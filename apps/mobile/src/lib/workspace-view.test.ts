@@ -1,0 +1,877 @@
+import capturedStatus from '../../mock-server/fixtures/status.json';
+import { receiveStatus, replaceReceivedField, statusEnumPaths } from '../../mock-server/receive-fixtures';
+import { deviceTileState } from '@/lib/device-tile';
+import { agentLabel } from '@/lib/agents';
+import {
+  historyTitle,
+  outcomeLabel,
+  macosBuildLabel,
+  pullRequestReviewName,
+  nextBuild,
+  recheckNote,
+} from '@/lib/format';
+import { attentionGroups, platformName, runningBuild } from '@/lib/workspaces';
+import type { StatusPayload } from '@/protocol/types';
+import vectors from '../../../desktop/Tests/StimKitTests/Fixtures/workspace-view-vectors.json';
+
+import { activityBadge } from '@/lib/format';
+import { devicesOf } from '@/lib/workspaces';
+import {
+  agentRow,
+  appPresence,
+  checksSummary,
+  phaseName,
+  barSteps,
+  barFills,
+  buildLine,
+  bundleLine,
+  cacheLookupLabel,
+  currentPhaseLabel,
+  otherPlatformLine,
+  deviceTitle,
+  deviceUsage,
+  finishedCacheLookupLabel,
+  diskParts,
+  diskSharedBytes,
+  diskPartsLabel,
+  gitChip,
+  namesPhases,
+  metroHealth,
+  phaseSteps,
+  type PhaseStep,
+  processRows,
+  usageLabel,
+  usageParts,
+  remoteBuild,
+  workspaceSeries,
+  workspaceStage,
+  workspaceUsage,
+  supportedPlatforms,
+} from '@/lib/workspace-view';
+import type {
+  BuildHistoryEntry,
+  DeviceActivity,
+  BuildReport,
+  EnvironmentState,
+  GitChipFacts,
+  LastBuild,
+  MachineUsageState,
+  StageFacts,
+  WorktreeFacts,
+} from '@/protocol/types';
+
+const NOW = Date.parse('2026-09-27T12:00:00Z');
+const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
+const MIN = 60_000;
+
+const env = (patch: Partial<EnvironmentState> = {}): EnvironmentState => ({
+  path: '/w',
+  live: true,
+  phase: 'live',
+  memoryMb: 0,
+  warnings: [],
+  ...patch,
+});
+
+const build = (patch: Partial<BuildReport> = {}): BuildReport => ({
+  platform: 'ios',
+  slot: 'default',
+  state: 'running',
+  phase: 'compile',
+  startedAt: iso(72_000),
+  phaseStartedAt: iso(47_000),
+  outcome: 'cold',
+  expectedMs: 160_000,
+  expectedPhaseMs: 94_000,
+  basis: 3,
+  ...patch,
+});
+
+const last = (patch: Partial<LastBuild> = {}): LastBuild => ({
+  platform: 'ios',
+  status: 'ok',
+  cacheHit: 'local',
+  cacheSkipped: false,
+  durationMs: 33_000,
+  fingerprint: null,
+  startedAt: iso(27 * MIN),
+  finishedAt: iso(26 * MIN),
+  ...patch,
+});
+
+const booted = { name: 'stim-w (iPhone 18 27.0)', udid: 'SIM-1', owned: true, state: 'Booted' };
+
+describe('appPresence', () => {
+  const stopped = { ...booted, app: { id: 'a', state: 'stopped' as const } };
+
+  it('takes the presence stim reports', () => {
+    const reported = env({ ios: { ...stopped, appPresence: 'none' } });
+    expect(appPresence(devicesOf(reported)[0]!)).toBe('none');
+    const cleared = env({ ios: { ...stopped, appPresence: null } });
+    expect(appPresence(devicesOf(cleared)[0]!)).toBeNull();
+  });
+
+  it('never reports the app of a leased phone, which Stim does not track', () => {
+    const e = env({ ios: { ...stopped, appPresence: 'none' } });
+    expect(appPresence({ ...devicesOf(e)[0]!, physical: true, owned: false })).toBeNull();
+  });
+});
+
+describe('usage from machine owners', () => {
+  const machine: MachineUsageState = {
+    memorySource: 'footprint',
+    owners: [
+      {
+        kind: 'simulator',
+        name: 's',
+        workspace: '/w',
+        id: 'SIM-1',
+        owned: true,
+        cpuPercent: 9,
+        residentMb: 3000,
+        memoryMb: 2150,
+        processes: 40,
+      },
+      {
+        kind: 'emulator',
+        name: 'e',
+        workspace: '/w',
+        id: 'stim-w',
+        owned: true,
+        cpuPercent: 14,
+        residentMb: 3000,
+        memoryMb: 2970,
+        processes: 3,
+      },
+      {
+        kind: 'metro',
+        name: 'm',
+        workspace: '/w',
+        id: '8084',
+        owned: true,
+        cpuPercent: 250,
+        residentMb: 1500,
+        memoryMb: 1434,
+        processes: 2,
+      },
+      {
+        kind: 'emulator',
+        name: 'x',
+        workspace: '/other',
+        id: 'stim-x',
+        owned: true,
+        cpuPercent: 99,
+        residentMb: 1,
+        memoryMb: 1,
+        processes: 1,
+      },
+    ],
+  };
+  const e = env({
+    ios: booted,
+    android: { name: 'stim-w', owned: true, physical: false, serial: 'emulator-5554', state: 'detected' },
+  });
+
+  it('sums the workspace owners, past 100% on several cores', () => {
+    expect(workspaceUsage(e, machine)).toEqual({ cpuPercent: 273, memoryMb: 6554, diskBytes: null });
+  });
+
+  it('matches an emulator by slot and kind, since its owner id is the AVD name and not the serial', () => {
+    const android = devicesOf(e).find((d) => d.platform === 'android')!;
+    expect(android.id).toBe('emulator-5554');
+    expect(deviceUsage(android, '/w', machine, 5.1e9)).toEqual({ cpuPercent: 14, memoryMb: 2970, diskBytes: 5.1e9 });
+  });
+
+  it("gives a leased phone none of its slot's simulator usage", () => {
+    const phone = { ...devicesOf(e).find((d) => d.platform === 'ios')!, physical: true, owned: false };
+    expect(deviceUsage(phone, '/w', machine, null)).toBeNull();
+  });
+
+  it('lists devices before Metro in the process table', () => {
+    expect(processRows(e, devicesOf(e), machine).map((row) => row.label)).toEqual([
+      'iPhone 18 simulator',
+      'Android emulator',
+      'Metro',
+    ]);
+  });
+
+  it('adds the worktree and build folders for the workspace disk', () => {
+    const disk = { worktreeBytes: 1.9e9, nodeModulesBytes: 0.9e9, buildBytes: 0.3e9, measuredAt: iso(0) };
+    expect(workspaceUsage(env({ disk }), null).diskBytes).toBeCloseTo(2.2e9);
+  });
+});
+
+describe('deviceTitle', () => {
+  it('splits an owned simulator model into the model and its iOS runtime', () => {
+    const [ios] = devicesOf(env({ ios: booted }));
+    expect(deviceTitle(ios!)).toEqual({ name: 'iPhone 18', detail: 'iOS 27.0' });
+    const [other] = devicesOf(
+      env({ slots: [{ slot: 'tablet', ios: { ...booted, name: 'stim-w (iPad Pro 13-inch (M5) 26.2)' } }] }),
+    );
+    expect(deviceTitle(other!)).toEqual({ name: 'iPad Pro 13-inch (M5)', detail: 'iOS 26.2 \u00B7 tablet' });
+  });
+
+  it('titles a leased iPhone by its own name and model, not as a simulator', () => {
+    const phone = { platform: 'ios', slot: 'default', physical: true, running: true, owned: false } as const;
+    expect(deviceTitle({ ...phone, id: 'U', name: 'Old iPhone', model: 'iPhone 12 Pro', state: 'connected' })).toEqual({
+      name: 'Old iPhone',
+      detail: 'iPhone 12 Pro',
+    });
+    expect(deviceTitle({ ...phone, id: 'U', name: 'iOS device', model: 'iOS device', state: 'connected' })).toEqual({
+      name: 'iOS device',
+      detail: '',
+    });
+  });
+});
+
+describe('buildLine', () => {
+  it('shows a run as its time and hit status, a failure as Failed, and else the next build prediction', () => {
+    expect(buildLine('ios', last(), undefined)).toMatchObject({
+      main: '0:33',
+      sub: 'hit',
+      tone: 'default',
+      spoken: 'iOS last build 0:33, hit',
+    });
+    expect(buildLine('ios', last({ cacheHit: false, durationMs: 158_000 }), undefined)).toMatchObject({
+      main: '2:38',
+      sub: 'cold',
+    });
+    expect(buildLine('ios', last({ status: 'failed' }), undefined)).toMatchObject({ main: 'Failed', tone: 'error' });
+    expect(
+      buildLine('ios', last({ cacheHit: false, durationMs: 70_000, offloadedTo: 'janics-mac-mini:7869' }), undefined),
+    ).toMatchObject({ main: '1:10', sub: 'on janics-mac-mini', spoken: 'iOS last build 1:10, on janics-mac-mini' });
+    const plan = {
+      kind: 'done' as const,
+      plan: {
+        platform: 'ios' as const,
+        fingerprint: 'f',
+        cacheKey: null,
+        cacheHit: 'local' as const,
+        provider: null,
+        cacheSkipped: false,
+        prebuild: null,
+        outcome: 'hit' as const,
+        expectedMs: 39_000,
+        basis: 2,
+      },
+    };
+    expect(buildLine('ios', undefined, plan)).toMatchObject({
+      main: '~0:39',
+      sub: 'est.',
+      tone: 'secondary',
+      spoken: 'iOS next build about 0:39, hit',
+    });
+    expect(buildLine('ios', undefined, { kind: 'checking' })).toMatchObject({ main: 'Checking\u2026' });
+    expect(buildLine('ios', undefined, { kind: 'failed', message: 'x' })).toMatchObject({ main: 'No build' });
+  });
+});
+
+describe('offloaded builds', () => {
+  const remote = { host: 'janics-mac-mini:7869', phase: 'pods', startedAt: iso(90_000), phaseStartedAt: iso(56_000) };
+
+  it('names the build machine without its port and the step it runs there, with that step elapsed', () => {
+    expect(remoteBuild(build({ phase: 'pods', placement: remote }), NOW)).toEqual({
+      host: 'janics-mac-mini',
+      phase: 'Pods',
+      phaseElapsedMs: 56_000,
+    });
+    expect(currentPhaseLabel(build({ phase: 'prepare', placement: { ...remote, phase: 'sync' } })).phase).toBe('Sync');
+    expect(currentPhaseLabel(build({ phase: 'compile', placement: { ...remote, phase: 'build' } })).phase).toBe(
+      'Compile',
+    );
+    expect(remoteBuild(build({ placement: 'local' }), NOW)).toBeNull();
+    expect(remoteBuild(build(), NOW)).toBeNull();
+  });
+});
+
+describe('cache lookup labels', () => {
+  it.each([
+    [{ cacheLookupOutcome: 'hit' }, 'hit'],
+    [{ cacheLookupOutcome: 'miss' }, 'miss'],
+    [{}, null],
+    [{ cacheLookupOutcome: 'unknown' }, null],
+  ] as const)('labels the latest lookup report %j as %s', (patch, label) => {
+    expect(cacheLookupLabel(build(patch))).toBe(label);
+  });
+
+  it.each([
+    [{ cacheHit: 'local' }, 'hit'],
+    [{ cacheHit: 'remote' }, 'hit'],
+    [{ cacheHit: false }, 'miss'],
+    [{ cacheHit: false, cacheSkipped: true }, null],
+    [{ cacheHit: 'local', cacheSkipped: true }, null],
+  ] as const)('labels the finished build %j as %s', (patch, label) => {
+    expect(finishedCacheLookupLabel(last(patch))).toBe(label);
+  });
+});
+
+describe('phaseSteps', () => {
+  const history: BuildHistoryEntry[] = [
+    {
+      ...last({ cacheHit: false }),
+      result: 'succeeded',
+      slot: 'default',
+      configuration: 'Debug',
+      cacheKey: null,
+      phases: { prepare: 2000, prebuild: 4000, pods: 21_000, compile: 94_000, install: 8000 },
+    },
+  ];
+
+  it('marks earlier phases done and later ones pending, with the reference run times as estimates', () => {
+    const steps = phaseSteps(build(), history, NOW);
+    expect(steps.map((s) => [s.phase, s.state])).toEqual([
+      ['prepare', 'done'],
+      ['prebuild', 'done'],
+      ['pods', 'done'],
+      ['compile', 'current'],
+      ['install', 'pending'],
+    ]);
+    expect(steps[3]).toMatchObject({ elapsedMs: 47_000, fraction: 0.5 });
+    expect(steps[4]).toMatchObject({ expectedMs: 8000 });
+    expect(steps.filter((step) => step.state === 'done').map((step) => step.elapsedMs)).toEqual([null, null, null]);
+  });
+
+  it("uses this run's completed times even for a phase missing from the plan", () => {
+    const steps = phaseSteps(
+      build({
+        plannedPhases: [
+          { phase: 'prepare', expectedMs: 2000 },
+          { phase: 'compile', expectedMs: 94_000 },
+        ],
+        completedPhaseMs: { prepare: 1000, 'cache-lookup': 0, pods: 15_000 },
+      }),
+      history,
+      NOW,
+    );
+    expect(steps.map((step) => [step.phase, step.state, step.elapsedMs])).toEqual([
+      ['prepare', 'done', 1000],
+      ['cache-lookup', 'done', 0],
+      ['pods', 'done', 15_000],
+      ['compile', 'current', 47_000],
+    ]);
+    expect(barSteps(steps).map((step) => step.phase)).toEqual(['prepare', 'compile']);
+    const repeated = build({
+      phase: 'cleanup',
+      completedPhaseMs: { prepare: 1000, cleanup: 3000 },
+      plannedPhases: [
+        { phase: 'prepare', expectedMs: 2000 },
+        { phase: 'compile', expectedMs: 94_000 },
+      ],
+    });
+    const cleaning = phaseSteps(repeated, history, NOW);
+    expect(cleaning.find((step) => step.phase === 'cleanup')).toMatchObject({
+      state: 'current',
+      expectedMs: null,
+      fraction: null,
+    });
+    expect(barSteps(cleaning)[0]).toMatchObject({ phase: 'prepare', state: 'current', fraction: null });
+    const resumed = phaseSteps(
+      {
+        ...repeated,
+        phase: 'prepare',
+        phaseStartedAt: iso(10_000),
+        expectedPhaseMs: 60_000,
+        completedPhaseMs: { prepare: 20_000, cleanup: 7000 },
+      },
+      history,
+      NOW,
+    );
+    expect(resumed.find((step) => step.phase === 'prepare')).toMatchObject({ elapsedMs: 30_000, fraction: 0.5 });
+    expect(resumed.find((step) => step.phase === 'cleanup')).toMatchObject({ state: 'done', elapsedMs: 7000 });
+    expect(cleaning.find((step) => step.phase === 'cleanup')?.elapsedMs).toBe(50_000);
+  });
+
+  it('keeps the time of a phase that came before the current one in phase order', () => {
+    const steps = phaseSteps(
+      build({
+        phase: 'prebuild',
+        plannedPhases: [{ phase: 'compile', expectedMs: 94_000 }],
+        completedPhaseMs: { compile: 30_000 },
+      }),
+      history,
+      NOW,
+    );
+    expect(steps.find((step) => step.phase === 'compile')).toMatchObject({ state: 'pending', elapsedMs: 30_000 });
+    expect(barSteps(steps).map((step) => step.phase)).toEqual(['prebuild', 'compile']);
+  });
+
+  it('folds the short prepare phases into one bar segment and launch into install', () => {
+    const steps = phaseSteps(build({ phase: 'cache-lookup', phaseStartedAt: iso(0) }), history, NOW);
+    expect(barSteps(steps).map((s) => [s.phase, s.state])).toEqual([
+      ['prepare', 'current'],
+      ['prebuild', 'pending'],
+      ['pods', 'pending'],
+      ['compile', 'pending'],
+      ['install', 'pending'],
+    ]);
+  });
+
+  it('gives the device wait its own bar segment between the build and install', () => {
+    const hit: BuildHistoryEntry = {
+      ...history[0]!,
+      cacheHit: 'local',
+      phases: { prepare: 1000, device: 500, 'cache-lookup': 3000, install: 2000, launch: 1000 },
+    };
+    const steps = phaseSteps(
+      build({ outcome: 'hit', phase: 'device', phaseStartedAt: iso(0), expectedPhaseMs: null }),
+      [hit],
+      NOW,
+    );
+    expect(barSteps(steps).map((s) => [s.phase, s.state])).toEqual([
+      ['prepare', 'done'],
+      ['device', 'current'],
+      ['install', 'pending'],
+    ]);
+  });
+
+  it('names phases only when there is more than one, so a first build in a fresh workspace does not repeat its stage', () => {
+    const fresh = phaseSteps(build({ phase: 'prepare', phaseStartedAt: iso(0) }), [], NOW);
+    expect(fresh.map((s) => s.phase)).toEqual(['prepare']);
+    expect(namesPhases(fresh)).toBe(false);
+    expect(namesPhases(barSteps(fresh))).toBe(false);
+    expect(namesPhases(phaseSteps(build(), history, NOW))).toBe(true);
+  });
+
+  it('moves the compile phase by the build tool counts only when they are ahead of the time estimate', () => {
+    const detail = {
+      step: 'compile' as const,
+      unit: 'targets' as const,
+      done: 45,
+      total: 180,
+      line: null,
+      updatedAt: iso(0),
+    };
+    expect(phaseSteps(build({ detail }), history, NOW)[3]!.fraction).toBe(0.5);
+    expect(phaseSteps(build({ detail: { ...detail, done: 135 } }), history, NOW)[3]!.fraction).toBe(0.75);
+    expect(phaseSteps(build({ detail: { ...detail, done: 0 } }), history, NOW)[3]!.fraction).toBe(0.5);
+    expect(currentPhaseLabel(build({ detail }))).toEqual({ phase: 'Compiling', counts: '45 of 180 targets' });
+    expect(currentPhaseLabel(build({ detail: { ...detail, unit: 'tasks', total: null } })).counts).toBe('45 tasks');
+    expect(currentPhaseLabel(build({ detail: { ...detail, unit: 'steps' } })).counts).toBe('45 of 180 steps');
+    expect(currentPhaseLabel(build({ phase: 'install', detail: { ...detail, step: 'sign' } }))).toEqual({
+      phase: 'Install',
+      counts: null,
+    });
+  });
+
+  it('names what the device and launch phases wait on, with Metro percent only while bundling', () => {
+    const bundling = { name: 'bundling', startedAt: iso(12000), percent: 44.6 };
+    expect(currentPhaseLabel(build({ phase: 'launch', activity: bundling }))).toEqual({
+      phase: 'Bundling JS',
+      counts: '45%',
+    });
+    expect(
+      currentPhaseLabel(build({ phase: 'launch', activity: { name: 'waiting-ready', startedAt: iso(0) } })),
+    ).toEqual({ phase: 'Waiting for app ready', counts: null });
+    expect(
+      currentPhaseLabel(
+        build({ phase: 'device', platform: 'android', activity: { name: 'booting', startedAt: iso(0) } }),
+      ),
+    ).toEqual({ phase: 'Booting emulator', counts: null });
+    expect(currentPhaseLabel(build({ phase: 'install', activity: bundling })).phase).toBe('Install');
+  });
+
+  it("draws the CLI's planned phases instead of the workspace history when the CLI sends them", () => {
+    const planned = build({
+      phase: 'cache-lookup',
+      phaseStartedAt: iso(1000),
+      outcome: 'hit',
+      expectedPhaseMs: 2000,
+      plannedPhases: [
+        { phase: 'prepare', expectedMs: 1500 },
+        { phase: 'cache-lookup', expectedMs: 2000 },
+        { phase: 'device', expectedMs: 800 },
+        { phase: 'install', expectedMs: 500 },
+        { phase: 'launch', expectedMs: 9000 },
+      ],
+    });
+    expect(barSteps(phaseSteps(planned, [], NOW)).map((s) => [s.phase, s.state])).toEqual([
+      ['prepare', 'current'],
+      ['device', 'pending'],
+      ['install', 'pending'],
+    ]);
+    expect(phaseSteps(planned, history, NOW).map((s) => s.phase)).toEqual([
+      'prepare',
+      'cache-lookup',
+      'device',
+      'install',
+      'launch',
+    ]);
+  });
+});
+
+describe('barFills state', () => {
+  const current = (fraction: number): PhaseStep => ({
+    phase: 'compile',
+    state: 'current',
+    elapsedMs: null,
+    expectedMs: 1000,
+    fraction,
+  });
+
+  it('remembers progress within a build without carrying it into another build', () => {
+    const first = barFills([current(0.8)], 'prune-progress')[0]!;
+    expect(barFills([current(0.2)], 'prune-progress')[0]).toBeGreaterThanOrEqual(first);
+    expect(barFills([current(0.2)], 'prune-other-build')[0]).toBeLessThan(first);
+  });
+
+  it('does not credit a pending phase with remembered progress', () => {
+    barFills([current(0.8)], 'prune-pending');
+    expect(barFills([{ ...current(0), state: 'pending' }], 'prune-pending')[0]).toBe(0);
+  });
+});
+
+describe('agentRow', () => {
+  it('names the driving tool with its last action, or how long the device has been quiet', () => {
+    const driven = {
+      state: 'driven' as const,
+      driver: { tool: 'agent-device', pid: 1, since: iso(18 * MIN) },
+      basis: [],
+    };
+    expect(agentRow(driven, { ts: NOW - 12_000, msg: 'Tapped "Allow camera"' }, NOW)).toEqual({
+      tool: 'agent-device',
+      text: 'Tapped "Allow camera" \u00B7 12s ago',
+    });
+    expect(agentRow({ state: 'idle', lastActivityAt: iso(6 * MIN), basis: [] }, null, NOW)).toEqual({
+      tool: null,
+      text: 'idle 6m',
+    });
+  });
+});
+
+describe('workspaceSeries', () => {
+  it('reads the workspace series with its window, peak CPU and memory change, skipping empty slots', () => {
+    const usage = {
+      intervalMs: 15_000,
+      endAt: NOW,
+      environments: [{ workspace: '/w', cpuPercent: [null, 40, 188, 38], memoryMb: [null, 7500, 7900, 8000] }],
+      devices: [],
+    };
+    expect(workspaceSeries(usage, '/w')).toMatchObject({ minutes: 1, peakCpuPercent: 188, memoryChangeMb: 500 });
+    expect(workspaceSeries(usage, '/other')).toBeNull();
+  });
+});
+
+type VectorStep = PhaseStep & { name: string };
+
+const vectorNow = Date.parse(vectors.now);
+const steady = (steps: readonly PhaseStep[]) =>
+  steps.map((step) => ({
+    phase: step.phase,
+    name: phaseName(step.phase),
+    state: step.state,
+    elapsedMs: step.elapsedMs,
+    expectedMs: step.expectedMs,
+    fraction: step.fraction === null ? null : Number(step.fraction.toFixed(9)),
+  }));
+const expectedSteps = (steps: VectorStep[]) =>
+  steps.map((step) => ({ ...step, fraction: step.fraction === null ? null : Number(step.fraction.toFixed(9)) }));
+
+describe('workspace view vectors', () => {
+  it.each(vectors.stage.map((c) => [c.name, c] as const))('stage: %s', (_, c) => {
+    const e = c.workspace as unknown as EnvironmentState;
+    const stage = workspaceStage({ ...e, stage: c.derived as StageFacts }, vectorNow);
+    expect(stage.kind).toBe(c.derived.kind);
+    expect({ label: stage.label, tone: stage.tone, subtitle: stage.subtitle }).toEqual(c.stage);
+  });
+
+  it.each(vectors.gitChip.map((c) => [c.name, c] as const))('git chip: %s', (_, c) => {
+    const worktree = c.worktree as unknown as WorktreeFacts;
+    const toneOf = (tone: string) => (tone === 'default' ? 'normal' : tone === 'secondary' ? 'neutral' : tone);
+    const chip = gitChip({ ...worktree, gitChip: c.derived as GitChipFacts });
+    const pr = chip?.pr ? { text: chip.pr.text, tone: chip.pr.tone, checks: chip.pr.ci } : null;
+    expect({
+      parts: chip?.parts.map((p) => ({ text: p.text, tone: toneOf(p.tone) })),
+      pullRequest: pr,
+      label: chip?.label,
+    }).toEqual(c.chip);
+  });
+
+  it('shows a neutral stage when stim reports a kind this app does not know, or none', () => {
+    const e = vectors.stage[0]!.workspace as unknown as EnvironmentState;
+    const paused = { kind: 'paused', since: null, platform: null, closedApps: [] } as unknown as StageFacts;
+    const unknown = { kind: 'unknown', label: 'Unknown', tone: 'tertiary', subtitle: null };
+    expect(workspaceStage({ ...e, stage: paused }, vectorNow)).toEqual(unknown);
+    expect(workspaceStage(e, vectorNow)).toEqual(unknown);
+  });
+
+  it.each(vectors.checksSummary.map((c) => [c.name, c] as const))('checks summary: %s', (_, c) => {
+    expect(checksSummary(c.checks)).toBe(c.summary);
+  });
+
+  it.each(vectors.phases.map((c) => [c.name, c] as const))('phases: %s', (_, c) => {
+    const steps = phaseSteps(c.build as unknown as BuildReport, c.history as unknown as BuildHistoryEntry[], vectorNow);
+    expect(steady(steps)).toEqual(expectedSteps(c.steps as VectorStep[]));
+    expect(steady(barSteps(steps)).map((s) => ({ ...s, elapsedMs: null }))).toEqual(
+      expectedSteps(c.bars as VectorStep[]),
+    );
+    expect(namesPhases(steps)).toBe(c.namesPhases);
+  });
+
+  it.each(vectors.activity.badge.map((c) => [c.name, c] as const))('activity badge: %s', (_, c) => {
+    expect(activityBadge(c.activity as unknown as DeviceActivity, vectorNow)?.text ?? null).toBe(
+      c.name === 'any other state shows nothing' ? 'Activity unknown' : c.text,
+    );
+  });
+
+  it.each(vectors.bundleLine.map((c) => [c.name, c] as const))('bundle line: %s', (_, c) => {
+    const line = bundleLine(c.workspace as unknown as EnvironmentState, vectorNow, c.reportsBundles);
+    expect(line && { text: line.text, tone: line.tone === 'default' ? 'normal' : line.tone }).toEqual(c.line);
+  });
+
+  it.each(vectors.diskParts.map((c) => [c.name, c] as const))('disk parts: %s', (_, c) => {
+    const workspace = c.workspace as unknown as EnvironmentState;
+    expect(diskParts(workspace)).toEqual(c.parts);
+    expect(diskSharedBytes(workspace)).toBe(c.shared ?? null);
+  });
+
+  it.each(vectors.agentRow.map((c) => [c.name, c] as const))('agent row: %s', (_, c) => {
+    const last = c.last && { ts: vectorNow - c.last.agoMs, msg: c.last.message };
+    expect(agentRow(c.activity as unknown as DeviceActivity, last, vectorNow)).toEqual(c.row);
+  });
+});
+
+describe('usageParts and usageLabel', () => {
+  it('words the disk parts in one line and sums them to the workspace disk', () => {
+    const e = env({
+      disk: { worktreeBytes: 1.72e9, nodeModulesBytes: 1.53e9, buildBytes: 19.2e6, measuredAt: iso(0) },
+    });
+    const parts = diskParts(e)!;
+    expect(diskPartsLabel(parts)).toBe('node_modules 1.5 GB, Rest of worktree 190 MB, Build output 19 MB');
+    expect(parts.reduce((sum, part) => sum + part.bytes, 0)).toBeCloseTo(workspaceUsage(e, null).diskBytes!);
+  });
+
+  it('leaves shared node_modules out of the disk parts and the workspace disk', () => {
+    const e = env({
+      worktree: { path: '/w' },
+      disk: {
+        worktreeBytes: 1.9e9,
+        nodeModulesBytes: 0.9e9,
+        nodeModulesPrivateBytes: 0.01e9,
+        buildBytes: 0.3e9,
+        measuredAt: iso(0),
+      },
+    });
+    const total = (diskParts(e) ?? []).reduce((sum, part) => sum + part.bytes, 0);
+    expect(diskSharedBytes(e)).toBeCloseTo(0.89e9);
+    expect(total).toBeCloseTo(1.31e9);
+    expect(workspaceUsage(e, null).diskBytes).toBeCloseTo(1.31e9);
+  });
+
+  it('lists the measured resources in CPU, memory, disk order', () => {
+    const usage = { cpuPercent: 42.4, memoryMb: 2048, diskBytes: 3e9 };
+    expect(usageParts(usage).map((part) => [part.kind, part.value])).toEqual([
+      ['cpu', '42%'],
+      ['memory', '2.0 GB'],
+      ['disk', '3.0 GB'],
+    ]);
+    expect(usageLabel(usage)).toBe('CPU 42%, memory 2.0 GB, disk 3.0 GB');
+  });
+
+  it('leaves out a resource that is not measured, but keeps a measured zero', () => {
+    expect(usageLabel({ cpuPercent: null, memoryMb: 512, diskBytes: null })).toBe('memory 512 MB');
+    expect(usageLabel({ cpuPercent: 0, memoryMb: null, diskBytes: null })).toBe('CPU 0%');
+    expect(usageLabel({ cpuPercent: null, memoryMb: null, diskBytes: null })).toBe('');
+  });
+});
+
+test.each([
+  ...statusEnumPaths.map((path) => [path, 'future-kind'] as const),
+  ['environments.0.build.missProvisional', false] as const,
+])('renders or skips newer status values at %s without an unsafe display', (path, value) => {
+  const payload = replaceReceivedField(receiveStatus(capturedStatus.payload as StatusPayload), path, value);
+  const workspace = payload.environments[0]!;
+  const devices = devicesOf(workspace);
+  const device = (platform: string) => devices.find((entry) => entry.platform === platform)!;
+  const worktree = path.startsWith('unprovisionedWorktrees.')
+    ? payload.unprovisionedWorktrees![0]!
+    : workspace.worktree;
+  const field = path.replace('environments.0.', '').replace('unprovisionedWorktrees.0.', 'worktree.');
+  if (path === 'machine.owners.0.kind') {
+    expect(processRows(workspace, devices, payload.machine)[0]).toMatchObject({
+      label: 'Metro',
+      memoryMb: 100,
+      cpuPercent: 10,
+    });
+  } else if (field === 'stage.kind') {
+    expect(workspaceStage(workspace, NOW)).toEqual({
+      kind: 'unknown',
+      label: 'Unknown',
+      tone: 'tertiary',
+      subtitle: null,
+    });
+  } else if (field === 'stage.platform') {
+    expect(workspaceStage({ ...workspace, stage: { ...workspace.stage!, kind: 'building' } }, NOW).subtitle).toContain(
+      'Unknown',
+    );
+  } else if (field === 'stage.closedApps.0.platform') {
+    expect(workspaceStage(workspace, NOW)).toMatchObject({ tone: 'success', subtitle: 'up <1m' });
+  } else if (field.endsWith('.activity.state')) {
+    const platform = field.split('.')[0]!;
+    expect(activityBadge(device(platform).activity, NOW)).toEqual({ kind: 'unknown', text: 'Activity unknown' });
+    expect(deviceTileState(device(platform), { ...workspace, build: null }, NOW)).toEqual({
+      text: 'Activity unknown',
+      tone: 'tertiary',
+    });
+  } else if (field === 'ios.app.state' || field === 'android.app.state') {
+    expect(deviceTileState(device(field.split('.')[0]!), { ...workspace, build: null }, NOW)).toEqual({
+      text: 'Unknown',
+      tone: 'secondary',
+    });
+  } else if (field.endsWith('.appPresence')) {
+    expect(appPresence(device(field.split('.')[0]!))).toBeNull();
+  } else if (field === 'android.state' || field === 'physicalDevices.0.connection') {
+    expect(field === 'android.state' ? device('android') : devices.find((entry) => entry.physical)).toMatchObject({
+      running: false,
+      state: 'unknown',
+    });
+  } else if (field === 'web.browser') {
+    expect(device('web')).toMatchObject({ running: true, page: { url: 'https://app', error: null } });
+  } else if (field === 'macos.state') {
+    expect(deviceTileState(device('macos'), workspace, NOW)).toEqual({ text: 'Unknown', tone: 'secondary' });
+  } else if (field === 'metro.bundle.last.status') {
+    expect(bundleLine(workspace, NOW, true)).toBeNull();
+  } else if (field === 'issues.0.severity') {
+    expect(attentionGroups([workspace])[0]!.items).toEqual([
+      expect.objectContaining({ message: 'Device missing', severity: 'warning' }),
+    ]);
+  } else if (field === 'build.placement') {
+    expect(remoteBuild(workspace.build!, NOW)).toBeNull();
+  } else if (field === 'build.state') {
+    expect(runningBuild(workspace)).toBeNull();
+  } else if (field === 'build.platform') {
+    expect(platformName(workspace.build!.platform)).toBe('Unknown');
+    expect(otherPlatformLine(workspace, workspace.build!.platform, NOW)).toBeNull();
+  } else if (field === 'build.phase' || field === 'build.detail.step') {
+    expect(currentPhaseLabel(workspace.build!).phase).toBe('Unknown');
+    if (field === 'build.phase')
+      expect(barSteps(phaseSteps(workspace.build!, [], NOW))).toEqual([
+        { phase: 'unknown', state: 'current', elapsedMs: 0, expectedMs: null, fraction: null },
+      ]);
+  } else if (field === 'build.detail.unit') {
+    expect(currentPhaseLabel(workspace.build!)).toEqual({ phase: 'Compiling', counts: null });
+  } else if (field === 'build.outcome') {
+    expect(outcomeLabel(workspace.build!)).toBeNull();
+  } else if (field === 'build.plannedPhases.0.phase') {
+    expect(barSteps(phaseSteps(workspace.build!, [], NOW)).map((step) => step.phase)).toEqual(['compile']);
+  } else if (field === 'lastBuilds.ios.status' || field === 'lastBuilds.ios.cacheHit') {
+    expect(buildLine('ios', workspace.lastBuilds!.ios, undefined)).toMatchObject({
+      main: 'Unknown',
+      tone: 'secondary',
+    });
+    if (field === 'lastBuilds.ios.status')
+      expect(otherPlatformLine(workspace, 'android', NOW)).toBe('iOS \u00B7 Unknown');
+  } else if (field === 'builds.ios.0.result' || field === 'builds.ios.0.cacheHit' || field === 'builds.ios.0.status') {
+    expect(historyTitle(workspace.builds!.ios![0]!)).toBe('Unknown');
+  } else if (field === 'worktree.pullRequest.state') {
+    expect(gitChip(worktree)!.pr).toMatchObject({ tone: 'tertiary' });
+    expect(gitChip(worktree)!.label).toContain('PR #1');
+  } else if (field === 'worktree.gitChip.parts.0.kind') {
+    expect(gitChip(worktree)!.parts).toEqual([]);
+  } else if (field === 'worktree.gitChip.ci') {
+    expect(gitChip(worktree)!.pr!.ci).toBeNull();
+  } else if (field === 'agents.0.tool' || field === 'endedAgents.0.tool') {
+    const session = field.startsWith('ended') ? workspace.endedAgents![0]! : workspace.agents![0]!;
+    expect(agentLabel(session)).toBe('future-kind');
+  } else if (field === 'physicalDevices.0.platform') {
+    expect(devices.some((entry) => entry.physical)).toBe(false);
+  } else if (field === 'warmStep') {
+    expect(workspaceStage({ ...workspace, stage: { ...workspace.stage!, kind: 'warming' } }, NOW).subtitle).toContain(
+      'Unknown',
+    );
+  } else if (field === 'worktree.pullRequest.reviewDecision') {
+    expect(pullRequestReviewName(worktree!.pullRequest!.reviewDecision!)).toBe('Unknown');
+  } else if (field === 'macos.build.state') {
+    expect(macosBuildLabel(workspace.macos!)).toBe('Unknown');
+  } else if (field.startsWith('build.missReason')) {
+    expect(
+      nextBuild({
+        platform: 'ios',
+        fingerprint: 'abc',
+        cacheKey: null,
+        cacheHit: false,
+        provider: null,
+        cacheSkipped: false,
+        prebuild: null,
+        outcome: 'cold',
+        expectedMs: null,
+        basis: 0,
+        missReason: workspace.build!.missReason,
+      }),
+    ).toBe('cold build, Native files changed');
+  } else if (field === 'build.missProvisional') {
+    expect(recheckNote({ ...workspace.build!, phase: 'pods' })).toBeNull();
+  } else if (field === 'build.cacheLookupOutcome') {
+    expect(outcomeLabel(workspace.build!)).toBe('Cache miss');
+  } else if (field === 'lastBuilds.ios.platform' || field === 'builds.ios.0.platform') {
+    expect(
+      platformName(
+        field.startsWith('last') ? workspace.lastBuilds!.ios!.platform : workspace.builds!.ios![0]!.platform,
+      ),
+    ).toBe('Unknown');
+  } else if (field.startsWith('remoteDevices')) {
+    expect(devices.some((entry) => entry.id === 'remote')).toBe(false);
+  } else if (field === 'physicalDevices.0.lease.kind') {
+    expect(devices.find((entry) => entry.physical)).toMatchObject({ name: 'Phone', state: 'connected', running: true });
+  } else if (field === 'web.viewport' || field === 'web.page.state') {
+    expect(device('web').page).toEqual({ url: 'https://app', error: null });
+  } else if (field.startsWith('metro.')) {
+    expect(metroHealth(workspace)).toBe('healthy');
+    expect(bundleLine(workspace, NOW, true)?.tone).toBe('tertiary');
+  } else if (
+    field === 'macos.hostLaunched' ||
+    field === 'macos.host.agent.setting' ||
+    field === 'macos.host.agent.driver'
+  ) {
+    expect(device('macos')).toMatchObject({ name: 'App', running: true });
+  } else if (field === 'phase') {
+    expect(workspaceStage(workspace, NOW).label).toBe('Running');
+  } else {
+    expect(workspaceUsage(workspace, payload.machine)).toEqual({ cpuPercent: 10, memoryMb: 100, diskBytes: null });
+  }
+});
+
+test('does not attribute a future device usage kind to an iOS simulator', () => {
+  const payload = receiveStatus(capturedStatus.payload as StatusPayload);
+  const workspace = payload.environments[0]!;
+  const device = devicesOf(workspace).find((entry) => entry.platform === 'ios')!;
+  expect(
+    workspaceSeries(
+      {
+        intervalMs: 1000,
+        endAt: 1,
+        environments: [{ workspace: '/app', cpuPercent: [10, 20], memoryMb: [100, 200] }],
+        devices: [{ kind: 'future-kind', id: device.id!, workspace: '/app', cpuPercent: [99], memoryMb: [999] }],
+      },
+      workspace.path,
+    ),
+  ).toMatchObject({ peakCpuPercent: 20, memoryChangeMb: 100 });
+});
+
+test.each(['future-kind', '__proto__', 'constructor'])(
+  'keeps unknown record keys %s out of tones and phase groups',
+  (value) => {
+    const payload = receiveStatus(capturedStatus.payload as StatusPayload);
+    const tree = {
+      ...payload.environments[0]!.worktree!,
+      pullRequest: { ...payload.environments[0]!.worktree!.pullRequest!, state: value },
+    };
+    expect(gitChip(tree)?.pr?.tone).toBe('tertiary');
+    expect(barSteps([{ phase: value, state: 'current', elapsedMs: null, expectedMs: null, fraction: null }])).toEqual([
+      { phase: 'unknown', state: 'current', elapsedMs: null, expectedMs: null, fraction: null },
+    ]);
+  },
+);
+
+it('offers detected and used platforms, ignores unknown platforms and preserves older CLI fallbacks', () => {
+  const env = { path: '/w', live: false, warnings: [], memoryMb: 0 };
+  expect(supportedPlatforms(env)).toEqual(['ios', 'android']);
+  const android = { ...env, android: { name: 'pixel', owned: true, physical: false, state: 'not-detected' } };
+  expect(supportedPlatforms(android)).toEqual(['android']);
+  expect(supportedPlatforms({ ...android, platforms: ['web', 'ios', 'future-platform'] })).toEqual([
+    'ios',
+    'android',
+    'web',
+  ]);
+  expect(supportedPlatforms({ ...env, platforms: ['future-platform'] })).toEqual([]);
+  expect(supportedPlatforms({ ...env, platforms: [] })).toEqual([]);
+});

@@ -1,0 +1,50 @@
+{
+  "environments": [],
+  "archived": [
+    {
+      "id": "tutorial-archive",
+      "projectRoot": "/Users/example/stim-tutorial-tour",
+      "project": "stim-tutorial",
+      "workspace": "tour",
+      "worktree": {
+        "repository": null,
+        "head": null,
+        "subject": null,
+        "merged": null,
+        "pullRequest": null,
+        "branch": "stim-tutorial/tour"
+      },
+      "removedAt": "2026-10-07T05:06:58.324Z",
+      "removedBy": "worktree-remove",
+      "builds": {
+        "count": 2,
+        "lastErrorCount": 0,
+        "last": null
+      },
+      "agents": [],
+      "bytes": {
+        "logs": 0,
+        "recordings": 0,
+        "agentActions": 0,
+        "record": 0,
+        "total": 0
+      },
+      "expires": {
+        "logs": null,
+        "recordings": null,
+        "agentActions": null,
+        "record": null
+      },
+      "version": 1,
+      "lastUsedAt": null
+    }
+  ],
+  "capacity": {
+    "liveCount": 0,
+    "committedMb": 0,
+    "totalMemoryMb": 49152,
+    "overCapacity": false
+  },
+  "deviceLeases": [],
+  "simctlAvailable": true
+}

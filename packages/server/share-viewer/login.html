@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta name="color-scheme" content="light dark" />
+    <title>{{title}}</title>
+    <link rel="stylesheet" href="/s/assets/viewer.css" />
+  </head>
+  <body class="page">
+    <header class="bar">{{logo}}</header>
+    <main class="center">
+      <form class="card" method="post" action="login">
+        <h1>Enter the access code</h1>
+        <p class="hint">The person who shared this app gave you one.</p>
+        <div class="labeled">
+          <label for="access">Access code</label>
+          <input
+            id="access"
+            type="text"
+            name="access"
+            class="field secret"
+            autocomplete="off"
+            autocapitalize="off"
+            autocorrect="off"
+            spellcheck="false"
+            data-1p-ignore
+            data-lpignore="true"
+            data-bwignore
+            data-form-type="other"
+            autofocus
+            required
+            maxlength="128"
+            placeholder="Access code"
+          />
+        </div>
+        <p class="error" role="alert">{{message}}</p>
+        <button class="primary" type="submit">View app</button>
+      </form>
+    </main>
+    <footer>
+      <p class="credit">
+        Shared with <a href="https://stim.appandflow.com" target="_blank" rel="noopener noreferrer">Stim</a> by
+        <a href="https://appandflow.com" target="_blank" rel="noopener noreferrer">App &amp; Flow</a>
+      </p>
+    </footer>
+  </body>
+</html>

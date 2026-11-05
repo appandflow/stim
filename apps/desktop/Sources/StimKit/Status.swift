@@ -1,0 +1,684 @@
+import Foundation
+
+/// The payload printed by `stim status --json`.
+public struct StatusPayload: Decodable, Sendable {
+  public var environments: [Workspace]
+  public var capacity: Capacity?
+  public var unprovisionedWorktrees: [UnprovisionedWorktree]?
+  public var machine: MachineUsage?
+  public var archived: [ArchivedWorkspace]?
+  public var archivedUsage: ArchivedUsage?
+  /// The same payload as the oversight rules read it; nil when it does not decode as one.
+  public var oversight: OversightStatus?
+  /// Absent from a `stim` before 1.16, and nil when the block does not decode.
+  public var maintenance: MaintenanceStatus?
+  /// The home daemon and its pressure level; nil from a `stim` without one, or when the block does not decode.
+  public var daemon: DaemonStatus?
+
+  enum CodingKeys: String, CodingKey {
+    case environments, capacity, unprovisionedWorktrees, machine, archived, archivedUsage, maintenance, daemon
+  }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    environments = try c.decode([Workspace].self, forKey: .environments)
+    capacity = try c.decodeIfPresent(Capacity.self, forKey: .capacity)
+    unprovisionedWorktrees = try c.decodeIfPresent([UnprovisionedWorktree].self, forKey: .unprovisionedWorktrees)
+    machine = try c.decodeIfPresent(MachineUsage.self, forKey: .machine)
+    if c.contains(.archived), try !c.decodeNil(forKey: .archived) {
+      var records = try c.nestedUnkeyedContainer(forKey: .archived)
+      var decoded: [ArchivedWorkspace] = []
+      while !records.isAtEnd {
+        let record = try records.superDecoder()
+        if let archive = try? ArchivedWorkspace(from: record) { decoded.append(archive) }
+      }
+      archived = decoded
+    }
+    archivedUsage = try c.decodeIfPresent(ArchivedUsage.self, forKey: .archivedUsage)
+    oversight = try? OversightStatus(from: decoder)
+    maintenance = try? c.decodeIfPresent(MaintenanceStatus.self, forKey: .maintenance)
+    daemon = try? c.decodeIfPresent(DaemonStatus.self, forKey: .daemon)
+  }
+}
+
+public struct Capacity: Decodable, Sendable {
+  public var liveCount: Int
+  public var committedMb: Int
+  public var totalMemoryMb: Int
+  public var overCapacity: Bool
+  /// `concurrency.maxBuilds` usage; present only while that cap is set.
+  public var builds: BuildSlots?
+  /// `concurrency.maxDevices` usage; present only while that cap is set.
+  public var devices: DeviceSlots?
+  /// `concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` usage; each is present only while its cap is set.
+  public var platformDevices: PlatformDeviceSlots?
+  /// Absent from a `stim` that predates it.
+  public var load: CapacityLoad?
+}
+
+public struct PlatformDeviceSlots: Decodable, Hashable, Sendable {
+  public var ios: PlatformSlots?
+  public var android: PlatformSlots?
+}
+
+public struct PlatformSlots: Decodable, Hashable, Sendable {
+  public var max: Int
+  /// Nil when `stim` could not count the owned devices; `unknown` says why.
+  public var inUse: Int?
+  public var unknown: String?
+}
+
+/// The Mac's 5-minute load average per core, and the state `stim` placed it in.
+public struct CapacityLoad: Decodable, Hashable, Sendable {
+  public enum State: String, Decodable, Hashable, Sendable {
+    case free, busy, holding, other
+
+    public init(from decoder: Decoder) throws {
+      self = State(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .other
+    }
+  }
+
+  public var cpus: Int
+  public var loadPerCore: Double
+  /// `server.maxLoadPerCore`: at or over it, placement prefers another machine.
+  public var busyAt: Double
+  /// The load per core at which new local native work waits; nil while no limit is configured.
+  public var limit: Double?
+  public var state: State
+}
+
+public struct BuildSlots: Decodable, Hashable, Sendable {
+  public var max: Int
+  public var inUse: Int
+  public var holders: [BuildSlotHolder]
+}
+
+public struct BuildSlotHolder: Decodable, Hashable, Sendable {
+  public var slot: Int
+  /// The root of the local build holding the slot.
+  public var workspace: String?
+  /// The device id of the client whose offloaded build this Mac runs in the slot.
+  public var client: String?
+  public var since: String?
+  /// A slot whose holder `stim` cannot read; `workspace` and `client` are nil.
+  public var unresolved: Bool?
+}
+
+public struct DeviceSlots: Decodable, Hashable, Sendable {
+  public var max: Int
+  /// Nil when `stim` could not count the owned devices; `unknown` says why.
+  public var inUse: Int?
+  public var unknown: String?
+  public var holders: [DeviceSlotHolder]
+}
+
+public struct DeviceSlotHolder: Decodable, Hashable, Sendable {
+  public var platform: String
+  /// The label of the workspace that records the device, or the device's name when none does.
+  public var label: String
+  public var workspace: String?
+  public var slot: String?
+  public var booting: Bool?
+}
+
+public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {
+  public var path: String
+  public var branch: String?
+  /// The repository's main checkout, or its git directory when it is bare.
+  public var repository: String?
+  public var git: WorktreeGit?
+  public var gitChip: GitChipFacts?
+
+  public var names: PathNames { PathNames(path: path, branch: branch, worktree: path) }
+
+  public var info: WorktreeInfo {
+    WorktreeInfo(path: path, branch: branch, repository: repository, git: git, gitChip: gitChip)
+  }
+}
+
+public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
+  public var path: String
+  public var workspaceId: String?
+  public var tutorial: TutorialMarker?
+  public var doctorRuns: DoctorRuns?
+  public var agentDevice: AgentDevice?
+  public var platforms: [String]?
+  public var live: Bool
+  public var hidden: Bool?
+  /// `warming`, `ready`, `live` or `idle`; absent from a `stim` that does not report lifecycle phases.
+  public var phase: String?
+  /// True when the workspace folder no longer exists on a mounted volume; `stim worktree remove <path>` removes the entry.
+  public var pathMissing: Bool?
+  /// When the warm started (`warming`) or finished (`ready`).
+  public var phaseSince: String?
+  /// `refresh` or `copy` while `phase` is `warming`.
+  public var warmStep: String?
+  /// Where the workspace is, as `stim` decided it.
+  public var stageFacts: StageFacts?
+  public var memoryMb: Int?
+  /// How `memoryMb` was obtained; absent from a payload written before it existed, whose `memoryMb` is the estimate.
+  public var memorySource: MemorySource?
+  public var warnings: [String]
+  public var issues: [StatusIssue]?
+  public var ios: IosDevice?
+  public var android: AndroidDevice?
+  public var web: WebBrowser?
+  public var macos: MacosApp?
+  public var metro: Metro?
+  public var supervisor: Supervisor?
+  public var logs: Logs?
+  public var slots: [Slot]?
+  public var remoteDevices: [RemoteDevice]?
+  /// The physical phones and tablets the workspace leases; absent when it leases none.
+  public var physicalDevices: [PhysicalDevice]?
+  public var build: Build?
+  public var lastBuilds: LastBuilds?
+  /// Each platform's last runs, newest first.
+  public var builds: BuildHistory?
+  /// Verified Git checkout identity, including primary checkouts without linked-worktree ownership facts.
+  public var checkout: String?
+  public var worktree: WorktreeInfo?
+  /// The coding-agent sessions working in the workspace, most recently active first; absent when none.
+  public var agents: [AgentSession]?
+  /// The sessions that stopped running in the workspace in the last 3 days, most recently ended first; absent when
+  /// none.
+  public var endedAgents: [AgentSession]?
+  /// Whether stim-server may record this workspace's device screens; absent from a `stim` without replay.
+  public var recording: Recording?
+  /// Disk use as a status watcher last measured it; absent until one has.
+  public var disk: WorkspaceDisk?
+  /// The project Stim Desktop resolved for the workspace; not part of the payload.
+  public var project: Project?
+  public var titleOverride: String?
+
+  enum CodingKeys: String, CodingKey {
+    case path, workspaceId, platforms, live, hidden, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios,
+      android,
+      web, metro
+    case pathMissing, macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
+    case lastBuilds, builds, checkout, worktree, recording
+    case agents, endedAgents, disk, tutorial, doctorRuns, agentDevice
+    case stageFacts = "stage"
+  }
+
+  public struct Recording: Decodable, Hashable, Sendable {
+    public var enabled: Bool
+  }
+
+  /// `recording.enabled` is false for this workspace, so it has no replay.
+  public var replayOff: Bool { recording?.enabled == false }
+
+  public var id: String { path }
+  public var checkoutPath: String? { checkout ?? worktree?.path }
+
+  /// The physical footprint of the workspace's processes in bytes, when `stim status` measured it.
+  public var footprintBytes: Int64? {
+    guard memorySource == .footprint, let memoryMb else { return nil }
+    return Int64(memoryMb) * 1_048_576
+  }
+
+  public var isWarming: Bool { phase == "warming" }
+
+  /// A workspace `stim worktree warm` is preparing or has just prepared, before its first run.
+  public var isSettingUp: Bool { pathMissing != true && (isWarming || phase == "ready") }
+
+  /// Whether the Live views show the workspace: something runs, a build runs, an EAS session or a leased phone is
+  /// held, or it is being set up.
+  public var isActive: Bool {
+    live || build?.isRunning == true || macos?.build.state == "running" || isSettingUp || remoteDevices?.isEmpty == false
+      || physicalDevices?.isEmpty == false
+  }
+
+  /// The workspace's default devices, its Stim-owned Chrome, its `stim macos` app, each named slot's devices, then its
+  /// leased physical devices.
+  public var devices: [DeviceRef] {
+    var out: [DeviceRef] = []
+    if let ios { out.append(.ios(slot: DeviceRef.defaultSlot, ios)) }
+    if let android { out.append(.android(slot: DeviceRef.defaultSlot, android)) }
+    if let web { out.append(.web(web)) }
+    if let macos { out.append(.macos(macos)) }
+    for slot in slots ?? [] {
+      if let ios = slot.ios { out.append(.ios(slot: slot.slot, ios)) }
+      if let android = slot.android { out.append(.android(slot: slot.slot, android)) }
+    }
+    for device in physicalDevices ?? [] { out.append(device.ref) }
+    for remote in remoteDevices ?? [] { out.append(.remote(remote)) }
+    return out
+  }
+
+  /// `devices` running first, then iOS, Android, macOS, Web, physical and remote devices, then by slot. The order never
+  /// depends on activity or drivers, so a device keeps its place while tools attach and detach.
+  public var orderedDevices: [DeviceRef] {
+    return devices.enumerated().sorted { a, b in
+      if DeviceRef.orderedBefore(a.element, b.element) { return true }
+      if DeviceRef.orderedBefore(b.element, a.element) { return false }
+      return a.offset < b.offset
+    }.map(\.element)
+  }
+
+  /// The running build that targets this local device's platform and slot. The status record does not say
+  /// whether a run targets a remote session, so remote devices get none.
+  public func runningBuild(for device: DeviceRef) -> Build? {
+    if case .remote = device { return nil }
+    if device.isPhysical { return nil }
+    guard let build, build.isRunning, build.platform == device.platform, build.slot == device.slot else { return nil }
+    return build
+  }
+
+  public var names: PathNames {
+    var names = PathNames(path: path, branch: worktree?.branch, worktree: checkoutPath, project: project)
+    if let titleOverride { names.title = titleOverride }
+    return names
+  }
+}
+
+/// One thing in a workspace that needs the user; `remedy` is a command to run from `workspace`.
+public struct StatusIssue: Decodable, Hashable, Sendable {
+  public var code: String
+  public var severity: String
+  public var message: String
+  public var remedy: String
+  public var workspace: String
+  public var slot: String?
+}
+
+/// `stim status --json` `stage`: `kind` is `building`, `warming`, `ready`, `build-failed`, `running` or `stopped`;
+/// `since` is when it began, `platform` names the build, and `closedApps` the devices whose app is closed.
+public struct StageFacts: Decodable, Hashable, Sendable {
+  public struct ClosedApp: Decodable, Hashable, Sendable {
+    public var platform: String
+    public var slot: String
+  }
+
+  public var kind: String
+  public var since: String?
+  public var platform: String?
+  public var closedApps: [ClosedApp]
+}
+
+/// `stim status --json` `gitChip`: the chip's parts in order, and the pull request's checks at a glance.
+public struct GitChipFacts: Decodable, Hashable, Sendable {
+  public struct Part: Decodable, Hashable, Sendable {
+    /// `arrows`, `changed`, `merged` or `no-upstream`.
+    public var kind: String
+    public var ahead: Int?
+    public var behind: Int?
+    public var count: Int?
+    public var into: String?
+
+    public init(kind: String, ahead: Int? = nil, behind: Int? = nil, count: Int? = nil, into: String? = nil) {
+      self.kind = kind
+      self.ahead = ahead
+      self.behind = behind
+      self.count = count
+      self.into = into
+    }
+  }
+
+  public var parts: [Part]
+  /// `passing`, `failing`, `pending`, or nil.
+  public var ci: String?
+}
+
+/// The git worktree that holds a workspace.
+public struct WorktreeInfo: Decodable, Hashable, Sendable {
+  public var path: String
+  public var branch: String?
+  public var merged: Bool?
+  public var repository: String?
+  public var git: WorktreeGit?
+  /// What the git chip shows, as `stim` decided it; absent without `git`.
+  public var gitChip: GitChipFacts?
+  /// The branch's pull request as Stim last asked GitHub; nil when it has none or `stim` did not say.
+  public var pullRequest: PullRequestFacts?
+}
+
+/// `stim status --json` `worktree.pullRequest`; `checks` counts the head commit's checks.
+public struct PullRequestFacts: Decodable, Hashable, Sendable {
+  public struct Checks: Decodable, Hashable, Sendable {
+    public var passing: Int
+    public var failing: Int
+    public var pending: Int
+  }
+
+  public var number: Int
+  public var url: String
+  public var title: String
+  /// `open`, `draft`, `merged` or `closed`.
+  public var state: String
+  public var checks: Checks?
+  public var reviewDecision: String?
+  public var checkedAt: String?
+}
+
+/// `worktreeBytes` is the git worktree folder with node_modules, `nodeModulesBytes` is part of it, and `buildBytes`
+/// is Stim's own folder for the workspace. `nodeModulesPrivateBytes` is the part of `nodeModulesBytes` that no
+/// copy-on-write clone or hard link shares, which is what deleting it would free; nil when Stim could not tell or
+/// is older than the measurement.
+public struct WorkspaceDisk: Decodable, Hashable, Sendable {
+  public var worktreeBytes: Double?
+  public var nodeModulesBytes: Double?
+  public var nodeModulesPrivateBytes: Double?
+  public var buildBytes: Double?
+  public var measuredAt: String?
+}
+
+/// A simulator's data folder or an emulator's AVD folder, as a status watcher last measured it.
+public struct DeviceDisk: Decodable, Hashable, Sendable {
+  public var bytes: Double
+  public var measuredAt: String?
+}
+
+/// A worktree's `git status`, as `stim status --json` reports it. `ahead` and `behind` are nil without an upstream.
+public struct WorktreeGit: Decodable, Hashable, Sendable {
+  public var changed: Int
+  public var untracked: Int
+  public var upstream: String?
+  public var ahead: Int?
+  public var behind: Int?
+  public var mergedInto: String?
+
+  public init(
+    changed: Int, untracked: Int, upstream: String? = nil, ahead: Int? = nil, behind: Int? = nil,
+    mergedInto: String? = nil
+  ) {
+    self.changed = changed
+    self.untracked = untracked
+    self.upstream = upstream
+    self.ahead = ahead
+    self.behind = behind
+    self.mergedInto = mergedInto
+  }
+
+  /// Changed and untracked files together: what a commit would still have to pick up.
+  public var uncommitted: Int { Format.sum([changed, untracked]) }
+
+  /// `\u{2191}2 \u{2193}1` for commits ahead of and behind the upstream, or nil when level with it.
+  public var arrows: String? { Self.arrows(ahead: ahead ?? 0, behind: behind ?? 0) }
+
+  public static func arrows(ahead: Int, behind: Int) -> String? {
+    let parts = [ahead > 0 ? "\u{2191}\(ahead)" : nil, behind > 0 ? "\u{2193}\(behind)" : nil].compactMap { $0 }
+    return parts.isEmpty ? nil : parts.joined(separator: " ")
+  }
+
+  /// Whether the indicator shows anything: a clean branch level with its upstream shows nothing.
+  public var isNotable: Bool { uncommitted > 0 || arrows != nil || mergedInto != nil }
+
+  /// A sentence for help text and accessibility.
+  public var summary: String {
+    var parts: [String] = []
+    if uncommitted > 0 { parts.append("\(uncommitted) uncommitted \(uncommitted == 1 ? "change" : "changes")") }
+    if let ahead, ahead > 0 { parts.append(unpushedLabel(ahead)) }
+    if let behind, behind > 0 { parts.append(behindLabel(behind)) }
+    if let mergedInto { parts.append("merged into \(mergedInto)") }
+    return parts.isEmpty ? "Clean" : parts.joined(separator: ", ")
+  }
+
+  public func unpushedLabel(_ count: Int) -> String {
+    "\(Self.commits(count)) not pushed to \(upstream ?? "the upstream")"
+  }
+
+  public func behindLabel(_ count: Int) -> String {
+    "\(Self.commits(count)) behind \(upstream ?? "the upstream")"
+  }
+
+  private static func commits(_ count: Int) -> String { "\(count) \(count == 1 ? "commit" : "commits")" }
+}
+
+public struct Slot: Decodable, Hashable, Sendable {
+  public var slot: String
+  public var ios: IosDevice?
+  public var android: AndroidDevice?
+}
+
+public struct HostedIos: Decodable, Hashable, Sendable {
+  public struct Device: Decodable, Hashable, Sendable {
+    public var name: String
+    public var runtime: String
+  }
+
+  public var machine: String
+  public var session: String
+  public var selected: String?
+  public var reason: String?
+  public var device: Device?
+}
+
+public struct HostedAndroid: Decodable, Hashable, Sendable {
+  public struct Device: Decodable, Hashable, Sendable {
+    public var name: String
+    public var systemImage: String
+    public var api: Int
+  }
+
+  public var machine: String
+  public var session: String
+  public var selected: String?
+  public var reason: String?
+  public var device: Device?
+}
+
+public struct DevicePlacement: Decodable, Hashable, Sendable {
+  public var decision: String
+  public var reason: String
+  public var machine: String?
+}
+
+public struct IosDevice: Decodable, Hashable, Sendable {
+  public var devicePlacement: DevicePlacement?
+  public var host: HostedIos?
+  public var name: String
+  public var udid: String
+  public var owned: Bool
+  public var state: String
+  public var activity: DeviceActivity?
+  public var app: AppProcess?
+  /// `none`, `closed`, or nil, as `stim` decided it.
+  public var appPresence: String?
+  public var disk: DeviceDisk?
+  /// Set only on a device built from `physicalDevices`, never decoded from the `ios` record.
+  public var physical = false
+  public var model: String?
+  public var leaseExpiresAt: String?
+
+  enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity, app, appPresence, disk, host, devicePlacement }
+
+  /// The name of a record that carries none: a simulator that no longer exists, or a hosted one not yet created.
+  public static let unnamed = "Missing simulator"
+
+  public init(name: String, udid: String, owned: Bool, state: String, activity: DeviceActivity? = nil) {
+    self.name = name
+    self.udid = udid
+    self.owned = owned
+    self.state = state
+    self.activity = activity
+  }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    host = try c.decodeIfPresent(HostedIos.self, forKey: .host)
+    devicePlacement = try c.decodeIfPresent(DevicePlacement.self, forKey: .devicePlacement)
+    udid = try c.decode(String.self, forKey: .udid)
+    name = try c.decodeIfPresent(String.self, forKey: .name) ?? Self.unnamed
+    owned = try c.decode(Bool.self, forKey: .owned)
+    state = try c.decode(String.self, forKey: .state)
+    activity = try c.decodeIfPresent(DeviceActivity.self, forKey: .activity)
+    app = try c.decodeIfPresent(AppProcess.self, forKey: .app)
+    appPresence = try c.decodeIfPresent(String.self, forKey: .appPresence)
+    disk = try c.decodeIfPresent(DeviceDisk.self, forKey: .disk)
+  }
+}
+
+/// Whether the workspace's app process runs on a device now: `state` is "running", "stopped", or "unknown" when
+/// `stim status` could not read the process list. Absent from a `stim` that does not report it.
+public struct AppProcess: Decodable, Hashable, Sendable {
+  public var id: String
+  public var state: String
+}
+
+public struct AndroidDevice: Decodable, Hashable, Sendable {
+  public var devicePlacement: DevicePlacement?
+  public var host: HostedAndroid?
+  public var name: String
+  public var owned: Bool
+  public var physical: Bool
+  public var serial: String?
+  public var state: String
+  public var deviceProfile: String?
+  public var activity: DeviceActivity?
+  public var app: AppProcess?
+  /// `none`, `closed`, or nil, as `stim` decided it.
+  public var appPresence: String?
+  public var disk: DeviceDisk?
+  public var model: String?
+  public var leaseExpiresAt: String?
+}
+
+/// A physical phone or tablet the workspace leases with `ios --device`, `android --device` or `device lock`.
+/// `connection` is `connected`, `disconnected` or `unknown`.
+public struct PhysicalDevice: Decodable, Hashable, Sendable {
+  public struct Lease: Decodable, Hashable, Sendable {
+    public var holder: String
+    public var kind: String
+    public var grantedAt: String?
+    public var expiresAt: String
+  }
+
+  public var platform: String
+  public var slot: String
+  public var id: String
+  public var name: String?
+  public var model: String?
+  public var connection: String
+  public var lease: Lease
+
+  var ref: DeviceRef {
+    let name = name ?? id
+    if platform == "ios" {
+      var device = IosDevice(name: name, udid: id, owned: false, state: connection)
+      device.physical = true
+      device.model = model
+      device.leaseExpiresAt = lease.expiresAt
+      return .ios(slot: slot, device)
+    }
+    return .android(
+      slot: slot,
+      AndroidDevice(
+        name: name, owned: false, physical: true, serial: id, state: connection, model: model,
+        leaseExpiresAt: lease.expiresAt))
+  }
+}
+
+/// The workspace's Stim-owned Chrome from `stim web`. `pid`, `cdpEndpoint` and `targetId` are set only while it
+/// runs; `page` is the document it loaded last, whether that load failed, and the in-app route it shows now when one
+/// moved it off that document.
+public struct WebBrowser: Decodable, Hashable, Sendable {
+  public struct Page: Decodable, Hashable, Sendable {
+    public var url: String
+    public var state: String
+    public var error: String?
+    public var route: String?
+  }
+
+  public var running: Bool
+  public var pid: Int?
+  public var url: String
+  public var headless: Bool
+  public var viewport: String
+  public var profile: String
+  public var cdpEndpoint: String?
+  public var targetId: String?
+  public var page: Page?
+  public var activity: DeviceActivity?
+
+  /// The page it shows now, or the one `stim web` opened before the first load.
+  public var currentURL: String { page?.route ?? page?.url ?? url }
+
+  public var pageFailed: Bool { running && page?.state == "failed" }
+}
+
+/// A billable remote session recorded for the workspace, such as an EAS Simulator.
+public struct RemoteDevice: Decodable, Hashable, Sendable {
+  public var platform: String?
+  public var backend: String
+  public var sessionId: String
+  public var state: String
+  public var startedAt: String?
+  public var webPreviewUrl: String?
+}
+
+public struct Metro: Decodable, Hashable, Sendable {
+  public struct Stop: Decodable, Hashable, Sendable {
+    public var reason: String
+    public var at: String?
+  }
+
+  public var port: Int
+  public var running: Bool
+  public var pid: Int?
+  public var lastStop: Stop?
+  /// Absent when the Metro log has no bundle request, and from a `stim` that does not report bundles.
+  public var bundle: MetroBundle?
+}
+
+/// Metro's bundle requests: `percent` (0 to 100) only while Metro reports progress, `last` the newest finished one.
+public struct MetroBundle: Decodable, Hashable, Sendable {
+  public struct Finished: Decodable, Hashable, Sendable {
+    public var platform: String?
+    /// `ok` or `failed`.
+    public var status: String
+    public var durationMs: Double
+    public var finishedAt: String
+  }
+
+  public var bundling: Bool
+  public var platform: String?
+  public var startedAt: String?
+  public var percent: Double?
+  public var last: Finished?
+}
+
+public struct Supervisor: Decodable, Hashable, Sendable {
+  public var pid: Int?
+  public var mode: String?
+  public var startedAt: String?
+  public var healthy: Bool?
+}
+
+public struct Logs: Decodable, Hashable, Sendable {
+  public var dir: String?
+  public var errorsSinceMarker: Int?
+}
+
+extension DeviceRef {
+  /// The shared workspace and merged-canvas ordering, with equal devices left in their input order.
+  public static func orderedBefore(_ a: DeviceRef, _ b: DeviceRef) -> Bool {
+    func rank(_ device: DeviceRef) -> Int {
+      if case .remote = device { return 4 }
+      if device.isPhysical { return 3 }
+      return ["ios": 0, "android": 1, "macos": 2, "web": 3][device.platform] ?? 4
+    }
+    if a.isRunning != b.isRunning { return a.isRunning }
+    let (ra, rb) = (rank(a), rank(b))
+    if ra != rb { return ra < rb }
+    return a.slot.localizedCompare(b.slot) == .orderedAscending
+  }
+}
+
+public struct TutorialMarker: Decodable, Hashable, Sendable {
+  public var version: Int
+}
+
+public struct DoctorRuns: Decodable, Hashable, Sendable {
+  public struct Run: Decodable, Hashable, Sendable {
+    public var at: String
+  }
+
+  public var ios: Run?
+  public var android: Run?
+}
+
+public struct AgentDevice: Decodable, Hashable, Sendable {
+  public var stateDir: String
+  public var installed: Bool?
+}

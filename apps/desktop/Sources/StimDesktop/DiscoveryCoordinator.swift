@@ -1,0 +1,301 @@
+import Combine
+import CoreGraphics
+import Foundation
+import StimKit
+import StimStores
+
+@MainActor
+final class DiscoveryCoordinator: ObservableObject {
+  private let status: StatusStore
+  private let machines: BuildMachinesModel
+  private let stats: StatsReader
+  private let pressure: DaemonPressureMonitor
+  private let gc: GcReportStore
+  private let environment: Task<[String: String], Never>
+  private let persistence: DiscoveryStore
+  private let idleSeconds: () -> TimeInterval
+  private var subscription: AnyCancellable?
+  private var pollTimer: Timer?
+  private var launchTimer: Timer?
+  private static var countedLaunch = false
+  private var latest: StatusPayload?
+  private var placements: [BuildPlacements.Placement]?
+  private var previous: StatusPayload?
+  private var peers: [TailnetMac] = []
+  private var pending: [DiscoveryType: (prompt: DiscoveryPrompt, rememberedAt: Date)] = [:]
+  private var capHit: (source: Discovery.CapHitSource, hosts: [String]?)?
+  private var polling = false
+  private var delivering = false
+
+  init(
+    status: StatusStore, machines: BuildMachinesModel, stats: StatsReader, pressure: DaemonPressureMonitor,
+    gc: GcReportStore, environment: Task<[String: String], Never>,
+    persistence: DiscoveryStore = DiscoveryStore(defaults: .standard),
+    idleSeconds: @escaping () -> TimeInterval = {
+      CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: UInt32.max)!)
+    }
+  ) {
+    self.status = status
+    self.machines = machines
+    self.stats = stats
+    self.pressure = pressure
+    self.gc = gc
+    self.environment = environment
+    self.persistence = persistence
+    self.idleSeconds = idleSeconds
+  }
+
+  func start(actions: ActionCenter) {
+    guard subscription == nil else { return }
+    persistence.migrate()
+    if !Self.countedLaunch {
+      persistence.launched()
+      Self.countedLaunch = true
+    }
+    let onFinish = actions.onFinish
+    actions.onFinish = { [weak self] run in
+      onFinish?(run)
+      guard let self, let exit = run.exitStatus else { return }
+      let lines = run.lines.map(\.text) + String(decoding: run.stdout, as: UTF8.self).components(separatedBy: "\n")
+      if Discovery.refusedForCapacity(lines: lines, exitStatus: exit) {
+        let source = Discovery.CapHitSource(
+          at: Date(), workspaceID: Discovery.workspaceID(path: run.command.cwd), platform: run.command.arguments.first)
+        Task {
+          await self.rememberCapHit(source)
+          self.evaluate()
+        }
+      } else {
+        evaluate()
+      }
+    }
+    NotificationResponder.shared.discoveryResponse = { [weak self] type, never in
+      if never { self?.persistence.set(.never, for: type) } else { Self.open(.pairPhone) }
+    }
+    subscription = status.$payload.compactMap { $0 }.sink { [weak self] payload in self?.receive(payload) }
+    launchTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
+      MainActor.assumeIsolated { self?.poll() }
+    }
+    pollTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
+      MainActor.assumeIsolated { self?.poll() }
+    }
+  }
+
+  private func receive(_ payload: StatusPayload) {
+    latest = payload
+    defer { previous = payload }
+    let before = Dictionary((previous?.environments ?? []).map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+    var finished = false
+    for workspace in payload.environments {
+      guard let build = before[workspace.path]?.build, build.isRunning,
+        workspace.build?.isRunning != true || workspace.build?.startedAt != build.startedAt
+      else { continue }
+      finished = true
+      if let last = workspace.lastBuilds?.build(for: build.platform), last.startedAt == build.startedAt,
+        let duration = last.durationMs, last.status == "ok" || last.status == "failed",
+        let phones = ServerController.shared.pairedPhoneCount
+      {
+        remember(Discovery.away(pairedPhones: phones, durationMs: duration, idleSeconds: idleSeconds()))
+      }
+    }
+    if finished {
+      Task {
+        await machines.settings.refresh()
+        let report = try? await stats.machine()
+        placements = report?.offload?.placements
+        await rememberCapacityEvents(report)
+        evaluate()
+      }
+    } else {
+      evaluate()
+    }
+  }
+
+  private func poll() {
+    guard !polling else { return }
+    polling = true
+    Task {
+      let environment = await environment.value
+      let found = await Task.detached {
+        Tailnet.status(environment: environment).flatMap(Tailnet.buildPeers(statusJSON:))
+      }.value
+      await machines.settings.refresh()
+      peers = found ?? []
+      let report = try? await stats.machine()
+      polling = false
+      if let report { placements = report.offload?.placements }
+      await rememberCapacityEvents(report)
+      if let found {
+        let result = Discovery.newMac(
+          peers: found, seen: persistence.seenPeers, machines: machines.entries ?? [], hosting: hostingEntries, now: Date())
+        persistence.seenPeers = result.seen
+        if machines.entries != nil, machines.settings.error == nil { remember(result.prompt) }
+      }
+      evaluate()
+    }
+  }
+
+  private var pairedMachines: [String]? {
+    settingsLoaded ? (machines.entries ?? []) + hostingEntries : nil
+  }
+
+  private var hostingEntries: [String] {
+    machines.settings.payload?.entry("remote.machines")?.value.strings ?? []
+  }
+
+  private func rememberCapacityEvents(_ report: MachineStats?) async {
+    guard
+      let source = Discovery.capHitSource(
+        events: report?.capacityRefusals ?? [], waits: report?.capacityWaits ?? [], now: Date())
+    else { return }
+    await rememberCapHit(source)
+  }
+
+  private var settingsLoaded: Bool { machines.settings.payload != nil && machines.settings.error == nil }
+
+  private func rememberCapHit(_ source: Discovery.CapHitSource) async {
+    var hosts: [String]?
+    if settingsLoaded && hostingEntries.isEmpty {
+      hosts = []
+    } else if let path = source.workspaceID.flatMap(workspacePath) {
+      await machines.refreshHostingMachinesWaiting(checkout: path)
+      hosts = machines.approvedHostingMachines(in: path)
+    }
+    if let old = capHit, old.source.at > source.at || (hosts == nil && old.hosts != nil) { return }
+    capHit = (source, hosts)
+    refreshCapHitPrompt()
+  }
+
+  private func refreshCapHitPrompt() {
+    guard let (source, fetched) = capHit else { return }
+    let current = source.workspaceID.flatMap(workspacePath).flatMap { machines.approvedHostingMachines(in: $0) }
+    let hosts = settingsLoaded && hostingEntries.isEmpty ? [] : current ?? fetched
+    let prompt = Discovery.capHit(
+      source: source, peers: peers, hosts: hosts, paired: pairedMachines,
+      isRemote: { [weak self] id, platform in
+        guard let env = self?.workspacePath(id).flatMap({ path in self?.latest?.environments.first { $0.path == path } })
+        else { return false }
+        return Discovery.runOnAutoPlatforms(platform).allSatisfy { platform in
+          env.devices.contains { $0.platform == platform && $0.hostedMachine != nil }
+        }
+      })
+    if let prompt { remember(prompt, rememberedAt: source.at) } else { pending[.capHit] = nil }
+  }
+
+  private func workspacePath(_ id: String) -> String? {
+    latest?.environments.first { Discovery.workspaceID(path: $0.path) == id }?.path
+  }
+
+  private func remember(_ prompt: DiscoveryPrompt?, rememberedAt: Date = Date()) {
+    if let prompt { pending[prompt.type] = (prompt, rememberedAt) }
+  }
+
+  private func allowed(now: Date) -> Bool {
+    guard let payload = latest, status.error == nil else { return false }
+    return Discovery.gate(
+      workspaces: payload.environments, setupCompleted: persistence.setupCompleted, launches: persistence.launches,
+      lastShown: persistence.lastShown, now: now, calendar: .current)
+  }
+
+  private func evaluate() {
+    let now = Date()
+    refreshCapHitPrompt()
+    pending = pending.filter { Discovery.fresh($0.key, rememberedAt: $0.value.rememberedAt, now: now) }
+    var candidates = pending.values.map(\.prompt).filter { prompt in
+      if prompt.type == .newMac, case .addMachine(let mac?, _) = prompt.action {
+        return peers.contains(where: { $0.id == mac.id }) && pairedMachines?.isEmpty == true
+      }
+      if case .runOnAuto(let id, _) = prompt.action { return workspacePath(id) != nil }
+      if prompt.type == .away { return ServerController.shared.pairedPhoneCount == 0 }
+      return true
+    }
+    .filter { prompt in
+      PhoneApp.allows(prompt.type, phoneApp: FeatureFlags.isEnabled(.phoneApp))
+    }
+    if let placements {
+      if let prompt = Discovery.slotWait(placements: placements, peers: peers, paired: pairedMachines, now: now) {
+        candidates.append(prompt)
+      }
+    }
+    let sizes = gc.report?.sections.caches?.compactMap(\.bytes)
+    if let prompt = Discovery.lowWithCaches(pressure: pressure.daemon?.pressure, cacheBytes: sizes.map { $0.reduce(0, +) }) {
+      candidates.append(prompt)
+    }
+    candidates = Discovery.suppressedByMacSuggestion(candidates, macSuggested: persistence.macSuggested)
+    let tips = TipStore(defaults: .standard)
+    let tipsShown = tips.state.lastShown
+    candidates.removeAll { Tips.suppressesDiscovery($0.type, lastShown: tipsShown) }
+    guard !delivering, allowed(now: now),
+      let prompt = Discovery.select(
+        candidates, states: persistence.states, now: now, bannersAvailable: MainWindow.isOpen && tips.enabled)
+    else { return }
+    if prompt.surface == .banner {
+      let previous = persistence.state(prompt.type)
+      NoticeCenter.shared.show(
+        Self.notice(
+          prompt, perform: { [weak self] in self?.perform($0) },
+          snooze: { [persistence] in
+            persistence.set(Discovery.dismissed(previous: previous, now: Date()), for: prompt.type)
+          }, never: { [persistence] in persistence.set(.never, for: prompt.type) }))
+      persistence.shown(prompt, now: now)
+      if Discovery.suggestsMac(prompt) { persistence.macSuggested = true }
+    } else {
+      guard let event = pending[prompt.type] else { return }
+      delivering = true
+      Task {
+        let posted = await Notifier.postDiscovery(prompt) { [self] in
+          allowed(now: Date()) && Discovery.eligible(persistence.state(prompt.type), now: Date())
+            && ServerController.shared.pairedPhoneCount == 0 && idleSeconds() > 300
+            && Discovery.fresh(prompt.type, rememberedAt: event.rememberedAt, now: Date())
+        }
+        if posted { persistence.shown(prompt, now: Date()) }
+        delivering = false
+      }
+    }
+  }
+
+  static func notice(
+    _ prompt: DiscoveryPrompt, perform: @escaping @MainActor (DiscoveryAction) -> Void,
+    snooze: @escaping @MainActor () -> Void, never: @escaping @MainActor () -> Void
+  ) -> Notice {
+    Notice(
+      icon: "lightbulb", title: prompt.title, detail: prompt.detail, actionTitle: prompt.actionTitle,
+      perform: { perform(prompt.action) }, onDismiss: snooze, key: AppPreferences.Key.discovery(prompt.type),
+      secondaryAction: Notice.Action(title: "Don't Suggest Again", perform: never))
+  }
+
+  private func perform(_ action: DiscoveryAction) {
+    guard case .runOnAuto(let id, let platform) = action else { return Self.open(action) }
+    guard let path = workspacePath(id) else { return }
+    Task {
+      for key in Discovery.runOnAutoPlatforms(platform).map({ "\($0).remote" }) {
+        let result = await machines.settings.write(key, value: "auto", scope: .workspace, cwd: path)
+        if let problem = Self.problem(result) {
+          NoticeCenter.shared.show(
+            Notice(
+              icon: "exclamationmark.triangle", tone: .caution, title: "Could not set \(key) to auto", detail: problem,
+              actionTitle: "OK", perform: {}))
+        }
+      }
+    }
+  }
+
+  private static func problem(_ result: Result<SettingsWriteResult, any Error>) -> String? {
+    switch result {
+    case .success(.written): return nil
+    case .success(.refused(let refusal)): return [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")
+    case .failure(let error): return error.localizedDescription
+    }
+  }
+
+  static func open(_ action: DiscoveryAction) {
+    switch action {
+    case .addMachine(let mac, let hosted):
+      OpenRequests.shared.addMachine = AddMachineRequest(machineID: mac?.id, hostedSimulators: hosted)
+    case .runOnAuto: break
+    case .reviewCaches: OpenRequests.shared.showsMachine = true
+    case .pairPhone:
+      MainWindow.show()
+      OpenRequests.shared.pairsPhone = true
+    }
+  }
+}

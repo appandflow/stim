@@ -1,0 +1,31 @@
+diff --git a/build/platforms/android/android.js b/build/platforms/android/android.js
+index d887a496ab788ebbe0f7ae1c36006f53ff30c6d6..da87527d9615b3ecd1e4000f045057d8f915b54b 100644
+--- a/build/platforms/android/android.js
++++ b/build/platforms/android/android.js
+@@ -126,7 +126,10 @@ async function resolveModuleAsync(packageName, revision) {
+                 projectDir
+             };
+         });
+-        const { publication } = project;
++        const publication = project.publication ? {
++            ...project.publication,
++            version: project.publication.version ?? revision.version
++        } : undefined;
+         const shouldUsePublicationScriptPath = project.shouldUsePublicationScriptPath ? _path().default.join(revision.path, project.shouldUsePublicationScriptPath) : undefined;
+         const packages = new Set();
+         for await (const file of (0, _utils.scanFilesRecursively)(projectPath)){
+diff --git a/src/platforms/android/android.ts b/src/platforms/android/android.ts
+index 07c5c049ce3775aa5ca032fc4bc3926e2c929b88..34f8e0b00c23db06c3f2285dcbe5e1e7c9e774d0 100644
+--- a/src/platforms/android/android.ts
++++ b/src/platforms/android/android.ts
+@@ -89,7 +89,9 @@ export async function resolveModuleAsync(
+       };
+     });
+ 
+-    const { publication } = project;
++    const publication = project.publication
++      ? { ...project.publication, version: project.publication.version ?? revision.version }
++      : undefined;
+     const shouldUsePublicationScriptPath = project.shouldUsePublicationScriptPath
+       ? path.join(revision.path, project.shouldUsePublicationScriptPath)
+       : undefined;

@@ -1,0 +1,90 @@
+{
+  "name": "@stim-cli/core",
+  "version": "1.40.0",
+  "description": "Shared internal cache and runtime primitives for Stim packages.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/appandflow/stim.git",
+    "directory": "packages/core"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "module-sync": "./dist/index.mjs",
+      "default": "./dist/index.mjs"
+    },
+    "./noise": {
+      "types": "./dist/noise.d.mts",
+      "module-sync": "./dist/noise.mjs",
+      "default": "./dist/noise.mjs"
+    },
+    "./noise-session": {
+      "types": "./dist/noise-session.d.mts",
+      "module-sync": "./dist/noise-session.mjs",
+      "default": "./dist/noise-session.mjs"
+    },
+    "./ownership-claim": {
+      "types": "./dist/ownership-claim.d.mts",
+      "module-sync": "./dist/ownership-claim.mjs",
+      "default": "./dist/ownership-claim.mjs"
+    },
+    "./process-identity": {
+      "types": "./dist/process-identity.d.mts",
+      "module-sync": "./dist/process-identity.mjs",
+      "default": "./dist/process-identity.mjs"
+    },
+    "./state": {
+      "types": "./dist/state.d.mts",
+      "module-sync": "./dist/state.mjs",
+      "default": "./dist/state.mjs"
+    },
+    "./oversight": {
+      "types": "./dist/oversight.d.mts",
+      "module-sync": "./dist/oversight.mjs",
+      "default": "./dist/oversight.mjs"
+    },
+    "./protocol": {
+      "types": "./dist/protocol.d.mts",
+      "module-sync": "./dist/protocol.mjs",
+      "default": "./dist/protocol.mjs"
+    },
+    "./phone-protocol": {
+      "types": "./dist/phone-protocol.d.mts",
+      "module-sync": "./dist/phone-protocol.mjs",
+      "default": "./dist/phone-protocol.mjs"
+    },
+    "./receive-protocol": {
+      "types": "./dist/receive-protocol.d.mts",
+      "module-sync": "./dist/receive-protocol.mjs",
+      "default": "./dist/receive-protocol.mjs"
+    },
+    "./toolchain": {
+      "types": "./dist/toolchain.d.mts",
+      "module-sync": "./dist/toolchain.mjs",
+      "default": "./dist/toolchain.mjs"
+    },
+    "./workspace-link": {
+      "types": "./dist/workspace-link.d.mts",
+      "module-sync": "./dist/workspace-link.mjs",
+      "default": "./dist/workspace-link.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "unique-pid": "0.1.1"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

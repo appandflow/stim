@@ -1,0 +1,690 @@
+import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import chalk from 'chalk';
+import { phaseLine } from '../command-output.ts';
+import {
+  allConsolePortsAndSerials,
+  clearAndroidBootPending,
+  clearDevice,
+  releaseAndroidConsolePort,
+  setDevice,
+  withConfigLock,
+  withConfigLockAsync,
+} from '../workspace/config.ts';
+import { getExecutor } from '../exec.ts';
+import { pidExists } from '../metro.ts';
+import {
+  memoryCulpritsUnderAsync,
+  readHostMemoryPressure,
+  reportMemoryCulprits,
+  type HostMemoryPressure,
+} from '../host-memory.ts';
+import { memoryCulpritAdvice } from '../memory-culprits.ts';
+import { listAllIosSimsAsync } from '../devices/ios.ts';
+import { adoptParked, isLegacyDeletionClaim, parkedMaxSetting, readParked } from '../devices/sim-pool.ts';
+import {
+  assertOwnedAvdStoppedAsync,
+  avdPoolConfiguration,
+  DEFAULT_AVD_DEVICE_PROFILE,
+  OWNED_AVD_CONFIG_DEFAULTS,
+  ownedAvdDeviceProfile,
+  ownedAvdMatchesConfiguration,
+  pickDefaultSystemImage,
+  listInstalledSystemImages,
+  bootAndroidEmulator,
+  configureNewOwnedAvd,
+  getAvdNameForSerialAsync,
+  listAdbDevicesAsync,
+  listAvdsAsync,
+  nextConsolePort,
+  ownedAvdSystemImage,
+  resolveOwnedAvdSerialAsync,
+  waitForBoot,
+} from '../devices/android.ts';
+import { androidAvdConfigSetting, androidDataPartitionSizeGbSetting } from '../workspace/settings.ts';
+import { teardownOwnedAvd, teardownParkedAvd } from '../devices/teardown.ts';
+import { AvdBootError, AvdRecoveryError, prepareOwnedAvd } from './android-avd-setup.ts';
+import { claimFailure } from '../ownership-claim.ts';
+import {
+  DeviceAdmissionRefusal,
+  countLiveOwnedDevicesFrom,
+  uncreatedDeviceKey,
+  withDeviceBootAdmission,
+  type DeviceSlotWaitPolicy,
+} from './device-capacity.ts';
+import type {
+  BootResult,
+  DeviceFlags,
+  DeviceSettings,
+  EmulatorLogging,
+  Liveness,
+  Notify,
+  OwnedDeviceRecord,
+} from './device.ts';
+
+export { AvdBootError, AvdRecoveryError } from './android-avd-setup.ts';
+
+// WHPX is the only Android accelerator on Windows and boots a cold system image far slower than
+// HVF or KVM: measured on a windows-latest host, a first emulator took 9m38s and a second one
+// beside it 9m37s, and a GitHub runner exceeded both. Both Android waits take 20 minutes there.
+const ANDROID_FRESH_BOOT_TIMEOUT_MS = process.platform === 'win32' ? 1200000 : 120000;
+export const ANDROID_BOOT_TIMEOUT_MS: number = process.platform === 'win32' ? 1200000 : 240000;
+
+export async function ensureOwnedAndroidDevice({
+  record,
+  projectPath,
+  slot,
+  settingsRoot,
+  label,
+  settings,
+  flags,
+  note,
+  out,
+  logFile,
+  alive,
+  configureAvd,
+  teardownAvd,
+}: {
+  record: OwnedDeviceRecord | null;
+  projectPath: string;
+  slot?: string;
+  settingsRoot: string;
+  label: string;
+  settings: DeviceSettings;
+  flags: DeviceFlags;
+  note: Notify;
+  out: Notify;
+  configureAvd: typeof configureNewOwnedAvd;
+  teardownAvd: typeof teardownOwnedAvd;
+} & EmulatorLogging): Promise<OwnedDeviceRecord> {
+  const projectAvdConfig = androidAvdConfigSetting(settings, settingsRoot);
+  const avdConfig = { ...OWNED_AVD_CONFIG_DEFAULTS, ...projectAvdConfig };
+  const requestedProfile = flags.deviceProfile || settings.android?.deviceProfile || null;
+  let replacedProfile: string | null = null;
+  if (record?.setupIncomplete && record.avdName) {
+    const avdName = record.avdName;
+    const cleanup = await teardownAvd(avdName, {
+      del: true,
+      owner: { projectPath, slot, expectedRecord: record },
+      onRemoved: () => withConfigLockAsync(() => clearDevice(projectPath, 'android', slot, avdName)),
+    });
+    if (cleanup.status === 'failed' || cleanup.status === 'skipped') {
+      throw new AvdRecoveryError(
+        `Owned AVD ${record.avdName} has incomplete setup and could not be deleted (${cleanup.reason || cleanup.status}). Fix the cause, then retry; Stim kept the device record for cleanup.`,
+        'Wait for any active AVD operation to finish. If the refusal names an unresolved claim, inspect its creator and native processes before removing only that claim. Retry `stim android` to reconcile the incomplete device.',
+      );
+    }
+    record = null;
+  }
+  const requestedImage = flags.systemImageFlag || null;
+  const currentImage = requestedImage && record?.owned && record.avdName ? ownedAvdSystemImage(record.avdName) : null;
+  if (record?.avdName && requestedImage && currentImage && currentImage !== requestedImage) {
+    const avdName = record.avdName;
+    if (!record.bootPending) {
+      throw new AvdRecoveryError(
+        `this project's emulator ${avdName} uses system image ${currentImage}, but ${requestedImage} was requested. --system-image replaces only an emulator that never finished a boot, and this one has.`,
+        'Run `stim worktree remove` (or `stim gc --delete`) to reap the current emulator, then `stim android` again to create the requested one, or pass `--slot <name>` to create it beside the current one.',
+      );
+    }
+    replacedProfile = ownedAvdDeviceProfile(avdName);
+    const cleanup = await teardownAvd(avdName, {
+      del: true,
+      owner: { projectPath, slot, expectedRecord: record },
+      onRemoved: () => withConfigLockAsync(() => clearDevice(projectPath, 'android', slot, avdName)),
+    });
+    if (cleanup.status === 'failed' || cleanup.status === 'skipped') {
+      throw new AvdRecoveryError(
+        `Owned AVD ${avdName} never finished a boot, but could not be deleted to create one on ${requestedImage} (${cleanup.reason || cleanup.status}). Stim kept the device record.`,
+        'Fix the cause, then retry, or pass `--slot <name>` to create the requested emulator beside it.',
+      );
+    }
+    out(phaseLine('device', `deleted ${avdName}, which never finished a boot, to create one on ${requestedImage}`));
+    record = null;
+  }
+  const deviceProfile = requestedProfile ?? replacedProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
+  const configuration = avdPoolConfiguration(androidDataPartitionSizeGbSetting(settings), avdConfig, deviceProfile);
+  const configurationBeforeDefaults = avdPoolConfiguration(
+    androidDataPartitionSizeGbSetting(settings),
+    projectAvdConfig,
+    deviceProfile,
+  );
+  if (record?.avdName) {
+    if (record.owned) {
+      const resolved = await resolveOwnedAvdSerialAsync(record.avdName, {
+        preferredSerial: record.consolePort ? `emulator-${record.consolePort}` : undefined,
+      });
+      const currentProfile = resolved.notOwned || resolved.missing ? null : ownedAvdDeviceProfile(record.avdName);
+      if (requestedProfile && currentProfile && currentProfile !== requestedProfile) {
+        throw new AvdRecoveryError(
+          `this project's emulator uses device profile ${currentProfile}, but ${requestedProfile} was requested. Stim will not silently boot a different model.`,
+          'Run `stim worktree remove` (or `stim gc --delete`) to reap the current emulator, then `stim android` again to create the requested one, or pass `--slot <name>` to create it beside the current one.',
+        );
+      }
+      if (resolved.notOwned) {
+        note(
+          chalk.yellow(
+            `Note: recorded AVD ${record.avdName} is not Stim-owned -- creating a fresh owned AVD instead of reusing it.`,
+          ),
+        );
+      } else if (resolved.serial) {
+        const consolePort = Number(resolved.serial.replace(/^emulator-/, ''));
+        if (record.consolePort && record.consolePort !== consolePort) {
+          out(
+            phaseLine(
+              'device',
+              `${record.avdName} changed serial (emulator-${record.consolePort} -> ${resolved.serial}); reconnecting this run, reopen agent-device on ${resolved.serial}`,
+            ),
+          );
+        }
+        const updated = {
+          ...record,
+          avdName: record.avdName,
+          consolePort,
+          owned: true,
+          deviceName: record.deviceName ?? record.avdName,
+        };
+        await withConfigLockAsync(() => setDevice(projectPath, 'android', updated, slot));
+        return {
+          ...updated,
+          systemImage: ownedAvdSystemImage(record.avdName),
+          deviceProfile: currentProfile,
+        };
+      } else if (!resolved.missing) {
+        out(
+          chalk.dim(
+            `Recorded port for owned AVD ${record.avdName} is not currently ours; booting it on a freshly allocated port...`,
+          ),
+        );
+        return {
+          ...(await bootOwnedAvdOnFreshPort({
+            deviceSlotWait: flags.deviceSlotWait,
+            avdName: record.avdName,
+            metadata: record,
+            projectPath,
+            slot,
+            deviceName: record.deviceName,
+            out,
+            logFile,
+            alive,
+          })),
+          systemImage: ownedAvdSystemImage(record.avdName),
+          deviceProfile: currentProfile,
+        };
+      }
+    } else {
+      const avdExists = (await listAvdsAsync()).includes(record.avdName);
+      if (avdExists) {
+        const adb = await listAdbDevicesAsync();
+        const running = adb.emulators.some((e) => e.consolePort === record.consolePort);
+        if (!running) {
+          note(
+            chalk.yellow(
+              `Note: assigned AVD ${record.avdName} (emulator-${record.consolePort}) is shut down and is not owned by Stim, so it will not be booted automatically.`,
+            ),
+          );
+          note(
+            chalk.dim(
+              'Boot it yourself, or run `stim gc --delete` to clear the assignment so Stim can create an owned AVD.',
+            ),
+          );
+        }
+        return record;
+      }
+    }
+  } else if (record?.serial) {
+    note(
+      chalk.yellow(
+        `Note: this project has a stored assignment to physical device ${record.serial}, which Stim no longer keeps.`,
+      ),
+    );
+    note(chalk.dim('Creating an owned emulator instead. Pass `--device` to build for a connected device.'));
+  }
+
+  if (parkedMaxSetting('android').max > 0) {
+    const systemImage = pickDefaultSystemImage(listInstalledSystemImages(), {
+      systemImage: flags.systemImage || settings.android?.systemImage,
+    })?.pkg;
+    const candidates = readParked('android')
+      .filter(
+        (entry) =>
+          entry.systemImage === systemImage &&
+          (entry.configuration === configuration || entry.configuration === configurationBeforeDefaults),
+      )
+      .toSorted((a, b) => a.parkedAt.localeCompare(b.parkedAt));
+    for (const parked of candidates) {
+      if (isLegacyDeletionClaim(parked.deletionClaim)) continue;
+      const resolved = await resolveOwnedAvdSerialAsync(parked.name);
+      if (resolved.missing) {
+        const result = await teardownParkedAvd(parked.name);
+        if (result.status === 'failed') out(phaseLine('device', `kept ${parked.name}: ${result.reason}`));
+        continue;
+      }
+      if (resolved.notOwned || resolved.serial) continue;
+      try {
+        await assertOwnedAvdStoppedAsync(parked.name);
+      } catch (error) {
+        out(phaseLine('device', `kept parked ${parked.name}: ${String((error as Error)?.message || error)}`));
+        continue;
+      }
+      if (
+        ownedAvdSystemImage(parked.name) !== systemImage ||
+        !ownedAvdMatchesConfiguration(parked.name, parked.configuration)
+      ) {
+        const result = await teardownParkedAvd(parked.name);
+        if (result.status === 'failed') out(phaseLine('device', `kept ${parked.name}: ${result.reason}`));
+        continue;
+      }
+      const adopted = {
+        avdName: parked.name,
+        deviceName: parked.name,
+        owned: true,
+        poolConfiguration: parked.configuration,
+        adoptionPending: true,
+      };
+      if (!(await adoptParked({ platform: 'android', projectPath, slot, udid: parked.udid, device: adopted })))
+        continue;
+      if (parked.configuration !== configuration) {
+        try {
+          configureAvd(parked.name, { dataPartitionSizeGb: androidDataPartitionSizeGbSetting(settings), avdConfig });
+          adopted.poolConfiguration = configuration;
+        } catch (error) {
+          out(
+            phaseLine(
+              'device',
+              `${parked.name} keeps its old AVD settings: ${String((error as Error)?.message || error)}`,
+            ),
+          );
+        }
+      }
+      return {
+        ...(await bootOwnedAvdOnFreshPort({
+          deviceSlotWait: flags.deviceSlotWait,
+          avdName: parked.name,
+          projectPath,
+          slot,
+          metadata: adopted,
+          out,
+          logFile,
+          alive,
+        })),
+        adopted: true,
+        systemImage,
+        deviceProfile,
+      };
+    }
+  }
+  return withDeviceBootAdmission(
+    { platform: 'android', key: uncreatedDeviceKey() },
+    async (admitted): Promise<OwnedDeviceRecord> => {
+      const created = await prepareOwnedAvd({
+        projectPath,
+        slot,
+        label,
+        previousAvdName: record?.avdName,
+        systemImage: flags.systemImage || settings.android?.systemImage || undefined,
+        deviceProfile,
+        configuration,
+        configure: (avdName) =>
+          configureAvd(avdName, {
+            dataPartitionSizeGb: androidDataPartitionSizeGbSetting(settings),
+            avdConfig,
+          }),
+        teardown: teardownAvd,
+      });
+      admitted.rekey(created.avdName);
+      if (!created.created) {
+        out(chalk.dim(phaseLine('device', `recovered ${created.avdName} (unrecorded from a prior run)`)));
+        if (created.serial) return { ...created, owned: true, deviceName: created.avdName };
+      }
+      return {
+        ...(await bootAvdOnFreshPort({
+          avdName: created.avdName,
+          metadata: created.created ? { poolConfiguration: configuration, bootPending: true } : undefined,
+          projectPath,
+          slot,
+          deviceName: created.avdName,
+          out,
+          logFile,
+          alive,
+        })),
+        created: created.created,
+        systemImage: created.systemImage,
+        deviceProfile: created.deviceProfile,
+      };
+    },
+    { ...flags.deviceSlotWait, root: projectPath, out },
+  );
+}
+
+export interface AndroidConsolePortClaim {
+  avdName: string;
+  consolePort: number;
+  owned: true;
+  deviceName: string;
+  [key: string]: unknown;
+}
+
+export function claimAndroidConsolePort(
+  {
+    projectPath,
+    slot,
+    avdName,
+    deviceName,
+    livePorts = [],
+    metadata,
+  }: {
+    projectPath: string;
+    slot?: string;
+    avdName: string;
+    deviceName?: string;
+    livePorts?: number[];
+    metadata?: OwnedDeviceRecord;
+  },
+  {
+    lock = withConfigLock,
+    recordedPorts = () => allConsolePortsAndSerials().androidConsolePorts,
+    record = setDevice,
+  }: {
+    lock?: <T>(fn: () => T) => T;
+    recordedPorts?: () => number[];
+    record?: typeof setDevice;
+  } = {},
+): AndroidConsolePortClaim {
+  return lock(() => {
+    const consolePort = nextConsolePort([...recordedPorts(), ...livePorts]);
+    const claim: AndroidConsolePortClaim = {
+      ...(metadata?.poolConfiguration ? { poolConfiguration: metadata.poolConfiguration } : {}),
+      ...(metadata?.adoptionPending ? { adoptionPending: true } : {}),
+      ...(metadata?.bootPending ? { bootPending: true } : {}),
+      avdName,
+      consolePort,
+      owned: true,
+      deviceName: deviceName ?? avdName,
+    };
+    record(projectPath, 'android', claim, slot);
+    return claim;
+  });
+}
+
+async function liveAndroidConsolePorts(): Promise<number[]> {
+  const adbLive = await listAdbDevicesAsync();
+  return [
+    ...adbLive.emulators.map((e) => e.consolePort),
+    ...adbLive.unhealthy.map((u) => u.consolePort).filter((p): p is number => p != null),
+  ];
+}
+
+interface FreshPortBoot extends EmulatorLogging {
+  avdName: string;
+  metadata?: OwnedDeviceRecord;
+  projectPath: string;
+  slot?: string;
+  deviceName?: string;
+  out: Notify;
+}
+
+async function bootAvdOnFreshPort({
+  avdName,
+  metadata,
+  projectPath,
+  slot,
+  deviceName,
+  out,
+  logFile = null,
+  alive = pidExists,
+}: FreshPortBoot): Promise<OwnedDeviceRecord> {
+  const livePorts = await liveAndroidConsolePorts();
+  const claim = await withConfigLockAsync(() =>
+    claimAndroidConsolePort({ projectPath, slot, avdName, deviceName, livePorts, metadata }),
+  );
+  const serial = `emulator-${claim.consolePort}`;
+  try {
+    reportAndroidMemoryPressure(out);
+    const pid = await bootAndroidEmulator(avdName, claim.consolePort, { logFile });
+    out(chalk.dim(phaseLine('device', `waiting for ${serial} to finish booting`)));
+    const result = await waitForAndroidBoot({ serial, timeoutMs: ANDROID_FRESH_BOOT_TIMEOUT_MS, pid, alive, out });
+    if (result.failed) throw new AvdBootError(result.reason!, result.remedy!);
+    const running = await getAvdNameForSerialAsync(serial);
+    if (running && running !== avdName) {
+      throw new Error(
+        `${serial} is running AVD ${running}, not this workspace's owned AVD ${avdName}; refusing to use it.`,
+      );
+    }
+    await withConfigLockAsync(() => clearAndroidBootPending(projectPath, avdName, slot));
+    await muteBootedEmulator(serial, avdName, out);
+    const { bootPending: _booted, ...booted } = claim;
+    return { ...booted, serial, setup: true };
+  } catch (error) {
+    await withConfigLockAsync(() => releaseAndroidConsolePort(projectPath, claim.consolePort, slot));
+    throw error;
+  }
+}
+
+function bootOwnedAvdOnFreshPort({
+  deviceSlotWait,
+  ...boot
+}: FreshPortBoot & { deviceSlotWait?: DeviceSlotWaitPolicy }): Promise<OwnedDeviceRecord> {
+  return withDeviceBootAdmission({ platform: 'android', key: boot.avdName }, () => bootAvdOnFreshPort(boot), {
+    ...deviceSlotWait,
+    root: boot.projectPath,
+    out: boot.out,
+  });
+}
+
+export async function muteBootedEmulator(serial: string, avdName: string, out: Notify): Promise<void> {
+  const exec = getExecutor();
+  try {
+    const helper = ['../shim/android-audio.jar', '../../shim/android-audio.jar']
+      .map((path) => fileURLToPath(new URL(path, import.meta.url)))
+      .find(existsSync);
+    if (!helper) throw new Error('Stim installation is missing shim/android-audio.jar.');
+    const remote = `/data/local/tmp/stim-audio-${randomUUID()}.jar`;
+    const adb = async (args: string[]) => {
+      if ((await getAvdNameForSerialAsync(serial)) !== avdName) {
+        throw new Error('The emulator no longer matches this workspace; media volume was not confirmed.');
+      }
+      return exec.runFileAsync('adb', ['-s', serial, ...args], { timeoutMs: 30000 });
+    };
+    try {
+      await adb(['push', helper, remote]);
+      await adb(['shell', `CLASSPATH=${remote}`, 'app_process', '/system/bin', 'dev.stim.audio.Main', '0']);
+    } finally {
+      await adb(['shell', 'rm', '-f', remote]);
+    }
+    const readback = await exec.runFileAsync(
+      'adb',
+      ['-s', serial, 'shell', 'cmd', 'media_session', 'volume', '--stream', '3', '--get'],
+      { timeoutMs: 30000 },
+    );
+    if (!/\bvolume is 0 in range \[0\.\.\d+\]/.test(readback)) {
+      throw new Error('Android did not confirm media volume zero for this emulator.');
+    }
+    out(chalk.dim(phaseLine('device', 'emulator media muted; turn on Media sound in its Stim Desktop options')));
+  } catch (error) {
+    out(
+      chalk.yellow(
+        phaseLine('device', `Could not mute emulator media: ${error instanceof Error ? error.message : String(error)}`),
+      ),
+    );
+  }
+}
+
+function reportAndroidMemoryPressure(out: Notify): void {
+  const pressure = readHostMemoryPressure();
+  if (pressure === 'warning' || pressure === 'critical') {
+    out(
+      chalk.dim(
+        phaseLine(
+          'memory',
+          `macOS reports ${pressure} host memory pressure; emulator boot may be slow. Free memory with \`stim stop\` only in workspaces you own; ask before closing other apps or devices.`,
+        ),
+      ),
+    );
+    reportMemoryCulprits(pressure, (named) => out(chalk.dim(phaseLine('memory', named))));
+  }
+}
+
+async function androidBootRemedy(pressure: HostMemoryPressure | null): Promise<string> {
+  let count: number | null = null;
+  try {
+    const live = await countLiveOwnedDevicesFrom({
+      sims: () => (process.platform === 'darwin' ? listAllIosSimsAsync({ timeoutMs: 2000 }) : []),
+      adb: async () => ({ ...(await listAdbDevicesAsync({ timeoutMs: 2000 })), unhealthy: [] }),
+      booting: [],
+    });
+    count = typeof live === 'number' ? live : null;
+  } catch {}
+  const named = memoryCulpritAdvice(await memoryCulpritsUnderAsync(pressure));
+  const observation =
+    pressure === 'warning' || pressure === 'critical'
+      ? `macOS reports ${pressure} host memory pressure. ${named ? `${named} ` : ''}`
+      : '';
+  const devices = count ? `${count} Stim-owned ${count === 1 ? 'device is' : 'devices are'} running. ` : '';
+  if (observation || devices) {
+    return `${observation}${devices}Stop an unneeded device with \`stim stop\` only in a workspace you own, then run \`stim android\` again; ask before closing other apps or devices. These observations do not establish the cause of the timeout or an OOM crash.`;
+  }
+  return 'Inspect the emulator log and run `stim doctor` to check JAVA_HOME, ANDROID_HOME, and installed system images, then run `stim android` again.';
+}
+
+async function waitForAndroidBoot({
+  serial,
+  timeoutMs,
+  pid = null,
+  alive = pidExists,
+  out,
+}: {
+  serial: string;
+  timeoutMs: number;
+  pid?: number | null;
+  alive?: Liveness;
+  out: Notify;
+}): Promise<BootResult> {
+  const aborted = () => pid !== null && !alive(pid);
+  const wait = (windowMs: number) => waitForBoot(serial, windowMs, { aborted, commandTimeoutMs: 5000 });
+  let result = await wait(timeoutMs);
+  if (result.ok) return { ok: true, serial };
+  let pressure = readHostMemoryPressure();
+  let elapsedMs = timeoutMs;
+  if (!result.exited && pid !== null && !aborted() && (pressure === 'warning' || pressure === 'critical')) {
+    const extensionMs = 240000;
+    out(
+      chalk.dim(
+        phaseLine(
+          'memory',
+          `macOS reports ${pressure} host memory pressure; retrying the boot wait once for the same live emulator ${serial} (up to ${extensionMs / 1000}s more).`,
+        ),
+      ),
+    );
+    result = await wait(extensionMs);
+    if (result.ok) return { ok: true, serial };
+    elapsedMs += extensionMs;
+    pressure = readHostMemoryPressure();
+  }
+  const exited = result.exited || aborted();
+  const reason = exited
+    ? `The emulator process for ${serial} exited before the device finished booting.`
+    : `Emulator ${serial} did not finish booting within ${Math.round(elapsedMs / 1000)}s.`;
+  return {
+    failed: true,
+    reason: `${reason} Diagnostic: ${JSON.stringify(result.diagnostic)}`,
+    remedy: exited
+      ? 'Inspect the emulator log for the process exit, fix what it reports, then run `stim android` again.'
+      : await androidBootRemedy(pressure),
+  };
+}
+
+export async function ensureAndroidBooted({
+  device,
+  deviceSlotWait,
+  projectPath,
+  slot,
+  timeoutMs,
+  out,
+  logFile = null,
+  alive = pidExists,
+}: {
+  device?: OwnedDeviceRecord | null;
+  deviceSlotWait?: DeviceSlotWaitPolicy;
+  projectPath?: string;
+  slot?: string;
+  timeoutMs: number;
+  out: Notify;
+} & EmulatorLogging): Promise<BootResult> {
+  if (!device?.avdName || !projectPath) {
+    return { failed: true, reason: 'No owned Android emulator is recorded for this project.' };
+  }
+
+  let resolved;
+  try {
+    resolved = await resolveOwnedAvdSerialAsync(device.avdName, {
+      preferredSerial: device.consolePort ? `emulator-${device.consolePort}` : undefined,
+    });
+  } catch (e) {
+    return { failed: true, reason: `Could not list AVDs: ${(e as Error)?.message || e}` };
+  }
+  if (resolved.missing) {
+    return {
+      failed: true,
+      reason: `AVD ${device.avdName} no longer exists. Run \`stim android\` again to create a fresh owned AVD.`,
+    };
+  }
+  if (resolved.notOwned) {
+    return { failed: true, reason: `AVD ${device.avdName} is not Stim-owned; refusing to boot it.` };
+  }
+  const avdName = device.avdName;
+  const booted = async (result: BootResult): Promise<BootResult> => {
+    if (!result.failed) await withConfigLockAsync(() => clearAndroidBootPending(projectPath, avdName, slot));
+    return result;
+  };
+  if (resolved.serial) {
+    return booted(await waitForAndroidBoot({ serial: resolved.serial, timeoutMs, out }));
+  }
+
+  const freshSerial = `emulator-${device.consolePort}`;
+  if (device.owned && device.serial === freshSerial) {
+    return booted(await waitForAndroidBoot({ serial: freshSerial, timeoutMs, out }));
+  }
+
+  const boot = async (): Promise<BootResult> => {
+    const livePorts = await liveAndroidConsolePorts();
+    const claim = await withConfigLockAsync(() =>
+      claimAndroidConsolePort({
+        projectPath,
+        slot,
+        avdName,
+        deviceName: device.deviceName,
+        livePorts,
+        metadata: device,
+      }),
+    );
+    const serial = `emulator-${claim.consolePort}`;
+    reportAndroidMemoryPressure(out);
+    out(chalk.dim(phaseLine('device', `booting ${avdName} as ${serial}`)));
+    let pid: number | null = null;
+    try {
+      pid = await bootAndroidEmulator(avdName, claim.consolePort, { logFile });
+    } catch (e) {
+      await withConfigLockAsync(() => releaseAndroidConsolePort(projectPath, claim.consolePort, slot));
+      return {
+        failed: true,
+        reason: `Could not start emulator for AVD ${avdName}: ${(e as Error)?.message || e}`,
+      };
+    }
+    const result = await waitForAndroidBoot({ serial, timeoutMs, pid, alive, out });
+    if (result.failed) await withConfigLockAsync(() => releaseAndroidConsolePort(projectPath, claim.consolePort, slot));
+    else await muteBootedEmulator(serial, avdName, out);
+    return booted(result);
+  };
+  try {
+    return await withDeviceBootAdmission({ platform: 'android', key: avdName }, boot, {
+      ...deviceSlotWait,
+      root: projectPath,
+      out,
+    });
+  } catch (error) {
+    const refusal = error instanceof DeviceAdmissionRefusal ? error : claimFailure(error, 'stim android');
+    if (!refusal) throw error;
+    return { failed: true, code: refusal.code, reason: refusal.message, remedy: refusal.remedy };
+  }
+}

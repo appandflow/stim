@@ -1,0 +1,644 @@
+export default {
+  summary: 'Querying the merged NDJSON timeline, and what --errors means',
+  body: () => `LOGS
+
+If Stim is not installed globally, replace stim with npx stim.
+
+AGENT-DEVICE WORKSPACE STATE
+
+stim agent-device <args> runs agent-device in this workspace's state
+directory, on its device (guide agent, DRIVING THE DEVICE). Its actions appear
+in stim logs --source agent. For a hosted iOS or Android session, the wrapper
+records the command name and result locally. The host keeps the detailed action
+records. When you run agent-device directly on this machine instead, opt in
+to the workspace's state directory reported as agentDevice.stateDir in the
+stim ios, android and macos output and in status. Read it once from status,
+run from the app root:
+
+  STATE_DIR="$(stim status --json | jq -r '.environments[] | select(.path=="'"$(pwd -P)"'") | .agentDevice.stateDir')"
+
+Then prefix each agent-device command, so the choice survives shells that do
+not keep exports:
+
+  AGENT_DEVICE_STATE_DIR="$STATE_DIR" agent-device open <bundle id> --platform ios --session <name>
+  AGENT_DEVICE_STATE_DIR="$STATE_DIR" agent-device snapshot --session <name>
+
+The path is $STIM_HOME/workspaces/<name>/agent-device. stim start creates it
+and writes boot-hook.json there: an agent-device that reads it runs stim revive
+(guide metro, IDLE STOP) instead of booting a shut-down simulator or emulator
+itself, so the device comes back through Stim's admission with this
+workspace's Metro. Sessions (including events, runner logs and request text), logs,
+metro-sessions, allocations and daemon files move there. The apple-runner build
+cache and device claims stay shared; do not set
+AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH or AGENT_DEVICE_CLAIMS_DIR.
+Each active workspace adds one agent-device daemon, which exits after five
+idle minutes with no open session. The variable is opt-in per command: forgetting it falls back to
+~/.agent-device.
+stim stop closes owned-device sessions there, stim logs --source agent reads
+them, and stim worktree remove stops the daemon and removes the directory.
+Hosted/stim-server sessions use their own state directory and need none of this.
+
+  stim logs [filters]
+
+Reads every *.ndjson file in the global workspace logs directory, merges them into one timeline
+ordered by timestamp, prints what matches, and EXITS. The file set is
+discovered, not enumerated.
+
+metro.ndjson, client.ndjson and device.ndjson are size-capped. At about 8 MiB a file
+becomes <name>.1, replacing the previous .1, and a new file starts. Queries read
+both generations, so the oldest records drop off first. History and --since
+reach back only as far as those records. A file written before the cap
+existed can be larger; \`gc\` reports each workspace's log size and \`gc
+--delete\` trims a file over 16 MiB to its newest 8 MiB in a workspace not in use
+(\`guide cleanup disk\`).
+
+EXIT 0 MEANS THE QUERY SUCCEEDED, whether or not records matched. A clean
+\`stim logs --errors\` check requires exit code 0 AND no matching errors in
+captured logs. A workspace that has never produced a timeline refuses with
+STIM_NO_PROJECT instead of passing with an empty result. In a monorepo the
+refusal names the nearest registered descendant app with logs, when there is one.
+
+Once a timeline file exists, zero matches after filtering means STDOUT IS EMPTY,
+exit code 0, and
+one dim note on STDERR reading \`No matching log records in <logs dir>\`
+(human mode only -- \`--json\` prints nothing at all, on either stream).
+The only exit-1 paths are a malformed query and no project.
+
+Device collectors and build records carry their named slot. Use --slot phone
+for that slot's timeline; its launch marker cannot hide a sibling's errors.
+Untagged legacy records belong to default. Metro/client records are shared and
+usually untagged, so every --slot query includes them, windowed by that slot's
+own launch and by bundles of the platforms it launched. When another slot's
+relaunch hides a Metro error from the unfiltered query, --slot <name> for the
+slot that printed it still shows it.
+
+FLAGS
+  --slot <name>   only this slot's records plus, once it has launched, the
+                  shared untagged Metro and app client records (not the web
+                  page's); default also includes untagged legacy records
+  --source <s...>  metro, client, device, build, agent, maintenance, placement (one or more), or all.
+                   gc alone reads the machine-wide gc log (GC LOG below);
+                   builds alone reads the machine-wide build ledger (BUILD LEDGER below).
+                   An unknown value is REJECTED rather than quietly matching
+                   nothing.
+  --level <l>      minimum level: debug, info, warn, error, fatal
+  --since <d>      only records newer than this: 30s, 5m, 2h
+  --grep <re>      only records whose msg matches this regular expression
+  --tail <n>       only the last n MATCHING records (applied after filtering,
+                   so --level error --tail 5 is the last five ERRORS)
+  --errors         errors and fatals since the last marker, from metro, client
+                   and build, plus confirmed native app-crash reports and the
+                   owned Chrome's device errors (platform web: failed
+                   requests, browser errors).
+                   Capped at 20 printed records.
+  --follow         keep streaming until interrupted (Ctrl+C is exit 0). Closing
+                   its stdout also ends it with exit 0; on Linux, so does the
+                   exit of the process that started it when stdout is a pipe.
+                   It notices within a few seconds even when nothing new
+                   arrives, except a closed stdout pipe on Linux whose starter
+                   is still running, which it notices at the next record.
+  --json           the raw records, one per line, so stdout is valid NDJSON.
+                   ZERO matches is ZERO bytes on stdout (an empty NDJSON
+                   stream), exit 0 -- parse stdout line by line, never as one
+                   JSON document. The "No matching log records" note is human
+                   mode only, on stderr. With --errors, an Expo error record
+                   also carries context (see THE RECORD).
+
+Local follow uses filesystem change hints with a ten-second repair scan for
+missed events or a replaced directory. Until a directory watch is available,
+it retries and scans every 500 ms, with one recovery scan 500 ms after attachment.
+On Windows a moved log directory can require the ten-second repair scan.
+Expo context settling uses a timer only
+while an error is pending; otherwise idle files are not repeatedly scanned.
+Local agent actions also follow their state and claim directories, coalescing file
+changes instead of re-reading every 500 ms while idle.
+While following, hosted targets join and leave from local state notifications.
+Missed notifications are reconciled about every 10 seconds. Active hosts still
+serve bounded log queries.
+
+--ERRORS, PRECISELY
+  Level error or fatal, from metro, client and build, plus device records with
+  event native_crash (app/device/time-correlated OS reports or fatal app console output)
+  and device records with platform web (the owned page's failed requests and
+  browser errors, from stim web), timestamped after the
+  marker that closes their window. Three rules, and a field test
+  caught all three wrong at once -- it returned 3,004 iOS syslog lines on a
+  healthy app while hiding a real startup crash.
+
+  SCOPE. General device logs are NOT in the default scope. A device log is the OS talking:
+  \`simctl log stream\` is predicated on the app's PROCESS, and inside that
+  process Apple's frameworks log thousands of Error-typed lines (nw_socket,
+  SecTrust, WebKit, CoreUI) that have nothing to do with your app. The proven
+  ones are demoted to info by the collector, and iOS main-thread
+  "Synchronous URL loading" performance diagnostics (Expo icons served by
+  Metro raise them) and SwiftUI "Invalid Configuration" faults (the Expo dev
+  launcher raises them for a duplicated server entry) to warn, so a launch does not count them as app errors;
+  the scope rule covers the rest.
+  The metro stream carries exactly one demotion of its own, and it is Stim's
+  doing: the dev-client deep link \`ios\`/\`android\` open to wire the app to
+  your port arrives inside the app as a link, and React Navigation logs at
+  error that no navigator handled a NAVIGATE to \`expo-development-client\`.
+  There is no such screen and there is not meant to be, so that one record is
+  recorded at info -- it made every healthy cold launch report 1 error. A real
+  unhandled NAVIGATE names a route your app has, and is still an error.
+  A native crash can happen before JS or Metro exists. Confirmed native_crash
+  records are included without admitting the rest of the device noise. Opt back in with
+  \`--source device\` or \`--source all\`; a plain \`logs\` with no --errors
+  has always shown everything. ON A PHYSICAL IPHONE opting back in buys less
+  than it does on a simulator: the device console carries no severity, so
+  \`--source device --errors\` there reports crash and refusal lines only,
+  never a level. Read a phone's device records with a plain \`logs
+  --source device\`.
+
+  THE WINDOW. A marker closes the window for the sources it can speak for:
+    a BUNDLE marker (src metro: bundle_build_done / bundle_build_failed, or
+      Expo's "Bundled" / "Bundling failed" lines) is written when a bundle
+      attempt FINISHES, success or failure. It resets METRO errors from
+      before the attempt -- a resolve failure you fixed and rebuilt is
+      history, and when bundles fail back to back only the newest attempt's
+      errors are reported -- and nothing else. A failed attempt's own summary
+      and details land at or after its marker, so they stay reported.
+    a LAUNCH marker (src build, written before \`ios\` / \`android\` attempts
+      launch) resets EVERYTHING in its slot except the web page's records. It
+      precedes the tool call so an immediate native crash is not hidden by a
+      marker written after the process died. Metro and client output names no
+      device, so in the unfiltered query the newest launch of any slot resets
+      it, and the newest bundle of any platform resets Metro errors; with
+      --slot <name>, that slot's newest launch and the newest bundle of a
+      platform it launched do. Metro records that name their platform (bare
+      React Native bundle records; the "iOS Bundled" / "Android Bundled" /
+      "RSC(iOS) Bundled" tag Expo prints for bundle markers, so a "DOM
+      Bundled" line does not close a native slot's window) follow only that
+      platform, and a slot query leaves out iOS or Android ones when it never
+      launched that platform. A single slot that runs both iOS and Android still shares one
+      window for untagged Metro errors.
+    a PAGE-LOAD marker (the web_navigation record \`stim web\` writes for each
+      load of the page's top-level document) resets only the page's records,
+      those with platform web. It is written when the load starts, so a
+      failure logged in the same millisecond belongs to that load, and so does
+      anything the old page logs before it is replaced. Until the first page
+      load is logged, the page's records follow the launch windows.
+  A finished bundle is not evidence that the app which loaded it is fine.
+  In the field case the app threw at 16:03:54 and Metro wrote its marker at
+  16:03:55, one second later, because the bundler finishes accounting for a
+  build after the client has already evaluated it. Under one marker for all
+  sources that crash was reported as nothing at all. The cost of the rule is
+  the safe direction: a client redbox that Fast Refresh already fixed keeps
+  being reported until the next launch.
+
+  RUN FAILURES. A run that builds or reuses an app and then fails before the app
+  is running adds one build record with event run_failed, its code and the
+  phase it failed in, so \`status\` and \`logs --errors\` agree.
+
+  OUTPUT. Every logs command, including --errors and --follow, shows full captured
+  error, component and native stacks, with no frame or message-length limit.
+  --errors shows the first 20 matching error records, plus stack context.
+  This record-count limit never truncates a stack. A footer reports hidden
+  records; use its printed --tail value to include all records before grouping.
+  To read the complete timeline without the default error-record limit:
+    stim logs --source all
+  This includes all sources, levels and retained history, not just the latest errors;
+  add --since, --level or --grep to narrow it. --source all selects sources,
+  not stack depth. For untouched captured records use:
+    stim logs --source all --json
+  Neither form can restore text the runtime truncated before capture.
+  With --errors, an Expo error includes the code frame and stack lines Expo
+  printed after it, in human and --json output, with or without --follow.
+  Stim's own Metro records that land between those lines, such as bundle
+  responses, do not cut the stack short. Human output joins the lines to the
+  message. --json leaves msg as captured and adds them to the error record as
+  a context array of strings; each record is still one line. --follow holds an
+  Expo error until a 500 ms settle check adds no more of its lines, so
+  it can print up to about a second after Expo does. Non-follow human output
+  also shows bare React Native symbolication as separate context, because
+  Metro does not provide an error correlation identifier. Context never
+  changes the error count or adds records to --json. --json is never capped,
+  and neither is an explicit --tail.
+
+  In --follow mode the marker window is dropped -- every error arriving from
+  then on is by definition after the last marker seen.
+
+  \`stim status\` reports the errors of the same query and scope per
+  workspace, as logs.errorsSinceMarker, so the two never disagree about
+  whether this workspace is failing. It counts failures as the Stim Desktop and
+  phone logs list them: a Metro bundle failure is one error, although it is a
+  marker line, the error line and a failed bundle response in the log, so the
+  count can be lower than the records this command prints.
+
+THE RECORD
+  { ts, src, level, msg } always. ts is epoch milliseconds; src is one of
+  metro / client / device / build / agent; level is one of the five above.
+  Optional fields:
+    event    the producer's own event name (bundle_build_done, client_log, ...)
+    stack    frames of { file, line, column, fn }, passed through as reported
+    marker   true on the records that close an error window
+    runId    the id of the stim invocation that wrote the record: STIM_RUN_ID
+             when set to a valid id (letters, digits, . _ -, at most 64),
+             else generated per run. Processes a command starts, such as the
+             Metro supervisor and the collectors, keep the id of the command
+             that started them. Debug records and the hello to stim-server
+             carry it too, and stim-server puts it on its log lines.
+    deviceTs Android logcat's original epoch milliseconds; ts is aligned to
+             host time using a bounded clock query at each collector attachment
+    clockOffsetMs the offset added to deviceTs; absent if the query failed.
+             A collector_clock warning then says timestamps retain device time.
+    raw      true when the level was inferred from a line of text rather than
+             reported by the producer (every expo-child and command-child
+             record)
+    context  --errors --json only: the code frame and stack lines Expo
+             printed after this error, as an array of strings. Absent when
+             there are none. Stim adds it at query time; it is not in the
+             log files.
+
+IOS BOOT RECORDS
+Booting an owned iOS simulator writes records to the workspace's device.ndjson:
+src device, platform ios, deviceId the simulator udid, slot when it is not
+default, level info unless noted. They show in a plain \`logs\` and in
+\`--source device\`, and never in \`--errors\`.
+  event ios_boot, with phase:
+    boot_requested      just before simctl boot; boot is adopted (a parked
+                        simulator), created, existing (an owned simulator
+                        that was shut down) or restart
+    bootstatus_done     simctl bootstatus -b returned
+    springboard_started SpringBoard finished starting; pid is its pid
+    viewer_opened       the simulator viewer was asked to open it
+    simslim_reboot      SimSlim changed the simulator and SpringBoard's pid
+                        changed; pidBefore and pidAfter are null when the pid
+                        could not be read
+    restart             warn: SpringBoard is not running after boot and the
+                        simulator was shut down; Stim boots it once more
+  event springboard_crash_reports, written before that restart and again if
+    SpringBoard is still missing after it. files lists the SpringBoard-*.ips
+    reports that name this simulator and were captured in the last ten minutes,
+    copied from ~/Library/Logs/DiagnosticReports and its Retired folder into
+    the workspace logs directory; level is warn, or info with an empty files
+    when none matched. dropped counts matching reports that exceeded the limits
+    below and were not copied; failure is the message of a write that failed,
+    with the reports copied before it in files. macOS deletes the originals
+    after about two days; Stim only reads that folder. It looks at the newest
+    100 reports of at most 1 MiB each, copies at most 8 MiB per run, and keeps
+    at most 40 in the directory.
+
+Maintenance records use src: maintenance and appear in the plain timeline.
+  stim logs --source maintenance
+Add --errors to --source maintenance to show only maintenance_failure events;
+failures before a later launch marker are hidden. Machine passes are reported in
+status and maintenance/maintenance.ndjson; this command reads workspace logs.
+
+GC LOG
+stim logs --source gc reads $STIM_HOME/gc/gc.ndjson from any directory: one
+record per item that a gc run or a maintenance action cleared, kept or
+failed to clear. The pressure ladder's actions are in
+$STIM_HOME/daemon/daemon.ndjson and each workspace's metro.ndjson as
+pressure_action records. It cannot be combined with other sources,
+and --source all does not include it. --errors shows the failed items.
+Each record has src: gc, level (info, or error for a failed item), msg and
+  runId    the stim invocation, or the pass id of maintenance.ndjson
+  trigger  manual (stim gc in a terminal), desktop (STIM_DESKTOP_APP is set, so also a gc run through a stim-server Desktop started),
+           or maintenance (budget in records written before the pressure
+           ladder replaced the per-command budget)
+  via      maintenance only: the command whose run started the pass
+  options  gc only: delete, worktrees, olderThan, cache, idleMs
+  kind     what the item was (the kind of gc --json results; maintenance
+           also writes buildDirectory and dependencies)
+  status   done, kept or failed
+  label, id, path, bytes, detail
+           name, identifier, absolute path when the item is one, bytes freed,
+           and the reason a kept or failed item was left
+Records of one run share runId. See stim guide cleanup, WHAT WAS CLEARED.
+
+BUILD LEDGER
+stim logs --source builds reads $STIM_HOME/builds/builds.ndjson from any
+directory: one record per native build run (ios, android or macos; compiled
+here, offloaded or fetched from a cache; succeeded, failed or cancelled). It
+keeps the newest 500 records, outlives the workspace that ran the build, and
+is never removed by gc. It cannot be combined with other sources, and --source
+all does not include it. --errors shows the failed runs. A record has
+src: builds, event: build, level (info, warn for cancelled, error for failed),
+msg and
+  ts, startedAt   epoch milliseconds when the run finished and started
+  id              the run
+  project, workspace, branch
+                  project root, workspace id and the branch checked out
+  platform        ios, android or macos
+  scheme, variant, configuration
+                  the iOS scheme when one was selected, the Android variant,
+                  the build configuration
+  placement       { where: local | offloaded, machine?, fellBack?, reason? };
+                  machine is the build machine that compiled the app, and
+                  fellBack with reason marks a build that considered
+                  offloading and compiled here
+  cache           { result: hit | miss | bypassed, source?: local | remote,
+                  key, fingerprint, missReason? }
+  durationMs, phases
+                  wall time and milliseconds in each local phase (prepare,
+                  cache-lookup, wait, prebuild, pods, compile, device,
+                  install, launch)
+  offloadPhases   milliseconds on the build machine: sync, deps, prebuild,
+                  pods, build, fetch
+  outcome         succeeded, failed or cancelled
+  failure         failed or cancelled runs: { code, message, remedy, phase }
+  device          { name, runtime? } of the simulator, emulator or device;
+                  never its serial or UDID
+  loadPerCore     this machine's 5-minute load average per CPU when the run
+                  started, to one decimal
+  boot            { startedAt, loadPerCore } of the run's first owned
+                  simulator or emulator boot: epoch milliseconds when it
+                  started, once any concurrency.maxDevices wait was over,
+                  and the load per core then. Absent when the run booted
+                  nothing.
+  stimVersion     the stim that ran the build
+Records written before these fields existed lack loadPerCore and boot.
+A run that stopped before it had an app to build (a refused flag, a missing
+project) writes no record. Writing the record never changes the run's result.
+
+REMOTE REQUEST RECORDS
+A request to another machine that fails is a warn record with src: build in the
+run's build log: remote_connect_failed { host, capability, ms, timeoutMs, msg,
+code } (could not connect or say hello, e.g. "no reply in time" when the machine
+did not answer hello) and remote_request_failed { method, ms, code, msg }.
+Timings of requests that succeed are debug records (below).
+stim-server writes to its service log (~/Library/Logs/Stim/<label>.log), with
+no tokens or tickets, each of these lines starting with an ISO time:
+"request failed method=<m> client=<device id> run=<runId>
+ms=<n> error=<code>" for an error reply (once a minute per client, method,
+code and reason, ignoring its numbers), ending in reason="<message>" for a build-busy or build-refused
+refusal; and "host_connect ... error=<reason_with_underscores>" when its connection to a hosting
+machine fails. With debug.logs on or STIM_DEBUG=1 for the server it logs every
+request instead: "debug request method=<m> client=<id> run=<runId> ms=<n>
+slow=true whois=<ms> probe=<ms> error=<code> reason="<message>"" (slow means 1000 ms or more;
+whois and probe are the hello's Tailscale identity lookup and its wait for
+the host permission probe; a method name that is not a plain dotted lowercase
+name is logged as unknown)
+and "debug host_connect host=<mac> ms=<n> connectMs=<n> helloMs=<n>" (reused=true instead of the two
+timings when an open connection was shared), also as
+records in STIM_HOME/logs/debug/server.ndjson. Search the run id in both logs.
+
+DEBUG LOGS
+With debug.logs on or STIM_DEBUG=1 (stim guide settings), the CLI also appends
+debug records to STIM_HOME/logs/debug/cli.ndjson, outside any workspace, so
+stim logs does not show them. Read them with jq:
+  jq -c 'select(.event=="exec" and .ms>1000)' ~/.stim/logs/debug/cli.ndjson
+Events: run_start, run_end { exit, ms }, exec { program, ms, ok, exit? }, and
+remote_connect and remote_request { ms, ok, code? } for requests to another
+machine. They carry no arguments, tokens or tickets.
+
+TIMING TRACES
+STIM_TRACE=<path> makes a stim command write a timeline of where it spent its
+time, as Chrome trace events. Open the file in Perfetto (ui.perfetto.dev) or
+chrome://tracing. Unset, nothing is written and no file is opened. There is no
+setting for it, and the trace goes only to that file, never to stdout or stderr.
+Use a new path for each command: the command you start truncates the file, and
+the processes it starts (a Metro supervisor, collectors, a nested stim) append
+to it.
+  STIM_TRACE=/tmp/ios.json stim ios
+The file is a JSON array with one event per line and no closing bracket, so
+read it with JSON.parse(text.trimEnd().replace(/,$/, '') + ']'). Every event
+has pid; spans have ts and dur in microseconds since the epoch. Events:
+  command  one span named "stim <command>" with the exit code in args.exit
+  exec     one span per child process. args.argv (or args.command for a shell
+           command) has the values of secret-looking flags, credentials in
+           URLs and token shapes replaced by [redacted], and the credentials
+           of curl -u and security import -P; other short flags such as -p
+           and -u are kept. args also has cwd, ok, exit and signal
+  phase    the build phases of an ios, android or macos run on a
+           "phases: <platform> build" track, named as in stats.json and the
+           build ledger (prepare, cache-lookup, wait, prebuild, pods, compile,
+           device, install, launch), and the steps of worktree warm
+  span     fingerprint, wait for metro and carry ignored entries
+  mark     instant events such as a fingerprint memo hit
+Children running at the same time are drawn on separate tracks. A span still
+open when its process exits is written with unfinished: true; a process ended
+by a signal writes none. A trace holds
+full paths and arguments, so treat it like a log.
+
+Placement records use src: placement and sit in the run's build log
+(build-*.ndjson), so a new run replaces the previous run's. A run writes one
+record per decision it makes (a build that compiles and has a remote machine to
+consider, or ios/android --remote auto|remote|remote-only), with event build_placement,
+device_placement or placement_fallback. A cache hit, a project with no paired
+remote machine and a named --remote target write none:
+  stim logs --source placement
+  stim logs --source placement --json
+Fields: kind (build or device), platform, settings [{ key, value, from }] with
+from flag, env, setting or default (remote.build for a
+build, ios.remote or android.remote, plus remote.easFallback when it is on, for
+a device), candidates [{ machine, code,
+msg, detail? }], choice { machine, code, msg } with machine local when the run
+stays on this machine, and fallback { code, msg, machine? } when a remote machine that
+was meant to take the run did not (level warn). The msg is the same text the
+placement: and build: phase lines print.
+Candidate codes: accepted, unreachable, busy, disk, load, version-mismatch
+(detail lists the toolchain parts: xcode, arch, jdk, ...), no-matching-device,
+declined, memory, no-capacity; with machine eas, why an EAS Simulator was not
+used: eas-named-slot, eas-local-flags, eas-no-agent-device, eas-no-cli,
+eas-cli-too-old, eas-session-busy, eas-metro-unreachable, eas-logged-out, eas-not-enabled,
+eas-unavailable. Choice codes for a build: placed, named,
+forced, this-mac-busy, this-mac-free, mode-off, local-selected, no-remote-mac,
+unsupported; fallback codes: no-remote-mac-took-it, offload-failed, fallback.
+Choice codes for a device: placed, sticky, this-mac-free, no-remote-mac,
+device-count-unknown, no-host-admits, eas-fallback (machine eas). Machine names appear in these records;
+they stay in the local logs. These records carry no tokens.
+
+WHAT WRITES WHAT
+  maintenance.ndjson   workspace maintenance actions, failures and explaining skips
+  $STIM_HOME/gc/gc.ndjson  machine-wide, not in a workspace: what gc and
+                       maintenance cleared (stim logs --source gc)
+  $STIM_HOME/builds/builds.ndjson  machine-wide: the last 500 native builds
+                       (stim logs --source builds)
+  metro.ndjson         the bundler, in every supervisor mode. Stim's
+                       middleware adds one record per bundle request
+                       (bundle_response_started, _progress, _finished,
+                       _failed; _started carries the request's path and
+                       query as url, which the next warmup prefetches)
+                       and, on Expo, one per dev-client manifest
+                       request (manifest_request_started, _finished,
+                       _failed: debug level, with platform and requestId;
+                       launch verification reads them as progress), and
+                       an hmr_update debug record, at most once a minute,
+                       when Metro pushes a Fast Refresh change to the app
+  client.ndjson        in-app console logs and redboxes -- BARE PROJECTS ONLY.
+                       In expo-child and command-child mode everything the
+                       dev server prints lands in metro.ndjson with raw: true,
+                       so \`--source client\` returns nothing there.
+  device.ndjson        the device-log collector uses \`simctl log stream\`
+                       predicated on the app, or \`adb logcat\` filtered to
+                       the app's pid. Local iOS simulator capture starts
+                       before launch; Android attaches once the pid is known
+                       and reads buffered logcat records. This
+                       is where a native crash that never reached JS shows up
+                       -- and, on iOS, where every Apple framework running in
+                       the app's process also logs. The proven noise sources
+                       are recorded at info rather than error (Synchronous
+                       URL loading diagnostics and SwiftUI Invalid Configuration
+                       faults at warn); the rest is why
+                       --errors leaves this source out unless asked. A VERIFIED
+                       LAUNCH counts these records and prints one line:
+
+                         launch      9 general device error-level records
+                                     (not confirmed app errors); inspect with
+                                     stim logs --errors --source device
+
+                       The count does not attribute unknown OS errors to the app.
+                       Known JavaScript errors also print individually: Android
+                       ReactNativeJS records, and iOS com.facebook.react.log /
+                       javascript records. These can interrupt a recommended
+                       readiness wait even without a client or Metro copy.
+                       Client and Metro errors still print individually.
+                       A native app that loaded its bundle but reported app errors
+                       ends with WARNING rather than OK. This does not change the
+                       launch JSON or exit code: launched describes bundle/process
+                       evidence, not a healthy UI. Inspect the errors and readiness.
+
+                       Only human ios/android launch output previews up to
+                       ten frames per error, component or native stack. App-source
+                       frames take priority; selected frames retain captured
+                       order, with an omitted-frame count. Escaped
+                       component stacks print one frame per line. Long bundle
+                       URLs are shortened and labeled unsymbolicated; shortening
+                       is not source-map resolution. A Metro error body that an
+                       Android DebugServerException embeds prints as the
+                       error's message and import stack, not its JSON. All
+                       logs commands show full
+                       captured stacks, including \`stim logs --errors\`.
+                       Use \`stim logs --source all\` for all sources/history,
+                       or add \`--json\` for raw
+                       records. This preview does not alter logs or JSON.
+
+                       Symbolication is best effort. Human launch and non-follow
+                       logs queries ask the verified workspace Metro's /symbolicate
+                       endpoint to resolve captured JS coordinates, with a 2s
+                       request deadline and raw-coordinate fallback. Successful
+                       launch context is retained separately under logs/error-context
+                       so stopping Metro does not discard resolved evidence.
+                       Expo code frames are attached; uncorrelated bare Metro
+                       symbolication events remain separate. A component stack
+                       never substitutes for a missing error stack. Historical
+                       stacks need matching sources/maps, not a rebuilt bundle.
+
+                       Cross-source copies combine only with matching error
+                       title, stack location, compatible platform and timing.
+                       Same-source repeats and raw JSON records stay intact.
+                       Human queries may attach a correlated device component
+                       stack to a selected Metro error, but never an unrelated
+                       device error.
+
+                       iOS simulator cold launch attaches app stdout/stderr and
+                       passes Expo's initial URL directly. Fatal output is available
+                       before delayed OS reports, which can take about a minute
+                       or longer to appear; rerun logs --errors for those
+                       before stopping or releasing the device. Collection requires
+                       this workspace's current launch and device ownership or lease;
+                       afterward only already-captured reports remain available.
+                       The app cache holds console files, so external STIM_HOME
+                       paths do not violate the app sandbox. Crash evidence is
+                       retained in workspace logs. --follow does not poll for
+                       delayed OS reports.
+                       Native iOS simulator reports match app ID, simulator ID
+                       and launch time. atos resolves app addresses only after
+                       the local binary UUID matches the report. Android reads
+                       the crash buffer even when the app PID has exited. Java
+                       traces remain readable; C/C++ resolution uses NDK tools
+                       and matching local ELF build IDs. General OS noise remains
+                       excluded from --errors. Full native evidence is in
+                       logs --source device --json. Physical iPhone capture stays
+                       console-only; missing reports or symbols are not proof
+                       of a healthy app. No symbol downloads are performed.
+                       Android may keep a crashed Java PID alive behind its
+                       crash dialog. Fix the crash, then rerun stim android,
+                       which force-stops that process before launching. Metro
+                       reload alone cannot recover it.
+
+                       The connection refusal \`TCP Conn ... Failed :
+                       error 0:61 [61]\` (61 is ECONNREFUSED) is not even
+                       counted. The app got its bundle over this workspace's
+                       Metro and outlived the stability window, so it
+                       recovered. A refusal before the
+                       launch verifies still prints, as does every record on a
+                       launch that does not verify, and the record stays an
+                       error in device.ndjson either way; read it with
+                       \`logs --errors --source device\`.
+
+  ON A PHYSICAL IPHONE THE SAME FILE CARRIES LESS, and the difference is not
+  cosmetic. \`simctl spawn\` is simulator-only and there is no devicectl
+  console subcommand, so a device run reads
+  \`devicectl device process launch --console\`, which connects the app's own
+  stdout and stderr and nothing else. Stim launches it with
+  OS_ACTIVITY_DT_MODE, which makes os_log mirror itself onto that stderr --
+  without it React Native's own logging, which goes through os_log, would not
+  appear at all. What the mirror carries, and what it drops:
+
+    ts        KEPT   the device's own timestamp, off the mirrored line
+    proc      KEPT   as name(pid), from the mirrored line, not a path
+    category  KEPT   only when the logger has a subsystem; \`javascript\` and
+                     \`native\` for React Native's own log calls
+    msg       KEPT   a multi-line message arrives as separate records
+    subsystem LOST   the mirror never prints it
+    level     LOST   Default, Error and Fault all render identically, and
+                     Debug is not mirrored at all
+
+  So every device record from a phone is \`raw: true\` and \`info\`, except
+  the lines that OPEN with a marker the runtime itself prints: an uncaught
+  ObjC exception, a libc++abi termination, an assertion failure, or a Swift
+  fatal error. The match is anchored, so an app logging ABOUT a crash stays
+  info. devicectl's own \`ERROR:\` is read only on a line with no mirror
+  prefix, because that is the only kind devicectl writes. Severity cannot be
+  recovered, so it is not guessed. The NOISE_RULES that demote Apple's framework chatter key on
+  subsystem and cannot fire either -- but they have less to do, because
+  --console carries only the app's streams rather than every framework
+  logging inside its process.
+
+  \`log collect --device-udid\` WOULD carry all six fields, in the same NDJSON
+  the simulator path parses. It is not used because it requires root
+  (\`log: Must be root to collect logs from attached device\`) and produces an
+  archive rather than a stream. Streaming with full fidelity needs
+  libimobiledevice or pymobiledevice3, which are third-party installs Stim
+  does not require. See appandflow/stim#179.
+  agent                hosted iOS and Android command summaries are in
+                       hosted-agent.ndjson. Agent input on the owned Chrome
+                       page is in web.ndjson (\`guide web\`). For local
+                       devices, each query reads agent-device's
+                       session records (~/.agent-device/sessions, or
+                       AGENT_DEVICE_STATE_DIR, plus existing workspace
+                       agent-device directories) for this workspace's owned
+                       simulators, emulators and native Mac app, read-only. An action is
+                       info (msg is agent-device's summary, e.g. "Tapped
+                       (201, 731)"; event agent_action with command, session,
+                       deviceId and details, and startedAt when agent-device
+                       logged the command's start: ts is when it finished,
+                       after any --settle wait); a failed command is error
+                       (event agent_failed). A plain query includes them;
+                       --errors only with --source agent or all. iOS sessions
+                       match a simulator through their runner.log, Android
+                       sessions only while agent-device's claim on the
+                       emulator is live (released claims drop their
+                       actions from later queries). A macOS session opened
+                       with explicit --surface app matches its isolated
+                       bundle ID and current launch (guide macos). App
+                       switches, unrecorded opens and rotated event logs
+                       clear that match; native screenshots are omitted
+                       because their surface is not in the event metadata.
+                       A session in an
+                       unrecognized format yields one warn record
+                       (agent_format_unknown) instead of its actions.
+  build-ios.ndjson     the xcodebuild / gradle transcript at level debug, the
+  build-android.ndjson extracted diagnostics at level error, and the launch as
+                       a marker record. One RUN's worth: each build starts the
+                       file over, so the first error in it always belongs to
+                       the run that pointed you at it. A build from the API's
+                       build() writes build-artifact-<platform>.ndjson
+                       instead, so it never replaces a run's transcript.
+                       A failed build also leaves a copy of its transcript next
+                       to the log, named <log>.failed (build-ios.ndjson.failed);
+                       the failure's log line points at it, and the next
+                       failed build of that log replaces it. \`logs\` does not
+                       read it.
+
+  Only a dev server Stim hosted is captured. If you started the bundler
+  yourself, the metro and client sources stay empty -- which is not a sign of a
+  clean build. The device and build sources are written either way, because
+  \`ios\` / \`android\` produce them.
+
+  A collector is killed and replaced on the next \`ios\` / \`android\` run for
+  that platform, and reaped by \`stop\`.`,
+};

@@ -1,0 +1,133 @@
+# DISPATCH-ONLY. Prepares a windows-latest runner the same way the
+# windows job in e2e-native.yml does, then opens SSH to it over Tailscale
+# and holds so the Android loop can be worked on interactively (#888). Port
+# 7787 is served on the tailnet-only HTTPS port 7443 so the runner can act as a
+# build worker (#3616); the first request to that route waits for its
+# certificate, so the job makes one before SSH opens.
+#
+# tunnel=tailscale needs a TAILSCALE_AUTHKEY repository secret (ephemeral,
+# reusable auth key); the node leaves the tailnet when the job ends and SSH
+# lands in pwsh as runneradmin. An optional EXPO_TOKEN repository secret is
+# exported to SSH sessions so `eas` and `stim --remote eas` are authenticated
+# without any credential passing through the operator's machine. tunnel=tmate needs no secret: the session is
+# limited to the GitHub SSH keys of whoever dispatched the run, and the
+# connection string is in the step log. Create a file named `stop` in the
+# workspace to end the hold early. GitHub caps a job at 6 hours.
+#
+#   gh workflow run windows-debug.yml -F public_key=@~/.ssh/id_rsa.pub -f hours=2
+#   ssh runneradmin@stim-windows-runner
+name: Windows debug host
+
+on:
+  workflow_dispatch:
+    inputs:
+      tunnel:
+        description: 'How to reach the runner'
+        required: false
+        default: tailscale
+        type: choice
+        options: [tailscale, tmate]
+      public_key:
+        description: 'SSH public key allowed to log in as runneradmin (tailscale only)'
+        required: false
+        default: ''
+        type: string
+      hours:
+        description: 'How long to hold the runner (max 6)'
+        required: false
+        default: '2'
+        type: string
+      prepare:
+        description: 'Install, build and add the Android system image before opening SSH'
+        required: false
+        default: true
+        type: boolean
+      sdk_packages:
+        description: 'Extra sdkmanager packages, space-separated, such as "ndk;27.1.12297006 build-tools;36.0.0"'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: windows debug host
+    runs-on: windows-latest
+    environment: debug
+    timeout-minutes: 360
+    env:
+      TEMP: ${{ github.workspace }}\e2e-tmp
+      TMP: ${{ github.workspace }}\e2e-tmp
+    steps:
+      - uses: actions/checkout@v4
+      - run: New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\e2e-tmp"
+
+      - uses: ./.github/actions/setup-stim
+        with:
+          install: ${{ inputs.prepare }}
+          build: ${{ inputs.prepare }}
+      - uses: ./.github/actions/windows-android-sdk
+        if: inputs.prepare
+
+      - name: Install Android SDK packages
+        if: inputs.prepare && inputs.sdk_packages != ''
+        env:
+          SDK_PACKAGES: ${{ inputs.sdk_packages }}
+        run: |
+          $sdkmanager = "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat"
+          & $sdkmanager --install @($env:SDK_PACKAGES -split '\s+' | Where-Object { $_ })
+
+      - name: Tailscale
+        if: inputs.tunnel == 'tailscale'
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: stim-windows-runner
+
+      # SSH sessions do not see GITHUB_ENV or GITHUB_PATH, so the toolchain
+      # locations are written to the machine environment instead.
+      - name: Open SSH
+        if: inputs.tunnel == 'tailscale'
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if (-not "${{ inputs.public_key }}") { throw "tunnel=tailscale needs public_key" }
+          Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+          New-Item -ItemType Directory -Force -Path "C:\ProgramData\ssh" | Out-Null
+          New-Item -Path "HKLM:\SOFTWARE\OpenSSH" -Force | Out-Null
+          New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name DefaultShell -Value "C:\Program Files\PowerShell\7\pwsh.exe" -PropertyType String -Force | Out-Null
+          $keys = "C:\ProgramData\ssh\administrators_authorized_keys"
+          Set-Content -Path $keys -Value "${{ inputs.public_key }}" -Encoding ascii
+          icacls $keys /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F" | Out-Null
+          [Environment]::SetEnvironmentVariable('JAVA_HOME', $env:JAVA_HOME, 'Machine')
+          [Environment]::SetEnvironmentVariable('ANDROID_HOME', $env:ANDROID_HOME, 'Machine')
+          if ($env:EXPO_TOKEN) { [Environment]::SetEnvironmentVariable('EXPO_TOKEN', $env:EXPO_TOKEN, 'Machine') }
+          [Environment]::SetEnvironmentVariable('TEMP', $env:TEMP, 'Machine')
+          [Environment]::SetEnvironmentVariable('TMP', $env:TMP, 'Machine')
+          $machinePath = [Environment]::GetEnvironmentVariable('PATH', 'Machine')
+          $extra = @("$env:ANDROID_HOME\platform-tools", "$env:ANDROID_HOME\emulator", "$env:JAVA_HOME\bin", (Split-Path (Get-Command pnpm).Source), (Split-Path (Get-Command node).Source))
+          [Environment]::SetEnvironmentVariable('PATH', (($extra + $machinePath) -join ';'), 'Machine')
+          Set-Service sshd -StartupType Automatic
+          Start-Service sshd
+          if (-not (Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Direction Inbound -Protocol TCP -LocalPort 22 -Action Allow | Out-Null
+          }
+          tailscale serve --bg --https=7443 http://127.0.0.1:7787
+          $dns = (tailscale status --json | ConvertFrom-Json).Self.DNSName.TrimEnd('.')
+          try { Invoke-WebRequest -Uri "https://${dns}:7443/health" -TimeoutSec 90 -SkipCertificateCheck | Out-Null } catch {}
+          "ssh runneradmin@$(tailscale ip -4)  (MagicDNS: stim-windows-runner)"
+
+      - name: tmate
+        if: inputs.tunnel == 'tmate'
+        uses: mxschmitt/action-tmate@v3
+        with:
+          detached: true
+          limit-access-to-actor: true
+
+      - name: Hold
+        run: |
+          $deadline = (Get-Date).AddHours([math]::Min([double]"${{ inputs.hours }}", 5.8))
+          "holding until $deadline; create $env:GITHUB_WORKSPACE\stop to end early"
+          while ((Get-Date) -lt $deadline -and -not (Test-Path "$env:GITHUB_WORKSPACE\stop")) { Start-Sleep -Seconds 30 }

@@ -1,0 +1,1577 @@
+import { withAmbientContext, type StimContext } from '@stim-cli/core';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
+import * as identities from '../process-identity.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
+import { testContext } from './_context.ts';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { ensureConfig, getProject, saveConfig, upsertProject } from '../workspace/config.ts';
+import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
+import { parkSim, readParked } from '../devices/sim-pool.ts';
+import {
+  eraseParkedIosSim,
+  shutDownBootedParkedIosSim,
+  teardownOwnedIosSim,
+  teardownOwnedAvd,
+} from '../devices/teardown.ts';
+import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
+import { readDeferredShutdowns } from '@stim-cli/core/state';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
+
+function seedCreatedDevices(): void {
+  for (const udid of ['U0', 'U1']) recordCreatedDevice('ios', udid);
+  for (const name of ['stim-app', 'stim-gone']) recordCreatedDevice('android', name);
+}
+
+let savedAndroidHome: string | undefined;
+let savedSdkRoot: string | undefined;
+let avdHome: string;
+let savedAvdRoots: Record<string, string | undefined>;
+
+beforeEach(() => {
+  avdHome = mkdtempSync(join(tmpdir(), 'stim-teardown-avds-'));
+  savedAvdRoots = Object.fromEntries(
+    ['STIM_HOME', 'HOME', 'ANDROID_AVD_HOME', 'ANDROID_SDK_HOME', 'ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME'].map(
+      (key) => [key, process.env[key]],
+    ),
+  );
+  process.env.HOME = avdHome;
+  process.env.STIM_HOME = join(avdHome, 'stim');
+  ensureConfig();
+  seedCreatedDevices();
+  process.env.ANDROID_AVD_HOME = join(avdHome, 'avd');
+  process.env.ANDROID_SDK_HOME = avdHome;
+  process.env.ANDROID_USER_HOME = join(avdHome, '.android');
+  process.env.ANDROID_EMULATOR_HOME = join(avdHome, '.android');
+  savedAndroidHome = process.env.ANDROID_HOME;
+  savedSdkRoot = process.env.ANDROID_SDK_ROOT;
+  process.env.ANDROID_HOME = join(tmpdir(), 'stim-test-no-sdk-here');
+  delete process.env.ANDROID_SDK_ROOT;
+});
+
+afterEach(() => {
+  for (const [key, value] of Object.entries(savedAvdRoots)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  rmSync(avdHome, { recursive: true, force: true });
+  if (savedAndroidHome === undefined) delete process.env.ANDROID_HOME;
+  else process.env.ANDROID_HOME = savedAndroidHome;
+  if (savedSdkRoot === undefined) delete process.env.ANDROID_SDK_ROOT;
+  else process.env.ANDROID_SDK_ROOT = savedSdkRoot;
+  resetExecutor();
+});
+
+interface IosExecutorOptions {
+  sims?: unknown[];
+  occupied?: string;
+  throwOn?: string | null;
+  /** Whether `simctl shutdown <udid>` actually moves the matching sim to Shutdown. Default true. */
+  shutdownSettles?: boolean;
+}
+
+function iosExecutor({ sims = [], occupied = '', throwOn = null, shutdownSettles = true }: IosExecutorOptions = {}) {
+  const calls: string[] = [];
+  const state = sims.map((sim) => ({ ...(sim as Record<string, unknown>) }));
+  const listJson = () =>
+    JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-26-5': state.map((sim) => ({
+          deviceTypeIdentifier: 'iphone-17',
+          ...sim,
+        })),
+      },
+    });
+  const answer = (cmd: string) => {
+    calls.push(cmd);
+    if (throwOn && cmd.includes(throwOn)) throw new Error('boom');
+    const shutdown = /simctl shutdown (\S+)/.exec(cmd);
+    if (shutdown && shutdownSettles) {
+      const sim = state.find((s) => s.udid === shutdown[1]);
+      if (sim) sim.state = 'Shutdown';
+    }
+    if (cmd.includes('simctl list devices --json')) return listJson();
+    if (cmd.includes('simctl list devicetypes --json')) {
+      return JSON.stringify({ devicetypes: [{ identifier: 'iphone-17', name: 'iPhone 17' }] });
+    }
+    if (/simctl spawn .* launchctl list/.test(cmd)) return occupied;
+    return '';
+  };
+  return {
+    calls,
+    run: answer,
+    runFile: (file: string, args: string[] = []) => answer([file, ...args].join(' ')),
+    runQuiet: answer,
+    runFileQuiet: (file: string, args: string[] = []) => answer([file, ...args].join(' ')),
+    spawn: () => {},
+  };
+}
+
+function fakeClock() {
+  let now = 0;
+  return {
+    now: () => now,
+    sleep: (ms: number) => {
+      now += ms;
+    },
+  };
+}
+
+const OWNED = { udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true };
+
+test('teardownOwnedIosSim shuts down and deletes an owned, unoccupied sim', async () => {
+  const exec = iosExecutor({ sims: [OWNED] });
+  setExecutor(exec);
+  const r = await teardownOwnedIosSim('U1', { del: true });
+  expect(r.status).toBe('torn-down');
+  expect(r.label).toBe('stim-app');
+  expect(exec.calls.some((c) => /simctl shutdown U1/.test(c))).toBeTruthy();
+  expect(exec.calls.some((c) => /simctl delete U1/.test(c))).toBeTruthy();
+});
+
+test('cancelling iOS teardown after shutdown prevents deletion and keeps its ledger', async () => {
+  const controller = new AbortController();
+  const reason = new Error('cancel after shutdown');
+  const operation: StimContext = {
+    home: join(avdHome, 'stim'),
+    cwd: avdHome,
+    projectRoot: avdHome,
+    buildCache: null,
+    runId: 'teardown-cancel',
+    env: { ...process.env },
+    signal: controller.signal,
+    output: () => {},
+  };
+  const exec = iosExecutor({ sims: [OWNED] });
+  const run = (file: string, args: string[] = []) => {
+    const result = exec.runFile(file, args);
+    if (args.includes('shutdown')) controller.abort(reason);
+    return result;
+  };
+  setExecutor({ ...exec, runFile: run, runFileQuiet: run });
+  await expect(teardownOwnedIosSim('U1', { del: true, operation })).rejects.toBe(reason);
+  expect(exec.calls).toContain('xcrun simctl shutdown U1');
+  expect(exec.calls).not.toContain('xcrun simctl delete U1');
+  expect(readCreatedDevices().ios).toContain('U1');
+});
+
+test('teardownOwnedIosSim shuts down WITHOUT deleting when del is false', async () => {
+  const exec = iosExecutor({ sims: [OWNED] });
+  setExecutor(exec);
+  const r = await teardownOwnedIosSim('U1', { del: false, shutdownClock: fakeClock() });
+  expect(r.status).toBe('torn-down');
+  expect(exec.calls.some((c) => /simctl shutdown U1/.test(c))).toBeTruthy();
+  expect(!exec.calls.some((c) => /simctl delete/.test(c))).toBeTruthy();
+});
+
+test('teardownOwnedIosSim reports failed, not torn-down, when the simulator never reaches Shutdown', async () => {
+  const exec = iosExecutor({ sims: [OWNED], shutdownSettles: false });
+  setExecutor(exec);
+  const r = await teardownOwnedIosSim('U1', { del: false, shutdownClock: fakeClock() });
+  expect(r.status).toBe('failed');
+  expect(r.label).toBe('stim-app');
+  expect(r.reason).toMatch(/still Booted after 2 shutdown attempts/);
+  expect(exec.calls.filter((c) => /simctl shutdown U1/.test(c))).toHaveLength(2);
+  expect(exec.calls.some((c) => /simctl delete/.test(c))).toBe(false);
+});
+
+test('waiting for a simulator to shut down leaves the event loop free', async () => {
+  setExecutor(iosExecutor({ sims: [OWNED], shutdownSettles: false }));
+  let now = 0;
+  let ticks = 0;
+  const timer = setInterval(() => (ticks += 1), 0);
+  const r = await teardownOwnedIosSim('U1', {
+    del: false,
+    shutdownClock: {
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      },
+    },
+  }).finally(() => clearInterval(timer));
+  expect(r.status).toBe('failed');
+  expect(ticks).toBeGreaterThan(10);
+});
+
+test('teardownOwnedIosSim refuses a sim renamed away from Stim ownership', async () => {
+  const exec = iosExecutor({ sims: [{ ...OWNED, name: 'My Real Sim' }] });
+  setExecutor(exec);
+  const r = await teardownOwnedIosSim('U1', { del: true });
+  expect(r.status).toBe('skipped');
+  expect(r.reason).toMatch(/not Stim-owned/);
+  expect(!exec.calls.some((c) => /simctl shutdown|simctl delete/.test(c))).toBeTruthy();
+});
+
+test('teardownOwnedIosSim reports missing without erroring', async () => {
+  setExecutor(iosExecutor({ sims: [] }));
+  expect(await teardownOwnedIosSim('U1', { del: true })).toEqual({ status: 'missing' });
+});
+
+test('teardownOwnedIosSim shuts down an owned sim without checking occupancy', async () => {
+  const exec = iosExecutor({
+    sims: [OWNED],
+    occupied: '\t123\t0\tUIKitApplication:com.example.thing.xctrunner[0x1][rb-legacy]\n',
+  });
+  setExecutor(exec);
+  const r = await teardownOwnedIosSim('U1', { del: false, shutdownClock: fakeClock() });
+  expect(r.status).toBe('torn-down');
+  expect(exec.calls.some((c) => /simctl shutdown U1/.test(c))).toBeTruthy();
+  expect(exec.calls.some((c) => /launchctl list/.test(c))).toBe(false);
+});
+
+test('teardownOwnedIosSim does not check occupancy or shut down a sim that is not owned', async () => {
+  const exec = iosExecutor({
+    sims: [{ ...OWNED, name: 'My Real Sim' }],
+    occupied: '\t123\t0\tUIKitApplication:com.callstack.agentdevice.runner.uitests.xctrunner[0x1][rb-legacy]\n',
+  });
+  setExecutor(exec);
+
+  const r = await teardownOwnedIosSim('U1', { del: false });
+
+  expect(r.kind).toBe('not-owned');
+  expect(exec.calls.some((c) => /launchctl list/.test(c))).toBe(false);
+  expect(exec.calls.some((c) => /simctl shutdown/.test(c))).toBe(false);
+});
+
+test('teardownOwnedIosSim deletes an occupied sim anyway, without needing force', async () => {
+  const exec = iosExecutor({
+    sims: [OWNED],
+    occupied: '\t123\t0\tUIKitApplication:com.example.thing.xctrunner[0x1][rb-legacy]\n',
+  });
+  setExecutor(exec);
+  const r = await teardownOwnedIosSim('U1', { del: true });
+  expect(r.status).toBe('torn-down');
+  expect(exec.calls.some((c) => /simctl delete U1/.test(c))).toBeTruthy();
+});
+
+test('teardownOwnedIosSim still refuses a sim that is not Stim-owned, even when deleting', async () => {
+  const exec = iosExecutor({ sims: [{ udid: 'U1', name: 'My iPhone', state: 'Booted', isAvailable: true }] });
+  setExecutor(exec);
+  const r = await teardownOwnedIosSim('U1', { del: true });
+  expect(r.status).toBe('skipped');
+  expect(r.kind).toBe('not-owned');
+  expect(!exec.calls.some((c) => /simctl shutdown|simctl delete/.test(c))).toBeTruthy();
+});
+
+test('teardownOwnedIosSim reports a failed delete rather than torn-down', async () => {
+  const exec = iosExecutor({ sims: [OWNED], throwOn: 'simctl delete' });
+  setExecutor(exec);
+  const r = await teardownOwnedIosSim('U1', { del: true });
+  expect(r.status).toBe('failed');
+  expect(r.reason).toMatch(/boom/);
+});
+
+test('teardownOwnedIosSim contains a failed simulator listing and touches nothing', async () => {
+  const exec = iosExecutor({ sims: [OWNED], throwOn: 'simctl list devices' });
+  setExecutor(exec);
+  const r = await teardownOwnedIosSim('U1', { del: true });
+  expect(r.status).toBe('failed');
+  expect(r.reason).toMatch(/boom/);
+  expect(exec.calls.some((c) => /simctl (shutdown|delete)/.test(c))).toBe(false);
+});
+
+test('teardownOwnedIosSim parks an owned simulator and clears its project claim', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
+  process.env.STIM_HOME = home;
+  seedCreatedDevices();
+  try {
+    const projectPath = '/tmp/pool-project';
+    upsertProject(projectPath, {
+      platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true } },
+    });
+    const calls: string[][] = [];
+    setExecutor({
+      run(cmd) {
+        if (cmd.includes('list devicetypes')) {
+          return JSON.stringify({ devicetypes: [{ identifier: 'iphone-17', name: 'iPhone 17' }] });
+        }
+        if (cmd.includes('list devices')) {
+          return JSON.stringify({
+            devices: {
+              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+                {
+                  udid: 'U1',
+                  name: 'stim-app',
+                  state: 'Shutdown',
+                  isAvailable: true,
+                  deviceTypeIdentifier: 'iphone-17',
+                  dataPath: join(home, 'device-data'),
+                },
+              ],
+            },
+          });
+        }
+        return '';
+      },
+      runFile(file, args = []) {
+        if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
+        calls.push([file, ...args]);
+        return '';
+      },
+      runQuiet: () => '',
+      runFileQuiet: () => '',
+      spawn: () => null,
+    });
+    const result = await teardownOwnedIosSim('U1', {
+      del: true,
+      park: { projectPath, max: 1, simslimManaged: true, appId: 'com.example.app', cacheKey: 'abc-debug-sim' },
+    });
+    expect(result.status).toBe('torn-down');
+    expect(result.parked?.name).toBe('stim-parked (iPhone 17 26.5) u1');
+    expect(calls.some((call) => call[1] === 'erase')).toBe(false);
+    const rename = calls.findIndex(
+      (call) => call.join(' ') === 'xcrun simctl rename U1 stim-parked (iPhone 17 26.5) u1',
+    );
+    expect(rename).toBeGreaterThan(calls.findIndex((call) => call.join(' ') === 'xcrun simctl shutdown U1'));
+    expect(getProject(projectPath)?.platforms?.ios).toBeUndefined();
+    expect(readParked('ios')).toEqual([
+      expect.objectContaining({
+        udid: 'U1',
+        simslimManaged: true,
+        bundleId: 'com.example.app',
+        cacheKey: 'abc-debug-sim',
+      }),
+    ]);
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+function withParkingHome<T>(body: (projectPath: string) => Promise<T>): Promise<T> {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
+  process.env.STIM_HOME = home;
+  seedCreatedDevices();
+  const projectPath = '/tmp/pool-project';
+  upsertProject(projectPath, { platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true } } });
+  return body(projectPath).finally(() => {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  });
+}
+
+test('teardownOwnedIosSim keeps a booted simulator booted when parking it with a grace period', () =>
+  withParkingHome(async (projectPath) => {
+    const exec = iosExecutor({ sims: [OWNED] });
+    setExecutor(exec);
+    const bootedUntil = new Date(Date.now() + 15 * 60_000).toISOString();
+    const result = await teardownOwnedIosSim('U1', {
+      del: true,
+      park: { projectPath, max: 1, appId: 'com.example.app', bootedUntil },
+    });
+    expect(result.parked?.name).toBe('stim-parked (iPhone 17 26.5) u1');
+    expect(exec.calls.some((call) => /simctl shutdown/.test(call))).toBe(false);
+    expect(exec.calls).toContain('xcrun simctl terminate U1 com.example.app');
+    expect(readParked('ios')).toEqual([expect.objectContaining({ udid: 'U1', bootedUntil })]);
+  }));
+
+test('teardownOwnedIosSim shuts a booted simulator down to park it when no grace period is given', () =>
+  withParkingHome(async (projectPath) => {
+    const exec = iosExecutor({ sims: [OWNED] });
+    setExecutor(exec);
+    await teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
+    expect(exec.calls).toContain('xcrun simctl shutdown U1');
+    expect(readParked('ios')[0]?.bootedUntil).toBeUndefined();
+  }));
+
+test('teardownOwnedIosSim shuts a kept-booted simulator down before deleting it when parking fails', () =>
+  withParkingHome(async (projectPath) => {
+    const exec = iosExecutor({ sims: [OWNED], throwOn: 'simctl rename' });
+    setExecutor(exec);
+    const bootedUntil = new Date(Date.now() + 15 * 60_000).toISOString();
+    const result = await teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1, bootedUntil } });
+    expect(result.parkFallback).toMatch(/boom/);
+    expect(exec.calls.indexOf('xcrun simctl delete U1')).toBeGreaterThan(
+      exec.calls.indexOf('xcrun simctl shutdown U1'),
+    );
+    expect(exec.calls).toContain('xcrun simctl shutdown U1');
+    expect(readParked('ios')).toEqual([]);
+  }));
+
+test('teardownOwnedIosSim parks a simulator that is already shut down without a booted mark, whatever the grace period', () =>
+  withParkingHome(async (projectPath) => {
+    const exec = iosExecutor({ sims: [{ ...OWNED, state: 'Shutdown' }] });
+    setExecutor(exec);
+    const bootedUntil = new Date(Date.now() + 15 * 60_000).toISOString();
+    const result = await teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1, bootedUntil } });
+    expect(result).toMatchObject({ status: 'torn-down', parked: { udid: 'U1' } });
+    expect(result.parkFallback).toBeUndefined();
+    expect(exec.calls.some((call) => /simctl delete/.test(call))).toBe(false);
+    expect(readParked('ios')[0]?.bootedUntil).toBeUndefined();
+  }));
+
+test('shutDownBootedParkedIosSim shuts the simulator down and keeps it parked without the booted mark', () =>
+  withParkingHome(async (projectPath) => {
+    const exec = iosExecutor({ sims: [OWNED] });
+    setExecutor(exec);
+    const bootedUntil = new Date(Date.now() + 15 * 60_000).toISOString();
+    await teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1, bootedUntil } });
+    const result = await shutDownBootedParkedIosSim('U1');
+    expect(result.status).toBe('torn-down');
+    expect(exec.calls).toContain('xcrun simctl shutdown U1');
+    const [record] = readParked('ios');
+    expect(record).toMatchObject({ udid: 'U1' });
+    expect(record?.bootedUntil).toBeUndefined();
+  }));
+
+test('teardownOwnedIosSim leaves a booted simulator booted for a deferred shutdown, ends its app and records the deadline', () =>
+  withParkingHome(async (projectPath) => {
+    const exec = iosExecutor({ sims: [OWNED] });
+    setExecutor(exec);
+    const until = new Date(Date.now() + 15 * 60_000).toISOString();
+    const result = await teardownOwnedIosSim('U1', {
+      workspace: projectPath,
+      deferShutdown: { until, slot: 'default', appId: 'com.example.app' },
+    });
+    expect(result).toMatchObject({ status: 'torn-down', deferredUntil: until });
+    expect(exec.calls.some((call) => /simctl shutdown/.test(call))).toBe(false);
+    expect(exec.calls).toContain('xcrun simctl terminate U1 com.example.app');
+    expect(readDeferredShutdowns(readWorkspaceState(projectPath))).toEqual({ ios: { udid: 'U1', until } });
+    expect(getProject(projectPath)?.platforms?.ios?.deviceUdid).toBe('U1');
+  }));
+
+test('a repeated deferral keeps the unexpired expiry of the first, so stop cannot extend the hold', () =>
+  withParkingHome(async (projectPath) => {
+    setExecutor(iosExecutor({ sims: [OWNED] }));
+    const first = new Date(Date.now() + 10 * 60_000).toISOString();
+    await teardownOwnedIosSim('U1', { workspace: projectPath, deferShutdown: { until: first, slot: 'default' } });
+    const later = new Date(Date.now() + 15 * 60_000).toISOString();
+    const result = await teardownOwnedIosSim('U1', {
+      workspace: projectPath,
+      deferShutdown: { until: later, slot: 'default' },
+    });
+    expect(result.deferredUntil).toBe(first);
+    expect(readDeferredShutdowns(readWorkspaceState(projectPath))).toEqual({ ios: { udid: 'U1', until: first } });
+  }));
+
+test('teardownOwnedIosSim shuts a simulator that is already shut down as before when a deferral is asked for', () =>
+  withParkingHome(async (projectPath) => {
+    const exec = iosExecutor({ sims: [{ ...OWNED, state: 'Shutdown' }] });
+    setExecutor(exec);
+    const until = new Date(Date.now() + 15 * 60_000).toISOString();
+    const result = await teardownOwnedIosSim('U1', {
+      workspace: projectPath,
+      deferShutdown: { until, slot: 'default' },
+    });
+    expect(result).toMatchObject({ status: 'torn-down' });
+    expect(result.deferredUntil).toBeUndefined();
+    expect(readDeferredShutdowns(readWorkspaceState(projectPath))).toEqual({});
+  }));
+
+test("teardownOwnedIosSim carries the workspace record's scheme approvals into the parked record", async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
+  process.env.STIM_HOME = home;
+  seedCreatedDevices();
+  try {
+    const projectPath = '/tmp/pool-project';
+    const schemeApprovals = ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'];
+    upsertProject(projectPath, {
+      platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true, schemeApprovals } },
+    });
+    setExecutor({
+      run(cmd) {
+        if (cmd.includes('list devicetypes')) {
+          return JSON.stringify({ devicetypes: [{ identifier: 'iphone-17', name: 'iPhone 17' }] });
+        }
+        if (cmd.includes('list devices')) {
+          return JSON.stringify({
+            devices: {
+              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+                {
+                  udid: 'U1',
+                  name: 'stim-app',
+                  state: 'Shutdown',
+                  isAvailable: true,
+                  deviceTypeIdentifier: 'iphone-17',
+                  dataPath: join(home, 'device-data'),
+                },
+              ],
+            },
+          });
+        }
+        return '';
+      },
+      runFile(file, args = []) {
+        if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
+        return '';
+      },
+      runQuiet: () => '',
+      runFileQuiet: () => '',
+      spawn: () => null,
+    });
+    const result = await teardownOwnedIosSim('U1', {
+      del: true,
+      park: { projectPath, max: 1, simslimManaged: true, appId: 'com.example.app', cacheKey: 'abc-debug-sim' },
+    });
+    expect(result.status).toBe('torn-down');
+    expect(readParked('ios')).toEqual([expect.objectContaining({ udid: 'U1', schemeApprovals })]);
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('a failed overflow eviction retains its parked ownership record', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
+  process.env.STIM_HOME = home;
+  seedCreatedDevices();
+  try {
+    const projectPath = '/tmp/pool-project';
+    upsertProject('/tmp/old-project', {
+      platforms: { ios: { deviceUdid: 'U0', deviceName: 'stim-old', owned: true } },
+    });
+    parkSim({
+      platform: 'ios',
+      projectPath: '/tmp/old-project',
+      max: 1,
+      record: {
+        udid: 'U0',
+        name: 'stim-parked (iPhone 17 26.5) u0',
+        deviceTypeIdentifier: 'iphone-17',
+        runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+        parkedAt: '2026-09-01T00:00:00.000Z',
+        simslimManaged: false,
+      },
+    });
+    upsertProject(projectPath, {
+      platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true } },
+    });
+    let shutdown = false;
+    setExecutor({
+      run(cmd) {
+        if (cmd.includes('list devicetypes')) {
+          return JSON.stringify({ devicetypes: [{ identifier: 'iphone-17', name: 'iPhone 17' }] });
+        }
+        if (cmd.includes('list devices')) {
+          return JSON.stringify({
+            devices: {
+              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+                {
+                  udid: 'U0',
+                  name: 'stim-parked (iPhone 17 26.5) u0',
+                  state: 'Shutdown',
+                  isAvailable: true,
+                  deviceTypeIdentifier: 'iphone-17',
+                },
+                {
+                  udid: 'U1',
+                  name: 'stim-app',
+                  state: shutdown ? 'Shutdown' : 'Booted',
+                  isAvailable: true,
+                  deviceTypeIdentifier: 'iphone-17',
+                },
+              ],
+            },
+          });
+        }
+        return '';
+      },
+      runFile(_file, args = []) {
+        if (_file === 'xcrun' && args[1] === 'list') return this.run!([_file, ...args].join(' '));
+        if (args[1] === 'delete' && args[2] === 'U0') throw new Error('simctl busy');
+        return '';
+      },
+      runFileQuiet(_file, args = []) {
+        if (args.join(' ') === 'simctl shutdown U1') shutdown = true;
+        return '';
+      },
+      spawn: () => null,
+    });
+
+    const result = await teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
+
+    expect(result.status).toBe('torn-down');
+    expect(result.evictionFailures?.join('\n')).toMatch(/simctl busy/);
+    expect(
+      readParked('ios')
+        .map((record) => record.udid)
+        .toSorted(),
+    ).toEqual(['U0', 'U1']);
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('teardownOwnedIosSim falls back to deletion when parking fails', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
+  process.env.STIM_HOME = home;
+  seedCreatedDevices();
+  try {
+    const projectPath = '/tmp/pool-project';
+    upsertProject(projectPath, {
+      platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true } },
+    });
+    const calls: string[] = [];
+    setExecutor({
+      run(cmd) {
+        calls.push(cmd);
+        if (cmd.includes('list devicetypes')) throw new Error('device types unavailable');
+        if (cmd.includes('list devices')) {
+          return JSON.stringify({
+            devices: {
+              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+                {
+                  udid: 'U1',
+                  name: 'stim-app',
+                  state: 'Shutdown',
+                  isAvailable: true,
+                  deviceTypeIdentifier: 'iphone-17',
+                },
+              ],
+            },
+          });
+        }
+        return '';
+      },
+      runFile(file, args = []) {
+        return this.run!([file, ...args].join(' '));
+      },
+      runQuiet: () => '',
+      runFileQuiet: () => '',
+      spawn: () => null,
+    });
+    const result = await teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
+    expect(result.status).toBe('torn-down');
+    expect(result.parkFallback).toMatch(/device types unavailable/);
+    expect(calls).toContain('xcrun simctl delete U1');
+    expect(readParked('ios')).toEqual([]);
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('teardownOwnedIosSim deletes instead of parking when the rename fails', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
+  process.env.STIM_HOME = home;
+  seedCreatedDevices();
+  try {
+    const projectPath = '/tmp/pool-project';
+    upsertProject(projectPath, {
+      platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true } },
+    });
+    const exec = iosExecutor({ sims: [{ ...OWNED, state: 'Shutdown' }], throwOn: 'simctl rename' });
+    setExecutor(exec);
+
+    const result = await teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
+
+    expect(result.status).toBe('torn-down');
+    expect(result.parkFallback).toMatch(/boom/);
+    expect(exec.calls).toContain('xcrun simctl delete U1');
+    expect(readParked('ios')).toEqual([]);
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('parking fallback re-resolves ownership immediately before deletion', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
+  process.env.STIM_HOME = home;
+  seedCreatedDevices();
+  try {
+    const projectPath = '/tmp/pool-project';
+    upsertProject(projectPath, {
+      platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true } },
+    });
+    let lists = 0;
+    const calls: string[] = [];
+    setExecutor({
+      run(cmd) {
+        calls.push(cmd);
+        if (cmd.includes('list devices')) {
+          lists++;
+          const name = lists < 3 ? 'stim-app' : 'My iPhone';
+          return JSON.stringify({
+            devices: {
+              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+                {
+                  udid: 'U1',
+                  name,
+                  state: lists === 1 ? 'Booted' : 'Shutdown',
+                  isAvailable: true,
+                  deviceTypeIdentifier: 'iphone-17',
+                },
+              ],
+            },
+          });
+        }
+        if (cmd.includes('list devicetypes')) throw new Error('device types unavailable');
+        return '';
+      },
+      runFile(file, args = []) {
+        return this.run!([file, ...args].join(' '));
+      },
+      runQuiet: () => '',
+      runFileQuiet: () => '',
+      spawn: () => null,
+    });
+
+    const result = await teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
+
+    expect(result.status).toBe('failed');
+    expect(result.reason).toMatch(/not a Stim-owned sim/);
+    expect(calls.some((call) => call.includes('simctl erase'))).toBe(false);
+    expect(calls.some((call) => call === 'xcrun simctl delete U1')).toBe(false);
+    expect(getProject(projectPath)?.platforms?.ios?.deviceUdid).toBe('U1');
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('teardownOwnedIosSim does not park a simulator that remains booted', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
+  process.env.STIM_HOME = home;
+  seedCreatedDevices();
+  try {
+    const projectPath = '/tmp/pool-project';
+    upsertProject(projectPath, {
+      platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true } },
+    });
+    const calls: string[] = [];
+    setExecutor({
+      run(cmd) {
+        calls.push(cmd);
+        if (cmd.includes('list devices')) {
+          return JSON.stringify({
+            devices: {
+              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+                {
+                  udid: 'U1',
+                  name: 'stim-app',
+                  state: 'Booted',
+                  isAvailable: true,
+                  deviceTypeIdentifier: 'iphone-17',
+                },
+              ],
+            },
+          });
+        }
+        return '';
+      },
+      runFile(file, args = []) {
+        if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
+        calls.push([file, ...args].join(' '));
+        return '';
+      },
+      runFileQuiet(file, args = []) {
+        calls.push([file, ...args].join(' '));
+        return '';
+      },
+      spawn: () => null,
+    });
+
+    const result = await teardownOwnedIosSim('U1', {
+      del: true,
+      park: { projectPath, max: 1 },
+      shutdownClock: fakeClock(),
+    });
+
+    expect(result.status).toBe('torn-down');
+    expect(result.parkFallback).toMatch(/still Booted after 2 shutdown attempts/);
+    expect(calls.filter((call) => call === 'xcrun simctl shutdown U1')).toHaveLength(2);
+    expect(calls.some((call) => call.includes('simctl erase'))).toBe(false);
+    expect(calls.some((call) => call.includes('simctl rename'))).toBe(false);
+    expect(calls).toContain('xcrun simctl delete U1');
+    expect(readParked('ios')).toEqual([]);
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('teardownOwnedIosSim waits for a lagging shutdown before parking the simulator', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
+  process.env.STIM_HOME = home;
+  seedCreatedDevices();
+  try {
+    const projectPath = '/tmp/pool-project';
+    upsertProject(projectPath, {
+      platforms: { ios: { deviceUdid: 'U1', deviceName: 'stim-app', owned: true } },
+    });
+    const calls: string[] = [];
+    let bootedReportsLeft = 0;
+    setExecutor({
+      run(cmd) {
+        if (cmd.includes('list devicetypes')) {
+          return JSON.stringify({ devicetypes: [{ identifier: 'iphone-17', name: 'iPhone 17' }] });
+        }
+        if (cmd.includes('list devices')) {
+          const state = bootedReportsLeft > 0 ? 'Booted' : 'Shutdown';
+          if (bootedReportsLeft > 0) bootedReportsLeft--;
+          return JSON.stringify({
+            devices: {
+              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
+                { udid: 'U1', name: 'stim-app', state, isAvailable: true, deviceTypeIdentifier: 'iphone-17' },
+              ],
+            },
+          });
+        }
+        return '';
+      },
+      runFile(file, args = []) {
+        if (file === 'xcrun' && args[1] === 'list') return this.run!([file, ...args].join(' '));
+        calls.push([file, ...args].join(' '));
+        if (args[1] === 'rename' && bootedReportsLeft > 0) {
+          throw new Error('Unable to rename device in current state: Booted');
+        }
+        return '';
+      },
+      runFileQuiet(file, args = []) {
+        const cmd = [file, ...args].join(' ');
+        calls.push(cmd);
+        if (cmd === 'xcrun simctl shutdown U1') bootedReportsLeft = 3;
+        return '';
+      },
+      spawn: () => null,
+    });
+
+    const result = await teardownOwnedIosSim('U1', {
+      del: true,
+      park: { projectPath, max: 1 },
+      shutdownClock: fakeClock(),
+    });
+
+    expect(result.parkFallback).toBeUndefined();
+    expect(result).toMatchObject({ status: 'torn-down', parked: { udid: 'U1' } });
+    expect(calls.some((call) => call.startsWith('xcrun simctl rename U1 stim-parked'))).toBe(true);
+    expect(calls).not.toContain('xcrun simctl delete U1');
+    expect(readParked('ios')).toMatchObject([{ udid: 'U1' }]);
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+function seedParkedSim(bootedUntil?: string): void {
+  const config = ensureConfig();
+  config.parked = {
+    ios: [
+      {
+        udid: 'U1',
+        name: 'stim-parked (iPhone 17 26.5) u1',
+        deviceTypeIdentifier: 'iphone-17',
+        runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+        parkedAt: '2026-09-01T00:00:00.000Z',
+        ...(bootedUntil ? { bootedUntil } : {}),
+        simslimManaged: false,
+        bundleId: 'com.example.app',
+        cacheKey: 'abc-debug-sim',
+        schemeApprovals: ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'],
+      },
+    ],
+  };
+  saveConfig(config);
+}
+
+test('eraseParkedIosSim erases a shut-down parked simulator and keeps it parked without its app', async () => {
+  seedParkedSim();
+  const exec = iosExecutor({
+    sims: [{ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1', state: 'Shutdown', isAvailable: true }],
+  });
+  setExecutor(exec);
+
+  expect((await eraseParkedIosSim('U1')).status).toBe('torn-down');
+
+  expect(exec.calls).toContain('xcrun simctl erase U1');
+  const [record] = readParked('ios');
+  expect(record).toMatchObject({ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1' });
+  expect(record).not.toHaveProperty('bundleId');
+  expect(record).not.toHaveProperty('cacheKey');
+  expect(record).not.toHaveProperty('schemeApprovals');
+});
+
+test('eraseParkedIosSim leaves a booted parked simulator and its record alone', async () => {
+  seedParkedSim();
+  const exec = iosExecutor({
+    sims: [{ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1', state: 'Booted', isAvailable: true }],
+  });
+  setExecutor(exec);
+
+  const result = await eraseParkedIosSim('U1');
+
+  expect(result).toMatchObject({ status: 'failed', reason: expect.stringMatching(/Booted, not Shutdown/) });
+  expect(exec.calls).not.toContain('xcrun simctl erase U1');
+  expect(readParked('ios')).toEqual([
+    expect.objectContaining({
+      bundleId: 'com.example.app',
+      schemeApprovals: ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'],
+    }),
+  ]);
+});
+
+test('eraseParkedIosSim shuts down a parked simulator kept booted before it erases it', async () => {
+  seedParkedSim(new Date(Date.now() + 60_000).toISOString());
+  const exec = iosExecutor({
+    sims: [{ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1', state: 'Booted', isAvailable: true }],
+  });
+  setExecutor(exec);
+
+  expect((await eraseParkedIosSim('U1')).status).toBe('torn-down');
+
+  expect(exec.calls.indexOf('xcrun simctl shutdown U1')).toBeGreaterThanOrEqual(0);
+  expect(exec.calls.indexOf('xcrun simctl erase U1')).toBeGreaterThan(exec.calls.indexOf('xcrun simctl shutdown U1'));
+});
+
+test('a failed simctl erase keeps the parked simulator without its app, cache key, or scheme approvals', async () => {
+  seedParkedSim();
+  const exec = iosExecutor({
+    sims: [{ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1', state: 'Shutdown', isAvailable: true }],
+    throwOn: 'simctl erase U1',
+  });
+  setExecutor(exec);
+
+  expect((await eraseParkedIosSim('U1')).status).toBe('failed');
+
+  const [record] = readParked('ios');
+  expect(record).toMatchObject({ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1' });
+  expect(record).not.toHaveProperty('deletionClaim');
+  expect(record).not.toHaveProperty('bundleId');
+  expect(record).not.toHaveProperty('cacheKey');
+  expect(record).not.toHaveProperty('schemeApprovals');
+});
+
+interface AndroidExecutorOptions {
+  avds?: string[];
+  adb?: string;
+  avdName?: string | null;
+  throwOn?: string | null;
+}
+
+function androidExecutor({ avds = [], adb = '', avdName = null, throwOn = null }: AndroidExecutorOptions = {}) {
+  const calls: string[] = [];
+  const answer = (cmd: string) => {
+    calls.push(cmd);
+    if (throwOn && cmd.includes(throwOn)) throw new Error('boom');
+    if (cmd === 'emulator -list-avds') return avds.join('\n');
+    if (cmd === 'adb devices') return adb;
+    if (/emu avd name/.test(cmd)) return avdName ? `${avdName}\nOK` : '';
+    return '';
+  };
+  return {
+    calls,
+    run: answer,
+    runFile: (file: string, args: string[] = []) => answer([file, ...args].join(' ')),
+    runQuiet: answer,
+    runFileQuiet: (file: string, args: string[] = []) => answer([file, ...args].join(' ')),
+    spawn: () => {},
+  };
+}
+
+describe.skipIf(process.platform === 'win32')('Android teardown cancellation', () => {
+  test.each([false, true])(
+    'stale Android session revalidation drains its probe or retains the AVD claim with cleanup refusal=%s',
+    async (unavailable) => {
+      resetExecutor();
+      const real = getExecutor().runFileAsync.bind(getExecutor());
+      const fake = androidExecutor({ avds: ['stim-app'] });
+      const controller = new AbortController();
+      const operation = testContext({ cwd: avdHome, projectRoot: avdHome, signal: controller.signal });
+      let owned: { pid: number; processToken: string } | undefined;
+      let handles: ClaimHandle[] = [];
+      let observed: number | undefined;
+      let closed = Promise.resolve();
+      const inspect = vi
+        .spyOn(identities, 'inspectProcessIdentity')
+        .mockImplementation((record) =>
+          unavailable && owned && record?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(record),
+        );
+      setExecutor({
+        ...fake,
+        findExecutable: () => 'fixture-agent-device',
+        runFileAsync: async (file, args, options) => {
+          if (file === 'agent-device')
+            return JSON.stringify({
+              success: true,
+              data: {
+                sessions: [
+                  { name: 'stale', platform: 'android', id: 'emulator-5554', device: 'stim-app', createdAt: 1 },
+                ],
+              },
+            });
+          if (file !== 'adb' || args[0] !== 'devices') return fake.runFile(file, args);
+          return real(process.execPath, ['-e', 'console.log("ready");setInterval(()=>{},1000)'], {
+            ...options,
+            timeoutMs: 250,
+            onSpawn: (child) => {
+              options.onSpawn?.(child);
+              const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+              if (child.pid === undefined || !birth?.ok) throw new Error('The adb fixture child has no identity');
+              owned = { pid: child.pid, processToken: birth.token };
+              handles = [...operationState(operation).declaring];
+              observed = handles[0] ? readClaimSet(handles[0].root).live[0]?.child?.pid : undefined;
+              closed = new Promise<void>((resolve) => child.once('close', resolve));
+              if (!unavailable) child.stdout?.once('data', () => controller.abort());
+            },
+          });
+        },
+      });
+      try {
+        await expect(
+          withAmbientContext(operation, () =>
+            teardownOwnedAvd('stim-app', {
+              operation,
+              del: true,
+              resolveAvd: () => ({ notRunning: true }),
+              waitForShutdown: async () => {},
+            }),
+          ),
+        ).rejects.toMatchObject(unavailable ? { code: 'STIM_CLAIM_UNAVAILABLE' } : { name: 'AbortError' });
+        if (!owned) throw new Error('The stale session probe did not start');
+        expect(observed).toBe(owned.pid);
+        expect(inspectProcessIdentity(owned)).toBe(unavailable ? 'same' : 'gone');
+        expect(readCreatedDevices().android.has('stim-app')).toBe(true);
+        expect(fake.calls.some((call) => call.includes('delete avd'))).toBe(false);
+        for (const handle of handles)
+          expect(readClaimSet(handle.root).live.map((holder) => holder.child?.pid)).toEqual(
+            unavailable ? [owned.pid] : [],
+          );
+      } finally {
+        inspect.mockRestore();
+        controller.abort();
+        if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+        await closed;
+        expect(owned ? await waitForProcessExit(owned, 5000) : true).toBe(true);
+        for (const handle of handles) releaseClaim(handle);
+      }
+    },
+  );
+
+  test.each(['registered', 'unregistered'])(
+    'the final stopped-AVD check yields so cancellation prevents deletion of %s data',
+    async (registration) => {
+      resetExecutor();
+      const executor = getExecutor();
+      const realSync = executor.runFileQuiet.bind(executor);
+      const realAsync = executor.runFileAsync.bind(executor);
+      const storage = process.env.ANDROID_AVD_HOME;
+      if (!storage) throw new Error('The fixture AVD home is missing');
+      const directory = join(storage, 'stim-app.avd');
+      mkdirSync(directory, { recursive: true });
+      if (registration === 'registered') writeFileSync(join(storage, 'stim-app.ini'), `path=${directory}\n`);
+      else writeFileSync(join(directory, 'config.ini'), 'disk.dataPartition.size=8589934592\n');
+      const fake = androidExecutor({ avds: ['stim-app'] });
+      let probing = false;
+      setExecutor({
+        ...fake,
+        findExecutable: () => null,
+        runFileQuiet: (file, args, options) => {
+          if (file !== 'ps') return fake.runFileQuiet(file, args);
+          probing = true;
+          try {
+            return realSync(process.execPath, ['-e', 'setTimeout(()=>{},800)'], options);
+          } finally {
+            probing = false;
+          }
+        },
+        runFileAsync: async (file, args, options) => {
+          if (file !== 'ps') return fake.runFile(file, args);
+          probing = true;
+          try {
+            return await realAsync(process.execPath, ['-e', 'setTimeout(()=>{},800)'], options);
+          } finally {
+            probing = false;
+          }
+        },
+      });
+      const controller = new AbortController();
+      const operation = testContext({ cwd: avdHome, projectRoot: avdHome, signal: controller.signal });
+      const pending = withAmbientContext(operation, () =>
+        teardownOwnedAvd('stim-app', {
+          operation,
+          del: true,
+          resolveAvd: () => (registration === 'registered' ? { notRunning: true } : { missing: true }),
+          waitForShutdown: async () => {},
+        }),
+      );
+      const settled = pending.catch((error: unknown) => error);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        expect(probing).toBe(true);
+        controller.abort();
+        expect(await settled).toMatchObject({ name: 'AbortError' });
+        expect(fake.calls.some((call) => call.includes('delete avd'))).toBe(false);
+        expect(readCreatedDevices().android.has('stim-app')).toBe(true);
+      } finally {
+        controller.abort();
+        await settled;
+      }
+    },
+  );
+});
+
+test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', async () => {
+  const exec = androidExecutor({
+    avds: ['stim-app'],
+    adb: 'List of devices attached\nemulator-5554\tdevice\n',
+    avdName: 'stim-app',
+  });
+  const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5554' }, { notRunning: true as const }];
+  setExecutor(exec);
+  const r = await teardownOwnedAvd('stim-app', {
+    del: true,
+    waitForShutdown: (_avdName, shutdown) => shutdown!(60_000),
+    assertStopped: () => {},
+    resolveAvd: () => resolutions.shift()!,
+  });
+  expect(r.status).toBe('torn-down');
+  expect(exec.calls.some((c) => /emu kill/.test(c))).toBeTruthy();
+  expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeTruthy();
+  expect(exec.calls.findIndex((c) => /emu kill/.test(c))).toBeLessThan(
+    exec.calls.findIndex((c) => /delete avd -n/.test(c)),
+  );
+});
+
+test.each(['emulator -list-avds', 'adb devices'])(
+  'teardown retains ownership and permits recovery when %s times out',
+  async (blocked) => {
+    const fake = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
+    const before = readCreatedDevices();
+    const onRemoved = vi.fn<() => void>();
+    const shutdown = vi.fn<() => void>();
+    const inventory = (file: string, args: string[]) => {
+      const command = [file, ...args].join(' ');
+      if (command === blocked) throw new Error(`Command timed out: ${command}`);
+      return fake.runFile(file, args);
+    };
+    setExecutor({
+      ...fake,
+      run: (command) => {
+        const [file, ...args] = command.split(' ');
+        return inventory(file!, args);
+      },
+      runFile: inventory,
+    });
+    const result = await teardownOwnedAvd('stim-app', { del: true, onRemoved, waitForShutdown: shutdown });
+    expect(result.status).toBe('failed');
+    expect(result.reason).toMatch(/Command timed out/);
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(onRemoved).not.toHaveBeenCalled();
+    expect(fake.calls.some((command) => /emu kill|delete avd/.test(command))).toBe(false);
+    expect(readCreatedDevices()).toEqual(before);
+    setExecutor(fake);
+    expect((await teardownOwnedAvd('stim-app', { waitForShutdown: shutdown })).status).toBe('torn-down');
+    expect(shutdown).toHaveBeenCalledOnce();
+  },
+);
+
+test('an unavailable post-shutdown inventory retains the owned AVD and its ledger', async () => {
+  const exec = androidExecutor({
+    avds: ['stim-app'],
+    adb: 'List of devices attached\nemulator-5554\tdevice\n',
+    avdName: 'stim-app',
+  });
+  const repo = join(avdHome, 'repo');
+  const workspace = join(repo, 'app');
+  mkdirSync(workspace, { recursive: true });
+  const before = readCreatedDevices();
+  const onRemoved = vi.fn<() => void>();
+  let stopped = false;
+  const inventory = (file: string, args: string[] = []) => {
+    if (file === 'git' && args.includes('--show-toplevel')) return repo;
+    if (file === 'agent-device') return JSON.stringify({ success: true, data: { sessions: [] } });
+    if (stopped && file === 'adb' && args[0] === 'devices') {
+      throw new Error('Command timed out: adb devices');
+    }
+    return exec.runFile(file, args);
+  };
+  setExecutor({
+    ...exec,
+    findExecutable: () => '/bin/agent-device',
+    runFileQuiet: () => null,
+    run: (command) => {
+      const [file, ...args] = command.split(' ');
+      return inventory(file!, args);
+    },
+    runFile: inventory,
+  });
+  const shutdown = vi.fn<() => void>(() => {
+    stopped = true;
+  });
+  const result = await teardownOwnedAvd('stim-app', { del: true, workspace, onRemoved, waitForShutdown: shutdown });
+  expect(result.status).toBe('failed');
+  expect(result.reason).toMatch(/Command timed out/);
+  expect(shutdown).toHaveBeenCalledOnce();
+  expect(onRemoved).not.toHaveBeenCalled();
+  expect(exec.calls.some((command) => /delete avd|agent-device close/.test(command))).toBe(false);
+  expect(readCreatedDevices()).toEqual(before);
+});
+
+test('teardownOwnedAvd refuses an AVD that this Stim home did not record', async () => {
+  const exec = androidExecutor({ avds: ['Pixel_6_API_34'], adb: 'List of devices attached\n' });
+  setExecutor(exec);
+  const r = await teardownOwnedAvd('Pixel_6_API_34', { del: true });
+  expect(r.status).toBe('skipped');
+  expect(!exec.calls.some((c) => /emu kill|avdmanager delete/.test(c))).toBeTruthy();
+});
+
+test('teardownOwnedAvd reports missing for an AVD that no longer exists', async () => {
+  setExecutor(androidExecutor({ avds: [], adb: 'List of devices attached\n' }));
+  expect((await teardownOwnedAvd('stim-gone', { del: true })).status).toEqual('missing');
+});
+
+test('teardownOwnedAvd contains a throw instead of propagating it', async () => {
+  setExecutor(
+    androidExecutor({
+      avds: ['stim-app'],
+      adb: 'List of devices attached\nemulator-5554\tdevice\n',
+      avdName: 'stim-app',
+      throwOn: 'delete avd',
+    }),
+  );
+  const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5554' }, { notRunning: true as const }];
+  const r = await teardownOwnedAvd('stim-app', {
+    del: true,
+    waitForShutdown: (_avdName, shutdown) => shutdown!(60_000),
+    assertStopped: () => {},
+    resolveAvd: () => resolutions.shift()!,
+  });
+  expect(r.status).toBe('failed');
+  expect(r.reason).toMatch(/boom/);
+});
+
+test('teardownOwnedAvd does not delete an AVD when emulator shutdown times out', async () => {
+  const exec = androidExecutor({
+    avds: ['stim-app'],
+    adb: 'List of devices attached\nemulator-5554\tdevice\n',
+    avdName: 'stim-app',
+  });
+  setExecutor(exec);
+
+  const r = await teardownOwnedAvd('stim-app', {
+    del: true,
+    waitForShutdown: async (_avdName, shutdown) => {
+      await shutdown!(60_000);
+      throw new Error('shutdown timed out');
+    },
+  });
+
+  expect(r.status).toBe('failed');
+  expect(r.reason).toMatch(/shutdown timed out/);
+  expect(exec.calls.some((c) => /emu kill/.test(c))).toBeTruthy();
+  expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeFalsy();
+});
+
+test('teardownOwnedAvd (stop, del false) reports failed instead of torn-down when adb cannot shut the emulator down', async () => {
+  const exec = androidExecutor({
+    avds: ['stim-app'],
+    adb: 'List of devices attached\nemulator-5554\tdevice\n',
+    avdName: 'stim-app',
+  });
+  setExecutor(exec);
+
+  const r = await teardownOwnedAvd('stim-app', {
+    del: false,
+    waitForShutdown: async (_avdName, shutdown) => {
+      await shutdown!(60_000);
+      throw new Error('Owned AVD stim-app did not finish shutting down within 60s.');
+    },
+  });
+
+  expect(r.status).toBe('failed');
+  expect(r.reason).toMatch(/did not finish shutting down/);
+  expect(exec.calls.some((c) => /emu kill/.test(c))).toBeTruthy();
+});
+
+test('teardownOwnedAvd stops an AVD that adb cannot resolve without a console command, and refuses when it stays', async () => {
+  const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
+  setExecutor(exec);
+  const consoleShutdowns: unknown[] = [];
+
+  const r = await teardownOwnedAvd('stim-app', {
+    del: true,
+    waitForShutdown: (_avdName, shutdown) => {
+      consoleShutdowns.push(shutdown);
+      throw new Error('live emulator process');
+    },
+  });
+
+  expect(consoleShutdowns).toEqual([null]);
+
+  expect(r.status).toBe('failed');
+  expect(r.reason).toMatch(/live emulator process/);
+  expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeFalsy();
+});
+
+test('teardownOwnedAvd refuses deletion when the AVD restarts after shutdown', async () => {
+  const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
+  const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5554' }, { serial: 'emulator-5556' }];
+  setExecutor(exec);
+
+  const r = await teardownOwnedAvd('stim-app', {
+    del: true,
+    waitForShutdown: () => {},
+    resolveAvd: () => resolutions.shift()!,
+  });
+
+  expect(r.status).toBe('failed');
+  expect(r.reason).toMatch(/started again before deletion/);
+  expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeFalsy();
+});
+
+test('teardownOwnedAvd rechecks the process lock immediately before deletion', async () => {
+  const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
+  const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5554' }, { notRunning: true as const }];
+  setExecutor(exec);
+
+  const r = await teardownOwnedAvd('stim-app', {
+    del: true,
+    waitForShutdown: () => {},
+    resolveAvd: () => resolutions.shift()!,
+    assertStopped: () => {
+      throw new Error('new live emulator process');
+    },
+  });
+
+  expect(r.status).toBe('failed');
+  expect(r.reason).toMatch(/new live emulator process/);
+  expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeFalsy();
+});
+
+test('ownership skip outcomes carry a machine-readable kind', async () => {
+  setExecutor(iosExecutor({ sims: [{ ...OWNED, name: 'My Real Sim' }] }));
+  expect((await teardownOwnedIosSim('U1', { del: true })).kind).toBe('not-owned');
+  resetExecutor();
+
+  setExecutor(androidExecutor({ avds: ['Pixel_6'], adb: 'List of devices attached\n' }));
+  expect((await teardownOwnedAvd('Pixel_6', { del: true })).kind).toBe('not-owned');
+});
+
+test('iOS session close failure warns but shutdown still follows', async () => {
+  const exec = iosExecutor({ sims: [OWNED] });
+  const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  setExecutor({
+    ...exec,
+    findExecutable: () => '/bin/agent-device',
+    runQuiet: (command) => exec.runQuiet(command),
+    runFile: (file, args) => {
+      if (file !== 'agent-device') return exec.runFile(file, args);
+      exec.calls.push([file, ...args].join(' '));
+      if (args[0] === 'close') throw new Error('close timed out');
+      return JSON.stringify({
+        success: true,
+        data: { sessions: [{ name: 'ui-task', platform: 'ios', device_udid: 'U1', id: 'U1', createdAt: 1 }] },
+      });
+    },
+  });
+  try {
+    expect((await teardownOwnedIosSim('U1')).status).toBe('torn-down');
+    const close = exec.calls.findIndex((command) => command.startsWith('agent-device close'));
+    expect(close).toBeGreaterThan(-1);
+    expect(close).toBeLessThan(exec.calls.findIndex((command) => command.includes('simctl shutdown')));
+    expect(write).toHaveBeenCalledWith(expect.stringContaining('could not close agent-device session'));
+  } finally {
+    write.mockRestore();
+  }
+});
+
+test('iOS ownership loss during session inventory prevents close and shutdown', async () => {
+  const exec = iosExecutor({ sims: [OWNED] });
+  const renamed = iosExecutor({ sims: [{ ...OWNED, name: 'User simulator' }] });
+  let listed = false;
+  setExecutor({
+    ...exec,
+    findExecutable: () => '/bin/agent-device',
+    runQuiet: (command) => exec.runQuiet(command),
+    runFile: (file, args) => {
+      if (file !== 'agent-device') return (listed ? renamed : exec).runFile(file, args);
+      exec.calls.push([file, ...args].join(' '));
+      listed = true;
+      return JSON.stringify({
+        success: true,
+        data: { sessions: [{ name: 'ui-task', platform: 'ios', device_udid: 'U1', id: 'U1', createdAt: 1 }] },
+      });
+    },
+  });
+  expect((await teardownOwnedIosSim('U1')).kind).toBe('not-owned');
+  expect(exec.calls.some((command) => /agent-device close|simctl shutdown/.test(command))).toBe(false);
+});
+
+test('Android serial reuse before shutdown keeps the device', async () => {
+  const exec = androidExecutor({ avds: ['stim-app'] });
+  const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5556' }];
+  setExecutor(exec);
+  const result = await teardownOwnedAvd('stim-app', { resolveAvd: () => resolutions.shift()! });
+  expect(result.status).toBe('failed');
+  expect(result.reason).toMatch(/changed before shutdown/);
+  expect(exec.calls.some((command) => /emu kill|delete avd/.test(command))).toBe(false);
+});
+
+test('a stopped AVD closes its stale sessions unless another device now holds their serial', async () => {
+  const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\nemulator-5556\tdevice\n' });
+  const session = { name: 'stale', platform: 'android', device: 'stim-app', id: 'emulator-5554', createdAt: 1 };
+  const sessions = [
+    { ...session, name: 'reused', id: 'emulator-5556' },
+    session,
+    { ...session, name: 'other-avd', device: 'stim-other' },
+  ];
+  const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  setExecutor({
+    ...exec,
+    findExecutable: () => '/bin/agent-device',
+    runFile: (file, args) => {
+      if (file !== 'agent-device') return exec.runFile(file, args);
+      exec.calls.push([file, ...args].join(' '));
+      if (args[0] === 'close') return '{"success":true}';
+      return JSON.stringify({ success: true, data: { sessions } });
+    },
+  });
+  try {
+    const result = await teardownOwnedAvd('stim-app', {
+      resolveAvd: () => ({ notRunning: true }),
+      waitForShutdown: () => {},
+    });
+    expect(result.status).toBe('torn-down');
+    expect(exec.calls.filter((command) => command.startsWith('agent-device close'))).toEqual([
+      'agent-device close --session stale --session-lock reject --platform android --serial emulator-5554 --json --daemon-transport socket',
+    ]);
+  } finally {
+    write.mockRestore();
+  }
+});
+
+test.each([
+  ['Booted', true, ['agent-device close --session root-task']],
+  ['Booted', false, []],
+  ['Shutdown', true, []],
+])(
+  'stop closes a session claimed from the repository root only once it shuts the simulator down (%s, settles: %s)',
+  async (state, shutdownSettles, expected) => {
+    const repo = join(avdHome, 'repo');
+    mkdirSync(join(repo, 'app'), { recursive: true });
+    const claims = join(avdHome, 'claims');
+    mkdirSync(claims);
+    const claim = (session: string, workspace: string) =>
+      writeFileSync(join(claims, `${session}.json`), JSON.stringify({ session, workspace, device: { id: 'U1' } }));
+    claim('root-task', repo);
+    claim('sibling-task', join(repo, 'other'));
+    const session = { platform: 'ios', device: 'stim-app', device_udid: 'U1', id: 'U1' };
+    let sessions = [
+      { ...session, name: 'root-task', createdAt: 1 },
+      { ...session, name: 'sibling-task', createdAt: 2 },
+    ];
+    const exec = iosExecutor({ sims: [{ ...OWNED, state }], shutdownSettles });
+    const events: string[] = [];
+    setExecutor({
+      ...exec,
+      findExecutable: () => '/bin/agent-device',
+      runFileQuiet: (file: string, args: string[]) => {
+        if (args[1] === 'shutdown') events.push('shutdown');
+        return exec.runFileQuiet(file, args);
+      },
+      runFile: (file: string, args: string[] = []) => {
+        if (file === 'git' && args.includes('--show-toplevel')) return `${repo}\n`;
+        if (file !== 'agent-device') return exec.runFile(file, args);
+        if (args[0] !== 'close') return JSON.stringify({ success: true, data: { sessions } });
+        events.push(`agent-device close --session ${args[2]}`);
+        sessions = sessions.filter((entry) => entry.name !== args[2]);
+        return '{"success":true}';
+      },
+    });
+    const previous = process.env.AGENT_DEVICE_CLAIMS_DIR;
+    process.env.AGENT_DEVICE_CLAIMS_DIR = claims;
+    const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      await teardownOwnedIosSim('U1', { del: false, workspace: join(repo, 'app'), shutdownClock: fakeClock() });
+      expect(events.filter((event) => event !== 'shutdown')).toEqual(expected);
+      expect(events[0]).toBe('shutdown');
+    } finally {
+      write.mockRestore();
+      if (previous === undefined) delete process.env.AGENT_DEVICE_CLAIMS_DIR;
+      else process.env.AGENT_DEVICE_CLAIMS_DIR = previous;
+    }
+  },
+);
+
+test('stop reports a busy agent-device daemon once although it checks before and after shutdown', async () => {
+  const repo = join(avdHome, 'repo');
+  mkdirSync(join(repo, 'app'), { recursive: true });
+  const exec = iosExecutor({ sims: [{ ...OWNED, state: 'Booted' }], shutdownSettles: true });
+  setExecutor({
+    ...exec,
+    findExecutable: () => '/bin/agent-device',
+    runFile: (file: string, args: string[] = []) => {
+      if (file === 'git' && args.includes('--show-toplevel')) return `${repo}\n`;
+      if (file !== 'agent-device') return exec.runFile(file, args);
+      throw Object.assign(new Error('Command failed: agent-device session list'), {
+        status: 1,
+        stdout: JSON.stringify({
+          success: false,
+          error: {
+            message: 'The running daemon is busy and was not replaced.',
+            details: { reason: 'daemon-busy', stateDir: "/h/it's here/.agent-device" },
+          },
+        }),
+        stderr: '',
+      });
+    },
+  });
+  const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  try {
+    const result = await teardownOwnedIosSim('U1', {
+      del: false,
+      workspace: join(repo, 'app'),
+      shutdownClock: fakeClock(),
+    });
+    expect(result.status).toBe('torn-down');
+    const lines = write.mock.calls
+      .map((call: unknown[]) => String(call[0]))
+      .filter((line: string) => line.includes('agent-device'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("agent-device daemon stop --state-dir '/h/it'\\''s here/.agent-device'");
+  } finally {
+    write.mockRestore();
+  }
+});
+
+test('device cleanup yields while checking the parent repository', async () => {
+  const repo = join(avdHome, 'repo');
+  const workspace = join(repo, 'app');
+  mkdirSync(workspace, { recursive: true });
+  const entered = join(avdHome, 'git-entered');
+  const released = join(avdHome, 'git-released');
+  const finished = join(avdHome, 'git-finished');
+  const script = join(avdHome, 'git.cjs');
+  writeFileSync(
+    script,
+    `
+const fs = require('node:fs');
+fs.writeFileSync(${JSON.stringify(entered)}, '');
+const deadline = Date.now() + 2000;
+const timer = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(released)}) && Date.now() < deadline) return;
+  clearInterval(timer);
+  fs.writeFileSync(${JSON.stringify(finished)}, '');
+  console.log(${JSON.stringify(repo)});
+}, 10);
+`,
+  );
+  const native = getExecutor();
+  const sdk = iosExecutor({ sims: [OWNED] });
+  setExecutor({
+    ...sdk,
+    findExecutable: () => '/fixture/agent-device',
+    runFileQuiet: (file, args, options) =>
+      file === 'git' ? native.runFileQuiet(process.execPath, [script], options) : sdk.runFileQuiet(file, args),
+    runFileAsync: async (file, args, options) => {
+      if (file === 'git') return native.runFileAsync(process.execPath, [script], options);
+      if (file === 'agent-device') return JSON.stringify({ success: true, data: { sessions: [] } });
+      return sdk.runFile(file, args);
+    },
+  });
+  const stopping = teardownOwnedIosSim('U1', { workspace, shutdownClock: fakeClock() });
+  try {
+    await vi.waitFor(() => expect(existsSync(entered)).toBe(true));
+    expect(existsSync(finished)).toBe(false);
+    writeFileSync(released, '');
+    expect(await stopping).toMatchObject({ status: 'torn-down' });
+  } finally {
+    writeFileSync(released, '');
+    await stopping;
+  }
+});

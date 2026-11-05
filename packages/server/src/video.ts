@@ -1,0 +1,167 @@
+import { VIDEO_ARTWORK, VIDEO_FOLDED, VIDEO_HEADER_VERSION, VIDEO_KEYFRAME, VIDEO_UNFOLDED } from './protocol.ts';
+
+/** One H.264 access unit from the helper, in Annex-B form; a keyframe starts with its SPS and PPS. */
+export interface AccessUnit {
+  keyframe: boolean;
+  /** Milliseconds since the epoch, on the machine's clock. */
+  capturedAt: number;
+  width: number;
+  height: number;
+  /** An iPhone Duo's posture, from the panel the helper streams. */
+  posture?: 'folded' | 'unfolded';
+  artworkTurns?: number;
+  data: Buffer;
+}
+
+const FIXED_HEADER_BYTES = 21;
+
+/** The binary WebSocket message for `unit` on `subscription`; see `VideoPacket` in protocol.ts for the layout. */
+export function videoPacket(subscription: string, sequence: number, unit: AccessUnit): Buffer {
+  const id = Buffer.from(subscription, 'ascii');
+  const header = Buffer.alloc(FIXED_HEADER_BYTES + id.length);
+  header.writeUInt8(VIDEO_HEADER_VERSION, 0);
+  const posture = unit.posture === 'folded' ? VIDEO_FOLDED : unit.posture === 'unfolded' ? VIDEO_UNFOLDED : 0;
+  const artwork = unit.artworkTurns === undefined ? 0 : VIDEO_ARTWORK | (unit.artworkTurns << 3);
+  header.writeUInt8((unit.keyframe ? VIDEO_KEYFRAME : 0) | posture | artwork, 1);
+  header.writeUInt16BE(header.length, 2);
+  header.writeUInt32BE(sequence >>> 0, 4);
+  header.writeDoubleBE(unit.capturedAt, 8);
+  header.writeUInt16BE(unit.width, 16);
+  header.writeUInt16BE(unit.height, 18);
+  header.writeUInt8(id.length, 20);
+  id.copy(header, FIXED_HEADER_BYTES);
+  return Buffer.concat([header, unit.data]);
+}
+
+/** The access unit a {@link videoPacket} carries, or null for a malformed packet. */
+export function accessUnitOf(packet: Buffer): AccessUnit | null {
+  if (videoSubscription(packet) === null) return null;
+  const flags = packet.readUInt8(1);
+  const posture = flags & VIDEO_FOLDED ? 'folded' : flags & VIDEO_UNFOLDED ? 'unfolded' : undefined;
+  return {
+    keyframe: (flags & VIDEO_KEYFRAME) !== 0,
+    capturedAt: packet.readDoubleBE(8),
+    width: packet.readUInt16BE(16),
+    height: packet.readUInt16BE(18),
+    ...(posture ? { posture } : {}),
+    ...(flags & VIDEO_ARTWORK ? { artworkTurns: (flags >> 3) & 3 } : {}),
+    data: packet.subarray(packet.readUInt16BE(2)),
+  };
+}
+
+export function videoSubscription(packet: Buffer): string | null {
+  if (packet.length < FIXED_HEADER_BYTES || packet[0] !== VIDEO_HEADER_VERSION) return null;
+  const headerBytes = FIXED_HEADER_BYTES + packet[20]!;
+  if (packet.length < headerBytes || packet.readUInt16BE(2) !== headerBytes) return null;
+  return packet.toString('ascii', FIXED_HEADER_BYTES, headerBytes);
+}
+
+export function rewriteVideoSubscription(packet: Buffer, upstream: string, subscription: string): Buffer | null {
+  if (videoSubscription(packet) !== upstream) return null;
+  const id = Buffer.from(subscription, 'ascii');
+  const header = Buffer.from(packet.subarray(0, FIXED_HEADER_BYTES));
+  header.writeUInt16BE(FIXED_HEADER_BYTES + id.length, 2);
+  header.writeUInt8(id.length, 20);
+  return Buffer.concat([header, id, packet.subarray(FIXED_HEADER_BYTES + upstream.length)]);
+}
+
+export interface VideoLimits {
+  /** A subscriber whose socket holds more than this drops frames until the next keyframe. */
+  congestedBytes: number;
+  startBitrate: number;
+  minBitrate: number;
+  maxBitrate: number;
+  /** How long the encoder must go without congestion before the bitrate rises by a quarter. */
+  recoverMs: number;
+}
+
+export const DEFAULT_VIDEO_LIMITS: VideoLimits = {
+  congestedBytes: 256 * 1024,
+  startBitrate: 3_000_000,
+  minBitrate: 250_000,
+  maxBitrate: 8_000_000,
+  recoverMs: 2000,
+};
+
+/** The top of the bitrate ladder for a hosted subscription: the host's uplink to the client is not measured. */
+export const HOSTED_MAX_BITRATE = 4_500_000;
+
+/**
+ * Decides, for one subscriber, whether each access unit goes out. A subscriber starts waiting for a keyframe.
+ * When its socket backs up it drops everything until the next keyframe, because a P-frame is useless without
+ * the frames before it; `congested` is reported once per episode.
+ */
+export class VideoGate {
+  private waiting = true;
+  private readonly congestedBytes: number;
+
+  constructor(congestedBytes: number) {
+    this.congestedBytes = congestedBytes;
+  }
+
+  admit(unit: Pick<AccessUnit, 'keyframe'>, bufferedBytes: number): 'send' | 'drop' | 'congested' {
+    if (bufferedBytes > this.congestedBytes) {
+      if (this.waiting) return 'drop';
+      this.waiting = true;
+      return 'congested';
+    }
+    if (this.waiting && !unit.keyframe) return 'drop';
+    this.waiting = false;
+    return 'send';
+  }
+
+  /** The client lost its decoder state; drop until the keyframe it asked for. */
+  reset(): void {
+    this.waiting = true;
+  }
+}
+
+/**
+ * One encoder's bitrate, shared by all subscribers of a device: halved on congestion at most once per `recoverMs`,
+ * and raised by a quarter after `recoverMs` without congestion.
+ */
+export class Bitrate {
+  private value: number;
+  private calmSince: number;
+  private cutAt = -Infinity;
+  private ceiling: number;
+  private readonly limits: VideoLimits;
+
+  constructor(limits: VideoLimits, now: number) {
+    this.limits = limits;
+    this.value = limits.startBitrate;
+    this.ceiling = limits.maxBitrate;
+    this.calmSince = now;
+  }
+
+  /** Sets the top of the ladder to `ceiling`, within the limits; a bitrate above it drops to it at once. */
+  limit(ceiling: number): void {
+    this.ceiling = Math.min(this.limits.maxBitrate, Math.max(this.limits.minBitrate, ceiling));
+    this.value = Math.min(this.value, this.ceiling);
+  }
+
+  get current(): number {
+    return this.value;
+  }
+
+  /** Called while any subscriber is congested. Returns the new bitrate when it changed. */
+  congested(now: number): number | null {
+    this.calmSince = now;
+    if (now - this.cutAt < this.limits.recoverMs) return null;
+    this.cutAt = now;
+    return this.set(Math.max(this.limits.minBitrate, Math.round(this.value / 2)));
+  }
+
+  /** Returns the new bitrate when it changed. */
+  tick(now: number): number | null {
+    if (now - this.calmSince < this.limits.recoverMs) return null;
+    this.calmSince = now;
+    return this.set(Math.min(this.ceiling, Math.round(this.value * 1.25)));
+  }
+
+  private set(next: number): number | null {
+    if (next === this.value) return null;
+    this.value = next;
+    return next;
+  }
+}

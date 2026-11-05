@@ -1,0 +1,769 @@
+import { basename, sep } from 'path';
+import { workspaceId } from '@stim-cli/core';
+import { isInsideProject } from './metro.ts';
+import { deviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
+import { clockTime, formatElapsed, formatLongDuration, plural } from './command-output.ts';
+import type { ProjectRecord } from './workspace/config.ts';
+import type { LeaseFileEntry } from './engine/device-lease.ts';
+import type { RemoteSessionRecord } from './supervisor/state.ts';
+import { cdpEndpoint, type WebFacts } from './web/state.ts';
+import type {
+  AndroidRuntimeFacts,
+  DeviceActivity,
+  DeviceIdleShutdownRecord,
+  DeviceLeaseState,
+  EnvironmentState,
+  IdleStopRecord,
+  MachineUsageState,
+  MetroLastStop,
+  RemoteDeviceState,
+  StatusCapacity,
+  StatusCapacityLoad,
+  StatusIssue,
+  StatusIssueCode,
+  WebBrowserState,
+  WorktreeFacts,
+  WorktreeGit,
+} from '@stim-cli/core/state';
+import { workspaceAgentDeviceDir } from './workspace/paths.ts';
+import { getExecutor } from './exec.ts';
+import { ACTIVITY_RECENCY_BASES, loadState } from '@stim-cli/core/state';
+
+export type {
+  AndroidRuntimeFacts,
+  DeviceLeaseState,
+  EnvironmentState,
+  RemoteDeviceState,
+  WorktreeFacts,
+} from '@stim-cli/core/state';
+
+const IOS_SIM_MB = 1500;
+const ANDROID_EMULATOR_MB = 2500;
+const METRO_MB = 700;
+const BROWSER_MB = 500;
+
+export interface SimFacts {
+  udid?: string;
+  name?: string;
+  state?: string;
+}
+
+export interface MetroFacts {
+  missing?: true;
+  metro?: { pid: number } | null;
+  notOurs?: string;
+  pid?: number;
+  cwd?: string;
+}
+
+interface SupervisorFacts {
+  pid?: number | null;
+  mode?: string | null;
+  startedAt?: string | null;
+  status: 'ours' | 'stale' | 'unverified';
+  reason?: string;
+  healthy?: boolean;
+}
+
+interface LogsFacts {
+  dir: string;
+  errorsSinceMarker?: number;
+}
+
+export function remoteDeviceState(
+  record: RemoteSessionRecord | null,
+  ledger: { claims: ReadonlyMap<string, { workspaceRoot: string }>; safe: boolean },
+  root: string,
+): RemoteDeviceState | null {
+  if (!record) return null;
+  const claim = ledger.claims.get(record.sessionId);
+  return {
+    platform: record.platform,
+    backend: 'eas',
+    sessionId: record.sessionId,
+    state: !ledger.safe ? 'unknown' : claim?.workspaceRoot === root ? 'claimed' : 'unclaimed',
+    startedAt: record.startedAt,
+    webPreviewUrl: record.webPreviewUrl,
+  };
+}
+
+export interface DiskInfo {
+  availableMb: number;
+  totalMb: number;
+}
+
+export interface VolumeInfo {
+  volume: string;
+  disk: DiskInfo | null;
+}
+
+export interface PoolFacts {
+  platform: 'ios' | 'android';
+  parked: number;
+  /** Parked devices kept booted until their grace period passes. */
+  booted?: number;
+  max: number;
+}
+
+export function poolLine({ platform, parked, booted = 0, max }: PoolFacts): string | null {
+  if (parked <= 0) return null;
+  const what = plural(parked, `parked ${platform === 'ios' ? 'iOS simulator' : 'Android emulator'}`);
+  const kept = booted > 0 ? `, ${booted} kept booted` : '';
+  return max > 0 ? `pool: ${what} (max ${max}${kept})` : `pool: ${what} (parking off${kept}; gc --delete removes them)`;
+}
+
+export const RECENT_LAUNCH_MS: number = 30 * 60 * 1000;
+
+function avdExpected({
+  slot,
+  serial,
+  launches,
+  leasedIds,
+  running,
+  now,
+}: {
+  slot: string;
+  serial: string | null | undefined;
+  launches: Readonly<Record<string, { launchedAt: string }>>;
+  leasedIds: ReadonlySet<string>;
+  running: boolean;
+  now: number;
+}): boolean {
+  if (serial && leasedIds.has(serial)) return true;
+  const launch = launches[deviceSlotKey('android', slot)];
+  if (!launch) return false;
+  return running || now - Date.parse(launch.launchedAt) < RECENT_LAUNCH_MS;
+}
+
+function androidStatus(
+  android: NonNullable<ProjectRecord['platforms']>['android'],
+  androidRuntime: AndroidRuntimeFacts | null,
+  androidDeviceProfile: string | null,
+  facts: { idleShutdown?: DeviceIdleShutdownRecord },
+): EnvironmentState['android'] {
+  if (!android) return null;
+  return {
+    name: android.avdName ?? android.serial,
+    owned: Boolean(android.owned),
+    physical: Boolean(android.serial && !android.avdName),
+    ...(androidRuntime ? { serial: androidRuntime.serial, state: androidRuntime.state } : {}),
+    ...(androidDeviceProfile ? { deviceProfile: androidDeviceProfile } : {}),
+    ...facts,
+  };
+}
+
+function idleShutdownFact(
+  stopped: unknown,
+  record: DeviceIdleShutdownRecord | undefined,
+): { idleShutdown?: DeviceIdleShutdownRecord } {
+  return stopped && record ? { idleShutdown: record } : {};
+}
+
+function stoppedMetroFacts(
+  idleStop: IdleStopRecord | null,
+  lastStop: MetroLastStop | null,
+): { idleStop?: IdleStopRecord; lastStop?: MetroLastStop } {
+  return { ...(idleStop ? { idleStop } : {}), ...(lastStop ? { lastStop } : {}) };
+}
+
+export function environmentState(
+  project: ProjectRecord & { __path: string },
+  {
+    simsByUdid = {},
+    metro = null,
+    worktrees = [],
+    simsAvailable = true,
+    androidRuntime = null,
+    androidRuntimes = {},
+    androidDeviceProfile = null,
+    androidDeviceProfiles = {},
+    supervisor = null,
+    logs = null,
+    remote = null,
+    idleStop = null,
+    lastStop = null,
+    idleShutdowns = {},
+    launches = {},
+    leasedIds = new Set(),
+    now = Date.now(),
+    slot = 'default',
+    workspaceRunning = false,
+    workspaces,
+  }: {
+    simsByUdid?: Record<string, SimFacts>;
+    metro?: MetroFacts | null;
+    worktrees?: WorktreeFacts[];
+    simsAvailable?: boolean;
+    androidRuntime?: AndroidRuntimeFacts | null;
+    androidRuntimes?: Record<string, AndroidRuntimeFacts | null>;
+    androidDeviceProfile?: string | null;
+    androidDeviceProfiles?: Record<string, string | null>;
+    supervisor?: SupervisorFacts | null;
+    logs?: LogsFacts | null;
+    remote?: RemoteDeviceState | null;
+    idleStop?: IdleStopRecord | null;
+    lastStop?: MetroLastStop | null;
+    idleShutdowns?: Readonly<Record<string, DeviceIdleShutdownRecord>>;
+    launches?: Readonly<Record<string, { launchedAt: string }>>;
+    leasedIds?: ReadonlySet<string>;
+    now?: number;
+    slot?: string;
+    workspaceRunning?: boolean;
+    workspaces?: readonly string[];
+  } = {},
+): EnvironmentState {
+  const ios = project.platforms?.ios;
+  const android = project.platforms?.android;
+  const sim = ios ? simsByUdid[ios.deviceUdid as string] : null;
+
+  const simBooted = Boolean(sim && sim.state === 'Booted');
+  const metroRunning = Boolean(metro?.metro);
+  const androidDetected = androidRuntime ? Boolean(androidRuntime.serial) : Boolean(android?.serial);
+  let live = simBooted || metroRunning || androidDetected || Boolean(remote);
+
+  let memoryMb = 0;
+  if (simBooted) memoryMb += IOS_SIM_MB;
+  if (androidDetected) memoryMb += ANDROID_EMULATOR_MB;
+  if (metroRunning) memoryMb += METRO_MB;
+
+  const running = workspaceRunning || metroRunning || supervisor?.status === 'ours';
+  const issues: StatusIssue[] = [];
+  const add = (code: StatusIssueCode, message: string, remedy: string, severity: StatusIssue['severity'] = 'warning') =>
+    issues.push({
+      code,
+      severity,
+      message,
+      remedy,
+      workspace: project.__path,
+      ...(slot === 'default' ? {} : { slot }),
+    });
+  const slotFlag = slot === 'default' ? '' : ` --slot ${slot}`;
+  if (metro?.notOurs && slot === 'default') {
+    add(
+      'port-not-ours',
+      ...portNotOurs(project.metroPort, portHolder(metro.cwd, project.__path, workspaces), supervisor),
+    );
+  }
+  if (ios && !sim && simsAvailable) {
+    add('sim-missing', `recorded sim ${ios.deviceUdid} no longer exists`, `stim ios${slotFlag}`, 'info');
+  }
+  if (simBooted && project.metroPort && !metroRunning) {
+    add('sim-without-metro', 'simulator is booted with no Metro serving it', 'stim start', 'info');
+  }
+  if (androidRuntime && android?.avdName) {
+    const recordedSerial = android.consolePort ? `emulator-${android.consolePort}` : android.serial;
+    const expected = avdExpected({ slot, serial: recordedSerial, launches, leasedIds, running, now });
+    for (const [code, message, severity] of androidIssues(android, recordedSerial, androidRuntime, expected)) {
+      add(code, message, code === 'avd-unchecked' ? 'stim doctor' : `stim android${slotFlag}`, severity);
+    }
+  }
+  if (supervisor?.status === 'unverified') {
+    add(
+      'supervisor-unverified',
+      `supervisor pid ${supervisor.pid} could not be verified${supervisor.reason ? `: ${supervisor.reason}` : ''}`,
+      'stim guide errors teardown',
+      'error',
+    );
+  }
+
+  const slots: NonNullable<EnvironmentState['slots']> = [];
+  for (const { slot: name, platforms } of projectDeviceSlots(project).slice(1)) {
+    const deviceState = environmentState(
+      { ...project, platforms, deviceSlots: undefined },
+      {
+        simsByUdid,
+        simsAvailable,
+        metro,
+        androidRuntime: androidRuntimes[name],
+        androidDeviceProfile: androidDeviceProfiles[name],
+        idleShutdowns,
+        launches,
+        leasedIds,
+        now,
+        slot: name,
+        workspaceRunning: running,
+      },
+    );
+    slots.push({ slot: name, ios: deviceState.ios, android: deviceState.android });
+    memoryMb += deviceState.memoryMb - (metroRunning ? METRO_MB : 0);
+    live ||= deviceState.live;
+    issues.push(...deviceState.issues);
+  }
+
+  return {
+    path: project.__path,
+    workspaceId: workspaceId(project.__path),
+    ...(slots.length ? { slots } : {}),
+    live,
+    memoryMb,
+    memorySource: 'estimate',
+    warnings: warningTexts(issues),
+    issues,
+    ios: ios
+      ? {
+          name: sim?.name ?? null,
+          udid: ios.deviceUdid as string,
+          owned: Boolean(ios.owned),
+          state: sim?.state ?? (simsAvailable ? 'missing' : 'unknown'),
+          ...idleShutdownFact(!simBooted && sim, idleShutdowns[deviceSlotKey('ios', slot)]),
+        }
+      : null,
+    android: androidStatus(
+      android,
+      androidRuntime,
+      androidDeviceProfile,
+      idleShutdownFact(!androidDetected, idleShutdowns[deviceSlotKey('android', slot)]),
+    ),
+    metro: project.metroPort
+      ? {
+          port: project.metroPort,
+          running: metroRunning,
+          pid: metro?.metro?.pid ?? null,
+          ...(metroRunning ? {} : stoppedMetroFacts(idleStop, lastStop)),
+          ...portHeldBy(metro),
+        }
+      : null,
+    supervisor:
+      supervisor && supervisor.status !== 'stale'
+        ? {
+            pid: supervisor.pid ?? null,
+            mode: supervisor.mode ?? null,
+            startedAt: supervisor.startedAt ?? null,
+            healthy: Boolean(supervisor.healthy),
+          }
+        : null,
+    agentDevice: { stateDir: workspaceAgentDeviceDir(project.__path), installed: agentDeviceInstalled() },
+    logs: logs ? { dir: logs.dir, errorsSinceMarker: logs.errorsSinceMarker ?? 0 } : null,
+    worktree: enclosingWorktree(worktrees, project.__path),
+    remoteDevices: remote ? [remote] : [],
+  };
+}
+
+/** Sets each environment's `memoryMb` to the sum of its owners' footprints; without footprints it keeps the estimate. */
+export function applyMachineMemory(states: EnvironmentState[], machine: MachineUsageState): void {
+  if (machine.memorySource !== 'footprint') return;
+  for (const state of states) {
+    state.memoryMb = machine.owners.reduce(
+      (sum, owner) => (owner.workspace === state.path ? sum + owner.memoryMb : sum),
+      0,
+    );
+    state.memorySource = machine.memorySource;
+  }
+}
+
+/** Adds the workspace's owned Chrome to its status: the web entry, its memory, and an unverifiable browser. */
+export function withWebFacts(state: EnvironmentState, web: WebFacts | null): EnvironmentState {
+  if (!web) return state;
+  const running = web.status === 'running';
+  const issues = [...state.issues];
+  if (web.status === 'orphaned') {
+    issues.push({
+      code: 'browser-orphaned',
+      severity: 'warning',
+      message: `the owned Chrome (pid ${web.record.chromeProcess?.pid}) runs without its supervisor, so its page logs are not captured`,
+      remedy: 'stim stop',
+      workspace: state.path,
+    });
+  }
+  if (web.status === 'unverified') {
+    issues.push({
+      code: 'browser-unverified',
+      severity: 'error',
+      message: `browser supervisor pid ${web.record.pid} or its Chrome could not be verified`,
+      remedy: 'stim guide errors teardown',
+      workspace: state.path,
+    });
+  }
+  return {
+    ...state,
+    live: state.live || running || web.status === 'orphaned',
+    memoryMb: state.memoryMb + (running || web.status === 'orphaned' ? BROWSER_MB : 0),
+    warnings: warningTexts(issues),
+    issues,
+    web: webBrowserState(web),
+  };
+}
+
+function webBrowserState({ record, status }: WebFacts): WebBrowserState {
+  const running = status === 'running';
+  return {
+    browser: 'chrome',
+    version: record.version ?? null,
+    running,
+    pid: running ? (record.chromeProcess?.pid ?? null) : null,
+    supervisorPid: running ? record.pid : null,
+    url: record.url,
+    headless: record.headless,
+    viewport: record.viewport,
+    profile: record.profile,
+    cdpEndpoint: running ? cdpEndpoint(record.cdpPort) : null,
+    targetId: running ? (record.targetId ?? null) : null,
+  };
+}
+
+function androidIssues(
+  android: NonNullable<NonNullable<ProjectRecord['platforms']>['android']>,
+  recordedSerial: string | undefined,
+  runtime: AndroidRuntimeFacts,
+  expected: boolean,
+): [StatusIssueCode, string, StatusIssue['severity']?][] {
+  const issues: [StatusIssueCode, string, StatusIssue['severity']?][] = [];
+  if (runtime.serial && recordedSerial && runtime.serial !== recordedSerial) {
+    issues.push([
+      'avd-serial-changed',
+      `owned AVD ${android.avdName} changed serial (${recordedSerial} -> ${runtime.serial}), so Metro forwarding is lost; rerun with the same build options, then reopen agent-device on ${runtime.serial}`,
+    ]);
+  }
+  if (runtime.state === 'missing')
+    issues.push(['avd-missing', `recorded AVD ${android.avdName} no longer exists`, 'info']);
+  if (runtime.state === 'not-detected' && expected) {
+    issues.push(['avd-not-detected', `owned AVD ${android.avdName} is not detected by adb`]);
+  }
+  if (runtime.error) {
+    issues.push(['avd-unchecked', `could not check owned AVD ${android.avdName}: ${runtime.error}`]);
+  }
+  return issues;
+}
+
+/**
+ * The owned emulators worth an `adb reverse --list`: each runs this workspace's debug app, launched onto that serial
+ * against the Metro port that is serving now.
+ */
+export function metroReverseTargets(
+  state: EnvironmentState,
+  launches: Readonly<Record<string, { deviceId: string; metroPort: number | null; release: boolean }>>,
+): { slot: string; serial: string; metroPort: number }[] {
+  const metroPort = state.metro?.running ? state.metro.port : null;
+  if (!metroPort) return [];
+  return [{ slot: 'default', android: state.android }, ...(state.slots ?? [])].flatMap(({ slot, android }) => {
+    const launch = launches[deviceSlotKey('android', slot)];
+    if (!android?.owned || android.physical || !android.serial || android.app?.state !== 'running') return [];
+    if (!launch || launch.release || launch.metroPort !== metroPort || launch.deviceId !== android.serial) return [];
+    return [{ slot, serial: android.serial, metroPort }];
+  });
+}
+
+export function reversePortTargets(
+  state: EnvironmentState,
+  launches: Readonly<Record<string, { deviceId: string }>>,
+): { slot: string; serial: string }[] {
+  return [{ slot: 'default', android: state.android }, ...(state.slots ?? [])].flatMap(({ slot, android }) => {
+    const launch = launches[deviceSlotKey('android', slot)];
+    if (!android?.owned || android.physical || !android.serial || android.app?.state !== 'running') return [];
+    return launch?.deviceId === android.serial ? [{ slot, serial: android.serial }] : [];
+  });
+}
+
+export function addReversePortMissingIssue(
+  state: EnvironmentState,
+  { slot, serial, port }: { slot: string; serial: string; port: number },
+): void {
+  const issue: StatusIssue = {
+    code: 'android-reverse-missing',
+    severity: 'warning',
+    message: `the adb reverse for port ${port} is missing on ${serial}, so the app cannot reach the server on localhost:${port}`,
+    remedy: `stim ports reverse ${port}`,
+    workspace: state.path,
+    ...(slot === 'default' ? {} : { slot }),
+  };
+  state.issues.push(issue);
+  state.warnings.push(issueText(issue));
+}
+
+export function addReverseMissingIssue(
+  state: EnvironmentState,
+  { slot, serial, metroPort }: { slot: string; serial: string; metroPort: number },
+): void {
+  const issue: StatusIssue = {
+    code: 'android-reverse-missing',
+    severity: 'warning',
+    message: `the adb reverse for Metro port ${metroPort} is missing on ${serial}, so the app cannot reach Metro`,
+    remedy: 'stim reload android',
+    workspace: state.path,
+    ...(slot === 'default' ? {} : { slot }),
+  };
+  state.issues.push(issue);
+  state.warnings.push(issueText(issue));
+}
+
+function portNotOurs(
+  port: number | null | undefined,
+  holder: string,
+  supervisor: SupervisorFacts | null,
+): [string, string, StatusIssue['severity']] {
+  if (supervisor?.status === 'ours') {
+    return [
+      `port ${port} is in use by ${holder}, so this workspace's Metro cannot serve on it`,
+      'stim stop',
+      'warning',
+    ];
+  }
+  if (supervisor?.status === 'unverified') {
+    return [`port ${port} is in use by ${holder}`, 'stim guide errors teardown', 'warning'];
+  }
+  return [`port ${port} is in use by ${holder}; stim start will choose a free port`, 'stim start', 'info'];
+}
+
+function portHeldBy(metro: MetroFacts | null): { heldBy?: { pid: number; cwd: string | null } } {
+  return metro?.notOurs && metro.pid ? { heldBy: { pid: metro.pid, cwd: metro.cwd ?? null } } : {};
+}
+
+function warningTexts(issues: StatusIssue[]): string[] {
+  return issues.filter((issue) => issue.severity !== 'info').map(issueText);
+}
+
+function portHolder(cwd: string | undefined, self: string, workspaces: readonly string[] = []): string {
+  if (!cwd) return 'another app';
+  const owner = workspaces
+    .filter((path) => path !== self && isInsideProject(cwd, path))
+    .toSorted((a, b) => b.length - a.length)[0];
+  if (owner) return `Metro for workspace ${basename(owner)}`;
+  return `a dev server in ${cwd.split(/[\\/]/).filter(Boolean).slice(-3).join('/')}`;
+}
+
+function issueText(issue: StatusIssue): string {
+  return `${issue.slot ? `${issue.slot}: ` : ''}${issue.message}; run \`${issue.remedy}\``;
+}
+
+function toMinute(iso: string): string {
+  const time = Date.parse(iso);
+  return new Date(time - (time % 60_000)).toISOString();
+}
+
+/**
+ * Activity as status reports it: `lastActivityAt` rounded down to the minute, the precision its readers show, so a
+ * new log record within the same minute does not change the payload.
+ */
+export function statusActivity(activity: DeviceActivity): DeviceActivity {
+  const at = Date.parse(activity.lastActivityAt ?? '');
+  return {
+    ...activity,
+    ...(Number.isFinite(at) ? { lastActivityAt: toMinute(activity.lastActivityAt!) } : {}),
+    ...(activity.recent
+      ? {
+          recent: Object.fromEntries(
+            ACTIVITY_RECENCY_BASES.flatMap((basis) => {
+              const iso = activity.recent?.[basis];
+              return iso ? [[basis, toMinute(iso)]] : [];
+            }),
+          ),
+        }
+      : {}),
+  };
+}
+
+export function activityLabel(activity: DeviceActivity | undefined, now: number): string | null {
+  if (!activity) return null;
+  if (activity.state === 'driven') {
+    const since = Date.parse(activity.driver?.since ?? '');
+    const duration = Number.isFinite(since) ? ` for ${formatLongDuration(Math.max(0, now - since))}` : '';
+    return `driven by ${activity.driver?.tool ?? 'an unknown tool'}${duration}`;
+  }
+  if (activity.state === 'unknown') return `activity unknown (${activity.basis.join(', ')})`;
+  if (activity.state === 'active') return 'active';
+  const last = Date.parse(activity.lastActivityAt ?? '');
+  return Number.isFinite(last) ? `idle ${formatLongDuration(Math.max(0, now - last))}` : 'idle (no recorded activity)';
+}
+
+export function remoteDeviceLine(remote: RemoteDeviceState): string {
+  const claim = remote.state === 'claimed' ? '' : ` (${remote.state})`;
+  const watch = remote.webPreviewUrl ? ` -- watch: ${remote.webPreviewUrl}` : '';
+  return `remote ${remote.platform ?? '?'}: EAS session ${remote.sessionId} billable${claim}${watch}`;
+}
+
+export function capacity(states: EnvironmentState[], totalMemoryMb: number): StatusCapacity {
+  const committedMb = states.reduce((n: number, s) => n + s.memoryMb, 0);
+  const liveCount = states.filter((s) => s.live).length;
+  return {
+    liveCount,
+    committedMb,
+    totalMemoryMb,
+    overCapacity: Boolean(totalMemoryMb && committedMb > totalMemoryMb * 0.6),
+  };
+}
+
+/** `capacity.load` from a load reading, the `server.maxLoadPerCore` it is busy at, and the configured limit. */
+export function capacityLoad(
+  { cpus, loadPerCore }: { cpus: number; loadPerCore: number },
+  busyAt: number,
+  limit: number | null,
+): StatusCapacityLoad {
+  return { cpus, loadPerCore, busyAt, limit, state: loadState(loadPerCore, busyAt, limit) };
+}
+
+export function loadLine({ loadPerCore, busyAt, limit }: StatusCapacityLoad): string {
+  return `load ${loadPerCore}/core (busy at ${busyAt}${limit === null ? '' : `, holding at ${limit}`})`;
+}
+
+/**
+ * The plain status lines for the build and device caps, naming `concurrency.maxBuilds` and `concurrency.maxDevices`
+ * or, for a cap `derived` marks, that Stim derived it and which setting overrides it.
+ */
+export function slotUsageLines(
+  { builds, devices, platformDevices }: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices'>,
+  derived: { builds: boolean; devices: boolean } = { builds: false, devices: false },
+): string[] {
+  const buildCap = derived.builds ? 'derived; set concurrency.maxBuilds to override' : 'concurrency.maxBuilds';
+  const deviceCap = derived.devices ? 'derived; set concurrency.maxDevices to override' : 'concurrency.maxDevices';
+  const lines: string[] = [];
+  if (builds) {
+    const holders = builds.holders.map((holder) =>
+      holder.unresolved
+        ? `slot ${holder.slot} unresolved`
+        : holder.client
+          ? `offloaded for ${holder.client}`
+          : holder.workspace
+            ? basename(holder.workspace)
+            : `slot ${holder.slot}`,
+    );
+    lines.push(`builds ${builds.inUse}/${builds.max} (${buildCap})${holders.length ? `: ${holders.join(', ')}` : ''}`);
+  }
+  if (devices) {
+    if (devices.inUse === null) {
+      lines.push(`devices ?/${devices.max} (${deviceCap}): ${devices.unknown ?? 'not counted'}`);
+    } else {
+      const holders = devices.holders.map(
+        (holder) =>
+          `${holder.label} ${holder.platform}${holder.slot && holder.slot !== 'default' ? ` [${holder.slot}]` : ''}${holder.booting ? ' (booting)' : ''}`,
+      );
+      lines.push(
+        `devices ${devices.inUse}/${devices.max} (${deviceCap})${holders.length ? `: ${holders.join(', ')}` : ''}`,
+      );
+    }
+  }
+  for (const [platform, setting, noun] of [
+    ['ios', 'concurrency.maxIosDevices', 'iOS simulators'],
+    ['android', 'concurrency.maxAndroidDevices', 'Android emulators'],
+  ] as const) {
+    const slots = platformDevices?.[platform];
+    if (!slots) continue;
+    lines.push(
+      slots.inUse === null
+        ? `${noun} ?/${slots.max} (${setting}): ${slots.unknown ?? 'not counted'}`
+        : `${noun} ${slots.inUse}/${slots.max} (${setting})`,
+    );
+  }
+  return lines;
+}
+
+export function parseDfFree(output: unknown): DiskInfo | null {
+  const lines = String(output || '')
+    .trim()
+    .split('\n');
+  if (lines.length < 2) return null;
+  const lastLine = lines[lines.length - 1];
+  if (lastLine === undefined) return null;
+  const m = /\s(\d+)\s+(\d+)\s+(\d+)\s+(\d+)%/.exec(lastLine);
+  if (!m) return null;
+  const totalKb = Number(m[1]);
+  const availableKb = Number(m[3]);
+  if (!Number.isFinite(totalKb) || !Number.isFinite(availableKb) || totalKb <= 0) return null;
+  return { availableMb: Math.round(availableKb / 1024), totalMb: Math.round(totalKb / 1024) };
+}
+
+function diskIsTight(disk: DiskInfo | null | undefined): boolean {
+  return Boolean(disk && disk.availableMb < 25 * 1024);
+}
+
+export function formatSpace(mb: number): string {
+  if (!Number.isFinite(mb)) return '?';
+  if (mb >= 1024 * 1024) return `${(mb / (1024 * 1024)).toFixed(1)} TB`;
+  if (mb >= 1024) return `${Math.round(mb / 1024)} GB`;
+  return `${Math.round(mb)} MB`;
+}
+
+export function diskLine(volumes: VolumeInfo[] | null | undefined): string | null {
+  const usable = (volumes || []).filter((v): v is VolumeInfo & { disk: DiskInfo } => Boolean(v && v.disk));
+  if (usable.length === 0) return null;
+  if (usable.length === 1) {
+    const first = usable[0];
+    if (!first) return null;
+    const { disk } = first;
+    return `${formatSpace(disk.availableMb)} free of ${formatSpace(disk.totalMb)} on disk.`;
+  }
+  return `${usable.map((v) => `${formatSpace(v.disk.availableMb)} free on ${v.volume}`).join(', ')}.`;
+}
+
+export function tightVolumes(volumes: VolumeInfo[] | null | undefined): VolumeInfo[] {
+  return (volumes || []).filter((v) => v && diskIsTight(v.disk));
+}
+
+function contains(dir: string, path: string): boolean {
+  return path === dir || path.startsWith(dir.endsWith(sep) ? dir : dir + sep);
+}
+
+function enclosingWorktree(worktrees: WorktreeFacts[], path: string): WorktreeFacts | null {
+  return worktrees.filter((w) => contains(w.path, path)).toSorted((a, b) => b.path.length - a.path.length)[0] ?? null;
+}
+
+/** One line for a worktree's git summary, such as `2 changed, 1 untracked, ahead 3, merged into origin/main`. */
+export function gitSummaryText(git: WorktreeGit): string {
+  const parts = [
+    git.changed ? `${git.changed} changed` : '',
+    git.untracked ? `${git.untracked} untracked` : '',
+    git.ahead ? `ahead ${git.ahead}` : '',
+    git.behind ? `behind ${git.behind}` : '',
+    git.mergedInto ? `merged into ${git.mergedInto}` : '',
+  ].filter(Boolean);
+  return parts.length ? parts.join(', ') : 'clean';
+}
+
+export function unprovisionedWorktrees(worktrees: WorktreeFacts[], projectPaths: string[]): WorktreeFacts[] {
+  return worktrees.filter((w) => !projectPaths.some((p) => contains(w.path, p)));
+}
+
+export function deviceLeaseStates(
+  entries: readonly LeaseFileEntry[],
+  { root, now }: { root: string | null; now: number },
+): DeviceLeaseState[] {
+  return entries.map((entry) => {
+    const lease = entry.lease;
+    return {
+      path: entry.path,
+      platform: entry.platform,
+      ...(lease?.slot ? { slot: lease.slot } : {}),
+      id: entry.id,
+      deviceName: lease?.deviceName ?? null,
+      holder: lease?.holder ?? null,
+      grantedAt: lease?.grantedAt ?? null,
+      expiresAt: lease?.expiresAt ?? null,
+      mine: Boolean(lease && root && lease.holder === root),
+      expired: Boolean(lease && Date.parse(lease.expiresAt) <= now),
+      parsed: Boolean(lease),
+    };
+  });
+}
+
+export function deviceLeaseLines(states: readonly DeviceLeaseState[], now: number): string[] {
+  if (states.length === 0) return [];
+  const lines = [`Device leases (${states.length}):`];
+  for (const state of states) {
+    const device = `${state.platform}${state.slot ? ` [${state.slot}]` : ''} ${state.id ?? state.path}${state.deviceName ? ` (${state.deviceName})` : ''}`;
+    if (!state.parsed || state.expiresAt === null) {
+      lines.push(`  ${device} -- unreadable lease file, so nothing may take the device: ${state.path}`);
+      continue;
+    }
+    const when = clockTime(state.expiresAt);
+    const remaining = Date.parse(state.expiresAt) - now;
+    const expiry = state.expired ? `expired at ${when}` : `until ${when} (${formatElapsed(remaining)} left)`;
+    lines.push(`  ${device} -- ${state.holder} ${expiry}${state.mine ? ' [this workspace]' : ''}`);
+  }
+  return lines;
+}
+
+const AGENT_DEVICE_CACHE_MS = 30_000;
+let agentDeviceCache: { at: number; installed: boolean } | undefined;
+
+function agentDeviceInstalled(): boolean {
+  const now = Date.now();
+  const age = agentDeviceCache ? now - agentDeviceCache.at : -1;
+  if (agentDeviceCache && age >= 0 && age < AGENT_DEVICE_CACHE_MS) return agentDeviceCache.installed;
+  let installed = false;
+  try {
+    installed = Boolean(getExecutor().findExecutable('agent-device'));
+  } catch {
+    installed = false;
+  }
+  agentDeviceCache = { at: now, installed };
+  return installed;
+}

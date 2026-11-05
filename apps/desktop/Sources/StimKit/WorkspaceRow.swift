@@ -1,0 +1,363 @@
+import Foundation
+
+/// What a workspace is doing, for the trailing word of its sidebar row. `apps/mobile/src/lib/home-list.ts` holds the
+/// same rules for the phone's Home list; both replay `Tests/StimKitTests/Fixtures/workspace-row-vectors.json`.
+public struct RowStatus: Equatable, Sendable {
+  public enum Kind: String, Sendable {
+    case building, warming, ready, driven, running, idle, missing
+  }
+
+  public var kind: Kind
+  public var text: String
+  /// `text` spelled out for assistive technology.
+  public var label: String
+  public var tone: Tone
+}
+
+/// One platform a workspace has run, with its own state for the sidebar row.
+public struct PlatformState: Equatable, Sendable {
+  public enum Kind: String, Sendable {
+    case building, failed, running, idle
+  }
+
+  public var platform: String
+  public var kind: Kind
+
+  public var label: String { platformName(platform) }
+  public var spoken: String { "\(label) \(kind.rawValue)" }
+
+  public var tone: Tone {
+    switch kind {
+    case .building: .brand
+    case .failed: .error
+    case .running: .success
+    case .idle: .tertiary
+    }
+  }
+
+  public var filled: Bool { kind != .idle }
+}
+
+/// Something wrong with a workspace, errors before warnings.
+public struct RowProblem: Equatable, Sendable {
+  public enum Kind: String, Sendable {
+    case errors
+    case buildFailed = "build-failed"
+    case appClosed = "app-closed"
+    case ciFailing = "ci-failing"
+    case issues, warnings, supervisor
+  }
+
+  public var kind: Kind
+  public var text: String
+  public var tone: Tone
+}
+
+/// A workspace's running devices by kind, the tools driving them, how long they have been idle, and its EAS sessions.
+public struct RowDevices: Equatable, Sendable {
+  public struct Idle: Equatable, Sendable {
+    public var text: String
+    public var label: String
+  }
+
+  /// Running devices by kind, such as "2 iOS, Android, iOS device".
+  public var names: String?
+  /// The tools driving any of them, each named once.
+  public var drivers: String?
+  /// How long since any running device was used, once that is 10 minutes or more and none is driven.
+  public var idle: Idle?
+  public var remote: Int
+}
+
+extension Format {
+  /// "45 minutes", "1 hour 5 minutes": `duration` spelled out for assistive technology.
+  public static func spokenDuration(_ seconds: TimeInterval) -> String {
+    let minutes = Format.int(max(0, seconds) / 60)
+    if minutes < 1 { return "less than a minute" }
+    if minutes < 60 { return countLabel(minutes, "minute") }
+    let hours = countLabel(minutes / 60, "hour")
+    return minutes % 60 == 0 ? hours : "\(hours) \(countLabel(minutes % 60, "minute"))"
+  }
+}
+
+extension Workspace {
+  /// The command that drops this workspace's record once its folder is gone.
+  public var removalCommand: String { "stim worktree remove \(shellQuote(path))" }
+
+  private var settingUp: Bool { !live && isSettingUp }
+
+  /// The running local devices in `orderedDevices` order; EAS sessions are counted apart.
+  private var runningLocalDevices: [DeviceRef] {
+    orderedDevices.filter {
+      if case .remote = $0 { return false }
+      return $0.isRunning
+    }
+  }
+
+  private func since(_ text: String?, _ now: Date) -> TimeInterval? {
+    text.flatMap(parseTimestamp).map { max(0, now.timeIntervalSince($0)) }
+  }
+
+  public func rowStatus(now: Date) -> RowStatus {
+    if let build, build.isRunning {
+      let text = "Building \(platformName(build.platform))"
+      return RowStatus(kind: .building, text: text, label: text, tone: .brand)
+    }
+    if settingUp {
+      if phase == "ready" { return RowStatus(kind: .ready, text: "Ready", label: "Ready", tone: .brand) }
+      guard let seconds = since(phaseSince, now) else {
+        return RowStatus(kind: .warming, text: "Warming", label: "Warming", tone: .brand)
+      }
+      return RowStatus(
+        kind: .warming, text: "Warming \(Format.duration(seconds))",
+        label: "Warming for \(Format.spokenDuration(seconds))", tone: .brand)
+    }
+    if pathMissing == true, !isActive {
+      return RowStatus(
+        kind: .missing, text: "Folder missing", label: "Folder missing, run \(removalCommand) to drop it", tone: .warning)
+    }
+    if !isActive {
+      guard let seconds = since(metro?.lastStop?.at, now) else {
+        return RowStatus(kind: .idle, text: "Idle", label: "Idle", tone: .tertiary)
+      }
+      return RowStatus(
+        kind: .idle, text: "Idle \(Format.duration(seconds))", label: "Idle for \(Format.spokenDuration(seconds))",
+        tone: .tertiary)
+    }
+    let driven = runningLocalDevices.filter { $0.activity?.state == "driven" }
+    if !driven.isEmpty {
+      guard let latest = driven.compactMap({ $0.activity?.driver?.since.flatMap(parseTimestamp) }).max() else {
+        return RowStatus(kind: .driven, text: "Driven", label: "Driven by an agent", tone: .brand)
+      }
+      let seconds = max(0, now.timeIntervalSince(latest))
+      return RowStatus(
+        kind: .driven, text: "Driven \(Format.duration(seconds))",
+        label: "Driven by an agent for \(Format.spokenDuration(seconds))", tone: .brand)
+    }
+    return RowStatus(kind: .running, text: "Running", label: "Running", tone: .success)
+  }
+
+  /// The platforms this workspace has run, in iOS, Android, macOS, Web order: a device, a build in the history or
+  /// last builds, a running build or a macOS run. A failed iOS, Android or macOS build shows while the workspace is live or for a day after it failed, like `rowProblems`; a failed web page shows while it is loaded.
+  public func platformStates(now: Date) -> [PlatformState] {
+    ["ios", "android", "macos", "web"].compactMap { platform in
+      let history = platform == "web" ? [] : (builds?.builds(for: platform) ?? [])
+      let ran =
+        devices.contains { $0.platform == platform } || !history.isEmpty || build?.platform == platform
+        || (platform == "macos" && macos != nil)
+        || ((platform == "ios" || platform == "android") && lastBuilds?.build(for: platform) != nil)
+      guard ran else { return nil }
+      func state(_ kind: PlatformState.Kind) -> PlatformState { PlatformState(platform: platform, kind: kind) }
+      let building = build?.isRunning == true ? build?.platform == platform : false
+      if building || (platform == "macos" && macos?.build.state == "running") { return state(.building) }
+      var failedAt: String?
+      var failed = false
+      switch platform {
+      case "macos":
+        failed = macos?.build.state == "failed"
+        failedAt = macos?.build.finishedAt ?? macos?.build.startedAt
+      case "web":
+        failed = devices.contains { $0.pageFailed }
+      default:
+        let last = lastBuilds?.build(for: platform)
+        failed = last?.status == "failed"
+        failedAt = last?.finishedAt ?? last?.startedAt
+      }
+      if failed, platform == "web" || isActive || (since(failedAt, now).map { $0 * 1000 < staleMs } ?? false) {
+        return state(.failed)
+      }
+      let up = devices.contains { $0.platform == platform && $0.isRunning } || (platform == "macos" && macos?.state == "running")
+      return state(up ? .running : .idle)
+    }
+  }
+
+  /// A failed build shows while the workspace is live, or for a day after it failed, like the Needs you notification.
+  public func rowProblems(now: Date) -> [RowProblem] {
+    var problems: [RowProblem] = []
+    let errors = logs?.errorsSinceMarker ?? 0
+    if errors > 0 { problems.append(RowProblem(kind: .errors, text: countLabel(errors, "error"), tone: .error)) }
+    let building = build?.isRunning == true ? build?.platform : nil
+    for platform in ["ios", "android"] {
+      guard let last = lastBuilds?.build(for: platform), last.status == "failed", building != platform else { continue }
+      let age = since(last.finishedAt ?? last.startedAt, now)
+      if !isActive, age.map({ $0 * 1000 >= staleMs }) ?? true { continue }
+      problems.append(RowProblem(kind: .buildFailed, text: "\(platformName(platform)) build failed", tone: .error))
+    }
+    for device in orderedDevices where appPresence(device) == .closed {
+      problems.append(RowProblem(kind: .appClosed, text: "\(platformName(device.platform)) app closed", tone: .error))
+    }
+    if (worktree?.pullRequest?.checks?.failing ?? 0) > 0 {
+      problems.append(RowProblem(kind: .ciFailing, text: "CI failing", tone: .error))
+    }
+    if !warnings.isEmpty {
+      problems.append(
+        issues?.contains { $0.severity == "error" } == true
+          ? RowProblem(kind: .issues, text: countLabel(warnings.count, "issue"), tone: .error)
+          : RowProblem(kind: .warnings, text: countLabel(warnings.count, "warning"), tone: .warning))
+    }
+    if supervisor?.healthy == false {
+      problems.append(RowProblem(kind: .supervisor, text: "Supervisor unhealthy", tone: .warning))
+    }
+    return problems
+  }
+
+  /// The step `stim worktree warm` is on.
+  public var warmStepText: String { warmStep == "copy" ? "Copying ignored files" : "Installing dependencies" }
+
+  var rowDriverTools: [String] {
+    var tools: [String] = []
+    for device in runningLocalDevices where device.activity?.state == "driven" {
+      let tool = device.activity?.driver?.tool ?? "unknown tool"
+      if !tools.contains(tool) { tools.append(tool) }
+    }
+    return tools
+  }
+
+  public func rowDevices(now: Date) -> RowDevices {
+    let running = runningLocalDevices
+    var kinds: [(name: String, count: Int)] = []
+    for device in running {
+      let name = platformName(device.platform) + (device.isPhysical ? " device" : "")
+      if let index = kinds.firstIndex(where: { $0.name == name }) {
+        kinds[index].count += 1
+      } else {
+        kinds.append((name, 1))
+      }
+    }
+    let tools = rowDriverTools
+    var idle: RowDevices.Idle?
+    let activities = running.compactMap(\.activity).filter { $0.state != "unknown" }
+    if tools.isEmpty, !activities.isEmpty, activities.allSatisfy({ $0.state == "idle" }),
+      let last = activities.compactMap({ $0.lastActivityAt.flatMap(parseTimestamp) }).max(),
+      now.timeIntervalSince(last) >= ActivityBadge.activeWindow
+    {
+      let seconds = now.timeIntervalSince(last)
+      idle = RowDevices.Idle(
+        text: "idle \(Format.duration(seconds))", label: "idle for \(Format.spokenDuration(seconds))")
+    }
+    return RowDevices(
+      names: kinds.isEmpty ? nil : kinds.map { $0.count > 1 ? "\($0.count) \($0.name)" : $0.name }.joined(separator: ", "),
+      drivers: tools.isEmpty ? nil : tools.joined(separator: ", "),
+      idle: idle,
+      remote: remoteDevices?.count ?? 0)
+  }
+}
+
+extension Workspace {
+  /// Everything the sidebar row shows, spoken, since the row is one accessibility element: the state, the agent
+  /// session, what is wrong, the build step, each running device and who drives it, EAS sessions, git and the folder.
+  /// A driven workspace is spoken through its devices only, so the driver is not said twice.
+  public func rowLabel(now: Date, folder: String?, showsGit: Bool) -> String {
+    let status = rowStatus(now: now)
+    var parts: [String?] = [names.title]
+    if status.kind == .building, let build, build.isRunning {
+      let (phase, counts) = build.currentPhaseLabel
+      parts += [status.label, phase, counts]
+    } else if status.kind != .driven {
+      parts.append(status.label)
+    }
+    if status.kind == .warming { parts.append(warmStepText) }
+    let sessions = AgentSession.associated(agents: agents, endedAgents: endedAgents)
+    if let first = sessions.first { parts.append(first.label + (sessions.count > 1 ? " +\(sessions.count - 1)" : "")) }
+    parts += rowProblems(now: now).map(\.text)
+    for device in orderedDevices where device.isRunning {
+      if case .remote = device { continue }
+      let kind = platformName(device.platform) + (device.isPhysical ? " device" : "")
+      let name = device.slot == DeviceRef.defaultSlot ? kind : "\(kind) slot \(device.slot)"
+      parts.append(ActivityBadge(device.activity, now: now).map { "\(name), \($0.spoken)" } ?? "\(name) running")
+    }
+    if let remote = remoteDevices, !remote.isEmpty { parts.append(countLabel(remote.count, "EAS session")) }
+    if showsGit { parts.append(GitChip(worktree)?.label) }
+    parts.append(folder)
+    return parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: ", ")
+  }
+}
+
+extension ActivityBadge {
+  /// `text` for assistive technology, such as "driven by agent-device for 5 minutes".
+  public var spoken: String {
+    switch self {
+    case .driven(let tool, let since):
+      return since.map { "driven by \(tool) for \(Format.spokenDuration($0))" } ?? "driven by \(tool)"
+    case .idle(let idle):
+      return idle.map { "idle for \(Format.spokenDuration($0))" } ?? "idle"
+    case .unknown:
+      return "activity unknown"
+    }
+  }
+}
+
+public struct WorktreeRowSummary: Sendable {
+  public struct App: Sendable {
+    /// The project folder, set only where the platforms do not tell the apps apart.
+    public var name: String?
+    public var platforms: [PlatformState]
+    public var status: RowStatus
+    public var active: Bool
+
+    var spoken: String? {
+      let states = platforms.map(\.spoken).joined(separator: ", ")
+      guard let name else { return states.isEmpty ? nil : states }
+      return states.isEmpty ? "\(name): \(status.label)" : "\(name): \(states)"
+    }
+  }
+
+  public var title: String
+  public var status: RowStatus
+  public var active: Bool
+  public var apps: [App]
+  public var agents: [AgentSession]
+  public var problems: [String]
+  public var drivers: String?
+  public var remote: Int
+  public var git: GitChip?
+  public var subtitle: String?
+
+  public var label: String {
+    var parts = [title, status.label] + apps.compactMap(\.spoken)
+    if let first = agents.first { parts.append(first.label + (agents.count > 1 ? " +\(agents.count - 1)" : "")) }
+    parts += problems
+    if let drivers { parts.append("driven by \(drivers)") }
+    if remote > 0 { parts.append(countLabel(remote, "EAS session")) }
+    if let git { parts.append(git.label) }
+    if let subtitle { parts.append(subtitle) }
+    return parts.filter { !$0.isEmpty }.joined(separator: ", ")
+  }
+}
+
+extension WorktreePage {
+  public func rowSummary(now: Date, subtitle: String?, showsGit: Bool) -> WorktreeRowSummary {
+    var problems: [String] = []
+    let errors = Format.sum(apps.map { $0.logs?.errorsSinceMarker ?? 0 })
+    if errors > 0 { problems.append(countLabel(errors, "error")) }
+    let states = apps.map { $0.platformStates(now: now) }
+    let names = apps.indices.map { i -> String? in
+      guard apps.count > 1 else { return nil }
+      let mine = Set(states[i].map(\.platform))
+      let shared = apps.indices.contains { $0 != i && !mine.isDisjoint(with: states[$0].map(\.platform)) }
+      return mine.isEmpty || shared ? Self.project(apps[i]) : nil
+    }
+    for (app, label) in zip(apps, appLabels) {
+      for problem in app.rowProblems(now: now) where problem.kind != .errors && problem.kind != .ciFailing {
+        problems.append("\(label): \(problem.text)")
+      }
+    }
+    if apps.contains(where: { $0.rowProblems(now: now).contains { $0.kind == .ciFailing } }) { problems.append("CI failing") }
+    var seenTools = Set<String>()
+    let tools = apps.flatMap(\.rowDriverTools).filter { seenTools.insert($0).inserted }
+    return WorktreeRowSummary(
+      title: apps[0].names.title, status: statusLead(now: now).rowStatus(now: now), active: apps.contains(where: \.isActive),
+      apps: apps.indices.map {
+        WorktreeRowSummary.App(
+          name: names[$0], platforms: states[$0], status: apps[$0].rowStatus(now: now), active: apps[$0].isActive)
+      },
+      agents: agents, problems: problems, drivers: tools.isEmpty ? nil : tools.joined(separator: ", "),
+      remote: Format.sum(apps.map { $0.remoteDevices?.count ?? 0 }),
+      git: showsGit ? GitChip(apps[0].worktree) : nil, subtitle: subtitle)
+  }
+
+  private func statusLead(now: Date) -> Workspace {
+    let active = apps.filter(\.isActive)
+    return lead(now: now, among: active.isEmpty ? nil : active)
+  }
+}

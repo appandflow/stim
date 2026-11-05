@@ -1,0 +1,158 @@
+{
+  "project": "/Users/dev/stim/apps/mobile",
+  "platform": null,
+  "stim": {
+    "runningVersion": "1.14.0",
+    "runningPath": "/Users/dev/Developer/stim/packages/stim-cli/dist/cli.mjs",
+    "resolved": {
+      "path": "/Users/dev/.nvm/versions/node/v22.22.2/bin/stim",
+      "realPath": "/Users/dev/Developer/stim/packages/stim-cli/dist/cli.mjs",
+      "version": "1.14.0"
+    },
+    "installations": [
+      {
+        "path": "/Users/dev/.nvm/versions/node/v22.22.2/bin/stim",
+        "realPath": "/Users/dev/Developer/stim/packages/stim-cli/dist/cli.mjs",
+        "version": "1.14.0"
+      }
+    ],
+    "versions": ["1.14.0"],
+    "highestVersion": "1.14.0",
+    "resolvedIsOlder": false
+  },
+  "budget": {
+    "budget": {
+      "minFreeDiskGb": 20,
+      "hardFloorDiskGb": 5,
+      "maxCommittedMemoryGb": 28.8,
+      "maxLiveWorkspaces": 0
+    },
+    "volumes": [
+      {
+        "volume": "/",
+        "freeGb": 100.6
+      }
+    ],
+    "memory": {
+      "committedGb": 19.4,
+      "liveWorkspaces": 7
+    },
+    "plan": []
+  },
+  "remoteMachines": [
+    {
+      "machine": "janics-mac-mini:7869",
+      "state": "approved",
+      "dnsName": "janics-mac-mini.tail0000.ts.net",
+      "deviceId": "fff01a8e",
+      "requestedAt": "2026-09-24T23:34:58.162Z",
+      "offloadable": true,
+      "reasons": [],
+      "problems": [],
+      "capacity": {
+        "running": 0,
+        "max": 1,
+        "diskFreeBytes": 812000000000,
+        "minDiskFreeBytes": 10737418240,
+        "cpus": 10,
+        "loadPerCore": 0.4,
+        "builds": 0,
+        "maxBuilds": 0,
+        "maxLoadPerCore": 2,
+        "declined": null
+      }
+    },
+    {
+      "machine": "build-box",
+      "state": "approved",
+      "dnsName": "build-box.tail0000.ts.net",
+      "deviceId": "ab12cd34",
+      "requestedAt": "2026-09-22T15:10:00.000Z",
+      "offloadable": false,
+      "reasons": ["busy (load at or above 2/core; load 8.2/core, 2 builds)"],
+      "problems": [
+        {
+          "code": "busy",
+          "reason": "busy (load at or above 2/core; load 8.2/core, 2 builds)"
+        }
+      ],
+      "capacity": {
+        "running": 0,
+        "max": 1,
+        "diskFreeBytes": 812000000000,
+        "minDiskFreeBytes": 10737418240,
+        "cpus": 10,
+        "loadPerCore": 8.2,
+        "builds": 2,
+        "maxBuilds": 0,
+        "maxLoadPerCore": 2,
+        "declined": "load at or above 2/core"
+      }
+    },
+    {
+      "machine": "old-mini",
+      "state": "approved",
+      "dnsName": "old-mini.tail0000.ts.net",
+      "deviceId": "9f8e7d6c",
+      "requestedAt": "2026-09-20T09:00:00.000Z",
+      "offloadable": false,
+      "reasons": ["Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"],
+      "problems": [
+        {
+          "code": "stim-build",
+          "reason": "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"
+        }
+      ],
+      "capacity": {
+        "running": 0,
+        "max": 1,
+        "diskFreeBytes": 812000000000,
+        "minDiskFreeBytes": 10737418240,
+        "cpus": 10,
+        "loadPerCore": 0.1,
+        "builds": 0,
+        "maxBuilds": 0,
+        "maxLoadPerCore": 2,
+        "declined": null
+      }
+    }
+  ],
+  "findings": [
+    {
+      "level": "note",
+      "title": "The source checkout is 9 commits behind origin/main",
+      "detail": "The count uses the locally known upstream ref. A fetch can reveal additional commits. A later rebase or merge can change native inputs and invalidate work done from the older base.",
+      "fix": "Run `stim worktree warm --refresh` from a linked worktree to fetch and fast-forward the source checkout, or `git -C '/Users/dev/Developer/stim' fetch --prune` and inspect the branch yourself."
+    },
+    {
+      "level": "note",
+      "title": "Cannot check the build cache provider in app.config.ts",
+      "detail": "This config is code, so it is not readable without executing it. A provider is optional -- stim ios/android have their own cache -- but if this project DOES set one, confirm by hand that it is on the key this SDK reads.",
+      "fix": "Use the top-level expo.buildCacheProvider; the experiments key still works as a fallback. Run `npx expo config --json` and look for buildCacheProvider. If one is already set -- including \"eas\" -- that satisfies this; Stim never replaces it."
+    },
+    {
+      "level": "note",
+      "title": "Concurrency limits are set",
+      "detail": "maxBuilds 3, maxDevices 6. Right now 8 Stim device(s) are booted and 0 build slot(s) are in use on this machine. At the device cap a new `stim ios`/`android` is refused with STIM_AT_CAPACITY (stop an environment or raise it); at the build cap a compile waits for a free slot.",
+      "fix": null
+    },
+    {
+      "level": "cost",
+      "title": "Host memory pressure can stall the iOS simulator",
+      "detail": "macOS reports warning host memory pressure. Simulator processes can stall even when the device is Booted. Free memory before retrying: use `stim stop` only in workspaces you own, and ask before closing other apps or devices. For parallel iOS work, consider a reviewed SimSlim profile (`stim guide lifecycle simslim`). This observation does not establish an OOM crash.",
+      "fix": "Free host memory, then retry. Run `stim guide lifecycle simslim` for the optional memory reduction setup."
+    },
+    {
+      "level": "note",
+      "title": "SimSlim is recommended for parallel iOS simulator work",
+      "detail": "A reviewed profile can reduce background simulator services and memory use. It is optional: disabling services can affect tests that depend on them, and installing the binary alone does not apply a profile.",
+      "fix": "Run `stim guide lifecycle simslim` to install SimSlim and configure ios.simslimProfile. Stim does not enable a profile through doctor --fix."
+    },
+    {
+      "level": "cost",
+      "title": "The configured CMake cache predates the ccache launcher, so C++ compiles still bypass it",
+      "detail": "CMake seeds CMAKE_CXX_COMPILER_LAUNCHER from the environment on a fresh configure only.",
+      "fix": "Stop native builds, then run `stim doctor --fix --platform android` in this checkout. It clears affected ignored, untracked .cxx configurations; the next `stim android` configures them with ccache. Existing custom launcher settings require project-specific repair."
+    }
+  ]
+}

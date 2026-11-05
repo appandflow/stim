@@ -1,0 +1,321 @@
+import Combine
+import Foundation
+import StimKit
+
+@MainActor
+final class TutorialModel: ObservableObject {
+  @Published private(set) var snapshot: TutorialSnapshot?
+  @Published private(set) var isOpen = false
+  @Published private(set) var workspace: Workspace?
+  @Published private(set) var archiveEnabled: Bool?
+  private var progress = TutorialProgress()
+  private let records: TutorialRecordStore
+  private let defaults: UserDefaults
+  private var workspaces: [Workspace] = []
+  private var archived: [ArchivedWorkspace] = []
+  private var statusLoaded = false
+  private var launchPending = true
+  private var openPending = false
+  private var logs: [LogRecord] = []
+  private var now = Date()
+  private var viewerEvents: [TutorialViewerEvents.Entry] = []
+  private var viewerEventSequence = 0
+  @Published private(set) var phoneState = TutorialPhoneState(pairedPhoneCount: nil)
+  private var pairedPhoneCount: Int?
+  @Published private var removalRefused = false
+  private var missingSince: Date?
+  private var followedPath: String?
+  private var followTask: Task<Void, Never>?
+  private var environment: Task<[String: String], Never>?
+  private lazy var follower = LogFollower { [weak self] in self?.receive($0) }
+  private lazy var agentFollower = LogFollower { [weak self] in self?.receive($0) }
+  private static let seenKey = "tutorial.openedPaths"
+
+  enum RestartDialog: Equatable {
+    case confirm(base: String, worktrees: [String])
+    case blocked(String)
+  }
+  @Published var restartDialog: RestartDialog?
+  private var restarting = false
+
+  private let cloneBase: String
+
+  init(defaults: UserDefaults = .standard, cloneBase: String = NSHomeDirectory() + "/stim-tutorial") {
+    self.defaults = defaults
+    self.cloneBase = cloneBase
+    records = TutorialRecordStore(defaults)
+  }
+
+  var tourPath: String? { snapshot?.record.tourPath ?? records.record?.tourPath }
+
+  func ask(for step: TutorialStep) -> String? {
+    var template = step.ask
+    if step.id == snapshot?.currentStep, step.id == "build",
+      snapshot?.steps.first(where: { $0.id == step.id }).map({
+        if case .failed = $0.state { return $0.action == nil }
+        return false
+      }) == true
+    {
+      template = TutorialSteps.retryAsk
+    }
+    let existing = Set(workspaces.map(\.path))
+    return template.map {
+      tutorialAsk(
+        $0, tourPath: tourPath, repository: workspace?.worktree?.repository ?? snapshot?.record.clonePath,
+        second: snapshot?.record.secondPath,
+        existing: existing)
+    }
+  }
+
+  var notice: TutorialNotice? {
+    if let notice = workspace?.tutorial.flatMap({ TutorialNotice.version($0.version) }) { return notice }
+    if workspace == nil, tourPath != nil, snapshot?.isComplete == false, snapshot?.currentStep != "delete",
+      !workspaces.contains(where: { $0.path == snapshot?.record.secondPath })
+    {
+      return TutorialNotice("Tutorial workspace gone: Restart", action: .restart)
+    }
+    if snapshot?.currentStep == "finish", removalRefused {
+      return TutorialNotice("Removal was refused: revert the tutorial edit and try again")
+    }
+    return nil
+  }
+
+  func configure(environment: Task<[String: String], Never>) {
+    self.environment = environment
+    followedPath = nil
+    syncFollowers()
+  }
+
+  func update(
+    workspaces: [Workspace], archived: [ArchivedWorkspace], sheetOpen: Bool, now: Date = Date(),
+    viewerEvents: [TutorialViewerEvents.Entry] = [], pairedPhoneCount: Int? = nil, removalRefused: Bool = false
+  ) {
+    self.now = now
+    if let stored = progress.record ?? records.record, !TutorialSteps.supportedVersions.contains(stored.version) {
+      progress = TutorialProgress()
+      records.record = nil
+      snapshot = nil
+      archiveEnabled = nil
+      logs = []
+      viewerEventSequence = viewerEvents.last?.sequence ?? 0
+      launchPending = false
+    }
+    self.viewerEvents = viewerEvents
+    self.pairedPhoneCount = pairedPhoneCount
+    let nextPhoneState = TutorialPhoneState(pairedPhoneCount: pairedPhoneCount)
+    if phoneState != nextPhoneState { phoneState = nextPhoneState }
+    if self.removalRefused != removalRefused { self.removalRefused = removalRefused }
+    self.workspaces = workspaces
+    self.archived = archived
+    statusLoaded = true
+    let saved = progress.record ?? records.record
+    let archivedRoots = saved?.archivedProjectRoots(in: archived) ?? []
+    let candidate = TutorialEnvironment.select(
+      workspaces, trackedPath: saved?.tourPath, since: saved.flatMap { $0.tourPath == nil ? $0.startedAt : nil },
+      repository: saved?.clonePath)
+    let tracked = saved?.tourPath
+    let nextWorkspace = workspaces.first { $0.path == (tracked ?? candidate?.path) }
+    if workspace != nextWorkspace { workspace = nextWorkspace }
+    let seen = defaults.stringArray(forKey: Self.seenKey) ?? []
+    let offered = AppPreferences.offersTutorial(defaults)
+    if launchPending, let saved, offered {
+      if let path = saved.tourPath, workspace != nil || archivedRoots.contains(path) {
+        openPending = saved.reopensAtLaunch
+        launchPending = false
+      } else if saved.tourPath == nil, saved.step != "done" {
+        openPending = saved.reopensAtLaunch
+        launchPending = false
+      }
+    } else if offered, let candidate, !seen.contains(candidate.path), saved == nil || saved?.step == "done" {
+      progress = TutorialProgress()
+      snapshot = nil
+      archiveEnabled = nil
+      logs = []
+      viewerEventSequence = viewerEvents.last?.sequence ?? 0
+      records.record = nil
+      workspace = workspaces.first { $0.path == candidate.path }
+      openPending = true
+      launchPending = false
+    }
+    if openPending, offered, !sheetOpen {
+      isOpen = true
+      openPending = false
+    }
+    guard isOpen || progress.record != nil || records.record != nil else { return }
+    if workspace == nil, tourPath != nil {
+      if missingSince == nil { missingSince = now }
+    } else {
+      missingSince = nil
+    }
+    let fallback =
+      archiveEnabled == nil && progress.record?.step == "finish" && progress.record?.stopped == true
+      && missingSince.map { now.timeIntervalSince($0) >= 10 } == true
+    let next = progress.update(
+      TutorialInput(
+        environment: workspace.flatMap(TutorialEnvironment.init), siblings: workspaces.compactMap(TutorialEnvironment.init),
+        archivedProjectRoots: archivedRoots,
+        logRecords: logs, viewerEvents: viewerEvents.filter { $0.sequence > viewerEventSequence }.map(\.event),
+        pairedPhoneCount: pairedPhoneCount, phoneApp: FeatureFlags.isEnabled(.phoneApp, defaults: defaults),
+        replayOff: workspace?.replayOff ?? false,
+        archiveEnabled: fallback ? false : archiveEnabled ?? true,
+        cloneFolderExists: saved?.clonePath.map { FileManager.default.fileExists(atPath: $0) },
+        newCloneFolder: saved?.step == "begin"
+          ? TutorialCloneFolder(path: cloneBase) : nil,
+        now: now, record: records.record))
+    if snapshot != next { snapshot = next }
+    if records.record != snapshot?.record { records.record = snapshot?.record }
+    if let path = tourPath, isOpen, !seen.contains(path) { defaults.set(seen + [path], forKey: Self.seenKey) }
+    syncFollowers()
+  }
+
+  func open(beginning: Bool = false, now: Date = Date()) {
+    if beginning {
+      progress = TutorialProgress()
+      records.record = TutorialRecord(version: TutorialSteps.supportedVersions.max()!, startedAt: now)
+      snapshot = nil
+      workspace = nil
+      logs = []
+      viewerEventSequence = viewerEvents.last?.sequence ?? 0
+    }
+    setDismissed(false)
+    isOpen = true
+    launchPending = false
+    refresh(now: now)
+    syncFollowers()
+  }
+
+  func restart() {
+    guard let environment else { return open(beginning: true) }
+    guard !restarting, restartDialog == nil else { return }
+    restarting = true
+    let base = records.record?.clonePath ?? cloneBase
+    Task {
+      defer { restarting = false }
+      let cleanup = tutorialCleanup(environment: await environment.value)
+      do {
+        guard let plan = try await cleanup.plan(base: base) else { return open(beginning: true) }
+        switch plan {
+        case .remove(let worktrees): restartDialog = .confirm(base: base, worktrees: worktrees)
+        case .refuse(let reason): restartDialog = .blocked(reason)
+        }
+      } catch { restartDialog = .blocked(error.localizedDescription) }
+    }
+  }
+
+  private func tutorialCleanup(environment: [String: String]) -> TutorialCleanup {
+    TutorialCleanup(
+      stop: { path in
+        let result = try await runServerStop(
+          StimCommand(["stop"], cwd: path), stimHome: StimHome.path(environment: environment),
+          connection: await ServerSession.shared.statsConnection)
+        guard result.exitStatus == 0 else { throw CommandFailure.exited(result.exitStatus, stderr: result.message) }
+      },
+      removeWorktree: { path, base in
+        let result = try await runServerWorktreeRemove(
+          StimCommand(["worktree", "remove", path], cwd: base), stimHome: StimHome.path(environment: environment),
+          connection: await ServerSession.shared.statsConnection)
+        guard result.exitStatus == 0 else { throw CommandFailure.exited(result.exitStatus, stderr: result.message) }
+      })
+  }
+
+  func confirmRestart(base: String, worktrees: [String]) {
+    guard let environment, !restarting else { return }
+    restartDialog = nil
+    restarting = true
+    Task {
+      defer { restarting = false }
+      do {
+        try await tutorialCleanup(environment: await environment.value).remove(base: base, worktrees: worktrees)
+        open(beginning: true)
+      } catch { restartDialog = .blocked(error.localizedDescription) }
+    }
+  }
+
+  func close() {
+    setDismissed(true)
+    isOpen = false
+    openPending = false
+    syncFollowers()
+  }
+
+  private func setDismissed(_ dismissed: Bool) {
+    progress.setDismissed(dismissed)
+    records.record?.dismissed = dismissed ? true : nil
+  }
+
+  func next() {
+    progress.next(now: Date())
+    refresh()
+  }
+  func copiedPrompt(now: Date = Date()) {
+    progress.copiedRunPrompt(now: now)
+    refresh(now: now)
+  }
+
+  private func refresh(now: Date = Date()) {
+    guard statusLoaded else { return }
+    update(
+      workspaces: workspaces, archived: archived, sheetOpen: false, now: now,
+      viewerEvents: viewerEvents, pairedPhoneCount: pairedPhoneCount, removalRefused: removalRefused)
+  }
+
+  func refreshLogs() {
+    syncFollowers(force: true)
+  }
+
+  private func syncFollowers(force: Bool = false) {
+    let path = isOpen && workspace?.live == true ? workspace?.path : nil
+    guard force || path != followedPath else { return }
+    followTask?.cancel()
+    follower.stop()
+    agentFollower.stop()
+    followedPath = path
+    guard let path, let environment else { return }
+    followTask = Task {
+      let environment = await environment.value
+      guard !Task.isCancelled, followedPath == path else { return }
+      var query = LogQuery()
+      query.search = "\\[stim:tutorial\\]"
+      follower.start(
+        query, stimHome: StimHome.path(environment: environment), connection: ServerSession.shared.statsConnection, cwd: path)
+      query.search = ""
+      query.sources = [.agent]
+      agentFollower.start(
+        query, stimHome: StimHome.path(environment: environment), connection: ServerSession.shared.statsConnection, cwd: path)
+      await refreshSettings()
+    }
+  }
+
+  func refreshSettings() async {
+    guard let path = followedPath, let environment else { return }
+    let settings = try? await readServerSettings(
+      stimHome: StimHome.path(environment: await environment.value), connection: ServerSession.shared.statsConnection, cwd: path)
+    guard !Task.isCancelled, followedPath == path else { return }
+    if let value = settings?.entry("archive.enabled")?.value {
+      switch value {
+      case .bool(let enabled): archiveEnabled = enabled
+      case .string(let enabled): archiveEnabled = ["true", "1"].contains(enabled)
+      default: break
+      }
+    }
+    refresh()
+  }
+
+  private func receive(_ event: LogFollower.Event) {
+    guard case .records(let batch) = event else { return }
+    struct Key: Hashable {
+      var ts: Double
+      var src: String
+      var msg: String
+      init(_ record: LogRecord) {
+        ts = record.ts
+        src = record.src
+        msg = record.msg
+      }
+    }
+    var seen = Set(logs.map(Key.init))
+    logs = Array((logs + batch.filter { seen.insert(Key($0)).inserted }).suffix(10000))
+    refresh()
+  }
+
+}

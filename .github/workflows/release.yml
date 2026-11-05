@@ -1,0 +1,599 @@
+# Publishes the packages to npm via OIDC trusted publishing. There is NO
+# token: npm trusts a short-lived OIDC credential minted for exactly this repo
+# + workflow + environment. A version tag publishes a release; a push to main
+# publishes the head of main to the `next` dist-tag (RELEASE.md, "Prerelease
+# channel").
+#
+# The tarballs come from `pnpm pack`: the packages declare their edges to each
+# other with pnpm's `workspace:` protocol, which only pnpm substitutes with the
+# real version. npm would upload the range verbatim, so npm only publishes the
+# already-packed tarball.
+#
+# Third-party actions are pinned by commit SHA and the publish job is deliberately
+# minimal -- nothing here may run code that could tamper with the tarballs.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NEXT_THROTTLE_MINUTES: 5
+
+jobs:
+  tag-on-main:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The tag is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::$GITHUB_REF_NAME is not on main. Tag a commit from main."
+            exit 1
+          fi
+      - name: A stable release has a green Full suite on this commit
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=workflow_dispatch&status=success&per_page=100" |
+            node scripts/full-suite-gate.mjs "$GITHUB_SHA"
+
+  publish:
+    needs: tag-on-main
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      dist_tag: ${{ steps.dist-tag.outputs.dist_tag }}
+    env:
+      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          # Release installs must not restore a package-manager cache.
+          cache: false
+          install: false
+      - name: Show release runtime
+        run: |
+          node --version
+          npm --version
+      - name: Install (lifecycle scripts stay blocked)
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm run build
+      - name: Tag matches the package versions
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for p in $PACKAGE_DIRS; do
+            v=$(node -p "require('./packages/$p/package.json').version")
+            if [ "$v" != "$tag" ]; then
+              echo "packages/$p is $v but the tag is $tag"; exit 1
+            fi
+          done
+      - name: Pack the tarballs with pnpm
+        run: |
+          for p in $PACKAGE_DIRS; do
+            tarball=$(cd "packages/$p" && pnpm pack --pack-destination "$RUNNER_TEMP/tarballs" | tail -1)
+            mv "$tarball" "$RUNNER_TEMP/tarballs/$p.tgz"
+            tar -xzOf "$RUNNER_TEMP/tarballs/$p.tgz" package/package.json > "$RUNNER_TEMP/tarballs/$p.package.json"
+          done
+      - name: Packed manifests name the exact tag, not a range
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for p in $PACKAGE_DIRS; do
+            manifest="$RUNNER_TEMP/tarballs/$p.package.json"
+            if grep -nE '"[^"]*": *"workspace:' "$manifest"; then
+              echo "packages/$p packed an unsubstituted workspace: range"; exit 1
+            fi
+            node -e '
+              const manifest = require(process.argv[1]);
+              const tag = process.argv[2];
+              const accepted = new Set([tag]);
+              const groups = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+              let bad = manifest.version === tag ? 0 : 1;
+              if (bad) console.log(`${manifest.name} is ${manifest.version} but the tag is ${tag}`);
+              for (const group of groups) {
+                for (const [name, range] of Object.entries(manifest[group] ?? {})) {
+                  if (name !== "stim" && !name.startsWith("@stim-cli/")) continue;
+                  const ok = accepted.has(range);
+                  console.log(`${manifest.name} ${group}.${name} ${range} ${ok ? "ok" : "MISMATCH"}`);
+                  if (!ok) bad += 1;
+                }
+              }
+              process.exit(bad === 0 ? 0 : 1);
+            ' "$manifest" "$tag"
+          done
+      - name: Compute publish dist-tag
+        id: dist-tag
+        # Dist-tag selection: see RELEASE.md section 1.
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          dist_tag=latest
+
+          if [[ "$tag_version" == *-* ]]; then
+            err_log="$(mktemp)"
+            if current=$(npm view @stim-cli/core version 2>"$err_log"); then
+              if [[ -n "$current" && "$current" != *-* ]]; then
+                dist_tag=next
+              fi
+            elif grep -q 'code E404' "$err_log"; then
+              :
+            else
+              echo "::error::npm view @stim-cli/core version failed and did not report E404; refusing to guess a dist-tag: $(cat "$err_log")"
+              rm -f "$err_log"
+              exit 1
+            fi
+            rm -f "$err_log"
+          fi
+
+          echo "tag_version=$tag_version dist_tag=$dist_tag"
+          echo "DIST_TAG=$dist_tag" >> "$GITHUB_ENV"
+          echo "dist_tag=$dist_tag" >> "$GITHUB_OUTPUT"
+      - name: Publish @stim-cli/core
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/core.package.json').version")
+          if npm view "@stim-cli/core@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/core@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/core.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/cache
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/cache.package.json').version")
+          if npm view "@stim-cli/cache@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/cache@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/cache.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/cache-s3
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/cache-s3.package.json').version")
+          if npm view "@stim-cli/cache-s3@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/cache-s3@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/cache-s3.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/agent-driver
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/agent-driver.package.json').version")
+          if npm view "@stim-cli/agent-driver@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/agent-driver@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/agent-driver.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/agent-driver-agent-device
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/agent-driver-agent-device.package.json').version")
+          if npm view "@stim-cli/agent-driver-agent-device@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/agent-driver-agent-device@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/agent-driver-agent-device.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/metro
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/metro.package.json').version")
+          if npm view "@stim-cli/metro@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/metro@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/metro.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/expo-build-cache
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/expo-build-cache.package.json').version")
+          if npm view "@stim-cli/expo-build-cache@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/expo-build-cache@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/expo-build-cache.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish stim
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/stim-cli.package.json').version")
+          if npm view "stim@$version" version >/dev/null 2>&1; then
+            echo "stim@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/stim-cli.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/ci
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if npm view "@stim-cli/ci@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/ci@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/ci.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/transport
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/transport.package.json').version")
+          if npm view "@stim-cli/transport@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/transport@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/transport.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/transport-tailscale
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/transport-tailscale.package.json').version")
+          if npm view "@stim-cli/transport-tailscale@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/transport-tailscale@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/transport-tailscale.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/transport-local
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/transport-local.package.json').version")
+          if npm view "@stim-cli/transport-local@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/transport-local@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/transport-local.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/server
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/server.package.json').version")
+          if npm view "@stim-cli/server@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/server@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/server.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+
+  # npm can take several minutes to serve a new version's metadata and longer
+  # for its tarball. A separate job without id-token lets `npx` run the
+  # published CLI and its freshly resolved dependencies with no publish
+  # credential, and lets a slow registry be retried with "Re-run failed jobs"
+  # without publishing again.
+  smoke:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server
+      DIST_TAG: ${{ needs.publish.outputs.dist_tag }}
+      npm_config_prefer_online: 'true'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Smoke-test the registry
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          budget=900
+
+          wait_for() {
+            local what="$1"
+            shift
+            local deadline=$((SECONDS + budget))
+            local delay=10
+            until "$@"; do
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "::error::$what: still failing after ${budget}s"
+                return 1
+              fi
+              echo "$what: not yet; retrying in ${delay}s"
+              sleep "$delay"
+              delay=$((delay * 2 > 60 ? 60 : delay * 2))
+            done
+            echo "$what: ok"
+          }
+
+          version_visible() {
+            [ "$(npm view "$1@$version" version 2>/dev/null)" = "$version" ]
+          }
+
+          tarball_served() {
+            local url
+            url=$(npm view "$1@$version" dist.tarball 2>/dev/null) && [ -n "$url" ] && curl -fsSL --max-time 60 -o /dev/null "$url"
+          }
+
+          dist_tag_set() {
+            [ "$(npm view "$1" "dist-tags.$DIST_TAG" 2>/dev/null)" = "$version" ]
+          }
+
+          scratch=$(mktemp -d)
+          cli_runs() {
+            local out
+            out=$(cd "$scratch" && npx --yes "stim@$version" --version 2>&1) || { echo "$out"; return 1; }
+            [ "$(printf '%s\n' "$out" | tail -1)" = "$version" ]
+          }
+
+          server_runs() {
+            local out
+            out=$(cd "$scratch" && npx --yes -p "@stim-cli/server@$version" stim-server --version 2>&1) || { echo "$out"; return 1; }
+            [ "$(printf '%s\n' "$out" | tail -1)" = "$version" ]
+          }
+
+          ci_runs() {
+            (cd "$scratch" && npx --yes -p "@stim-cli/ci@$version" stim-ci --version) > "$scratch/ci-version.txt" 2>&1 || { cat "$scratch/ci-version.txt"; return 1; }
+            tail -1 "$scratch/ci-version.txt" | VERSION="$version" node --input-type=module -e 'let output = ""; for await (const chunk of process.stdin) output += chunk; process.exitCode = output.trim() === process.env.VERSION ? 0 : 1;'
+          }
+
+          for d in $PACKAGE_DIRS; do
+            p=$(node -p "require('./packages/$d/package.json').name")
+            wait_for "$p@$version version" version_visible "$p"
+            wait_for "$p@$version tarball" tarball_served "$p"
+            wait_for "$p dist-tag $DIST_TAG -> $version" dist_tag_set "$p"
+          done
+          wait_for "npx stim@$version --version" cli_runs
+          wait_for "npx -p @stim-cli/ci@$version stim-ci --version" ci_runs
+          wait_for "npx -p @stim-cli/server@$version stim-server --version" server_runs
+
+  next-publish:
+    if: github.repository == 'appandflow/stim' && github.ref == 'refs/heads/main' && vars.NEXT_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: release
+    # GitHub keeps one run active and one pending, and a newer pending run
+    # replaces the older one, so a burst of pushes queues at most one publish.
+    concurrency:
+      group: npm-next-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      checks: read
+      id-token: write
+    env:
+      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server
+    steps:
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Wait until NEXT_THROTTLE_MINUTES after the last next publish
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          if ! current=$(npm view stim dist-tags.next); then
+            echo "::warning::could not read stim's next dist-tag; publishing without waiting"
+            exit 0
+          fi
+          if [ -z "$current" ]; then
+            echo "stim has no next dist-tag yet"
+            exit 0
+          fi
+          if ! published=$(npm view stim time --json | node -e '
+            const time = JSON.parse(require("fs").readFileSync(0, "utf8"));
+            process.stdout.write(String(Math.floor(Date.parse(time[process.argv[1]]) / 1000)));
+          ' "$current"); then
+            echo "::warning::could not read when $current was published; publishing without waiting"
+            exit 0
+          fi
+          wait=$((published + NEXT_THROTTLE_MINUTES * 60 - $(date +%s)))
+          echo "next is $current, published $(date -u -d "@$published" +%FT%TZ)"
+          if [ "$wait" -gt 0 ]; then
+            echo "waiting ${wait}s"
+            sleep "$wait"
+          fi
+
+      - name: Resolve the head of main
+        id: head
+        run: |
+          sha=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY" refs/heads/main | cut -f1)
+          [ -n "$sha" ] || { echo "::error::could not resolve refs/heads/main"; exit 1; }
+          echo "head of main: $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # The main ruleset requires the merge queue's `merge gate` check, but
+      # repository admins can bypass it. A bypassed push publishes only once
+      # the CI release-gate jobs passed on it.
+      - name: The head passed its required checks
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          passed() {
+            local conclusion
+            conclusion=$(gh api -X GET "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs" -f check_name="$1" \
+              --jq '.check_runs | sort_by(.id) | last | .conclusion // ""')
+            [ "$conclusion" = success ]
+          }
+          if passed 'merge gate'; then
+            echo "merge gate passed on $SHA"
+          elif passed 'test (node 22)' && passed 'test (node 24)' && passed 'published runtime (node 22.12.0)'; then
+            echo "$SHA bypassed the merge queue; the CI release-gate jobs passed"
+          else
+            echo "::notice::$SHA has no passing merge gate or CI release gate yet; not publishing it"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          ref: ${{ steps.head.outputs.sha }}
+          persist-credentials: false
+
+      - name: Compute the next version
+        id: version
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          base=$(node -p "require('./packages/core/package.json').version")
+          if [[ "$base" == *-* ]]; then
+            echo "::notice::main carries the release candidate $base, which owns the next dist-tag; not publishing"
+            exit 0
+          fi
+          IFS=. read -r major minor _ <<<"${base%%-*}"
+          stamp=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S "$SHA")
+          version="$major.$((minor + 1)).0-next.$stamp.g${SHA:0:7}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.0-next\.[0-9]{14}\.g[0-9a-f]{7}$ ]]; then
+            echo "::error::refusing to publish $version: not an X.Y.0-next.<stamp>.g<sha> version"
+            exit 1
+          fi
+          for name in @stim-cli/ci @stim-cli/server; do
+            if ! npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "version=$version" >> "$GITHUB_OUTPUT"
+              echo "publishing $version"
+              exit 0
+            fi
+          done
+          echo "::notice::$version is already published"
+
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        if: steps.version.outputs.version != ''
+        with:
+          cache: false
+          install: false
+
+      - name: Set the version
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node scripts/release-prep.mjs --check
+          for p in $PACKAGE_DIRS; do
+            node -e '
+              const fs = require("fs");
+              const path = `packages/${process.argv[1]}/package.json`;
+              const manifest = JSON.parse(fs.readFileSync(path, "utf8"));
+              manifest.version = process.env.VERSION;
+              fs.writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
+            ' "$p"
+          done
+
+      - name: Install and build the packages
+        if: steps.version.outputs.version != ''
+        run: |
+          pnpm install --frozen-lockfile --filter "./packages/*"
+          pnpm -r --filter "./packages/*" run build
+
+      - name: Pack the tarballs
+        if: steps.version.outputs.version != ''
+        run: |
+          mkdir -p "$RUNNER_TEMP/tarballs"
+          for p in $PACKAGE_DIRS; do
+            tarball=$(cd "packages/$p" && pnpm pack --pack-destination "$RUNNER_TEMP/tarballs" | tail -1)
+            mv "$tarball" "$RUNNER_TEMP/tarballs/$p.tgz"
+            tar -xzOf "$RUNNER_TEMP/tarballs/$p.tgz" package/package.json > "$RUNNER_TEMP/tarballs/$p.package.json"
+          done
+
+      - name: Packed manifests name the exact version
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for p in $PACKAGE_DIRS; do
+            node -e '
+              const manifest = require(process.argv[1]);
+              const version = process.env.VERSION;
+              const groups = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+              let bad = manifest.version === version ? 0 : 1;
+              if (bad) console.log(`${manifest.name} is ${manifest.version}, not ${version}`);
+              for (const group of groups) {
+                for (const [name, range] of Object.entries(manifest[group] ?? {})) {
+                  if (name !== "stim" && !name.startsWith("@stim-cli/")) continue;
+                  if (range !== version) {
+                    console.log(`${manifest.name} ${group}.${name} is ${range}, not ${version}`);
+                    bad += 1;
+                  }
+                }
+              }
+              process.exit(bad === 0 ? 0 : 1);
+            ' "$RUNNER_TEMP/tarballs/$p.package.json"
+          done
+
+      - name: The server tarball ships the share viewer
+        if: steps.version.outputs.version != ''
+        run: |
+          listing=$(tar -tzf "$RUNNER_TEMP/tarballs/server.tgz")
+          for f in packages/server/share-viewer/*; do
+            entry="package/dist/share-viewer/$(basename "$f")"
+            grep -qxF "$entry" <<<"$listing" || { echo "::error::server tarball is missing $entry"; exit 1; }
+          done
+
+      # Dependencies publish before their dependents, so `npm install stim@next`
+      # never resolves a version whose dependencies are missing. Each wave
+      # publishes in parallel.
+      - name: Publish to the next dist-tag
+        if: steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ "$VERSION" != *-next.* ]]; then
+            echo "::error::refusing to publish $VERSION: the next channel publishes only -next. versions"
+            exit 1
+          fi
+          publish() {
+            local name
+            name=$(node -p "require('$RUNNER_TEMP/tarballs/$1.package.json').name")
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is already published"
+            elif npm publish "$RUNNER_TEMP/tarballs/$1.tgz" --provenance --access public --tag next > "$RUNNER_TEMP/npm-$1.log" 2>&1; then
+              cat "$RUNNER_TEMP/npm-$1.log"
+              echo "$name@$VERSION published"
+            elif cat "$RUNNER_TEMP/npm-$1.log" && grep -q 'cannot publish over the previously published' "$RUNNER_TEMP/npm-$1.log"; then
+              echo "$name@$VERSION is already published"
+            else
+              echo "$name@$VERSION failed to publish"
+              return 1
+            fi
+          }
+          wave() {
+            local names=("$@") pids=() failed=0 i
+            for p in "${names[@]}"; do
+              publish "$p" > "$RUNNER_TEMP/publish-$p.log" 2>&1 &
+              pids+=($!)
+            done
+            for i in "${!pids[@]}"; do
+              wait "${pids[$i]}" || failed=1
+              echo "::group::${names[$i]}"
+              cat "$RUNNER_TEMP/publish-${names[$i]}.log"
+              echo "::endgroup::"
+            done
+            return "$failed"
+          }
+          wave core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache transport transport-tailscale transport-local
+          wave stim-cli
+          wave ci server
+
+      - name: Summary
+        if: always() && steps.version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          {
+            echo "## stim@$VERSION"
+            echo
+            echo "Commit: [${SHA:0:9}](https://github.com/$GITHUB_REPOSITORY/commit/$SHA)"
+            echo
+            echo '```'
+            echo "npm install --global stim@$VERSION"
+            echo '```'
+            echo
+            echo "| package | published |"
+            echo "| --- | --- |"
+            for p in $PACKAGE_DIRS; do
+              name=$(node -p "require('./packages/$p/package.json').name")
+              if npm view "$name@$VERSION" version >/dev/null 2>&1; then state=yes; else state=NO; fi
+              echo "| $name | $state |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,581 @@
+import type { StimContext } from '@stim-cli/core';
+import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
+import type { ChildProcess } from 'node:child_process';
+import { constants, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
+import { copyFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join } from 'node:path';
+import { getExecutor, type Executor } from '../exec.ts';
+import type { NdjsonWriter } from '../ndjson.ts';
+import { createLineReader, waitForChild } from '../process-output.ts';
+import { runOperationFile } from './operation-exec.ts';
+import { bundleInvocation } from './node-cli.ts';
+import { spawnDeclared } from './spawn-claims.ts';
+import { throwIfCancelled } from '../cancellation.ts';
+import { killOnAbort } from '../workspace/git-read.ts';
+import { operationState } from './operation-state.ts';
+import type { SettingsObject } from '@stim-cli/core/state';
+import { androidBuildToolName, findBuildTool, type BuildToolsEntry } from '../devices/android.ts';
+import { cleanLine } from '../supervisor/server-expo.ts';
+import {
+  assetDiffReason,
+  compareAssetManifests,
+  readAssetManifest,
+  type AssetManifest,
+  type AssetManifestDiff,
+} from './asset-manifest.ts';
+import { detectEntryFile, refreshUpdatesManifestFile, swapBundlerEnv, UPDATES_MANIFEST_NAME } from './js-swap.ts';
+import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
+import { defaultAndroidLayout, realpathInside, type AndroidLayout } from '../workspace/settings.ts';
+
+export const ANDROID_BUNDLE_NAME = 'index.android.bundle';
+
+const LAST_LINES = 5;
+
+export function hermesEnabledFromGradleProperties(text: unknown): boolean {
+  if (typeof text !== 'string') return true;
+  let value: string | null = null;
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (line === '' || line.startsWith('#') || line.startsWith('!')) continue;
+    const match = /^hermesEnabled\s*[=:]\s*(.*)$/.exec(line);
+    if (match) value = match[1]!.trim();
+  }
+  return value === null || value.toLowerCase() !== 'false';
+}
+
+export function readAndroidHermesEnabled(
+  root: string,
+  { gradleRoot, moduleDir, custom }: AndroidLayout = defaultAndroidLayout(root),
+): boolean {
+  for (const dir of custom ? [moduleDir, gradleRoot] : [gradleRoot]) {
+    let text: string;
+    try {
+      text = readFileSync(join(dir, 'gradle.properties'), 'utf-8');
+    } catch {
+      continue;
+    }
+    if (/^\s*hermesEnabled\s*[=:]/m.test(text)) return hermesEnabledFromGradleProperties(text);
+  }
+  return true;
+}
+
+export function hermescBinDir(platform: string = process.platform): string {
+  if (platform === 'darwin') return 'osx-bin';
+  return platform === 'win32' ? 'win64-bin' : 'linux64-bin';
+}
+
+function hermescName(platform: string): string {
+  return platform === 'win32' ? 'hermesc.exe' : 'hermesc';
+}
+
+export function hermescCandidates(
+  root: string,
+  { platform = process.platform, reactNativePath = null }: { platform?: string; reactNativePath?: string | null } = {},
+): string[] {
+  const bin = hermescBinDir(platform);
+  const name = hermescName(platform);
+  const rn = reactNativePath ?? join(root, 'node_modules', 'react-native');
+  return [
+    ...new Set([
+      join(dirname(rn), 'hermes-compiler', 'hermesc', bin, name),
+      join(root, 'node_modules', 'hermes-compiler', 'hermesc', bin, name),
+      join(root, 'node_modules', 'react-native', 'sdks', 'hermesc', bin, name),
+      join(root, 'node_modules', 'react-native', 'sdks', 'hermes', 'build', 'bin', name),
+    ]),
+  ];
+}
+
+export function androidHermescPath(
+  root: string,
+  {
+    exists = existsSync,
+    platform = process.platform,
+    reactNativePath = null,
+  }: { exists?: (p: string) => boolean; platform?: string; reactNativePath?: string | null } = {},
+): string {
+  const candidates = hermescCandidates(root, { platform, reactNativePath });
+  return candidates.find(exists) ?? candidates[candidates.length - 1]!;
+}
+
+function androidHermescArgs({ bundle, out }: { bundle: string; out: string }): string[] {
+  return ['-emit-binary', '-O', '-w', '-out', out, bundle];
+}
+
+function androidBundleCommand({
+  isExpo,
+  entryFile,
+  bundleOutput,
+  assetsDest,
+}: {
+  isExpo: boolean;
+  entryFile: string;
+  bundleOutput: string;
+  assetsDest: string;
+}): { file: string; args: string[] } {
+  if (isExpo) {
+    return {
+      file: 'npx',
+      args: [
+        'expo',
+        'export:embed',
+        '--platform',
+        'android',
+        '--dev',
+        'false',
+        '--bundle-output',
+        bundleOutput,
+        '--assets-dest',
+        assetsDest,
+      ],
+    };
+  }
+  return {
+    file: 'npx',
+    args: [
+      'react-native',
+      'bundle',
+      '--platform',
+      'android',
+      '--dev',
+      'false',
+      '--entry-file',
+      entryFile,
+      '--bundle-output',
+      bundleOutput,
+      '--assets-dest',
+      assetsDest,
+    ],
+  };
+}
+
+function jarPath({
+  javaHome = process.env.JAVA_HOME,
+}: {
+  javaHome?: string | undefined;
+} = {}): string {
+  return javaHome ? join(javaHome, 'bin', 'jar') : 'jar';
+}
+
+function zipalignArgs({
+  buildToolsMajor,
+  input,
+  output,
+}: {
+  buildToolsMajor: number;
+  input: string;
+  output: string;
+}): string[] {
+  return [...(buildToolsMajor >= 35 ? ['-P', '16'] : ['-p']), '-f', '-v', '4', input, output];
+}
+
+export const KEYSTORE_PASSWORD_ENV = 'STIM_KEYSTORE_PASSWORD';
+
+export interface KeystoreConfig {
+  path: string;
+  pass: string;
+  password: string | null;
+}
+
+export function keystorePassArg(value: unknown): { pass: string; password: string | null } {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (text === '') return { pass: 'pass:android', password: null };
+  if (/^(?:file|env):/.test(text) || text === 'stdin') return { pass: text, password: null };
+  return { pass: `env:${KEYSTORE_PASSWORD_ENV}`, password: text.startsWith('pass:') ? text.slice(5) : text };
+}
+
+export function resolveKeystore(
+  root: string,
+  settings: SettingsObject | null | undefined,
+  layout: AndroidLayout = defaultAndroidLayout(root),
+  containedIn: string | null = null,
+): KeystoreConfig {
+  const android = settings?.['android'];
+  const bag = android && typeof android === 'object' && !Array.isArray(android) ? (android as SettingsObject) : {};
+  const configured = bag['keystore'];
+  let path =
+    typeof configured === 'string' && configured.trim() !== ''
+      ? isAbsolute(configured.trim())
+        ? configured.trim()
+        : join(root, configured.trim())
+      : join(layout.moduleDir, 'debug.keystore');
+  if (containedIn !== null && typeof configured === 'string' && configured.trim() !== '') {
+    try {
+      path = realpathInside(containedIn, path);
+    } catch (error) {
+      throw new Error(
+        `Could not use android.keystore ${configured.trim()} from the committed .stim.json: ${String((error as Error)?.message || error)}`,
+        { cause: error },
+      );
+    }
+  }
+  return { path, ...keystorePassArg(bag['keystorePassword']) };
+}
+
+function apksignerArgs({ keystore, apkPath }: { keystore: KeystoreConfig; apkPath: string }): string[] {
+  return ['sign', '--ks', keystore.path, '--ks-pass', keystore.pass, apkPath];
+}
+
+/** Writes `input` to `output` zipaligned, then signs `output`; the step that failed and why, or null. */
+export async function zipalignAndSignApk({
+  context,
+  exec = null,
+  input,
+  output,
+  keystore,
+  buildTools = null,
+  findTool = findBuildTool,
+  exists = existsSync,
+  platform = process.platform,
+}: {
+  context?: StimContext;
+  exec?: Executor | null;
+  input: string;
+  output: string;
+  keystore: KeystoreConfig;
+  buildTools?: BuildToolsEntry | null;
+  findTool?: typeof findBuildTool;
+  exists?: (p: string) => boolean;
+  platform?: NodeJS.Platform;
+}): Promise<{ step: 'zipalign' | 'apksigner'; reason: string } | null> {
+  const e = exec ?? getExecutor();
+  const tools = buildTools ?? findTool(['zipalign']);
+  if (!tools) {
+    return {
+      step: 'zipalign',
+      reason: 'no zipalign found under the Android SDK build-tools; install one with `sdkmanager "build-tools;36.0.0"`',
+    };
+  }
+  try {
+    await runOperationFile(context, e, tools.path, zipalignArgs({ buildToolsMajor: tools.major, input, output }), {
+      timeoutMs: 'unbounded',
+    });
+  } catch (err) {
+    return { step: 'zipalign', reason: `zipalign failed on ${input}: ${describe(err)}` };
+  }
+
+  const signer = buildTools
+    ? { ...buildTools, path: join(dirname(buildTools.path), androidBuildToolName('apksigner')) }
+    : findTool(['apksigner']);
+  if (!signer) {
+    return {
+      step: 'apksigner',
+      reason:
+        'no apksigner found under the Android SDK build-tools; install one with `sdkmanager "build-tools;36.0.0"`',
+    };
+  }
+  try {
+    let signerFile = signer.path;
+    const signerArgs = apksignerArgs({ keystore, apkPath: output });
+    if (platform === 'win32') {
+      const javaHome = ((context?.env ?? process.env).JAVA_HOME ?? '').replaceAll('"', '');
+      signerFile = javaHome ? join(javaHome, 'bin', 'java.exe') : 'java.exe';
+      const fallbackJar = join(dirname(signer.path), '..', 'framework', 'apksigner.jar');
+      const signerJar =
+        [join(dirname(signer.path), 'apksigner.jar'), join(dirname(signer.path), 'lib', 'apksigner.jar')].find(
+          exists,
+        ) ?? fallbackJar;
+      // Android SDK apksigner.bat uses these heap/stack defaults and jar search paths.
+      // https://android.googlesource.com/platform/tools/apksig/+/5889dfb13b754dc723e3c906e927ce3e8faab917/etc/apksigner.bat
+      signerArgs.unshift('-Xmx1024M', '-Xss1m', '-jar', signerJar);
+    }
+    await runOperationFile(
+      context,
+      e,
+      signerFile,
+      signerArgs,
+      keystore.password === null
+        ? { timeoutMs: 'unbounded' }
+        : {
+            timeoutMs: 'unbounded',
+            env: { [KEYSTORE_PASSWORD_ENV]: keystore.password },
+            redact: [keystore.password],
+          },
+    );
+  } catch (err) {
+    return { step: 'apksigner', reason: `apksigner sign failed on ${output} with ${keystore.path}: ${describe(err)}` };
+  }
+  return null;
+}
+
+type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
+
+export type ApkSwapResult = {
+  ok?: boolean;
+  apkPath?: string;
+  tmpDir?: string;
+  hermes?: boolean;
+  note?: string;
+  durationMs?: number;
+  assetMismatch?: boolean;
+  assetDiff?: AssetManifestDiff;
+  failed?: boolean;
+  step?: string;
+  reason?: string;
+  lastLines?: string[];
+};
+
+export async function swapApkBundle({
+  context,
+  root,
+  isExpo,
+  cachedApkPath,
+  keystore,
+  logWriter = null,
+  exec = null,
+  spawnFn = null,
+  mkdtemp = () => makeTemporaryDirectory(cachedApkPath, 'stim-apk-swap-'),
+  exists = existsSync,
+  hermesEnabled = null,
+  layout = defaultAndroidLayout(root),
+  buildTools = null,
+  findTool = findBuildTool,
+  storedAssets = null,
+  readManifest = readAssetManifest,
+  now = Date.now,
+  heartbeatMs = HEARTBEAT_INTERVAL_MS,
+  onHeartbeat = (line: string) => console.error(line),
+  platform = process.platform,
+}: {
+  context?: StimContext;
+  root: string;
+  isExpo: boolean;
+  cachedApkPath: string;
+  keystore: KeystoreConfig;
+  logWriter?: NdjsonWriter | null;
+  exec?: Executor | null;
+  spawnFn?: SpawnFn | null;
+  mkdtemp?: () => string;
+  exists?: (p: string) => boolean;
+  hermesEnabled?: boolean | null;
+  layout?: AndroidLayout;
+  buildTools?: BuildToolsEntry | null;
+  findTool?: typeof findBuildTool;
+  storedAssets?: AssetManifest | null;
+  readManifest?: typeof readAssetManifest;
+  now?: () => number;
+  heartbeatMs?: number;
+  onHeartbeat?: (line: string) => void;
+  platform?: NodeJS.Platform;
+}): Promise<ApkSwapResult> {
+  const e = exec || getExecutor();
+  const startedAt = now();
+  const elapsed = () => now() - startedAt;
+  let tmp: string | undefined;
+  const fail = (step: string, reason: string, lastLines: string[] = []): ApkSwapResult => {
+    logWriter?.write?.({
+      src: 'build',
+      level: 'error',
+      msg: `APK swap failed at ${step}: ${reason}`,
+      event: 'apk_swap',
+    });
+    if (tmp) removeTemporaryEntry(tmp);
+    return { failed: true, step, reason, lastLines, durationMs: elapsed() };
+  };
+
+  let work: string;
+  let final: string;
+  try {
+    tmp = mkdtemp();
+    const base = basename(cachedApkPath);
+    work = join(tmp, `unaligned-${base}`);
+    final = join(tmp, base);
+    await copyApk(context, e, cachedApkPath, work, platform);
+  } catch (err) {
+    return fail('copy', `could not copy ${cachedApkPath} aside: ${describe(err)}`);
+  }
+
+  const stage = join(tmp, 'stage');
+  const bundleOutput = join(stage, 'assets', ANDROID_BUNDLE_NAME);
+  const assetsDest = join(stage, 'res');
+  const entryFile = isExpo ? 'index.js' : detectEntryFile(root);
+  const command = androidBundleCommand({ isExpo, entryFile, bundleOutput, assetsDest });
+  try {
+    mkdirSync(join(stage, 'assets'), { recursive: true });
+    mkdirSync(assetsDest, { recursive: true });
+  } catch (err) {
+    return fail('bundle', `could not create ${stage}: ${describe(err)}`);
+  }
+
+  logWriter?.write?.({
+    src: 'build',
+    level: 'info',
+    msg: `${command.file} ${command.args.join(' ')}`,
+    event: 'apk_swap',
+  });
+
+  const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => e.spawn(cmd, args, opts));
+  const transcript: string[] = [];
+  const push = (line: unknown) => {
+    const msg = cleanLine(line);
+    if (msg.trim() === '') return;
+    transcript.push(msg);
+    logWriter?.write?.({ src: 'build', level: 'debug', msg, raw: true, event: 'apk_swap' });
+  };
+  let child: ChildProcess;
+  try {
+    const invocation = bundleInvocation(root, isExpo, command.args.slice(1));
+    child = spawnDeclared(context, () =>
+      spawn(invocation.file, invocation.args, {
+        cwd: root,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: swapBundlerEnv(root, context?.env ?? process.env),
+      }),
+    );
+    killOnAbort(context ? (operationState(context).runSignal ?? context.signal) : undefined)(child);
+  } catch (err) {
+    return fail('bundle', `could not run ${command.file} ${command.args[0]}: ${describe(err)}`);
+  }
+  const reader = { out: createLineReader(push), err: createLineReader(push) };
+  child.stdout?.setEncoding?.('utf-8');
+  child.stderr?.setEncoding?.('utf-8');
+  child.stdout?.on('data', (chunk) => reader.out.push(chunk));
+  child.stderr?.on('data', (chunk) => reader.err.push(chunk));
+  const stopHeartbeat = startBuildHeartbeat({
+    intervalMs: heartbeatMs,
+    elapsed,
+    emit: onHeartbeat,
+    label: 'swap',
+  });
+  let outcome: Awaited<ReturnType<typeof waitForChild>>;
+  try {
+    outcome = await waitForChild(child);
+  } finally {
+    stopHeartbeat();
+  }
+  reader.out.flush();
+  reader.err.flush();
+  if (outcome.error) {
+    return fail('bundle', `could not run ${command.file} ${command.args[0]}: ${describe(outcome.error)}`);
+  }
+  if (outcome.code !== 0) {
+    const how = outcome.signal ? `signal ${outcome.signal}` : `exit code ${outcome.code}`;
+    return fail(
+      'bundle',
+      `\`${command.args.slice(0, 2).join(' ')}\` failed (${how})`,
+      tailLines(transcript, LAST_LINES),
+    );
+  }
+  if (!exists(bundleOutput)) {
+    return fail('bundle', `the bundle command exited 0 but wrote no ${ANDROID_BUNDLE_NAME} at ${bundleOutput}`);
+  }
+
+  let hermes = false;
+  let note: string | undefined;
+  const wantsHermes = hermesEnabled ?? readAndroidHermesEnabled(root, layout);
+  if (wantsHermes) {
+    const hermesc = androidHermescPath(root);
+    if (!exists(hermesc)) {
+      note = `hermesc not found at ${hermesc}; embedding the plain JS bundle instead of Hermes bytecode`;
+    } else {
+      const hbc = `${bundleOutput}.hbc`;
+      try {
+        await runOperationFile(context, e, hermesc, androidHermescArgs({ bundle: bundleOutput, out: hbc }), {
+          timeoutMs: 'unbounded',
+        });
+        renameSync(hbc, bundleOutput);
+        hermes = true;
+      } catch (err) {
+        return fail('hermesc', `hermesc failed on ${bundleOutput}: ${describe(err)}`);
+      }
+    }
+  }
+
+  const refuse = (reason: string, assetDiff?: AssetManifestDiff): ApkSwapResult => {
+    logWriter?.write?.({ src: 'build', level: 'warn', msg: `APK swap refused: ${reason}`, event: 'apk_swap' });
+    removeTemporaryEntry(tmp);
+    const result: ApkSwapResult = { assetMismatch: true, reason, durationMs: elapsed() };
+    if (assetDiff) result.assetDiff = assetDiff;
+    return result;
+  };
+  if (!storedAssets) {
+    return refuse(
+      'this cache entry predates asset tracking (no assets-manifest.json beside the artifact), ' +
+        'so its asset set cannot be proven to match this one',
+    );
+  }
+  const fresh = readManifest(assetsDest);
+  if (!fresh) {
+    return fail('assets', `could not hash the assets emitted into ${assetsDest}, so the asset set cannot be verified`);
+  }
+  const diff = compareAssetManifests(fresh, storedAssets);
+  if (!diff.same) return refuse(assetDiffReason(diff), diff);
+
+  const jar = jarPath({ javaHome: (context?.env ?? process.env).JAVA_HOME ?? '' });
+  const updatesManifest = join(stage, 'assets', UPDATES_MANIFEST_NAME);
+  try {
+    await runOperationFile(context, e, jar, ['--extract', '--file', work, `assets/${UPDATES_MANIFEST_NAME}`], {
+      cwd: stage,
+      timeoutMs: 'unbounded',
+    });
+    if (exists(updatesManifest)) refreshUpdatesManifestFile(updatesManifest, now());
+  } catch (err) {
+    return fail('updates', `could not refresh the expo-updates manifest from ${work}: ${describe(err)}`);
+  }
+
+  try {
+    // --no-compress is mandatory: AGP packages the bundle STORED so the Hermes
+    // runtime can mmap it straight out of the APK, and a deflated entry fails to
+    // load. jar --update keeps every other entry's method and replaces the
+    // staged assets/ entries in place.
+    await runOperationFile(context, e, jar, ['--update', '--file', work, '--no-compress', '-C', stage, 'assets'], {
+      timeoutMs: 'unbounded',
+    });
+  } catch (err) {
+    return fail('zip', `${jar} --update ${work} failed: ${describe(err)}`);
+  }
+
+  const unsigned = await zipalignAndSignApk({
+    context,
+    exec: e,
+    input: work,
+    output: final,
+    keystore,
+    buildTools,
+    findTool,
+    exists,
+    platform,
+  });
+  if (unsigned) return fail(unsigned.step, unsigned.reason);
+
+  logWriter?.write?.({
+    src: 'build',
+    level: 'info',
+    msg: `APK swap done: ${hermes ? 'hermes bytecode' : 'plain JS'} into ${final} in ${elapsed()}ms`,
+    event: 'apk_swap',
+  });
+  const result: ApkSwapResult = { ok: true, apkPath: final, tmpDir: tmp, hermes, durationMs: elapsed() };
+  if (note) result.note = note;
+  return result;
+}
+
+// libuv implements COPYFILE_FICLONE only on Linux; on macOS copyFile reads
+// and writes every byte, while cp -c clones the APK on APFS in constant time.
+async function copyApk(
+  context: StimContext | undefined,
+  e: Executor,
+  from: string,
+  to: string,
+  platform: NodeJS.Platform,
+): Promise<void> {
+  if (platform === 'darwin') {
+    try {
+      await runOperationFile(context, e, 'cp', ['-c', from, to], { timeoutMs: 'unbounded' });
+      return;
+    } catch {
+      throwIfCancelled(context ? (operationState(context).runSignal ?? context.signal) : undefined, 'APK swap');
+    }
+  }
+  throwIfCancelled(context ? (operationState(context).runSignal ?? context.signal) : undefined, 'APK swap');
+  await copyFile(from, to, constants.COPYFILE_FICLONE);
+  throwIfCancelled(context ? (operationState(context).runSignal ?? context.signal) : undefined, 'APK swap');
+}
+
+function describe(err: unknown): string {
+  const e = err as { stderr?: unknown; stdout?: unknown; message?: unknown };
+  const streams = [e?.stdout, e?.stderr]
+    .map((s) => (s ? String(s).trim() : ''))
+    .filter(Boolean)
+    .join('\n');
+  const message = e?.message ? String(e.message).trim() : String(err);
+  return streams ? `${message}: ${streams}` : message;
+}

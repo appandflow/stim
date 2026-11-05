@@ -1,0 +1,117 @@
+import { spawn, type ChildProcess } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import { isJsonObject } from '@stim-cli/core/state';
+import { Pending, terminate } from './stim-command.ts';
+
+export type JsonObject = Record<string, unknown>;
+
+export interface FeedListener {
+  /** `text` is the exact line that parsed to `value`. */
+  item: (value: JsonObject, text: string) => void;
+  failed: (message: string) => void;
+}
+
+export interface FeedSpec {
+  args: string[];
+  cwd: string;
+  keep: number;
+  label: string;
+}
+
+const STDERR_TAIL = 2000;
+
+class Feed {
+  private readonly listeners = new Set<FeedListener>();
+  private readonly kept: { value: JsonObject; text: string }[] = [];
+  private child: ChildProcess | null;
+
+  private readonly ended: (stopped?: Promise<void>) => void;
+
+  constructor(spec: FeedSpec, stimCli: string, env: NodeJS.ProcessEnv, ended: (stopped?: Promise<void>) => void) {
+    this.ended = ended;
+    const child = spawn(process.execPath, [stimCli, ...spec.args], {
+      cwd: spec.cwd,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    this.child = child;
+    let stderr = '';
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => {
+      stderr = (stderr + chunk).slice(-STDERR_TAIL);
+    });
+    createInterface({ input: child.stdout! }).on('line', (line) => {
+      if (this.child !== child) return;
+      let value: unknown;
+      try {
+        value = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (!isJsonObject(value)) return;
+      this.kept.push({ value, text: line });
+      if (this.kept.length > spec.keep) this.kept.shift();
+      for (const listener of this.listeners) listener.item(value, line);
+    });
+    const exited = (reason: string) => {
+      if (this.child !== child) return;
+      this.child = null;
+      this.ended();
+      const message = `${spec.label} ${reason}${stderr.trim() ? `: ${stderr.trim()}` : ''}`;
+      const listeners = [...this.listeners];
+      this.listeners.clear();
+      for (const listener of listeners) listener.failed(message);
+    };
+    child.on('error', (error) => exited(`could not start (${error.message})`));
+    child.on('close', (code, signal) => exited(`exited (${signal ?? `code ${code}`})`));
+  }
+
+  add(listener: FeedListener): () => void {
+    this.listeners.add(listener);
+    for (const { value, text } of this.kept) listener.item(value, text);
+    return () => {
+      if (this.listeners.delete(listener) && this.listeners.size === 0) void this.stop();
+    };
+  }
+
+  stop(): Promise<void> {
+    const child = this.child;
+    if (!child) return Promise.resolve();
+    this.child = null;
+    this.listeners.clear();
+    const stopped = terminate(child);
+    this.ended(stopped);
+    return stopped;
+  }
+}
+
+export class FeedPool {
+  private readonly feeds = new Map<string, Feed>();
+  private readonly stopping = new Pending();
+  private readonly stimCli: string;
+  private readonly env: NodeJS.ProcessEnv;
+
+  constructor(stimCli: string, env: NodeJS.ProcessEnv) {
+    this.stimCli = stimCli;
+    this.env = env;
+  }
+
+  subscribe(spec: FeedSpec, listener: FeedListener): () => void {
+    const key = JSON.stringify([spec.cwd, spec.args]);
+    let feed = this.feeds.get(key);
+    if (!feed) {
+      const created: Feed = new Feed(spec, this.stimCli, this.env, (stopped) => {
+        if (this.feeds.get(key) === created) this.feeds.delete(key);
+        if (stopped) void this.stopping.track(stopped);
+      });
+      this.feeds.set(key, created);
+      feed = created;
+    }
+    return feed.add(listener);
+  }
+
+  async close(): Promise<void> {
+    await Promise.all([...this.feeds.values()].map((feed) => feed.stop()));
+    await this.stopping.settled();
+  }
+}

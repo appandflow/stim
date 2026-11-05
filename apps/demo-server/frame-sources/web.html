@@ -1,0 +1,113 @@
+<!doctype html><meta charset="utf-8" /><style>
+  * {
+    box-sizing: border-box;
+    margin: 0;
+  }
+  body {
+    width: 1280px;
+    height: 800px;
+    font-family: -apple-system, system-ui;
+    background: #f6f8f5;
+    color: #16231c;
+    overflow: hidden;
+    display: flex;
+  }
+  .side {
+    width: 240px;
+    background: #fff;
+    border-right: 1px solid #dde4de;
+    padding: 28px 20px;
+  }
+  .logo {
+    font-size: 22px;
+    font-weight: 700;
+    color: #2f7d5b;
+    margin-bottom: 28px;
+  }
+  .nav div {
+    padding: 10px 12px;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    font-size: 15px;
+  }
+  .nav .on {
+    background: #e5f2ea;
+    color: #2f7d5b;
+    font-weight: 600;
+  }
+  .main {
+    flex: 1;
+    padding: 36px 44px;
+  }
+  h1 {
+    font-size: 30px;
+    margin-bottom: 6px;
+  }
+  .sub {
+    color: #6a7b70;
+    margin-bottom: 26px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .c {
+    background: #fff;
+    border-radius: 14px;
+    padding: 20px;
+  }
+  .c b {
+    font-size: 34px;
+    display: block;
+    color: #2f7d5b;
+  }
+  .c span {
+    color: #6a7b70;
+    font-size: 14px;
+  }
+  .bars {
+    background: #fff;
+    border-radius: 14px;
+    padding: 22px;
+    height: 300px;
+    display: flex;
+    align-items: flex-end;
+    gap: 18px;
+  }
+  .bars div {
+    flex: 1;
+    background: #8fcaa9;
+    border-radius: 6px 6px 0 0;
+  }
+</style>
+<body>
+  <div class="side">
+    <div class="logo">Habitat</div>
+    <div class="nav">
+      <div class="on">Today</div>
+      <div>Habits</div>
+      <div>Insights</div>
+      <div>Settings</div>
+    </div>
+  </div>
+  <div class="main">
+    <h1>Good morning</h1>
+    <div class="sub">5 of 8 habits done today</div>
+    <div class="grid">
+      <div class="c"><b>12</b><span>Day streak</span></div>
+      <div class="c"><b>86%</b><span>This week</span></div>
+      <div class="c"><b>41</b><span>Check-ins this month</span></div>
+    </div>
+    <div class="bars">
+      <div style="height: 60%"></div>
+      <div style="height: 75%"></div>
+      <div style="height: 50%"></div>
+      <div style="height: 90%"></div>
+      <div style="height: 80%"></div>
+      <div style="height: 65%"></div>
+      <div style="height: 95%"></div>
+    </div>
+  </div>
+</body>

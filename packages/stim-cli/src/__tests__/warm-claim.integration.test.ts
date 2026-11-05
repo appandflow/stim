@@ -1,0 +1,316 @@
+import { once } from 'node:events';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { acquireWarmClaim, withWarmClaim, warmClaimPath, warmClaimsDir } from '../engine/warm-claim.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { getExecutor } from '../exec.ts';
+import {
+  ClaimRefusedError,
+  exclusiveClaimDir,
+  readClaimSet,
+  markClaimChildPending,
+  releaseClaim,
+  type ClaimHandle,
+} from '../ownership-claim.ts';
+import { IMPOSSIBLE_PID, goneClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
+
+let home: string;
+
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), 'stim-test-warm-claim-'));
+  process.env.STIM_HOME = home;
+});
+
+afterEach(() => {
+  delete process.env.STIM_HOME;
+  rmSync(home, { recursive: true, force: true });
+});
+
+const REPO = '/w/monorepo';
+
+const never = async (): Promise<void> => {
+  throw new Error('waited instead of taking a claim nothing holds');
+};
+
+function exclusiveClaimFile(): string {
+  const dir = exclusiveClaimDir(warmClaimPath(REPO));
+  const name = readdirSync(dir).find((entry) => entry.endsWith('.claim'));
+  if (!name) throw new Error('no exclusive claim in the warm claim set');
+  return join(dir, name);
+}
+
+test('every app in one repository resolves the same claim, keyed on the repository root', () => {
+  expect(warmClaimPath(REPO)).toBe(warmClaimPath(REPO));
+  expect(warmClaimPath(`${REPO}/apps/a`)).not.toBe(warmClaimPath(REPO));
+  expect(warmClaimPath(REPO).startsWith(join(warmClaimsDir(), 'monorepo--'))).toBe(true);
+});
+
+test('two copies hold the claim at the same time', async () => {
+  const first = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'copy', sleep: never });
+  const second = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'copy', sleep: never });
+  expect(first.wait.holder).toBe(null);
+  expect(second.wait.holder).toBe(null);
+  expect(readClaimSet(warmClaimPath(REPO)).live).toHaveLength(2);
+  first.release();
+  second.release();
+});
+
+test('two refreshes never hold the claim at once', async () => {
+  const first = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
+  let polls = 0;
+  const second = await acquireWarmClaim({
+    repositoryRoot: REPO,
+    phase: 'refresh',
+    sleep: async () => {
+      if (++polls === 3) first.release();
+    },
+  });
+  expect(polls).toBe(3);
+  expect(second.wait.holder).toEqual({ pid: process.pid, phase: 'refresh' });
+  second.release();
+});
+
+test('a refresh drains the copies in flight before it starts, and blocks new ones while it waits', async () => {
+  const copy = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'copy', sleep: never });
+  let polls = 0;
+  let blocked = 0;
+  const refresh = await acquireWarmClaim({
+    repositoryRoot: REPO,
+    phase: 'refresh',
+    sleep: async () => {
+      if (++polls === 1) {
+        await acquireWarmClaim({
+          repositoryRoot: REPO,
+          phase: 'copy',
+          sleep: async () => {
+            blocked++;
+            throw new Error('stop');
+          },
+        }).catch(() => {});
+      }
+      if (polls === 2) copy.release();
+    },
+  });
+  expect(blocked).toBe(1);
+  expect(refresh.wait.holder).toEqual({ pid: process.pid, phase: 'copy' });
+  refresh.release();
+});
+
+test('a dead refresh holder and a dead copy holder are both reclaimed without waiting', async () => {
+  const root = warmClaimPath(REPO);
+  plantClaim(root, 'exclusive', goneClaimOwner(), { claimId: 'dead-refresh' });
+  plantClaim(root, 'shared', goneClaimOwner(), { claimId: 'dead-copy' });
+  const copy = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'copy', sleep: never });
+  expect(copy.wait.holder).toBe(null);
+  copy.release();
+  const refresh = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
+  expect(refresh.wait.holder).toBe(null);
+  refresh.release();
+});
+
+test('a refresh claim whose pid was recycled is reclaimed, not waited out', async () => {
+  plantClaim(warmClaimPath(REPO), 'exclusive', recycledClaimOwner(), { claimId: 'recycled' });
+  const copy = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'copy', sleep: never });
+  expect(copy.wait.holder).toBe(null);
+  copy.release();
+});
+
+test('a claim Stim cannot resolve refuses both phases and names the removal of that claim', async () => {
+  const root = warmClaimPath(REPO);
+  const path = plantClaim(root, 'exclusive', goneClaimOwner(), { claimId: 'half-spawned', child: { record: null } });
+  for (const phase of ['copy', 'refresh'] as const) {
+    const error = await acquireWarmClaim({ repositoryRoot: REPO, phase, sleep: never }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(ClaimRefusedError);
+    expect((error as ClaimRefusedError).message).toContain('worktree warm claim');
+    expect((error as ClaimRefusedError).removeCommand).toContain(path);
+  }
+  expect(existsSync(path)).toBe(true);
+});
+
+test('a refresh that gives up while copies drain leaves no claim of its own behind', async () => {
+  const copy = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'copy', sleep: never });
+  let clock = 0;
+  const error = await acquireWarmClaim({
+    repositoryRoot: REPO,
+    phase: 'refresh',
+    now: () => (clock += 1000),
+    ceilingMs: 3000,
+    sleep: async () => {},
+  }).catch((thrown: unknown) => thrown);
+  expect((error as Error & { code?: string }).code).toBe('STIM_LOCK_TIMEOUT');
+  expect(existsSync(exclusiveClaimDir(warmClaimPath(REPO)))).toBe(false);
+  copy.release();
+  const after = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
+  expect(after.wait.holder).toBe(null);
+  after.release();
+});
+
+test.skipIf(process.platform === 'win32')(
+  'the installer process group keeps the claim after the refresh that spawned it is gone (POSIX process groups; skipped on win32)',
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stim-test-warm-installer-'));
+    const leader = join(dir, 'leader.mjs');
+    const pidFile = join(dir, 'grandchild.pid');
+    writeFileSync(
+      leader,
+      [
+        'const { spawn } = await import("node:child_process");',
+        'const { writeFileSync } = await import("node:fs");',
+        'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
+        'child.unref();',
+        `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+      ].join('\n'),
+    );
+
+    const refresh = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
+    const installer = getExecutor().spawn(process.execPath, [leader], { detached: true, stdio: 'ignore' });
+    if (!installer.pid) throw new Error('the installer did not start');
+    refresh.installer.declare();
+    refresh.installer.record(installer.pid);
+    await once(installer, 'exit');
+
+    let grandchild = 0;
+    for (let attempt = 0; attempt < 200 && !grandchild; attempt++) {
+      try {
+        grandchild = Number(readFileSync(pidFile, 'utf-8'));
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    if (!grandchild) throw new Error('the installer never spawned its own child');
+
+    try {
+      const claim = exclusiveClaimFile();
+      const record = JSON.parse(readFileSync(claim, 'utf-8'));
+      writeFileSync(claim, JSON.stringify({ ...record, owner: goneClaimOwner() }));
+
+      let polls = 0;
+      await acquireWarmClaim({
+        repositoryRoot: REPO,
+        phase: 'copy',
+        sleep: async () => {
+          polls++;
+          throw new Error('stop');
+        },
+      }).catch(() => {});
+      expect(polls).toBe(1);
+
+      process.kill(grandchild, 'SIGKILL');
+      for (let attempt = 0; attempt < 200 && readClaimSet(warmClaimPath(REPO)).live.length > 0; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const copy = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'copy', sleep: never });
+      expect(copy.wait.holder).toBe(null);
+      copy.release();
+    } finally {
+      try {
+        process.kill(grandchild, 'SIGKILL');
+      } catch {}
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test('an installer whose identity cannot be captured leaves the claim unresolvable rather than free', async () => {
+  const refresh = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
+  refresh.installer.declare();
+  const claim = exclusiveClaimFile();
+  const record = JSON.parse(readFileSync(claim, 'utf-8'));
+  writeFileSync(claim, JSON.stringify({ ...record, owner: goneClaimOwner() }));
+  const error = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'copy', sleep: never }).catch(
+    (thrown: unknown) => thrown,
+  );
+  expect(error).toBeInstanceOf(ClaimRefusedError);
+  expect(await refresh.installer.settle()).toEqual({ settled: true, pid: null, waitedMs: expect.any(Number) });
+  refresh.release();
+});
+
+test('a pid that no longer exists is not a writer to hold the claim for', async () => {
+  const lines: string[] = [];
+  const refresh = await acquireWarmClaim({
+    repositoryRoot: REPO,
+    phase: 'refresh',
+    sleep: never,
+    out: (line) => lines.push(line),
+  });
+  refresh.installer.declare();
+  refresh.installer.record(IMPOSSIBLE_PID);
+  expect((await refresh.installer.settle()).settled).toBe(true);
+  expect(lines).toEqual([]);
+  refresh.release();
+  expect(existsSync(warmClaimPath(REPO))).toBe(false);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'a child record that cannot be written leaves the claim held while the writer it names runs (POSIX directory permissions and process groups; skipped on win32)',
+  async () => {
+    const lines: string[] = [];
+    const refresh = await acquireWarmClaim({
+      repositoryRoot: REPO,
+      phase: 'refresh',
+      sleep: never,
+      out: (line) => lines.push(line),
+    });
+    const writer = getExecutor().spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    if (!writer.pid) throw new Error('the writer did not start');
+    const group = writer.pid;
+    try {
+      refresh.installer.declare();
+      chmodSync(exclusiveClaimDir(warmClaimPath(REPO)), 0o500);
+      refresh.installer.record(group);
+      expect(lines.join('\n')).toMatch(/lock {8}could not record the install this refresh spawned \(.*EACCES/);
+
+      refresh.release();
+      expect(readClaimSet(warmClaimPath(REPO)).live.some((holder) => holder.mode === 'exclusive')).toBe(true);
+      let polls = 0;
+      await acquireWarmClaim({
+        repositoryRoot: REPO,
+        phase: 'copy',
+        sleep: async () => {
+          polls++;
+          throw new Error('stop');
+        },
+      }).catch(() => {});
+      expect(polls).toBe(1);
+    } finally {
+      chmodSync(exclusiveClaimDir(warmClaimPath(REPO)), 0o700);
+      try {
+        process.kill(-group, 'SIGKILL');
+      } catch {}
+    }
+    expect(await refresh.installer.settle()).toMatchObject({ settled: true });
+    refresh.release();
+    expect(existsSync(warmClaimPath(REPO))).toBe(false);
+  },
+);
+
+test('unresolved copy cleanup retains both source and target claims and names their recovery paths', async () => {
+  const target = '/w/linked';
+  const held: ClaimHandle[] = [];
+  let failure: WorkspaceProcessCleanupError | undefined;
+  const warming = withWarmClaim({ repositoryRoot: REPO, phase: 'copy' }, (source) => {
+    held.push(source.claim);
+    return withWarmClaim({ repositoryRoot: target, phase: 'copy', mode: 'exclusive' }, (destination) => {
+      held.push(destination.claim);
+      for (const claim of held) markClaimChildPending(claim);
+      failure = new WorkspaceProcessCleanupError(held, 'copy child identity is unknown', 'Verify the copy stopped.');
+      throw failure;
+    });
+  });
+  try {
+    await expect(warming).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    expect(held).toHaveLength(2);
+    for (const claim of held) {
+      expect(existsSync(claim.path)).toBe(true);
+      expect(failure?.remedy).toContain(claim.path);
+    }
+  } finally {
+    for (const claim of held) releaseClaim(claim);
+  }
+});

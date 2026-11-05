@@ -1,0 +1,5 @@
+android/.cxx/
+android/build/
+
+# libsodium release sources, fetched and hash-checked by scripts/fetch-libsodium.mjs
+third_party/

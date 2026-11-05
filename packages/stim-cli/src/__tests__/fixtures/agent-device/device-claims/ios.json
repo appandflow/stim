@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 2,
+  "deviceKey": "local:apple:ios:AD45387C-599D-4EDB-A62B-18176FF3A2A7",
+  "session": "cwd:b764dacffe51e890:default",
+  "workspace": "/Users/dev/app",
+  "stateDir": "/Users/dev/.agent-device",
+  "device": {
+    "id": "AD45387C-599D-4EDB-A62B-18176FF3A2A7",
+    "family": "apple",
+    "appleOs": "ios",
+    "kind": "simulator",
+    "target": "mobile",
+    "name": "stim-1166-home-screen-mobile-phone (iPhone 18 Pro 27.0)"
+  },
+  "ownerPid": 15315,
+  "ownerStartTime": "Fri Sep 25 08:09:29 2026",
+  "ownerToken": "84b906be-3ffd-4360-9642-5dc823e1489a",
+  "createdAtMs": 1790339039068,
+  "updatedAtMs": 1790339039175
+}

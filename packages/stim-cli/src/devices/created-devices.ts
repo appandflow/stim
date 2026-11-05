@@ -1,0 +1,84 @@
+import { renameSync, rmSync, writeFileSync } from 'node:fs';
+import { ensurePrivateDir } from '@stim-cli/core';
+import {
+  createdDevicesFile,
+  createdDevicesLock,
+  readCreatedDevices,
+  type CreatedDevicePlatform,
+} from '@stim-cli/core/state';
+import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
+import { noteStimHome } from '../engine/stim-home-registry.ts';
+import { getConfigDir } from '../workspace/config.ts';
+
+export { readCreatedDevices, type CreatedDevicePlatform } from '@stim-cli/core/state';
+
+function update(platform: CreatedDevicePlatform | 'systemImages', change: (entries: Set<string>) => boolean): void {
+  const dir = getConfigDir();
+  withDirLock(
+    createdDevicesLock(),
+    () => {
+      const current = readCreatedDevices();
+      const entries = new Set(current[platform]);
+      if (!change(entries)) return;
+      const next = {
+        version: 1,
+        ios: [...current.ios],
+        android: [...current.android],
+        web: [...current.web],
+        ...(current.systemImages.size ? { systemImages: [...current.systemImages] } : {}),
+        [platform]: [...entries],
+      };
+      const file = createdDevicesFile();
+      const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+      writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+      try {
+        renameSync(tmp, file);
+      } catch (error) {
+        rmSync(tmp, { force: true });
+        throw error;
+      }
+      noteStimHome({ ios: next.ios, android: next.android });
+    },
+    { ensureParent: () => ensurePrivateDir(dir) },
+  );
+}
+
+export function recordCreatedDevice(platform: CreatedDevicePlatform, id: string): void {
+  update(platform, (entries) => entries.size !== entries.add(id).size);
+}
+
+export function forgetCreatedDevice(platform: CreatedDevicePlatform, id: string): void {
+  update(platform, (entries) => entries.delete(id));
+}
+
+/** Waits asynchronously for the ledger lock, then records the device. */
+export function recordCreatedDeviceAsync(platform: CreatedDevicePlatform, id: string): Promise<void> {
+  return withDirLockAsync(createdDevicesLock(), () => recordCreatedDevice(platform, id), {
+    ensureParent: () => ensurePrivateDir(getConfigDir()),
+  });
+}
+
+/** Waits asynchronously for the ledger lock, then atomically forgets the device. The synchronous transaction decides whether to commit the removal; cancellation stops admission. */
+export function forgetCreatedDeviceAsync(
+  platform: CreatedDevicePlatform,
+  id: string,
+  signal?: AbortSignal,
+  transaction: (forget: () => void) => boolean = (forget) => {
+    forget();
+    return true;
+  },
+): Promise<boolean> {
+  return withDirLockAsync(createdDevicesLock(), () => transaction(() => forgetCreatedDevice(platform, id)), {
+    ensureParent: () => ensurePrivateDir(getConfigDir()),
+    signal,
+  });
+}
+
+/** Waits asynchronously for the ledger lock, then records an Android system image directory Stim installed. */
+export function recordInstalledSystemImageAsync(directory: string): Promise<void> {
+  return withDirLockAsync(
+    createdDevicesLock(),
+    () => update('systemImages', (entries) => entries.size !== entries.add(directory).size),
+    { ensureParent: () => ensurePrivateDir(getConfigDir()) },
+  );
+}

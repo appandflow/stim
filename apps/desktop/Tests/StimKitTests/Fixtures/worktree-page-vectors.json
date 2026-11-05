@@ -1,0 +1,840 @@
+{
+  "cases": [
+    {
+      "name": "a single app in a linked worktree keeps platform labels only",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/one/apps/mobile",
+        "environments": [
+          {
+            "path": "/w/one/apps/mobile",
+            "live": true,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/one"
+            },
+            "stage": {
+              "kind": "running",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            },
+            "platforms": ["ios", "android"]
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/one/apps/mobile"],
+        "projects": ["apps/mobile"],
+        "lead": "/w/one/apps/mobile",
+        "subtitles": [null, null],
+        "appLabels": ["React Native"],
+        "buildEntries": [
+          {
+            "path": "/w/one/apps/mobile",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/one/apps/mobile",
+            "platform": "android"
+          }
+        ]
+      }
+    },
+    {
+      "name": "apps sharing a worktree join in path order and other checkouts stay out",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/wt/apps/desktop",
+        "environments": [
+          {
+            "path": "/w/wt/apps/mobile",
+            "live": true,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "running",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": [
+                {
+                  "platform": "ios",
+                  "slot": "default"
+                }
+              ]
+            },
+            "platforms": ["ios", "android", "web"]
+          },
+          {
+            "path": "/w/other/apps/mobile",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/other"
+            },
+            "stage": {
+              "kind": "building",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": "ios",
+              "closedApps": []
+            },
+            "platforms": []
+          },
+          {
+            "path": "/w/wt/apps/desktop",
+            "live": true,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "running",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": "macos",
+              "closedApps": []
+            },
+            "platforms": ["macos"],
+            "macos": {
+              "launchId": "one",
+              "product": "Sample",
+              "bundle": "/w/Sample.app",
+              "bundleId": "dev.sample",
+              "executable": "/w/Sample.app/Contents/MacOS/Sample",
+              "state": "stopped",
+              "build": {
+                "state": "ok",
+                "startedAt": "2026-10-04T00:00:00Z"
+              }
+            }
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/wt/apps/desktop", "/w/wt/apps/mobile"],
+        "projects": ["apps/desktop", "apps/mobile"],
+        "lead": "/w/wt/apps/mobile",
+        "subtitles": [null, null, null],
+        "appLabels": ["macOS", "React Native \u00b7 Web"],
+        "buildEntries": [
+          {
+            "path": "/w/wt/apps/mobile",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/wt/apps/mobile",
+            "platform": "android"
+          },
+          {
+            "path": "/w/wt/apps/desktop",
+            "platform": "macos"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a platform two apps share names each project",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/wt/apps/b",
+        "environments": [
+          {
+            "path": "/w/wt/apps/b",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "ready",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            },
+            "platforms": ["ios"]
+          },
+          {
+            "path": "/w/wt/apps/a",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "ready",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            },
+            "platforms": ["ios", "android"]
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/wt/apps/a", "/w/wt/apps/b"],
+        "projects": ["apps/a", "apps/b"],
+        "lead": "/w/wt/apps/a",
+        "subtitles": ["apps/a", "apps/b", null],
+        "appLabels": ["React Native \u00b7 apps/a", "React Native \u00b7 apps/b"],
+        "buildEntries": [
+          {
+            "path": "/w/wt/apps/a",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/wt/apps/b",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/wt/apps/a",
+            "platform": "android"
+          }
+        ]
+      }
+    },
+    {
+      "name": "apps with the same platforms fall back to their project",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/wt/apps/a",
+        "environments": [
+          {
+            "path": "/w/wt/apps/a",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "stopped",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            },
+            "platforms": ["ios"]
+          },
+          {
+            "path": "/w/wt/apps/b",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "stopped",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            },
+            "platforms": ["ios"]
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/wt/apps/a", "/w/wt/apps/b"],
+        "projects": ["apps/a", "apps/b"],
+        "lead": "/w/wt/apps/a",
+        "subtitles": ["apps/a", "apps/b"],
+        "appLabels": ["React Native \u00b7 apps/a", "React Native \u00b7 apps/b"],
+        "buildEntries": [
+          {
+            "path": "/w/wt/apps/a",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/wt/apps/b",
+            "platform": "ios"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an app with no platform yet is named by its project",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/wt/apps/a",
+        "environments": [
+          {
+            "path": "/w/wt/apps/a",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "warming",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            },
+            "platforms": []
+          },
+          {
+            "path": "/w/wt/apps/b",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "ready",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            },
+            "platforms": ["android"]
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/wt/apps/a", "/w/wt/apps/b"],
+        "projects": ["apps/a", "apps/b"],
+        "lead": "/w/wt/apps/a",
+        "subtitles": [null],
+        "appLabels": ["apps/a", "React Native"],
+        "buildEntries": [
+          {
+            "path": "/w/wt/apps/b",
+            "platform": "android"
+          }
+        ]
+      }
+    },
+    {
+      "name": "workspaces without a linked worktree stay alone",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/repo/apps/mobile",
+        "environments": [
+          {
+            "path": "/repo/apps/mobile",
+            "live": true,
+            "warnings": [],
+            "stage": {
+              "kind": "running",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            },
+            "platforms": ["ios"]
+          },
+          {
+            "path": "/repo/apps/web",
+            "live": true,
+            "warnings": [],
+            "stage": {
+              "kind": "running",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            },
+            "platforms": []
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/repo/apps/mobile"],
+        "projects": ["mobile"],
+        "lead": "/repo/apps/mobile",
+        "subtitles": [null],
+        "appLabels": ["React Native"],
+        "buildEntries": [
+          {
+            "path": "/repo/apps/mobile",
+            "platform": "ios"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an app at the worktree root joins one in a folder and a nested checkout stays out",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/root/packages/app",
+        "environments": [
+          {
+            "path": "/w/root/packages/app",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/root"
+            },
+            "stage": {
+              "kind": "ready",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            },
+            "platforms": ["android"]
+          },
+          {
+            "path": "/w/root",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/root"
+            },
+            "stage": {
+              "kind": "building",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": "android",
+              "closedApps": []
+            },
+            "platforms": ["android"]
+          },
+          {
+            "path": "/w/root/.worktrees/feat",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/root/.worktrees/feat"
+            },
+            "stage": {
+              "kind": "build-failed",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": "ios",
+              "closedApps": []
+            },
+            "platforms": []
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/root", "/w/root/packages/app"],
+        "projects": ["root", "packages/app"],
+        "lead": "/w/root",
+        "subtitles": ["root", "packages/app"],
+        "appLabels": ["React Native \u00b7 root", "React Native \u00b7 packages/app"],
+        "buildEntries": [
+          {
+            "path": "/w/root",
+            "platform": "android"
+          },
+          {
+            "path": "/w/root/packages/app",
+            "platform": "android"
+          }
+        ]
+      }
+    },
+    {
+      "name": "the lead is the most urgent stage, the first app on a tie",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/wt/apps/c",
+        "environments": [
+          {
+            "path": "/w/wt/apps/c",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "build-failed",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": "ios",
+              "closedApps": []
+            },
+            "platforms": []
+          },
+          {
+            "path": "/w/wt/apps/a",
+            "live": true,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "running",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            },
+            "platforms": []
+          },
+          {
+            "path": "/w/wt/apps/b",
+            "live": true,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "running",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            },
+            "logs": {
+              "dir": "/l",
+              "errorsSinceMarker": 2
+            },
+            "platforms": []
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/wt/apps/a", "/w/wt/apps/b", "/w/wt/apps/c"],
+        "projects": ["apps/a", "apps/b", "apps/c"],
+        "lead": "/w/wt/apps/b",
+        "subtitles": [],
+        "appLabels": ["apps/a", "apps/b", "apps/c"],
+        "buildEntries": []
+      }
+    },
+    {
+      "name": "a fresh native app has both build predictions before it runs",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "platforms": ["ios", "android"]
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [null, null],
+        "appLabels": ["React Native"],
+        "buildEntries": [
+          {
+            "path": "/w/app",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/app",
+            "platform": "android"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a fresh web-only app has a Web label and no native build rows",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "platforms": ["web"]
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [],
+        "appLabels": ["Web"],
+        "buildEntries": []
+      }
+    },
+    {
+      "name": "a fresh Expo web app keeps native predictions and a Web label",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "platforms": ["ios", "android", "web"]
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [null, null],
+        "appLabels": ["React Native \u00b7 Web"],
+        "buildEntries": [
+          {
+            "path": "/w/app",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/app",
+            "platform": "android"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a recorded macOS app has its macOS build row",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "platforms": ["macos"],
+            "macos": {
+              "launchId": "one",
+              "product": "Sample",
+              "bundle": "/w/Sample.app",
+              "bundleId": "dev.sample",
+              "executable": "/w/Sample.app/Contents/MacOS/Sample",
+              "state": "stopped",
+              "build": {
+                "state": "ok",
+                "startedAt": "2026-10-04T00:00:00Z"
+              }
+            }
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [null],
+        "appLabels": ["macOS"],
+        "buildEntries": [
+          {
+            "path": "/w/app",
+            "platform": "macos"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an older CLI with only Android use shows only Android",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "android": {
+              "name": "pixel",
+              "owned": true,
+              "physical": false,
+              "state": "not-detected"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [null],
+        "appLabels": ["React Native"],
+        "buildEntries": [
+          {
+            "path": "/w/app",
+            "platform": "android"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an older CLI with no recorded use keeps native predictions",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": []
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [null, null],
+        "appLabels": ["React Native"],
+        "buildEntries": [
+          {
+            "path": "/w/app",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/app",
+            "platform": "android"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a detected macOS package without recorded state has a label only",
+      "desktopExpected": {
+        "buildEntries": [{ "path": "/w/app", "platform": "macos" }],
+        "subtitles": [null]
+      },
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "platforms": ["macos"]
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [],
+        "appLabels": ["macOS"],
+        "buildEntries": []
+      }
+    },
+    {
+      "name": "detected support keeps a native platform that actually ran",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "platforms": ["web"],
+            "android": {
+              "name": "pixel",
+              "owned": true,
+              "physical": false,
+              "state": "not-detected"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [null],
+        "appLabels": ["React Native \u00b7 Web"],
+        "buildEntries": [
+          {
+            "path": "/w/app",
+            "platform": "android"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an older CLI with a web device does not invent native builds",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "web": {
+              "browser": "chrome",
+              "version": null,
+              "running": true,
+              "pid": 1,
+              "supervisorPid": 2,
+              "url": "http://localhost:5173/",
+              "headless": true,
+              "viewport": "desktop",
+              "profile": "/p",
+              "cdpEndpoint": "http://127.0.0.1:8900",
+              "targetId": "T"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [],
+        "appLabels": ["Web"],
+        "buildEntries": []
+      }
+    },
+    {
+      "name": "a running native build stays visible when detection misses it",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "platforms": ["web"],
+            "live": false,
+            "warnings": [],
+            "build": {
+              "platform": "ios",
+              "slot": "default",
+              "state": "running",
+              "phase": "compile",
+              "startedAt": "2026-10-05T11:00:00.000Z",
+              "phaseStartedAt": "2026-10-05T11:00:00.000Z",
+              "basis": 0
+            }
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [null],
+        "appLabels": ["React Native \u00b7 Web"],
+        "buildEntries": [
+          {
+            "path": "/w/app",
+            "platform": "ios"
+          }
+        ]
+      }
+    },
+    {
+      "name": "primary checkout apps group without linked worktree facts",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/repo/apps/b",
+        "environments": [
+          { "path": "/repo/apps/a", "checkout": "/repo", "platforms": ["ios"], "live": false, "warnings": [] },
+          { "path": "/repo/apps/b", "checkout": "/repo", "platforms": ["android"], "live": false, "warnings": [] },
+          { "path": "/other/apps/c", "checkout": "/other", "platforms": ["ios"], "live": false, "warnings": [] },
+          { "path": "/repo/unknown", "platforms": ["ios"], "live": false, "warnings": [] }
+        ]
+      },
+      "expected": {
+        "apps": ["/repo/apps/a", "/repo/apps/b"],
+        "projects": ["apps/a", "apps/b"],
+        "lead": "/repo/apps/a",
+        "subtitles": [null, null],
+        "appLabels": ["React Native \u00b7 apps/a", "React Native \u00b7 apps/b"],
+        "buildEntries": [
+          { "path": "/repo/apps/a", "platform": "ios" },
+          { "path": "/repo/apps/b", "platform": "android" }
+        ]
+      },
+      "desktopExpected": {
+        "identity": "/repo",
+        "title": "repo"
+      }
+    }
+  ]
+}

@@ -1,0 +1,202 @@
+import type { StimContext } from '@stim-cli/core';
+import {
+  hostedNativeRecords,
+  parseHostedNativePlacement,
+  unreadableHostedNative,
+  macosAppState,
+  readMacosRecord,
+} from '@stim-cli/core/state';
+import { macosRuntimeClaim } from '../macos/state.ts';
+import { bundleInstancePids, bundleInstancePidsAsync } from '../macos/instances.ts';
+import { lstatSync, rmdirSync } from 'node:fs';
+import { lstat, readdir, rm, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { isClaimRefusal, isClaimUnavailable, readClaimSet } from '../ownership-claim.ts';
+import { listBuildLocks } from '../engine/build-lock.ts';
+import { listBuildSlots } from '../engine/build-slots.ts';
+import { managedLockHolders } from '../engine/tunnel.ts';
+import {
+  withWorkspaceProcessLock,
+  WorkspaceProcessCleanupError,
+  workspaceProcessLockError,
+  workspaceProcessLockPath,
+} from '../engine/workspace-process-lock.ts';
+import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import { canonicalPath } from '../commands/gc/paths.ts';
+import { getProject } from './config.ts';
+import { workspaceDir } from './paths.ts';
+import { readWorkspaceState } from './workspace-state.ts';
+import { readWebRecord, webFacts } from '../web/state.ts';
+
+const NATIVE_RUN = 'native-run';
+const NATIVE_RUN_HELD = 'a stim ios, android, share or stop run holds its native-run.lock';
+
+interface InUseChecks {
+  supervisor?: boolean;
+  devServer?: boolean;
+  managedLocks?: boolean;
+  hosted?: boolean;
+  hostedMacos?: boolean;
+}
+
+export function workspaceInUse(
+  root: string,
+  {
+    supervisor = true,
+    devServer = true,
+    managedLocks = true,
+    hosted = true,
+    hostedMacos = true,
+    nativeRun = true,
+  }: InUseChecks & { nativeRun?: boolean } = {},
+  bundleInstances: (root: string) => number[] = bundleInstancePids,
+): string[] {
+  const reasons: string[] = [];
+  if (supervisor && devServer) {
+    const project = getProject(root);
+    const target = resolveSupervisorTarget({
+      state: readWorkspaceState(root)?.supervisor,
+      record: project?.supervisor,
+      reservedPort: project?.metroPort,
+    });
+    if (target.status === 'ours') reasons.push(`its dev server supervisor (pid ${target.pid}) is running`);
+    else if (target.status === 'unverified') {
+      reasons.push(`its dev server supervisor cannot be verified: ${target.reason ?? 'unknown identity'}`);
+    }
+    const browser = webFacts(readWebRecord(root));
+    if (browser?.status === 'running' || browser?.status === 'orphaned') {
+      reasons.push(`its owned Chrome (pid ${browser.record.chromeProcess?.pid}) is running`);
+    } else if (browser?.status === 'unverified') reasons.push('its owned Chrome cannot be verified');
+  }
+  if (supervisor) {
+    const macos = macosAppState(readMacosRecord(root));
+    if (macos?.host) {
+      if (hostedMacos) reasons.push(`its macOS app runs on ${macos.host.machine}`);
+    } else if (macos?.state === 'running' || macos?.state === 'orphaned' || macos?.build.state === 'running')
+      reasons.push('its macOS app or build is running');
+    else if (macos?.state === 'unverified' || (!macos && readWorkspaceState(root)?.macos !== undefined))
+      reasons.push('its macOS process owner cannot be verified');
+    else {
+      try {
+        const pids = bundleInstances(root);
+        if (pids.length) reasons.push(`its macOS app is running (pid ${pids.join(', ')})`);
+      } catch (error) {
+        reasons.push(`its running macOS apps cannot be listed: ${(error as Error).message}`);
+      }
+    }
+    const runtime = readClaimSet(macosRuntimeClaim(root));
+    if (runtime.live.length) reasons.push('its macOS runtime claim is held');
+    else if (runtime.unresolved[0])
+      reasons.push(`its macOS runtime cannot be verified: ${runtime.unresolved[0].reason}`);
+  }
+  if (nativeRun) {
+    const claims = readClaimSet(workspaceProcessLockPath(workspaceDir(root), NATIVE_RUN, true));
+    if (claims.live.length) reasons.push(NATIVE_RUN_HELD);
+    else if (claims.unresolved[0])
+      reasons.push(`its native-run.lock cannot be resolved: ${claims.unresolved[0].reason}`);
+  }
+  for (const platform of ['ios', 'android'] as const) {
+    for (const [slot, record] of Object.entries(
+      hosted ? hostedNativeRecords(readWorkspaceState(root), platform) : {},
+    )) {
+      const placement = parseHostedNativePlacement(record, platform);
+      reasons.push(
+        placement
+          ? `its ${platform === 'ios' ? 'iOS simulator' : 'Android emulator'} runs on ${placement.machine}`
+          : unreadableHostedNative(slot, platform),
+      );
+    }
+  }
+  const self = canonicalPath(root);
+  for (const [kind, entries] of [
+    ['build lock', listBuildLocks()],
+    ['build slot', listBuildSlots()],
+  ] as const) {
+    for (const entry of entries) {
+      if (!entry.alive && !entry.unresolved) continue;
+      if (entry.projectRoot !== null && canonicalPath(entry.projectRoot) === self) {
+        reasons.push(`a ${entry.alive ? 'live' : 'unresolvable'} ${kind} at ${entry.path} names it`);
+      }
+    }
+  }
+  if (managedLocks) reasons.push(...managedLockHolders(root));
+  return reasons;
+}
+
+export async function workspaceInUseAsync(
+  root: string,
+  checks: InUseChecks & { nativeRun?: boolean } = {},
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<string[]> {
+  let instances: number[] | Error;
+  try {
+    instances = checks.supervisor === false ? [] : await bundleInstancePidsAsync(root, signal, operation);
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    signal?.throwIfAborted();
+    instances = error instanceof Error ? error : new Error(String(error));
+  }
+  signal?.throwIfAborted();
+  return workspaceInUse(root, checks, () => {
+    if (instances instanceof Error) throw instances;
+    return instances;
+  });
+}
+
+export async function emptyWorkspaceDir(dir: string, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  const stat = await lstat(dir);
+  signal?.throwIfAborted();
+  if (stat.isSymbolicLink()) {
+    // The native-run claim was taken through this link, so its release cannot reach the target
+    // afterwards; the target keeps that claim, which reads as free once this process exits.
+    await unlink(dir);
+    return;
+  }
+  for (const name of await readdir(dir)) {
+    signal?.throwIfAborted();
+    if (name !== `${NATIVE_RUN}.lock`) await rm(join(dir, name), { recursive: true, force: true });
+  }
+}
+
+export type IdleWorkspaceRun<T> = { ran: true; value: T } | { ran: false; reasons: string[] };
+
+export async function withIdleWorkspace<T>(
+  root: string,
+  fn: () => T | Promise<T>,
+  {
+    purpose,
+    operation,
+    signal = operation?.signal,
+    ...checks
+  }: InUseChecks & { purpose: string; signal?: AbortSignal; operation?: StimContext },
+): Promise<IdleWorkspaceRun<T>> {
+  try {
+    return await withWorkspaceProcessLock(
+      workspaceDir(root),
+      NATIVE_RUN,
+      async (): Promise<IdleWorkspaceRun<T>> => {
+        const reasons = signal
+          ? await workspaceInUseAsync(root, { ...checks, nativeRun: false }, signal, operation)
+          : workspaceInUse(root, { ...checks, nativeRun: false });
+        if (reasons.length) return { ran: false, reasons };
+        return { ran: true, value: await fn() };
+      },
+      { external: true, waitMs: 0, ownerPurpose: purpose, signal, declareSpawnsFor: operation },
+    );
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    signal?.throwIfAborted();
+    if (workspaceProcessLockError(error)) return { ran: false, reasons: [NATIVE_RUN_HELD] };
+    if (isClaimRefusal(error) || isClaimUnavailable(error)) {
+      return { ran: false, reasons: [`its native-run.lock cannot be taken: ${error.reason}`] };
+    }
+    throw error;
+  } finally {
+    try {
+      const dir = workspaceDir(root);
+      if (!lstatSync(dir).isSymbolicLink()) rmdirSync(dir);
+    } catch {}
+  }
+}

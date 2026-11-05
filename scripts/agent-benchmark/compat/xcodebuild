@@ -1,0 +1,14 @@
+#!/bin/bash
+set -euo pipefail
+args=()
+has_swift_flags=false
+for arg in "$@"; do
+  case "$arg" in
+    OTHER_SWIFT_FLAGS=*) args+=("$arg -disable-sandbox"); has_swift_flags=true ;;
+    *) args+=("$arg") ;;
+  esac
+done
+if ! "$has_swift_flags"; then
+  args+=('OTHER_SWIFT_FLAGS=$(inherited) -disable-sandbox')
+fi
+exec /usr/bin/xcodebuild "${args[@]}" -IDEPackageSupportDisableManifestSandbox=1 -IDEPackageSupportDisablePluginExecutionSandbox=1

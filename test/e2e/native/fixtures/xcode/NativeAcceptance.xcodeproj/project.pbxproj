@@ -1,0 +1,157 @@
+{
+    archiveVersion = 1;
+    classes = {};
+    objectVersion = 56;
+    objects = {
+        A00000000000000000000001 = {
+            isa = PBXProject;
+            attributes = { LastUpgradeCheck = 2700; };
+            buildConfigurationList = A00000000000000000000010;
+            compatibilityVersion = "Xcode 14.0";
+            developmentRegion = en;
+            hasScannedForEncodings = 0;
+            knownRegions = (en, Base);
+            mainGroup = A00000000000000000000002;
+            productRefGroup = A00000000000000000000003;
+            projectDirPath = "";
+            projectRoot = "";
+            targets = (A00000000000000000000004);
+        };
+        A00000000000000000000002 = {
+            isa = PBXGroup;
+            children = (A00000000000000000000005, A00000000000000000000003);
+            sourceTree = "<group>";
+        };
+        A00000000000000000000003 = {
+            isa = PBXGroup;
+            children = (A00000000000000000000006);
+            name = Products;
+            sourceTree = "<group>";
+        };
+        A00000000000000000000004 = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = A00000000000000000000011;
+            buildPhases = (A00000000000000000000008, A00000000000000000000009);
+            buildRules = ();
+            dependencies = ();
+            name = NativeAcceptance;
+            productName = NativeAcceptance;
+            productReference = A00000000000000000000006;
+            productType = "com.apple.product-type.application";
+        };
+        A00000000000000000000005 = {
+            isa = PBXFileReference;
+            lastKnownFileType = sourcecode.swift;
+            path = NativeAcceptance.swift;
+            sourceTree = "<group>";
+        };
+        A00000000000000000000006 = {
+            isa = PBXFileReference;
+            explicitFileType = wrapper.application;
+            includeInIndex = 0;
+            path = NativeAcceptance.app;
+            sourceTree = BUILT_PRODUCTS_DIR;
+        };
+        A00000000000000000000007 = {
+            isa = PBXBuildFile;
+            fileRef = A00000000000000000000005;
+        };
+        A00000000000000000000008 = {
+            isa = PBXSourcesBuildPhase;
+            buildActionMask = 2147483647;
+            files = (A00000000000000000000007);
+            runOnlyForDeploymentPostprocessing = 0;
+        };
+        A00000000000000000000009 = {
+            isa = PBXFrameworksBuildPhase;
+            buildActionMask = 2147483647;
+            files = ();
+            runOnlyForDeploymentPostprocessing = 0;
+        };
+        A00000000000000000000010 = {
+            isa = XCConfigurationList;
+            buildConfigurations = (A00000000000000000000012, A00000000000000000000013, A00000000000000000000014);
+            defaultConfigurationIsVisible = 0;
+            defaultConfigurationName = Debug;
+        };
+        A00000000000000000000011 = {
+            isa = XCConfigurationList;
+            buildConfigurations = (A00000000000000000000015, A00000000000000000000016, A00000000000000000000017);
+            defaultConfigurationIsVisible = 0;
+            defaultConfigurationName = Debug;
+        };
+        A00000000000000000000012 = {
+            isa = XCBuildConfiguration;
+            name = Debug;
+            buildSettings = {
+                SDKROOT = iphoneos;
+                IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+                SWIFT_VERSION = 5.0;
+                CLANG_ENABLE_MODULES = YES;
+                SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+            };
+        };
+        A00000000000000000000015 = {
+            isa = XCBuildConfiguration;
+            name = Debug;
+            buildSettings = {
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                PRODUCT_BUNDLE_IDENTIFIER = dev.stim.native.acceptance;
+                GENERATE_INFOPLIST_FILE = YES;
+                INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+                INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+                TARGETED_DEVICE_FAMILY = "1,2";
+                SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+            };
+        };
+        A00000000000000000000013 = {
+            isa = XCBuildConfiguration;
+            name = Release;
+            buildSettings = {
+                SDKROOT = iphoneos;
+                IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+                SWIFT_VERSION = 5.0;
+                CLANG_ENABLE_MODULES = YES;
+                SWIFT_OPTIMIZATION_LEVEL = "-O";
+            };
+        };
+        A00000000000000000000016 = {
+            isa = XCBuildConfiguration;
+            name = Release;
+            buildSettings = {
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                PRODUCT_BUNDLE_IDENTIFIER = dev.stim.native.acceptance;
+                GENERATE_INFOPLIST_FILE = YES;
+                INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+                INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+                TARGETED_DEVICE_FAMILY = "1,2";
+                SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+            };
+        };
+        A00000000000000000000014 = {
+            isa = XCBuildConfiguration;
+            name = Staging;
+            buildSettings = {
+                SDKROOT = iphoneos;
+                IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+                SWIFT_VERSION = 5.0;
+                CLANG_ENABLE_MODULES = YES;
+                SWIFT_OPTIMIZATION_LEVEL = "-O";
+            };
+        };
+        A00000000000000000000017 = {
+            isa = XCBuildConfiguration;
+            name = Staging;
+            buildSettings = {
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                PRODUCT_BUNDLE_IDENTIFIER = dev.stim.native.acceptance;
+                GENERATE_INFOPLIST_FILE = YES;
+                INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+                INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+                TARGETED_DEVICE_FAMILY = "1,2";
+                SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+            };
+        };
+    };
+    rootObject = A00000000000000000000001;
+}

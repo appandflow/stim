@@ -1,0 +1,2827 @@
+import { killProcessTree, makeRunnerHome, spawnStamped, terminateProcessTree } from './runner.mjs';
+import { javascriptProof, appAliveErrorIsSuperseded } from './javascript-proof.mjs';
+import { benchmarkAvdDescription as androidAvdDescription } from './android-avd.mjs';
+import { ownedMetroListeners } from './metro-listeners.mjs';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  changedPathsFromGitOutputs,
+  injectRootRenderCrash,
+  launchCrashDiagnosis,
+  launchCrashRecovery,
+  launchCrashRepair,
+  launchCrashToken,
+  podfileChecksumChanges,
+} from '../launch-crash-benchmark.mjs';
+import { benchmarkFingerprint, selectBenchmarkCacheKey } from './cache-key.mjs';
+import { reconstructCommandEvidence } from './command-evidence.mjs';
+import {
+  ANDROID_BENCHMARK_AVD_CONFIG,
+  assertGoldenCleanup,
+  matchesGoldenPreparation,
+  preparedAndroidEmulator,
+} from './golden-state.mjs';
+import { launchCrashSetup } from './launch-crash-setup.mjs';
+import { benchmarkTaskPrompt } from './task-prompt.mjs';
+import { probeNativeCompatibility, verifyNativeCompatibility } from './native-compat.mjs';
+import { compatibilityProofEvidence, prepareCompatibilityProof } from './compatibility-proof.mjs';
+import {
+  androidApplicationLabelFromBadging,
+  matchesExpectedAndroidEmulator,
+  matchesExpectedIosSimulator,
+} from './watch-app-selection.mjs';
+import { completedCleanupRecord, durableRunRecord } from './run-record.mjs';
+import { ccacheLogEvidence } from './ccache-evidence.mjs';
+import { retireAndroidRecording } from './recording-cleanup.mjs';
+import { benchmarkEnvironment, benchmarkLocale, isolatedShellEnvironment } from './shell-environment.mjs';
+import {
+  benchmarkFixtureReadPaths,
+  isolatedRunnerInvocation,
+  prepareRunnerIsolation,
+  runnerIsolationPolicy,
+  verifyIsolationCompatibility,
+} from './runner-isolation.mjs';
+import {
+  agentDeviceIsolationInvalidReasons,
+  agentDeviceAuxiliarySessions,
+  benchmarkSetupInvalidReasons,
+  benchmarkTarget,
+  benchmarkTiming,
+  parseBenchmarkTargets,
+  stimShellProvenanceInvalidReasons,
+  assertAndroidDoctorClean,
+  benchmarkCcache,
+  benchmarkMeasurementWarnings,
+  ccacheMeasurements,
+  runnerToolOutput,
+  topLevelShellCommand,
+  sameLiteralShellCommand,
+} from './run-guards.mjs';
+
+const launchCrashVariant = 'launch-crash';
+const scriptRoot = dirname(fileURLToPath(import.meta.url));
+const root = resolve(process.env.STIM_BENCH_ROOT ?? '');
+if (!process.env.STIM_BENCH_ROOT) {
+  throw new Error('STIM_BENCH_ROOT must name the machine-local benchmark directory');
+}
+const main = resolve(process.env.STIM_BENCH_FIXTURE ?? join(root, '../trailhead-v3'));
+const results = join(root, 'results');
+const state = join(root, 'state');
+const agentDeviceState = join(state, 'agent-device');
+const allowedBin = join(root, 'allowed-bin');
+const stimBin = join(root, 'bin');
+const golden = join(root, 'golden');
+const worktreeParent = resolve(process.env.STIM_BENCH_WORKTREE_PARENT ?? join(root, '../trailhead-worktrees'));
+const stimPackage = resolve(process.env.STIM_BENCH_STIM_PACKAGE ?? join(root, 'runtime', 'node_modules', 'stim'));
+const stimCli = join(stimPackage, 'dist', 'cli.mjs');
+const agentDeviceBin = process.env.STIM_BENCH_AGENT_DEVICE_BIN ?? 'agent-device';
+const nativeCompatManifest = process.env.STIM_BENCH_NATIVE_COMPAT_MANIFEST;
+const claudeBin = process.env.STIM_BENCH_CLAUDE_BIN ?? 'claude';
+const codexBin = process.env.STIM_BENCH_CODEX_BIN ?? 'codex';
+const agentSkillsRoot = process.env.STIM_BENCH_SKILLS_ROOT;
+const codexAuthPath = process.env.STIM_BENCH_CODEX_AUTH;
+const pins = Object.fromEntries(
+  readFileSync(join(root, 'pins.env'), 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const at = line.indexOf('=');
+      return [line.slice(0, at), line.slice(at + 1)];
+    }),
+);
+
+function benchmarkTargets() {
+  const path = join(root, 'targets.json');
+  if (!existsSync(path)) throw new Error(`benchmark targets missing: ${path}`);
+  return parseBenchmarkTargets(readFileSync(path, 'utf8'));
+}
+
+function expectedStimShellProvenance() {
+  return {
+    resolvedPath: join(stimBin, 'stim'),
+    version: pins.STIM_VERSION,
+    executableSha256: sha256(join(stimBin, 'stim')),
+    cliSha256: sha256(stimCli),
+  };
+}
+
+function stimShellProvenance(environment) {
+  return {
+    resolvedPath: run('/bin/zsh', ['-lc', 'command -v stim'], { cwd: main, env: environment }),
+    version: run('/bin/zsh', ['-lc', 'stim --version'], { cwd: main, env: environment }),
+    executableSha256: sha256(join(stimBin, 'stim')),
+    cliSha256: sha256(stimCli),
+  };
+}
+
+function verifyRunnerShell(arm, environment) {
+  for (const mode of ['-lc', '-c']) {
+    const locale = run(
+      '/bin/zsh',
+      [mode, 'test -z "${LC_MESSAGES+x}" && printf "%s\\n" "$LANG" "$LC_ALL" "$LC_CTYPE"'],
+      {
+        cwd: main,
+        env: environment,
+      },
+    );
+    if (locale !== Array(3).fill(benchmarkLocale).join('\n')) {
+      throw new Error(`timed shell locale mismatch: ${locale}`);
+    }
+  }
+  if (arm === 'control') {
+    const resolved = run('/bin/zsh', ['-lc', 'command -v stim || true'], { cwd: main, env: environment });
+    if (resolved) throw new Error(`control login shell resolved Stim: ${resolved}`);
+    return null;
+  }
+  const expected = expectedStimShellProvenance();
+  const actual = stimShellProvenance(environment);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`timed shell Stim provenance mismatch: ${JSON.stringify({ expected, actual })}`);
+  }
+  return actual;
+}
+
+function checkedPlatform(value = 'ios') {
+  if (!['ios', 'android'].includes(value)) throw new Error(`unsupported benchmark platform: ${value}`);
+  return value;
+}
+
+function goldenFor(platform) {
+  return platform === 'ios' ? golden : join(golden, platform);
+}
+
+function run(file, args, options = {}) {
+  const output = execFileSync(file, args, {
+    cwd: options.cwd ?? main,
+    encoding: 'utf8',
+    env: benchmarkEnvironment(options.env ?? process.env),
+    timeout: options.timeout ?? 30_000,
+    maxBuffer: options.maxBuffer ?? 64 * 1024 * 1024,
+    stdio: options.stdio ?? ['ignore', 'pipe', 'pipe'],
+  });
+  return typeof output === 'string' ? (options.trim === false ? output : output.trim()) : '';
+}
+
+function jsonRun(file, args, options) {
+  return JSON.parse(run(file, args, options));
+}
+
+function executablePath(file) {
+  return file.includes('/') ? file : run('/usr/bin/which', [file], { cwd: root });
+}
+
+function agentDeviceEnvironment(session) {
+  return {
+    ...benchmarkEnvironment(process.env),
+    AGENT_DEVICE_STATE_DIR: agentDeviceState,
+    ...(session ? { AGENT_DEVICE_SESSION: session } : {}),
+  };
+}
+
+function agentDeviceCommand(meta, command) {
+  const stateDir = meta.agentDevice?.stateDir ?? agentDeviceState;
+  const session = meta.agentDevice?.session ?? meta.runId;
+  return `env AGENT_DEVICE_STATE_DIR=${stateDir} AGENT_DEVICE_SESSION=${session} agent-device ${command}`;
+}
+
+function agentDeviceSessionState(meta) {
+  return `${meta.agentDevice?.stateDir ?? agentDeviceState}/sessions/${meta.agentDevice?.session ?? meta.runId}`;
+}
+
+function isJavascriptVariant(variant) {
+  return variant === 'javascript' || variant === launchCrashVariant;
+}
+
+function settingsProofText(variant) {
+  return variant === 'javascript'
+    ? 'Keep saved trail maps available offline'
+    : variant === launchCrashVariant
+      ? 'Keep map tiles for saved trails on device'
+      : 'Offline maps';
+}
+
+function agentDeviceSessions(environment) {
+  const payload = jsonRun(agentDeviceBin, ['session', 'list', '--json'], {
+    cwd: main,
+    env: environment,
+    timeout: 30_000,
+  });
+  if (payload.success !== true || !Array.isArray(payload.data?.sessions)) {
+    throw new Error(`unexpected agent-device session response: ${JSON.stringify(payload)}`);
+  }
+  return payload.data.sessions;
+}
+
+function stopBenchmarkAgentDeviceDaemon() {
+  return run(agentDeviceBin, ['daemon', 'stop', '--state-dir', agentDeviceState, '--clean'], {
+    cwd: main,
+    env: agentDeviceEnvironment(),
+    timeout: 60_000,
+  });
+}
+
+function prepareAgentDeviceRun(runId, platform, deviceId = null) {
+  mkdirSync(agentDeviceState, { recursive: true });
+  const environment = agentDeviceEnvironment(runId);
+  let sessions = agentDeviceSessions(environment);
+  let recovered = false;
+  if (sessions.length) {
+    stopBenchmarkAgentDeviceDaemon();
+    recovered = true;
+    sessions = agentDeviceSessions(environment);
+  }
+  if (sessions.length) {
+    throw new Error(`benchmark agent-device sessions remain: ${JSON.stringify(sessions)}`);
+  }
+  let claims = [];
+  if (deviceId) {
+    const targetFlag = platform === 'android' ? '--serial' : '--udid';
+    const deviceStatus = jsonRun(
+      agentDeviceBin,
+      ['device', 'status', '--platform', platform, targetFlag, deviceId, '--json'],
+      { cwd: main, env: environment, timeout: 30_000 },
+    );
+    claims = deviceStatus.data?.claims;
+    if (deviceStatus.success !== true || !Array.isArray(claims)) {
+      throw new Error(`unexpected agent-device ownership response: ${JSON.stringify(deviceStatus)}`);
+    }
+    if (claims.length || deviceStatus.data.hiddenStaleClaims) {
+      throw new Error(`benchmark device has an agent-device claim: ${JSON.stringify(deviceStatus.data)}`);
+    }
+  }
+  return {
+    stateDir: agentDeviceState,
+    session: runId,
+    recoveredBenchmarkDaemon: recovered,
+    sessionsBeforeDispatch: sessions.length,
+    deviceClaimsBeforeDispatch: claims.length,
+  };
+}
+
+function sha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+function verifyGoldenCache(platform, platformGolden = goldenFor(platform)) {
+  const readyPath = join(platformGolden, 'READY.json');
+  if (existsSync(readyPath) && JSON.parse(readFileSync(readyPath, 'utf8')).locale !== benchmarkLocale) {
+    throw new Error('golden cache locale is unverified; requalify preparation before dispatch');
+  }
+  const fingerprint = benchmarkFingerprint(main, stimPackage, platform);
+  const cacheRoot = join(platformGolden, 'stim-home', 'build-cache', platform);
+  const cacheKey = selectBenchmarkCacheKey(platform, fingerprint, existsSync(cacheRoot) ? readdirSync(cacheRoot) : []);
+  const cacheDir = join(cacheRoot, cacheKey);
+  const extension = platform === 'ios' ? '.app' : '.apk';
+  const artifact = existsSync(cacheDir) ? readdirSync(cacheDir).find((name) => name.endsWith(extension)) : null;
+  if (!artifact) {
+    throw new Error(`golden ${platform} artifact missing for fresh-worktree key ${cacheKey}`);
+  }
+  return { fingerprint, cacheKey, artifact: join(cacheDir, artifact) };
+}
+
+function availableSimulators() {
+  const data = jsonRun('xcrun', ['simctl', 'list', 'devices', '--json']);
+  return Object.values(data.devices)
+    .flat()
+    .filter((device) => device.isAvailable);
+}
+
+function waitForSimulatorQuiescence(udid) {
+  const deadline = Date.now() + 3 * 60 * 1000;
+  let stableSamples = 0;
+  while (Date.now() < deadline) {
+    const simulator = availableSimulators().find((device) => device.udid === udid);
+    const runnerActive = run('ps', ['-Ao', 'command='])
+      .split('\n')
+      .some((command) => command.includes('xcodebuild test-without-building') && command.includes(udid));
+    stableSamples = simulator?.state === 'Shutdown' && !runnerActive ? stableSamples + 1 : 0;
+    if (stableSamples >= 2) return simulator;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2_000);
+  }
+  throw new Error(`simulator did not become quiescent: ${udid}`);
+}
+
+function pinnedIosDevice() {
+  const deviceTypes = jsonRun('xcrun', ['simctl', 'list', 'devicetypes', '--json']).devicetypes;
+  const runtimes = jsonRun('xcrun', ['simctl', 'list', 'runtimes', '--json']).runtimes;
+  const device = deviceTypes.find((item) => item.name === pins.IOS_DEVICE_TYPE);
+  const runtime = runtimes.find(
+    (item) => item.name.startsWith('iOS ') && item.version === pins.IOS_RUNTIME && item.isAvailable,
+  );
+  if (!device || !runtime) throw new Error('pinned iOS device type or runtime is unavailable');
+  return { deviceTypeIdentifier: device.identifier, runtimeIdentifier: runtime.identifier };
+}
+
+function verifyParkedSimulator(stimHome, expectedUdid) {
+  const configPath = join(stimHome, 'config.json');
+  if (!existsSync(configPath)) throw new Error('golden Stim config is missing');
+  const config = JSON.parse(readFileSync(configPath, 'utf8'));
+  const records = Array.isArray(config.parked?.ios) ? config.parked.ios : [];
+  if (config.pool?.iosParkedMax !== 1 || records.length !== 1) {
+    throw new Error('golden must contain exactly one parked iOS simulator with max 1');
+  }
+  const record = records[0];
+  if (expectedUdid && record.udid !== expectedUdid) {
+    throw new Error(`parked simulator changed: expected ${expectedUdid}, got ${record.udid}`);
+  }
+  const simulator = availableSimulators().find((device) => device.udid === record.udid);
+  if (
+    !simulator ||
+    simulator.state !== 'Shutdown' ||
+    simulator.name !== record.name ||
+    !simulator.name.startsWith('stim-parked')
+  ) {
+    throw new Error(`golden parked simulator is not ready: ${JSON.stringify({ record, simulator })}`);
+  }
+  const expected = pinnedIosDevice();
+  if (
+    record.deviceTypeIdentifier !== expected.deviceTypeIdentifier ||
+    record.runtimeIdentifier !== expected.runtimeIdentifier
+  ) {
+    throw new Error(`golden parked simulator has the wrong model or runtime: ${JSON.stringify(record)}`);
+  }
+  return { ...record, state: simulator.state };
+}
+
+function verifyGoldenParkedSimulator() {
+  return verifyParkedSimulator(join(golden, 'stim-home'));
+}
+
+function verifyParkedAndroidEmulator(stimHome, expectedName) {
+  const activeNames = androidEmulatorTransports().map(({ serial }) =>
+    run('adb', ['-s', serial, 'emu', 'avd', 'name']).split('\n')[0].trim(),
+  );
+  return preparedAndroidEmulator({
+    config: JSON.parse(readFileSync(join(stimHome, 'config.json'), 'utf8')),
+    avds: androidAvdSnapshot().map((name) => androidAvdDescription(name)),
+    activeNames,
+    systemImage: pins.ANDROID_SYSTEM_IMAGE,
+    expectedName,
+  });
+}
+
+function verifyGoldenParkedAndroidEmulator() {
+  const platformGolden = goldenFor('android');
+  const readyPath = join(platformGolden, 'READY.json');
+  const expectedName = existsSync(readyPath)
+    ? JSON.parse(readFileSync(readyPath, 'utf8')).parkedEmulator?.name
+    : undefined;
+  if (existsSync(readyPath) && !expectedName) throw new Error('Android golden must be prepared with emulator pooling');
+  return verifyParkedAndroidEmulator(join(platformGolden, 'stim-home'), expectedName);
+}
+
+function ensureDirs() {
+  for (const path of [results, state, allowedBin, stimBin, golden]) {
+    mkdirSync(path, { recursive: true });
+  }
+}
+
+function prepareAllowedBin() {
+  const compatibility = verifyNativeCompatibility(
+    nativeCompatManifest,
+    pins.NATIVE_COMPAT_SHA256,
+    main,
+    executablePath(agentDeviceBin),
+  );
+  const names = [
+    'adb',
+    'agent-device',
+    'avdmanager',
+    'ccache',
+    'emulator',
+    'node',
+    'npm',
+    'npx',
+    'pnpm',
+    'pod',
+    'rg',
+    'sdkmanager',
+    'watchman',
+  ];
+  if (compatibility) names.push('xcodebuild');
+  if (compatibility?.emulatorProcess) names.push('ps');
+  for (const name of names) {
+    let source;
+    try {
+      source =
+        name === 'agent-device'
+          ? executablePath(agentDeviceBin)
+          : name === 'ps' && compatibility?.emulatorProcess
+            ? join(compatibility.directory, 'emulator-process/ps')
+            : name === 'xcodebuild' && compatibility
+              ? join(compatibility.directory, 'bin/xcodebuild')
+              : run('/usr/bin/which', [name], { cwd: root });
+    } catch {
+      continue;
+    }
+    const target = join(allowedBin, name);
+    if (!existsSync(source)) continue;
+    if (existsSync(target)) {
+      if (realpathSync(target) !== realpathSync(source))
+        throw new Error(`allowed tool ${name} resolves to a stale target`);
+      continue;
+    }
+    symlinkSync(source, target);
+  }
+  chmodSync(join(stimBin, 'stim'), 0o755);
+}
+
+function simulatorSnapshot() {
+  const data = jsonRun('xcrun', ['simctl', 'list', 'devices', '--json']);
+  return Object.values(data.devices)
+    .flat()
+    .filter((device) => device.isAvailable)
+    .map((device) => device.udid);
+}
+
+function androidEmulatorSnapshot() {
+  return run('adb', ['devices'])
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/))
+    .filter(([serial, deviceState]) => serial?.startsWith('emulator-') && deviceState === 'device')
+    .map(([serial]) => serial);
+}
+
+function androidAvdSnapshot() {
+  return run('emulator', ['-list-avds'])
+    .split('\n')
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
+function androidEmulatorTransports() {
+  return run('adb', ['devices'])
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/))
+    .filter(([serial]) => serial?.startsWith('emulator-'))
+    .map(([serial, transportState]) => ({ serial, transportState }));
+}
+
+function androidEmulatorDescription(serial, allowedRoots = []) {
+  const name = run('adb', ['-s', serial, 'shell', 'getprop', 'ro.boot.qemu.avd_name']);
+  const avd = androidAvdDescription(name, {
+    reportedPath: run('adb', ['-s', serial, 'emu', 'avd', 'path']),
+    allowedRoots,
+  });
+  return {
+    ...avd,
+    udid: serial,
+    runtimeIdentifier: `Android-${run('adb', ['-s', serial, 'shell', 'getprop', 'ro.build.version.sdk'])}`,
+  };
+}
+
+function deviceSnapshot(platform) {
+  return platform === 'android' ? androidEmulatorSnapshot() : simulatorSnapshot();
+}
+
+function controlSimulatorForCleanup(runDir, preferredUdid) {
+  const baselinePath = existsSync(join(runDir, 'devices-before.json'))
+    ? join(runDir, 'devices-before.json')
+    : join(runDir, 'simulators-before.json');
+  const baseline = new Set(JSON.parse(readFileSync(baselinePath, 'utf8')));
+  const data = jsonRun('xcrun', ['simctl', 'list', 'devices', '--json']);
+  const candidates = Object.values(data.devices)
+    .flat()
+    .filter((device) => device.isAvailable && !baseline.has(device.udid) && device.name.startsWith('Trailhead '));
+  if (preferredUdid) {
+    return candidates.find((device) => device.udid === preferredUdid) ?? null;
+  }
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function controlAndroidForCleanup(runDir, preferredSerial, expectedName, recordedPath) {
+  const beforePath = join(runDir, 'avds-before.json');
+  if (!existsSync(beforePath)) return null;
+  const before = new Set(JSON.parse(readFileSync(beforePath, 'utf8')));
+  if (before.has(expectedName)) return null;
+  const baseline = new Set(JSON.parse(readFileSync(join(runDir, 'devices-before.json'), 'utf8')));
+  const liveCandidates = androidEmulatorSnapshot()
+    .filter((serial) => !baseline.has(serial))
+    .map((serial) => androidEmulatorDescription(serial, [runDir]))
+    .filter((device) => device.name === expectedName);
+  if (preferredSerial) {
+    const preferred = liveCandidates.find((device) => device.udid === preferredSerial);
+    if (preferred) return preferred;
+  }
+  if (liveCandidates.length === 1) return liveCandidates[0];
+  if (recordedPath) {
+    return androidAvdDescription(expectedName, { reportedPath: dirname(recordedPath), allowedRoots: [runDir] });
+  }
+  return androidAvdSnapshot().includes(expectedName) ? androidAvdDescription(expectedName) : null;
+}
+
+function bootedSimulators() {
+  const data = jsonRun('xcrun', ['simctl', 'list', 'devices', '--json']);
+  return Object.values(data.devices)
+    .flat()
+    .filter((device) => device.isAvailable && device.state === 'Booted');
+}
+
+function git(...args) {
+  return run('git', args, { cwd: main });
+}
+
+function versionChecks() {
+  const stimManifest = JSON.parse(readFileSync(join(stimPackage, 'package.json'), 'utf8'));
+  const macVersion = run('sw_vers', ['-productVersion']);
+  const macBuild = run('sw_vers', ['-buildVersion']);
+  const xcode = run('xcodebuild', ['-version']).split('\n');
+  const actual = {
+    TRAILHEAD_FIXTURE_COMMIT: git('rev-parse', 'HEAD'),
+    CODEX_VERSION: run(codexBin, ['--version']).replace(/^codex-cli /, ''),
+    CLAUDE_VERSION: run(claudeBin, ['--version']).split(/\s+/)[0],
+    NODE_VERSION: run('node', ['--version']).replace(/^v/, ''),
+    COCOAPODS_VERSION: run('pod', ['--version']),
+    STIM_VERSION: stimManifest.version,
+    STIM_INTEGRITY: JSON.parse(readFileSync(join(root, 'runtime', 'package-lock.json'), 'utf8')).packages[
+      `node_modules/${stimManifest.name}`
+    ].integrity,
+    AGENT_DEVICE_VERSION: run(agentDeviceBin, ['--version']).split(/\s+/).at(-1),
+    AGENT_DEVICE_SHA256: sha256(executablePath(agentDeviceBin)),
+    MACOS_VERSION: macVersion,
+    MACOS_BUILD: macBuild,
+    XCODE_VERSION: xcode[0].replace(/^Xcode /, ''),
+    XCODE_BUILD: xcode[1].replace(/^Build version /, ''),
+    ANDROID_SDK_VERSION: run('sdkmanager', ['--version']).split('\n').at(-1),
+    ANDROID_EMULATOR_VERSION: run('emulator', ['-version'])
+      .split('\n')[0]
+      .replace(/^Android emulator version /, ''),
+    ADB_VERSION: run('adb', ['version'])
+      .split('\n')
+      .find((line) => line.startsWith('Version '))
+      ?.replace(/^Version /, ''),
+  };
+  for (const [key, value] of Object.entries(actual)) {
+    if (value !== pins[key]) {
+      throw new Error(`${key}: expected ${pins[key]}, got ${value}`);
+    }
+  }
+  if (git('status', '--short') !== '') {
+    throw new Error('fixture checkout is dirty');
+  }
+  return actual;
+}
+
+function preflight(requestedPlatform = 'ios') {
+  const platform = checkedPlatform(requestedPlatform);
+  ensureDirs();
+  prepareAllowedBin();
+  const actual = versionChecks();
+  const nativeCompatibility = verifyNativeCompatibility(
+    nativeCompatManifest,
+    pins.NATIVE_COMPAT_SHA256,
+    main,
+    executablePath(agentDeviceBin),
+  );
+  const targets = benchmarkTargets();
+  if (!readFileSync(join(stimBin, 'stim'), 'utf8').includes(stimCli)) {
+    throw new Error('Stim shim does not target the pinned CLI checkout');
+  }
+  const shellProbeHome = join(state, 'shell-probe');
+  const shellProbeEnvironment = isolatedShellEnvironment(
+    {
+      ...benchmarkEnvironment(process.env),
+      STIM_HOME: join(shellProbeHome, 'stim-home'),
+      BENCH_STIM_HOME: join(shellProbeHome, 'stim-home'),
+      PATH: `${stimBin}:${allowedBin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    },
+    shellProbeHome,
+  );
+  const shellProvenance = verifyRunnerShell('stim', shellProbeEnvironment);
+  const doctor = platform === 'android' ? androidDoctor(main, shellProbeEnvironment) : null;
+  const booted = platform === 'android' ? androidEmulatorTransports() : bootedSimulators().map((device) => device.udid);
+  if (booted.length) {
+    throw new Error(`booted ${platform} devices require operator cleanup: ${JSON.stringify(booted)}`);
+  }
+  const listeners = run('/bin/sh', [
+    '-c',
+    'for p in 8081 8082 8083 8084 8085 8086 8087 8088 8089 8090; do /usr/sbin/lsof -nP -iTCP:$p -sTCP:LISTEN 2>/dev/null; done; exit 0',
+  ]);
+  if (listeners) throw new Error(`Metro-range listener found:\n${listeners}`);
+  const disk = run('df', ['-k', main, root]);
+  const load = run('sysctl', ['-n', 'vm.loadavg']);
+  const thermal = run('pmset', ['-g', 'therm']);
+  if (thermal.split('\n').some((line) => /warning/i.test(line) && !/No .*warning/i.test(line))) {
+    throw new Error(`thermal warning reported:\n${thermal}`);
+  }
+  for (const [path, minimumGiB] of [
+    [main, 12],
+    [root, 8],
+  ]) {
+    const fields = run('df', ['-Pk', path]).split('\n').at(-1).trim().split(/\s+/);
+    const freeBytes = Number(fields[3]) * 1024;
+    if (!Number.isFinite(freeBytes) || freeBytes < minimumGiB * 1024 ** 3) {
+      throw new Error(`${path} requires ${minimumGiB} GiB free; found ${freeBytes} bytes`);
+    }
+  }
+  const platformGolden = goldenFor(platform);
+  const readyPath = join(platformGolden, 'READY.json');
+  const goldenCache = existsSync(readyPath) ? verifyGoldenCache(platform, platformGolden) : null;
+  const parkedSimulator = platform === 'ios' && existsSync(readyPath) ? verifyGoldenParkedSimulator() : null;
+  const parkedEmulator = platform === 'android' && existsSync(readyPath) ? verifyGoldenParkedAndroidEmulator() : null;
+  const preflightRecord = {
+    checkedAt: new Date().toISOString(),
+    locale: benchmarkLocale,
+    actual,
+    nativeCompatibility,
+    disk,
+    load,
+    thermal,
+    platform,
+    timingTargets: {
+      machine: targets.machine,
+      keys: Object.keys(targets.targets).toSorted(),
+    },
+    goldenCache,
+    parkedSimulator,
+    parkedEmulator,
+    shellProvenance,
+    doctor,
+    stimExecutableSha256: sha256(join(stimBin, 'stim')),
+    stimCliSha256: sha256(stimCli),
+  };
+  writeFileSync(join(state, 'last-preflight.json'), `${JSON.stringify(preflightRecord, null, 2)}\n`);
+  return preflightRecord;
+}
+
+function androidDoctor(cwd, env) {
+  return assertAndroidDoctorClean(
+    JSON.parse(
+      run('node', [stimCli, 'doctor', '--platform', 'android', '--json'], {
+        cwd,
+        env,
+        timeout: 2 * 60 * 1000,
+      }),
+    ),
+  );
+}
+
+async function waitForLoadGate() {
+  const samples = [];
+  let consecutive = 0;
+  const deadline = Date.now() + 10 * 60 * 1000;
+  while (Date.now() < deadline) {
+    const raw = run('sysctl', ['-n', 'vm.loadavg']);
+    const oneMinute = Number(raw.match(/[\d.]+/)?.[0]);
+    const sample = { at: new Date().toISOString(), raw, oneMinute };
+    samples.push(sample);
+    consecutive = Number.isFinite(oneMinute) && oneMinute <= 3 ? consecutive + 1 : 0;
+    if (consecutive >= 2) return { passed: true, samples };
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 15_000));
+  }
+  return { passed: false, samples };
+}
+
+function prepare() {
+  ensureDirs();
+  prepareAllowedBin();
+  versionChecks();
+  const readyPath = join(golden, 'READY.json');
+  if (existsSync(readyPath)) {
+    verifyGoldenCache('ios');
+    process.stdout.write(readFileSync(readyPath));
+    return;
+  }
+  const seedHome = join(golden, 'seed-stim-home');
+  const finalHome = join(golden, 'stim-home');
+  const controlTmp = join(golden, 'control-tmp');
+  if (existsSync(seedHome)) {
+    throw new Error('partial seed golden exists; inspect it before retrying');
+  }
+  const preparingHome = existsSync(finalHome) ? finalHome : seedHome;
+  const preparation = {
+    locale: benchmarkLocale,
+    fixtureCommit: git('rev-parse', 'HEAD'),
+    stimVersion: pins.STIM_VERSION,
+    stimIntegrity: pins.STIM_INTEGRITY,
+    stimCliSha256: sha256(stimCli),
+    agentDeviceVersion: pins.AGENT_DEVICE_VERSION,
+    agentDeviceSha256: pins.AGENT_DEVICE_SHA256,
+  };
+  const preparationPath = join(preparingHome, 'benchmark-preparation.json');
+  if (!existsSync(finalHome)) {
+    mkdirSync(seedHome, { recursive: true });
+    writeFileSync(
+      join(seedHome, 'config.json'),
+      `${JSON.stringify(
+        {
+          version: 2,
+          projects: {},
+          repos: {},
+          pool: { iosParkedMax: 1 },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    writeFileSync(preparationPath, `${JSON.stringify(preparation, null, 2)}\n`);
+  } else {
+    let retainedPreparation = null;
+    try {
+      retainedPreparation = JSON.parse(readFileSync(preparationPath, 'utf8'));
+    } catch {}
+    if (!matchesGoldenPreparation(retainedPreparation, preparation)) {
+      throw new Error(`retained iOS golden provenance does not match current pins: ${finalHome}`);
+    }
+  }
+  const seedEnv = {
+    ...benchmarkEnvironment(process.env),
+    STIM_HOME: preparingHome,
+    STIM_POOL_IOS_PARKED_MAX: '1',
+  };
+  const worktree = join(worktreeParent, 'bench-golden-seed');
+  run('git', ['worktree', 'add', '--detach', worktree, 'HEAD'], {
+    cwd: main,
+    timeout: 5 * 60 * 1000,
+  });
+  try {
+    run('node', [stimCli, 'worktree', 'warm'], {
+      cwd: worktree,
+      env: seedEnv,
+      timeout: 20 * 60 * 1000,
+    });
+    run('node', [stimCli, 'start'], {
+      cwd: worktree,
+      env: seedEnv,
+      timeout: 5 * 60 * 1000,
+      stdio: 'inherit',
+    });
+    run('node', [stimCli, 'ios', '--device-type', pins.IOS_DEVICE_TYPE, '--runtime', pins.IOS_RUNTIME], {
+      cwd: worktree,
+      env: seedEnv,
+      timeout: 20 * 60 * 1000,
+      stdio: 'inherit',
+    });
+    run('node', [stimCli, 'stop'], {
+      cwd: worktree,
+      env: seedEnv,
+      timeout: 2 * 60 * 1000,
+      stdio: 'inherit',
+    });
+    run('node', [stimCli, 'worktree', 'remove', '--force'], {
+      cwd: worktree,
+      env: seedEnv,
+      timeout: 5 * 60 * 1000,
+      stdio: 'inherit',
+    });
+  } catch (error) {
+    throw new Error(`golden preparation failed; retained ${preparingHome}`, { cause: error });
+  }
+  if (preparingHome === seedHome) renameSync(seedHome, finalHome);
+  const parkedSimulator = verifyGoldenParkedSimulator();
+  mkdirSync(controlTmp, { recursive: true });
+  const exportPath = join(golden, 'control-export');
+  run('npx', ['expo', 'export', '--platform', 'ios', '--dev', '--output-dir', exportPath], {
+    cwd: main,
+    env: { ...benchmarkEnvironment(process.env), TMPDIR: controlTmp },
+    timeout: 10 * 60 * 1000,
+    stdio: 'inherit',
+  });
+  rmSync(exportPath, { recursive: true, force: true });
+  const ready = {
+    preparedAt: new Date().toISOString(),
+    locale: benchmarkLocale,
+    fixtureCommit: git('rev-parse', 'HEAD'),
+    stimVersion: pins.STIM_VERSION,
+    stimIntegrity: pins.STIM_INTEGRITY,
+    stimCliSha256: sha256(stimCli),
+    agentDeviceVersion: pins.AGENT_DEVICE_VERSION,
+    agentDeviceSha256: pins.AGENT_DEVICE_SHA256,
+    parkedSimulator,
+    buildCacheEntries: readdirSync(join(finalHome, 'build-cache', 'ios')),
+  };
+  writeFileSync(readyPath, `${JSON.stringify(ready, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(ready, null, 2)}\n`);
+}
+
+function prepareAndroid() {
+  ensureDirs();
+  prepareAllowedBin();
+  versionChecks();
+  androidDoctor(main, { ...benchmarkEnvironment(process.env), STIM_HOME: join(state, 'doctor-home') });
+  const platformGolden = goldenFor('android');
+  const readyPath = join(platformGolden, 'READY.json');
+  if (existsSync(readyPath)) {
+    verifyGoldenCache('android', platformGolden);
+    verifyGoldenParkedAndroidEmulator();
+    process.stdout.write(readFileSync(readyPath));
+    return;
+  }
+  if (!pins.ANDROID_SYSTEM_IMAGE) throw new Error('pins.env must define ANDROID_SYSTEM_IMAGE');
+  const seedHome = join(platformGolden, 'seed-stim-home');
+  const finalHome = join(platformGolden, 'stim-home');
+  const controlTmp = join(platformGolden, 'control-tmp');
+  if (existsSync(seedHome)) throw new Error('partial Android seed golden exists; inspect it before retrying');
+  mkdirSync(platformGolden, { recursive: true });
+  const preparingHome = existsSync(finalHome) ? finalHome : seedHome;
+  const preparation = {
+    locale: benchmarkLocale,
+    fixtureCommit: git('rev-parse', 'HEAD'),
+    stimVersion: pins.STIM_VERSION,
+    stimIntegrity: pins.STIM_INTEGRITY,
+    stimCliSha256: sha256(stimCli),
+    agentDeviceVersion: pins.AGENT_DEVICE_VERSION,
+    agentDeviceSha256: pins.AGENT_DEVICE_SHA256,
+  };
+  const preparationPath = join(preparingHome, 'benchmark-preparation.json');
+  if (!existsSync(finalHome)) {
+    mkdirSync(seedHome, { recursive: true });
+    writeFileSync(
+      join(seedHome, 'config.json'),
+      `${JSON.stringify({ version: 2, projects: {}, repos: {}, pool: { androidParkedMax: 1 } }, null, 2)}\n`,
+    );
+    writeFileSync(preparationPath, `${JSON.stringify(preparation, null, 2)}\n`);
+  } else {
+    let retainedPreparation = null;
+    try {
+      retainedPreparation = JSON.parse(readFileSync(preparationPath, 'utf8'));
+    } catch {}
+    if (!matchesGoldenPreparation(retainedPreparation, preparation)) {
+      throw new Error(`retained Android golden provenance does not match current pins: ${finalHome}`);
+    }
+  }
+  const seedEnv = { ...benchmarkEnvironment(process.env), STIM_HOME: preparingHome, STIM_POOL_ANDROID_PARKED_MAX: '1' };
+  let preparedDevice = null;
+  const worktree = join(worktreeParent, 'bench-golden-android-seed');
+  run('git', ['worktree', 'add', '--detach', worktree, 'HEAD'], {
+    cwd: main,
+    timeout: 5 * 60 * 1000,
+  });
+  try {
+    run('node', [stimCli, 'worktree', 'warm'], {
+      cwd: worktree,
+      env: seedEnv,
+      timeout: 20 * 60 * 1000,
+    });
+    run('node', [stimCli, 'start'], {
+      cwd: worktree,
+      env: seedEnv,
+      timeout: 5 * 60 * 1000,
+      stdio: 'inherit',
+    });
+    run('node', [stimCli, 'android', '--system-image', pins.ANDROID_SYSTEM_IMAGE], {
+      cwd: worktree,
+      env: seedEnv,
+      timeout: 25 * 60 * 1000,
+      stdio: 'inherit',
+    });
+    const preparedSerials = androidEmulatorSnapshot();
+    if (preparedSerials.length !== 1) {
+      throw new Error(`expected one prepared Android emulator, got ${JSON.stringify(preparedSerials)}`);
+    }
+    preparedDevice = androidEmulatorDescription(preparedSerials[0]);
+    if (preparedDevice.systemImage !== pins.ANDROID_SYSTEM_IMAGE) {
+      throw new Error(`prepared Android emulator image mismatch: ${JSON.stringify(preparedDevice)}`);
+    }
+    run('node', [stimCli, 'stop'], {
+      cwd: worktree,
+      env: seedEnv,
+      timeout: 2 * 60 * 1000,
+      stdio: 'inherit',
+    });
+    run('node', [stimCli, 'worktree', 'remove', '--force'], {
+      cwd: worktree,
+      env: seedEnv,
+      timeout: 5 * 60 * 1000,
+      stdio: 'inherit',
+    });
+  } catch (error) {
+    throw new Error(`Android golden preparation failed; retained ${preparingHome}`, { cause: error });
+  }
+  if (preparingHome === seedHome) renameSync(seedHome, finalHome);
+  const parkedEmulator = verifyParkedAndroidEmulator(finalHome, preparedDevice?.name);
+  mkdirSync(controlTmp, { recursive: true });
+  const exportPath = join(platformGolden, 'control-export');
+  run('npx', ['expo', 'export', '--platform', 'android', '--dev', '--output-dir', exportPath], {
+    cwd: main,
+    env: { ...benchmarkEnvironment(process.env), TMPDIR: controlTmp },
+    timeout: 10 * 60 * 1000,
+    stdio: 'inherit',
+  });
+  rmSync(exportPath, { recursive: true, force: true });
+  const cache = verifyGoldenCache('android', platformGolden);
+  const ready = {
+    preparedAt: new Date().toISOString(),
+    locale: benchmarkLocale,
+    fixtureCommit: git('rev-parse', 'HEAD'),
+    stimVersion: pins.STIM_VERSION,
+    stimIntegrity: pins.STIM_INTEGRITY,
+    stimCliSha256: sha256(stimCli),
+    agentDeviceVersion: pins.AGENT_DEVICE_VERSION,
+    agentDeviceSha256: pins.AGENT_DEVICE_SHA256,
+    systemImage: pins.ANDROID_SYSTEM_IMAGE,
+    deviceTypeIdentifier: preparedDevice?.deviceTypeIdentifier ?? null,
+    parkedEmulator,
+    runtimeIdentifier: `Android-${pins.ANDROID_SYSTEM_IMAGE.match(/android-(\d+)/)?.[1]}`,
+    buildCacheEntries: [cache.cacheKey],
+  };
+  writeFileSync(readyPath, `${JSON.stringify(ready, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(ready, null, 2)}\n`);
+}
+
+function prepareLaunchCrashFixture(arm, runId, environment, platform) {
+  const fixtureCheckout = join(worktreeParent, `fixture-${runId}`);
+  const fixtureBranch = arm === 'stim' ? `worktree-fixture/${runId}` : `bench-fixture/${runId}`;
+  run('git', ['worktree', 'add', '-b', fixtureBranch, fixtureCheckout, 'HEAD'], {
+    cwd: main,
+    timeout: 5 * 60 * 1000,
+  });
+  if (arm === 'stim') {
+    run('stim', ['worktree', 'warm'], { cwd: fixtureCheckout, env: environment, timeout: 20 * 60 * 1000 });
+  } else {
+    for (const name of launchCrashSetup({ arm, platform, systemImage: pins.ANDROID_SYSTEM_IMAGE }).ignoredPaths) {
+      const source = join(main, name);
+      if (!existsSync(source)) continue;
+      const target = join(fixtureCheckout, name);
+      mkdirSync(dirname(target), { recursive: true });
+      run('cp', ['-cR', source, target], { cwd: main, timeout: 10 * 60 * 1000 });
+    }
+  }
+  const absolute = realpathSync(fixtureCheckout);
+  if (!absolute.startsWith(`${worktreeParent}/`)) {
+    throw new Error(`launch-crash fixture escaped the benchmark root: ${absolute}`);
+  }
+  const sourcePath = join(absolute, 'app', '_layout.tsx');
+  const original = readFileSync(sourcePath, 'utf8');
+  const token = launchCrashToken(runId);
+  writeFileSync(sourcePath, injectRootRenderCrash(original, token));
+  run('git', ['add', 'app/_layout.tsx'], { cwd: absolute });
+  run('git', ['commit', '-m', 'test: prepare launch failure fixture'], {
+    cwd: absolute,
+    timeout: 60_000,
+  });
+  return {
+    fixtureCheckout: absolute,
+    setup: { arm, platform, systemImage: pins.ANDROID_SYSTEM_IMAGE },
+    fixtureBranch,
+    fixtureCommit: run('git', ['rev-parse', 'HEAD'], { cwd: absolute }),
+    sourcePath,
+    sourceRelative: 'app/_layout.tsx',
+    token,
+    originalSha256: createHash('sha256').update(original).digest('hex'),
+  };
+}
+
+function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform = 'ios', compatibilityProof = null) {
+  const platform = checkedPlatform(requestedPlatform);
+  const source = variant === launchCrashVariant ? crash.fixtureCheckout : main;
+  const worktree = join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId);
+  const branch = arm === 'stim' ? `worktree-bench/${runId}` : `bench/${runId}`;
+  const deviceName = platform === 'ios' ? `Trailhead ${runId}` : `Trailhead_${runId}`;
+  const device =
+    platform === 'ios'
+      ? `an isolated ${pins.IOS_DEVICE_TYPE} simulator with iOS ${pins.IOS_RUNTIME}${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}` : ''}`
+      : `an isolated arm64 Android emulator using ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)}, the ${JSON.stringify(ANDROID_BENCHMARK_AVD_CONFIG['hw.device.name'])} hardware profile, a hardware keyboard enabled, and an 8 GiB data partition${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}` : ''}`;
+  const prefix = `env AGENT_DEVICE_STATE_DIR=${agentDeviceState} AGENT_DEVICE_SESSION=${runId} agent-device`;
+  const screenshot = join('/tmp', `${runId}-settings.png`);
+  const recording = join('/tmp', `${runId}-session.mp4`);
+  const target = platform === 'ios' ? '--udid <run simulator UDID>' : '--serial <run emulator serial>';
+  const proof =
+    `Use this run-scoped agent-device prefix: ` +
+    '\n' +
+    prefix +
+    '\n' +
+    `The common evidence protocol below records the same endpoint for both arms. Copy the full run-scoped prefix unchanged and use the assigned device. Run each proof command as a separate complete shell command, without chaining, pipelines or redirection; literal quoting may differ without changing arguments. Navigate to Settings between recording start and the text check.\n\n` +
+    [
+      `${prefix} open com.appandflow.trailhead --foreground --platform ${platform} ${target}`,
+      `${prefix} record start ${recording} --scope device --quality high --hide-touches`,
+      `${prefix} wait text ${JSON.stringify(settingsProofText(variant))}`,
+      `${prefix} screenshot ${screenshot}`,
+      `cp ${screenshot} ${join(runDir, 'proof', 'settings.png')}`,
+      `${prefix} record stop`,
+      `cp ${recording} ${join(runDir, 'proof', 'session.mp4')}`,
+      ...(compatibilityProof ? [compatibilityProof.command] : []),
+      `${prefix} close`,
+    ]
+      .map((command, index) => `${index + 1}. \`${command}\``)
+      .join('\n');
+  return benchmarkTaskPrompt({
+    arm,
+    platform,
+    variant,
+    source,
+    worktree,
+    branch,
+    marker: `Trailhead ${runId}`,
+    device,
+    proof,
+  });
+}
+
+function runnerForModel(model) {
+  return ['sonnet', 'opus'].includes(model) || model.startsWith('claude-') ? 'claude' : 'codex';
+}
+
+function writeClaudeGuidance(codexHome, arm, runDir) {
+  const skillNames = arm === 'stim' ? ['agent-device', 'stim'] : ['agent-device'];
+  const guidance = skillNames
+    .map((name) => readFileSync(join(codexHome, 'skills', name, 'SKILL.md'), 'utf8'))
+    .join('\n\n');
+  const path = join(runDir, 'runner-guidance.md');
+  writeFileSync(path, `${guidance}\n`);
+  return { path, skillNames };
+}
+
+function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidance = null, compatibilityProof = null) {
+  const runTmp = join(runDir, 'tmp');
+  return prepareRunnerIsolation({
+    policy: runnerIsolationPolicy({
+      protectedRoots: [root, worktreeParent],
+      reservedRoots: [golden, results, state, worktreeParent],
+      readPaths: [
+        ...benchmarkFixtureReadPaths(main, crash?.setup),
+        allowedBin,
+        ...(nativeCompatManifest ? [dirname(realpathSync(nativeCompatManifest))] : []),
+        ...(arm === 'stim' ? [stimBin, join(root, 'runtime'), stimPackage] : []),
+      ],
+      writePaths: [join(main, '.git'), env.GRADLE_USER_HOME, env.ANDROID_AVD_HOME].filter(Boolean),
+      scopedAccess: {
+        readPaths: [
+          crash?.fixtureCheckout,
+          claudeGuidance?.path,
+          compatibilityProof?.helper,
+          compatibilityProof?.node,
+        ].filter(Boolean),
+        writePaths: [
+          join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId),
+          join(runDir, 'runner-home'),
+          join(runDir, 'shell-home'),
+          join(runDir, 'proof'),
+          runTmp,
+          agentDeviceState,
+          env.STIM_HOME,
+        ],
+      },
+    }),
+    profilePath: join(runDir, 'runner-isolation.sb'),
+    probeRoots: [root, golden, results],
+    probeParent: runTmp,
+    execute: (file, args) => run(file, args, { cwd: main, env }),
+  });
+}
+
+function verifyRunnerProfile(codexHome, env, arm, runDir, isolation) {
+  const path = join(runDir, 'prompt-input.json');
+  const invocation = { command: executablePath(codexBin), args: ['debug', 'prompt-input', 'profile smoke'] };
+  const checked = isolatedRunnerInvocation(isolation, invocation.command, invocation.args);
+  const output = run(checked.command, checked.args, {
+    cwd: main,
+    env,
+    timeout: 30_000,
+  });
+  writeFileSync(path, `${output}\n`);
+  const payload = JSON.parse(output);
+  const textParts = payload.flatMap((item) => item.content ?? []).map((item) => item.text ?? '');
+  const skillsText = textParts.find((text) => text.includes('<skills_instructions>')) ?? '';
+  const skillLines = skillsText.match(/^- [a-zA-Z0-9:_-]+:/gm) ?? [];
+  const expectedSkills = arm === 'stim' ? ['agent-device', 'stim'] : ['agent-device'];
+  const actualSkills = skillLines.map((line) => line.slice(2, -1)).toSorted();
+  if (JSON.stringify(actualSkills) !== JSON.stringify(expectedSkills)) {
+    throw new Error(`${arm} runner skill mismatch: ${skillLines.join(', ')}`);
+  }
+  return { codexHome, skillLines };
+}
+
+function smoke(arm) {
+  if (!['stim', 'control'].includes(arm)) {
+    throw new Error('smoke requires <stim|control>');
+  }
+  ensureDirs();
+  prepareAllowedBin();
+  const runDir = join(state, `smoke-${arm}`);
+  const runId = `smoke-${arm}`;
+  rmSync(runDir, { recursive: true, force: true });
+  mkdirSync(runDir, { recursive: true });
+  const { codexHome } = makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, stimPackage });
+  const env = {
+    ...benchmarkEnvironment(process.env),
+    CODEX_HOME: codexHome,
+    STIM_HOME: join(runDir, 'stim-home'),
+    AGENT_DEVICE_STATE_DIR: agentDeviceState,
+    AGENT_DEVICE_SESSION: runId,
+    PATH: `${arm === 'stim' ? `${stimBin}:` : ''}${allowedBin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+  };
+  if (arm === 'stim') env.STIM_POOL_IOS_PARKED_MAX = '1';
+  env.BENCH_STIM_HOME = env.STIM_HOME;
+  const isolation = prepareRunIsolation(runId, runDir, env, arm);
+  const profile = verifyRunnerProfile(codexHome, env, arm, runDir, isolation);
+  const resolvedStim = run('/bin/sh', ['-c', 'command -v stim || true'], {
+    cwd: main,
+    env,
+  });
+  if (arm === 'control' && resolvedStim) {
+    throw new Error(`control resolved Stim: ${resolvedStim}`);
+  }
+  if (arm === 'stim' && resolvedStim !== join(stimBin, 'stim')) {
+    throw new Error(`Stim profile resolved unexpected binary: ${resolvedStim}`);
+  }
+  const stimStatus = arm === 'stim' ? JSON.parse(run('stim', ['status', '--json'], { cwd: main, env })) : null;
+  const smokeRecord = { checkedAt: new Date().toISOString(), arm, profile, isolation, resolvedStim, stimStatus };
+  writeFileSync(join(runDir, 'smoke.json'), `${JSON.stringify(smokeRecord, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(smokeRecord, null, 2)}\n`);
+}
+
+async function runnerSmoke(arm) {
+  smoke(arm);
+  const runDir = join(state, `runner-smoke-${arm}`);
+  rmSync(runDir, { recursive: true, force: true });
+  mkdirSync(runDir, { recursive: true });
+  const { codexHome } = makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, stimPackage });
+  const env = {
+    ...benchmarkEnvironment(process.env),
+    CODEX_HOME: codexHome,
+    STIM_HOME: join(runDir, 'stim-home'),
+    TMPDIR: join(runDir, 'tmp'),
+    PATH: `${arm === 'stim' ? `${stimBin}:` : ''}${allowedBin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+  };
+  const isolation = prepareRunIsolation(`runner-smoke-${arm}`, runDir, env, arm);
+  const invocation = isolatedRunnerInvocation(isolation, executablePath(codexBin), [
+    '--ask-for-approval',
+    'never',
+    'exec',
+    '--strict-config',
+    '--ignore-rules',
+    '--json',
+    '--model',
+    'gpt-5.6-luna',
+    '--sandbox',
+    'read-only',
+    '--cd',
+    main,
+    '-',
+  ]);
+  const result = await spawnStamped(
+    invocation.command,
+    invocation.args,
+    join(runDir, 'events.jsonl'),
+    { cwd: main, env, stdio: ['pipe', 'pipe', 'pipe'] },
+    'Reply OK only.',
+  );
+  const usage = usageFromEvents(join(runDir, 'events.jsonl'));
+  if (result.code !== 0 || !usage) {
+    throw new Error(`runner smoke failed: ${JSON.stringify({ result, usage })}`);
+  }
+  process.stdout.write(`${JSON.stringify({ arm, result, usage }, null, 2)}\n`);
+}
+
+async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform = 'ios') {
+  const platform = checkedPlatform(requestedPlatform);
+  if (!model || !['stim', 'control'].includes(arm)) {
+    throw new Error('dispatch requires <model> <stim|control> <javascript|native|launch-crash> [stage] [ios|android]');
+  }
+  if (!['javascript', 'native', launchCrashVariant].includes(variant)) {
+    throw new Error(`unsupported variant: ${variant}`);
+  }
+  const preflightReport = preflight(platform);
+  const timingTarget = benchmarkTarget(benchmarkTargets(), { platform, variant, arm });
+  if (
+    platform === 'android' &&
+    variant === 'native' &&
+    arm === 'stim' &&
+    timingTarget.ccacheMinHitRatePercent == null
+  ) {
+    throw new Error(
+      'Android native Stim benchmark requires a ccacheMinHitRatePercent target established before dispatch',
+    );
+  }
+  preflightReport.loadGate = await waitForLoadGate();
+  if (!preflightReport.loadGate.passed) {
+    throw new Error('one-minute load average did not pass two consecutive samples within 10 minutes');
+  }
+  const platformGolden = goldenFor(platform);
+  const readyPath = join(platformGolden, 'READY.json');
+  if (!existsSync(readyPath)) {
+    throw new Error('golden is not prepared; run bench.mjs prepare first');
+  }
+  const ready = JSON.parse(readFileSync(readyPath, 'utf8'));
+  if (ready.stimVersion !== pins.STIM_VERSION || ready.stimIntegrity !== pins.STIM_INTEGRITY) {
+    throw new Error(
+      `golden Stim package ${ready.stimVersion} (${ready.stimIntegrity}) does not match the published pin`,
+    );
+  }
+  if (arm === 'stim' && ready.stimCliSha256 !== sha256(stimCli)) {
+    throw new Error('pinned Stim CLI bytes do not match the prepared golden state');
+  }
+  const expectedBuildCache = verifyGoldenCache(platform, platformGolden);
+  const expectedParkedSimulator = platform === 'ios' ? verifyGoldenParkedSimulator() : null;
+  const expectedParkedEmulator = platform === 'android' ? verifyGoldenParkedAndroidEmulator() : null;
+  const runId = `${stage}-${model.replaceAll('.', '-')}-${variant}-${arm}-${Date.now()}`;
+  const expectedControlSimulator = {
+    name: platform === 'ios' ? `Trailhead ${runId}` : `Trailhead_${runId}`,
+    deviceTypeIdentifier:
+      platform === 'ios' ? expectedParkedSimulator.deviceTypeIdentifier : ready.deviceTypeIdentifier,
+    runtimeIdentifier: platform === 'ios' ? expectedParkedSimulator.runtimeIdentifier : ready.runtimeIdentifier,
+    ...(platform === 'android' ? { systemImage: ready.systemImage } : {}),
+  };
+  const expectedStimDevice =
+    platform === 'android'
+      ? {
+          name: expectedParkedEmulator.name,
+          deviceTypeIdentifier: ready.deviceTypeIdentifier,
+          runtimeIdentifier: ready.runtimeIdentifier,
+          systemImage: ready.systemImage,
+        }
+      : expectedParkedSimulator;
+  const runDir = join(results, stage, runId);
+  mkdirSync(join(runDir, 'proof'), { recursive: true });
+  mkdirSync(join(runDir, 'raw'), { recursive: true });
+  const before = deviceSnapshot(platform);
+  writeFileSync(join(runDir, 'devices-before.json'), `${JSON.stringify(before, null, 2)}\n`);
+  if (platform === 'android') {
+    writeFileSync(join(runDir, 'avds-before.json'), `${JSON.stringify(androidAvdSnapshot(), null, 2)}\n`);
+  }
+  const runnerKind = runnerForModel(model);
+  const runnerEnvironment =
+    runnerKind === 'claude' ? { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1', CLAUDE_CODE_DISABLE_CRON: '1' } : {};
+  const { codexHome } = makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, stimPackage });
+  const runTmp = join(runDir, 'tmp');
+  mkdirSync(runTmp, { recursive: true });
+  run('cp', ['-cR', `${join(platformGolden, 'control-tmp')}/.`, runTmp], {
+    cwd: root,
+    timeout: 5 * 60 * 1000,
+  });
+  const baseEnv = {
+    ...benchmarkEnvironment(process.env),
+    ...runnerEnvironment,
+    CODEX_HOME: codexHome,
+    STIM_HOME: join(runDir, 'stim-home'),
+    TMPDIR: runTmp,
+    PATH: `${arm === 'stim' ? `${stimBin}:` : ''}${allowedBin}:/usr/bin:/bin:/usr/sbin:/sbin`,
+  };
+  const env = isolatedShellEnvironment(baseEnv, runDir);
+  if (arm === 'stim' && platform === 'ios') env.STIM_POOL_IOS_PARKED_MAX = '1';
+  if (arm === 'stim' && platform === 'android') env.STIM_POOL_ANDROID_PARKED_MAX = '1';
+  env.BENCH_STIM_HOME = env.STIM_HOME;
+  mkdirSync(env.STIM_HOME, { recursive: true });
+  if (arm === 'stim') {
+    run('cp', ['-cR', `${join(platformGolden, 'stim-home')}/.`, env.STIM_HOME], {
+      cwd: root,
+      timeout: 10 * 60 * 1000,
+    });
+  }
+  const crash = variant === launchCrashVariant ? prepareLaunchCrashFixture(arm, runId, env, platform) : null;
+  if (crash && nativeCompatManifest)
+    verifyNativeCompatibility(
+      nativeCompatManifest,
+      pins.NATIVE_COMPAT_SHA256,
+      crash.fixtureCheckout,
+      executablePath(agentDeviceBin),
+    );
+  const compatibilityProof = prepareCompatibilityProof({
+    runId,
+    worktree: join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId),
+    runDir,
+    compatibility: preflightReport.nativeCompatibility,
+  });
+  const prompt = promptFor(arm, variant, runId, runDir, crash, platform, compatibilityProof);
+  writeFileSync(join(runDir, 'prompt.txt'), `${prompt}\n`);
+  const shellProvenance = verifyRunnerShell(arm, env);
+  const claudeGuidance = runnerKind === 'claude' ? writeClaudeGuidance(codexHome, arm, runDir) : null;
+  const isolation = prepareRunIsolation(runId, runDir, env, arm, crash, claudeGuidance, compatibilityProof);
+  try {
+    preflightReport.isolationCompatibility = verifyIsolationCompatibility(isolation, {
+      platform,
+      nativeCompatibility: preflightReport.nativeCompatibility,
+      execute: (file, args) => run(file, args, { cwd: crash?.fixtureCheckout ?? main, env, timeout: 30_000 }),
+    });
+  } catch (error) {
+    if (error.isolationCompatibility) {
+      writeFileSync(
+        join(runDir, 'isolation-compatibility.json'),
+        `${JSON.stringify(error.isolationCompatibility, null, 2)}\n`,
+      );
+    }
+    throw error;
+  }
+  preflightReport.nativeCompatibilityProbe = probeNativeCompatibility(
+    preflightReport.nativeCompatibility,
+    (file, args) => {
+      const invocation = isolatedRunnerInvocation(isolation, file, args);
+      return run(invocation.command, invocation.args, { cwd: crash?.fixtureCheckout ?? main, env, timeout: 30_000 });
+    },
+  );
+  const profile = verifyRunnerProfile(codexHome, env, arm, runDir, isolation);
+  const agentDevice = prepareAgentDeviceRun(runId, platform, expectedParkedSimulator?.udid ?? null);
+  const dispatchAt = new Date().toISOString();
+  const meta = {
+    schemaVersion: 1,
+    promptPolicy: 'minimal-v1',
+    locale: benchmarkLocale,
+    runId,
+    stage,
+    runner: runnerKind,
+    model,
+    requestedServiceTier: 'priority',
+    arm,
+    variant,
+    platform,
+    worktreeParent,
+    deviceTargetingRequired: true,
+    dispatchAt,
+    timingTarget,
+    preflight: preflightReport,
+    compatibilityProof,
+    expectedStimShellProvenance: arm === 'stim' ? expectedStimShellProvenance() : null,
+    stimShellProvenance: shellProvenance,
+    profile: { ...profile, claudeGuidance, isolation, runnerEnvironment },
+    expectedBuildCache,
+    expectedParkedSimulator,
+    expectedParkedEmulator,
+    expectedStimDevice,
+    expectedControlSimulator,
+    expectedControlAvdConfig:
+      platform === 'android' && arm === 'control'
+        ? join(
+            process.env.ANDROID_AVD_HOME ?? join(process.env.HOME, '.android', 'avd'),
+            expectedControlSimulator.name + '.avd',
+            'config.ini',
+          )
+        : null,
+    agentDevice,
+    crash,
+  };
+  writeFileSync(join(runDir, 'meta.json'), `${JSON.stringify(meta, null, 2)}\n`);
+
+  const watcher = spawn(
+    'node',
+    [
+      join(scriptRoot, 'watch-app.mjs'),
+      join(runDir, 'devices-before.json'),
+      join(runDir, 'app-alive.json'),
+      dispatchAt,
+      variant,
+      arm,
+      expectedParkedSimulator?.udid ?? '',
+      expectedControlSimulator.name,
+      expectedControlSimulator.deviceTypeIdentifier ?? '',
+      expectedControlSimulator.runtimeIdentifier,
+      platform,
+      expectedStimDevice?.name ?? '',
+      expectedControlSimulator.systemImage ?? '',
+      `Trailhead ${runId}`,
+    ],
+    { cwd: main, env, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32' },
+  );
+  const watcherClosed = new Promise((resolvePromise) => {
+    watcher.on('close', (code, signal) => resolvePromise({ code, signal }));
+  });
+  const runnerCommand = executablePath(runnerKind === 'claude' ? claudeBin : codexBin);
+  const runnerCwd = crash?.fixtureCheckout ?? main;
+  const runnerArgs =
+    runnerKind === 'claude'
+      ? [
+          '-p',
+          '--output-format',
+          'stream-json',
+          '--verbose',
+          '--model',
+          model,
+          '--effort',
+          'high',
+          '--safe-mode',
+          '--strict-mcp-config',
+          '--permission-mode',
+          'acceptEdits',
+          '--prompt-suggestions',
+          'false',
+          '--append-system-prompt-file',
+          claudeGuidance.path,
+          '--tools',
+          variant === launchCrashVariant ? 'Bash' : 'Bash,Edit,Read',
+          '--allowedTools',
+          variant === launchCrashVariant ? 'Bash' : 'Bash,Edit,Read',
+        ]
+      : [
+          '--ask-for-approval',
+          'never',
+          'exec',
+          '--strict-config',
+          '--ignore-rules',
+          '--json',
+          '--model',
+          model,
+          '--sandbox',
+          'danger-full-access',
+          '--add-dir',
+          dirname(runDir),
+          '--cd',
+          runnerCwd,
+          '-',
+        ];
+  const isolatedRunner = isolatedRunnerInvocation(isolation, runnerCommand, runnerArgs);
+  const runner = spawnStamped(
+    isolatedRunner.command,
+    isolatedRunner.args,
+    join(runDir, 'events.jsonl'),
+    { cwd: runnerCwd, env, stdio: ['pipe', 'pipe', 'pipe'] },
+    prompt,
+    timingTarget.runTimeoutSeconds * 1000,
+    5000,
+    (event) => {
+      if (arm !== 'stim' || platform !== 'android' || timingTarget.ccacheMinHitRatePercent == null) return;
+      for (const measurement of ccacheMeasurements(runnerToolOutput(event))) {
+        if (measurement.hitRatePercent != null && measurement.hitRatePercent >= timingTarget.ccacheMinHitRatePercent)
+          continue;
+        const alert = {
+          observedAt: new Date().toISOString(),
+          runId,
+          minimumHitRatePercent: timingTarget.ccacheMinHitRatePercent,
+          ...measurement,
+        };
+        const path = join(runDir, 'cache-alerts.json');
+        const alerts = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : [];
+        alerts.push(alert);
+        writeFileSync(path, `${JSON.stringify(alerts, null, 2)}\n`);
+        process.stderr.write(
+          `CACHE ALERT ${runId}: ${measurement.hits} hits / ${measurement.misses} misses; expected at least ${timingTarget.ccacheMinHitRatePercent}% hits. Investigate before publishing.\n`,
+        );
+      }
+    },
+  );
+  const runnerResult = await runner;
+  const watcherForceKill = runnerResult.timedOut ? terminateProcessTree(watcher, watcher.pid, 5000) : null;
+  const watcherResult = await watcherClosed;
+  if (watcherForceKill) {
+    clearTimeout(watcherForceKill);
+    killProcessTree(watcher, watcher.pid, 'SIGKILL');
+  }
+  meta.runnerResult = runnerResult;
+  meta.watcherResult = watcherResult;
+  meta.finishedAt = new Date().toISOString();
+  writeFileSync(join(runDir, 'meta.json'), `${JSON.stringify(meta, null, 2)}\n`);
+  process.stdout.write(`${runDir}\n`);
+}
+
+function runnerMetricsFromEvents(eventsPath, runner) {
+  if (!existsSync(eventsPath)) return null;
+  const lines = readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const stamped = JSON.parse(lines[index]);
+    try {
+      const event = JSON.parse(stamped.line);
+      if (runner === 'claude' && event.type === 'result') {
+        const usage = event.usage ?? {};
+        const cachedInput = usage.cache_read_input_tokens ?? 0;
+        const cacheCreationInput = usage.cache_creation_input_tokens ?? 0;
+        return {
+          usage: {
+            input_tokens: (usage.input_tokens ?? 0) + cachedInput + cacheCreationInput,
+            cached_input_tokens: cachedInput,
+            cache_creation_input_tokens: cacheCreationInput,
+            output_tokens: usage.output_tokens ?? 0,
+            reasoning_output_tokens: usage.output_tokens_details?.thinking_tokens ?? 0,
+          },
+          reportedCostUsd: event.total_cost_usd ?? null,
+          returnedServiceTier: usage.service_tier ?? null,
+          modelUsage: event.modelUsage ?? null,
+          terminalReason: event.terminal_reason ?? null,
+          isError: Boolean(event.is_error),
+          subagentsSpawned: event.subagent_stats?.spawned ?? 0,
+        };
+      }
+      if (runner !== 'claude' && event.type === 'turn.completed') {
+        return { usage: event.usage };
+      }
+    } catch {}
+  }
+  return null;
+}
+
+function usageFromEvents(eventsPath) {
+  return runnerMetricsFromEvents(eventsPath, 'codex')?.usage ?? null;
+}
+
+function usageFromRollout(rolloutPath) {
+  if (!rolloutPath || !existsSync(rolloutPath)) return null;
+  const lines = readFileSync(rolloutPath, 'utf8').trim().split('\n').filter(Boolean);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const event = JSON.parse(lines[index]);
+    const usage = event.payload?.info?.total_token_usage;
+    if (event.type === 'event_msg' && event.payload?.type === 'token_count' && usage) {
+      return usage;
+    }
+  }
+  return null;
+}
+
+function usageAtOrBefore(rolloutPath, observedAt) {
+  if (!rolloutPath || !existsSync(rolloutPath) || !observedAt) return null;
+  const cutoff = Date.parse(observedAt);
+  if (!Number.isFinite(cutoff)) return null;
+  const lines = readFileSync(rolloutPath, 'utf8').trim().split('\n').filter(Boolean);
+  let result = null;
+  for (const line of lines) {
+    const event = JSON.parse(line);
+    const timestamp = Date.parse(event.timestamp);
+    const usage = event.payload?.info?.total_token_usage;
+    if (
+      event.type === 'event_msg' &&
+      event.payload?.type === 'token_count' &&
+      usage &&
+      Number.isFinite(timestamp) &&
+      timestamp <= cutoff
+    ) {
+      result = usage;
+    }
+  }
+  return result;
+}
+
+function tokensFromUsage(usage) {
+  if (!usage) return null;
+  const input = usage.input_tokens ?? 0;
+  const cached = usage.cached_input_tokens ?? 0;
+  return {
+    uncachedInput: Math.max(0, input - cached),
+    cachedInput: cached,
+    output: usage.output_tokens ?? 0,
+    reasoningOutput: usage.reasoning_output_tokens ?? 0,
+  };
+}
+
+function commandEvidence(meta, eventsPath, runDir, device) {
+  if (!existsSync(eventsPath)) {
+    return { commands: [], activities: [], completedEvents: [], invalidReasons: [] };
+  }
+  const stamped = readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+  const { commands, activities, completedEvents } = reconstructCommandEvidence(meta.runner, stamped);
+  writeFileSync(join(runDir, 'commands.log'), `${commands.map((command) => JSON.stringify(command)).join('\n')}\n`);
+  const commandText = commands.map((command) => command.command ?? '').join('\n');
+  const outputText = completedEvents.map((item) => item.aggregated_output ?? '').join('\n');
+  const invalidReasons = [];
+  if (meta.arm === 'control' && /(^|[\s;&|])(?:npx\s+)?stim(?:-cli)?([\s;&|]|$)/m.test(commandText)) {
+    invalidReasons.push('control-used-stim');
+  }
+  if (meta.arm === 'stim') {
+    if (/(?:^|[\s;&|])(?:export\s+)?STIM_HOME\s*=(?!%s)/m.test(commandText)) {
+      invalidReasons.push('stim-home-overridden');
+    }
+    if (/\bnpx\s+(?:--yes\s+)?stim(?:-cli)?\b/.test(commandText)) {
+      invalidReasons.push('stim-invoked-through-npx');
+    }
+    const invokedPlatform = new RegExp(`\\bstim\\s+${meta.platform ?? 'ios'}\\b`).test(commandText);
+    if (!invokedPlatform) invalidReasons.push(`stim-${meta.platform ?? 'ios'}-command-missing`);
+    if (isJavascriptVariant(meta.variant) && !/fingerprint\s+[0-9a-f]{6}\.\.\s+hit\b/.test(outputText)) {
+      invalidReasons.push('stim-build-cache-hit-missing');
+    }
+    if (
+      ((meta.platform ?? 'ios') === 'ios' || meta.expectedParkedEmulator) &&
+      !/device\s+.+\sadopted\s+\(/.test(outputText)
+    ) {
+      invalidReasons.push('stim-parked-adoption-missing');
+    }
+  }
+  const topLevelCommands = commands.map((command) => topLevelShellCommand(command.command));
+  if (
+    meta.arm === 'control' &&
+    meta.platform === 'android' &&
+    meta.variant === 'native' &&
+    topLevelCommands.some((command) => /(?:--variant\s+release\b|\bassembleRelease\b)/i.test(command))
+  ) {
+    invalidReasons.push('android-native-control-used-release-build');
+  }
+  const target =
+    meta.variant === launchCrashVariant ? { platform: meta.platform ?? 'ios', device: device?.udid } : null;
+  invalidReasons.push(...agentDeviceIsolationInvalidReasons(commands, agentDeviceCommand(meta, ''), target));
+  const auxiliarySessions = agentDeviceAuxiliarySessions(commands, agentDeviceCommand(meta, ''), target);
+  return { commands, activities, completedEvents, invalidReasons, auxiliarySessions };
+}
+
+function agentDeviceOpenCommand(meta, appAlive) {
+  const prefix = agentDeviceCommand(meta, 'open com.appandflow.trailhead --foreground');
+  if (!meta.deviceTargetingRequired) return prefix;
+  const platform = meta.platform ?? 'ios';
+  const targetFlag = platform === 'android' ? '--serial' : '--udid';
+  return `${prefix} --platform ${platform} ${targetFlag} ${appAlive.simulator?.udid ?? '<missing-run-device>'}`;
+}
+
+function agentDeviceCaptureCommands(meta, appAlive) {
+  return {
+    command: agentDeviceOpenCommand(meta, appAlive),
+    snapshotCommand: meta.promptPolicy === 'minimal-v1' ? agentDeviceCommand(meta, 'snapshot -i') : undefined,
+    appId: 'com.appandflow.trailhead',
+    sessionState: agentDeviceSessionState(meta),
+  };
+}
+
+function nativeMarkerObserved(items, openCommand, expected) {
+  let opened = false;
+  for (const item of items) {
+    if (item.exit_code === 0 && sameLiteralShellCommand(item.command, openCommand)) {
+      opened = true;
+    }
+    if (
+      opened &&
+      item.exit_code === 0 &&
+      item.command?.includes('agent-device ') &&
+      item.aggregated_output?.includes(`[window] "${expected}"`)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function androidBuildTool(name) {
+  const sdk = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
+  if (!sdk) return null;
+  const buildTools = join(sdk, 'build-tools');
+  if (!existsSync(buildTools)) return null;
+  return readdirSync(buildTools)
+    .toSorted((left, right) => right.localeCompare(left, undefined, { numeric: true }))
+    .map((version) => join(buildTools, version, name))
+    .find((path) => existsSync(path));
+}
+
+function installedAndroidNativeMarker(meta, appAlive, runDir, expected) {
+  const serial = appAlive.simulator?.udid;
+  const target = join(runDir, 'proof', 'native-application-label.txt');
+  if (existsSync(target)) {
+    const preserved = readFileSync(target, 'utf8');
+    const observedSerial = preserved.match(/^serial=(.*)$/m)?.[1] ?? null;
+    const label = preserved.match(/^application-label=(.*)$/m)?.[1] ?? null;
+    return {
+      valid: observedSerial === serial && label === expected,
+      kind: 'installed-android-apk-label',
+      expected,
+      observed: label,
+      target,
+    };
+  }
+  const aapt = androidBuildTool('aapt');
+  if (!serial || !aapt) return { valid: false, reason: 'android-native-proof-tool-missing' };
+  let packagePath;
+  try {
+    packagePath = run('adb', ['-s', serial, 'shell', 'pm', 'path', 'com.appandflow.trailhead'])
+      .split('\n')
+      .find((line) => line.startsWith('package:') && line.endsWith('/base.apk'))
+      ?.slice('package:'.length);
+  } catch {
+    return { valid: false, reason: 'android-installed-apk-missing' };
+  }
+  if (!packagePath) return { valid: false, reason: 'android-installed-apk-missing' };
+  const temporaryApk = join('/tmp', `${meta.runId}-installed-base.apk`);
+  try {
+    run('adb', ['-s', serial, 'pull', packagePath, temporaryApk], { timeout: 2 * 60 * 1000 });
+    const label = androidApplicationLabelFromBadging(run(aapt, ['dump', 'badging', temporaryApk], { timeout: 30_000 }));
+    writeFileSync(target, `serial=${serial}\napplication-label=${label ?? ''}\n`);
+    return {
+      valid: label === expected,
+      kind: 'installed-android-apk-label',
+      expected,
+      observed: label,
+      target,
+    };
+  } finally {
+    if (existsSync(temporaryApk)) rmSync(temporaryApk);
+  }
+}
+
+function screenEvidence(meta, appAlive, commands, runDir) {
+  const target = join(runDir, 'proof', 'settings.png');
+  const screenshotScratch = join('/tmp', `${meta.runId}-settings.png`);
+  const recording = join(runDir, 'proof', 'session.mp4');
+  const recordingScratch = join('/tmp', `${meta.runId}-session.mp4`);
+  const expected = settingsProofText(meta.variant);
+  const openCommand = agentDeviceOpenCommand(meta, appAlive);
+  const required = [
+    agentDeviceCommand(meta, `record start ${recordingScratch} --scope device --quality high --hide-touches`),
+    agentDeviceCommand(meta, `wait text ${JSON.stringify(expected)}`),
+    agentDeviceCommand(meta, `screenshot ${screenshotScratch}`),
+    `cp ${screenshotScratch} ${target}`,
+    agentDeviceCommand(meta, 'record stop'),
+    `cp ${recordingScratch} ${recording}`,
+    agentDeviceCommand(meta, 'close'),
+  ];
+  const indexes = [];
+  let after = -1;
+  const openIndex = commands.findIndex(
+    (command) => command.exitCode === 0 && sameLiteralShellCommand(command.command, openCommand),
+  );
+  if (openIndex === -1) {
+    return {
+      valid: false,
+      reason: `missing-successful-command:${openCommand}`,
+      expected,
+      target,
+    };
+  }
+  const expectedSessionState = `Session state: ${agentDeviceSessionState(meta)}`;
+  if (!commands[openIndex].output.includes(expectedSessionState)) {
+    return {
+      valid: false,
+      reason: 'agent-device-open-used-wrong-session',
+      expected,
+      target,
+    };
+  }
+  indexes.push(openIndex);
+  after = openIndex;
+  for (const needle of required) {
+    const index = commands.findIndex(
+      (command, offset) => offset > after && command.exitCode === 0 && sameLiteralShellCommand(command.command, needle),
+    );
+    if (index === -1) {
+      return {
+        valid: false,
+        reason: `missing-successful-command:${needle}`,
+        expected,
+        target,
+      };
+    }
+    indexes.push(index);
+    after = index;
+  }
+  if (!existsSync(target)) {
+    return { valid: false, reason: 'settings-screenshot-missing', expected, target };
+  }
+  const signature = readFileSync(target).subarray(0, 8).toString('hex');
+  if (signature !== '89504e470d0a1a0a') {
+    return { valid: false, reason: 'settings-screenshot-not-png', expected, target };
+  }
+  let dimensions;
+  try {
+    const metadata = run('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', target]);
+    dimensions = {
+      width: Number(metadata.match(/pixelWidth:\s+(\d+)/)?.[1]),
+      height: Number(metadata.match(/pixelHeight:\s+(\d+)/)?.[1]),
+    };
+  } catch {
+    return { valid: false, reason: 'settings-screenshot-unreadable', expected, target };
+  }
+  if (dimensions.width < 300 || dimensions.height < 600) {
+    return {
+      valid: false,
+      reason: 'settings-screenshot-too-small',
+      expected,
+      target,
+      dimensions,
+    };
+  }
+  const screenshotCommand = commands[indexes[3]];
+  return {
+    valid: true,
+    kind: 'agent-device-settings-screenshot',
+    expected,
+    target,
+    bytes: statSync(target).size,
+    dimensions,
+    observedAt: screenshotCommand.endedAt,
+    openCommandId: commands[indexes[0]].id,
+    recordStartCommandId: commands[indexes[1]].id,
+    waitCommandId: commands[indexes[2]].id,
+    screenshotCommandId: screenshotCommand.id,
+    copyCommandId: commands[indexes[4]].id,
+    recordStopCommandId: commands[indexes[5]].id,
+    recordingCopyCommandId: commands[indexes[6]].id,
+    closeCommandId: commands[indexes[7]].id,
+    dispatchToScreenReadySeconds: (Date.parse(screenshotCommand.endedAt) - Date.parse(meta.dispatchAt)) / 1000,
+    commands: [openCommand, ...required],
+  };
+}
+
+function recordingEvidence(meta, commands, runDir, screen) {
+  const target = join(runDir, 'proof', 'session.mp4');
+  const start = commands.find((command) => command.id === screen.recordStartCommandId);
+  const stop = commands.find((command) => command.id === screen.recordStopCommandId);
+  const copy = commands.find((command) => command.id === screen.recordingCopyCommandId);
+  if (!screen.valid || !start || !stop || !copy || start.exitCode !== 0 || stop.exitCode !== 0 || copy.exitCode !== 0) {
+    return { valid: false, reason: 'simulator-recording-commands-missing', target };
+  }
+  if (!existsSync(target)) return { valid: false, reason: 'simulator-recording-missing', target };
+  const bytes = readFileSync(target);
+  if (bytes.length < 1_000 || bytes.subarray(4, 8).toString('ascii') !== 'ftyp') {
+    return { valid: false, reason: 'simulator-recording-invalid-mp4', target };
+  }
+  return {
+    valid: true,
+    kind: 'agent-device-simulator-recording',
+    target,
+    bytes: bytes.length,
+    startedAt: start.endedAt,
+    endedAt: stop.endedAt,
+    startCommandId: start.id,
+    stopCommandId: stop.id,
+    copyCommandId: copy.id,
+  };
+}
+
+function runWorktreeParent(meta) {
+  return resolve(
+    meta.worktreeParent ?? (meta.crash?.fixtureCheckout ? dirname(meta.crash.fixtureCheckout) : worktreeParent),
+  );
+}
+
+function findRunWorktree(runId, parent = worktreeParent) {
+  const entries = git('worktree', 'list', '--porcelain').split('\n\n');
+  for (const entry of entries) {
+    const lines = entry.split('\n');
+    const branch = lines.find((line) => line.startsWith('branch '))?.slice(7);
+    const path = lines.find((line) => line.startsWith('worktree '))?.slice(9);
+    if (
+      path &&
+      (branch === `refs/heads/bench/${runId}` || branch === `refs/heads/worktree-bench/${runId}`) &&
+      validRunWorktree(path, runId, parent)
+    )
+      return path;
+  }
+  return null;
+}
+
+function validRunWorktree(path, runId, parent = worktreeParent) {
+  const absolute = resolve(path);
+  const prefix = `${parent}/`;
+  if (!absolute.startsWith(prefix)) return false;
+  const segments = absolute.slice(prefix.length).split('/');
+  return segments.some(
+    (segment) =>
+      segment === runId ||
+      segment === `bench-${runId}` ||
+      segment === `bench+${runId}` ||
+      segment === `bench%2F${runId}`,
+  );
+}
+
+function worktreeFromEvents(eventsPath, runId, parent = worktreeParent) {
+  if (!existsSync(eventsPath)) return null;
+  const prefix = `${parent}/`;
+  const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pathPattern = new RegExp(`${escapedPrefix}[^\\s'"]+`, 'g');
+  const candidates = new Set();
+  const lines = readFileSync(eventsPath, 'utf8').trim().split('\n').filter(Boolean);
+  for (const line of lines) {
+    let event;
+    try {
+      event = JSON.parse(JSON.parse(line).line);
+    } catch {
+      continue;
+    }
+    const claudeBlocks = event.message?.content ?? [];
+    const texts = [
+      event.item?.command,
+      event.item?.aggregated_output,
+      event.item?.text,
+      event.result,
+      ...claudeBlocks.flatMap((block) => [
+        block.input?.command,
+        typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? ''),
+      ]),
+    ];
+    for (const text of texts) {
+      if (typeof text !== 'string') continue;
+      for (const token of text.matchAll(pathPattern)) {
+        const absolute = resolve(token[0].replace(/[`)\]}>.,]+$/, ''));
+        if (!absolute.startsWith(prefix)) continue;
+        const segments = absolute.slice(prefix.length).split('/');
+        let end = -1;
+        for (let index = 0; index < segments.length; index += 1) {
+          if (
+            segments[index] === runId ||
+            segments[index] === `bench-${runId}` ||
+            segments[index] === `bench+${runId}` ||
+            segments[index] === `bench%2F${runId}`
+          )
+            end = index;
+        }
+        if (end >= 0) {
+          candidates.add(join(parent, ...segments.slice(0, end + 1)));
+        }
+      }
+    }
+  }
+  const ordered = [...candidates].toSorted((left, right) => right.length - left.length);
+  if (ordered.length === 0) return null;
+  const deepest = ordered[0];
+  return ordered.every((candidate) => candidate === deepest || deepest.startsWith(`${candidate}/`)) ? deepest : null;
+}
+
+function worktreeEvidence(runDir, meta, eventsPath) {
+  const parent = runWorktreeParent(meta);
+  const live = findRunWorktree(meta.runId, parent);
+  if (live) return { path: live, source: 'live-git-worktree' };
+  const events = worktreeFromEvents(eventsPath, meta.runId, parent);
+  if (events) return { path: events, source: 'stamped-events' };
+  const recordPath = join(runDir, 'run.json');
+  if (existsSync(recordPath)) {
+    const preserved = JSON.parse(readFileSync(recordPath, 'utf8')).worktree;
+    if (preserved && validRunWorktree(preserved, meta.runId, parent)) {
+      return { path: preserved, source: 'preserved-run-record' };
+    }
+  }
+  return null;
+}
+
+function copyRollout(runDir) {
+  const sessionRoot = join(runDir, 'runner-home', '.codex', 'sessions');
+  if (!existsSync(sessionRoot)) return null;
+  const files = [];
+  function visit(path) {
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      const child = join(path, entry.name);
+      if (entry.isDirectory()) visit(child);
+      if (entry.isFile() && entry.name.endsWith('.jsonl')) files.push(child);
+    }
+  }
+  visit(sessionRoot);
+  if (files.length !== 1) return null;
+  const target = join(runDir, 'rollout.jsonl');
+  copyFileSync(files[0], target);
+  return target;
+}
+
+function proofFor(meta, appAlive, runDir, worktree, commandItems, screen) {
+  if (meta.variant === 'javascript') {
+    const sourcePath = worktree ? join(worktree, 'app', '(tabs)', 'settings.tsx') : null;
+    const proof = javascriptProof(
+      sourcePath && existsSync(sourcePath) ? readFileSync(sourcePath, 'utf8') : null,
+      sourcePath,
+      screen,
+    );
+    if (proof.valid) {
+      const target = join(runDir, 'proof', 'settings-source.tsx');
+      copyFileSync(sourcePath, target);
+      return { ...proof, target };
+    }
+    return proof;
+  }
+  if (meta.variant === launchCrashVariant) {
+    if (!worktree) {
+      return { valid: false, reason: 'launch-crash-worktree-missing' };
+    }
+    const sourcePath = join(worktree, meta.crash.sourceRelative);
+    if (!existsSync(sourcePath)) {
+      return { valid: false, reason: 'launch-crash-source-missing', sourcePath };
+    }
+    const source = readFileSync(sourcePath, 'utf8');
+    const repair = launchCrashRepair(source, meta.crash.token, meta.crash.originalSha256);
+    if (!repair.valid) return { ...repair, sourcePath };
+    const sourceSha256 = repair.sourceSha256;
+    const changedPaths = changedPathsFromGitOutputs(
+      run('git', ['diff', '--name-only', '-z', 'HEAD'], { cwd: worktree }),
+      run('git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd: worktree }),
+    );
+    let checksumChanges = null;
+    if (
+      (meta.platform ?? 'ios') === 'ios' &&
+      changedPaths.length === 2 &&
+      changedPaths.includes(meta.crash.sourceRelative) &&
+      changedPaths.includes('ios/Podfile.lock')
+    ) {
+      const before = run('git', ['show', 'HEAD:ios/Podfile.lock'], { cwd: worktree, trim: false });
+      const after = readFileSync(join(worktree, 'ios/Podfile.lock'), 'utf8');
+      checksumChanges = podfileChecksumChanges(before, after);
+      if (checksumChanges?.length) {
+        const raw = join(runDir, 'raw');
+        mkdirSync(raw, { recursive: true });
+        writeFileSync(join(raw, 'Podfile.lock.base'), before);
+        writeFileSync(join(raw, 'Podfile.lock.final'), after);
+        writeFileSync(join(raw, 'launch-crash-source-final.tsx'), source);
+        const names = ['Podfile.lock.base', 'Podfile.lock.final', 'launch-crash-source-final.tsx'];
+        writeFileSync(
+          join(raw, 'auxiliary-audit-evidence.json'),
+          JSON.stringify(
+            {
+              schemaVersion: 1,
+              runId: meta.runId,
+              metaSha256: sha256(join(runDir, 'meta.json')),
+              files: Object.fromEntries(names.map((name) => [name, sha256(join(raw, name))])),
+              changedPaths,
+            },
+            null,
+            2,
+          ) + '\n',
+        );
+      }
+    }
+    if ((changedPaths.length !== 1 || changedPaths[0] !== meta.crash.sourceRelative) && !checksumChanges?.length) {
+      return {
+        valid: false,
+        reason: 'launch-crash-unrelated-source-changes',
+        sourcePath,
+        changedPaths,
+      };
+    }
+    return {
+      valid: true,
+      kind: 'launch-crash-source-repair',
+      expected: `${meta.crash.token} removed and original source restored`,
+      target: sourcePath,
+      sourceSha256,
+      changedPaths,
+      ...(checksumChanges?.length ? { checksumChanges } : {}),
+    };
+  }
+  if (appAlive.proof?.valid && existsSync(appAlive.proof.target)) {
+    return appAlive.proof;
+  }
+  if (appAlive.error === 'proof-timeout-after-app-alive') {
+    return { valid: false, reason: 'changed-metro-bundle-not-found' };
+  }
+  if (!appAlive.simulator?.udid || !worktree) {
+    return { valid: false, reason: 'missing-simulator-or-worktree' };
+  }
+  if (meta.variant === 'native') {
+    const expected = `Trailhead ${meta.runId}`;
+    if ((meta.platform ?? 'ios') === 'android') {
+      return installedAndroidNativeMarker(meta, appAlive, runDir, expected);
+    }
+    const eventsPath = join(runDir, 'events.jsonl');
+    const markerObserved = nativeMarkerObserved(commandItems, agentDeviceOpenCommand(meta, appAlive), expected);
+    return {
+      valid: markerObserved,
+      kind: 'agent-device-native-window-marker',
+      expected,
+      target: eventsPath,
+    };
+  }
+  return { valid: false, reason: 'unsupported-proof-variant' };
+}
+
+function completedCleanup(runDir) {
+  const cleanupPath = join(runDir, 'cleanup.json');
+  if (!existsSync(cleanupPath)) return false;
+  try {
+    return completedCleanupRecord(JSON.parse(readFileSync(cleanupPath, 'utf8')));
+  } catch {
+    return false;
+  }
+}
+
+function deviceMismatchReasons(meta, device) {
+  const platform = meta.platform ?? 'ios';
+  if (meta.arm === 'stim' && platform === 'ios') {
+    return device?.udid === meta.expectedParkedSimulator?.udid ? [] : ['stim-did-not-use-prepared-parked-simulator'];
+  }
+  if (meta.arm === 'stim') {
+    return matchesExpectedAndroidEmulator(device, meta.expectedStimDevice ?? {}) ? [] : ['stim-emulator-mismatch'];
+  }
+  const matchesExpected =
+    platform === 'ios'
+      ? matchesExpectedIosSimulator(device, meta.expectedControlSimulator ?? {})
+      : matchesExpectedAndroidEmulator(device, meta.expectedControlSimulator ?? {});
+  return matchesExpected ? [] : [`control-${platform === 'android' ? 'emulator' : 'simulator'}-mismatch`];
+}
+
+function collect(runDir) {
+  const meta = JSON.parse(readFileSync(join(runDir, 'meta.json'), 'utf8'));
+  const appAlivePath = join(runDir, 'app-alive.json');
+  const appAlive = existsSync(appAlivePath)
+    ? JSON.parse(readFileSync(appAlivePath, 'utf8'))
+    : { error: 'missing-app-alive-record' };
+  const eventsPath = join(runDir, 'events.jsonl');
+  const commandAudit = commandEvidence(meta, eventsPath, runDir, appAlive.simulator);
+  const screen = screenEvidence(meta, appAlive, commandAudit.commands, runDir);
+  const timing = benchmarkTiming(
+    meta.timingTarget,
+    commandAudit.commands,
+    screen.dispatchToScreenReadySeconds,
+    meta.runnerResult?.timedOut,
+  );
+  const recording = recordingEvidence(meta, commandAudit.commands, runDir, screen);
+  const worktreeRecord = worktreeEvidence(runDir, meta, eventsPath);
+  const worktree = worktreeRecord?.path ?? null;
+  const ccache = benchmarkCcache(
+    meta,
+    commandAudit.commands,
+    ccacheLogEvidence({ runDir, meta, commands: commandAudit.commands, worktree, capture: true }),
+  );
+  const nativeCompatibility = compatibilityProofEvidence(meta, worktree, commandAudit.commands, screen, recording);
+  const proof = proofFor(meta, appAlive, runDir, worktree, commandAudit.completedEvents, screen);
+  const rollout =
+    meta.runner === 'claude'
+      ? eventsPath
+      : (copyRollout(runDir) ?? (existsSync(join(runDir, 'rollout.jsonl')) ? join(runDir, 'rollout.jsonl') : null));
+  const runnerMetrics = runnerMetricsFromEvents(eventsPath, meta.runner);
+  const usage = runnerMetrics?.usage ?? usageFromRollout(rollout);
+  const diagnosis =
+    meta.variant === launchCrashVariant
+      ? launchCrashDiagnosis(commandAudit.commands, {
+          initialLaunchCapture: meta.promptPolicy === 'minimal-v1',
+          dispatchAt: meta.dispatchAt,
+          token: meta.crash.token,
+          arm: meta.arm,
+          platform: meta.platform ?? 'ios',
+          activities: commandAudit.activities,
+          agentDeviceLaunch: agentDeviceCaptureCommands(meta, appAlive),
+          setup: {
+            worktree,
+            avdConfig: appAlive.simulator?.configPath ?? meta.expectedControlAvdConfig,
+          },
+        })
+      : null;
+  const recovery =
+    meta.variant === launchCrashVariant
+      ? launchCrashRecovery(commandAudit.commands, {
+          diagnosis,
+          arm: meta.arm,
+          platform: meta.platform ?? 'ios',
+          screen,
+        })
+      : null;
+  const diagnosisUsage =
+    diagnosis?.valid && meta.runner !== 'claude' ? usageAtOrBefore(rollout, diagnosis.observedAt) : null;
+  const measurementWarnings = benchmarkMeasurementWarnings({ ...meta, timing, ccache, diagnosis, diagnosisUsage });
+  const invalidReasons = [
+    ...(nativeCompatibility && !nativeCompatibility.valid ? ['native-compatibility-changed-or-unverified'] : []),
+    ...(appAlive.error && !appAliveErrorIsSuperseded(appAlive, proof, screen) ? [appAlive.error] : []),
+    ...(meta.runnerResult?.code === 0 ? [] : [`runner-exit-${meta.runnerResult?.code}`]),
+    ...(runnerMetrics?.isError ? [`runner-${runnerMetrics.terminalReason ?? 'error'}`] : []),
+    ...(runnerMetrics?.subagentsSpawned ? ['runner-used-subagents'] : []),
+    ...(proof.valid ? [] : [proof.reason ?? 'proof-failed']),
+    ...(screen.valid ? [] : [screen.reason ?? 'screen-proof-failed']),
+    ...(recording.valid ? [] : [recording.reason ?? 'simulator-recording-failed']),
+    ...(rollout ? [] : ['rollout-missing-or-ambiguous']),
+    ...(existsSync(eventsPath) ? [] : ['stamped-events-missing']),
+    ...(worktree ? [] : ['worktree-evidence-missing']),
+    ...(diagnosis && !diagnosis.valid ? [diagnosis.reason ?? 'launch-crash-diagnosis-failed'] : []),
+    ...(recovery && !recovery.valid ? [recovery.reason ?? 'launch-crash-recovery-failed'] : []),
+    ...deviceMismatchReasons(meta, appAlive.simulator),
+    ...commandAudit.invalidReasons,
+    ...benchmarkSetupInvalidReasons(meta, commandAudit.commands),
+    ...stimShellProvenanceInvalidReasons(meta),
+    ...timing.invalidReasons,
+    ...ccache.invalidReasons,
+    ...(git('status', '--short') === '' ? [] : ['main-checkout-dirty']),
+  ];
+  const nextRunRecord = {
+    schemaVersion: 1,
+    runId: meta.runId,
+    stage: meta.stage,
+    runner: meta.runner,
+    model: meta.model,
+    requestedServiceTier: meta.requestedServiceTier ?? null,
+    returnedServiceTier: runnerMetrics?.returnedServiceTier ?? null,
+    serviceTierStatus: runnerMetrics?.returnedServiceTier ? 'tier-reported' : 'tier-unverified',
+    arm: meta.arm,
+    variant: meta.variant,
+    valid: invalidReasons.length === 0,
+    nativeCompatibility,
+    invalidReasons,
+    measurementWarnings,
+    watcherWarnings: appAliveErrorIsSuperseded(appAlive, proof, screen) ? [appAlive.error] : [],
+    dispatchToAppAliveSeconds: appAlive.dispatchToAppAliveSeconds ?? null,
+    dispatchToProofSeconds: appAlive.dispatchToProofSeconds ?? null,
+    dispatchToScreenReadySeconds: screen.dispatchToScreenReadySeconds ?? null,
+    timing,
+    ccache,
+    stimShellProvenance: meta.stimShellProvenance ?? null,
+    dispatchToDiagnosisSeconds: diagnosis?.dispatchToDiagnosisSeconds ?? null,
+    diagnosisCommandCount: diagnosis?.commandCount ?? null,
+    diagnosisUsage,
+    diagnosisTokens: tokensFromUsage(diagnosisUsage),
+    diagnosis,
+    recovery,
+    auxiliarySessions: commandAudit.auxiliarySessions,
+    simulator: appAlive.simulator ?? null,
+    worktree,
+    worktreeEvidence: worktreeRecord,
+    proof,
+    screen,
+    recording,
+    evidenceSha256: {
+      events: existsSync(eventsPath) ? sha256(eventsPath) : null,
+      settingsPng: screen.valid && existsSync(screen.target) ? sha256(screen.target) : null,
+      transcript: rollout && existsSync(rollout) ? sha256(rollout) : null,
+      proof: proof.valid && existsSync(proof.target) ? sha256(proof.target) : null,
+      recording: recording.valid && existsSync(recording.target) ? sha256(recording.target) : null,
+    },
+    reportedCostUsd: runnerMetrics?.reportedCostUsd ?? null,
+    modelUsage: runnerMetrics?.modelUsage ?? null,
+    runnerTerminalReason: runnerMetrics?.terminalReason ?? null,
+    transcript: meta.runner === 'claude' ? eventsPath : rollout,
+    usage,
+    tokens: tokensFromUsage(usage),
+    retrySecondsByClass: {},
+    commandCount: commandAudit.commands.length,
+    collectedAt: new Date().toISOString(),
+  };
+  const runRecordPath = join(runDir, 'run.json');
+  const previousRunRecord = existsSync(runRecordPath) ? JSON.parse(readFileSync(runRecordPath, 'utf8')) : null;
+  const runRecord = durableRunRecord(previousRunRecord, nextRunRecord, completedCleanup(runDir));
+  writeFileSync(runRecordPath, `${JSON.stringify(runRecord, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(runRecord, null, 2)}\n`);
+}
+
+function cleanup(runDir) {
+  const meta = JSON.parse(readFileSync(join(runDir, 'meta.json'), 'utf8'));
+  const appAlivePath = join(runDir, 'app-alive.json');
+  const appAlive = existsSync(appAlivePath) ? JSON.parse(readFileSync(appAlivePath, 'utf8')) : {};
+  const worktree = findRunWorktree(meta.runId, runWorktreeParent(meta));
+  const branch = meta.arm === 'stim' ? `worktree-bench/${meta.runId}` : `bench/${meta.runId}`;
+  const actions = [];
+  let retainStimWorktrees = false;
+  const verifyCleanupDevice = () =>
+    assertGoldenCleanup({
+      config: JSON.parse(readFileSync(join(runDir, 'stim-home', 'config.json'), 'utf8')),
+      platform: meta.platform,
+      expectedIdentity:
+        meta.platform === 'android' ? meta.expectedParkedEmulator?.name : meta.expectedParkedSimulator?.udid,
+    });
+  const agentDeviceEnv = agentDeviceEnvironment(meta.agentDevice?.session ?? meta.runId);
+  try {
+    run(agentDeviceBin, ['close'], {
+      cwd: worktree && existsSync(worktree) ? worktree : main,
+      env: agentDeviceEnv,
+      timeout: 30_000,
+    });
+    actions.push(`agent-device close session ${meta.agentDevice?.session ?? meta.runId}`);
+  } catch {}
+  try {
+    const sessions = agentDeviceSessions(agentDeviceEnv);
+    if (sessions.length) {
+      actions.push(`agent-device cleanup could not prove closure: ${JSON.stringify(sessions)}`);
+      stopBenchmarkAgentDeviceDaemon();
+      actions.push('stop and clean benchmark agent-device daemon');
+      const remaining = agentDeviceSessions(agentDeviceEnv);
+      if (remaining.length) {
+        throw new Error(`benchmark agent-device sessions remain after daemon cleanup: ${JSON.stringify(remaining)}`);
+      }
+    }
+    actions.push('verified benchmark agent-device sessions empty');
+  } catch (error) {
+    try {
+      stopBenchmarkAgentDeviceDaemon();
+      actions.push(`stop and clean benchmark agent-device daemon after verification failure: ${error}`);
+    } catch (stopError) {
+      actions.push(`failed: benchmark agent-device cleanup: ${stopError}`);
+    }
+  }
+  const screenshotScratch = join('/tmp', `${meta.runId}-settings.png`);
+  if (existsSync(screenshotScratch)) {
+    rmSync(screenshotScratch);
+    actions.push(`remove ${screenshotScratch}`);
+  }
+  const recordingScratch = join('/tmp', `${meta.runId}-session.mp4`);
+  if (existsSync(recordingScratch)) {
+    rmSync(recordingScratch);
+    actions.push(`remove ${recordingScratch}`);
+  }
+  if (meta.arm === 'stim' && worktree && existsSync(worktree)) {
+    const stimHome = join(runDir, 'stim-home');
+    if (meta.platform === 'android') {
+      const serial = appAlive.simulator?.udid;
+      const retired = retireAndroidRecording({
+        runDir,
+        ownerHome: stimHome,
+        ownerWorktree: worktree,
+        serial,
+        adb: (args) => run('adb', ['-s', serial, ...args], { timeout: 10_000 }),
+      });
+      actions.push(`verified completed recording metadata cleared before parking: ${retired.length} manifests`);
+    }
+    const env = {
+      ...benchmarkEnvironment(process.env),
+      STIM_HOME: stimHome,
+      ...(meta.platform === 'android' ? { STIM_POOL_ANDROID_PARKED_MAX: '1' } : { STIM_POOL_IOS_PARKED_MAX: '1' }),
+    };
+    for (const args of [['stop'], ['worktree', 'remove', '--force']]) {
+      try {
+        if (args[0] === 'worktree') verifyCleanupDevice();
+        run('node', [stimCli, ...args], {
+          cwd: worktree,
+          env,
+          timeout: 5 * 60 * 1000,
+          stdio: 'inherit',
+        });
+        actions.push(`stim ${args.join(' ')}`);
+      } catch (error) {
+        actions.push(`failed: stim ${args.join(' ')}: ${error}`);
+        retainStimWorktrees = true;
+        break;
+      }
+    }
+    if (meta.platform === 'android') {
+      try {
+        const parked = verifyParkedAndroidEmulator(stimHome, meta.expectedParkedEmulator?.name);
+        actions.push(`verified parked emulator ${parked.name}`);
+      } catch (error) {
+        actions.push(`failed: parked emulator verification: ${error}`);
+      }
+    } else {
+      try {
+        const parked = verifyParkedSimulator(stimHome, meta.expectedParkedSimulator?.udid);
+        actions.push(`verified parked simulator ${parked.udid}`);
+        waitForSimulatorQuiescence(parked.udid);
+        actions.push(`verified quiescent simulator ${parked.udid}`);
+      } catch (error) {
+        actions.push(`failed: parked simulator verification: ${error}`);
+      }
+    }
+  } else if (meta.arm === 'control') {
+    const simulator =
+      meta.platform === 'android'
+        ? controlAndroidForCleanup(
+            runDir,
+            appAlive.simulator?.udid,
+            meta.expectedControlSimulator?.name,
+            appAlive.simulator?.configPath,
+          )
+        : controlSimulatorForCleanup(runDir, appAlive.simulator?.udid);
+    if (simulator) {
+      const udid = simulator.udid;
+      if (!appAlive.simulator?.udid) {
+        actions.push(`inferred sole new benchmark simulator ${udid}`);
+      }
+      if (meta.platform === 'android') {
+        const expected = meta.expectedControlSimulator ?? {};
+        const cleanupExpected = simulator.deviceTypeIdentifier
+          ? expected
+          : { ...expected, deviceTypeIdentifier: undefined };
+        const matchesExpected = matchesExpectedAndroidEmulator(simulator, cleanupExpected);
+        try {
+          if (!matchesExpected) throw new Error('ownership revalidation failed');
+          if (udid) {
+            run('adb', ['-s', udid, 'emu', 'kill'], { timeout: 60_000 });
+            actions.push(`shutdown ${udid}`);
+            const deadline = Date.now() + 60_000;
+            while (Date.now() < deadline && androidEmulatorSnapshot().includes(udid)) {
+              Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000);
+            }
+          }
+          run('avdmanager', ['delete', 'avd', '-n', simulator.name], {
+            timeout: 60_000,
+            env: { ...benchmarkEnvironment(process.env), ANDROID_AVD_HOME: simulator.avdHome },
+          });
+          actions.push(`delete AVD ${simulator.name}`);
+        } catch (error) {
+          actions.push(`failed: delete Android benchmark emulator ${udid}: ${error}`);
+        }
+      } else {
+        try {
+          run('xcrun', ['simctl', 'shutdown', udid], { timeout: 60_000 });
+          actions.push(`shutdown ${udid}`);
+        } catch {}
+        if (controlSimulatorForCleanup(runDir, udid)) {
+          try {
+            run('xcrun', ['simctl', 'delete', udid], { timeout: 60_000 });
+            actions.push(`delete ${udid}`);
+          } catch (error) {
+            actions.push(`failed: delete ${udid}: ${error}`);
+          }
+        } else {
+          actions.push(`skipped delete ${udid}: ownership revalidation failed`);
+        }
+      }
+    }
+    if (worktree && existsSync(worktree)) {
+      for (const { pid, port } of ownedMetroListeners(worktree)) {
+        try {
+          if (ownedMetroListeners(worktree).some((candidate) => candidate.pid === pid && candidate.port === port)) {
+            process.kill(pid, 'SIGTERM');
+            actions.push(`terminate Metro pid ${pid}`);
+          }
+        } catch {}
+      }
+      try {
+        run('git', ['worktree', 'remove', '--force', worktree], {
+          cwd: main,
+          timeout: 5 * 60 * 1000,
+        });
+        actions.push(`remove worktree ${worktree}`);
+      } catch (error) {
+        actions.push(`failed: remove worktree ${worktree}: ${error}`);
+      }
+      try {
+        run('git', ['branch', '-D', branch], { cwd: main });
+        actions.push(`delete branch ${branch}`);
+      } catch {}
+    }
+  } else {
+    actions.push('skipped Stim device cleanup: run worktree missing');
+  }
+  if (!findRunWorktree(meta.runId, runWorktreeParent(meta))) {
+    try {
+      run('git', ['branch', '-D', branch], { cwd: main });
+      actions.push(`delete branch ${branch}`);
+    } catch {}
+  }
+  if (meta.crash?.fixtureCheckout && !retainStimWorktrees) {
+    const fixtureCheckout = resolve(meta.crash.fixtureCheckout);
+    const fixtureBranch = meta.crash.fixtureBranch;
+    if (!fixtureCheckout.startsWith(`${worktreeParent}/`)) {
+      actions.push(`skipped launch-crash fixture cleanup outside benchmark root: ${fixtureCheckout}`);
+    } else if (existsSync(fixtureCheckout)) {
+      if (meta.arm === 'stim') {
+        try {
+          verifyCleanupDevice();
+          run('node', [stimCli, 'worktree', 'remove', '--force'], {
+            cwd: fixtureCheckout,
+            env: {
+              ...benchmarkEnvironment(process.env),
+              STIM_HOME: join(runDir, 'stim-home'),
+              STIM_POOL_IOS_PARKED_MAX: '1',
+            },
+            timeout: 5 * 60 * 1000,
+            stdio: 'inherit',
+          });
+          actions.push(`stim worktree remove launch-crash fixture ${fixtureCheckout}`);
+        } catch (error) {
+          actions.push(`failed: remove Stim launch-crash fixture ${fixtureCheckout}: ${error}`);
+        }
+      } else {
+        try {
+          run('git', ['worktree', 'remove', '--force', fixtureCheckout], {
+            cwd: main,
+            timeout: 5 * 60 * 1000,
+          });
+          actions.push(`remove launch-crash fixture ${fixtureCheckout}`);
+        } catch (error) {
+          actions.push(`failed: remove launch-crash fixture ${fixtureCheckout}: ${error}`);
+        }
+      }
+    }
+    if (!existsSync(fixtureCheckout) && fixtureBranch) {
+      try {
+        run('git', ['branch', '-D', fixtureBranch], { cwd: main });
+        actions.push(`delete branch ${fixtureBranch}`);
+      } catch {}
+    }
+  }
+  copyRollout(runDir);
+  rmSync(join(runDir, 'runner-home'), { recursive: true, force: true });
+  const record = { cleanedAt: new Date().toISOString(), actions };
+  writeFileSync(join(runDir, 'cleanup.json'), `${JSON.stringify(record, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(record, null, 2)}\n`);
+}
+
+function relativeUsage(stim, control) {
+  const percent = (1 - stim / control) * 100;
+  return `${Math.abs(percent).toFixed(0)}% ${percent >= 0 ? 'fewer' : 'more'}`;
+}
+
+function report(stage) {
+  const stageDir = join(results, stage);
+  const records = existsSync(stageDir)
+    ? readdirSync(stageDir)
+        .map((name) => join(stageDir, name, 'run.json'))
+        .filter(existsSync)
+        .map((path) => JSON.parse(readFileSync(path, 'utf8')))
+    : [];
+  const pricing = {
+    'gpt-5.6-sol': { input: 4, cached: 0.4, output: 20 },
+    'gpt-5.6-terra': { input: 2, cached: 0.2, output: 12 },
+    'gpt-5.6-luna': { input: 0.2, cached: 0.02, output: 1.2 },
+  };
+  const estimatedCost = (model, tokens) => {
+    const rate = pricing[model];
+    if (!rate || !tokens) return null;
+    return (
+      (tokens.uncachedInput * rate.input + tokens.cachedInput * rate.cached + tokens.output * rate.output) / 1_000_000
+    );
+  };
+  const cost = (record) => {
+    if (Number.isFinite(record.reportedCostUsd)) return record.reportedCostUsd;
+    return estimatedCost(record.model, record.tokens);
+  };
+  const header =
+    '| Model | Variant | Arm | Valid | Measurement warnings | Diagnosis (s) | Settings repaired (s) | Commands to diagnosis | Tokens to diagnosis | Cost to diagnosis | Total commands | Uncached input | Cached input | Output | Total cost |\n| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |';
+  const rows = records.map((record) =>
+    [
+      record.model,
+      record.variant,
+      record.arm,
+      record.valid ? 'yes' : `no: ${record.invalidReasons.join(', ')}`,
+      (record.measurementWarnings ?? []).join(', ') || '-',
+      record.dispatchToDiagnosisSeconds ?? '-',
+      record.dispatchToScreenReadySeconds ?? '-',
+      record.diagnosisCommandCount ?? '-',
+      record.diagnosisTokens
+        ? record.diagnosisTokens.uncachedInput + record.diagnosisTokens.cachedInput + record.diagnosisTokens.output
+        : '-',
+      estimatedCost(record.model, record.diagnosisTokens) === null
+        ? '-'
+        : `$${estimatedCost(record.model, record.diagnosisTokens).toFixed(3)}`,
+      record.commandCount ?? '-',
+      record.tokens?.uncachedInput ?? '-',
+      record.tokens?.cachedInput ?? '-',
+      record.tokens?.output ?? '-',
+      cost(record) === null ? '-' : `$${cost(record).toFixed(3)} (${record.serviceTierStatus ?? 'tier-unverified'})`,
+    ]
+      .map((value) => String(value))
+      .join(' | ')
+      .replace(/^/, '| ')
+      .replace(/$/, ' |'),
+  );
+  const valid = records.filter((record) => record.valid);
+  const pairKeys = [...new Set(valid.map((record) => `${record.model}\0${record.variant}`))];
+  const pairs = pairKeys
+    .map((key) => {
+      const [model, variant] = key.split('\0');
+      const stim = valid.find(
+        (record) => record.model === model && record.variant === variant && record.arm === 'stim',
+      );
+      const control = valid.find(
+        (record) => record.model === model && record.variant === variant && record.arm === 'control',
+      );
+      return stim && control ? { model, variant, stim, control } : null;
+    })
+    .filter(Boolean);
+  const pairHeader =
+    '| Model | Variant | Screen-ready speedup | App-alive speedup | Commands | Uncached input | Cached input | Output | Cost |\n| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |';
+  const pairRows = pairs.map(({ model, variant, stim, control }) => {
+    const stimCost = cost(stim);
+    const controlCost = cost(control);
+    const tierStatus =
+      stim.serviceTierStatus === control.serviceTierStatus
+        ? stim.serviceTierStatus
+        : `${stim.serviceTierStatus}/${control.serviceTierStatus}`;
+    return `| ${model} | ${variant} | ${(control.dispatchToScreenReadySeconds / stim.dispatchToScreenReadySeconds).toFixed(2)}x | ${(control.dispatchToAppAliveSeconds / stim.dispatchToAppAliveSeconds).toFixed(2)}x | ${relativeUsage(stim.commandCount, control.commandCount)} | ${relativeUsage(stim.tokens.uncachedInput, control.tokens.uncachedInput)} | ${relativeUsage(stim.tokens.cachedInput, control.tokens.cachedInput)} | ${relativeUsage(stim.tokens.output, control.tokens.output)} | ${relativeUsage(stimCost, controlCost)} (${tierStatus}) |`;
+  });
+  const pairSection = pairs.length
+    ? `## Valid paired results\n\n${pairHeader}\n${pairRows.join('\n')}\n\nEach row is one matched pilot pair and is directional, not statistically conclusive. Claude costs are the CLI-reported total cost; Codex costs use direct API token rates. Both exclude local tool/runtime costs, and reasoning tokens are already included in output tokens.\n\n`
+    : '';
+  const markdown = `# Benchmark ${stage}\n\nGenerated ${new Date().toISOString()}.\n\n${pairSection}## All attempts\n\n${header}\n${rows.join('\n')}\n`;
+  const path = join(results, `${stage}-report.md`);
+  writeFileSync(path, markdown);
+  process.stdout.write(`${path}\n`);
+}
+
+function selftestDeviceTargeting() {
+  const meta = {
+    deviceTargetingRequired: true,
+    runId: 'benchmark-run',
+    agentDevice: { stateDir: agentDeviceState, session: 'benchmark-run' },
+  };
+  const appAlive = { simulator: { udid: 'RUN-UDID' } };
+  const expected = agentDeviceOpenCommand(meta, appAlive);
+  const commands = [
+    'agent-device open com.appandflow.trailhead --foreground',
+    'agent-device open com.appandflow.trailhead --foreground --platform ios --udid WRONG-UDID',
+    expected,
+  ];
+  if (commands[0].includes(expected) || commands[1].includes(expected)) {
+    throw new Error('omitted or wrong simulator UDID passed the target check');
+  }
+  if (!commands[2].includes(expected)) {
+    throw new Error('matching simulator UDID failed the target check');
+  }
+  const marker = 'Trailhead benchmark-run';
+  const afterOnboarding = [
+    {
+      type: 'command_execution',
+      command: expected,
+      exit_code: 0,
+      aggregated_output: 'Expo developer menu',
+    },
+    {
+      type: 'command_execution',
+      command: agentDeviceCommand(meta, 'click @continue --settle'),
+      exit_code: 0,
+      aggregated_output: `[window] "${marker}"`,
+    },
+  ];
+  if (!nativeMarkerObserved(afterOnboarding, expected, marker)) {
+    throw new Error('native marker after Expo onboarding failed the proof check');
+  }
+  const withoutSuccessfulOpen = [
+    {
+      ...afterOnboarding[0],
+      exit_code: 1,
+    },
+    afterOnboarding[1],
+  ];
+  if (nativeMarkerObserved(withoutSuccessfulOpen, expected, marker)) {
+    throw new Error('native marker passed without a successful exact-device open');
+  }
+  const androidMeta = { ...meta, platform: 'android' };
+  const androidExpected = agentDeviceOpenCommand(androidMeta, { simulator: { udid: 'emulator-5554' } });
+  if (!androidExpected.endsWith('--platform android --serial emulator-5554')) {
+    throw new Error('Android emulator serial failed the target check');
+  }
+  process.stdout.write('device targeting self-test passed\n');
+}
+
+function selftestAgentDeviceIsolation() {
+  const runId = 'benchmark-run';
+  const environment = agentDeviceEnvironment(runId);
+  if (environment.AGENT_DEVICE_STATE_DIR !== agentDeviceState) {
+    throw new Error('benchmark agent-device state directory is not isolated');
+  }
+  if (environment.AGENT_DEVICE_SESSION !== runId) {
+    throw new Error('benchmark agent-device session is not run-scoped');
+  }
+  const meta = { runId, agentDevice: { stateDir: agentDeviceState, session: runId } };
+  const expected = agentDeviceCommand(meta, 'close');
+  if (topLevelShellCommand(`/bin/zsh -lc '${expected}'`) !== expected) {
+    throw new Error('top-level shell command was not recognized');
+  }
+  if (topLevelShellCommand(`/bin/zsh -lc '${expected} && echo hidden'`) === expected) {
+    throw new Error('chained proof command was accepted as top-level evidence');
+  }
+  if ('agent-device close'.startsWith(agentDeviceCommand(meta, ''))) {
+    throw new Error('bare default-session command passed the isolation check');
+  }
+  const prompt = promptFor('stim', 'javascript', runId, state);
+  const androidPrompt = promptFor('control', 'javascript', runId, state, null, 'android');
+  const screenshotScratch = join('/tmp', `${runId}-settings.png`);
+  const screenshot = join(state, 'proof', 'settings.png');
+  const recordingScratch = join('/tmp', `${runId}-session.mp4`);
+  const recording = join(state, 'proof', 'session.mp4');
+  if (!prompt.includes(`record start ${recordingScratch}`) || !prompt.includes(`cp ${recordingScratch} ${recording}`)) {
+    throw new Error('simulator recording does not use local scratch before copying to evidence');
+  }
+  if (prompt.includes(`record start ${recording}`)) {
+    throw new Error('simulator recording writes directly to durable evidence storage');
+  }
+  const proofCommands = [
+    agentDeviceCommand(meta, 'open com.appandflow.trailhead --foreground --platform ios --udid <run simulator UDID>'),
+    agentDeviceCommand(meta, `record start ${recordingScratch} --scope device --quality high --hide-touches`),
+    agentDeviceCommand(meta, `wait text ${JSON.stringify(settingsProofText('javascript'))}`),
+    agentDeviceCommand(meta, `screenshot ${screenshotScratch}`),
+    `cp ${screenshotScratch} ${screenshot}`,
+    agentDeviceCommand(meta, 'record stop'),
+    `cp ${recordingScratch} ${recording}`,
+    agentDeviceCommand(meta, 'close'),
+  ];
+  if (proofCommands.some((proofCommand, index) => !prompt.includes(`${index + 1}. \`${proofCommand}\``))) {
+    throw new Error('proof command boundaries are not explicit and ordered');
+  }
+  if (
+    !androidPrompt.includes(
+      `1. \`${agentDeviceCommand(meta, 'open com.appandflow.trailhead --foreground --platform android --serial <run emulator serial>')}\``,
+    )
+  ) {
+    throw new Error('Android proof command boundaries are not explicit');
+  }
+  process.stdout.write('agent-device isolation self-test passed\n');
+}
+
+function selftestLaunchCrash() {
+  const runId = 'launch-crash-selftest';
+  const token = launchCrashToken(runId);
+  const crash = {
+    fixtureCheckout: join(worktreeParent, `fixture-${runId}`),
+    sourceRelative: 'app/_layout.tsx',
+    token,
+  };
+  const prompt = promptFor('stim', launchCrashVariant, runId, state, crash);
+  for (const platform of ['ios', 'android']) {
+    const instructions = promptFor('stim', launchCrashVariant, runId, state, crash, platform);
+    if (!instructions.includes('Use Stim and its installed skill.'))
+      throw new Error(`${platform} prompt must identify the available Stim skill`);
+    if (
+      promptFor('control', launchCrashVariant, runId, state, crash, platform).includes(
+        'Use Stim and its installed skill.',
+      )
+    ) {
+      throw new Error(`${platform} control must not load the Stim guide`);
+    }
+  }
+  for (const required of [
+    `worktree-bench/${runId}`,
+    'The app fails on launch.',
+    'capture the runtime error before inspecting application source',
+    'Settings screenshot',
+  ]) {
+    if (!prompt.includes(required)) {
+      throw new Error(`launch-crash prompt is missing: ${required}`);
+    }
+  }
+  const usagePath = join('/tmp', 'stim-launch-crash-selftest-rollout.jsonl');
+  writeFileSync(
+    usagePath,
+    [
+      {
+        timestamp: '2026-09-04T12:00:10.000Z',
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: { total_token_usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 10 } },
+        },
+      },
+      {
+        timestamp: '2026-09-04T12:00:20.000Z',
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: { total_token_usage: { input_tokens: 200, cached_input_tokens: 50, output_tokens: 30 } },
+        },
+      },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n') + '\n',
+  );
+  const usage = usageAtOrBefore(usagePath, '2026-09-04T12:00:15.000Z');
+  rmSync(usagePath, { force: true });
+  if (usage?.input_tokens !== 100 || usage?.cached_input_tokens !== 20) {
+    throw new Error(`launch-crash diagnosis usage was not cutoff correctly: ${JSON.stringify(usage)}`);
+  }
+  process.stdout.write('launch-crash self-test passed\n');
+}
+
+function selftestAndroid() {
+  const runId = 'android-selftest';
+  const prompt = promptFor('stim', 'native', runId, state, null, 'android');
+  for (const required of [
+    `worktree-bench/${runId}`,
+    'Android application label',
+    pins.ANDROID_SYSTEM_IMAGE,
+    '--platform android --serial <run emulator serial>',
+    'record start',
+    'record stop',
+  ]) {
+    if (!prompt.includes(required)) throw new Error(`Android prompt is missing: ${required}`);
+  }
+  const cleanupDir = join('/tmp', `stim-android-cleanup-selftest-${process.pid}`);
+  mkdirSync(cleanupDir, { recursive: true });
+  writeFileSync(join(cleanupDir, 'devices-before.json'), '[]\n');
+  writeFileSync(join(cleanupDir, 'avds-before.json'), `${JSON.stringify(['Trailhead_existing'])}\n`);
+  if (controlAndroidForCleanup(cleanupDir, 'emulator-5554', 'Trailhead_existing') !== null) {
+    throw new Error('Android cleanup accepted an AVD that existed before dispatch');
+  }
+  rmSync(cleanupDir, { recursive: true, force: true });
+  process.stdout.write('Android self-test passed\n');
+}
+
+async function selftestRunnerTimeout() {
+  const runDir = join(state, `runner-timeout-selftest-${process.pid}`);
+  rmSync(runDir, { recursive: true, force: true });
+  mkdirSync(runDir, { recursive: true });
+  const startedAt = Date.now();
+  const eventsPath = join(runDir, 'events.jsonl');
+  const childScript = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)";
+  const parentScript = `const { spawn } = require('node:child_process'); const child = spawn(process.execPath, ['-e', ${JSON.stringify(childScript)}], { stdio: 'ignore' }); process.stdout.write(String(child.pid) + '\\n'); setInterval(() => {}, 1000)`;
+  const result = await spawnStamped(
+    process.execPath,
+    ['-e', parentScript],
+    eventsPath,
+    { cwd: root, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] },
+    '',
+    250,
+    50,
+  );
+  const elapsedMs = Date.now() - startedAt;
+  const childPid = Number(
+    readFileSync(eventsPath, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .find((line) => line.stream === 'stdout')?.line,
+  );
+  let childAlive = Number.isInteger(childPid);
+  for (let attempt = 0; childAlive && attempt < 50; attempt += 1) {
+    try {
+      process.kill(childPid, 0);
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+    } catch (error) {
+      if (error?.code !== 'ESRCH') throw error;
+      childAlive = false;
+    }
+  }
+  rmSync(runDir, { recursive: true, force: true });
+  if (!result.timedOut || childAlive || elapsedMs > 2000) {
+    throw new Error(`runner timeout was not enforced: ${JSON.stringify({ result, elapsedMs, childPid })}`);
+  }
+  process.stdout.write('runner timeout self-test passed\n');
+}
+
+const [command, ...args] = process.argv.slice(2);
+ensureDirs();
+if (command === 'preflight') {
+  process.stdout.write(`${JSON.stringify(preflight(args[0]), null, 2)}\n`);
+} else if (command === 'prepare') {
+  if (checkedPlatform(args[0]) === 'android') prepareAndroid();
+  else prepare();
+} else if (command === 'smoke') {
+  smoke(args[0]);
+} else if (command === 'runner-smoke') {
+  await runnerSmoke(args[0]);
+} else if (command === 'dispatch') {
+  await dispatch(...args);
+} else if (command === 'collect') {
+  collect(resolve(args[0]));
+} else if (command === 'cleanup') {
+  cleanup(resolve(args[0]));
+} else if (command === 'report') {
+  report(args[0]);
+} else if (command === 'selftest-device-targeting') {
+  selftestDeviceTargeting();
+} else if (command === 'selftest-agent-device-isolation') {
+  selftestAgentDeviceIsolation();
+} else if (command === 'selftest-launch-crash') {
+  selftestLaunchCrash();
+} else if (command === 'selftest-android') {
+  selftestAndroid();
+} else if (command === 'selftest-runner-timeout') {
+  await selftestRunnerTimeout();
+} else {
+  throw new Error(
+    'usage: bench.mjs preflight [ios|android] | prepare [ios|android] | smoke <stim|control> | runner-smoke <stim|control> | dispatch <model> <stim|control> <javascript|native|launch-crash> [stage] [ios|android] | collect <run-dir> | cleanup <run-dir> | report <stage> | selftest-device-targeting | selftest-agent-device-isolation | selftest-launch-crash | selftest-android | selftest-runner-timeout',
+  );
+}

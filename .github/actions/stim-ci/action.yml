@@ -1,0 +1,75 @@
+name: Run Stim CI
+description: Build an app, or build then launch, test and stop it through stim-ci.
+inputs:
+  build-only:
+    description: Build without installing, launching, starting Metro or running a test command. Native platforms only.
+    default: 'false'
+  platform:
+    description: ios, android, macos, or web.
+    required: true
+  project:
+    description: App directory relative to the checked-out repository.
+    default: '.'
+  command:
+    description: Test command executed by Bash in the app directory. Not accepted with build-only. Without it the combined action builds, installs and launches the app from clean state, then stops it and its Metro; it needs @stim-cli/ci newer than 1.37.0, which refuses a run without a command.
+  version:
+    description: Exact published @stim-cli/ci version. Required unless cli-path is supplied.
+  cli-path:
+    description: Built stim-ci executable from the checkout, relative to the repository root.
+  artifacts:
+    description: Empty directory relative to the repository root for result, test and diagnostic files. Without it no such file is written and nothing is uploaded. Use a different path for each run.
+  scheme:
+    description: iOS scheme to build and run. Defaults to the project's normal build settings.
+  configuration:
+    description: iOS configuration to build and run, such as Release. Defaults to the project's normal build settings.
+  variant:
+    description: Android variant to build and run. Defaults to the project's normal build settings.
+  arch:
+    description: iOS simulator architecture to build (arm64, x86_64 or all).
+  abi:
+    description: Android ABI to build (arm64-v8a, armeabi-v7a, x86, x86_64 or all).
+  eas-profile:
+    description: Download this EAS profile's completed development build instead of compiling (iOS and Android).
+  export:
+    description: Also write the built app to this path relative to the repository root, as an APK for Android or a tar.gz for iOS and macOS. Not for web.
+  home:
+    description: Optional Stim home. Use a unique runner-temporary directory on disposable workers.
+  build-cache:
+    description: Optional local build cache directory restored by the workflow.
+  timeout:
+    description: Session timeout in seconds.
+    default: '1800'
+  upload-artifacts:
+    description: Upload result, test and diagnostic logs to GitHub, including on failure. Applies only when artifacts is set. Set false for local paths only.
+    default: 'true'
+  artifact-name:
+    description: Unique GitHub artifact name. Defaults to a generated name for this invocation.
+  retention-days:
+    description: Artifact retention in days. Zero uses the repository default.
+    default: '0'
+outputs:
+  app-id:
+    description: Bundle ID or Android package of the app.
+  app-path:
+    description: Absolute path of the recorded app (.app or .apk) on this runner.
+  export-path:
+    description: Absolute path of the exported app, when export is set.
+  cache-hit:
+    description: true when Stim restored the build from its local or remote cache, false when it compiled.
+  device-id:
+    description: Simulator UDID or emulator serial the app ran on. The step shuts the device down when it ends; boot a simulator again before installing on it.
+  device-name:
+    description: Name of the simulator or emulator the app ran on.
+  exit-code:
+    description: Exit code of the build-only or run step, the test command's code when it ran.
+  result:
+    description: Absolute path to result.json, when artifacts is set.
+  artifacts:
+    description: Absolute diagnostics directory, when artifacts is set.
+  artifact-id:
+    description: Uploaded GitHub artifact ID, when an upload succeeds.
+  artifact-url:
+    description: Uploaded GitHub artifact URL, when an upload succeeds.
+runs:
+  using: node24
+  main: dist/main.mjs

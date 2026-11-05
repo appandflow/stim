@@ -1,0 +1,106 @@
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { inspectHostedDevice } from '../device-host/offer.ts';
+import type { SystemImage } from '../devices/android.ts';
+import { makeIosSim } from './_factories.ts';
+
+const native = vi.hoisted(() => ({
+  runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>(),
+  pressure: vi.fn<() => string | null>(),
+  ios: vi.fn<(selectors: unknown) => object>(),
+  images: vi.fn<() => SystemImage[]>(),
+  create: vi.fn<() => void>(),
+  boot: vi.fn<() => void>(),
+  sims: vi.fn<typeof import('../devices/ios.ts').listAllIosSims>(),
+}));
+vi.mock('../exec.ts', () => ({ getExecutor: () => ({ runFile: native.runFile }) }));
+vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => native.pressure() }));
+vi.mock('../devices/ios.ts', () => ({
+  listAllIosSims: () => native.sims(),
+  resolveIosCreation: (selectors: unknown) => native.ios(selectors),
+  createOwnedIosSim: native.create,
+  bootIosSim: native.boot,
+}));
+vi.mock('../devices/android.ts', async (original) => ({
+  ...(await original<typeof import('../devices/android.ts')>()),
+  hostSystemImageArch: () => 'arm64-v8a',
+  listInstalledSystemImages: () => native.images(),
+  listAvdDeviceProfiles: () => ['pixel_6'],
+  createOwnedAvd: native.create,
+  bootAndroidEmulator: native.boot,
+}));
+let home: string;
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.stubGlobal('process', Object.create(process, { platform: { value: 'darwin' }, arch: { value: 'arm64' } }));
+  home = mkdtempSync(join(tmpdir(), 'stim-host-offer-'));
+  process.env.STIM_HOME = home;
+  native.pressure.mockReturnValue('normal');
+  native.sims.mockReturnValue([]);
+  native.runFile.mockReturnValue('27.0');
+  native.ios.mockImplementation((selectors) => {
+    if ((selectors as { runtime?: string }).runtime === 'missing') throw new Error('Runtime not installed.');
+    return { deviceTypeId: 'iphone', runtimeId: 'ios', deviceType: 'iPhone', runtime: '27.1' };
+  });
+  native.images.mockReturnValue([
+    { pkg: 'system-images;android-30;google_apis;arm64-v8a', api: 30, tag: 'google_apis', arch: 'arm64-v8a' },
+    { pkg: 'system-images;android-36;google_apis;x86_64', api: 36, tag: 'google_apis', arch: 'x86_64' },
+  ]);
+});
+afterEach(() => {
+  delete process.env.STIM_HOME;
+  vi.unstubAllGlobals();
+  rmSync(home, { recursive: true, force: true });
+});
+
+test('reports selected installed SDK metadata without native or filesystem mutation', async () => {
+  expect(await inspectHostedDevice({ platform: 'ios' })).toMatchObject({
+    choice: { runtime: '27.1', deviceTypeId: 'iphone', architecture: 'arm64' },
+    declined: null,
+  });
+  expect(await inspectHostedDevice({ platform: 'android' })).toMatchObject({
+    choice: { systemImage: 'system-images;android-30;google_apis;arm64-v8a', deviceProfile: 'pixel_6' },
+    declined: null,
+  });
+  expect(await inspectHostedDevice({ platform: 'ios', runtime: 'missing' })).toMatchObject({
+    choice: null,
+    declined: 'Runtime not installed.',
+  });
+  expect(
+    await inspectHostedDevice({ platform: 'android', systemImage: 'system-images;android-36;google_apis;x86_64' }),
+  ).toMatchObject({
+    choice: null,
+    declined: 'No compatible installed Android image.',
+  });
+  expect(await inspectHostedDevice({ platform: 'android', deviceProfile: 'missing' })).toMatchObject({
+    choice: null,
+    declined: 'The Android device profile is not installed.',
+  });
+  expect(await inspectHostedDevice({ platform: 'macos' })).toMatchObject({
+    choice: { architecture: 'arm64', macosVersion: '27.0' },
+    declined: null,
+  });
+  expect(native.create).not.toHaveBeenCalled();
+  expect(native.boot).not.toHaveBeenCalled();
+  expect(readdirSync(home)).toEqual([]);
+});
+
+test('native offers report local live devices while excluding recorded hosted devices', async () => {
+  native.sims.mockReturnValue([
+    makeIosSim({ udid: 'hosted', name: 'stim-hosted', state: 'Booted' }),
+    makeIosSim({ udid: 'local', name: 'stim-local', state: 'Booted' }),
+  ]);
+  expect(
+    await inspectHostedDevice({ platform: 'ios' }, { exclude: [{ platform: 'ios', key: 'hosted' }] }),
+  ).toMatchObject({
+    resources: { localDevices: 1 },
+    declined: null,
+  });
+  native.sims.mockImplementation(() => {
+    throw new Error('simulator inventory unavailable');
+  });
+  expect(await inspectHostedDevice({ platform: 'ios' }, { exclude: [] })).toMatchObject({
+    resources: { localDevices: { unknown: expect.stringContaining('simulator inventory unavailable') } },
+  });
+});

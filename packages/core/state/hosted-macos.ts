@@ -1,0 +1,204 @@
+import { isAbsolute } from 'node:path';
+import { isJsonObject } from './json-file.ts';
+import type { HostedAppDelivery } from './hosted-app.ts';
+
+/** App slots one host offers; a slot names the host-assigned bundle id `<bundleId>.hosted<slot>`. */
+export const HOSTED_MACOS_APP_SLOTS = 64;
+
+/** The drivers `hosting.agentDriver` can name: `none` and the first-party driver packages stim-server ships. */
+export const HOSTED_AGENT_DRIVERS = ['none', 'agent-device'] as const;
+
+export type HostedAgentDriverName = (typeof HOSTED_AGENT_DRIVERS)[number];
+
+const AGENT_DRIVER_NAME = /^[a-z][a-z0-9-]{0,62}$/;
+
+/** A driver name a grant or access record can carry; a client resolves only the drivers it knows. */
+export function hostedAgentDriverName(value: unknown): value is string {
+  return typeof value === 'string' && value !== 'none' && AGENT_DRIVER_NAME.test(value);
+}
+
+/** What a host reports in a macOS offer: no simulator is created, so the choice is the host itself. */
+export interface HostedMacosChoice {
+  architecture: 'arm64' | 'x86_64';
+  macosVersion: string;
+}
+
+/** A ready hosted macOS session's identity: the host it runs on and the app slot reserved for it. */
+export interface HostedMacosDevice extends HostedMacosChoice {
+  appSlot: number;
+}
+
+/**
+ * The agent-device lease owner scope a client names on every request. `deviceKey` is `<bundleId>@<pid>`
+ * for a macOS app, or `ios:mobile:<udid>` with `backend: ios-instance` for a hosted simulator, or `android:mobile:<serial>` with `backend: android-instance` for a hosted emulator.
+ */
+export interface HostedAgentLease {
+  tenant: string;
+  runId: string;
+  clientId: string;
+  deviceKey: string;
+  backend?: 'ios-instance' | 'android-instance';
+}
+
+/**
+ * Agent control a driver issues for one installed hosted app. `path` is the session's base route on the host,
+ * `scope` the driver's handle that limits it to this one app, and `lease`, for a driver that allocates leases,
+ * the scope that pins the allocation.
+ */
+export interface HostedAgentIssuedGrant {
+  driver: string;
+  path: string;
+  token: string;
+  scope: string;
+  lease?: HostedAgentLease;
+}
+
+/**
+ * Agent control the host grants a client for one installed hosted app, sent only over that client's approved
+ * device-host connection and never journaled. `none` means the host's `hosting.agentDriver` starts no driver.
+ */
+export type HostedAgentGrant = { driver: 'none' } | HostedAgentIssuedGrant;
+
+/** `app.launch` and `app.attach` results; a host includes `agent` once the app is installed. */
+export type HostedAppLaunch = HostedAppDelivery & { agent?: HostedAgentGrant };
+
+/**
+ * Agent control as the client hands it to a coding agent: secrets stay in files Stim writes with mode
+ * 0600, and `command` shows how to address the hosted app. Never carries a token inline. `setting` names
+ * the hosting Mac's setting that turns a driver on.
+ */
+export type HostedAgentAccess =
+  | { driver: 'none'; setting: 'hosting.agentDriver' }
+  | { driver: string; remoteConfig: string; command: string };
+
+/** Where a workspace's macOS app runs when `stim macos --remote` placed it on another Mac. */
+export interface HostedMacosPlacement {
+  machine: string;
+  session: string;
+  appSlot: number;
+  appAttempt: string;
+  /** The host-assigned id the running app uses, `hostedMacosBundleId(<offered id>, appSlot)`. */
+  bundleId: string;
+  agent: HostedAgentAccess;
+}
+
+export function hostedMacosAppSlot(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= HOSTED_MACOS_APP_SLOTS;
+}
+
+export function hostedMacosBundleId(bundleId: string, appSlot: number): string {
+  return `${bundleId}.hosted${appSlot}`;
+}
+
+export function parseHostedMacosChoice(value: unknown): HostedMacosChoice | null {
+  if (
+    !isJsonObject(value) ||
+    (value.architecture !== 'arm64' && value.architecture !== 'x86_64') ||
+    typeof value.macosVersion !== 'string' ||
+    !/^\d+(\.\d+){0,2}$/.test(value.macosVersion)
+  )
+    return null;
+  return { architecture: value.architecture, macosVersion: value.macosVersion };
+}
+
+export function parseHostedMacosDevice(value: unknown): HostedMacosDevice | null {
+  if (
+    !isJsonObject(value) ||
+    !hostedMacosAppSlot(value.appSlot) ||
+    Object.keys(value).some((key) => !['architecture', 'macosVersion', 'appSlot'].includes(key))
+  )
+    return null;
+  const choice = parseHostedMacosChoice(value);
+  return choice && { ...choice, appSlot: value.appSlot };
+}
+
+const AGENT_PATH = /^\/device-host\/agent\/[a-f0-9-]{36}\/$/;
+const LEASE_NAME = /^[A-Za-z0-9._-]{1,128}$/;
+const LEASE_DEVICE_KEY = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+@[1-9][0-9]{0,9}$/;
+
+function leaseName(value: unknown): value is string {
+  return typeof value === 'string' && LEASE_NAME.test(value);
+}
+
+function parseHostedAgentLease(value: unknown): HostedAgentLease | null {
+  if (!isJsonObject(value)) return null;
+  const { tenant, runId, clientId, deviceKey, backend } = value;
+  if (
+    Object.keys(value).length !== (backend === 'ios-instance' || backend === 'android-instance' ? 5 : 4) ||
+    !leaseName(tenant) ||
+    !leaseName(runId) ||
+    !leaseName(clientId) ||
+    typeof deviceKey !== 'string'
+  )
+    return null;
+  if (backend === 'ios-instance')
+    return /^ios:mobile:[a-fA-F0-9-]{36}$/.test(deviceKey) ? { tenant, runId, clientId, deviceKey, backend } : null;
+  if (backend === 'android-instance')
+    return /^android:mobile:emulator-[0-9]+$/.test(deviceKey) ? { tenant, runId, clientId, deviceKey, backend } : null;
+  return backend === undefined && LEASE_DEVICE_KEY.test(deviceKey) ? { tenant, runId, clientId, deviceKey } : null;
+}
+
+/** A grant naming a driver this client does not know is not usable; it parses as null. */
+export function parseHostedAgentGrant(value: unknown): HostedAgentGrant | null {
+  if (!isJsonObject(value)) return null;
+  if (value.driver === 'none') return Object.keys(value).length === 1 ? { driver: 'none' } : null;
+  if (
+    !hostedAgentDriverName(value.driver) ||
+    typeof value.path !== 'string' ||
+    !AGENT_PATH.test(value.path) ||
+    typeof value.token !== 'string' ||
+    !/^[A-Za-z0-9_-]{32,256}$/.test(value.token) ||
+    typeof value.scope !== 'string' ||
+    !/^[A-Za-z0-9._:-]{1,256}$/.test(value.scope) ||
+    Object.keys(value).length !== (value.lease === undefined ? 4 : 5)
+  )
+    return null;
+  const grant = { driver: value.driver, path: value.path, token: value.token, scope: value.scope };
+  if (value.lease === undefined) return grant;
+  const lease = parseHostedAgentLease(value.lease);
+  return lease && { ...grant, lease: { ...lease } };
+}
+
+export function parseHostedAgentAccess(value: unknown): HostedAgentAccess | null {
+  if (!isJsonObject(value)) return null;
+  if (value.driver === 'none')
+    return value.setting === 'hosting.agentDriver' && Object.keys(value).length === 2
+      ? { driver: 'none', setting: 'hosting.agentDriver' }
+      : null;
+  if (
+    !hostedAgentDriverName(value.driver) ||
+    typeof value.remoteConfig !== 'string' ||
+    !isAbsolute(value.remoteConfig) ||
+    typeof value.command !== 'string' ||
+    !value.command ||
+    Object.keys(value).length !== 3
+  )
+    return null;
+  return { driver: value.driver, remoteConfig: value.remoteConfig, command: value.command };
+}
+
+export function parseHostedMacosPlacement(value: unknown): HostedMacosPlacement | null {
+  if (
+    !isJsonObject(value) ||
+    typeof value.machine !== 'string' ||
+    !value.machine ||
+    typeof value.session !== 'string' ||
+    !/^[a-f0-9-]{36}$/.test(value.session) ||
+    !hostedMacosAppSlot(value.appSlot) ||
+    typeof value.appAttempt !== 'string' ||
+    !/^[a-zA-Z0-9_-]{1,128}$/.test(value.appAttempt) ||
+    typeof value.bundleId !== 'string' ||
+    !value.bundleId.endsWith(`.hosted${value.appSlot}`)
+  )
+    return null;
+  const agent = parseHostedAgentAccess(value.agent);
+  if (!agent) return null;
+  return {
+    machine: value.machine,
+    session: value.session,
+    appSlot: value.appSlot,
+    appAttempt: value.appAttempt,
+    bundleId: value.bundleId,
+    agent,
+  };
+}

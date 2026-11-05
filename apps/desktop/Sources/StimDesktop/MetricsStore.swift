@@ -1,0 +1,178 @@
+import AppKit
+import Observation
+import StimKit
+import StimStores
+
+struct UsageHistory {
+  static let limit = 40
+
+  var latest: ResourceUsage
+  /// The latest memory figure: the status footprint when `stim` measured one, else the sampled resident size.
+  var memoryBytes: Int64 = 0
+  var isFootprint = false
+  var cpu: [Double] = []
+  var memory: [Double] = []
+
+  mutating func append(_ usage: ResourceUsage, footprintBytes: Int64?) {
+    latest = usage
+    memoryBytes = footprintBytes ?? usage.residentBytes
+    if (footprintBytes != nil) != isFootprint { memory = [] }
+    isFootprint = footprintBytes != nil
+    if let percent = usage.cpuPercent { cpu = Array((cpu + [percent]).suffix(Self.limit)) }
+    memory = Array((memory + [Double(memoryBytes)]).suffix(Self.limit))
+  }
+}
+
+@MainActor @Observable
+final class MetricsStore {
+  private(set) var usage: [String: UsageHistory] = [:]
+  private(set) var volumes: [DiskVolume] = []
+  private(set) var hasVolumes = false
+  private(set) var memory: MachineMemory?
+  private(set) var machineCpuFraction: Double?
+  private(set) var machineCpu: [Double] = []
+  private(set) var diskUsed: [String: [Double]] = [:]
+  /// Samples of the Mac's memory in use and of the CPU the status `machine` owners use, oldest first.
+  private(set) var memoryUsed: [Double] = []
+  private(set) var ownersCpu: [Double] = []
+  private(set) var owners = OwnerHistory()
+
+  private let status: StatusStore
+  private let gc: GcReportStore
+  private let disks: DiskVolumeStore
+  @ObservationIgnored private var sampler = ResourceSampler()
+  @ObservationIgnored private var poller: VisiblePoller?
+  @ObservationIgnored private var observers: [NSObjectProtocol] = []
+  @ObservationIgnored private var sampling = false
+  @ObservationIgnored private var cpuTicks: (ticks: MachineCpuTicks, at: Date)?
+  private var cores: Int?
+
+  init(status: StatusStore, gc: GcReportStore, disks: DiskVolumeStore) {
+    self.status = status
+    self.gc = gc
+    self.disks = disks
+  }
+
+  func start() {
+    guard poller == nil else { return }
+    let poller = VisiblePoller(
+      interval: .seconds(3), isVisible: { MainWindow.isInFront }, tick: { [weak self] in self?.tick() })
+    self.poller = poller
+    let names = [
+      NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+      NSWindow.didChangeOcclusionStateNotification,
+    ]
+    observers = names.map { name in
+      NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+        MainActor.assumeIsolated { poller.update() }
+      }
+    }
+    poller.update()
+  }
+
+  /// The share of the Mac's CPU that every live workspace's processes use, from 0 to 1.
+  var workspacesCpuFraction: Double? {
+    guard let cores else { return nil }
+    let values = usage.values.compactMap(\.latest.cpuPercent)
+    return values.isEmpty
+      ? nil : UsageThresholds.cpuFraction(percentOfOneCore: values.reduce(0, +), cores: cores)
+  }
+
+  private func tick() {
+    sampleMachineCpu()
+    sample()
+    if !gc.running, gc.at.map({ Date().timeIntervalSince($0) > 300 }) ?? true { gc.refresh() }
+  }
+
+  private func sampleMachineCpu() {
+    guard let ticks = MachineCpuTicks.read() else {
+      cpuTicks = nil
+      machineCpuFraction = nil
+      machineCpu = []
+      return
+    }
+    let now = Date()
+    if let previous = cpuTicks, now.timeIntervalSince(previous.at) < Self.cpuStaleAfter {
+      machineCpuFraction = MachineCpuTicks.fraction(from: previous.ticks, to: ticks)
+    } else {
+      machineCpuFraction = nil
+    }
+    cpuTicks = (ticks, now)
+    if let machineCpuFraction {
+      machineCpu = Array((machineCpu + [machineCpuFraction * 100]).suffix(UsageHistory.limit))
+    } else {
+      machineCpu = []
+    }
+  }
+
+  private static let cpuStaleAfter: TimeInterval = 10
+
+  private func sample() {
+    guard !sampling, let payload = status.payload else { return }
+    sampling = true
+    let workspaces = payload.environments
+    let base = sampler
+    let disks = disks
+    Task.detached {
+      let cores = ProcessInfo.processInfo.activeProcessorCount
+      var processes: [ProcessEntry] = []
+      if !workspaces.isEmpty {
+        do {
+          processes = try ProcessTable.snapshot()
+          DebugLog.gap("process table", processes.isEmpty ? "ps listed no parsable processes" : nil)
+        } catch {
+          DebugLog.gap("process table", "ps could not run: \(error)")
+        }
+      }
+      var sampler = base
+      let canSample = workspaces.isEmpty || !processes.isEmpty
+      let result = canSample ? sampler.sample(workspaces, processes: processes, at: Date()) : [:]
+      let volumes = await disks.volumes(maxAge: 1)
+      let memory = MachineMemory.read()
+      DebugLog.gap("memory", memory == nil ? "host_statistics64 or hw.memsize failed" : nil)
+      DebugLog.gap("disk volumes", volumes.isEmpty ? "no volume with Stim locations could be measured" : nil)
+      let unmatched = workspaces.filter { $0.live && result[$0.path] == nil }.map(\.path).sorted()
+      DebugLog.gap(
+        "workspace cpu",
+        processes.isEmpty || unmatched.isEmpty
+          ? nil : "no process matched the roots of live workspaces \(unmatched.joined(separator: ", "))")
+      let updated = canSample ? sampler : nil
+      await MainActor.run {
+        self.sampling = false
+        if let updated { self.sampler = updated }
+        var next: [String: UsageHistory] = [:]
+        let footprints = Dictionary(
+          (self.status.payload?.environments ?? []).compactMap { env in env.footprintBytes.map { (env.path, $0) } },
+          uniquingKeysWith: { first, _ in first })
+        for (path, value) in result {
+          var history = self.usage[path] ?? UsageHistory(latest: value)
+          history.append(value, footprintBytes: footprints[path])
+          next[path] = history
+        }
+        self.cores = cores
+        self.usage = next
+        self.volumes = volumes
+        self.diskUsed = Dictionary(
+          uniqueKeysWithValues: volumes.map { volume in
+            let values = (self.diskUsed[volume.id] ?? []) + [Double(volume.totalBytes - volume.freeBytes)]
+            return (volume.id, Array(values.suffix(UsageHistory.limit)))
+          })
+        if self.hasVolumes != !volumes.isEmpty { self.hasVolumes = !volumes.isEmpty }
+        self.memory = memory
+        if let memory { self.memoryUsed = Array((self.memoryUsed + [Double(memory.usedBytes)]).suffix(UsageHistory.limit)) }
+        self.owners.append(self.status.payload?.machine, at: Date())
+        DebugLog.gap("machine cpu", self.status.payload?.machine == nil ? "stim status reported no machine usage" : nil)
+        if let machine = self.status.payload?.machine {
+          let share = 100 * UsageThresholds.cpuFraction(percentOfOneCore: machine.cpuPercent, cores: cores)
+          self.ownersCpu = Array((self.ownersCpu + [share]).suffix(UsageHistory.limit))
+        } else {
+          self.ownersCpu = []
+        }
+      }
+    }
+  }
+}
+
+func formatPercent(_ percent: Double) -> String {
+  "\(Int(percent.rounded()))%"
+}

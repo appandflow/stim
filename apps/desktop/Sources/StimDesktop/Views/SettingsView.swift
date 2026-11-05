@@ -1,0 +1,460 @@
+import AppKit
+import StimKit
+import StimStores
+import SwiftUI
+
+struct SettingsView: View {
+  @ObservedObject var store: StatusStore
+  @StateObject private var model: SettingsModel
+  @StateObject private var history: GcHistoryModel
+  @StateObject private var builds: BuildLedgerModel
+  @ObservedObject private var openRequests = OpenRequests.shared
+  @State private var workspace: String?
+  @AppStorage("settingsTab") private var tab = "app"
+  @AppStorage("settingsWorkspace") private var lastWorkspace = ""
+  @AppStorage("settingsScope") private var scope = SettingScope.machine.rawValue
+  @AppStorage("connectionsSegment") private var segment = ConnectionsSegment.incoming
+  private let machine: MachineSettingsStore
+  private let buildMachines: BuildMachinesModel
+  private let actions: ActionCenter
+
+  init(
+    environment: Task<[String: String], Never>, store: StatusStore, machine: MachineSettingsStore,
+    buildMachines: BuildMachinesModel,
+    actions: ActionCenter
+  ) {
+    self.store = store
+    self.actions = actions
+    self.machine = machine
+    self.buildMachines = buildMachines
+    _model = StateObject(wrappedValue: SettingsModel(environment: environment, machine: machine))
+    _history = StateObject(wrappedValue: GcHistoryModel(environment: environment))
+    _builds = StateObject(wrappedValue: BuildLedgerModel(environment: environment))
+  }
+
+  var body: some View {
+    TabView(selection: $tab) {
+      AppPreferencesView(stimHome: store.stimHome, settings: machine, history: history)
+        .tabItem { Label("App", systemImage: "macwindow") }
+        .tag("app")
+      ConnectionsView(
+        segment: $segment, store: store, machine: machine, buildMachines: buildMachines, ledger: builds,
+        workspace: workspace, actions: actions
+      )
+      .tabItem { Label("Connections", systemImage: "point.3.connected.trianglepath.dotted") }
+      .tag("connections")
+      stimSettings
+        .tabItem { Label("Stim Settings", systemImage: "slider.horizontal.3") }
+        .tag("stim-settings")
+      AdvancedSettingsView(server: ServerController.shared, settings: machine, stimHome: store.stimHome)
+        .tabItem { Label("Advanced", systemImage: "gearshape.2") }
+        .tag("advanced")
+    }
+    .frame(width: 780, height: 640)
+    .font(.stim(.body))
+    .foregroundStyle(Palette.text)
+    .tint(Palette.primary)
+    .onAppear {
+      openConnections(tab)
+      if SettingScope(rawValue: tab) != nil {
+        scope = tab
+        tab = "stim-settings"
+      }
+      workspace = openRequests.selectedWorkspace ?? workspace ?? (lastWorkspace.isEmpty ? nil : lastWorkspace)
+      model.load(directory: workspace)
+    }
+    .onChange(of: tab) { _, new in openConnections(new) }
+    .onReceive(openRequests.$selectedWorkspace) { path in
+      if let path { workspace = path }
+    }
+    .onReceive(ServerSession.shared.$client.combineLatest(ServerSession.shared.$state).dropFirst()) { client, state in
+      if client != nil, case .open = state { model.load(directory: workspace) }
+    }
+    .onChange(of: machine.revision) {
+      model.load(directory: workspace)
+    }
+    .onChange(of: workspace) { _, path in
+      lastWorkspace = path ?? ""
+      model.load(directory: path)
+    }
+  }
+
+  private func openConnections(_ legacyTab: String) {
+    guard let opened = ConnectionsSegment(legacyTab: legacyTab) else { return }
+    segment = opened
+    tab = "connections"
+  }
+
+  private var stimSettings: some View {
+    let selected = SettingScope(rawValue: scope) ?? .machine
+    return ScopeSettingsView(
+      scope: selected, model: model, workspace: $workspace, workspaces: workspacePaths,
+      title: { store.names(ofPath: $0).title }
+    )
+    .safeAreaInset(edge: .top, spacing: 0) {
+      VStack(alignment: .leading, spacing: Space.sm) {
+        Picker("Scope", selection: $scope) {
+          Text("Machine").tag(SettingScope.machine.rawValue)
+          Text("Repository").tag(SettingScope.repo.rawValue)
+          Text("Workspace").tag(SettingScope.workspace.rawValue)
+          Text(".stim.json").tag(SettingScope.committed.rawValue)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .tint(Palette.brand)
+        .frame(maxWidth: .infinity)
+        Text(ScopeSettingsView.caption(for: selected)).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+          .frame(maxWidth: .infinity).multilineTextAlignment(.center)
+      }
+      .padding(.horizontal, Space.xl)
+      .padding(.top, Space.xl)
+      .background(Palette.background)
+    }
+    .background(Palette.background)
+  }
+
+  private var workspacePaths: [String] {
+    var paths = (store.payload?.environments ?? []).map(\.path)
+    if let workspace, !paths.contains(workspace) { paths.insert(workspace, at: 0) }
+    return paths
+  }
+}
+
+struct ScopeSettingsView: View {
+  var scope: SettingScope
+  @ObservedObject var model: SettingsModel
+  @Binding var workspace: String?
+  var workspaces: [String]
+  var title: (String) -> String
+
+  var body: some View {
+    content
+      .safeAreaInset(edge: .top, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
+          header
+          Rectangle().fill(Palette.border).frame(height: 1).padding(.horizontal, Space.xl)
+        }
+        .background(Palette.background)
+      }
+      .background(Palette.background)
+  }
+
+  private var header: some View {
+    VStack(alignment: .leading, spacing: Space.sm) {
+      if scope != .machine {
+        HStack {
+          Picker("Workspace", selection: $workspace) {
+            Text("None").tag(String?.none)
+            ForEach(workspaces, id: \.self) { path in
+              Text("\(title(path)) \u{2014} \(abbreviatingHome(path))")
+                .tag(String?.some(path))
+            }
+          }
+          Button("Choose\u{2026}", action: chooseWorkspace).buttonStyle(.stim())
+            #if DEBUG
+              .disabled(model.inMemory)
+            #endif
+        }
+      }
+      if let file = model.payload?.file(for: scope) {
+        Text(abbreviatingHome(file))
+          .font(.stim(.caption, mono: true))
+          .foregroundStyle(Palette.secondary)
+          .textSelection(.enabled)
+      }
+    }
+    .padding(Space.xl)
+  }
+
+  static func caption(for scope: SettingScope) -> String {
+    switch scope {
+    case .machine: return "Applies to every project on this Mac. Kept in the Stim config."
+    case .repo: return "Applies to every worktree of this repository. Kept in the Stim config."
+    case .workspace: return "Applies to this workspace only and wins over every other layer. Kept in the Stim config."
+    case .committed: return "Committed to the repo in .stim.json. worktree.* settings come from the repository root."
+    }
+  }
+
+  @ViewBuilder private var content: some View {
+    if let error = model.schemaError ?? model.loadError {
+      EmptyState(title: "Settings Unavailable", message: error)
+    } else if model.payload == nil || model.fields.isEmpty {
+      ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+    } else if scope != .machine && model.payload?.file(for: scope) == nil {
+      EmptyState(
+        title: "No Workspace Selected",
+        message: "Pick a workspace above, or choose a project directory, to edit its \(scope.rawValue) settings.")
+    } else {
+      ScrollView {
+        LazyVStack(alignment: .leading, spacing: 0) {
+          ForEach(model.fields(in: scope)) { field in
+            SettingRow(field: field, scope: scope, model: model)
+            Rectangle().fill(Palette.border).frame(height: 1)
+          }
+          unknown
+        }
+        .finiteAccessibilityFrame()
+        .padding(.horizontal, Space.xl)
+      }
+    }
+  }
+
+  @ViewBuilder private var unknown: some View {
+    let entries = model.payload?.unknown.filter { $0.scope == scope } ?? []
+    if !entries.isEmpty {
+      VStack(alignment: .leading, spacing: Space.md) {
+        SectionLabel(title: "Not read by Stim")
+        ForEach(entries, id: \.self) { entry in
+          HStack(alignment: .firstTextBaseline) {
+            Text(entry.key).font(.stim(.callout, mono: true))
+            Text(abbreviatingHome(entry.value?.display ?? "")).font(.stim(.caption, mono: true)).foregroundStyle(
+              Palette.secondary
+            ).lineLimit(1)
+            Spacer()
+            Text(abbreviatingHome(entry.file))
+              .font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1).truncationMode(.head)
+          }
+        }
+      }
+      .padding(.vertical, Space.xl)
+    }
+  }
+
+  private func chooseWorkspace() {
+    let panel = NSOpenPanel()
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = false
+    panel.prompt = "Choose"
+    panel.message = "Choose the app directory, the one holding package.json."
+    if panel.runModal() == .OK, let url = panel.url { workspace = url.path }
+  }
+}
+
+private struct SettingRow: View {
+  var field: SettingField
+  var scope: SettingScope
+  @ObservedObject var model: SettingsModel
+
+  private var entry: SettingEntry? { model.payload?.entry(field.key) }
+  private var layerValue: JSONValue? { entry?.layer(scope) }
+  private var id: String { SettingsModel.id(field.key, scope) }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.sm) {
+      HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+        Text(field.key).font(.stim(.callout, mono: true)).foregroundStyle(Palette.text)
+        if field.sensitive { Pill(tone: .warning) { Text("sensitive") } }
+        Spacer()
+        if model.writing.contains(id) { ProgressView().controlSize(.small) }
+        if layerValue != nil {
+          Button("Reset") { model.write(field, scope: scope, value: nil) }
+            .buttonStyle(.stim())
+            .help("stim settings unset \(field.key) --scope \(scope.rawValue)")
+        }
+      }
+      if !field.description.isEmpty {
+        Text(field.description).font(.stim(.callout)).foregroundStyle(Palette.secondary)
+      }
+      SettingEditor(field: field, value: layerValue, effective: entry?.value == .null ? nil : entry?.value) { value in
+        model.write(field, scope: scope, value: value)
+      }
+      .disabled(model.writing.contains(id))
+      facts
+      if let refusal = model.refusals[id] {
+        Text(abbreviatingHome(refusal)).font(.stim(.footnote)).foregroundStyle(Palette.error).textSelection(.enabled)
+      }
+    }
+    .padding(.vertical, Space.lg)
+  }
+
+  @ViewBuilder private var facts: some View {
+    HStack(spacing: Space.lg) {
+      if let entry {
+        if let origin = entry.originLabel {
+          Text(abbreviatingHome("Effective: \(entry.value.display) from \(origin)"))
+        } else {
+          Text("Not set")
+        }
+        if let lower = entry.overridden(by: scope, field: field) {
+          Text(
+            abbreviatingHome(
+              layerValue == nil
+                ? "Setting it here overrides \(lower.source): \(lower.value.display)"
+                : "Overrides \(lower.source): \(lower.value.display)"))
+        }
+        if let env = entry.env {
+          Text(abbreviatingHome("\(env.name)=\(env.value) in the environment wins")).foregroundStyle(Palette.warning)
+        }
+      }
+    }
+    .font(.stim(.caption))
+    .foregroundStyle(Palette.tertiary)
+    .lineLimit(1)
+    .truncationMode(.middle)
+  }
+}
+
+private struct SettingEditor: View {
+  var field: SettingField
+  var value: JSONValue?
+  var effective: JSONValue?
+  var commit: (JSONValue) -> Void
+  @State private var draft = ""
+
+  var body: some View {
+    editor
+      .onAppear { draft = text(value) }
+      .onChange(of: value) { _, new in draft = text(new) }
+  }
+
+  @ViewBuilder private var editor: some View {
+    switch field.control {
+    case .picker(let choices):
+      Picker("", selection: Binding(get: { value?.string ?? "" }, set: { commit(.string($0)) })) {
+        if value == nil { Text("Not set").tag("") }
+        ForEach(choices, id: \.self) { Text($0).tag($0) }
+      }
+      .labelsHidden()
+      .frame(maxWidth: 260, alignment: .leading)
+    case .toggle:
+      Toggle(
+        "Enabled",
+        isOn: Binding(get: { value?.bool ?? effective?.bool ?? false }, set: { commit(.bool($0)) })
+      )
+      .toggleStyle(.switch)
+    case .stepper(let minimum, let maximum, let integer):
+      HStack {
+        TextField(placeholder, text: $draft).frame(width: 100).onSubmit(commitNumber)
+        Stepper(
+          "",
+          onIncrement: { step(1, minimum: minimum, maximum: maximum) },
+          onDecrement: { step(-1, minimum: minimum, maximum: maximum) }
+        )
+        .labelsHidden()
+        if let minimum, let maximum {
+          Text("\(format(minimum))\u{2013}\(format(maximum))").foregroundStyle(Palette.tertiary)
+        } else if integer, let minimum {
+          Text("\(format(minimum)) or more").foregroundStyle(Palette.tertiary)
+        }
+      }
+    case .filePicker:
+      HStack {
+        TextField(placeholder, text: $draft).onSubmit { commitText() }
+        Button("Choose\u{2026}", action: choosePath).buttonStyle(.stim())
+      }
+    case .tokens:
+      TokenField(tokens: value?.strings ?? []) { commit(.array($0.map(JSONValue.string))) }
+        .frame(height: 24)
+    case .json:
+      VStack(alignment: .leading, spacing: Space.sm) {
+        TextEditor(text: $draft)
+          .font(.stim(.caption, mono: true))
+          .frame(height: 64)
+          .overlay(RoundedRectangle(cornerRadius: Radius.small).strokeBorder(Palette.border))
+        Button("Apply") {
+          if let data = draft.data(using: .utf8), let parsed = try? JSONDecoder().decode(JSONValue.self, from: data) {
+            commit(parsed)
+          } else {
+            commit(.string(draft))
+          }
+        }
+        .buttonStyle(.stim(.primary))
+      }
+    case .secure:
+      HStack {
+        SecureField(value == nil ? "Not set" : "Hidden; type to replace", text: $draft).onSubmit { commitText() }
+        Button("Set") { commitText() }
+          .buttonStyle(.stim(.primary))
+          .disabled(draft.isEmpty)
+      }
+    case .text:
+      TextField(placeholder, text: $draft).onSubmit { commitText() }
+    }
+  }
+
+  private var placeholder: String {
+    effective.map { "Inherits \($0.display)" } ?? "Not set"
+  }
+
+  private func text(_ value: JSONValue?) -> String {
+    guard let value, !field.sensitive else { return "" }
+    if case .object = value {
+      let data = (try? JSONEncoder.pretty.encode(value)) ?? Data()
+      return String(decoding: data, as: UTF8.self)
+    }
+    return value.display
+  }
+
+  private func commitText() {
+    guard !draft.isEmpty else { return }
+    commit(.string(draft))
+    if field.sensitive { draft = "" }
+  }
+
+  private func commitNumber() {
+    guard let number = Double(draft) else {
+      commit(.string(draft))
+      return
+    }
+    commit(.number(number))
+  }
+
+  private func step(_ delta: Double, minimum: Double?, maximum: Double?) {
+    let current = Double(draft) ?? value?.number ?? effective?.number ?? minimum ?? 0
+    var next = current + delta
+    if let minimum { next = max(minimum, next) }
+    if let maximum { next = min(maximum, next) }
+    commit(.number(next))
+  }
+
+  private func format(_ number: Double) -> String { JSONValue.number(number).json }
+
+  private func choosePath() {
+    let panel = NSOpenPanel()
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = true
+    panel.prompt = "Choose"
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+    commit(.string(url.path))
+  }
+}
+
+extension JSONEncoder {
+  fileprivate static let pretty: JSONEncoder = {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    return encoder
+  }()
+}
+
+/// An `NSTokenField` whose tokens are committed when editing ends.
+private struct TokenField: NSViewRepresentable {
+  var tokens: [String]
+  var commit: ([String]) -> Void
+
+  final class Coordinator: NSObject, NSTokenFieldDelegate {
+    var parent: TokenField
+    init(_ parent: TokenField) { self.parent = parent }
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+      guard let field = notification.object as? NSTokenField else { return }
+      let tokens = (field.objectValue as? [String]) ?? []
+      if tokens != parent.tokens { parent.commit(tokens) }
+    }
+  }
+
+  func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+  func makeNSView(context: Context) -> NSTokenField {
+    let field = NSTokenField()
+    field.delegate = context.coordinator
+    field.placeholderString = "Type a value and press Return"
+    field.objectValue = tokens
+    return field
+  }
+
+  func updateNSView(_ field: NSTokenField, context: Context) {
+    context.coordinator.parent = self
+    if field.currentEditor() == nil { field.objectValue = tokens }
+  }
+}

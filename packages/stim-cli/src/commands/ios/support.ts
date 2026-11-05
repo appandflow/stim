@@ -1,0 +1,493 @@
+import type { BuildProgress } from '../../engine/build-progress.ts';
+import type { RunRecorder } from '../../engine/stats.ts';
+import { parseDeviceWait } from '../../engine/device-lease-run.ts';
+import { join, basename } from 'node:path';
+import chalk from 'chalk';
+import { workspaceLogsDir } from '../../workspace/paths.ts';
+import { formatDuration, shortUdid, phaseLine, SLOW_STEP_MS } from '../../command-output.ts';
+import type { IosCommandOptions, DeviceLike, PodStateLike, PodVerdictLike, FailArgs } from './types.ts';
+import type { BuildIosResult } from '../../engine/xcode.ts';
+import {
+  cacheProviderSettingError,
+  iosProjectDirSetting,
+  iosProjectDirSettingError,
+  SETTING_SHAPE_REMEDY,
+  settingShapeErrors,
+  inertSettingWarning,
+  unknownSettingKeys,
+  type SettingsObject,
+} from '../../workspace/settings.ts';
+import { resolveBuildPlacement } from '../../offload/selection.ts';
+import { resolveOptimizations, type Optimizations } from '../../optimizations.ts';
+import type { SettingScope } from '@stim-cli/core/state';
+import {
+  DeviceAdmissionRefusal,
+  type DeviceSlotWaitPolicy,
+  layerNote,
+  unknownIosDeviceTypeRefusal,
+  unknownIosRuntimeRefusal,
+} from '../../engine/device-capacity.ts';
+import { parseIosSimulatorApp, type IosSimulatorApp } from '../../devices/ios-simulator-viewer.ts';
+import { listIosRuntimes, type IosSimSnapshot } from '../../devices/ios.ts';
+import { IosDeviceMismatchError } from '../../engine/device-ios.ts';
+import { didSetUpDevice, RecordedDeviceLostError, type OwnedDeviceRecord } from '../../engine/device.ts';
+import { claimFailure } from '../../ownership-claim.ts';
+import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
+import { describeDiagnostic } from '../../engine/errors-xcode.ts';
+import type { SimulatorArch } from '../../engine/agent-device.ts';
+
+export const PLATFORM = 'ios';
+
+export function buildLogFile(root: string): string {
+  return join(workspaceLogsDir(root), `build-${PLATFORM}.ndjson`);
+}
+
+export function iosProjectPathError(settings: unknown, root: string, isExpo: () => boolean): string | null {
+  const error = iosProjectDirSettingError(settings, root);
+  if (error || !iosProjectDirSetting(settings, root).custom || !isExpo()) return error;
+  return 'ios.projectPath applies to bare React Native apps only: expo prebuild generates and builds ios/. Remove it for this Expo app.';
+}
+
+export function resolveIosBuildSetup(
+  remoteBuild: string | undefined,
+  settings: SettingsObject,
+  warn: (label: 'setting' | 'cache', message: string) => void,
+  env?: NodeJS.ProcessEnv,
+): { ok: true; buildMachine: string; optimizations: Optimizations } | { ok: false; failure: FailArgs } {
+  const [shapeError, ...lines] = settingShapeErrors(settings);
+  if (shapeError)
+    return { ok: false, failure: { code: 'STIM_BAD_ARG', message: shapeError, lines, remedy: SETTING_SHAPE_REMEDY } };
+  const placement = resolveBuildPlacement(remoteBuild);
+  if (placement.failure) return { ok: false, failure: { ...placement.failure, setup: true } };
+  let optimizations: Optimizations;
+  try {
+    optimizations = resolveOptimizations(settings, env);
+  } catch (error) {
+    return {
+      ok: false,
+      failure: { code: 'STIM_BAD_ARG', message: (error as Error).message, remedy: SETTING_SHAPE_REMEDY },
+    };
+  }
+  for (const key of unknownSettingKeys(settings)) {
+    warn('setting', inertSettingWarning(settings, key));
+  }
+  const cacheProviderError = cacheProviderSettingError(settings);
+  if (cacheProviderError) warn('cache', `${cacheProviderError} Using the local cache.`);
+  return { ok: true, buildMachine: placement.selected, optimizations };
+}
+
+const MAX_PRINTED_DIAGNOSTICS = 6;
+
+export function deviceLabel(device: DeviceLike | null | undefined, udid: unknown): string {
+  const name = device?.deviceName || device?.name || null;
+  return name ? `${name} (${shortUdid(udid)})` : shortUdid(udid);
+}
+
+export function deviceShortName(device: DeviceLike | null | undefined, udid: unknown): string {
+  return device?.deviceName || device?.name || shortUdid(udid);
+}
+
+export function appNameFromPath(appPath: unknown): string | null {
+  if (typeof appPath !== 'string' || appPath.trim() === '') return null;
+  const name = basename(appPath).replace(/\.app$/i, '');
+  return name === '' ? null : name;
+}
+
+export function iosConfigurationSetting(settings: SettingsObject | null | undefined): string | null {
+  const ios = settings?.['ios'];
+  if (!ios || typeof ios !== 'object' || Array.isArray(ios)) return null;
+  const raw = (ios as Record<string, unknown>)['configuration'];
+  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+}
+
+export function resolveConfiguration(
+  flag: string | null | undefined,
+  settings: SettingsObject | null | undefined,
+): string | null {
+  const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
+  return fromFlag || iosConfigurationSetting(settings);
+}
+
+export function resolveSchemeSelection(
+  { scheme, easProfile }: { scheme?: string | null; easProfile?: string },
+  settings: SettingsObject | null | undefined,
+): string | undefined {
+  if (typeof scheme === 'string' || easProfile !== undefined) return scheme ?? undefined;
+  return iosStringSetting(settings, 'scheme') ?? undefined;
+}
+
+function iosStringSetting(settings: SettingsObject | null | undefined, key: string): string | null {
+  const ios = settings?.['ios'];
+  if (!ios || typeof ios !== 'object' || Array.isArray(ios)) return null;
+  const raw = (ios as Record<string, unknown>)[key];
+  return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
+}
+
+export function resolveDeviceType(
+  flag: string | null | undefined,
+  settings: SettingsObject | null | undefined,
+): string | null {
+  const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
+  return fromFlag || iosStringSetting(settings, 'deviceType');
+}
+
+export function resolveRuntime(
+  flag: string | null | undefined,
+  settings: SettingsObject | null | undefined,
+): string | null {
+  const fromFlag = typeof flag === 'string' && flag.trim() !== '' ? flag.trim() : null;
+  return fromFlag || iosStringSetting(settings, 'runtime');
+}
+
+export function resolveSimulatorAppFlag(
+  flag: string | undefined,
+  physical: boolean,
+  remoteBackend: string | null,
+  automatic = false,
+): { simulatorApp?: IosSimulatorApp } | { refusal: FailArgs } {
+  if (flag === undefined) return {};
+  let simulatorApp: IosSimulatorApp;
+  try {
+    simulatorApp = parseIosSimulatorApp(flag, '--simulator-app');
+  } catch (error) {
+    return { refusal: { code: 'STIM_BAD_ARG', message: (error as Error).message } };
+  }
+  if (physical || (remoteBackend && !automatic)) {
+    return {
+      refusal: {
+        code: 'STIM_BAD_ARG',
+        message: '--simulator-app only applies to a local owned iOS simulator.',
+        remedy: 'Drop --simulator-app when using a physical or remote device.',
+      },
+    };
+  }
+  return { simulatorApp };
+}
+
+export async function deviceModelRefusal({
+  slot,
+  deviceTypeFlag,
+  runtimeFlag,
+  deviceType,
+  runtime,
+  deviceTypeOrigin = null,
+  runtimeOrigin = null,
+  physical,
+  remoteBackend,
+  hosted = false,
+  listRuntimes,
+  signal,
+  snapshot,
+}: {
+  slot?: string;
+  deviceTypeFlag: string | undefined;
+  runtimeFlag: string | undefined;
+  deviceType: string | null;
+  runtime: string | null;
+  deviceTypeOrigin?: SettingScope | null;
+  runtimeOrigin?: SettingScope | null;
+  physical: boolean;
+  remoteBackend: RemoteDeviceBackend | null;
+  hosted?: boolean;
+  signal?: AbortSignal;
+  snapshot?: IosSimSnapshot;
+  listRuntimes: (options?: {
+    signal?: AbortSignal;
+    snapshot?: IosSimSnapshot;
+  }) => ReturnType<typeof listIosRuntimes> | Promise<ReturnType<typeof listIosRuntimes>>;
+}): Promise<{ code: string; message: string; remedy: string } | null> {
+  if (slot && slot !== 'default' && remoteBackend)
+    return {
+      code: 'STIM_BAD_ARG',
+      message: 'Named slots currently support local simulators and physical devices.',
+      remedy: 'Use the default slot for a remote session.',
+    };
+  if (typeof deviceTypeFlag === 'string' && deviceTypeFlag.trim() === '') {
+    return {
+      code: 'STIM_BAD_ARG',
+      message: '--device-type was given an empty name.',
+      remedy:
+        'Pass `--device-type <name>` with a model `xcrun simctl list devicetypes` names, e.g. "iPad Pro 13-inch (M5)".',
+    };
+  }
+  if (typeof runtimeFlag === 'string' && runtimeFlag.trim() === '') {
+    return {
+      code: 'STIM_BAD_ARG',
+      message: '--runtime was given an empty version.',
+      remedy: 'Pass `--runtime <version>` with a runtime `xcrun simctl list runtimes` reports, e.g. "18.5".',
+    };
+  }
+  if (remoteBackend) {
+    const eas = remoteBackend === 'eas';
+    const given = [!eas && deviceTypeFlag && '--device-type', runtimeFlag && '--runtime'].filter(Boolean).join(' and ');
+    if (given) {
+      return {
+        code: 'STIM_BAD_ARG',
+        message: `${given} ${given.includes(' and ') ? 'apply' : 'applies'} only to a local owned iOS simulator; the ${remoteBackend} remote backend chooses its own ${eas ? 'iOS runtime' : 'device'}.`,
+        remedy: `Drop ${given} for a remote run. For a local owned simulator, drop --remote and unset ios.remote with \`stim settings unset ios.remote --scope <machine|workspace|repo|committed>\`.`,
+      };
+    }
+    return null;
+  }
+  if (physical || hosted) return null;
+  if (!deviceType && !runtime) return null;
+  let runtimes;
+  try {
+    runtimes = await listRuntimes({ signal, snapshot });
+  } catch (error) {
+    return {
+      code: 'STIM_NO_DEVICE',
+      message: `Could not read the installed simulator runtimes: ${(error as Error)?.message || error}`,
+      remedy: 'Run `stim doctor` to check the simulator toolchain, then try again.',
+    };
+  }
+  const runtimeRefusal = unknownIosRuntimeRefusal(runtime, runtimes);
+  if (runtimeRefusal) {
+    const { message, remedy } = layerNote(runtimeRefusal, 'ios.runtime', runtimeFlag, runtimeOrigin);
+    return { code: 'STIM_BAD_ARG', message, remedy };
+  }
+  const deviceTypeRefusal = unknownIosDeviceTypeRefusal(deviceType, runtimes, runtime);
+  if (deviceTypeRefusal) {
+    const { message, remedy } = layerNote(deviceTypeRefusal, 'ios.deviceType', deviceTypeFlag, deviceTypeOrigin);
+    return { code: 'STIM_BAD_ARG', message, remedy };
+  }
+  return null;
+}
+
+export function ownedSimFailure(error: unknown): { code: string; message: string; remedy: string } {
+  if (error instanceof RecordedDeviceLostError || error instanceof DeviceAdmissionRefusal) {
+    return { code: error.code, message: error.message, remedy: error.remedy };
+  }
+  const refusal = claimFailure(error, 'stim ios');
+  if (refusal) return refusal;
+  return {
+    code: 'STIM_NO_DEVICE',
+    message: `Could not ensure an owned iOS simulator: ${(error as Error)?.message || error}`,
+    remedy:
+      error instanceof IosDeviceMismatchError
+        ? error.remedy
+        : 'Run `stim doctor` to check the simulator toolchain, then try again.',
+  };
+}
+
+export function isReleaseConfiguration(configuration: string | null | undefined): boolean {
+  const name = typeof configuration === 'string' ? configuration.trim() : '';
+  // react-native-xcode.sh skips the simulator bundle for any configuration matching `*Debug*`.
+  return name !== '' && name.toLowerCase() !== 'debug' && !name.includes('Debug');
+}
+
+export function simulatorBuildArch({
+  physical,
+  remoteArch,
+  hostArch,
+}: {
+  physical: boolean;
+  remoteArch: SimulatorArch | null;
+  hostArch: SimulatorArch;
+}): SimulatorArch | null {
+  if (physical) return null;
+  return remoteArch ?? hostArch;
+}
+
+export function iosProviderRunOptions(
+  configuration: string | null | undefined,
+  arch: SimulatorArch | null,
+): { configuration?: string; arch?: SimulatorArch } | null {
+  if (arch) return { configuration: configuration || 'Debug', arch };
+  return configuration ? { configuration } : null;
+}
+
+export function podAction(
+  podState: PodStateLike | null | undefined,
+  verdict: PodVerdictLike | null | undefined,
+  { prebuildRan = false }: { prebuildRan?: boolean } = {},
+): { install: boolean; reason?: string } {
+  if (verdict?.stale) return { install: true, reason: verdict.reason };
+  if (verdict?.noPods && podState?.hasPodfile) {
+    return { install: true, reason: 'ios/Podfile exists but no pods are installed' };
+  }
+  if (prebuildRan && podState?.hasPodfile) {
+    return { install: true, reason: 'prebuild updated ios/ in place' };
+  }
+  return { install: false };
+}
+
+export function xcodeFailureReport(
+  result: Extract<BuildIosResult, { ok: false }>,
+  logPath: string,
+): { message: string; remedy: string } {
+  const diagnostics = result.diagnostics;
+  const code = result.exitCode;
+  const how = code === null ? '' : ` (exit code ${code})`;
+  const message = diagnostics.length
+    ? `\`xcodebuild\` failed${how} with ${diagnostics.length} diagnostic${diagnostics.length === 1 ? '' : 's'}.`
+    : `\`xcodebuild\` failed${how} with no recognizable diagnostic.`;
+  const remedy = diagnostics.find((d) => d?.remedy)?.remedy || `See ${logPath} for the transcript.`;
+  return { message, remedy };
+}
+
+export function printDiagnostics(note: (line: string) => void, result: Extract<BuildIosResult, { ok: false }>): void {
+  const diagnostics = result.diagnostics;
+  const shown = diagnostics.slice(0, MAX_PRINTED_DIAGNOSTICS);
+  for (const diagnostic of shown) {
+    note(chalk.red(phaseLine('error', describeDiagnostic(diagnostic))));
+  }
+  const hidden = diagnostics.length - shown.length + result.truncated;
+  if (hidden > 0) {
+    note(chalk.dim(phaseLine('error', `... and ${hidden} more diagnostic${hidden === 1 ? '' : 's'} in the log`)));
+  }
+  if (diagnostics.length === 0) {
+    note(chalk.red(phaseLine('error', 'xcodebuild failed with no recognizable diagnostic; last lines:')));
+    for (const line of result.tail.slice(-5)) note(chalk.dim(phaseLine('', line)));
+  }
+}
+
+export function resolveIosWait(
+  opts: IosCommandOptions,
+  physical: boolean,
+):
+  | { waitSeconds: number; noWait: boolean; deviceSlotWaitMs: number | undefined; checkCapacity: boolean }
+  | { failure: FailArgs } {
+  const noWait = opts.wait === false;
+  if (opts.waitConflict) {
+    return {
+      failure: {
+        code: 'STIM_BAD_ARG',
+        message: '--wait and --no-wait ask for opposite things.',
+        remedy: 'Pass only one of `--wait <seconds>` and `--no-wait`.',
+      },
+    };
+  }
+  const waitParsed = parseDeviceWait(noWait ? undefined : opts.wait);
+  if ('error' in waitParsed) {
+    return {
+      failure: {
+        code: 'STIM_BAD_ARG',
+        message: waitParsed.error,
+        remedy:
+          'Pass a whole number of seconds, e.g. --wait 90. `--wait 0` refuses a busy lease or device slot at once.',
+      },
+    };
+  }
+  return {
+    waitSeconds: waitParsed.seconds,
+    noWait,
+    checkCapacity: !physical && (noWait || waitParsed.seconds === 0),
+    deviceSlotWaitMs: noWait ? 0 : opts.wait === undefined && !physical ? undefined : waitParsed.seconds * 1000,
+  };
+}
+
+interface IosDeviceWaitRun {
+  policy: DeviceSlotWaitPolicy;
+  record: RunRecorder['record'];
+  booting(pending: { done: Promise<unknown> } | undefined): void;
+  /** A simulator creation the run cannot abandon: `finish` waits for it to settle, queued or not. */
+  creating(pending: Promise<unknown>): void;
+  finish(): Promise<void>;
+}
+
+/** What the run records once its owned simulator is prepared: how long it took, and the device it boots. */
+export function iosDeviceSettler({
+  prepare,
+  phase,
+  progress,
+  deviceWaitRun,
+  remote,
+  onSettled,
+}: {
+  prepare: () => number;
+  phase: (label: string, line: string) => void;
+  progress: BuildProgress;
+  deviceWaitRun: Pick<IosDeviceWaitRun, 'booting'>;
+  remote: boolean;
+  onSettled: (prepared: OwnedDeviceRecord) => void;
+}): (prepared: OwnedDeviceRecord) => void {
+  return (prepared) => {
+    onSettled(prepared);
+    deviceWaitRun.booting(prepared.booting);
+    progress.deviceSetup(didSetUpDevice(prepared, remote));
+    const prepareMs = prepare();
+    if (prepared.created || prepareMs >= SLOW_STEP_MS) {
+      phase(
+        'device',
+        `${deviceLabel(prepared, prepared.deviceUdid)} ${prepared.created ? 'created' : 'prepared'} (${formatDuration(prepareMs)})`,
+      );
+    }
+  };
+}
+
+export interface PendingOwnedDevice {
+  runtimeId: string;
+  created: Promise<void>;
+}
+
+/**
+ * Settles `device` with `settle` unless it is a simulator still waiting for its boot slot. A pending one is
+ * settled when its creation resolves; the run waits for it in `finish`, and a rejection stays on `created`.
+ */
+export function pendOwnedDevice(
+  device: OwnedDeviceRecord,
+  settle: (device: OwnedDeviceRecord) => void,
+  waitRun: Pick<IosDeviceWaitRun, 'creating'>,
+): PendingOwnedDevice | null {
+  if (!device.creating) {
+    settle(device);
+    return null;
+  }
+  const { runtimeId, created } = device.creating;
+  waitRun.creating(created);
+  const settled = created.then((prepared) => settle(prepared));
+  settled.catch(() => {});
+  return { runtimeId, created: settled };
+}
+
+/** Runs `start` once the pending device exists; the promise rejects with the creation's failure. */
+export function startWhenCreated(pending: PendingOwnedDevice | null, start: () => unknown): Promise<void> | null {
+  if (!pending) return null;
+  const started = (async () => {
+    await pending.created;
+    start();
+  })();
+  started.catch(() => {});
+  return started;
+}
+
+export function createIosDeviceWaitRun(
+  stats: RunRecorder,
+  progress: BuildProgress,
+  signal?: AbortSignal,
+): IosDeviceWaitRun {
+  const controller = new AbortController();
+  let waiting = false;
+  let boot: Promise<unknown> | undefined;
+  let creation: Promise<unknown> | undefined;
+  let outcome: Parameters<RunRecorder['record']>[0] | undefined;
+  return {
+    policy: {
+      signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
+      waitingFor(info) {
+        waiting = info !== null;
+        progress.waitingFor(info, 'device-slot');
+      },
+      onWait: stats.addDeviceSlotWaitMs,
+      onBootStart: () => progress.bootStarted(),
+    },
+    record(next) {
+      if (waiting) outcome = next;
+      else stats.record(next);
+    },
+    booting(pending) {
+      boot ??= pending?.done;
+    },
+    creating(pending) {
+      creation = pending;
+    },
+    async finish() {
+      const queued = waiting;
+      controller.abort();
+      await creation?.catch(() => {});
+      if (queued) await boot?.catch(() => {});
+      if (outcome) stats.record(outcome);
+    },
+  };
+}

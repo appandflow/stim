@@ -1,0 +1,39 @@
+{
+  "sessions": [
+    {
+      "id": "ios-session",
+      "client": { "id": "laptop", "name": "Laptop", "node": "extra" },
+      "platform": "ios",
+      "device": "iPhone 17",
+      "app": "Example",
+      "state": "ready",
+      "parked": false,
+      "since": "2026-10-07T12:00:00.000Z",
+      "workspace": "workspace-a",
+      "futureField": true
+    },
+    {
+      "id": "android-session",
+      "client": { "id": "studio", "name": "Studio" },
+      "platform": "android",
+      "device": "Pixel 9",
+      "app": null,
+      "state": "recovering",
+      "parked": false,
+      "since": "2026-10-07T11:00:00Z",
+      "workspace": "workspace-b"
+    },
+    {
+      "id": "macos-session",
+      "client": { "id": "mini", "name": "Mini" },
+      "platform": "macos",
+      "device": null,
+      "app": "Example Desktop",
+      "state": "stopped",
+      "parked": true,
+      "since": "2026-10-07T10:00:00.000Z",
+      "workspace": "workspace-c"
+    }
+  ],
+  "futurePayloadField": 1
+}

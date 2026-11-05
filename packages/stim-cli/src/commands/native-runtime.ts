@@ -1,0 +1,145 @@
+import chalk from 'chalk';
+import { readIdleStop } from '@stim-cli/core/state';
+import { phaseLine } from '../command-output.ts';
+import type { DevServerStart } from '../engine/build-facts.ts';
+import { resolveProjectMetro } from '../metro.ts';
+import { metroPortSetting } from '../workspace/settings.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { startDevServer, type StartDevServerRequest } from './start.ts';
+import { ensureWorkspaceStorageAsync } from '../workspace/paths.ts';
+import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../engine/launch-verify.ts';
+
+export interface MobileRuntimePreparation {
+  metroPort: number | null;
+}
+
+export interface RuntimeReadiness {
+  state: boolean | string;
+  warning?: string;
+  unattributed?: boolean;
+}
+
+export type DevServerGate =
+  | { ok: true; port: number; pid: number | null; devServer: DevServerStart | null }
+  | {
+      ok: false;
+      code: string;
+      message: string;
+      remedy: string | null;
+      lines: string[];
+      retainedClaimRoots?: string[];
+    };
+
+export async function ensureDevServer({
+  root,
+  port,
+  settings,
+  settingsContext,
+  remote,
+  hostedPorts,
+  env,
+  note,
+  onReclaim,
+  resolve = resolveProjectMetro,
+  start = startDevServer,
+  readState = readWorkspaceState,
+}: {
+  root: string;
+  port: number | null;
+  settings: StartDevServerRequest['settings'];
+  settingsContext: StartDevServerRequest['settingsContext'];
+  remote: boolean;
+  hostedPorts?: StartDevServerRequest['hostedPorts'];
+  env?: NodeJS.ProcessEnv;
+  note: (line: string) => void;
+  onReclaim?: StartDevServerRequest['onReclaim'];
+  resolve?: (port: number, root: string) => Promise<{ metro?: { pid?: number } | null }>;
+  start?: typeof startDevServer;
+  readState?: typeof readWorkspaceState;
+}): Promise<DevServerGate> {
+  const pin = metroPortSetting(settings, env);
+  const canReuse = !pin.error && (pin.port === null || pin.port === port);
+  const held = port === null || !canReuse ? null : (await resolve(port, root)).metro;
+  if (port !== null && held) return { ok: true, port, pid: held.pid ?? null, devServer: null };
+  const reason = readIdleStop(readState(root)) ? 'stopped (idle)' : 'not running';
+  note(chalk.dim(phaseLine('metro', `dev server ${reason}; starting it${remote ? ' for a remote device' : ''}`)));
+  const result = await start({ root, settings, settingsContext, remote, hostedPorts, out: note, note, onReclaim });
+  if (!result.ok) {
+    return {
+      ok: false,
+      code: result.error.code,
+      message: `Could not start this workspace's dev server: ${result.error.message}`,
+      remedy: result.error.remedy,
+      lines: result.lines,
+      ...(result.retainedClaimRoots ? { retainedClaimRoots: result.retainedClaimRoots } : {}),
+    };
+  }
+  const { facts } = result;
+  return {
+    ok: true,
+    port: facts.port,
+    pid: facts.supervisorPid,
+    devServer: facts.alreadyRunning ? null : { started: true, reason },
+  };
+}
+
+export async function ensureWorkspaceStorageSafely(
+  root: string,
+  { note = (_line: string) => {} }: { note?: (line: string) => void } = {},
+): Promise<unknown> {
+  try {
+    return await ensureWorkspaceStorageAsync(root);
+  } catch (err) {
+    note(chalk.dim(`Could not prepare this workspace's Stim state: ${(err as Error)?.message || err}`));
+    throw err;
+  }
+}
+
+export function launchOutcomeRecord({
+  launchState,
+  release,
+  process = false,
+  bundleId,
+  configuration,
+  metroPort,
+  unattributed = false,
+}: {
+  launchState: boolean | string;
+  release: boolean;
+  process?: boolean;
+  bundleId: string | null;
+  configuration: string | null;
+  metroPort?: number | null;
+  unattributed?: boolean;
+}): Record<string, unknown> {
+  const unverified = launchState === LAUNCH_UNVERIFIED;
+  const bundling = launchState === LAUNCH_BUNDLING;
+  let msg: string;
+  if (process) {
+    msg = unverified ? `${bundleId} could not be verified as running` : `${bundleId} is running its native process`;
+  } else if (release) {
+    msg = unverified
+      ? `${bundleId} could not be verified as running after its ${configuration} launch`
+      : `${bundleId} is running its embedded ${configuration} bundle`;
+  } else if (unverified && unattributed) {
+    msg = `a bundle delivered on this workspace's Metro port ${metroPort} could not be attributed to ${bundleId} on this device: another slot of the same platform shares that Metro`;
+  } else if (unverified) {
+    msg = `no bundle request from ${bundleId} reached this workspace's Metro on port ${metroPort}`;
+  } else if (bundling) {
+    msg =
+      `${bundleId} requested a bundle from this workspace's Metro on port ${metroPort}; ` +
+      'it was still being built when the launch check ended';
+  } else {
+    msg = `${bundleId} fetched a bundle from this workspace's Metro on port ${metroPort}`;
+  }
+  return {
+    src: 'build',
+    level: unverified ? 'warn' : 'info',
+    event: unverified ? 'launch_unverified' : bundling ? 'launch_bundling' : 'launch_verified',
+    msg,
+  };
+}
+
+export function isPhysicalDeviceRequest(flag: string | boolean | null | undefined): boolean {
+  return flag !== null && flag !== undefined && flag !== false;
+}

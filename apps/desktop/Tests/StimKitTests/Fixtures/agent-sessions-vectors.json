@@ -1,0 +1,138 @@
+{
+  "labels": [
+    {
+      "name": "names the tool and the title",
+      "session": {
+        "tool": "claude-code",
+        "sessionId": "a",
+        "cwd": "/w",
+        "title": "Fix the login bug",
+        "lastActiveAt": "2026-09-28T11:55:00.000Z"
+      },
+      "label": "Claude Code · Fix the login bug"
+    },
+    {
+      "name": "names only the tool without a title",
+      "session": { "tool": "codex", "sessionId": "b", "cwd": "/w" },
+      "label": "Codex"
+    },
+    {
+      "name": "drops an empty title",
+      "session": {
+        "tool": "codex",
+        "sessionId": "b",
+        "cwd": "/w",
+        "title": ""
+      },
+      "label": "Codex"
+    },
+    {
+      "name": "shows no age for an ended session",
+      "session": {
+        "tool": "claude-code",
+        "sessionId": "c",
+        "cwd": "/w",
+        "title": "Fix the login bug",
+        "endedAt": "2026-09-28T10:00:00.000Z"
+      },
+      "label": "Claude Code · Fix the login bug"
+    },
+    {
+      "name": "shows an unknown tool by its raw name",
+      "session": { "tool": "gemini-cli", "sessionId": "d", "cwd": "/w" },
+      "label": "gemini-cli"
+    }
+  ],
+  "order": [
+    {
+      "name": "puts the earliest started session first, running or ended",
+      "agents": [
+        {
+          "tool": "claude-code",
+          "sessionId": "late",
+          "cwd": "/w",
+          "startedAt": "2026-09-28T11:00:00.000Z",
+          "lastActiveAt": "2026-09-28T11:59:00.000Z"
+        }
+      ],
+      "endedAgents": [
+        {
+          "tool": "claude-code",
+          "sessionId": "first",
+          "cwd": "/w",
+          "startedAt": "2026-09-27T09:00:00.000Z",
+          "endedAt": "2026-09-28T10:00:00.000Z"
+        },
+        {
+          "tool": "codex",
+          "sessionId": "middle",
+          "cwd": "/w",
+          "startedAt": "2026-09-28T08:00:00Z",
+          "endedAt": "2026-09-28T08:30:00.000Z"
+        }
+      ],
+      "ids": ["claude-code:first", "codex:middle", "claude-code:late"]
+    },
+    {
+      "name": "keeps the first session first when it stops running",
+      "agents": [],
+      "endedAgents": [
+        {
+          "tool": "claude-code",
+          "sessionId": "late",
+          "cwd": "/w",
+          "startedAt": "2026-09-28T11:00:00.000Z",
+          "endedAt": "2026-09-28T11:59:00.000Z"
+        },
+        {
+          "tool": "claude-code",
+          "sessionId": "first",
+          "cwd": "/w",
+          "startedAt": "2026-09-27T09:00:00.000Z",
+          "endedAt": "2026-09-28T10:00:00.000Z"
+        }
+      ],
+      "ids": ["claude-code:first", "claude-code:late"]
+    },
+    {
+      "name": "puts sessions without a start time last, by tool and id",
+      "agents": [
+        { "tool": "codex", "sessionId": "x", "cwd": "/w" },
+        { "tool": "claude-code", "sessionId": "z", "cwd": "/w" },
+        {
+          "tool": "claude-code",
+          "sessionId": "started",
+          "cwd": "/w",
+          "startedAt": "2026-09-28T11:00:00.000Z"
+        }
+      ],
+      "endedAgents": [
+        {
+          "tool": "claude-code",
+          "sessionId": "y",
+          "cwd": "/w",
+          "endedAt": "2026-09-28T10:00:00.000Z"
+        }
+      ],
+      "ids": ["claude-code:started", "claude-code:y", "claude-code:z", "codex:x"]
+    },
+    {
+      "name": "breaks a start time tie by tool and id",
+      "agents": [
+        {
+          "tool": "codex",
+          "sessionId": "a",
+          "cwd": "/w",
+          "startedAt": "2026-09-28T11:00:00.000Z"
+        },
+        {
+          "tool": "claude-code",
+          "sessionId": "b",
+          "cwd": "/w",
+          "startedAt": "2026-09-28T11:00:00.000Z"
+        }
+      ],
+      "ids": ["claude-code:b", "codex:a"]
+    }
+  ]
+}

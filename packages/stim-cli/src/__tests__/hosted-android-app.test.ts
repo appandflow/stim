@@ -1,0 +1,235 @@
+import { hostedAppState } from '../device-host/app-state.ts';
+import { runHostedAndroidDevice } from '../device-host/android.ts';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { installHostedAndroidApp } from '../device-host/android-app.ts';
+import type { HostedAndroidDevice } from '@stim-cli/core/state';
+
+const native = vi.hoisted(() => ({
+  runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>(),
+  runFileQuiet: vi.fn<(file: string, args?: string[]) => string>(),
+}));
+vi.mock('../exec.ts', () => ({
+  getExecutor: () => ({
+    ...native,
+    runFileAsync: async (file: string, args?: string[], options?: unknown) => native.runFile(file, args, options),
+    runFileQuietAsync: async (file: string, args?: string[]) => native.runFileQuiet(file, args),
+  }),
+}));
+let root: string;
+let home: string;
+let area: string;
+let aapt: string;
+let launched: boolean;
+let badging: string;
+let running: string;
+const session = '12345678-1234-1234-1234-123456789abc';
+const packageName = 'dev.stim.android_app';
+const sdkAdbName = process.platform === 'win32' ? 'adb.exe' : 'adb';
+const device: HostedAndroidDevice = {
+  avdName: `stim-hosted-${session}`,
+  serial: 'emulator-5554',
+  consolePort: 5554,
+  systemImage: 'system-images;android-30;google_apis;arm64-v8a',
+  deviceProfile: 'pixel_6',
+  architecture: 'arm64-v8a',
+};
+const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'stim-hosted-apk-'));
+  home = join(root, 'home');
+  area = join(root, 'apps', 'app');
+  process.env.STIM_HOME = home;
+  mkdirSync(home);
+  mkdirSync(area, { recursive: true });
+  mkdirSync(join(home, '..', 'blobs'), { recursive: true });
+  const sdk = join(root, 'sdk');
+  mkdirSync(join(sdk, 'platform-tools'), { recursive: true });
+  writeFileSync(join(sdk, 'platform-tools', sdkAdbName), 'fixture');
+  const tools = join(sdk, 'build-tools', '36.0.0');
+  mkdirSync(tools, { recursive: true });
+  aapt = join(tools, process.platform === 'win32' ? 'aapt.exe' : 'aapt');
+  writeFileSync(aapt, 'fixture');
+  vi.stubEnv('ANDROID_HOME', sdk);
+  writeFileSync(join(home, 'hosted-device.json'), JSON.stringify(device));
+  writeFileSync(
+    join(home, 'created-devices.json'),
+    JSON.stringify({ version: 1, ios: [], android: [device.avdName], web: [] }),
+  );
+  launched = false;
+  running = device.avdName;
+  badging = `package: name='${packageName}' versionCode='1'\nsdkVersion:'21'\nnative-code: 'arm64-v8a'`;
+  native.runFile.mockReset();
+  native.runFileQuiet.mockReset();
+  native.runFileQuiet.mockImplementation((_file, args = []) =>
+    args.join(' ').includes('emu avd name') ? running + '\nOK' : 'arm64-v8a',
+  );
+  native.runFile.mockImplementation((file, args = []) => {
+    if (file === aapt) return badging;
+    if (args.includes('getprop')) return 'arm64-v8a';
+    if (args.includes('resolve-activity')) return packageName + '/.MainActivity';
+    if (args.includes('start')) launched = true;
+    if (args.includes('pidof')) return launched ? '321' : '';
+    return '';
+  });
+});
+afterEach(() => {
+  delete process.env.STIM_HOME;
+  vi.unstubAllEnvs();
+  rmSync(root, { recursive: true, force: true });
+});
+
+function receipt(mode = 'release') {
+  const apk = Buffer.from('verified APK fixture');
+  const sha256 = hash(apk);
+  writeFileSync(join(home, '..', 'blobs', sha256), apk);
+  const manifest = Buffer.from(JSON.stringify([{ path: 'App.apk', kind: 'file', size: apk.length, sha256 }]));
+  const digest = hash(manifest);
+  writeFileSync(join(home, '..', 'blobs', digest), manifest);
+  writeFileSync(
+    join(area, 'receipt.json'),
+    JSON.stringify({
+      session,
+      attempt: 'app',
+      bundleId: packageName,
+      mode,
+      manifest: { sha256: digest, size: manifest.length },
+      state: 'installing',
+      launched: null,
+    }),
+  );
+  return sha256;
+}
+const effects = () =>
+  native.runFile.mock.calls.filter(([, args]) => args?.includes('install') || args?.includes('start'));
+
+test('development launch remains unverified despite a live native process', async () => {
+  receipt('development');
+  expect(await installHostedAndroidApp(home, session, 'app', device, { bridgePort: 9000, devicePort: 8082 })).toBe(
+    'unverified',
+  );
+  expect(
+    native.runFile.mock.calls.some(
+      ([, args]) => JSON.stringify(args) === JSON.stringify(['-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:9000']),
+    ),
+  ).toBe(true);
+  expect(native.runFile.mock.calls.find(([, args]) => args?.includes('run-as'))?.[1]?.at(-1)).toContain(
+    'localhost:8082',
+  );
+});
+
+test.each(['package', 'SDK', 'ABI'])('incompatible %s metadata refuses before installation', async (kind) => {
+  receipt();
+  if (kind === 'package') badging = badging.replace(packageName, 'dev.foreign');
+  if (kind === 'SDK') badging = badging.replace("sdkVersion:'21'", "sdkVersion:'31'");
+  if (kind === 'ABI') badging = badging.replace("'arm64-v8a'", "'x86_64'");
+  await expect(installHostedAndroidApp(home, session, 'app', device)).rejects.toThrow(/incompatible|native library/);
+  expect(effects()).toEqual([]);
+});
+
+test('corrupt upload bytes refuse before SDK or native effects', async () => {
+  const digest = receipt();
+  writeFileSync(join(home, '..', 'blobs', digest), 'corrupt');
+  await expect(installHostedAndroidApp(home, session, 'app', device)).rejects.toThrow(/differs/);
+  expect(native.runFile).not.toHaveBeenCalled();
+});
+
+test('the reverse worker restores Metro repeatedly without reinstalling or relaunching the app', async () => {
+  receipt('development');
+  const receiptFile = join(area, 'receipt.json');
+  const record = JSON.parse(readFileSync(receiptFile, 'utf8'));
+  writeFileSync(receiptFile, JSON.stringify({ ...record, state: 'installed', launched: 'unverified' }));
+  expect(
+    await runHostedAndroidDevice(
+      'reverse',
+      { session, consolePort: 5554 },
+      { attempt: 'app', metroPort: 9000, clientMetroPort: 8082 },
+    ),
+  ).toMatchObject({ state: 'ready', device });
+  expect(
+    await runHostedAndroidDevice(
+      'reverse',
+      { session, consolePort: 5554 },
+      { attempt: 'app', metroPort: 9000, clientMetroPort: 8082 },
+    ),
+  ).toMatchObject({ state: 'ready', device });
+  expect(effects()).toEqual([]);
+  const reversed = native.runFile.mock.calls.filter(([, args]) => args?.includes('reverse'));
+  expect(reversed.map(([, args]) => args)).toEqual(
+    Array.from({ length: 2 }, () => ['-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:9000']),
+  );
+  expect(reversed.map(([file]) => file)).toEqual(Array(2).fill(join(root, 'sdk', 'platform-tools', sdkAdbName)));
+});
+
+test.each(['reused serial', 'lost ledger', 'changed record'])(
+  'Metro restore refuses changed ownership before adb effects: %s',
+  async (kind) => {
+    receipt('development');
+    const receiptFile = join(area, 'receipt.json');
+    const record = JSON.parse(readFileSync(receiptFile, 'utf8'));
+    writeFileSync(receiptFile, JSON.stringify({ ...record, state: 'installed', launched: 'unverified' }));
+    if (kind === 'reused serial') running = 'foreign';
+    if (kind === 'lost ledger')
+      writeFileSync(join(home, 'created-devices.json'), JSON.stringify({ version: 1, ios: [], android: [], web: [] }));
+    if (kind === 'changed record')
+      writeFileSync(
+        join(home, 'hosted-device.json'),
+        JSON.stringify({ ...device, consolePort: 5556, serial: 'emulator-5556' }),
+      );
+    expect(
+      await runHostedAndroidDevice(
+        'reverse',
+        { session, consolePort: 5554 },
+        { attempt: 'app', metroPort: 9000, clientMetroPort: 8082 },
+      ),
+    ).toMatchObject({ state: 'unknown', notice: expect.stringMatching(/identity|ownership/) });
+    expect(
+      native.runFile.mock.calls.filter(([, args]) => args?.includes('reverse') || args?.includes('run-as')),
+    ).toEqual([]);
+  },
+);
+
+test.each([true, false])('native hosted readiness requires a live app process: %s', async (alive) => {
+  receipt('process');
+  const run = native.runFile.getMockImplementation()!;
+  native.runFile.mockImplementation((file, args = [], options) =>
+    args.includes('pidof') && !alive ? '' : run(file, args, options),
+  );
+  const ready = installHostedAndroidApp(home, session, 'app', device);
+  await vi.waitUntil(() => native.runFile.mock.calls.some(([, args]) => args?.includes('am')));
+  await vi.runAllTimersAsync();
+  expect(await ready).toBe(alive ? true : 'unverified');
+  expect(effects().map(([, args]) => args?.slice(0, 2))).toEqual(
+    Array.from({ length: 2 }, () => ['-s', device.serial]),
+  );
+  expect(native.runFile.mock.calls.some(([, args]) => args?.includes('reverse') || args?.includes('run-as'))).toBe(
+    false,
+  );
+});
+
+test('an app that exits after its first process sighting is not a verified release launch', async () => {
+  receipt();
+  const ready = installHostedAndroidApp(home, session, 'app', device);
+  await vi.waitUntil(() => native.runFile.mock.calls.some(([, args]) => args?.includes('start')));
+  setTimeout(() => {
+    launched = false;
+  }, 300);
+  await vi.runAllTimersAsync();
+  expect(await ready).toBe('unverified');
+});
+
+test('app state requires an installed receipt and probes only its ledger-owned android target', async () => {
+  receipt();
+  await expect(hostedAppState(home, session, 'app', 'android')).rejects.toThrow('installed');
+  const file = join(area, 'receipt.json');
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), state: 'installed' }));
+  launched = true;
+  expect(await hostedAppState(home, session, 'app', 'android')).toEqual({ state: 'running' });
+  launched = false;
+  expect(await hostedAppState(home, session, 'app', 'android')).toEqual({ state: 'stopped' });
+  running = 'foreign-avd';
+  await expect(hostedAppState(home, session, 'app', 'android')).rejects.toThrow('identity changed');
+});

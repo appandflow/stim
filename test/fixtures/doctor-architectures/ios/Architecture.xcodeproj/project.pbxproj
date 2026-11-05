@@ -1,0 +1,99 @@
+{
+  archiveVersion = 1;
+  classes = {};
+  objectVersion = 56;
+  objects = {
+    A00000000000000000000001 = {
+      isa = PBXProject;
+      buildConfigurationList = A00000000000000000000002;
+      compatibilityVersion = "Xcode 14.0";
+      developmentRegion = en;
+      knownRegions = (en, Base);
+      mainGroup = A00000000000000000000003;
+      projectDirPath = "";
+      projectRoot = "";
+      targets = (A00000000000000000000010, A00000000000000000000020);
+    };
+    A00000000000000000000002 = {
+      isa = XCConfigurationList;
+      buildConfigurations = (A00000000000000000000004, A00000000000000000000005);
+      defaultConfigurationIsVisible = 0;
+      defaultConfigurationName = Release;
+    };
+    A00000000000000000000003 = {
+      isa = PBXGroup;
+      children = (A00000000000000000000006);
+      sourceTree = "<group>";
+    };
+    A00000000000000000000004 = {
+      isa = XCBuildConfiguration;
+      buildSettings = { SDKROOT = iphoneos; ARCHS = "$(ARCHS_STANDARD)"; ONLY_ACTIVE_ARCH = YES; };
+      name = Debug;
+    };
+    A00000000000000000000005 = {
+      isa = XCBuildConfiguration;
+      buildSettings = { SDKROOT = iphoneos; ARCHS = "$(ARCHS_STANDARD)"; ONLY_ACTIVE_ARCH = NO; };
+      name = Release;
+    };
+    A00000000000000000000006 = {
+      isa = PBXFileReference;
+      lastKnownFileType = text.xcconfig;
+      path = Debug.xcconfig;
+      sourceTree = "<group>";
+    };
+    A00000000000000000000010 = {
+      isa = PBXNativeTarget;
+      buildConfigurationList = A00000000000000000000011;
+      buildPhases = ();
+      buildRules = ();
+      dependencies = ();
+      name = App;
+      productName = App;
+      productType = "com.apple.product-type.application";
+    };
+    A00000000000000000000011 = {
+      isa = XCConfigurationList;
+      buildConfigurations = (A00000000000000000000012, A00000000000000000000013);
+      defaultConfigurationIsVisible = 0;
+      defaultConfigurationName = Release;
+    };
+    A00000000000000000000012 = {
+      isa = XCBuildConfiguration;
+      buildSettings = { PRODUCT_NAME = "$(TARGET_NAME)"; ONLY_ACTIVE_ARCH = "$(inherited)"; };
+      name = Debug;
+    };
+    A00000000000000000000013 = {
+      isa = XCBuildConfiguration;
+      buildSettings = { PRODUCT_NAME = "$(TARGET_NAME)"; };
+      name = Release;
+    };
+    A00000000000000000000020 = {
+      isa = PBXNativeTarget;
+      buildConfigurationList = A00000000000000000000021;
+      buildPhases = ();
+      buildRules = ();
+      dependencies = ();
+      name = NativePod;
+      productName = NativePod;
+      productType = "com.apple.product-type.library.static";
+    };
+    A00000000000000000000021 = {
+      isa = XCConfigurationList;
+      buildConfigurations = (A00000000000000000000022, A00000000000000000000023);
+      defaultConfigurationIsVisible = 0;
+      defaultConfigurationName = Release;
+    };
+    A00000000000000000000022 = {
+      isa = XCBuildConfiguration;
+      baseConfigurationReference = A00000000000000000000006;
+      buildSettings = { PRODUCT_NAME = "$(TARGET_NAME)"; };
+      name = Debug;
+    };
+    A00000000000000000000023 = {
+      isa = XCBuildConfiguration;
+      buildSettings = { PRODUCT_NAME = "$(TARGET_NAME)"; };
+      name = Release;
+    };
+  };
+  rootObject = A00000000000000000000001;
+}

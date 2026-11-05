@@ -1,0 +1,97 @@
+<!doctype html><meta charset="utf-8" /><style>
+  * {
+    box-sizing: border-box;
+    margin: 0;
+  }
+  body {
+    width: 1000px;
+    height: 680px;
+    font-family: -apple-system, system-ui;
+    background: #fffdf5;
+    color: #26210f;
+    overflow: hidden;
+    display: flex;
+    position: relative;
+  }
+  .tl {
+    position: absolute;
+    left: 16px;
+    top: 14px;
+    display: flex;
+    gap: 8px;
+  }
+  .tl i {
+    width: 12px;
+    height: 12px;
+    border-radius: 6px;
+    display: block;
+  }
+  .side {
+    width: 210px;
+    background: #f1ead0;
+    padding: 52px 14px;
+  }
+  .side div {
+    padding: 7px 10px;
+    border-radius: 7px;
+    font-size: 14px;
+    margin-bottom: 2px;
+  }
+  .side .on {
+    background: #e6dcb8;
+  }
+  .list {
+    width: 280px;
+    border-right: 1px solid #eee7cc;
+    padding: 48px 0;
+  }
+  .list div {
+    padding: 11px 18px;
+    border-bottom: 1px solid #eee7cc;
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .list small {
+    display: block;
+    font-weight: 400;
+    color: #8a8266;
+    margin-top: 3px;
+  }
+  .doc {
+    flex: 1;
+    padding: 56px 36px;
+  }
+  h1 {
+    font-size: 26px;
+    margin-bottom: 14px;
+  }
+  p {
+    font-size: 15px;
+    line-height: 1.6;
+    color: #4a4328;
+    margin-bottom: 10px;
+  }
+</style>
+<body>
+  <div class="tl">
+    <i style="background: #ff5f57"></i><i style="background: #febc2e"></i><i style="background: #28c840"></i>
+  </div>
+  <div class="side">
+    <div class="on">All notes</div>
+    <div>Personal</div>
+    <div>Work</div>
+    <div>Archive</div>
+  </div>
+  <div class="list">
+    <div>Trip packing list<small>Today</small></div>
+    <div>Sprint planning<small>Yesterday</small></div>
+    <div>Book ideas<small>Monday</small></div>
+    <div>Recipe: lentil soup<small>Sunday</small></div>
+    <div>Gift ideas<small>Oct 1</small></div>
+  </div>
+  <div class="doc">
+    <h1>Trip packing list</h1>
+    <p>Weekend in Lisbon. Check the forecast on Thursday.</p>
+    <p>Passport, phone charger, rain jacket, walking shoes, sunglasses, camera.</p>
+  </div>
+</body>

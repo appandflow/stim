@@ -1,0 +1,166 @@
+import StimKit
+import StimStores
+import SwiftUI
+
+/// A floating toast anchored to the bottom of the main content column: one problem at a time,
+/// most important first, so it never resizes content or covers the toolbar or inspector.
+struct OnboardingBanner: View {
+  @ObservedObject var onboarding: Onboarding
+  @EnvironmentObject private var actions: ActionCenter
+  @ObservedObject private var flags = FeatureFlagStore.shared
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var showsCommand = false
+
+  var body: some View {
+    Group {
+      if let report = onboarding.report, let kind = currentKind(report) {
+        popup(kind, report)
+          .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+      }
+    }
+    .frame(maxWidth: .infinity)
+    .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: onboarding.report.flatMap(currentKind))
+  }
+
+  private func currentKind(_ report: Onboarding.Report) -> Onboarding.PopupKind? {
+    if onboarding.showsGuide { return nil }
+    if report.nodeBlocksServer, !onboarding.dismissedPopups.contains(.node) { return .node }
+    if let server = report.server, !server.isCompatible, !report.nodeBlocksServer,
+      !onboarding.dismissedPopups.contains(.server)
+    {
+      return .server
+    }
+    if !report.viewerKeys.isEmpty,
+      !onboarding.dismissedPopups.contains(.viewer)
+    {
+      return .viewer
+    }
+    return nil
+  }
+
+  @ViewBuilder
+  private func popup(_ kind: Onboarding.PopupKind, _ report: Onboarding.Report) -> some View {
+    switch kind {
+    case .node: nodePopup(report)
+    case .server: serverPopup(report)
+    case .viewer: viewerPopup(report.viewerKeys)
+    }
+  }
+
+  private func nodePopup(_ report: Onboarding.Report) -> some View {
+    let runtime = report.nodeBlockingServer
+    return popupCard(kind: .node, icon: "exclamationmark.triangle", tone: .warning) {
+      Text("Update Node.js to Use Stim Desktop").font(.stim(.headline))
+      Text(
+        "stim-server needs Node.js \(SetupChecks.nodeMinimum.description) or later. Make a newer Node your version manager's default, or reinstall the CLI under one when an older Node sits beside it, then check again."
+      )
+      .foregroundStyle(Palette.secondary)
+      if let runtime {
+        disclosure { Text("\(abbreviatingHome(runtime.path)) is \(runtime.version).") }
+      }
+    } buttons: {
+      Button("Check Again", action: onboarding.check).buttonStyle(.stim(.primary))
+    }
+  }
+
+  private func serverPopup(_ report: Onboarding.Report) -> some View {
+    guard let server = report.server else { return AnyView(EmptyView()) }
+    let missing = server == .missing
+    return AnyView(
+      popupCard(kind: .server, icon: flags.phoneApp ? "iphone.gen3.radiowaves.left.and.right" : "server.rack", tone: .warning) {
+        Text(PhoneApp.Copy.serverPopupTitle(missing: missing, phoneApp: flags.phoneApp))
+          .font(.stim(.headline))
+        Text(PhoneApp.Copy.serverPopupDetail(minimum: StimServerCLI.minimumVersion.description, phoneApp: flags.phoneApp))
+          .foregroundStyle(Palette.secondary)
+        disclosure { Text(detail(server, name: "stim-server", path: report.serverPath, manager: .npm)) }
+      } buttons: {
+        runButton(
+          missing ? "Install stim-server" : "Update stim-server", variant: .primary, key: .server,
+          action: onboarding.installServer)
+        Button("Choose stim-server Executable\u{2026}", action: onboarding.chooseServer).buttonStyle(.stim())
+      })
+  }
+
+  private func viewerPopup(_ keys: [String]) -> some View {
+    popupCard(kind: .viewer, icon: "macwindow", tone: .accent) {
+      Text("Show Stim's Devices in Stim Desktop").font(.stim(.headline))
+      Text("Stim can open the simulators and emulators it boots here instead of in their own windows.")
+        .foregroundStyle(Palette.secondary)
+      disclosure {
+        VStack(alignment: .leading, spacing: Space.sm) {
+          ForEach(keys, id: \.self) { key in
+            VStack(alignment: .leading, spacing: Space.xxs) {
+              Text("stim settings set \(key) stim-desktop --scope machine").font(.stim(.caption, mono: true))
+              Text(Self.viewerExplanation[key] ?? "").font(.stim(.caption)).foregroundStyle(Palette.secondary)
+            }
+          }
+        }
+      }
+    } buttons: {
+      runButton("Use Stim Desktop", variant: .primary, key: .viewer, action: onboarding.useDesktopViewer)
+      Button("Not Now") { onboarding.dismissPopup(.viewer) }.buttonStyle(.stim())
+    }
+  }
+
+  private static let viewerExplanation = [
+    "iosSimulatorApp":
+      "iOS: an owned simulator opens here, focused on its workspace, instead of in Xcode's Simulator app.",
+    "androidEmulatorApp":
+      "Android: Stim boots owned emulators without a window and shows them here. One already running keeps its window until it next boots.",
+  ]
+
+  private func detail(_ compatibility: CLICompatibility, name: String, path: String?, manager: PackageManager)
+    -> String
+  {
+    switch compatibility {
+    case .missing:
+      return
+        "Stim Desktop found no \(name). Installing runs \(manager.rawValue) \(manager == .npm ? "install" : "add") --global and needs Node.js 22.12 or later."
+    case .outdated(let found?):
+      return "\(abbreviatingHome(path ?? name)) reports \(found)."
+    case .outdated(nil):
+      return "\(abbreviatingHome(path ?? name)) did not report a version."
+    case .compatible(let version):
+      return "\(abbreviatingHome(path ?? name)) \(version)"
+    }
+  }
+
+  @ViewBuilder
+  private func disclosure<Content: View>(@ViewBuilder content: @escaping () -> Content) -> some View {
+    DisclosureGroup("Show Command", isExpanded: $showsCommand) {
+      content().font(.stim(.footnote)).foregroundStyle(Palette.tertiary).padding(.top, Space.xs)
+    }
+    .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+  }
+
+  @ViewBuilder
+  private func runButton(
+    _ title: String, variant: ButtonVariant = .secondary, key: Onboarding.PopupKind, action: @escaping () -> Void
+  ) -> some View {
+    if let active = actions.active(for: Onboarding.actionKey) {
+      Button {
+        actions.presented = active
+      } label: {
+        HStack(spacing: Space.sm) {
+          ProgressView().controlSize(.small)
+          Text("Running")
+        }
+      }
+      .buttonStyle(.stim(variant))
+    } else {
+      Button(title, action: action).buttonStyle(.stim(variant))
+    }
+  }
+
+  private func popupCard<Body: View, Buttons: View>(
+    kind: Onboarding.PopupKind, icon: String, tone: Tone, @ViewBuilder text: () -> Body,
+    @ViewBuilder buttons: () -> Buttons
+  ) -> some View {
+    Banner(tone: tone, icon: icon, style: .floating, onDismiss: { onboarding.dismissPopup(kind) }) {
+      text()
+      HStack(spacing: Space.md) { buttons() }.padding(.top, Space.xxs)
+    }
+    .frame(minWidth: 420, maxWidth: 520)
+    .padding(.bottom, Space.xxl)
+  }
+}

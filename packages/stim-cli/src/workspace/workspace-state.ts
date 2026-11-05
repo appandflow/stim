@@ -1,0 +1,172 @@
+import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { WORKSPACE_AGENT_KEY, readWorkspaceState, type WorkspaceState } from '@stim-cli/core/state';
+import { agentFromEnv } from '../agent-sessions.ts';
+import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
+import { getProjectSettings, writeConfigSetting, writeConfigSettingAsync } from './config.ts';
+import { workspaceHiddenSetting } from './settings.ts';
+import {
+  ensureWorkspaceStorage,
+  ensureWorkspaceStorageAsync,
+  workspaceStateFile,
+  workspaceStateLock,
+} from './paths.ts';
+
+export { readWorkspaceState, workspaceLastUsed, type WorkspaceState } from '@stim-cli/core/state';
+
+export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
+  const file = workspaceStateFile(root);
+  return withDirLock(workspaceStateLock(root), fn, {
+    ensureParent: () => {
+      ensureWorkspaceStorage(root);
+      mkdirSync(dirname(file), { recursive: true });
+    },
+  });
+}
+
+/** Waits for the workspace state lock asynchronously; the transaction remains synchronous and reentrant. */
+export async function withWorkspaceStateLockAsync<T>(root: string, fn: () => T, signal?: AbortSignal): Promise<T> {
+  await ensureWorkspaceStorageAsync(root, signal);
+  const file = workspaceStateFile(root);
+  return withDirLockAsync(workspaceStateLock(root), fn, {
+    ensureParent: () => mkdirSync(dirname(file), { recursive: true }),
+    signal,
+  });
+}
+
+export function writeWorkspaceState(root: string, patch: WorkspaceState): WorkspaceState {
+  return updateWorkspaceState(root, (state) => ({ ...state, ...patch }));
+}
+
+/** Merges a patch into workspace state after asynchronously acquiring its lock. */
+export function writeWorkspaceStateAsync(
+  root: string,
+  patch: WorkspaceState,
+  signal?: AbortSignal,
+): Promise<WorkspaceState> {
+  return updateWorkspaceStateAsync(root, (state) => ({ ...state, ...patch }), signal);
+}
+
+export function updateWorkspaceState(root: string, update: (state: WorkspaceState) => WorkspaceState): WorkspaceState {
+  return withWorkspaceStateLock(root, () => replaceWorkspaceState(root, update(readWorkspaceState(root) ?? {})));
+}
+
+/** Updates workspace state atomically after asynchronously acquiring its lock. */
+export function updateWorkspaceStateAsync(
+  root: string,
+  update: (state: WorkspaceState) => WorkspaceState,
+  signal?: AbortSignal,
+): Promise<WorkspaceState> {
+  return withWorkspaceStateLockAsync(
+    root,
+    () => replaceWorkspaceState(root, update(readWorkspaceState(root) ?? {})),
+    signal,
+  );
+}
+
+function replaceWorkspaceState(root: string, state: WorkspaceState): WorkspaceState {
+  const file = workspaceStateFile(root);
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  renameSync(tmp, file);
+  return state;
+}
+
+export function clearWorkspaceStateKeys(root: string, keys: readonly string[]): void {
+  if (!existsSync(workspaceStateFile(root))) return;
+  withWorkspaceStateLock(root, () => {
+    const state = readWorkspaceState(root);
+    const file = workspaceStateFile(root);
+    if (!state) {
+      try {
+        rmSync(file, { force: true });
+      } catch {}
+      return;
+    }
+    let changed = false;
+    for (const key of keys) {
+      if (!(key in state)) continue;
+      delete state[key];
+      changed = true;
+    }
+    if (!changed) return;
+    if (Object.keys(state).length === 0) {
+      rmSync(file, { force: true });
+      return;
+    }
+    replaceWorkspaceState(root, state);
+  });
+}
+
+export function clearWorkspaceStateKey(root: string, key: string, shouldClear: (value: unknown) => boolean): boolean {
+  return withWorkspaceStateLock(root, () => {
+    const state = readWorkspaceState(root);
+    if (!state || !(key in state)) return true;
+    if (!shouldClear(state[key])) return false;
+    delete state[key];
+    const file = workspaceStateFile(root);
+    if (Object.keys(state).length === 0) {
+      try {
+        rmSync(file, { force: true });
+      } catch {}
+      return true;
+    }
+    replaceWorkspaceState(root, state);
+    return true;
+  });
+}
+
+/**
+ * Records a command's use of the workspace, and the agent session whose shell ran it when there is one, and
+ * clears `workspace.hidden`.
+ */
+export function recordWorkspaceUse(
+  root: string,
+  now: Date = new Date(),
+  env: NodeJS.ProcessEnv = process.env,
+  commandCwd: string = process.cwd(),
+): void {
+  try {
+    writeWorkspaceState(root, workspaceUsePatch(now, env, commandCwd));
+  } catch {}
+  try {
+    if (workspaceHiddenSetting(getProjectSettings(root))) {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'workspace.hidden', undefined);
+    }
+  } catch {}
+}
+
+/** Records workspace use and clears workspace.hidden after asynchronously acquiring the state and config locks. */
+export async function recordWorkspaceUseAsync(
+  root: string,
+  now: Date = new Date(),
+  env: NodeJS.ProcessEnv = process.env,
+  commandCwd: string = process.cwd(),
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
+  try {
+    const patch = workspaceUsePatch(now, env, commandCwd);
+    await updateWorkspaceStateAsync(root, (state) => ({ ...state, ...patch }), signal);
+  } catch {}
+  signal?.throwIfAborted();
+  try {
+    if (workspaceHiddenSetting(getProjectSettings(root))) {
+      await writeConfigSettingAsync({ scope: 'workspace', projectPath: root }, 'workspace.hidden', undefined, signal);
+    }
+  } catch {}
+  signal?.throwIfAborted();
+}
+
+function workspaceUsePatch(now: Date, env: NodeJS.ProcessEnv, commandCwd: string): WorkspaceState {
+  const agent = agentFromEnv(env);
+  let cwd = commandCwd;
+  try {
+    cwd = realpathSync(cwd);
+  } catch {}
+  return {
+    lastUsedAt: now.toISOString(),
+    ...(agent ? { [WORKSPACE_AGENT_KEY]: { ...agent, cwd, lastActiveAt: now.toISOString() } } : {}),
+  };
+}

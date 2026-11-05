@@ -1,0 +1,200 @@
+import Foundation
+
+/// Stim Desktop's connection to its local stim-server, as a physical device's tile needs it.
+public enum ServerLink: Equatable, Sendable {
+  case connecting
+  /// `features` is nil from a server older than the `features` hello field.
+  case open(features: [String]?, capabilities: [String])
+  /// The server is unreachable or refused Stim Desktop, with why.
+  case unavailable(String)
+}
+
+/// What a physical or hosted device's tile shows: its screen through stim-server, or why it cannot.
+public enum PhysicalScreen: Equatable, Sendable {
+  /// `control` is nil when Control is offered, else why the screen is view only.
+  case stream(control: String?)
+  case message(String, remedy: String? = nil)
+
+  /// The local server Desktop connected to is not the one it bundles; Desktop starts its own once that one stops.
+  static func olderServer(showing what: String) -> PhysicalScreen {
+    .message(
+      "The stim-server on this port is older than Stim Desktop and cannot show \(what). Update or stop it so Stim Desktop starts its own."
+    )
+  }
+
+  /// `now` decides an expired lease before `stim status` drops the device.
+  public init(device: DeviceRef, link: ServerLink, now: Date) {
+    if case .macos = device, let machine = device.hostedMachine {
+      if device.state == "stopped" {
+        self = .message(
+          "The app on \(machineName(machine)) stopped.", remedy: "stim macos --remote \(machine)")
+      } else {
+        self.init(hostedMacosOn: link)
+      }
+      return
+    }
+    if let machine = device.hostedMachine {
+      let slot = device.slot == DeviceRef.defaultSlot ? "" : " --slot \(device.slot)"
+      if device.state == "stopped" {
+        self = .message(
+          "The \(platformName(device.platform)) session on \(machineName(machine)) stopped.",
+          remedy: "stim \(device.platform) --remote \(machine)\(slot)")
+        return
+      }
+      switch link {
+      case .connecting: self = .message("Connecting to stim-server")
+      case .unavailable(let reason): self = .message(reason)
+      case .open(let features, let capabilities):
+        guard features?.contains("\(device.platform)-hosted") == true else {
+          self = Self.olderServer(showing: "this simulator's screen")
+          return
+        }
+        self = .stream(control: capabilities.contains("control") ? nil : "Stim Desktop's stim-server pairing is read only.")
+      }
+      return
+    }
+    let command = device.platform == "ios" ? "stim ios --device" : "stim android --device"
+    if let expires = device.leaseExpiresAt, expires <= now {
+      self = .message("The workspace's lease on this device ended.", remedy: command)
+      return
+    }
+    guard device.isRunning else {
+      switch device.state {
+      case "disconnected":
+        self = .message(
+          device.platform == "ios"
+            ? "Disconnected. Plug the iPhone into this Mac with a USB cable."
+            : "Disconnected. Plug the phone into this Mac and allow USB debugging.")
+      default: self = .message("Stim cannot tell whether this device is connected.")
+      }
+      return
+    }
+    switch link {
+    case .connecting:
+      self = .message("Connecting to stim-server")
+    case .unavailable(let reason):
+      self = .message(reason)
+    case .open(let features, let capabilities):
+      guard features?.contains("physical-\(device.platform)") == true else {
+        self = Self.olderServer(showing: "this device's screen")
+        return
+      }
+      if device.platform == "ios" {
+        self = .stream(control: "stim-server shows an iPhone's screen but does not drive it.")
+      } else if !capabilities.contains("control") {
+        self = .stream(control: "Stim Desktop's stim-server pairing is read only.")
+      } else {
+        self = .stream(control: nil)
+      }
+    }
+  }
+
+  /// A device a paired server reports, which Stim Desktop shows only through that server: its own simulators,
+  /// emulators and phones, and the iOS, Android and macOS sessions it hosts on other Macs. `server` names the paired
+  /// machine. A remedy would be a command for that machine, so none is offered.
+  public init(pairedDevice device: DeviceRef, server: String, link: ServerLink, now: Date) {
+    switch device {
+    case .ios, .android: break
+    case .macos where device.hostedMachine != nil: break
+    default:
+      self = .message("Stim Desktop shows this device only on the Mac that runs it.")
+      return
+    }
+    if let machine = device.hostedMachine {
+      if device.state == "stopped" {
+        self = .message("The \(platformName(device.platform)) session on \(machineName(machine)) stopped.")
+        return
+      }
+    } else if let expires = device.leaseExpiresAt, expires <= now {
+      self = .message("The workspace's lease on this device ended.")
+      return
+    } else if !device.isRunning {
+      self = .message(device.isPhysical ? "Not connected to \(server)." : "Not running on \(server).")
+      return
+    }
+    switch link {
+    case .connecting:
+      self = .message("Connecting to \(server)")
+    case .unavailable(let reason):
+      self = .message(reason)
+    case .open(let features, let capabilities):
+      let feature =
+        device.hostedMachine != nil
+        ? "\(device.platform)-hosted" : device.isPhysical ? "physical-\(device.platform)" : nil
+      if let feature, features?.contains(feature) != true {
+        self = .message("Update stim-server on \(server) to show this device's screen.")
+      } else if device.isPhysical, device.platform == "ios" {
+        self = .stream(control: "stim-server shows an iPhone's screen but does not drive it.")
+      } else {
+        self = .stream(control: capabilities.contains("control") ? nil : "\(server) lets this Mac view only.")
+      }
+    }
+  }
+
+  /// A macOS app that `stim macos --remote` runs on another Mac, which this Mac's stim-server relays.
+  public init(hostedMacosOn link: ServerLink) {
+    switch link {
+    case .connecting:
+      self = .message("Connecting to stim-server")
+    case .unavailable(let reason):
+      self = .message(reason)
+    case .open(let features, let capabilities):
+      guard features?.contains("macos-hosted") == true else {
+        self = Self.olderServer(showing: "this app's window")
+        return
+      }
+      self = .stream(control: capabilities.contains("control") ? nil : "Stim Desktop's stim-server pairing is read only.")
+    }
+  }
+
+  public var canControl: Bool { self == .stream(control: nil) }
+}
+
+/// What a key press sends to a physical device with `input.text`: printable ASCII as typed, and Return, Tab and
+/// Delete as the `\n`, `\t` and `\b` the protocol reserves for them. Nil for other keys, which it has no way to send.
+public func physicalInputText(characters: String?, keyCode: UInt16) -> String? {
+  switch keyCode {
+  case 0x24, 0x4C: return "\n"
+  case 0x30: return "\t"
+  case 0x33: return "\u{8}"
+  default: break
+  }
+  guard let characters, !characters.isEmpty,
+    characters.unicodeScalars.allSatisfy({ (32..<127).contains($0.value) })
+  else { return nil }
+  return characters
+}
+
+/// What a key press sends to a device through stim-server.
+public enum PhysicalKeyInput: Equatable, Sendable {
+  case text(String)
+  case key(String, modifiers: [String])
+}
+
+private let namedPhysicalKeys: [UInt16: String] = [0x7B: "left", 0x7C: "right", 0x7D: "down", 0x7E: "up", 0x35: "escape"]
+private let chordPhysicalKeys: [UInt16: String] = namedPhysicalKeys.merging([
+  0x30: "tab", 0x24: "return", 0x4C: "return", 0x33: "backspace",
+]) {
+  first, _ in first
+}
+
+/// The `input.key` or `input.text` a key press sends. The arrows and Escape go as keys, and a printable key without
+/// Command, Control or Option as text. With `chords`, which a server advertising `device-keyboard` takes for an iOS
+/// simulator or an Android emulator, Shift also goes with the arrows and Escape, and Command, Control and Option chords
+/// go with the keys `input.key` names. Nil for a key that has no way to be sent.
+public func physicalKeyInput(
+  characters: String?, charactersIgnoringModifiers: String?, keyCode: UInt16, command: Bool, control: Bool,
+  option: Bool, shift: Bool, chords: Bool
+) -> PhysicalKeyInput? {
+  let held = [("command", command), ("shift", shift), ("option", option), ("control", control)].filter { $0.1 }.map(\.0)
+  if !(command || control || option) {
+    if let name = namedPhysicalKeys[keyCode], chords || !shift { return .key(name, modifiers: held) }
+    return physicalInputText(characters: characters, keyCode: keyCode).map { .text($0) }
+  }
+  guard chords else { return nil }
+  if let name = chordPhysicalKeys[keyCode] { return .key(name, modifiers: held) }
+  guard let typed = charactersIgnoringModifiers?.lowercased(), typed.count == 1, let scalar = typed.unicodeScalars.first,
+    ("a"..."z").contains(scalar) || ("0"..."9").contains(scalar)
+  else { return nil }
+  return .key(typed, modifiers: held)
+}

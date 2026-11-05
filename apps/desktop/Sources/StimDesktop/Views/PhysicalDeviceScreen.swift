@@ -1,0 +1,432 @@
+import AppKit
+import CoreVideo
+import EmulatorFrames
+import StimKit
+import SwiftUI
+
+/// A physical device or hosted iOS screen through Stim Desktop's local stim-server connection. Hosted iOS and
+/// physical Android targets take clicks, trackpad scrolls and keys; physical iOS stays view only. An iOS or Android
+/// device other than an iPhone Duo also takes two-finger gestures; the server refuses a second finger on the rest.
+struct PhysicalDeviceScreen: View {
+  var device: DeviceRef
+  var owner: ServerOwner
+  var workspace: String
+  var interactive: Bool
+  /// Whether the tile's build cover hides the screen; its own message then stays hidden, and lifting the cover
+  /// subscribes again after a failed subscription.
+  var covered: Bool
+  var onPixelSizeChange: (CGSize) -> Void
+  /// Control ended, or was refused, while `interactive`, other than by the user's Release.
+  var onControlLost: () -> Void
+  /// Receives the windows of a hosted macOS app, for the tile's menu.
+  var windowChoice: MacosWindowChoice?
+  var quality: StreamQuality
+  /// Receives the stream and what the clipboard section may offer, for the tile's options.
+  var clipboard: ServerClipboard?
+  @ObservedObject private var localSession = ServerSession.shared
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
+  @StateObject private var stream: PhysicalStream
+
+  init(
+    device: DeviceRef, owner: ServerOwner = .local, workspace: String, interactive: Bool, covered: Bool = false,
+    onPixelSizeChange: @escaping (CGSize) -> Void, onControlLost: @escaping () -> Void,
+    windowChoice: MacosWindowChoice? = nil, quality: StreamQuality = .standard, clipboard: ServerClipboard? = nil
+  ) {
+    self.quality = quality
+    self.clipboard = clipboard
+    self.windowChoice = windowChoice
+    self.device = device
+    self.owner = owner
+    self.workspace = workspace
+    self.interactive = interactive
+    self.covered = covered
+    self.onPixelSizeChange = onPixelSizeChange
+    self.onControlLost = onControlLost
+    _stream = StateObject(
+      wrappedValue: PhysicalStream(
+        target: ReplayTarget(workspace: workspace, platform: device.platform, slot: device.slot), physical: device.isPhysical,
+        quality: quality))
+  }
+
+  var body: some View {
+    TimelineView(.periodic(from: .now, by: 15)) { context in
+      let screen = ServerSession.screen(for: owned, now: context.date)
+      content(screen)
+        .onChange(of: screen, initial: true) { _, screen in follow(screen) }
+        .onChange(of: clipboardAccess, initial: true) { _, access in clipboard?.access = access }
+        .onChange(of: keyboardChords, initial: true) { _, chords in stream.keyboardChords = chords }
+    }
+    .onChange(of: interactive, initial: true) { _, interactive in
+      if interactive, ServerSession.screen(for: owned, now: Date()).canControl {
+        stream.begin()
+      } else {
+        stream.end()
+      }
+    }
+    .onChange(of: covered) { _, covered in
+      guard !covered, stream.problem != nil else { return }
+      stream.stop()
+      follow(ServerSession.screen(for: owned, now: Date()))
+    }
+    .onChange(of: stream.control) { _, control in
+      switch control {
+      case .off, .failed: if interactive { onControlLost() }
+      case .starting, .on: break
+      }
+    }
+    .onChange(of: quality) { _, quality in stream.setQuality(quality) }
+    .onChange(of: stream.windows, initial: true) { _, windows in publishWindows(windows) }
+    .onChange(of: isControlling, initial: true) { _, _ in publishWindows(stream.windows) }
+    .onAppear { clipboard?.stream = stream }
+    .onDisappear {
+      if clipboard?.stream === stream {
+        clipboard?.stream = nil
+        clipboard?.access = .none
+      }
+      stream.stop()
+      windowChoice?.windows = []
+      windowChoice?.currentPointSize = nil
+      windowChoice?.canSelect = false
+    }
+  }
+
+  private func publishWindows(_ windows: MacosWindows?) {
+    guard let windowChoice else { return }
+    windowChoice.windows = windows?.windows ?? []
+    windowChoice.current = windows?.current
+    windowChoice.currentPointSize = windows?.currentPointSize
+    windowChoice.pinned = windows?.pinned ?? false
+    windowChoice.canSelect = isControlling
+    windowChoice.select = { [stream] id in stream.selectWindow(id) }
+  }
+
+  @ViewBuilder private func content(_ screen: PhysicalScreen) -> some View {
+    switch screen {
+    case .message(let text, let remedy):
+      PhysicalMessage(text: text, remedy: remedy)
+    case .stream:
+      VStack(spacing: Space.md) {
+        PhysicalDisplay(
+          stream: stream, activityKey: owned.activityKey,
+          interactive: interactive && isControlling, twoFinger: takesTwoFingers,
+          onPixelSizeChange: onPixelSizeChange
+        )
+        .overlay {
+          if !covered, let problem = stream.problem ?? (stream.receiving ? nil : "Connecting to the device") {
+            PhysicalMessage(text: problem)
+          }
+        }
+        if let controlNote {
+          Text(controlNote).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(2)
+            .multilineTextAlignment(.center)
+        }
+        if interactive, device.platform == "android" { hardwareButtons }
+      }
+    }
+  }
+
+  private var owned: OwnedDevice { OwnedDevice(owner: owner, ref: device) }
+
+  private var clipboardAccess: ServerClipboard.Access {
+    let session = ServerSession.session(for: owner)
+    return ServerClipboard.Access(
+      platform: device.platform, physical: device.isPhysical, link: session?.link ?? .connecting, control: stream.control,
+      server: owner.isLocal ? nil : session?.name ?? "the paired machine")
+  }
+
+  private var keyboardChords: Bool {
+    guard !device.isPhysical, device.platform == "ios" || device.platform == "android",
+      case .open(let features, _) = ServerSession.session(for: owner)?.link ?? .connecting
+    else { return false }
+    return features?.contains("device-keyboard") == true
+  }
+
+  private var takesTwoFingers: Bool {
+    (device.platform == "ios" || device.platform == "android") && device.formFactor != .dual
+  }
+
+  private var isControlling: Bool {
+    if case .on = stream.control { return true }
+    return false
+  }
+
+  private var controlNote: String? {
+    switch stream.control {
+    case .starting: return "Starting control"
+    case .failed(let message): return message
+    case .off(ended: let ended?): return "Control ended. \(ended)"
+    case .off, .on: return nil
+    }
+  }
+
+  private var hardwareButtons: some View {
+    HStack(spacing: Space.sm) {
+      hardwareButton("Home", systemImage: "circle", button: "home")
+      hardwareButton("Back", systemImage: "chevron.backward", button: "back")
+      hardwareButton("Apps", systemImage: "square.on.square", button: "app-switch")
+      hardwareButton("Lock", systemImage: "lock", button: "lock")
+    }
+    .disabled(!isControlling)
+  }
+
+  private func hardwareButton(_ title: String, systemImage: String, button: String) -> some View {
+    Button(title, systemImage: systemImage) { stream.button(button) }
+      .labelStyle(.iconOnly)
+      .buttonStyle(.stim())
+      .help("Press the phone's \(title) button")
+      .accessibilityLabel("Press \(title)")
+  }
+
+  private func follow(_ screen: PhysicalScreen) {
+    if case .stream = screen, let session = ServerSession.session(for: owner), session.isOpen {
+      stream.connect(session.client)
+      if interactive, screen.canControl { stream.begin() } else { stream.end() }
+    } else {
+      stream.stop()
+    }
+  }
+}
+
+struct PhysicalMessage: View {
+  var text: String
+  var remedy: String? = nil
+
+  var body: some View {
+    VStack(spacing: Space.sm) {
+      Text(text)
+        .font(.stim(.callout))
+        .foregroundStyle(Palette.tertiary)
+        .multilineTextAlignment(.center)
+      if let remedy {
+        Text(remedy)
+          .font(.stim(.caption, mono: true))
+          .foregroundStyle(Palette.secondary)
+          .textSelection(.enabled)
+      }
+    }
+    .padding()
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Media.screen.opacity(0.85))
+  }
+}
+
+struct PhysicalDisplay: NSViewRepresentable {
+  @ObservedObject var stream: PhysicalStream
+  var activityKey: String?
+  var interactive: Bool
+  var twoFinger: Bool
+  var onPixelSizeChange: (CGSize) -> Void
+
+  func makeNSView(context: Context) -> PhysicalDisplayView {
+    let view = PhysicalDisplayView()
+    update(view)
+    return view
+  }
+
+  func updateNSView(_ view: PhysicalDisplayView, context: Context) {
+    update(view)
+  }
+
+  private func update(_ view: PhysicalDisplayView) {
+    view.stream = stream
+    view.activityKey = activityKey
+    view.onPixelSizeChange = onPixelSizeChange
+    view.allowsTwoFinger = twoFinger
+    view.setInteractive(interactive)
+    stream.onVideo = { [weak view] packet in view?.show(packet) }
+    stream.onImage = { [weak view] data in view?.show(jpeg: data) }
+  }
+
+  static func dismantleNSView(_ view: PhysicalDisplayView, coordinator: ()) {
+    view.decoder.invalidate()
+  }
+}
+
+final class PhysicalDisplayView: NSView {
+  weak var stream: PhysicalStream?
+  var activityKey: String?
+  var onPixelSizeChange: (CGSize) -> Void = { _ in }
+  private var size: CGSize?
+  private var configured = false
+  private var askedKeyframe = false
+  private var interactive = false
+  private var touching = false
+  var allowsTwoFinger = false
+  private lazy var twoFinger = TwoFingerGesture(
+    view: self, enabled: { [weak self] in self?.interactive == true && self?.allowsTwoFinger == true },
+    map: { [weak self] point, clamped in
+      guard let self, let size = self.size else { return nil }
+      return normalizedScreenPoint(point, viewSize: self.bounds.size, screenSize: size, clamped: clamped)
+    },
+    project: { [weak self] point in
+      guard let self, let size = self.size else { return nil }
+      let fitted = fittedScreenSize(viewSize: self.bounds.size, screenSize: size)
+      return CGPoint(
+        x: (self.bounds.width - fitted.width) / 2 + point.x * fitted.width,
+        y: (self.bounds.height - fitted.height) / 2 + (1 - point.y) * fitted.height)
+    },
+    send: { [weak self] phase, first, second in
+      self?.stream?.touch(
+        phase.wire, x: Double(first.x), y: Double(first.y), second: (x: Double(second.x), y: Double(second.y))) ?? false
+    })
+  lazy var decoder = H264Decoder { [weak self] image in
+    guard let surface = CVPixelBufferGetIOSurface(image)?.takeUnretainedValue() else { return }
+    DispatchQueue.main.async { self?.layer?.contents = surface }
+  }
+
+  override init(frame: NSRect) {
+    super.init(frame: frame)
+    wantsLayer = true
+    layer = CALayer()
+    layer?.contentsGravity = .resizeAspect
+    layer?.minificationFilter = .trilinear
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
+    guard let window else { return twoFinger.cancel() }
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(windowResignedKey), name: NSWindow.didResignKeyNotification, object: window)
+  }
+
+  @objc private func windowResignedKey() { twoFinger.cancel() }
+
+  override func layout() {
+    super.layout()
+    twoFinger.redraw()
+  }
+
+  @MainActor func show(_ packet: VideoPacket) {
+    if packet.keyframe {
+      configured = decoder.configure(packet.accessUnit)
+      askedKeyframe = false
+    }
+    guard configured else {
+      if !askedKeyframe {
+        askedKeyframe = true
+        stream?.requestKeyframe()
+      }
+      return
+    }
+    configured = decoder.decode(packet.accessUnit)
+    shown(CGSize(width: packet.width, height: packet.height))
+  }
+
+  @MainActor func show(jpeg: Data) {
+    guard let image = NSImage(data: jpeg)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+    layer?.contents = image
+    shown(CGSize(width: image.width, height: image.height))
+  }
+
+  private func shown(_ size: CGSize) {
+    if let activityKey { ScreenActivity.shared.record(activityKey) }
+    guard size != self.size else { return }
+    twoFinger.cancel()
+    self.size = size
+    onPixelSizeChange(size)
+  }
+
+  func setInteractive(_ interactive: Bool) {
+    guard interactive != self.interactive else { return }
+    self.interactive = interactive
+    if interactive {
+      window?.makeFirstResponder(self)
+    } else {
+      twoFinger.cancel()
+      touching = false
+    }
+  }
+
+  private func point(_ event: NSEvent, clamped: Bool) -> CGPoint? {
+    guard let size else { return nil }
+    return normalizedScreenPoint(
+      convert(event.locationInWindow, from: nil), viewSize: bounds.size, screenSize: size, clamped: clamped)
+  }
+
+  private func touch(_ phase: String, _ point: CGPoint) {
+    stream?.touch(phase, x: point.x, y: point.y)
+    touching = phase != "up"
+    lastTouch = touching ? point : nil
+  }
+
+  private var lastTouch: CGPoint?
+
+  override var acceptsFirstResponder: Bool { interactive }
+
+  override func acceptsFirstMouse(for event: NSEvent?) -> Bool { interactive }
+
+  override func mouseDown(with event: NSEvent) {
+    guard interactive else { return super.mouseDown(with: event) }
+    window?.makeFirstResponder(self)
+    guard !touching, !twoFinger.isActive else { return }
+    if twoFinger.mouseDown(event) { return }
+    guard !(allowsTwoFinger && event.modifierFlags.contains(.option)), let point = point(event, clamped: false)
+    else { return }
+    touch("down", point)
+  }
+
+  override func mouseDragged(with event: NSEvent) {
+    if twoFinger.mouseDragged(event) { return }
+    guard touching, let point = point(event, clamped: true) else { return }
+    touch("move", point)
+  }
+
+  override func mouseUp(with event: NSEvent) {
+    if twoFinger.mouseUp(event) { return }
+    guard touching, let last = lastTouch else { return }
+    touch("up", point(event, clamped: true) ?? last)
+  }
+
+  override func magnify(with event: NSEvent) {
+    guard !touching else { return }
+    twoFinger.magnify(event)
+  }
+
+  override func flagsChanged(with event: NSEvent) { twoFinger.flagsChanged(event) }
+
+  override func scrollWheel(with event: NSEvent) {
+    if twoFinger.isActive { return }
+    guard interactive, event.hasPreciseScrollingDeltas, event.momentumPhase.isEmpty else {
+      return super.scrollWheel(with: event)
+    }
+    if event.phase.contains(.began) {
+      guard !touching, let point = point(event, clamped: false) else { return }
+      touch("down", point)
+    } else if touching, let last = lastTouch, let size {
+      let fitted = fittedScreenSize(viewSize: bounds.size, screenSize: size)
+      guard fitted.width > 0, fitted.height > 0 else { return }
+      let point = CGPoint(
+        x: min(max(last.x + event.scrollingDeltaX / fitted.width, 0), 1),
+        y: min(max(last.y + event.scrollingDeltaY / fitted.height, 0), 1))
+      let ended = event.phase.contains(.ended) || event.phase.contains(.cancelled)
+      touch(ended ? "up" : "move", point)
+    }
+  }
+
+  override func keyDown(with event: NSEvent) {
+    let flags = event.modifierFlags
+    guard interactive,
+      let input = physicalKeyInput(
+        characters: event.characters, charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+        keyCode: event.keyCode, command: flags.contains(.command), control: flags.contains(.control),
+        option: flags.contains(.option), shift: flags.contains(.shift), chords: stream?.keyboardChords == true)
+    else { return super.keyDown(with: event) }
+    switch input {
+    case .text(let text): stream?.text(text)
+    case .key(let name, let modifiers): stream?.key(name, modifiers: modifiers)
+    }
+  }
+}
+
+extension TwoFingerPhase {
+  fileprivate var wire: String {
+    switch self {
+    case .down: return "down"
+    case .move: return "move"
+    case .up: return "up"
+    }
+  }
+}

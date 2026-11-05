@@ -1,0 +1,1389 @@
+import Combine
+import StimKit
+import StimStores
+import SwiftUI
+
+enum SidebarItem: Hashable {
+  case overview
+  case discover
+  case wall
+  case project(Project)
+  case environment(String)
+  case archived(String)
+  case worktree(String)
+  case notifications
+  case machine
+  case builds
+  case pairedWorkspace(WorkspaceKey)
+
+  var logName: String {
+    switch self {
+    case .overview: "overview"
+    case .discover: "discover"
+    case .wall: "wall"
+    case .archived(let id): "archived \(id)"
+    case .project(let project): "project \(project.root)"
+    case .environment(let path): "workspace \(path)"
+    case .worktree(let path): "worktree \(path)"
+    case .notifications: "notifications"
+    case .machine: "machine"
+    case .builds: "builds"
+    case .pairedWorkspace(let key):
+      if case .paired(let id) = key.owner { "paired workspace on \(id)" } else { "workspace \(key.path)" }
+    }
+  }
+}
+
+struct RootView: View {
+  @ObservedObject private var store: StatusStore
+  private let metrics: MetricsStore
+  private let gc: GcReportStore
+  @ObservedObject private var tips: TipCoordinator
+  private let buildMachines: BuildMachinesModel
+  @ObservedObject private var actions: ActionCenter
+  @ObservedObject private var operations: OperationLog
+  @ObservedObject private var inbox = NotificationInbox.shared
+  private let pressure: DaemonPressureMonitor
+  private let onboarding: Onboarding
+  private let storage: StorageStore
+  private let planChecks: BuildPlanChecks
+  private let statsReader: StatsReader
+  @StateObject private var tutorial = TutorialModel()
+  @StateObject private var builds: BuildLedgerModel
+  @State private var selection: SidebarItem? = .overview
+  @State private var previousSelection: SidebarItem? = .overview
+  @StateObject private var navigation = NavigationController()
+  @State private var replacesHistory = false
+  @State private var restoredProject = false
+  @State private var lastResolvedWorkspace: String?
+  @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
+  @AppStorage(AppPreferences.Key.lastProjectPath) private var lastProjectPath = ""
+  @State private var projectFilter: Project?
+  @State private var showingAllWorktrees: Project?
+  @State private var focusedDeviceID: String?
+  @State private var logQuery = LogQuery()
+  @State private var archivedLogQuery = LogQuery()
+  @State private var tutorialDestinationHighlight: UUID?
+  @State private var tutorialHighlightDestination: SidebarItem?
+
+  @AppStorage(AppPreferences.Key.showsLogs) private var showsLogs = false
+  @AppStorage(AppPreferences.Key.showsInspector) private var showsInspector = true
+  @State private var showsInspectorOverlay = false
+  @State private var inspectorWidth = WorkspaceDetail.inspectorWidth
+  @State private var windowSize = CGSize.zero
+  @State private var isFullScreen = false
+  @State private var tutorialPinned = false
+  @State private var tutorialWindowTransitioning = false
+  @State private var tutorialPopupOpen = false
+  @State private var sidebarWidth: CGFloat = 0
+  @State private var settledInspectorFits: Bool?
+  @State private var detailWidth: CGFloat = 0
+  @State private var narrowestSummaryWidth: CGFloat = .infinity
+  @State private var summaryHidden = true
+  @State private var logWorkspacePath: String?
+  @State private var columnVisibility = NavigationSplitViewVisibility.all
+  @ObservedObject private var nativePermissions = NativeViewerPermissions.shared
+  @ObservedObject private var openRequests = OpenRequests.shared
+  private let toasts = ToastCenter.shared
+  private let notices = NoticeCenter.shared
+  @AppStorage(AppPreferences.Key.dismissedStimUpdate) private var dismissedStimUpdate = ""
+  @State private var pendingLink: PendingWorkspaceLink?
+  @State private var pendingSharedLink: PendingSharedWorkspaceLink?
+  @Environment(\.openWindow) private var openWindow
+  @Environment(\.openSettings) private var openSettings
+  @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.accessibilityReduceMotion) private var reduceAppearanceMotion
+  @State private var appearanceHovered = false
+  @AppStorage(AppPreferences.Key.appearance) private var appearance = Appearance.auto
+  @AppStorage("settingsTab") private var settingsTab = "app"
+
+  private let environment: Task<[String: String], Never>
+  private let tutorialClock = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
+
+  init(
+    environment: Task<[String: String], Never>, store: StatusStore, actions: ActionCenter, pressure: DaemonPressureMonitor,
+    onboarding: Onboarding, gc: GcReportStore, buildMachines: BuildMachinesModel, metrics: MetricsStore,
+    storage: StorageStore, planChecks: BuildPlanChecks, statsReader: StatsReader, tips: TipCoordinator
+  ) {
+    SidebarWidthGuard.prime()
+    self.tips = tips
+    self.buildMachines = buildMachines
+    self.environment = environment
+    _builds = StateObject(wrappedValue: BuildLedgerModel(environment: environment))
+    self.onboarding = onboarding
+    self.store = store
+    self.actions = actions
+    operations = actions.operations
+    self.pressure = pressure
+    self.gc = gc
+    self.metrics = metrics
+    self.storage = storage
+    self.planChecks = planChecks
+    self.statsReader = statsReader
+  }
+
+  var body: some View {
+    content
+      .onReceive(ServerSession.shared.$client.combineLatest(ServerSession.shared.$state)) { client, state in
+        Task {
+          showSharedWorkspaceLink()
+          guard client != nil, case .open = state else { return }
+          tutorial.refreshLogs()
+          await buildMachines.settings.refresh()
+          await onboarding.refreshViewerSettings()
+        }
+      }
+  }
+
+  private var content: some View {
+    NavigationSplitView(columnVisibility: $columnVisibility) {
+      Sidebar(
+        store: store, pressure: pressure, onboarding: onboarding, actions: actions, selection: attributed(.click("sidebar")),
+        openLogs: showLogs
+      )
+      .toolbar(removing: .sidebarToggle)
+      .toolbar {
+        if columnVisibility != .detailOnly { sidebarToggleToolbar }
+      }
+      .navigationSplitViewColumnWidth(min: SidebarWidthGuard.minimum, ideal: SidebarWidthGuard.ideal, max: 360)
+      .background(SidebarWidthGuard())
+      .onGeometryChange(for: CGFloat.self) {
+        $0.size.width
+      } action: {
+        sidebarWidth = $0
+      }
+    } detail: {
+      HStack(spacing: 0) {
+        detail
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .overlay(alignment: .bottomTrailing) {
+            let isDark = colorScheme == .dark
+            let title = isDark ? "Switch to light mode" : "Switch to dark mode"
+            let button = Button {
+              let next: Appearance = isDark ? .light : .dark
+              appearance = next
+              Theme.apply(next)
+            } label: {
+              ZStack {
+                Image(systemName: isDark ? "sun.max" : "moon")
+                  .id(isDark)
+                  .font(.system(size: 17))
+                  .foregroundStyle(Palette.text)
+                  .transition(reduceAppearanceMotion ? .opacity : .scale(scale: 0.75).combined(with: .opacity))
+              }
+              .scaleEffect(appearanceHovered && !reduceAppearanceMotion ? 1.08 : 1)
+              .animation(.easeOut(duration: 0.12), value: appearanceHovered)
+              .animation(.easeInOut(duration: 0.18), value: isDark)
+              .frame(width: 32, height: 36)
+              .contentShape(Rectangle())
+            }
+            .buttonStyle(.hoverRow(radius: Radius.round))
+            .onHover { appearanceHovered = $0 }
+            .accessibilityLabel(title)
+            .help(title)
+            .padding(.horizontal, Space.xs)
+            .frame(height: ToolbarMetrics.glassHeight)
+
+            Group {
+              if #available(macOS 26.0, *) {
+                button.glassEffect(.regular, in: Capsule())
+              } else {
+                button.background(.regularMaterial, in: Capsule())
+              }
+            }
+            .padding(Space.lg)
+          }
+        if tutorialDocked, let snapshot = tutorial.snapshot {
+          TutorialDockHost(transitioning: tutorialWindowTransitioning) {
+            HStack(spacing: 0) {
+              Divider()
+              tutorialPanelContent(snapshot)
+                .disabled(tutorialPopupOpen)
+                .allowsHitTesting(!tutorialPopupOpen && !tutorialWindowTransitioning)
+            }
+          }
+          .frame(width: WorkspaceDetail.inspectorWidth + 1)
+          .background {
+            Palette.sidebar
+              .ignoresSafeArea(edges: .top)
+          }
+          .overlay(alignment: .leading) {
+            Rectangle()
+              .fill(Palette.border)
+              .frame(width: 1)
+              .ignoresSafeArea(edges: .top)
+          }
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Palette.background)
+      .overlay(alignment: .bottom) { onboardingPopup }
+      .background(alignment: .topLeading) {
+        machineSummary(measuresNarrowest: true)
+          .onGeometryChange(for: CGFloat.self) {
+            $0.size.width
+          } action: {
+            narrowestSummaryWidth = $0
+          }
+          .hidden()
+      }
+      .overlay(alignment: .topTrailing) { inspectorSideControls }
+      .overlay(alignment: .topTrailing) {
+        ToastStack(center: toasts)
+      }
+      .overlay(alignment: .bottomLeading) { NoticeStack(center: notices) }
+      .onGeometryChange(for: CGFloat.self) {
+        max(0, $0.size.width - tutorialDockWidth)
+      } action: {
+        detailWidth = $0
+      }
+      .navigationSplitViewColumnWidth(min: 440, ideal: 900)
+      .toolbar {
+        if columnVisibility == .detailOnly { sidebarToggleToolbar }
+        let history = HistoryButtons(
+          navigation: navigation, canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward)
+        if #available(macOS 26.0, *) {
+          ToolbarItem(placement: .navigation) {
+            history.padding(.horizontal, Space.xs).frame(height: ToolbarMetrics.glassHeight)
+              .glassEffect(.regular, in: Capsule())
+          }
+          .sharedBackgroundVisibility(.hidden)
+          ToolbarSpacer(.fixed, placement: .navigation)
+        } else {
+          ToolbarItem(placement: .navigation) { history }
+        }
+        if columnVisibility == .detailOnly, !operations.runs.isEmpty {
+          ToolbarItem(placement: .navigation) {
+            OperationsButton(log: operations, actions: actions, store: store, arrowEdge: .bottom)
+          }
+        }
+        let summary = machineSummary()
+        if summary.hasContent, summaryFits {
+          let summaryItem =
+            summary
+            .frame(maxWidth: max(0, summaryWidth), alignment: .leading)
+            .frame(height: ToolbarMetrics.glassHeight)
+          if #available(macOS 26.0, *) {
+            ToolbarItem(id: summaryItemID(for: summary), placement: .navigation) {
+              summaryItem.glassEffect(.regular, in: Capsule())
+            }
+            .sharedBackgroundVisibility(.hidden)
+          } else {
+            ToolbarItem(id: summaryItemID(for: summary), placement: .navigation) { summaryItem }
+          }
+        }
+        ToolbarItem(placement: .primaryAction) { Spacer() }
+        if !controlsBesideInspector {
+          let bell = notificationButton.padding(.horizontal, Space.xs).frame(height: ToolbarMetrics.glassHeight)
+          if #available(macOS 26.0, *) {
+            ToolbarItem(id: "notifications", placement: .primaryAction) {
+              bell.glassEffect(.regular, in: Capsule())
+            }
+            .sharedBackgroundVisibility(.hidden)
+          } else {
+            ToolbarItem(id: "notifications", placement: .primaryAction) { notificationButton }
+          }
+          if showsWorkspace, #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+          }
+        }
+        if showsWorkspace {
+          let controls = HStack(spacing: Space.md) {
+            logsToggleButton
+            InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
+          }
+          .padding(.horizontal, Space.md + Space.xxs)
+          .frame(height: ToolbarMetrics.glassHeight)
+          .accessibilityElement(children: .contain)
+          if #available(macOS 26.0, *) {
+            ToolbarItem(placement: .primaryAction) {
+              controls.glassEffect(.regular, in: Capsule()).padding(.trailing, Space.md)
+            }
+            .sharedBackgroundVisibility(.hidden)
+          } else {
+            ToolbarItem(placement: .primaryAction) { controls.padding(.trailing, Space.md) }
+          }
+        }
+      }
+    }
+    .onChange(of: [summaryWidth, narrowestSummaryWidth], initial: true) {
+      summaryHidden = !summaryFits
+    }
+    .tutorialHighlights(showFallback: columnVisibility == .detailOnly)
+    .environment(\.tutorialHint, tutorialHint)
+    .environment(
+      \.tutorialLogsHighlight,
+      tutorialLogsHighlight
+    )
+    .onChange(of: showsLogs) {
+      if !showsLogs, case .environment = tutorialHighlightDestination { tutorialDestinationHighlight = nil }
+    }
+
+    .focusedSceneValue(
+      \.inspectorToggle,
+      showsWorkspace ? InspectorToggle(isShown: inspector != .hidden, toggle: toggleInspector) : nil
+    )
+    .focusedSceneValue(
+      \.sidebarNavigation,
+      SidebarNavigation { navigate($0, .command("Overview, Active Workspaces, Notifications, Machines or Builds")) }
+    )
+    .focusedSceneValue(
+      \.historyNavigation,
+      HistoryNavigation(
+        canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward, back: { navigation.goBack(via: .menu) },
+        forward: { navigation.goForward(via: .menu) })
+    )
+    .onChange(of: destination) { _, destination in
+      if replacesHistory {
+        replacesHistory = false
+        navigation.replaceCurrent(destination)
+      } else {
+        navigation.record(destination)
+      }
+    }
+    .onChange(of: inspectorFits) { showsInspectorOverlay = false }
+    .task(id: [windowSize.width, detailRoom]) { await settleInspectorFit() }
+    .onGeometryChange(for: CGSize.self) {
+      $0.size
+    } action: {
+      windowSize = $0
+    }
+    .environment(\.windowSize, windowSize)
+    .toolbarBackground(.hidden, for: .windowToolbar)
+    .tint(Palette.primary)
+    .font(.stim(.body))
+    .foregroundStyle(Palette.text)
+    .environmentObject(actions)
+    .environmentObject(planChecks)
+    .environment(\.workspaceTitle, workspaceTitles)
+    .sheet(item: $actions.presented) { run in
+      ActivitySheet(run: run).environmentObject(actions)
+    }
+    .onQuitRequested { actions.presented = nil }
+    .sheet(item: $openRequests.shareRequest) { request in
+      ShareDeviceSheet(request: request) {
+        settingsTab = "web-shares"
+        openSettings()
+      }
+    }
+    .onQuitRequested { openRequests.shareRequest = nil }
+    .modifier(SetupGuidePresenter(onboarding: onboarding, actions: actions))
+    .sheet(isPresented: $nativePermissions.showsSetup) {
+      NativeViewerPermissionsView(
+        permissions: nativePermissions, relaunch: onboarding.canRelaunch ? { onboarding.relaunch() } : nil)
+    }
+    .modifier(TutorialRestartDialogs(tutorial: tutorial))
+    .background(floatingTutorial)
+    .background(
+      TutorialWindowObserver(
+        isFullScreen: $isFullScreen, popupOpen: $tutorialPopupOpen, transitioning: $tutorialWindowTransitioning)
+    )
+    .onChange(of: isFullScreen) {
+      if !isFullScreen { tutorialPinned = false }
+    }
+    .onAppear {
+      navigation.resolves = resolves
+      navigation.apply = show
+      navigation.startMonitoring()
+      store.start()
+      tutorial.configure(environment: environment)
+      openRequests.openMainWindow = { [openWindow] in openWindow(id: "main") }
+    }
+    .onDisappear {
+      notices.removeAll()
+      navigation.stopMonitoring()
+      navigation.resolves = { _ in true }
+      navigation.apply = { _ in }
+    }
+    .onChange(of: onboarding.stimUpdate, initial: true) { _, latest in showStimUpdate(latest) }
+    .onReceive(openRequests.$showsDiscover) { requested in
+      guard requested else { return }
+      openRequests.showsDiscover = false
+      navigate(.discover, .command("Discover Stim"))
+    }
+    .onChange(of: openRequests.target, initial: true) { _, target in show(target, in: store.payload) }
+    .onReceive(openRequests.$addMachine) { request in
+      guard request != nil else { return }
+      settingsTab = "build-machines"
+      openSettings()
+    }
+    .onReceive(openRequests.$pairsPhone) { pair in
+      guard pair else { return }
+      guard PhoneApp.opensPairing(phoneApp: FeatureFlags.isEnabled(.phoneApp)) else {
+        openRequests.pairsPhone = false
+        return
+      }
+      settingsTab = "phones"
+      openSettings()
+    }
+    .onReceive(openRequests.$workspaceLink) { link in
+      guard link != nil else { return }
+      Task { takeWorkspaceLink() }
+    }
+    .onReceive(store.$payload) { payload in
+      updateTutorial(payload)
+      var arrived: [String] = []
+      if let payload {
+        notices.dismissCards(notIn: payload)
+        toasts.dismissCards(notIn: payload)
+        arrived = showNewWorkspaces(in: payload)
+      }
+      showWorkspaceLink(in: payload, arrived: arrived)
+      show(openRequests.target, in: payload)
+      if case .worktree(let path) = selection,
+        let environment = payload?.environments.filter({ $0.path == path || $0.worktree?.path == path }).map(\.path)
+          .sorted().first
+      {
+        navigate(.environment(environment), .automatic("worktree now has a workspace"))
+      }
+      restoreLastProject()
+    }
+    .onReceive(openRequests.$tutorialRequest) { entry in
+      guard let entry else { return }
+      openRequests.tutorialRequest = nil
+      tutorial.open(beginning: entry == .begin)
+    }
+    .onReceive(tutorialClock) { _ in
+      updateTutorial(store.payload)
+    }
+    .onReceive(TutorialViewerEvents.shared.$events.receive(on: DispatchQueue.main)) { events in
+      updateTutorial(store.payload, events: events)
+    }
+    .onReceive(store.$projects) { _ in restoreLastProject() }
+    .onReceive(openRequests.$showsMachine) { shows in
+      guard shows else { return }
+      openRequests.showsMachine = false
+      navigate(.machine, .request("show machine"))
+    }
+    .onReceive(openRequests.$workspacePath) { path in
+      guard let path else { return }
+      openRequests.workspacePath = nil
+      navigate(.environment(path), .request("workspace path"))
+    }
+    .onReceive(store.$payload) { payload in
+      if let payload, case .environment(let path) = selection {
+        if WorktreePage(path: path, environments: payload.environments) != nil {
+          lastResolvedWorkspace = path
+        } else if lastResolvedWorkspace == path
+          || WorktreePage(path: path, environments: store.payload?.environments ?? []) != nil,
+          let archive = ArchivedWorkspace.newest(removedFrom: path, in: payload.archived ?? [])
+        {
+          lastResolvedWorkspace = nil
+          navigate(.archived(archive.id), .automatic("workspace removed, opening its archive"))
+          return
+        }
+      }
+      guard let payload, case .archived(let id) = selection,
+        !(payload.archived ?? []).contains(where: { $0.id == id })
+      else { return }
+      navigate(previousSelection ?? .overview, .automatic("archived workspace no longer listed"))
+    }
+    .onChange(of: selection, initial: true) { old, item in
+      switch item {
+      case .environment(let path): store.show(workspace: WorkspaceKey(owner: .local, path: path))
+      case .pairedWorkspace(let key): store.show(workspace: key)
+      default: store.show(workspace: nil)
+      }
+      let name = item?.logName ?? "none"
+      let cause = navigation.takeCause()
+      if old == item {
+        DebugLog.setDestination(name)
+      } else {
+        DebugLog.setDestination(name, from: old?.logName ?? "none", cause: cause)
+      }
+    }
+    .onChange(of: selection) { old, item in
+      if item != tutorialHighlightDestination { tutorialDestinationHighlight = nil }
+
+      if case .archived = item {
+        archivedLogQuery = LogQuery()
+        if case .archived = old {} else { previousSelection = old }
+      }
+      if case .environment(let path) = item, path == lastResolvedWorkspace {} else { lastResolvedWorkspace = nil }
+      restoredProject = true
+      if case .project = item {} else { showingAllWorktrees = nil }
+      switch item {
+      case .overview, .wall, .discover:
+        projectFilter = nil
+        openRequests.selectedWorkspace = nil
+      case .project(let project):
+        if showingAllWorktrees != project { showingAllWorktrees = nil }
+        projectFilter = project
+        lastProjectPath = project.root
+        openRequests.selectedWorkspace = store.environments(in: project).first?.path
+      case .environment(let path):
+        openRequests.selectedWorkspace = path
+      case .worktree, .archived, .pairedWorkspace:
+        openRequests.selectedWorkspace = nil
+      default: break
+      }
+    }
+  }
+
+  private var tutorialLogsHighlight: UUID? {
+    guard case .environment = selection, selection == tutorialHighlightDestination, showsLogs else { return nil }
+    return tutorialDestinationHighlight
+  }
+
+  private var tutorialHint: TutorialHint? {
+    guard tutorial.isOpen else { return nil }
+    let selected: String? = if case .environment(let path) = selection { path } else { nil }
+    return TutorialHint(
+      step: tutorial.snapshot?.currentStep ?? "done", path: tutorial.tourPath,
+      secondPath: tutorial.snapshot?.record.secondPath, selectedPath: selected, logsShown: showsLogs,
+      ticks: tutorial.snapshot?.steps.first { $0.id == tutorial.snapshot?.currentStep }?.ticks ?? [],
+      showMe: {
+        if tutorial.snapshot?.isFinished == true {
+          if let archive = tutorial.snapshot?.record.latestArchive(in: store.payload?.archived ?? []) {
+            navigate(.archived(archive.id), .click("tutorial Show me"))
+          }
+        } else if let path = tutorial.tourPath {
+          navigate(.environment(path), .click("tutorial Show me"))
+          if ["logs", "refresh", "agent"].contains(tutorial.snapshot?.currentStep ?? "") { showsLogs = true }
+          if tutorial.snapshot?.currentStep == "logs" { TutorialViewerEvents.shared.logsOpened(path) }
+        }
+      })
+  }
+
+  private func updateTutorial(_ payload: StatusPayload?, events: [TutorialViewerEvents.Entry]? = nil) {
+    guard let payload else { return }
+    tutorial.update(
+      workspaces: payload.environments, archived: payload.archived ?? [],
+      sheetOpen: onboarding.showsGuide || nativePermissions.showsSetup || actions.presented != nil
+        || NSApp.windows.contains { $0.attachedSheet != nil },
+      viewerEvents: events ?? TutorialViewerEvents.shared.events,
+      pairedPhoneCount: ServerController.shared.pairedPhoneCount,
+      removalRefused: operations.runs.contains { run in
+        run.needsAttention && run.startedAt >= (tutorial.snapshot?.record.stepSince ?? .distantFuture)
+          && run.steps.contains { command in
+            command.arguments.starts(with: ["worktree", "remove"])
+              && (command.cwd == tutorial.tourPath || command.arguments.contains(tutorial.tourPath ?? ""))
+          }
+      })
+  }
+
+  private var tutorialShortcut: String? {
+    let listed = Set(store.payload?.environments.map(\.path) ?? [])
+    return tutorial.snapshot?.record.trackedPaths.first(where: listed.contains)
+  }
+
+  private func openTutorialAgentActions(_ path: String) {
+    navigate(.environment(path), .click("tutorial Open Agent Actions"))
+    guard
+      let device = store.payload?.environments.first(where: { $0.path == path })?.orderedDevices
+        .first(where: { $0.platform == "ios" })
+    else { return }
+    focusedDeviceID = device.id
+    UserDefaults.standard.set(true, forKey: AppPreferences.Key.viewerShowsActions)
+    openRequests.viewer = ViewedDevice(id: device.id, workspace: path)
+  }
+
+  private var tutorialArchiveUnavailableReason: String {
+    if store.payload == nil { return "Waiting for Stim to load saved archives." }
+    if tutorial.archiveEnabled == false { return "Archiving is off. No saved archive is available for this tutorial run." }
+    let paths = tutorial.snapshot?.record.trackedPaths ?? []
+    if store.payload?.environments.contains(where: { paths.contains($0.path) }) == true {
+      return "Finish removing the tutorial worktrees to see their saved builds and logs in Archived."
+    }
+    return "No saved archive is available for this tutorial run. It may have expired or been removed."
+  }
+
+  private var showsWorkspace: Bool {
+    if case .environment = selection { return selectedPage != nil }
+    if case .archived = selection { return true }
+    if case .pairedWorkspace(let key) = selection { return store.workspace(key) != nil }
+    return false
+  }
+
+  private var selectedPage: WorktreePage? {
+    guard case .environment(let path) = selection else { return nil }
+    return WorktreePage(path: path, environments: store.payload?.environments ?? [])
+  }
+
+  private var logsWorkspace: Binding<String?> {
+    Binding(
+      get: { logWorkspacePath },
+      set: { path in
+        if selectedPage?.isUnified == true, logWorkspacePath != path {
+          logQuery.slot = nil
+          logQuery.buildRun = nil
+        }
+        logWorkspacePath = path
+      })
+  }
+
+  private var tutorialDocked: Bool {
+    (isFullScreen || tutorialPinned) && tutorial.isOpen && tutorial.snapshot != nil
+  }
+
+  private var tutorialDockWidth: CGFloat { tutorialDocked ? WorkspaceDetail.inspectorWidth + 1 : 0 }
+
+  private var floatingTutorial: some View {
+    ExperimentalTutorialFloat(
+      isPresented: tutorial.isOpen && tutorial.snapshot != nil && !tutorialDocked && !tutorialWindowTransitioning
+    ) {
+      if let snapshot = tutorial.snapshot { tutorialPanelContent(snapshot) }
+    }
+  }
+
+  private func tutorialPanelContent(_ snapshot: TutorialSnapshot) -> some View {
+    let archive = snapshot.record.latestArchive(in: store.payload?.archived ?? [])
+    return TutorialPanel(
+      snapshot: snapshot, message: tutorial.notice,
+      issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState,
+      agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
+      asks: tutorial.ask,
+      copied: { tutorial.copiedPrompt() }, next: tutorial.next,
+      restart: tutorial.restart,
+      close: tutorial.close,
+      isDocked: tutorialDocked, isFullScreen: isFullScreen,
+      togglePin: { if !isFullScreen { tutorialPinned.toggle() } },
+      openArchived: archive.map { archive in
+        {
+          navigate(.archived(archive.id), .click("tutorial Open Archived"))
+          tutorialHighlightDestination = .archived(archive.id)
+          tutorialDestinationHighlight = UUID()
+        }
+      },
+      archiveUnavailableReason: tutorialArchiveUnavailableReason,
+      openBuild: tutorial.tourPath.map { path in
+        {
+          navigate(.environment(path), .click("tutorial Open the build"))
+          focusedDeviceID = tutorial.workspace?.orderedDevices.first { $0.platform == "ios" }?.id
+        }
+      },
+      openAgentActions: tutorialShortcut.map { path in { openTutorialAgentActions(path) } },
+      openLogs: tutorialShortcut.map { path in
+        {
+          showLogs(path)
+          tutorialHighlightDestination = .environment(path)
+          tutorialDestinationHighlight = UUID()
+          logQuery.errorsOnly = false
+          TutorialViewerEvents.shared.logsOpened(path)
+        }
+      },
+      pairPhone: { openRequests.pairsPhone = true },
+      updateCLI: {
+        onboarding.openGuide()
+        onboarding.guideStep = .cli
+      }
+    )
+  }
+
+  private var detailRoom: CGFloat {
+    windowSize.width - (columnVisibility == .detailOnly ? 0 : sidebarWidth) - tutorialDockWidth
+  }
+
+  private var inspectorFits: Bool {
+    settledInspectorFits ?? (detailRoom >= WorkspaceDetail.widthWithInspector)
+  }
+
+  private func settleInspectorFit() async {
+    let fits = detailRoom >= WorkspaceDetail.widthWithInspector
+    guard windowSize.width > 0, columnVisibility == .detailOnly || sidebarWidth > 0, settledInspectorFits != fits else {
+      return
+    }
+    if fits, settledInspectorFits != nil {
+      try? await Task.sleep(for: .milliseconds(150))
+      if Task.isCancelled { return }
+    }
+    settledInspectorFits = fits
+  }
+
+  private var inspector: InspectorPresentation {
+    if inspectorFits { return showsInspector ? .column : .hidden }
+    return showsInspectorOverlay ? .overlay : .hidden
+  }
+
+  private var workspaceTitles: WorkspaceTitles {
+    WorkspaceTitles(
+      titles: Dictionary(
+        (store.payload?.environments ?? []).map { ($0.path, $0.names.title) }, uniquingKeysWith: { first, _ in first }))
+  }
+
+  private func toggleInspector() {
+    if inspectorFits { showsInspector.toggle() } else { showsInspectorOverlay.toggle() }
+  }
+
+  /// Leaves room for the inspector, column or floating, so the popup never sits under it.
+  @ViewBuilder private var onboardingPopup: some View {
+    HStack(spacing: 0) {
+      OnboardingBanner(onboarding: onboarding).frame(maxWidth: .infinity)
+      if showsWorkspace, inspector == .column {
+        Color.clear.frame(width: WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1)
+      } else if showsWorkspace, inspector == .overlay {
+        Color.clear.frame(width: WorkspaceDetail.inspectorWidth)
+      }
+    }
+  }
+
+  private var controlsBesideInspector: Bool { showsWorkspace && inspector == .column }
+
+  @ToolbarContentBuilder private var sidebarToggleToolbar: some ToolbarContent {
+    if #available(macOS 26.0, *) {
+      ToolbarItem(placement: .navigation) {
+        sidebarToggleButton.glassEffect(.regular, in: Capsule())
+      }
+      .sharedBackgroundVisibility(.hidden)
+    } else {
+      ToolbarItem(placement: .navigation) {
+        sidebarToggleButton.background(.regularMaterial, in: Capsule())
+      }
+    }
+  }
+
+  private var sidebarToggleButton: some View {
+    Button {
+      withAnimation { columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly }
+    } label: {
+      Label(columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar", systemImage: "sidebar.left")
+    }
+    .buttonStyle(.icon())
+    .labelStyle(.iconOnly)
+    .padding(.horizontal, Space.md + Space.xxs)
+    .frame(height: ToolbarMetrics.glassHeight)
+    .help(columnVisibility == .detailOnly ? "Show the sidebar" : "Hide the sidebar")
+  }
+
+  private var logsToggleButton: some View {
+    LogsToggleButton(isShown: showsLogs, errors: selectedPage?.errors ?? 0) {
+      if !showsLogs, let page = selectedPage, page.isUnified, let app = page.soleErrorApp {
+        logsWorkspace.wrappedValue = app.path
+      }
+      showsLogs.toggle()
+    }
+    .tutorialGlowInPlace(tutorialHint, .logsToggle)
+  }
+
+  @ViewBuilder private var inspectorSideControls: some View {
+    if controlsBesideInspector {
+      let controls = notificationButton.padding(.horizontal, Space.xs).frame(height: ToolbarMetrics.glassHeight)
+      Group {
+        if #available(macOS 26.0, *) {
+          controls.glassEffect(.regular, in: Capsule())
+        } else {
+          controls.background(.regularMaterial, in: Capsule())
+        }
+      }
+      .padding(.top, 6)
+      .padding(.trailing, WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1 + Space.lg)
+      .ignoresSafeArea(edges: .top)
+    }
+  }
+
+  private var notificationButton: some View {
+    let unread = inbox.inbox.unreadCount
+    return Button {
+      navigate(.notifications, .click("notifications button"))
+    } label: {
+      NotificationBell(selected: selection == .notifications)
+        .padding(.trailing, unread > 0 ? 6 : 0)
+        .frame(width: Self.bellContentWidth(unread: unread), height: 36)
+        .overlay(alignment: .topTrailing) {
+          if unread > 0 {
+            Text(unread > 99 ? "99+" : "\(unread)")
+              .font(.system(size: 10, weight: .bold))
+              .monospacedDigit()
+              .foregroundStyle(.white)
+              .fixedSize()
+              .padding(.horizontal, 4)
+              .frame(minWidth: 15, minHeight: 15)
+              .background(Capsule().fill(Palette.brand))
+              .padding(.top, 3)
+              .padding(.trailing, 5)
+              .allowsHitTesting(false)
+          }
+        }
+        .contentShape(Capsule())
+    }
+    .buttonStyle(.hoverRow(radius: Radius.round, selected: selection == .notifications))
+    .accessibilityLabel("Notifications")
+    .accessibilityValue("\(inbox.inbox.unreadCount) unread")
+    .help("Open notifications")
+  }
+
+  private static func bellContentWidth(unread: Int) -> CGFloat {
+    unread == 0 ? 32 : unread < 10 ? 40 : 46
+  }
+
+  private var bellWidth: CGFloat {
+    Self.bellContentWidth(unread: inbox.inbox.unreadCount) + 2 * Space.xs + Self.toolbarItemSpacing
+  }
+
+  private static let toolbarItemSpacing: CGFloat = 16
+  private static let toolbarSlack: CGFloat = 16
+  private static let summaryHysteresis: CGFloat = 8
+  private static let historyButtonsWidth: CGFloat = 64
+  private static let operationsButtonWidth: CGFloat = 64
+
+  /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
+  private var summaryWidth: CGFloat {
+    detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - Self.toolbarSlack
+      - (showsWorkspace && inspector != .column ? 88 : 0)
+      - bellWidth
+      - Self.historyButtonsWidth
+      - (columnVisibility == .detailOnly && !operations.runs.isEmpty ? Self.operationsButtonWidth : 0)
+      - (showsWorkspace && inspector == .column
+        ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1
+        : showsWorkspace && inspector == .overlay ? max(0, WorkspaceDetail.inspectorWidth - 88 - bellWidth) : 0)
+  }
+
+  private func machineSummary(measuresNarrowest: Bool = false) -> MachineSummary {
+    MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth, measuresNarrowest: measuresNarrowest) {
+      navigate(.machine, .click("machine summary"))
+    }
+  }
+
+  private var summaryFits: Bool {
+    summaryWidth >= narrowestSummaryWidth + (summaryHidden ? Self.summaryHysteresis : 0)
+  }
+
+  /// NSToolbar measures an item when it is inserted or the window resizes, not when a SwiftUI item grows, so the
+  /// summary is reinserted whenever the room it gets changes.
+  private func summaryItemID(for summary: MachineSummary) -> String {
+    "machine-summary-\(summary.contentKey)-\(detailWidth > 0)-\(showsWorkspace)-\(showsWorkspace && inspector == .column)-\(showsWorkspace && inspector == .overlay)-\(bellWidth)-\(summaryFits)"
+  }
+
+  private func restoreLastProject() {
+    guard !restoredProject, selection == .overview else { return }
+    if defaultView == .allDevices {
+      restoredProject = true
+      replacesHistory = true
+      navigate(.wall, .automatic("default view"))
+      return
+    }
+    guard defaultView == .lastProject, !lastProjectPath.isEmpty else { return }
+    guard let entry = store.projectList.first(where: { $0.project.root == lastProjectPath }) else { return }
+    restoredProject = true
+    replacesHistory = true
+    navigate(.project(entry.project), .automatic("default view"))
+  }
+
+  private var destination: NavigationDestination {
+    var showsAll = false
+    if case .project(let project) = selection { showsAll = showingAllWorktrees == project }
+    var focused: String?
+    if case .environment = selection { focused = focusedDeviceID }
+    return NavigationDestination(selection: selection, showsAllWorktrees: showsAll, focusedDeviceID: focused)
+  }
+
+  private func navigate(_ item: SidebarItem?, _ cause: NavigationCause) {
+    navigation.setCause(cause)
+    selection = item
+  }
+
+  private func attributed(_ cause: NavigationCause) -> Binding<SidebarItem?> {
+    Binding(get: { selection }, set: { navigate($0, cause) })
+  }
+
+  private func show(_ destination: NavigationDestination) {
+    selection = destination.selection
+    showingAllWorktrees = nil
+    if destination.showsAllWorktrees, case .project(let project)? = destination.selection { showingAllWorktrees = project }
+    focusedDeviceID = destination.focusedDeviceID
+  }
+
+  /// Whether the destination's page still exists. Without a status payload nothing can be told yet.
+  private func resolves(_ destination: NavigationDestination) -> Bool {
+    guard let payload = store.payload else { return true }
+    switch destination.selection {
+    case .environment(let path): return WorktreePage(path: path, environments: payload.environments) != nil
+    case .worktree(let path): return payload.unprovisionedWorktrees?.contains { $0.path == path } == true
+    case .archived(let id): return payload.archived?.contains { $0.id == id } == true
+    case .project(let project): return store.projectList.contains { $0.project == project }
+    case .pairedWorkspace(let key):
+      guard case .paired(let id) = key.owner, store.paired[id]?.payload != nil else { return true }
+      return store.workspace(key) != nil
+    default: return true
+    }
+  }
+
+  private func showNewWorkspaces(in payload: StatusPayload) -> [String] {
+    let arrived = notices.arrivals.update(payload.environments)
+    var shown: [String] = []
+    for workspace in arrived {
+      let path = workspace.path
+      let card = Notice(
+        icon: "plus.rectangle.on.folder", title: "New workspace \(workspace.names.title)",
+        detail: newWorkspaceDetail(workspace), actionTitle: "Show",
+        perform: {
+          navigate(.environment(path), .click("new workspace notice"))
+          let current = store.payload?.environments.first { $0.path == path }
+          focusedDeviceID =
+            current?.orderedDevices.first { device in
+              current?.build.map { $0.platform == device.platform && $0.slot == device.slot } ?? true
+            }?.id
+        }, key: WorkspaceArrivals.cardKey(path), workspacePath: path)
+      if notices.show(card) { shown.append(path) }
+    }
+    for workspace in payload.environments {
+      notices.update(key: WorkspaceArrivals.cardKey(workspace.path), detail: newWorkspaceDetail(workspace))
+    }
+    return shown
+  }
+
+  private func newWorkspaceDetail(_ workspace: Workspace) -> String {
+    WorkspaceArrivals.buildLine(workspace) ?? abbreviatingHome(workspace.path)
+  }
+
+  private func showStimUpdate(_ latest: SemanticVersion?) {
+    guard let latest, latest.description != dismissedStimUpdate,
+      case .compatible(let installed)? = onboarding.report?.stim
+    else {
+      notices.remove(key: "stim-update")
+      return
+    }
+    notices.show(
+      Notice(
+        icon: "arrow.down.circle", title: "Stim \(latest.description)",
+        detail: "Installed: \(installed.description)", actionTitle: "Update",
+        perform: onboarding.installStim,
+        onDismiss: { dismissedStimUpdate = latest.description }, key: "stim-update"))
+  }
+
+  /// `@Published` emits before the property changes, so the link is read once the assignment has landed.
+  private func takeWorkspaceLink() {
+    guard let link = openRequests.workspaceLink else { return }
+    openRequests.workspaceLink = nil
+    pendingSharedLink = nil
+    if case .shared(let request) = link {
+      pendingLink = nil
+      let pending = PendingSharedWorkspaceLink(request: request)
+      pendingSharedLink = pending
+      showSharedWorkspaceLink()
+      Task {
+        try? await Task.sleep(for: .seconds(10))
+        guard pendingSharedLink?.id == pending.id else { return }
+        pendingSharedLink = nil
+        showWorkspaceNotFound(
+          "The server is unavailable or no longer lists this workspace. Connect to the Mac and try the link again.")
+      }
+      return
+    }
+    guard case .workspace(let request) = link else {
+      showWorkspaceNotFound("The link does not name a workspace.")
+      return
+    }
+    pendingLink = PendingWorkspaceLink(request: request)
+    showWorkspaceLink(in: store.payload, arrived: [])
+  }
+
+  /// A link waits for a status payload that lists its workspace. Once one exists, "Workspace not found" shows after
+  /// 10 seconds without a match, and a match within the next minute still replaces it with the workspace's card,
+  /// since `stim status --watch` can lag the command that printed the link. A link without `archive=` opens the
+  /// path's newest archive only after that wait, so a re-created worktree is not shadowed by its old archive.
+  private func showWorkspaceLink(in payload: StatusPayload?, arrived: [String]) {
+    showSharedWorkspaceLink()
+    guard let pending = pendingLink, let payload else { return }
+    guard let target = payload.target(of: pending.request) else {
+      if let archive = payload.archive(for: pending.request, waited: pending.waited) {
+        pendingLink = nil
+        navigate(.archived(archive.id), .request("workspace link"))
+        return
+      }
+      guard !pending.expiring else { return }
+      pendingLink?.expiring = true
+      Task {
+        try? await Task.sleep(for: .seconds(10))
+        guard pendingLink?.id == pending.id else { return }
+        pendingLink?.waited = true
+        if let archive = store.payload?.archive(for: pending.request, waited: true) {
+          pendingLink = nil
+          navigate(.archived(archive.id), .request("workspace link"))
+          return
+        }
+        showWorkspaceNotFound(
+          "Stim does not list \(abbreviatingHome(pending.request.path)) as a workspace.",
+          key: "workspace-link:\(pending.request.path)")
+        try? await Task.sleep(for: .seconds(60))
+        if pendingLink?.id == pending.id { pendingLink = nil }
+      }
+      return
+    }
+    pendingLink = nil
+    let path = target.workspace.path
+    let deviceID = target.device?.id
+    guard !arrived.contains(path) else {
+      toasts.dismiss(key: "workspace-link:\(path)")
+      return
+    }
+    toasts.show(
+      Toast(
+        icon: "macwindow", tone: .accent, title: "\(target.workspace.names.title) \u{00B7} workspace started",
+        body: abbreviatingHome(path),
+        action: Toast.Action(title: "Open") {
+          navigate(.environment(path), .click("workspace started toast"))
+          if let deviceID { focusedDeviceID = deviceID }
+        },
+        sticky: true, key: "workspace-link:\(path)", workspacePath: path))
+  }
+
+  private func showSharedWorkspaceLink() {
+    guard let pending = pendingSharedLink, case .open(let hello) = ServerSession.shared.state else { return }
+    guard let homeId = hello.server.id else {
+      pendingSharedLink = nil
+      showWorkspaceNotFound("Update Stim and its local server to open shared workspace links.")
+      return
+    }
+    guard homeId.lowercased() == pending.request.machine else {
+      pendingSharedLink = nil
+      showWorkspaceNotFound(
+        "This workspace belongs to another Mac or Stim home. Open it in Stim on that Mac or on a paired phone.")
+      return
+    }
+    guard let target = store.target(for: pending.request, connection: ServerSession.shared.feedConnection) else { return }
+    pendingSharedLink = nil
+    navigate(.environment(target.workspace.path), .request("shared workspace link"))
+    if let device = target.device { focusedDeviceID = device.id }
+  }
+
+  private func showWorkspaceNotFound(_ body: String, key: String? = nil) {
+    toasts.show(Toast(icon: "questionmark.folder", tone: .warning, title: "Workspace not found", body: body, key: key))
+  }
+
+  private func show(_ target: OversightTarget?, in payload: StatusPayload?) {
+    guard let target, let payload else { return }
+    let env = target.path.flatMap { path in payload.environments.first { $0.path == path } }
+    openRequests.target = nil
+    if env == nil, let path = target.path,
+      let archive = ArchivedWorkspace.newest(removedFrom: path, in: payload.archived ?? [])
+    {
+      navigate(.archived(archive.id), .request("oversight target"))
+      return
+    }
+    switch target {
+    case .machine:
+      navigate(.machine, .request("oversight target"))
+    case .device(let path, let platform, let slot):
+      navigate(.environment(path), .request("oversight target"))
+      if let device = env?.devices.first(where: { device in
+        if case .remote = device { return false }
+        return device.platform == platform && device.slot == slot
+      }) {
+        focusedDeviceID = device.id
+      }
+    case .build(let path, _):
+      navigate(.environment(path), .request("oversight target"))
+      if inspector == .hidden { toggleInspector() }
+    case .workspace(let path), .url(let path, _):
+      navigate(.environment(path), .request("oversight target"))
+    case .buildRequest:
+      break
+    }
+  }
+
+  private func openErrors(_ path: String) {
+    logsWorkspace.wrappedValue = path
+    navigate(.environment(path), .click("open errors"))
+    showsLogs = true
+    logQuery.errorsOnly = true
+  }
+
+  private func showLogs(_ path: String) {
+    logsWorkspace.wrappedValue = path
+    navigate(.environment(path), .click("open logs"))
+    showsLogs = true
+  }
+
+  @ViewBuilder private var detail: some View {
+    switch selection {
+    case .environment(let path):
+      if let page = WorktreePage(path: path, environments: store.payload?.environments ?? []) {
+        let host = WorkspaceDetailHost(
+          statsReader: statsReader, environment: environment, page: page, selectedPath: path, metrics: metrics,
+          machine: store.payload?.machine,
+          reportsBundles: store.payload?.environments.contains { $0.metro?.bundle != nil } ?? false,
+          inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedDeviceID, logQuery: $logQuery,
+          logWorkspacePath: logsWorkspace, archived: store.payload?.archived ?? [],
+          selection: attributed(.click("workspace page"))
+        )
+        if page.isUnified {
+          host.id(page.identity)
+        } else {
+          host
+        }
+      } else {
+        EmptyState(
+          title: "Workspace Gone", message: "stim status no longer reports this workspace.",
+          actionTitle: "Go to Overview", action: { navigate(.overview, .click("workspace gone overview")) })
+      }
+    case .archived(let id):
+      if let archive = store.payload?.archived?.first(where: { $0.id == id }) {
+        WorkspaceDetail.archived(
+          archive, environment: environment, statsReader: statsReader, environments: store.payload?.environments ?? [],
+          inspector: inspector, inspectorWidth: $inspectorWidth, logQuery: $archivedLogQuery,
+          openReplacement: { navigate(.environment($0), .click("archived workspace replacement")) }
+        )
+        .tutorialDestinationGlow(
+          trigger: tutorialHighlightDestination == .archived(id) ? tutorialDestinationHighlight : nil
+        )
+        .id(id)
+      }
+    case .worktree(let path):
+      if let worktree = store.payload?.unprovisionedWorktrees?.first(where: { $0.path == path }) {
+        NoEnvironmentDetail(
+          worktree: worktree, environment: environment,
+          apps: notSetUpApps(for: worktree, environments: store.payload?.environments ?? [], project: store.project(ofPath:)),
+          projectName: store.title(of: store.project(ofPath: worktree.path)))
+      } else {
+        EmptyState(title: "Worktree Gone", message: "stim status no longer reports this worktree.")
+      }
+    case .notifications:
+      InboxView(inbox: NotificationInbox.shared, openLogs: openErrors)
+    case .machine:
+      MachineView(
+        buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, pressure: pressure, tips: tips)
+    case .pairedWorkspace(let key):
+      PairedWorkspaceDetail(
+        store: store, key: key, environment: environment, statsReader: statsReader, inspector: inspector,
+        inspectorWidth: $inspectorWidth,
+        focusedID: $focusedDeviceID)
+    case .discover:
+      DiscoverView(
+        replayUnavailableReason: discoverReplayUnavailableReason,
+        perform: performDiscoverAction)
+    case .builds:
+      BuildsView(
+        history: builds, status: store,
+        openWorkspace: { navigate($0.owner.isLocal ? .environment($0.path) : .pairedWorkspace($0), .click("builds page")) })
+    case .overview:
+      OverviewView(
+        store: store, metrics: metrics,
+        selection: attributed(.click("overview page")),
+        openLogs: openErrors,
+        openDevice: { key, deviceID in
+          focusedDeviceID = deviceID
+          navigate(key.owner.isLocal ? .environment(key.path) : .pairedWorkspace(key), .click("overview page"))
+        },
+        openIdleProject: { project in
+          showingAllWorktrees = project
+          navigate(.project(project), .click("overview page"))
+        })
+    default:
+      WallView(
+        store: store, metrics: metrics, project: projectFilter,
+        scope: projectFilter.map { ProjectPage.scope(of: $0, showingAll: showingAllWorktrees) } ?? .active,
+        setScope: { showingAllWorktrees = $0 == .all ? projectFilter : nil },
+        selection: attributed(.click("wall page")), openLogs: openErrors,
+        openDevice: { key, deviceID in
+          focusedDeviceID = deviceID
+          navigate(key.owner.isLocal ? .environment(key.path) : .pairedWorkspace(key), .click("wall page"))
+        })
+    }
+  }
+
+  private var discoverReplayArchive: ArchivedWorkspace? {
+    var inputs = TipInputs()
+    inputs.workspaces = store.payload?.environments ?? []
+    inputs.archived = store.payload?.archived ?? []
+    inputs.serverRunning = ServerController.shared.isRunning
+    return Tips.replayArchive(inputs)
+  }
+
+  private var discoverReplayUnavailableReason: String? {
+    if store.payload == nil { return "Waiting for Stim to load saved recordings." }
+    if !ServerController.shared.isRunning { return "Connect the Stim server to open saved recordings." }
+    return discoverReplayArchive == nil
+      ? "Replay needs an archived workspace with a saved recording. Run an app, then archive its workspace to try it."
+      : nil
+  }
+
+  private func performDiscoverAction(_ topic: TipTopic) {
+    switch topic {
+    case .tutorial: openRequests.showTutorial()
+    case .buildMachine, .hostedSimulators:
+      openRequests.addMachine = AddMachineRequest(
+        machineID: Tips.preselected(buildMachines.peers, hostedSimulators: topic == .hostedSimulators)?.id,
+        hostedSimulators: topic == .hostedSimulators)
+    case .phone: openRequests.pairsPhone = true
+    case .hideWorkspaces, .statusFilter:
+      columnVisibility = .all
+      openRequests.showsViewOptions = true
+    case .replay:
+      if let archive = discoverReplayArchive {
+        navigate(.archived(archive.id), .click("Discover replay"))
+      }
+    case .easProfile, .macos, .logs: break
+    }
+  }
+}
+
+private struct WorkspaceDetailHost: View {
+  var statsReader: StatsReader
+  var environment: Task<[String: String], Never>
+  var page: WorktreePage
+  var selectedPath: String
+  var metrics: MetricsStore
+  var machine: MachineUsage?
+  var reportsBundles: Bool
+  var inspector: InspectorPresentation
+  @Binding var inspectorWidth: CGFloat
+  @Binding var focusedID: String?
+  @Binding var logQuery: LogQuery
+  @Binding var logWorkspacePath: String?
+  var archived: [ArchivedWorkspace]
+  @Binding var selection: SidebarItem?
+
+  var body: some View {
+    let env = page.apps[0]
+    WorkspaceDetail(
+      environment: environment, statsReader: statsReader, env: env, page: page, selectedPath: selectedPath,
+      sampled: metrics.usage,
+      usage: metrics.usage[env.path], machine: machine,
+      reportsBundles: reportsBundles,
+      history: metrics.owners, inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedID,
+      logQuery: $logQuery, logWorkspacePath: $logWorkspacePath, archived: archived, openArchive: { selection = .archived($0) })
+  }
+}
+
+private struct PendingWorkspaceLink {
+  let id = UUID()
+  let request: WorkspaceOpenRequest
+  var expiring = false
+  var waited = false
+}
+
+private struct PendingSharedWorkspaceLink {
+  let id = UUID()
+  let request: SharedWorkspaceOpenRequest
+}
+
+private struct NotificationBell: View {
+  var selected: Bool
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var wiggles = 0
+  @State private var lastWiggle: Date?
+
+  private struct Wiggle {
+    var angle = 0.0
+    var highlight = 0.0
+  }
+
+  var body: some View {
+    let swing = reduceMotion ? 0.0 : 1.0
+    return Image(systemName: "bell")
+      .font(.system(size: 17))
+      .keyframeAnimator(initialValue: Wiggle(), trigger: wiggles) { content, value in
+        content
+          .foregroundStyle(value.highlight > 0 ? Palette.primary : (selected ? Palette.primary : Palette.text))
+          .rotationEffect(.degrees(value.angle * swing), anchor: .top)
+      } keyframes: { _ in
+        KeyframeTrack(\.angle) {
+          CubicKeyframe(-12, duration: 0.1)
+          CubicKeyframe(10, duration: 0.1)
+          CubicKeyframe(-6, duration: 0.1)
+          CubicKeyframe(0, duration: 0.1)
+        }
+        KeyframeTrack(\.highlight) {
+          MoveKeyframe(1)
+          LinearKeyframe(1, duration: 0.79)
+          LinearKeyframe(0, duration: 0.01)
+        }
+      }
+      .onReceive(NotificationInbox.shared.arrivals) { suppressed in
+        let now = Date()
+        guard
+          Inbox.wigglesBell(suppressed: suppressed, notificationsOpen: selected, now: now, lastWiggle: lastWiggle)
+        else { return }
+        lastWiggle = now
+        wiggles += 1
+      }
+  }
+}
+
+enum InspectorPresentation {
+  case column
+  case overlay
+  case hidden
+}
+
+struct InspectorToggleButton: View {
+  var isShown: Bool
+  var action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Label(isShown ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
+    }
+    .buttonStyle(.icon(tint: isShown ? Palette.text : Palette.secondary))
+    .labelStyle(.iconOnly)
+    .accessibilityAddTraits(isShown ? .isSelected : [])
+    .help(isShown ? "Hide the inspector" : "Show the inspector")
+  }
+}
+
+/// Shows or hides the workspace's logs below its devices, with the error count while they are hidden.
+struct LogsToggleButton: View {
+  var isShown: Bool
+  var errors: Int
+  var action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Label(isShown ? "Hide Logs" : "Show Logs", systemImage: "text.alignleft")
+    }
+    .buttonStyle(.icon(tint: isShown ? Palette.text : Palette.secondary))
+    .labelStyle(.iconOnly)
+    .accessibilityAddTraits(isShown ? .isSelected : [])
+    .overlay(alignment: .topTrailing) {
+      if errors > 0, !isShown {
+        Text(errors > 99 ? "99+" : String(errors))
+          .font(.system(size: 10, weight: .bold))
+          .monospacedDigit()
+          .foregroundStyle(.white)
+          .lineLimit(1)
+          .fixedSize()
+          .padding(.horizontal, 4)
+          .frame(minWidth: 15, minHeight: 15)
+          .background(Capsule().fill(Palette.error))
+          .offset(x: 6, y: -5)
+          .allowsHitTesting(false)
+      }
+    }
+    .help(
+      isShown
+        ? "Hide the logs"
+        : errors > 0 ? "Show the logs: \(countLabel(errors, "error")) since the last marker" : "Show the logs"
+    )
+    .accessibilityLabel(isShown ? "Hide logs" : errors > 0 ? "Show logs, \(countLabel(errors, "error"))" : "Show logs")
+  }
+}
+
+struct InspectorToggle {
+  var isShown: Bool
+  var toggle: () -> Void
+}
+
+struct SidebarNavigation {
+  var go: (SidebarItem) -> Void
+}
+
+extension FocusedValues {
+  @Entry var inspectorToggle: InspectorToggle?
+  @Entry var sidebarNavigation: SidebarNavigation?
+}
+
+extension EnvironmentValues {
+  /// The main window's content size, which caps the size of a sheet over it.
+  @Entry var windowSize = CGSize.zero
+}
+
+/// Presents the setup guide over the main window, and opens it when the Help menu or Settings asks.
+private struct SetupGuidePresenter: ViewModifier {
+  @ObservedObject var onboarding: Onboarding
+  let actions: ActionCenter
+  @ObservedObject private var openRequests = OpenRequests.shared
+
+  func body(content: Content) -> some View {
+    content
+      .sheet(isPresented: $onboarding.showsGuide) {
+        SetupGuideView(onboarding: onboarding).environmentObject(actions)
+      }
+      .onQuitRequested { onboarding.showsGuide = false }
+      .onChange(of: openRequests.showsSetupGuide, initial: true) { _, shows in
+        guard shows else { return }
+        openRequests.showsSetupGuide = false
+        onboarding.openGuide()
+      }
+  }
+}

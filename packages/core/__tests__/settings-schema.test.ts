@@ -1,0 +1,44 @@
+import { SETTINGS } from '../state/settings-registry.ts';
+import { settingsJsonSchema } from '../state/settings-schema.ts';
+import Ajv from 'ajv/dist/2020.js';
+
+test('the editor schema accepts the tailnet-only Metro mode and refuses an unknown provider', () => {
+  const validate = new Ajv({ strict: false }).compile(settingsJsonSchema());
+  expect(validate({ metro: { tunnel: 'tailscale' } })).toBe(true);
+  expect(validate({ metro: { tunnel: 'funnel' } })).toBe(false);
+});
+
+test('the published schema covers every committed or machine setting once, at the scope files it may live in', () => {
+  const schema = settingsJsonSchema();
+  const keys: Record<string, string[]> = {};
+  const walk = (node: Record<string, unknown>, where: string) => {
+    for (const child of Object.values((node.properties ?? {}) as Record<string, Record<string, unknown>>)) {
+      const stim = child['x-stim'] as { key: string } | undefined;
+      if (stim) (keys[stim.key] ??= []).push(where);
+      else walk(child, where);
+    }
+  };
+  walk(schema, 'committed');
+  walk((schema.$defs as Record<string, Record<string, unknown>>).machine!, 'machine');
+
+  const inFiles = SETTINGS.filter((setting) =>
+    setting.scopes.some((scope) => scope === 'committed' || scope === 'machine'),
+  );
+  expect(Object.keys(keys).toSorted()).toEqual(inFiles.map((setting) => setting.key).toSorted());
+  expect(keys).toEqual(
+    Object.fromEntries(
+      inFiles.map((setting) => [
+        setting.key,
+        (['committed', 'machine'] as const).filter((scope) => setting.scopes.includes(scope)),
+      ]),
+    ),
+  );
+});
+
+test('native hosting targets accept tailnet names and ports', () => {
+  const validate = new Ajv({ strict: false }).compile(settingsJsonSchema());
+  for (const remote of ['eas', 'proxy', 'auto', 'mini', 'mini.tail.ts.net:7443'])
+    for (const platform of ['ios', 'android']) expect(validate({ [platform]: { remote } })).toBe(true);
+  for (const remote of ['bad name', 'mini:0', 'mini:65536', true])
+    for (const platform of ['ios', 'android']) expect(validate({ [platform]: { remote } })).toBe(false);
+});

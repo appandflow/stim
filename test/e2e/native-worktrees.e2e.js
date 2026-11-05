@@ -1,0 +1,358 @@
+import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
+import test from 'node:test';
+import {
+  assertMatchingPods,
+  createFixture,
+  createHarness,
+  createWarmWorktree,
+  prepareIosDevices,
+  teardownWorkspaces,
+  cleanupTmp,
+  workspaceLogsDir,
+} from './native/harness.mjs';
+
+function scratch(t) {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-native-worktrees-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  return base;
+}
+
+function git(cwd, ...args) {
+  return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' }).trim();
+}
+
+function repoFixture(t) {
+  const base = scratch(t);
+  const sourceDir = join(base, 'fixture app');
+  const workDir = join(base, 'run worktrees');
+  mkdirSync(sourceDir);
+  mkdirSync(workDir);
+  writeFileSync(join(sourceDir, 'package.json'), '{"name":"fixture"}\n');
+  git(sourceDir, 'init', '-q', '-b', 'main');
+  git(sourceDir, 'config', 'user.email', 'test@example.com');
+  git(sourceDir, 'config', 'user.name', 'test');
+  git(sourceDir, 'config', 'commit.gpgsign', 'false');
+  git(sourceDir, 'add', '.');
+  git(sourceDir, 'commit', '-qm', 'fixture');
+  const h = createHarness({ env: { ...process.env, STIM_HOME: join(base, 'home') }, cliPath: '', label: 'fixture' });
+  return { sourceDir, workDir, h, created: [] };
+}
+
+test('native worktree creation uses real detached Git paths and records them before warming', (t) => {
+  const f = repoFixture(t);
+  const before = git(f.sourceDir, 'show-ref', '--heads');
+  const head = git(f.sourceDir, 'rev-parse', 'HEAD');
+  let warmCalls = 0;
+  f.h.cli = (argv, opts) => {
+    warmCalls++;
+    assert.deepEqual(argv, ['worktree', 'warm']);
+    assert.deepEqual(f.created, [opts.cwd]);
+    assert.equal(existsSync(opts.cwd), true);
+    assert.equal(git(opts.cwd, 'branch', '--show-current'), '');
+    assert.equal(git(opts.cwd, 'rev-parse', 'HEAD'), head);
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  const path = createWarmWorktree({ ...f, name: 'native [one]' });
+  assert.equal(dirname(path), f.workDir);
+  assert.equal(warmCalls, 1);
+  assert.equal(git(f.sourceDir, 'show-ref', '--heads'), before);
+  assert.equal(git(f.sourceDir, 'status', '--porcelain'), '');
+  git(f.sourceDir, 'worktree', 'remove', path);
+  assert.doesNotMatch(git(f.sourceDir, 'worktree', 'list', '--porcelain'), /native \[one\]/);
+});
+
+test('a failed native warm keeps its created worktree recorded for diagnostics and cleanup', (t) => {
+  const f = repoFixture(t);
+  f.h.cli = () => ({ code: 1, stdout: '', stderr: 'copy failed' });
+  assert.throws(() => createWarmWorktree({ ...f, name: 'failed-warm' }), /warming .* failed: copy failed/);
+  assert.equal(f.created.length, 1);
+  assert.equal(dirname(f.created[0]), f.workDir);
+  assert.equal(existsSync(f.created[0]), true);
+  assert.equal(git(f.sourceDir, 'branch', '--list'), '* main');
+  git(f.sourceDir, 'worktree', 'remove', f.created[0]);
+});
+
+test('native worktrees from a symlinked parent use the same paths as logs and Git cleanup', (t) => {
+  const f = repoFixture(t);
+  const alias = `${f.workDir}-alias`;
+  symlinkSync(f.workDir, alias);
+  const previousHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = f.h.env.STIM_HOME;
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+  });
+  f.h.cli = (_, { cwd }) => {
+    const logs = workspaceLogsDir(realpathSync(cwd));
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, 'build.log'), 'build evidence');
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  const path = createWarmWorktree({ ...f, workDir: alias, name: 'aliased' });
+  assert.equal(readFileSync(join(workspaceLogsDir(path), 'build.log'), 'utf-8'), 'build evidence');
+  assert.deepEqual(f.created, [realpathSync(path)]);
+  assert.ok(git(f.sourceDir, 'worktree', 'list', '--porcelain').includes(`worktree ${f.created[0]}\n`));
+  git(f.sourceDir, 'worktree', 'remove', path);
+});
+
+test('failed Git creation does not warm or claim an existing path', (t) => {
+  const f = repoFixture(t);
+  let path;
+  const sh = f.h.sh;
+  f.h.sh = (file, argv, opts) => {
+    path = argv[5];
+    writeFileSync(path, 'keep');
+    return sh(file, argv, opts);
+  };
+  f.h.cli = () => assert.fail('warm must not run after a failed git add');
+  assert.throws(() => createWarmWorktree({ ...f, name: 'occupied' }), /git worktree add failed/);
+  assert.deepEqual(f.created, []);
+  assert.equal(readFileSync(path, 'utf-8'), 'keep');
+});
+
+test('separate native runs cannot claim the same device name for their first worktree', (t) => {
+  const f = repoFixture(t);
+  const anotherRun = join(f.workDir, 'another run');
+  mkdirSync(anotherRun);
+  f.h.cli = () => ({ code: 0, stdout: '', stderr: '' });
+  const first = createWarmWorktree({ ...f, name: 'e2e-cache-1' });
+  const second = createWarmWorktree({ ...f, workDir: anotherRun, name: 'e2e-cache-1' });
+  assert.notEqual(basename(first), basename(second));
+  assert.deepEqual(f.created, [first, second]);
+  git(f.sourceDir, 'worktree', 'remove', second);
+  git(f.sourceDir, 'worktree', 'remove', first);
+});
+
+test('Pods reuse requires both lockfiles and an exact match', (t) => {
+  const app = scratch(t);
+  mkdirSync(join(app, 'ios', 'Pods'), { recursive: true });
+  assert.throws(() => assertMatchingPods(app), /requires Podfile.lock and Pods\/Manifest.lock/);
+  writeFileSync(join(app, 'ios', 'Podfile.lock'), 'lock');
+  assert.throws(() => assertMatchingPods(app), /requires Podfile.lock and Pods\/Manifest.lock/);
+  writeFileSync(join(app, 'ios', 'Pods', 'Manifest.lock'), 'other');
+  assert.throws(() => assertMatchingPods(app), /differs/);
+  writeFileSync(join(app, 'ios', 'Pods', 'Manifest.lock'), 'lock');
+  assert.doesNotThrow(() => assertMatchingPods(app));
+});
+
+test('the disposable Expo iOS fixture enables scenes and prepares matching Pods before committing', (t) => {
+  const workDir = scratch(t);
+  const tools = join(workDir, 'tools');
+  mkdirSync(tools);
+  for (const name of ['npm', 'simslim']) {
+    const tool = join(tools, name);
+    writeFileSync(tool, '#!/bin/sh\nexit 0\n');
+    chmodSync(tool, 0o755);
+  }
+  const init = join(workDir, 'init.mjs');
+  writeFileSync(
+    init,
+    `import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const app = process.argv[2];
+mkdirSync(app);
+writeFileSync(join(app, 'package.json'), '{"name":"fixture","dependencies":{"expo":"~57.0.24"}}\\n');
+writeFileSync(join(app, 'app.json'), '{"expo":{"plugins":[["fixture-plugin",{"enabled":true}],["expo-build-properties",{"android":{"compileSdkVersion":36}}]]}}\\n');
+writeFileSync(join(app, '.stim.json'), JSON.stringify({ios:{deviceType:'iPhone 17'},android:{systemImage:'keep-image'}}));
+`,
+  );
+  const previousInit = process.env.STIM_E2E_EXPO_INIT;
+  process.env.STIM_E2E_EXPO_INIT = `${process.execPath} ${init} {dir}`;
+  t.after(() => {
+    if (previousInit === undefined) delete process.env.STIM_E2E_EXPO_INIT;
+    else process.env.STIM_E2E_EXPO_INIT = previousInit;
+  });
+  const h = createHarness({
+    env: { ...process.env, PATH: `${tools}:${process.env.PATH}`, STIM_HOME: join(workDir, 'home') },
+    cliPath: '',
+    label: 'fixture',
+  });
+  const sh = h.sh;
+  let prepared = false;
+  let recorded = false;
+  h.sh = (file, argv, opts) => {
+    if (file === 'npx' && argv[2] === 'install') {
+      assert.deepEqual(argv, ['--no-install', 'expo', 'install', 'expo-build-properties']);
+      assert.equal(existsSync(join(opts.cwd, '.git')), false);
+      return { code: 0, stdout: '', stderr: '' };
+    }
+    if (file === 'npx') {
+      assert.deepEqual(argv, ['--no-install', 'expo', 'prebuild', '--platform', 'ios']);
+      assert.equal(existsSync(join(opts.cwd, '.git')), false);
+      assert.equal(
+        JSON.parse(readFileSync(join(opts.cwd, '.stim.json'), 'utf8')).ios.simslimProfile,
+        '.stim-simslim.json',
+      );
+      assert.deepEqual(JSON.parse(readFileSync(join(opts.cwd, 'app.json'), 'utf8')).expo.plugins, [
+        ['fixture-plugin', { enabled: true }],
+        ['expo-build-properties', { android: { compileSdkVersion: 36 }, ios: { enableSceneSupport: true } }],
+      ]);
+      mkdirSync(join(opts.cwd, 'ios', 'Pods'), { recursive: true });
+      writeFileSync(join(opts.cwd, 'ios', 'Pods', 'Manifest.lock'), 'prepared');
+      writeFileSync(join(opts.cwd, 'ios', 'Podfile.lock'), 'prepared');
+      writeFileSync(join(opts.cwd, 'package.json'), '{"name":"prepared-fixture"}\n');
+      prepared = true;
+      return { code: 0, stdout: '', stderr: '' };
+    }
+    if (file === process.execPath && basename(argv[1]) === 'record-fixture-prebuild.mjs') {
+      assert.equal(prepared, true);
+      assert.equal(git(opts.cwd, 'status', '--porcelain'), '');
+      assert.equal(git(opts.cwd, 'show', 'HEAD:package.json'), '{"name":"prepared-fixture"}');
+      recorded = true;
+      return { code: 0, stdout: '', stderr: '' };
+    }
+    if (file === 'git' && argv[0] === 'init') assert.equal(prepared, true);
+    return sh(file, argv, opts);
+  };
+  const app = createFixture({ framework: 'expo', platform: 'ios', workDir, h });
+  assert.equal(recorded, true);
+  assertMatchingPods(app);
+  assert.equal(git(app, 'status', '--porcelain'), '');
+  assert.equal(git(app, 'show', 'HEAD:package.json'), '{"name":"prepared-fixture"}');
+  assert.equal(git(app, 'ls-files', 'ios'), '');
+  const settings = JSON.parse(git(app, 'show', 'HEAD:.stim.json'));
+  assert.equal(settings.ios.deviceType, 'iPhone 17');
+  assert.equal(settings.android.systemImage, 'keep-image');
+  assert.equal(
+    git(app, 'show', `HEAD:${settings.ios.simslimProfile}`),
+    readFileSync(new URL('./native/simslim-profile.json', import.meta.url), 'utf8').trim(),
+  );
+});
+
+test('native preparation controls simulator shutdown and stops after a failed preparation', (t) => {
+  const root = scratch(t);
+  const homes = [join(root, 'first'), join(root, 'second')];
+  for (const cwd of homes) {
+    mkdirSync(cwd);
+    writeFileSync(join(cwd, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'profile.json' } }));
+  }
+  for (const { failure, shutdown } of [
+    { failure: null, shutdown: true },
+    { failure: 'prepare', shutdown: true },
+    { failure: null, shutdown: false },
+    { failure: 'inventory', shutdown: false },
+  ]) {
+    const events = [];
+    const h = {
+      log() {},
+      sh(file, args, { cwd, allowFail } = {}) {
+        if (file === 'xcrun') {
+          assert.equal(allowFail, true);
+          if (failure === 'inventory') return { code: 1, stdout: '', stderr: 'inventory timed out' };
+          return {
+            code: 0,
+            stdout: JSON.stringify({ devices: { ios: [{ udid: 'owned', state: shutdown ? 'Shutdown' : 'Booted' }] } }),
+          };
+        }
+        assert.equal(file, process.execPath);
+        assert.equal(args[2], cwd);
+        events.push(['prepare', cwd]);
+        return {
+          code: failure === 'prepare' ? 1 : 0,
+          stdout: JSON.stringify({ udid: 'owned' }),
+          stderr: failure === 'prepare' ? 'boot timed out' : '',
+        };
+      },
+      cli(args, { cwd }) {
+        assert.deepEqual(args, ['stop', '--slot', 'default', '--json']);
+        events.push(['stop', cwd]);
+        return { code: 0, stderr: '' };
+      },
+    };
+    const run = () =>
+      prepareIosDevices({
+        h,
+        platform: 'ios',
+        shutdown,
+        targets: homes.map((cwd) => ({ cwd })),
+        cleanup: {
+          recordWorkspace(cwd) {
+            events.push(['record', cwd]);
+          },
+        },
+      });
+    if (failure) {
+      let observed;
+      try {
+        run();
+      } catch (error) {
+        observed = error;
+      }
+      assert.match(observed.message, failure === 'prepare' ? /boot timed out/ : /inventory timed out/);
+      assert.equal(observed.preserveNativeState, true);
+      cleanupTmp(homes, observed);
+      assert.ok(homes.every((cwd) => existsSync(join(cwd, '.stim.json'))));
+    } else run();
+    assert.deepEqual(
+      events,
+      (failure ? homes.slice(0, 1) : homes).flatMap((cwd) =>
+        [
+          ['prepare', cwd],
+          ['record', cwd],
+        ].concat(shutdown ? [['stop', cwd]] : []),
+      ),
+    );
+  }
+});
+
+test('failure teardown stops and removes every created worktree, newest first, despite command failures', (t) => {
+  const base = scratch(t);
+  const [first, second, gone, kept] = ['first', 'second', 'gone', 'kept'].map((name) => join(base, name));
+  for (const dir of [first, second, kept]) mkdirSync(dir);
+  const calls = [];
+  const h = {
+    cli(args, { cwd }) {
+      calls.push(args[0] === 'stop' ? ['stop', cwd] : ['remove', args[2], ...args.slice(3)]);
+      if (args[0] === 'worktree') rmSync(args[2], { recursive: true, force: true });
+      return { code: args[0] === 'stop' && cwd === second ? 1 : 0, stderr: '' };
+    },
+    sh() {
+      return { code: 0, stdout: '', stderr: '' };
+    },
+  };
+  const created = [first, second, gone];
+  teardownWorkspaces({ h, created });
+  teardownWorkspaces({ h, created });
+  assert.deepEqual(calls, [
+    ['stop', second],
+    ['remove', second, '--force'],
+    ['stop', first],
+    ['remove', first, '--force'],
+  ]);
+  calls.length = 0;
+  teardownWorkspaces({ h, created: [kept], removeWorktrees: false });
+  assert.deepEqual(calls, [['stop', kept]]);
+});
+
+test('die runs its exit hooks once and keeps the failing exit code', (t) => {
+  const base = scratch(t);
+  const marker = join(base, 'marker');
+  const harness = new URL('./native/harness.mjs', import.meta.url).href;
+  const script = `
+    import { appendFileSync } from 'node:fs';
+    import { createHarness } from ${JSON.stringify(harness)};
+    const h = createHarness({ env: process.env, cliPath: 'unused', label: 'die' });
+    h.onDie(() => appendFileSync(${JSON.stringify(marker)}, 'first\\n'));
+    h.onDie(() => { throw new Error('hook failed'); });
+    h.die('boom', 3);
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf-8' });
+  assert.equal(result.status, 3);
+  assert.match(result.stderr, /ERROR: boom/);
+  assert.match(result.stderr, /exit cleanup failed: hook failed/);
+  assert.equal(readFileSync(marker, 'utf-8'), 'first\n');
+});

@@ -1,0 +1,715 @@
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
+import { readdir, readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
+import { getExecutor } from '../exec.ts';
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFileQuiet } from '../engine/operation-exec.ts';
+import { cdpClientTool, hostDriverTool, instrumentationTool } from './automation-tools.ts';
+import { inspectProcessStart, type ProcessStart } from '../process-identity.ts';
+import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../engine/device-lease.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import {
+  agentDeviceStateDirs,
+  readInteractions,
+  readViewedDevices,
+  type ActivityDriver,
+  type ActivityRecencyBasis,
+  type DeviceActivity,
+  type ViewedDevice,
+} from '@stim-cli/core/state';
+
+export type { DeviceActivity } from '@stim-cli/core/state';
+
+const ACTIVE_WINDOW_MS = 10 * 60 * 1000;
+const LOG_TAIL_BYTES = 256 * 1024;
+
+interface ActivityEvidence {
+  drivers: (ActivityDriver & { basis: string })[];
+  unknown: string[];
+  recency: { basis: ActivityRecencyBasis; at: number }[];
+}
+
+/** Evidence `recent` reports but that never counts as activity: a device's own logs. */
+const NOT_ACTIVITY: ReadonlySet<ActivityRecencyBasis> = new Set(['device-log']);
+
+function classifyActivity(evidence: ActivityEvidence, now: number): DeviceActivity {
+  const last = evidence.recency.reduce<{ basis: string; at: number } | null>(
+    (best, entry) =>
+      !NOT_ACTIVITY.has(entry.basis) && Number.isFinite(entry.at) && (!best || entry.at > best.at) ? entry : best,
+    null,
+  );
+  const recent: Partial<Record<ActivityRecencyBasis, string>> = {};
+  for (const { basis, at } of evidence.recency) {
+    if (Number.isFinite(at) && !(Date.parse(recent[basis] ?? '') >= at)) recent[basis] = new Date(at).toISOString();
+  }
+  const lastActivityAt = {
+    ...(last ? { lastActivityAt: new Date(last.at).toISOString() } : {}),
+    ...(Object.keys(recent).length ? { recent } : {}),
+  };
+  const [first] = evidence.drivers;
+  if (first) {
+    const { basis: _basis, ...driver } = first;
+    return {
+      state: 'driven',
+      driver,
+      ...lastActivityAt,
+      basis: [...new Set(evidence.drivers.map((entry) => entry.basis))],
+      ...(evidence.unknown.length ? { unknown: [...new Set(evidence.unknown)] } : {}),
+    };
+  }
+  if (evidence.unknown.length) return { state: 'unknown', ...lastActivityAt, basis: [...new Set(evidence.unknown)] };
+  const active = Boolean(last && now - last.at < ACTIVE_WINDOW_MS);
+  return {
+    state: active ? 'active' : 'idle',
+    ...lastActivityAt,
+    basis: [...new Set(evidence.recency.map((entry) => entry.basis))],
+  };
+}
+
+interface PidStart {
+  pid: number;
+  startTime: string;
+}
+
+export interface AgentDeviceRecord {
+  path: string;
+  kind: 'claim' | 'runner-lease';
+  deviceId: string | null;
+  session: string | null;
+  workspace: string | null;
+  stateDir: string | null;
+  deviceName: string | null;
+  readable: boolean;
+  owner: PidStart | null;
+  runner: PidStart | null;
+  /**
+   * The lease declares agent-device's device-claim protocol: its owner holds a device claim while it wants the
+   * device, so without a claim the runner is one agent-device kept warm after `close` or handed off at daemon exit.
+   */
+  claimProtocol: boolean;
+  createdAtMs: number | null;
+  xctestrunPath: string | null;
+}
+
+function field(entry: Record<string, unknown>, pidKey: string, startKey: string): PidStart | null {
+  const pid = entry[pidKey];
+  const startTime = entry[startKey];
+  if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0 || typeof startTime !== 'string') return null;
+  return { pid, startTime };
+}
+
+function parseObject(raw: string | null): Record<string, unknown> | null {
+  if (raw === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function parseAgentDeviceRecord(
+  kind: AgentDeviceRecord['kind'],
+  path: string,
+  raw: string | null,
+): AgentDeviceRecord {
+  const entry = parseObject(raw);
+  const stem = basename(path, '.json');
+  const device = entry?.device && typeof entry.device === 'object' ? (entry.device as Record<string, unknown>) : null;
+  const recordedId = kind === 'claim' ? device?.id : entry?.deviceId;
+  const deviceId = typeof recordedId === 'string' && recordedId ? recordedId : kind === 'runner-lease' ? stem : null;
+  const createdAtMs = typeof entry?.createdAtMs === 'number' ? entry.createdAtMs : null;
+  return {
+    path,
+    kind,
+    deviceId,
+    session: kind === 'claim' && typeof entry?.session === 'string' && entry.session ? entry.session : null,
+    workspace: kind === 'claim' && typeof entry?.workspace === 'string' && entry.workspace ? entry.workspace : null,
+    stateDir: kind === 'claim' && typeof entry?.stateDir === 'string' && entry.stateDir ? entry.stateDir : null,
+    deviceName: kind === 'claim' && typeof device?.name === 'string' ? device.name : null,
+    readable: Boolean(entry && deviceId),
+    owner: entry ? field(entry, 'ownerPid', 'ownerStartTime') : null,
+    runner: entry && kind === 'runner-lease' ? field(entry, 'runnerPid', 'runnerStartTime') : null,
+    claimProtocol: kind === 'runner-lease' && entry?.deviceClaimProtocol === 1,
+    createdAtMs,
+    xctestrunPath: typeof entry?.xctestrunPath === 'string' ? entry.xctestrunPath : null,
+  };
+}
+
+export type Liveness = 'live' | 'dead' | 'unknown';
+
+export function processMatches(entry: PidStart, startOf: (pid: number) => ProcessStart): Liveness {
+  const start = startOf(entry.pid);
+  if (start.status === 'gone') return 'dead';
+  if (start.status === 'unknown') return 'unknown';
+  const recorded = Date.parse(entry.startTime);
+  if (!Number.isFinite(recorded)) return 'unknown';
+  if (Math.floor(start.startedAtMs / 1000) === Math.floor(recorded / 1000)) return 'live';
+  // agent-device's zone-less ps lstart cannot distinguish repeated local seconds: https://github.com/appandflow/stim/issues/4729
+  if (
+    /^\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4}$/.test(entry.startTime) &&
+    new Date(start.startedAtMs).toLocaleString('en-US') === new Date(recorded).toLocaleString('en-US')
+  )
+    return 'unknown';
+  return 'dead';
+}
+
+export function agentDeviceDaemon(
+  stateDir: string,
+  startOf: (pid: number) => ProcessStart = inspectProcessStart,
+): 'none' | Liveness {
+  let raw: string;
+  try {
+    raw = readFileSync(join(stateDir, 'daemon.json'), 'utf8');
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'none' : 'unknown';
+  }
+  const entry = parseObject(raw);
+  const owner = entry && field(entry, 'pid', 'processStartTime');
+  return owner ? processMatches(owner, startOf) : 'unknown';
+}
+
+export function agentDeviceLiveness(record: AgentDeviceRecord, startOf: (pid: number) => ProcessStart): Liveness {
+  const required = record.kind === 'claim' ? [record.owner] : [record.owner, record.runner];
+  const results = required.map((entry) => (entry ? processMatches(entry, startOf) : 'unknown'));
+  if (results.includes('dead')) return 'dead';
+  if (!record.readable || results.includes('unknown')) return 'unknown';
+  return 'live';
+}
+
+export interface HostProcess {
+  pid: number;
+  ppid: number;
+  rssKb: number;
+  cpuPercent: number;
+  startedAt: string | null;
+  command: string;
+}
+
+const HOST_PROCESS_COLUMNS = 'pid=,ppid=,rss=,%cpu=,lstart=,command=';
+
+export function parseProcessTable(output: string): HostProcess[] {
+  const rows: HostProcess[] = [];
+  for (const line of output.split('\n')) {
+    const match =
+      /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+(?:[.,]\d+)?)\s+(\w{3}\s+\w{3}\s+\d+\s+\d{1,2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/.exec(
+        line,
+      );
+    if (!match) continue;
+    const at = Date.parse(match[5]!);
+    rows.push({
+      pid: Number(match[1]),
+      ppid: Number(match[2]),
+      rssKb: Number(match[3]),
+      cpuPercent: Number(match[4]!.replace(',', '.')),
+      startedAt: Number.isFinite(at) ? new Date(at).toISOString() : null,
+      command: match[6]!,
+    });
+  }
+  return rows;
+}
+
+function parseAndroidInstrumentation(output: string): { pid: number; tool: string }[] {
+  const found: { pid: number; tool: string }[] = [];
+  for (const line of output.split('\n')) {
+    const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (!match) continue;
+    const tool = instrumentationTool(match[2]!);
+    if (tool) found.push({ pid: Number(match[1]), tool });
+  }
+  return found;
+}
+
+interface LogRecordTarget {
+  platform: 'ios' | 'android';
+  id: string;
+  slot: string;
+}
+
+function latestDeviceLogAt(lines: readonly string[], target: LogRecordTarget): number | null {
+  return latestRecordAt(lines, (record) => {
+    if (record.src !== 'device' || record.platform !== target.platform || !isDeviceRecord(record)) return false;
+    if (target.slot === 'default') return record.slot === undefined;
+    return record.slot === target.slot && (record.deviceId === undefined || record.deviceId === target.id);
+  });
+}
+
+function latestBundleRequestAt(lines: readonly string[], platform: 'ios' | 'android'): number | null {
+  return latestRecordAt(lines, (record) => record.event === 'bundle_response_started' && record.platform === platform);
+}
+
+function latestRecordAt(
+  lines: readonly string[],
+  matches: (record: Record<string, unknown>) => boolean,
+): number | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const record = parseObject(lines[i]!);
+    if (record && typeof record.ts === 'number' && matches(record)) return record.ts;
+  }
+  return null;
+}
+
+function isDeviceRecord(record: Record<string, unknown>): boolean {
+  return !(typeof record.event === 'string' && record.event.startsWith('collector_'));
+}
+
+/** The last lines of the file at `path`, at most its final 256 KiB, or null when it cannot be read. */
+export function tailLines(path: string): string[] | null {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, 'r');
+    const size = fstatSync(fd).size;
+    const length = Math.min(size, LOG_TAIL_BYTES);
+    const buffer = Buffer.alloc(length);
+    readSync(fd, buffer, 0, length, size - length);
+    const lines = buffer.toString('utf8').split('\n');
+    return length < size ? lines.slice(1) : lines;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+export function envDir(name: string, env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): string | null {
+  const value = env[name]?.trim();
+  return value ? resolve(cwd, value) : null;
+}
+
+function agentDeviceDirs(
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { kind: AgentDeviceRecord['kind']; dir: string }[] {
+  const root = join(home, '.agent-device');
+  const leaseDirs = [
+    envDir('AGENT_DEVICE_IOS_RUNNER_LEASE_DIR', env) ?? join(root, 'apple-runner', 'leases'),
+    join(root, 'ios-runner', 'leases'),
+  ];
+  return [
+    { kind: 'claim', dir: envDir('AGENT_DEVICE_CLAIMS_DIR', env) ?? join(root, 'device-claims') },
+    ...[...new Set(leaseDirs)].map((dir) => ({ kind: 'runner-lease' as const, dir })),
+  ];
+}
+
+/**
+ * When an agent-device session last recorded an event: its events file's modification time. agent-device names a
+ * session's directory after the session with every character outside `[a-zA-Z0-9._-]` replaced by `_`.
+ */
+function agentSessionActedAt(
+  home: string,
+  session: string,
+  stateDir: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): number | null {
+  let latest: number | null = null;
+  for (const root of stateDir ? [stateDir] : agentDeviceStateDirs(home, env)) {
+    try {
+      const at = statSync(join(root, 'sessions', session.replaceAll(/[^a-zA-Z0-9._-]/g, '_'), 'events.ndjson')).mtimeMs;
+      latest = latest === null ? at : Math.max(latest, at);
+    } catch {}
+  }
+  return latest;
+}
+
+export function readAgentDeviceRecords(home: string, env: NodeJS.ProcessEnv = process.env): AgentDeviceRecord[] {
+  return agentDeviceDirs(home, env).flatMap(({ kind, dir }) => {
+    let names: string[];
+    try {
+      names = readdirSync(dir).filter((name) => name.endsWith('.json'));
+    } catch {
+      return [];
+    }
+    return names.map((name) => {
+      const path = join(dir, name);
+      let raw: string | null = null;
+      try {
+        raw = readFileSync(path, 'utf8');
+      } catch {}
+      return parseAgentDeviceRecord(kind, path, raw);
+    });
+  });
+}
+
+export async function readAgentDeviceRecordsAsync(
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<AgentDeviceRecord[]> {
+  const records: AgentDeviceRecord[] = [];
+  for (const { kind, dir } of agentDeviceDirs(home, env)) {
+    let names: string[];
+    try {
+      names = (await readdir(dir)).filter((name) => name.endsWith('.json'));
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      const path = join(dir, name);
+      let raw: string | null = null;
+      try {
+        raw = await readFile(path, 'utf8');
+      } catch {}
+      records.push(parseAgentDeviceRecord(kind, path, raw));
+    }
+  }
+  return records;
+}
+
+function isClaimProtocolRunner(record: AgentDeviceRecord, row: HostProcess): boolean {
+  if (!record.claimProtocol || record.runner?.pid !== row.pid || row.startedAt === null) return false;
+  const recorded = Date.parse(record.runner.startTime);
+  return Math.floor(recorded / 1000) === Math.floor(Date.parse(row.startedAt) / 1000);
+}
+
+export interface ActivityTarget extends LogRecordTarget {
+  workspace: string | null;
+}
+
+export interface DeviceProcessTables {
+  host(): HostProcess[] | null;
+  android(serial: string): string | null;
+  /** `lsof -Fpn` output for the established connections of a loopback TCP port, or null when lsof failed. */
+  tcpConnections(port: number): string | null;
+  /** The process table that names DevTools clients, when `host` was read before `tcpConnections`; defaults to `host`. */
+  clients?(): HostProcess[] | null;
+}
+
+function lsofArgs(port: number): string[] {
+  return ['-nP', `-iTCP:${port}`, '-sTCP:ESTABLISHED', '-Fpn'];
+}
+
+// lsof exits 1 with empty output when no connection matches.
+function lsofNoMatch(error: unknown): string | null {
+  const stdout = (error as { status?: unknown; stdout?: unknown }).stdout;
+  return (error as { status?: unknown }).status === 1 && (stdout === '' || stdout === undefined) ? '' : null;
+}
+
+export function createDeviceProcessTables(): DeviceProcessTables {
+  const exec = getExecutor();
+  let host: HostProcess[] | null | undefined;
+  const android = new Map<string, string | null>();
+  const tcp = new Map<number, string | null>();
+  return {
+    tcpConnections(port) {
+      if (!tcp.has(port)) {
+        let output: string | null;
+        try {
+          output = exec.runFile('lsof', lsofArgs(port), { timeoutMs: 5000 });
+        } catch (error) {
+          output = lsofNoMatch(error);
+        }
+        tcp.set(port, output);
+      }
+      return tcp.get(port) ?? null;
+    },
+    host() {
+      if (host === undefined) {
+        // macOS ps can stall for several seconds on a heavily loaded host.
+        const output = exec.runFileQuiet('ps', ['-axww', '-o', HOST_PROCESS_COLUMNS], { timeoutMs: 10_000 });
+        host = output === null ? null : parseProcessTable(output);
+      }
+      return host;
+    },
+    android(serial) {
+      if (!android.has(serial)) {
+        android.set(
+          serial,
+          exec.runFileQuiet('adb', ['-s', serial, 'shell', 'ps', '-A', '-o', 'PID,ARGS'], { timeoutMs: 5000 }),
+        );
+      }
+      return android.get(serial) ?? null;
+    },
+  };
+}
+
+export interface ActivityReaderOptions {
+  env?: NodeJS.ProcessEnv;
+  now?: number;
+  home?: string;
+  startOf?: (pid: number) => ProcessStart;
+  leaseFiles?: () => LeaseFileEntry[];
+  tables?: DeviceProcessTables;
+  viewers?: () => ViewedDevice[];
+}
+
+export async function readHostProcessTableAsync(
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<HostProcess[] | null> {
+  const output = await runOperationFileQuiet(operation, getExecutor(), 'ps', ['-axww', '-o', HOST_PROCESS_COLUMNS], {
+    timeoutMs: 10_000,
+    killSignal: 'SIGKILL',
+    signal,
+    cwd: operation?.cwd,
+  });
+  return output === null ? null : parseProcessTable(output);
+}
+
+/** Reads bounded host/instrumentation children asynchronously, sharing observations across device targets. */
+export function createActivityReaderAsync(
+  options: Omit<ActivityReaderOptions, 'tables'> & { signal?: AbortSignal; operation?: StimContext } = {},
+): (target: ActivityTarget) => Promise<DeviceActivity> {
+  const exec = getExecutor();
+  let host: Promise<HostProcess[] | null> | undefined;
+  let hostValue: HostProcess[] | null = null;
+  const android = new Map<string, Promise<string | null>>();
+  const androidValues = new Map<string, string | null>();
+  const read = createActivityReader({
+    ...options,
+    tables: {
+      ...createDeviceProcessTables(),
+      host: () => hostValue,
+      android: (serial) => androidValues.get(serial) ?? null,
+    },
+  });
+  const probe = async (target: ActivityTarget): Promise<DeviceActivity> => {
+    options.signal?.throwIfAborted();
+    host ??= readHostProcessTableAsync(options.signal, options.operation);
+    hostValue = await host;
+    options.signal?.throwIfAborted();
+    if (target.platform === 'android') {
+      let pending = android.get(target.id);
+      if (!pending) {
+        pending = runOperationFileQuiet(
+          options.operation,
+          exec,
+          'adb',
+          ['-s', target.id, 'shell', 'ps', '-A', '-o', 'PID,ARGS'],
+          {
+            timeoutMs: 5000,
+            killSignal: 'SIGKILL',
+            signal: options.signal,
+            // Windows keeps adb's inherited cwd open when it starts its server: https://github.com/appandflow/stim/issues/914.
+            cwd: process.platform === 'win32' ? homedir() : options.operation?.cwd,
+          },
+        );
+        android.set(target.id, pending);
+      }
+      androidValues.set(target.id, await pending);
+    }
+    options.signal?.throwIfAborted();
+    return read(target);
+  };
+  let queued: Promise<unknown> = Promise.resolve();
+  return (target) => {
+    if (!options.operation) return probe(target);
+    const result = queued.then(() => probe(target));
+    queued = result;
+    return result;
+  };
+}
+
+/** The newest Stim command in the workspace or use of its focused Simulator or emulator window. */
+export function workspaceDeviceLastUseAt(root: string): number {
+  const state = readWorkspaceState(root);
+  const times = [String(state?.lastUsedAt ?? ''), ...Object.values(readInteractions(state))]
+    .map((at) => Date.parse(at))
+    .filter(Number.isFinite);
+  return times.length ? Math.max(...times) : NaN;
+}
+
+export function createActivityReader({
+  now = Date.now(),
+  env = process.env,
+  home = env.HOME || env.USERPROFILE || homedir(),
+  startOf = inspectProcessStart,
+  leaseFiles = listLeaseFiles,
+  tables = createDeviceProcessTables(),
+  viewers = readViewedDevices,
+}: ActivityReaderOptions = {}): (target: ActivityTarget) => DeviceActivity {
+  let agentDevice: { record: AgentDeviceRecord; liveness: Liveness }[] | undefined;
+  let stimLeases: LeaseFileEntry[] | undefined;
+  let viewed: ViewedDevice[] | undefined;
+  const logs = new Map<string, string[] | null>();
+  const log = (path: string) => {
+    if (!logs.has(path)) logs.set(path, tailLines(path));
+    return logs.get(path) ?? null;
+  };
+
+  return (target) => {
+    const evidence: ActivityEvidence = { drivers: [], unknown: [], recency: [] };
+
+    agentDevice ??= readAgentDeviceRecords(home, env).map((record) => ({
+      record,
+      liveness: agentDeviceLiveness(record, startOf),
+    }));
+    for (const { record, liveness } of agentDevice) {
+      if (record.deviceId !== null && record.deviceId !== target.id) continue;
+      if (record.claimProtocol) continue;
+      const basis = record.kind === 'claim' ? 'agent-device-claim' : 'agent-device-lease';
+      if (liveness === 'live') {
+        evidence.drivers.push({
+          basis,
+          tool: 'agent-device',
+          pid: record.owner?.pid ?? null,
+          since: record.createdAtMs !== null ? new Date(record.createdAtMs).toISOString() : null,
+        });
+        const actedAt = record.session ? agentSessionActedAt(home, record.session, record.stateDir, env) : null;
+        if (actedAt !== null) evidence.recency.push({ basis: 'agent-action', at: actedAt });
+      } else if (liveness === 'unknown') {
+        evidence.unknown.push(basis);
+      }
+    }
+
+    try {
+      stimLeases ??= leaseFiles();
+    } catch {
+      stimLeases = [];
+      evidence.unknown.push('device-lock');
+    }
+    for (const entry of stimLeases) {
+      if (entry.platform !== target.platform || entry.id !== target.id) continue;
+      if (!entry.lease) evidence.unknown.push('device-lock');
+      else if (!leaseIsExpired(entry.lease, now))
+        evidence.drivers.push({
+          basis: 'device-lock',
+          tool: 'stim device lock',
+          pid: null,
+          since: entry.lease.grantedAt,
+        });
+    }
+
+    viewed ??= viewers();
+    for (const device of viewed) {
+      if (device.platform !== target.platform || device.id !== target.id || !device.lastInputAt) continue;
+      evidence.recency.push({ basis: 'viewer', at: Date.parse(device.lastInputAt) });
+    }
+
+    const processes = tables.host();
+    if (processes === null) evidence.unknown.push('driver-process');
+    for (const row of processes ?? []) {
+      if (agentDevice.some(({ record }) => isClaimProtocolRunner(record, row))) continue;
+      const tool = hostDriverTool(row.command, target.platform, target.id);
+      if (tool) evidence.drivers.push({ basis: 'driver-process', tool, pid: row.pid, since: row.startedAt });
+    }
+
+    if (target.platform === 'android') {
+      const output = tables.android(target.id);
+      if (output === null) evidence.unknown.push('instrumentation');
+      for (const { pid, tool } of parseAndroidInstrumentation(output ?? '')) {
+        evidence.drivers.push({ basis: 'instrumentation', tool, pid, since: null });
+      }
+    }
+
+    if (target.workspace) {
+      const dir = workspaceLogsDir(target.workspace);
+      const deviceAt = latestDeviceLogAt(log(join(dir, 'device.ndjson')) ?? [], target);
+      if (deviceAt !== null) evidence.recency.push({ basis: 'device-log', at: deviceAt });
+      const bundleAt = latestBundleRequestAt(log(join(dir, 'metro.ndjson')) ?? [], target.platform);
+      if (bundleAt !== null) evidence.recency.push({ basis: 'metro-bundle', at: bundleAt });
+      const usedAt = Date.parse(String(readWorkspaceState(target.workspace)?.lastUsedAt ?? ''));
+      if (Number.isFinite(usedAt)) evidence.recency.push({ basis: 'workspace-use', at: usedAt });
+    }
+
+    return classifyActivity(evidence, now);
+  };
+}
+
+export function workspaceActivity(workspace: string, now: number = Date.now()): DeviceActivity {
+  const dir = workspaceLogsDir(workspace);
+  const state = readWorkspaceState(workspace);
+  const recency: ActivityEvidence['recency'] = [];
+  const deviceAt = latestRecordAt(
+    tailLines(join(dir, 'device.ndjson')) ?? [],
+    (record) => record.src === 'device' && isDeviceRecord(record),
+  );
+  if (deviceAt !== null) recency.push({ basis: 'device-log', at: deviceAt });
+  const bundleAt = latestRecordAt(
+    tailLines(join(dir, 'metro.ndjson')) ?? [],
+    (record) => record.event === 'bundle_response_started',
+  );
+  if (bundleAt !== null) recency.push({ basis: 'metro-bundle', at: bundleAt });
+  for (const [basis, value] of [
+    ['workspace-use', state?.lastUsedAt],
+    ['supervisor-start', state?.supervisor?.startedAt],
+  ] as const) {
+    const at = Date.parse(String(value ?? ''));
+    if (Number.isFinite(at)) recency.push({ basis, at });
+  }
+  return classifyActivity({ drivers: [], unknown: [], recency }, now);
+}
+
+/**
+ * The pids of processes connected to loopback `port` as clients, from `lsof -Fpn` output: a connection whose remote
+ * end is the port. Chrome's own accepted sockets have the port as their local end and are skipped.
+ */
+function parseTcpClients(output: string, port: number): number[] {
+  const pids = new Set<number>();
+  let pid: number | null = null;
+  for (const line of output.split('\n')) {
+    if (line.startsWith('p')) pid = Number(line.slice(1));
+    else if (line.startsWith('n') && pid !== null && Number.isInteger(pid)) {
+      const remote = line.slice(1).split('->')[1];
+      if (remote && Number(remote.slice(remote.lastIndexOf(':') + 1)) === port) pids.add(pid);
+    }
+  }
+  return [...pids];
+}
+
+export interface WebActivityTarget {
+  port: number;
+  /** The supervisor's and Chrome's pids, which hold the page's own connections. */
+  ownPids: number[];
+  workspace: string;
+}
+
+function webClientPids(connections: string, target: Omit<WebActivityTarget, 'workspace'>): number[] {
+  return parseTcpClients(connections, target.port).filter((pid) => !target.ownPids.includes(pid));
+}
+
+function webDrivers(clients: readonly number[], processes: readonly HostProcess[]): ActivityDriver[] {
+  return clients.flatMap((pid) => {
+    const row = processes.find((candidate) => candidate.pid === pid);
+    const tool = row ? cdpClientTool(row.command) : 'unknown DevTools client';
+    return tool ? [{ tool, pid, since: row?.startedAt ?? null }] : [];
+  });
+}
+
+/**
+ * The DevTools clients of the owned browser that are not Stim's, read without blocking the event loop; null when
+ * lsof or ps could not be read.
+ */
+export async function probeWebDrivers(target: Omit<WebActivityTarget, 'workspace'>): Promise<ActivityDriver[] | null> {
+  const exec = getExecutor();
+  let connections: string | null;
+  try {
+    connections = await exec.runFileAsync('lsof', lsofArgs(target.port), { timeoutMs: 5000 });
+  } catch (error) {
+    connections = lsofNoMatch(error);
+  }
+  if (connections === null) return null;
+  const clients = webClientPids(connections, target);
+  if (!clients.length) return [];
+  let table: string;
+  try {
+    table = await exec.runFileAsync('ps', ['-axww', '-o', HOST_PROCESS_COLUMNS], { timeoutMs: 5000 });
+  } catch {
+    return null;
+  }
+  return webDrivers(clients, parseProcessTable(table));
+}
+
+/**
+ * The owned browser's activity: a DevTools client other than Stim's is a driver (basis `cdp-client`). Recency comes
+ * from the newest agent action the browser supervisor recorded (basis `agent-action`) and the newest other page
+ * record (basis `page-log`).
+ */
+export function readWebActivity(
+  target: WebActivityTarget,
+  tables: DeviceProcessTables,
+  now: number = Date.now(),
+): DeviceActivity {
+  const evidence: ActivityEvidence = { drivers: [], unknown: [], recency: [] };
+  const connections = tables.tcpConnections(target.port);
+  const clients = connections === null ? [] : webClientPids(connections, target);
+  const processes = clients.length ? (tables.clients ?? tables.host)() : [];
+  if (connections === null || processes === null) evidence.unknown.push('cdp-client');
+  else for (const driver of webDrivers(clients, processes)) evidence.drivers.push({ ...driver, basis: 'cdp-client' });
+  const lines = tailLines(join(workspaceLogsDir(target.workspace), 'web.ndjson')) ?? [];
+  const actionAt = latestRecordAt(lines, (record) => record.src === 'agent');
+  if (actionAt !== null) evidence.recency.push({ basis: 'agent-action', at: actionAt });
+  const pageAt = latestRecordAt(lines, (record) => record.src !== 'agent');
+  if (pageAt !== null) evidence.recency.push({ basis: 'page-log', at: pageAt });
+  return classifyActivity(evidence, now);
+}

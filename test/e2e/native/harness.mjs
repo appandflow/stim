@@ -1,0 +1,743 @@
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
+import { launchEvidenceMessage } from './assertions.mjs';
+import {
+  appendFileSync,
+  copyFileSync,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
+
+// npx, npm and bundle are .cmd wrappers on Windows, and Node refuses to spawn a
+// .cmd without a shell (child_process, since 18.20.2).
+const WRAPPER_SHELL = process.platform === 'win32';
+const require = createRequire(import.meta.url);
+
+export function createHarness({ env, cliPath, label }) {
+  const log = (msg) => process.stderr.write(`[${label}] ${msg}\n`);
+  const banner = (msg) => log('='.repeat(4) + ` ${msg} ` + '='.repeat(4));
+  const dieHooks = [];
+  const onDie = (hook) => dieHooks.push(hook);
+  const die = (msg, code = 1) => {
+    log(`ERROR: ${msg}`);
+    while (dieHooks.length > 0) {
+      try {
+        dieHooks.pop()(new Error(msg));
+      } catch (error) {
+        log(`exit cleanup failed: ${error?.message || error}`);
+      }
+    }
+    process.exit(code);
+  };
+
+  const sh = (file, argv, opts = {}) => {
+    const r = spawnSync(file, argv, {
+      cwd: opts.cwd,
+      env: opts.env || env,
+      encoding: 'utf-8',
+      timeout: opts.timeout || 5 * 60 * 1000,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    const stdout = r.stdout || '';
+    const stderr = r.stderr || r.error?.message || '';
+    if (stderr) process.stderr.write(stderr);
+    if (r.error && !opts.allowFail) die(`${file} ${argv.join(' ')} could not run: ${r.error.message}`);
+    const code = r.status ?? (r.signal || r.error ? 1 : 0);
+    if (code !== 0 && !opts.allowFail)
+      die(`${file} ${argv.slice(0, 3).join(' ')} exited ${code}:\n${lastLines(stderr, 40)}`);
+    return { code, stdout, stderr };
+  };
+
+  const cli = (argv, opts = {}) => sh(process.execPath, [cliPath, ...argv], opts);
+
+  const cliJson = (argv, opts = {}) => {
+    const r = cli(argv, { ...opts, allowFail: true });
+    if (r.code !== 0)
+      throw Object.assign(new Error(`stim ${argv.join(' ')} failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`), {
+        preserveNativeState: true,
+      });
+    const line = r.stdout.trim().split('\n').findLast(Boolean);
+    try {
+      return JSON.parse(line);
+    } catch {
+      throw new Error(`stim ${argv.join(' ')} did not emit a JSON line on stdout:\n${r.stdout}`);
+    }
+  };
+
+  const requireTool = (file, argv) => {
+    const r = sh(file, argv, { allowFail: true });
+    if (r.code !== 0 && r.stderr && /not found|ENOENT/i.test(r.stderr)) {
+      die(`required tool "${file}" is not available on this runner`, 2);
+    }
+  };
+
+  return { env, cliPath, label, log, banner, die, onDie, sh, cli, cliJson, requireTool };
+}
+
+export function assertVerifiedLaunch({ h, facts, cwd, label, expectUnattributedAndroidSlot = false }) {
+  const strict = h.env.STIM_E2E_STRICT_QA === '1';
+  if (strict) {
+    assert([true, 'bundling', 'unverified'].includes(facts.launched), `${label} did not establish launch evidence`);
+    h.log(`${label}: checking this launch's delivery, live process and readiness (QA deadline 180s)`);
+    const helper = fileURLToPath(new URL('./await-launch.mjs', import.meta.url));
+    const argv = ['--experimental-strip-types', helper, cwd, JSON.stringify(facts)];
+    if (expectUnattributedAndroidSlot) argv.push('expect-unattributed-android-slot');
+    const result = h.sh(process.execPath, argv, {
+      cwd,
+      timeout: 180_000,
+      allowFail: true,
+    });
+    if (result.stdout) h.log(result.stdout.trim());
+    assert(result.code === 0, `${label} launch did not establish strict readiness: ${result.stderr}`);
+    h.log(
+      expectUnattributedAndroidSlot
+        ? `${label}: delivery UNAVAILABLE (same-platform Android slot attribution); exact app process checked, slot/cache/cleanup checks remain required.`
+        : `${label} completed bundle delivery and stayed alive.`,
+    );
+    return;
+  }
+  h.log(launchEvidenceMessage(facts.launched, label));
+}
+
+export function preflight(h, platform) {
+  const v = h.cli(['--version'], { allowFail: true });
+  assert(v.code === 0, `stim CLI does not run: ${v.stderr}`);
+  h.log(`stim ${v.stdout.trim()}`);
+  if (platform === 'ios') {
+    const locale = h.sh('locale', ['charmap'], { allowFail: true });
+    assert(
+      locale.code === 0 && /^utf-?8$/i.test(locale.stdout.trim()),
+      'Native iOS tests require a UTF-8 locale for CocoaPods. Set LANG=en_US.UTF-8 and LC_ALL=en_US.UTF-8 before running the suite.',
+    );
+    if (process.platform !== 'darwin') h.die('ios variant requires macOS + Xcode; this is not a macOS host.', 2);
+    h.requireTool('xcrun', ['--version']);
+    h.requireTool('xcodebuild', ['-version']);
+    h.log('checking CoreSimulator inventory before fixture setup (up to 5 minutes)');
+    h.sh('xcrun', ['simctl', 'list', '--json'], { timeout: 5 * 60 * 1000 });
+  } else {
+    const sdk = h.env.ANDROID_HOME || h.env.ANDROID_SDK_ROOT;
+    assert(sdk, 'Native Android tests require ANDROID_HOME or ANDROID_SDK_ROOT pointing to the Android SDK.');
+    assert(existsSync(sdk) && statSync(sdk).isDirectory(), `Android SDK directory does not exist: ${sdk}`);
+    h.requireTool('adb', ['version']);
+  }
+  return v.stdout.trim();
+}
+
+export const FIXTURE_COMMANDS = {
+  bare(appDir) {
+    if (process.env.STIM_E2E_BARE_INIT) return withDir(process.env.STIM_E2E_BARE_INIT, appDir);
+    return [
+      'npx',
+      '--yes',
+      '@react-native-community/cli@latest',
+      'init',
+      'StimE2E',
+      '--directory',
+      appDir,
+      '--skip-git-init',
+      '--install-pods',
+      'false',
+      '--pm',
+      'npm',
+    ];
+  },
+  expo(appDir) {
+    if (process.env.STIM_E2E_EXPO_INIT) return withDir(process.env.STIM_E2E_EXPO_INIT, appDir);
+    return ['npx', '--yes', 'create-expo-app@latest', appDir, '--template', 'blank', '--no-install'];
+  },
+};
+
+function withDir(tmplStr, appDir) {
+  return tmplStr
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((t) => (t === '{dir}' ? appDir : t));
+}
+
+export function createFixture({ framework, platform, workDir, h }) {
+  if (platform === 'ios') h.requireTool('simslim', ['--version']);
+  const appDir = join(workDir, 'app');
+  const cmd = FIXTURE_COMMANDS[framework](appDir);
+  h.log(`creating ${framework} fixture: ${cmd.map(quote).join(' ')}`);
+  const r = spawnSync(cmd[0], cmd.slice(1), {
+    cwd: workDir,
+    env: h.env,
+    stdio: 'inherit',
+    timeout: 20 * 60 * 1000,
+    shell: WRAPPER_SHELL,
+  });
+  if (r.status !== 0) h.die(`fixture creation failed (exit ${r.status ?? r.signal})`);
+  assert(existsSync(join(appDir, 'package.json')), `fixture has no package.json at ${appDir}`);
+
+  if (framework === 'expo') {
+    const r2 = spawnSync('npm', ['install', '--no-audit', '--no-fund'], {
+      cwd: appDir,
+      env: h.env,
+      stdio: 'inherit',
+      timeout: 15 * 60 * 1000,
+      shell: WRAPPER_SHELL,
+    });
+    if (r2.status !== 0) h.die('installing the expo fixture dependencies failed');
+  }
+
+  if (framework === 'bare' && platform === 'ios') {
+    // The Gemfile pins cocoapods/activesupport, and installing the fixture's
+    // pods outside bundler both dodges those pins and trips RubyGems'
+    // Gemfile-aware activation under rvm (#133).
+    h.log('installing the bare iOS fixture pods (bundler, per the template) before its initial commit');
+    const rb = spawnSync('bundle', ['install'], {
+      cwd: appDir,
+      env: h.env,
+      stdio: 'inherit',
+      timeout: 20 * 60 * 1000,
+    });
+    if (rb.status !== 0) {
+      h.die(
+        `bundle install failed for the bare iOS fixture (exit ${rb.status ?? rb.signal}${rb.error ? `: ${rb.error.message}` : ''}); ` +
+          'its Gemfile pins the pods toolchain, so the fixture cannot be prepared without it',
+      );
+    }
+    const r2 = spawnSync('bundle', ['exec', 'pod', 'install'], {
+      cwd: join(appDir, 'ios'),
+      env: h.env,
+      stdio: 'inherit',
+      timeout: 20 * 60 * 1000,
+    });
+    if (r2.status !== 0) {
+      h.die(
+        `installing the bare iOS fixture pods failed (exit ${r2.status ?? r2.signal}${r2.error ? `: ${r2.error.message}` : ''})`,
+      );
+    }
+  }
+
+  if (platform === 'ios') {
+    const settingsPath = join(appDir, '.stim.json');
+    const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf8')) : {};
+    settings.ios = { ...settings.ios, simslimProfile: '.stim-simslim.json' };
+    copyFileSync(new URL('./simslim-profile.json', import.meta.url), join(appDir, '.stim-simslim.json'));
+    writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+    h.log('generated iOS fixture uses the native QA SimSlim profile');
+  }
+
+  if (framework === 'expo' && platform === 'ios') {
+    const expoVersion = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8')).dependencies.expo;
+    if (/^[~^]?57\./.test(expoVersion)) {
+      h.sh('npx', ['--no-install', 'expo', 'install', 'expo-build-properties'], {
+        cwd: appDir,
+        timeout: 15 * 60 * 1000,
+      });
+      const configPath = join(appDir, 'app.json');
+      const config = JSON.parse(readFileSync(configPath, 'utf8'));
+      const plugins = config.expo.plugins ?? [];
+      const index = plugins.findIndex(
+        (plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) === 'expo-build-properties',
+      );
+      const options = index >= 0 && Array.isArray(plugins[index]) ? (plugins[index][1] ?? {}) : {};
+      const scenePlugin = ['expo-build-properties', { ...options, ios: { ...options.ios, enableSceneSupport: true } }];
+      if (index >= 0) plugins[index] = scenePlugin;
+      else plugins.push(scenePlugin);
+      config.expo.plugins = plugins;
+      writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    }
+    h.log('preparing the disposable Expo iOS fixture and Pods before its initial commit');
+    h.sh('npx', ['--no-install', 'expo', 'prebuild', '--platform', 'ios'], { cwd: appDir, timeout: 20 * 60 * 1000 });
+    assertMatchingPods(appDir);
+  }
+
+  gitInitWithRemote({ appDir, workDir, framework, h });
+  if (framework === 'expo' && platform === 'ios') {
+    h.sh(
+      process.execPath,
+      ['--experimental-strip-types', fileURLToPath(new URL('./record-fixture-prebuild.mjs', import.meta.url)), appDir],
+      { cwd: appDir },
+    );
+  }
+  return appDir;
+}
+
+export function createWarmWorktree({ h, sourceDir, workDir, name, created }) {
+  const runId = createHash('sha256').update(realpathSync(workDir)).digest('hex').slice(0, 12);
+  const requestedPath = join(workDir, `${name}-${runId}`);
+  const added = h.sh('git', ['-C', sourceDir, 'worktree', 'add', '--detach', requestedPath, 'HEAD'], {
+    allowFail: true,
+  });
+  assert(added.code === 0, `git worktree add failed: ${added.stderr}`);
+  const path = realpathSync(requestedPath);
+  created.push(path);
+  const warmed = h.cli(['worktree', 'warm'], { cwd: path, allowFail: true });
+  assert(warmed.code === 0, `warming ${path} failed: ${warmed.stderr}`);
+  h.log(`worktree ${name} (from ${sourceDir}) -> ${path}`);
+  return path;
+}
+
+export function teardownWorkspaces({ h, created, removeWorktrees = true, timeout = 3 * 60 * 1000 }) {
+  for (const path of created.toReversed()) {
+    if (!existsSync(path)) continue;
+    h.cli(['stop'], { cwd: path, allowFail: true, timeout });
+    if (!removeWorktrees) continue;
+    h.sh('git', ['-C', path, 'checkout', '--', '.'], { allowFail: true, timeout });
+    h.sh('git', ['-C', path, 'clean', '-fdq', 'ios', 'android'], { allowFail: true, timeout });
+    h.cli(['worktree', 'remove', path, '--force'], { allowFail: true, timeout });
+  }
+}
+
+export function prepareIosDevices({ h, platform, targets, cleanup, shutdown = true }) {
+  if (platform !== 'ios') return;
+  const script = fileURLToPath(new URL('./prepare-ios-device.mjs', import.meta.url));
+  try {
+    for (const { cwd, slot = 'default' } of targets) {
+      const settingsPath = join(cwd, '.stim.json');
+      const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf-8')) : {};
+      if (!settings.ios?.simslimProfile) continue;
+      h.log(`preparing simulator ${slot} in ${cwd} before the multi-device workload`);
+      const result = h.sh(process.execPath, ['--experimental-strip-types', script, cwd, slot], {
+        cwd,
+        timeout: 25 * 60 * 1000,
+        allowFail: true,
+      });
+      cleanup.recordWorkspace(cwd);
+      if (shutdown) {
+        const stopped = h.cli(['stop', '--slot', slot, '--json'], { cwd, allowFail: true });
+        assert(stopped.code === 0, `could not stop prepared simulator ${slot}: ${stopped.stderr}`);
+      }
+      assert(result.code === 0, `simulator preparation failed for ${slot}: ${result.stderr}`);
+      const { udid } = JSON.parse(result.stdout);
+      const listed = h.sh('xcrun', ['simctl', 'list', 'devices', '--json'], { timeout: 30000, allowFail: true });
+      assert(listed.code === 0, `could not inspect prepared simulator ${slot}: ${listed.stderr}`);
+      const inventory = JSON.parse(listed.stdout);
+      const sim = Object.values(inventory.devices)
+        .flat()
+        .find((device) => device.udid === udid);
+      assert(sim?.state === (shutdown ? 'Shutdown' : 'Booted'), `prepared simulator ${slot} has the wrong state`);
+    }
+  } catch (error) {
+    error.preserveNativeState = true;
+    h.log(`Simulator preparation failed. Keeping ${h.env?.STIM_HOME ?? 'STIM_HOME'} for recovery.`);
+    throw error;
+  }
+}
+
+export function assertMatchingPods(appDir) {
+  const lock = join(appDir, 'ios', 'Podfile.lock');
+  const manifest = join(appDir, 'ios', 'Pods', 'Manifest.lock');
+  const remedy =
+    "Prepare matching Pods in the source checkout before the cache suite: for Expo, run `npx --no-install expo prebuild --platform ios`; for bare React Native, run the project's normal pod install.";
+  assert(
+    existsSync(lock) && existsSync(manifest),
+    `Pods reuse requires Podfile.lock and Pods/Manifest.lock at ${appDir}. ${remedy}`,
+  );
+  assert(
+    readFileSync(lock, 'utf-8') === readFileSync(manifest, 'utf-8'),
+    `Pods/Manifest.lock differs from Podfile.lock at ${appDir}. ${remedy}`,
+  );
+}
+
+export function gitInitWithRemote({ appDir, workDir, framework, h }) {
+  const remote = join(workDir, 'remote.git');
+  h.sh('git', ['init', '-b', 'main', appDir]);
+  const g = (a) => h.sh('git', ['-C', appDir, ...a]);
+  g(['config', 'user.email', 'e2e@example.com']);
+  g(['config', 'user.name', 'stim-cli native e2e']);
+  g(['config', 'commit.gpgsign', 'false']);
+  ensureGitignore({ appDir, framework });
+  g(['add', '-A']);
+  g(['commit', '-m', `${framework} native e2e fixture`]);
+  h.sh('git', ['init', '--bare', '-b', 'main', remote]);
+  g(['remote', 'add', 'origin', remote]);
+  g(['push', '-u', 'origin', 'main']);
+  g(['remote', 'set-head', 'origin', 'main']);
+}
+
+export function ensureGitignore({ appDir, framework }) {
+  const gi = join(appDir, '.gitignore');
+  const needed = ['node_modules/', 'ios/Pods/', 'ios/build/', 'android/.gradle/', 'android/app/build/'];
+  if (framework === 'expo') needed.push('ios/', 'android/');
+  let text = existsSync(gi) ? readFileSync(gi, 'utf-8') : '';
+  const missing = needed.filter(
+    (n) =>
+      !text
+        .split('\n')
+        .map((l) => l.trim())
+        .includes(n.replace(/\/$/, '')) && !text.includes(n),
+  );
+  if (missing.length) {
+    const add = `\n# stim-cli native e2e\n${missing.join('\n')}\n`;
+    appendFileSync(gi, add);
+  }
+}
+
+export function createCleanupTracker({
+  h,
+  platform,
+  processExitTimeoutMs = 5000,
+  processStart = process.platform === 'darwin' ? darwinProcessStart : null,
+}) {
+  const devices = new Set();
+  const processes = new Map();
+
+  function recordBuild(facts) {
+    const id = platform === 'ios' ? facts.udid : facts.avdName;
+    assert(typeof id === 'string' && id.length > 0, `the ${platform} build did not identify its device`);
+    devices.add(id);
+  }
+
+  function recordWorkspace(cwd) {
+    let assignments = [];
+    try {
+      const config = JSON.parse(readFileSync(join(h.env.STIM_HOME, 'config.json'), 'utf-8'));
+      const project = config.projects?.[resolve(cwd)];
+      assignments = [project?.platforms, ...Object.values(project?.deviceSlots ?? {})].map(
+        (platforms) => platforms?.[platform],
+      );
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    for (const device of assignments) {
+      if (device?.owned === true) recordBuild({ udid: device.deviceUdid, avdName: device.avdName });
+    }
+
+    let state;
+    try {
+      state = JSON.parse(readFileSync(join(workspaceLogsDir(cwd), '..', 'state.json'), 'utf-8'));
+    } catch (error) {
+      if (error.code === 'ENOENT') return;
+      throw error;
+    }
+    const records = [
+      state.supervisor,
+      { pid: state.supervisor?.serverPid, startedAt: state.supervisor?.startedAt },
+      ...Object.values(state.collectors ?? {}),
+    ].filter((record) => Number.isInteger(record?.pid) && record.pid > 0);
+    if (records.length === 0) return;
+    const live = processSnapshot(
+      h,
+      records.map((record) => record.pid),
+      processStart,
+    );
+    for (const record of records) {
+      const key = JSON.stringify([cwd, record.pid, record.startedAt]);
+      if (!processes.has(key)) processes.set(key, { pid: record.pid, identity: live.get(record.pid) });
+    }
+  }
+
+  function remainingDevices() {
+    const ids =
+      platform === 'ios'
+        ? Object.values(JSON.parse(inspect(h, 'xcrun', ['simctl', 'list', 'devices', '--json'])).devices)
+            .flat()
+            .map((device) => device.udid)
+        : inspect(
+            h,
+            h.env.ANDROID_HOME || h.env.ANDROID_SDK_ROOT
+              ? join(h.env.ANDROID_HOME || h.env.ANDROID_SDK_ROOT, 'emulator', 'emulator')
+              : 'emulator',
+            ['-list-avds'],
+          )
+            .split('\n')
+            .map((name) => name.trim());
+    return ids.filter((id) => devices.has(id));
+  }
+
+  async function verifyProcesses() {
+    const deadline = Date.now() + processExitTimeoutMs;
+    while (true) {
+      const records = [...processes.values()];
+      const live = new Set(
+        processSnapshot(
+          h,
+          records.map((record) => record.pid),
+          processStart,
+        ).values(),
+      );
+      const leaked = records.map((record) => record.identity).filter((identity) => live.has(identity));
+      if (leaked.length === 0) return;
+      assert(Date.now() < deadline, `a workspace process is still running:\n${leaked.join('\n')}`);
+      await sleep(Math.min(100, deadline - Date.now()));
+    }
+  }
+
+  return { recordBuild, recordWorkspace, remainingDevices, verifyProcesses };
+}
+
+function inspect(h, file, argv, timeout = 5000) {
+  const result = h.sh(file, argv, { allowFail: true, timeout });
+  assert(result.code === 0, `could not inspect ${file}: ${result.stderr}`);
+  return result.stdout;
+}
+
+function darwinProcessStart(pid) {
+  return require('../../../packages/core/dist/process-identity.mjs').processStartMicros(pid);
+}
+
+function processSnapshot(h, candidates, processStart) {
+  const pids = [...new Set([...candidates, process.pid])];
+  if (processStart) {
+    const live = new Map();
+    for (const pid of pids) {
+      const observed = processStart(pid);
+      assert(observed.status !== 'unknown', `could not inspect process birth for pid ${pid}`);
+      if (observed.status === 'running') live.set(pid, `${pid} ${observed.startedAtMicros}`);
+    }
+    assert(live.has(process.pid), 'process inspection did not include the live harness');
+    return live;
+  }
+  // ps exits 1 when no selected process remains; the live harness makes an empty result an inspection failure.
+  const filter = pids.map((pid) => `ProcessId = ${pid}`).join(' OR ');
+  const out =
+    process.platform === 'win32'
+      ? inspect(
+          h,
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `$ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process -Filter '${filter}' | ` +
+              "ForEach-Object { $_.ProcessId.ToString() + ' ' + $_.CreationDate.Ticks.ToString() + ' ' + $_.CommandLine }",
+          ],
+          60_000,
+        )
+      : inspect(h, 'ps', ['-p', pids.join(','), '-o', 'pid=,lstart=,command=']);
+  const live = new Map(
+    out
+      .split(/\r?\n/)
+      .map((line) => /^\s*(\d+)\s+(.+)$/.exec(line))
+      .filter(Boolean)
+      .map((match) => [Number(match[1]), match[0].trim()]),
+  );
+  assert(live.has(process.pid), 'process inspection did not include the live harness');
+  return live;
+}
+
+export async function verifyCleanup({ h, cleanup, appDir, created }) {
+  h.banner('cleanup checks');
+
+  const devices = cleanup.remainingDevices();
+  assert(devices.length === 0, `a device from this run was left behind: ${devices.join(', ')}`);
+  h.log('(1) no devices from this run remain');
+
+  await cleanup.verifyProcesses();
+  h.log('(2) no workspace supervisor/Metro/collector processes remain');
+
+  const status = h.cli(['status'], { allowFail: true });
+  if (h.env.STIM_E2E_STRICT_QA === '1') assert(status.code === 0, `cleanup status failed: ${status.stderr}`);
+  assert(!created.some((p) => status.stdout.includes(p)), 'status still lists a removed workspace');
+  h.log('(3) status is clean of our workspaces');
+
+  const porcelain = h.sh('git', ['-C', appDir, 'status', '--porcelain']).stdout.trim();
+  assert(porcelain === '', `source checkout is dirty after the run:\n${porcelain}`);
+  const wl = h.sh('git', ['-C', appDir, 'worktree', 'list', '--porcelain']).stdout;
+  const registered = new Set(
+    wl
+      .split('\n')
+      .filter((line) => line.startsWith('worktree '))
+      .map((line) => line.slice('worktree '.length)),
+  );
+  assert(!created.some((path) => registered.has(resolve(path))), `a worktree registration survived:\n${wl}`);
+  h.log('(4) source checkout byte-clean, no worktrees linger');
+
+  const gc = h.cli(['gc', '--json'], { allowFail: true });
+  if (h.env.STIM_E2E_STRICT_QA === '1') assert(gc.code === 0, `cleanup gc inspection failed: ${gc.stderr}`);
+  if (gc.code === 0) {
+    const { sections } = JSON.parse(gc.stdout);
+    assert(sections && typeof sections === 'object', `cleanup gc --json has no sections: ${gc.stdout.slice(0, 500)}`);
+    const text = JSON.stringify({ ...sections, trash: null, staleStatusCaches: null });
+    assert(
+      !created.some((p) => text.includes(JSON.stringify(p).slice(1, -1))),
+      `gc reports one of our workspaces as orphaned:\n${JSON.stringify(
+        Object.fromEntries(
+          Object.entries(sections).filter(
+            ([name, value]) =>
+              name !== 'trash' &&
+              name !== 'staleStatusCaches' &&
+              created.some((p) => JSON.stringify(value).includes(JSON.stringify(p).slice(1, -1))),
+          ),
+        ),
+        null,
+        2,
+      )}`,
+    );
+  }
+  h.log('(5) gc reports nothing of ours orphaned');
+}
+
+export function buildLog(cwd) {
+  const dir = workspaceLogsDir(cwd);
+  if (!existsSync(dir)) return null;
+  const candidates = readdirSync(dir)
+    .filter((f) => /^build-.*\.ndjson$/.test(f))
+    .map((f) => join(dir, f));
+  return candidates.toSorted((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0] || null;
+}
+
+export function workspaceLogsDir(cwd) {
+  const canonical = resolve(cwd);
+  const slug =
+    basename(canonical)
+      .normalize('NFKD')
+      .replace(/[^A-Za-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase()
+      .slice(0, 48) || 'workspace';
+  const id = createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+  const home = process.env.STIM_HOME || join(process.env.HOME || '', '.stim');
+  return join(home, 'workspaces', `${slug}--${id}`, 'logs');
+}
+
+export function dumpDiagnostics(h, created) {
+  h.banner('DIAGNOSTICS (build log tails)');
+  for (const wt of created) {
+    const logPath = buildLog(wt);
+    if (!logPath) {
+      h.log(`no build log under ${wt}`);
+      continue;
+    }
+    h.log(`--- ${logPath} (tail) ---`);
+    const text = readFileSync(logPath, 'utf-8');
+    process.stderr.write(lastLines(text, 60) + '\n');
+    const launch = text
+      .split('\n')
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line)];
+        } catch {
+          return [];
+        }
+      })
+      .findLast((record) => record?.event === 'launch_attempt');
+    if (launch?.platform !== 'android' || typeof launch.deviceId !== 'string' || typeof launch.appId !== 'string')
+      continue;
+    const queries = [
+      ['get-state'],
+      ['shell', 'pm', 'path', launch.appId],
+      ['shell', 'cmd', 'package', 'resolve-activity', '--brief', launch.appId],
+      ['shell', 'pidof', launch.appId],
+      ['logcat', '-b', 'all', '-d', '-t', '2000'],
+    ];
+    const diagnostics = queries.map((query) => {
+      const argv = ['-s', launch.deviceId, ...query];
+      const started = Date.now();
+      const result = h.sh('adb', argv, { allowFail: true, timeout: 10_000 });
+      return { argv, elapsedMs: Date.now() - started, code: result.code, stdout: result.stdout, stderr: result.stderr };
+    });
+    const output = JSON.stringify({ launch, diagnostics }, null, 2);
+    writeFileSync(join(dirname(logPath), 'android-failure-diagnostics.json'), output + '\n');
+    h.log(output);
+  }
+}
+
+export function cleanupTmp(dirs, error) {
+  if (error?.preserveNativeState) return;
+  for (const dir of dirs.filter(Boolean)) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+export function dirStats(dir) {
+  const out = { dir, exists: existsSync(dir), files: 0, bytes: 0 };
+  if (!out.exists) return out;
+  const stack = [dir];
+  while (stack.length) {
+    const current = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const path = join(current, e.name);
+      if (e.isDirectory()) {
+        stack.push(path);
+        continue;
+      }
+      if (!e.isFile()) continue;
+      out.files += 1;
+      try {
+        out.bytes += statSync(path).size;
+      } catch {}
+    }
+  }
+  return out;
+}
+
+export function topFileNames(dir, { matching } = {}) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && (!matching || matching.test(e.name)))
+    .map((e) => e.name);
+}
+
+export function growth(label, before, after) {
+  return {
+    label,
+    before: before.files,
+    after: after.files,
+    added: after.files - before.files,
+    bytesBefore: before.bytes,
+    bytesAfter: after.bytes,
+    bytesAdded: after.bytes - before.bytes,
+    dir: after.dir,
+  };
+}
+
+export function describeGrowth(g) {
+  return `${g.label}: ${g.before} files -> ${g.after} files (${g.added >= 0 ? '+' : ''}${g.added}, ${formatBytes(
+    g.bytesAdded,
+  )}) at ${g.dir}`;
+}
+
+export function formatBytes(n) {
+  const bytes = Number(n) || 0;
+  const sign = bytes < 0 ? '-' : '';
+  let value = Math.abs(bytes);
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i += 1;
+  }
+  return `${sign}${i === 0 ? value : value.toFixed(1)}${units[i]}`;
+}
+
+export function readNdjson(file) {
+  if (!file || !existsSync(file)) return [];
+  const out = [];
+  for (const line of readFileSync(file, 'utf-8').split('\n')) {
+    if (line.trim() === '') continue;
+    try {
+      out.push(JSON.parse(line));
+    } catch {}
+  }
+  return out;
+}
+
+export function assert(cond, msg) {
+  if (!cond) throw new Error(msg);
+}
+
+export function lastLines(s, n) {
+  return String(s || '')
+    .split('\n')
+    .slice(-n)
+    .join('\n');
+}
+
+export function quote(s) {
+  return /[^\w./@:{}-]/.test(s) ? `'${String(s).replace(/'/g, "'\\''")}'` : String(s);
+}
+
+export function resolvePath(p) {
+  return resolve(p);
+}

@@ -1,0 +1,72 @@
+{
+  "cpu": [
+    {
+      "fraction": 0,
+      "tone": "normal"
+    },
+    {
+      "fraction": 0.79,
+      "tone": "normal"
+    },
+    {
+      "fraction": 0.8,
+      "tone": "caution"
+    },
+    {
+      "fraction": 0.94,
+      "tone": "caution"
+    },
+    {
+      "fraction": 0.95,
+      "tone": "error"
+    },
+    {
+      "fraction": 1,
+      "tone": "error"
+    }
+  ],
+  "disk": [
+    {
+      "freeBytes": 0,
+      "tone": "error"
+    },
+    {
+      "freeBytes": 4990000000,
+      "tone": "error"
+    },
+    {
+      "freeBytes": 5000000000,
+      "tone": "caution"
+    },
+    {
+      "freeBytes": 19990000000,
+      "tone": "caution"
+    },
+    {
+      "freeBytes": 20000000000,
+      "tone": "normal"
+    },
+    {
+      "freeBytes": 500000000000,
+      "tone": "normal"
+    }
+  ],
+  "memory": [
+    {
+      "pressure": "normal",
+      "tone": "normal"
+    },
+    {
+      "pressure": "warning",
+      "tone": "caution"
+    },
+    {
+      "pressure": "critical",
+      "tone": "error"
+    },
+    {
+      "pressure": null,
+      "tone": "normal"
+    }
+  ]
+}

@@ -1,0 +1,347 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+
+import { withDirLock } from './dir-lock.ts';
+import { isJsonObject } from './state/json-file.ts';
+import { ambientContext, ambientEnv } from './context.ts';
+export { withDirLock, withDirLockAsync, withDirLockTransaction, type DirLockOptions } from './dir-lock.ts';
+export {
+  ambientContext,
+  ambientEnv,
+  ambientWrite,
+  withAmbientContext,
+  type StimContext,
+  type StimOutput,
+} from './context.ts';
+export { validMacosResourceDestination } from './macos-resources.ts';
+export { quotedPath } from './quoted-path.ts';
+export { quoteUnitWord, unitLines, unitWords, type UnitLine } from './systemd-unit.ts';
+export { artifactIn, resolveArtifact, storeArtifact, type StoreArtifactOptions } from './artifact-store.ts';
+export { storeArtifactAsync, type AsyncStoreArtifactOptions } from './artifact-store-async.ts';
+export { compiledHelper } from './compiled-helper.ts';
+export { dependencyInstall, dependencyLockfile, reusableDependencies } from './dependency-install.ts';
+export {
+  createMetroBridge,
+  createMetroLinks,
+  type MetroBridge,
+  type MetroLink,
+  type MetroLinks,
+} from './metro-bridge.ts';
+
+const warnedRelative = new Set<string>();
+
+function absoluteEnvPath(name: 'STIM_HOME' | 'STIM_BUILD_CACHE' | 'STIM_METRO_CACHE'): string | null {
+  const value = ambientEnv()[name];
+  if (!value) return null;
+  if (path.isAbsolute(value)) return value;
+  if (!warnedRelative.has(name)) {
+    warnedRelative.add(name);
+    process.emitWarning(`${name}=${value} is not an absolute path and is ignored.`, { code: 'STIM_RELATIVE_PATH' });
+  }
+  return null;
+}
+
+export function configDir(): string {
+  return ambientContext()?.home ?? (absoluteEnvPath('STIM_HOME') || path.join(os.homedir(), '.stim'));
+}
+
+/**
+ * Whether `STIM_HOME` scopes this Stim home, whatever path it names, `~/.stim` included. A scoped home owns only the
+ * devices its created-devices ledger lists and leaves machine-wide device and memory sweeps alone.
+ */
+export function isScopedHome(env: NodeJS.ProcessEnv = ambientEnv()): boolean {
+  return Boolean(env.STIM_HOME);
+}
+
+/** Creates `dir` and its missing parents owner-only, and narrows an existing `dir` that grants group or other access when the filesystem and owner allow it. */
+export function ensurePrivateDir(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (process.platform === 'win32') return;
+  try {
+    if ((fs.statSync(dir).mode & 0o077) !== 0) fs.chmodSync(dir, 0o700);
+  } catch {}
+}
+
+export function workspaceSlug(projectRoot: string): string {
+  const name = path
+    .basename(path.resolve(projectRoot))
+    .normalize('NFKD')
+    .replace(/[^A-Za-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase()
+    .slice(0, 48);
+  return name || 'workspace';
+}
+
+export function workspaceId(projectRoot: string): string {
+  return createHash('sha256').update(path.resolve(projectRoot)).digest('hex').slice(0, 16);
+}
+
+export function workspaceName(projectRoot: string): string {
+  return `${workspaceSlug(projectRoot)}--${workspaceId(projectRoot)}`;
+}
+
+export function workspaceStateDir(projectRoot: string): string {
+  return path.join(configDir(), 'workspaces', workspaceName(projectRoot));
+}
+
+export function workspaceLogDir(projectRoot: string): string {
+  return path.join(workspaceStateDir(projectRoot), 'logs');
+}
+
+export const LOG_ROTATE_BYTES: number = 8 * 1024 * 1024;
+
+export function rotatedLogPath(file: string): string {
+  return `${file}.1`;
+}
+
+/** Moves `file` over its previous generation once it reaches `maxBytes`; readers read both generations. */
+export function rotateLog(file: string, maxBytes: number): void {
+  if (logSize(file) < maxBytes) return;
+  withDirLock(
+    `${file}.lock`,
+    () => {
+      if (logSize(file) >= maxBytes) fs.renameSync(file, rotatedLogPath(file));
+    },
+    { waitMs: 100, pollMs: 10 },
+  );
+}
+
+function logSize(file: string): number {
+  try {
+    return fs.statSync(file).size;
+  } catch {
+    return 0;
+  }
+}
+
+export function cachePathSetting(key: 'buildCache' | 'metroCache'): string | null {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(configDir(), 'config.json'), 'utf-8'));
+    const caches = isJsonObject(parsed) ? parsed.caches : undefined;
+    const value = isJsonObject(caches) ? caches[key] : undefined;
+    return typeof value === 'string' && path.isAbsolute(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function cacheNameSegment(name: string | null | undefined): string {
+  return (
+    String(name)
+      .replace(/[^A-Za-z0-9._-]+/g, '-')
+      .replace(/^\.+/, '') || 'app'
+  );
+}
+
+export function buildCacheRoot(): string {
+  return absoluteEnvPath('STIM_BUILD_CACHE') || cachePathSetting('buildCache') || path.join(configDir(), 'build-cache');
+}
+
+export function metroCacheRoot(name?: string | null): string {
+  const root =
+    absoluteEnvPath('STIM_METRO_CACHE') || cachePathSetting('metroCache') || path.join(configDir(), 'metro-cache');
+  return name === undefined || name === null || name === '' ? root : path.join(root, cacheNameSegment(name));
+}
+
+export const STORE_ROOT_TAG = 'stimStoreRoot';
+
+export function tagSharedStore<T extends object>(store: T, root: string): T {
+  try {
+    Object.defineProperty(store, STORE_ROOT_TAG, { value: root, enumerable: false, configurable: true });
+  } catch {}
+  return store;
+}
+
+export function sharedStoreRoot(store: unknown): string | null {
+  if (store === null || typeof store !== 'object') return null;
+  const tagged = (store as Record<string, unknown>)[STORE_ROOT_TAG];
+  if (typeof tagged === 'string') return tagged;
+  const legacy = (store as { _root?: unknown })._root;
+  return typeof legacy === 'string' ? legacy : null;
+}
+
+export interface BuildRunOptions {
+  buildProfile?: string;
+  compiler?: string;
+  variant?: string;
+  abi?: string;
+  allArch?: boolean;
+  arch?: string;
+  configuration?: string;
+  scheme?: string;
+  gradleProject?: string;
+  buildConfiguration?: string;
+  isSimulator?: boolean;
+  device?: string | boolean | null;
+}
+
+const SIMULATOR_UDID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const EMULATOR_SERIAL = /^emulator-\d+$/;
+
+function slug(value: unknown): string {
+  return String(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function buildVariant(platform: string, options: BuildRunOptions): string {
+  const raw = platform === 'android' ? options.variant : (options.configuration ?? options.buildConfiguration);
+  return (typeof raw === 'string' ? slug(raw) : '') || 'debug';
+}
+
+function buildTarget(options: BuildRunOptions): string {
+  if (typeof options.isSimulator === 'boolean') return options.isSimulator ? 'sim' : 'device';
+  const device = options.device;
+  if (device === undefined || device === null || device === false) return 'sim';
+  if (typeof device !== 'string') return 'prompted';
+  const name = device.trim();
+  if (name === '' || name === 'generic') return 'sim';
+  if (SIMULATOR_UDID.test(name) || EMULATOR_SERIAL.test(name)) return 'sim';
+  return `on-${slug(name)}`;
+}
+
+/** The simulator slice a local build compiles for this machine: `arm64` or `x86_64`. */
+export function hostSimulatorArch(arch: string = process.arch): 'arm64' | 'x86_64' {
+  return arch === 'x64' ? 'x86_64' : 'arm64';
+}
+
+export function buildCacheKey(platform: string, fingerprintHash: string, options: unknown = {}): string {
+  const opts = (options && typeof options === 'object' ? options : {}) as BuildRunOptions;
+  const target = buildTarget(opts);
+  const abi =
+    platform === 'android' && typeof opts.abi === 'string'
+      ? slug(opts.abi)
+      : platform === 'ios' && target === 'sim' && typeof opts.arch === 'string'
+        ? slug(opts.arch)
+        : '';
+  const allArch = platform === 'android' && opts.allArch === true ? '-all-arch' : '';
+  const compiler = typeof opts.compiler === 'string' ? slug(opts.compiler) : '';
+  const profile = typeof opts.buildProfile === 'string' ? slug(opts.buildProfile) : '';
+  const scheme =
+    platform === 'ios' && typeof opts.scheme === 'string' && opts.scheme
+      ? createHash('sha256').update(opts.scheme).digest('hex')
+      : '';
+  const gradleProject =
+    platform === 'android' && typeof opts.gradleProject === 'string' && opts.gradleProject
+      ? createHash('sha256').update(opts.gradleProject).digest('hex')
+      : '';
+  return `${fingerprintHash}-${buildVariant(platform, opts)}-${target}${abi ? `-${abi}` : ''}${allArch}${compiler ? `-${compiler}` : ''}${profile ? `-${profile}` : ''}${scheme ? `-scheme-${scheme}` : ''}${gradleProject ? `-gradle-${gradleProject}` : ''}`;
+}
+
+export interface RegisterOptions {
+  dir: string;
+  name: string;
+  prune: string;
+  note: string;
+  entriesDepth?: number;
+  layout?: string;
+  replaces?: CacheRegistrationMatch[];
+}
+
+export interface CacheRegistrationMatch {
+  dir: string;
+  name?: string;
+  prune?: string;
+  entriesDepth?: number;
+  layout?: string | null;
+}
+
+export const METRO_NAMED_CACHE_LAYOUT = 'metro-named-v1';
+
+export interface CacheManifest {
+  version: number;
+  caches: Array<Record<string, unknown>>;
+}
+
+export function cacheManifestLockPath(file: string): string {
+  return `${file}.lock`;
+}
+
+export function readCacheManifest(file: string): CacheManifest {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    const caches = isJsonObject(parsed) && Array.isArray(parsed.caches) ? parsed.caches : [];
+    return { version: 1, caches: caches.filter(isJsonObject) };
+  } catch {
+    return { version: 1, caches: [] };
+  }
+}
+
+export function updateCacheManifest(
+  file: string,
+  mutate: (caches: Array<Record<string, unknown>>) => Array<Record<string, unknown>>,
+): CacheManifest {
+  const parent = path.dirname(file);
+  return withDirLock(
+    cacheManifestLockPath(file),
+    () => {
+      const next: CacheManifest = { version: 1, caches: mutate(readCacheManifest(file).caches) };
+      const temporary = path.join(parent, `.${path.basename(file)}.${process.pid}.tmp`);
+      try {
+        fs.writeFileSync(temporary, JSON.stringify(next, null, 2));
+        fs.renameSync(temporary, file);
+      } catch (error) {
+        fs.rmSync(temporary, { force: true });
+        throw error;
+      }
+      return next;
+    },
+    { ensureParent: () => fs.mkdirSync(parent, { recursive: true }) },
+  );
+}
+
+function realOrResolved(dir: string): string {
+  try {
+    return fs.realpathSync(dir);
+  } catch {
+    return path.resolve(dir);
+  }
+}
+
+export function cacheDirRefusal(dir: string): string | null {
+  if (!path.isAbsolute(dir)) return `${dir} is not an absolute path`;
+  const target = realOrResolved(dir);
+  if (path.dirname(target) === target) return `${dir} is a filesystem root`;
+  const guarded = [os.homedir(), os.tmpdir(), configDir()].find((held) => {
+    const inside = path.relative(target, realOrResolved(held));
+    return inside !== '..' && !inside.startsWith(`..${path.sep}`) && !path.isAbsolute(inside);
+  });
+  return guarded ? `${dir} is or contains ${guarded}` : null;
+}
+
+export function registerCache({ dir, name, prune, note, entriesDepth, layout, replaces = [] }: RegisterOptions): void {
+  if (cacheDirRefusal(dir)) return;
+  try {
+    updateCacheManifest(path.join(configDir(), 'caches.json'), (caches) => {
+      const others = caches.filter(
+        (cache) => cache.dir !== dir && !replaces.some((match) => matchesCache(cache, match)),
+      );
+      const record: Record<string, unknown> = {
+        dir,
+        name,
+        prune,
+        note,
+        registeredBy: ambientContext()?.cwd ?? process.cwd(),
+      };
+      if (entriesDepth) record.entriesDepth = entriesDepth;
+      if (layout) record.layout = layout;
+      others.push(record);
+      return others;
+    });
+  } catch {}
+}
+
+function matchesCache(cache: Record<string, unknown>, match: CacheRegistrationMatch): boolean {
+  if (cache.dir !== match.dir) return false;
+  if (match.name !== undefined && cache.name !== match.name) return false;
+  if (match.prune !== undefined && cache.prune !== match.prune) return false;
+  if (match.entriesDepth !== undefined && cache.entriesDepth !== match.entriesDepth) return false;
+  if (match.layout === null) return !Object.hasOwn(cache, 'layout');
+  return match.layout === undefined || cache.layout === match.layout;
+}
+export { reactNativeArtifactQuery, reactNativeArtifactIdentity } from './react-native-artifact.ts';
+export { swiftpmArtifactQuery } from './swiftpm-artifact.ts';

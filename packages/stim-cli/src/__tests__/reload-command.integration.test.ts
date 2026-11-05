@@ -1,0 +1,1377 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+import assert from 'node:assert/strict';
+import { configLockPath, isJsonObject, workspaceStateLock } from '@stim-cli/core/state';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Command } from 'commander';
+import { getProjectSettings, writeConfigSetting, type ProjectRecord } from '../workspace/config.ts';
+import { registerReload, runReload, type ReloadDeps } from '../commands/reload.ts';
+import type { WorkspaceLaunchRecord } from '../supervisor/state.ts';
+import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
+import { readWorkspaceState, recordWorkspaceUseAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
+
+const iosLaunch: WorkspaceLaunchRecord = {
+  appId: 'com.example.ios',
+  deviceId: 'U1',
+  metroPort: 8082,
+  release: false,
+  launchedAt: '2026-09-04T12:00:00.000Z',
+};
+
+const androidLaunch: WorkspaceLaunchRecord = {
+  appId: 'com.example.android',
+  deviceId: 'emulator-5554',
+  metroPort: 8082,
+  release: false,
+  launchedAt: '2026-09-04T12:00:00.000Z',
+};
+
+const project: ProjectRecord = {
+  metroPort: 8082,
+  platforms: {
+    ios: { deviceUdid: 'U1', deviceName: 'stim-ios', owned: true },
+    android: { avdName: 'stim-android', serial: 'emulator-5554', owned: true },
+  },
+};
+
+function reloadDeps(overrides: Partial<ReloadDeps> = {}): Partial<ReloadDeps> {
+  return {
+    findWorkspace: () => '/project',
+    getProject: () => project,
+    readLaunches: () => ({ android: androidLaunch }),
+    resolveIos: () => ({ sim: { udid: 'U1', name: 'stim-ios', state: 'Booted' } }) as never,
+    resolveAndroid: async () => ({ serial: 'emulator-5554' }),
+    iosProcess: async () => ({ state: 'running', pid: 42 }),
+    androidProcess: async () => ({ state: 'running', pid: 43 }),
+    resolveMetro: async () => ({ metro: { pid: 1, leader: 1, cwd: '/project' } }),
+    reloadMetro: async () => ({ ok: true, peers: 1, targets: 1 }),
+    readBrowser: () => null,
+    ensureReverse: async () => ({ restored: false }),
+    sleep: async () => {},
+    ...overrides,
+  };
+}
+
+let tmpHome: string;
+
+beforeEach(() => {
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
+});
+
+afterEach(() => {
+  resetExecutor();
+  process.exitCode = undefined;
+  rmSync(tmpHome, { recursive: true, force: true });
+  delete process.env.STIM_HOME;
+});
+
+test('reload waits for an asynchronous simulator listing without blocking other requests', async () => {
+  recordCreatedDevice('ios', 'U1');
+  const real = getExecutor();
+  const listing = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-27-0': [
+        { udid: 'U1', name: 'stim-ios', state: 'Booted', isAvailable: true, deviceTypeIdentifier: 'iphone-18' },
+      ],
+    },
+  });
+  setExecutor({
+    ...real,
+    runFile: () => {
+      throw new Error('synchronous simulator probe');
+    },
+    runFileAsync: () =>
+      real.runFileAsync(process.execPath, ['-e', `setTimeout(() => console.log(${JSON.stringify(listing)}), 150)`], {
+        timeoutMs: 2000,
+      }),
+  });
+  const deps = reloadDeps({ readLaunches: () => ({ ios: iosLaunch }) });
+  delete deps.resolveIos;
+  let finished = false;
+  const pending = runReload({ root: '/project', platform: 'ios', deps });
+  void pending.then(() => (finished = true));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(finished).toBe(false);
+  await expect(pending).resolves.toMatchObject({ ok: true, facts: { deviceId: 'U1', strategy: 'metro-websocket' } });
+});
+
+test.each([false, true])(
+  'Metro lookup stays responsive and cancels its status request, cancelled=%s',
+  async (cancel) => {
+    const projectRoot = realpathSync(process.cwd());
+    let status!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      status = resolve;
+    });
+    const server = createServer((request, response) => {
+      if (request.url === '/other') return void response.end('responsive');
+      status();
+      if (!cancel) response.end('packager-status:running');
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    assert(address && typeof address === 'object');
+    const port = address.port;
+    const real = getExecutor();
+    const lookup = (file: string, args: string[]) => {
+      expect(file).toBe('lsof');
+      const output = args.includes('-t') ? String(process.pid) : `p${process.pid}\nfcwd\nn${projectRoot}\n`;
+      return real.runFileAsync(
+        process.execPath,
+        ['-e', 'setTimeout(() => process.stdout.write(process.argv[1]), 150)', output],
+        { timeoutMs: 2000 },
+      );
+    };
+    setExecutor({
+      ...real,
+      runFileQuiet: () => {
+        throw new Error('synchronous Metro lookup');
+      },
+      runFileQuietAsync: lookup,
+      runFileAsync: lookup,
+    });
+    const reload = vi.fn<ReloadDeps['reloadMetro']>(async () => ({ ok: true, peers: 1, targets: 1 }));
+    const deps = reloadDeps({
+      getProject: () => ({ ...project, metroPort: port }),
+      readLaunches: () => ({ android: { ...androidLaunch, metroPort: port } }),
+      reloadMetro: reload,
+    });
+    delete deps.resolveMetro;
+    const controller = new AbortController();
+    let finished = false;
+    const pending = runReload({ root: projectRoot, platform: 'android', deps, signal: controller.signal });
+    void pending.then(
+      () => (finished = true),
+      () => (finished = true),
+    );
+    try {
+      expect(await (await fetch(`http://127.0.0.1:${port}/other`)).text()).toBe('responsive');
+      expect(finished).toBe(false);
+      await requested;
+      const completed = pending.catch((cause: unknown) => cause);
+      if (cancel) controller.abort();
+      const outcome = cancel
+        ? Promise.race([completed, new Promise((resolve) => setTimeout(() => resolve('pending'), 200))])
+        : completed;
+      await expect(outcome).resolves.toMatchObject(
+        cancel ? { code: 'STIM_CANCELLED' } : { ok: true, facts: { metroPort: port } },
+      );
+      expect(reload.mock.calls).toHaveLength(cancel ? 0 : 1);
+    } finally {
+      controller.abort();
+      await pending.catch(() => {});
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  },
+);
+
+test.each([
+  ['workspace', false],
+  ['config', false],
+  ['workspace', true],
+  ['config', true],
+  ['metadata', true],
+] as const)('recording reload use waits for the %s lock without blocking, cancelled=%s', async (scope, cancel) => {
+  const root = join(tmpHome, 'app');
+  mkdirSync(root);
+  ensureWorkspaceStorage(root);
+  writeConfigSetting({ scope: 'workspace', projectPath: root }, 'workspace.hidden', true);
+  const lock =
+    scope === 'workspace'
+      ? workspaceStateLock(root)
+      : scope === 'config'
+        ? configLockPath()
+        : join(workspaceDir(root), 'metadata.lock');
+  const child = spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+    const { withDirLock } = await import(process.argv[1]);
+    const { readSync } = await import('node:fs');
+    withDirLock(process.argv[2], () => {
+      process.stdout.write('held');
+      readSync(0, Buffer.alloc(1), 0, 1, null);
+    });
+  `,
+      new URL('../../../core/dist/index.mjs', import.meta.url).href,
+      lock,
+    ],
+    { stdio: ['pipe', 'pipe', 'pipe'] },
+  );
+  const exited = once(child, 'exit');
+  try {
+    assert(child.stdout);
+    await once(child.stdout, 'data');
+    let finished = false;
+    const controller = new AbortController();
+    const pending = recordWorkspaceUseAsync(
+      root,
+      new Date(),
+      { CODEX_THREAD_ID: 'reload-thread' },
+      root,
+      controller.signal,
+    );
+    void pending.then(
+      () => (finished = true),
+      () => (finished = true),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(finished).toBe(false);
+    if (cancel) {
+      controller.abort();
+    } else {
+      assert(child.stdin);
+      child.stdin.end('x');
+    }
+    const outcome = await pending.then(
+      () => 'recorded',
+      (error: unknown) => (error instanceof Error ? error.name : String(error)),
+    );
+    expect(outcome).toBe(cancel ? 'AbortError' : 'recorded');
+    const shouldRecord = !cancel || scope === 'config';
+    const agent = readWorkspaceState(root)?.agentSession;
+    expect(isJsonObject(agent) ? agent.sessionId : undefined).toBe(shouldRecord ? 'reload-thread' : undefined);
+    expect(isJsonObject(agent) ? agent.cwd : undefined).toBe(shouldRecord ? realpathSync(root) : undefined);
+    expect(getProjectSettings(root)?.workspace).toEqual(cancel ? { hidden: true } : undefined);
+  } finally {
+    child.kill('SIGKILL');
+    await exited;
+  }
+});
+
+test('a reload records when the workspace was last used', async () => {
+  const program = new Command();
+  registerReload(program, reloadDeps());
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    await program.parseAsync(['node', 'stim', 'reload', 'android']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  expect(Date.parse(String(readWorkspaceState('/project')?.lastUsedAt))).toBeGreaterThan(Date.now() - 60_000);
+});
+
+test('reload auto-selects the sole live owned app and reports its strategy', async () => {
+  const result = await runReload({ root: '/project', deps: reloadDeps() });
+
+  expect(result).toEqual({
+    ok: true,
+    facts: {
+      platform: 'android',
+      deviceId: 'emulator-5554',
+      deviceName: 'stim-android',
+      appId: 'com.example.android',
+      metroPort: 8082,
+      strategy: 'metro-websocket',
+      targets: 1,
+      reverseRestored: [],
+    },
+  });
+});
+
+test('reload addresses Metro with the target platform and app', async () => {
+  const calls: unknown[] = [];
+  await runReload({
+    root: '/project',
+    platform: 'android',
+    deps: reloadDeps({
+      reloadMetro: async (port, options) => {
+        calls.push([port, options]);
+        return { ok: true, peers: 1, targets: 1 };
+      },
+    }),
+  });
+  await runReload({
+    root: '/project',
+    platform: 'ios',
+    deps: reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch }),
+      reloadMetro: async (port, options) => {
+        calls.push([port, options]);
+        return { ok: true, peers: 1, targets: 1 };
+      },
+    }),
+  });
+
+  expect(calls).toEqual([
+    [8082, { role: 'android', appId: 'com.example.android' }],
+    [8082, { role: 'ios', appId: 'com.example.ios' }],
+  ]);
+});
+
+describe('the adb reverse for the workspace Metro port', () => {
+  const noPeer = { failed: true as const, noPeer: true as const, peers: 0, reason: 'No Android app connected.' };
+
+  test('an Android reload checks the reverse on the launch device and leaves a present one alone', async () => {
+    const checked: unknown[] = [];
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: async (serial, port) => {
+          checked.push([serial, port]);
+          return { restored: false };
+        },
+      }),
+    });
+    expect(checked).toEqual([['emulator-5554', 8082]]);
+    expect(result).toMatchObject({ ok: true, facts: { reverseRestored: [] } });
+  });
+
+  test('an Android reload also checks the ports reversed with ports reverse', async () => {
+    writeWorkspaceState('/project', { reversePorts: [8901] });
+    const checked: unknown[] = [];
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: async (serial, port) => {
+          checked.push([serial, port]);
+          return { restored: port === 8901 };
+        },
+      }),
+    });
+    expect(checked).toEqual([
+      ['emulator-5554', 8082],
+      ['emulator-5554', 8901],
+    ]);
+    expect(result).toMatchObject({ ok: true, facts: { reverseRestored: ['emulator-5554'] } });
+  });
+
+  test('a restored reverse waits, sending nothing, until the app reconnects, then reloads once', async () => {
+    const calls: unknown[] = [];
+    let probes = 0;
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: async () => ({ restored: true }),
+        reloadMetro: async (_port, options) => {
+          calls.push(options?.peersOnly ?? 'reload');
+          if (!options?.peersOnly) return { ok: true, peers: 1, targets: 1 };
+          return ++probes < 3 ? noPeer : { ok: true, peers: 1, targets: 1 };
+        },
+      }),
+    });
+    expect(calls).toEqual([true, true, true, 'reload']);
+    expect(result).toMatchObject({
+      ok: true,
+      facts: { reverseRestored: ['emulator-5554'], strategy: 'metro-websocket' },
+    });
+  });
+
+  test('an app that never reconnects gets one reload after the wait, with the no-peer remedy', async () => {
+    const calls: unknown[] = [];
+    const slept: number[] = [];
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: async () => ({ restored: true }),
+        sleep: async (ms) => {
+          slept.push(ms);
+        },
+        reloadMetro: async (_port, options) => {
+          calls.push(options?.peersOnly ?? 'reload');
+          return noPeer;
+        },
+      }),
+    });
+    expect(calls.filter((call) => call === 'reload')).toEqual(['reload']);
+    expect(calls.at(-1)).toBe('reload');
+    expect(slept.reduce((sum, ms) => sum + ms, 0)).toBeGreaterThanOrEqual(5000);
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_FAILED' } });
+  });
+
+  test('a Metro that cannot name its peers gets one reconnect interval before the broadcast reload', async () => {
+    const slept: number[] = [];
+    const calls: unknown[] = [];
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: async () => ({ restored: true }),
+        sleep: async (ms) => {
+          slept.push(ms);
+        },
+        reloadMetro: async (_port, options) => {
+          calls.push(options?.peersOnly ?? 'reload');
+          return { ok: true, broadcast: true };
+        },
+      }),
+    });
+    expect(calls).toEqual([true, 'reload']);
+    expect(slept).toEqual([2500]);
+    expect(result).toMatchObject({ ok: true, facts: { strategy: 'metro-broadcast' } });
+  });
+
+  test('an unreadable reverse list refuses before reloading, naming the manual command', async () => {
+    let reloaded = false;
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: reloadDeps({
+        ensureReverse: async () => ({ failed: true, reason: 'adb reverse --list failed on emulator-5554' }),
+        reloadMetro: async () => {
+          reloaded = true;
+          return { ok: true, peers: 1, targets: 1 };
+        },
+      }),
+    });
+    expect(reloaded).toBe(false);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'STIM_RELOAD_FAILED',
+        remedy: expect.stringContaining('adb -s emulator-5554 reverse tcp:8082 tcp:8082'),
+      },
+    });
+  });
+
+  test('an iOS reload and a release launch never touch adb reverse', async () => {
+    const ensureReverse = () => {
+      throw new Error('adb reverse must not run');
+    };
+    expect(
+      await runReload({
+        root: '/project',
+        platform: 'ios',
+        deps: reloadDeps({ readLaunches: () => ({ ios: iosLaunch }), ensureReverse }),
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      await runReload({
+        root: '/project',
+        platform: 'android',
+        deps: reloadDeps({ readLaunches: () => ({ android: { ...androidLaunch, release: true } }), ensureReverse }),
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_RELEASE' } });
+  });
+});
+
+test('reload requires a platform when both owned apps are live', async () => {
+  const result = await runReload({
+    root: '/project',
+    deps: reloadDeps({ readLaunches: () => ({ ios: iosLaunch, android: androidLaunch }) }),
+  });
+
+  expect(result).toEqual({
+    ok: false,
+    error: {
+      code: 'STIM_RELOAD_AMBIGUOUS',
+      message: 'More than one platform is live: ios, android.',
+      remedy: 'Choose one with `stim reload ios` or `stim reload android`.',
+    },
+  });
+});
+
+const browser = {
+  pid: 10,
+  processToken: 't',
+  chromeProcess: { pid: 11, processToken: 'c' },
+  chrome: '/Chrome',
+  headless: true,
+  viewport: 'desktop' as const,
+  ignoreCertificateErrors: false,
+  cdpPort: 8901,
+  profile: '/stim/web/profile',
+  url: 'http://localhost:8082/',
+  startedAt: '2026-09-26T00:00:00.000Z',
+  targetId: 'PAGE',
+  version: 'Chrome/153.0.8010.49',
+};
+
+test('reload reaches the owned Chrome page when it is the only live target, and names web when others are', async () => {
+  const reloaded: string[] = [];
+  const reloadPage = async (record: { targetId: string }) => {
+    reloaded.push(record.targetId);
+    return 'http://localhost:8082/settings';
+  };
+  expect(
+    await runReload({
+      root: '/project',
+      deps: reloadDeps({ readLaunches: () => ({}), readBrowser: async () => browser, reloadPage }),
+    }),
+  ).toEqual({
+    ok: true,
+    facts: {
+      platform: 'web',
+      deviceId: 'http://127.0.0.1:8901',
+      deviceName: 'Chrome/153.0.8010.49',
+      appId: 'http://localhost:8082/settings',
+      metroPort: 8082,
+      strategy: 'cdp',
+      targets: 1,
+      reverseRestored: [],
+    },
+  });
+  expect(reloaded).toEqual(['PAGE']);
+
+  const both = await runReload({ root: '/project', deps: reloadDeps({ readBrowser: () => browser, reloadPage }) });
+  expect(both).toMatchObject({
+    ok: false,
+    error: { code: 'STIM_RELOAD_AMBIGUOUS', remedy: 'Choose one with `stim reload android` or `stim reload web`.' },
+  });
+  expect(
+    await runReload({
+      root: '/project',
+      platform: 'web',
+      deps: reloadDeps({ readBrowser: () => browser, reloadPage }),
+    }),
+  ).toMatchObject({ ok: true, facts: { platform: 'web' } });
+  expect(reloaded).toEqual(['PAGE', 'PAGE']);
+  expect(await runReload({ root: '/project', platform: 'web', deps: reloadDeps() })).toMatchObject({
+    ok: false,
+    error: { code: 'STIM_RELOAD_STOPPED', remedy: 'Run `stim web` first.' },
+  });
+  expect(
+    await runReload({
+      root: '/project',
+      platform: 'web',
+      deps: reloadDeps({ readBrowser: async (): Promise<'unverified'> => 'unverified' }),
+    }),
+  ).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_PROBE_FAILED' } });
+});
+
+test.each<[string, string, Partial<ReloadDeps>, string]>([
+  [
+    'a shut-down owned simulator',
+    'ios',
+    { resolveIos: () => ({ sim: { udid: 'U1', name: 'stim-ios', state: 'Shutdown' } }) as never },
+    '`stim revive`',
+  ],
+  ['a deleted simulator', 'ios', { resolveIos: () => ({ missing: true }) }, '`stim ios`'],
+  [
+    'an owned emulator that is not running',
+    'android',
+    { resolveAndroid: async () => ({ notRunning: true }) },
+    '`stim revive`',
+  ],
+  [
+    'an emulator now on another serial',
+    'android',
+    { resolveAndroid: async () => ({ serial: 'emulator-5556' }) },
+    '`stim android`',
+  ],
+  [
+    'a shut-down owned simulator, from a Release launch revive skips',
+    'ios',
+    {
+      readLaunches: () => ({ ios: { ...iosLaunch, release: true, metroPort: null } }),
+      resolveIos: () => ({ sim: { udid: 'U1', name: 'stim-ios', state: 'Shutdown' } }) as never,
+    },
+    '`stim ios`',
+  ],
+  [
+    'an owned emulator that is not running, from a native-process launch revive skips',
+    'android',
+    {
+      readLaunches: () => ({ android: { ...androidLaunch, runtime: 'process', metroPort: null } }),
+      resolveAndroid: async () => ({ notRunning: true }),
+    },
+    '`stim android`',
+  ],
+])('a recorded app on %s gets the remedy that brings it back', async (_name, platform, overrides, remedy) => {
+  const result = await runReload({
+    root: '/project',
+    deps: reloadDeps({
+      readLaunches: (): Record<string, WorkspaceLaunchRecord> =>
+        platform === 'ios' ? { ios: iosLaunch } : { android: androidLaunch },
+      ...overrides,
+    }),
+  });
+  expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_STOPPED' } });
+  expect(result.ok ? '' : result.error.remedy).toContain(remedy);
+});
+
+test('a bare reload keeps reporting a stopped native app instead of switching to the owned page', async () => {
+  const reloaded: string[] = [];
+  const result = await runReload({
+    root: '/project',
+    deps: reloadDeps({
+      androidProcess: async () => ({ state: 'stopped' }),
+      readBrowser: () => browser,
+      reloadPage: async (record) => {
+        reloaded.push(record.targetId);
+        return record.url;
+      },
+    }),
+  });
+  expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_STOPPED' } });
+  expect(result.ok ? '' : result.error.remedy).toContain('`stim reload web`');
+  expect(reloaded).toEqual([]);
+});
+
+test('reload ignores a stopped platform while auto-selecting the live one', async () => {
+  const result = await runReload({
+    root: '/project',
+    deps: reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch, android: androidLaunch }),
+      iosProcess: async () => ({ state: 'stopped' }),
+    }),
+  });
+
+  expect(result.ok && result.facts.platform).toBe('android');
+});
+
+test('reload gives the iOS process probe a budget above the 2 second default', async () => {
+  const options: unknown[] = [];
+  await runReload({
+    root: '/project',
+    platform: 'ios',
+    deps: reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch }),
+      iosProcess: async (_udid, _appId, opts) => {
+        options.push(opts);
+        return { state: 'running', pid: 42 };
+      },
+    }),
+  });
+  expect(options[0]).toEqual({ timeoutMs: expect.toSatisfy((ms: number) => ms >= 5_000 && ms <= 30_000) });
+});
+
+test.each([
+  {
+    platform: 'ios' as const,
+    launches: { ios: iosLaunch } as Record<string, WorkspaceLaunchRecord>,
+    dep: 'iosProcess' as const,
+  },
+  {
+    platform: 'android' as const,
+    launches: { android: androidLaunch } as Record<string, WorkspaceLaunchRecord>,
+    dep: 'androidProcess' as const,
+  },
+])('reload still reaches Metro when the $platform process probe times out', async ({ platform, launches, dep }) => {
+  let probes = 0;
+  const reloads: unknown[] = [];
+  const result = await runReload({
+    root: '/project',
+    platform,
+    deps: reloadDeps({
+      readLaunches: () => launches,
+      [dep]: async () => {
+        probes++;
+        return { state: 'unknown' };
+      },
+      reloadMetro: async (...args) => {
+        reloads.push(args);
+        return { ok: true, peers: 1, targets: 1 };
+      },
+    }),
+  });
+  expect(result).toMatchObject({ ok: true, facts: { platform, strategy: 'metro-websocket', targets: 1 } });
+  expect(reloads).toHaveLength(1);
+  expect(probes).toBe(1);
+});
+
+test('reload keeps refusing when the process probe times out and Metro has no peer for the app', async () => {
+  const result = await runReload({
+    root: '/project',
+    platform: 'ios',
+    deps: reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch }),
+      iosProcess: async () => ({ state: 'unknown' }),
+      reloadMetro: async () => ({ failed: true, noPeer: true, peers: 0, reason: 'No app connected.' }),
+    }),
+  });
+  expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_PROBE_FAILED' } });
+});
+
+test('reload refuses release launches before issuing a reload action', async () => {
+  let called = false;
+  const result = await runReload({
+    root: '/project',
+    platform: 'android',
+    deps: reloadDeps({
+      readLaunches: () => ({ android: { ...androidLaunch, release: true, metroPort: null } }),
+      reloadMetro: async () => {
+        called = true;
+        return { ok: true, peers: 1, targets: 1 };
+      },
+    }),
+  });
+
+  expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_RELEASE' } });
+  expect(called).toBe(false);
+});
+
+test('reload refuses a launch record that no longer belongs to the configured owned device', async () => {
+  const result = await runReload({
+    root: '/project',
+    platform: 'android',
+    deps: reloadDeps({ getProject: () => ({ ...project, platforms: { android: { owned: false } } }) }),
+  });
+
+  expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_UNOWNED' } });
+});
+
+test('an app Metro cannot see gets the automation remedy, not a restart', async () => {
+  const result = await runReload({
+    root: '/project',
+    platform: 'android',
+    deps: reloadDeps({
+      reloadMetro: async () => ({ failed: true, noPeer: true, peers: 0, reason: 'No Android app connected.' }),
+    }),
+  });
+
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      code: 'STIM_RELOAD_FAILED',
+      remedy: expect.stringContaining('agent-device snapshot -i --platform android --serial emulator-5554'),
+    },
+  });
+});
+
+test('a no-peer reload names the first-load causes that need automation', async () => {
+  const result = await runReload({
+    root: '/project',
+    platform: 'ios',
+    deps: reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch }),
+      reloadMetro: async () => ({ failed: true, noPeer: true, peers: 0, reason: 'No app connected.' }),
+    }),
+  });
+
+  const remedy = (result.ok === false ? result.error.remedy : '') ?? '';
+  expect(remedy).toContain('Stim broadcast a reload anyway');
+  expect(remedy).toContain('reconnects every 2 seconds');
+  expect(remedy).toContain('run `stim reload ios` once more');
+  expect(remedy).toContain('first bundle');
+  // Check the screen before spending a round trip on a retry.
+  expect(remedy.indexOf('check the expected UI')).toBeLessThan(remedy.indexOf('once more'));
+});
+
+// reload refuses anything that is not this workspace's owned local device, so a
+// phone never reaches this branch and its Local Network remedy does not belong here.
+test('a no-peer reload does not offer the phone-only Local Network cause', async () => {
+  const result = await runReload({
+    root: '/project',
+    platform: 'ios',
+    deps: reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch }),
+      reloadMetro: async () => ({ failed: true, noPeer: true, peers: 0, reason: 'No app connected.' }),
+    }),
+  });
+
+  expect((result.ok === false ? result.error.remedy : '') ?? '').not.toContain('Local Network');
+});
+
+test('a no-peer reload on Android does not claim an iOS first-bundle cause', async () => {
+  const result = await runReload({
+    root: '/project',
+    platform: 'android',
+    deps: reloadDeps({
+      reloadMetro: async () => ({ failed: true, noPeer: true, peers: 0, reason: 'No app connected.' }),
+    }),
+  });
+
+  const remedy = (result.ok === false ? result.error.remedy : '') ?? '';
+  expect(remedy).toContain('run `stim reload android` once more');
+  expect(remedy).not.toContain('first bundle');
+});
+
+test('a no-peer reload routes to the device reload controls before a relaunch', async () => {
+  const result = await runReload({
+    root: '/project',
+    platform: 'ios',
+    deps: reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch }),
+      reloadMetro: async () => ({ failed: true, noPeer: true, peers: 0, reason: 'No app connected.' }),
+    }),
+  });
+
+  const remedy = (result.ok === false ? result.error.remedy : '') ?? '';
+  expect(remedy).toContain("press the error screen's Reload button");
+  expect(remedy).toContain('open the dev menu and press Reload');
+  expect(remedy.indexOf('Reload button')).toBeLessThan(remedy.indexOf('--relaunch'));
+});
+
+// A workspace Metro serves one app, so several matching peers are that app on
+// several devices. The agent asked about one device and has to learn the others
+// reloaded too.
+const tabletSlot = {
+  getProject: () => ({
+    ...project,
+    deviceSlots: { tablet: { android: { avdName: 'stim-tablet', serial: 'emulator-5556', owned: true } } },
+  }),
+  readLaunches: () => ({
+    android: androidLaunch,
+    'android:tablet': { ...androidLaunch, deviceId: 'emulator-5556' },
+  }),
+  resolveAndroid: async (avdName: string) => ({
+    serial: avdName === 'stim-tablet' ? 'emulator-5556' : 'emulator-5554',
+  }),
+};
+
+test('a reload that reached several devices says so and counts them', async () => {
+  const deps = reloadDeps({ ...tabletSlot, reloadMetro: async () => ({ ok: true, peers: 3, targets: 2 }) });
+  const result = await runReload({ root: '/project', platform: 'android', deps });
+
+  expect(result.ok && result.facts).toMatchObject({ strategy: 'metro-websocket', targets: 2 });
+
+  const program = new Command();
+  registerReload(program, deps);
+  const lines: string[] = [];
+  const originalLog = console.log;
+  console.log = (line) => lines.push(String(line));
+  try {
+    await program.parseAsync(['node', 'stim', 'reload', 'android']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  expect(lines[0]).toContain('2 devices are running this app');
+  expect(lines[0]).toContain('not only emulator-5554');
+});
+
+test.each([
+  ['ios', 'U1', { 'socket#0': 'role=ios', 'socket#5': 'role=ios' }],
+  ['android', 'emulator-5554', { 'socket#0': 'app=com.example.android', 'socket#5': 'app=com.example.android' }],
+] as const)(
+  'one %s device listed as several Metro sockets is not reported as several devices',
+  async (platform, deviceId, sockets) => {
+    const peers = Object.keys(sockets).length;
+    const deps = reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch, android: androidLaunch }),
+      reloadMetro: async () => ({ ok: true, peers, targets: peers }),
+    });
+    const result = await runReload({ root: '/project', platform, deps });
+    expect(result.ok && result.facts).toMatchObject({ deviceId, targets: 1 });
+
+    const program = new Command();
+    registerReload(program, deps);
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (line) => lines.push(String(line));
+    try {
+      await program.parseAsync(['node', 'stim', 'reload', platform]);
+    } finally {
+      console.log = originalLog;
+    }
+    expect(lines[0]).not.toContain('devices are running this app');
+  },
+);
+
+test('a reload that reached one device does not mention other devices', async () => {
+  const program = new Command();
+  registerReload(program, reloadDeps());
+  const lines: string[] = [];
+  const originalLog = console.log;
+  console.log = (line) => lines.push(String(line));
+  try {
+    await program.parseAsync(['node', 'stim', 'reload', 'android']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  expect(lines[0]).not.toContain('devices are running this app');
+});
+
+// The bare React Native dev server cannot enumerate peers, so the reload is a
+// broadcast and Stim cannot prove the named app was among the apps it reached.
+// The output has to say so, or exit 0 reads as proof this app reloaded.
+test('a broadcast reload reports its wider scope in the facts and the plain output', async () => {
+  const deps = reloadDeps({ reloadMetro: async () => ({ ok: true, broadcast: true }) });
+  const result = await runReload({ root: '/project', platform: 'android', deps });
+
+  expect(result.ok && result.facts.strategy).toBe('metro-broadcast');
+
+  const program = new Command();
+  registerReload(program, deps);
+  const lines: string[] = [];
+  const originalLog = console.log;
+  console.log = (line) => lines.push(String(line));
+  try {
+    await program.parseAsync(['node', 'stim', 'reload', 'android']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  expect(lines[0]).toContain('cannot name its connected apps');
+  expect(lines[0]).toContain('cannot confirm com.example.android was one');
+});
+
+test('a targeted reload does not claim the broadcast scope', async () => {
+  const program = new Command();
+  registerReload(program, reloadDeps());
+  const lines: string[] = [];
+  const originalLog = console.log;
+  console.log = (line) => lines.push(String(line));
+  try {
+    await program.parseAsync(['node', 'stim', 'reload', 'android']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  expect(lines[0]).not.toContain('cannot name its connected apps');
+  expect(lines[0]).not.toContain('cannot confirm');
+});
+
+// Metro answering nothing says nothing about the app, so the agent is sent back
+// to the dev server rather than to the device's reload controls.
+test.each([
+  ['a probe timeout', 'Metro did not answer on port 8082.'],
+  ['a socket error', 'Metro reload failed: connect ECONNREFUSED'],
+])('an unreachable Metro asks for a retry, not device automation: %s', async (_label, reason) => {
+  const result = await runReload({
+    root: '/project',
+    platform: 'ios',
+    deps: reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch }),
+      reloadMetro: async () => ({ failed: true, unreachable: true, reason }),
+    }),
+  });
+
+  expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_FAILED', message: reason } });
+  const remedy = (result.ok === false ? result.error.remedy : '') ?? '';
+  expect(remedy).toContain('Run `stim reload ios` again.');
+  expect(remedy).toContain('stim doctor');
+  expect(remedy).not.toContain('agent-device');
+  expect(remedy).not.toContain('--relaunch');
+});
+
+test('a no-peer reload prints the exact agent-device commands for the iOS target', async () => {
+  const result = await runReload({
+    root: '/project',
+    platform: 'ios',
+    deps: reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch }),
+      reloadMetro: async () => ({ failed: true, noPeer: true, peers: 0, reason: 'No app connected.' }),
+    }),
+  });
+
+  expect(result).toMatchObject({
+    ok: false,
+    error: { code: 'STIM_RELOAD_FAILED', message: 'No app connected.' },
+  });
+  const remedy = (result.ok === false ? result.error.remedy : '') ?? '';
+  expect(remedy).toContain('agent-device snapshot -i --platform ios --udid U1');
+  expect(remedy).toContain('agent-device open com.example.ios --platform ios --udid U1 --metro-port 8082 --relaunch');
+});
+
+test('reload turns owned-device inspection failures into actionable errors', async () => {
+  const ios = await runReload({
+    root: '/project',
+    platform: 'ios',
+    deps: reloadDeps({
+      readLaunches: () => ({ ios: iosLaunch }),
+      resolveIos: () => {
+        throw new Error('simctl unavailable');
+      },
+    }),
+  });
+  const android = await runReload({
+    root: '/project',
+    platform: 'android',
+    deps: reloadDeps({
+      resolveAndroid: async () => {
+        throw new Error('adb unavailable');
+      },
+    }),
+  });
+
+  expect(ios).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_PROBE_FAILED', remedy: expect.any(String) } });
+  expect(android).toMatchObject({
+    ok: false,
+    error: { code: 'STIM_RELOAD_PROBE_FAILED', remedy: expect.any(String) },
+  });
+});
+
+test.each(['default', 'tablet'].flatMap((slot) => [false, true].map((launched) => ({ slot, launched }))))(
+  'reload --json reports an unreadable iOS placement in slot $slot with launch $launched',
+  async ({ slot, launched }) => {
+    writeWorkspaceState(
+      '/project',
+      slot === 'default'
+        ? { ios: { host: { machine: 'mini', session: '' } } }
+        : { deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } } },
+    );
+    const program = new Command();
+    registerReload(
+      program,
+      reloadDeps({ readLaunches: () => (launched ? { [slot === 'default' ? 'ios' : 'ios:tablet']: iosLaunch } : {}) }),
+    );
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (line) => lines.push(String(line));
+    try {
+      await program.parseAsync(['node', 'stim', 'reload', 'ios', '--json']);
+    } finally {
+      console.log = originalLog;
+    }
+    expect(process.exitCode).toBe(1);
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      code: 'STIM_HOSTING_REFUSED',
+      message: expect.stringContaining(slot === 'default' ? 'ios.host.session' : 'deviceSlots.tablet.ios.host.session'),
+      remedy: expect.stringContaining('stim stop'),
+    });
+  },
+);
+
+test('reload ignores an unreadable sibling iOS placement when reloading a live default app', async () => {
+  writeWorkspaceState('/project', { deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } } });
+  const result = await runReload({
+    root: '/project',
+    deps: reloadDeps({ readLaunches: () => ({ ios: iosLaunch, 'ios:tablet': iosLaunch }) }),
+  });
+  expect(result).toMatchObject({ ok: true, facts: { platform: 'ios', deviceId: 'U1' } });
+});
+
+test('reload --json prints exactly one parseable facts line', async () => {
+  const program = new Command();
+  registerReload(program, reloadDeps());
+  const lines: string[] = [];
+  const originalLog = console.log;
+  console.log = (line) => lines.push(String(line));
+  try {
+    await program.parseAsync(['node', 'stim', 'reload', 'android', '--json']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  expect(lines).toHaveLength(1);
+  expect(JSON.parse(lines[0]!)).toEqual({
+    platform: 'android',
+    deviceId: 'emulator-5554',
+    deviceName: 'stim-android',
+    appId: 'com.example.android',
+    metroPort: 8082,
+    strategy: 'metro-websocket',
+    targets: 1,
+    reverseRestored: [],
+  });
+});
+
+test('reload plain output reports a request and retains the target facts', async () => {
+  const program = new Command();
+  registerReload(program, reloadDeps());
+  const lines: string[] = [];
+  const originalLog = console.log;
+  console.log = (line) => lines.push(String(line));
+  try {
+    await program.parseAsync(['node', 'stim', 'reload', 'android']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toMatch(/^Reload requested for com\.example\.android /);
+  expect(lines[0]).toContain('emulator-5554');
+  expect(lines[0]).toContain('8082');
+  expect(lines[0]).toContain('stim logs --errors');
+});
+
+test('multiple live slots of the same platform use one platform reload', async () => {
+  const calls: unknown[] = [];
+  const result = await runReload({
+    root: '/project',
+    deps: reloadDeps({
+      getProject: () => ({ ...project, deviceSlots: { phone: { ios: { deviceUdid: 'U2', owned: true } } } }),
+      readLaunches: () => ({ ios: iosLaunch, 'ios:phone': { ...iosLaunch, deviceId: 'U2' } }),
+      resolveIos: (udid) => ({ sim: { udid, name: `stim-${udid}`, state: 'Booted' } }) as never,
+      reloadMetro: async (port, options) => {
+        calls.push([port, options]);
+        return { ok: true, peers: 2, targets: 2 };
+      },
+    }),
+  });
+  expect(result.ok).toBe(true);
+  expect(calls).toEqual([[8082, { role: 'ios', appId: iosLaunch.appId }]]);
+});
+
+test('an Android reload restores the reverse on every live slot that lost it', async () => {
+  const checked: string[] = [];
+  const result = await runReload({
+    root: '/project',
+    platform: 'android',
+    deps: reloadDeps({
+      getProject: () => ({
+        ...project,
+        deviceSlots: { tablet: { android: { avdName: 'stim-tablet', serial: 'emulator-5556', owned: true } } },
+      }),
+      readLaunches: () => ({
+        android: androidLaunch,
+        'android:tablet': { ...androidLaunch, deviceId: 'emulator-5556' },
+      }),
+      resolveAndroid: async (avdName) => ({ serial: avdName === 'stim-tablet' ? 'emulator-5556' : 'emulator-5554' }),
+      ensureReverse: async (serial) => {
+        checked.push(serial);
+        return { restored: serial === 'emulator-5556' };
+      },
+    }),
+  });
+  expect(checked).toEqual(['emulator-5554', 'emulator-5556']);
+  expect(result).toMatchObject({ ok: true, facts: { reverseRestored: ['emulator-5556'] } });
+});
+
+test('with one slot still connected, the reload waits for the restored slot before reloading both', async () => {
+  const calls: unknown[] = [];
+  let probes = 0;
+  const result = await runReload({
+    root: '/project',
+    platform: 'android',
+    deps: reloadDeps({
+      getProject: () => ({
+        ...project,
+        deviceSlots: { tablet: { android: { avdName: 'stim-tablet', serial: 'emulator-5556', owned: true } } },
+      }),
+      readLaunches: () => ({
+        android: androidLaunch,
+        'android:tablet': { ...androidLaunch, deviceId: 'emulator-5556' },
+      }),
+      resolveAndroid: async (avdName) => ({ serial: avdName === 'stim-tablet' ? 'emulator-5556' : 'emulator-5554' }),
+      ensureReverse: async (serial) => ({ restored: serial === 'emulator-5556' }),
+      reloadMetro: async (_port, options) => {
+        calls.push(options?.peersOnly ?? 'reload');
+        if (!options?.peersOnly) return { ok: true, peers: 2, targets: 2 };
+        return { ok: true, peers: 2, targets: ++probes < 3 ? 1 : 2 };
+      },
+    }),
+  });
+  expect(calls).toEqual([true, true, true, 'reload']);
+  expect(result).toMatchObject({ ok: true, facts: { targets: 2 } });
+});
+
+test.each([true, false])(
+  'a default release or old-port launch does not block a Debug sibling (release: %s)',
+  async (release) => {
+    const result = await runReload({
+      root: '/project',
+      platform: 'ios',
+      deps: reloadDeps({
+        getProject: () => ({ ...project, deviceSlots: { phone: { ios: { deviceUdid: 'U2', owned: true } } } }),
+        readLaunches: () => ({
+          ios: { ...iosLaunch, release, metroPort: release ? null : 8083 },
+          'ios:phone': { ...iosLaunch, deviceId: 'U2' },
+        }),
+        resolveIos: (udid) => ({ sim: { udid, name: `stim-${udid}`, state: 'Booted' } }) as never,
+      }),
+    });
+    expect(result).toMatchObject({ ok: true, facts: { deviceId: 'U2', metroPort: 8082 } });
+  },
+);
+
+test('a stopped named slot keeps its slot in the reload recovery command', async () => {
+  const result = await runReload({
+    root: '/project',
+    deps: reloadDeps({
+      getProject: () => ({ ...project, deviceSlots: { phone: { ios: { deviceUdid: 'U1', owned: true } } } }),
+      readLaunches: () => ({ 'ios:phone': iosLaunch }),
+      iosProcess: async () => ({ state: 'stopped' }),
+    }),
+  });
+  expect(result).toMatchObject({ ok: false, error: { remedy: 'Run `stim ios --slot phone` to launch it.' } });
+});
+
+describe('a workspace with no launch on an owned local simulator or emulator', () => {
+  const session = {
+    platform: 'ios' as const,
+    sessionId: '01a15cf7-0000',
+    startedAt: null,
+    webPreviewUrl: null,
+  };
+  const unrecorded = (overrides: Partial<ReloadDeps> = {}) =>
+    reloadDeps({ readLaunches: () => ({}), readRemote: () => null, ...overrides });
+
+  test('a phone connected to the workspace Metro is reloaded through it', async () => {
+    const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>(async () => ({ ok: true, peers: 1, targets: 1 }));
+    const result = await runReload({ root: '/project', platform: 'android', deps: unrecorded({ reloadMetro }) });
+    expect(result).toEqual({
+      ok: true,
+      facts: {
+        platform: 'android',
+        deviceId: 'metro:8082',
+        deviceName: 'devices connected to Metro',
+        appId: null,
+        metroPort: 8082,
+        strategy: 'metro-websocket',
+        targets: 1,
+        reverseRestored: [],
+      },
+    });
+    expect(reloadMetro).toHaveBeenCalledTimes(2);
+    expect(reloadMetro).toHaveBeenNthCalledWith(1, 8082, { peersOnly: true, role: 'android' });
+    expect(reloadMetro).toHaveBeenNthCalledWith(2, 8082, { role: 'android', exact: true });
+  });
+
+  test('an EAS Simulator session reloads through Metro with the session platform', async () => {
+    const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>(async () => ({ ok: true, peers: 1, targets: 1 }));
+    const result = await runReload({ root: '/project', deps: unrecorded({ reloadMetro, readRemote: () => session }) });
+    expect(result).toMatchObject({
+      ok: true,
+      facts: { platform: 'ios', deviceName: 'EAS Simulator session 01a15cf7-0000', appId: null, targets: 1 },
+    });
+    expect(reloadMetro).toHaveBeenLastCalledWith(8082, { role: 'ios', exact: true });
+  });
+
+  test('a recorded EAS session does not outrank the platform the connected apps report', async () => {
+    const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>(async (_port, options) =>
+      options.peersOnly
+        ? { ok: true, peers: 1, targets: 1, platforms: ['android'] }
+        : { ok: true, peers: 1, targets: 1 },
+    );
+    const result = await runReload({ root: '/project', deps: unrecorded({ reloadMetro, readRemote: () => session }) });
+    expect(result).toMatchObject({
+      ok: true,
+      facts: { platform: 'android', deviceName: 'devices connected to Metro' },
+    });
+    expect(reloadMetro).toHaveBeenLastCalledWith(8082, { role: 'android', exact: true });
+  });
+
+  test('a bare reload takes the platform of the only apps connected to Metro', async () => {
+    const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>(async (_port, options) =>
+      options.peersOnly
+        ? { ok: true, peers: 1, targets: 1, platforms: ['android'] }
+        : { ok: true, peers: 1, targets: 1 },
+    );
+    const result = await runReload({ root: '/project', deps: unrecorded({ reloadMetro }) });
+    expect(result).toMatchObject({ ok: true, facts: { platform: 'android' } });
+    expect(reloadMetro).toHaveBeenNthCalledWith(1, 8082, { peersOnly: true });
+    expect(reloadMetro).toHaveBeenNthCalledWith(2, 8082, { role: 'android', exact: true });
+  });
+
+  test('a bare reload sends nothing while apps on both platforms are connected', async () => {
+    const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>(async () => ({
+      ok: true,
+      peers: 2,
+      targets: 2,
+      platforms: ['ios', 'android'],
+    }));
+    const result = await runReload({ root: '/project', deps: unrecorded({ reloadMetro }) });
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_AMBIGUOUS' } });
+    expect(reloadMetro).toHaveBeenCalledTimes(1);
+    expect(reloadMetro).toHaveBeenCalledWith(8082, { peersOnly: true });
+  });
+
+  test('a platform with no connected app sends nothing, so apps on the other platform are left alone', async () => {
+    const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>(async () => ({
+      failed: true,
+      noPeer: true,
+      peers: 1,
+      reason: 'No iOS React Native app.',
+    }));
+    const result = await runReload({ root: '/project', platform: 'ios', deps: unrecorded({ reloadMetro }) });
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_STOPPED' } });
+    expect(reloadMetro).toHaveBeenCalledTimes(1);
+    expect(reloadMetro).toHaveBeenCalledWith(8082, { peersOnly: true, role: 'ios' });
+  });
+
+  test('a recorded EAS session does not break a tie between platforms the connected apps report', async () => {
+    const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>(async () => ({
+      ok: true,
+      peers: 2,
+      targets: 2,
+      platforms: ['ios', 'android'],
+    }));
+    const result = await runReload({ root: '/project', deps: unrecorded({ reloadMetro, readRemote: () => session }) });
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_AMBIGUOUS' } });
+    expect(reloadMetro).toHaveBeenCalledTimes(1);
+  });
+
+  test('a Metro that cannot name its clients gets a broadcast once the platform is named', async () => {
+    const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>(async () => ({ ok: true, broadcast: true }));
+    const bare = await runReload({ root: '/project', deps: unrecorded({ reloadMetro }) });
+    expect(bare).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_AMBIGUOUS' } });
+    expect(reloadMetro).toHaveBeenCalledTimes(1);
+    expect(reloadMetro).toHaveBeenCalledWith(8082, { peersOnly: true });
+    const named = await runReload({ root: '/project', platform: 'ios', deps: unrecorded({ reloadMetro }) });
+    expect(named).toMatchObject({ ok: true, facts: { strategy: 'metro-broadcast', targets: null } });
+  });
+
+  test('nothing connected to Metro names the missing launch and the physical-device requirement', async () => {
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: unrecorded({
+        reloadMetro: async () => ({ failed: true, noPeer: true, peers: 0, reason: 'No Android React Native app.' }),
+      }),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'STIM_RELOAD_STOPPED',
+        message:
+          "No android app launch is recorded for this workspace and no app is connected to this workspace's Metro on port 8082.",
+      },
+    });
+    const remedy = !result.ok ? result.error.remedy : null;
+    expect(remedy).toContain('Run `stim android` first.');
+    expect(remedy).toContain('adb reverse tcp:8082 tcp:8082');
+  });
+
+  test('a recorded EAS session with no connected app says to relaunch and why reload cannot reach it', async () => {
+    const result = await runReload({
+      root: '/project',
+      deps: unrecorded({
+        readRemote: () => session,
+        reloadMetro: async () => ({ failed: true, noPeer: true, peers: 0, reason: 'none' }),
+      }),
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_STOPPED' } });
+    expect(!result.ok ? result.error.message : '').toContain('01a15cf7-0000');
+    expect(!result.ok ? result.error.remedy : '').toContain('stim ios --remote eas');
+  });
+
+  test('a session on the other platform does not answer a platform-specific reload', async () => {
+    const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>(async () => ({
+      failed: true,
+      noPeer: true,
+      peers: 0,
+      reason: 'none',
+    }));
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: unrecorded({ readRemote: () => session, reloadMetro }),
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_STOPPED' } });
+    expect(!result.ok ? result.error.message : '').not.toContain('01a15cf7-0000');
+    expect(reloadMetro).toHaveBeenCalledWith(8082, { peersOnly: true, role: 'android' });
+  });
+
+  test('a Metro that is not this workspace is never asked to reload', async () => {
+    const reloadMetro = vi.fn<ReloadDeps['reloadMetro']>();
+    const result = await runReload({
+      root: '/project',
+      platform: 'android',
+      deps: unrecorded({ reloadMetro, resolveMetro: async () => ({ missing: true }) }),
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_STOPPED' } });
+    expect(reloadMetro).not.toHaveBeenCalled();
+  });
+
+  test('a Metro that does not answer is reported as failed, not as a missing launch', async () => {
+    const result = await runReload({
+      root: '/project',
+      platform: 'ios',
+      deps: unrecorded({
+        reloadMetro: async () => ({ failed: true, unreachable: true, reason: 'Metro did not answer on port 8082.' }),
+      }),
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_FAILED' } });
+  });
+
+  test('a bare reload against a Metro that does not answer reports failure, not a missing launch', async () => {
+    const result = await runReload({
+      root: '/project',
+      deps: unrecorded({
+        reloadMetro: async () => ({ failed: true, unreachable: true, reason: 'Metro did not answer on port 8082.' }),
+      }),
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_FAILED' } });
+  });
+});

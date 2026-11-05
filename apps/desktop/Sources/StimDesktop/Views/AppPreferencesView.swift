@@ -1,0 +1,311 @@
+import AppKit
+import ServiceManagement
+import StimKit
+import SwiftUI
+
+struct AppPreferencesView: View {
+  let stimHome: String
+  let settings: MachineSettingsStore
+  @ObservedObject var history: GcHistoryModel
+  @AppStorage(AppPreferences.Key.appearance) private var appearance = Appearance.auto
+  @AppStorage(AppPreferences.Key.sidebarStatuses) private var statuses = StatusFilter.encode(StatusFilter.defaultSelection)
+  @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
+  @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
+  @AppStorage(AppPreferences.Key.maxFramesPerSecond) private var framesPerSecond = 60.0
+  @AppStorage(AppPreferences.Key.streamQuality) private var streamQuality = StreamQuality.standard
+  @AppStorage(AppPreferences.Key.pausesHiddenFrames) private var pausesHidden = true
+  @AppStorage(AppPreferences.Key.editorBundleID) private var editor = ""
+  @AppStorage(AppPreferences.Key.diffViewer) private var diffViewer = DiffViewer.builtIn
+  @AppStorage(AppPreferences.Key.terminalBundleID) private var terminal = ""
+  @AppStorage(AppPreferences.Key.tipsEnabled) private var showsTips = true
+  @AppStorage(AppPreferences.Key.showsWorkspaceCards) private var showsWorkspaceCards = true
+  @AppStorage(AppPreferences.Key.offersTutorial) private var offersTutorial = true
+  @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
+  @AppStorage(AppPreferences.Key.remoteSessionMinutes) private var remoteMinutes = 30
+  @AppStorage(AppPreferences.Key.notifiesDiskPressure) private var notifiesPressure = true
+  @AppStorage(NotificationSettings.stuckMinutesKey) private var stuckMinutes = Oversight.defaultStuckMinutes
+  @AppStorage(NotificationSettings.quietHoursKey) private var quietHours = "off"
+  @EnvironmentObject private var pressure: DaemonPressureMonitor
+  @EnvironmentObject private var onboarding: Onboarding
+  @ObservedObject private var updater = AppUpdater.shared
+  @State private var launchesAtLogin = SMAppService.mainApp.status == .enabled
+  @State private var loginError: String?
+  @State private var scrolledToTop = false
+
+  var body: some View {
+    ScrollViewReader { proxy in
+      form
+        .background(ResignFirstResponder())
+        .task { await history.poll() }
+        .onAppear {
+          onboarding.refreshLatestStim(interval: StimRelease.settingsInterval)
+          guard !scrolledToTop else { return }
+          scrolledToTop = true
+          DispatchQueue.main.async { proxy.scrollTo("top", anchor: .top) }
+        }
+    }
+  }
+
+  private var form: some View {
+    Form {
+      Section("Appearance") {
+        Picker("Appearance", selection: $appearance) {
+          ForEach(Appearance.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .tint(Palette.brand)
+        .onChange(of: appearance) { _, value in Theme.apply(value) }
+      }
+      .id("top")
+
+      Section("Workspace List") {
+        LabeledContent("Status") {
+          Menu(StatusFilter.summary(StatusFilter.decode(statuses))) {
+            Button("All") { statuses = StatusFilter.encode(StatusFilter.all) }
+            Divider()
+            ForEach(StatusFilter.allCases, id: \.self) { status in
+              Toggle(
+                status.title,
+                isOn: Binding(
+                  get: { StatusFilter.decode(statuses).contains(status) },
+                  set: { selected in
+                    var updated = StatusFilter.decode(statuses)
+                    if selected { updated.insert(status) } else { updated.remove(status) }
+                    statuses = StatusFilter.encode(updated)
+                  }))
+            }
+          }
+        }
+        Picker("Open to", selection: $defaultView) {
+          ForEach(DefaultView.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+      }
+
+      Section("Device Wall") {
+        Picker("Tile size", selection: $tileSize) {
+          ForEach(TileSize.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        Picker("Live frame rate", selection: $framesPerSecond) {
+          ForEach(AppPreferences.frameRates, id: \.self) { Text("\(Int($0)) fps").tag($0) }
+        }
+        Picker("Stream quality", selection: $streamQuality) {
+          ForEach(StreamQuality.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        Text(
+          "High streams hosted, remote and physical devices in a device's viewer at 60 fps and a larger size. It uses more bandwidth. Tiles stay Standard."
+        )
+        .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        Toggle("Pause frames while the window is hidden", isOn: $pausesHidden)
+      }
+
+      Section("Integrations") {
+        appPicker("Open in editor", selection: $editor, apps: ExternalApp.editors)
+        appPicker("Open in Terminal", selection: $terminal, apps: ExternalApp.terminals)
+        Picker("Review changes in", selection: $diffViewer) {
+          ForEach(DiffViewer.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        if diffViewer == .visualStudioCode {
+          Text("Opens the local repository. Use Source Control in Visual Studio Code to compare files.")
+            .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        }
+      }
+
+      MaintenanceSection(
+        maintenance: pressure.cliMaintenance, daemon: pressure.daemon, statusLoaded: pressure.statusLoaded,
+        settings: settings)
+
+      CleanupHistorySection(history: history)
+
+      Section {
+        ForEach(OversightCategory.desktop, id: \.self) { category in
+          OversightLevelPicker(category: category)
+        }
+        Picker("Stuck after", selection: $stuckMinutes) {
+          ForEach(NotificationSettings.stuckMinuteChoices, id: \.self) { Text("\($0) min").tag($0) }
+        }
+        Picker("Quiet hours", selection: $quietHours) {
+          ForEach(NotificationSettings.quietHoursChoices, id: \.value) { Text($0.label).tag($0.value) }
+        }
+      } header: {
+        Text("Notify When")
+      } footer: {
+        Text(
+          PhoneApp.Copy.notificationRulesPrefix(phoneApp: FeatureFlags.isEnabled(.phoneApp))
+            + "Alert sends a macOS notification with sound while the Stim window is in the background; macOS asks for permission the first time. While the window is in front, a build or device-hosting request or a machine problem at Alert also shows a card in the window's top right corner. Silent means no sound, macOS notification or card: the bell in the toolbar gives one small wiggle for an Alert or Silent notification, and Off never does. Every notification is kept under the bell, an Off one marked Muted and already read. Work started is Off by default. An agent stopping notifies Work finished once per workspace per run, and a Needs you notification comes once per workspace per run; a folder that is not a React Native or Expo app raises none. A request or machine problem card stays until dismissed. Each workspace notifies once per episode. During quiet hours alerts are silent. A pull request's review is not looked up here; a branch git finds merged still notifies."
+        )
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .foregroundStyle(Palette.tertiary)
+      }
+
+      Section("Notifications") {
+        if !Notifier.isAvailable {
+          Text("Notifications need the bundled app; `swift run` cannot post them.")
+            .foregroundStyle(Palette.tertiary)
+        }
+        ForEach(StatusEvent.Kind.allCases, id: \.self) { kind in
+          NotificationToggle(kind: kind)
+        }
+        Toggle("The pressure level needs attention", isOn: $notifiesPressure)
+          .disabled(!Notifier.isAvailable)
+          .onChange(of: notifiesPressure) { _, on in if on { Notifier.requestAuthorization() } }
+        Stepper("Remote session reminder after \(remoteMinutes) min", value: $remoteMinutes, in: 5...240, step: 5)
+      }
+
+      Section("System") {
+        LabeledContent("Setup guide") {
+          Button("Open Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }.buttonStyle(.stim())
+        }
+        LabeledContent("Features") {
+          Button("Discover Stim") { OpenRequests.shared.showDiscover() }.buttonStyle(.stim())
+        }
+        Toggle("Show in the menu bar", isOn: $showsMenuBarExtra)
+        Toggle("Launch at login", isOn: $launchesAtLogin)
+          .onChange(of: launchesAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
+        if let loginError {
+          Text(abbreviatingHome(loginError)).foregroundStyle(Palette.error)
+        }
+      }
+
+      Section {
+        Toggle("Show tips", isOn: $showsTips)
+        Toggle("Show new workspace cards", isOn: $showsWorkspaceCards)
+        Toggle("Offer the tutorial", isOn: $offersTutorial)
+      } header: {
+        Text("Cards and Tips")
+      } footer: {
+        Text(
+          "Turning off Show tips also hides the suggestion banners. New workspace cards are the ones in the bottom-left corner; "
+            + "Notifications, system notifications and build requests are unchanged. "
+            + "With the tutorial off, Help > Stim Tutorial still opens it."
+        )
+        .foregroundStyle(Palette.tertiary)
+      }
+
+      Section {
+        Toggle("Automatically check for updates", isOn: $updater.automaticallyChecksForUpdates)
+          .disabled(!updater.isAvailable)
+        Toggle("Get prerelease updates", isOn: $updater.prereleaseUpdates)
+          .disabled(!updater.isAvailable)
+      } header: {
+        Text("Updates")
+      } footer: {
+        if !updater.isAvailable {
+          Text("This build has no update key, so it never checks for updates.").foregroundStyle(Palette.tertiary)
+        } else {
+          Text(
+            "Prereleases are notarized builds of every Desktop change on main, so they can be unfinished. "
+              + "Turning this off keeps the installed build until a newer stable release."
+          )
+          .foregroundStyle(Palette.tertiary)
+        }
+      }
+
+      Section("Stim") {
+        LabeledContent("Stim home") {
+          Text(abbreviatingHome(stimHome))
+            .font(.stim(.body, mono: true))
+            .textSelection(.enabled)
+        }
+        if !StimHome.isDefault(stimHome) {
+          Text("Set by STIM_HOME. Workspaces, devices, settings and stim-server in this window all use this home.")
+            .foregroundStyle(Palette.tertiary)
+        }
+        stimVersionRow
+      }
+    }
+    .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+    .background(Palette.background)
+  }
+
+  @ViewBuilder private var stimVersionRow: some View {
+    if case .compatible(let installed)? = onboarding.report?.stim {
+      LabeledContent("Installed") { Text(installed.description).font(.stim(.body, mono: true)) }
+      if let latest = StimRelease.shownLatest(installed: installed, latest: onboarding.latestStim) {
+        LabeledContent("Latest") {
+          HStack(spacing: Space.md) {
+            Text(latest.description).font(.stim(.body, mono: true))
+            if onboarding.stimUpdate != nil {
+              Button("Update", action: onboarding.installStim).buttonStyle(.stim(.primary))
+            }
+          }
+        }
+        if installed < latest, onboarding.stimUpdate == nil {
+          Text("No package manager installed this stim, so update it where it came from.")
+            .foregroundStyle(Palette.tertiary)
+        }
+      }
+    }
+  }
+
+  private func appPicker(_ title: String, selection: Binding<String>, apps: [ExternalApp]) -> some View {
+    let installed = apps.filter { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil }
+    return Picker(title, selection: selection) {
+      Text("First Installed").tag("")
+      ForEach(installed) { Text($0.name).tag($0.bundleID) }
+    }
+  }
+
+  private func setLaunchAtLogin(_ enabled: Bool) {
+    do {
+      if enabled {
+        try SMAppService.mainApp.register()
+      } else {
+        try SMAppService.mainApp.unregister()
+      }
+      loginError = nil
+    } catch {
+      loginError = "Could not change the login item: \(error.localizedDescription)"
+      launchesAtLogin = SMAppService.mainApp.status == .enabled
+    }
+  }
+}
+
+private struct NotificationToggle: View {
+  var kind: StatusEvent.Kind
+  @AppStorage private var enabled: Bool
+
+  init(kind: StatusEvent.Kind) {
+    self.kind = kind
+    _enabled = AppStorage(wrappedValue: false, AppPreferences.Key.notifies(kind))
+  }
+
+  var body: some View {
+    Toggle(kind.title, isOn: $enabled)
+      .disabled(!Notifier.isAvailable)
+      .onChange(of: enabled) { _, on in if on { Notifier.requestAuthorization() } }
+  }
+}
+
+struct OversightLevelPicker: View {
+  var category: OversightCategory
+  @AppStorage private var level: String
+
+  init(category: OversightCategory) {
+    self.category = category
+    _level = AppStorage(wrappedValue: category.defaultLevel.rawValue, NotificationSettings.key(category))
+  }
+
+  var body: some View {
+    Picker(selection: $level) {
+      ForEach(NotificationLevel.allCases, id: \.self) { Text($0.title).tag($0.rawValue) }
+    } label: {
+      Label(category.label, systemImage: category.symbol)
+    }
+  }
+}
+
+private struct ResignFirstResponder: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSView { WindowView() }
+
+  func updateNSView(_ view: NSView, context: Context) {}
+
+  private final class WindowView: NSView {
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      DispatchQueue.main.async { [weak self] in self?.window?.makeFirstResponder(nil) }
+    }
+  }
+}

@@ -1,0 +1,318 @@
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFile } from './engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
+import { getExecutor } from './exec.ts';
+import { isMetroRunning } from './ports.ts';
+import { addressPort, parseLsofListeners } from './listening-ports.ts';
+import { readlinkSync, realpathSync } from 'fs';
+import { sep } from 'path';
+import { inspectProcessIdentity } from './process-identity.ts';
+import { readWorkspaceState } from './workspace/workspace-state.ts';
+
+/**
+ * True when some process with this pid exists right now. It cannot tell a recycled pid from the
+ * process that first held it, so it is only valid for a pid this run spawned and still holds a
+ * handle on. For a pid read from a record on disk, decide with `inspectProcessIdentity` on that
+ * record's process token, or take an ownership claim (`ownership-claim.ts`): this answer would keep
+ * a dead holder's record looking live until some unrelated process exits.
+ */
+export function pidExists(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
+function parseLsofPids(out: unknown): number[] {
+  if (!out) return [];
+  return String(out)
+    .split('\n')
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => Number.isFinite(n));
+}
+
+// netstat's LISTENING state column is localized, so a listening TCP row is recognized by its
+// foreign address carrying port 0 instead.
+export function parseNetstatPids(out: unknown, port: number): number[] {
+  const pids: number[] = [];
+  for (const line of String(out ?? '').split('\n')) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 5 || cols[0]?.toUpperCase() !== 'TCP') continue;
+    if (addressPort(cols[1]) !== port || addressPort(cols[2]) !== 0) continue;
+    const pid = Number(cols.at(-1));
+    if (Number.isSafeInteger(pid) && pid > 0 && !pids.includes(pid)) pids.push(pid);
+  }
+  return pids;
+}
+
+export function listeningPids(port: number, platform: NodeJS.Platform = process.platform): number[] {
+  const pids = parseLsofPids(
+    getExecutor().runFileQuiet('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { timeoutMs: 10_000 }),
+  );
+  if (pids.length > 0 || platform !== 'win32') return pids;
+  return parseNetstatPids(getExecutor().runQuiet('netstat -ano', { timeoutMs: 10_000 }), port);
+}
+
+/** Reads listener pids without blocking on lsof or netstat. */
+export async function listeningPidsAsync(
+  port: number,
+  platform: NodeJS.Platform = process.platform,
+  signal?: AbortSignal,
+): Promise<number[]> {
+  const pids = parseLsofPids(
+    await getExecutor().runFileQuietAsync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], {
+      timeoutMs: 10_000,
+      killSignal: 'SIGKILL',
+      signal,
+    }),
+  );
+  if (pids.length > 0 || platform !== 'win32') return pids;
+  return parseNetstatPids(
+    await getExecutor().runFileQuietAsync('netstat', ['-ano'], { timeoutMs: 10_000, killSignal: 'SIGKILL', signal }),
+    port,
+  );
+}
+
+function parseLsofCwd(out: unknown): string | null {
+  if (!out) return null;
+  const lines = String(out).split('\n');
+  const idx = lines.findIndex((l) => l === 'fcwd');
+  if (idx === -1) return null;
+  const nLine = lines.slice(idx + 1).find((l) => l.startsWith('n'));
+  return nLine ? nLine.slice(1) : null;
+}
+
+function lsofOutput(args: string[], signal?: AbortSignal): Promise<string | null> {
+  return getExecutor()
+    .runFileAsync('lsof', args, { timeoutMs: 10_000, killSignal: 'SIGKILL', signal })
+    .catch((error: { stdout?: unknown }) => (typeof error?.stdout === 'string' ? error.stdout : null));
+}
+
+/**
+ * `listeningPids` for several ports with one lsof call. A port lsof could not be asked about is
+ * missing from the map.
+ */
+export async function listeningPidsByPort(ports: number[]): Promise<Map<number, number[]>> {
+  const result = new Map<number, number[]>();
+  if (ports.length === 0) return result;
+  const out = await lsofOutput(['-nP', `-iTCP:${ports.join(',')}`, '-sTCP:LISTEN', '-Fpn']);
+  if (out === null) return result;
+  const found = parseLsofListeners(out);
+  for (const port of ports) result.set(port, found.get(port) ?? []);
+  return result;
+}
+
+function parseLsofCwds(out: unknown): Map<number, string> {
+  const cwds = new Map<number, string>();
+  let pid: number | null = null;
+  let inCwd = false;
+  for (const line of String(out ?? '').split('\n')) {
+    if (line.startsWith('p')) {
+      pid = parseInt(line.slice(1), 10);
+      inCwd = false;
+    } else if (line.startsWith('f')) {
+      inCwd = line === 'fcwd';
+    } else if (inCwd && line.startsWith('n') && pid !== null && !cwds.has(pid)) {
+      cwds.set(pid, line.slice(1));
+    }
+  }
+  return cwds;
+}
+
+/** `processCwd` for several pids with at most one lsof call. A pid lsof could not be asked about is missing from the map. */
+export async function processCwds(pids: number[], signal?: AbortSignal): Promise<Map<number, string | null>> {
+  const cwds = new Map<number, string | null>();
+  const viaLsof: number[] = [];
+  for (const pid of new Set(pids)) {
+    let cwd: string | null = null;
+    if (process.platform === 'linux') {
+      try {
+        cwd = readlinkSync(`/proc/${pid}/cwd`);
+      } catch {}
+    }
+    if (cwd) cwds.set(pid, cwd);
+    else viaLsof.push(pid);
+  }
+  if (viaLsof.length === 0) return cwds;
+  const out = await lsofOutput(['-a', '-p', viaLsof.join(','), '-d', 'cwd', '-Fn'], signal);
+  if (out === null) return cwds;
+  const found = parseLsofCwds(out);
+  for (const pid of viaLsof) cwds.set(pid, found.get(pid) ?? null);
+  return cwds;
+}
+
+export function processCwd(pid: number): string | null {
+  if (process.platform === 'linux') {
+    try {
+      return readlinkSync(`/proc/${pid}/cwd`);
+    } catch {}
+  }
+  return parseLsofCwd(
+    getExecutor().runFileQuiet('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], { timeoutMs: 10_000 }),
+  );
+}
+
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+export function isInsideProject(cwd: string | null | undefined, projectPath: string | null | undefined): boolean {
+  if (!cwd || !projectPath) return false;
+  const a = canonicalPath(cwd);
+  const b = canonicalPath(projectPath);
+  return a === b || a.startsWith(b.endsWith(sep) ? b : b + sep);
+}
+
+const NOT_OURS_UNRESPONSIVE = 'unresponsive';
+const NOT_OURS_UNREADABLE_CWD = 'unreadable-cwd';
+export const NOT_OURS_FOREIGN_CWD = 'foreign-cwd';
+
+export interface MetroResolution {
+  missing?: true;
+  notOurs?: string;
+  kind?: string;
+  pid?: number;
+  cwd?: string;
+  metro?: { pid: number; leader: number; cwd: string; processToken?: string };
+}
+
+function ownedSupervisor(projectPath: string, port: number) {
+  const supervisor = readWorkspaceState(canonicalPath(projectPath))?.supervisor;
+  if (supervisor?.port !== port || inspectProcessIdentity(supervisor) !== 'same') return null;
+  return supervisor;
+}
+
+export async function resolveProjectMetro(
+  port: number,
+  projectPath: string,
+  {
+    probe = isMetroRunning,
+    pidsOf = listeningPids,
+    cwdOf = processCwd,
+  }: {
+    probe?: (port: number) => Promise<boolean> | boolean;
+    pidsOf?: (port: number) => Promise<number[]> | number[];
+    cwdOf?: (pid: number) => Promise<string | null> | string | null;
+  } = {},
+): Promise<MetroResolution> {
+  const pids = await pidsOf(port);
+  const pid = pids[0];
+  if (pid === undefined) return { missing: true };
+
+  if (!(await probe(port))) {
+    return { notOurs: `pid ${pid} on port ${port} does not answer Metro's /status`, kind: NOT_OURS_UNRESPONSIVE, pid };
+  }
+  const cwd = await cwdOf(pid);
+  if (!cwd) {
+    const owner = ownedSupervisor(projectPath, port);
+    if (owner && (pid === owner.pid || pid === owner.serverPid)) {
+      return {
+        metro: {
+          pid,
+          leader: owner.pid as number,
+          cwd: canonicalPath(projectPath),
+          processToken: owner.processToken as string,
+        },
+      };
+    }
+    return {
+      notOurs: `pid ${pid} on port ${port}: working directory could not be read`,
+      kind: NOT_OURS_UNREADABLE_CWD,
+      pid,
+    };
+  }
+  if (!isInsideProject(cwd, projectPath)) {
+    return {
+      notOurs: `pid ${pid} on port ${port} runs from ${cwd}, outside ${projectPath}`,
+      kind: NOT_OURS_FOREIGN_CWD,
+      pid,
+      cwd,
+    };
+  }
+  const owner = ownedSupervisor(projectPath, port);
+  return {
+    metro: {
+      pid,
+      leader: owner ? (owner.pid as number) : pid,
+      cwd,
+      ...(owner ? { processToken: owner.processToken as string } : {}),
+    },
+  };
+}
+
+/**
+ * Terminate a process and everything it spawned. On POSIX `group` signals the process group, which
+ * is what a detached leader owns. Windows has no process groups, and its SIGTERM is
+ * TerminateProcess: no handler runs and no child is reached, so a spawned dev server or `adb
+ * logcat` would outlive its parent. taskkill /T is the only route to the tree there, and it is
+ * always forceful.
+ */
+export function signalProcessTree(
+  pid: number,
+  signal: NodeJS.Signals = 'SIGTERM',
+  { group = false, platform = process.platform }: { group?: boolean; platform?: NodeJS.Platform } = {},
+): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error(`Refusing to signal pid ${pid}.`);
+  if (platform !== 'win32') return process.kill(group ? -pid : pid, signal);
+  return getExecutor().runFileQuiet('taskkill', ['/PID', String(pid), '/T', '/F'], { timeoutMs: 30_000 }) !== null;
+}
+
+export function killMetroTree(leader: number | null | undefined, processToken?: string): boolean {
+  if (!leader || leader === process.pid || inspectProcessIdentity({ pid: leader, processToken }) !== 'same')
+    return false;
+  try {
+    return signalProcessTree(leader, 'SIGTERM', { group: true });
+  } catch {
+    return false;
+  }
+}
+
+/** Signals a process tree without blocking on Windows taskkill. */
+export async function signalProcessTreeAsync(
+  pid: number,
+  signal: NodeJS.Signals = 'SIGTERM',
+  options: { group?: boolean; platform?: NodeJS.Platform; operation?: StimContext } = {},
+): Promise<boolean> {
+  options.operation?.signal.throwIfAborted();
+  if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error(`Refusing to signal pid ${pid}.`);
+  if ((options.platform ?? process.platform) !== 'win32') return signalProcessTree(pid, signal, options);
+  if (options.operation) {
+    await runOperationFile(options.operation, getExecutor(), 'taskkill', ['/PID', String(pid), '/T', '/F'], {
+      cwd: options.operation.cwd,
+      timeoutMs: 30_000,
+      killSignal: 'SIGKILL',
+    });
+    return true;
+  }
+  return (
+    (await getExecutor().runFileQuietAsync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      timeoutMs: 30_000,
+      killSignal: 'SIGKILL',
+    })) !== null
+  );
+}
+
+/** Stops the verified Metro process tree without blocking on Windows taskkill. */
+export async function killMetroTreeAsync(
+  leader: number | null | undefined,
+  processToken?: string,
+  operation?: StimContext,
+): Promise<boolean> {
+  operation?.signal.throwIfAborted();
+  if (!leader || leader === process.pid || inspectProcessIdentity({ pid: leader, processToken }) !== 'same')
+    return false;
+  try {
+    return await signalProcessTreeAsync(leader, 'SIGTERM', { group: true, operation });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    operation?.signal.throwIfAborted();
+    return false;
+  }
+}

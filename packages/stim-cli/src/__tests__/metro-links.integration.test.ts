@@ -1,0 +1,337 @@
+import assert from 'node:assert';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer, type Server } from 'node:http';
+import { createServer as createNetServer, type AddressInfo, type Socket } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setImmediate } from 'node:timers/promises';
+import { deviceHostMachinesFile } from '@stim-cli/core/state';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { BuildConnection } from '../offload/client.ts';
+import type { ConnectFailure } from '../offload/tailnet.ts';
+import { openMetroLinks, type MetroLinkPool } from '../supervisor/metro-links.ts';
+import { getConfigPath } from '../workspace/config.ts';
+import { FAKE_SERVER_PUBLIC } from './_noise-server.ts';
+
+const session = '12345678-1234-1234-1234-123456789abc';
+const TAILSCALE_STATUS = JSON.stringify({
+  BackendState: 'Running',
+  Peer: { nMini: { ID: 'nMini', DNSName: 'mini.tail1.ts.net.', TailscaleIPs: ['100.64.0.7'] } },
+});
+const SILENT: ConnectFailure = {
+  failure: 'Opening handshake has timed out',
+  refused: false,
+  transport: { kind: 'silent' },
+};
+
+interface FakeLink {
+  connection: BuildConnection;
+  requests: { method: string; params: unknown }[];
+  sent: Buffer[];
+  closed: boolean;
+  closeCode: number | null;
+  watched: boolean;
+  paused: boolean;
+  resumed: number;
+  open: () => void;
+  receive: (frame: Buffer) => void;
+  drop: (code: number) => void;
+}
+
+let dir: string;
+let metro: Server;
+let metroPort: number;
+let links: FakeLink[];
+let pool: MetroLinkPool | undefined;
+let refusal: string | null;
+let openOnRequest: number;
+let connectOutcomes: ConnectFailure[];
+let tailscale: string[][];
+let ready: number;
+let lost: number;
+let errors: string[];
+let features: string[];
+
+function fakeLink(): FakeLink {
+  let event: ((message: Record<string, unknown>) => void) | null = null;
+  let binary: ((frame: Buffer) => void) | null = null;
+  let dropped: ((code: number) => void) | null = null;
+  const link: FakeLink = {
+    requests: [],
+    sent: [],
+    closed: false,
+    closeCode: null,
+    watched: false,
+    paused: false,
+    resumed: 0,
+    open: () => event?.({ event: 'device-host.metro.link.open' }),
+    receive: (frame) => binary?.(frame),
+    drop: (code) => {
+      link.closed = true;
+      dropped?.(code);
+    },
+    connection: Object.create(
+      BuildConnection.prototype,
+      Object.getOwnPropertyDescriptors({
+        supports: (feature: string) => features.includes(feature),
+        request: async (method: string, params: unknown) => {
+          link.requests.push({ method, params });
+          if (openOnRequest > 0) {
+            openOnRequest--;
+            link.open();
+          }
+          return refusal ? { error: { code: 'action-failed', message: refusal } } : { result: {} };
+        },
+        onEvent: (listener: typeof event) => (event = listener),
+        onBinary: (listener: typeof binary) => (binary = listener),
+        onDropped: (listener: typeof dropped) => (dropped = listener),
+        sendBinary: async (frame: Buffer) => void link.sent.push(Buffer.from(frame)),
+        flushed: async () => {},
+        watch: () => (link.watched = true),
+        unwatch: () => (link.watched = false),
+        pause: () => (link.paused = true),
+        resume: () => {
+          link.paused = false;
+          link.resumed++;
+        },
+        close: (code = 1000) => {
+          link.closed = true;
+          link.closeCode ??= code;
+        },
+        get failure() {
+          return link.closed ? 'closed' : null;
+        },
+      }),
+    ) as BuildConnection,
+  };
+  return link;
+}
+
+function start(reverse = false): void {
+  pool = openMetroLinks({
+    machine: 'mini',
+    session,
+    metroPort,
+    reverse,
+    onReady: () => ready++,
+    onLost: () => lost++,
+    onError: (message) => errors.push(message),
+  });
+}
+
+beforeEach(async () => {
+  dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-metro-links-')));
+  process.env.STIM_HOME = join(dir, 'home');
+  mkdirSync(process.env.STIM_HOME);
+  writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini'] } }));
+  writeFileSync(
+    deviceHostMachinesFile(),
+    JSON.stringify({
+      version: 2,
+      machines: [
+        {
+          machine: 'mini',
+          transport: 'tailscale',
+          address: 'mini.tail1.ts.net',
+          deviceId: 'client1',
+          serverKey: FAKE_SERVER_PUBLIC,
+          state: 'approved',
+          requestedAt: 'now',
+        },
+      ],
+    }),
+  );
+  links = [];
+  refusal = null;
+  openOnRequest = 0;
+  connectOutcomes = [];
+  tailscale = [];
+  ready = 0;
+  lost = 0;
+  errors = [];
+  features = ['hosted-metro-link', 'hosted-reverse-ports'];
+  setExecutor({
+    ...getExecutor(),
+    runFileAsync: async (_file: string, args: string[]) => {
+      tailscale.push(args);
+      return TAILSCALE_STATUS;
+    },
+  });
+  vi.spyOn(BuildConnection, 'open').mockImplementation(async () => {
+    const outcome = connectOutcomes.shift();
+    if (outcome) return outcome;
+    const link = fakeLink();
+    links.push(link);
+    return link.connection;
+  });
+  metro = createServer((request, response) => {
+    response.setHeader('connection', 'close');
+    response.end(request.url === '/large' ? Buffer.alloc(200 * 1024, 7) : `served ${request.url}`);
+  });
+  await new Promise<void>((resolve) => metro.listen(0, '127.0.0.1', resolve));
+  metroPort = (metro.address() as AddressInfo).port;
+});
+afterEach(async () => {
+  pool?.close();
+  pool = undefined;
+  vi.restoreAllMocks();
+  resetExecutor();
+  metro.closeAllConnections();
+  await new Promise<void>((resolve) => metro.close(() => resolve()));
+  delete process.env.STIM_HOME;
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('keeps retrying when every first link times out, and links once the host answers', async () => {
+  connectOutcomes = [SILENT, SILENT, SILENT, SILENT];
+  start();
+  await vi.waitFor(() => expect(ready).toBe(1), { timeout: 3000 });
+  expect(errors).toEqual([]);
+});
+
+test('reports a hosting refusal at once and stops opening links', async () => {
+  connectOutcomes = [
+    { failure: 'This machine has not approved this client for device-host.', refused: true, code: 'forbidden' },
+  ];
+  start();
+  await vi.waitFor(() => expect(errors).toHaveLength(1));
+  expect(errors[0]).toContain('mini refused this machine: This machine has not approved this client for device-host');
+  await vi.waitFor(() => expect(links.every((link) => link.closed)).toBe(true));
+  const opened = vi.mocked(BuildConnection.open).mock.calls.length;
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  expect(vi.mocked(BuildConnection.open).mock.calls.length).toBe(opened);
+  expect(ready).toBe(0);
+});
+
+test('after the host held links, a refusal while its session is not attached again is retried until it links', async () => {
+  start();
+  await vi.waitFor(() => expect(ready).toBe(1));
+  refusal = 'Only a ready session attached to this owner can link Metro.';
+  for (const link of links.slice(0, 4)) link.drop(1006);
+  expect(lost).toBe(1);
+  await vi.waitFor(() => expect(links.length).toBeGreaterThan(8), { timeout: 3000 });
+  refusal = null;
+  await vi.waitFor(() => expect(ready).toBe(2), { timeout: 5000 });
+  expect(errors).toEqual([]);
+});
+
+test('retries while Tailscale cannot name the host and links once it can', async () => {
+  let statusReads = 0;
+  setExecutor({
+    ...getExecutor(),
+    runFileAsync: async () =>
+      statusReads++ === 0 ? JSON.stringify({ BackendState: 'Running', Peer: {} }) : TAILSCALE_STATUS,
+  });
+  start();
+  await vi.waitFor(() => expect(ready).toBe(1), { timeout: 3000 });
+  expect(errors).toEqual([]);
+  expect(statusReads).toBe(2);
+});
+
+test('stops reading the link while loopback Metro is not reading, and resumes when it drains', async () => {
+  const received: Buffer[] = [];
+  const accepted: Socket[] = [];
+  const slow = createNetServer((socket) => {
+    accepted.push(socket);
+    socket.pause();
+    socket.on('data', (chunk: Buffer) => received.push(chunk));
+  });
+  await new Promise<void>((resolve) => slow.listen(0, '127.0.0.1', resolve));
+  metroPort = (slow.address() as AddressInfo).port;
+  try {
+    start();
+    await vi.waitFor(() => expect(ready).toBe(1));
+    const [link] = links;
+    assert(link);
+    link.open();
+    await vi.waitFor(() => expect(accepted).toHaveLength(1));
+    const frame = Buffer.alloc(32 * 1024, 9);
+    let fed = 0;
+    while (!link.paused && fed < 64 * 1024 * 1024) {
+      link.receive(frame);
+      fed += frame.length;
+      await setImmediate();
+    }
+    expect(link.paused).toBe(true);
+    expect(fed).toBeLessThan(16 * 1024 * 1024);
+    accepted[0]?.resume();
+    await vi.waitFor(() => expect(link.resumed).toBe(1));
+    await vi.waitFor(() => expect(Buffer.concat(received).length).toBe(fed));
+  } finally {
+    pool?.close();
+    for (const socket of accepted) socket.destroy();
+    await new Promise<void>((resolve) => slow.close(() => resolve()));
+  }
+});
+
+test('a link the host ends cleanly ends Metro, and one the host resets resets Metro', async () => {
+  const ends: string[] = [];
+  const recorder = createNetServer((socket) => {
+    socket.once('end', () => ends.push('end'));
+    socket.once('error', (error: NodeJS.ErrnoException) => ends.push(error.code ?? 'error'));
+  });
+  await new Promise<void>((resolve) => recorder.listen(0, '127.0.0.1', resolve));
+  metroPort = (recorder.address() as AddressInfo).port;
+  try {
+    start();
+    await vi.waitFor(() => expect(ready).toBe(1));
+    const [clean, reset] = links;
+    assert(clean && reset);
+    clean.open();
+    reset.open();
+    await vi.waitFor(() => expect(links).toHaveLength(6));
+    clean.drop(1000);
+    reset.drop(4410);
+    await vi.waitFor(() => expect(ends.toSorted()).toEqual(['ECONNRESET', 'end']));
+  } finally {
+    pool?.close();
+    await new Promise<void>((resolve) => recorder.close(() => resolve()));
+  }
+});
+
+test('a link whose loopback Metro refuses the connection closes with a reset code', async () => {
+  const closedPort = createNetServer();
+  await new Promise<void>((resolve) => closedPort.listen(0, '127.0.0.1', resolve));
+  metroPort = (closedPort.address() as AddressInfo).port;
+  await new Promise<void>((resolve) => closedPort.close(() => resolve()));
+  start();
+  await vi.waitFor(() => expect(ready).toBe(1));
+  const [link] = links;
+  assert(link);
+  link.open();
+  await vi.waitFor(() => expect(link.closeCode).toBe(4410));
+});
+
+test('a reverse pool registers each link for its port and pipes the stream to that loopback port only', async () => {
+  start(true);
+  await vi.waitFor(() => expect(ready).toBe(1));
+  const link = links[0];
+  assert(link);
+  expect(link.requests).toEqual([{ method: 'device-host.metro.link', params: { session, port: metroPort } }]);
+  link.open();
+  await vi.waitFor(() => expect(link.watched).toBe(false));
+  link.receive(Buffer.from('GET /hello HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n'));
+  await vi.waitFor(() => expect(Buffer.concat(link.sent).toString()).toContain('served /hello'));
+});
+
+test('a host without reverse ports refuses a reverse pool and not a Metro pool', async () => {
+  features = ['hosted-metro-link'];
+  start(true);
+  await vi.waitFor(() => expect(errors).toHaveLength(1));
+  expect(errors[0]).toContain('cannot link reverse ports');
+  pool?.close();
+  errors = [];
+  start();
+  await vi.waitFor(() => expect(ready).toBe(1));
+  expect(errors).toEqual([]);
+});
+
+test('a reverse pool keeps retrying while the host does not reverse its port yet, and links once it does', async () => {
+  refusal = 'This session does not reverse port 8901.';
+  start(true);
+  await vi.waitFor(() => expect(links.length).toBeGreaterThan(4), { timeout: 3000 });
+  expect(errors).toEqual([]);
+  refusal = null;
+  await vi.waitFor(() => expect(ready).toBe(1), { timeout: 6000 });
+  expect(errors).toEqual([]);
+});

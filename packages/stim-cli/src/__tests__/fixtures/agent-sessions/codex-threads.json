@@ -1,0 +1,26 @@
+[
+  {
+    "id": "01a0e5e1-d61b-73e0-b06f-48616fa98d92",
+    "cwd": "/Users/dev/stim-1743",
+    "name": "Add agent sessions to status",
+    "source": "vscode",
+    "created_at_ms": 1790560000000,
+    "updated_at_ms": 1790571263728
+  },
+  {
+    "id": "01a0e5e2-0000-7000-8000-000000000001",
+    "cwd": "/Users/dev/stim-1743",
+    "name": null,
+    "source": "{\"subagent\":{\"thread_spawn\":{\"parent_thread_id\":\"01a0e5e1-d61b-73e0-b06f-48616fa98d92\",\"depth\":1}}}",
+    "created_at_ms": 1790570000000,
+    "updated_at_ms": 1790570100000
+  },
+  {
+    "id": "01a0e5e3-0000-7000-8000-000000000002",
+    "cwd": "/Users/dev/other",
+    "name": null,
+    "source": "cli",
+    "created_at_ms": 1790569000000,
+    "updated_at_ms": 1790569500000
+  }
+]

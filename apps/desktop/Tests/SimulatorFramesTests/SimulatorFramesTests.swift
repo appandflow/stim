@@ -1,0 +1,193 @@
+import CoreGraphics
+import Testing
+
+@testable import SimulatorFrames
+
+@Suite struct NativeScreenPointTests {
+  let topLeft = CGPoint(x: 0, y: 0)
+
+  @Test func mapsTheUprightTopLeftCornerForEachOrientation() {
+    #expect(nativeScreenPoint(topLeft, orientation: 1) == CGPoint(x: 0, y: 0))
+    #expect(nativeScreenPoint(topLeft, orientation: 2) == CGPoint(x: 1, y: 1))
+    #expect(nativeScreenPoint(topLeft, orientation: 3) == CGPoint(x: 0, y: 1))
+    #expect(nativeScreenPoint(topLeft, orientation: 4) == CGPoint(x: 1, y: 0))
+  }
+
+  @Test func mapsAnInteriorPointInLandscape() {
+    let point = CGPoint(x: 0.25, y: 0.75)
+    #expect(nativeScreenPoint(point, orientation: 3) == CGPoint(x: 0.75, y: 0.75))
+    #expect(nativeScreenPoint(point, orientation: 4) == CGPoint(x: 0.25, y: 0.25))
+  }
+}
+
+@Suite struct SimulatorTouchSequenceTests {
+  @Test func retainsTheOriginEdgeUntilTheContactLifts() {
+    var gesture = SimulatorTouchSequence()
+    #expect(gesture.edge(for: .down, at: CGPoint(x: 0.5, y: 0.98)) == 3)
+    #expect(gesture.edge(for: .move, at: CGPoint(x: 0.5, y: 0.5)) == 3)
+    #expect(gesture.edge(for: .up, at: CGPoint(x: 0.5, y: 0.5)) == 3)
+    #expect(gesture.edge(for: .down, at: CGPoint(x: 0.5, y: 0.5)) == 0)
+    #expect(gesture.edge(for: .move, at: CGPoint(x: 0.5, y: 0.99)) == 0)
+    #expect(gesture.edge(for: .up, at: CGPoint(x: 0.5, y: 0.99)) == 0)
+  }
+
+  @Test func bottomSwipesUseTheNativeEdgeInEveryOrientation() {
+    for (orientation, expected) in [(UInt32(1), UInt32(3)), (2, 1), (3, 4), (4, 2)] {
+      var gesture = SimulatorTouchSequence()
+      let start = nativeScreenPoint(CGPoint(x: 0.5, y: 0.99), orientation: orientation)
+      let end = nativeScreenPoint(CGPoint(x: 0.5, y: 0.5), orientation: orientation)
+      #expect(gesture.edge(for: .down, at: start) == expected)
+      #expect(gesture.edge(for: .up, at: end) == expected)
+    }
+  }
+
+  @Test func twoFingerContactsNearAnEdgeRemainOrdinaryTouches() {
+    var gesture = SimulatorTouchSequence()
+    #expect(gesture.edge(for: .down, at: CGPoint(x: 0.5, y: 0.99), isMultiTouch: true) == 0)
+    #expect(gesture.edge(for: .move, at: CGPoint(x: 0.5, y: 0.5), isMultiTouch: true) == 0)
+    #expect(gesture.edge(for: .up, at: CGPoint(x: 0.5, y: 0.5), isMultiTouch: true) == 0)
+  }
+}
+
+@Suite struct QuarterTurnTests {
+  @Test func rotatesPortraitToTheLandscapeOnTheTurnsSide() {
+    #expect(quarterTurn(from: 1, clockwise: false) == 3)
+    #expect(quarterTurn(from: 1, clockwise: true) == 4)
+    #expect(quarterTurn(from: 3, clockwise: true) == 1)
+    #expect(quarterTurn(from: 4, clockwise: true) == 2)
+  }
+
+  @Test func startsFromTheDeviceOrientationThatShowsTheInterfaceUpright() {
+    #expect(deviceOrientation(interface: 4) == 3)
+    #expect(deviceOrientation(interface: 3) == 4)
+  }
+
+  @Test func startsFromTheDuoProvidersOrientationOnItsInnerPanel() {
+    #expect(deviceOrientation(interface: 3, innerPanel: true) == 1)
+    #expect(deviceOrientation(interface: 2, innerPanel: true) == 4)
+    #expect(deviceOrientation(interface: 4, innerPanel: true) == 2)
+    #expect(deviceOrientation(interface: 1, innerPanel: true) == 3)
+  }
+}
+
+@Suite struct ScreenOrientationTests {
+  @Test func theDeviceOrientationDrawsTheInterfaceItShowsUpright() {
+    for device in UInt32(1)...4 {
+      #expect(deviceOrientation(interface: screenOrientation(app: 1, device: device)) == device)
+    }
+  }
+
+  @Test func anAppThatTurnedItselfKeepsItsOwnOrientation() {
+    #expect(screenOrientation(app: 3, device: 1) == 3)
+    #expect(screenOrientation(app: 4, device: 3) == 4)
+    #expect(screenOrientation(app: 2, device: 4) == 2)
+  }
+
+  @Test func anUnturnedDeviceFollowsTheApp() {
+    for app in UInt32(1)...4 { #expect(screenOrientation(app: app, device: nil) == app) }
+  }
+
+  @Test func touchesOnAPortraitAppReachTheNativePointTheSidewaysImageShows() {
+    let upright = CGPoint(x: 0.25, y: 0.75)
+    let landscapeLeft = nativeScreenPoint(upright, orientation: screenOrientation(app: 1, device: 3))
+    #expect(landscapeLeft == CGPoint(x: 1 - 0.75, y: 0.25))
+    let landscapeRight = nativeScreenPoint(upright, orientation: screenOrientation(app: 1, device: 4))
+    #expect(landscapeRight == CGPoint(x: 0.75, y: 1 - 0.25))
+    #expect(nativeScreenPoint(upright, orientation: screenOrientation(app: 1, device: 2)) == CGPoint(x: 0.75, y: 0.25))
+  }
+}
+
+@Suite struct KeyUsageTests {
+  @Test(.enabled(if: SimulatorKit.usageForKeyCode != nil, "needs an Xcode whose SimulatorKit exports hidUsageForCGKeyCode"))
+  func mapsEditingAndNavigationKeysToTheirHIDUsages() throws {
+    let usage = try #require(SimulatorKit.usageForKeyCode)
+    let expected: [(keyCode: UInt32, usage: UInt32)] = [
+      (0, 0x04), (36, 0x28), (53, 0x29), (51, 0x2A), (48, 0x2B), (49, 0x2C),
+      (115, 0x4A), (116, 0x4B), (117, 0x4C), (119, 0x4D), (121, 0x4E),
+      (124, 0x4F), (123, 0x50), (125, 0x51), (126, 0x52), (56, 0xE1),
+    ]
+    for key in expected {
+      #expect(usage(key.keyCode) == key.usage, "key code \(key.keyCode)")
+    }
+  }
+}
+
+@Suite struct DuoHingeTests {
+  @Test func everyPostureRestsOutsideThePanelTurnOnItsOwnSide() {
+    for posture in DuoPosture.allCases {
+      let angle = posture.hingeAngle
+      #expect(posture.isFolded ? angle <= DuoHinge.coverRestAngle : angle >= DuoHinge.innerRestAngle)
+    }
+  }
+
+  @Test func foldingSweepsThroughTheTurnWithoutJumping() {
+    let angles = DuoHinge.sweep(from: 180, to: 0)
+    #expect(angles.last == 0)
+    #expect(angles.count < 600)
+    #expect(angles.filter { $0 > DuoHinge.coverRestAngle && $0 < DuoHinge.innerRestAngle }.count >= 10)
+    let phases = [DuoHinge.phase(for: 180)] + angles.map(DuoHinge.phase(for:))
+    for (previous, next) in zip(phases, phases.dropFirst()) {
+      #expect(next <= previous)
+      #expect(previous - next <= 1.0 / 60 + 0.0001)
+    }
+  }
+
+  @Test func externalPanelChangesOverrideConflictingRememberedAngles() {
+    let folded = DuoHinge.estimatedAngle(remembered: 180, folded: true)
+    let halfOpen = DuoHinge.estimatedAngle(remembered: 120, folded: true)
+    let unfolded = DuoHinge.estimatedAngle(remembered: 0, folded: false)
+    #expect(folded == 0)
+    #expect(halfOpen == 0)
+    #expect(unfolded == 180)
+    #expect(DuoHinge.sweep(from: folded, to: 180).last == 180)
+    let reopening = DuoHinge.sweep(from: halfOpen, to: 120)
+    #expect(!reopening.isEmpty)
+    #expect(abs(reopening.last! - 120) < 0.001)
+    #expect(DuoHinge.sweep(from: unfolded, to: 0).last == 0)
+  }
+
+  @Test func preservesIntermediateAnglesWithoutInferringDegreesFromThePanel() {
+    #expect(DuoHinge.estimatedAngle(remembered: 73, folded: true) == 73)
+    #expect(DuoHinge.estimatedAngle(remembered: 93, folded: false) == 93)
+    #expect(DuoHinge.estimatedAngle(remembered: 147, folded: nil) == 147)
+    #expect(DuoHinge.estimatedAngle(remembered: nil, folded: nil) == 180)
+    #expect(DuoHinge.estimatedAngle(remembered: nil, folded: false) == 180)
+    #expect(DuoHinge.estimatedAngle(remembered: nil, folded: true) == 0)
+  }
+
+  @Test func arbitraryAnglesSweepToTheSelectedAngleInBothDirections() {
+    for (from, to) in [(0.0, 73.0), (180.0, 93.0), (93.0, 147.0)] {
+      let angles = DuoHinge.sweep(from: from, to: to)
+      #expect(abs(angles.last! - to) < 0.001)
+      #expect(angles.allSatisfy { (min(from, to) - 0.001)...(max(from, to) + 0.001) ~= $0 })
+    }
+  }
+
+  @Test func halfOpeningFromFoldedEndsAtTheHalfOpenAngle() {
+    let angles = DuoHinge.sweep(from: 0, to: DuoPosture.halfOpen.hingeAngle)
+    #expect(abs(angles.last! - 120) < 0.001)
+    #expect(zip(angles, angles.dropFirst()).allSatisfy { $0 <= $1 })
+  }
+}
+
+@Suite struct SimulatorHingeAngleTests {
+  @Test func readsNativeAnglesIncludingEndpoints() {
+    for (sample, expected) in [
+      ("0.000000", 0.0),
+      ("73.200000\n", 73.2),
+      ("120.000000", 120.0),
+      ("180.000000", 180.0),
+    ] {
+      #expect(SimulatorHingeAngle.parse(sample) == expected)
+    }
+  }
+
+  @Test func ignoresUnavailableInvalidAndUnrecognizedSamples() {
+    for sample in [
+      "", "unavailable", "nan", "inf", "-1.0", "181.0", "73.2 degrees", "73.2 74.0",
+    ] {
+      #expect(SimulatorHingeAngle.parse(sample) == nil)
+    }
+  }
+
+}

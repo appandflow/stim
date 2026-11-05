@@ -1,0 +1,276 @@
+import Foundation
+
+/// Where a build's app came from: `"local"` or `"remote"` in the CLI's JSON, `false` when it compiled.
+public enum CacheSource: Decodable, Hashable, Sendable {
+  case local
+  case remote
+  case none
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    switch try? container.decode(String.self) {
+    case "local": self = .local
+    case "remote": self = .remote
+    default: self = .none
+    }
+  }
+}
+
+/// One platform's most recent `ios` or `android` run, from `lastBuilds` in `stim status --json`.
+public struct LastBuild: Decodable, Hashable, Sendable {
+  public var platform: String
+  public var status: String
+  public var cacheHit: CacheSource
+  public var cacheSkipped: Bool?
+  public var durationMs: Double?
+  public var fingerprint: String?
+  public var startedAt: String
+  public var finishedAt: String?
+  public var errorCode: String?
+  public var buildMachine: String?
+  public var builtOn: String?
+  public var missReason: BuildMissReason?
+  /// The remote Mac that compiled the app when the build was offloaded.
+  public var offloadedTo: String?
+  /// Why the run built here after it considered offloading.
+  public var offloadFallback: String?
+  /// The first compiler errors of a failed run; absent from an older `stim`.
+  public var diagnostics: [BuildDiagnostic]?
+  public var cause: BuildCause?
+
+  public var summary: String {
+    let took = durationMs.map { " in \(Format.elapsed(ms: $0))" } ?? ""
+    guard status == "ok" else { return "Failed (\(errorCode ?? "error"))\(took)" }
+    if platform == "macos" {
+      return offloadedTo.map { "Built on \(machineName($0))\(took)" } ?? "Built\(took)"
+    }
+    switch cacheHit {
+    case .local: return "Local cache\(took)"
+    case .remote: return "Remote cache\(took)"
+    case .none:
+      if let offloadedTo { return "Built on \(machineName(offloadedTo))\(took)" }
+      return "\(cacheSkipped == true ? "Compiled" : "Cache miss, compiled")\(took)"
+    }
+  }
+
+  public var endedAt: Date? { parseTimestamp(finishedAt ?? startedAt) }
+}
+
+/// One compiler error of a failed build, from `lastBuilds.<platform>.diagnostics`.
+public struct BuildDiagnostic: Decodable, Hashable, Sendable {
+  public var file: String?
+  public var line: Int?
+  public var column: Int?
+  public var message: String
+
+  /// `ios/App/AppDelegate.swift:71:24: message`, with `file` written relative to `workspace` when inside it.
+  public func text(workspace: String) -> String {
+    guard let file else { return message }
+    let shown = file.hasPrefix(workspace + "/") ? String(file.dropFirst(workspace.count + 1)) : abbreviatingHome(file)
+    let position = line.map { ":\($0)" + (column.map { ":\($0)" } ?? "") } ?? ""
+    return "\(shown)\(position): \(message)"
+  }
+}
+
+/// Why a run compiled instead of installing a cached app, from `lastBuilds.<platform>.missReason`, or why
+/// the next one would, from a plan's `missReason`.
+public struct BuildMissReason: Decodable, Hashable, Sendable {
+  public struct Change: Decodable, Hashable, Sendable {
+    public var source: String
+    public var change: String
+    public var category: String
+  }
+
+  public struct Baseline: Decodable, Hashable, Sendable {
+    public var fingerprint: String
+    public var from: String
+  }
+
+  public var kind: String
+  public var summary: String
+  public var changes: [Change]
+  public var changeCount: Int
+  public var baseline: Baseline?
+  public var rekeyedBy: [String]
+
+  public var baselineLine: String? {
+    guard let baseline else { return nil }
+    let place = baseline.from == "workspace" ? "in this workspace" : "of this project in another worktree"
+    return "Compared with \(baseline.fingerprint.prefix(8)), the last build \(place)."
+  }
+}
+
+public struct LastBuilds: Decodable, Hashable, Sendable {
+  public var ios: LastBuild?
+  public var android: LastBuild?
+
+  public func build(for platform: String) -> LastBuild? {
+    switch platform {
+    case "ios": return ios
+    case "android": return android
+    default: return nil
+    }
+  }
+}
+
+/// One run in a workspace's recent build history, from `builds.<platform>` in `stim status --json`: the fields
+/// of a last build plus how the run ended, its slot, configuration and phase timings.
+public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
+  public var build: LastBuild
+  /// `succeeded`, `failed`, `cancelled`, or `interrupted` for a run whose process ended without a result.
+  public var result: String
+  public var slot: String
+  public var configuration: String?
+  /// Milliseconds spent in each build phase the run entered, keyed by phase name.
+  public var phases: [String: Double]
+  /// A `stim macos` run's SwiftPM step total; absent for other runs and older stim.
+  public var compileSteps: Int?
+
+  enum CodingKeys: String, CodingKey { case result, slot, configuration, phases, compileSteps }
+
+  public init(from decoder: Decoder) throws {
+    build = try LastBuild(from: decoder)
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    result = try container.decode(String.self, forKey: .result)
+    slot = try container.decode(String.self, forKey: .slot)
+    configuration = try container.decodeIfPresent(String.self, forKey: .configuration)
+    phases = try container.decode([String: Double].self, forKey: .phases)
+    compileSteps = try container.decodeIfPresent(Int.self, forKey: .compileSteps)
+  }
+
+  /// How the run ended in a word or two, for a list row; `detail` carries the error code and miss reason.
+  public var outcome: String {
+    switch (result, build.cacheHit) {
+    case ("interrupted", _): return "Interrupted"
+    case ("cancelled", _): return "Cancelled"
+    case ("failed", _): return "Failed"
+    case (_, .none) where build.platform == "macos":
+      return build.offloadedTo.map { "Built on \(machineName($0))" } ?? "Succeeded"
+    case (_, .local): return "Local cache"
+    case (_, .remote): return "Remote cache"
+    case (_, .none): return build.offloadedTo.map { "Built on \(machineName($0))" } ?? "Compiled"
+    }
+  }
+
+  /// A list row's second line: a failed run's error code, the miss reason, and a slot other than the default.
+  public var detail: String? {
+    let parts = [
+      result == "failed" ? build.errorCode : nil,
+      build.missReason?.summary,
+      slot == DeviceRef.defaultSlot ? nil : "slot \(slot)",
+    ].compactMap { $0 }
+    return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+  }
+
+  /// The phases the run entered, in build order, as `compile 1m 58s \u{00B7} install 0m 3s`.
+  public var phaseLine: String? {
+    let order = PhaseStep.order
+    let stoppedIn = stoppedPhase
+    let parts = order.compactMap { phase in
+      phases[phase].map { ms in phase == stoppedIn ? "stopped in \(phase)" : "\(phase) \(Format.elapsed(ms: ms))" }
+    }
+    return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+  }
+}
+
+public struct BuildHistory: Decodable, Hashable, Sendable {
+  public var ios: [BuildHistoryEntry]?
+  public var android: [BuildHistoryEntry]?
+  public var macos: [BuildHistoryEntry]?
+
+  public func builds(for platform: String) -> [BuildHistoryEntry] {
+    switch platform {
+    case "ios": return ios ?? []
+    case "macos": return macos ?? []
+    default: return android ?? []
+    }
+  }
+}
+
+/// The shared iOS, Android or macOS next-build report.
+public struct BuildPlan: Decodable, Hashable, Sendable {
+  public var platform: String
+  public var fingerprint: String?
+  public var cacheHit: CacheSource
+  public var provider: String?
+  public var cacheSkipped: Bool
+  public var prebuild: String?
+  public var outcome: String?
+  public var expectedMs: Double?
+  public var basis: Int
+  public var product: String?
+  public var buildMachine: String?
+  public var missReason: BuildMissReason?
+  public var refusal: CommandRefusal?
+  /// Set with `ios.remote` or `android.remote` on `auto` or a Mac: where the plan assumes the device runs.
+  public var placement: String?
+
+  /// What the next build would do, as the Builds section words it after "Next build: ".
+  public var nextBuild: String {
+    if let refusal { return "would refuse (\(refusal.code))" }
+    if platform == "macos" { return "SwiftPM Debug build" }
+    let took = expectedMs.map { ", ~\(Format.elapsed(ms: $0))" } ?? ""
+    switch cacheHit {
+    case .local: return "cache hit (local)\(took)"
+    case .remote: return "cache hit (remote)\(took)"
+    case .none:
+      let off = cacheSkipped ? " (cache reads off)" : ""
+      let native = prebuild == "generate" || prebuild == "regenerate" ? ", \(prebuild!)s the native dir" : ""
+      return "cold build\(off)\(native)\(took)"
+    }
+  }
+
+  /// The remote provider and the runs behind the estimate.
+  public var detail: String? {
+    if platform == "macos", refusal == nil {
+      return
+        "Build selection: \(buildMachine ?? "auto"). Worker availability is not checked. SwiftPM determines incremental work when the build runs; macOS has no artifact cache or timing prediction."
+    }
+    guard refusal == nil, let outcome else { return nil }
+    let runs =
+      expectedMs == nil
+      ? "No \(outcome) run of this project recorded yet"
+      : "Median of \(basis) \(outcome) run\(basis == 1 ? "" : "s")"
+    return cacheHit == .remote ? "From \(provider ?? "the cache provider"). \(runs)" : runs
+  }
+}
+
+/// A refusal the CLI printed as `{ code, message, remedy }`.
+public struct CommandRefusal: Decodable, Error, Hashable, Sendable {
+  public var code: String
+  public var message: String
+  public var remedy: String?
+}
+
+public enum BuildPlanOutcome: Hashable, Sendable {
+  case plan(BuildPlan)
+  case refused(CommandRefusal)
+}
+
+extension Build {
+  /// What the build card says while `missReason` is the first lookup's miss, which prebuild or pods can still turn into a hit.
+  public var recheckNote: String? {
+    guard missProvisional == true, missReason != nil else { return nil }
+    switch phase {
+    case "prebuild": return "Checks the cache again after prebuild"
+    case "pods": return "Checks the cache again after pods"
+    default: return "Checks the cache again after prebuild or pods"
+    }
+  }
+
+  /// Until the run knows its outcome, the CLI reports the outcome of the project's previous run.
+  public var outcomeLabel: String? {
+    guard let outcome, outcomeKnown == true else { return nil }
+    switch outcome {
+    case "hit": return "Cache hit"
+    case "cold": return missReason == nil ? "Cold build" : "Cache miss"
+    default: return nil
+    }
+  }
+}
+
+public struct BuildCause: Decodable, Hashable, Sendable {
+  public var key: String
+  public var file: String?
+  public var line: Int?
+}

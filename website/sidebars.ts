@@ -1,0 +1,46 @@
+import type { SidebarsConfig } from '@docusaurus/plugin-content-docs';
+
+const sidebars: SidebarsConfig = {
+  docs: [
+    'why',
+    'requirements',
+    'getting-started',
+    'desktop',
+    {
+      type: 'category',
+      label: 'Understand Stim',
+      collapsed: false,
+      items: [
+        'build-caches',
+        'eas-builds',
+        'worktrees',
+        'owned-devices',
+        'remote-machines',
+        'phone-app',
+        'dev-server-and-logs',
+        'web',
+        'share',
+        'macos',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Reference',
+      collapsed: false,
+      items: [
+        'commands',
+        'settings',
+        'troubleshooting',
+        'build-optimizations',
+        'android-cas',
+        'agent-skills',
+        'cache-packages',
+        'programmatic-api',
+        'ci',
+      ],
+    },
+    'changelog',
+  ],
+};
+
+export default sidebars;

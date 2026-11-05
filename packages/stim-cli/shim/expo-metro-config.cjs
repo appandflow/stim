@@ -1,0 +1,229 @@
+'use strict';
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFile } = require('node:child_process');
+const http = require('node:http');
+const { createRequire } = require('node:module');
+const { pathToFileURL } = require('node:url');
+const { bundleResponseMiddleware } = require('./bundle-response.cjs');
+
+const projectRoot = process.env.STIM_PROJECT_ROOT;
+const storeRoot = process.env.STIM_METRO_STORE;
+const isolated = process.env.STIM_METRO_ISOLATED === '1';
+const priorOverride = process.env.STIM_EXPO_METRO_CONFIG;
+const adapterPath = __filename;
+const STORE_ROOT_TAG = 'stimStoreRoot';
+const OK_PREFIX = 'stim-metro-store: sharing Metro transforms through ';
+
+let announced = false;
+let warned = false;
+let armed = false;
+
+function warn(reason) {
+  if (warned) return;
+  warned = true;
+  process.stderr.write(
+    `warning: Stim could not share this project's Metro transform cache (${String(reason).replace(/\s+/g, ' ')}); ` +
+      'the dev server is running with its normal cache.\n',
+  );
+}
+
+function announce() {
+  if (announced) return;
+  announced = true;
+  process.stderr.write(`${OK_PREFIX}${storeRoot}\n`);
+}
+
+function isFile(file) {
+  try {
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function packageHasMetro(file) {
+  try {
+    return Object.prototype.hasOwnProperty.call(JSON.parse(fs.readFileSync(file, 'utf8')), 'metro');
+  } catch {
+    return false;
+  }
+}
+
+const searchPlaces = [
+  'metro.config.js',
+  'metro.config.cjs',
+  'metro.config.mjs',
+  'metro.config.json',
+  'metro.config.ts',
+  'metro.config.cts',
+  'metro.config.mts',
+  path.join('.config', 'metro.js'),
+  path.join('.config', 'metro.cjs'),
+  path.join('.config', 'metro.mjs'),
+  path.join('.config', 'metro.json'),
+  path.join('.config', 'metro.ts'),
+  path.join('.config', 'metro.cts'),
+  path.join('.config', 'metro.mts'),
+  'package.json',
+];
+
+function findProjectConfig() {
+  if (priorOverride) {
+    let candidate;
+    try {
+      candidate = createRequire(path.join(projectRoot, 'package.json')).resolve(priorOverride);
+    } catch {
+      candidate = path.isAbsolute(priorOverride) ? priorOverride : path.resolve(projectRoot, priorOverride);
+    }
+    if (path.resolve(candidate) !== path.resolve(adapterPath)) return candidate;
+  }
+
+  const stop = os.homedir();
+  let dir = path.resolve(projectRoot);
+  while (true) {
+    for (const relative of searchPlaces) {
+      const candidate = path.join(dir, relative);
+      if (!isFile(candidate)) continue;
+      if (relative === 'package.json' && !packageHasMetro(candidate)) continue;
+      return candidate;
+    }
+    if (dir === stop || dir === path.dirname(dir)) return null;
+    dir = path.dirname(dir);
+  }
+}
+
+function unwrap(file, value) {
+  if (file.endsWith(`${path.sep}package.json`)) return value.metro;
+  return value && value['__esModule'] ? value.default : value;
+}
+
+function loadProjectConfig(file) {
+  if (!file) return {};
+  try {
+    return unwrap(file, require(file));
+  } catch (error) {
+    if (
+      error &&
+      (error.code === 'ERR_REQUIRE_ESM' ||
+        error.code === 'ERR_UNKNOWN_FILE_EXTENSION' ||
+        error.code === 'ERR_REQUIRE_ASYNC_MODULE')
+    ) {
+      return import(pathToFileURL(file).href).then((module) => unwrap(file, module.default));
+    }
+    throw error;
+  }
+}
+
+function then(value, next) {
+  // oxlint-disable-next-line promise/no-callback-in-promise -- Metro accepts synchronous values and promises.
+  return value && typeof value.then === 'function' ? value.then(next) : next(value);
+}
+
+function storeAtRoot(store) {
+  if (!store || typeof store !== 'object') return false;
+  return store[STORE_ROOT_TAG] === storeRoot || store['_root'] === storeRoot;
+}
+
+function runLsof(args) {
+  return new Promise((resolve, reject) =>
+    execFile('lsof', args, { timeout: 2000 }, (error, stdout) => (error ? reject(error) : resolve(stdout))),
+  );
+}
+
+function armManifestObserver() {
+  const port = Number(process.env.STIM_METRO_PORT);
+  if (armed || !Number.isInteger(port) || port <= 0) return;
+  armed = true;
+  let attempts = 0;
+  const probe = () => {
+    const retry = () => {
+      if (++attempts < 240) setTimeout(probe, 250).unref();
+    };
+    const request = http.get({ host: '127.0.0.1', port, path: '/_stim/metro-warmup', timeout: 2000 }, (response) => {
+      response.resume();
+      if (response.statusCode !== 200) retry();
+    });
+    request.on('timeout', () => request.destroy());
+    request.on('error', retry);
+  };
+  setTimeout(probe, 0).unref();
+}
+
+function appendStore(config, defaultConfig) {
+  const output = config && typeof config === 'object' ? config : {};
+  const configuredStores = output.cacheStores != null ? output.cacheStores : defaultConfig.cacheStores;
+  if (isolated) {
+    return {
+      ...output,
+      cacheStores(MetroCache) {
+        if (!storeRoot || !MetroCache || typeof MetroCache.FileStore !== 'function') {
+          throw new Error('Stim cannot isolate the Release Metro transform cache.');
+        }
+        return [new MetroCache.FileStore({ root: storeRoot })];
+      },
+    };
+  }
+  const server = { ...defaultConfig.server, ...output.server };
+  const enhanceMiddleware = server.enhanceMiddleware;
+
+  const observed = {
+    ...output,
+    server: {
+      ...server,
+      enhanceMiddleware(middleware, metroServer) {
+        const enhanced = enhanceMiddleware ? enhanceMiddleware(middleware, metroServer) : middleware;
+        const observe = bundleResponseMiddleware(
+          (record) => process.stderr.write(`stim-bundle-response: ${JSON.stringify(record)}\n`),
+          { runLsof: process.platform === 'darwin' ? runLsof : undefined, manifests: true },
+        );
+        armManifestObserver();
+        return (req, res, next) => observe(req, res, (error) => (error ? next(error) : enhanced(req, res, next)));
+      },
+    },
+  };
+  if (!storeRoot) return observed;
+  return {
+    ...observed,
+    cacheStores(MetroCache) {
+      const resolved = typeof configuredStores === 'function' ? configuredStores(MetroCache) : configuredStores;
+      const stores = Array.isArray(resolved) ? resolved : [];
+      if (stores.some(storeAtRoot)) {
+        announce();
+        return stores;
+      }
+      if (!MetroCache || typeof MetroCache.FileStore !== 'function') {
+        warn('Metro exposes no FileStore constructor');
+        return stores;
+      }
+      try {
+        const store = new MetroCache.FileStore({ root: storeRoot });
+        try {
+          Object.defineProperty(store, STORE_ROOT_TAG, { value: storeRoot, configurable: true });
+        } catch {}
+        announce();
+        return [...stores, store];
+      } catch (error) {
+        warn(error instanceof Error ? error.message : error);
+        return stores;
+      }
+    },
+  };
+}
+
+if (!projectRoot) {
+  module.exports = {};
+} else {
+  const projectRequire = createRequire(path.join(projectRoot, 'package.json'));
+  const expoMetroConfig = projectRequire('expo/metro-config');
+  const defaultConfig = expoMetroConfig.getDefaultConfig(projectRoot);
+  const projectConfig = loadProjectConfig(findProjectConfig());
+
+  module.exports = then(defaultConfig, (base) =>
+    then(projectConfig, (loaded) =>
+      then(typeof loaded === 'function' ? loaded(base) : loaded, (resolved) => appendStore(resolved, base)),
+    ),
+  );
+}

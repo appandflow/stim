@@ -1,0 +1,72 @@
+{
+  "baselineCommit": "c842988ac7ff7aa6b8dbf270eb196bb71330c824",
+  "hardware": "Mac16,10",
+  "memoryBytes": 17179869184,
+  "os": "macOS 27.0 (26A428)",
+  "swift": "Apple Swift 6.4.0.34.1",
+  "buildMode": "Debug",
+  "workload": "Overview.idleProjects, 100 idle projects/workspaces, two failed platform builds per workspace, UTC millisecond timestamps",
+  "repetitions": 6,
+  "passesPerRepetition": 20,
+  "warmSummary": "Exclude repetition 0 from both variants; retain it as cold data.",
+  "limitations": [
+    "Model calculation only; excludes fixture construction, SwiftUI layout and accessibility.",
+    "Diagnostic baseline runs overlap isolated Swift test compilation; they do not enter the primary comparison.",
+    "The final after sample follows completion of unit compilation; reported host load was 3.25 on 10 cores.",
+    "No real server or live capture workload. No whole-app CPU or screen time-to-visible claim."
+  ],
+  "runs": [
+    {
+      "name": "baseline-model",
+      "use": "primary comparison",
+      "runId": "f6a9c8d1b562",
+      "measuredAtUtc": "2026-10-29T17:08:45.418000+00:00",
+      "wallMsPer20Passes": [
+        376.1275833239779, 378.53225000435486, 376.7435000045225, 374.41416666842997, 373.0727499932982,
+        369.8806666652672
+      ],
+      "checksum": 3586557720023.9937,
+      "warmMedianMsPerPass": 18.7207083334215
+    },
+    {
+      "name": "baseline-repeat",
+      "use": "diagnostic baseline; concurrent test compilation",
+      "runId": "5155face01b3",
+      "measuredAtUtc": "2026-10-29T18:15:50.283000+00:00",
+      "wallMsPer20Passes": [
+        409.83737498754635, 416.79954167921096, 396.36112499283627, 398.1193749932572, 408.1243750406429,
+        386.91925001330674
+      ],
+      "checksum": 3586557720023.9937,
+      "warmMedianMsPerPass": 19.90596874966286
+    },
+    {
+      "name": "final-baseline",
+      "use": "diagnostic baseline; concurrent test compilation",
+      "runId": "b35efd492bd8",
+      "measuredAtUtc": "2026-10-29T18:29:59.505000+00:00",
+      "wallMsPer20Passes": [
+        495.1310000033118, 471.41408338211477, 449.1594166611321, 389.299166679848, 389.7264583501965, 394.5392916793935
+      ],
+      "checksum": 3586557720023.9937,
+      "warmMedianMsPerPass": 19.726964583969675
+    },
+    {
+      "name": "normalized-model",
+      "use": "primary comparison",
+      "runId": "8a986ec044c5",
+      "measuredAtUtc": "2026-10-29T18:36:53.856000+00:00",
+      "wallMsPer20Passes": [
+        26.21537499362603, 23.65270833251998, 22.78645837213844, 22.849541681353003, 22.657791676465422,
+        22.585791652090847
+      ],
+      "checksum": 3586557720023.9937,
+      "warmMedianMsPerPass": 1.139322918606922
+    }
+  ],
+  "cpu": "Apple M4 (10 cores)",
+  "xcode": "Xcode 27.1 (27A9275)",
+  "sdk": "macOS 27.0",
+  "changedSourceSha256": "7950019a5fbe64ce954fa8a3f36dfa974a4ec786f3f1ba73cd50d7ce6e4968cb",
+  "probeSourceSha256": "fe506a2765bbdca8ca8baf8c4df2cb8df2f2c85b91d0d49f07cdea1725f1f97d"
+}

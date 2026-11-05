@@ -1,0 +1,28 @@
+{
+  "$schema": "https://nitro.margelo.com/nitro.schema.json",
+  "cxxNamespace": ["stimsession"],
+  "ios": {
+    "iosModuleName": "NitroStimSession"
+  },
+  "android": {
+    "androidNamespace": ["stimsession"],
+    "androidCxxLibName": "NitroStimSession"
+  },
+  "autolinking": {
+    "StimSession": {
+      "all": { "language": "c++", "implementationClassName": "HybridStimSession" }
+    },
+    "NoiseCheck": {
+      "all": { "language": "c++", "implementationClassName": "HybridNoiseCheck" }
+    },
+    "VideoStream": {
+      "ios": { "language": "swift", "implementationClassName": "HybridVideoStream" },
+      "android": { "language": "kotlin", "implementationClassName": "HybridVideoStream" }
+    },
+    "StimVideoView": {
+      "ios": { "language": "swift", "implementationClassName": "HybridStimVideoView" },
+      "android": { "language": "kotlin", "implementationClassName": "HybridStimVideoView" }
+    }
+  },
+  "ignorePaths": ["**/node_modules"]
+}

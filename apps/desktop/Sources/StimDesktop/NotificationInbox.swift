@@ -1,0 +1,68 @@
+import Combine
+import Foundation
+import StimKit
+
+@MainActor
+final class NotificationInbox: ObservableObject {
+  static let shared = NotificationInbox()
+
+  @Published private(set) var inbox: Inbox
+  let arrivals = PassthroughSubject<NoticeSuppression?, Never>()
+
+  private let file: URL?
+  #if DEBUG
+    private var inMemory = false
+
+    init(fixtures: Inbox) {
+      file = nil
+      inbox = fixtures
+      inMemory = true
+    }
+  #endif
+
+  init() {
+    let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+    file = support?.appendingPathComponent(Bundle.main.bundleIdentifier ?? "StimDesktop", isDirectory: true)
+      .appendingPathComponent("notifications.json")
+    var stored =
+      file.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode(Inbox.self, from: $0) }
+      ?? Inbox()
+    stored.prune(now: Date())
+    let migrated = NotificationSettings.markBacklogReadOnce(&stored, .standard)
+    inbox = stored
+    if migrated { persist(stored) }
+    Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { _ in
+      MainActor.assumeIsolated { NotificationInbox.shared.update { $0.prune(now: Date()) } }
+    }
+  }
+
+  func add(_ entry: InboxEntry) {
+    update { $0.add(entry, now: Date()) }
+    arrivals.send(entry.suppressed)
+  }
+  func markRead(_ id: String) { update { $0.markRead(id) } }
+  func markAllRead(_ filter: InboxFilter) { update { $0.markAllRead(filter) } }
+  func clear(_ filter: InboxFilter) { update { $0.clear(filter) } }
+
+  func open(_ entry: InboxEntry) {
+    markRead(entry.id)
+    #if DEBUG
+      if inMemory { return }
+    #endif
+    NoticeRouter.open(entry.target)
+  }
+
+  private func update(_ change: (inout Inbox) -> Void) {
+    var next = inbox
+    change(&next)
+    guard next != inbox else { return }
+    inbox = next
+    persist(next)
+  }
+
+  private func persist(_ inbox: Inbox) {
+    guard let file, let data = try? JSONEncoder().encode(inbox) else { return }
+    try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try? data.write(to: file, options: .atomic)
+  }
+}

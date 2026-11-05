@@ -1,0 +1,70 @@
+# Trimmed from the failing Release build of an Expo app whose Sentry upload phase has no auth token: a swift line
+# that mentions `error:`, the phase output behind the `error: sentry-cli - ` wrapper (xtrace included), the plain
+# trace after it, and the failed-commands block. Paths and names are anonymized.
+    static func map(error: ASAuthorizationError) -> Exception {
+error: sentry-cli -   INFO    2026-10-28 11:27:04.511667 -07:00 Loaded file referenced by SENTRY_PROPERTIES (sentry.properties)
+error: sentry-cli - + DEST=/Users/dev/.stim/workspaces/app/derived-data/Build/Products/Release-iphonesimulator/ExampleApp.app
+error: sentry-cli - + [[ ! -n '' ]]
+error: sentry-cli - + [[ Release = *Debug* ]]
+error: sentry-cli - + [[ -n '' ]]
+error: sentry-cli - + case "$CONFIGURATION" in
+error: sentry-cli - + DEV=false
+error: sentry-cli -       return t instanceof HTMLAnchorElement && (t.getAttribute("href") || t.h...
+error: sentry-cli -                           ^~~~~~~~~~~~~~~~~
+error: sentry-cli - /Users/dev/.stim/workspaces/app/derived-data/Build/Products/Release-iphonesimulator/main.jsbundle:399317:18: warning: the variable "WebKitCSSMatrix" was not declared in function "Su"
+error: sentry-cli -       return new WebKitCSSMatrix(r.transform).m41;
+error: sentry-cli -                  ^~~~~~~~~~~~~~~
+error: sentry-cli - /Users/dev/.stim/workspaces/app/derived-data/Build/Products/Release-iphonesimulator/main.jsbundle:401616:28: warning: the variable "FontFace" was not declared in anonymous function
+error: sentry-cli -                 _n20 = new FontFace(_a40, `url(${e.url})`, {
+error: sentry-cli -                            ^~~~~~~~
+error: sentry-cli - /Users/dev/.stim/workspaces/app/derived-data/Build/Products/Release-iphonesimulator/main.jsbundle:460164:34: warning: the variable "File" was not declared in anonymous arrow function
+error: sentry-cli -   var isFile = x => x instanceof File;
+error: sentry-cli -                                  ^~~~
+error: sentry-cli - /Users/dev/.stim/workspaces/app/derived-data/Build/Products/Release-iphonesimulator/main.jsbundle:568099:7: warning: the variable "alert" was not declared in function "throwOrAlert"
+error: sentry-cli -       alert(msg);
+error: sentry-cli -       ^~~~~
+error: sentry-cli - + [[ true == true ]]
+error: sentry-cli - + HBC_SOURCEMAP_FILE=/Users/dev/.stim/workspaces/app/derived-data/Build/Products/Release-iphonesimulator/ExampleApp.app/main.jsbundle.map
+error: sentry-cli - + /Users/dev/app/node_modules/@sentry/cli-darwin/bin/sentry-cli /Users/dev/app/node_modules/react-native/scripts/compose-source-maps.js /Users/dev/.stim/workspaces/app/derived-data/Build/Products/Release-iph...
+error: sentry-cli - + rm /Users/dev/.stim/workspaces/app/derived-data/Build/Products/Release-iphonesimulator/ExampleApp.app/main.jsbundle.map
+error: sentry-cli - + rm /Users/dev/.stim/workspaces/app/derived-data/Build/Products/Release-iphonesimulator/main.jsbundle.map
+error: sentry-cli - + BUNDLE_FILE=/Users/dev/.stim/workspaces/app/derived-data/Build/Products/Release-iphonesimulator/ExampleApp.app/main.jsbundle
+error: sentry-cli - + [[ false != true ]]
+error: sentry-cli - + [[ ! -f /Users/dev/.stim/workspaces/app/derived-data/Build/Products/Release-iphonesimulator/ExampleApp.app/main.jsbundle ]]
+error: sentry-cli - Using Hermes bundle and combined source map.
+error: sentry-cli - Processing react-native sourcemaps for Sentry upload.
+error: sentry-cli - > Analyzing 2 sources
+error: sentry-cli - > Rewriting sources
+error: sentry-cli - > Adding source map references
+error: sentry-cli - error: Auth token is required for this request. Please run `sentry-cli login` and try again!
+error: sentry-cli -
+error: sentry-cli - Add --log-level=[info|debug] or export SENTRY_LOG_LEVEL=[info|debug] to see more output.
+error: sentry-cli - Please attach the full debug log to all bug reports.
+error: sentry-cli - To disable source maps auto upload, set SENTRY_DISABLE_AUTO_UPLOAD=true in your environment variables. Or to allow failing upload, set SENTRY_ALLOW_FAILURE=true
++ '[' -z '' ']'
+++ /Users/dev/node/bin/node --print 'require('\''path'\'').dirname(require.resolve('\''@sentry/react-native/package.json'\''))'
++ SENTRY_RN_PACKAGE_PATH=/Users/dev/app/node_modules/@sentry/react-native
++ '[' -z '' ']'
++ SENTRY_COLLECT_MODULES=/Users/dev/app/node_modules/@sentry/react-native/scripts/collect-modules.sh
++ '[' -f /Users/dev/app/node_modules/@sentry/react-native/scripts/collect-modules.sh ']'
++ /bin/sh /Users/dev/app/node_modules/@sentry/react-native/scripts/collect-modules.sh
++ [[ Release = *Debug* ]]
++ [[ -z /Users/dev/.stim/workspaces/app/derived-data/Build/Products/Release-iphonesimulator ]]
++ [[ -z ExampleApp.app ]]
++ [[ -z /Users/dev/.stim/workspaces/app/derived-data/Build/Intermediates.noindex/ExampleApp.build/Release-iphonesimulator/ExampleApp.build/DerivedSources ]]
++ nodePath=node
++ [[ -n /Users/dev/node/bin/node ]]
++ nodePath=/Users/dev/node/bin/node
+++ dirname /Users/dev/app/node_modules/@sentry/react-native/scripts/collect-modules.sh
++ thisFilePath=/Users/dev/app/node_modules/@sentry/react-native/scripts
++ collectModulesScript=/Users/dev/app/node_modules/@sentry/react-native/scripts/../dist/js/tools/collectModules.js
++ destination=/Users/dev/.stim/workspaces/app/derived-data/Build/Products/Release-iphonesimulator/ExampleApp.app
++ modulesOutput=/Users/dev/.stim/workspaces/app/derived-data/Build/Products/Release-iphonesimulator/ExampleApp.app/modules.json
++ echo '[Sentry] /Users/dev/app/ios/../sentry.options.json not found. Skipping options file copy. To disable this behavior, set SENTRY_COPY_OPTIONS_FILE=false in your environment variables.'
+[Sentry] /Users/dev/app/ios/../sentry.options.json not found. Skipping options file copy. To disable this behavior, set SENTRY_COPY_OPTIONS_FILE=false in your environment variables.
++ exit 1
+** BUILD FAILED **
+The following build commands failed:
+	PhaseScriptExecution Bundle\ React\ Native\ code\ and\ images /Users/dev/.stim/workspaces/app/derived-data/Build/Intermediates.noindex/ExampleApp.build/Release-iphonesimulator/ExampleApp.build/Script-00AA00AA00AA00AA00AA00AA.sh (in target 'ExampleApp' from project 'ExampleApp')
+	Building workspace ExampleApp with scheme ExampleApp and configuration Release
+(2 failures)

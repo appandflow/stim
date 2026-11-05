@@ -1,0 +1,498 @@
+import { deviceSlotKey, parseDeviceSlotOption, projectDeviceSlots } from '../devices/device-slots.ts';
+import chalk from 'chalk';
+import type { Command } from 'commander';
+import { clockTime } from '../command-output.ts';
+import { registerDeviceTools } from './device-tools.ts';
+import { runProvision, type ProvisionOptions } from './device-provision.ts';
+import { runProcessOperation } from '../cli-operation.ts';
+import {
+  fileLeaseIo,
+  parseLeaseDuration,
+  releaseWorkspaceLeases,
+  takeLease,
+  type LeaseIo,
+  type LeasePlatform,
+  type ReleasedLease,
+} from '../engine/device-lease.ts';
+import { parseDeviceWait, waitForDevice } from '../engine/device-lease-run.ts';
+import { selectFromPool } from '../engine/device-pool.ts';
+import {
+  iosPoolCandidates,
+  iosPoolNoCandidatesRefusal,
+  isWirelessIosDevice,
+  listIosDevices,
+  resolveIosPhysicalDevice,
+} from '../engine/ios-device.ts';
+import { getProject, type ProjectRecord } from '../workspace/config.ts';
+import { findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
+import {
+  androidPoolCandidates,
+  getAvdNameForSerialAsync,
+  androidPoolNoCandidatesRefusal,
+  emulatorProbeSession,
+  listAdbDevicesAsync,
+  physicalDeviceModel,
+  probeEmulatorSerial,
+  resolvePhysicalDevice,
+} from '../devices/android.ts';
+
+const DEFAULT_FOR = '5m';
+
+export interface DeviceDeps {
+  findProjectRoot: typeof findProjectRoot;
+  getProject: (root: string) => ProjectRecord | null;
+  avdNameOf: (serial: string) => Promise<string | null>;
+  listIosDevices: typeof listIosDevices;
+  listAdbDevices: typeof listAdbDevicesAsync;
+  physicalDeviceModel: typeof physicalDeviceModel;
+  probeEmulatorSerial: typeof probeEmulatorSerial;
+  takeLease: typeof takeLease;
+  releaseLeases: typeof releaseWorkspaceLeases;
+  waitForDevice: typeof waitForDevice;
+  selectFromPool: typeof selectFromPool;
+  io: LeaseIo;
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+  out: (line: string) => void;
+  note: (line: string) => void;
+}
+
+const DEFAULT_DEPS: DeviceDeps = {
+  findProjectRoot,
+  getProject,
+  avdNameOf: getAvdNameForSerialAsync,
+  listIosDevices,
+  listAdbDevices: listAdbDevicesAsync,
+  physicalDeviceModel,
+  probeEmulatorSerial,
+  takeLease,
+  releaseLeases: releaseWorkspaceLeases,
+  waitForDevice,
+  selectFromPool,
+  io: fileLeaseIo,
+  now: () => Date.now(),
+  sleep: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+  out: (line: string) => console.log(line),
+  note: (line: string) => console.error(line),
+};
+
+interface LockOptions {
+  slot?: string;
+  for?: string;
+  wait?: string;
+  json?: boolean;
+}
+
+interface UnlockOptions {
+  slot?: string;
+  json?: boolean;
+}
+
+export interface DeviceFailure {
+  code: string;
+  message: string;
+  remedy: string | null;
+  lease?: unknown;
+}
+
+export interface LockFacts {
+  slot?: string;
+  platform: LeasePlatform;
+  id: string;
+  deviceName: string | null;
+  holder: string;
+  kind: string;
+  grantedAt: string | null;
+  expiresAt: string;
+  leaseSeconds: number;
+}
+
+export function grantLine(facts: LockFacts, durationText: string): string {
+  const device = facts.deviceName ? `${facts.deviceName} (${facts.id})` : facts.id;
+  return (
+    `locked ${device} for ${facts.holder} until ${clockTime(facts.expiresAt)} (${durationText}). ` +
+    `Renew: stim device lock ${facts.platform}${facts.slot ? ` --slot ${facts.slot}` : ''} --for ${durationText}. Release: stim device unlock${facts.slot ? ` --slot ${facts.slot}` : ''}.`
+  );
+}
+
+export function releasedLine(lease: ReleasedLease): string {
+  const device = lease.deviceName ? `${lease.deviceName} (${lease.id})` : lease.id;
+  return `unlocked ${device} -- the ${lease.platform} lease ran until ${clockTime(lease.expiresAt)}.`;
+}
+
+function readPlatform(value: unknown): LeasePlatform | null {
+  return value === 'ios' || value === 'android' ? value : null;
+}
+
+interface ResolvedDevice {
+  id: string;
+  deviceName: string | null;
+}
+
+async function resolveDevice(
+  platform: LeasePlatform,
+  requested: string | null,
+  d: DeviceDeps,
+): Promise<ResolvedDevice | DeviceFailure> {
+  if (platform === 'ios') {
+    const resolved = resolveIosPhysicalDevice(requested, await d.listIosDevices());
+    if (!resolved.udid) {
+      return { code: 'STIM_NO_DEVICE', message: resolved.error as string, remedy: resolved.remedy ?? null };
+    }
+    return { id: resolved.udid, deviceName: resolved.name ?? resolved.udid };
+  }
+  const adb = await d.listAdbDevices();
+  const resolved = await emulatorProbeSession(d.probeEmulatorSerial)((isEmulator) =>
+    resolvePhysicalDevice(requested, adb, isEmulator),
+  );
+  if (!resolved.serial) {
+    return { code: 'STIM_NO_DEVICE', message: resolved.error as string, remedy: resolved.remedy ?? null };
+  }
+  return { id: resolved.serial, deviceName: (await d.physicalDeviceModel(resolved.serial)) ?? resolved.serial };
+}
+
+interface OwnedVirtualDevice extends ResolvedDevice {
+  slot: string;
+}
+
+async function findOwnedVirtualDevice(
+  project: ProjectRecord | null,
+  platform: LeasePlatform,
+  id: string,
+  avdNameOf: (serial: string) => Promise<string | null>,
+): Promise<OwnedVirtualDevice | null> {
+  let running: { name: string | null } | undefined;
+  for (const { slot, platforms } of projectDeviceSlots(project)) {
+    if (platform === 'ios') {
+      const sim = platforms.ios;
+      if (sim?.owned && sim.deviceUdid && sim.deviceUdid.toLowerCase() === id.toLowerCase()) {
+        return { id: sim.deviceUdid, deviceName: sim.deviceName ?? null, slot };
+      }
+      continue;
+    }
+    const emulator = platforms.android;
+    if (!emulator?.owned || !emulator.avdName || !/^emulator-\d+$/.test(id)) continue;
+    running ??= { name: await avdNameOf(id) };
+    if (running.name === emulator.avdName) return { id, deviceName: emulator.deviceName ?? emulator.avdName, slot };
+  }
+  return null;
+}
+
+function isFailure(value: object): value is DeviceFailure {
+  return 'code' in value;
+}
+
+async function poolDevice(
+  platform: LeasePlatform,
+  idLabel: string,
+  waitSeconds: number,
+  deadline: number,
+  root: string,
+  d: DeviceDeps,
+  slot?: string,
+): Promise<ResolvedDevice | DeviceFailure> {
+  const probed = emulatorProbeSession(d.probeEmulatorSerial);
+  const pooled = await d.selectFromPool({
+    ...(slot ? { slot } : {}),
+    root,
+    platform,
+    idLabel,
+    list: async () => {
+      if (platform === 'ios') {
+        return iosPoolCandidates(await d.listIosDevices()).map((entry) => ({
+          id: entry.udid,
+          name: entry.name,
+          fallback: isWirelessIosDevice(entry),
+        }));
+      }
+      const adb = await d.listAdbDevices();
+      const candidates = await probed((isEmulator) => androidPoolCandidates(adb, isEmulator));
+      return candidates.map((entry) => ({ id: entry.serial }));
+    },
+    noCandidates: async () => {
+      let resolved;
+      if (platform === 'ios') resolved = iosPoolNoCandidatesRefusal(await d.listIosDevices());
+      else {
+        const adb = await d.listAdbDevices();
+        resolved = await probed((isEmulator) => androidPoolNoCandidatesRefusal(adb, isEmulator));
+      }
+      return { message: resolved.error as string, remedy: resolved.remedy as string };
+    },
+    waitSeconds,
+    deadline,
+    now: d.now,
+    sleep: d.sleep,
+    warn: (line: string) => d.note(chalk.yellow(line)),
+    io: d.io,
+  });
+  if (pooled.status === 'refused') {
+    return {
+      code: pooled.refusal.code,
+      message: pooled.refusal.message,
+      remedy: pooled.refusal.remedy,
+      ...(pooled.refusal.lease === null ? {} : { lease: pooled.refusal.lease }),
+    };
+  }
+  const name =
+    pooled.candidate.name ??
+    (platform === 'ios' ? pooled.candidate.id : await d.physicalDeviceModel(pooled.candidate.id));
+  return { id: pooled.candidate.id, deviceName: name ?? pooled.candidate.id };
+}
+
+export async function runLock(
+  platformArg: string,
+  idArg: string | undefined,
+  opts: LockOptions = {},
+  overrides: Partial<DeviceDeps> = {},
+): Promise<LockFacts | DeviceFailure> {
+  const d: DeviceDeps = { ...DEFAULT_DEPS, ...overrides };
+  const json = Boolean(opts.json);
+  const report = (failure: DeviceFailure): DeviceFailure => {
+    d.note(chalk.red(`${failure.code}: ${failure.message}`));
+    if (failure.remedy) d.note(chalk.dim(failure.remedy));
+    if (json) {
+      d.out(
+        JSON.stringify({
+          code: failure.code,
+          message: failure.message,
+          remedy: failure.remedy,
+          ...(failure.lease === undefined ? {} : { lease: failure.lease }),
+        }),
+      );
+    }
+    return failure;
+  };
+
+  const platform = readPlatform(platformArg);
+  if (!platform) {
+    return report({
+      code: 'STIM_BAD_ARG',
+      message: `\`stim device lock\` takes ios or android, not ${JSON.stringify(platformArg)}.`,
+      remedy: 'Run `stim device lock ios` or `stim device lock android`.',
+    });
+  }
+
+  const root = d.findProjectRoot(process.cwd());
+  if (!root) {
+    return report(NO_PROJECT_REFUSAL);
+  }
+
+  const durationText = String(opts.for ?? DEFAULT_FOR).trim();
+  const duration = parseLeaseDuration(durationText);
+  if ('error' in duration) {
+    return report({
+      code: 'STIM_BAD_ARG',
+      message: duration.error,
+      remedy: 'Pass a whole number of seconds or minutes from 10s to 30m, e.g. --for 90s or --for 10m.',
+    });
+  }
+
+  const wait = parseDeviceWait(opts.wait);
+  if ('error' in wait) {
+    return report({
+      code: 'STIM_BAD_ARG',
+      message: wait.error,
+      remedy: 'Pass a whole number of seconds, e.g. --wait 90. `--wait 0` refuses a leased device at once.',
+    });
+  }
+
+  const idLabel = platform === 'ios' ? 'udid' : 'serial';
+  const deadline = d.now() + wait.seconds * 1000;
+  const lastLine: { at: number | null } = { at: null };
+
+  const owned = idArg ? await findOwnedVirtualDevice(d.getProject(root), platform, idArg, d.avdNameOf) : null;
+  if (owned && opts.slot && opts.slot !== owned.slot) {
+    return report({
+      code: 'STIM_BAD_ARG',
+      message: `${owned.id} is this workspace's ${platform} device in slot ${owned.slot}, not ${opts.slot}.`,
+      remedy: `Run \`stim device lock ${platform} ${owned.id}\` without --slot, or with --slot ${owned.slot}.`,
+    });
+  }
+  const held = owned ? d.io.readHolder(root)[deviceSlotKey(platform, owned.slot)] : undefined;
+  if (owned && held && held.id !== owned.id) {
+    return report({
+      code: 'STIM_DEVICE_BUSY',
+      message: `This workspace already leases ${held.id} for ${platform} in slot ${owned.slot}, and a workspace holds one lease per platform and slot.`,
+      remedy: `Release it with \`stim device unlock ${platform}${owned.slot === 'default' ? '' : ` --slot ${owned.slot}`}\` once nothing depends on it, then lock ${owned.id}.`,
+    });
+  }
+  const slot = owned ? (owned.slot === 'default' ? undefined : owned.slot) : opts.slot;
+  const device = owned
+    ? owned
+    : idArg
+      ? await resolveDevice(platform, idArg, d)
+      : await poolDevice(platform, idLabel, wait.seconds, deadline, root, d, opts.slot);
+  if (isFailure(device)) return report(device);
+
+  for (;;) {
+    const outcome = await d.waitForDevice({
+      ...(slot ? { slot } : {}),
+      root,
+      platform,
+      id: device.id,
+      idLabel,
+      waitSeconds: wait.seconds,
+      now: d.now,
+      sleep: d.sleep,
+      warn: (line: string) => d.note(chalk.yellow(line)),
+      io: d.io,
+      deadline,
+      lastLine,
+    });
+    if (outcome.status === 'refused') {
+      return report({ ...outcome.refusal, lease: outcome.refusal.lease });
+    }
+
+    const taken = d.takeLease(
+      {
+        ...(slot ? { slot } : {}),
+        root,
+        platform,
+        id: device.id,
+        deviceName: device.deviceName,
+        kind: 'declared',
+        durationMs: duration.ms,
+      },
+      d.io,
+    );
+    if (taken.status === 'unreadable') {
+      return report({
+        code: 'STIM_DEVICE_BUSY',
+        message: `The lease file at ${taken.path} does not parse, so Stim cannot tell who holds that device.`,
+        remedy: `Read ${taken.path} and, once you know no run depends on it, delete it. \`stim gc\` reports it on every run.`,
+        lease: { platform: null, id: null, deviceName: null, holder: null, expiresAt: null },
+      });
+    }
+    if (taken.status === 'held') continue;
+
+    const facts: LockFacts = {
+      ...(taken.lease.slot ? { slot: taken.lease.slot } : {}),
+      platform,
+      id: taken.lease.id,
+      deviceName: taken.lease.deviceName,
+      holder: taken.lease.holder,
+      kind: 'declared',
+      grantedAt: taken.lease.grantedAt,
+      expiresAt: taken.lease.expiresAt,
+      leaseSeconds: Math.round(duration.ms / 1000),
+    };
+    if (json) d.out(JSON.stringify(facts));
+    else d.out(chalk.green(grantLine(facts, durationText)));
+    return facts;
+  }
+}
+
+export async function runUnlock(
+  platformArg: string | undefined,
+  opts: UnlockOptions = {},
+  overrides: Partial<DeviceDeps> = {},
+): Promise<ReleasedLease[] | DeviceFailure> {
+  const d: DeviceDeps = { ...DEFAULT_DEPS, ...overrides };
+  const json = Boolean(opts.json);
+  const report = (failure: DeviceFailure): DeviceFailure => {
+    d.note(chalk.red(`${failure.code}: ${failure.message}`));
+    if (failure.remedy) d.note(chalk.dim(failure.remedy));
+    if (json) d.out(JSON.stringify({ code: failure.code, message: failure.message, remedy: failure.remedy }));
+    return failure;
+  };
+
+  const platform = platformArg === undefined ? null : readPlatform(platformArg);
+  if (platformArg !== undefined && !platform) {
+    return report({
+      code: 'STIM_BAD_ARG',
+      message: `\`stim device unlock\` takes ios or android, not ${JSON.stringify(platformArg)}.`,
+      remedy: 'Run `stim device unlock` for every lease this workspace holds, or name one platform.',
+    });
+  }
+
+  const root = d.findProjectRoot(process.cwd());
+  if (!root) {
+    return report(NO_PROJECT_REFUSAL);
+  }
+
+  const released = d.releaseLeases(root, { platform, ...(opts.slot ? { slot: opts.slot } : {}) }, d.io);
+  if (released.length === 0) {
+    d.note(
+      chalk.dim(
+        `No ${platform ? `${platform} ` : ''}device lease to release for ${root}. ` +
+          '`stim status` lists every lease on this machine.',
+      ),
+    );
+  }
+  if (json) d.out(JSON.stringify(released.map((lease) => ({ ...lease, holder: root }))));
+  else for (const lease of released) d.out(chalk.green(releasedLine(lease)));
+  return released;
+}
+
+export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {}): void {
+  const device = program
+    .command('device')
+    .description(
+      "Lease a connected physical device to this workspace, give it back, provision iOS signing for it, or change the workspace's own simulator or emulator",
+    );
+
+  device
+    .command('lock')
+    .argument('<platform>', 'ios or android')
+    .argument(
+      '[id]',
+      "the UDID or serial to lease, a connected device or this workspace's own simulator or emulator; without one, the first free connected device is used",
+    )
+    .description(
+      "Lease a connected physical device, or this workspace's own simulator or emulator, to this workspace for a " +
+        "declared time, so another workspace's `--device` run waits and agents see the device as driven. Nothing but " +
+        'this command and a `--device` run moves the expiry.',
+    )
+    .option(
+      '--for <duration>',
+      `How long to hold it: a whole number of seconds or minutes from 10s to 30m (default ${DEFAULT_FOR})`,
+    )
+    .option(
+      '--wait <seconds>',
+      'How long to wait for a device another workspace holds, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once)',
+    )
+    .option('--slot <name>', 'Use this workspace device slot', parseDeviceSlotOption)
+    .option('--json', 'print the lease as JSON on stdout')
+    .action(async (platform: string, id: string | undefined, opts: LockOptions) => {
+      const result = await runLock(platform, id, opts, deps);
+      if ('code' in result) process.exit(1);
+    });
+
+  device
+    .command('unlock')
+    .argument('[platform]', 'ios or android; without one, every lease this workspace holds is released')
+    .description('Release the device lease or leases this workspace holds. Releasing nothing is not an error.')
+    .option('--slot <name>', 'Use this workspace device slot', parseDeviceSlotOption)
+    .option('--json', 'print the released leases as JSON on stdout')
+    .action(async (platform: string | undefined, opts: UnlockOptions) => {
+      const result = await runUnlock(platform, opts, deps);
+      if (!Array.isArray(result)) process.exit(1);
+    });
+
+  device
+    .command('provision')
+    .argument('<platform>', 'ios')
+    .argument('[udid]', 'the connected iPhone or iPad to provision for; required when more than one is connected')
+    .description(
+      "Register a connected iPhone with the project's Apple Developer team and create or refresh its iOS App " +
+        'Development profile, through xcodebuild -allowProvisioningUpdates. It lists the account changes and asks ' +
+        'first; no build ever does this.',
+    )
+    .option('--scheme <name>', 'Xcode scheme whose signed targets to provision (default: ios.scheme, then detected)')
+    .option('--configuration <name>', 'build configuration to provision (default: ios.configuration, then Debug)')
+    .option('--yes', 'confirm the listed Apple Developer account changes without a prompt')
+    .option('--json', 'print the plan and result, or the refusal, as JSON on stdout')
+    .action(async (platform: string, udid: string | undefined, opts: ProvisionOptions) => {
+      const root = findProjectRoot(process.cwd()) ?? process.cwd();
+      const { value: result, interrupted } = await runProcessOperation(root, (operation) =>
+        runProvision(platform, udid, opts, { operation }),
+      );
+      if ('code' in result) process.exit(interrupted ?? 1);
+    });
+
+  registerDeviceTools(device);
+}
+
+export default function deviceCommand(program: Command): void {
+  registerDevice(program);
+}

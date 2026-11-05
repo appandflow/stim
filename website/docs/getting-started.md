@@ -1,0 +1,259 @@
+---
+title: 'Getting started'
+sidebar_position: 2
+description: 'Install Stim, add the agent skill, and run the first isolated app'
+---
+
+import StimTabs, { StimInstallTabs } from '@site/src/components/StimTabs';
+import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
+
+Check the [requirements](./requirements.md) first: Node 22.12.0 or later, Xcode
+for local iOS builds, and the Android SDK for local Android builds.
+
+## Terms
+
+A workspace is one app in one checkout, either the source checkout or a git
+worktree. Each workspace gets its own Metro port and an owned device: a
+simulator or emulator that Stim created, the only kind it boots or deletes.
+`worktree warm` copies ignored state such as dependencies and native build
+output from the source checkout into a new worktree. A lease is a time-limited
+claim on a physical device, so two workspaces do not install on the same phone
+at once. A slot, selected with `--slot <name>`, runs another device in the same
+workspace. `stop` shuts down the workspace's Metro server and devices (an owned iOS
+simulator stays booted for a grace period when memory permits) and
+releases its leases; `worktree remove` reclaims everything the workspace owns.
+`gc` reports resources left behind by workspaces that are gone, and
+`gc --delete` removes them.
+
+## Install Stim
+
+Install the CLI globally or run it with npx. The package and command are both
+`stim`. If you previously installed `stim-cli` globally, run
+`npm uninstall --global stim-cli` first. The `@stim-cli/*` packages keep their
+names.
+
+<StimInstallTabs />
+
+Install the bundled skill for your coding agent:
+
+```bash
+npx skills add appandflow/stim
+```
+
+The skill stays small and asks the installed CLI for version-specific guidance,
+so upgrading Stim does not require reinstalling the skill.
+
+## Ask the agent to run the app
+
+Ask for the outcome:
+
+<PromptBox
+title="Build and run"
+response={'Trailhead launched on stim-trailhead (iPhone 17 / iOS 26.5).\ncom.appandflow.trailhead · ready · cache hit · 58.8s · errors clean'}
+
+>
+
+{`Run the app on iOS.`}
+</PromptBox>
+
+You normally do not need to name Stim. Installing the skill lets a compatible
+agent route build, run, device, log, and worktree requests to Stim. Say "use
+Stim" only when you want to force that choice instead of a project-specific
+wrapper.
+
+The agent normally runs:
+
+<StimTabs
+code={`git worktree add -b <branch> <path> HEAD   # unless a harness made one
+cd <path>
+stim worktree warm    # copy ignored state from the source checkout
+stim doctor           # inspect the source checkout and warm-state gaps
+stim start            # optional: start this workspace's dev server early
+stim ios              # build or restore, install, launch, and verify
+stim logs --errors    # check for errors in the captured logs
+stim stop             # release the active environment
+stim worktree remove  # after the work is preserved`}
+/>
+
+Use `stim android` for Android. Stim works with React Native Community CLI and
+Expo projects. It needs no project initialization and writes no runtime state
+into the repository.
+
+After a build, the agent should report only the exact device and app, launch
+state, cache result, total duration, and whether the error log is clean. Ask for
+build-performance details when you want history across runs.
+
+## Take the tutorial
+
+Clone a tiny Expo app and watch two agents work on two changes at once, each
+in its own worktree with its own simulator and dev server, each checking its own
+work on the device. The first build can take a few minutes on a cold cache; the
+parallel one reuses it. Uncached dependencies need network access. Both
+changes build and run on this machine even when `ios.remote` or `remote.build` would
+pick another one.
+
+<PromptBox
+title="Run the Stim tutorial"
+response={`The test app is cloned and its dependencies are installed.
+Next, ask for a change in your own words.`}
+
+>
+
+{`Clone appandflow/stim-tutorial into ~/stim-tutorial and follow stim guide tutorial run.`}
+</PromptBox>
+
+Finishing stops the apps and removes only the two experiment worktrees, keeping
+the base repository; an optional last step deletes it. With archiving enabled, the tour appears under Archived.
+Phone viewing is optional.
+
+## Common prompts
+
+Each prompt has a copy button and an illustrative agent response. Simulator
+results use the Trailhead run above; device and PR flows show the same compact
+reporting style.
+
+<PromptGrid>
+  <PromptBox
+    title="Choose an iOS simulator"
+response={`Trailhead launched on stim-trailhead (iPhone 17 / iOS 26.5).
+com.appandflow.trailhead · ready · cache hit · 58.8s · errors clean`}
+  >
+    {`Run the app on an iPhone 17 simulator with iOS 26.5.`}
+  </PromptBox>
+  <PromptBox
+    title="Use an EAS build"
+    response={`Trailhead launched on stim-trailhead (iPhone 17 / iOS 26.5).
+com.appandflow.trailhead · ready · EAS build · errors clean`}
+  >
+    {`Run the app on an iOS simulator using an EAS build.`}
+  </PromptBox>
+  <PromptBox
+    title="Run on a connected phone"
+    response={`Trailhead launched on the connected iPhone.
+com.appandflow.trailhead · ready · device lease released · errors clean`}
+  >
+    {`Run the app on my connected iPhone.`}
+  </PromptBox>
+  <PromptBox title="Inspect recent errors" response={`No Trailhead app errors in the last 10 minutes.`}>
+    {`Show app errors from the last 10 minutes.`}
+  </PromptBox>
+  <PromptBox
+    title="Check the environment"
+    response={`Trailhead is active on stim-trailhead (iPhone 17 / iOS 26.5).
+com.appandflow.trailhead · Metro 8083 · launch ready`}
+  >
+    {`What is running for this workspace?`}
+  </PromptBox>
+  <PromptBox
+    title="Stop the environment"
+    response={`Stopped Trailhead: Metro on port 8083 stopped, stim-trailhead (iPhone 17 / iOS 26.5) shut down.
+The simulator stays assigned for the next run.`}
+  >
+    {`I'm done testing for now. Stop this workspace's dev server and simulator.`}
+  </PromptBox>
+  <PromptBox
+    title="Review build performance"
+    response={`iOS · 3 runs · 67% cache hits · cached average 46s · estimated savings ~7m`}
+  >
+    {`Show iOS build performance.`}
+  </PromptBox>
+  <PromptBox
+    title="Work in parallel"
+    response={`Implemented on @janic/example in an isolated worktree.
+Trailhead · iPhone 17 / iOS 26.5 · ready · cache hit · errors clean
+Branch preserved.`}
+  >
+    {`Make this change in a separate worktree and validate it on iOS.`}
+  </PromptBox>
+  <PromptBox
+    title="Record PR validation"
+    response={`Validated the Trailhead Settings flow on iPhone 17 / iOS 26.5.
+Before and After recordings captured; named assertion passed; PR opened with the comparison table.`}
+  >
+    {`Fix this in a separate worktree. Record the affected flow before and after on iOS with agent-device, then open a PR with the recordings in a Before/After table.`}
+  </PromptBox>
+</PromptGrid>
+
+The agent can choose a compatible EAS profile for the requested target. It
+should ask if none fits or the choice is ambiguous. See
+[EAS development builds](./eas-builds.md) for setup, Android and device examples,
+and build-miss behavior.
+
+## Run work in parallel
+
+An agent works in a separate worktree by default. It works in the current
+checkout only when you ask for that, or when the task depends on your
+uncommitted changes there:
+
+<StimTabs
+code={`git worktree add -b feature-name ../feature-name HEAD
+cd ../feature-name
+stim worktree warm
+stim start
+stim ios
+
+# After the work is preserved:
+
+stim stop
+stim worktree remove`}
+/>
+
+If a harness already created the linked worktree, skip Git creation and run
+`stim worktree warm` there. Warm copies missing ignored state from the source
+checkout, including dependencies, native output, and eligible `.env` and local
+config. Existing entries stay untouched. See
+[worktree isolation](./worktrees.md) for exclusions and cleanup; removal works
+whether or not the worktree was warmed.
+
+The worktree gets a separate port and device. It can still use native and Metro
+cache entries created by the source checkout or another worktree.
+
+## What success means
+
+`stim ios` and `stim android` install and open the app, then report launch
+evidence. The summary includes the exact device, app identifier, cache result,
+Metro state, launch state, and log path.
+
+An OK summary without a launch qualifier confirms a bundle request, or a live
+process of an app whose runtime has no Metro (a release build, or a native
+Xcode or Gradle app). `bundle requested, still building` means Metro is still
+working. For `launch UNVERIFIED`, follow the printed remedy before claiming
+success. None of these checks proves that the screen rendered correctly.
+
+Use a device automation tool only when the task requires visual interaction or
+a screenshot. Stim owns the build and launch. It does not require a separate
+device tool for that workflow.
+
+A cached `stim ios` run ends with a summary like this on stdout, after progress
+lines on stderr:
+
+```text
+OK: com.appandflow.trailhead on stim-trailhead (iPhone 17 26.5) (4F2A..), Metro port 8083 (from cache, 58.8s)
+  device      stim-trailhead (iPhone 17 26.5) (4F2A91C6-7D3B-4E58-9A1F-2C6B8E0D5A73)
+  app         com.appandflow.trailhead
+  metro       running on port 8083
+  cache       from cache
+  compilation cache not run; artifact cache supplied the app
+  logs        /Users/you/.stim/workspaces/trailhead--3f9c2a1b7d3b4e58/logs
+```
+
+## When it fails
+
+- Run `stim doctor` to check the machine and project setup.
+- Run `stim logs --errors` for Metro, app, and build errors since the last
+  launch or bundle.
+- A refusal prints a code such as `STIM_METRO_TIMEOUT`. Run
+  `stim guide errors <CODE>` for its cause and remedy, or look it up on the
+  [troubleshooting page](./troubleshooting.md).
+- If Stim itself looks wrong, [report a problem](./agent-skills.md#report-a-problem).
+
+Use [remote machines](./remote-machines.md) to build on an approved machine or
+run on an approved Mac, and the [phone app](./phone-app.md) to watch
+workspaces, devices and logs away from your desk.
+
+## Next steps
+
+- Read [Why Stim](/docs/why) for the design and benefits.
+- Read the concept guides for caches, devices, logs, and worktrees.
+- Use the [command reference](/docs/commands) for every command and option.
+- Run `stim guide` for reference text that matches the installed version.

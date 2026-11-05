@@ -1,0 +1,378 @@
+import { spawn, type ChildProcess } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import {
+  ENDED_AGENT_RETENTION_MS,
+  diskUsageWalkClaims,
+  readAgentSessionsCache,
+  readDiskUsage,
+  readEndedAgentSessions,
+  readPullRequestCache,
+  type EnvironmentState,
+} from '@stim-cli/core/state';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { applyStatusMeasures, createStatusMeasurer } from '../status-measures.ts';
+import { checkCounts } from '../workspace/pull-request.ts';
+import { workspaceDir } from '../workspace/paths.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+
+const GRAPHQL = readFileSync(new URL('./fixtures/gh-pull-requests-graphql.json', import.meta.url), 'utf-8');
+const HEAD = 'dcce0407269e492928e083695fd7b134e64e7af4';
+const BRANCH = 'feat/1688-physical-device-tiles';
+
+let home: string;
+let app: string;
+let avd: string;
+let calls: { file: string; args: string[] }[];
+let head: string;
+let clock: number;
+let gate: Promise<void> | null;
+let duFails: boolean;
+let duPid: number;
+let kilobytes: Record<string, number>;
+const realHome = process.env.HOME;
+const realUserProfile = process.env.USERPROFILE;
+
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), 'stim-status-measures-'));
+  process.env.STIM_HOME = home;
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  process.env.ANDROID_AVD_HOME = join(home, 'avd');
+  app = join(home, 'app');
+  avd = join(home, 'avd', 'stim-t.avd');
+  mkdirSync(join(app, 'node_modules'), { recursive: true });
+  mkdirSync(avd, { recursive: true });
+  avd = realpathSync(avd);
+  writeFileSync(join(home, 'avd', 'stim-t.ini'), `path=${avd}\n`);
+  mkdirSync(workspaceDir(app), { recursive: true });
+  calls = [];
+  head = HEAD;
+  clock = Date.parse('2026-09-27T10:00:00.000Z');
+  gate = null;
+  duFails = false;
+  duPid = process.pid;
+  kilobytes = {
+    [app]: 1000,
+    [join(app, 'node_modules')]: 400,
+    [workspaceDir(app)]: 200,
+    [avd]: 3000,
+  };
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : real.findExecutable(name)),
+    runFileAsync: async (file, args = [], opts) => {
+      calls.push({ file, args });
+      if (file === 'nice') {
+        opts?.onSpawn?.({ pid: duPid } as ChildProcess);
+        await gate;
+        if (duFails) throw new Error('Command timed out after 120000ms: du');
+        return args
+          .slice(4)
+          .map((path: string) => `${kilobytes[path] ?? 1}\t${path}\n`)
+          .join('');
+      }
+      if (file === 'git') return `${head}\n`;
+      if (file === 'gh') return GRAPHQL;
+      throw new Error(`unexpected ${file}`);
+    },
+  });
+});
+
+afterEach(() => {
+  resetExecutor();
+  delete process.env.STIM_HOME;
+  if (realHome === undefined) delete process.env.HOME;
+  else process.env.HOME = realHome;
+  if (realUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = realUserProfile;
+  delete process.env.ANDROID_AVD_HOME;
+  rmSync(home, { recursive: true, force: true });
+});
+
+function duWalks(): string[][] {
+  return calls.filter((call) => call.file === 'nice').map((call) => call.args.slice(4));
+}
+
+function environment(): EnvironmentState {
+  return {
+    path: app,
+    live: true,
+    memoryMb: 0,
+    warnings: [],
+    issues: [],
+    worktree: {
+      path: app,
+      branch: BRANCH,
+      repository: join(home, 'repo'),
+      git: { changed: 0, untracked: 0, upstream: null, ahead: null, behind: null, mergedInto: null },
+    },
+    android: { name: 'stim-t', owned: true, physical: false },
+  };
+}
+
+test('measures stale folders and pull requests in the background, then status reads only the caches', async () => {
+  const updated = vi.fn<() => void>();
+  const measurer = createStatusMeasurer({ updated, now: () => clock });
+  const state = environment();
+  measurer.schedule([state], [state.worktree!]);
+  await vi.waitFor(() => {
+    expect(readDiskUsage(avd)).not.toBeNull();
+    expect(readPullRequestCache(app)).not.toBeNull();
+  });
+
+  const read = environment();
+  applyStatusMeasures([read], [read.worktree!]);
+  const measuredAt = '2026-09-27T10:00:00.000Z';
+  expect(read.disk).toEqual({
+    worktreeBytes: 1000 * 1024,
+    nodeModulesBytes: 400 * 1024,
+    nodeModulesPrivateBytes: null,
+    buildBytes: 200 * 1024,
+    measuredAt,
+  });
+  expect(read.android?.disk).toEqual({ bytes: 3000 * 1024, measuredAt });
+  expect(read.worktree?.pullRequest).toEqual({
+    number: 1692,
+    url: 'https://github.com/appandflow/stim/pull/1692',
+    title: 'feat(status): show leased physical devices as device tiles',
+    state: 'open',
+    checks: { passing: 10, failing: 0, pending: 0 },
+    reviewDecision: null,
+    checkedAt: measuredAt,
+  });
+  expect(readPullRequestCache(app)).toMatchObject({ containsHead: true, endedAt: null });
+  expect(duWalks()).toHaveLength(4);
+  expect(calls.filter((call) => call.file === 'gh')).toHaveLength(1);
+  expect(updated).toHaveBeenCalled();
+
+  calls = [];
+  clock += 60_000;
+  measurer.schedule([state], [state.worktree!]);
+  await vi.waitFor(() => expect(calls.some((call) => call.file === 'git')).toBe(true));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(calls.map((call) => call.file)).toEqual(['git']);
+
+  calls = [];
+  clock += 60_000;
+  head = 'f'.repeat(40);
+  measurer.schedule([state], [state.worktree!]);
+  await vi.waitFor(() => expect(readPullRequestCache(app)?.head).toBe(head));
+  expect(calls.filter((call) => call.file === 'gh')).toHaveLength(1);
+});
+
+test('status reports node_modules only while its install is the one that was measured, as gc and the daemon do', async () => {
+  const state = environment();
+  createStatusMeasurer({ updated: () => {}, now: () => clock }).schedule([state], []);
+  await vi.waitFor(() => expect(readDiskUsage(join(app, 'node_modules'))?.signature).toBeDefined());
+  await vi.waitFor(() => expect(readDiskUsage(app)).not.toBeNull());
+
+  const measured = environment();
+  applyStatusMeasures([measured], []);
+  expect(measured.disk).toMatchObject({ worktreeBytes: 1000 * 1024, nodeModulesBytes: 400 * 1024 });
+
+  writeFileSync(join(app, 'node_modules', '.modules.yaml'), 'layoutVersion: 5\n');
+  const reinstalled = environment();
+  applyStatusMeasures([reinstalled], []);
+  expect(reinstalled.disk).toMatchObject({
+    worktreeBytes: 1000 * 1024,
+    nodeModulesBytes: null,
+    nodeModulesPrivateBytes: null,
+  });
+});
+
+test('a checkout is measured without the linked worktrees nested under it', async () => {
+  kilobytes = {};
+  const common = join(app, '.git');
+  const nested = join(app, '.worktrees', 'feature');
+  mkdirSync(join(common, 'worktrees', 'feature'), { recursive: true });
+  mkdirSync(nested, { recursive: true });
+  mkdirSync(join(app, '.worktrees', 'plain'));
+  mkdirSync(join(app, 'src'));
+  writeFileSync(join(common, 'HEAD'), 'ref: refs/heads/main\n');
+  writeFileSync(join(common, 'worktrees', 'feature', 'HEAD'), 'ref: refs/heads/feature\n');
+  writeFileSync(join(common, 'worktrees', 'feature', 'gitdir'), `${join(nested, '.git')}\n`);
+  const root = realpathSync(app);
+  const state = environment();
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  measurer.schedule([state], []);
+  await vi.waitFor(() => expect(readDiskUsage(app)).not.toBeNull());
+
+  const checkoutWalk = duWalks().find((targets) => targets.some((path) => path.startsWith(root)))!;
+  expect(checkoutWalk.toSorted()).toEqual(
+    [join(root, '.git'), join(root, '.worktrees', 'plain'), join(root, 'node_modules'), join(root, 'src')].toSorted(),
+  );
+  expect(readDiskUsage(app)?.bytes).toBe(4 * 1024);
+
+  const checkout = join(home, 'separate-checkout');
+  const metadata = join(home, 'separate-metadata');
+  mkdirSync(metadata);
+  mkdirSync(checkout);
+  writeFileSync(join(checkout, '.git'), `gitdir: ${metadata}\n`);
+  kilobytes[checkout] = 3000;
+  const siblings = ['one', 'two'].map((name, index) => {
+    const path = join(checkout, 'apps', name);
+    mkdirSync(path, { recursive: true });
+    kilobytes[path] = (index + 1) * 1000;
+    const sibling = environment();
+    sibling.path = path;
+    sibling.checkout = checkout;
+    sibling.worktree = null;
+    sibling.android = null;
+    return sibling;
+  });
+  createStatusMeasurer({ updated: () => {}, now: () => clock }).schedule(siblings, []);
+  await vi.waitFor(() => {
+    applyStatusMeasures(siblings, []);
+    expect(siblings.map((sibling) => sibling.disk?.worktreeBytes)).toEqual([3000 * 1024, 3000 * 1024]);
+  });
+  expect(duWalks().filter((targets) => targets.includes(checkout))).toHaveLength(1);
+});
+
+test('the walk claim records the du process while it runs and drops it afterwards', async () => {
+  const sleeper = spawn('sleep', ['30']);
+  try {
+    duPid = sleeper.pid!;
+    let release!: () => void;
+    gate = new Promise((resolve) => (release = resolve));
+    const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+    measurer.schedule([environment()], []);
+    await vi.waitFor(() => expect(readClaimSet(diskUsageWalkClaims()).live[0]?.child?.pid).toBe(sleeper.pid));
+    release();
+    await vi.waitFor(() => expect(readDiskUsage(avd)).not.toBeNull());
+    expect(readClaimSet(diskUsageWalkClaims()).live).toEqual([]);
+  } finally {
+    sleeper.kill();
+  }
+});
+
+test('watchers in separate processes share one walk and one failure', async () => {
+  let release!: () => void;
+  gate = new Promise((resolve) => (release = resolve));
+  const state = environment();
+  const first = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  const second = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  first.schedule([state], []);
+  await vi.waitFor(() => expect(duWalks()).toHaveLength(1));
+  second.schedule([state], []);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(duWalks()).toHaveLength(1);
+  release();
+  await vi.waitFor(() => expect(readDiskUsage(avd)).not.toBeNull());
+  expect(duWalks()).toHaveLength(4);
+
+  duFails = true;
+  calls = [];
+  clock += 5 * 60_000;
+  first.schedule([state], []);
+  await vi.waitFor(() => expect(duWalks()).toHaveLength(3));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  second.schedule([state], []);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(duWalks()).toHaveLength(3);
+  expect(duWalks().flat()).not.toContain(join(app, 'node_modules'));
+
+  clock += 5 * 60_000;
+  duFails = false;
+  second.schedule([state], []);
+  await vi.waitFor(() => expect(readDiskUsage(app)?.measuredAt).toBe(new Date(clock).toISOString()));
+});
+
+test('a session that stops running stays listed as ended with its links for 3 days, and running again wins', async () => {
+  clock = Date.now();
+  const firstAt = new Date(clock).toISOString();
+  const sessions = join(home, '.claude', 'sessions');
+  mkdirSync(sessions, { recursive: true });
+  const claude = join(sessions, `${process.pid}.json`);
+  const run = () =>
+    writeFileSync(
+      claude,
+      JSON.stringify({
+        pid: process.pid,
+        sessionId: 'live',
+        cwd: app,
+        name: 'Fix tiles',
+        startedAt: clock,
+        bridgeSessionId: 'session_01abc',
+      }),
+    );
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  const discover = async (count: number) => {
+    const before = readAgentSessionsCache()?.discoveredAt;
+    const state = environment();
+    measurer.schedule([state], [state.worktree!]);
+    await vi.waitFor(() => {
+      const cache = readAgentSessionsCache();
+      expect(cache?.discoveredAt).not.toBe(before);
+      expect(cache?.sessions).toHaveLength(count);
+    });
+  };
+  const read = () => {
+    const state = environment();
+    applyStatusMeasures([state], []);
+    return state;
+  };
+
+  run();
+  recordWorkspaceUse(app, new Date(clock), { CLAUDE_CODE_SESSION_ID: 'live' });
+  await discover(1);
+  expect(read().agents?.map((agent) => agent.sessionId)).toEqual(['live']);
+  expect(read().endedAgents).toBeUndefined();
+
+  rmSync(claude);
+  clock += 20_000;
+  await discover(0);
+  const ended = read();
+  expect(ended.agents).toBeUndefined();
+  expect(ended.endedAgents).toEqual([
+    {
+      tool: 'claude-code',
+      sessionId: 'live',
+      title: 'Fix tiles',
+      cwd: realpathSync(app),
+      startedAt: firstAt,
+      lastActiveAt: firstAt,
+      webUrl: 'https://claude.ai/code/session_01abc',
+      endedAt: firstAt,
+    },
+  ]);
+  expect(readEndedAgentSessions(app, Date.parse(firstAt) + ENDED_AGENT_RETENTION_MS + 1)).toEqual([]);
+
+  run();
+  clock += 20_000;
+  await discover(1);
+  const resumed = read();
+  expect(resumed.agents?.map((agent) => agent.sessionId)).toEqual(['live']);
+  expect(resumed.endedAgents).toBeUndefined();
+});
+
+test('check counts sort every check run and commit status state into passing, failing or pending', () => {
+  const counts = (states: [string, number][], statuses: [string, number][] = []) =>
+    checkCounts({
+      contexts: {
+        checkRunCountsByState: states.map(([state, count]) => ({ state, count })),
+        statusContextCountsByState: statuses.map(([state, count]) => ({ state, count })),
+      },
+    });
+  expect(
+    counts(
+      [
+        ['SUCCESS', 7],
+        ['SKIPPED', 3],
+        ['FAILURE', 1],
+        ['TIMED_OUT', 1],
+        ['IN_PROGRESS', 2],
+        ['QUEUED', 1],
+      ],
+      [
+        ['ERROR', 1],
+        ['PENDING', 1],
+        ['EXPECTED', 1],
+      ],
+    ),
+  ).toEqual({ passing: 10, failing: 3, pending: 5 });
+  expect(checkCounts(null)).toBeNull();
+});

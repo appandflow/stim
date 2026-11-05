@@ -1,0 +1,7 @@
+# swift build -c debug --product StimDesktop --scratch-path <scratch> --jobs 2 (Swift 6.4, piped); thin space (U+2009) is written as backslash-u2009
+Building for debugging...
+[Using on-disk description]
+[1\u2009/\u200929]
+[2\u2009/\u200916] StimKit
+[4\u2009/\u200918] StimKit
+Build complete! (2.12 secs.)

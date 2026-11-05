@@ -1,0 +1,622 @@
+import Foundation
+
+/// Another machine on the tailnet, from `tailscale status --json`: a Mac, or a Linux or Windows machine the wizard can
+/// add for Android builds.
+public struct TailnetMac: Hashable, Identifiable, Sendable {
+  /// The node's StableID.
+  public var id: String
+  public var hostName: String
+  /// The MagicDNS name, lowercased, without the trailing dot.
+  public var dnsName: String
+  /// Tailscale's `OS` for the node.
+  public var os: TailnetOS = .macOS
+
+  /// A Linux or Windows machine builds Android only and cannot host simulators.
+  public var buildsAndroidOnly: Bool { os != .macOS }
+
+  /// The `remote.machines` entry that names it: the first label of its MagicDNS name.
+  public var machine: String { String(dnsName.split(separator: ".").first ?? Substring(dnsName)) }
+}
+
+public enum TailnetOS: String, Hashable, Sendable {
+  case macOS
+  case linux
+  case windows
+
+  public var title: String {
+    switch self {
+    case .macOS: return "macOS"
+    case .linux: return "Linux"
+    case .windows: return "Windows"
+    }
+  }
+}
+
+public enum Tailnet {
+  static let appBinary = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+  /// The HTTPS port `stim-server` suggests for its `tailscale serve` route, and `remote.machines`' default.
+  public static let servePort = 7443
+
+  /// The other macOS peers that are online, by name; nil when Tailscale is not running.
+  public static func macs(statusJSON: Data) -> [TailnetMac]? {
+    guard let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any],
+      status["BackendState"] as? String == "Running"
+    else { return nil }
+    let peers = (status["Peer"] as? [String: Any] ?? [:]).values.compactMap { $0 as? [String: Any] }
+    return peers.compactMap { peer -> TailnetMac? in
+      guard peer["OS"] as? String == "macOS", peer["Online"] as? Bool == true,
+        let id = peer["ID"] as? String, let dns = peer["DNSName"] as? String
+      else { return nil }
+      let dnsName = (dns.hasSuffix(".") ? String(dns.dropLast()) : dns).lowercased()
+      guard !dnsName.isEmpty else { return nil }
+      return TailnetMac(id: id, hostName: peer["HostName"] as? String ?? dnsName, dnsName: dnsName)
+    }
+    .sorted { $0.dnsName < $1.dnsName }
+  }
+
+  public enum StatusProbe: Equatable, Sendable {
+    case answered(Data)
+    case timedOut
+    case unavailable
+  }
+
+  /// `tailscale status --json`, from the CLI on `PATH` or the Mac app's. A binary that has not answered after
+  /// `timeout` seconds is killed, and the result is `.timedOut` when no other binary answered.
+  public static func probe(
+    environment: [String: String], timeout: TimeInterval = 5, appBinary: String? = nil
+  ) -> StatusProbe {
+    var environment = environment
+    let candidates = [resolveExecutable("tailscale", override: nil, environment: &environment), appBinary ?? Self.appBinary]
+    var timedOut = false
+    for binary in candidates.compactMap({ $0 }) where FileManager.default.isExecutableFile(atPath: binary) {
+      var request = ProcessRequest(binary, ["status", "--json"], environment: environment, timeout: timeout)
+      request.timeoutSignal = SIGKILL
+      guard let result = try? request.runBlocking() else { continue }
+      if result.timedOut {
+        timedOut = true
+      } else if result.status == 0 {
+        return .answered(result.stdout)
+      }
+    }
+    return timedOut ? .timedOut : .unavailable
+  }
+
+  /// The output of `probe`, or nil when Tailscale did not answer.
+  public static func status(environment: [String: String]) -> Data? {
+    if case .answered(let data) = probe(environment: environment) { return data }
+    return nil
+  }
+
+  public struct Peer: Hashable, Identifiable, Sendable {
+    public var mac: TailnetMac
+    public var online: Bool
+    public var id: String { mac.id }
+  }
+
+  /// How Tailscale is installed on this Mac: the Mac app (turned on from its menu bar item), only the CLI
+  /// (`tailscale up`), or not at all.
+  public enum Install: Equatable, Sendable {
+    case app, cli, none
+
+    public static func detect(
+      environment: [String: String], exists: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) -> Install {
+      if exists(appBinary) { return .app }
+      let path = (environment["PATH"] ?? "").split(separator: ":")
+      return path.contains { exists("\($0)/tailscale") } ? .cli : .none
+    }
+  }
+
+  public enum Reachability: Equatable, Sendable {
+    case tailscaleMissing, tailscaleStopped, peerOffline, ready
+  }
+
+  /// A peer stim-server's `/health`, which tells other machines only its version.
+  public struct Health: Decodable, Equatable, Sendable {
+    public var version: String
+  }
+
+  public static func selfNode(statusJSON: Data) -> TailnetMac? {
+    guard let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any],
+      let node = status["Self"] as? [String: Any]
+    else { return nil }
+    return parseNode(node)
+  }
+
+  /// The online peers that can build for this Mac: Macs, Linux and Windows machines; nil when Tailscale is not running.
+  public static func buildPeers(statusJSON: Data) -> [TailnetMac]? {
+    guard let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any],
+      status["BackendState"] as? String == "Running"
+    else { return nil }
+    return peers(statusJSON: statusJSON).filter(\.online).map(\.mac)
+  }
+
+  /// The macOS, Linux and Windows peers the wizard can add; other systems cannot be remote machines.
+  public static func peers(statusJSON: Data) -> [Peer] {
+    guard let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any] else { return [] }
+    return (status["Peer"] as? [String: Any] ?? [:]).values.compactMap { value in
+      guard let node = value as? [String: Any], let os = (node["OS"] as? String).flatMap(TailnetOS.init(rawValue:)),
+        var mac = parseNode(node)
+      else { return nil }
+      mac.os = os
+      return Peer(mac: mac, online: node["Online"] as? Bool == true)
+    }.sorted { $0.mac.dnsName < $1.mac.dnsName }
+  }
+
+  /// `install` tells a quit Tailscale app, whose CLI answers nothing, from a missing Tailscale.
+  public static func reachability(statusJSON: Data?, peer: Peer?, install: Install = .none) -> Reachability {
+    guard let statusJSON else { return install == .none ? .tailscaleMissing : .tailscaleStopped }
+    guard let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any],
+      status["BackendState"] as? String == "Running"
+    else { return .tailscaleStopped }
+    return peer?.online == true ? .ready : .peerOffline
+  }
+
+  private static func parseNode(_ node: [String: Any]) -> TailnetMac? {
+    guard let id = node["ID"] as? String, !id.isEmpty,
+      let dns = node["DNSName"] as? String, !dns.isEmpty
+    else { return nil }
+    let name = dns.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+    return TailnetMac(id: id, hostName: node["HostName"] as? String ?? name, dnsName: name)
+  }
+
+  public static func health(dnsName: String, port: Int = servePort) async -> Health? {
+    guard let url = URL(string: "https://\(dnsName):\(port)/health") else { return nil }
+    var request = URLRequest(url: url)
+    request.timeoutInterval = 3
+    guard let (data, response) = try? await URLSession.shared.data(for: request),
+      (response as? HTTPURLResponse)?.statusCode == 200,
+      let health = try? JSONDecoder().decode(Health.self, from: data)
+    else { return nil }
+    return health
+  }
+}
+
+/// Where this machine stands with one `remote.machines` entry, as `stim doctor --json` and `stim remote list --json`
+/// report it.
+public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
+  public enum State: String, Decodable, Sendable {
+    case approved, pending, revoked, lapsed, invalid, unreachable, outdated, busy, unknown
+    case notAsked = "not-asked"
+    case keyChanged = "key-changed"
+    case keyUnconfirmed = "key-unconfirmed"
+    case credentialsUnavailable = "credentials-unavailable"
+    case notOnTailnet = "not-on-tailnet"
+    case tailscaleOff = "tailscale-off"
+
+    public init(from decoder: Decoder) throws {
+      self = State(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .unknown
+    }
+
+    public var title: String {
+      switch self {
+      case .approved: return "Approved"
+      case .pending: return "Waiting for approval"
+      case .notAsked: return "Not asked"
+      case .revoked: return "Revoked"
+      case .lapsed: return "Request lapsed"
+      case .keyChanged: return "Different machine"
+      case .keyUnconfirmed: return "Key not confirmed"
+      case .outdated: return "Server is outdated"
+      case .credentialsUnavailable: return "Credentials unreadable"
+      case .busy: return "Check in progress"
+      case .notOnTailnet: return "Not on the tailnet"
+      case .tailscaleOff: return "Tailscale is off"
+      case .unreachable: return "Unreachable"
+      case .invalid: return "Not a tailnet name"
+      case .unknown: return "Unknown"
+      }
+    }
+
+    var readinessTone: Tone {
+      switch self {
+      case .approved: return .success
+      case .pending, .notOnTailnet, .tailscaleOff, .unreachable, .keyUnconfirmed, .outdated: return .warning
+      case .revoked, .lapsed, .keyChanged, .invalid, .credentialsUnavailable: return .error
+      case .notAsked, .busy, .unknown: return .neutral
+      }
+    }
+
+    /// Whether asking again through `stim doctor --fix` can change it, given whether this Mac already has a request.
+    public func canAsk(requested: Bool) -> Bool {
+      self == .notAsked || self == .revoked || self == .lapsed || (self == .unreachable && !requested)
+    }
+  }
+
+  /// One reason `stim doctor` gave for a machine not taking builds, with its finding code.
+  public struct Problem: Decodable, Hashable, Sendable {
+    public var code: String
+    public var reason: String
+  }
+
+  public struct Capacity: Decodable, Hashable, Sendable {
+    public var loadPerCore: Double?
+    public var cpus: Int?
+    /// Offloaded builds it runs now, and how many it takes at once.
+    public var running: Int?
+    public var max: Int?
+    /// Native builds it runs now, its own and offloaded, and how many it takes at once (0 when unlimited).
+    public var builds: Int?
+    public var maxBuilds: Int?
+    public var diskFreeBytes: Double?
+    public var maxLoadPerCore: Double?
+    /// Memory in use, as Activity Monitor counts it, and the Mac's total. Absent from an older stim-server.
+    public var memoryUsedBytes: Double?
+    public var memoryTotalBytes: Double?
+
+    /// What the Busy pill adds: the load when it is at its limit, else the builds it runs, else the load.
+    var busyDetail: String? {
+      let load = loadPerCore.map { "load \(formatLoad($0))/core" }
+      let atLimit = loadPerCore.map { load in maxLoadPerCore.map { load >= $0 } ?? false } ?? false
+      return (atLimit ? load : buildsText ?? load).map { " (\($0))" }
+    }
+
+    /// The builds it runs, such as "1/2 builds" or "3 builds"; nil when it reported no count.
+    public var buildsText: String? {
+      guard let builds else { return nil }
+      if let maxBuilds, maxBuilds > 0 { return "\(builds)/\(maxBuilds) builds" }
+      return "\(builds) \(builds == 1 ? "build" : "builds")"
+    }
+
+    /// A byte count from a remote Mac's JSON number; nil when it is not a whole number that fits.
+    private static func wholeBytes(_ value: Double) -> Int64? { Int64(exactly: value.rounded()) }
+
+    /// The load, memory and free disk it reported, with the icon and format the toolbar's resource summary uses.
+    /// The CPU entry is the 5-minute load per core, since the offer carries no CPU percentage.
+    public var resources: [MachineResource] {
+      var items: [MachineResource] = []
+      if let loadPerCore {
+        let fraction = maxLoadPerCore.map { loadPerCore / $0 }
+        items.append(
+          MachineResource(
+            kind: .cpu, label: "Load", value: "\(formatLoad(loadPerCore))/core",
+            tone: fraction.map(UsageThresholds.cpu(fraction:)) ?? .normal))
+      }
+      if let used = memoryUsedBytes.flatMap(Self.wholeBytes), let total = memoryTotalBytes.flatMap(Self.wholeBytes) {
+        items.append(
+          MachineResource(
+            kind: .memory, label: "RAM", value: Format.memoryPair(usedBytes: used, totalBytes: total), tone: .normal))
+      }
+      if let free = diskFreeBytes.flatMap(Self.wholeBytes) {
+        items.append(
+          MachineResource(
+            kind: .disk, label: "Disk", value: "\(Format.fileSize(free)) free", tone: UsageThresholds.disk(freeBytes: free)))
+      }
+      return items
+    }
+
+    /// The load, cores, offloaded builds and free disk it reported, separated by middle dots.
+    public var line: String {
+      var parts: [String] = []
+      if let loadPerCore {
+        parts.append("load \(formatLoad(loadPerCore))/core" + (maxLoadPerCore.map { " of \(formatLoad($0))" } ?? ""))
+      }
+      if let cpus { parts.append("\(cpus) cores") }
+      if let running, let max { parts.append(max > 0 ? "\(running) of \(max) offloaded builds" : "\(running) offloaded builds") }
+      if let diskFreeBytes { parts.append("\(Format.freeSpace(diskFreeBytes)) free") }
+      return parts.joined(separator: " \u{00B7} ")
+    }
+  }
+
+  public struct Host: Decodable, Hashable, Sendable {
+    public var name: String
+    public var screenRecording: Bool
+    public var accessibility: Bool
+
+    public init(name: String, screenRecording: Bool, accessibility: Bool) {
+      self.name = name
+      self.screenRecording = screenRecording
+      self.accessibility = accessibility
+    }
+  }
+
+  /// The first layer `stim doctor` found stopping this Mac from using the machine: Tailscale here, the peer, its
+  /// serve route, stim-server or compatibility. `code` is stable; `title` is the short pill text.
+  public struct Diagnosis: Decodable, Hashable, Sendable {
+    public var layer: String
+    public var code: String
+    public var title: String
+    public var message: String
+    public var remedy: String
+
+    /// What failed, then what to do about it.
+    public var detail: String { "\(message) \(remedy)" }
+
+    public init(layer: String, code: String, title: String, message: String, remedy: String) {
+      self.layer = layer
+      self.code = code
+      self.title = title
+      self.message = message
+      self.remedy = remedy
+    }
+  }
+
+  public var host: Host?
+  public var machine: String
+  public var state: State
+  /// Present for the states that stop below approval (`tailscale-off`, `not-on-tailnet`, `unreachable`, `outdated`)
+  /// and possibly for a state this Desktop does not know; absent from an older `stim`.
+  public var diagnosis: Diagnosis?
+  public var dnsName: String?
+  public var deviceId: String?
+  public var requestedAt: String?
+  public var expiresAt: String?
+  /// For an approved machine: whether it would take builds now, and each reason it would not.
+  public var offloadable: Bool?
+  public var reasons: [String]?
+  public var problems: [Problem]?
+  /// What a build there does without stopping, such as downloading an SDK package on its first build.
+  public var notes: [Problem]?
+  public var capacity: Capacity?
+
+  public var id: String { machine }
+
+  public init(machine: String, state: State, dnsName: String? = nil, deviceId: String? = nil) {
+    self.machine = machine
+    self.state = state
+    self.dnsName = dnsName
+    self.deviceId = deviceId
+  }
+
+  /// Whether it takes builds now: "Ready", or the first reason `stim doctor` gave with its remedy, such as
+  /// "Stim build differs" and "update the remote machine", or "Busy (load 8.2/core)"; its pairing state when it is not
+  /// approved. `reasons` lists every reason, one per line. `detail` says the same remedy as a sentence.
+  public var readiness: MachineReadiness {
+    let all = reasons.flatMap { $0.isEmpty ? nil : $0.joined(separator: "\n") }
+    guard state == .approved, let offloadable else {
+      if let diagnosed {
+        return MachineReadiness(
+          title: diagnosed.title, remedy: nil, tone: state == .unknown ? .warning : state.readinessTone, reasons: all)
+      }
+      return MachineReadiness(title: state.title, remedy: nil, tone: state.readinessTone, reasons: all)
+    }
+    if offloadable { return MachineReadiness(title: "Ready", remedy: nil, tone: .success, reasons: nil) }
+    let first = problems?.first
+    if first?.code == "busy" {
+      return MachineReadiness(title: "Busy\(capacity?.busyDetail ?? "")", remedy: nil, tone: .warning, reasons: all)
+    }
+    if let first, let known = MachineReadiness.problems[first.code] {
+      return MachineReadiness(
+        title: known.0, remedy: known.1, tone: first.code == "unreachable" ? .warning : .error, reasons: all)
+    }
+    return MachineReadiness(title: reasons?.first ?? "Cannot take builds", remedy: nil, tone: .error, reasons: all)
+  }
+
+  /// The one pill a row of the remote Mac list shows: Approved, Waiting for approval, Unreachable, Needs update or
+  /// the first problem's short title for the states that matter most, else the readiness title (Busy, Revoked, ...).
+  public var listStatus: MachineListStatus {
+    let ready = readiness
+    switch state {
+    case .approved:
+      guard offloadable == false else { return MachineListStatus(title: "Approved", tone: .success) }
+      let code = problems?.first?.code
+      if code == "unreachable" { return MachineListStatus(title: "Unreachable", tone: .warning) }
+      if code == "busy" { return MachineListStatus(title: ready.title, tone: ready.tone) }
+      if code == "stim-build" { return MachineListStatus(title: "Needs update", tone: .warning) }
+      return MachineListStatus(title: code.flatMap { MachineReadiness.problems[$0]?.0 } ?? "Not offloading", tone: .warning)
+    case .pending: return MachineListStatus(title: "Waiting for approval", tone: .warning)
+    default:
+      if let diagnosed {
+        return MachineListStatus(title: diagnosed.title, tone: state == .unknown ? .warning : state.readinessTone)
+      }
+      return MachineListStatus(title: state.title, tone: state.readinessTone)
+    }
+  }
+
+  /// The diagnosis, for the states it explains.
+  var diagnosed: Diagnosis? {
+    switch state {
+    case .unreachable, .tailscaleOff, .notOnTailnet, .outdated, .unknown: return diagnosis
+    default: return nil
+    }
+  }
+
+  /// "Stim build 5773060 there, d9b8bdb here" from doctor's full 16-digit build digests.
+  static func shortStimBuild(_ reason: String) -> String {
+    guard let match = reason.wholeMatch(of: /Stim build (\S+) there, (\S+) here/) else { return reason }
+    return "Stim build \(match.1.prefix(7)) there, \(match.2.prefix(7)) here"
+  }
+
+  /// The command that gives the remote Mac this Mac's CocoaPods, from "CocoaPods 1.17.0 there, CocoaPods 1.16.2 here" or
+  /// "no CocoaPods there, CocoaPods 1.16.2 here", with or without the "; its pod install runs anyway" a note adds.
+  static func cocoapodsFix(_ reason: String) -> String? {
+    let head = reason.split(separator: ";", maxSplits: 1).first.map(String.init) ?? reason
+    guard let match = head.wholeMatch(of: /(no CocoaPods|CocoaPods (\S+)) there, (?:CocoaPods )?([0-9.]+) here/) else {
+      return nil
+    }
+    return match.2 == nil || match.2 == "null" ? "brew install cocoapods" : "gem install cocoapods -v \(match.3)"
+  }
+
+  /// The text line under the machine's name when it has no resources to show: `detail`, empty when the pill and the
+  /// machine's page already say why builds stay on this Mac.
+  public var rowDetail: String {
+    guard state == .approved else { return detail }
+    if let capacity, !capacity.resources.isEmpty { return "" }
+    let blocking = offloadable == false && (problems ?? []).contains { $0.code != "busy" }
+    return blocking ? "" : detail
+  }
+
+  /// Its MagicDNS name, cores and offloaded builds, which the resource summary leaves out; nil when none is known.
+  public var identityLine: String? {
+    var parts = [dnsName].compactMap { $0 }
+    if let cpus = capacity?.cpus { parts.append("\(cpus) cores") }
+    if let running = capacity?.running, let max = capacity?.max {
+      parts.append(max > 0 ? "\(running) of \(max) offloaded builds" : "\(running) offloaded builds")
+    }
+    return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+  }
+
+  /// When a request waiting for approval lapses, as stim-server sets it.
+  public static let requestLapse = "The request lapses after 15 minutes."
+
+  public func lapseLine(timeZone: TimeZone = .current, locale: Locale = .current) -> String {
+    guard let expiresAt, let date = Self.parseTimestamp(expiresAt) else { return Self.requestLapse }
+    let formatter = DateFormatter()
+    formatter.locale = locale
+    formatter.timeZone = timeZone
+    formatter.timeStyle = .short
+    formatter.dateStyle = .none
+    return "Waiting for approval until \(formatter.string(from: date))."
+  }
+
+  private static func parseTimestamp(_ text: String) -> Date? {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+  }
+
+  /// Who approves a request waiting for approval, and where; `detail` continues it.
+  public var approvalPrompt: String { "Someone on \(machine) approves it by running the setup command there" }
+
+  public var detail: String {
+    if let diagnosed { return diagnosed.detail }
+    switch state {
+    case .approved:
+      if offloadable != false { return "Builds can run there." }
+      return readiness.remedy.map { $0.prefix(1).uppercased() + $0.dropFirst() + "." } ?? "Builds stay on this machine for now."
+    case .pending:
+      return "\(approvalPrompt). \(lapseLine())"
+    case .notAsked: return "This machine has not asked it yet."
+    case .revoked: return "It revoked this machine or denied the request."
+    case .lapsed: return "The request lapsed before anyone on \(machine) approved it. Ask again."
+    case .keyChanged:
+      return
+        "It answered with a different stim-server key than the one this machine pinned, so Stim does not connect to it. If that machine was replaced or reinstalled, remove it here, which forgets the old key, then set it up again."
+    case .keyUnconfirmed:
+      return
+        "It answered with a stim-server key this machine has not confirmed. In a terminal on this machine, run stim remote list and answer y only if the fingerprint matches the one stim-server setup printed on \(machine)."
+    case .outdated:
+      return
+        "Its stim-server is older than this machine's Stim. On \(machine), run stim-server service update --release <version>, then run stim remote add \(machine) on this machine."
+    case .credentialsUnavailable:
+      return
+        "This machine cannot read the credentials it keeps for hosted simulators. Restore read access to device-host-machines.json in the Stim home, then check again."
+    case .busy: return "Another check holds this machine's hosting credentials. It shows here once that check finishes."
+    case .notOnTailnet: return "No machine on this tailnet has that name."
+    case .tailscaleOff: return "Start Tailscale to reach it."
+    case .unreachable: return "stim-server did not answer on its tailscale serve route."
+    case .invalid: return "Expected a MagicDNS name, optionally with :port."
+    case .unknown: return "Update Stim Desktop to show this state."
+    }
+  }
+}
+
+/// One resource of a remote Mac, shown like the toolbar's resource summary item of the same kind.
+public struct MachineResource: Equatable, Sendable {
+  public var kind: ResourceKind
+  public var label: String
+  public var value: String
+  public var tone: Tone
+}
+
+/// The pill text and tone of a remote Mac in the list.
+public struct MachineListStatus: Equatable, Sendable {
+  public var title: String
+  public var tone: Tone
+}
+
+/// What a listed remote Mac does for this Mac: it always builds, and hosts simulators when its device-host access
+/// is approved. `hosts` is the doctor report's `deviceHosts`, nil when unknown.
+public func buildMachineCapabilities(_ machine: String, hosts: [BuildMachineStatus]?) -> [String] {
+  let name = OffloadMachines.name(machine)
+  let simulators = hosts?.contains { $0.state == .approved && OffloadMachines.name($0.machine) == name } == true
+  return simulators ? ["Builds", "Simulators"] : ["Builds"]
+}
+
+/// A remote Mac's readiness for builds, as `BuildMachineStatus.readiness` reads it from `stim doctor`.
+public struct MachineReadiness: Equatable, Sendable {
+  public var title: String
+  public var remedy: String?
+  public var tone: Tone
+  public var reasons: String?
+
+  /// `Stim build differs \u{2014} update the remote Mac`, or the title alone.
+  public var line: String { remedy.map { "\(title) \u{2014} \($0)" } ?? title }
+
+  /// The short title and remedy of each `stim doctor` build-machine reason code; `busy` is built from the load.
+  static let problems: [String: (String, String)] = {
+    let sdk = "install it with sdkmanager there"
+    return [
+      "unreachable": ("Not answering", "check its stim-server"),
+      "checkout": ("Not a git checkout", "run Stim from a git checkout"),
+      "stim-build": ("Stim build differs", "update the remote machine"),
+      "arch": ("Other CPU", "use a Mac with the same CPU"),
+      "platform": ("Not a Mac", "iOS and macOS builds need a Mac"),
+      "xcode": ("Xcode differs", "select the same Xcode on both"),
+      "simulator-sdk": ("Simulator SDK differs", "select the same Xcode on both"),
+      "cocoapods": ("CocoaPods differs", "install the same CocoaPods there"),
+      "bundler": ("No Bundler", "install Bundler there"),
+      "runtime": ("No simulator runtime", "install the iOS runtime there"),
+      "jdk": ("JDK differs", "use the same JDK there"),
+      "android-sdk": ("No Android SDK", "install one there"),
+      "ndk": ("NDK missing", sdk),
+      "build-tools": ("Build-tools missing", sdk),
+      "compile-sdk": ("Android platform missing", sdk),
+      "disk": ("Low on disk", "free space there"),
+    ]
+  }()
+}
+
+func formatLoad(_ value: Double) -> String {
+  Int(exactly: value).map(String.init) ?? String(value)
+}
+
+/// A tailnet machine that is already in `remote.machines`, with the state `stim doctor` found for it.
+public struct AddedMachine: Equatable, Sendable {
+  /// The `remote.machines` entry that names it.
+  public var entry: String
+  /// The pill the Connections list shows for it; nil until `stim doctor` has reported.
+  public var status: MachineListStatus?
+  /// What stops it and what to do about it; nil when it is healthy or not yet checked.
+  public var detail: String?
+}
+
+/// `remote.machines` edits, as the JSON text `stim settings set` takes.
+public enum OffloadMachines {
+  /// The name part of an entry, without its port.
+  public static func name(_ entry: String) -> String {
+    String(entry.split(separator: ":").first ?? Substring(entry)).lowercased()
+  }
+
+  /// Whether an entry names `mac`: its first label or its full MagicDNS name.
+  public static func names(_ entry: String, _ mac: TailnetMac) -> Bool {
+    let name = name(entry)
+    return name == mac.machine || name == mac.dnsName
+  }
+
+  /// `mac` as the Connections list knows it, or nil when no entry names it. Its state is the doctor status for that
+  /// entry, never Tailscale's `Online` flag, which can read false while the machine answers.
+  public static func added(_ mac: TailnetMac, entries: [String], statuses: [BuildMachineStatus]?) -> AddedMachine? {
+    guard let entry = entries.first(where: { names($0, mac) }) else { return nil }
+    guard let status = statuses?.first(where: { $0.machine == entry && ($0.dnsName ?? mac.dnsName) == mac.dnsName }) else {
+      return AddedMachine(entry: entry)
+    }
+    let listed = status.listStatus
+    return AddedMachine(entry: entry, status: listed, detail: listed.tone == .success ? nil : status.detail)
+  }
+
+  /// The list with `entry` added, as JSON text.
+  public static func adding(_ entry: String, to entries: [String]) -> String {
+    encode(entries.contains(entry) ? entries : entries + [entry])
+  }
+
+  /// The list without `entry` as JSON text, or nil when it is empty and the setting should be unset.
+  public static func removing(_ entry: String, from entries: [String]) -> String? {
+    let rest = entries.filter { $0 != entry }
+    return rest.isEmpty ? nil : encode(rest)
+  }
+
+  public static func moving(_ entry: String, by offset: Int, in entries: [String]) -> String? {
+    guard let from = entries.firstIndex(of: entry) else { return nil }
+    let to = min(max(from + offset, 0), entries.count - 1)
+    guard to != from else { return nil }
+    var moved = entries
+    moved.remove(at: from)
+    moved.insert(entry, at: to)
+    return encode(moved)
+  }
+
+  private static func encode(_ entries: [String]) -> String {
+    String(decoding: (try? JSONEncoder().encode(entries)) ?? Data("[]".utf8), as: UTF8.self)
+  }
+}

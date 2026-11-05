@@ -1,0 +1,484 @@
+# End-to-end tests and CI
+
+Per-workspace runtime state and logs live outside the project tree under
+`$STIM_HOME/workspaces/<readable-project-slug>--<16hex-path-digest>/` (by
+default `~/.stim/workspaces/...`). Stim does not create a project
+`.gitignore` entry for this state.
+
+Stim has three test layers. The unit suite (`pnpm test`, Vitest, more than
+2,000 cases across six packages) is the bulk of the coverage. On top of it sit
+two end-to-end layers that exercise the _published loop_ rather than individual
+functions. The separately built runtime-floor job loads every published ESM
+entry point on Node 22.12.0.
+
+## The fast cross-platform e2e
+
+`test/e2e/cache-flow.e2e.js`, run with:
+
+```bash
+pnpm run test:e2e
+```
+
+Published packages support Node 22.12.0 or later. Repository development,
+including this suite, uses Node 22.18 or later. CI runs the suite on Node 22 and
+24; the separate runtime-floor job loads every published entry point under
+exactly Node 22.12.0. Git is also required.
+The suite needs **no Xcode or Android SDK**.
+It drives the real CLI and the real cache library end to end under a throwaway
+`STIM_HOME` and a throwaway temp repo, so it never touches the machine's real
+caches, registry, or checkouts. What it proves:
+
+1. Git creates real linked worktrees at one commit. `stim worktree warm`
+   copies missing ignored state from the source checkout, preserves existing entries and the
+   branch, and keeps stdout empty.
+2. Two worktrees of one commit **fingerprint identically when scoped to a
+   platform** (the cross-worktree cache premise) -- and diverge under `ios/`
+   when a worktree-local path leaks in, which is exactly why the hash is scoped.
+3. A build stored under wt1's key **resolves from wt2's key**: a cross-worktree
+   cache hit with no compiler. Change a native input in wt2 and the key changes
+   and the hit becomes a miss.
+4. Two real node processes racing the single-flight build lock: **exactly one
+   builds**, the other waits and resolves the artifact the first one stored.
+5. `stim worktree remove` refuses a dirty tree, then removes a clean linked
+   worktree, warmed or not, without requiring a Stim registry entry. It leaves
+   no workspace directories or config entries and retains Git-created branches.
+
+The one non-real piece is the leaf hash function: the real CLI has a direct `@expo/fingerprint` dependency, while this fast suite injects a deterministic platform-scoping stub (`test/e2e/fixtures/fingerprint-stub.mjs`) through the `load` seam. Everything else -- `buildCacheKey`, `storeBuild`, `resolveBuild`, `acquireBuildLock`, the worktree CLI -- is the real library.
+
+## The native e2e
+
+There are four native suites and one shared harness
+(`test/e2e/native/harness.mjs`, which owns the fixture creation, the process
+wrappers, the cleanup checks and the diagnostics dump so all drivers build and
+tear down the same app the same way):
+
+| suite      | driver                       | proves                                                  | platforms           | when                                         |
+| ---------- | ---------------------------- | ------------------------------------------------------- | ------------------- | -------------------------------------------- |
+| **smoke**  | `run-native-e2e.mjs --smoke` | one worktree builds, launches and stops                 | iOS, Linux, Windows | `e2e-smoke`, dispatch, `Full suite` dispatch |
+| **loop**   | `run-native-e2e.mjs`         | the dev loop works end to end                           | iOS, Linux, Windows | nightly, `e2e-loop`, dispatch                |
+| **caches** | `run-cache-e2e.mjs`          | each individual cache is engaged, storing and reused    | iOS, Linux          | `e2e-caches`, dispatch                       |
+| **pool**   | `run-pool-e2e.mjs`           | iOS simulators are parked, evicted, adopted, and reaped | iOS                 | `e2e-pool`, dispatch                         |
+
+The `e2e-*` names are pull-request labels; the `e2e-all` label is loop, caches
+and pool together. See [CI](#ci) for the gate.
+
+### The loop suite
+
+`test/e2e/native/run-native-e2e.mjs` codifies `docs/field-test-protocol.md` as
+an executable. It creates a real app, runs the real `start` -> `ios|android`
+loop against a real simulator/emulator with a real compiler, and proves the
+cache actually engages on a second worktree. It is a 2x2 matrix:
+
+```
+framework in {bare, expo}   x   platform in {ios, android}
+```
+
+bare and expo are not cosmetic variants: bare hosts Metro **in-process**
+(`start` mode `bare-inproc`); expo spawns `expo start` as a **child** (mode `expo-child`) and
+prebuilds first. The driver asserts the start mode explicitly per variant --
+this is the `detectIsExpo` path a field test caught misfiring on a wrapper-less
+`app.json`. Per variant it asserts: correct start mode; a cold build produces a
+real artifact; the second worktree hits the local cache with **no compile**
+(proven from the build log, not just the JSON); and the protocol's five cleanup
+checks pass.
+
+It is **slow and occasionally flaky by nature**, so it is not run on every push.
+Run one variant by hand:
+
+```bash
+node test/e2e/native/run-native-e2e.mjs --framework bare --platform ios
+node test/e2e/native/run-native-e2e.mjs --framework expo --platform android
+# safe, no device/build: create the fixture then stop
+node test/e2e/native/run-native-e2e.mjs --framework expo --platform ios --fixture-only
+# print the plan, no side effects
+node test/e2e/native/run-native-e2e.mjs --framework bare --platform android --dry-run
+# the smoke subset: fixture, one worktree, stim start, cold build, launch, stop, cleanup
+node test/e2e/native/run-native-e2e.mjs --framework bare --platform android --smoke
+```
+
+`--smoke` stops after the first worktree has been built, launched, verified and
+stopped: no second-worktree cache proof, no named slots. CI restores the
+cross-run build cache before it, so a run whose native fingerprint matches an
+earlier loop or smoke installs from cache. Observed on the `e2e-smoke` runs of
+#905: iOS 8 to 17 minutes and Linux Android 3 to 4 minutes with the cache warm
+(the build phase was 60 to 90 seconds; the rest is fixture creation,
+`pod install` and device boot), Windows Android 13 minutes warm and 25 cold,
+of which the Gradle build was 20. A run that changes the fingerprint pays the
+cold build on every platform.
+
+The fixture-creation commands are version-sensitive; each is overridable with an
+env var (`STIM_E2E_BARE_INIT`, `STIM_E2E_EXPO_INIT`) so a runner can adjust
+them without touching assertion logic.
+
+Native runners check their environment before preparing the fixture. Android
+requires `ANDROID_HOME` or `ANDROID_SDK_ROOT` pointing to an existing SDK
+directory, even when the app has `android/local.properties`. iOS requires a
+UTF-8 locale; set `LANG=en_US.UTF-8` and `LC_ALL=en_US.UTF-8` when needed.
+Its preflight also checks CoreSimulator inventory with a five-minute deadline
+before fixture setup. This read-only check initializes the service without
+booting devices; a failure identifies the command before any app build starts.
+The cache runner performs these checks before seeding its disposable Gradle
+home. Worktree names include a digest of the run directory, so separate runs
+use different device names and do not recover a previous run's AVD by name.
+
+Generated iOS fixtures use the committed
+[`simslim-profile.json`](../test/e2e/native/simslim-profile.json) to reduce
+background services while running several simulators. Install the prerequisite
+with `brew install mobai-app/tap/simslim`; CI does this automatically. The profile
+keeps only SimSlim's ads, diagnostics and telemetry category enabled. SpringBoard,
+app installation and launch, and networking belong to no SimSlim category, so
+SimSlim never disables them. It disables every other category: widgets, Siri, search, account
+sync, App Store/push/media, PIM, web/universal links, family, health, photos,
+bundled apps, messaging, connectivity and miscellaneous services, which these
+blank-app scenarios do not exercise. Review the profile when adding
+feature-specific QA.
+Supplied `--app-dir` projects retain their own settings. Stock simulator boot
+and memory behavior require a separate run against a project without a profile.
+
+### The simulator pool suite
+
+`test/e2e/native/run-pool-e2e.mjs` runs on iOS. With a pool bound of one, it
+creates two workspace simulators, proves the first is parked and then evicted,
+proves a third workspace adopts the survivor, and finishes by proving
+`gc --delete` empties the pool. Run it by hand with:
+
+```bash
+node test/e2e/native/run-pool-e2e.mjs --framework expo
+node test/e2e/native/run-pool-e2e.mjs --framework bare --dry-run
+```
+
+### The cache suite
+
+`test/e2e/native/run-cache-e2e.mjs` is the executable replacement for the
+hand-written cache field passes. Those kept drifting in coverage: one Android
+pass never checked Gradle caching at all, a zero-config pass ran iOS-only and
+left `--build-cache` unproven, and a broken Expo Metro store shipped through green CI
+(#73) because nothing measured the directory it was supposed to be filling.
+
+**The three-part rule.** For every cache it proves three separate things, and
+refuses to take one as evidence of another:
+
+- **ENGAGED** -- the flag / setting / record is really there, read back off the
+  REAL argv or the REAL log, never re-derived from the suite's idea of what
+  Stim should have done.
+- **STORES** -- the cache directory actually GREW. A file count before and a
+  file count after. **This is the one that matters**: an engaged cache that
+  stores nothing looks identical to a working one from every other angle, and
+  that is exactly the shape of the old loader-hook bug.
+- **REUSED** -- a SECOND workspace got the stored work back.
+
+**The eight checks.**
+
+| id                  | what it proves                                                                          | how                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `zero-config`       | Stim writes no runtime state into the repo; global workspace state needs no ignore rule | `git status --porcelain` before and after; a change to `metro.config.js` / `Podfile` / `gradle.properties` is a CRITICAL failure; every worktree is removed WITHOUT `--force` and no project `.gitignore` mutation is expected                                                                                                                                                                                                                                                                                                                                                                                    |
+| `metro-store`       | the shared transform store is engaged per dev-server mode, stores, and is reused        | the `cache_store_added` record in the global workspace `logs/metro.ndjson` (Expo SDK 54+: the config adapter's confirmation from inside the child; bare: the in-process append), the absence of a "could not share" warning, one store root for both workspaces, then a file count around each workspace's build+launch                                                                                                                                                                                                                                                                                           |
+| `xcode-cas`         | Xcode compilation caching, clang always and Swift when the gate allows                  | each expected build setting found on the real `build_start` argv in `build-ios.ndjson` -- with the Swift ones expected `YES` or `NO` from the same two-part gate the product applies, `xcrun swift` 6.4+ AND the fixture's `react-native` 0.87+, and `SWIFT_OTHER_PREFIX_MAPPINGS` asserted ABSENT when Swift is off; the two `*_OTHER_PREFIX_MAPPINGS` values are matched by their `<worktree>=/^src` half only, so the DerivedData half the product appends is not checked -- plus CAS directory growth across the cold compile, and near-zero growth when a never-compiled workspace compiles the same sources |
+| `gradle-cache`      | the Gradle build cache                                                                  | `--build-cache` read off the `build_start` record in `build-android.ndjson` (added in #78 so this need not race `ps`), growth of `<gradle user home>/caches/build-cache-1`, and `FROM-CACHE` tasks in a second worktree forced to run gradle with `stim android --no-build-cache`                                                                                                                                                                                                                                                                                                                                 |
+| `fingerprint-cache` | the entry is complete and under the right key                                           | the entry holds the artifact AND `fingerprint-sources.json` (and, for an Android release entry, `assets-manifest.json`); a second run in the SAME tree must HIT what the first stored, which is what proves the entry landed under the POST-mutation key that prebuild and `pod install` shift it to                                                                                                                                                                                                                                                                                                              |
+| `pods-reuse`        | carried Pods skip `pod install`                                                         | the racing worktrees warm ignored state from the source checkout, whose installed Pods match their tracked Podfile.lock; the one that takes the BUILD path must print no `pods` phase line at all                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `single-flight`     | two workspaces racing one uncached fingerprint compile once                             | both racers point at an EMPTY build-cache root (so the fingerprint is identical to the one already stored and misses only because that root is empty, which keeps the check about the lock and nothing else) while the build lock stays shared through `STIM_HOME`; exactly one compiles, the other reports `waited ... -> installed from cache` with `waitedForBuild` in its payload                                                                                                                                                                                                                             |
+| `gc-view`           | `gc` can see every cache                                                                | a bare `gc` must list each live cache directory with a size under "Shared build caches (N) - alive, not garbage"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+
+**Honesty rules.** Every assertion prints the evidence it checked -- numbers, and
+quoted lines. A check that cannot run SKIPS with the reason spelled out ("no
+Android SDK on this runner", "compilation caching needs Xcode 26+, this runner
+reports ..."), and a skip is never a pass. A check that finishes without
+reporting a verdict is a failure. Every human line goes to stderr; **stdout
+carries exactly one line**, the machine-readable summary:
+
+```json
+{"suite":"caches","variant":"expo-ios","ok":true,"counts":{"pass":6,"skip":2,"fail":0},"checks":[...]}
+```
+
+Each `checks[]` entry carries its `id`, `status`, `reason` and the full
+`evidence` array, so a CI job can fail on one cache without a human reading the
+log.
+
+**Cache roots are forced, not inherited.** Unlike the loop suite -- which lets
+CI persist `STIM_BUILD_CACHE` across runs on purpose, and has
+`STIM_E2E_WARM_CACHE` to relax its cold-miss assertion -- the cache suite
+overrides `STIM_BUILD_CACHE` and `STIM_METRO_CACHE` into its own throwaway
+home. Every number it reports is a before/after around a COLD compile, and an
+inherited warm cache turns "the CAS gained 4,000 files" into a measurement of
+nothing.
+
+Android cache runs also own a disposable Gradle home. Cleanup runs each cached
+Gradle version's `--stop` against that home and waits for its recorded daemons
+to exit before removal. A shutdown failure fails the run and preserves its
+state for diagnosis. The same check protects cleanup of an earlier run whose
+owner has exited. Symlink homes and homes with missing ownership records or
+linked daemon registries are preserved. `--keep` retains the home without stopping its daemons.
+
+Run it by hand:
+
+```bash
+# the full suite (two cold compiles plus two cache-hit builds; 20-60 minutes)
+node test/e2e/native/run-cache-e2e.mjs --framework expo --platform ios
+node test/e2e/native/run-cache-e2e.mjs --framework bare --platform android
+
+# skip the single-flight race (saves one cold compile; that check reports SKIP)
+node test/e2e/native/run-cache-e2e.mjs --framework expo --platform ios --skip-race
+
+# warm-cache parity: use a previously built disposable source checkout with matching Pods
+node test/e2e/native/run-cache-e2e.mjs --framework expo --platform ios \
+  --app-dir /tmp/my-app-fixture --summary /tmp/cache-summary.json
+
+# print the plan, no side effects
+node test/e2e/native/run-cache-e2e.mjs --framework bare --platform ios --dry-run
+```
+
+See the [source-fixture preparation requirements](./field-test-protocol.md#use-a-fixture-that-looks-like-a-real-repo).
+
+On CI it runs on `workflow_dispatch` (**Actions -> Native E2E -> Run workflow ->
+suite: `caches`**, or `all` for loop, caches and pool) or on a pull request
+labeled `e2e-caches`. The dispatch default stays `loop`.
+
+#### What its first run found
+
+Recorded so that the contracts behind the suite are not mysterious. First full local run,
+2026-08-27, `expo-ios`, Expo SDK 57 / RN 0.86 / Xcode 26.6, 769s:
+`xcode-cas`, `fingerprint-cache`, `single-flight` and `pods-reuse` PASS,
+`gradle-cache` SKIP (iOS), and two checks exposed product bugs that are now
+fixed:
+
+- **`metro-store` (fixed)** -- the old Expo implementation intercepted Node's
+  module loader and missed Expo's vendored Metro path. Expo SDK 54+'s
+  `EXPO_OVERRIDE_METRO_CONFIG` now loads a small adapter instead, so the project
+  config is composed through an explicit config seam and no module interception
+  remains. SDK 53 and older intentionally use Expo's normal Metro cache.
+- **`gc-view` (fixed)** -- the Xcode compilation cache and Gradle build cache
+  are detected and reported with their ownership-safe cleanup policies.
+
+## CI
+
+The CI workflows under `.github/workflows/` share two composite actions under
+`.github/actions/`: `setup-stim` (pnpm and Node from the lockfile, the frozen
+install, the tsdown build) and `windows-android-sdk` (JDK 17 plus the system
+image the `windows-latest` image lacks, with platform-tools and the emulator on
+PATH).
+
+- **`ci.yml`** -- fast and **blocking** on every push to `main` and every pull request: the
+  Linux jobs only, about 3 minutes on a pull request and 8 on a push, which adds the integration tests. The
+  repository build matrix uses Node 22 and 24, runs frozen pnpm install, lint,
+  format check, ESM build, typecheck, knip, Vitest, and the cross-platform E2E.
+  A separate job builds on Node 22.18 and then runs `test/runtime-floor.mjs`
+  under exactly Node 22.12.0, the published floor, then `test/runtime-refusal.mjs`
+  under Node 18, where both built bins must refuse with `STIM_NODE_UNSUPPORTED`.
+  Repository development needs
+  Node 22.18 or later because tsdown has the higher floor. With `full` (the
+  `Full suite` passes it; so does a dispatch, which defaults to it) the
+  workflow also runs a Windows lane,
+  `test (windows)`, which repeats install, build, typecheck and a Windows smoke
+  on `windows-latest`, `native process inspection` on macOS and Windows, and a macOS lane, `test (macos)`, which runs on `macos-15` the unit
+  test files that skip or branch on darwin, which the Linux and Windows lanes
+  cannot run. `scripts/ci-darwin-unit-test-files.mjs` derives the list from
+  the test sources (`process.platform` compared with `'darwin'`, plus the
+  `/bin/zsh` and case-insensitive-filesystem gates), so a new gated file joins
+  without a workflow edit. It runs each selected file in full, with a 60 second
+  test timeout, and uploads `unit-test-timings-macos`. Like every `ci.yml` job
+  it is part of the `merge gate` poll on a pull request and does not run in the
+  merge queue.
+
+- **`full-suite.yml`** -- "Full suite": calls `ci.yml`, `desktop.yml` and
+  `mobile.yml` with `full: true`, so the macOS and Windows jobs, the Desktop
+  tests and Release compile and the mobile license check run, and, on a
+  dispatch with `native` (the default), calls `e2e-native.yml` with
+  `suite: smoke`. It runs nightly at 04:30 UTC, on a dispatch, and on a pull
+  request that carries the `ci-full` label (re-run on every push to it; an
+  unrelated label does not start it). Its `full suite` job fails when any called
+  job failed or was cancelled. A stable release requires a green dispatched run
+  with the native E2E on the release commit (RELEASE.md section 4);
+  `scripts/full-suite-gate.mjs` checks it and `release.yml` and
+  `desktop-release.yml` run it for a stable tag.
+
+- **`nightly-failures.yml`** -- "Nightly failures": when a scheduled `Full
+suite`, `Native E2E` or `Stim CI dogfood` run fails, opens an issue titled
+  `Nightly failure: <workflow>` labeled `source: nightly` with the failed jobs
+  and the run link, or comments on the open one. It never closes an issue.
+
+- **`stim-ci.yml`** -- "Stim CI dogfood": builds, launches, probes and stops
+  the mobile app on iOS (`xcode-27`) and Android (`ubuntu-latest`) and the
+  Desktop app on macOS (`macos-15`) through the `stim-ci` action, twice per job
+  to cover the warm path. It runs nightly at 09:00 UTC on `main`, on dispatch,
+  and on a pull request labeled `e2e-smoke` that changes `apps/mobile`,
+  `apps/desktop`, `packages`, `scripts/ci`, the action, the workflow or the
+  lockfile. A push to `main` does not start it, so a merge that breaks the app
+  lifecycle shows in the next nightly run; dispatch or the label runs it on
+  demand.
+  No workflow uses a larger runner, because larger runners are billed per minute
+  even on public repositories.
+
+- The release gate in RELEASE.md section 4 is the merge queue's `Merge gate`
+  plus the `test (node 22)`, `test (node 24)` and `published runtime (node
+22.12.0)` jobs of the push `CI` run on the release commit, and, for a stable
+  version, a green `Full suite` run with the native E2E.
+
+- **`desktop.yml`** -- "Desktop". On a pull request or push to `main` that
+  touches a Desktop path (not its Markdown) it runs a Linux `checks` job (the
+  token, agent-prompt and ASCII checks) and a macOS `build` job that lints the Swift
+  formatting, compiles the debug configuration with `-Xswiftc -warnings-as-errors`
+  and checks the linked SDK, about 4 minutes plus the runner queue. It has no
+  build cache: a cached SwiftPM `.build` saved at most 20 to 50 seconds, within the
+  run-to-run noise, because a fresh checkout recompiles the package's own modules
+  and a restore of the whole directory costs a minute (#5108 covers a real fix
+  through `stim-ci`). With `full` (the `Full suite`, or a dispatch) the `build` job also stages the server, runs `swift test`, compiles the
+  Release configuration and the `stim-frames` helper, starts the
+  bundled server under the hardened runtime and packages an ad-hoc release,
+  about 15 to 20 more minutes. The Release compile is also built by every
+  `Desktop next` run on `main`.
+
+- **`windows-debug.yml`** -- dispatch only: prepares a `windows-latest` runner
+  like the Android lane and holds it open behind Tailscale SSH or tmate.
+
+- **`e2e-native.yml`** -- the native matrix, every native gate in one
+  workflow. Nothing native runs on an unlabeled pull request; what runs is:
+
+  | event               | suites                                                                                              |
+  | ------------------- | --------------------------------------------------------------------------------------------------- |
+  | nightly schedule    | loop on iOS, Linux Android and Windows Android                                                      |
+  | `Full suite` call   | the smoke on iOS, Linux Android and Windows Android (a dispatch with `native`)                      |
+  | `workflow_dispatch` | the `suite` input (`smoke` \| `loop` \| `caches` \| `pool` \| `all`, default `loop`)                |
+  | pull request        | the union of its labels `e2e-smoke`, `e2e-loop`, `e2e-caches`, `e2e-pool`, `e2e-all`; none, nothing |
+
+  `all` and `e2e-all` are loop, caches and pool. Adding a label re-triggers the
+  workflow through the `labeled` event; several labels union. A `plan` job runs
+  `scripts/e2e-plan.mjs` (unit-tested in `scripts/e2e-plan.test.mjs`), which
+  turns event, labels and input into one suite list per platform, filtered by
+  what the platform supports: iOS smoke, loop, caches, pool; Linux Android
+  smoke, loop, caches; Windows Android smoke and loop. Each
+  platform job reads its list as the `suite` matrix axis and is skipped when
+  the list is empty. The
+  smoke is one framework per platform: Expo on iOS and Linux, bare on Windows.
+  The `caches` selection raises the job timeout to 120 minutes (per
+  variant it pays one more cold compile than the loop suite -- the single-flight
+  race -- plus two cache-hit builds, and on Android one forced `gradlew` run)
+  and uploads its machine-readable summary
+  as an artifact with `if: always()` -- a FAILING cache run is exactly when the
+  per-check evidence is worth reading. iOS runs on the `xcode-27` image, which
+  ships Xcode 27 and its Swift 6.4 toolchain as the only Xcode; the job selects
+  `/Applications/Xcode_27.0.app` and fails if the toolchain is below Swift 6.4.
+  Linux Android runs on a KVM host via
+  `reactivecircus/android-emulator-runner`; Windows Android runs bare on
+  `windows-latest` with a WHPX-accelerated emulator, its fixture under `D:\e`
+  to stay under the 260-character path cap. Framework and suite are matrix
+  axes, so variants run as parallel, isolated jobs. iOS and Linux Android run
+  both frameworks for loop and caches, and iOS also runs both for pool. Smoke
+  keeps one framework per platform: Expo on iOS and Linux, bare on Windows.
+  `~/.stim`'s shared build cache
+  (`STIM_BUILD_CACHE`) is persisted across runs with `actions/cache` for the
+  smoke and loop suites on every platform, so the cross-run cache path is
+  itself exercised and a smoke whose native fingerprint is unchanged installs
+  from cache. Nothing in the repository predicts the generated fixture's
+  fingerprint, so the lane restores its newest entry by key prefix, and after
+  the suite `scripts/e2e-build-cache.mjs` trims the cache to the two newest
+  fingerprints per platform and names the set in the key; a run on `main` saves
+  only when that set changed, and a pull request never saves, because GitHub
+  scopes an entry to the ref that saved it. The Android lanes also persist
+  Gradle's dependency cache and wrapper distribution (`~/.gradle/caches/modules-2`,
+  `~/.gradle/wrapper`) under a key that rotates monthly, saved from `main` by
+  the suites that build in the real Gradle home. The pnpm store is not cached
+  on any lane: a cold install from the registry measured as fast as a restored
+  store (#904). Every restore logs `Cache restored from key:` or `Cache not
+found`, and the build-cache lanes print `build cache: HIT <key>` or
+  `build cache: MISS`. Build logs (`build-*.ndjson`) are uploaded as artifacts
+  on failure.
+
+### Merge gate
+
+`merge-gate.yml` runs on every pull request with no path filter, so it exists
+even when `ci.yml`, `desktop.yml` and `mobile.yml` are skipped by their path
+filters. A pull request, the merge queue and a push to `main` start only Linux jobs and the
+Desktop debug compile, so that is all it waits for; a `ci-full` label or a dispatched
+`Full suite` on the head SHA adds the platform jobs to its wait. Its one job, `merge gate`, waits at least 75 seconds so later-starting
+workflows register, then polls (every 30 seconds, every 60 after ten minutes)
+until every other check run, workflow run and commit status on the head SHA has
+completed. It fails if any ended with a conclusion other than `success`,
+`neutral` or `skipped`, or a status of `failure` or `error`. A cancelled run
+that a newer run of the same workflow on the SHA replaced does not count. It
+times out after 90 minutes, and a run waiting for approval counts as pending. A failed API call fails the job instead of passing it. After re-running a failed workflow, re-run the
+`merge gate` job; it reads the latest results. It also re-runs on label changes
+because `e2e-*` labels start more checks. In the merge queue (`merge_group`) the
+same job instead runs the merged-result validation.
+
+A ruleset should require only `merge gate`. Requiring `test (node 22)` or any
+other path-filtered check leaves pull requests that skip it waiting forever.
+
+### Assumptions a reviewer must confirm
+
+- `xcode-27` is a GitHub **preview** image (actions/runner-images#14404). It can
+  queue longer and break sooner than a GA image, and its larger size,
+  `xcode-27-xlarge`, is billed per minute even on public repositories, so no
+  workflow uses it. The iOS lane is worth the preview risk because Swift
+  compilation caching cannot be exercised anywhere else: the `macos-26` images top out at Xcode 26.6.
+- The image's Xcode still has to suit the RN/Expo template the fixture creates,
+  and this is now the likelier failure: `xcode-27` ships only the iOS 27 SDK and
+  the iOS 27 simulator runtimes, with no older runtime to fall back to. A
+  template that does not build against, or launch on, iOS 27 fails the lane.
+- The `@react-native-community/cli` and `create-expo-app` flag surfaces in the
+  driver's `FIXTURE_COMMANDS` match the versions the runners fetch (override via
+  the env vars above if not).
+- **The iOS job pins the Expo fixture to Expo SDK 58**, through
+  `STIM_E2E_EXPO_INIT`, to exercise Swift compilation caching with
+  `react-native 0.88.0-rc.0`, above the 0.87 floor. SDK 58 is a preview
+  (`expo ~58.0.0-preview.3`), so the pin lives in that one job and neither the
+  harness default nor the Android lane moves. The default SDK 57 iOS fixture
+  enables scene support with `expo-build-properties` before prebuild so it can
+  launch on iOS 27.
+- **The iOS bare fixture pins React Native 0.88.1** through
+  `STIM_E2E_BARE_INIT`. Its tagged template includes `SceneDelegate.swift` and
+  `UIApplicationSceneManifest`, so it adopts the scene lifecycle iOS 27 requires.
+  It also clears the React Native 0.87 floor for Swift compilation caching.
+  The Android bare fixture keeps the harness default.
+- `xcode-cas` prints which half of the Swift gate decided, in its evidence and
+  its PASS message. A PASS with `Swift caching OFF` is not Swift coverage.
+- The Android job's `api-level` / `target` / `arch` have a matching system image
+  available to `android-emulator-runner`.
+- **Disk, for the `caches` suite only.** It stands up FOUR worktrees, each with
+  its own global workspace DerivedData / Gradle build dir under `STIM_HOME`, and
+  `--keep` leaves them for the artifact step. A hosted runner's free space is
+  the thing most likely to end that run early; if it does, `--skip-race` drops
+  it to two worktrees at the cost of the `single-flight` and `pods-reuse`
+  checks (both of which then report SKIP with that reason).
+
+### Android emulator recycling
+
+After `pnpm run build`, run the pool smoke test against an existing debuggable APK:
+
+```bash
+node --experimental-strip-types test/e2e/native/run-android-pool-e2e.mjs /absolute/path/app-debug.apk
+```
+
+It creates an owned emulator in a temporary Stim home, records fresh and adopted
+setup timings, seeds and clears app data, verifies an unchanged APK skips
+installation, and checks that GC deletes the parked AVD. It uses separate launch
+and cleanup processes, like the CLI. The test removes its own devices and prints
+the temporary directory containing `result.json` and emulator logs.
+
+### Sequential iOS simulator preparation
+
+When an iOS fixture declares a SimSlim profile, the loop and cache suites
+prepare their required simulator assignments one at a time before starting
+the workload. Preparation creates or reuses an owned simulator, waits for boot
+and profile reconciliation, then shuts it down through Stim. It does not start
+Metro, build the app, or populate the native artifact cache. Stock fixtures
+and Android do not take this preparation path.
+
+The iOS loop asserts that two distinct simulators, the default slot and the
+`second` slot, are booted simultaneously, and that stopping `second` leaves the
+default slot booted. The Linux Android loop adds a `third` slot and asserts three
+distinct emulators. The 3-vCPU, 7 GB `xcode-27` runner spends most of the job in
+each new simulator's first boot, so the iOS loop does not run a third simulator
+or a per-slot `--device-type` override. The CI job also turns off Spotlight
+indexing before it installs anything. The
+Windows Android loop runs one emulator at a time and skips the named-slot proof, because
+the 4-vCPU runner starves the adb server and the package verifier with two (#3086).
+Cache suites still require a cold artifact miss and race two commands against
+one empty cache. The preparation reduces overlapping first-boot work; it does
+not establish that host memory caused earlier failures or guarantee enough
+capacity for the eventual concurrent workload. Runner sizes are unchanged.
+
+If preparation or its shutdown fails, the suite preserves its temporary
+worktrees and `STIM_HOME` and prints the state location. Inspect the failure
+and use Stim with that home to clean up; do not erase ownership records while
+their simulators still exist.

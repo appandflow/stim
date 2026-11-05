@@ -1,0 +1,195 @@
+import { isJsonObject, type ProjectRecord, type StimConfig } from '@stim-cli/core/state';
+import type { AuditRecord } from './actions.ts';
+import type { BuildClientSummary, BuildMachineReport, MachineDetails } from './protocol.ts';
+
+const MACHINE_DETAILS_TTL_MS = 60_000;
+
+export type DetailsRead = { ok: true; report: Record<string, unknown> } | { ok: false; message: string };
+
+const iosDoctorRanAt = ([, record]: [string, ProjectRecord]) => Date.parse(record.doctorRuns?.ios?.at ?? '') || 0;
+
+/**
+ * Where `machine.details` reads doctor for the remote machines: null when `remote.machines` names none, else
+ * the registered workspace that still exists and ran doctor for iOS most recently, or the first one; `cwd` is null
+ * when no registered workspace exists. Doctor refuses outside a project, and judges a machine against that app.
+ */
+export function doctorWorkspace(
+  config: Pick<StimConfig, 'projects' | 'remote'> | null,
+  exists: (path: string) => boolean,
+): { cwd: string | null } | null {
+  const machines = config?.remote?.machines;
+  if (!Array.isArray(machines) || machines.length === 0) return null;
+  const candidates = Object.entries(config?.projects ?? {}).filter(([path]) => exists(path));
+  const newest = candidates.reduce<(typeof candidates)[number] | null>(
+    (best, entry) => (best === null || iosDoctorRanAt(entry) > iosDoctorRanAt(best) ? entry : best),
+    null,
+  );
+  return { cwd: newest?.[0] ?? null };
+}
+
+/** Where to run doctor, why it cannot run, or null when no remote machine is named. */
+export type DoctorTarget = { cwd: string | null } | { error: string } | null;
+
+/** The build-machines part of a `machine.details` reply, without the pending flag a stale-cache read adds. */
+type BuildMachinesResult = { buildMachines: BuildMachineReport[] | null; buildMachinesError?: string };
+
+async function runDoctor(read: (cwd: string) => Promise<DetailsRead>, cwd: string): Promise<BuildMachinesResult> {
+  const outcome = await read(cwd);
+  if (!outcome.ok) return { buildMachines: null, buildMachinesError: outcome.message };
+  const payload = outcome.report;
+  const machines = payload.remoteMachines;
+  if (!Array.isArray(machines)) {
+    return { buildMachines: null, buildMachinesError: 'This stim does not report remote machines; update it.' };
+  }
+  return {
+    buildMachines: machines.filter(
+      (entry): entry is BuildMachineReport =>
+        isJsonObject(entry) && typeof entry.machine === 'string' && typeof entry.state === 'string',
+    ),
+  };
+}
+
+/**
+ * The build-machines part of `machine.details`, refreshed with the doctor report API in the
+ * background instead of blocking the reply: doctor's offer to an unreachable machine can take about 13 seconds,
+ * and the rest of `machine.details` has nothing to do with it. `snapshot` never awaits doctor. It returns the last
+ * settled result immediately (with `buildMachinesPending: true` alongside it once that result is `ttlMs` old or
+ * older), starting at most one background read to refresh it. A changed target clears the settled result and
+ * rejects a previous target's late completion. While no result has ever settled, it returns
+ * `buildMachines: null` with `buildMachinesPending: true`. `remote.machines` naming no machine, or `doctor` being
+ * an error or an unresolved workspace, answers synchronously and never starts a run.
+ */
+export class BuildMachinesCache {
+  private settled: { result: BuildMachinesResult; at: number } | null = null;
+  private inflight: Promise<void> | null = null;
+  private workspace: string | null = null;
+  private generation = 0;
+  private readonly ttlMs: number;
+  private readonly now: () => number;
+
+  constructor(ttlMs: number = MACHINE_DETAILS_TTL_MS, now: () => number = Date.now) {
+    this.ttlMs = ttlMs;
+    this.now = now;
+  }
+
+  snapshot(
+    read: (cwd: string) => Promise<DetailsRead>,
+    doctor: DoctorTarget,
+  ): BuildMachinesResult & { buildMachinesPending?: boolean; buildMachinesAt?: string } {
+    const target = doctor && 'cwd' in doctor ? doctor.cwd : null;
+    if (this.workspace !== target) {
+      this.workspace = target;
+      this.generation++;
+      this.settled = null;
+    }
+    if (doctor === null) return { buildMachines: [] };
+    if ('error' in doctor) return { buildMachines: null, buildMachinesError: doctor.error };
+    if (doctor.cwd === null) {
+      return { buildMachines: null, buildMachinesError: 'no Stim workspace is registered to check them from' };
+    }
+    const cwd = doctor.cwd;
+    const fresh = this.settled !== null && this.now() - this.settled.at < this.ttlMs;
+    if (!fresh && !this.inflight) {
+      const generation = this.generation;
+      this.inflight = runDoctor(read, cwd).then((result) => {
+        if (this.generation === generation) this.settled = { result, at: this.now() };
+        this.inflight = null;
+        return undefined;
+      });
+    }
+    if (!this.settled) return { buildMachines: null, buildMachinesPending: true };
+    return {
+      ...this.settled.result,
+      buildMachinesAt: new Date(this.settled.at).toISOString(),
+      ...(fresh ? {} : { buildMachinesPending: true }),
+    };
+  }
+}
+
+/** The `build` audit records grouped by client, most recent client first; `today` is `now`'s local calendar day. */
+export function buildClients(records: AuditRecord[], now: number): BuildClientSummary[] {
+  const day = new Date(now).toDateString();
+  const clients = new Map<string, BuildClientSummary>();
+  for (const record of records) {
+    if (record.action !== 'build' || typeof record.device?.id !== 'string') continue;
+    const durationMs =
+      typeof record.durationMs === 'number' && record.durationMs > 0 ? Math.round(record.durationMs) : 0;
+    const entry = clients.get(record.device.id) ?? {
+      id: record.device.id,
+      name: record.device.name,
+      builds: 0,
+      failed: 0,
+      buildMs: 0,
+      today: { builds: 0, failed: 0, buildMs: 0 },
+      lastAt: record.at,
+    };
+    const failed = record.ok ? 0 : 1;
+    entry.name = record.device.name;
+    entry.builds += 1;
+    entry.failed += failed;
+    entry.buildMs += durationMs;
+    entry.lastAt = record.at;
+    if (new Date(record.at).toDateString() === day) {
+      entry.today.builds += 1;
+      entry.today.failed += failed;
+      entry.today.buildMs += durationMs;
+    }
+    clients.set(record.device.id, entry);
+  }
+  return [...clients.values()].toSorted((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt));
+}
+
+export async function loadMachineDetails(
+  readGc: () => Promise<DetailsRead>,
+  audit: () => Promise<AuditRecord[]>,
+  readStats: () => Promise<DetailsRead>,
+): Promise<Omit<MachineDetails, 'buildMachines'>> {
+  const measuredAt = new Date().toISOString();
+  const [gc, stats, records] = await Promise.all([readGc(), readStats(), audit()]);
+  return {
+    gc: gc.ok ? gc.report : null,
+    ...(gc.ok ? {} : { gcError: gc.message }),
+    stats: stats.ok ? stats.report : null,
+    ...(stats.ok ? {} : { statsError: stats.message }),
+    buildClients: buildClients(records, Date.parse(measuredAt)),
+    measuredAt,
+  };
+}
+
+/**
+ * The gc/stats part of one `machine.details` result shared by every connection: a request while a load runs joins
+ * it, and a finished load answers for `ttlMs` after it settled, so phones cannot make the machine read GC back
+ * to back. Remote machines are cached and refreshed separately by `BuildMachinesCache`, never joined into this
+ * promise, so a re-poll observes its progress instead of the gc/stats snapshot from whenever this last loaded.
+ */
+export class MachineDetailsCache {
+  private entry: { value: Promise<Omit<MachineDetails, 'buildMachines'>>; settledAt: number | null } | null = null;
+  private readonly load: () => Promise<Omit<MachineDetails, 'buildMachines'>>;
+  private readonly ttlMs: number;
+  private readonly now: () => number;
+
+  constructor(
+    load: () => Promise<Omit<MachineDetails, 'buildMachines'>>,
+    ttlMs: number = MACHINE_DETAILS_TTL_MS,
+    now: () => number = Date.now,
+  ) {
+    this.load = load;
+    this.ttlMs = ttlMs;
+    this.now = now;
+  }
+
+  get(): Promise<Omit<MachineDetails, 'buildMachines'>> {
+    const current = this.entry;
+    if (current && (current.settledAt === null || this.now() - current.settledAt < this.ttlMs)) return current.value;
+    const next: { value: Promise<Omit<MachineDetails, 'buildMachines'>>; settledAt: number | null } = {
+      value: this.load(),
+      settledAt: null,
+    };
+    const settle = () => {
+      next.settledAt = this.now();
+    };
+    next.value.then(settle, settle);
+    this.entry = next;
+    return next.value;
+  }
+}

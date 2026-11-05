@@ -1,0 +1,817 @@
+import { isScopedHome, type StimContext } from '@stim-cli/core';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
+import { isStimOwnedAvd, isStimOwnedSim } from '../../devices/device-ownership.ts';
+import { deviceSlotPlatforms, projectDeviceSlots } from '../../devices/device-slots.ts';
+import { existsSync } from 'fs';
+import { isAbsolute } from 'path';
+import chalk from 'chalk';
+import { clearDevice, getProject, withConfigLockAsync } from '../../workspace/config.ts';
+import { plural } from '../../command-output.ts';
+import { directorySizeAsync } from '../../fs-util.ts';
+import { runOperationFile } from '../../engine/operation-exec.ts';
+import { getExecutor } from '../../exec.ts';
+import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../../engine/device-lease.ts';
+import {
+  listAllIosSimsAsync,
+  listIosDeviceTypes,
+  listIosDeviceTypesAsync,
+  parseRuntimeVersion,
+  type IosSimRecord,
+} from '../../devices/ios.ts';
+import { listAvdsAsync, ownedAvdDirectory, type OrphanedAvdDirectory } from '../../devices/android.ts';
+import { dropParked, readParked, type ParkedSim } from '../../devices/sim-pool.ts';
+import {
+  eraseParkedAvd,
+  eraseParkedIosSim,
+  teardownOwnedIosSim,
+  teardownOwnedAvd,
+  teardownParkedIosSim,
+  teardownParkedAvd,
+} from '../../devices/teardown.ts';
+import type { Config } from '@stim-cli/core/state';
+import type { OrphanedDevice } from './types.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
+
+export interface StaleProjectDevice {
+  kind: 'ios' | 'android';
+  id: string;
+  name: string;
+  project: string;
+  slot?: string;
+  idleDays: number;
+  bytes?: number;
+}
+
+export interface StaleDeviceRecord {
+  kind: 'ios' | 'android';
+  id: string;
+  project: string;
+  slot?: string;
+  owned: boolean;
+}
+
+interface KeptDevice {
+  kind: 'ios' | 'android';
+  id: string;
+  name: string;
+  reason: string;
+}
+
+interface KeptLeaseFile {
+  name: string;
+  path: string;
+  reason: string;
+}
+
+export interface DeviceLeaseGarbage {
+  expired: LeaseFileEntry[];
+  kept: KeptLeaseFile[];
+}
+
+export interface ParkedSimReport {
+  udid: string;
+  name: string;
+  model: string | null;
+  runtime: string | null;
+  parkedAt: string;
+  app: string | null;
+  bytes: number | null;
+  listed: boolean | null;
+}
+
+export interface GcDeviceDependencies {
+  operation?: StimContext;
+  listAvds?: (...args: Parameters<typeof listAvdsAsync>) => string[] | Promise<string[]>;
+  avdDirectory?: typeof ownedAvdDirectory;
+  directorySize?: (...args: Parameters<typeof directorySizeAsync>) => number | Promise<number>;
+  listAllIosSims?: (...args: Parameters<typeof listAllIosSimsAsync>) => IosSimRecord[] | Promise<IosSimRecord[]>;
+  listIosDeviceTypes?: (
+    ...args: Parameters<typeof listIosDeviceTypesAsync>
+  ) => ReturnType<typeof listIosDeviceTypes> | ReturnType<typeof listIosDeviceTypesAsync>;
+  deleteParkedIosSim?: (udid: string, operation?: StimContext) => Promise<void>;
+}
+
+// simctl and emulator listings can exceed 10 seconds on loaded hosts; 30 seconds still bounds hangs.
+export const DEVICE_LIST_TIMEOUT_MS = 30000;
+const AVD_SIZE_TIMEOUT_MS = 5000;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function describeKept(ref: { path: string; mounted: boolean }): string {
+  return ref.mounted
+    ? `referenced by ${ref.path}`
+    : `referenced by ${ref.path} (volume not mounted; kept just in case)`;
+}
+
+export function findOrphanedDevices({
+  sims = [],
+  avds = [],
+  config,
+  isMounted,
+  deadProjects = [],
+}: {
+  sims?: IosSimRecord[];
+  avds?: string[];
+  config: Config | null;
+  isMounted?: (path: string) => boolean;
+  deadProjects?: string[];
+}): { orphaned: OrphanedDevice[]; kept: KeptDevice[]; unverified: UnverifiedDevice[] } {
+  const dead = new Set(deadProjects);
+  const referenced = new Map<string, { path: string; mounted: boolean }>();
+
+  for (const [path, proj] of Object.entries(config?.projects || {})) {
+    if (dead.has(path)) continue;
+    const mounted = isMounted ? isMounted(path) : true;
+    for (const { platforms } of projectDeviceSlots(proj)) {
+      const ios = platforms.ios;
+      if (ios?.deviceUdid) {
+        referenced.set(ios.deviceUdid, { path, mounted });
+      }
+      const android = platforms.android;
+      if (android?.avdName) {
+        referenced.set(android.avdName, { path, mounted });
+      }
+    }
+  }
+  for (const sim of readParked('ios', { config })) {
+    referenced.set(sim.udid, { path: 'the simulator pool', mounted: true });
+  }
+  for (const avd of readParked('android', { config })) {
+    referenced.set(avd.name, { path: 'the emulator pool', mounted: true });
+  }
+
+  const orphaned: OrphanedDevice[] = [];
+  const kept: KeptDevice[] = [];
+  const unverified: UnverifiedDevice[] = [];
+
+  for (const sim of sims) {
+    if (!sim?.name?.startsWith('stim-')) continue;
+    const ref = referenced.get(sim.udid);
+    const device = { kind: 'ios' as const, id: sim.udid, name: sim.name };
+    if (!ref && !isStimCreated(device)) {
+      unverified.push(device);
+    } else if (!ref) {
+      orphaned.push({ ...device, ...simBytes(sim) });
+    } else {
+      kept.push({ kind: 'ios', id: sim.udid, name: sim.name, reason: describeKept(ref) });
+    }
+  }
+
+  for (const avdName of avds) {
+    if (!avdName?.startsWith('stim-')) continue;
+    const ref = referenced.get(avdName);
+    const device = { kind: 'android' as const, id: avdName, name: avdName };
+    if (!ref && !isStimCreated(device)) {
+      unverified.push(device);
+    } else if (!ref) {
+      orphaned.push(device);
+    } else {
+      kept.push({ kind: 'android', id: avdName, name: avdName, reason: describeKept(ref) });
+    }
+  }
+
+  return { orphaned, kept, unverified };
+}
+
+function simBytes(sim: IosSimRecord): { bytes?: number } {
+  return typeof sim.dataPathSize === 'number' ? { bytes: sim.dataPathSize } : {};
+}
+
+export interface UnverifiedDevice {
+  kind: 'ios' | 'android';
+  id: string;
+  name: string;
+  directory?: string;
+}
+
+function isStimCreated(device: UnverifiedDevice): boolean {
+  return device.kind === 'ios' ? isStimOwnedSim({ udid: device.id, name: device.name }) : isStimOwnedAvd(device.id);
+}
+
+export interface SimulatorLaunchdFolder {
+  udid: string;
+  path: string;
+  bytes: number | null;
+}
+
+export function findSimulatorLaunchdLeftovers({
+  folders,
+  sims,
+}: {
+  folders: readonly { udid: string; path: string }[];
+  sims: readonly IosSimRecord[];
+}): { udid: string; path: string }[] {
+  const known = new Set(sims.map((sim) => sim.udid));
+  return folders.filter((folder) => !known.has(folder.udid));
+}
+
+const LAUNCHD_FOLDER_SIZE_TIMEOUT_MS = 30000;
+
+export async function sizeSimulatorLaunchdFolders(
+  folders: readonly { udid: string; path: string }[],
+  operation?: StimContext,
+): Promise<SimulatorLaunchdFolder[]> {
+  if (folders.length === 0) return [];
+  let out = '';
+  try {
+    out = await runOperationFile(operation, getExecutor(), 'du', ['-sk', ...folders.map((folder) => folder.path)], {
+      timeoutMs: LAUNCHD_FOLDER_SIZE_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+      signal: operation?.signal,
+      cwd: operation?.cwd,
+    });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    operation?.signal.throwIfAborted();
+    if (error instanceof Error && 'stdout' in error && typeof error.stdout === 'string') out = error.stdout;
+  }
+  const sizes = new Map<string, number>();
+  for (const line of out.split('\n')) {
+    const [, kilobytes, path] = /^(\d+)\s+(.+)$/.exec(line.trim()) ?? [];
+    if (kilobytes !== undefined && path !== undefined) sizes.set(path, Number(kilobytes) * 1024);
+  }
+  return folders.map((folder) => ({ ...folder, bytes: sizes.get(folder.path) ?? null }));
+}
+
+export function unverifiedDeviceCommand(device: UnverifiedDevice): string {
+  if (device.kind === 'ios') return `xcrun simctl delete ${device.id}`;
+  return device.directory
+    ? `rm -rf ${JSON.stringify(device.directory)}`
+    : `avdmanager delete avd -n ${JSON.stringify(device.id)}`;
+}
+
+export function findStaleProjectDevices({
+  config,
+  sims = [],
+  avds = [],
+  olderThanDays,
+  now = Date.now(),
+  lastTouched,
+  deadProjects = [],
+}: {
+  config: Config | null;
+  sims?: IosSimRecord[];
+  avds?: string[];
+  olderThanDays?: number;
+  now?: number;
+  lastTouched?: (path: string) => number;
+  deadProjects?: string[];
+}): StaleProjectDevice[] {
+  if (!Number.isFinite(olderThanDays) || typeof lastTouched !== 'function') return [];
+  const cutoff = now - (olderThanDays as number) * DAY_MS;
+  const dead = new Set(deadProjects);
+
+  const liveSims = new Map(sims.filter((s) => s?.name?.startsWith('stim-')).map((s) => [s.udid, s]));
+  const liveAvds = new Set(avds.filter((a) => typeof a === 'string' && a.startsWith('stim-')));
+
+  const stale: StaleProjectDevice[] = [];
+  for (const [path, proj] of Object.entries(config?.projects || {})) {
+    if (dead.has(path) || !isAbsolute(path)) continue;
+    const touched = lastTouched(path);
+    if (!Number.isFinite(touched) || touched >= cutoff) continue;
+    const idleDays = Math.floor((now - touched) / DAY_MS);
+
+    for (const { slot, platforms } of projectDeviceSlots(proj)) {
+      const ios = platforms.ios;
+      const sim = ios?.owned && ios.deviceUdid ? liveSims.get(ios.deviceUdid) : undefined;
+      if (sim) {
+        stale.push({
+          kind: 'ios',
+          id: sim.udid,
+          name: sim.name,
+          project: path,
+          ...(slot === 'default' ? {} : { slot }),
+          idleDays,
+          ...simBytes(sim),
+        });
+      }
+      const android = platforms.android;
+      if (android?.owned && android.avdName && liveAvds.has(android.avdName)) {
+        stale.push({
+          kind: 'android',
+          id: android.avdName,
+          name: android.avdName,
+          project: path,
+          idleDays,
+          ...(slot === 'default' ? {} : { slot }),
+        });
+      }
+    }
+  }
+  return stale;
+}
+
+export function findStaleDeviceRecords({
+  config,
+  sims = [],
+  avds = [],
+  deadProjects = [],
+  simsChecked = true,
+  avdsChecked = true,
+}: {
+  config: Config | null;
+  sims?: IosSimRecord[];
+  avds?: string[];
+  deadProjects?: string[];
+  simsChecked?: boolean;
+  avdsChecked?: boolean;
+}): StaleDeviceRecord[] {
+  const dead = new Set(deadProjects);
+  const liveSims = new Set(sims.map((s) => s?.udid).filter(Boolean));
+  const liveAvds = new Set(avds.filter((a) => typeof a === 'string'));
+
+  const stale: StaleDeviceRecord[] = [];
+  for (const [path, proj] of Object.entries(config?.projects || {})) {
+    if (dead.has(path)) continue;
+
+    for (const { slot, platforms } of projectDeviceSlots(proj)) {
+      const ios = platforms.ios;
+      if (simsChecked && ios?.deviceUdid && !liveSims.has(ios.deviceUdid)) {
+        stale.push({
+          kind: 'ios',
+          id: ios.deviceUdid,
+          project: path,
+          ...(slot === 'default' ? {} : { slot }),
+          owned: Boolean(ios.owned),
+        });
+      }
+      const android = platforms.android;
+      if (avdsChecked && android?.avdName && !liveAvds.has(android.avdName)) {
+        stale.push({
+          kind: 'android',
+          id: android.avdName,
+          project: path,
+          ...(slot === 'default' ? {} : { slot }),
+          owned: Boolean(android.owned),
+        });
+      }
+    }
+  }
+  return stale;
+}
+
+export interface DeadProjectOwnedDevice {
+  kind: 'ios' | 'android';
+  id: string;
+  name: string;
+  project: string;
+}
+
+export function findDeadProjectOwnedDevices({
+  config,
+  deadProjects,
+  sims,
+  avds,
+}: {
+  config: Config | null;
+  deadProjects: string[];
+  sims: { udid: string; name: string }[];
+  avds: string[];
+}): DeadProjectOwnedDevice[] {
+  const found: DeadProjectOwnedDevice[] = [];
+  for (const project of deadProjects) {
+    for (const { platforms } of projectDeviceSlots(config?.projects[project])) {
+      const ios = platforms.ios;
+      const sim =
+        ios?.owned && ios.deviceUdid
+          ? sims.find((s) => s.udid === ios.deviceUdid && s.name.startsWith('stim-'))
+          : undefined;
+      if (sim) found.push({ kind: 'ios', id: sim.udid, name: sim.name, project });
+      const android = platforms.android;
+      if (android?.owned && android.avdName?.startsWith('stim-') && avds.includes(android.avdName)) {
+        found.push({ kind: 'android', id: android.avdName, name: android.avdName, project });
+      }
+    }
+  }
+  return found;
+}
+
+export function describeDeadProjectDevices(devices: DeadProjectOwnedDevice[]): string[] {
+  return devices.map(
+    (device) =>
+      `${device.kind === 'ios' ? 'ios sim' : 'android avd'} ${device.name} is owned by the dead project ${device.project}; --delete tries to delete it with the entry`,
+  );
+}
+
+export function describeUnverifiableDevices(
+  simNames: string[] = [],
+  avdNames: string[] = [],
+  { reason = 'no Stim config found' }: { reason?: string } = {},
+): string[] {
+  const ours = [...simNames, ...avdNames].filter((n) => typeof n === 'string' && n.startsWith('stim-'));
+  if (ours.length === 0) return [`${reason}; device sweep skipped`];
+  return [
+    `${reason}, so ${ours.length} stim-created device(s) cannot be verified as orphaned: ${ours.join(', ')}`,
+    'they were NOT touched. If they are stale, delete them with `xcrun simctl delete <udid>` or `avdmanager delete avd -n <name>`',
+  ];
+}
+
+export async function withAndroidAvdSizes<
+  T extends { kind: 'ios' | 'android'; id: string; bytes?: number; orphanedDirectory?: OrphanedAvdDirectory },
+>(
+  devices: T[],
+  {
+    avdDirectory = ownedAvdDirectory,
+    size = directorySizeAsync,
+    operation,
+  }: {
+    avdDirectory?: typeof ownedAvdDirectory;
+    size?: GcDeviceDependencies['directorySize'];
+    operation?: StimContext;
+  } = {},
+): Promise<T[]> {
+  const sized: T[] = [];
+  for (const device of devices) {
+    operation?.signal.throwIfAborted();
+    if (device.kind !== 'android') {
+      sized.push(device);
+      continue;
+    }
+    const dir = device.orphanedDirectory?.directory ?? avdDirectory(device.id);
+    if (!dir) {
+      sized.push(device);
+      continue;
+    }
+    try {
+      const bytes = await size(dir, { timeoutMs: AVD_SIZE_TIMEOUT_MS, operation, signal: operation?.signal });
+      sized.push(bytes > 0 ? { ...device, bytes } : device);
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      operation?.signal.throwIfAborted();
+      sized.push(device);
+    }
+  }
+  return sized;
+}
+
+export function describeParkedSims(
+  records: readonly ParkedSim[],
+  sims: readonly IosSimRecord[],
+  deviceTypes: readonly { identifier: string; name: string }[],
+  { simsChecked = true }: { simsChecked?: boolean } = {},
+): ParkedSimReport[] {
+  const listed = new Map(sims.map((sim) => [sim.udid, sim]));
+  return records.map((record) => {
+    const sim = listed.get(record.udid);
+    return {
+      udid: record.udid,
+      name: sim?.name ?? record.name,
+      model: deviceTypes.find((d) => d.identifier === record.deviceTypeIdentifier)?.name ?? null,
+      runtime: sim ? parseRuntimeVersion(sim.runtime) : parseRuntimeVersion(record.runtimeIdentifier),
+      parkedAt: record.parkedAt,
+      app: record.bundleId ?? null,
+      bytes: typeof sim?.dataPathSize === 'number' ? sim.dataPathSize : null,
+      listed: simsChecked ? Boolean(sim) : null,
+    };
+  });
+}
+
+interface ParkedAge {
+  olderThanDays?: number | null;
+  now?: number;
+}
+
+function parkedAtLeast<T extends { parkedAt: string }>(
+  records: readonly T[],
+  { olderThanDays = null, now = Date.now() }: ParkedAge,
+): T[] {
+  if (olderThanDays === null) return [...records];
+  const cutoff = now - olderThanDays * DAY_MS;
+  return records.filter((record) => Date.parse(record.parkedAt) <= cutoff);
+}
+
+export async function collectParkedSims(deps: GcDeviceDependencies, age: ParkedAge = {}): Promise<ParkedSimReport[]> {
+  const operation = deps.operation;
+  operation?.signal.throwIfAborted();
+  const records = parkedAtLeast(readParked('ios'), age);
+  if (records.length === 0) return [];
+  let sims: IosSimRecord[];
+  let deviceTypes: { identifier: string; name: string }[] = [];
+  try {
+    sims = await (deps.listAllIosSims ?? listAllIosSimsAsync)({
+      timeoutMs: DEVICE_LIST_TIMEOUT_MS,
+      includeUnavailable: true,
+      operation,
+      signal: operation?.signal,
+    });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    operation?.signal.throwIfAborted();
+    return describeParkedSims(records, [], [], { simsChecked: false });
+  }
+  try {
+    deviceTypes = await (deps.listIosDeviceTypes ?? listIosDeviceTypesAsync)({ operation, signal: operation?.signal });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    operation?.signal.throwIfAborted();
+  }
+  return describeParkedSims(records, sims, deviceTypes);
+}
+
+export interface ParkedAvdReport {
+  name: string;
+  systemImage: string;
+  deviceProfile: string | null;
+  parkedAt: string;
+  app: string | null;
+  bytes: number | null;
+  listed: boolean | null;
+}
+
+function poolConfigurationDeviceProfile(configuration: string): string | null {
+  try {
+    const entries: unknown = JSON.parse(configuration);
+    const entry = Array.isArray(entries)
+      ? entries.find((pair) => Array.isArray(pair) && pair[0] === 'hw.device.name')
+      : undefined;
+    return typeof entry?.[1] === 'string' ? entry[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function collectParkedAvds(deps: GcDeviceDependencies, age: ParkedAge = {}): Promise<ParkedAvdReport[]> {
+  const operation = deps.operation;
+  operation?.signal.throwIfAborted();
+  const records = parkedAtLeast(readParked('android'), age);
+  if (!records.length) return [];
+  let avds: string[] | null = null;
+  try {
+    avds = await (deps.listAvds ?? listAvdsAsync)({ operation, signal: operation?.signal });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    operation?.signal.throwIfAborted();
+  }
+  const reports: ParkedAvdReport[] = [];
+  for (const record of records) {
+    operation?.signal.throwIfAborted();
+    let bytes: number | null = null;
+    try {
+      const directory = (deps.avdDirectory ?? ownedAvdDirectory)(record.name);
+      if (directory)
+        bytes = await (deps.directorySize ?? directorySizeAsync)(directory, {
+          timeoutMs: AVD_SIZE_TIMEOUT_MS,
+          operation,
+          signal: operation?.signal,
+        });
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      operation?.signal.throwIfAborted();
+    }
+    reports.push({
+      name: record.name,
+      systemImage: record.systemImage,
+      deviceProfile: poolConfigurationDeviceProfile(record.configuration),
+      parkedAt: record.parkedAt,
+      app: record.packageName ?? null,
+      bytes,
+      listed: avds === null ? null : avds.includes(record.name),
+    });
+  }
+  return reports;
+}
+
+export async function eraseParkedDevices(
+  sims: readonly ParkedSimReport[],
+  avds: readonly ParkedAvdReport[],
+  output: GcOutput = GC_OUTPUT,
+  operation?: StimContext,
+): Promise<number> {
+  let failures = 0;
+  const devices = [
+    ...sims.map((sim) => ({ platform: 'ios', id: sim.udid, name: sim.name, listed: sim.listed, bytes: sim.bytes })),
+    ...avds.map((avd) => ({ platform: 'android', id: avd.name, name: avd.name, listed: avd.listed, bytes: avd.bytes })),
+  ];
+  for (const device of devices) {
+    operation?.signal.throwIfAborted();
+    const what = `parked ${device.platform === 'ios' ? 'ios sim' : 'android emulator'} ${device.name}`;
+    if (device.listed !== true) {
+      const unverified = device.listed === null;
+      const detail = unverified
+        ? 'Stim could not list devices to verify it; it was kept. Retry stim gc --cache parked --delete.'
+        : 'it is not on this machine; stim gc --delete drops its pool record.';
+      if (unverified) failures++;
+      output.log((unverified ? chalk.red : chalk.dim)(`Did not erase ${what}: ${detail}`));
+      output.record('parkedDevice', unverified ? 'failed' : 'kept', device.name, { id: device.id, detail });
+      continue;
+    }
+    const result =
+      device.platform === 'ios'
+        ? await eraseParkedIosSim(device.id, { label: device.name, operation })
+        : await eraseParkedAvd(device.id, { operation });
+    operation?.signal.throwIfAborted();
+    if (result.status === 'torn-down') {
+      output.log(chalk.green(`Erased ${what}; it stays parked`));
+      output.record('parkedDevice', 'done', device.name, { id: device.id, bytes: device.bytes });
+    } else if (result.status === 'failed') {
+      failures++;
+      output.log(chalk.red(`Failed to erase ${what}: ${result.reason}`));
+      output.record('parkedDevice', 'failed', device.name, { id: device.id, detail: result.reason });
+    } else {
+      output.log(chalk.dim(`Skipped ${device.name}; it is no longer parked.`));
+    }
+  }
+  return failures;
+}
+
+export async function deleteParkedAvds(
+  avds: readonly ParkedAvdReport[],
+  output: GcOutput = GC_OUTPUT,
+  operation?: StimContext,
+): Promise<number> {
+  let failures = 0;
+  for (const avd of avds) {
+    operation?.signal.throwIfAborted();
+    if (avd.listed === null) {
+      failures++;
+      output.log(chalk.red(`Could not verify parked android emulator ${avd.name}; its pool record was kept.`));
+      output.record('parkedDevice', 'failed', avd.name, {
+        id: avd.name,
+        detail: 'Stim could not list emulators to verify it; its pool record was kept. Retry stim gc --delete.',
+      });
+      continue;
+    }
+    const result = await teardownParkedAvd(avd.name, { operation });
+    operation?.signal.throwIfAborted();
+    if (result.status === 'failed') {
+      failures++;
+      output.log(chalk.red(`Failed to delete parked android emulator ${avd.name}: ${result.reason}`));
+      output.record('parkedDevice', 'failed', avd.name, { id: avd.name, detail: result.reason });
+    } else if (result.status === 'torn-down') {
+      output.log(chalk.green(`Deleted parked android emulator ${avd.name}`));
+      output.record('parkedDevice', 'done', avd.name, { id: avd.name, bytes: avd.bytes });
+    } else {
+      output.log(chalk.dim(`Skipped ${avd.name}; it is no longer parked.`));
+    }
+  }
+  return failures;
+}
+
+export async function deleteParkedSims(
+  parkedSims: readonly ParkedSimReport[],
+  deps: GcDeviceDependencies = {},
+  output: GcOutput = GC_OUTPUT,
+): Promise<number> {
+  let failures = 0;
+  let emptied = 0;
+  for (const sim of parkedSims) {
+    deps.operation?.signal.throwIfAborted();
+    if (sim.listed === null) {
+      failures++;
+      output.log(chalk.red(`Could not verify parked ios sim ${sim.name} (${sim.udid}); its pool record was kept.`));
+      output.record('parkedDevice', 'failed', sim.name, {
+        id: sim.udid,
+        detail: 'Stim could not list simulators to verify it; its pool record was kept. Retry stim gc --delete.',
+      });
+      continue;
+    }
+    try {
+      const teardown = sim.listed
+        ? await teardownParkedIosSim(sim.udid, {
+            label: sim.name,
+            deleteSim: deps.deleteParkedIosSim,
+            operation: deps.operation,
+          })
+        : null;
+      const removed = sim.listed ? teardown?.status === 'torn-down' : await dropParked('ios', sim.udid, deps.operation);
+      if (!removed) {
+        if (teardown?.status === 'failed') {
+          failures++;
+          output.log(chalk.red(`Failed to delete parked ios sim ${sim.name}: ${teardown.reason}`));
+          output.record('parkedDevice', 'failed', sim.name, { id: sim.udid, detail: teardown.reason });
+        } else {
+          output.log(chalk.dim(`Skipped ${sim.name} (${sim.udid}); it is no longer parked.`));
+        }
+        continue;
+      }
+      emptied++;
+      output.record('parkedDevice', 'done', sim.name, { id: sim.udid, bytes: sim.listed ? sim.bytes : null });
+      output.log(
+        chalk.green(
+          sim.listed
+            ? `Deleted parked ios sim ${sim.name} (${sim.udid})`
+            : `Dropped the parked record for ${sim.name} (${sim.udid}); it is not on this machine.`,
+        ),
+      );
+    } catch (err) {
+      if (err instanceof WorkspaceProcessCleanupError) throw err;
+      deps.operation?.signal.throwIfAborted();
+      failures++;
+      output.log(chalk.red(`Failed to delete parked ios sim ${sim.name}: ${(err as Error)?.message || err}`));
+      output.record('parkedDevice', 'failed', sim.name, {
+        id: sim.udid,
+        detail: (err as Error)?.message || String(err),
+      });
+    }
+  }
+  if (emptied) output.log(chalk.dim(`  emptied ${plural(emptied, 'parked simulator')} from the pool`));
+  return failures;
+}
+
+export function deviceSweepIsScoped(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isScopedHome(env);
+}
+
+export function collectDeviceLeases(now: number): DeviceLeaseGarbage {
+  const expired: LeaseFileEntry[] = [];
+  const kept: KeptLeaseFile[] = [];
+  for (const entry of listLeaseFiles()) {
+    const lease = entry.lease;
+    if (!lease) {
+      kept.push({
+        name: entry.name,
+        path: entry.path,
+        reason: 'it does not parse as a lease, so no run may take that device',
+      });
+      continue;
+    }
+    if (leaseIsExpired(lease, now)) {
+      expired.push(entry);
+      continue;
+    }
+    if (!existsSync(lease.holder)) {
+      kept.push({
+        name: entry.name,
+        path: entry.path,
+        reason: `${lease.holder} is not on this machine, but the lease runs until ${lease.expiresAt}`,
+      });
+    }
+  }
+  return { expired, kept };
+}
+
+export async function deleteProjectDevices(
+  orphanedDevices: OrphanedDevice[],
+  staleDevices: StaleProjectDevice[],
+  staleDeviceRecords: StaleDeviceRecord[],
+  output: GcOutput = GC_OUTPUT,
+  operation?: StimContext,
+): Promise<number> {
+  let deleteFailures = 0;
+  async function reap(d: OrphanedDevice | StaleProjectDevice, onlyIfMissing = false) {
+    operation?.signal.throwIfAborted();
+    const r =
+      d.kind === 'ios'
+        ? await teardownOwnedIosSim(d.id, { del: true, label: d.name, operation })
+        : await teardownOwnedAvd(d.name, {
+            operation,
+            del: true,
+            onlyIfMissing,
+            ...('project' in d ? { owner: { projectPath: d.project, slot: d.slot } } : {}),
+            ...('project' in d
+              ? {
+                  onRemoved: async () => {
+                    if (await withConfigLockAsync(() => clearDevice(d.project, d.kind, d.slot, d.id)))
+                      output.log(chalk.dim(`  cleared the ${d.kind} record for ${d.project}`));
+                  },
+                }
+              : {}),
+            ...('orphanedDirectory' in d ? { orphanedDirectory: d.orphanedDirectory } : {}),
+          });
+    const what = d.kind === 'ios' ? `ios sim ${d.name} (${d.id})` : `android avd ${d.name}`;
+    const result = { id: d.id, bytes: d.bytes ?? null };
+    if (r.status === 'torn-down') {
+      output.log(chalk.green(`Deleted ${what}`));
+      output.record('device', 'done', d.name, result);
+    } else if (r.status === 'missing') {
+      output.log(chalk.dim(`${what} is already gone; nothing to delete.`));
+    } else if (r.status === 'skipped') {
+      output.log(chalk.yellow(`Skipped ${what}: ${r.reason} -- left for a later gc`));
+      output.record('device', 'kept', d.name, { ...result, detail: `${r.reason}; left for a later gc` });
+    } else {
+      deleteFailures++;
+      output.log(chalk.red(`Failed to delete ${d.kind} device ${d.name}: ${r.reason}`));
+      output.record('device', 'failed', d.name, { ...result, detail: r.reason });
+    }
+    return r.status;
+  }
+
+  for (const d of orphanedDevices) await reap(d);
+
+  for (const d of staleDevices) {
+    const status = await reap(d);
+    if (d.kind === 'ios' && (status === 'torn-down' || status === 'missing')) {
+      await withConfigLockAsync(() => clearDevice(d.project, d.kind, d.slot, d.id));
+      output.log(chalk.dim(`  cleared the ${d.kind} record for ${d.project}`));
+    }
+  }
+
+  for (const r of staleDeviceRecords) {
+    operation?.signal.throwIfAborted();
+    if (r.kind === 'android' && r.owned) {
+      await reap({ ...r, name: r.id, idleDays: 0 }, true);
+    } else {
+      const removed = await withConfigLockAsync(() => {
+        operation?.signal.throwIfAborted();
+        if (r.kind === 'android' && deviceSlotPlatforms(getProject(r.project), r.slot)?.android?.owned) return false;
+        return clearDevice(r.project, r.kind, r.slot, r.id);
+      }, operation?.signal);
+      if (removed) {
+        output.log(chalk.green(`Cleared the ${r.kind} record for ${r.project} (${r.id} is not on this machine)`));
+        output.record('deviceRecord', 'done', r.project, { id: r.id });
+      }
+    }
+  }
+
+  return deleteFailures;
+}

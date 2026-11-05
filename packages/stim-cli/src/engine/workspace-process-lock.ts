@@ -1,0 +1,119 @@
+import { join } from 'node:path';
+import type { StimContext } from '@stim-cli/core';
+import { setTimeout as delay } from 'node:timers/promises';
+import {
+  releaseClaim,
+  tryAcquireClaim,
+  claimRemoveCommand,
+  type ClaimDetails,
+  type ClaimHandle,
+  type ClaimHolder,
+} from '../ownership-claim.ts';
+import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
+
+const DEFAULT_WAIT_MS = 60_000;
+const POLL_MS = 25;
+
+export class WorkspaceProcessCleanupError extends Error {
+  readonly code = 'STIM_CLAIM_UNAVAILABLE';
+  readonly claims: readonly ClaimHandle[];
+  readonly remedy: string;
+  readonly reportResourceSettled?: () => boolean;
+  readonly cleanupSettled?: () => boolean;
+
+  constructor(claims: readonly ClaimHandle[], message: string, remedy: string, cause?: Error) {
+    super(`${message} Its ownership claims remain held at ${claims.map((claim) => claim.path).join(', ')}.`, { cause });
+    this.claims = claims;
+    this.remedy = `${remedy} After verifying no child remains, remove only these claims: ${claims.map((claim) => claimRemoveCommand(claim.path)).join('; ')}`;
+    const resourceSettled = cause && 'reportResourceSettled' in cause ? cause.reportResourceSettled : undefined;
+    if (typeof resourceSettled === 'function') this.reportResourceSettled = () => resourceSettled() === true;
+    const cleanupSettled = cause && 'cleanupSettled' in cause ? cause.cleanupSettled : undefined;
+    if (typeof cleanupSettled === 'function') this.cleanupSettled = () => cleanupSettled() === true;
+  }
+}
+
+export interface WorkspaceProcessLockOptions {
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  waitMs?: number;
+  signal?: AbortSignal;
+  ownerPurpose?: string;
+  details?: ClaimDetails;
+  /** Called on every poll while another claim holds the lock; a throw ends the wait with that error. */
+  onHeld?: (holder: ClaimHolder) => void | Promise<void>;
+  rejectOwnerPurposes?: readonly string[];
+  external?: boolean;
+  /** Record the children this operation starts through `spawnDeclared` on the lock's claim while it is held. */
+  declareSpawnsFor?: StimContext;
+}
+
+export function workspaceProcessLockError(err: unknown): 'refused' | 'timeout' | null {
+  const code = (err as Error & { code?: string })?.code;
+  if (code === 'STIM_LOCK_REFUSED') return 'refused';
+  if (code === 'STIM_LOCK_TIMEOUT') return 'timeout';
+  return null;
+}
+
+export function workspaceProcessLockPath(root: string, name: string, external: boolean): string {
+  return external ? join(root, `${name}.lock`) : join(root, '.stim', `${name}.lock`);
+}
+
+export async function withWorkspaceProcessLock<T>(
+  root: string,
+  name: string,
+  fn: (claim: ClaimHandle) => Promise<T>,
+  {
+    now = Date.now,
+    signal,
+    sleep = (ms) => delay(ms, undefined, { signal }),
+    waitMs = DEFAULT_WAIT_MS,
+    ownerPurpose,
+    details = {},
+    onHeld,
+    rejectOwnerPurposes = [],
+    external = false,
+    declareSpawnsFor,
+  }: WorkspaceProcessLockOptions = {},
+): Promise<T> {
+  const path = workspaceProcessLockPath(root, name, external);
+  const deadline = now() + waitMs;
+
+  for (;;) {
+    signal?.throwIfAborted();
+    const attempt = tryAcquireClaim({
+      root: path,
+      mode: 'exclusive',
+      label: `${name} lock`,
+      details: ownerPurpose ? { ...details, purpose: ownerPurpose } : details,
+    });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (attempt.acquired) {
+      if (declareSpawnsFor) declareSpawnsOn(declareSpawnsFor, attempt.acquired);
+      let retained = false;
+      try {
+        return await fn(attempt.acquired);
+      } catch (cause) {
+        retained = cause instanceof WorkspaceProcessCleanupError && cause.claims.includes(attempt.acquired);
+        throw cause;
+      } finally {
+        if (declareSpawnsFor) stopDeclaringSpawnsOn(declareSpawnsFor, attempt.acquired);
+        if (!retained) releaseClaim(attempt.acquired);
+      }
+    }
+
+    const holder = attempt.held ?? attempt.waitingFor?.[0];
+    const purpose = holder?.details.purpose;
+    if (typeof purpose === 'string' && rejectOwnerPurposes.includes(purpose)) {
+      const error = new Error(`The ${name} lock at ${path} is held for ${purpose}.`);
+      (error as Error & { code?: string }).code = 'STIM_LOCK_REFUSED';
+      throw error;
+    }
+    if (holder && onHeld) await onHeld(holder);
+    if (now() >= deadline) {
+      const error = new Error(`Timed out waiting for the ${name} lock at ${path}.`);
+      (error as Error & { code?: string }).code = 'STIM_LOCK_TIMEOUT';
+      throw error;
+    }
+    await sleep(POLL_MS);
+  }
+}

@@ -1,0 +1,225 @@
+import AppKit
+import StimKit
+import StimStores
+import SwiftUI
+
+/// The action set shared by the sidebar's row context menu and the workspace detail's "..." menu, built from
+/// `workspaceMenuItems(for:)` so the two never drift apart. A `nil` action closure hides that item, which
+/// covers cases `kind` alone does not decide: no editor or terminal is installed, or there is no previous
+/// run to show output for.
+struct WorkspaceActionsMenu: View {
+  var kind: ActionRowKind
+  var path: String
+  var busy: Bool
+  var removalAllowed: Bool
+  var building: Bool = false
+  var reloadAllowed: Bool = true
+  var onShowLastOutput: (() -> Void)?
+  var onRun: ((String) -> Void)?
+  var onReload: (() -> Void)?
+  var onStartDevServer: (() -> Void)?
+  var onStopDevServer: (() -> Void)?
+  var onShowLogs: (() -> Void)?
+  var onWarmWorktree: (() -> Void)?
+  var onRemoveWorktree: (() -> Void)?
+  var onStopAllLiveWorkspaces: (() -> Void)?
+  var hidden = false
+  var canHide = true
+  var hidePending = false
+  var unhideUnavailable: String?
+  var onToggleHidden: (() -> Void)?
+  @AppStorage(AppPreferences.Key.editorBundleID) private var editorID = ""
+  @AppStorage(AppPreferences.Key.terminalBundleID) private var terminalID = ""
+
+  var body: some View {
+    ForEach(Array(menuItems.enumerated()), id: \.offset) { _, item in
+      if let item {
+        button(for: item)
+      } else {
+        Divider()
+      }
+    }
+  }
+
+  private var menuItems: [WorkspaceMenuItem?] {
+    var items = workspaceMenuItems(for: kind)
+    if onToggleHidden == nil, let index = items.firstIndex(of: .toggleHidden) {
+      items.remove(at: index)
+      if index > 0, items[index - 1] == nil, index == items.count || items[index] == nil { items.remove(at: index - 1) }
+    }
+    return items
+  }
+
+  @ViewBuilder
+  private func button(for item: WorkspaceMenuItem) -> some View {
+    switch item {
+    case .openInEditor:
+      if let editor = chosenExternalApp(editorID, from: ExternalApp.editors) {
+        Button("Open in \(editor.name)", systemImage: "chevron.left.forwardslash.chevron.right") {
+          openInExternalApp(path, in: editor)
+        }
+      }
+    case .openInTerminal:
+      if let terminal = chosenExternalApp(terminalID, from: ExternalApp.terminals) {
+        Button("Open in \(terminal.name)", systemImage: "terminal") { openInExternalApp(path, in: terminal) }
+      }
+    case .revealInFinder:
+      Button("Reveal in Finder", systemImage: "folder") {
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+      }
+    case .copyPath:
+      Button("Copy Path", systemImage: "doc.on.doc") {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(path, forType: .string)
+      }
+    case .lastOutput:
+      if let onShowLastOutput {
+        Button("Last Output", systemImage: "doc.plaintext", action: onShowLastOutput)
+      }
+    case .run(let platform):
+      if let onRun {
+        Button("Run on \(platformName(platform))", systemImage: "play.fill") { onRun(platform) }
+          .disabled(busy || building)
+      }
+    case .reload:
+      if let onReload {
+        Button("Reload App", systemImage: "arrow.clockwise", action: onReload)
+          .disabled(busy || !reloadAllowed)
+      }
+    case .startDevServer:
+      if let onStartDevServer {
+        Button("Start Dev Server", systemImage: "play", action: onStartDevServer).disabled(busy)
+      }
+    case .stopDevServer:
+      if let onStopDevServer {
+        Button("Stop", systemImage: "stop.circle", action: onStopDevServer).disabled(busy)
+      }
+    case .showLogs:
+      if let onShowLogs {
+        Button("Show Logs", systemImage: "text.alignleft", action: onShowLogs)
+      }
+    case .warmWorktree:
+      if let onWarmWorktree {
+        Button("Warm Worktree", systemImage: "flame", action: onWarmWorktree).disabled(busy)
+      }
+    case .toggleHidden:
+      if let onToggleHidden {
+        Button(hidden ? "Unhide" : "Hide", systemImage: hidden ? "eye" : "eye.slash", action: onToggleHidden)
+          .disabled(hidePending || (hidden && unhideUnavailable != nil) || (!hidden && !canHide))
+          .help(hidden ? unhideUnavailable ?? "" : !canHide ? "A workspace in use cannot be hidden." : "")
+      }
+    case .removeWorktree:
+      if let onRemoveWorktree {
+        Button("Remove Worktree\u{2026}", systemImage: "trash", role: .destructive, action: onRemoveWorktree)
+          .disabled(busy || !removalAllowed)
+          .help(removalAllowed ? "" : "Stim refuses to remove a worktree with uncommitted or unpushed work.")
+      }
+    case .stopAllLiveWorkspaces:
+      if let onStopAllLiveWorkspaces {
+        Button("Stop All Active Workspaces", systemImage: "stop.circle", action: onStopAllLiveWorkspaces).disabled(busy)
+      }
+    }
+  }
+}
+
+struct WorkspaceActions<Content: View>: View {
+  var env: Workspace
+  var openLogs: (String) -> Void
+  var showsHide = true
+  var content: (WorkspaceActionsMenu) -> Content
+  @EnvironmentObject private var actions: ActionCenter
+  @State private var confirmingStop = false
+  @State private var removal: WorktreeRemoval?
+  let prefs = SidebarPreferences()
+
+  var body: some View {
+    let isHidden = prefs.hiddenWorkspaces.contains(.workspace(env))
+    content(
+      WorkspaceActionsMenu(
+        kind: .workspace(
+          metroRunning: env.metro?.running == true, platforms: env.runPlatforms,
+          linkedWorktree: env.worktree != nil),
+        path: env.path,
+        busy: actions.active(for: env.path) != nil,
+        removalAllowed: worktreeRemovalAllowed(git: env.worktree?.git),
+        building: env.build?.isRunning == true,
+        reloadAllowed: env.canReload,
+        onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
+        onRun: { platform in actions.runApp(env, platform: platform) },
+        onReload: { actions.run("Reload \(env.names.title)", steps: [StimCommand(["reload"], cwd: env.path)], present: false) },
+        onStartDevServer: {
+          actions.run("Start \(env.names.title)", steps: [StimCommand(["start"], cwd: env.path)], present: false)
+        },
+        onStopDevServer: {
+          if env.remoteDevices?.isEmpty == false {
+            confirmingStop = true
+          } else {
+            actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
+          }
+        },
+        onShowLogs: { openLogs(env.path) },
+        onRemoveWorktree: { resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) } },
+        hidden: isHidden,
+        canHide: !env.isActive && actions.active(for: env.path) == nil && actions.active(for: env.worktreeActionKey) == nil,
+        hidePending: actions.active(for: env.path) != nil || actions.active(for: env.worktreeActionKey) != nil,
+        unhideUnavailable: env.pathMissing == true && env.hidden == true
+          ? "Restore the workspace folder to change shared visibility." : nil,
+        onToggleHidden: showsHide ? { prefs.setHidden(!isHidden, apps: [env], actions: actions) } : nil)
+    )
+    .confirmationDialog("Stop This Workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
+      Button("Run stim stop", role: .destructive) {
+        actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
+      }
+    } message: {
+      Text("This also ends the workspace's billable EAS Simulator session.")
+    }
+    .confirmationDialog(
+      "Remove This Worktree?",
+      isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
+      titleVisibility: .visible,
+      presenting: removal
+    ) { _ in
+      Button("Run stim worktree remove", role: .destructive) {
+        actions.run("Remove \(env.names.title)", StimCommand(["worktree", "remove"], cwd: env.checkoutPath ?? env.path))
+      }
+    } message: { removal in
+      Text(worktreeRemovalMessage(path: env.checkoutPath ?? env.path, branch: removal.branch))
+    }
+  }
+}
+
+/// The preferred editor or terminal, or the first installed one, matching `Inspector`'s resolution.
+func chosenExternalApp(_ preferred: String, from apps: [ExternalApp]) -> ExternalApp? {
+  ExternalApp.choose(preferred, from: apps) { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil }
+}
+
+func openInExternalApp(_ path: String, in app: ExternalApp) {
+  guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.bundleID) else { return }
+  NSWorkspace.shared.open([URL(fileURLWithPath: path)], withApplicationAt: url, configuration: NSWorkspace.OpenConfiguration())
+}
+
+/// Reads the worktree's current branch off the main thread, then hands it to `set` for a removal confirmation.
+func resolveRemovalBranch(at path: String, set: @escaping (String?) -> Void) {
+  Task {
+    let branch = await Task.detached { currentBranch(at: path) }.value
+    set(branch)
+  }
+}
+
+/// The worktree branch a "Remove worktree" confirmation dialog is about to remove, resolved asynchronously.
+struct WorktreeRemoval {
+  var branch: String?
+}
+
+/// The explanation shown in a "Remove worktree" confirmation dialog, shared by the sidebar's context menu and
+/// the workspace detail's "..." menu.
+func worktreeRemovalMessage(path: String, branch: String?) -> String {
+  """
+  Worktree: \(abbreviatingHome(path))
+  Branch: \(branch ?? "none (detached HEAD)")
+
+  Stim deletes the worktree, its branch when Stim created it and nothing else uses it, \
+  its build artifacts, owned devices and Metro port. It refuses when the worktree holds \
+  uncommitted or unpushed work.
+  """
+}

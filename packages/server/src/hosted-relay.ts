@@ -1,0 +1,822 @@
+import type { ConnectionOptions } from 'node:tls';
+import { WebSocket, type ClientOptions } from 'ws';
+import {
+  clientIdentity,
+  isJsonObject,
+  machineEndpoint,
+  parseMachine,
+  readDeviceHostMachines,
+  type Endpoint,
+} from '@stim-cli/core/state';
+import {
+  initiateNoise,
+  MAX_SERVER_MESSAGE_BYTES,
+  TRANSPORT_OVERHEAD_BYTES,
+  type NoiseSocket,
+} from '@stim-cli/core/noise-session';
+import type { AuditRecord } from './actions.ts';
+import { isExtendedDeviceKey, type SessionTarget } from './control.ts';
+import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
+import { presenceKey, type PresenceHub } from './presence.ts';
+import {
+  FRAME_FPS,
+  TOUCH_PHASES,
+  VIDEO_KEYFRAME,
+  type ProtocolError,
+  type RequestId,
+  type ServerMessage,
+} from './protocol.ts';
+import { DEFAULT_VIDEO_LIMITS, rewriteVideoSubscription, videoSubscription, VideoGate } from './video.ts';
+
+const TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 20_000;
+const KEYFRAME_RETRY_MS = 400;
+const RECONNECT_FIRST_MS = 1000;
+const RECONNECT_MAX_MS = 15_000;
+const RECONNECT_WINDOW_MS = 3 * 60_000;
+const FATAL_HOST_ERRORS = new Set<string>(['forbidden', 'unauthorized', 'unknown-session', 'protocol-unsupported']);
+
+/** A host answer a retry cannot change: the approval ended, or the session is gone. */
+class FatalHostError extends Error {}
+
+const hostError = (error: ProtocolError): Error =>
+  FATAL_HOST_ERRORS.has(error.code) ? new FatalHostError(error.message) : new Error(error.message);
+
+export const CONGESTION_NOTICE_MS = 250;
+type Placement = { machine: string; session: string };
+type RelayTarget = { platform: 'ios' | 'android' | 'macos'; slot: string };
+type Reply = { result: unknown } | { error: ProtocolError };
+type Event = Record<string, unknown> | Buffer;
+
+export interface HostedRelayOptions {
+  status: () => unknown | Promise<unknown>;
+  endpoint?: (found: Endpoint) => Endpoint;
+  /** Receives each host connection's timings, and its failures with `failed`. */
+  log?: (event: string, fields: Record<string, unknown>, failed?: boolean) => void;
+}
+
+interface Route {
+  event: (event: Event) => void;
+  closed: (error: Error) => void;
+}
+
+function routeOf(message: Event): string | null {
+  if (Buffer.isBuffer(message)) {
+    const subscription = videoSubscription(message);
+    return subscription === null ? null : `s:${subscription}`;
+  }
+  if (typeof message.subscription === 'string') return `s:${message.subscription}`;
+  if (message.event === 'control-ended' && typeof message.session === 'string') return `c:${message.session}`;
+  return null;
+}
+
+export class Upstream {
+  private nextId = 1;
+  private readonly pending = new Map<number, { resolve: (reply: Reply) => void; reject: (error: Error) => void }>();
+  private readonly routes = new Map<string, Route>();
+  private held: { route: string; event: Event }[] = [];
+  private holding: NodeJS.Immediate | null = null;
+  private ended: Error | null = null;
+  private users = 0;
+  private features: string[] = [];
+  onClose: (() => void) | null = null;
+  connectMs = 0;
+  helloMs = 0;
+
+  private readonly raw: WebSocket;
+  private socket: NoiseSocket | null = null;
+  private readonly serverKey: Buffer;
+
+  /** Connects to `endpoint`, whose stim-server must prove it holds `serverKey`, the key pinned at approval. */
+  constructor(endpoint: Endpoint, serverKey: string) {
+    this.serverKey = Buffer.from(serverKey, 'base64url');
+    const options: ClientOptions & ConnectionOptions = {
+      handshakeTimeout: TIMEOUT_MS,
+      servername: endpoint.servername,
+      headers: { Host: endpoint.host },
+      maxPayload: MAX_SERVER_MESSAGE_BYTES + TRANSPORT_OVERHEAD_BYTES,
+    };
+    this.raw = new WebSocket(endpoint.url, options);
+    this.raw.on('error', (error) => this.fail(error.message));
+    this.raw.on('close', (_code, reason) =>
+      this.fail(reason.length ? `the host closed the connection: ${reason.toString()}` : 'the host connection closed'),
+    );
+  }
+
+  private receive(data: Buffer, binary: boolean): void {
+    if (this.ended) return;
+    let message: unknown;
+    if (binary) message = data;
+    else {
+      try {
+        message = JSON.parse(data.toString());
+      } catch {
+        return this.fail('the host sent invalid JSON');
+      }
+    }
+    if (isJsonObject(message) && typeof message.id === 'number') {
+      const pending = this.pending.get(message.id);
+      if (!pending) return;
+      this.pending.delete(message.id);
+      if (isJsonObject(message.error)) {
+        pending.resolve({
+          error: { code: message.error.code, message: String(message.error.message) } as ProtocolError,
+        });
+      } else if ('result' in message) pending.resolve({ result: message.result });
+      else pending.reject(new Error('the host sent an invalid reply'));
+    } else if (Buffer.isBuffer(message) || isJsonObject(message)) {
+      const route = routeOf(message);
+      if (route) this.dispatch(route, message);
+    }
+  }
+
+  /** `ws` can emit an event from the same read as the reply that names its route; it waits one turn for that route. */
+  private dispatch(route: string, event: Event): void {
+    const found = this.routes.get(route);
+    if (found) return found.event(event);
+    this.held.push({ route, event });
+    this.holding ??= setImmediate(() => {
+      this.held = [];
+      this.holding = null;
+    });
+  }
+
+  private fail(message: string): void {
+    if (this.ended) return;
+    this.ended = new Error(message);
+    const routes = [...this.routes.values()];
+    this.close();
+    for (const route of routes) route.closed(this.ended);
+  }
+
+  /** Connects, runs the handshake with this machine's client key, and says hello; the host must grant `capability`. */
+  async open(version: string, capability: 'device-host' | 'build' = 'device-host'): Promise<void> {
+    const started = Date.now();
+    await new Promise<void>((resolve, reject) => {
+      const done = (error?: Error) => {
+        clearTimeout(timer);
+        this.raw.removeListener('open', opened);
+        this.raw.removeListener('close', closed);
+        this.raw.removeListener('error', failed);
+        if (error) reject(error);
+        else resolve();
+      };
+      const opened = () => done();
+      const closed = () => done(this.ended ?? new Error('the host connection closed'));
+      const failed = () => done(this.ended ?? new Error('the host connection failed'));
+      const timer = setTimeout(() => {
+        this.fail('the host did not connect in time');
+        done(this.ended!);
+      }, TIMEOUT_MS);
+      this.raw.once('open', opened);
+      this.raw.once('close', closed);
+      this.raw.once('error', failed);
+    });
+    try {
+      this.socket = await initiateNoise(this.raw, {
+        keyPair: clientIdentity(),
+        serverKey: this.serverKey,
+        timeoutMs: TIMEOUT_MS,
+      });
+    } catch (error) {
+      this.fail((error as Error).message);
+      throw this.ended!;
+    }
+    this.socket.on('message', (data: Buffer, binary: boolean) => this.receive(data, binary));
+    this.connectMs = Date.now() - started;
+    const reply = await this.request('hello', { client: { name: 'stim-server', version }, access: capability });
+    this.helloMs = Date.now() - started - this.connectMs;
+    if ('error' in reply) throw hostError(reply.error);
+    if (
+      !isJsonObject(reply.result) ||
+      !Array.isArray(reply.result.capabilities) ||
+      !reply.result.capabilities.includes(capability)
+    ) {
+      throw new Error(`the host did not grant ${capability} access`);
+    }
+    if (Array.isArray(reply.result.features))
+      this.features = reply.result.features.filter((feature): feature is string => typeof feature === 'string');
+  }
+
+  request(method: string, params: unknown): Promise<Reply> {
+    if (this.ended) return Promise.reject(this.ended);
+    return new Promise((resolve, reject) => {
+      const id = this.nextId++;
+      const timer = setTimeout(
+        () =>
+          this.fail(
+            `the host was busy or slow: it did not answer ${method} within ${REQUEST_TIMEOUT_MS / 1000} seconds`,
+          ),
+        REQUEST_TIMEOUT_MS,
+      );
+      this.pending.set(id, {
+        resolve: (reply) => {
+          clearTimeout(timer);
+          resolve(reply);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
+      if (!this.socket) return reject(new Error('the host connection is not authenticated'));
+      this.socket.send(JSON.stringify({ id, method, params }));
+    });
+  }
+
+  route(name: string, route: Route): () => void {
+    if (this.ended) throw this.ended;
+    this.routes.set(name, route);
+    const held = this.held.filter((entry) => entry.route === name);
+    this.held = this.held.filter((entry) => entry.route !== name);
+    for (const entry of held) route.event(entry.event);
+    return () => {
+      if (this.routes.get(name) === route) this.routes.delete(name);
+    };
+  }
+
+  supports(feature: string): boolean {
+    return this.features.includes(feature);
+  }
+
+  lease(): Lease {
+    this.users++;
+    let released = false;
+    return {
+      connection: this,
+      release: () => {
+        if (released) return;
+        released = true;
+        if (--this.users === 0) this.close();
+      },
+    };
+  }
+
+  close(): void {
+    this.routes.clear();
+    this.held = [];
+    if (this.holding) clearImmediate(this.holding);
+    this.holding = null;
+    this.ended ??= new Error('the host connection closed');
+    for (const pending of this.pending.values()) pending.reject(this.ended);
+    this.pending.clear();
+    const closed = this.onClose;
+    this.onClose = null;
+    closed?.();
+    if (this.raw.readyState === WebSocket.CONNECTING) this.raw.terminate();
+    else this.raw.close();
+  }
+}
+
+interface Lease {
+  connection: Upstream;
+  release: () => void;
+}
+
+/**
+ * The client's connections to its hosts, one per host credential and pinned endpoint, shared by every local socket.
+ * Each subscription and control session holds a lease; the connection closes when the last lease is released.
+ */
+export class HostConnections {
+  private readonly open = new Map<string, { connection: Upstream; ready: Promise<void> }>();
+  private readonly options: HostedRelayOptions;
+  private readonly version: string;
+
+  constructor(options: HostedRelayOptions, version: string) {
+    this.options = options;
+    this.version = version;
+  }
+
+  /** Reads the credential on every call, then joins or opens the connection to that machine's pinned key. */
+  async acquire(host: Placement): Promise<Lease> {
+    const started = Date.now();
+    try {
+      const credential = readDeviceHostMachines().find((entry) => entry.machine === host.machine);
+      if (!credential || credential.state !== 'approved' || !credential.serverKey)
+        throw new FatalHostError('no approved device-host credential');
+      const found = machineEndpoint(
+        credential.machine,
+        parseMachine(credential.machine)?.transport === 'tailscale' ? await this.options.status() : null,
+      );
+      if (typeof found === 'string') throw new Error(found);
+      const endpoint = this.options.endpoint?.(found) ?? found;
+      const key = JSON.stringify([
+        host.machine,
+        credential.serverKey,
+        endpoint.url,
+        endpoint.servername,
+        endpoint.host,
+      ]);
+      let entry = this.open.get(key);
+      const created = !entry;
+      if (!entry) {
+        const connection = new Upstream(endpoint, credential.serverKey);
+        const opened = { connection, ready: connection.open(this.version) };
+        connection.onClose = () => {
+          if (this.open.get(key) === opened) this.open.delete(key);
+        };
+        opened.ready.catch(() => connection.close());
+        this.open.set(key, opened);
+        entry = opened;
+      }
+      const lease = entry.connection.lease();
+      try {
+        await entry.ready;
+      } catch (cause) {
+        lease.release();
+        throw cause;
+      }
+      this.options.log?.('host_connect', {
+        host: host.machine,
+        ms: Date.now() - started,
+        ...(created ? { connectMs: entry.connection.connectMs, helloMs: entry.connection.helloMs } : { reused: true }),
+      });
+      return lease;
+    } catch (cause) {
+      const reason = (cause as Error).message;
+      this.options.log?.(
+        'host_connect',
+        { host: host.machine, ms: Date.now() - started, error: reason.slice(0, 200) },
+        true,
+      );
+      throw cause instanceof FatalHostError ? new FatalHostError(reason, { cause }) : new Error(reason, { cause });
+    }
+  }
+
+  close(): void {
+    for (const { connection } of this.open.values()) connection.close();
+  }
+}
+
+export class HostedRelay {
+  private readonly frames = new Map<
+    string,
+    { lease: Lease; subscription: string; reset: () => void; stop: () => void }
+  >();
+  private readonly controls = new Map<
+    string,
+    {
+      lease: Lease;
+      hostSession: string;
+      unroute: () => void;
+      startedAt: number;
+      workspace: string;
+      device: { id: string; name: string };
+      target: RelayTarget;
+      postures: SessionTarget['postures'];
+    }
+  >();
+  private nextControl = 1;
+  private closed = false;
+
+  private readonly hosts: HostConnections;
+  private readonly send: (message: ServerMessage | Buffer) => void;
+  private readonly buffered: () => number;
+  private readonly openSubscription: (id: RequestId, result: { video?: 'h264' }) => string | null;
+  private readonly dropSubscription: (subscription: string) => void;
+  private readonly audit: (record: AuditRecord) => void;
+  /** Where this connection's own touches on a hosted device are shown, as the host's. */
+  private readonly shown: Pick<PresenceHub, 'touch' | 'leave'> | undefined;
+
+  constructor(
+    hosts: HostConnections,
+    send: (message: ServerMessage | Buffer) => void,
+    buffered: () => number,
+    openSubscription: (id: RequestId, result: { video?: 'h264' }) => string | null,
+    dropSubscription: (subscription: string) => void,
+    audit: (record: AuditRecord) => void,
+    shown?: Pick<PresenceHub, 'touch' | 'leave'>,
+  ) {
+    this.shown = shown;
+    this.hosts = hosts;
+    this.send = send;
+    this.buffered = buffered;
+    this.openSubscription = openSubscription;
+    this.dropSubscription = dropSubscription;
+    this.audit = audit;
+  }
+
+  private async connect(host: Placement): Promise<Lease> {
+    if (this.closed) throw new Error('the local connection closed');
+    const lease = await this.hosts.acquire(host);
+    if (this.closed) {
+      lease.release();
+      throw new Error('the local connection closed');
+    }
+    return lease;
+  }
+
+  private releaseAfter(lease: Lease, method: string, params: unknown): void {
+    void lease.connection
+      .request(method, params)
+      .catch(() => {})
+      .finally(lease.release);
+  }
+
+  async subscribe(
+    id: RequestId,
+    host: Placement,
+    params: Record<string, unknown>,
+    register: (id: string, stop: () => void) => void,
+    presence?: (subscription: string) => () => void,
+  ): Promise<void> {
+    let lease: Lease | undefined;
+    const platform = params.platform === 'ios' || params.platform === 'android' ? params.platform : 'macos';
+    const slot = typeof params.slot === 'string' ? params.slot : 'default';
+    const eventTarget: Partial<RelayTarget> = platform !== 'macos' ? { platform, slot } : {};
+    let upstream: string | undefined;
+    let local: string | null = null;
+    try {
+      lease = await this.connect(host);
+      let connection = lease.connection;
+      const subscribeParams = {
+        session: host.session,
+        fps: params.fps,
+        maxEdge: params.maxEdge,
+        video: params.video,
+        ...(platform === 'ios' && params.deviceFrame !== undefined ? { deviceFrame: params.deviceFrame } : {}),
+      };
+      const reply = await connection.request('device-host.frames.subscribe', subscribeParams);
+      if ('error' in reply) throw new Error(reply.error.message);
+      if (!isJsonObject(reply.result) || typeof reply.result.subscription !== 'string')
+        throw new Error('the host sent no subscription');
+      upstream = reply.result.subscription;
+      if (this.closed) throw new Error('the local connection closed');
+      local = this.openSubscription(id, reply.result.video === 'h264' ? { video: 'h264' } : {});
+      if (!local) return this.releaseAfter(lease, 'device-host.unsubscribe', { subscription: upstream });
+      const subscription = local;
+      let hostSubscription = upstream;
+      const videoMode = reply.result.video;
+      let leased = lease;
+      let reconnecting = false;
+      const gate = new VideoGate(DEFAULT_VIDEO_LIMITS.congestedBytes);
+      let askedAt = -Infinity;
+      let congestedAt = -Infinity;
+      let keyframeRetry: NodeJS.Timeout | null = null;
+      let unroute: (() => void) | null = null;
+      let stopPresence: (() => void) | undefined;
+      const delivery = new LatestFrames<Record<string, unknown> & { data: string }>(
+        Math.min(
+          (params.fps as number | undefined) ?? FRAME_FPS.default,
+          reply.result.video === 'h264' ? FRAME_FPS.video : FRAME_FPS.max,
+        ),
+        this.buffered,
+        (event) => this.send(event as unknown as ServerMessage),
+      );
+      const requestKeyframe = () => {
+        keyframeRetry = null;
+        if (!this.frames.has(subscription)) return;
+        if (this.buffered() > DEFAULT_VIDEO_LIMITS.congestedBytes) {
+          if (connection.supports('hosted-congestion') && Date.now() - congestedAt >= CONGESTION_NOTICE_MS) {
+            congestedAt = Date.now();
+            void connection.request('device-host.frames.congested', { subscription: hostSubscription }).catch(() => {});
+          }
+          keyframeRetry = setTimeout(requestKeyframe, FRAME_RETRY_MS);
+          return;
+        }
+        if (Date.now() - askedAt < KEYFRAME_RETRY_MS) return;
+        askedAt = Date.now();
+        void connection.request('device-host.frames.keyframe', { subscription: hostSubscription }).catch(() => {});
+      };
+      const end = (hostEnded: boolean) => {
+        if (!this.frames.delete(subscription)) return;
+        delivery.stop();
+        if (keyframeRetry) clearTimeout(keyframeRetry);
+        unroute?.();
+        stopPresence?.();
+        this.dropSubscription(subscription);
+        if (hostEnded) leased.release();
+        else this.releaseAfter(leased, 'device-host.unsubscribe', { subscription: hostSubscription });
+      };
+      const failed = (message: string) => {
+        if (!this.frames.has(subscription)) return;
+        this.send({
+          event: 'error',
+          subscription,
+          platform,
+          slot,
+          error: { code: 'frames-failed', message: `${host.machine}: ${message}` },
+        } as ServerMessage);
+        end(true);
+      };
+      const stop = () => end(false);
+      this.frames.set(subscription, {
+        lease,
+        subscription: hostSubscription,
+        stop,
+        reset: () => {
+          gate.reset();
+          askedAt = Date.now();
+          if (keyframeRetry) clearTimeout(keyframeRetry);
+          keyframeRetry = null;
+        },
+      });
+      register(subscription, stop);
+      stopPresence = presence?.(subscription);
+      const onEvent = (event: Event) => {
+        if (!this.frames.has(subscription)) return;
+        if (Buffer.isBuffer(event)) {
+          const packet = rewriteVideoSubscription(event, hostSubscription, subscription);
+          if (!packet) return;
+          const keyframe = (packet[1]! & VIDEO_KEYFRAME) !== 0;
+          if (gate.admit({ keyframe }, this.buffered()) === 'send') return this.send(packet);
+          if (!keyframeRetry) requestKeyframe();
+        } else if (['frame', 'frame-delayed', 'device-frame', 'macos-windows', 'error'].includes(String(event.event))) {
+          if (event.event === 'error')
+            return failed(isJsonObject(event.error) ? String(event.error.message) : 'host frames failed');
+          if (event.event === 'macos-windows')
+            return this.send({ ...event, subscription, pinned: event.pinned === true } as unknown as ServerMessage);
+          if (event.event === 'device-frame') {
+            if (platform === 'ios') this.send({ ...event, subscription, platform, slot } as unknown as ServerMessage);
+            return;
+          }
+          const forwarded = { ...event, subscription, platform, slot };
+          if (event.event === 'frame') {
+            if (typeof event.data !== 'string') return failed('the host sent an invalid JPEG frame');
+            delivery.push({ ...forwarded, data: event.data });
+          } else this.send(forwarded as unknown as ServerMessage);
+        }
+      };
+      const reconnect = async (reason: string) => {
+        if (!this.frames.has(subscription) || reconnecting) return;
+        reconnecting = true;
+        unroute = null;
+        leased.release();
+        gate.reset();
+        if (keyframeRetry) clearTimeout(keyframeRetry);
+        keyframeRetry = null;
+        const deadline = Date.now() + RECONNECT_WINDOW_MS;
+        for (let delay = RECONNECT_FIRST_MS; ; delay = Math.min(delay * 2, RECONNECT_MAX_MS)) {
+          await new Promise((resolve) => setTimeout(resolve, delay).unref());
+          if (!this.frames.has(subscription) || this.closed) return;
+          let next: Lease | undefined;
+          try {
+            next = await this.connect(host);
+            const state = await next.connection.request('device-host.attach', { session: host.session });
+            if (!this.frames.has(subscription) || this.closed) return next.release();
+            if ('error' in state) throw hostError(state.error);
+            if (isJsonObject(state.result) && state.result.state === 'stopped')
+              throw new FatalHostError('the hosted session stopped');
+            if (!isJsonObject(state.result) || state.result.state !== 'ready')
+              throw new Error('the hosted session is not ready');
+            const again = await next.connection.request('device-host.frames.subscribe', subscribeParams);
+            if ('error' in again) throw hostError(again.error);
+            if (!isJsonObject(again.result) || typeof again.result.subscription !== 'string')
+              throw new Error('the host sent no subscription');
+            if ((again.result.video === 'h264') !== (videoMode === 'h264')) {
+              this.releaseAfter(next, 'device-host.unsubscribe', { subscription: again.result.subscription });
+              throw new FatalHostError('the host streams another video format now');
+            }
+            if (!this.frames.has(subscription) || this.closed)
+              return this.releaseAfter(next, 'device-host.unsubscribe', { subscription: again.result.subscription });
+            leased = next;
+            connection = next.connection;
+            hostSubscription = again.result.subscription;
+            const entry = this.frames.get(subscription)!;
+            entry.lease = next;
+            entry.subscription = hostSubscription;
+            unroute = connection.route(`s:${hostSubscription}`, { event: onEvent, closed: onClosed });
+            reconnecting = false;
+            return;
+          } catch (cause) {
+            next?.release();
+            if (cause instanceof FatalHostError || Date.now() + delay >= deadline)
+              return failed(`${reason}; ${(cause as Error).message}`);
+          }
+        }
+      };
+      const onClosed = (error: Error) => void reconnect(error.message);
+      unroute = connection.route(`s:${hostSubscription}`, { event: onEvent, closed: onClosed });
+      if (!this.frames.has(subscription)) unroute?.();
+    } catch (cause) {
+      const message = `${host.machine}: ${(cause as Error).message}`;
+      if (local && this.frames.has(local)) {
+        this.send({ event: 'error', subscription: local, ...eventTarget, error: { code: 'frames-failed', message } });
+        this.frames.get(local)!.stop();
+        return;
+      }
+      if (lease && upstream) this.releaseAfter(lease, 'device-host.unsubscribe', { subscription: upstream });
+      else lease?.release();
+      if (local) {
+        this.dropSubscription(local);
+        this.send({ event: 'error', subscription: local, ...eventTarget, error: { code: 'frames-failed', message } });
+      } else this.send({ id, error: { code: 'frames-failed', message } });
+    }
+  }
+
+  keyframe(id: RequestId, subscription: string): boolean {
+    const frame = this.frames.get(subscription);
+    if (!frame) return false;
+    frame.reset();
+    void this.forward(id, frame.lease.connection, 'device-host.frames.keyframe', { subscription: frame.subscription });
+    return true;
+  }
+
+  async begin(
+    id: RequestId,
+    host: Placement,
+    takeOver: boolean,
+    allowed: () => boolean,
+    context: {
+      workspace: string;
+      device: { id: string; name: string };
+      platform?: 'ios' | 'android' | 'macos';
+      slot?: string;
+    },
+  ): Promise<void> {
+    let lease: Lease | undefined;
+    const target: RelayTarget = { platform: context.platform ?? 'macos', slot: context.slot ?? 'default' };
+    const eventTarget = target.platform !== 'macos' ? target : {};
+    const { workspace, device } = context;
+    let hostSession: string | undefined;
+    let opened: string | undefined;
+    const record = (outcome: { ok: boolean; error?: ProtocolError }) =>
+      this.audit({
+        at: new Date().toISOString(),
+        workspace,
+        device,
+        platform: target.platform,
+        ...(target.platform !== 'macos' ? { slot: target.slot } : {}),
+        action: 'control.begin',
+        ...outcome,
+      });
+    try {
+      lease = await this.connect(host);
+      const connection = lease.connection;
+      const reply = await connection.request('device-host.control.begin', { session: host.session, takeOver });
+      if ('error' in reply) {
+        lease.release();
+        record({ ok: false, error: reply.error });
+        return this.send({ id, error: reply.error });
+      }
+      if (!isJsonObject(reply.result) || typeof reply.result.session !== 'string')
+        throw new Error('the host sent no control session');
+      hostSession = reply.result.session;
+      if (this.closed || !allowed()) throw new Error('local control access ended');
+      const session = `h${this.nextControl++}`;
+      const postures = Array.isArray(reply.result.postures) ? (reply.result.postures as SessionTarget['postures']) : [];
+      const entry = {
+        lease,
+        hostSession,
+        unroute: () => {},
+        startedAt: Date.now(),
+        workspace,
+        device,
+        target,
+        postures,
+      };
+      this.controls.set(session, entry);
+      opened = session;
+      record({ ok: true });
+      this.send({ id, result: { ...reply.result, session } });
+      entry.unroute = connection.route(`c:${hostSession}`, {
+        event: (event) => {
+          if (this.controls.has(session) && !Buffer.isBuffer(event) && event.event === 'control-ended') {
+            this.send({ ...event, session, ...eventTarget } as unknown as ServerMessage);
+            this.endControl(session, String(event.reason), String(event.message), 'ended');
+          }
+        },
+        closed: (error) => {
+          if (!this.controls.has(session)) return;
+          const message = `${host.machine}: ${error.message}`;
+          this.send({ event: 'control-ended', session, ...eventTarget, reason: 'failed', message });
+          this.endControl(session, 'failed', message, 'ended');
+        },
+      });
+      if (!this.controls.has(session)) entry.unroute();
+    } catch (cause) {
+      const message = `${host.machine}: ${(cause as Error).message}`;
+      if (opened) {
+        this.send({ event: 'control-ended', session: opened, ...eventTarget, reason: 'failed', message });
+        return this.endControl(opened, 'failed', message, 'end');
+      }
+      if (lease && hostSession) this.releaseAfter(lease, 'device-host.control.end', { session: hostSession });
+      else lease?.release();
+      const error: ProtocolError = { code: 'action-failed', message };
+      record({ ok: false, error });
+      this.send({ id, error });
+    }
+  }
+
+  targetOf(session: string): SessionTarget | null {
+    const entry = this.controls.get(session);
+    if (!entry) return null;
+    return entry.target.platform !== 'macos'
+      ? { ...entry.target, postures: entry.postures }
+      : { platform: 'macos', postures: [] };
+  }
+
+  control(id: RequestId, method: string, params: unknown): boolean {
+    if (!isJsonObject(params) || typeof params.session !== 'string') return false;
+    const entry = this.controls.get(params.session);
+    if (!entry) return false;
+    if (method.startsWith('input.clipboard.') && !entry.lease.connection.supports('device-clipboard')) {
+      this.send({
+        id,
+        error: {
+          code: 'action-failed',
+          message: 'The Mac hosting this device cannot set or read a clipboard: update its Stim.',
+        },
+      });
+      return true;
+    }
+    if (
+      method === 'input.key' &&
+      entry.target.platform !== 'macos' &&
+      isExtendedDeviceKey(params.key, params.modifiers) &&
+      !entry.lease.connection.supports('device-keyboard')
+    ) {
+      this.send({
+        id,
+        error: {
+          code: 'action-failed',
+          message: 'The Mac hosting this device takes only the arrows and Escape as keys: update its Stim.',
+        },
+      });
+      return true;
+    }
+    if (method === 'input.touch') this.show(params.session, entry, params);
+    const response = this.forward(id, entry.lease.connection, `device-host.${method}`, {
+      ...params,
+      session: entry.hostSession,
+    });
+    if (method === 'control.end') this.endControl(params.session, null, 'The client ended the session.', response);
+    return true;
+  }
+
+  private deviceKey(entry: { workspace: string; target: RelayTarget }): string {
+    return presenceKey(entry.workspace, entry.target.platform, entry.target.slot, false);
+  }
+
+  private show(
+    session: string,
+    entry: { workspace: string; target: RelayTarget },
+    params: Record<string, unknown>,
+  ): void {
+    const { phase, x, y, x2, y2 } = params;
+    if (!this.shown || entry.target.platform === 'macos') return;
+    const shown = TOUCH_PHASES.find((each) => each === phase);
+    if (!shown || typeof x !== 'number' || typeof y !== 'number') return;
+    this.shown.touch(
+      this.deviceKey(entry),
+      { id: session, kind: 'host', name: 'Host', color: 0 },
+      {
+        phase: shown,
+        x,
+        y,
+        ...(typeof x2 === 'number' && typeof y2 === 'number' ? { second: { x: x2, y: y2 } } : {}),
+        at: Date.now(),
+      },
+    );
+  }
+
+  private endControl(
+    session: string,
+    reason: string | null,
+    message: string,
+    host: 'ended' | 'end' | Promise<void>,
+  ): void {
+    const entry = this.controls.get(session);
+    if (!entry) return;
+    this.controls.delete(session);
+    if (entry.target.platform !== 'macos') this.shown?.leave(this.deviceKey(entry), session);
+    entry.unroute();
+    this.audit({
+      at: new Date().toISOString(),
+      device: entry.device,
+      workspace: entry.workspace,
+      platform: entry.target.platform,
+      ...(entry.target.platform !== 'macos' ? { slot: entry.target.slot } : {}),
+      action: 'control.end',
+      ok: true,
+      durationMs: Date.now() - entry.startedAt,
+      reason: `${reason ?? 'ended'}: ${message}`,
+    });
+    if (host === 'ended') entry.lease.release();
+    else if (host === 'end') this.releaseAfter(entry.lease, 'device-host.control.end', { session: entry.hostSession });
+    else void host.finally(entry.lease.release);
+  }
+
+  private async forward(id: RequestId, connection: Upstream, method: string, params: unknown): Promise<void> {
+    try {
+      this.send({ id, ...(await connection.request(method, params)) } as ServerMessage);
+    } catch (cause) {
+      this.send({ id, error: { code: 'action-failed', message: (cause as Error).message } });
+    }
+  }
+
+  endControls(): void {
+    for (const [session, entry] of this.controls) {
+      const eventTarget = entry.target.platform !== 'macos' ? entry.target : {};
+      const message = 'Local control access ended.';
+      this.send({ event: 'control-ended', session, ...eventTarget, reason: 'forbidden', message });
+      this.endControl(session, 'forbidden', message, 'end');
+    }
+  }
+
+  close(): void {
+    this.closed = true;
+    for (const session of this.controls.keys()) this.endControl(session, null, 'The client disconnected.', 'end');
+    for (const frame of this.frames.values()) frame.stop();
+  }
+}

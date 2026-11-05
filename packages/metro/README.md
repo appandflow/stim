@@ -1,0 +1,73 @@
+# @stim-cli/metro
+
+Optional Metro integration for Stim. It exports a transform cache shared across
+worktrees and an NDJSON reporter for structured Metro and client logs.
+
+If Stim is not installed globally, replace `stim` with `npx stim`.
+
+```bash
+npm install --save-dev @stim-cli/metro
+```
+
+## Shared transforms
+
+Set `cacheStores` on the final merged Metro config:
+
+```js
+const { sharedCacheStores } = require('@stim-cli/metro');
+const { name } = require('./package.json');
+
+config.cacheStores = sharedCacheStores(name, { cwd: __dirname });
+```
+
+For bare React Native under Stim, this explicitly selects one shared transform
+store. Stim's automatic setup preserves Metro's default `os.tmpdir()/metro-cache`
+store; this assignment replaces it and any custom stores in `cacheStores`.
+Using the package name lets Stim recognize the shared store without adding another.
+
+Set `STIM_METRO_CACHE` to an absolute path to override the shared cache location.
+A relative value is ignored with a warning.
+
+## Optional second tier
+
+The filesystem cache above is always the first tier. When the project selects a
+cache provider, the exported store reads it after a local miss, writes provider
+hits back to the filesystem, and queues new transforms for the provider without
+blocking Metro. Provider failures are misses.
+
+```json
+{
+  "cache": {
+    "provider": "./tools/cache-provider.cjs",
+    "options": { "bucket": "mobile-cache" }
+  }
+}
+```
+
+Under `stim start` the supervisor passes the resolved selection to Metro. A
+Metro process outside Stim reads `.stim.json` only from its app working directory;
+it does not inherit a monorepo-root provider. See
+[`@stim-cli/cache`](https://www.npmjs.com/package/@stim-cli/cache) for the
+provider contract. `clear()` only clears the local tier.
+
+## Log reporter
+
+```js
+const { ndjsonReporter } = require('@stim-cli/metro');
+
+config.reporter = ndjsonReporter({ dir: '/absolute/log/directory' });
+```
+
+It writes `metro.ndjson` and `client.ndjson`. When a file reaches about 8 MiB it is
+renamed to `<name>.1`, replacing the previous one, and a new file starts.
+
+The reporter must be attached to the config passed directly to
+`Metro.runServer`. React Native and Expo CLIs can replace a reporter declared in
+`metro.config.js`.
+
+Stim supplies this integration automatically for Stim-managed servers. Direct
+configuration is optional: use it for the explicit store choice above or for
+Metro processes that run outside Stim.
+
+See the [cache package documentation](https://stim.appandflow.com/docs/cache-packages)
+for current usage and cleanup guidance.

@@ -1,0 +1,970 @@
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import type { AddressInfo } from 'node:net';
+import { WebSocketServer } from 'ws';
+import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
+import { acceptNoise, newSecret, type NoiseSocket } from '@stim-cli/core/noise-session';
+import {
+  clientIdentity,
+  deviceHostMachinesFile,
+  workspaceStateFile,
+  type Endpoint,
+  readMacosRecord,
+} from '@stim-cli/core/state';
+import { HostConnections, HostedRelay } from '../src/hosted-relay.ts';
+import { readAudit } from '../src/actions.ts';
+import { MAX_INPUT_TEXT, type ServerMessage } from '../src/protocol.ts';
+import { DEFAULT_VIDEO_LIMITS, videoPacket } from '../src/video.ts';
+import { createPairingToken, capabilitiesFor, grantDevice } from '../src/registry.ts';
+import { startServer, type RunningServer } from '../src/server.ts';
+import { noiseConnect, terminateClients } from './noise-client.ts';
+
+const HOST_SESSION = '12345678-1234-1234-1234-123456789abc';
+const CONTROL = 'c1';
+const UPSTREAM = 'host-video-subscription';
+const CLIENT = { name: 'test desktop', version: '1' };
+type Json = Record<string, unknown>;
+type Reply = { result: { subscription: string; session?: string }; error: { code: string; message: string } };
+type HostRequest = {
+  id: number;
+  method: string;
+  params: {
+    session?: string;
+    subscription?: string;
+    video?: string[];
+    text?: string;
+    access?: string;
+    client?: { name: string };
+  };
+};
+
+let root: string;
+let workspace: string;
+let server: RunningServer | undefined;
+let host: WebSocketServer;
+let hostKey: NoiseKeyPair;
+let pinnedKey: Buffer;
+let upstreams: NoiseSocket[];
+let requests: { socket: NoiseSocket; method: string; params: Json }[];
+let connections: number;
+let endpointCalls: Endpoint[];
+let credentialState: 'pending' | 'approved';
+let helloError: string | undefined;
+let helloCapabilities: string[];
+let helloFeatures: string[];
+let heldMethods: Set<string>;
+let heldReplies: (() => void)[];
+let endControlOnBegin: boolean;
+let stopped: boolean;
+let postures: string[];
+
+beforeEach(async () => {
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-hosted-relay-')));
+  process.env.STIM_HOME = join(root, 'home');
+  workspace = join(root, 'app');
+  mkdirSync(workspace);
+  mkdirSync(process.env.STIM_HOME);
+  writeFileSync(join(process.env.STIM_HOME, 'config.json'), JSON.stringify({ projects: { [workspace]: {} } }));
+  const file = workspaceStateFile(workspace);
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(
+    file,
+    JSON.stringify({
+      macos: {
+        launchId: 'launch',
+        arguments: [],
+        product: 'App',
+        bundle: '/App.app',
+        bundleId: 'com.example.app',
+        executable: 'App',
+        build: { state: 'ok', startedAt: new Date().toISOString() },
+        host: {
+          machine: 'mini',
+          session: HOST_SESSION,
+          appSlot: 1,
+          appAttempt: 'app-attempt',
+          bundleId: 'com.example.app.hosted1',
+          agent: { driver: 'none', setting: 'hosting.agentDriver' },
+        },
+      },
+    }),
+  );
+  hostKey = generateNoiseKeyPair();
+  pinnedKey = hostKey.publicKey;
+  upstreams = [];
+  requests = [];
+  connections = 0;
+  endpointCalls = [];
+  credentialState = 'approved';
+  helloError = undefined;
+  helloCapabilities = ['device-host'];
+  helloFeatures = [];
+  heldMethods = new Set();
+  heldReplies = [];
+  endControlOnBegin = false;
+  stopped = false;
+  postures = [];
+  host = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+  await new Promise<void>((resolve, reject) => {
+    host.once('listening', resolve);
+    host.once('error', reject);
+  });
+  host.on('connection', (raw) => {
+    connections++;
+    raw.once('message', async (first, isBinary) => {
+      const accepted = await acceptNoise(raw, first, isBinary, {
+        keyPair: hostKey,
+        psk: () => null,
+        timeoutMs: 5000,
+      }).catch(() => null);
+      if (!accepted) return;
+      if (!accepted.clientKey.equals(clientIdentity().publicKey)) return raw.close(4401, 'unauthorized');
+      upstreams.push(accepted.socket);
+      serveHost(accepted.socket);
+    });
+  });
+});
+
+function serveHost(socket: NoiseSocket) {
+  const subscriptions: string[] = [];
+  const controls: string[] = [];
+  socket.on('message', (data: Buffer) => {
+    const request = JSON.parse(data.toString()) as HostRequest;
+    const { id, method, params } = request;
+    requests.push({ socket, method, params });
+    const answer = (result: Json) => {
+      const send = () => socket.send(JSON.stringify({ id, result }));
+      if (heldMethods.has(method)) heldReplies.push(send);
+      else send();
+    };
+    const refuse = (message: string) => socket.send(JSON.stringify({ id, error: { code: 'forbidden', message } }));
+    if (method === 'hello') {
+      if (params.access !== 'device-host' || params.client?.name !== 'stim-server') return refuse('bad hello');
+      if (helloError) return refuse(helloError);
+      return answer({ capabilities: helloCapabilities, features: helloFeatures });
+    }
+    if (stopped && (method === 'device-host.frames.subscribe' || method === 'device-host.control.begin'))
+      return refuse('The hosted session stopped.');
+    if (method === 'device-host.attach') return answer({ state: stopped ? 'stopped' : 'ready' });
+    if (method === 'device-host.frames.subscribe') {
+      if (params.session !== HOST_SESSION) return refuse('wrong hosted session');
+      const upstream = subscriptions.length ? `${UPSTREAM}-${subscriptions.length + 1}` : UPSTREAM;
+      subscriptions.push(upstream);
+      answer({ subscription: upstream, ...(params.video?.includes('h264') ? { video: 'h264' } : {}) });
+      socket.send(JSON.stringify({ event: 'frame', subscription: 'unrelated', image: 'ignore' }));
+      socket.send(
+        JSON.stringify({
+          event: 'frame',
+          subscription: upstream,
+          platform: 'ios',
+          slot: 'host-slot',
+          data: 'anBlZw==',
+          width: 800,
+          height: 600,
+        }),
+      );
+      if (params.video?.includes('h264'))
+        socket.send(
+          videoPacket(upstream, 7, {
+            keyframe: true,
+            capturedAt: 12345,
+            width: 800,
+            height: 600,
+            data: Buffer.from([0, 0, 1, 101, 99]),
+          }),
+        );
+      return;
+    }
+    if (method === 'device-host.control.begin') {
+      if (params.session !== HOST_SESSION) return refuse('wrong hosted session');
+      const control = controls.length ? `${CONTROL}-${controls.length + 1}` : CONTROL;
+      controls.push(control);
+      answer({ session: control, lease: null, ...(postures.length ? { postures } : {}) });
+      if (endControlOnBegin)
+        socket.send(
+          JSON.stringify({
+            event: 'control-ended',
+            session: control,
+            reason: 'taken-over',
+            message: 'Another client took control.',
+          }),
+        );
+      return;
+    }
+    if (
+      method === 'device-host.frames.keyframe' ||
+      method === 'device-host.frames.congested' ||
+      method === 'device-host.unsubscribe'
+    ) {
+      if (!subscriptions.includes(params.subscription!)) return refuse('wrong subscription');
+      return answer({});
+    }
+    if (method.startsWith('device-host.input.') || method === 'device-host.control.end') {
+      if (!controls.includes(params.session!)) return refuse('wrong control id');
+      if (params.text === 'refuse') return refuse('input refused');
+      return answer({});
+    }
+    refuse('unexpected method');
+  });
+}
+
+afterEach(async () => {
+  terminateClients();
+  await server?.close();
+  server = undefined;
+  for (const socket of host.clients) socket.terminate();
+  await new Promise<void>((resolve) => host.close(() => resolve()));
+  delete process.env.STIM_HOME;
+  rmSync(root, { recursive: true, force: true });
+});
+
+function saveCredential() {
+  writeFileSync(
+    deviceHostMachinesFile(),
+    JSON.stringify({
+      version: 2,
+      machines: [
+        {
+          machine: 'mini',
+          transport: 'tailscale',
+          address: 'mini.tail.ts.net',
+          ...(credentialState === 'approved'
+            ? { deviceId: 'client', serverKey: pinnedKey.toString('base64url') }
+            : { ticket: newSecret() }),
+          state: credentialState,
+          requestedAt: new Date().toISOString(),
+        },
+      ],
+    }),
+  );
+}
+
+async function client(control = true, controlLimits?: Parameters<typeof startServer>[0]['controlLimits']) {
+  saveCredential();
+  server ??= await startServer({
+    name: 'Client machine',
+    hosts: ['127.0.0.1'],
+    port: 0,
+    localSocket: null,
+    stimCli: join(root, 'unused-stim.mjs'),
+    stimVersion: '1',
+    serverVersion: '1.2.3',
+    env: process.env,
+    tailscale: null,
+    tailscaleState: { state: 'not-running', backendState: 'Stopped' },
+    record: false,
+    controlLimits,
+    history: false,
+    frameHelper: null,
+    pullRequests: async () => new Map(),
+    hostedRelay: {
+      status: () => ({
+        BackendState: 'Running',
+        Peer: {
+          peer: {
+            ID: 'mini-node',
+            DNSName: 'mini.tail.ts.net.',
+            TailscaleIPs: ['100.64.0.8'],
+          },
+        },
+      }),
+      endpoint: (pinned) => {
+        endpointCalls.push(pinned);
+        return { ...pinned, url: `ws://127.0.0.1:${(host.address() as AddressInfo).port}` };
+      },
+    },
+  });
+  await server.ready;
+  const { socket } = await noiseConnect(`ws://127.0.0.1:${server.addresses[0]!.port}`, {
+    secret: createPairingToken(Date.now(), capabilitiesFor(control)).token,
+    name: 'Desktop',
+  });
+  const inbox: (Json | Buffer)[] = [];
+  const waiters: ((message: Json | Buffer) => void)[] = [];
+  const replies = new Map<number, (message: Reply) => void>();
+  socket.on('message', (data, binary) => {
+    const message = binary ? Buffer.from(data) : (JSON.parse(data.toString()) as Json);
+    if (!Buffer.isBuffer(message) && typeof message.id === 'number' && replies.has(message.id)) {
+      replies.get(message.id)!(message as unknown as Reply);
+      replies.delete(message.id);
+    } else {
+      const waiter = waiters.shift();
+      if (waiter) waiter(message);
+      else inbox.push(message);
+    }
+  });
+  let id = 0;
+  const request = (method: string, params?: Json) =>
+    new Promise<Reply>((resolve) => {
+      replies.set(++id, resolve);
+      socket.send(JSON.stringify({ id, method, params }));
+    });
+  const next = () =>
+    inbox.length ? Promise.resolve(inbox.shift()!) : new Promise<Json | Buffer>((resolve) => waiters.push(resolve));
+  const hello = await request('hello', { client: CLIENT });
+  expect(hello.error).toBeUndefined();
+  return {
+    socket,
+    request,
+    next,
+    inbox,
+    device: (hello as unknown as { result: { device: { id: string } } }).result.device,
+  };
+}
+
+const target = () => ({ workspace, platform: 'macos' });
+const releases = () =>
+  requests
+    .filter((request) => request.method === 'device-host.unsubscribe' || request.method === 'device-host.control.end')
+    .map(({ method, params }) => [method, params]);
+
+it('routes hosted frames and video to the local subscription and forwards keyframes', async () => {
+  const local = await client();
+  const reply = await local.request('frames.subscribe', { ...target(), fps: 12, maxEdge: 1280, video: ['h264'] });
+  expect(reply.result).toEqual({ subscription: 's1', video: 'h264' });
+  const subscription = reply.result.subscription;
+  expect(await local.next()).toMatchObject({
+    event: 'frame',
+    subscription,
+    platform: 'macos',
+    slot: 'default',
+    data: 'anBlZw==',
+  });
+  const binary = await local.next();
+  expect(Buffer.isBuffer(binary)).toBe(true);
+  const packet = binary as Buffer;
+  expect(packet.readUInt16BE(2)).toBe(21 + subscription.length);
+  expect(packet[20]).toBe(subscription.length);
+  expect(packet.toString('ascii', 21, 21 + packet[20]!)).toBe(subscription);
+  expect(packet.readUInt32BE(4)).toBe(7);
+  expect(packet.readDoubleBE(8)).toBe(12345);
+  expect(packet.readUInt16BE(16)).toBe(800);
+  expect(packet.readUInt16BE(18)).toBe(600);
+  expect(packet.subarray(21 + packet[20]!)).toEqual(Buffer.from([0, 0, 1, 101, 99]));
+  const upstream = requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket;
+  const window = { id: 7, title: 'Hosted app', frame: { x: -100, y: 0, width: 800, height: 600 } };
+  const windowsEvent = { event: 'macos-windows', current: window, windows: [window], pinned: true };
+  upstream.send(
+    JSON.stringify({ event: 'macos-windows', subscription: 'unrelated', current: null, windows: [], pinned: false }),
+  );
+  upstream.send(JSON.stringify({ ...windowsEvent, subscription: UPSTREAM }));
+  expect(await local.next()).toEqual({ ...windowsEvent, subscription });
+  expect(await local.request('frames.keyframe', { subscription })).toMatchObject({ result: {} });
+  expect(requests.find((request) => request.method === 'device-host.frames.subscribe')?.params).toEqual({
+    session: HOST_SESSION,
+    fps: 12,
+    maxEdge: 1280,
+    video: ['h264'],
+  });
+  expect(requests.find((request) => request.method === 'device-host.frames.keyframe')?.params).toEqual({
+    subscription: UPSTREAM,
+  });
+  expect(endpointCalls).toEqual([
+    { url: 'wss://100.64.0.8:7443', servername: 'mini.tail.ts.net', host: 'mini.tail.ts.net:7443' },
+  ]);
+  expect(await local.request('unsubscribe', { subscription })).toMatchObject({ result: {} });
+  await vi.waitFor(() => expect(host.clients.size).toBe(0));
+  expect(await local.request('frames.keyframe', { subscription })).toMatchObject({
+    error: { code: 'unknown-subscription' },
+  });
+});
+
+it('routes input using the host control id and closes upstream after control.end', async () => {
+  const local = await client();
+  const begun = await local.request('control.begin', { ...target(), takeOver: true });
+  expect(begun).toMatchObject({ result: { session: 'h1', lease: null } });
+  const session = begun.result.session!;
+  const inputs = [
+    ['input.touch', { phase: 'down', x: 0.25, y: 0.5 }],
+    ['input.text', { text: 'hello' }],
+    ['input.scroll', { x: 0.5, y: 0.5, deltaX: 0, deltaY: 1 }],
+    ['input.key', { key: 'return', modifiers: [] }],
+    ['input.window', { window: 7 }],
+    ['input.window', { window: null }],
+    ['input.window', { window: 0 }],
+    ['input.window', { window: 0xffffffff }],
+  ] as const;
+  for (const [method, params] of inputs) {
+    expect(await local.request(method, { session, ...params })).toMatchObject({ result: {} });
+    expect(requests.at(-1)).toMatchObject({ method: `device-host.${method}`, params: { session: CONTROL, ...params } });
+  }
+  expect(await local.request('input.text', { session, text: 'refuse' })).toMatchObject({
+    error: { code: 'forbidden', message: 'input refused' },
+  });
+  expect(await local.request('control.end', { session })).toMatchObject({ result: {} });
+  await vi.waitFor(() => expect(host.clients.size).toBe(0));
+  expect(await local.request('input.text', { session, text: 'late' })).toMatchObject({
+    error: { code: 'unknown-session' },
+  });
+  expect(requests.find((request) => request.method === 'device-host.control.begin')?.params).toEqual({
+    session: HOST_SESSION,
+    takeOver: true,
+  });
+  expect(readAudit().filter((record) => record.workspace === workspace)).toEqual([
+    expect.objectContaining({ action: 'control.begin', workspace, platform: 'macos', ok: true }),
+    expect.objectContaining({
+      action: 'control.end',
+      workspace,
+      platform: 'macos',
+      ok: true,
+      durationMs: expect.any(Number),
+      reason: 'ended: The client ended the session.',
+    }),
+  ]);
+});
+
+it('refuses a host that proves a different server key than the pinned one before saying hello', async () => {
+  pinnedKey = generateNoiseKeyPair().publicKey;
+  const local = await client();
+  const reply = await local.request('frames.subscribe', target());
+  expect(reply.error).toMatchObject({ code: 'frames-failed' });
+  expect(reply.error.message).toContain('mini');
+  expect(reply.error.message).toContain('different server key');
+  expect(connections).toBe(1);
+  expect(requests).toEqual([]);
+});
+
+it('refuses a pending credential before resolving or connecting to the host', async () => {
+  credentialState = 'pending';
+  const local = await client();
+  const reply = await local.request('frames.subscribe', target());
+  expect(reply.error).toMatchObject({ code: 'frames-failed' });
+  expect(reply.error.message).toContain('mini');
+  expect(reply.error.message).toContain('approved');
+  expect(connections).toBe(0);
+  expect(endpointCalls).toEqual([]);
+});
+
+it('subscribes again on a new host connection and keeps streaming to the same local subscription', async () => {
+  const local = await client();
+  expect(await local.request('frames.subscribe', target())).toMatchObject({ result: { subscription: 's1' } });
+  await local.next();
+  const before = connections;
+  requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket.terminate();
+  expect(await local.next()).toMatchObject({ event: 'frame', subscription: 's1' });
+  expect(connections).toBe(before + 1);
+  expect(requests.filter((request) => request.method === 'device-host.frames.subscribe')).toHaveLength(2);
+  expect(local.inbox).toEqual([]);
+});
+
+it('fails at once, without retrying, when the host refuses this machine on the new connection', async () => {
+  const local = await client();
+  expect(await local.request('frames.subscribe', target())).toMatchObject({ result: { subscription: 's1' } });
+  await local.next();
+  helloError = 'This machine lost device-host access.';
+  const before = connections;
+  requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket.terminate();
+  expect(await local.next()).toMatchObject({
+    event: 'error',
+    subscription: 's1',
+    error: { code: 'frames-failed', message: expect.stringContaining('lost device-host access') },
+  });
+  expect(connections).toBe(before + 1);
+});
+
+it('turns upstream close into one frames-failed event and drops the local subscription once the host session stopped', async () => {
+  const local = await client();
+  const reply = await local.request('frames.subscribe', target());
+  expect(reply.result).toEqual({ subscription: 's1' });
+  await local.next();
+  stopped = true;
+  requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket.terminate();
+  expect(await local.next()).toMatchObject({ event: 'error', subscription: 's1', error: { code: 'frames-failed' } });
+  expect(await local.request('unsubscribe', { subscription: 's1' })).toMatchObject({
+    error: { code: 'unknown-subscription' },
+  });
+});
+
+it('forwards control-ended and forgets the host control id', async () => {
+  const local = await client();
+  const begun = await local.request('control.begin', target());
+  const session = begun.result.session!;
+  requests
+    .find((request) => request.method === 'device-host.control.begin')!
+    .socket.send(
+      JSON.stringify({
+        event: 'control-ended',
+        session: CONTROL,
+        reason: 'taken-over',
+        message: 'Another client took control.',
+      }),
+    );
+  expect(await local.next()).toEqual({
+    event: 'control-ended',
+    session,
+    reason: 'taken-over',
+    message: 'Another client took control.',
+  });
+  expect(await local.request('input.text', { session, text: 'late' })).toMatchObject({
+    error: { code: 'unknown-session' },
+  });
+  await vi.waitFor(() => expect(host.clients.size).toBe(0));
+});
+
+it('checks local control permission before opening an upstream control connection', async () => {
+  const local = await client(false);
+  expect(await local.request('control.begin', target())).toMatchObject({ error: { code: 'forbidden' } });
+  expect(connections).toBe(0);
+});
+
+it('ends its host subscription and control session and closes the shared connection when the local socket closes', async () => {
+  const local = await client();
+  await local.request('frames.subscribe', target());
+  await local.request('control.begin', target());
+  expect(host.clients.size).toBe(1);
+  local.socket.close();
+  await vi.waitFor(() => expect(host.clients.size).toBe(0));
+  expect(releases()).toEqual([
+    ['device-host.control.end', { session: CONTROL }],
+    ['device-host.unsubscribe', { subscription: UPSTREAM }],
+  ]);
+});
+
+it('relays a viewer and a control session over one host connection until the last one ends', async () => {
+  const local = await client();
+  const subscription = (await local.request('frames.subscribe', target())).result.subscription;
+  await local.next();
+  const session = (await local.request('control.begin', target())).result.session!;
+  expect(connections).toBe(1);
+  expect(await local.request('unsubscribe', { subscription })).toMatchObject({ result: {} });
+  await vi.waitFor(() => expect(releases()).toEqual([['device-host.unsubscribe', { subscription: UPSTREAM }]]));
+  expect(host.clients.size).toBe(1);
+  expect(await local.request('input.text', { session, text: 'still here' })).toMatchObject({ result: {} });
+  expect(await local.request('control.end', { session })).toMatchObject({ result: {} });
+  await vi.waitFor(() => expect(host.clients.size).toBe(0));
+});
+
+it('shares one host connection between local clients and keeps one client streaming when another leaves', async () => {
+  const desktop = await client();
+  const phone = await client();
+  await desktop.request('frames.subscribe', target());
+  await desktop.next();
+  await desktop.request('control.begin', target());
+  const phoneSubscription = (await phone.request('frames.subscribe', { ...target(), video: ['h264'] })).result
+    .subscription;
+  expect(await phone.next()).toMatchObject({ event: 'frame', subscription: phoneSubscription });
+  const video = (await phone.next()) as Buffer;
+  expect(video.toString('ascii', 21, 21 + video[20]!)).toBe(phoneSubscription);
+  expect(connections).toBe(1);
+  const upstream = upstreams[0]!;
+  desktop.socket.close();
+  await vi.waitFor(() =>
+    expect(releases()).toEqual([
+      ['device-host.control.end', { session: CONTROL }],
+      ['device-host.unsubscribe', { subscription: UPSTREAM }],
+    ]),
+  );
+  upstream.send(
+    JSON.stringify({ event: 'frame-delayed', subscription: `${UPSTREAM}-2`, delayed: true, reason: 'still live' }),
+  );
+  expect(await phone.next()).toMatchObject({ event: 'frame-delayed', subscription: phoneSubscription });
+  expect(host.clients.size).toBe(1);
+});
+
+it('opens one host connection for requests that arrive while the first is still saying hello', async () => {
+  heldMethods.add('hello');
+  const local = await client();
+  const subscribing = local.request('frames.subscribe', target());
+  const beginning = local.request('control.begin', target());
+  await vi.waitFor(() => expect(heldReplies).toHaveLength(1));
+  heldMethods.clear();
+  heldReplies.splice(0).forEach((send) => send());
+  expect((await subscribing).result.subscription).toBe('s1');
+  expect((await beginning).result.session).toBe('h1');
+  expect(connections).toBe(1);
+});
+
+it('fails every relayed subscription and control session once when the shared connection drops', async () => {
+  const local = await client();
+  const first = (await local.request('frames.subscribe', target())).result.subscription;
+  await local.next();
+  const second = (await local.request('frames.subscribe', target())).result.subscription;
+  await local.next();
+  const session = (await local.request('control.begin', target())).result.session!;
+  stopped = true;
+  [...host.clients][0]!.terminate();
+  const events = [await local.next(), await local.next(), await local.next()];
+  expect(events).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        event: 'error',
+        subscription: first,
+        error: expect.objectContaining({ code: 'frames-failed' }),
+      }),
+      expect.objectContaining({
+        event: 'error',
+        subscription: second,
+        error: expect.objectContaining({ code: 'frames-failed' }),
+      }),
+      expect.objectContaining({ event: 'control-ended', session, reason: 'failed' }),
+    ]),
+  );
+  expect(await local.request('frames.keyframe', { subscription: first })).toMatchObject({
+    error: { code: 'unknown-subscription' },
+  });
+  expect(local.inbox).toEqual([]);
+});
+
+it('forwards a control-ended that arrives right behind the control.begin reply', async () => {
+  endControlOnBegin = true;
+  const local = await client();
+  const begun = await local.request('control.begin', target());
+  expect(await local.next()).toEqual({
+    event: 'control-ended',
+    session: begun.result.session,
+    reason: 'taken-over',
+    message: 'Another client took control.',
+  });
+  await vi.waitFor(() => expect(host.clients.size).toBe(0));
+});
+
+it('returns the host refusal of hello as frames-failed and closes the host connection', async () => {
+  helloError = 'access refused';
+  const local = await client();
+  const reply = await local.request('frames.subscribe', target());
+  expect(reply.error).toMatchObject({ code: 'frames-failed' });
+  expect(reply.error.message).toContain('mini');
+  expect(reply.error.message).toContain('access refused');
+  await vi.waitFor(() => expect(host.clients.size).toBe(0));
+});
+
+it('refuses a host that grants no device-host capability before subscribing', async () => {
+  helloCapabilities = ['read', 'control'];
+  const local = await client();
+  const reply = await local.request('frames.subscribe', target());
+  expect(reply.error).toMatchObject({ code: 'frames-failed' });
+  expect(reply.error.message).toContain('device-host');
+  expect(requests.map((request) => request.method)).toEqual(['hello']);
+  await vi.waitFor(() => expect(host.clients.size).toBe(0));
+});
+
+it('maps delayed and error events to the local target and drops failed capture', async () => {
+  const local = await client();
+  const reply = await local.request('frames.subscribe', target());
+  const subscription = reply.result.subscription;
+  await local.next();
+  const upstream = requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket;
+  upstream.send(
+    JSON.stringify({ event: 'frame-delayed', subscription: UPSTREAM, delayed: true, reason: 'window hidden' }),
+  );
+  expect(await local.next()).toMatchObject({
+    event: 'frame-delayed',
+    subscription,
+    platform: 'macos',
+    slot: 'default',
+    delayed: true,
+    reason: 'window hidden',
+  });
+  upstream.send(
+    JSON.stringify({
+      event: 'error',
+      subscription: UPSTREAM,
+      error: { code: 'frames-failed', message: 'capture failed' },
+    }),
+  );
+  expect(await local.next()).toMatchObject({
+    event: 'error',
+    subscription,
+    platform: 'macos',
+    slot: 'default',
+    error: { code: 'frames-failed' },
+  });
+  expect(await local.request('unsubscribe', { subscription })).toMatchObject({
+    error: { code: 'unknown-subscription' },
+  });
+  await vi.waitFor(() => expect(host.clients.size).toBe(0));
+});
+
+it('keeps the request queue available while subscribe, keyframe, input and end replies are stalled', async () => {
+  const local = await client();
+  heldMethods.add('device-host.frames.subscribe');
+  const subscribing = local.request('frames.subscribe', { ...target(), video: ['h264'] });
+  await vi.waitFor(() => expect(heldReplies).toHaveLength(1));
+  expect(await local.request('frames.keyframe', { subscription: 'missing' })).toMatchObject({
+    error: { code: 'unknown-subscription' },
+  });
+  heldReplies.splice(0).forEach((send) => send());
+  const subscription = (await subscribing).result.subscription;
+  heldMethods.delete('device-host.frames.subscribe');
+  const session = (await local.request('control.begin', target())).result.session!;
+  heldMethods = new Set(['device-host.frames.keyframe', 'device-host.input.text', 'device-host.control.end']);
+  const keyframe = local.request('frames.keyframe', { subscription });
+  const input = local.request('input.text', { session, text: 'hello' });
+  const end = local.request('control.end', { session });
+  await vi.waitFor(() => expect(heldReplies).toHaveLength(3));
+  expect(await local.request('frames.keyframe', { subscription: 'missing' })).toMatchObject({
+    error: { code: 'unknown-subscription' },
+  });
+  expect(
+    requests
+      .filter(
+        (request) => request.method.startsWith('device-host.input.') || request.method === 'device-host.control.end',
+      )
+      .map((request) => request.method),
+  ).toEqual(['device-host.input.text', 'device-host.control.end']);
+  heldReplies.splice(0).forEach((send) => send());
+  expect(await keyframe).toMatchObject({ result: {} });
+  expect(await input).toMatchObject({ result: {} });
+  expect(await end).toMatchObject({ result: {} });
+});
+
+it('validates hosted macOS input and applies the connection input budget', async () => {
+  const local = await client(true, { inputPerSecond: 1 });
+  const session = (await local.request('control.begin', target())).result.session!;
+  for (const [method, params] of [
+    ['input.touch', { phase: 'down', x: 2, y: 0 }],
+    ['input.text', { text: '' }],
+    ['input.scroll', { x: 0, y: 0, deltaX: 2000, deltaY: 0 }],
+    ['input.key', { key: 'unknown' }],
+    ['input.window', { window: -1 }],
+    ['input.window', { window: 0x100000000 }],
+    ['input.window', { window: 1.5 }],
+    ['input.window', { window: '7' }],
+    ['input.window', {}],
+    ['input.button', { button: 'home' }],
+  ] as const) {
+    expect(await local.request(method, { session, ...params })).toMatchObject({ error: { code: 'bad-request' } });
+  }
+  expect(requests.filter((request) => request.method.startsWith('device-host.input.'))).toEqual([]);
+  expect(await local.request('input.window', { session, window: 7 })).toMatchObject({ result: {} });
+  expect(await local.request('input.window', { session, window: null })).toMatchObject({
+    error: { code: 'limit-exceeded' },
+  });
+  expect(requests.filter((request) => request.method === 'device-host.input.window')).toHaveLength(1);
+});
+
+it('applies the local text character budget before forwarding hosted input', async () => {
+  const local = await client(true, { textCharsPerSecond: 1 });
+  const session = (await local.request('control.begin', target())).result.session!;
+  expect(await local.request('input.text', { session, text: 'x'.repeat(MAX_INPUT_TEXT) })).toMatchObject({
+    result: {},
+  });
+  expect(await local.request('input.text', { session, text: 'blocked' })).toMatchObject({
+    error: { code: 'limit-exceeded' },
+  });
+  expect(requests.filter((request) => request.method === 'device-host.input.text')).toHaveLength(1);
+});
+
+it('ends relayed controls on local revocation and records their local target', async () => {
+  const local = await client();
+  const session = (await local.request('control.begin', target())).result.session!;
+  grantDevice(local.device.id, ['read']);
+  expect(await local.next()).toMatchObject({ event: 'control-ended', session, reason: 'forbidden' });
+  await vi.waitFor(() => expect(host.clients.size).toBe(0));
+  expect(await local.request('input.text', { session, text: 'late' })).toMatchObject({
+    error: { code: 'unknown-session' },
+  });
+  expect(readAudit().filter((record) => record.workspace === workspace)).toEqual([
+    expect.objectContaining({ action: 'control.begin', workspace, platform: 'macos', ok: true }),
+    expect.objectContaining({
+      action: 'control.end',
+      workspace,
+      platform: 'macos',
+      ok: true,
+      reason: expect.stringContaining('forbidden:'),
+      durationMs: expect.any(Number),
+    }),
+  ]);
+});
+
+async function congestionNotices(features: string[]) {
+  saveCredential();
+  helloFeatures = features;
+  let buffered = 0;
+  const sent: (ServerMessage | Buffer)[] = [];
+  const relay = new HostedRelay(
+    new HostConnections(
+      {
+        status: () => ({
+          Peer: { peer: { ID: 'mini-node', DNSName: 'mini.tail.ts.net.', TailscaleIPs: ['100.64.0.8'] } },
+        }),
+        endpoint: (pinned) => ({ ...pinned, url: `ws://127.0.0.1:${(host.address() as AddressInfo).port}` }),
+      },
+      '1',
+    ),
+    (message) => sent.push(message),
+    () => buffered,
+    () => 'local-video',
+    () => {},
+    () => {},
+  );
+  const notices = () => requests.filter((request) => request.method === 'device-host.frames.congested');
+  try {
+    await relay.subscribe(1, readMacosRecord(workspace)!.host!, { video: ['h264'] }, () => {});
+    await vi.waitFor(() => expect(sent.filter(Buffer.isBuffer)).toHaveLength(1));
+    const upstream = requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket;
+    buffered = DEFAULT_VIDEO_LIMITS.congestedBytes + 1;
+    upstream.send(
+      videoPacket(UPSTREAM, 8, { keyframe: false, capturedAt: 1000, width: 800, height: 600, data: Buffer.from([0]) }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const whileBehind = notices().map((request) => request.params.subscription);
+    buffered = 0;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const drained = notices().length;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    return { whileBehind, afterDrain: notices().length - drained };
+  } finally {
+    relay.close();
+  }
+}
+
+it('sends no congestion notices to a host without hosted-congestion', async () => {
+  expect(await congestionNotices([])).toEqual({ whileBehind: [], afterDrain: 0 });
+});
+
+function placeIos(slot: string, platform: 'ios' | 'android' = 'ios') {
+  const placement = {
+    machine: 'mini',
+    session: HOST_SESSION,
+    appAttempt: 'ios-attempt',
+    selected: 'mini',
+    device: null,
+    agent: { driver: 'none', setting: 'hosting.agentDriver' },
+  };
+  const ios = { host: placement };
+  writeFileSync(
+    workspaceStateFile(workspace),
+    JSON.stringify({
+      ...JSON.parse(readFileSync(workspaceStateFile(workspace), 'utf8')),
+      ...(slot === 'default' ? { [platform]: ios } : { deviceSlots: { [slot]: { [platform]: ios } } }),
+    }),
+  );
+  return { workspace, platform, slot };
+}
+
+it.each([
+  ['ios', 'default'],
+  ['ios', 'tablet'],
+  ['android', 'default'],
+  ['android', 'tablet'],
+] as const)('relays hosted %s frames and control for slot %s without a local device ID', async (platform, slot) => {
+  const ios = placeIos(slot, platform);
+  postures = ['folded', 'unfolded'];
+  const local = await client();
+  const reply = await local.request('frames.subscribe', { ...ios, deviceFrame: true, video: ['h264'] });
+  expect(await local.next()).toMatchObject({
+    event: 'frame',
+    subscription: reply.result.subscription,
+    platform,
+    slot,
+  });
+  const packet = (await local.next()) as Buffer;
+  expect(packet.toString('ascii', 21, 21 + packet[20]!)).toBe(reply.result.subscription);
+  expect(await local.request('frames.keyframe', { subscription: reply.result.subscription })).toMatchObject({
+    result: {},
+  });
+  expect(requests.find((r) => r.method === 'device-host.frames.subscribe')?.params).toEqual({
+    session: HOST_SESSION,
+    ...(platform === 'ios' ? { deviceFrame: true } : {}),
+    video: ['h264'],
+  });
+  const session = (await local.request('control.begin', ios)).result.session!;
+  for (const [method, params] of (
+    [
+      ['input.touch', { phase: 'down', x: 0.2, y: 0.7 }],
+      ['input.button', { button: 'home' }],
+      ['input.rotate', { direction: 'right' }],
+      ['input.posture', { posture: 'folded' }],
+    ] as const
+  ).filter(([name]) => platform === 'ios' || (name !== 'input.rotate' && name !== 'input.posture'))) {
+    expect(await local.request(method, { session, ...params })).toMatchObject({ result: {} });
+    expect(requests.at(-1)).toMatchObject({
+      method: `device-host.${method}`,
+      params: { session: CONTROL, ...params },
+    });
+  }
+  expect(await local.request('input.window', { session, window: 1 })).toMatchObject({
+    error: { code: 'bad-request' },
+  });
+  const upstream = requests.find((r) => r.method === 'device-host.frames.subscribe')!.socket;
+  upstream.send(JSON.stringify({ event: 'frame-delayed', subscription: UPSTREAM, delayed: true, reason: 'waiting' }));
+  expect(await local.next()).toMatchObject({ event: 'frame-delayed', platform, slot });
+  upstream.send(
+    JSON.stringify({ event: 'control-ended', session: CONTROL, reason: 'device-gone', message: 'stopped' }),
+  );
+  expect(await local.next()).toMatchObject({ event: 'control-ended', session, platform, slot });
+  expect(readAudit().filter((r) => r.workspace === workspace)).toEqual([
+    expect.objectContaining({ platform, slot, action: 'control.begin', ok: true }),
+    expect.objectContaining({ platform, slot, action: 'control.end', ok: true }),
+  ]);
+  upstream.send(
+    JSON.stringify({ event: 'error', subscription: UPSTREAM, error: { code: 'frames-failed', message: 'stopped' } }),
+  );
+  expect(await local.next()).toMatchObject({ event: 'error', platform, slot });
+});
+
+it.each(['ios', 'android'] as const)(
+  'refuses hosted %s replay and duo frames before opening a host connection',
+  async (platform) => {
+    const ios = placeIos('tablet', platform);
+    const local = await client();
+    for (const options of [{ at: 123 }, { rate: 1 }, { duoFrame: true }])
+      expect(await local.request('frames.subscribe', { ...ios, ...options })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+    expect(connections).toBe(0);
+  },
+);
+
+it.each(['ios', 'android'] as const)(
+  'routes a physical %s device on a hosted slot to the local path, and ignores prototype slot names',
+  async (platform) => {
+    const ios = placeIos('tablet', platform);
+    const local = await client();
+    expect(await local.request('control.begin', { ...ios, physical: true })).toHaveProperty('error.code');
+    expect(await local.request('frames.subscribe', { ...ios, physical: true })).not.toHaveProperty(
+      'error.message',
+      expect.stringContaining('Hosted iOS'),
+    );
+    expect(await local.request('frames.subscribe', { ...ios, slot: 'constructor' })).not.toHaveProperty(
+      'error.code',
+      'frames-failed',
+    );
+    expect(connections).toBe(0);
+  },
+);
+
+it.each(['ios', 'android'] as const)(
+  'reports a stopped hosted %s placement instead of opening a local device',
+  async (platform) => {
+    const ios = placeIos('tablet', platform);
+    stopped = true;
+    const local = await client();
+    expect(await local.request('frames.subscribe', ios)).toMatchObject({
+      error: { code: 'frames-failed', message: 'mini: The hosted session stopped.' },
+    });
+    expect(await local.request('control.begin', ios)).toMatchObject({
+      error: { code: 'forbidden', message: 'The hosted session stopped.' },
+    });
+  },
+);
+
+it('shares a host connection across macOS and a named iOS slot without confusing their events', async () => {
+  const ios = placeIos('tablet');
+  const local = await client();
+  const macos = await local.request('frames.subscribe', target());
+  expect(await local.next()).toMatchObject({
+    subscription: macos.result.subscription,
+    platform: 'macos',
+    slot: 'default',
+  });
+  const phone = await local.request('frames.subscribe', ios);
+  expect(await local.next()).toMatchObject({
+    subscription: phone.result.subscription,
+    platform: 'ios',
+    slot: 'tablet',
+  });
+  expect(connections).toBe(1);
+  expect(await local.request('unsubscribe', { subscription: macos.result.subscription })).toMatchObject({ result: {} });
+  const upstream = requests.find((r) => r.method === 'device-host.frames.subscribe')!.socket;
+  upstream.send(JSON.stringify({ event: 'frame-delayed', subscription: `${UPSTREAM}-2`, delayed: true }));
+  expect(await local.next()).toMatchObject({
+    subscription: phone.result.subscription,
+    platform: 'ios',
+    slot: 'tablet',
+  });
+  expect(await local.request('unsubscribe', { subscription: phone.result.subscription })).toMatchObject({ result: {} });
+  await vi.waitFor(() => expect(host.clients.size).toBe(0));
+});

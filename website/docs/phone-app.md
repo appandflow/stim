@@ -1,0 +1,311 @@
+---
+title: 'Phone app'
+description: 'Pair a phone to watch Stim workspaces, devices and logs over Tailscale'
+---
+
+import StimTabs, { StimInstallTabs } from '@site/src/components/StimTabs';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
+
+:::note[Phone app feature flag]
+Stim Desktop hides everything about the phone app unless the **Phone app**
+feature flag is on: **Add... > Pair a Phone...** in **Settings > Connections** (paired phones stay listed there), the phone
+steps of the setup guide and tutorial, and phone suggestions. Turn it on in
+**Settings > Advanced > Feature flags**. A Mac that already serves phones or has
+a paired phone starts with it on. Turning the flag off does not stop a running
+`stim-server` or revoke pairings.
+:::
+
+Stim Mobile connects to a Mac running Stim Desktop or `stim-server`. It shows
+workspaces, builds, devices and logs. Choose view-only or view-and-control access
+when pairing in Desktop. CLI pairings are read-only unless you pass `--control`.
+It can keep connections to several paired machines.
+
+## Install
+
+The repository documents iOS distribution through TestFlight. Install
+TestFlight on your iPhone or iPad, then accept a Stim tester invitation.
+External builds become installable only after Apple's Beta App Review.
+The repository also contains App Store listing metadata and a manual release
+configuration; that does not confirm a live App Store listing. See the
+[mobile release notes for contributors](https://github.com/appandflow/stim/blob/main/apps/mobile/README.md#ship-to-testflight)
+for the distribution process.
+
+For CLI commands on the Mac, install Stim globally or run it with npx:
+
+<StimInstallTabs />
+
+The app also supports Android, but the documented production distribution
+flow is iOS TestFlight. Contributors can build the app from
+[apps/mobile](https://github.com/appandflow/stim/blob/main/apps/mobile/README.md#develop).
+
+## What you need
+
+- A Mac running [Stim Desktop](./desktop.md), or the server from
+  `@stim-cli/server`.
+- Tailscale running on the Mac and phone, signed in to the same tailnet.
+- **Allow connections** enabled in Desktop, with a verified private route.
+  A standalone server needs the equivalent Tailscale Serve route.
+
+Install Tailscale on the phone, sign in and turn its connection on. Both
+devices can be on different networks as long as they can reach each other
+through Tailscale.
+
+On the first launch without a saved Mac, the welcome screen lists these
+requirements. **Get Tailscale** opens the phone's store; **Pair with Your Mac**
+opens the scanner. **Not Now** dismisses the welcome screen for later launches.
+After pairing, the app opens its workspace list. Forgetting a Mac does not
+bring back a welcome screen you have already dismissed or completed.
+
+## Allow connections
+
+On the Mac, open **Stim > Settings > Connections > Using this machine > Add... > Pair a Phone...**, or choose
+**Pair a Phone...** in the first-run guide's **Pair Your Phone** step. The wizard
+walks through getting Stim Mobile and Tailscale on your phone, connecting both
+devices to the same tailnet, allowing connections, scanning a code, and confirming
+the paired phone. Checks update automatically.
+
+Desktop runs the server while it is open, or uses one already running. The
+wizard allows connections and uses its authenticated loopback `route.setup`
+request to configure a private tailnet-only route. Setup preserves existing
+routes and never enables Funnel. If Tailscale asks to enable HTTPS, open
+**Open Tailscale Setup**, approve it in your browser, then choose **Try Again**.
+The wizard waits until the route is verified. A route exposing the server
+through Funnel refuses setup and pairing: remove that Funnel handler before
+using a tailnet-only route.
+
+For a standalone server, use the
+[server's Tailscale instructions](https://github.com/appandflow/stim/blob/main/packages/server/README.md#tailscale)
+to configure the route. Keeping the Mac's server running is required for live
+viewing and server-delivered notifications.
+
+## Pair your phone
+
+1. Follow the Desktop wizard to **Scan with Stim Mobile**. Choose **View Only**
+   or **View and Control** for this phone.
+2. In the phone app, choose **Pair with Your Mac** from the welcome screen,
+   or **Pair a Machine** from Machines. Allow the camera and scan the QR code.
+3. Name the machine and choose **Save** to open the workspace list. Desktop
+   waits for the phone, then shows its name and access on the success screen.
+
+The single-use code pairs one phone and expires after five minutes. A second
+phone needs a new code. Desktop replaces expired codes automatically up to
+three times, then offers **Show a New Code**. Changing access also generates a
+new code; the previous code stays valid until it expires.
+
+If scanning fails or camera access is denied, expand **Can't scan? Enter the
+endpoint and token** on Desktop. **Endpoint** and **Token** each have a copy
+button; the token is hidden until you choose the eye button. Choose **Enter the Endpoint and Token Instead** on the phone and paste them into its fields. Manual entry uses the same single-use code. Choose **Retry** on
+the phone when a failed scan needs another attempt.
+
+A standalone server can print the same pairing payload:
+
+<Tabs groupId="stim-invocation" defaultValue="global">
+<TabItem value="global" label="Global">
+
+```bash
+stim-server pair --json
+```
+
+</TabItem>
+<TabItem value="npx" label="npx">
+
+```bash
+npx --yes --package @stim-cli/server@1.21.0 stim-server pair --json
+```
+
+</TabItem>
+</Tabs>
+
+Use its endpoint and pairing token for manual entry. The phone spends the
+token once in the server's authentication handshake, and the server then
+recognizes the phone by its own key, which the phone keeps in its Keychain or
+Keystore. The QR code also carries the server key's fingerprint, which the phone
+checks before it pairs; afterwards it accepts only that server key. Every
+connection is encrypted, so the app accepts plain `ws://` endpoints on private
+networks as well as `wss://`.
+
+Pairings made with an older phone app must pair again. A Mac whose `stim-server`
+predates protocol 2 shows **Update stim-server on this Mac**.
+
+### Read and control access
+
+A read-only phone can see workspace status, builds, logs, device screens and
+replay. With workspace diff support, it can also read changed and untracked
+text files in registered workspaces, including non-ignored `.env` files.
+
+To allow input, choose **Control** under **Change Access** in the phone's menu in Desktop's
+**Settings > Connections**, or run `stim-server devices grant <id> --control` on
+the Mac. Use `--read` to take control away while retaining viewing access.
+The server's npx prefix is shown above. The phone's **Allow Control** action
+explains this Mac-side change; it cannot grant itself access. **Reconnect**
+picks up a new grant. Revoked control ends active control sessions and the
+phone reconnects with its current scope.
+
+## Notifications
+
+Open **Settings > Notifications** on the phone and turn notifications on.
+The app requests system permission at that point, not on launch. Every
+category defaults to **Silent**. Choose **Alert** for a banner and sound,
+**Silent** for Notification Center only, or **Off** for no delivery. Quiet
+hours suppress delivery; problems that still hold afterward can notify then,
+while work events during quiet hours are dropped.
+
+Categories cover work starting or finishing, an agent that looks stuck,
+repeated build failures, machine problems, someone else driving a device you
+control and problems that
+need a person. A single failed build or new log error stays in **Needs
+attention** rather than notifying by itself.
+
+On a production iPhone build with working push credentials, a push-capable
+Mac server can deliver notifications while the app is open, backgrounded or
+closed. The Mac must be running and the phone must have network access.
+Delivery uses Expo's push service and Apple; payloads include the workspace
+path, title and a short cause. A Mac going offline is detected only while
+the phone app is open. Android and builds without push support notify only
+while the app is open. The notification inbox shows history from paired
+servers that support it.
+
+## Revoke access
+
+In Desktop's **Settings > Connections**, choose **Revoke Access...** on the phone's row, or run
+`stim-server devices revoke <id>` on the Mac. Revocation closes its active
+connections; the server checks registrations on changes and once a second.
+The phone must pair again to reconnect.
+
+To rename a paired phone on the Mac, run `stim-server devices rename <id> <name>`
+there; the phone gets the new name the next time it connects.
+
+`stim-server devices --json` reports each pairing's `kind`: `desktop` for Stim
+Desktop on another machine, which also pairs with `stim-server pair`, and `phone`
+for any other app. Each pairing records the app and version it names when it
+connects, so `kind` and the `clientApp` and `clientVersion` fields appear after
+a pairing's next connection. They are labels only and never change what it may do.
+
+An entry in the server's registry files that this version of `stim-server` cannot
+read, such as a malformed one or one a newer Stim wrote, is never dropped: writes
+keep it as it was and it grants nothing. `stim-server devices --json` lists each
+one in `unreadable` as `{ "file", "index", "id" }` (`id` only when the entry has
+one). A registry file written by a newer Stim as a whole is listed as
+`{ "file", "version" }`, and `stim-server` refuses every write to it, including
+pairing a new device. `devices rename`, `grant` and `revoke` refuse the id of an
+unreadable entry; edit the file to change or remove it.
+
+**Forget** on the phone removes the saved Mac and its local status. To revoke
+the server's authorization, use the Mac-side action above.
+
+## What the phone can do
+
+| With read access                                                | With control added                                               |
+| --------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Watch builds and workspace status.                              | Reload the app and Stop the workspace.                           |
+| Read captured logs, build diagnostics and supported text diffs. | Tap, swipe, pinch, type and use buttons on controllable devices. |
+| View device screens and supported replay.                       | Control a leased Android phone while its lease is valid.         |
+
+With control on, two fingers on the screen of an iOS simulator, an Android emulator or an
+Android phone pinch or pan the app on the device. The phone waits 40 ms after the first finger
+lands for a second one, so a tap on these devices reaches the device that much later. A macOS
+app, a web page and an iPhone Duo take one finger, and a server or hosted worker older than
+two-finger input turns a pinch into a one-finger touch or refuses it.
+
+With control on, the viewer's **More** menu has **Paste from Phone** and **Copy
+Device Clipboard** for an iOS simulator, an Android emulator or an Android phone,
+when the Mac's `stim-server` is new enough to offer them. Paste reads the phone's
+clipboard when you tap it (iOS asks you to allow the paste), sets the device
+clipboard to that text and pastes it into the focused field. Text over 8 KiB is
+not sent. An iOS simulator types printable ASCII, line breaks and tabs into the field,
+about 35 characters a second, so no paste prompt is involved. Text with other characters,
+such as accents and emoji, is pasted instead. In an app Stim installed on an owned
+simulator it lands without a prompt, because Stim allows that app's paste
+permission; another app can leave a "Paste from CoreSimulatorBridge" suggestion on
+the device to tap, which a simulator slimmed by `ios.simslimProfile` cannot show. Copy reads the device clipboard into the
+phone's. Nothing syncs by itself, only text is sent, and Stim never logs it.
+
+Each machine the phone pairs with reports the work it started, including
+work it placed on another machine. A Home row names that machine on the build
+line, such as **Pods** beside `janics-mac-mini-2` for an offloaded build, and on
+the context line for running hosted simulators, emulators and macOS apps. The
+workspace page, build sheet and device tiles show it too. Each row stays under
+the server that owns it, and the phone pairs only with those servers. See
+[remote machines](./remote-machines.md).
+
+The last build shows the selected build destination and the compilation machine
+when compilation is recorded. Cache hits omit the compilation line;
+`STIM_OFFLOAD_REFUSED` reads **Build destination refused**.
+
+The build sheet shows build and device slot waits alongside the current phase,
+with the number of slots in use and a live elapsed wait timer. A device slot
+wait can overlap compilation. Older CLIs omit this information. While the run
+boots its simulator or emulator, builds the app's first JS bundle in Metro, or
+waits for the app to report ready, the phase reads **Booting simulator**,
+**Bundling JS** with Metro's percentage once Metro reports one, or **Waiting
+for app ready**.
+
+A Mac's status sheet shows its load per core with the state `stim` reports (**Free**,
+**Busy** or **Holding new builds**). While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
+`concurrency.maxAndroidDevices` or `concurrency.maxBuilds` is set, it also shows **Devices**, **iOS simulators**, **Android emulators** and **Builds** meters, such as
+`6 / 6`. A full device meter lists the devices holding the slots, with the slot and how long
+each has been idle. The phone cannot stop them; stop a slot from Stim Desktop or with
+`stim stop --slot`. A meter reads `? / 6` when `stim` could not count the devices.
+Older `stim` versions send none of these fields, and the sheet omits them.
+
+A leased iPhone connected over USB is view-only and must be unlocked and trust
+the Mac; over Wi-Fi it has no screen stream. Hosted iOS simulators can be viewed
+and controlled through the main machine's relay, with **Allow connections** enabled.
+See [remote machines](./remote-machines.md) for host setup.
+
+The phone cannot start a build, create a worktree, edit or stage source files,
+set up a remote machine, or approve access requests. Have your coding agent run
+the app on the Mac, then watch it from the phone. It does not run your project's
+native app on the phone itself.
+
+### Archived workspaces
+
+**Show** in Filters takes any combination of Active, Idle, Not set up and
+Archived; **All** selects all four. Choose **Archived** to see removed workspaces
+in the same repository and worktree groups as active ones. Rows keep their branch or folder title and app
+label, with removal time, size and an expiry indicator. A PR snapshot shows its
+number and title; only a merged outcome shows a state label.
+
+An archive uses the workspace page with read-only Status, Build, Logs and Work
+cards. Status shows removal, last activity, retention dates, size by content and
+activity totals. Build opens the shared history sheet, including durations,
+cache results, failures and remote machines. Logs reads saved archive logs. Work
+shows ended sessions, their durations and the branch's final commit. Recordings
+replace devices and open replay at the recorded time, including notification
+links. Expired logs and recordings are marked.
+
+Archives have no Stop, Reload, run, viewer or device control actions. Manage
+archive deletion on the Mac. Older servers without archive detail keep the last
+build summary and count; update stim-server for full history and recording
+discovery.
+
+## Ask your agent
+
+These prompts are for the coding agent working in your app's checkout.
+Responses are illustrative.
+
+<PromptGrid>
+  <PromptBox
+    title="Build while you watch"
+    response={`Trailhead launched on stim-trailhead (iPhone 17 / iOS 26.5).
+com.appandflow.trailhead · ready · cache hit · errors clean
+The workspace is running for you to view from your paired phone.`}
+  >
+    {`Run the app on iOS and tell me when it's ready; I'll watch from my phone.`}
+  </PromptBox>
+  <PromptBox
+    title="Inspect recent errors"
+    response={`No Trailhead app errors in the last 10 minutes.`}
+  >
+    {`Show app errors from the last 10 minutes.`}
+  </PromptBox>
+</PromptGrid>
+
+The agent can inspect the environment and recent errors with:
+
+<StimTabs
+code={`stim status --json
+stim logs --errors --since 10m`}
+/>

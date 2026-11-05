@@ -1,0 +1,429 @@
+import Foundation
+import Testing
+
+@testable import StimKit
+
+@Suite struct BuildCacheTests {
+  private func decode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
+    try JSONDecoder().decode(type, from: Data(json.utf8))
+  }
+
+  @Test func runListKeepsOrderAndIdentityAcrossCompletionWithoutDuplicatingTheActiveSlot() throws {
+    let workspace = try decode(
+      Workspace.self,
+      """
+      {"path":"/w","live":true,"warnings":[],"build":{
+        "platform":"ios","slot":"default","state":"running","phase":"compile",
+        "startedAt":"2026-09-25T12:00:00Z","phaseStartedAt":"2026-09-25T12:00:01Z","basis":0},
+       "builds":{"ios":[
+        {"platform":"ios","status":"ok","cacheHit":false,"startedAt":"2026-09-25T12:00:00Z",
+         "result":"succeeded","slot":"default","phases":{"compile":1000}},
+        {"platform":"ios","status":"ok","cacheHit":"local","startedAt":"2026-09-25T12:00:00Z",
+         "result":"succeeded","slot":"fold","phases":{}},
+        {"platform":"ios","status":"ok","cacheHit":"remote","startedAt":"2026-09-25T11:00:00Z",
+         "result":"succeeded","slot":"default","phases":{}}]}}
+      """)
+    let history = try #require(workspace.builds?.ios)
+    let active = BuildRun.runs(platform: "ios", running: workspace.build, history: history, last: nil)
+    #expect(active.map(\.slot) == ["default", "fold", "default"])
+    #expect(active.map(\.startedAt) == ["2026-09-25T12:00:00Z", "2026-09-25T12:00:00Z", "2026-09-25T11:00:00Z"])
+    #expect(active.first?.running == workspace.build)
+    #expect(Set(active.map(\.id)).count == 3)
+    let finished = BuildRun.runs(platform: "ios", running: nil, history: history, last: history[0].build)
+    #expect(active.map(\.id) == finished.map(\.id))
+    #expect(finished.first?.history == history[0])
+    #expect(BuildRun.runs(platform: "android", running: workspace.build, history: [], last: nil).isEmpty)
+  }
+
+  @Test func runListUsesLastBuildOnlyWithoutHistoryAndDoesNotRepeatAnActiveRun() throws {
+    let last = try decode(
+      LastBuild.self,
+      #"{"platform":"ios","status":"ok","cacheHit":"local","startedAt":"2026-09-25T12:00:00Z"}"#)
+    let fallback = BuildRun.runs(platform: "ios", running: nil, history: [], last: last)
+    #expect(fallback.count == 1 && fallback.first?.last == last)
+    #expect(fallback.first?.slot == "default")
+    let running = try decode(
+      Build.self,
+      #"{"platform":"ios","slot":"default","state":"running","phase":"compile","startedAt":"2026-09-25T12:00:00Z","phaseStartedAt":"2026-09-25T12:00:01Z","basis":0}"#
+    )
+    #expect(BuildRun.runs(platform: "ios", running: running, history: [], last: last).count == 1)
+    var older = last
+    older.startedAt = "2026-09-25T11:00:00Z"
+    #expect(
+      BuildRun.runs(platform: "ios", running: running, history: [], last: older).map(\.startedAt) == [
+        running.startedAt, older.startedAt,
+      ])
+    #expect(BuildRun.runs(platform: "ios", running: nil, history: [], last: nil).isEmpty)
+  }
+
+  @Test func finishedStepsUseBuildOrderAndActualTimesAndIdentifyWhereAnInterruptedRunStopped() throws {
+    var entry = try decode(
+      BuildHistoryEntry.self,
+      #"{"platform":"ios","status":"ok","cacheHit":false,"startedAt":"2026-09-25T12:00:00Z","result":"succeeded","slot":"default","phases":{"launch":100,"compile":9000,"prepare":200,"pods":0,"unknown":42}}"#
+    )
+    #expect(
+      entry.finishedSteps == [
+        PhaseStep(phase: "prepare", state: .done, elapsedMs: 200, expectedMs: nil, fraction: 1),
+        PhaseStep(phase: "pods", state: .done, elapsedMs: 0, expectedMs: nil, fraction: 1),
+        PhaseStep(phase: "compile", state: .done, elapsedMs: 9000, expectedMs: nil, fraction: 1),
+        PhaseStep(phase: "launch", state: .done, elapsedMs: 100, expectedMs: nil, fraction: 1),
+      ])
+    #expect(entry.stoppedPhase == nil)
+    entry.result = "interrupted"
+    #expect(entry.stoppedPhase == "pods")
+    entry.phases["pods"] = 500
+    #expect(entry.stoppedPhase == "launch")
+    entry.phases = [:]
+    #expect(entry.finishedSteps.isEmpty && entry.stoppedPhase == nil)
+  }
+
+  @Test func readsEachPlatformsLastBuildIncludingACompiledOneWhoseCacheHitIsFalse() throws {
+    let workspace = try decode(
+      Workspace.self,
+      """
+      {"path":"/w","live":true,"warnings":[],"lastBuilds":{
+        "ios":{"platform":"ios","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":83123,
+               "fingerprint":"1b62","buildMachine":"remote-only","builtOn":"mini:7744","startedAt":"2026-09-25T12:28:58.294Z","finishedAt":"2026-09-25T12:30:21.417Z"},
+        "android":{"platform":"android","status":"failed","cacheHit":"remote","durationMs":4000,"buildMachine":"remote-only","builtOn":"mini:7744",
+                   "startedAt":"2026-09-25T12:00:00.000Z","finishedAt":null,"errorCode":"STIM_BUILD_FAILED"}}}
+      """)
+    let ios = try #require(workspace.lastBuilds?.build(for: "ios"))
+    #expect(ios.cacheHit == .none && ios.status == "ok" && ios.durationMs == 83123)
+    #expect(ios.buildMachine == "remote-only" && ios.builtOn == "mini:7744")
+    let android = try #require(workspace.lastBuilds?.build(for: "android"))
+    #expect(android.status == "failed" && android.errorCode == "STIM_BUILD_FAILED" && android.cacheHit == .remote)
+    #expect(android.buildMachine == "remote-only" && android.builtOn == "mini:7744")
+  }
+
+  @Test func readsTheBuildHistoryOfEachPlatformWithHowEachRunEnded() throws {
+    let workspace = try decode(
+      Workspace.self,
+      """
+      {"path":"/w","live":true,"warnings":[],"builds":{
+        "ios":[
+          {"platform":"ios","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":99918,
+           "fingerprint":null,"startedAt":"2026-09-26T12:58:00.000Z","finishedAt":"2026-09-26T12:59:39.918Z",
+           "errorCode":"STIM_CANCELLED","result":"cancelled","slot":"default","configuration":"Debug","cacheKey":null,
+           "phases":{"pods":90794,"prepare":2260}},
+          {"platform":"ios","status":"ok","cacheHit":"local","cacheSkipped":false,"durationMs":18128,
+           "fingerprint":"7a512dbf","startedAt":"2026-09-26T12:50:00.000Z","finishedAt":"2026-09-26T12:50:18.128Z",
+           "result":"succeeded","slot":"default","configuration":"Debug","cacheKey":"7a512dbf-debug-sim","phases":{}}],
+        "android":[
+          {"platform":"android","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":null,
+           "fingerprint":null,"startedAt":"2026-09-26T13:00:20.861Z","finishedAt":null,"result":"interrupted",
+           "slot":"tablet","configuration":null,"cacheKey":null,"phases":{"prepare":1524,"device":3000,"compile":0}}],
+        "macos":[
+          {"platform":"macos","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":62000,
+           "fingerprint":null,"startedAt":"2026-09-26T13:10:00.000Z","finishedAt":"2026-09-26T13:11:02.000Z",
+           "result":"succeeded","slot":"default","configuration":"Debug","cacheKey":null,
+           "phases":{"prepare":900,"compile":58000,"install":3100}}]}}
+      """)
+    let ios = try #require(workspace.builds?.builds(for: "ios"))
+    #expect(ios.map(\.result) == ["cancelled", "succeeded"])
+    #expect(ios[0].phases == ["pods": 90794, "prepare": 2260])
+    #expect(ios[1].build.cacheHit == .local && ios[1].slot == "default" && ios[1].phases.isEmpty)
+    let android = try #require(workspace.builds?.builds(for: "android").first)
+    #expect(android.result == "interrupted" && android.slot == "tablet" && android.configuration == nil)
+    #expect(android.phases == ["prepare": 1524, "device": 3000, "compile": 0])
+    let macos = try #require(workspace.builds?.builds(for: "macos"))
+    #expect(macos.map(\.build.platform) == ["macos"] && macos[0].phases["compile"] == 58000)
+    #expect(
+      try decode(Workspace.self, #"{"path":"/w","live":true,"warnings":[],"builds":{"android":[]}}"#).builds?.builds(for: "macos")
+        == [])
+    let failed = try decode(
+      BuildHistoryEntry.self,
+      """
+      {"platform":"android","status":"failed","cacheHit":false,"durationMs":27583,"startedAt":"2026-09-26T12:57:50.000Z",
+       "finishedAt":null,"errorCode":"STIM_BUILD_FAILED","result":"failed","slot":"default","phases":{},
+       "missReason":{"kind":"changed","summary":"android/ added (+2 more)","changes":[],"changeCount":3,
+         "baseline":null,"rekeyedBy":[]}}
+      """)
+    #expect(failed.result == "failed" && failed.build.errorCode == "STIM_BUILD_FAILED")
+    #expect(failed.build.missReason?.summary == "android/ added (+2 more)")
+    #expect(try decode(Workspace.self, #"{"path":"/w","live":false,"warnings":[]}"#).builds == nil)
+  }
+
+  @Test func readsAMissReasonAndNamesItsBaseline() throws {
+    let last = try decode(
+      LastBuild.self,
+      """
+      {"platform":"ios","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":1000,
+       "startedAt":"2026-09-25T12:00:00.000Z","finishedAt":"2026-09-25T12:00:01.000Z",
+       "missReason":{"kind":"changed","summary":"native dependency added: expo-clipboard",
+         "changes":[{"source":"node_modules/expo-clipboard","change":"added","category":"native-dependency"}],
+         "changeCount":3,"baseline":{"fingerprint":"0123456789abcdef","from":"project"},"rekeyedBy":[]}}
+      """)
+    let reason = try #require(last.missReason)
+    #expect(reason.changes.first?.category == "native-dependency" && reason.changeCount == 3)
+    #expect(reason.baseline?.fingerprint == "0123456789abcdef" && reason.baseline?.from == "project")
+  }
+
+  @Test func describesAPlannedHitMissAndRefusal() throws {
+    let hit = try decode(
+      BuildPlan.self,
+      """
+      {"platform":"ios","fingerprint":"1b62","cacheKey":"k","cacheHit":"remote","provider":"eas","cacheSkipped":false,
+       "prebuild":null,"outcome":"hit","expectedMs":2656,"basis":1}
+      """)
+    #expect(hit.cacheHit == .remote && hit.outcome == "hit" && hit.expectedMs == 2656)
+
+    let miss = try decode(
+      BuildPlan.self,
+      """
+      {"platform":"android","fingerprint":"f","cacheKey":"k","cacheHit":false,"provider":null,"cacheSkipped":false,
+       "prebuild":"regenerate","outcome":"cold","expectedMs":null,"basis":0,
+       "missReason":{"kind":"prebuild-pending","summary":"native dependency added: expo-clipboard (before prebuild regenerates android/)",
+         "changes":[{"source":"node_modules/expo-clipboard/android","change":"added","category":"native-dependency"}],
+         "changeCount":1,"baseline":{"fingerprint":"0123456789abcdef","from":"workspace"},"rekeyedBy":[]}}
+      """)
+    #expect(miss.outcome == "cold" && miss.prebuild == "regenerate")
+    #expect(miss.missReason?.baseline?.from == "workspace")
+
+    let refused = try decode(
+      BuildPlan.self,
+      """
+      {"platform":"ios","fingerprint":"f","cacheKey":null,"cacheHit":false,"provider":"eas","cacheSkipped":false,
+       "prebuild":null,"outcome":null,"expectedMs":null,"basis":0,
+       "refusal":{"code":"STIM_EAS_BUILD_MISSING","message":"No compatible EAS ios build.","remedy":"Run eas build."}}
+      """)
+    #expect(refused.refusal?.code == "STIM_EAS_BUILD_MISSING" && refused.outcome == nil)
+  }
+
+  @Test func macosPlanDoesNotClaimAColdBuildOrCacheMiss() throws {
+    let plan = try decode(
+      BuildPlan.self,
+      """
+      {"platform":"macos","product":"Sample","buildMachine":"local","fingerprint":null,"cacheKey":null,
+       "cacheHit":false,"provider":null,"cacheSkipped":false,"prebuild":null,"outcome":null,"expectedMs":null,"basis":0}
+      """)
+    #expect(plan.fingerprint == nil && plan.outcome == nil && plan.expectedMs == nil)
+    #expect(plan.nextBuild == "SwiftPM Debug build")
+    #expect(plan.detail?.contains("incremental work") == true)
+    let last = try decode(
+      LastBuild.self,
+      """
+      {"platform":"macos","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":1000,
+       "startedAt":"2026-09-25T12:00:00.000Z","finishedAt":"2026-09-25T12:00:01.000Z"}
+      """)
+    #expect(last.summary.hasPrefix("Built") && !last.summary.contains("Cache"))
+  }
+
+  @Test func hidesHistoricalOutcomesUntilTheRunKnowsItsCacheResult() throws {
+    var build = try decode(
+      Build.self,
+      """
+      {"platform":"ios","slot":"default","state":"running","phase":"cache-lookup","startedAt":"2026-09-25T12:00:00Z",
+       "phaseStartedAt":"2026-09-25T12:00:01Z","outcome":"cold","outcomeKnown":false,"expectedMs":null,
+       "expectedPhaseMs":null,"basis":0}
+      """)
+    #expect(build.outcomeLabel == nil && build.cacheLookupOutcome == nil)
+    build.outcomeKnown = true
+    #expect(build.outcomeLabel == "Cold build")
+    build.outcome = "hit"
+    #expect(build.outcomeLabel == "Cache hit" && build.cacheLookupOutcome == nil)
+    build.outcome = nil
+    #expect(build.outcomeLabel == nil)
+  }
+
+  @Test func showsAMissBeforePodsAsACacheMissAndNotesTheRecheck() throws {
+    let build = try decode(
+      Build.self,
+      """
+      {"platform":"ios","slot":"default","state":"running","phase":"pods","startedAt":"2026-09-25T12:00:00Z",
+       "phaseStartedAt":"2026-09-25T12:00:01Z","outcome":"cold","outcomeKnown":true,"cacheLookupOutcome":"miss","expectedMs":null,
+       "expectedPhaseMs":null,"basis":0,"missProvisional":true,
+       "missReason":{"kind":"changed","summary":"native dependency added: expo-clipboard","changes":[],
+                     "changeCount":1,"baseline":null,"rekeyedBy":[]}}
+      """)
+    #expect(build.outcomeLabel == "Cache miss" && build.cacheLookupOutcome == "miss")
+    #expect(build.recheckNote != nil)
+    var compiling = build
+    compiling.phase = "compile"
+    compiling.missProvisional = nil
+    #expect(compiling.outcomeLabel == "Cache miss")
+    #expect(compiling.recheckNote == nil)
+  }
+
+}
+
+@MainActor
+@Suite struct BuildPlanChecksTests {
+  private final class Planner: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls: [String] = []
+    private var active = 0
+    private(set) var mostActive = 0
+    var delay: Duration = .milliseconds(20)
+
+    var recorded: [String] { lock.withLock { calls } }
+
+    func plan(_ platform: String, _ workspace: String) async throws -> BuildPlanOutcome {
+      lock.withLock {
+        calls.append("\(workspace) \(platform)")
+        active += 1
+        mostActive = max(mostActive, active)
+      }
+      defer { lock.withLock { active -= 1 } }
+      try await Task.sleep(for: delay)
+      return .refused(CommandRefusal(code: "STIM_TEST", message: platform, remedy: nil))
+    }
+  }
+
+  private func settled(_ checks: BuildPlanChecks, _ workspace: String, _ platforms: [String]) async throws {
+    for _ in 0..<200 {
+      if platforms.allSatisfy({ checks.entry(workspace: workspace, platform: $0)?.state != .checking }) { return }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("checks did not settle")
+  }
+
+  @Test func runsOnePlanPerBuildAndReusesAFreshResult() async throws {
+    let planner = Planner()
+    var now = Date(timeIntervalSince1970: 0)
+    let checks = BuildPlanChecks(planner: planner.plan, now: { now })
+
+    checks.check(workspace: "/w", builds: ["ios": "a", "android": "b"])
+    checks.check(workspace: "/w", builds: ["ios": "a", "android": "b"])
+    try await settled(checks, "/w", ["ios", "android"])
+    #expect(planner.recorded == ["/w android", "/w ios"])
+    #expect(planner.mostActive == 1)
+
+    now += 59
+    checks.check(workspace: "/w", builds: ["ios": "a", "android": "b"])
+    #expect(planner.recorded.count == 2)
+
+    checks.check(workspace: "/w", builds: ["ios": "a2", "android": "b"])
+    try await settled(checks, "/w", ["ios"])
+    #expect(planner.recorded == ["/w android", "/w ios", "/w ios"])
+
+    now += 61
+    checks.check(workspace: "/w", builds: ["android": "b"])
+    checks.check(workspace: "/w", builds: ["ios": "a2"], force: true)
+    try await settled(checks, "/w", ["ios", "android"])
+    #expect(planner.recorded.count == 5)
+    #expect(planner.mostActive == 1)
+  }
+
+  @Test func defersRecentBuildsThenReusesOneFreshCheckAcrossViews() async throws {
+    let planner = Planner()
+    var now = Date(timeIntervalSince1970: 100)
+    let checks = BuildPlanChecks(planner: planner.plan, now: { now })
+    let finished = ["macos": now]
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    #expect(checks.entry(workspace: "/w", platform: "macos") == nil)
+    #expect(planner.recorded.isEmpty)
+    now += 59
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    #expect(planner.recorded.isEmpty)
+    now += 1
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    try await settled(checks, "/w", ["macos"])
+    #expect(planner.recorded == ["/w macos"])
+    now += 30
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    #expect(planner.recorded.count == 1)
+    checks.check(workspace: "/w", builds: ["macos": "b"], finishedAt: ["macos": now])
+    #expect(checks.entry(workspace: "/w", platform: "macos") == nil)
+    now += 60
+    checks.check(workspace: "/w", builds: ["macos": "b"], finishedAt: ["macos": now - 60])
+    try await settled(checks, "/w", ["macos"])
+    #expect(planner.recorded.count == 2)
+  }
+
+  @Test func cancellingOnePlatformPreservesTheOtherInFlightCheck() async throws {
+    let started = AsyncStream<String>.makeStream()
+    let gate = AsyncStream<Void>.makeStream()
+    let checks = BuildPlanChecks { platform, _ in
+      started.continuation.yield(platform)
+      for await _ in gate.stream { break }
+      try Task.checkCancellation()
+      return .refused(CommandRefusal(code: "STIM_TEST", message: "still running", remedy: nil))
+    }
+    defer {
+      gate.continuation.finish()
+      started.continuation.finish()
+      checks.cancel(workspace: "/w")
+    }
+    checks.check(workspace: "/w", builds: ["android": "a", "ios": "b"])
+    var calls = started.stream.makeAsyncIterator()
+    #expect(await calls.next() == "android")
+
+    checks.cancel(workspace: "/w", platforms: ["ios"])
+    #expect(checks.entry(workspace: "/w", platform: "ios") == nil)
+    #expect(checks.entry(workspace: "/w", platform: "android")?.state == .checking)
+
+    gate.continuation.yield(())
+    try await settled(checks, "/w", ["android"])
+    #expect(
+      checks.entry(workspace: "/w", platform: "android")?.state
+        == .done(
+          .refused(CommandRefusal(code: "STIM_TEST", message: "still running", remedy: nil))))
+  }
+
+  @Test func cancellingForgetsUnfinishedChecksAndLetsTheNextOneRun() async throws {
+    let planner = Planner()
+    let checks = BuildPlanChecks(planner: planner.plan)
+    checks.check(workspace: "/w", builds: ["android": "b"])
+    try await settled(checks, "/w", ["android"])
+
+    planner.delay = .seconds(30)
+    checks.check(workspace: "/w", builds: ["ios": "a", "android": "b2"])
+    checks.cancel(workspace: "/w")
+    #expect(checks.entry(workspace: "/w", platform: "ios") == nil)
+    #expect(checks.entry(workspace: "/w", platform: "android") == nil)
+
+    planner.delay = .milliseconds(20)
+    checks.check(workspace: "/w", builds: ["ios": "a"])
+    try await settled(checks, "/w", ["ios"])
+    guard case .done = checks.entry(workspace: "/w", platform: "ios")?.state else {
+      Issue.record("the check after cancelling did not finish")
+      return
+    }
+    #expect(planner.mostActive == 1)
+  }
+
+  private func macosRuns(_ entries: String) throws -> [BuildRun] {
+    let json = #"{"path":"/w","live":true,"warnings":[],"builds":{"macos":[\#(entries)]}}"#
+    let workspace = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+    return BuildRun.runs(platform: "macos", running: nil, history: workspace.builds?.builds(for: "macos") ?? [], last: nil)
+  }
+
+  @Test func mapsASucceededMacosBuildToAPlainSuccessWithItsPhasesAndStepCount() throws {
+    let run = try #require(
+      macosRuns(
+        #"{"platform":"macos","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":38000,"startedAt":"2026-10-08T10:00:00Z","finishedAt":"2026-10-08T10:00:38Z","result":"succeeded","slot":"default","configuration":"Debug","phases":{"prepare":0,"compile":29000,"install":8000,"launch":1000},"compileSteps":428}"#
+      ).first)
+    #expect(run.pillLabel == "Succeeded")
+    #expect(run.tone == .success)
+    #expect(run.outcome == "Succeeded")
+    #expect(run.summary == "Built in 0m 38s")
+    #expect(run.configurationLabel == "Swift Package Debug")
+    let steps = try #require(run.history?.finishedSteps)
+    #expect(steps.map(\.phase) == ["prepare", "compile", "install", "launch"])
+    #expect(steps.map(\.note) == [nil, "428 steps", nil, nil])
+    #expect(run.history?.failedPhase == nil)
+  }
+
+  @Test func mapsAFailedMacosBuildToTheLastPhaseItEntered() throws {
+    let run = try #require(
+      macosRuns(
+        #"{"platform":"macos","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":12000,"startedAt":"2026-10-08T10:00:00Z","finishedAt":"2026-10-08T10:00:12Z","errorCode":"STIM_BUILD_FAILED","result":"failed","slot":"default","configuration":"Debug","phases":{"prepare":0,"compile":12000}}"#
+      ).first)
+    #expect(run.pillLabel == "Failed")
+    #expect(run.tone == .error)
+    #expect(run.summary == "Failed (STIM_BUILD_FAILED) in 0m 12s")
+    #expect(run.history?.failedPhase == "compile")
+  }
+
+  @Test func mapsAnOffloadedMacosBuildToItsWorker() throws {
+    let run = try #require(
+      macosRuns(
+        #"{"platform":"macos","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":50000,"startedAt":"2026-10-08T10:00:00Z","finishedAt":"2026-10-08T10:00:50Z","offloadedTo":"janics-mac-mini","result":"succeeded","slot":"default","configuration":"Debug","phases":{"prepare":0,"compile":45000,"install":5000}}"#
+      ).first)
+    #expect(run.offloadedTo == "janics-mac-mini")
+    #expect(run.summary.hasPrefix("Built on "))
+    #expect(run.outcome.hasPrefix("Built on "))
+    #expect(run.history?.compileSteps == nil)
+  }
+}

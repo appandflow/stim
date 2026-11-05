@@ -1,0 +1,21 @@
+{
+  "pid": 20606,
+  "sessionId": "0dc300cd-42a3-4758-8d35-79edf2904001",
+  "cwd": "/Users/dev/stim",
+  "startedAt": 1790346707440,
+  "procStart": "Fri Sep 25 14:31:47 2026",
+  "version": "2.1.281",
+  "peerProtocol": 1,
+  "peerFeatures": ["notify_idle", "reply_across_default_dirs", "artifact_yield"],
+  "kind": "interactive",
+  "entrypoint": "claude-desktop",
+  "hostSessionId": "local_bb7da4e5-d1f7-4ba4-b2aa-8dd8021e39a7",
+  "pidDomain": "darwin",
+  "messagingSocketPath": "/tmp/cc-socks/20606.sock",
+  "name": "Stim desktop app concept",
+  "nameSince": 1790346707440,
+  "updatedAt": 1790599263886,
+  "status": "busy",
+  "statusUpdatedAt": 1790599263886,
+  "bridgeSessionId": "session_016mNVcEGnttEVda1aDtiDUK"
+}

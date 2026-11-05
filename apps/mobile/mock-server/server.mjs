@@ -1,0 +1,750 @@
+#!/usr/bin/env node
+import { createHash, randomBytes } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { parseArgs } from 'node:util';
+import { statusViews } from '@stim-cli/core/phone-protocol';
+import { withDerivedFacts } from '@stim-cli/core/state';
+import { generateNoiseKeyPair, noiseKeyPairFromPrivateKey } from '@stim-cli/core/noise';
+import { WebSocketServer } from 'ws';
+
+import { loadFixtures } from './fixtures.mjs';
+import { filterRecords, shiftTimestamps, usageHistory } from './payloads.mjs';
+import {
+  acceptNoise,
+  CLOSE_REFUSED,
+  HandshakeRefusal,
+  keyFingerprint,
+  MODE_FIRST_CONTACT,
+  newSecret,
+  secretValues,
+} from '@stim-cli/core/noise-session';
+import { loadRecording, replayKeyframe, replayRange, VideoFeed } from './replay.mjs';
+
+const { values } = parseArgs({
+  options: {
+    port: { type: 'string', default: '7787' },
+    name: { type: 'string', default: 'studio' },
+    read: { type: 'boolean', default: false },
+    workspaces: { type: 'string' },
+    'free-gb': { type: 'string', default: '212' },
+    overlay: { type: 'string' },
+    'slot-waits': { type: 'boolean', default: false },
+    capacity: { type: 'boolean', default: false },
+    'linux-owner': { type: 'boolean', default: false },
+  },
+});
+
+const PAIRING_TTL_MS = 5 * 60 * 1000;
+const DEVICES_FILE = join(tmpdir(), 'stim-mobile-mock-server-devices.json');
+const IDENTITY_FILE = join(tmpdir(), 'stim-mobile-mock-server-identity.key');
+const fixtures = loadFixtures({ slotWaits: values['slot-waits'], capacity: values.capacity });
+const legacyArchives = process.env.STIM_MOCK_LEGACY_ARCHIVES === '1';
+const recording = loadRecording();
+const recordingFor = (params) => {
+  if (!params.archive) return recording;
+  const device = fixtures.archiveDetails[params.archive]?.recordings.find(
+    (device) => device.platform === params.platform && device.slot === (params.slot ?? 'default'),
+  );
+  return {
+    ...recording,
+    spans: (device?.spans ?? []).map((span) => ({ start: span.start + shiftMs, end: span.end + shiftMs })),
+  };
+};
+let recordingEnabled = true;
+const hash = (token) => createHash('sha256').update(token).digest('hex');
+
+let deviceKeys = new Set();
+try {
+  deviceKeys = new Set(JSON.parse(readFileSync(DEVICES_FILE, 'utf8')));
+} catch {}
+
+function identity() {
+  try {
+    return noiseKeyPairFromPrivateKey(Buffer.from(readFileSync(IDENTITY_FILE, 'utf8').trim(), 'base64url'));
+  } catch {
+    const created = generateNoiseKeyPair();
+    writeFileSync(IDENTITY_FILE, created.privateKey.toString('base64url'), { mode: 0o600 });
+    return created;
+  }
+}
+const keyPair = identity();
+
+const endpoint = `ws://127.0.0.1:${values.port}`;
+const PAIRING_FILE = join(tmpdir(), `stim-mobile-mock-server-pairing-${values.port}.json`);
+
+function newPairing() {
+  const pairingToken = newSecret();
+  const { psk, lookup } = secretValues(Buffer.from(pairingToken, 'base64url'));
+  const next = { psk, lookup: lookup.toString('hex'), expiresAt: Date.now() + PAIRING_TTL_MS };
+  const code = JSON.stringify({
+    v: 2,
+    name: values.name,
+    endpoint,
+    pairingToken,
+    fingerprint: keyFingerprint(keyPair.publicKey),
+  });
+  writeFileSync(PAIRING_FILE, code);
+  return { ...next, code };
+}
+
+let pairing = newPairing();
+setInterval(() => {
+  pairing = newPairing();
+  console.log('Pairing code:');
+  console.log(pairing.code);
+}, PAIRING_TTL_MS);
+
+const server = new WebSocketServer({ host: '127.0.0.1', port: Number(values.port) });
+server.on('listening', () => {
+  console.log(`Mock Stim server on ${endpoint}, replaying fixtures captured at ${fixtures.capturedAt}`);
+  console.log('Pairing code (valid 5 minutes, single use):');
+  console.log(pairing.code);
+});
+
+const ACTIONS = ['reload', 'stop'];
+const ACTION_MS = 800;
+const busy = new Set();
+
+const startedAt = Date.now();
+const shiftMs = startedAt - Date.parse(fixtures.capturedAt);
+const logs = fixtures.logs.map((record) => ({ ...record, ts: record.ts + shiftMs }));
+const LINUX_OWNER_ROOT = /^\/home\/floco\//;
+const only = values.workspaces ? new RegExp(values.workspaces) : values['linux-owner'] ? LINUX_OWNER_ROOT : null;
+const readOverlay = () => {
+  if (!values.overlay) return {};
+  try {
+    return JSON.parse(readFileSync(values.overlay, 'utf8'));
+  } catch {
+    return {};
+  }
+};
+const overlaid = (payload) => {
+  const changes = readOverlay().environments ?? {};
+  return {
+    ...payload,
+    environments: payload.environments.map((env) =>
+      withDerivedFacts({ ...env, recording: { enabled: recordingEnabled }, ...changes[env.path] }),
+    ),
+  };
+};
+const status = () => {
+  const payload = overlaid(shiftTimestamps(fixtures.status, shiftMs));
+  if (values['linux-owner']) Object.assign(payload, { simctlAvailable: false, deviceLeases: [], archived: [] });
+  const archived = payload.archived ?? [];
+  payload.archivedUsage = {
+    count: archived.length,
+    bytes: archived.reduce((sum, archive) => sum + archive.bytes.total, 0),
+    byKind: Object.fromEntries(
+      ['logs', 'recordings', 'agentActions', 'record'].map((kind) => [
+        kind,
+        archived.reduce((sum, archive) => sum + archive.bytes[kind], 0),
+      ]),
+    ),
+  };
+  if (!only) return payload;
+  const environments = payload.environments.filter((env) => only.test(env.path));
+  const live = environments.filter((env) => env.live);
+  return {
+    ...payload,
+    environments,
+    unprovisionedWorktrees: payload.unprovisionedWorktrees?.filter((facts) => only.test(facts.path)),
+    capacity: {
+      ...payload.capacity,
+      liveCount: live.length,
+      committedMb: live.reduce((sum, env) => sum + env.memoryMb, 0),
+    },
+  };
+};
+const NOTIFICATION_LOG = `mock-${randomBytes(4).toString('hex')}`;
+const MINUTE = 60_000;
+const notificationSamples = (() => {
+  const login = '/Users/dev/Developer/tlon-apps/.worktrees/web-login';
+  const hinges = '/Users/dev/Developer/react-native-hinges/example';
+  const pr = 'https://github.com/appandflow/react-native-hinges/pull/42';
+  const stopped = fixtures.status.environments.find((env) => env.path.includes('a4-stopped')).path;
+  const archive = fixtures.status.archived[0];
+  return [
+    {
+      ago: 0.5,
+      id: `started:${stopped}`,
+      category: 'started',
+      title: 'a4-stopped',
+      body: 'Agent drove this device before it stopped',
+      target: { kind: 'device', path: stopped, platform: 'ios', slot: 'default' },
+    },
+    {
+      ago: 1,
+      id: `started:${hinges}:no-recording`,
+      category: 'started',
+      title: 'example',
+      body: 'Agent drove this device without a recording',
+      target: { kind: 'device', path: hinges, platform: 'ios', slot: 'default' },
+    },
+    {
+      ago: 120.5,
+      id: `started:${archive.projectRoot}`,
+      category: 'started',
+      title: archive.workspace,
+      body: 'Agent drove this device before the workspace was removed',
+      target: { kind: 'device', path: archive.projectRoot, platform: 'ios', slot: 'default' },
+    },
+    {
+      ago: 2,
+      id: `stuck:${login}`,
+      category: 'stuck',
+      title: 'web-login',
+      body: 'No agent activity for 15 min; iPhone 17 Pro 26.0 still up',
+      target: { kind: 'device', path: login, platform: 'ios', slot: 'default' },
+    },
+    {
+      ago: 18,
+      id: `started:${login}`,
+      category: 'started',
+      title: 'web-login',
+      body: `agent-device started driving iPhone 17 Pro 26.0 on ${values.name}`,
+      quiet: true,
+      target: { kind: 'device', path: login, platform: 'ios', slot: 'default' },
+    },
+    {
+      ago: 30,
+      id: `lease-ios-default:${login}`,
+      category: 'attention',
+      title: 'web-login',
+      body: 'Lease on Old iPhone expired',
+      target: { kind: 'workspace', path: login },
+    },
+    {
+      ago: 47,
+      id: `looping-android:${hinges}`,
+      category: 'looping',
+      title: 'example',
+      body: 'Same Kotlin error 3x at MainActivity.kt:42',
+      target: { kind: 'build', path: hinges, platform: 'android' },
+    },
+    {
+      ago: 95,
+      id: `finished:${hinges}`,
+      category: 'finished',
+      title: 'example',
+      body: 'PR #42 is ready for review',
+      target: { kind: 'url', path: hinges, url: pr },
+    },
+    {
+      ago: 60 * 20,
+      id: 'machine:disk',
+      category: 'machine',
+      title: values.name,
+      body: "4.2 GB free, below Stim's floor",
+      target: { kind: 'machine' },
+      suppressed: 'quiet-hours',
+    },
+    {
+      ago: 60 * 26,
+      id: `control:${login}:ios:default`,
+      category: 'control',
+      title: 'web-login',
+      body: 'iPad took over the iOS device you were controlling',
+      target: { kind: 'device', path: login, platform: 'ios', slot: 'default' },
+    },
+    {
+      ago: 60 * 30,
+      id: `finished:${login}`,
+      category: 'finished',
+      title: 'web-login',
+      body: 'Agent stopped after a green iOS build',
+      target: { kind: 'workspace', path: login },
+      suppressed: 'muted',
+    },
+    {
+      ago: 60 * 50,
+      id: `started:${hinges}`,
+      category: 'started',
+      title: 'example',
+      body: `Warming on ${values.name}`,
+      quiet: true,
+      target: { kind: 'workspace', path: hinges },
+    },
+  ];
+})();
+const notifications = notificationSamples
+  .toReversed()
+  .map(({ ago, quiet = true, ...rest }, i) => ({
+    seq: i + 1,
+    at: new Date(startedAt - ago * MINUTE).toISOString(),
+    quiet,
+    ...rest,
+  }))
+  .toReversed();
+const notificationListeners = new Set();
+const LIVE_NOTIFICATION_MS = 120_000;
+setInterval(() => {
+  const sample = notificationSamples[notifications.length % notificationSamples.length];
+  const { ago: _ago, quiet = true, ...rest } = sample;
+  const entry = { seq: notifications[0].seq + 1, at: new Date().toISOString(), quiet, ...rest };
+  delete entry.suppressed;
+  notifications.unshift(entry);
+  for (const send of notificationListeners) send({ event: 'notification', log: NOTIFICATION_LOG, notification: entry });
+}, LIVE_NOTIFICATION_MS);
+
+const GB = 1e9;
+const usage = () => ({
+  volumes: [
+    {
+      mount: '/',
+      holds: ['Workspaces', 'Stim home', 'Simulators'],
+      freeBytes: Number(readOverlay().freeGb ?? values['free-gb']) * GB,
+      totalBytes: 994.66 * GB,
+    },
+  ],
+  memory: {
+    totalBytes: fixtures.status.capacity.totalMemoryMb * 1024 * 1024,
+    usedBytes: 31.4 * 2 ** 30,
+    pressure: 'normal',
+  },
+  load: { avg1: 6.2, avg5: 5.4, avg15: 4.9, cpus: 14 },
+  cpu: { usage: 0.34, cores: 14 },
+  sampledAt: new Date().toISOString(),
+});
+
+const HISTORY_INTERVAL_MS = 5000;
+const history = (sinceMs = -Infinity) => {
+  const end = Math.floor(Date.now() / HISTORY_INTERVAL_MS) * HISTORY_INTERVAL_MS;
+  const samples = [];
+  for (let at = end - 719 * HISTORY_INTERVAL_MS; at <= end; at += HISTORY_INTERVAL_MS) {
+    if (at <= sinceMs) continue;
+    const phase = at / 600_000;
+    samples.push({
+      at,
+      cpu: 0.3 + 0.25 * Math.sin(phase * 2 * Math.PI) ** 2,
+      memoryUsedBytes: (29 + 3 * Math.sin(phase)) * 2 ** 30,
+      memoryPressure: 0,
+      diskFreeBytes: Number(values['free-gb']) * GB,
+    });
+  }
+  return { intervalMs: HISTORY_INTERVAL_MS, samples };
+};
+
+server.on('connection', (ws) => {
+  ws.once('message', (data, isBinary) => {
+    authenticate(ws, data, isBinary).then(
+      (accepted) => accepted && serve(accepted.socket, accepted.device),
+      (error) => console.error(`Mock server: ${error.message}`),
+    );
+  });
+});
+
+/** Runs the Noise handshake as stim-server does: first contact spends the pairing code, a returning key needs a record. */
+async function authenticate(ws, data, isBinary) {
+  let accepted;
+  try {
+    accepted = await acceptNoise(ws, data, isBinary, {
+      keyPair,
+      psk: (lookup) => (Date.now() <= pairing.expiresAt && lookup === pairing.lookup ? pairing.psk : null),
+      timeoutMs: 10_000,
+    });
+  } catch (error) {
+    if (error instanceof HandshakeRefusal) return null;
+    throw error;
+  }
+  const key = accepted.clientKey.toString('base64url');
+  if (accepted.mode !== MODE_FIRST_CONTACT) {
+    if (deviceKeys.has(key)) return { socket: accepted.socket, device: { key, name: 'Phone' } };
+    ws.close(CLOSE_REFUSED, 'unauthorized');
+    return null;
+  }
+  let name = '';
+  try {
+    name = String(JSON.parse(accepted.payload.toString('utf8')).name ?? '');
+  } catch {}
+  deviceKeys.add(key);
+  writeFileSync(DEVICES_FILE, JSON.stringify([...deviceKeys]));
+  pairing = newPairing();
+  console.log('Paired a phone. Next pairing code:');
+  console.log(pairing.code);
+  return { socket: accepted.socket, device: { key, name: name || 'Phone' } };
+}
+
+function serve(socket, device) {
+  let authed = false;
+  let nextSubscription = 1;
+  const timers = new Map();
+  const send = (message) => socket.readyState === socket.OPEN && socket.send(JSON.stringify(message));
+  const fail = (id, code, message) => send({ id, error: { code, message } });
+  const feeds = new Map();
+  const controls = new Set();
+  const hostedTarget = (params) => {
+    const env = fixtures.status.environments.find((candidate) => candidate.path === params.workspace);
+    const device =
+      params.slot && params.slot !== 'default'
+        ? env?.slots?.find((slot) => slot.slot === params.slot)?.[params.platform]
+        : env?.[params.platform];
+    return ['ios', 'android'].includes(params.platform) && device?.host ? device : null;
+  };
+  const stop = (subscription) => {
+    clearInterval(timers.get(subscription));
+    timers.delete(subscription);
+    feeds.get(subscription)?.stop();
+    feeds.delete(subscription);
+  };
+  const every = (ms, fn) => {
+    const subscription = `s${nextSubscription++}`;
+    timers.set(
+      subscription,
+      setInterval(() => fn(subscription), ms),
+    );
+    return subscription;
+  };
+
+  const stream = (event) => {
+    let seq = 0;
+    const tick = (subscription) => {
+      const payload = status();
+      send({ subscription, ...event(statusViews(payload), seq++, payload) });
+    };
+    const subscription = every(5000, tick);
+    setImmediate(() => timers.has(subscription) && tick(subscription));
+    return { result: { subscription } };
+  };
+
+  const handlers = {
+    hello(params) {
+      authed = true;
+      return { result: hello(device.key, device.name) };
+    },
+    'workspaces.subscribe'() {
+      return stream((views, seq) => ({
+        event: 'workspaces',
+        seq,
+        snapshot: { workspaces: views.workspaces, worktrees: views.worktrees, archived: views.archived },
+      }));
+    },
+    'workspace.subscribe'(params) {
+      if (!fixtures.status.environments.some((env) => env.path === params.workspace))
+        return { error: ['unknown-workspace', `${params.workspace} is not a Stim workspace on this machine.`] };
+      return stream((views, seq) => ({
+        event: 'workspace',
+        seq,
+        environment: views.details.get(params.workspace) ?? null,
+      }));
+    },
+    'machine.subscribe'() {
+      return stream((views, seq, payload) => ({
+        event: 'machine',
+        seq,
+        machine: views.machine,
+        usage: usageHistory(payload.machine?.owners ?? [], Date.now()),
+      }));
+    },
+    'archived.list'() {
+      const payload = status();
+      return { result: { archived: payload.archived ?? [], usage: payload.archivedUsage, next: null } };
+    },
+    'logs.query'(params) {
+      return { result: { records: filterRecords(logs, params) } };
+    },
+    'logs.subscribe'(params) {
+      if (params.archive) {
+        const subscription = `s${nextSubscription++}`;
+        setImmediate(() => {
+          send({ event: 'logs', subscription, records: filterRecords(logs, params) });
+          send({ event: 'logs-ended', subscription });
+        });
+        return { result: { subscription } };
+      }
+      let cursor = 0;
+      const subscription = every(2000, (id) => {
+        const record = { ...logs[cursor++ % logs.length], ts: Date.now() };
+        const records = filterRecords([record], { ...params, tail: undefined });
+        if (records.length > 0) send({ event: 'logs', subscription: id, records });
+      });
+      setImmediate(() => send({ event: 'logs', subscription, records: filterRecords(logs, params) }));
+      return { result: { subscription } };
+    },
+    'frames.subscribe'(params) {
+      if (hostedTarget(params)?.state === 'stopped') return { error: ['frames-failed', 'The hosted session stopped.'] };
+      if (
+        hostedTarget(params) &&
+        (params.physical || params.duoFrame || params.at !== undefined || params.rate !== undefined)
+      )
+        return { error: ['bad-request', 'Hosted frames do not support physical targets, duoFrame or replay.'] };
+      if (params.archive && params.at === undefined) return { error: ['bad-request', 'An archive requires at.'] };
+      if (params.archive && !recordingFor(params).spans.length)
+        return { error: ['no-recording', 'No archived recording remains.'] };
+      if ((params.platform === 'ios' || params.archive) && params.video?.includes('h264')) {
+        const subscription = `s${nextSubscription++}`;
+        const feed = new VideoFeed(recordingFor(params), subscription, socket, send);
+        feed.archived = Boolean(params.archive);
+        feeds.set(subscription, feed);
+        if (params.at === undefined) setImmediate(() => feed.live());
+        else setImmediate(() => feed.seek(params.at, params.rate ?? 0));
+        return { result: { subscription, video: 'h264' } };
+      }
+      const frame = fixtures.frames[params.platform];
+      if (!frame) return { error: ['no-frames', `The mock server has no ${params.platform} frame fixture.`] };
+      const subscription = every(1000, (id) =>
+        send({
+          event: 'frame',
+          subscription: id,
+          platform: params.platform,
+          slot: params.slot ?? 'default',
+          ...frame,
+          capturedAt: new Date().toISOString(),
+        }),
+      );
+      return { result: { subscription } };
+    },
+    'control.begin'(params) {
+      if (values.read) return { error: ['forbidden', 'The mock pairing is read only.'] };
+      if (!hostedTarget(params) || params.physical)
+        return { error: ['bad-request', 'Mock control needs a hosted iOS or Android target.'] };
+      if (hostedTarget(params).state === 'stopped') return { error: ['action-failed', 'The hosted session stopped.'] };
+      const session = `c${nextSubscription++}`;
+      controls.add(session);
+      return { result: { session, platform: params.platform, lease: null, postures: [] } };
+    },
+    'control.end'(params) {
+      controls.delete(params.session);
+      return { result: {} };
+    },
+    'workspace.files'(params) {
+      const files =
+        params.group === 'untracked'
+          ? [{ path: 'src/new-screen.tsx', status: '??', staged: false, unstaged: false, untracked: true }]
+          : [
+              { path: 'src/app.tsx', status: 'MM', staged: true, unstaged: true, untracked: false },
+              { path: 'assets/logo.png', status: ' M', staged: false, unstaged: true, untracked: false },
+            ];
+      return { result: { files, truncated: false } };
+    },
+    'workspace.diff'(params) {
+      const patches =
+        params.path === 'assets/logo.png'
+          ? [{ section: 'unstaged', kind: 'binary', text: '' }]
+          : params.path === 'src/new-screen.tsx'
+            ? [{ section: 'untracked', kind: 'text', text: 'export const NewScreen = () => null;\n' }]
+            : [
+                {
+                  section: 'staged',
+                  kind: 'text',
+                  text: 'diff --git a/src/app.tsx b/src/app.tsx\n--- a/src/app.tsx\n+++ b/src/app.tsx\n@@ -1 +1 @@\n-export const title = "Old title";\n+export const title = "Staged title";\n',
+                },
+                {
+                  section: 'unstaged',
+                  kind: 'text',
+                  text: 'diff --git a/src/app.tsx b/src/app.tsx\n--- a/src/app.tsx\n+++ b/src/app.tsx\n@@ -1 +1 @@\n-export const title = "Staged title";\n+export const title = "Current title";\n',
+                },
+              ];
+      return { result: { path: params.path, patches } };
+    },
+    'stats.get'() {
+      return { error: ['not-implemented', 'The mock server does not serve stats.'] };
+    },
+    'build.plan'(params) {
+      const plan = fixtures.plans[params.platform];
+      if (!plan) return { error: ['stim-failed', `The mock server has no ${params.platform} plan fixture.`] };
+      return { result: { ...plan, ...(params.slot && params.slot !== 'default' ? { slot: params.slot } : {}) } };
+    },
+    'settings.get'() {
+      return {
+        result: {
+          project: null,
+          files: {},
+          settings: [{ key: 'recording.enabled', value: recordingEnabled, origin: 'machine', layers: {} }],
+          unknown: [],
+        },
+      };
+    },
+    'archive.detail'(params) {
+      const detail = shiftTimestamps(fixtures.archiveDetails[params.archive], shiftMs);
+      return {
+        result: {
+          ...detail,
+          recordings: detail.recordings.map((device) => ({
+            ...device,
+            spans: device.spans.map((span) => ({ start: span.start + shiftMs, end: span.end + shiftMs })),
+          })),
+        },
+      };
+    },
+    'replay.range'(params) {
+      if (hostedTarget(params)) return { result: { enabled: false, recording: false, spans: [], markers: [] } };
+      if (params.archive) {
+        const source = recordingFor(params);
+        return { result: { ...replayRange(source), recording: false } };
+      }
+      if (
+        params.platform !== 'ios' ||
+        !recordingEnabled ||
+        params.workspace === '/Users/dev/Developer/react-native-hinges/example'
+      ) {
+        return { result: { enabled: recordingEnabled, recording: false, spans: [], markers: [] } };
+      }
+      const running =
+        fixtures.status.environments.find((env) => env.path === params.workspace)?.ios?.state === 'Booted';
+      return { result: { ...replayRange(recording), recording: running } };
+    },
+    'replay.keyframe'(params) {
+      if (params.archive ? !recordingFor(params).spans.length : params.platform !== 'ios')
+        return { error: ['no-recording', 'No recording remains.'] };
+      return { result: replayKeyframe(recordingFor(params), params.at) };
+    },
+    'frames.seek'(params) {
+      const feed = feeds.get(params.subscription);
+      if (!feed) return { error: ['unknown-subscription', `No video subscription ${params.subscription}.`] };
+      return { result: { at: feed.seek(params.at, params.rate) } };
+    },
+    'frames.live'(params) {
+      const feed = feeds.get(params.subscription);
+      if (!feed) return { error: ['unknown-subscription', `No video subscription ${params.subscription}.`] };
+      if (feed.archived) return { error: ['bad-request', 'An archive cannot go live.'] };
+      feed.live();
+      return { result: {} };
+    },
+    'frames.keyframe'() {
+      return { result: {} };
+    },
+    'recording.set'(params) {
+      if (values.read) return { error: ['forbidden', 'This device can only read (mock server started with --read).'] };
+      recordingEnabled = params.enabled === true;
+      return { result: { enabled: recordingEnabled, recordingsDeleted: [] } };
+    },
+    action(params, id) {
+      if (values.read) return { error: ['forbidden', 'This device can only read (mock server started with --read).'] };
+      if (!ACTIONS.includes(params.action)) return { error: ['unknown-action', `Unknown action ${params.action}.`] };
+      const platformOk =
+        params.platform === undefined ||
+        (params.action === 'reload' && ['ios', 'android', 'web'].includes(params.platform));
+      if (!platformOk) return { error: ['bad-request', 'platform must be ios, android or web, and only for reload.'] };
+      const env = fixtures.status.environments.find((candidate) => candidate.path === params.workspace);
+      if (!env) return { error: ['unknown-workspace', `${params.workspace} is not a Stim workspace on this machine.`] };
+      if (params.action === 'reload' && params.platform === undefined && runsBothPlatforms(env)) {
+        return {
+          error: [
+            'action-failed',
+            'STIM_RELOAD_AMBIGUOUS: Both the iOS and Android apps are running. Choose one with `stim reload ios` or `stim reload android`.',
+          ],
+        };
+      }
+      if (busy.has(params.workspace)) {
+        return { error: ['action-busy', `An action is already running in ${params.workspace}.`] };
+      }
+      busy.add(params.workspace);
+      console.log(`${params.action} ${params.workspace}`);
+      setTimeout(() => {
+        busy.delete(params.workspace);
+        send({ id, result: { action: params.action, workspace: params.workspace, output: { mock: true } } });
+      }, ACTION_MS);
+      return { deferred: true };
+    },
+    'machine.get'() {
+      return { result: usage() };
+    },
+    'machine.details'() {
+      return { result: shiftTimestamps(fixtures.machineDetails, shiftMs) };
+    },
+    'machine.history'(params) {
+      return { result: history(params.sinceMs) };
+    },
+    'notifications.list'(params) {
+      notificationListeners.add(send);
+      const since = params.since ?? 0;
+      return {
+        result: {
+          log: NOTIFICATION_LOG,
+          cursor: notifications[0].seq,
+          notifications: notifications.filter((entry) => entry.seq > since),
+        },
+      };
+    },
+    unsubscribe(params) {
+      stop(params.subscription);
+      return { result: {} };
+    },
+  };
+
+  let deviceClipboard = 'Text on the mock device clipboard';
+  handlers['input.clipboard.set'] = (params) => {
+    if (!controls.has(params.session)) return { error: ['unknown-session', 'No mock control session.'] };
+    if (typeof params.text !== 'string' || Buffer.byteLength(params.text) > 8192)
+      return { error: ['bad-request', 'The clipboard text is at most 8192 bytes.'] };
+    deviceClipboard = params.text;
+    return { result: {} };
+  };
+  handlers['input.clipboard.get'] = (params) =>
+    controls.has(params.session)
+      ? { result: { text: deviceClipboard } }
+      : { error: ['unknown-session', 'No mock control session.'] };
+
+  for (const method of ['input.touch', 'input.text', 'input.button', 'input.rotate'])
+    handlers[method] = (params) =>
+      controls.has(params.session) ? { result: {} } : { error: ['unknown-session', 'No mock control session.'] };
+
+  socket.on('message', (data) => {
+    let message;
+    try {
+      message = JSON.parse(String(data));
+    } catch {
+      return;
+    }
+    const { id, method, params = {} } = message;
+    const handler = handlers[method];
+    if (!handler) return fail(id, 'unknown-method', `Unknown method ${method}.`);
+    if (method !== 'hello' && !authed) return fail(id, 'unauthorized', 'Send hello first.');
+    let outcome;
+    try {
+      if (method === 'archive.detail') {
+        if (legacyArchives) return fail(id, 'unknown-method', `Unknown method ${method}.`);
+        if (typeof params.archive !== 'string' || !params.archive || params.workspace !== undefined)
+          return fail(id, 'bad-request', 'Send an archive id.');
+        if (!fixtures.status.archived.some((archive) => archive.id === params.archive))
+          return fail(id, 'unknown-workspace', `Archive ${params.archive} is not a Stim archive on this machine.`);
+      }
+      if (['logs.query', 'logs.subscribe', 'replay.range', 'replay.keyframe', 'frames.subscribe'].includes(method)) {
+        if (legacyArchives && !params.workspace) return fail(id, 'bad-request', 'workspace is required.');
+        if (Boolean(params.workspace) === Boolean(params.archive))
+          return fail(id, 'bad-request', 'Send exactly one workspace or archive.');
+        if (params.archive && !fixtures.status.archived.some((archive) => archive.id === params.archive))
+          return fail(id, 'unknown-workspace', `Archive ${params.archive} is not a Stim archive on this machine.`);
+      }
+      outcome = handler(params, id);
+    } catch (error) {
+      return fail(id, 'bad-request', error.message);
+    }
+    if (outcome.error) {
+      fail(id, ...outcome.error);
+      if (method === 'hello') socket.close();
+      return;
+    }
+    if (!outcome.deferred) send({ id, result: outcome.result });
+  });
+  socket.on('close', () => {
+    notificationListeners.delete(send);
+    for (const subscription of new Set([...timers.keys(), ...feeds.keys()])) stop(subscription);
+  });
+}
+
+function runsBothPlatforms(env) {
+  const slots = [env, ...(env.slots ?? [])];
+  return slots.some((slot) => slot.ios?.state === 'Booted') && slots.some((slot) => slot.android?.state === 'detected');
+}
+
+function hello(clientKey, deviceName) {
+  return {
+    protocol: 2,
+    server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
+    capabilities: values.read ? ['read'] : ['read', 'control'],
+    features: [
+      'ios-hosted',
+      'android-hosted',
+      'physical-ios',
+      'physical-android',
+      'notifications',
+      'workspace-diff',
+      'device-clipboard',
+    ],
+    actions: values.read ? [] : ACTIONS,
+    device: { id: hash(clientKey).slice(0, 8), name: deviceName },
+  };
+}

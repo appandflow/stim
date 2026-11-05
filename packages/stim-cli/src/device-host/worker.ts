@@ -1,0 +1,180 @@
+import { existsSync, renameSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { withDirLockAsync } from '@stim-cli/core';
+import {
+  assertHostedDeviceLedger,
+  readHostedDevice,
+  type HostedDeviceSelectors,
+  type HostedDevice,
+  type HostedIosChoice,
+  type HostedIosDevice,
+} from '@stim-cli/core/state';
+import { muteBootedSimulator } from '../engine/device-ios.ts';
+import {
+  bootIosSim,
+  createOwnedIosSim,
+  listAllIosSims,
+  resolveIosCreation,
+  resetIosPrivacy,
+  resetIosKeychain,
+  listUserApps,
+  uninstallIosApp,
+} from '../devices/ios.ts';
+import { forgetCreatedDeviceAsync } from '../devices/created-devices.ts';
+import { teardownOwnedIosSim } from '../devices/teardown.ts';
+import { installHostedApp, removeHostedAppData } from './app.ts';
+
+export type HostedWorkerResult = {
+  state: 'ready' | 'stopped' | 'installed' | 'unknown' | 'parked' | 'compatible' | 'incompatible' | 'unusable';
+  device: HostedDevice | null;
+  notice?: string;
+  launched?: true | 'unverified';
+  /** The registered hosted macOS app process, for the host's agent driver. */
+  pid?: number;
+};
+
+export const hostedNotify = (message: string): void => {
+  process.stderr.write(`${message}\n`);
+};
+
+function inventory(): ReturnType<typeof listAllIosSims> {
+  return listAllIosSims({ includeUnavailable: true });
+}
+
+export async function selectHostedIosDevice(selectors: HostedDeviceSelectors): Promise<HostedIosChoice> {
+  inventory();
+  const selected = await resolveIosCreation(selectors);
+  if (!selected.deviceType || !selected.runtime)
+    throw new Error('The installed simulator type or runtime could not be established.');
+  if (process.arch !== 'arm64' && process.arch !== 'x64') throw new Error('Unsupported simulator host architecture.');
+  return {
+    ...selected,
+    deviceType: selected.deviceType,
+    runtime: selected.runtime,
+    architecture: process.arch === 'arm64' ? 'arm64' : 'x86_64',
+  };
+}
+
+/** Called only in the private server-owned worker home; native effects use Stim's existing ownership and teardown. */
+export async function runHostedDevice(
+  mode: 'prepare' | 'stop' | 'install' | 'park' | 'inspect' | 'adopt' | 'resume',
+  selectors: HostedDeviceSelectors,
+  app?: { session: string; attempt: string; metroPort?: number },
+): Promise<HostedWorkerResult> {
+  const home = process.env.STIM_HOME;
+  if (!home) throw new Error('Hosted workers require their isolated STIM_HOME.');
+  let device: HostedIosDevice | null = null;
+  let creationStarted = false;
+  try {
+    if (mode === 'prepare') {
+      creationStarted = existsSync(join(home, 'hosted-device.json')) || existsSync(join(home, 'created-devices.json'));
+      if (creationStarted)
+        throw new Error('This hosted worker home already has a device record. Attach or stop its existing session.');
+      const selected = await selectHostedIosDevice(selectors);
+      creationStarted = true;
+      const created = await createOwnedIosSim('hosted', {}, selected);
+      device = { ...selected, udid: created.udid, name: created.name };
+      await withDirLockAsync(join(home, 'hosted-device.lock'), () => {
+        const temporary = join(home, 'hosted-device.json.tmp');
+        writeFileSync(temporary, JSON.stringify(device), { mode: 0o600 });
+        renameSync(temporary, join(home, 'hosted-device.json'));
+      });
+      assertHostedDeviceLedger(home, device.udid);
+      await bootIosSim(device.udid, { openViewer: false });
+      if (inventory().find((sim) => sim.udid === device!.udid)?.state !== 'Booted')
+        throw new Error('Hosted simulator boot could not be verified.');
+      await muteBootedSimulator(device.udid, hostedNotify);
+      return { state: 'ready', device };
+    }
+    device = readHostedDevice(home);
+    const ledger = assertHostedDeviceLedger(home, device.udid, 'ios', { allowEmpty: mode === 'stop' });
+    const current = inventory().find((sim) => sim.udid === device!.udid);
+    if (mode === 'inspect' || mode === 'adopt') {
+      if (
+        !current ||
+        !current.available ||
+        !current.name.startsWith('stim-') ||
+        current.name !== device.name ||
+        current.state !== 'Shutdown'
+      )
+        throw new Error('The parked hosted simulator is missing, renamed or not Shutdown.');
+      let choice: HostedIosChoice;
+      try {
+        choice = await selectHostedIosDevice(selectors);
+      } catch (error) {
+        if (mode === 'inspect') return { state: 'incompatible', device, notice: (error as Error).message };
+        throw error;
+      }
+      if (
+        choice.deviceTypeId !== device.deviceTypeId ||
+        choice.runtimeId !== device.runtimeId ||
+        choice.architecture !== device.architecture
+      ) {
+        if (mode === 'inspect') return { state: 'incompatible', device };
+        throw new Error('The parked hosted simulator does not match the requested selectors.');
+      }
+      if (mode === 'inspect') return { state: 'compatible', device };
+      await bootIosSim(device.udid, { openViewer: false });
+      if (inventory().find((sim) => sim.udid === device!.udid)?.state !== 'Booted')
+        throw new Error('Hosted simulator boot could not be verified.');
+      await resetIosPrivacy(device.udid);
+      await resetIosKeychain(device.udid);
+      for (const bundleId of await listUserApps(device.udid)) await uninstallIosApp(device.udid, bundleId);
+      await withDirLockAsync(join(home, 'hosted-device.lock'), () => {
+        const temporary = join(home, 'hosted-device.json.tmp');
+        writeFileSync(temporary, JSON.stringify(device), { mode: 0o600 });
+        renameSync(temporary, join(home, 'hosted-device.json'));
+      });
+      removeHostedAppData(home, { keepBlobs: true });
+      await muteBootedSimulator(device.udid, hostedNotify);
+      return { state: 'ready', device };
+    }
+    if (mode === 'resume') {
+      if (
+        !current ||
+        !current.available ||
+        !current.name.startsWith('stim-') ||
+        current.name !== device.name ||
+        current.state !== 'Booted'
+      )
+        throw new Error('The hosted simulator is missing, renamed or no longer Booted.');
+      return { state: 'ready', device };
+    }
+    if (mode === 'park') {
+      const outcome = await teardownOwnedIosSim(device.udid);
+      if (outcome.status !== 'torn-down' || inventory().find((sim) => sim.udid === device!.udid)?.state !== 'Shutdown')
+        throw new Error(outcome.reason ?? 'Hosted simulator shutdown could not be verified.');
+      removeHostedAppData(home, { keepBlobs: true });
+      return { state: 'parked', device };
+    }
+    if (mode === 'install') {
+      if (!app || current?.state !== 'Booted')
+        throw new Error('Hosted app installation requires its booted owned simulator.');
+      const launched = await installHostedApp(home, app.session, app.attempt, device, app.metroPort);
+      return { state: 'installed', device, launched };
+    }
+    if (ledger === 'empty') {
+      if (current) throw new Error('The hosted simulator remains without ledger ownership; it was kept.');
+      removeHostedAppData(home);
+      return { state: 'stopped', device };
+    }
+    const outcome = await teardownOwnedIosSim(device.udid, { del: true });
+    if (outcome.status !== 'torn-down' && outcome.status !== 'missing')
+      throw new Error(outcome.reason ?? 'Hosted simulator teardown was not established.');
+    const after = inventory().find((sim) => sim.udid === device!.udid);
+    if (after)
+      throw new Error(
+        `Hosted simulator ${device.udid} is still listed (${after.state}); deletion could not be verified. If its runtime is unavailable, delete it with xcrun simctl delete and stop the session again.`,
+      );
+    await forgetCreatedDeviceAsync('ios', device.udid);
+    removeHostedAppData(home);
+    return { state: 'stopped', device };
+  } catch (error) {
+    return {
+      state:
+        mode === 'inspect' ? 'unusable' : mode === 'prepare' && !creationStarted && !device ? 'stopped' : 'unknown',
+      device,
+      notice: (error as Error).message,
+    };
+  }
+}

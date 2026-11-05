@@ -1,0 +1,138 @@
+import { rm } from 'node:fs/promises';
+import { basename, dirname } from 'node:path';
+import chalk from 'chalk';
+import { listStatusCacheEntries, listStatusCacheEntriesAsync, type StatusCacheEntry } from '@stim-cli/core/state';
+import { formatBytes, isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
+import type { GcSkip } from './types.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
+import { rootPresence } from './workspaces.ts';
+
+export interface StaleStatusCache {
+  kind: StatusCacheEntry['kind'];
+  file: string;
+  path: string;
+  bytes: number;
+}
+
+const KINDS: readonly StatusCacheEntry['kind'][] = ['disk-usage', 'pull-request', 'git-merge'];
+
+type Verdict = 'gone' | 'present' | 'unreadable' | 'unknown' | 'unmounted';
+
+const KEPT_REASON: Record<'unreadable' | 'unknown' | 'unmounted', string> = {
+  unreadable: 'the file records no readable path of its own',
+  unknown: 'Stim cannot tell whether the folder it measures still exists',
+  unmounted: 'the volume of the folder it measures is not mounted',
+};
+
+function witnessPath(path: string): string {
+  return basename(path).startsWith('node_modules') ? dirname(path) : path;
+}
+
+function judge(path: string | null, mountedVolumes: string[]): Verdict {
+  if (path === null) return 'unreadable';
+  const witness = witnessPath(path);
+  const present = rootPresence(witness);
+  if (present === null) return 'unknown';
+  if (present) return 'present';
+  return isOnMountedVolume(witness, mountedVolumes) ? 'gone' : 'unmounted';
+}
+
+export interface KeptStatusCaches {
+  dir: string;
+  verdict: 'unreadable' | 'unknown' | 'unmounted';
+  count: number;
+}
+
+export function judgeStatusCaches(
+  entries: readonly StatusCacheEntry[],
+  mountedVolumes: string[],
+): { stale: StaleStatusCache[]; kept: KeptStatusCaches[] } {
+  const stale: StaleStatusCache[] = [];
+  const kept = new Map<string, KeptStatusCaches>();
+  for (const { kind, file, path, bytes } of entries) {
+    const verdict = judge(path, mountedVolumes);
+    if (verdict === 'present') continue;
+    if (verdict === 'gone') {
+      stale.push({ kind, file, path: path as string, bytes });
+      continue;
+    }
+    const dir = dirname(file);
+    const key = `${dir}\n${verdict}`;
+    const seen = kept.get(key);
+    if (seen) seen.count++;
+    else kept.set(key, { dir, verdict, count: 1 });
+  }
+  return { stale, kept: [...kept.values()] };
+}
+
+export function keptStatusCachesReason({ verdict, count }: KeptStatusCaches): string {
+  return `${count} entr${count === 1 ? 'y' : 'ies'} kept: ${KEPT_REASON[verdict]}`;
+}
+
+export function classifyStatusCaches(
+  entries: readonly StatusCacheEntry[],
+  mountedVolumes: string[],
+): { stale: StaleStatusCache[]; skipped: GcSkip[] } {
+  const { stale, kept } = judgeStatusCaches(entries, mountedVolumes);
+  return { stale, skipped: kept.map((group) => ({ dir: group.dir, reason: keptStatusCachesReason(group) })) };
+}
+
+export function collectStaleStatusCaches(mountedVolumes: string[]): { stale: StaleStatusCache[]; skipped: GcSkip[] } {
+  return classifyStatusCaches(listStatusCacheEntries(), mountedVolumes);
+}
+
+export async function collectStaleStatusCachesAsync(
+  mountedVolumes: string[],
+  signal?: AbortSignal,
+): Promise<ReturnType<typeof judgeStatusCaches>> {
+  return judgeStatusCaches(await listStatusCacheEntriesAsync(signal), mountedVolumes);
+}
+
+export function statusCacheLines(stale: readonly StaleStatusCache[]): string[] {
+  if (!stale.length) return [];
+  const total = stale.reduce((sum, entry) => sum + entry.bytes, 0);
+  const lines = [
+    `Stale status cache entries (${stale.length}, ${formatBytes(total)}) - the folder or worktree they measure is gone:`,
+  ];
+  for (const kind of KINDS) {
+    const count = stale.filter((entry) => entry.kind === kind).length;
+    if (count) lines.push(`  ${kind}: ${count}`);
+  }
+  lines.push('              --delete removes them; `stim status` measures a folder again if it comes back.');
+  return lines;
+}
+
+export async function deleteStaleStatusCaches(
+  stale: readonly StaleStatusCache[],
+  output: GcOutput = GC_OUTPUT,
+  signal?: AbortSignal,
+): Promise<number> {
+  signal?.throwIfAborted();
+  const mountedVolumes = listMountedVolumes();
+  let failures = 0;
+  for (const kind of KINDS) {
+    let removed = 0;
+    let bytes = 0;
+    for (const entry of stale.filter((candidate) => candidate.kind === kind)) {
+      signal?.throwIfAborted();
+      if (judge(entry.path, mountedVolumes) !== 'gone') continue;
+      try {
+        await rm(entry.file, { force: true });
+        removed++;
+        bytes += entry.bytes;
+      } catch (error) {
+        signal?.throwIfAborted();
+        failures++;
+        const detail = (error as Error)?.message || String(error);
+        output.log(chalk.red(`Could not remove ${entry.file}: ${detail}`));
+        output.record('statusCache', 'failed', `${kind} cache entry`, { id: entry.file, detail });
+      }
+    }
+    if (!removed) continue;
+    const label = `${removed} stale ${kind} cache entr${removed === 1 ? 'y' : 'ies'}`;
+    output.log(chalk.green(`Removed ${label}`));
+    output.record('statusCache', 'done', label, { bytes });
+  }
+  signal?.throwIfAborted();
+  return failures;
+}

@@ -1,0 +1,15 @@
+diff --git a/android/build.gradle b/android/build.gradle
+index e2aa501d9dbafa7927bf2cefb6c9a8242d8c141c..3b42509335f8a41970b0cb4c8464c136f977579a 100644
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -19,7 +19,9 @@ def isNewArchitectureEnabled() {
+ }
+ 
+ apply plugin: "com.android.library"
+-apply plugin: 'org.jetbrains.kotlin.android'
++if (project.extensions.findByName('kotlin') == null) {
++  apply plugin: 'org.jetbrains.kotlin.android'
++}
+ apply from: '../nitrogen/generated/android/NitroMmkv+autolinking.gradle'
+ apply from: "./fix-prefab.gradle"
+ 

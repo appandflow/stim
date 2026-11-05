@@ -1,0 +1,156 @@
+{
+  "workspace": "/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway",
+  "syntaxError": [
+    {
+      "ts": 1790402301996,
+      "src": "metro",
+      "level": "debug",
+      "event": "bundle_response_started",
+      "platform": "ios",
+      "requestId": "3ffec5f3-b4de-4eb6-8f3e-69c5854ab469",
+      "msg": "ios bundle response started"
+    },
+    {
+      "src": "metro",
+      "level": "error",
+      "msg": "iOS Bundling failed 128ms index.js (1 module)",
+      "raw": true,
+      "event": "expo_stdout",
+      "marker": true,
+      "ts": 1790402302131
+    },
+    {
+      "src": "metro",
+      "level": "error",
+      "msg": " ERROR  SyntaxError: /private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/App.js: Unexpected token, expected \"}\" (12:31)",
+      "raw": true,
+      "event": "expo_stdout",
+      "ts": 1790402302131
+    },
+    {
+      "src": "metro",
+      "level": "info",
+      "msg": "  10 |     <View style={styles.container}>",
+      "raw": true,
+      "event": "expo_stdout",
+      "ts": 1790402302131
+    },
+    {
+      "src": "metro",
+      "level": "info",
+      "msg": "  11 |       <Text>Open up App.js to start working on your app!</Text>",
+      "raw": true,
+      "event": "expo_stdout",
+      "ts": 1790402302131
+    },
+    {
+      "src": "metro",
+      "level": "info",
+      "msg": "> 12 |       <Text>{formatTotal(null) ]}</Text>",
+      "raw": true,
+      "event": "expo_stdout",
+      "ts": 1790402302131
+    },
+    {
+      "src": "metro",
+      "level": "info",
+      "msg": "     |                                ^",
+      "raw": true,
+      "event": "expo_stdout",
+      "ts": 1790402302131
+    },
+    {
+      "src": "metro",
+      "level": "info",
+      "msg": "  13 |       <StatusBar style=\"auto\" />",
+      "raw": true,
+      "event": "expo_stdout",
+      "ts": 1790402302131
+    },
+    {
+      "src": "metro",
+      "level": "info",
+      "msg": "  14 |     </View>",
+      "raw": true,
+      "event": "expo_stdout",
+      "ts": 1790402302131
+    },
+    {
+      "src": "metro",
+      "level": "info",
+      "msg": "  15 |   );",
+      "raw": true,
+      "event": "expo_stdout",
+      "ts": 1790402302131
+    },
+    {
+      "src": "metro",
+      "level": "info",
+      "msg": "    at constructor (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:369:19)",
+      "raw": true,
+      "event": "expo_stdout",
+      "ts": 1790402302131
+    },
+    {
+      "src": "metro",
+      "level": "info",
+      "msg": "    at FlowParserMixin.raise (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6622:19)",
+      "raw": true,
+      "event": "expo_stdout",
+      "ts": 1790402302131
+    },
+    {
+      "src": "metro",
+      "level": "info",
+      "msg": "    at FlowParserMixin.unexpected (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6642:16)",
+      "raw": true,
+      "event": "expo_stdout",
+      "ts": 1790402302131
+    },
+    {
+      "src": "metro",
+      "level": "info",
+      "msg": "    at FlowParserMixin.expect (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:6922:12)",
+      "raw": true,
+      "event": "expo_stdout",
+      "ts": 1790402302131
+    },
+    {
+      "ts": 1790402302131,
+      "src": "metro",
+      "level": "debug",
+      "event": "bundle_response_finished",
+      "platform": "ios",
+      "requestId": "3ffec5f3-b4de-4eb6-8f3e-69c5854ab469",
+      "statusCode": 200,
+      "msg": "ios bundle response finished"
+    },
+    {
+      "src": "metro",
+      "level": "info",
+      "msg": "    at FlowParserMixin.jsxParseExpressionContainer (/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/logs-throwaway/node_modules/@babel/parser/lib/index.js:4655:10)",
+      "raw": true,
+      "event": "expo_stdout",
+      "ts": 1790402302132
+    }
+  ],
+  "runtimeError": [
+    {
+      "src": "metro",
+      "level": "info",
+      "msg": "iOS Bundled 80ms index.js (1 module)",
+      "raw": true,
+      "event": "expo_stdout",
+      "marker": true,
+      "ts": 1790401969753
+    },
+    {
+      "src": "metro",
+      "level": "error",
+      "msg": " ERROR  [TypeError: Cannot read property 'total' of null]",
+      "raw": true,
+      "event": "expo_stdout",
+      "ts": 1790401969977
+    }
+  ]
+}

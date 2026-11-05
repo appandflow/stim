@@ -1,0 +1,47 @@
+{
+  "name": "stim-monorepo",
+  "private": true,
+  "description": "Workspace root. The published packages live in packages/.",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p packages/core/tsconfig.json && tsc --noEmit -p packages/cache/tsconfig.json && tsc --noEmit -p packages/cache-s3/tsconfig.json && tsc --noEmit -p packages/agent-driver/tsconfig.json && tsc --noEmit -p packages/agent-driver-agent-device/tsconfig.json && tsc --noEmit -p packages/stim-cli/tsconfig.json && tsc --noEmit -p packages/metro/tsconfig.json && tsc --noEmit -p packages/expo-build-cache/tsconfig.json && tsc --noEmit -p packages/server/tsconfig.json && tsc --noEmit -p packages/transport/tsconfig.json && tsc --noEmit -p packages/transport-tailscale/tsconfig.json && tsc --noEmit -p packages/transport-local/tsconfig.json && tsc --noEmit -p packages/ci/tsconfig.json && tsc --noEmit -p .github/actions/stim-ci/tsconfig.json",
+    "lint": "oxlint . && node scripts/type-assertion-ratchet.mjs && node scripts/build-compat.mjs",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "test": "vitest run",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:compat": "vitest run --config vitest.compat.config.ts",
+    "test:runtime": "node test/runtime-floor.mjs",
+    "test:watch": "vitest",
+    "build": "pnpm -r --filter \"./packages/*\" --filter @stim-cli/github-action run build",
+    "test:e2e": "node --import ./test/e2e/daemon-off.mjs --test test/e2e/*.e2e.js",
+    "knip": "knip && knip --production",
+    "benchmark:agent": "node scripts/agent-benchmark/driver.mjs",
+    "release:prep": "node scripts/release-prep.mjs",
+    "preinstall": "npx only-allow pnpm",
+    "test:prompts": "node scripts/prompt-eval/run.mjs",
+    "rpc:generate": "node scripts/generate-rpc-validators.mjs",
+    "rpc:check": "node scripts/generate-rpc-validators.mjs --check"
+  },
+  "devDependencies": {
+    "@types/node": "26.3.0",
+    "ajv": "8.20.0",
+    "knip": "^6.32.2",
+    "oxfmt": "0.65.0",
+    "oxlint": "1.80.0",
+    "ts-json-schema-generator": "2.9.0",
+    "tsdown": "0.22.14",
+    "typescript": "7.0.2",
+    "vitest": "5.0.4"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "packageManager": "pnpm@12.0.0"
+}

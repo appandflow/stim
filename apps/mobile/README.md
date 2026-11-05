@@ -1,0 +1,1915 @@
+# Stim Mobile
+
+An Expo app for watching Stim workspaces from a phone. It pairs with
+the Stim server on a machine (`stim-server`, from the `@stim-cli/server` package)
+and shows what Stim Desktop shows. A phone the machine grants control can also
+reload and stop a workspace:
+
+On supported iOS and Android phones, haptics mark opening the compact menu,
+changing primary sections or custom filters, and successfully copying diagnostics
+or a log entry. Re-selecting the current section or filter, scrolling and live
+updates stay silent. System settings and hardware can suppress feedback.
+
+On wide iPad and Duo windows, the main screen shows its navigation menu
+in the leading third. A book fold places the menu and content on opposite
+panels, leaving the division clear. Detail screens and the device viewer
+use the whole window. The narrow cover screen uses the menu drawer, retaining
+its open or closed state when rotating through a wide layout. Each pane
+uses its own safe area. Pane widths transition when the fold changes;
+Reduce Motion disables that transition. The home scene keeps its split behind
+pushed details and bottom sheets, so Back reveals the existing split. Notifications
+uses the same content pane and sidebar as Workspaces, Devices and Machines. Opening
+Pair or another overlay retains an open compact drawer beneath it. Choosing primary
+content closes the compact drawer. A sheet opened from a detail screen keeps that
+screen full width.
+Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
+27.1 runtime.
+
+- **Home**: one screen for every paired machine; the app keeps a connection
+  to each. The **Machines** row has a chip per machine with its connection dot and basic
+  usage: active workspaces, the machine's memory used of total (as Activity
+  Monitor's "Memory Used" counts it, colored by memory pressure), and the lowest
+  free space of the volumes that hold Stim's workspaces, Stim home and the
+  simulators. **+**
+  pairs another machine. Below, one list of every workspace on every machine,
+  grouped by repo. Workspaces marked with `workspace.hidden` stay out of the default
+  list; select Hidden in the Home filters to see them. Starting or warming the
+  workspace clears that shared flag. Each repo is a heading with how many of its workspaces are
+  active and idle; repos with an active workspace come first, then by name. In a
+  repo, active workspaces come before idle ones, each by name and machine, so a
+  workspace moves only when it turns active or idle, not while builds run and
+  agents attach. A workspace `stim worktree warm` is preparing or has prepared
+  counts as active. When status identifies a Git checkout, including a primary checkout, its app projects
+  share one row, with the branch and git state shown once. The row shows the
+  status of the app that needs attention most (failed, building, running, idle),
+  error and warning counts summed across the apps, the agent sessions of all of
+  them, and one state dot per platform any app has run (iOS, Android, macOS,
+  Web), as in Stim Desktop's sidebar. Tapping the row opens the unified workspace
+  page at the app that leads the row. Filters still apply per app. Repo active/idle counts count
+  the shown workspaces, while the hidden-idle footer counts apps and source-only worktrees. Different machines
+  and checkouts stay separate even when they share a branch name. Older servers without
+  an explicit checkout identity retain separate app rows for primary checkouts.
+  The identity groups display rows only; each app keeps its own routes, commands, ports and devices.
+  Source-only worktrees share their repo's section and count as idle. **Not set up**,
+  **All** and **Show All** reveal them; the default **Active** filter hides them. Their rows
+  show the branch or folder, **Not warmed**, git facts and the machine when more
+  than one is paired. They have no app activity or controls and do not open a
+  workspace page. Machine and project filters apply; errors and remote-session
+  filters exclude them. Older servers that omit them keep the registered-app list.
+  Each single-app row is titled by its worktree's branch, or the
+  worktree's folder when it has no branch, or the project for a main checkout,
+  truncated in the middle when long. At the trailing edge, a word says what the
+  workspace is doing: **Building iOS**, **Warming** with how long, **Ready**
+  until its first run, **Driven** with how long an agent has driven a device,
+  **Running**, or **Idle** with how long ago Metro stopped. Below the title, in
+  this order and only when there is something to show: the workspace's agent
+  session (the same one the Work card shows, running or ended) with how many
+  others it has; what is wrong (error count, which opens the logs, a failed
+  build while the workspace is active or for a day after, a closed app, **CI
+  failing**, and warning or issue counts); while building, the build step with
+  its counts, the cache outcome and the elapsed time against the estimate over
+  a bar of the planned phases, with the build machine beside the step when the
+  build was offloaded; while warming, the step with an activity
+  indicator; the running devices by kind (`2 iOS, Android`) with the tools
+  driving them, or how long they have been idle once that is 10 minutes, the
+  machines hosted devices run on, and remote EAS sessions; and the git state: the pull request number colored by
+  its state, commits ahead and behind, changed files, **merged into** and **no
+  upstream**. The machine's name shows only when more than one machine is
+  paired, and the app's folder in its checkout only when a repo's workspaces
+  sit in different folders. Metro's port is on the workspace screen. A row is
+  one element for VoiceOver and TalkBack, whose label says all of this; a row
+  with errors has a **Show Errors** action. A machine that is not connected keeps its
+  last status: its rows are dimmed with a hollow dot and read "Last seen 3m
+  ago", and their activity and build times stop at the moment it disconnected, and
+  their colors turn grey. The phone keeps each machine's last status on disk,
+  written at most every 5 seconds and when the app leaves the foreground or the
+  connection drops, so a cold launch shows those rows, dimmed with "Last seen",
+  until the machine's live status replaces them. Removing a machine deletes
+  its saved status. The first launch of a new app build, update or rollback
+  deletes every saved status and the notification state first, so that code
+  never reads what an older version wrote; pairings and settings stay.
+- **Needs Attention**: a strip between the machine chips and the list, hidden
+  when nothing is wrong, lists the problems on every paired machine, whatever
+  the filters, errors (red) before warnings (amber): a machine that is offline
+  or refuses the connection, free disk below 5 GB (the default of Stim's
+  refuse floor), a failed last build, errors in the logs since the marker,
+  status issues, a running build at more than twice its median, and a running
+  simulator or emulator whose app is not running. A workspace that is not active,
+  building or holding a remote session, warming and ready ones included, adds only its error issues and a build
+  that failed in the last day; the machine status sheet lists every issue. A
+  disconnected machine shows only its offline item, because its status is
+  stale. It shows three items until you expand it. A machine item opens the machine's status, log errors
+  open the workspace's errors, and every other item opens the workspace. A
+  **Notifications** row at the bottom of the strip, with the unread count, opens
+  the notification inbox when a paired machine keeps one.
+- **Devices**: the Workspaces / Devices toggle under the machine chips switches
+  the list to a grid of every running simulator and emulator on every paired
+  machine, with its latest frame, model, workspace name and machine, by project
+  and workspace name and, inside a workspace, iOS, Android, Web and then physical
+  devices, by slot. A tile shows the latest frame, then the platform logo and
+  model with the OS or emulator beside it (the line shrinks, then truncates, before it wraps), then one colored state that
+  wraps instead of truncating, then the workspace and its project, then the
+  workspace's agent session on one line, which opens its Claude link when it has one. The state is
+  the first that applies: **Building** with its elapsed time on that device, **Driven by**
+  a tool with how long, **App not running**, **Page failed to load**, **Idle**
+  with how long once nothing has used it for 10 minutes, **Activity unknown**
+  (grey: Stim has no data, not a problem), **In use**, **Leased**
+  for a physical device, and otherwise **Running**. The tile names the machine
+  only when more than one is paired. A tile never moves because a tool starts
+  or stops driving it; its state shows that instead.
+  Phones sit two to a row; a device whose frame is wider than tall, such as a
+  landscape iPad or an unfolded iPhone Duo, takes a whole row.
+  Tapping a tile's screen opens the [device view](#device-view); tapping the
+  rest of the tile opens its workspace. The grid follows the machine and
+  project filters. Each tile on screen asks for one frame, scaled to fit 640
+  pixels, unsubscribes when
+  it arrives, and asks again 2 seconds later, backing off after errors. Tiles
+  off screen, or under another screen, ask for nothing, and the server's
+  capture loop runs only briefly.
+- **Machines**: the third destination on home, alongside Workspaces and
+  Devices, lists every paired machine with its connection state and endpoint,
+  with **Rename** and **Remove** on each row and **Pair** in the header. While
+  connected, a row also shows the machine's own name when this phone labels it
+  differently, and this phone's record on that machine (the name and id
+  `stim-server devices` lists, from `hello`'s `device`). **Rename** changes only
+  the name this phone shows; renaming this phone's record on the machine needs
+  `stim-server devices rename <id> <name>` there. **Remove** forgets the pairing
+  on this phone; its confirmation first shows the `stim-server devices revoke <id>`
+  command that revokes this phone on the machine, which keeps listing it until then. A
+  connected machine's row shows the pairing's scope, **Can control** or
+  **Read-only** (see [Read-only pairings](#read-only-pairings)).
+  Tapping a machine opens that machine's status. Whichever of the three
+  destinations is open is saved on the phone and is what home shows next
+  launch.
+- **Archived Workspaces**: choose **Archived** in Filters to see removed
+  workspaces, grouped by repository and worktree like the active list. Apps in one
+  worktree share a heading and keep their app labels. Rows show removal time,
+  size, the PR number (or Merged), and an indicator for expired content or
+  content expiring within 24 hours. Missing branch or repository facts fall back
+  to the worktree folder. **Show** in Filters is a multi-select over Active, Idle,
+  Not set up and Archived; **All** selects all four, so it includes archived
+  workspaces, which follow the current ones. At least one stays selected. A
+  filter saved by an older app version keeps what it showed.
+  An archive opens the same workspace page as a read-only variant: Status shows
+  removal, last activity, retention dates, size by content and activity totals;
+  Build opens the same build history sheet with cache results, durations,
+  failure codes and build machines; Logs opens the saved archive logs; Work
+  shows ended sessions, their durations, the branch, final commit and PR title.
+  Only a merged snapshot supplies a PR state label; other snapshots show only
+  the number and title. Recordings replace live device tiles and open replay for
+  each retained slot. Expired logs and recordings are marked. A replacement
+  link opens the newer workspace when available. Archives have no workspace
+  controls and never add to active counts or Needs attention. An older server
+  without archive status shows an empty list; one that refuses `archive.detail`
+  keeps the last-build summary and build count and shows an update hint for full
+  history and recording discovery. Archive log or replay refusals show an update hint.
+- **Filters**: the filter button filters the list by machine, by project, by active
+  or idle, and to workspaces with errors or with remote sessions. The filters
+  are saved on the phone; a dot on the button shows that some are on. Active and Idle
+  is the default.
+- **Machine Status**: tapping a chip shows that machine's page, laid out like
+  Stim Desktop's Machine page, read-only. **Now** has the CPU, memory used and
+  startup-volume free space charts over the last hour, the active workspaces and
+  Stim's share of memory, the machine's load per core, and the **Devices** and **Builds** slot meters while their caps are set (a full device meter lists the devices holding the slots), then **CPU and Memory**, the status `machine` owners
+  by memory. **Disk** shows the lowest free space against Stim's disk budget
+  and a bar of what uses it: Stim devices, Stim caches and outputs,
+  `node_modules`, other simulators and AVDs, and runtimes and system images. A
+  figure marked ≥ has parts the machine has not sized; the phone does not size
+  AVDs or system images itself, as Stim Desktop does. Then come **Safe to
+  free now** (what `stim gc --delete` would free, with the command on the machine
+  that frees each row), **Projects** (repositories and their worktrees, with each
+  worktree's `node_modules` (for a linked worktree, what removing it frees with the
+  part shared with other folders noted; a primary checkout, all of it), devices, build outputs and logs, and whether it is
+  merged, has an open pull request, or is stale), **Simulators and
+  emulators** (every one on the machine, Stim's and **Yours**), **Leased
+  devices**, **Runtimes and System Images**, **Recordings**, **Caches**,
+  **Archived Workspaces** (count, total size and sizes of logs, recordings,
+  agent actions and records, shown separately from caches and Safe to free),
+  **Native Builds** (runs, cache hits and time saved per platform), budgets and
+  **Needs Attention**. Nothing on the page frees, deletes or stops anything;
+  it says to manage those on the machine. The disk sections other than Projects and
+  Simulators and emulators come from stim-server's `machine.details`, the `stim
+gc --json` dry run and `stim stats --json`, which the server refreshes at
+  most once a minute; a server without it shows only what `stim status`
+  reports, and says to update. Each section folds from its header, shows its
+  first 10 rows with **Show All N**, and the phone remembers both per section.
+  The title shows the pairing's scope; a read-only pairing also says what it
+  cannot do, with **Allow Control**.
+  Needs attention groups status issues by workspace, active workspaces first,
+  then those with an error, and shows each issue's remedy with **Copy**, which
+  copies it as `cd '<workspace>' && <remedy>`. No remedy maps to Reload or
+  Stop, so none offers an action button.
+- **Menu**: the menu button, or a swipe from the left edge of home, slides
+  home right and shows the menu behind it: **Workspaces**, **Devices** and
+  **Machines** (the same switch as home's toggle), **Notifications** (see
+  [Inbox](#inbox)) with its unread count, **Pair a Machine**, and
+  **Recent Workspaces**, the workspaces most recently active or opened on this
+  phone. The button at the bottom shows the number of
+  paired machines and opens **About**, with the app version and build, the
+  runtime, channel, update and protocol, each paired machine's stim and server
+  versions with the protocol, **Report a Bug**, which opens a new GitHub
+  issue prefilled with those versions and numbered, unnamed machines for you to
+  review and submit, and links to the website, GitHub, Stim's own license, the
+  open source licenses and App&Flow, then **Open Source by App&Flow**, a link to
+  the GitHub repository of each App&Flow library in the build, as a sheet sized to its content on iOS over the menu, which stays
+  open when the sheet closes. **Copy** puts every version, with the OS, device and
+  locale, on the clipboard for a bug report. A tap on home, a swipe left, or Android's back button closes the
+  menu. Pairing scans the QR code Stim Desktop
+  shows under **Pair a Phone**, or takes the endpoint and pairing token typed
+  in. Either way, the app shows the endpoint host and connects only after
+  **Connect**; a host that is not a `.ts.net` name or a private IP address gets a warning.
+  A failed QR pairing keeps its error visible and pauses scanning until
+  **Retry** or manual entry is chosen; unrelated QR codes do not pause scanning.
+  The token field is masked, with a button that shows it, and drops
+  what a token cannot hold, such as the spaces and line breaks of a paste, as you
+  type, without moving the cursor. Pairing creates nothing to show: the phone
+  proves itself with its own X25519 key, which the native session generates and
+  keeps in the Keychain on iOS (this device only, after first unlock) or encrypted
+  with an Android Keystore key on Android, and which never reaches JavaScript.
+  Android Auto Backup and device transfer leave that file out, since the Keystore
+  key does not move with it. A stored key the phone can no longer read is replaced
+  on launch and the saved machines are dropped, so the phone pairs again. The
+  app pins the server key it paired with and refuses any other.
+- **Workspace**: apps with the same linked worktree open one detail page; a
+  single app keeps the same layout. All devices share one grid, with their own
+  app's frames, usage, warnings and actions. Platforms identify builds and devices;
+  only a platform shared by multiple apps adds a small project subtitle. The header
+  keeps the project and machine and omits the app folder. Status uses the most urgent
+  app's stage, CPU and memory sum over apps, and disk counts the worktree and its
+  node_modules once (the largest measurement) plus each app's build output. Logs
+  sum errors and show the worst Metro health with that app's bundle line. Work
+  deduplicates sessions by session id, most recently active first, and shows git
+  once. Logs opens the only app with errors directly, or asks which app; Reload
+  and Stop let you choose an app, and Stop all stops every app. Copy path copies
+  the worktree path. Under the title, four small cards open more. They use one row
+  when the content pane can fit four readable cards, a 2x2 grid on compact
+  panes, and one column with large text. Device cards below fill the pane up
+  to 640 points wide and stay centered; additional columns appear only when
+  another full-width card fits:
+  - **Status**: the stage in its color, **Running** ("up 42m", red with the
+    error count or a closed app), **Building**, **Build failed** (when the
+    newest build of either platform failed, with the platform and when),
+    **Warming** (installing dependencies or copying ignored files), **Ready**,
+    or **Stopped** (with when Metro stopped when known), cut to one line.
+    Under it, on one line, the workspace's CPU (`ps` CPU summed over its
+    processes, so above 100% on several cores) and memory from the status
+    `machine` owners, and its disk (the worktree plus Stim's build folder, without
+    node_modules files shared with other folders) once
+    a status watcher measured it. It opens the **Status** sheet: the whole
+    stage line, CPU and memory tiles, with sparklines of the last 10
+    minutes when the server sends usage history, a process table of the
+    workspace's simulators, emulators, Chrome, Metro and build, and a Disk
+    card: the total, a stacked bar and a legend row each for node_modules, the
+    rest of the worktree and Stim's build output, with the machine's free space
+    below it. For a linked worktree with a private size for node_modules, the card
+    counts only that part, what removing it frees, and a last legend row lists
+    the part that clones or hard links share with other folders, not counted. A
+    primary checkout counts all of its node_modules, so shared bytes are counted
+    once, under the source.
+  - **Build**: one row per platform with the Apple or Android glyph, the last
+    run's time and whether it hit the cache, **Failed** in red, or the next
+    build's prediction from `build.plan` before any run, in grey with a tilde
+    and **est.** (`~0:40 est.`) so it never reads as a finished run. A
+    workspace shows the platforms `stim status` reports in `platforms`, plus any
+    it has used, so a fresh native app shows both before its first run (an older
+    `stim` that reports none shows both when nothing has run), and the screen
+    asks for each shown platform's prediction when it opens. A row reads **Checking…** while its prediction is pending,
+    and **No build** only when there is no run and no prediction. It opens the
+    **Build** sheet on that platform.
+  - **Logs**: the error count since the marker, with a red dot above zero,
+    Metro's port with its health as the dot's color, and the bundle line
+    (**Bundling** with Metro's percent, **Bundled in 1.8s** and when, or **Not
+    bundled yet** once the server reports bundles). It opens the logs, on
+    errors when there are some.
+  - **Work**: the workspace's Claude Code or Codex session, the earliest
+    started of those running there or that stopped in the last 3 days, so it
+    stays the same as processes start and stop, with no time, then the git
+    state. With a pull request `stim status` reports, the git line
+    starts with the number colored by its state (open, draft, merged, closed)
+    and **CI failing** in red when a check fails; the sheet shows every check
+    state. Without one, it starts with a branch icon. Then only what is not
+    zero or unusual: commits ahead and behind, the count of changed files,
+    **merged into** a branch (unless the pull request already reads merged),
+    and **no upstream**. Its accessibility label spells out each part. It
+    opens the **Work** sheet: every agent session running in the workspace or
+    that stopped there in the last 3 days, in the same order, by title and
+    tool without times. A Claude Code session with Remote Control connected,
+    running or ended, shows as a link that opens it in the Claude app, or
+    claude.ai/code without the app. Below come the upstream, ahead, behind, changed and untracked
+    files, merged into, and the pull request's title, state, checks and review
+    with **Open in GitHub**, offered only for a `github.com` pull request link. **Changed** and **Untracked** open a file list on a
+    machine that supports workspace diffs. Select a file to read its staged and
+    unstaged patches or new text. These requests run only when opening the list
+    or selecting a file; home and status updates fetch no diff data. The list
+    shows up to 200 files and each preview is limited to 256 KiB. Binary files,
+    larger patches, symlinks and submodules show why a preview is unavailable.
+    Changed lists include submodules only when their recorded commit differs;
+    uncommitted edits inside submodules are not listed.
+    Repositories using active Git clean/process filters (including Git LFS)
+    refuse rather than run them. Lists and patch lines are virtualized. This is
+    read-only; edit, stage and commit on the machine. Older servers keep the Git
+    counts visible.
+
+  A card with a problem turns red; there is no separate banner. While a build
+  runs, the Build card gives its place to a full-width card: the platform and
+  target device, the tool's step with its counts (such as "Compiling 97 of 214
+  targets") and the elapsed time against the estimate, a bar of the phases
+  sized by the last comparable run, the cache-miss reason, the other
+  platform's last build, and the latest compiler line. Then **Devices**, one
+  card per device: the model and runtime, and the device's CPU,
+  memory and disk; the latest frame the server sends, fitted to the card, with
+  **Folded** or **Unfolded** for an iPhone Duo or an Android foldable emulator.
+  Tapping the frame opens the [device view](#device-view). A device waiting on
+  a build shows **Waiting for the iOS Build** (or its platform) under Stim's
+  build animation, the same one Stim Desktop plays, in the light or dark
+  version; Reduce Motion holds it on one frame. A device with a failed build and no app shows
+  **No App Installed**, and a closed app dims the frame under **App closed**, or
+  shows an **App closed** pill while there is no frame. A
+  warming workspace shows one card while it warms, and a stopped one says that
+  nothing is running. Under a running simulator, emulator or Web device that
+  Stim owns, the agent row names the driving tool with its latest action and
+  how long ago, or **No agent** and how long the device has been idle. It
+  opens the **Agent** sheet: the device's actions, newest first, from
+  `logs.subscribe` with `sources: ["agent"]`, filtered by all, failed, or the
+  most used commands; an action opens the logs with it expanded, and **Open in
+  logs** opens them on the Agent source and that slot. The **Build** sheet
+  switches between iOS and Android for one app. A multi-app worktree has segments
+  for every app's iOS and Android builds and each macOS app, in platform order;
+  duplicate platforms show the project below the label. Each segment reads its own
+  app's build and logs. macOS shows the product, state, duration, error and a
+  Build logs row. While any iOS or Android build runs, the summary Build card is
+  replaced by one progress card per running build. For the running build it shows the elapsed
+  time against the estimate with the miss reason, a checklist of phases with
+  the current phase's time and the estimates of those left (from the last
+  comparable run), and the live output tail of this build from the build log.
+  Otherwise it shows the last build's selected destination and recorded compilation machine,
+  omitting the compilation line for cache hits or absent compilation data.
+  `STIM_OFFLOAD_REFUSED` is labeled **Build destination refused**.
+  It shows when the last build ran, a failed build's compiler
+  errors, why it missed the cache with the changed fingerprint sources, its
+  phase times, and a **Build Logs** row (marked Failed for a failed build) that
+  opens Logs on the build source for that build's slot, limited to the lines
+  written from its start to just after its finish; the server keeps a bounded
+  tail, so an old build's lines may have rolled off. **Recent Builds** lists the platform's last 10 runs from status
+  `builds`, newest first, under a bar sparkline of the durations of runs that
+  finished (two or more), colored by result. Each row shows the result (a cache
+  hit, a cold build, failed, cancelled, or interrupted), its duration, and a
+  detail line: the miss reason, a failed run's cache hit, or cache reads off;
+  how long ago it ran; and a slot other than the default. Tapping a row shows
+  its configuration, fingerprint and phase times, its compiler errors, why it
+  missed, and the same **Build Logs** row for that run. Archived workspaces get
+  the row too, opening the archive's logs. **Next Build** is what the next build would find, why, and how long
+  it should take, from the server's read-only `build.plan`, with the median
+  behind its estimate, a refusal's remedy, when it was checked, and **Check
+  again**. The screen asks for each platform the Build card shows when it
+  opens, one plan at a time, reuses a result for 60 seconds unless that
+  platform's last build changes, asks again after a failure or a reconnect,
+  ignores a reply that arrives after it closes, and asks nothing while a build
+  runs. The **...** menu opens the logs, copies the full path, shows errors, or
+  opens the machine's status. With control, it also runs **Reload** and
+  **Stop** (see [Actions](#actions)).
+
+- **Logs**: opens from the workspace screen's Logs card, on errors from the
+  home screen and notifications, and from the agent feed on the Agent source
+  with the tapped action expanded. A header shows Metro's port and a dot for
+  whether it runs, and how long the last bundle took when the loaded Metro
+  records hold its start and finish. **All**, **Errors** and **Warnings** pick
+  the severity: Errors is `stim logs --errors` and counts the errors since the
+  last launch, from the status; Warnings counts the loaded warnings. Source
+  chips (Metro, App, iOS, Android, Web, Build, Agent) show only the sources the
+  workspace runs or that sent records; none selected shows every source. iOS,
+  Android and Web split the device logs by their platform. The server does not
+  filter by platform or warnings alone, so the phone filters those within the
+  records it loaded. A slot row and a regular expression search complete the
+  filters. It starts with the newest 200 records. **Load Older Logs** reloads a
+  recent window with another 200 records, up to 5,000; these requests repeat
+  recent records rather than use a history cursor. Opening a particular agent
+  action keeps the 5,000-record window so that action can be found.
+  Log followers pause when another route covers the screen or the app enters
+  the background. Returning replaces the snapshot using the retained display
+  window, then follows new records. History outside that window requires
+  **Load Older Logs**. This bounds the phone's initial transfer; the server's
+  existing CLI reader still reads its captured timeline.
+  The list follows new records until you scroll up, and again after a filter
+  change. It keeps the newest 5,000, and a tap on a record
+  shows its whole message and stack. Each entry shows a severity dot, its
+  source and time, then the message; a record with a stack shows its top
+  frames, the workspace's own frames in bold, one framework frame dimmed as its
+  package, and a count of the rest.
+  The records of one failed Expo bundle (`Bundling failed`, the error line with
+  its code frame and stack lines, and a failed bundle response) are one entry.
+  An entry leads with the error type and message, then the file and line
+  relative to the workspace, such as `App.js:12:31`. Tapping it shows the code
+  frame. Under Errors, Stim attaches the code frame to the error record.
+  When the severity or a search leaves the code frame lines out, or an older
+  Stim does not attach them, the app fetches them from the Metro log. **Copy** copies the message and location,
+  and **Share** shares the whole entry.
+
+Paths under the machine's home folder show as `~/...`; the server reports the home
+folder in `hello`. Copy Path copies the full path.
+
+The design and protocol are in
+[docs/specs/2026-09-25-stim-server-design.md](../../docs/specs/2026-09-25-stim-server-design.md).
+The phone speaks protocol 2 only
+([docs/specs/2026-10-13-pluggable-transports-design.md](../../docs/specs/2026-10-13-pluggable-transports-design.md),
+"Authentication"): every connection starts with a Noise handshake, `XXpsk2` with
+the pairing token when it pairs and `XX` when it returns, and every message after
+it is encrypted. The QR code is `v: 2` and carries the server key's fingerprint
+(base64url of its SHA-256); the app ignores fields it does not know. When pairing,
+the session checks the key the server proves against the fingerprint before it
+sends message 3, which carries the phone's name as `{"name": ...}`, then pins the
+full key; `hello` carries only the client name and version. Since Noise
+encrypts the session, plain `ws://` is accepted for private IP addresses as well as
+`wss://` anywhere. Pairings made with protocol 1 are dropped on launch and must
+pair again. A stim-server that predates protocol 2 closes the connection on the
+Noise prefix with 4400 `unexpected binary frame`, and the app then says to update
+stim-server on that machine. A protocol 2 server names its refusal in the close
+reason (`unknown-secret` for a spent or expired pairing code, `unauthorized` for a
+phone it no longer knows).
+
+## Device view
+
+Tapping a running device's screen, on the workspace screen or in the devices
+grid, grows it into the full-screen viewer: the thumbnail expands into the
+screen's place while the backdrop, title and toolbars fade in, showing the
+thumbnail's frame until the stream's first frame arrives. The centered title
+is the workspace's name, with the device's model and slot under it. The close
+button at the top left, Android's back button, or dragging the screen down
+while Control is off shrinks it back into the thumbnail; a short drag springs
+back. The route is a transparent modal, so the list stays underneath, and the
+thumbnail hides while the viewer covers it. With Control off, pinching zooms the
+device's whole frame, its rounded corners and screen together, up to 5 times;
+one finger pans it while zoomed, and a double-tap zooms in to 2.5 times where
+you tap, or back to fit. A zoomed device can extend past the stage and under
+the title bar. While zoomed, the title bar has a dark blurred material on iOS
+(SwiftUI's thin material, through `@expo/ui`) and a translucent dark fill on
+Android. Dragging down closes the viewer only at fit, and closing while
+zoomed takes the device back to fit as it shrinks into the thumbnail. Turning
+Control on puts the device back at fit and turns these gestures off, so
+touches go to the device. The viewer lays the screen out itself, animating its
+position and size rather than a transform, so Android's `SurfaceView` follows
+it and the stream stays live through the open, close and zoom animations. With reduced motion on, the viewer
+opens and closes without animating. It renders `DeviceScreen` (see Device video): H.264 video at up to
+60 frames a second when the server offers it, JPEG frames at up to 30
+otherwise, scaled to the screen's pixels (at most 1600 on the longer edge)
+and fitted to the device's shape. It is view-only until you turn on **Control**, the button at the top right, which is filled and shows a checkmark while it is on. On a read-only pairing,
+Control, the toolbar buttons and **Take Over** show disabled, and a banner
+says the phone is read-only and how to allow control, with **Copy Command**
+and **Reconnect** (see [Read-only pairings](#read-only-pairings)). The same
+banner appears when the server refuses `control.begin` with `forbidden`, or
+ends a session because the machine took control away.
+
+The compact bottom toolbar keeps common icons visible: **Keyboard**, **Home** on iOS or
+**Back** on Android and web, and both rotation directions on simulators and
+emulators. **More** (the ellipsis button) opens
+a native menu for Lock, Android Home and Apps, supported foldable postures,
+and simulator options. **Device Frame** appears in More when matching frame artwork
+is available; this display toggle does not require control permission. Unavailable
+device commands stay disabled.
+
+On iOS simulators whose server advertises them, **More** includes
+**Shake** and **Slow Animations**. Slow animations shows its confirmed state;
+its buttons wait for the current change to finish. Ending control stops a
+pending change. Older servers and unavailable simulator capabilities leave
+these controls hidden. These options do not appear for physical phones,
+Android or web.
+
+### Native macOS apps
+
+Native workspaces from `stim macos` appear on Home with app/build/runtime state.
+The workspace shows the owned app tile, a build card opening SwiftPM logs and a
+logs card opening native runtime stdout/stderr in the existing log viewer.
+macOS uses no Metro. Stopped and unverified apps retain their status tile.
+
+A running app's tile opens the same viewer with `platform: "macos"`, in the default
+slot, when the server advertises `macos-window`. It has no replay. The server captures only
+the front standard window of the app whose PID, process start time, executable and
+bundle match its owned launch record, following it as the app opens, switches, closes
+or resizes windows; other apps and the desktop are excluded.
+Existing Screen & System Audio Recording permission (Screen Recording on macOS 14) is required for the capture host. A denial
+shows permission guidance while status and logs stay usable. On the host Mac, Stim Desktop opens one native viewer setup screen for Screen & System Audio Recording and Device Control and Data Access (Accessibility on macOS 26 and earlier) on first use. Approve the normal macOS requests there, then reconnect the phone viewer. **Permissions** on the Desktop app card reopens setup. The phone and server do not request or reset OS grants.
+
+With `macos-window-control` and a control pairing, **Control** enables mouse
+clicks/drags and printable ASCII typing. The main bar offers **Keyboard** and
+**Scroll**. Keyboard attaches one compact, horizontally scrolling extra-key row over a
+subtle material backdrop on iOS and a translucent fallback elsewhere, with
+modifier glyphs, navigation keys and shortcut icons. Every control keeps its accessible name. One-shot
+Shift, Control, Option and Command clear after the next supported key or on
+keyboard dismissal. Scroll turns a drag into scrolling instead of moving the
+mouse.
+
+Keyboard Controller requires a new native client build; an older binary cannot
+receive it through a JavaScript update. A server advertising
+`macos-keyboard-extended` supports modified `a-z` and `0-9` one key at a time.
+Older servers retain fixed shortcuts and navigation but reject other modified
+letters; the phone explains that requirement. Modified symbols and
+multi-character input are unsupported. Shortcuts for `a-z` and `0-9` use the
+key that types the character in the **machine's current keyboard layout**, using the
+Command layer when Command is held. Dvorak and Dvorak-QWERTY Command are
+supported. On Russian and similar layouts (Cyrillic, Greek, Hebrew, Arabic),
+Latin-letter shortcuts work with Command; Control-only or Option-only letter
+shortcuts are refused. With Control, the layout's Control table must also yield
+the requested character or, for letters, its C0 control character; otherwise
+the shortcut is refused. The machine's selected input source is read on each key,
+so switching layouts takes effect on the next key. Letters and digits
+available only with Shift or Option, or through a dead key (for example digits
+on AZERTY), are refused with a reason naming the layout, and Control ends. Stim
+does not add modifiers to reach those characters. Ordinary typing and navigation
+do not depend on the layout. Symbols such as comma remain unsupported key names.
+Control does not bring the app to the front.
+
+With `macos-window-select`, Control adds a **Window** toolbar menu when the app has
+more than one window: **Follow Front Window**, or a window by title, which pins the
+view and input to that window (`input.window`) until it closes, Control ends (including the idle timeout) or the
+menu follows the front window again.
+
+Each action verifies the same owned process and that the captured
+window is still the app's front standard window, or the window Control pinned. The app's other windows are allowed;
+input that arrives while the view moves to another window is dropped and Control
+continues. A modal dialog window refuses input. A sheet attached to the captured
+window takes focus and pointer input. A sheet larger than the captured window is not
+supported. Control
+uses one exclusive server session per app, with disconnect/revocation/takeover
+and five-minute idle expiry; it takes no CLI simulator lock. Existing
+Device Control and Data Access permission (Accessibility on macOS 26 and earlier) is required. Refusals end Control and show the reason
+while the live view remains available. Older servers keep the viewer read-only.
+
+Native Control uses dynamically resolved private CoreGraphics input SPI in the
+server helper, outside the phone and Mac App Store app binaries. A macOS update
+can make it unavailable; then Control refuses while viewing and logs remain
+available.
+
+### Replay
+
+When the machine has recorded the device, the viewer shows replay controls over
+the bottom of the screen. The machine records while an agent or automation tool
+drives the device, or while a phone watches it, and keeps the last 15 minutes
+of footage (see `packages/server/README.md`, Recording).
+
+- **The controls.** They fade out 4 seconds after the last touch, and a tap on
+  the screen shows or hides them. While you control the device, taps go to it,
+  so taking control hides them and a **Replay** button in the toolbar shows
+  them. They stay while a finger is on the scrubber, while replay is paused,
+  and, unless you control the device, while a screen reader runs. A double tap
+  zooms without showing them.
+  Reduce Motion shows and hides them without a fade. A device that is not
+  streaming shows them under the screen instead.
+- **The bar.** It has **Live**, play or pause, previous and next agent action,
+  and 1x or 2x. Previous and next always show and dim when there is no earlier
+  or later agent action; 1x or 2x is hidden while live and keeps its place. In
+  replay, a line under the buttons shows the time of the frame shown. The
+  scrubber is linear in time: a second of footage or of a short stop takes the
+  same width anywhere on it. A stop longer than a minute takes a minute's width
+  and is dashed. While the device is
+  recorded, the track's length is rounded up
+  to a whole minute, with the spare room before the oldest footage, so it grows
+  at most once a minute; it shrinks only when the footage is two minutes
+  shorter, so pruning at the 15 minute cap does not rescale it. Otherwise the track
+  fits the footage exactly and fills the width. While the machine
+  records the device, the track's right edge is the machine's time now and the
+  footage slides left as time passes; a finger on the track holds it still.
+- **Markers.** Agent actions sit on the scrubber in the accent color, errors
+  in orange and crashes in red.
+- **Moving through it.**
+  - Dragging pauses a playing replay and shows the frame under the finger;
+    lifting the finger plays on from there when the replay played before the
+    drag; a drag that starts live lands paused. The thumb and time follow the
+    finger. One seek is out at a time, the
+    finger's latest time waits, and seeks go out at most every 50 ms. Dragging
+    holds off the viewer's swipe to close.
+  - Tapping within 14 points of a marker lands 1.5 seconds before it; tapping
+    elsewhere shows the frame there. Either keeps the replay playing or
+    paused. Past the newest frame, the newest frame shows.
+  - A device that stops while you scrub stays on its recording, and one that
+    starts stays on the recording until **Live**.
+  - While live, the button shows pause: pressing it freezes on the newest
+    frame, in replay. In replay, play plays on at the chosen speed and pauses
+    at the newest frame.
+  - Previous and next agent action land 1.5 seconds before the agent action
+    before or after the frame shown, and keep playing or paused. From live,
+    previous goes to the newest agent action.
+  - **Live** returns to the live screen.
+- **Agent actions.** Under the screen, in portrait, on a simulator, emulator
+  or Chrome page, the device's last three agent actions
+  show with their age, a failed one in red; in replay, the last three at or
+  before the frame shown. Tapping them opens the device's agent actions.
+- **While not live.** Control and **Take Over** are disabled, and turning
+  Control on is refused until Live.
+- **Stopped devices.** A device that is not running can still be replayed:
+  the first scrub opens the stream on its recording, with no live screen to go
+  back to.
+- **Indicators.** A red **Recording** chip next to the model shows while the
+  machine records the device. A **Replay off** pill replaces the bar when
+  `recording.enabled` is off for the workspace. If the timeline goes away
+  while you replay, the bar keeps only **Live**.
+- **Where it runs.** The app polls `replay.range` every 10 seconds while the
+  viewer is open; seeking goes through `frames.seek` and `frames.live` on the
+  same video subscription. Replay needs video: with Data saver, which asks for
+  JPEG frames, or when the server answers the subscription with JPEG because
+  it has no H.264, the bar is hidden. A server without replay answers
+  `unknown-method`, and the bar stays hidden. The timeline math is in
+  `src/lib/replay.ts`.
+
+Settings has a **Replay** section with one switch per machine this phone can
+control, **Record on <machine>**. It reads `recording.enabled` with `settings.get`
+and changes it at machine scope with `recording.set`, which deletes the machine's
+recordings when it turns them off. When `STIM_RECORDING` decides on the machine,
+the switch is disabled and says so. The switch sets the machine layer; a repo
+or workspace `recording.enabled` on the machine still wins for its workspaces.
+
+A workspace where `stim web` runs shows its Stim-owned Chrome as a **Web**
+tile, in the devices grid and on the workspace screen, labelled with the page's
+URL (the in-app route when one moved it after the load, `web.page.route`), with a "Page failed to load" pill when its latest load failed. It opens in
+the same viewer, streamed from the page's DevTools screencast as H.264 through
+`stim-server`. With Control on, a tap clicks, a drag scrolls, and **Keyboard**
+types into the page; the toolbar has **Keyboard** and **Back** (the page's
+history back) only, since a page has no home, lock, rotation or hinge. A web
+session holds no `stim device lock` lease; a browser tool attached to the
+page, such as Playwright MCP, shows as its driver, and Control explicitly
+taking over from it. Reload in the workspace menu reloads the page with
+`stim reload web`.
+
+A physical iPhone, iPad or Android phone the workspace leases with
+`stim ios --device`, `stim android --device` or `stim device lock` shows as its
+own tile, from the environment's `physicalDevices` in `stim status`, next to
+any simulator or emulator in the same slot. The tile names the device and its
+model, carries a **Physical** pill and the time left on the lease, and counts
+as running while the machine reaches the device. A lease alone puts the workspace
+under Active.
+
+A connected physical iPhone or iPad streams its screen, view only: the tile
+and the viewer show it like a simulator's, the viewer has no Control, and the
+app sends it no input. The machine captures it only over a USB cable, so a phone
+paired over Wi-Fi shows the server's message instead of a screen. While the
+iPhone is locked or QuickTime Player records it, the last frame stays with a
+**Screen paused** pill, and the viewer names the reason.
+
+A connected physical Android phone streams like an emulator and opens the same
+viewer. With **Control** on, taps, typing, **Home**, **Back**, **Apps** and
+**Lock** reach the phone while the workspace holds its lease, and the session
+ends when the lease does. The viewer has no rotate buttons for a phone, which
+turns only in hand. A physical device is not recorded, so its viewer has no
+replay timeline or Recording badge.
+
+A phone tile streams only when the connected machine's `stim-server` lists that
+platform's feature, `physical-ios` or `physical-android`, in its hello
+`features`. An older server would ignore `physical` and stream the slot's
+simulator or emulator instead, so while connected to one the tile asks for a
+`stim-server` update.
+
+The viewer is the one screen on a phone that turns to landscape with the
+phone; every other screen stays portrait. In landscape the title stays on
+top, and the Control toolbar stays below the screen. Turning the phone does not restart the stream, and
+touches keep landing where they are drawn once the screen settles into its new
+size. The phone does not turn by itself when the device is landscape. On iPad
+every screen follows the iPad's orientation; Android tablets follow the phone
+rules. On a read-only pairing in landscape, dragging down does not close the
+viewer.
+
+On a foldable folded like a book, such as an iPhone Duo or a Pixel Fold
+half open, the viewer splits at the fold: the device screen and its replay
+controls on the leading side, and the read-only banner, the Control toolbars
+and the agent actions on the other. The title, the control banner and the
+replay chips stay on the leading side. The viewer reads the fold from
+`react-native-reserved-regions`, which needs a build compiled with iOS SDK 27.1
+or newer and an iOS 27.1 or newer runtime, or Android with WindowManager fold
+support. Older iOS SDK builds receive no fold divisions and keep the default
+layout. The safe area
+insets already keep it clear of the Dynamic Island and camera cutouts.
+
+Half folded with the fold across the screen, like a laptop on a table, the
+viewer takes a tabletop layout: the title and the device screen above the
+fold, and the read-only banner, the Control toolbars, the replay controls and
+the agent actions below it. It takes that layout only while
+`react-native-hinges` reports the hinge partly open, and the fold's position
+comes from the reserved regions. The hinge readings need the same iOS SDK
+27.1 and runtime requirements as the fold readings, or Android WindowManager
+support. Without both readings, the viewer keeps its default layout. Every
+control stays available in every posture.
+
+The **Device Frame** button in the bottom toolbar shows installed iPhone or
+Android emulator housing around the live screen. Frames start off and do not
+require Control. The paired machine supplies PNG layers from its installed DeviceKit
+or Android skin; artwork is not bundled in the app or repository. Touches stay
+inside the screen aperture, and taps on the bezel send no device input. Rotation
+metadata must match the current capture; otherwise the viewer shows the screen
+without its housing. Replay, physical phones, web pages and Android foldable
+or circular devices remain frameless. Missing artwork or an older server also
+keeps the frameless viewer.
+
+Framed H.264 needs a mobile build containing the native orientation-clear acknowledgement; older clients stay frameless. Rotation clears old screen pixels before matching housing is shown. JPEG and housing images reset their displayed content on orientation changes.
+
+For a live iPhone Duo, a server advertising `duo-frames` composes Xcode's installed
+V68 hardware model and both screen surfaces on the machine. **Device Frame** starts
+off. The composed JPEG follows the observed hinge angle and rotation; without
+the model or a current angle reading, the raw screen remains visible. The app
+waits until the image is displayed before accepting a touch, then holds that
+image and pose throughout the drag. Bezel and hinge taps send no input. Leaving
+Control releases a held touch even while other clients keep viewing. Raw viewers
+and recordings keep their existing capture. Turn the frame off to use replay.
+
+With **Control** on, the server starts a control session (`control.begin`)
+and holds a `stim device lock` lease on the device, so agents see it as
+driven. Touches on the frame go to the device as a touch that follows your
+finger: a tap, a drag or swipe, or a long press. On an iOS simulator, an Android
+emulator or an Android phone, two fingers pinch or pan together: the phone sends
+both as one `input.touch` gesture with a second point (`x2`, `y2`) on every
+phase. The first finger waits 40 ms for a second one, so a tap on these devices
+reaches the device that much later, and a second finger that lands later lifts
+the first and presses both. Once either finger lifts, the gesture ends and the
+other finger is ignored until every finger is up. A macOS app, a web page and an
+iPhone Duo take one finger. A server older than this field turns a two-finger
+gesture into one finger, and an older hosted worker refuses it. The toolbar under the
+screen is a compact icon bar that scrolls sideways when needed in either orientation.
+Each button has a spoken label and a 44-point touch target. It has **Keyboard**,
+which opens the phone's keyboard and types what you type (printable ASCII;
+Return and Delete included), **Home**, **Lock**, and on Android **Back** and
+**Apps**. While the keyboard is open, a bar above it shows what you typed
+since the last Return, with **Done** to close it, and the screen keeps its
+size and moves up until its bottom meets that bar, stopping below the title.
+It continues with **Rotate Left** and **Rotate Right** for simulators and
+emulators, including iPhone Duo. Physical devices turn only in hand. When the device
+has a hinge, posture buttons follow: **Fold**, **Half Open** and **Unfold**, as supported by that device. The current
+posture is selected and disabled. On an unfolded Duo, touches go
+to the inner panel the screen shows. The session ends when you turn
+Control off, leave the view, lose the connection, or after 5 minutes without
+input; the banner says why.
+
+On an iOS simulator, an Android emulator or an Android phone, when the server lists
+`device-clipboard`, **More** also has **Paste from Phone** and **Copy Device
+Clipboard** while Control is on. Paste reads the phone's clipboard when you tap it
+(iOS asks to allow the paste), sets the device clipboard to that text and pastes it
+into the focused field; text over 8 KiB is not sent, and a note says so. An iOS
+simulator types printable ASCII, line breaks and tabs into the field (the server answers
+`typed`), so no paste prompt is involved. Only when the text has other characters does the
+note after a paste on iOS add that the device may show a paste suggestion to tap, which
+simulators slimmed by `simslimProfile` cannot show. An app Stim installed on an owned simulator
+has its paste permission allowed and takes that text without a prompt. Copy reads the device clipboard
+into the phone's and a note confirms it. Text only; nothing syncs by itself, and the
+app never logs the text. A web page, a Mac app and a physical iPhone have neither action.
+
+After a rotate, a note over the screen says "Rotated to landscape" (or
+portrait) once the picture turns. When it has not turned after 2.5 seconds,
+the note says the screen stayed as it was and that the app in front may not
+support rotating; the phone cannot tell that apart from a rotate the device
+did not apply.
+
+When status reports the device driven by something else, such as
+agent-device, a `stim device lock`, or another phone, a small chip with a
+cursor icon next to the model names it. On a server with `shared-control`,
+**Control** starts at once while others drive the device: the phone, Stim
+Desktop, web share viewers and agents all send input to it together. The chip
+stays while you have control, because that driver still sends input too. The
+server still refuses Control while another workspace holds the device's lease,
+and an older server also refuses it while someone else drives the device. The
+banner then gives its reason with **Take Over**, which starts control
+immediately when tapped: without the other workspace's lease, or by taking the
+device from whoever drove it on an older server.
+
+## Actions
+
+`hello` tells the app which actions the machine lets this phone run. With control,
+the workspace **...** menu shows **Reload** and **Stop**:
+
+- **Reload** runs `stim reload` at once. When the workspace has both a running
+  owned iOS simulator and a running owned Android emulator, it asks which app
+  to reload, because `stim reload` without a platform refuses to choose.
+- **Stop** asks for confirmation, then runs `stim stop`.
+
+A toast shows the action while it runs, then its result or the server's error
+message. The workspace updates through the status stream.
+
+A read-only pairing shows **Reload** and **Stop** disabled, with the reason,
+and **Allow Control...**, which explains the grant (see
+[Read-only pairings](#read-only-pairings)). When control is taken away while
+connected, the server refuses the action and the toast shows why. A server
+that predates actions shows neither entry.
+
+## Read-only pairings
+
+`hello` returns the pairing's `capabilities` and the phone's device id. A
+pairing without `control` is read-only: Stim Desktop's **Pair a Phone** makes
+read-only pairings. With workspace diff support, a read-only pairing can read
+changed and untracked text files in registered workspaces, including
+non-ignored `.env` files. The machine row, the machine sheet and the **Machines**
+section in Settings show the scope while connected: **Can control**,
+**Read-only**, or the connection state. In Settings, tapping a read-only
+machine explains how to allow control, and tapping any other machine opens
+its sheet. Wherever the app
+would offer a control action, a read-only pairing shows it disabled with a
+short reason, and **Allow Control** explains the upgrade: in Stim Desktop on
+the machine, **Settings**, **Phones**, turn on **Allow Control** for this phone,
+or run `stim-server devices grant <id> --control` with this phone's id. A
+connection learns its scope only from `hello`, so **Reconnect** opens a new
+connection to pick up the grant. When the server refuses control or an action
+with `forbidden`, or ends a control session for that reason, the app
+reconnects on its own, so a revoked grant shows as read-only everywhere.
+
+## Notifications
+
+**Settings > Notifications** turns on notifications for what a person
+overseeing agents needs: your attention changes the outcome, or work you wait
+on started or finished. Each category has its own level:
+
+- **Alert**: a banner and sound (iOS `interruptionLevel` `active`, Android's
+  high-importance "Alerts" channel, `attention`).
+- **Silent**: no banner or sound; the notification waits in Notification
+  Center or the notification shade (iOS `passive`, Android's low-importance
+  "Silent" channel, `updates`).
+- **Off**: never notifies.
+
+Work started defaults to Off and every other category to Silent. A level you
+chose is kept. Settings saved before levels keep what was off off, and give
+each category that was on its default level, so an old on for Work started
+becomes Off.
+
+- **Work started**: a workspace began warming, or an agent first drove one of
+  its devices. It is grouped per machine, and opens the workspace or the device
+  viewer.
+- **Agent looks stuck**: an agent drove the workspace, a device is still up,
+  and nothing happened for the **Stuck after** time (15 minutes by default):
+  no agent action, build, reload or new log error. App log records do not
+  count, since an idle app keeps logging. It opens the device viewer.
+- **Agent repeats the same failure**: three or more builds in a row failed at
+  the same first compiler error (`Same Swift error 3x at
+AppDelegate.swift:71`), or with the same error code, such as an app that
+  exits at launch. It opens the build details with their diagnostics.
+- **Work finished or PR ready**: the agent stopped after a green build, or the
+  workspace's pull request became ready for review or merged. A pull request
+  opens on GitHub.
+- **Machine in trouble**: disk below Stim's floor, critical memory pressure,
+  or a machine that went offline or refuses the pairing. It opens the machine
+  sheet.
+- **Someone else drives your device**: an agent started driving a device you
+  control, or, on a server without `shared-control`, another phone took it over. It opens the device viewer.
+- **Needs you**: something only a person can fix, such as a port held by
+  another app, a supervisor or browser Stim cannot verify, a signing or
+  provisioning failure, an expired device lease or a billable EAS session left
+  running. It opens the workspace, or the build for a signing failure. These are
+  the strip's items that are not already a stuck agent, a repeated failure or a
+  machine problem.
+
+A single failed build, new log errors, a stopped app and a slow build do not
+notify; they stay in the **Needs Attention** strip. Each notification names the
+workspace, or the machine, and gives a one-line cause. A workspace notifies once
+per episode, and a later notification of the same category replaces the
+earlier one instead of stacking. An agent stop notifies **Work finished** once
+per workspace per run, and **Needs you** comes once per workspace per run. A
+run for **Work finished** ends when the workspace goes idle; **Needs you**
+starts over when the workspace stops being idle or has no item left. A pull
+request that became ready or merged keeps its own notification. What is already true when you turn
+notifications on does not notify. **Quiet hours** hold notifications: a
+problem that still holds when they end notifies then, and work that started
+or finished during them does not. Four or more notifications at once become
+one that opens home. The app asks for notification permission when you first
+turn them on, never at launch; when it is refused, the switch stays off and
+the app offers the system settings.
+
+The app and `stim-server` import the same notification rules from
+`@stim-cli/core/oversight`. Notification delivery and preferences stay in the app.
+
+When notifications can arrive:
+
+- **iPhone, from a machine whose `stim-server` pushes** (#1577): every category
+  but a machine going offline arrives while the app is open, in the background
+  or closed, as long as `stim-server` runs on the machine and the phone has a
+  network connection. The app registers its Expo push token, the categories
+  that are not Off with their levels, its stuck time and its quiet hours in the phone's time zone with each machine
+  over the existing connection; the machine sends through Expo's push service and
+  Apple, with the workspace title, a one-line cause, the screen to open and the
+  workspace's path. The app then does not notify those categories
+  itself, so nothing arrives twice. A `stim-server` older than levels ignores
+  them and alerts for every category but Work started. Push needs the production app and an
+  APNs key in the EAS credentials for `com.appandflow.stim` (`eas credentials
+--platform ios`, **Push Notifications**); without one Expo refuses every
+  push with `InvalidCredentials`, which `stim-server` prints on stderr. Stim
+  Dev has no push credentials and notifies only locally, unless Metro starts
+  with `STIM_DEV_PUSH=1`.
+- **Everything else, and all of Android**: only while the app is open. The
+  app notifies from its own connection to each machine, which iOS closes seconds
+  after the app leaves the foreground. What went wrong while the app was
+  closed notifies when you next open it, as one summary when there are four or
+  more. Android push needs FCM credentials the
+  app does not have yet. A machine going offline or refusing the pairing is
+  only ever noticed by the phone, so it notifies only while the app is open.
+  Only a machine that pushes looks up pull requests and sees control conflicts;
+  without push, a branch counts as merged when git finds it merged into the
+  default branch.
+
+### Inbox
+
+**Notifications** in the menu lists what each paired machine's `stim-server`
+logged in the last 7 days (at most 200 per machine), newest first, in sections by
+day and merged across machines, whether or not it notified this phone. The menu
+button and the menu row show the unread count. A row shows the category's
+icon, the workspace (or the machine, for a machine problem), the one-line cause,
+the category and the machine, and how long ago it happened; an entry no phone was
+notified of says **Muted** (no registered phone wants its category) or
+**Quiet hours**. Tapping a row marks it read and opens what its notification
+opens. The filter button marks read what the list shows and filters by
+category and, with several machines, by machine. Pull down to list again. What a machine
+logged before this phone first listed its history, such as right after
+pairing, starts out read.
+
+The app lists each machine's history with `notifications.list` on every connection
+and adds the `notification` events the machine sends while connected. The history
+lives in memory; which entries were read is saved per machine in the notification
+store, which a new build or update keeps, and forgetting the machine deletes it.
+Tapping a push or local notification marks its entry read: a push carries the
+entry's number, and a local notification the rule's id, which matches the
+newest entry with that id; a tap that launches the app is applied once that
+machine's history is listed. A machine whose server predates the history
+(`notifications` missing from `hello`'s `features`) adds nothing, and without
+one the menu has no **Notifications** row. The categories, wording and icons
+are the ones Stim Desktop's inbox uses.
+
+A background check was not added: `expo-background-task` runs at most every
+15 minutes on Android, and on iOS it schedules a `BGProcessingTask` that the
+system runs rarely and at times of its choosing, often only while the phone
+charges, and never after the app is swiped away. It would also need the machine's
+token readable while the phone is locked. Push covers the same cases on iPhone
+without waking the phone.
+
+## Device video
+
+`DeviceScreen` (`src/components/device-screen.tsx`) shows the stream
+`useDeviceStream` (`src/hooks/device-stream.ts`) opens, which subscribes with
+`video: ["h264"]`. When the server offers video, the connection asks the native
+session for the subscription's `VideoStream` and the hook passes it to
+`StimVideoView` as its `stream` prop. Video messages go from the socket through
+decryption to the view's decoder without reaching JavaScript; the stream reports
+only size changes and, at most every 200 ms, frame counts and the newest capture
+time. On iOS the view decodes with `AVSampleBufferDisplayLayer`, and on Android
+with `MediaCodec` onto a `SurfaceView`. The view stays black until the first
+keyframe; a stream with no view attached keeps the messages since the last
+keyframe for the view that attaches. A decoder that lost its state, for example
+after the app was in the background, or one that fell more than three frames
+behind on Android, drops frames until a keyframe it asks the server for with
+`frames.keyframe`. Replacing or removing the prop, or the view leaving the
+screen, detaches it and releases its decoder, and the connection disposes a
+stream when its subscription ends. A server without video sends JPEG `frame`
+events, which the same component shows as images. The component fills the bounds
+its parent gives it, which the viewer sizes to the device's aspect ratio, and
+children render over the screen, so touch overlays share its coordinates.
+Development builds show H.264 fps, bitrate and latency (arrival time minus the
+machine's capture time) in the corner, with the native timing below it: decrypt time
+and the time to hand a frame to its stream in the session, receive-to-present time in
+the view, and dropped frames. The grid
+tiles keep requesting JPEG frames.
+
+The session and the view live in `modules/stim-session`, a linked Nitro package
+(`link:./modules/stim-session`). Its C++ `StimSession` wraps the
+react-native-nitro-websockets socket and runs Noise on libsodium 1.0.22 (ISC
+license), compiled from source by the podspec and `android/CMakeLists.txt`. The repository
+holds no libsodium code: `libsodium.json` pins the official release tarball by SHA-256,
+from download.libsodium.org with its GitHub release as a mirror, and
+`scripts/fetch-libsodium.mjs` downloads it, checks the hash, and extracts its C sources
+into the gitignored `third_party/libsodium`. The podspec runs the script when CocoaPods
+reads it, CMake when it configures, and the vector test before it compiles, so all three
+use the same pinned release. The script reuses the folder while it holds that release and
+fails the build on a hash mismatch; it runs nothing from the tarball. A fresh build needs
+network access once, or `STIM_LIBSODIUM_TARBALL=<path>` pointing at a copy of the same
+tarball. `VideoStream` and `StimVideoView` are Swift and Kotlin. After editing
+`src/specs/StimSession.nitro.ts`, run `pnpm run nitrogen` and commit
+`nitrogen/generated`. The module is native code: pull it, then rebuild the app with
+`stim ios` or `stim android`; Fast Refresh does not load it. `fingerprint.config.js`
+adds the directory to the fingerprint, which does not hash linked packages on its own.
+
+`stim://noise-check`, in development builds, measures decrypt, header parsing and routing
+to a `VideoStream`. `pnpm test` compiles `cpp/Noise.cpp` with the fetched libsodium on the
+machine and checks it against the Noise and framing vectors of `packages/core/__tests__/fixtures`;
+it needs `cc` and `c++`.
+
+## Protocol types
+
+`src/protocol/types.ts` re-exports `@stim-cli/core/phone-protocol`, which derives
+the phone's receiving types from the shared wire contract. Compatibility fields
+such as `issues` and `home` are optional in the phone's types. These entries
+do not load core's Node-only root or state readers.
+
+`@stim-cli/core/receive-protocol` validates method results, known events and
+errors before the connection publishes them to screens. Invalid payloads close
+the connection and trigger a retry without logging the payload. Unknown future
+events and additional compatible fields remain accepted.
+
+Display enums accept open strings, and unknown values show neutral information or are skipped when unsupported.
+
+After changing the contracts, run `pnpm run rpc:generate` at the repository
+root. `pnpm run rpc:check` verifies the generated validators in CI.
+`packages/server/__tests__/mobile-protocol.test.ts` checks agreement between the
+phone's types and the server's types; receiver and connection tests cover
+payload validation and reconnect behavior. The phone requires structured
+`LogRecord` fields even though the server's NDJSON type permits other records.
+
+The connection and pairing open their sockets with
+[react-native-nitro-websockets](https://github.com/margelo/react-native-nitro-fetch)
+through `src/lib/socket.ts`, which hands text messages over as strings and
+binary ones as `ArrayBuffer`s. It needs a native build. The app installs no
+global `WebSocket`. Jest has no native module: `__mocks__` stands in for the
+Nitro packages, and tests pass `StimConnection` a `createSocket` factory.
+`patches/react-native-nitro-websockets@1.3.1.patch` raises the iOS message limit
+from 1 MiB to the 16 MiB Android allows.
+
+On Android, `wss://` runs on libwebsockets and Mbed TLS and trusts only the
+Mozilla CA snapshot the package bundles (dated February 2026 in 1.3.1), not the
+system store. CAs a person installs on the phone do not apply, and CA changes
+reach the app only with a package update. iOS uses the system trust store.
+
+## Develop
+
+The app is a member of the repository's pnpm workspace, `stim-mobile`. It
+needs Node.js 22. Install from the repository root; `pnpm install` there
+installs the app with the published packages, from the one `pnpm-lock.yaml`.
+
+```bash
+pnpm install
+pnpm --filter @stim-cli/core run build
+cd apps/mobile
+stim start
+stim ios          # or: stim android
+pnpm run mock-server
+```
+
+To install the app and its build prerequisites, run
+`pnpm install --filter stim-mobile... --filter stim-monorepo` from the root,
+then `pnpm --filter @stim-cli/core run build`. Rebuild core after changing the
+shared rules. Mobile CI and the EAS post-install hook build it before bundling.
+
+A checkout that installed the app with npm before it joined the workspace has an
+`apps/mobile/node_modules` pnpm does not clean up. Delete it once, then run
+`pnpm install` from the root.
+
+The mock server imports `@stim-cli/core/state` from its build, so run
+`pnpm --filter @stim-cli/core run build` before starting it.
+
+`pnpm run mock-server` serves a Stim server on `ws://127.0.0.1:7787` that
+replays payloads captured from a real machine in `mock-server/fixtures/`: a
+`stim status --json` payload taken while `stim ios` was installing, records
+from `stim logs --json`, and one simulator screenshot as the frame of every
+iOS device. It prints a pairing code; in the app, choose
+**Enter the Endpoint and Token Instead** and type the endpoint and token. The
+status timestamps are moved forward to the time the server starts, so build
+and activity durations read as they did at capture. The workspace that ran
+the build carries a remote EAS session added by hand (listed under `edits` in
+`status.json`), because the capture machine had none. Two workspaces carry
+`lastBuilds` added the same way; the compiled Android one also carries a `missReason`
+in the shape of a real miss. `chat-perf-demo` also leases a connected
+iPhone and a disconnected Android phone, added by hand in the
+`physicalDevices` shape. `a4-running` and `a4-ready` carry ended agent
+sessions added by hand in the `endedAgents` shape. `a4-running` and
+`a4-multi-device` also include an `apps/desktop` macOS app sharing the mobile
+app's worktree, so they exercise unified builds and devices. `build.plan` answers from
+`mock-server/fixtures/plans.json`, a local hit for iOS and a cold build that
+generates the native dir for Android, captured from `stim ios|android --plan
+--json`, with a `missReason` added to the Android one by hand.
+`machine.details` answers from `mock-server/fixtures/machine-details.json`, a
+`stim gc --json` dry run and `stim stats --json` payload made for the fixture
+workspaces: build outputs, logs and recordings for them, 44 simulators and
+emulators with every owner kind, runtimes and system images with unused ones,
+14 caches, and merged, stale and open-pull-request worktrees, so the owners,
+Safe to free now, Simulators and emulators, Recordings and Caches sections have
+more than 10 rows to fold. Its `buildMachines` lists one build machine ready, one
+busy and one on another Stim build. Its `stats` carries an `offload` part with placements
+here, on `janics-mac-mini` and back from `old-mini`, and `buildClients` lists
+one machine that built here. The `a4-offloading`, `a4-offloaded` and
+`a4-offload-fallback` workspaces show an iOS build running on
+`janics-mac-mini`, a last build that machine compiled, and a local build after
+it was busy.
+`linux-owner.json` adds two workspaces a Linux `stim-server` could report, which
+has no simulators of its own: `bot/onboarding-copy`, an iOS simulator hosted on
+`janics-mac-mini-2` and driven by Claude Code, and `bot/upgrade-pods`, an iOS build
+running on `janics-mac-mini-2`. `pnpm run mock-server --linux-owner --name floco`
+lists only them as workspaces, with `simctlAvailable` false, no device leases and no archives;
+the machine's usage, `machine.details` and notifications stay the captured machine's.
+The `a4-multi-device` workspace also carries a macOS app that
+`stim macos --remote janics-mac-mini` placed on another machine, added by hand in the
+`macos.host` shape.
+
+The mock server speaks protocol 2 with `@stim-cli/core/noise-session`, as stim-server does. Its server key and
+the client keys of phones it paired survive its restarts in files in the system
+temporary directory. The mock server grants every phone control and
+answers `reload` and `stop` for the fixture workspaces after 0.8 seconds, one
+at a time per workspace, without changing the fixtures. The `chat-perf-demo`
+workspace runs an iOS simulator and an Android emulator, so reload there asks
+for a platform, and the mock server refuses a reload without one, like
+`stim reload`. Start it with
+`pnpm run mock-server --read` to see a read-only pairing, which gets no
+actions.
+It keeps one clipboard for `input.clipboard.set` and `input.clipboard.get`, so the
+paste and copy actions round-trip.
+
+A phone that asks iOS devices for H.264 gets video from
+`mock-server/fixtures/recording-ios.seg`. That is 60 seconds of an iOS
+simulator that stim-server recorded while agent-device drove it, stored in
+stim-server's segment format, with its agent-action markers in
+`recording-ios.json`.
+
+- **Live.** The live stream loops that footage.
+- **`replay.range`.** It serves the footage twice, once ending two hours
+  before the mock started and once ending when it started, so the timeline
+  shows a stopped gap.
+- **Seeking.** `frames.seek` and `frames.live` behave like stim-server's.
+  Seeking past the footage shows its last frame.
+- **The switch.** `recording.set` flips a flag that `replay.range`,
+  `settings.get` and every status environment's `recording.enabled` follow.
+
+The mock status includes three archived workspaces: a merged PR with logs and
+an iOS recording, an archive without footage, and an archive replaced by a live
+workspace. Set `STIM_MOCK_LEGACY_ARCHIVES=1` when starting the mock to keep those
+rows visible while refusing archive requests with `bad-request`, so the update
+hints can be checked. Archived log subscriptions end with `logs-ended`; the
+phone uses one-shot queries instead.
+
+To screenshot slot waits, run `pnpm run mock-server --slot-waits` and pair with
+`ws://127.0.0.1:7787`. Open the iOS build sheet for `a4-building` to see a device
+slot wait during compilation, or `a4-offloading` to see a build slot wait during
+pods. Both wait timers start at 0:42 and count up. The optional state lives in
+`mock-server/fixtures/slot-waits.json`; the default captured fixtures stay unchanged.
+
+To screenshot the machine's load and slot meters, run `pnpm run mock-server --capacity`. The machine status
+sheet then shows a Load row and `Devices 6 / 6` and `Builds 2 / 2` meters, with the devices holding the
+slots listed because they are full. Without the flag the capture carries none of these fields, which is what
+a machine running an older `stim` sends; the sheet shows only the memory line. The added state lives in
+`mock-server/fixtures/capacity.json`.
+
+To try the home screen with two machines, run two mock servers on different ports.
+`--workspaces <regex>` keeps only the app workspaces and source-only worktrees whose path matches, and
+`--free-gb <n>` sets the free disk `machine.get` reports:
+
+```bash
+node mock-server/server.mjs --port 7797 --name "MacBook Pro" --workspaces tlon-apps
+node mock-server/server.mjs --port 7798 --name "Mac mini" --workspaces 'Developer/stim|hinges' --free-gb 14
+```
+
+The status also holds eight workspaces under `.worktrees/a4-*` for the
+workspace screen, one per stage (running, building, crashed, build failed,
+warming, ready, stopped) and one running iOS, Android and Web, with the status
+`machine` owners, disk use, bundle state, build detail and pull requests they
+would report. Start the server with `--workspaces a4-` to see only those. Each
+status event carries a usage history drawn around those owners, and
+`logs.ndjson` holds agent actions on their devices. Log timestamps move forward
+with the status. Android and Web devices show `frame-android.jpg` and
+`frame-web.jpg`.
+
+The mock server answers `notifications.list` with twelve entries covering every
+category, two of them held back (`suppressed`), and sends a new `notification`
+event every 2 minutes to each connection that listed. Device samples include
+**a4-stopped** with recorded iOS footage, **example** from react-native-hinges
+with no recording, and **archived-workspaces**, whose iOS footage is served
+through the archive target. Archive fixtures include a merged PR snapshot with
+full iOS and Android history and two recordings, no builds, expired logs, and
+`real-archive/archive.json`: the gc'd sample-sdk58 workspace with no branch or
+repository, five iOS builds (13s failed, 30s offloaded, 66s local, 9s failed,
+129s offloaded), and an iOS recording. `real-archive/detail.json` is derived from
+`history.json` with core's history reader; it keeps the live history shape.
+Tapping the stopped or archived recording opens it
+at the notification time, clamped to available footage. A running device stays
+live; a stopped device without footage explains why replay is unavailable.
+
+`--overlay <file>` changes the status while the server runs, to try
+notifications. The server rereads the JSON file for each status push (every 5
+seconds) and `machine.get`: `freeGb` replaces `--free-gb`, and `environments`
+maps a workspace path to fields that replace the fixture's, such as a
+`phase` of `warming`, an `ios` device whose `activity` is `driven`, or a
+`builds` history with three failed runs. The server then derives each
+workspace's `stage`, `appPresence` and `gitChip` again with core's
+`withDerivedFacts`, so an overlay's changes reach the stage line.
+
+## Design system
+
+Styles come from the tokens in `src/design/tokens.ts`: spacing, text styles,
+radii, light and dark colors, the fixed colors of the device viewer's chrome,
+and opacities. The file is plain data. `src/design/theme.ts` turns it into the
+[Unistyles](https://www.unistyl.es) light and dark themes, and
+`src/design/unistyles.ts` configures them before the router loads. The theme
+follows the Appearance setting in Settings.
+
+Write styles with `StyleSheet.create((theme) => ...)` from
+`react-native-unistyles`, and text with `Text` from `src/components/text.tsx`
+(`variant`, `tone`). Unistyles re-styles only React Native and Reanimated
+components when the theme changes. A color passed as a prop to anything else,
+such as `Icon`, an `@expo/ui` view or a Gesture Handler list, comes from
+`useUnistyles().theme`, which re-renders the component.
+
+The shared components are `Button`, `IconButton`, `Pill`, `Banner`,
+`ListSection` and `ListRow`, in `src/components`. A debug build shows all of
+them at `stim://gallery`, with a button that switches between light and dark.
+
+## Driving the app
+
+Development builds can start already paired, so a person or an agent driving
+the app with agent-device skips the pairing screen:
+
+```bash
+cd apps/mobile
+pnpm run dev:pair  # or: pnpm run dev:pair --mock, with pnpm run mock-server running
+stim start
+stim ios
+```
+
+`pnpm run dev:pair` runs `stim-server pair --json` against the server running on
+this machine and writes its pairing code to `.env.local`:
+
+```bash
+EXPO_PUBLIC_STIM_DEV_PAIRING={"v":2,"name":"...","endpoint":"ws://127.0.0.1:7787","pairingToken":"...","fingerprint":"..."}
+```
+
+On launch, a development build without a machine at that endpoint spends the code with
+its own key, as pairing does, and shows the machine on the home screen. The code
+expires like any pairing code; run `dev:pair` again if the app reports that. Release
+builds ignore the variable. `.env.local` is gitignored; never commit a pairing code.
+Metro picks up a rewritten `.env.local`; reload the app after `dev:pair`.
+
+- `--mock` pairs with `pnpm run mock-server` instead of `stim-server`. The mock
+  server writes its current pairing code to a file in the system temporary
+  directory, and issues and prints a new code after each pairing and every 5
+  minutes.
+- `--control` pairs with control, so the app can run actions. Without it the
+  pairing is read-only. The mock server ignores it.
+- `--port <n>` targets a server on another port than 7787, such as a
+  `stim-server --port <n>` running with a scratch `STIM_HOME`.
+- `--endpoint <url>` sets the endpoint the app connects to, such as the
+  tailnet endpoint `stim-server` prints. The default, `ws://127.0.0.1:<port>`,
+  reaches the machine from the iOS Simulator but not from an Android emulator.
+  The endpoint must be one the device can reach.
+
+Revoke the development pairing when you are done; `stim-server devices` lists it.
+
+## Variants
+
+`app.config.ts` builds one of two variants, chosen by `APP_VARIANT`:
+
+- `production`, the default: **Stim**, bundle id and Android package
+  `com.appandflow.stim`, scheme `stim`.
+- `development`: **Stim Dev**, `com.appandflow.stim.dev`, schemes `stim` and
+  `stim-dev`, and an orange icon with a **DEV** band. It installs next to the
+  TestFlight app instead of replacing it.
+
+`stim ios`, `stim android` and the EAS `production` profile build
+`production`; the EAS `development` profile builds `development`. Set the
+variable for any other command that reads the config, such as
+`APP_VARIANT=development npx expo prebuild`.
+
+The development icons in `assets/images/icon-dev.png` and
+`assets/images/icon-ios-dev.png` are generated from the production icons.
+After changing an icon, regenerate them and commit the result:
+
+```bash
+node scripts/dev-icons.mjs
+```
+
+## Building the dev app for your own phone
+
+A Release build of the Stim Dev variant runs on an iPhone without Metro and
+without TestFlight. `xcodebuild` signs it with the App&Flow team (`R7E8P23K3N`)
+through an App Store Connect API key, so Xcode does not need to be signed in
+to an Apple ID. Unlock the phone, connect it by cable or on the same network,
+and find its UDID with `xcrun devicectl list devices`. Then, from
+`apps/mobile`:
+
+```bash
+APP_VARIANT=development npx expo prebuild -p ios --clean
+APP_VARIANT=development xcodebuild -workspace ios/StimDev.xcworkspace -scheme StimDev \
+  -configuration Release -destination id=<UDID> -derivedDataPath ios/build \
+  -allowProvisioningUpdates -allowProvisioningDeviceRegistration \
+  -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8 \
+  -authenticationKeyID <KEY_ID> -authenticationKeyIssuerID <ISSUER_ID> \
+  DEVELOPMENT_TEAM=R7E8P23K3N build
+xcrun devicectl device install app --device <UDID> \
+  ios/build/Build/Products/Release-iphoneos/StimDev.app
+rm -rf ios
+```
+
+`xcodebuild` reads `app.config.ts` again during the build, so it needs
+`APP_VARIANT` too. Remove `ios/` at the end: Stim records the prebuild it ran
+for this workspace and does not notice a hand-made one, so the next `stim ios`
+would build and cache the Stim Dev project as the production app.
+
+The key's role must reach Certificates, Identifiers & Profiles: Admin, or
+App Manager with that access. With it, Xcode creates the
+development certificate, registers the bundle id, and adds the phone named by
+`-destination` to the team's devices, then refreshes the team provisioning
+profile. `-destination generic/platform=iOS` also signs, but registers no
+device, so the app installs only on phones the team already has.
+
+A Release build ignores `.env.local`; pair it with the QR code or the
+endpoint and token, as with the TestFlight app. It gets updates published
+to channel `development` (see [Updates](#updates)). `pnpm run dev:pair` is for
+development builds on this machine's simulators and emulators.
+
+## Updates
+
+Release builds run `expo-updates` against EAS Update. The production variant
+reads channel `production`: TestFlight builds from the EAS `production`
+profile, `preview` builds, and local Release builds. A Release build of the
+Stim Dev variant, such as the phone build above, reads channel
+`development`. The channel is `updates.requestHeaders` in `app.config.ts`, so
+a local `xcodebuild` gets it too; `eas.json` sets the same `channel` on the
+`production` and `development` profiles. Debug builds, including the EAS
+`development` development client, load JS from Metro and fetch no updates on
+launch.
+
+`runtimeVersion` uses the `fingerprint` policy: the runtime is a hash of the
+native project inputs. A JS-only change keeps the runtime, so an update
+reaches the builds already installed. A change to native code, a native
+dependency, `eas.json`, an asset the config names, or the native parts of
+`app.config.ts` gives a new runtime, which needs a new build; installed
+builds ignore updates for another runtime. `xcodebuild` computes the
+fingerprint from `app.config.ts` during the build, which is why the phone
+build passes `APP_VARIANT` to it. The two variants have different bundle ids,
+so they never share a runtime.
+
+The Expo dev server sets `EXPO_DEV_SERVER_ORIGIN` once it starts, and
+`app.config.ts` gives the static runtime `dev-server` to the `expo-updates
+runtimeversion:resolve` child that inherits it. That child otherwise recomputes
+the fingerprint on every manifest request, which costs seconds on each
+dev-client launch ([expo/expo#46415](https://github.com/expo/expo/issues/46415)),
+and the dev launcher does not compare the manifest's runtime. Every other
+evaluation of the config keeps the fingerprint: builds, `eas update` and
+`expo-updates fingerprint:generate`, including a build started with
+`expo run:* --configuration Release`, which sets the variable before it builds
+but does not run `runtimeversion:resolve`, and eas-cli's own
+`runtimeversion:resolve` calls, which pass `--workflow`. The runtime of TestFlight builds and
+updates is unchanged.
+
+The app checks for an update on every launch without waiting for it: it
+starts the update it already has and downloads a newer one in the background.
+This is the `expo-updates` default. A monitor that opens to glance at a build
+should open at once, even on a slow or captive network, and one launch on the
+previous JS changes nothing on the machine. A resumed process never launches
+again, so the app also checks whenever it returns to the foreground, at most
+once a minute. Once an update has downloaded, the menu lists
+**Restart to update** under **Pair a Machine**; tapping it asks
+before restarting into the new JS, and a restart that fails says so. Nothing
+restarts the app on its own.
+
+**About** shows the running update's short id and when it was published, or
+**Built-in** when the app runs the JS it was built with. Debug builds show
+**Built-in** too.
+
+Publish an update by hand from `apps/mobile`:
+
+```bash
+eas update --channel production --environment production --platform ios --message "<what changed>"
+APP_VARIANT=development eas update --channel development --environment development --platform ios --message "<what changed>"
+```
+
+`eas update` computes the runtime from the checked-out project, so run it on
+the commit the builds were made from, plus JS changes only.
+
+## Crash reporting
+
+The app reports JS errors and native crashes to Sentry
+(`@sentry/react-native`) only when its JS was bundled with
+`EXPO_PUBLIC_SENTRY_DSN` set. The DSN is not in the repository: EAS builds
+and updates read it from the EAS `production` and `preview` environments.
+Without it, as in local builds, `stim ios`, CI and forks, Sentry is not
+initialized and the app sends nothing. Sentry starts from JS in
+`src/lib/sentry.ts`, the first import of `index.ts`, so a native crash before
+the JS bundle runs is not reported. React Native sends an error thrown while
+rendering straight to its native exception handler rather than through
+`ErrorUtils`, so Sentry reports a render error only because the root
+`ErrorBoundary` in `src/app/_layout.tsx` is wrapped with
+`Sentry.wrapExpoRouterErrorBoundary`.
+
+Besides crashes and uncaught JS errors, the app sends handled failures and
+route breadcrumbs, listed under "What is sent" below. Reports carry no personal data: `sendDefaultPii` is off, there are no
+screenshots, view hierarchy, session replay or performance tracing, and the
+native SDKs record no network breadcrumbs. Before an event or breadcrumb
+leaves the phone, `src/lib/sentry-scrub.ts` replaces URLs (the paired machine's
+`wss://` endpoint among them), IP addresses, `*.ts.net` and `*.local` host
+names, Expo push tokens, pairing and device tokens, and `/Users/<name>` home
+folders. Events the native SDKs build themselves, such as native crashes and
+app hangs, skip that scrubbing, but carry only the JS breadcrumbs already
+scrubbed. Each report names the release
+(`com.appandflow.stim@<version>+<build>`), the build number as `dist`, and the
+running update in the tags `expo.updates.update_id`, `expo.updates.channel`
+and `expo.updates.runtime_version`.
+
+### What is sent
+
+Besides crashes and uncaught JS errors, the app sends these warning events and
+nothing else. Each distinct event is sent once per launch, at most 20 per
+launch, and none carries a payload value, endpoint, name, token or path:
+
+| Event (message)         | When                                                                                                                                     | Tags                                                                                                                                                                                                                                                                                                        |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rpc-validation-failed` | A message from a machine fails the shared RPC validators ("The machine sent an invalid RPC message"), during a session or while pairing. | `stage` (`parse`, `envelope`, `result`, `event` or `error`), `name` (the RPC method or event name), and for a schema violation `keyword`, `schema_path` (a location in the JSON Schema, such as `#/properties/sessions/items/required`), `missing_property` and `expected_type` when the schema names them. |
+| `pairing-failed`        | Pairing ends in an error.                                                                                                                | `error_class`: `timeout`, `closed`, `invalid-response`, `refused:<code>`, `key-storage` or `request-error:<code>`.                                                                                                                                                                                          |
+| `connection-failed`     | A machine answers `hello` with an error, or the phone cannot read its key.                                                               | `error_class`: `refused:<code>`, `key-storage` or `request-error:<code>`.                                                                                                                                                                                                                                   |
+
+`<code>` is the machine's error code and is sent only when it is one of the protocol's `ERROR_CODES`; otherwise `other`. The schema location comes from the validator, never from the message, so it holds no key or value the machine sent. Once a session is established, a dropped connection, a sleeping machine and a retry send nothing.
+
+Breadcrumbs added by the app are `navigation` entries holding the route pattern (such as `mac/[id]/workspace`), never the values of its parameters. Sentry's console breadcrumbs, scrubbed as above, remain. Tag values also pass through `src/lib/sentry-scrub.ts`. `src/lib/sentry.test.ts` checks that Sentry starts only with a DSN.
+
+With `SENTRY_AUTH_TOKEN` set, a Release build uploads its JS source maps and,
+on iOS, its dSYMs; without it, the build prints
+`SENTRY_DISABLE_AUTO_UPLOAD=true, skipping ...` and succeeds.
+`plugins/sentry-upload-only-with-token.js` makes that decision when the build
+runs, not in `app.config.ts`, so the token does not change the fingerprint.
+The release workflow uploads an update's source maps after `eas update` when
+the `SENTRY_AUTH_TOKEN` secret exists, and skips that step otherwise.
+
+### Setup
+
+The Sentry organization is `stim-rn` and the project `stim-mobile`.
+
+1. From `apps/mobile`, store the DSN, the slugs and an organization auth token
+   (Sentry **Settings**, **Developer Settings**, **Organization Tokens**) in
+   the EAS `production` and `preview` environments. The token is `secret`,
+   which only EAS builds read; `eas update` reads the plaintext DSN:
+
+   ```bash
+   eas env:set --environment production --environment preview --name EXPO_PUBLIC_SENTRY_DSN --value '<dsn>' --visibility plaintext
+   eas env:set --environment production --environment preview --name SENTRY_ORG --value stim-rn --visibility plaintext
+   eas env:set --environment production --environment preview --name SENTRY_PROJECT --value stim-mobile --visibility plaintext
+   eas env:set --environment production --environment preview --name SENTRY_AUTH_TOKEN --value '<auth token>' --visibility secret
+   ```
+
+2. In the GitHub repository, **Settings**, **Secrets and variables**,
+   **Actions**: add the secret `SENTRY_AUTH_TOKEN` and the variables
+   `SENTRY_ORG` (`stim-rn`) and `SENTRY_PROJECT` (`stim-mobile`).
+3. Build and submit a new TestFlight build. The DSN reaches only builds and
+   updates bundled after step 1.
+
+## Open source licenses
+
+Settings > More > **Open Source Licenses** lists Stim's own license and every
+npm package compiled into the app or linked natively, each with its version,
+license and repository link. Tapping one shows the license text. The list comes
+from `src/generated/licenses.json`, which `pnpm run licenses` writes: it runs
+`expo export` for iOS and Android with source maps, takes the packages the
+Metro bundles pull in, adds the direct dependencies of `package.json`, and reads
+each package's `package.json` and license file. A package that ships no license
+file uses the text of another bundled package from the same repository under the
+same license, or its file in `scripts/licenses`, and otherwise shows none. Identical texts are stored once. The
+list does not include native libraries that no npm package vendors, such as the
+Hermes engine and CocoaPods or Gradle transitive dependencies.
+
+Run `pnpm run licenses` and commit the file after a dependency change: a change
+to the dependencies or `pnpm-lock.yaml`, including an automated update, fails the
+Mobile workflow until the file is regenerated. `scripts/licenses/<name>.txt`
+holds the upstream license text of a package that ships no license file; the
+generator prints the packages that still have none.
+`pnpm run licenses:check` regenerates the list and fails when the committed file
+differs; the Mobile workflow runs it. The page is JavaScript and JSON only, so
+it changes no native fingerprint and ships over the air.
+
+## Localization
+
+The app is localized with [Lingui](https://lingui.dev) 5. Its messages are English only
+for now: the source locale `en` has no translations. Mark every string a person
+reads: `<Trans>` for text in JSX, `t` from `@lingui/core/macro` for props and
+strings built outside JSX, including in `src/lib`, and `<Plural>` or `plural`
+for counts. `@lingui/babel-plugin-lingui-macro` compiles the macros, and
+`src/intl/i18n.ts` loads the compiled catalog before the router, so a `t` at a
+module's top level also works. Jest loads the same file through `setupFiles`.
+
+`pnpm run intl:extract` writes the messages to `locales/en.po`, and
+`pnpm run intl:compile` compiles them to `locales/en.ts`, which the app
+imports. Commit both after changing a message: `pnpm run intl:check` runs the
+two and fails when either file changes, and CI runs it. The catalogs live
+outside `src` because the extracted messages carry the non-ASCII characters
+that `src` writes as `\uXXXX` escapes.
+
+Dates, numbers, sizes and durations go through `src/intl/format.ts`
+(`formatDateTime`, `formatDuration`, `formatBytes`, `formatSize`,
+`formatMemoryMb`). Dates follow the device's region, as `toLocaleString()`
+did; sizes follow the messages' language, so they read `3.3 GB` in any region. Hermes has no
+`Intl.PluralRules` or `Intl.Locale`, so `src/intl/polyfills.ts` loads the
+formatjs polyfills with English plural rules only; each installs only when the
+API is missing. Hermes on iOS also rounds half to even and ignores
+`style: 'unit'`, so sizes round with `toFixed` and carry their unit in the
+message. The shared `@stim-cli/core/oversight` rules stay unlocalized; the
+app localizes their notifications in `src/lib/notifications.ts`.
+
+The `lingui/no-unlocalized-strings` lint rule, through oxlint's `jsPlugins`,
+fails on an unmarked string anywhere in `src`. It skips single lowercase words,
+which are mostly identifiers, so wrap a lowercase word a person reads by hand;
+and it skips strings that start with `stim `, `stim-server `, `cd ` or `at `
+(commands and stack frames), and a string assigned to a `SCREAMING_CASE`
+constant, for a value sent to the server. It is off for tests, for `src/design` and
+`src/lib/agent-prompts.ts`, which Stim Desktop's generator imports without the
+Lingui macros, and for the components
+that hold SVG paths.
+
+## Checks
+
+```bash
+pnpm run format:check
+pnpm run lint
+pnpm run intl:check
+pnpm run typecheck
+pnpm test
+pnpm run licenses:check
+```
+
+Run `pnpm run knip` from the repository root instead of from `apps/mobile`: it
+covers the app as one workspace of the root `knip.ts`, so it reports unused
+files, exports and dependencies across the app and the rest of the repository.
+knip's Expo, Jest, Metro and Babel plugins find the `src/app` routes and the
+config files; the workspace entry adds the config plugins, the mock server,
+the scripts and `fingerprint.config.js`. It ignores `expo-screen-orientation`,
+which the app
+never imports: its iOS app delegate is what applies the per-screen
+`orientation` of `src/app/_layout.tsx`.
+
+The app uses TypeScript 7, the same version as the root. TypeScript 7 has no
+JavaScript compiler API, so Expo loads `app.config.ts` by stripping its types
+with Node, which does not add default-import interop. Import only types in
+`app.config.ts`, and name config plugins by string in `plugins` instead of
+importing them (expo/expo#49564).
+
+`pnpm run lint` runs oxlint with `.oxlintrc.json`, which includes oxlint's React
+Compiler rules. A component or hook the compiler would skip fails lint, so fix
+the code rather than suppress the rule. oxlint ports the compiler from React's
+main branch, while the app builds with `babel-plugin-react-compiler` 1.0.0, so
+a few 1.0.0 bailouts pass lint. One is a conditional, `??`, `||` or optional
+chain inside a `try` block.
+
+`.github/workflows/mobile.yml` runs them for changes under `apps/mobile` and to
+the root `knip.ts`, `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
+
+`src/app-boot.test.tsx` is the boot test. It renders the whole app, from
+`src/app/_layout.tsx` down to home, in Jest. The phone starts from what the
+previous release stored: a paired machine, that machine's cached status from an
+older `stim`, notification preferences and state in their old shapes, and that
+release's marker. The test checks that the launch clears the cached status and
+the notification state, and keeps the pairing and the
+preferences. The machine then connects to a fake `stim-server` that serves
+`mock-server/fixtures/status.json`, and the app turns `active` the way iOS does
+after launch. The test fails when React reports an error or anything throws,
+so it catches JS that throws while launching over an earlier release's state,
+on the screens it renders. Reanimated, the drawer and Lottie are stubbed, so
+the test does not cover animations or native code.
+
+When a change stores something new on the phone, decide whether it is derived
+data, which `clearDerivedDataOnChange` in `src/lib/derived-data.ts` must clear
+on a new build or update, or user data, which must stay; then seed the previous
+shape in `seedPreviousInstall`.
+
+## Ship to TestFlight
+
+The app ships to TestFlight with EAS, under the App&Flow Expo account
+(`appandflow`) and the App&Flow Apple Developer team. `eas.json` has three
+build profiles:
+
+- `development`: a development client of the Stim Dev variant (see
+  [Variants](#variants)), distributed internally.
+- `preview`: a release build of the production variant, distributed
+  internally. It replaces the TestFlight app on a phone and gets updates from
+  channel `production`.
+- `production`: an App Store build on update channel `production`. EAS owns the build number
+  (`appVersionSource: "remote"`) and increments it on every build. The
+  marketing version is `version` in `app.config.ts`.
+
+`development` and `preview` builds install only on devices registered with
+`eas device:create`.
+
+EAS installs from the repository root with pnpm. Each profile sets `pnpm` to
+the root `packageManager` version: the EAS images ship pnpm 11, which cannot
+switch to pnpm 12.0.0 on its own (pnpm/pnpm#14346). Change both together.
+
+The app declares `ITSAppUsesNonExemptEncryption` as `false`: it uses only the
+TLS that iOS provides, so App Store Connect does not ask the export compliance
+question for each build.
+
+### One-time setup
+
+Run these from `apps/mobile` with the EAS CLI (`npm install --global eas-cli`,
+or prefix each command with `npx`).
+
+1. Log in to Expo with an account that belongs to the `appandflow`
+   organization:
+
+   ```bash
+   eas login
+   eas whoami
+   ```
+
+2. Create the EAS project under the App&Flow owner and link it:
+
+   ```bash
+   eas init --account appandflow
+   ```
+
+   This prints the `owner` and `extra.eas.projectId` to set in
+   `app.config.ts`; commit that change. If the project already exists on expo.dev, link it with
+   `eas init --id <project-id>` instead.
+
+3. Create the App Store Connect app record, if it does not exist yet. In
+   [App Store Connect](https://appstoreconnect.apple.com), under the App&Flow
+   team, open **Apps**, choose **+**, then **New App**: platform iOS, name
+   `Stim`, bundle ID `com.appandflow.stim`, and any SKU. If the list does not
+   offer the bundle ID, run step 4 first, which registers it, or register it
+   under **Certificates, Identifiers & Profiles**. `eas submit` can create the record only when it signs in with an
+   Apple ID; an App Store Connect API key cannot create apps.
+
+   Copy the app's **Apple ID** (a number, under **App Information**) into
+   `eas.json`:
+
+   ```json
+   "submit": { "production": { "ios": { "ascAppId": "<Apple ID>" } } }
+   ```
+
+4. Set up signing and submission credentials:
+
+   ```bash
+   eas credentials --platform ios
+   ```
+
+   Choose the `production` profile, sign in with an Apple ID on the App&Flow
+   team, and let EAS create or reuse the distribution certificate and the App
+   Store provisioning profile. In the same menu, under **App Store Connect:
+   Manage your API Key**, add an API key so `eas submit` runs without Apple ID
+   prompts. To create the key yourself: App Store Connect, **Users and
+   Access**, **Integrations**, **App Store Connect API**, a key with the **App
+   Manager** role; keep the downloaded `.p8` file out of the repository.
+
+### Each release
+
+`.github/workflows/mobile-release.yml` releases from `main`. It runs in the
+`release` environment and signs in to Expo with the `EXPO_TOKEN` secret.
+
+- **Actions**, **Mobile release**, **Run workflow**, with a `mode`:
+  - `auto`, the default: computes the iOS fingerprint of the checked-out
+    project (`npx expo-updates fingerprint:generate --platform ios`) and
+    compares it with the runtime of the latest finished `production` build.
+    The same runtime publishes an update; a different one, or no build with a
+    runtime, builds and distributes.
+  - `update`: publishes an update to channel `production` with the commit
+    subject as the message. Use it only when you know the change is
+    JS-only; an update for a runtime no build has reaches no one.
+  - `build`: builds with the `production` profile, uploads the build to
+    TestFlight and adds it to the `External` group. See
+    [External testers](#external-testers).
+  - `rollback`: points channel `production` back at the JS embedded in the
+    build (`eas update:roll-back-to-embedded`). By default it uses the runtime
+    of the latest finished production build; the `runtime` input names
+    another one. See [Roll back a bad update](#roll-back-a-bad-update).
+  - `republish`: publishes the update group named by the `group` input again
+    on channel `production` (`eas update:republish`), so installed builds go
+    back to that update.
+- A `mobile-v<version>` tag on `main` always builds and distributes. The version
+  must equal `version` in `app.config.ts`, so raise it first.
+
+The workflow runs three jobs in order. `verify` checks that the commit is on
+`main`, that a tag matches `version` in `app.config.ts`, and, in every mode
+except `rollback` and `republish`, runs the unit tests, the boot test included.
+It runs in no environment and loads no secret. `demo-server` then deploys the
+App Review demo server with `.github/workflows/demo-server-deploy.yml` and
+smoke tests it, on a tag and in every mode except `rollback` and `republish`,
+so App Review never gets a build or update whose demo server is not live.
+`release` publishes, builds, rolls back or republishes. A failure in `verify`,
+the deploy or the smoke test stops the run before anything is published or
+built; a failing check in `verify` never deploys the demo server. The demo
+deploy runs before the `release` environment approval. Rejecting that approval
+does not roll back the deployed demo server.
+On a tag, missing Cloudflare secrets or `DEMO_TOKEN` fail the deploy. On a
+dispatched release, missing Cloudflare secrets skip deployment; a missing
+`DEMO_TOKEN` skips only the smoke test, with a notice. `rollback` and
+`republish` skip the tests and the deploy because they must still work when
+`main` is broken. See [Deploy](../demo-server/README.md#deploy).
+
+`eas build` records as the build's runtime the fingerprint computed on the
+machine that starts it, so a build from this workflow and the fingerprint
+`auto` compares are both computed on the Linux runner. A build started by hand
+on a machine records the machine's fingerprint; if a platform difference ever made
+the two disagree, `auto` would build for a JS-only change. `auto` compares
+with the newest production build from any branch, so start production builds
+only from `main`.
+
+The upload and `eas submit` read the App Store Connect API key from EAS
+credentials, not from GitHub. Store it once, from `apps/mobile`:
+
+```bash
+eas credentials --platform ios
+```
+
+Choose the `production` profile, then **App Store Connect: Manage your API
+Key**, **Set up your project to use an API Key for EAS Submit**, and use an
+existing key: give the path to its `.p8` file, its key ID and issuer ID.
+EAS keeps the key on expo.dev for the Expo account; the `.p8` stays out of
+the repository.
+
+To release by hand instead:
+
+```bash
+eas build --platform ios --profile production --auto-submit
+eas update --channel production --environment production --platform ios --message "<what changed>"
+```
+
+A hand build with `--auto-submit` reaches the internal testers only; add it to
+the `External` group in App Store Connect. To distribute a hand build to
+external testers from the start, build without `--auto-submit` and run the
+workflow with the build's id:
+
+```bash
+eas build --platform ios --profile production
+eas workflow:run .eas/workflows/testflight.yml -F build_id=<build id> -F "changelog=<what to test>"
+```
+
+The build appears in TestFlight after Apple finishes processing it, usually
+within 30 minutes. Raise `version` in `app.config.ts` for a new marketing
+version; build numbers need no change.
+
+### External testers
+
+The `build` mode does not use `eas build --auto-submit`. After `eas build`
+finishes, it starts the EAS workflow `.eas/workflows/testflight.yml` with
+`eas workflow:run --wait` and the finished build's id. The workflow's
+`testflight` job uploads that exact build with the `production` submit
+profile, waits for Apple to process it, adds it to the `External` TestFlight
+group, sets What to Test and submits the build for Beta App Review. Internal
+testers still get it through the groups that have automatic distribution
+turned on. The job is expected to need no GitHub secret beyond `EXPO_TOKEN`; it reads the same
+App Store Connect API key from EAS credentials as the upload did before.
+
+What to Test is the commit subject and short hash of the commit being
+released, for example `feat: add pairing retry (#123) (1a2b3c4)`.
+
+Apple requires Beta App Review for the first build of each marketing version
+(`version` in `app.config.ts`) before external testers can install it, and
+the beta app description and feedback email in App Store Connect must be
+filled in. The first build of a new version is therefore not installable
+for external testers until Apple approves it. Apple reviews the first build
+of each version; later builds usually need no new review.
+
+The last step of the run reads `eas submit:status` for the build and reports
+one state in the run's annotations and summary:
+
+| Message                                        | Meaning                                                       |
+| ---------------------------------------------- | ------------------------------------------------------------- |
+| still processing at Apple                      | uploaded; Apple has not finished processing it                |
+| not submitted for Beta App Review              | uploaded and processed, but the job did not add it for review |
+| awaiting Beta App Review or in Beta App Review | submitted; external testers cannot install it yet             |
+| available to external testers                  | approved and in the `External` group                          |
+| in export compliance review                    | Apple is reviewing the export compliance answers              |
+| rejected by Beta App Review                    | open the build in App Store Connect for Apple's reason        |
+| in an unexpected state                         | the message prints Apple's processing and external states     |
+
+A failure after the upload, such as missing test information or a rejected
+review submission, is a warning and does not fail the release: the build
+is in TestFlight and the update channel and runtime are unaffected. The run
+fails only when the build never reaches TestFlight. If the `testflight` job
+exits with code 11 and the build is not in TestFlight, the step uploads the same build with `eas submit`,
+which reaches internal testers only and is reported as a warning. If that fails
+too, run `mode=build` again, which makes a new build.
+
+There is no retry that distributes an already uploaded build without
+uploading again: the `build_id` form of the `testflight` job uploads the
+build each time, and Apple refuses a second upload of the same build number.
+For a warning, fix the cause in App Store Connect and add the existing build
+to `External` there. The job's other form takes the id of a build already in
+App Store Connect (`asc_build_id`) and needs an App Store Connect connection
+under the Expo project's settings, **Connections**; the workflow does not use
+it.
+
+### App Store listing
+
+`store.config.js` is the App Store listing for [EAS Metadata](https://docs.expo.dev/eas/metadata/):
+name ("Stim Mobile"; the home-screen name stays "Stim"), subtitle, description,
+keywords, support, marketing and privacy URLs, copyright, categories (Developer
+Tools, Productivity), the screenshots, the age rating answers and the App Review
+notes.
+`eas.json` points `submit.production.ios.metadataPath` at it. `apple.version`
+names the App Store version that `eas metadata:push` edits, or creates when it
+does not exist; set it to the version being released, which must equal `version`
+in `app.config.ts` for App Store Connect to accept the uploaded build.
+`apple.release.automaticRelease` is `false`, so the version uses manual release:
+after Apple approves it, it waits in App Store Connect until you choose
+**Release This Version**. A push sets this on the version it edits, so
+a new `apple.version` is manual too.
+
+The screenshots are the framed light images in `store/screenshots/en-US/`, which
+sit outside `src/` and `assets/`, so the app bundle never contains them. They
+are listed per display type, in the order App Store Connect shows them:
+
+| Directory    | Display type            | Size      | Images |
+| ------------ | ----------------------- | --------- | ------ |
+| `iphone-6.9` | `APP_IPHONE_67`         | 1320x2868 | 6      |
+| `ipad-13`    | `APP_IPAD_PRO_3GEN_129` | 2064x2752 | 4      |
+
+App Store Connect files its 6.9-inch iPhone and 13-inch iPad images under those
+two display types. To change a screenshot, replace the PNG (RGB, no alpha) or
+edit the list in `store.config.js`, then push. `eas metadata:push` matches an
+image by file name and byte size, so a replacement needs a new file name unless
+its size differs. Within each listed display type it uploads new or changed
+images, deletes ones no longer listed and reorders the rest; dropping a display
+type from the config leaves its set in App Store Connect. `eas metadata:lint`
+does not check that the files exist.
+
+The App Review notes tell the reviewer to pair with the demo server at
+`wss://stim-demo.appandflow.workers.dev` (see `apps/demo-server`). The pairing
+token and the review contact are secrets and personal data, so the file reads
+them from the environment and never stores them:
+
+| Variable                 | Used for                                                     |
+| ------------------------ | ------------------------------------------------------------ |
+| `STIM_REVIEW_DEMO_TOKEN` | the demo server's `DEMO_TOKEN`, appended to the review notes |
+| `STIM_REVIEW_FIRST_NAME` | App Review contact first name                                |
+| `STIM_REVIEW_LAST_NAME`  | App Review contact last name                                 |
+| `STIM_REVIEW_EMAIL`      | App Review contact email                                     |
+| `STIM_REVIEW_PHONE`      | App Review contact phone, with the country code              |
+
+A variable that is not set is left out. Without the four contact variables,
+`eas metadata:lint` and `eas metadata:push` refuse the config, which needs a
+review contact. Without `STIM_REVIEW_DEMO_TOKEN` the notes have no token, and a
+push replaces the notes already in App Store Connect, so set it every time.
+
+Push from `apps/mobile`, signed in with `eas login`. EAS signs in to App Store
+Connect with an API key (`EXPO_ASC_API_KEY_PATH`, `EXPO_ASC_KEY_ID`,
+`EXPO_ASC_ISSUER_ID`) or asks for an Apple ID:
+
+```bash
+cd apps/mobile
+STIM_REVIEW_DEMO_TOKEN="<DEMO_TOKEN>" \
+  STIM_REVIEW_FIRST_NAME="<first name>" STIM_REVIEW_LAST_NAME="<last name>" \
+  STIM_REVIEW_EMAIL="<email>" STIM_REVIEW_PHONE="<+country number>" \
+  npx eas-cli metadata:push
+```
+
+Run the same command with `metadata:lint` to validate the file without signing
+in to Apple. The push sends the listing to App Store Connect; it does not
+submit the version for App Review.
+
+### Roll back a bad update
+
+An update reaches every installed build on its runtime the next time the app
+launches, and it runs on the launch after that. A bad update shows up as:
+
+- the app closing at launch, or showing an error screen, on phones that were
+  fine before;
+- crashes in `eas update:view <group> --insights` for the newest group.
+
+Find the newest groups and the one that was good before the bad one:
+
+```bash
+cd apps/mobile
+eas update:list --branch production --limit 10
+eas update:view <group> --insights
+```
+
+Roll back to the JS embedded in the build. This works whatever is on the
+channel, and needs no group id:
+
+```bash
+gh workflow run mobile-release.yml --ref main -f mode=rollback
+gh workflow run mobile-release.yml --ref main -f mode=rollback -f runtime=<runtime>
+```
+
+Or go back to a specific update that worked:
+
+```bash
+gh workflow run mobile-release.yml --ref main -f mode=republish -f group=<group>
+```
+
+Both runs use the `release` environment, which has no required reviewers for
+now. They queue apart from the publishing modes, so a build in progress does
+not hold them up. A publishing run that is still in progress can publish after
+the rollback and undo it, so cancel it first (`gh run cancel <run-id>`); find
+the run id with `gh run list --workflow mobile-release.yml --limit 1`. The run log's
+notice names the runtime and group it acted on. `republish` warns when the
+group's runtime is not the latest production build's, because only builds on
+that runtime get it. When the group is on a branch other than `production`,
+`republish` publishes it to channel `production` with `--destination-channel`.
+
+Phones pick up the rollback when a launch checks for updates, and run it on the
+launch after that. A phone that crashes at launch may need a few launches.
+
+After a rollback, fix the bug on `main`. The next `auto` run publishes the fix
+as a new update, which replaces the rollback. Build for TestFlight (`mode=build`)
+instead when the fix changes native code or dependencies. Do the same when the
+embedded JS itself is broken, because then a rollback cannot help: `auto` builds
+only when the runtime changes, so pick `build` explicitly.
+
+The workflow has no staging channel. Publishing to a staging branch first and
+promoting it with `republish` would need a build that reads that channel,
+installed on a phone someone checks before promoting. Without that build,
+staging adds a step and verifies nothing. A simulator run of each update on a
+macOS runner, using a production-runtime simulator build per runtime, would
+catch native and render crashes. It would also cost a macOS runner and an EAS
+simulator build for every runtime. The boot test catches JS errors on launch,
+which covers this class of crash, at no extra cost. To check an update by hand
+before publishing it, run a Release build of the same commit on a simulator
+with `stim ios --configuration Release`. Stim puts the current JS into the
+cached build, so this works without Metro. Then read `stim logs --errors`. A
+Release build ignores `.env.local`, so it starts with no paired machine unless
+you pair it.
+
+## Shared workspace links
+
+HTTPS links at `https://stim.appandflow.com/open` identify a persistent Stim home
+and its registered workspace. Stim resolves those IDs only through an already-paired,
+approved machine and a current snapshot from that home. Pairing IDs can differ between
+phone installations. Offline, unpaired, old-server and stale destinations show a
+message; a link contains no server endpoint, path or credentials. Opening one only
+navigates, including to the requested platform and device slot. Control still requires
+the viewer's explicit control action.
+
+iOS universal links need a new native build with Associated Domains enabled for
+`com.appandflow.stim`, its updated provisioning profile, and the website's
+`/.well-known/apple-app-site-association` file. An OTA update cannot enable native
+association. The production association does not claim the development app. Android
+verified links remain separate work. The website fallback can open the existing
+custom scheme when the OS does not open the app.

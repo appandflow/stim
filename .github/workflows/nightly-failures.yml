@@ -1,0 +1,44 @@
+name: Nightly failures
+
+on:
+  workflow_run:
+    workflows: [Full suite, Native E2E, Stim CI dogfood]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: nightly-failures-${{ github.event.workflow_run.name }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    if: github.repository == 'appandflow/stim' && github.event.workflow_run.event == 'schedule' && github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      RUN_URL: ${{ github.event.workflow_run.html_url }}
+      WORKFLOW: ${{ github.event.workflow_run.name }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Open or update the issue for this workflow's nightly failure
+        run: |
+          failed=$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/jobs?per_page=100&filter=latest" --paginate \
+            --jq '.jobs[] | select(.conclusion == "failure") | "- [\(.name)](\(.html_url))"')
+          body=$(printf 'The nightly **%s** run failed on %s: %s\n\nFailed jobs:\n\n%s\n' "$WORKFLOW" "${SHA:0:9}" "$RUN_URL" "$failed")
+          title="Nightly failure: $WORKFLOW"
+          gh label create "source: nightly" --description "Filed by a failing nightly workflow run" --color BFD4F2 2>/dev/null || true
+          existing=$(gh issue list --state open --label "source: nightly" --search "\"$title\" in:title" --json number,title \
+            --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --label "source: nightly" --label "type: bug" --label "priority: P1" --label "area: repo" \
+              --body "$(printf '## Problem\n\n%s\n\n## Evidence\n\nRun: %s\n\n## Cause\n\nUnknown. Read the failing job logs first; a platform-only failure on a recent main commit is the likely shape.\n\n## Fix idea\n\nFix forward or revert the commit that broke it, then confirm with a dispatched run of the workflow. Close this issue once a nightly run is green.\n' "$body" "$RUN_URL")"
+          fi

@@ -1,0 +1,148 @@
+import { existsSync, readFileSync, readdirSync, type Dirent } from 'fs';
+import { join } from 'path';
+import { readProjectConfig } from '../engine/remote-cache.ts';
+import { readAppConfigText, readAppJson } from './project.ts';
+import { DEFAULT_IOS_PROJECT_PATH, defaultAndroidLayout } from './settings.ts';
+
+interface AppIds {
+  bundleId: string | null;
+  androidPackage: string | null;
+  androidPackageProblem: string | null;
+}
+
+const ANDROID_PACKAGE_NAME = /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/;
+
+type AndroidPackageFilter = (id: string | null, source: string) => string | null;
+
+function androidPackageFilter(problems: string[]): AndroidPackageFilter {
+  return (id, source) => {
+    if (id === null || ANDROID_PACKAGE_NAME.test(id)) return id;
+    problems.push(
+      `Invalid Android package ${JSON.stringify(id)} in ${source}. Expected dot-separated letters, digits and underscores, such as com.example.app.`,
+    );
+    return null;
+  };
+}
+
+function configString(config: unknown, platform: 'ios' | 'android', key: string): string | null {
+  if (!config || typeof config !== 'object') return null;
+  const expoField = (config as { expo?: unknown }).expo;
+  const exp = (expoField && typeof expoField === 'object' ? expoField : config) as Record<string, unknown>;
+  const section = exp[platform];
+  if (!section || typeof section !== 'object') return null;
+  const value = (section as Record<string, unknown>)[key];
+  return typeof value === 'string' && value ? value : null;
+}
+
+function literalString(text: string | null, key: string): string | null {
+  return text?.match(new RegExp(`${key}\\s*:\\s*["']([^"']+)["']`))?.[1] ?? null;
+}
+
+async function idsFromConfig(
+  projectRoot: string,
+  options: Parameters<typeof readProjectConfig>[1],
+): Promise<Pick<AppIds, 'bundleId' | 'androidPackage'>> {
+  const read = await readProjectConfig(projectRoot, options);
+  if (!read.unavailable) {
+    return {
+      bundleId: configString(read.config, 'ios', 'bundleIdentifier'),
+      androidPackage: configString(read.config, 'android', 'package'),
+    };
+  }
+  const appJson = readAppJson(projectRoot);
+  const text = readAppConfigText(projectRoot);
+  return {
+    bundleId: configString(appJson, 'ios', 'bundleIdentifier') ?? literalString(text, 'bundleIdentifier'),
+    androidPackage: configString(appJson, 'android', 'package') ?? literalString(text, 'package'),
+  };
+}
+
+export async function detectAppIds(
+  projectRoot: string,
+  iosDir: string = join(projectRoot, DEFAULT_IOS_PROJECT_PATH),
+  androidModuleDir: string = defaultAndroidLayout(projectRoot).moduleDir,
+  config: Parameters<typeof readProjectConfig>[1] = {},
+): Promise<AppIds> {
+  const ids = await idsFromConfig(projectRoot, config);
+  const problems: string[] = [];
+  const accept = androidPackageFilter(problems);
+  return {
+    bundleId: ids.bundleId ?? detectBundleIdFromPbxproj(iosDir),
+    androidPackage:
+      accept(ids.androidPackage, 'the Expo config android.package') ??
+      detectAndroidPackageFromGradle(androidModuleDir, accept),
+    androidPackageProblem: problems.length > 0 ? problems.join(' ') : null,
+  };
+}
+
+export async function detectBundleId(
+  projectRoot: string,
+  iosDir: string = join(projectRoot, DEFAULT_IOS_PROJECT_PATH),
+): Promise<string | null> {
+  return (await detectAppIds(projectRoot, iosDir)).bundleId;
+}
+
+export async function detectAndroidPackage(
+  projectRoot: string,
+  androidModuleDir: string = defaultAndroidLayout(projectRoot).moduleDir,
+): Promise<string | null> {
+  return (await detectAppIds(projectRoot, undefined, androidModuleDir)).androidPackage;
+}
+
+function detectBundleIdFromPbxproj(iosDir: string): string | null {
+  if (!existsSync(iosDir)) return null;
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(iosDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.endsWith('.xcodeproj')) continue;
+    const pbx = join(iosDir, entry.name, 'project.pbxproj');
+    if (!existsSync(pbx)) continue;
+    let text: string;
+    try {
+      text = readFileSync(pbx, 'utf-8');
+    } catch {
+      continue;
+    }
+    const all = [...text.matchAll(/PRODUCT_BUNDLE_IDENTIFIER\s*=\s*([^;\s"]+)\s*;/g)].map((m) => m[1]);
+    const concrete = all.filter((id): id is string => !!id && !id.startsWith('$') && !id.includes('('));
+    if (concrete.length === 0) continue;
+    const counts: Record<string, number> = {};
+    for (const id of concrete) counts[id] = (counts[id] || 0) + 1;
+    let best: string | null = null,
+      bestCount = 0,
+      bestLen = Infinity;
+    for (const [id, count] of Object.entries(counts)) {
+      if (count > bestCount || (count === bestCount && id.length < bestLen)) {
+        best = id;
+        bestCount = count;
+        bestLen = id.length;
+      }
+    }
+    return best;
+  }
+  return null;
+}
+
+function detectAndroidPackageFromGradle(moduleDir: string, accept: AndroidPackageFilter): string | null {
+  const gradle = [join(moduleDir, 'build.gradle'), join(moduleDir, 'build.gradle.kts')].find((file) =>
+    existsSync(file),
+  );
+  if (!gradle) return null;
+  let text: string;
+  try {
+    text = readFileSync(gradle, 'utf-8');
+  } catch {
+    return null;
+  }
+  const ns = text.match(/namespace\s*=?\s*["']([^"']+)["']/);
+  const nsId = ns?.[1];
+  const namespace = nsId ? accept(nsId, gradle) : null;
+  if (namespace) return namespace;
+  const app = text.match(/applicationId\s*=?\s*["']([^"']+)["']/);
+  const appId = app?.[1];
+  return appId ? accept(appId, gradle) : null;
+}

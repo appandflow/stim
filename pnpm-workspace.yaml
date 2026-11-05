@@ -1,0 +1,72 @@
+packages:
+  - packages/*
+  - .github/actions/stim-ci
+  - website
+  - apps/mobile
+  - apps/demo-server
+
+# Defence in depth: the packages declare each other with `workspace:` ranges,
+# which link regardless. This keeps a plain semver internal dep linking to the
+# workspace copy rather than silently resolving to a published version.
+linkWorkspacePackages: true
+
+# Security posture (pnpm 12 defaults + explicit choices):
+# - dependency lifecycle scripts are BLOCKED unless allowlisted here
+# - freshly published versions are held back a day before pnpm will resolve
+#   them (the window supply-chain attacks live in); our own packages are
+#   exempt so a release does not lock the repo out of itself
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - stim
+  - '@stim-cli/*'
+  - unique-pid@0.1.1
+  - react-native-unistyles@3.5.0
+  - react-native-screens@4.30.0
+allowBuilds:
+  '@sentry/cli': false
+  '@swc/core': false
+  core-js: false
+  esbuild: false
+  unrs-resolver: false
+  workerd: false
+
+# Docusaurus uses image-size only while building repository-owned content, and
+# image-size has no patched release (facebook/docusaurus#12231).
+audit:
+  ignore:
+    - GHSA-5p2g-fcmc-qvqq
+    - GHSA-w3rx-r6r6-pgpr
+
+# website's Docusaurus toolchain pulls these transitively at vulnerable
+# versions; the published packages under packages/ do not depend on them
+# (see issue #267).
+overrides:
+  uuid: ^11.1.1
+  serialize-javascript: '>=7.0.5'
+  qs: '>=6.16.0'
+  # stim reaches brace-expansion 5 through @expo/fingerprint (minimatch, glob); 5.0.9 is affected (#3255).
+  brace-expansion@5: ^5.0.10
+
+# AGP 9 (React Native 0.88) registers the Kotlin plugin itself, and these packages
+# apply it again unconditionally, which fails Gradle configuration. Drop each
+# patch once the fix ships: margelo/react-native-mmkv#1090, margelo/nitro#1579.
+# The expo-image patch loads require()d images from React Native's asset catalog
+# (RCTUseAssetCatalog, apps/mobile); drop it once expo/expo#50723 ships. It only
+# takes effect because apps/mobile builds expo-image from source on iOS.
+patchedDependencies:
+  expo-image@58.0.6: patches/expo-image@58.0.6.patch
+  react-native-mmkv@4.3.2: patches/react-native-mmkv@4.3.2.patch
+  react-native-nitro-modules@0.37.1: patches/react-native-nitro-modules@0.37.1.patch
+  react-native-transformer-text-input@0.4.2: patches/react-native-transformer-text-input@0.4.2.patch
+  react-native-screens@4.30.0: patches/react-native-screens@4.30.0.patch
+  # Expo #50052 adds versionless Android publications; later autolinkers also require
+  # a macro package absent from this SDK core. Backport the resolver until the SDK updates.
+  expo-modules-autolinking@58.0.4: patches/expo-modules-autolinking@58.0.4.patch
+  # react-native-unistyles 3.5.0 passes ImageProps::tintColor to a SharedColor overload;
+  # React Native 0.88 declares it std::optional<SharedColor>, so the iOS build fails in
+  # ShadowTreeDiagnostics.cpp. Drop the patch once a release compiles against 0.88.
+  react-native-unistyles@3.5.0: patches/react-native-unistyles@3.5.0.patch
+  # react-native-nitro-websockets 1.3.1 keeps NSURLSessionWebSocketTask's 1 MiB message limit on
+  # iOS, which closes the connection with 1009; Android allows 16 MiB. Raise iOS to match.
+  # Recheck on upgrade: later releases default iOS to a Network.framework transport with its own limit.
+  react-native-nitro-websockets@1.3.1: patches/react-native-nitro-websockets@1.3.1.patch

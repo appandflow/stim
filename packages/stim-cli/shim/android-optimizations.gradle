@@ -1,0 +1,38 @@
+gradle.beforeProject { project ->
+    ["com.android.application", "com.android.library"].each { plugin ->
+        project.pluginManager.withPlugin(plugin) {
+            project.extensions.getByName("androidComponents").finalizeDsl { android ->
+                def reactApplication = project.plugins.hasPlugin("com.android.application") && project.plugins.hasPlugin("com.facebook.react")
+                if (!android.externalNativeBuild.cmake.path && !reactApplication) return
+                def profile = System.getenv("STIM_ANDROID_NATIVE_PROFILE")
+                def windows = System.getProperty("os.name").toLowerCase().startsWith("windows")
+                def staging = android.externalNativeBuild.cmake.buildStagingDirectory ?: new File(project.projectDir, ".cxx")
+                // Windows caps a path at 260 characters and the SDK's ninja is not long-path aware, so every
+                // character of the staging directory comes out of the project root's budget: there the profile
+                // directory keeps 4 hex characters, and CMake replaces the mangled absolute source directory in an
+                // over-long object path with a hash of it.
+                android.externalNativeBuild.cmake.buildStagingDirectory = new File(staging, windows ? profile.take(4) : "stim-" + profile)
+                if (windows) {
+                    android.defaultConfig.externalNativeBuild.cmake.arguments.add("-DCMAKE_OBJECT_PATH_MAX=240")
+                }
+                def configs = [android.defaultConfig] + android.buildTypes.toList() + android.productFlavors.toList()
+                def pch = System.getenv("STIM_ANDROID_PCH")
+                def ccache = System.getenv("STIM_ANDROID_CCACHE")
+                def pchArgument = { arg -> arg =~ /^(?:-D\s*)?CMAKE_DISABLE_PRECOMPILE_HEADERS(?::[^=]+)?=/ }
+                if (pch != "auto") {
+                    configs.each { config -> config.externalNativeBuild.cmake.arguments.removeAll(pchArgument) }
+                }
+                if (pch != "auto" || (ccache == "on" && !configs.any { config -> config.externalNativeBuild.cmake.arguments.any(pchArgument) })) {
+                    android.defaultConfig.externalNativeBuild.cmake.arguments.add("-DCMAKE_DISABLE_PRECOMPILE_HEADERS=" + (pch == "on" ? "OFF" : "ON"))
+                }
+                if (ccache == "off") {
+                    android.defaultConfig.externalNativeBuild.cmake.arguments.addAll([
+                        "-DCMAKE_C_COMPILER_LAUNCHER=",
+                        "-DCMAKE_CXX_COMPILER_LAUNCHER=",
+                        "-DCCACHE_FOUND=OFF"
+                    ])
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,145 @@
+---
+title: 'Requirements'
+sidebar_position: 3
+description: 'Local and optional remote requirements'
+---
+
+:::note[Command examples]
+
+Commands use `stim`. If it is not installed globally, replace `stim` with
+`npx stim`.
+
+:::
+
+## All projects
+
+- Node 22.12.0 or later. Node 20 is no longer supported.
+- A project with `expo` or `react-native` in `package.json`.
+- Git for `stim worktree` commands.
+- macOS, Linux or Windows. What each host can run is listed below.
+
+## Projects that pin an older Node {/* #older-node-pins */}
+
+`stim` and `stim-server` start through `#!/usr/bin/env node`, so the working
+directory can choose the Node that runs them. asdf, mise and Volta's `node`
+shim follow the project's `.nvmrc`, `.node-version`, `.tool-versions` or
+`package.json`; nvm and fnm do when a shell hook switches versions on `cd`. A
+Stim installed with Volta keeps the Node it was installed with. When that Node
+is older than 22.12.0, Stim refuses before it does anything and prints
+`STIM_NODE_UNSUPPORTED` with the Node version and path it found.
+
+Run Stim with a supported Node for that command:
+
+```bash
+ASDF_NODEJS_VERSION=<version> stim <command>
+mise exec node@<version> -- stim <command>
+volta run --node <version> stim <command>
+fnm exec --using=<version> stim <command>
+nvm exec --silent <version> stim <command>
+```
+
+`<version>` is 22.12.0 or later. asdf, mise, fnm and nvm keep global packages
+per Node version, so when Stim was installed with npm under one of them, use
+the version it was installed with. asdf names that version when it prints
+`No version is set for command stim` instead of running Stim. When that
+version is older than 22.12.0, first install Stim with npm under a supported
+version. The tools Stim starts inherit the override.
+
+## iOS
+
+- Local builds and simulators need macOS with Xcode. Local simulator runs also
+  need an installed iOS Simulator runtime.
+- A compatible Ruby and CocoaPods setup when the project uses pods. Install
+  Bundler when the project pins CocoaPods in `Gemfile.lock`.
+- From Linux or Windows, a React Native or Expo app builds and runs on a paired
+  Mac approved for builds and hosted simulators:
+  `stim ios --remote <mac> --remote-build <mac>`. See
+  [Remote machines](./remote-machines.md#requirements). It can also run through
+  an EAS build and an EAS Simulator session:
+  `stim ios --remote eas --eas-profile <profile>`. See
+  [From Windows or Linux](./owned-devices.md#from-windows-or-linux).
+
+## Android
+
+- macOS, Linux or Windows with the Android SDK. Stim reads its location from
+  `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then Android Studio's default:
+  `~/Library/Android/sdk` on macOS, `~/Android/Sdk` on Linux or
+  `%LOCALAPPDATA%\Android\Sdk` on Windows. It passes that path to Gradle as
+  `ANDROID_HOME` when neither variable is set.
+  With no SDK there and no `android/local.properties`, `stim doctor --platform
+android` reports it and `stim android` refuses with `STIM_BUILD_FAILED`
+  before Gradle runs. A local React Native or Expo emulator run checks this
+  before starting Metro or preparing a device.
+- For an emulator, an Android system image matching the host: `arm64-v8a` on
+  ARM64 or `x86_64` on x64. When none is installed, `stim android` installs
+  `system-images;android-36;google_apis;<host ABI>` with the SDK's
+  `cmdline-tools/latest/bin/sdkmanager`, which needs the SDK licenses accepted
+  (`sdkmanager --licenses`) and 8 GB free.
+- A working Java and Gradle setup for the project.
+- Without a JDK or the Android SDK, a React Native or Expo app builds and runs
+  on a paired machine approved for builds and hosted emulators:
+  `stim android --remote <machine> --remote-build <machine>`. That machine's
+  JDK and Android SDK are the build's. See
+  [Remote machines](./remote-machines.md#requirements).
+- On Windows, a project root short enough for the NDK's object paths: its
+  ninja cannot open a path of 260 characters or more, and a React Native
+  codegen object path only fits when CMake can shorten it. A project with
+  react-native-gesture-handler 3 fits a root of at most 24 characters for an
+  x86_64 emulator build and 21 for arm64-v8a, such as `C:\src\trailhead`;
+  other projects fit about twice that. `stim doctor --platform android`
+  reports a root that leaves no room and `stim android` refuses it with
+  `STIM_PATH_TOO_LONG` before it prepares the emulator, even when a cached build
+  would have installed. Move or clone the project under a
+  short real path such as `C:\src\<name>`. A `subst` drive does not work: Node
+  and Expo autolinking resolve it back to the long path. The check
+  assumes the default native staging path and may also refuse a shorter
+  custom `buildStagingDirectory`.
+
+## Windows
+
+The Android loop runs on Windows: owned emulators, builds, install, launch,
+logs, worktrees and caches. iOS can run through `--remote eas`; there
+is no local Xcode path. Requirements on top of the Android list:
+
+- Windows 10 or 11 with PowerShell 7 or cmd.exe to run Stim. Windows PowerShell
+  (`powershell.exe`) must also be on `PATH` for background processes and emulator
+  cleanup. Stim resolves `.cmd` and `.bat` tools itself.
+- Git for Windows. Stim passes `core.longpaths` to the git commands that need
+  it; your global configuration is not changed.
+- Emulator acceleration: WHPX (Windows Hypervisor Platform) or the Android
+  Emulator hypervisor driver. `emulator -accel-check` reports which is active.
+- JDK 17 on `JAVA_HOME` or `PATH`.
+- A short project path, as described in the Android path requirement above.
+
+On Windows, `stim doctor --platform android` checks path room, and `stim doctor
+--platform ios` points at `--remote eas` for iOS.
+
+Install the host tools and JavaScript dependencies before building. Stim runs
+`pod install` when an iOS project's installed Pods are missing or stale. When
+the project pins CocoaPods and Bundler is available, it installs missing bundled
+gems and runs `bundle exec pod install`. Run `stim doctor` to check the setup.
+
+## Web
+
+`stim web` needs Google Chrome or Chromium. On macOS Stim looks in
+`/Applications` and `~/Applications`; elsewhere it looks for `google-chrome`,
+`google-chrome-stable`, `chromium` or `chromium-browser` on `PATH`, and on
+Windows in Program Files. Stim never installs a browser. Expo web also needs
+`react-dom`, `react-native-web` and `@expo/metro-runtime`.
+
+## Optional remote devices
+
+- The `proxy` backend needs an Agent Device daemon URL and token.
+- The `eas` backend needs EAS CLI 21.6.0 or later (22.2.0 or later for
+  `stim ios --device-type`), an authenticated Expo
+  account, and a configured EAS project. EAS simulator use can be billable.
+
+## EAS development builds
+
+`--eas-profile` needs EAS CLI 18.9.0 or later, an authenticated Expo account, and a linked Expo
+project with an internal development profile. It downloads an existing build
+and skips local native compilation, so CocoaPods and Gradle compilation setup
+are not needed for this path. Keep the host tools needed to run the selected
+device: Xcode and an installed runtime for a local iOS simulator, or the Android
+SDK and system image for an emulator. See [EAS development builds](./eas-builds.md)
+for setup and connected-device requirements.

@@ -1,0 +1,628 @@
+import type { CSSProperties, ReactNode, TouchEvent as ReactTouchEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+import {
+  assignCommandLanes,
+  commandAtCursor,
+  formatCost,
+  formatSeconds,
+  formatTokens,
+  initialAuditSelection,
+  timelineZoomDimensions,
+  timelineZoomFromPinch,
+  timeBreakdown,
+  totalTokens,
+  type BenchmarkAuditSelection,
+  type BenchmarkBackgroundProcess,
+  type BenchmarkCommand,
+  type BenchmarkRun,
+} from './benchmarkData';
+import {
+  installTimelineWheelZoom,
+  timelineAnchoredScrollLeft,
+  timelinePinchGeometry,
+  timelinePlaybackScrollLeft,
+} from './timelineGesture';
+import styles from './BenchmarkTimeline.module.css';
+
+function position(seconds: number, total: number): string {
+  return `${Math.min(100, Math.max(0, (seconds / total) * 100))}%`;
+}
+
+function shortCommand(command: BenchmarkCommand): string {
+  return displayCommand(command).slice(0, 92);
+}
+
+function displayCommand(command: BenchmarkCommand): string {
+  return command.presentation?.command ?? command.command;
+}
+
+function eventTime(selected: BenchmarkAuditSelection): number {
+  if (selected.kind === 'command') return selected.event.endSeconds;
+  if (selected.kind === 'background') return selected.event.endSeconds;
+  return selected.event.atSeconds;
+}
+
+function BackgroundDetail({ process }: { process: BenchmarkBackgroundProcess }): ReactNode {
+  return (
+    <section className={styles.eventDetail} aria-live="polite">
+      <div>
+        <strong>{process.label}</strong>
+        <span>
+          +{formatSeconds(process.startSeconds)} to +{formatSeconds(process.endSeconds)}
+        </span>
+      </div>
+      <p>
+        A launcher detached this process with <code>nohup</code>. Later process-inspection commands referenced its PID
+        or PID file {process.monitorCount} {process.monitorCount === 1 ? 'time' : 'times'} through the end of this span;
+        this is recorded monitoring evidence, not a claim that the process exited there.
+      </p>
+    </section>
+  );
+}
+
+function TerminalDetail({
+  command,
+  state = 'complete',
+  cursorSeconds,
+}: {
+  command: BenchmarkCommand;
+  state?: 'running' | 'complete';
+  cursorSeconds?: number;
+}): ReactNode {
+  const elapsed =
+    state === 'running'
+      ? Math.max(0, (cursorSeconds ?? command.startSeconds) - command.startSeconds)
+      : command.endSeconds - command.startSeconds;
+  return (
+    <section className={styles.terminal} aria-live="polite">
+      <div className={styles.terminalBar}>
+        <span className={styles.terminalLights} aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </span>
+        <span>Terminal</span>
+        <span>
+          {formatSeconds(elapsed)} / {state === 'running' ? 'running' : `exit ${command.exitCode ?? '-'}`}
+        </span>
+      </div>
+      {command.presentation && (
+        <div className={styles.commandContext}>
+          <details>
+            <summary>Command context and original</summary>
+            {command.presentation.cwd && <span>Directory: {command.presentation.cwd}</span>}
+            {command.presentation.isolatedAgentDevice && <span>Isolated agent-device session</span>}
+            <pre>{command.command}</pre>
+          </details>
+        </div>
+      )}
+      <pre>
+        <span className={styles.prompt}>$ </span>
+        {displayCommand(command)}
+        {state === 'running' ? '\n\n... command still running' : command.output ? `\n\n${command.output}` : ''}
+      </pre>
+    </section>
+  );
+}
+
+function pinchGeometry(event: ReactTouchEvent<HTMLDivElement>): ReturnType<typeof timelinePinchGeometry> {
+  return timelinePinchGeometry(Array.from(event.touches, ({ clientX, clientY }) => ({ clientX, clientY })));
+}
+
+export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): ReactNode {
+  const isLaunchCrash = run.variant === 'launch-crash';
+  const [selected, setSelected] = useState<BenchmarkAuditSelection | null>(() => initialAuditSelection(run));
+  const [playbackMode, setPlaybackMode] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [cursorSeconds, setCursorSeconds] = useState(0);
+  const [speed, setSpeed] = useState(20);
+  const [zoom, setZoom] = useState(1);
+  const [timelineViewport, setTimelineViewport] = useState({ width: 0, rootFontSize: 16 });
+  const pinch = useRef<{ distance: number; zoom: number } | null>(null);
+  const timelineScroller = useRef<HTMLDivElement>(null);
+  const zoomAnchor = useRef<{ contentRatio: number; viewportOffset: number } | null>(null);
+  const { commands, laneCount } = useMemo(() => assignCommandLanes(run.commands), [run.commands]);
+  const breakdown = useMemo(() => timeBreakdown(run), [run]);
+  const playbackCommand = useMemo(() => commandAtCursor(run.commands, cursorSeconds), [run.commands, cursorSeconds]);
+  const proofSrc = useBaseUrl(run.proof?.src ?? '');
+  const recordingSrc = useBaseUrl(run.recording?.src ?? '');
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const timelineDimensions = timelineZoomDimensions(timelineViewport.width, timelineViewport.rootFontSize, zoom);
+  const beginPinch = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const gesture = pinchGeometry(event);
+    if (!gesture) return;
+    pinch.current = { distance: gesture.distance, zoom };
+  };
+  const updatePinch = (event: ReactTouchEvent<HTMLDivElement>) => {
+    const gesture = pinchGeometry(event);
+    if (!gesture || !pinch.current) return;
+    const scroller = timelineScroller.current;
+    if (scroller) {
+      const viewportOffset = gesture.midpointX - scroller.getBoundingClientRect().left;
+      zoomAnchor.current = {
+        contentRatio: (scroller.scrollLeft + viewportOffset) / scroller.scrollWidth,
+        viewportOffset,
+      };
+    }
+    setZoom(timelineZoomFromPinch(pinch.current.zoom, pinch.current.distance, gesture.distance));
+  };
+  const finishPinch = (event: ReactTouchEvent<HTMLDivElement>) => {
+    if (event.touches.length < 2) pinch.current = null;
+  };
+
+  useEffect(() => {
+    const scroller = timelineScroller.current;
+    if (!scroller) return;
+    return installTimelineWheelZoom(scroller, ({ clientX, scale }) => {
+      const viewportOffset = clientX - scroller.getBoundingClientRect().left;
+      zoomAnchor.current = {
+        contentRatio: (scroller.scrollLeft + viewportOffset) / scroller.scrollWidth,
+        viewportOffset,
+      };
+      setZoom((current) => timelineZoomFromPinch(current, 1, scale));
+    });
+  }, []);
+
+  useEffect(() => {
+    const scroller = timelineScroller.current;
+    if (!scroller) return;
+    const update = () => {
+      setTimelineViewport({
+        width: scroller.clientWidth,
+        rootFontSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+      });
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(scroller);
+    update();
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const scroller = timelineScroller.current;
+    const anchor = zoomAnchor.current;
+    if (!scroller || !anchor) return;
+    scroller.scrollLeft = timelineAnchoredScrollLeft(anchor.contentRatio, scroller.scrollWidth, anchor.viewportOffset);
+    zoomAnchor.current = null;
+  }, [zoom]);
+
+  useEffect(() => {
+    const scroller = timelineScroller.current;
+    if (!playing || !scroller) return;
+    scroller.scrollLeft = timelinePlaybackScrollLeft(
+      cursorSeconds / Math.max(1, run.totalSeconds),
+      scroller.scrollWidth,
+      scroller.clientWidth,
+      timelineDimensions.labelWidth,
+    );
+  }, [cursorSeconds, playing, run.totalSeconds, timelineDimensions.labelWidth]);
+
+  useEffect(() => {
+    if (playing && cursorSeconds >= run.totalSeconds) setPlaying(false);
+  }, [cursorSeconds, playing, run.totalSeconds]);
+
+  useEffect(() => {
+    if (!playing) return;
+    let frame = 0;
+    let previous = performance.now();
+    const advance = (now: number) => {
+      const elapsed = ((now - previous) / 1000) * speed;
+      previous = now;
+      setCursorSeconds((current) => {
+        return Math.min(run.totalSeconds, current + elapsed);
+      });
+      frame = requestAnimationFrame(advance);
+    };
+    frame = requestAnimationFrame(advance);
+    return () => cancelAnimationFrame(frame);
+  }, [playing, run.totalSeconds, speed]);
+
+  function inspect(selection: BenchmarkAuditSelection): void {
+    setPlaying(false);
+    setPlaybackMode(false);
+    setSelected(selection);
+  }
+
+  function togglePlayback(): void {
+    setPlaybackMode(true);
+    if (cursorSeconds >= run.totalSeconds) setCursorSeconds(0);
+    setPlaying((current) => !current);
+  }
+
+  return (
+    <div className={styles.viewer}>
+      <div className={styles.stats}>
+        {isLaunchCrash ? (
+          <>
+            <div>
+              <span>Actionable diagnosis</span>
+              <strong>{formatSeconds(run.diagnosisSeconds ?? null)}</strong>
+              <small>primary outcome</small>
+            </div>
+            <div>
+              <span>Settings repaired</span>
+              <strong>{formatSeconds(run.settingsReadySeconds)}</strong>
+              <small>validated recovery endpoint</small>
+            </div>
+          </>
+        ) : (
+          <div>
+            <span>Settings ready</span>
+            <strong>{formatSeconds(run.settingsReadySeconds)}</strong>
+            <small>primary outcome</small>
+          </div>
+        )}
+        <div>
+          <span>Total tokens</span>
+          <strong>{totalTokens(run.usage) > 0 ? formatTokens(totalTokens(run.usage)) : 'unavailable'}</strong>
+          <small>full agent run, including cached input</small>
+        </div>
+        <div>
+          <span>Total cost</span>
+          <strong>{formatCost(run.estimatedTokenCostUsd)}</strong>
+          <small>full agent run / reported or API-equivalent estimate</small>
+        </div>
+        {!isLaunchCrash && (
+          <div>
+            <span>Commands</span>
+            <strong>{run.commandCount}</strong>
+            <small>{formatTokens(run.usage.cached_input_tokens)} cached input</small>
+          </div>
+        )}
+      </div>
+
+      <div className={styles.runHeading}>
+        <div>
+          <h2>
+            {run.model} / {run.variant} / {run.arm}
+          </h2>
+        </div>
+        <span>Agent turn {formatSeconds(run.totalSeconds)}</span>
+      </div>
+
+      <section className={styles.summary}>
+        <span>What the agent did</span>
+        <p>{run.summary}</p>
+        {!!run.measurementWarnings?.length && (
+          <div>
+            <strong>Measurement warnings</strong>
+            <p>The outcome passed validation; these measurements need attention.</p>
+            <ul>
+              {run.measurementWarnings.map((warning, index) => (
+                <li key={index}>{warning}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </section>
+
+      <div className={styles.breakdown}>
+        <div className={styles.breakdownBar} aria-label="Agent time category summary">
+          <span
+            className={styles.agentTime}
+            style={{ width: `${(breakdown.agentOtherSeconds / Math.max(1, run.totalSeconds)) * 100}%` }}
+          />
+          <span
+            className={styles.shellTime}
+            style={{ width: `${(breakdown.shellActiveSeconds / Math.max(1, run.totalSeconds)) * 100}%` }}
+          />
+        </div>
+        <div className={styles.breakdownLegend}>
+          <span>
+            <i className={styles.agentKey} />
+            Agent / other <strong>{formatSeconds(breakdown.agentOtherSeconds)}</strong>
+          </span>
+          <span>
+            <i className={styles.shellKey} />
+            Shell active <strong>{formatSeconds(breakdown.shellActiveSeconds)}</strong>
+          </span>
+          <span>
+            Commands summed <strong>{formatSeconds(breakdown.summedCommandSeconds)}</strong>
+          </span>
+          <span>
+            Peak concurrency <strong>{breakdown.peakConcurrency}</strong>
+          </span>
+        </div>
+      </div>
+
+      <div className={styles.toolbar}>
+        <div className={styles.transport}>
+          <button type="button" className={styles.playButton} onClick={togglePlayback}>
+            {playing ? 'Pause' : 'Play'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPlaying(false);
+              setPlaybackMode(true);
+              setCursorSeconds(0);
+              setZoom(1);
+            }}
+          >
+            Reset
+          </button>
+          <strong>
+            {formatSeconds(cursorSeconds)} <span>/ {formatSeconds(run.totalSeconds)}</span>
+          </strong>
+        </div>
+        <div className={styles.toolbarOptions}>
+          <label>
+            Speed
+            <select value={speed} onChange={(event) => setSpeed(Number(event.currentTarget.value))}>
+              <option value={1}>1x</option>
+              <option value={5}>5x</option>
+              <option value={20}>20x</option>
+              <option value={60}>60x</option>
+            </select>
+          </label>
+          <div className={styles.zoomControl} role="group" aria-label="Timeline zoom">
+            <button
+              type="button"
+              aria-label="Zoom out"
+              disabled={zoom <= 1}
+              onClick={() => setZoom((current) => Math.max(1, Math.ceil(current * 2 - 1) / 2))}
+            >
+              -
+            </button>
+            <output aria-live="off">{Math.round(zoom * 10) / 10}x</output>
+            <button
+              type="button"
+              aria-label="Zoom in"
+              disabled={zoom >= 4}
+              onClick={() => setZoom((current) => Math.min(4, Math.floor(current * 2 + 1) / 2))}
+            >
+              +
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div
+        ref={timelineScroller}
+        className={styles.timelineScroller}
+        tabIndex={0}
+        role="region"
+        aria-label="Benchmark command timeline"
+        onTouchStart={beginPinch}
+        onTouchMove={updatePinch}
+        onTouchEnd={finishPinch}
+        onTouchCancel={finishPinch}
+      >
+        <div
+          className={styles.timeline}
+          style={
+            timelineViewport.width > 0
+              ? {
+                  width: `${timelineDimensions.totalWidth}px`,
+                  gridTemplateColumns: `${timelineDimensions.labelWidth}px ${timelineDimensions.trackWidth}px`,
+                }
+              : undefined
+          }
+        >
+          <div className={styles.axisLabel} />
+          <div className={styles.axis}>
+            {ticks.map((tick) => (
+              <span key={tick} style={{ left: `${tick * 100}%` }}>
+                {formatSeconds(run.totalSeconds * tick)}
+              </span>
+            ))}
+            <input
+              type="range"
+              className={styles.scrubber}
+              min={0}
+              max={Math.max(0.01, run.totalSeconds)}
+              step={0.1}
+              value={cursorSeconds}
+              aria-label="Playback position"
+              aria-valuetext={`${formatSeconds(cursorSeconds)} of ${formatSeconds(run.totalSeconds)}`}
+              onChange={(event) => {
+                setPlaying(false);
+                setPlaybackMode(true);
+                setCursorSeconds(Number(event.currentTarget.value));
+              }}
+            />
+            {playbackMode ? (
+              <i className={styles.playhead} style={{ left: position(cursorSeconds, run.totalSeconds) }} />
+            ) : null}
+          </div>
+
+          <div className={styles.laneLabel}>Agent</div>
+          <div className={styles.dotTrack}>
+            {run.messages.map((message) => (
+              <button
+                key={message.id}
+                type="button"
+                className={styles.agentDot}
+                style={{ left: position(message.atSeconds, run.totalSeconds) }}
+                aria-label={`Agent note at ${formatSeconds(message.atSeconds)}`}
+                onClick={() => inspect({ kind: 'message', event: message })}
+              />
+            ))}
+          </div>
+
+          <div className={styles.laneLabel}>Shell</div>
+          <div className={styles.shellTracks} style={{ '--lane-count': laneCount } as CSSProperties}>
+            {playbackMode ? (
+              <i className={styles.playhead} style={{ left: position(cursorSeconds, run.totalSeconds) }} />
+            ) : null}
+            {Array.from({ length: laneCount }, (_, lane) => (
+              <div className={styles.shellTrack} key={lane}>
+                {commands
+                  .filter((command) => command.lane === lane)
+                  .map((command) => {
+                    const widthPercent = Math.max(
+                      0.7,
+                      ((command.endSeconds - command.startSeconds) / run.totalSeconds) * 100,
+                    );
+                    const labelFits =
+                      (widthPercent / 100) * timelineDimensions.trackWidth >= timelineViewport.rootFontSize * 3.5;
+                    return (
+                      <button
+                        key={command.id}
+                        type="button"
+                        className={`${styles.commandBar} ${command.exitCode === 0 ? '' : styles.commandFailed} ${
+                          (playbackMode && playbackCommand?.command.id === command.id) ||
+                          (!playbackMode && selected?.kind === 'command' && selected.event.id === command.id)
+                            ? styles.commandSelected
+                            : ''
+                        }`}
+                        style={{ left: position(command.startSeconds, run.totalSeconds), width: `${widthPercent}%` }}
+                        aria-label={`${shortCommand(command)}, ${formatSeconds(
+                          command.endSeconds - command.startSeconds,
+                        )}, exit ${command.exitCode ?? 'unknown'}`}
+                        onClick={() => inspect({ kind: 'command', event: command })}
+                      >
+                        {labelFits ? shortCommand(command) : null}
+                      </button>
+                    );
+                  })}
+              </div>
+            ))}
+          </div>
+
+          {run.backgroundProcesses.length ? (
+            <>
+              <div className={styles.laneLabel}>Background</div>
+              <div
+                className={styles.backgroundTracks}
+                style={{ '--lane-count': run.backgroundProcesses.length } as CSSProperties}
+              >
+                {playbackMode ? (
+                  <i className={styles.playhead} style={{ left: position(cursorSeconds, run.totalSeconds) }} />
+                ) : null}
+                {run.backgroundProcesses.map((process) => {
+                  const active =
+                    playbackMode && cursorSeconds >= process.startSeconds && cursorSeconds <= process.endSeconds;
+                  const selectedProcess =
+                    !playbackMode && selected?.kind === 'background' && selected.event.id === process.id;
+                  return (
+                    <div className={styles.backgroundTrack} key={process.id}>
+                      <button
+                        type="button"
+                        className={`${styles.backgroundBar} ${active || selectedProcess ? styles.commandSelected : ''}`}
+                        style={{
+                          left: position(process.startSeconds, run.totalSeconds),
+                          width: `${Math.max(
+                            0.7,
+                            ((process.endSeconds - process.startSeconds) / run.totalSeconds) * 100,
+                          )}%`,
+                        }}
+                        aria-label={`${process.label}, monitored for ${formatSeconds(
+                          process.endSeconds - process.startSeconds,
+                        )}`}
+                        onClick={() => inspect({ kind: 'background', event: process })}
+                      >
+                        {process.label}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : null}
+
+          <div className={styles.laneLabel}>Events</div>
+          <div className={styles.dotTrack}>
+            {run.markers.map((marker) => (
+              <button
+                key={marker.id}
+                type="button"
+                className={`${styles.deviceDot} ${marker.kind === 'settingsReady' ? styles.readyDot : ''} ${
+                  marker.kind === 'diagnosis' ? styles.diagnosisDot : ''
+                }`}
+                style={{ left: position(marker.atSeconds, run.totalSeconds) }}
+                aria-label={`${marker.label} at ${formatSeconds(marker.atSeconds)}`}
+                onClick={() => inspect({ kind: 'marker', event: marker })}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {playbackMode && playbackCommand ? (
+        <TerminalDetail command={playbackCommand.command} state={playbackCommand.state} cursorSeconds={cursorSeconds} />
+      ) : playbackMode ? (
+        <section className={styles.eventDetail} aria-live="polite">
+          <div>
+            <strong>Waiting for the first command</strong>
+            <span>+{formatSeconds(cursorSeconds)}</span>
+          </div>
+          <p>Playback follows recorded event boundaries. Command output appears when that command completes.</p>
+        </section>
+      ) : selected?.kind === 'command' ? (
+        <TerminalDetail command={selected.event} />
+      ) : selected?.kind === 'background' ? (
+        <BackgroundDetail process={selected.event} />
+      ) : selected ? (
+        <section className={styles.eventDetail} aria-live="polite">
+          <div>
+            <strong>{selected.kind === 'marker' ? selected.event.label : 'Agent note'}</strong>
+            <span>+{formatSeconds(eventTime(selected))}</span>
+          </div>
+          <p>{selected.kind === 'message' ? selected.event.text : `${selected.event.label}.`}</p>
+        </section>
+      ) : (
+        <section className={styles.eventDetail} aria-live="polite">
+          <div>
+            <strong>No audit events recorded</strong>
+          </div>
+          <p>This attempt ended before the agent emitted a command, message, or app/device marker.</p>
+        </section>
+      )}
+
+      <details className={styles.commandIndex}>
+        <summary>Commands in order ({run.commands.length})</summary>
+        <div>
+          {run.commands.map((command) => (
+            <button type="button" key={command.id} onClick={() => inspect({ kind: 'command', event: command })}>
+              <span>+{formatSeconds(command.startSeconds)}</span>
+              <code>{shortCommand(command)}</code>
+              <span>{formatSeconds(command.endSeconds - command.startSeconds)}</span>
+            </button>
+          ))}
+        </div>
+      </details>
+
+      {run.proof ? (
+        <section className={styles.proof}>
+          <div>
+            <span>Validated proof</span>
+            <h2>Settings screen</h2>
+            <p>
+              Captured by <code>agent-device</code> after it found &quot;{run.proof.expected}&quot;. This screenshot
+              completion is the {isLaunchCrash ? 'validated recovery endpoint' : 'timing endpoint used above'}.
+            </p>
+          </div>
+          <img
+            src={proofSrc}
+            width={run.proof.width}
+            height={run.proof.height}
+            loading="lazy"
+            alt={`Validated Settings screen for the ${run.variant} ${run.arm} run`}
+          />
+        </section>
+      ) : (
+        <section className={styles.proof}>
+          <div>
+            <span>Proof unavailable</span>
+            <h2>No validated Settings screenshot</h2>
+            <p>This attempt did not reach the benchmark's required visual endpoint.</p>
+          </div>
+        </section>
+      )}
+      {run.recording ? (
+        <section className={styles.recording}>
+          <div>
+            <span>Run recording</span>
+            <h2>Simulator playback</h2>
+            <p>The run-scoped recording starts after the app session opens and includes onboarding and navigation.</p>
+          </div>
+          <video controls preload="metadata" poster={proofSrc} aria-label={`Simulator recording for ${run.id}`}>
+            <source src={recordingSrc} type="video/mp4" />
+          </video>
+        </section>
+      ) : null}
+    </div>
+  );
+}

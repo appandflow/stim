@@ -1,0 +1,230 @@
+import Combine
+import Foundation
+import StimKit
+
+@MainActor
+final class LogsModel: ObservableObject {
+  static let limit = 50_000
+
+  enum Phase: Equatable {
+    case idle
+    case loading
+    case following
+    case loaded
+    case ended(String)
+  }
+
+  enum Change {
+    case reset
+    /// Rows from `from` on were replaced; `replaced` are their leads.
+    case updated(from: Int, replaced: [Row.Lead])
+    /// These rows were removed from the front, together `lines` lines tall.
+    case trimmed(rows: Int, lines: Int)
+    /// The slot column grew, so rows already drawn pad their slot label to the new width.
+    case slotColumnWidened
+    case jumpToLatest
+    case reveal(Int)
+  }
+
+  struct Row {
+    struct Lead: Equatable {
+      var ts: Double
+      var src: String
+      var msg: String
+    }
+
+    var entry: LogEntry
+    var view: LogEntryView
+    var preview: StackPreview?
+
+    var lead: Lead { Lead(ts: entry.lead.ts, src: entry.lead.src, msg: entry.lead.msg) }
+
+    var lines: Int {
+      1 + (view.location == nil ? 0 : 1) + (preview.map { $0.frames.count + ($0.hidden > 0 ? 1 : 0) } ?? 0)
+    }
+  }
+
+  private(set) var rows: [Row] = []
+  private(set) var rawRows: [Row] = []
+  @Published var readableBuildLogs = true {
+    didSet {
+      guard readableBuildLogs != oldValue else { return }
+      updateRows(from: 0)
+      pinnedToLatest = true
+      onChange?(.reset)
+    }
+  }
+  private var displayStarts = [0]
+  private var presentation = XcodeLogPresentation()
+  @Published private(set) var count = 0
+  @Published private(set) var phase = Phase.idle
+  @Published var pinnedToLatest = true
+  var slotWidth: Int { list.slotWidth }
+  var onChange: ((Change) -> Void)?
+
+  private var list = LogEntryList()
+  private var root = ""
+  private let home = NSHomeDirectory()
+  private var session = 0
+  private var following: LogQuery?
+  private var pending: (at: Double, query: LogQuery)?
+  private lazy var follower = LogFollower { [weak self] event in self?.handle(event) }
+
+  /// Replaces the running query. Pass the returned session to `stop` so a
+  /// stale stop cannot end a newer query.
+  func start(_ query: LogQuery, stimHome: String, connection: (client: ServerClient, home: String)?, cwd: String) -> Int {
+    session += 1
+    following = query
+    if let pending, pending.query != query { self.pending = nil }
+    root = cwd
+    reset(.loading)
+    follower.start(query, stimHome: stimHome, connection: connection, cwd: cwd)
+    return session
+  }
+
+  @Published private(set) var archiveSlots: [String] = []
+  private var archiveID: String?
+
+  func loadArchive(
+    _ archive: ArchivedWorkspace, query: LogQuery, server: ServerClient?, unavailable: String = "Connecting to stim-server"
+  ) async {
+    session += 1
+    let generation = session
+    follower.stop()
+    following = query
+    if let pending, pending.query != query { self.pending = nil }
+    if archiveID != archive.id {
+      archiveID = archive.id
+      archiveSlots = []
+    }
+    pinnedToLatest = true
+    list = LogEntryList()
+    rows = []
+    rawRows = []
+    displayStarts = [0]
+    presentation = XcodeLogPresentation()
+    root = archive.projectRoot
+    count = 0
+    phase = .loading
+    onChange?(.reset)
+    guard let server else {
+      phase = .ended(unavailable)
+      return
+    }
+    do {
+      let records = try await server.archivedLogs(ArchivedLogsRequest(archive: archive.id, query: query))
+      guard generation == session, !Task.isCancelled else { return }
+      for slot in records.compactMap(\.slot) where !archiveSlots.contains(slot) { archiveSlots.append(slot) }
+      handle(.records(records))
+      phase = .loaded
+    } catch {
+      guard generation == session, !Task.isCancelled else { return }
+      phase = .ended(archivedReadError(error, content: "logs"))
+    }
+  }
+
+  func stop(session: Int) {
+    guard session == self.session else { return }
+    follower.stop()
+    phase = .idle
+  }
+
+  func jumpToLatest() {
+    pinnedToLatest = true
+    onChange?(.jumpToLatest)
+  }
+
+  /// Scrolls to and selects the first record at or after `at`, epoch ms, once `query` is followed and that record
+  /// has arrived.
+  func reveal(at: Double, in query: LogQuery) {
+    pending = (at, query)
+    revealPending()
+  }
+
+  private func revealPending() {
+    guard let pending, pending.query == following, let record = list.records.firstIndex(where: { $0.ts >= pending.at }),
+      let entry = list.entryIndex(ofRecord: record), displayStarts[entry] < rows.count
+    else { return }
+    let row = displayStarts[entry]
+    self.pending = nil
+    pinnedToLatest = false
+    onChange?(.reveal(row))
+  }
+
+  private func row(_ entry: LogEntry) -> Row {
+    Row(
+      entry: entry, view: viewEntry(entry, root: root, home: home),
+      preview: stackPreview(entry.lead.stack, root: root, home: home))
+  }
+
+  private func updateRows(from: Int) {
+    let shownFrom = displayStarts[from]
+    rows.removeSubrange(shownFrom...)
+    displayStarts.removeSubrange((from + 1)...)
+    for index in from..<rawRows.count {
+      let original = rawRows[index]
+      if !readableBuildLogs {
+        rows.append(original)
+      } else if let message = presentation.messages[index] {
+        if message == original.entry.lead.msg {
+          rows.append(original)
+        } else {
+          var entry = original.entry
+          entry.lead.msg = message
+          var shown = original
+          shown.view = viewEntry(entry, root: root, home: home)
+          rows.append(shown)
+        }
+      }
+      displayStarts.append(rows.count)
+    }
+  }
+
+  func rawRow(for row: Row) -> Row { self.row(row.entry) }
+
+  private func reset(_ phase: Phase) {
+    list = LogEntryList()
+    rows = []
+    rawRows = []
+    displayStarts = [0]
+    presentation = XcodeLogPresentation()
+    count = 0
+    self.phase = phase
+    pinnedToLatest = true
+    onChange?(.reset)
+  }
+
+  private func handle(_ event: LogFollower.Event) {
+    switch event {
+    case .reset:
+      reset(.following)
+    case .records(let batch):
+      let width = list.slotWidth
+      let from = list.append(batch)
+      let shownFrom = displayStarts[from]
+      let replaced = rows[shownFrom...].map(\.lead)
+      rawRows.removeSubrange(from...)
+      rawRows += list.entries[from...].map(row)
+      presentation.update(list.entries, from: from)
+      updateRows(from: from)
+      onChange?(.updated(from: shownFrom, replaced: replaced))
+      if following?.buildRun == nil, list.records.count > Self.limit {
+        let dropped = list.dropOldest(list.records.count - Self.limit + Self.limit / 10)
+        let shownDropped = displayStarts[dropped]
+        let lines = rows[..<shownDropped].reduce(0) { $0 + $1.lines }
+        rawRows.removeFirst(dropped)
+        presentation.dropFirst(dropped)
+        rows.removeFirst(shownDropped)
+        displayStarts = displayStarts.dropFirst(dropped).map { $0 - shownDropped }
+        onChange?(.trimmed(rows: shownDropped, lines: lines))
+      }
+      if list.slotWidth != width { onChange?(.slotColumnWidened) }
+      count = list.records.count
+      revealPending()
+    case .ended:
+      phase = .ended("The log stream ended.")
+    case .failed(let message):
+      phase = .ended(message)
+    }
+  }
+}

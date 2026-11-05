@@ -1,0 +1,809 @@
+{
+  "schemaVersion": 1,
+  "stage": "opus-ios-launch-error",
+  "title": "Opus iOS launch error",
+  "suite": "launch-crash",
+  "platform": "ios",
+  "protocolVersion": 4,
+  "recordedOn": "2026-09-11",
+  "primaryMetric": "First recorded agent activity to actionable diagnosis; repaired Settings screenshot reported separately",
+  "pricing": null,
+  "environment": {
+    "machine": {
+      "model": "Mac mini",
+      "chip": "Apple M4",
+      "memory": "16 GB"
+    },
+    "macos": "macOS 26.5.2 (25F84)",
+    "xcode": "Xcode 26.6 (17F113)",
+    "node": "Node 26.7.0",
+    "simulator": "iPhone 17 / iOS 26.5"
+  },
+  "runs": [
+    {
+      "id": "launch-crash-stim",
+      "model": "opus",
+      "platform": "ios",
+      "recordedOn": "2026-09-11",
+      "variant": "launch-crash",
+      "arm": "stim",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 152.273,
+      "appAliveSeconds": 65.168,
+      "diagnosisSeconds": 70.464,
+      "diagnosisCommandCount": 5,
+      "launchCrashAudit": {
+        "initialLaunchCommandId": "toolu_018duCJUWYrB7j3xEkNbmqh5",
+        "errorCaptureCommandId": "toolu_01Qvsm3PYLjNB7JUTU7Tf6Wi",
+        "diagnosisCommandId": "toolu_018duCJUWYrB7j3xEkNbmqh5",
+        "screenshotCommandId": "toolu_019PPFAh5D255XnjLTxTGcw4"
+      },
+      "diagnosisUsage": null,
+      "estimatedDiagnosisCostUsd": null,
+      "totalSeconds": 187.05,
+      "commandCount": 22,
+      "usage": {
+        "input_tokens": 471420,
+        "cached_input_tokens": 445077,
+        "cache_creation_input_tokens": 26297,
+        "output_tokens": 5781,
+        "reasoning_output_tokens": 480
+      },
+      "estimatedTokenCostUsd": 0.6331895000000001,
+      "summary": "Created an isolated worktree, worked on the JavaScript launch failure, and ran Stim's iOS workflow. It used the captured Stim error log to identify the injected failure before repairing it. It reached Settings and captured valid agent-device proof.",
+      "messages": [
+        {
+          "id": "981cf154-d72d-4299-8623-45311e5f9d5b-0",
+          "atSeconds": 0,
+          "text": "I'll start by creating the run worktree."
+        },
+        {
+          "id": "803f3904-34c9-4627-9ea6-fc6cbb39234d-0",
+          "atSeconds": 186.785,
+          "text": "All eight proof commands succeeded in order; both artifacts exist.\n\n## Summary\n\n**Launch (before fix):** `com.appandflow.trailhead` on `stim-bench-opus-ios-launch-error-opus-launc (iPhone 17 26.5)` `<simulator-udid>`, Metro port 8082, from cache, 26.4s — WARNING: app error, native process alive. `stim logs --errors` printed the error and location.\n\n**Diagnosis:** `RootLayout` in `app/_layout.tsx:27` unconditionally threw `Error('STIM_BENCH_LAUNCH_CRASH_5AC2C609595F')` on every render, before any hooks or providers mounted. The HEAD commit (`8591e2b`) introduced exactly that one line.\n\n**Repair:** Removed the single `throw` line — a one-line deletion, nothing else touched. After `stim reload ios`, logs show `[stim:readiness] ready` and `stim logs --errors --since 45s` returns no matching records.\n\n**Proof:** Opened an isolated agent-device session, navigated Trails → Settings via `@e32`, `wait text \"Keep map tiles for saved trails on device\"` succeeded, screenshot and recording captured and copied. No onboarding was shown. Metro and the app are still running; Stim was not stopped.\n\n**Paths**\n- Run worktree: `./worktrees/bench-launch-crash-stim`\n- Screenshot: `results/opus-ios-launch-error/launch-crash-stim/proof/settings.png`\n- Recording: `results/opus-ios-launch-error/launch-crash-stim/proof/session.mp4`"
+        }
+      ],
+      "commands": [
+        {
+          "id": "toolu_01QkZx4WdP71pzMmyCefWsn2",
+          "startSeconds": 1.85,
+          "endSeconds": 2.429,
+          "command": "git worktree add -b worktree-bench/launch-crash-stim './worktrees/bench-launch-crash-stim' HEAD",
+          "output": "Preparing worktree (new branch 'worktree-bench/launch-crash-stim')\nHEAD is now at 8591e2b test: prepare launch failure fixture",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Pgc38hbQThPH626e8tsx35",
+          "startSeconds": 5.405,
+          "endSeconds": 5.501,
+          "command": "cd ./worktrees/bench-launch-crash-stim && stim guide agent",
+          "output": "Commands use `stim`. If it is not installed globally, replace `stim` with `npx stim`.\n\nAGENT WORKFLOW\n\nUse Stim to run React Native and Expo apps without sharing a Metro port or\ndevice with another workspace. Prefer plain output: it streams each phase and\nends with the facts the next step needs. Use --json only when a script must\nparse a stable payload.\n\nNORMAL WORKFLOW\n\nWork in the current checkout by default. When the task needs another branch or\nan isolated environment, create a linked worktree with Git and warm its\nignored state. If a harness already created this linked worktree, run\nstim worktree warm here instead of creating another one. It copies missing\nignored paths from the main checkout, including eligible .env and local\nconfiguration files. It preserves the branch, tracked files, and every existing\ndestination entry; existing ignored directories are skipped whole, not filled in.\nRead guide lifecycle options for exclusions and incomplete-copy remedies.\n\nWait for warm to exit successfully (exit code 0) before running stim start,\nstim ios, stim android, or a dependency install in that worktree. If the shell\ntool returns a running session or job ID, poll or wait for that job to finish;\nthe ID is not completion. Concurrent writes to the destination are unsafe:\nwarm checks for existing entries before copying, not during the copy. Do not\nedit files, install dependencies, or run another warm in that worktree until\nit finishes; concurrent files can be overwritten or removed.\nIf warm fails or reports incomplete, resolve the reported failure first.\n\nBefore native worktree work, run doctor for the platform in scope. It checks\nthe main checkout from a linked worktree. Fix relevant findings and inspect the\nupstream gap. It also prints the running CLI version and the stim installation\nresolved from PATH. If that resolved installation is older than another one,\nfix PATH or the installation before continuing so commands and guidance match.\nDoctor reports cross-volume staging and build-cache copies; read guide settings\nfor placement overrides and guide lifecycle options for warm behavior.\nFor iOS Debug architecture findings, review the project's overrides and imported\nPodfile helpers using guide lifecycle options. Doctor --fix does not change them.\nFor a linked native library carrying Git metadata, add the printed .git entries to\n.fingerprintignore only when the native build does not read Git state.\n\n  stim doctor --platform ios          # or: --platform android\n\nFor stale Android CMake launcher findings, stop native builds and run\nstim doctor --fix --platform android in the affected checkout before warming\nmore worktrees. It removes affected ignored, untracked generated .cxx\nconfigurations, including installed native modules; the next build recreates\nthem. It preserves source, custom launcher settings, and the shared ccache.\n\n  # Skip Git creation if the harness already created this linked worktree.\n  git worktree add -b <branch> <worktree-path> HEAD\n  cd <worktree-path>\n  stim worktree warm\n\n  stim start\n  stim ios                             # or: stim android\n\n  # Reproduce the affected behavior and capture the baseline errors.\n  stim logs --errors\n\n  # If a native process exits with no report, inspect the captured device output.\n  # An empty query is not proof that a crashed app was healthy.\n  # See guide logs for JS/native symbolication and capture limits.\n\n  # Edit JavaScript or TypeScript; Fast Refresh applies the change.\n  # For UI work, wait for the expected UI and repeat the affected interaction\n  # on the reported device. Keep using the existing automation session, if any.\n  stim logs --errors\n  # Retain proof before cleanup: a screenshot, recording, or relevant runtime output.\n\n  stim stop\n  stim worktree remove\n\nRULES DURING THE LOOP\n\n- Run Stim from the app directory: the one whose package.json depends on\n  react-native or expo. Anywhere else -- a monorepo root, a tools package --\n  start, ios and android refuse with STIM_NO_PROJECT naming that package.json,\n  and doctor reports it as a finding.\n- Put runtime .stim.json beside that app's package.json. Monorepo apps do not\n  inherit a repository-root runtime file. Keep repository-wide worktree-copy\n  rules at the main checkout root; see guide settings for the two scopes.\n- Run start before a debug ios or android build. If it returns STIM_NO_METRO,\n  run stim start and retry.\n- Run ios or android again after a native input changes. A JavaScript-only\n  change does not need one.\n- For stale Metro transforms or file-map state, use stim start --reset-cache.\n  It restarts only this app's verified owned Metro, preserving devices and other\n  apps' caches. See guide lifecycle for reset scope and Expo requirements.\n- Reload is not part of the normal workflow. Use stim reload on an owned local\n  simulator or emulator after a failed first bundle load, when an error screen\n  remains after the fix, or when you explicitly need an app restart. For a\n  physical device that reached Metro, use agent-device metro reload with the\n  reported port. The detected iOS Local Network first-load remedy uses UI\n  automation instead because that app never established a Metro connection.\n- A successful stim reload confirms that the request was sent, not that new\n  JavaScript loaded or the screen recovered. Verify the expected UI on the\n  reported device and inspect stim logs --errors before claiming recovery.\n- If launch reports an app error but also says the native process is alive,\n  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh. If\n  the error screen remains, follow the printed reload remedy instead of\n  running ios or android again. If launch says FATAL because the app process exited,\n  fix the crash and run the platform command again; Metro cannot restart it.\n- A native build can outlive a shell timeout. Retry the same command and\n  follow its printed remedy if waiting times out. See guide lifecycle concurrency.\n- ios and android install the app, launch it, and check readiness. Trust the\n  exact device, app, Metro, and launch facts in the final summary. Use the full\n  reported device ID. Never assume a simulator named booted belongs to this\n  workspace.\n- After each ios or android run, give the user one compact result: exact device,\n  app id, launch state, cache result, total duration, and whether stim logs\n  --errors passed. Include a remedy only when action remains. Do not repeat the\n  phase transcript.\n- An OK summary with no launch qualifier proves the launch. \"bundle requested,\n  still building\" means Metro has not finished; wait and query the logs. For\n  launch UNVERIFIED, follow the printed remedy before claiming success. JSON\n  reports these as true, \"bundling\", and \"unverified\" in launched.\n  WARNING means the native launch completed with app errors, or an app readiness\n  signal was expected but not confirmed; inspect the output before claiming a healthy UI.\n- A clean logs --errors check requires exit code 0 AND no matching errors in\n  captured logs. Exit code 0 alone means the query succeeded, even when errors\n  were printed. Human output shows \"No matching log records\" on stderr for\n  zero matches; JSON mode prints zero bytes. This does not prove launch or log\n  capture succeeded. Do not read the NDJSON files directly.\n- Use stim status when resuming a workspace or recovering missing device,\n  port, server, or build facts. A normal start and platform run already print\n  them. Use stim doctor when a build is unexpectedly slow or the environment\n  looks incomplete.\n\nOWNERSHIP AND DELETION\n\nStim creates, boots, and deletes only devices it created. Owned simulators use\nthe stim-<label> (<model> <runtime>) name. Never point Stim at a user-created\nemulator or simulator.\n\nworktree remove parks the workspace's simulator or emulator for later adoption.\nA parked device is Stim-owned: never delete one by hand. gc --delete clears verified\nentries and keeps failures; see guide lifecycle pool. First launch on a\nphysical iPhone can need the one-time taps named by the remedy.\n\nstim android --device [serial] and stim ios --device [udid] install on a\nconnected physical device. Stim never creates, boots, shuts down, or deletes\nhardware. It records a temporary lease, not an owned-device registry entry.\n\nA --device run leases that device for the run. stim device lock ios --for 10m\nholds it across runs; stim device unlock gives it back. Never delete another\nworkspace's lease file under ~/.stim/device-locks; gc --delete removes expired\nones.\n\nstop and worktree remove release this workspace's leases. On a physical\niPhone, stop also closes the app by ending its log collector; it does not\nshut down the phone or uninstall the app.\n\nTreat a refusal as an ownership or state mismatch: read its code and remedy.\nNever reach for --force first.\nStim leaves externally started servers alone. Stop them with their original\ntool; neither a matching port nor --force grants process ownership.\n\nAsk the user before these actions:\n\n- worktree remove, because it deletes the worktree and gives up its owned\n  device. It works with any linked worktree, warmed or not, without requiring\n  a Stim registry entry. Git-created branches are kept; a branch with an\n  existing Stim ownership record is deleted only when it has no unique commits.\n- worktree remove --force, because it also discards uncommitted and untracked\n  files.\n- gc --delete, because it deletes orphaned resources. gc --delete --cache all\n  empties the shared build caches instead; it inspects nothing else.\n- stop when the workspace owns an EAS session, because it irreversibly ends\n  that remote session. For a local device, stop shuts it down but does not\n  delete it. An explicit stop shuts down a Stim-owned simulator even when\n  another process uses it. It never shuts down an unowned simulator.\n\nSANDBOXES\n\nAn agent harness that sandboxes shell commands usually permits writes inside\nthe project and little else. Stim also needs writes to STIM_HOME (~/.stim by\ndefault), simulator service access, and local access to the adb server. When\nthose sit outside the harness allowlist, the failure looks like an unwritable\ndirectory or unavailable device service rather than a broken machine. Decide\nat the start of a session whether to run Stim outside the sandbox or ask the\nuser to allow those operations. guide errors sandbox lists the exact\nrequirements.\n\nLOAD ADVANCED GUIDANCE WHEN NEEDED\n\n  stim guide                      # list topics\n  stim guide errors               # index of every refusal code and message\n  stim guide errors <CODE>        # one refusal, e.g. stim guide errors STIM_NO_METRO\n  stim guide errors sandbox       # running under a sandboxing harness\n  stim guide errors unverified    # launch unverified, and the Local Network reason\n  stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit\n  stim guide lifecycle            # the ordered flow, consent rules, and capacity\n  stim guide lifecycle verification # reproduce, edit, verify the UI, and retain proof\n  stim guide lifecycle readiness  # add optional app readiness logs; no package required\n  stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints\n  stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits\n  stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image\n  stim guide lifecycle devices    # ios --device and android --device on a physical phone\n  stim guide lifecycle release    # Release configurations and ...Release variants\n  stim guide facts                # the --json payloads\n  stim guide facts devmenu        # the Expo dev menu or Tools button over the app\n  stim guide metro                # supervisor, custom Metro, tunnels, and remote devices\n  stim guide logs                 # filters, record shape, and capture limits\n  stim guide cleanup              # what reclaims a device, and what deletes\n  stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed\n  stim guide settings             # configuration files and supported keys\n\nA refusal prints a CODE such as STIM_NO_METRO. Run stim guide errors <CODE>\nwith the code exactly as printed and read only that section; every code in a\nshared header (STIM_BAD_ARG / STIM_NO_PROJECT) resolves to the same section. A\nrefusal with no code is quoted by message in stim guide errors. A topic with\nsections called bare prints its section index, so read the narrowest section\nbefore release configurations or Android variants; remote devices; custom\nMetro processes or tunnels; cache misses, bypasses, or concurrent builds;\ncapacity limits; cache statistics from stim stats; worktree carry-over;\nfingerprint exclusions; gc; --force; cleanup failures; or unfamiliar states\nand error codes. Ordinary stim stop and an authorized clean\nstim worktree remove do not need the cleanup guide.\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim guide agent",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
+        },
+        {
+          "id": "toolu_012tcbeqw8MJASdtJAaR6THz",
+          "startSeconds": 9.251,
+          "endSeconds": 32.534,
+          "command": "cd ./worktrees/bench-launch-crash-stim && stim worktree warm",
+          "output": "  carry       copied .expo, android/.gradle, android/app/.cxx, +6 from worktree/bench-fixture-1.0.0\n  carry       complete: 9 ignored entries copied, 0 kept, 0 failed\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim worktree warm",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
+        },
+        {
+          "id": "toolu_01EudEPicsrgyEGdGTWbTUhG",
+          "startSeconds": 37.46,
+          "endSeconds": 39.35,
+          "command": "cd ./worktrees/bench-launch-crash-stim && stim start",
+          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 9590)\nOK: dev server on port 8082, supervisor pid 9590 (expo-child) (1.7s)\n  logs        results/opus-ios-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-ios-launch-error-opus-launch-crash-st--0eee9614f323cb94/logs\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim start",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
+        },
+        {
+          "id": "toolu_018duCJUWYrB7j3xEkNbmqh5",
+          "startSeconds": 43.901,
+          "endSeconds": 70.464,
+          "command": "cd ./worktrees/bench-launch-crash-stim && stim ios",
+          "output": "  device      booting stim-bench-opus-ios-launch-error-opus-launc (iPhone 17 26.5) (<simulator-udid>)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  fingerprint 065903.. hit (12.4s)\n  device      stim-bench-opus-ios-launch-error-opus-launc (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (12.4s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     Trailhead.app -> stim-bench-opus-ios-launch-error-opus-launc (iPhone 17 26.5) (<simulator-udid-prefix>) (4.4s)\n  install     dev client prepared (774ms)\n  launch      com.appandflow.trailhead (1.4s)\n  readiness   waiting for app readiness (up to 30s after bundle load)\n  readiness   not confirmed: an app error or process exit interrupted the readiness wait\n  verify      bundle loaded, process alive (5.5s total)\n  launch       ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_5AC2C609595F]\n  launch      Code: _layout.tsx\n  launch        25 |\n  launch        26 | export default function RootLayout() {\n  launch      > 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_5AC2C609595F');\n  launch           |                  ^\n  launch        28 |   const { name, colors } = useTheme();\n  launch        29 |\n  launch        30 |   useEffect(() => {\n  launch      Error stack:\n  launch        RootLayout (app/_layout.tsx:27:18)\n  launch      Component stack:\n  launch        at RootLayout(./_layout.tsx) (app/_layout.tsx:27:18)\n  launch        at WrappedScreenComponent (node_modules/expo-router/build/useScreens.js:284:49)\n  launch        at Suspense (<anonymous>)\n  launch        at ZoomTransitionTargetContextProvider (node_modules/expo-router/build/link/zoom/zoom-transition-context-providers.ios.js:90:1)\n  launch      Full captured logs: stim logs --source all\n  remedy      The native app is still running. Fix the JavaScript or TypeScript error; Fast Refresh should apply the edit. If the error screen remains, run `stim reload ios`. Do not run `stim ios` unless native inputs changed or the app process exits.\nWARNING: com.appandflow.trailhead on stim-bench-opus-ios-launch-error-opus-launc (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (from cache, 26.4s) -- app errors detected; inspect the error above\n  device      stim-bench-opus-ios-launch-error-opus-launc (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       from cache\n  compilation cache not run; artifact cache supplied the app\n  logs        results/opus-ios-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-ios-launch-error-opus-launch-crash-st--0eee9614f323cb94/logs\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim ios",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
+        },
+        {
+          "id": "toolu_01Qvsm3PYLjNB7JUTU7Tf6Wi",
+          "startSeconds": 74.875,
+          "endSeconds": 75.161,
+          "command": "cd ./worktrees/bench-launch-crash-stim && stim logs --errors",
+          "output": "00:51:26.271 error metro   ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_5AC2C609595F]\n    Code: _layout.tsx\n      25 |\n      26 | export default function RootLayout() {\n    > 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_5AC2C609595F');\n         |                  ^\n      28 |   const { name, colors } = useTheme();\n      29 |\n      30 |   useEffect(() => {\n    Error stack:\n      RootLayout (app/_layout.tsx:27:18)\n    Component stack:\n      at RootLayout(./_layout.tsx) (./worktrees/bench-launch-crash-stim/app/_layout.tsx:27:18)\n      at WrappedScreenComponent (./worktrees/bench-launch-crash-stim/node_modules/expo-router/build/useScreens.js:284:49)\n      at Suspense (<anonymous>)\n      at ZoomTransitionTargetContextProvider (./worktrees/bench-launch-crash-stim/node_modules/expo-router/build/link/zoom/zoom-transition-context-providers.ios.js:90:1)\n      at Route (http://localhost:8082/index.bundle//&platform=ios&dev=true&hot=false&lazy=true&transform.engine=hermes&<…>\n    Same error captured by metro + device; raw copies retained in logs --json.\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim logs --errors",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
+        },
+        {
+          "id": "toolu_01WxGef4vE9Q5wm9b5GTQAse",
+          "startSeconds": 79.759,
+          "endSeconds": 79.819,
+          "command": "cd ./worktrees/bench-launch-crash-stim && cat -n app/_layout.tsx && git log --oneline -1 --stat",
+          "output": "     1\timport { useEffect } from 'react';\n     2\timport { Stack } from 'expo-router';\n     3\timport { StatusBar } from 'expo-status-bar';\n     4\timport { GestureHandlerRootView } from 'react-native-gesture-handler';\n     5\timport { SafeAreaProvider } from 'react-native-safe-area-context';\n     6\timport { QueryClient, QueryClientProvider } from '@tanstack/react-query';\n     7\timport * as SplashScreen from 'expo-splash-screen';\n     8\t\n     9\timport { initializeDatabase } from '@/src/db/client';\n    10\timport { seedHikesIfEmpty } from '@/src/db/seed';\n    11\timport { useTheme } from '@/src/theme';\n    12\t\n    13\tSplashScreen.preventAutoHideAsync().catch(() => {});\n    14\t\n    15\tconst queryClient = new QueryClient({\n    16\t  defaultOptions: { queries: { staleTime: 60_000, retry: 1 } },\n    17\t});\n    18\t\n    19\t// Both are synchronous and idempotent, and the schema has to exist before any\n    20\t// screen queries it. Doing this at module scope rather than in an effect means\n    21\t// the first render already has a usable database, with no loading state and no\n    22\t// setState-in-effect cascade.\n    23\tinitializeDatabase();\n    24\tseedHikesIfEmpty();\n    25\t\n    26\texport default function RootLayout() {\n    27\t  throw new Error('STIM_BENCH_LAUNCH_CRASH_5AC2C609595F');\n    28\t  const { name, colors } = useTheme();\n    29\t\n    30\t  useEffect(() => {\n    31\t    let active = true;\n    32\t    SplashScreen.hideAsync()\n    33\t      .then(() => {\n    34\t        if (active && __DEV__) console.info('[stim:readiness] ready');\n    35\t      })\n    36\t      .catch(console.error);\n    37\t    return () => {\n    38\t      active = false;\n    39\t    };\n    40\t  }, []);\n    41\t\n    42\t  return (\n    43\t    <GestureHandlerRootView style={{ flex: 1 }}>\n    44\t      <SafeAreaProvider>\n    45\t        <QueryClientProvider client={queryClient}>\n    46\t          <StatusBar style={name === 'dark' ? 'light' : 'dark'} />\n    47\t          <Stack\n    48\t            screenOptions={{\n    49\t              headerStyle: { backgroundColor: colors.surface },\n    50\t              headerTintColor: colors.text,\n    51\t              contentStyle: { backgroundColor: colors.background },\n    52\t            }}\n    53\t          >\n    54\t            <Stack.Screen name=\"(tabs)\" options={{ headerShown: false }} />\n    55\t            <Stack.Screen name=\"trail/[id]\" options={{ title: 'Trail' }} />\n    56\t            <Stack.Screen name=\"hike/[id]\" options={{ title: 'Hike' }} />\n    57\t            <Stack.Screen name=\"+not-found\" options={{ title: 'Not found' }} />\n    58\t          </Stack>\n    59\t        </QueryClientProvider>\n    60\t      </SafeAreaProvider>\n    61\t    </GestureHandlerRootView>\n    62\t  );\n    63\t}\n8591e2b test: prepare launch failure fixture\n app/_layout.tsx | 1 +\n 1 file changed, 1 insertion(+)\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "cat -n app/_layout.tsx && git log --oneline -1 --stat",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
+        },
+        {
+          "id": "toolu_01GFY41ka8HgJtezkLts3snJ",
+          "startSeconds": 84.503,
+          "endSeconds": 84.602,
+          "command": "cd ./worktrees/bench-launch-crash-stim && sed -i '' \"27{/throw new Error('STIM_BENCH_LAUNCH_CRASH_5AC2C609595F');/d;}\" app/_layout.tsx && git diff",
+          "output": "diff --git a/app/_layout.tsx b/app/_layout.tsx\nindex 324745f..c9d63e6 100644\n--- a/app/_layout.tsx\n+++ b/app/_layout.tsx\n@@ -24,7 +24,6 @@ initializeDatabase();\n seedHikesIfEmpty();\n \n export default function RootLayout() {\n-  throw new Error('STIM_BENCH_LAUNCH_CRASH_5AC2C609595F');\n   const { name, colors } = useTheme();\n \n   useEffect(() => {\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "sed -i '' \"27{/throw new Error('STIM_BENCH_LAUNCH_CRASH_5AC2C609595F');/d;}\" app/_layout.tsx && git diff",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
+        },
+        {
+          "id": "toolu_013euAXxAZ4UbS5SZ7w7C1cy",
+          "startSeconds": 89.048,
+          "endSeconds": 89.873,
+          "command": "cd ./worktrees/bench-launch-crash-stim && stim reload ios",
+          "output": "Reload requested for com.appandflow.trailhead on stim-bench-opus-ios-launch-error-opus-launc (iPhone 17 26.5) (<simulator-udid>) via deep-link; ios Metro port 8082. Completion is not observed; verify the expected UI and run stim logs --errors.\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim reload ios",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
+        },
+        {
+          "id": "toolu_01N982GPsiaTR3CLcjy44qFp",
+          "startSeconds": 93.585,
+          "endSeconds": 93.899,
+          "command": "cd ./worktrees/bench-launch-crash-stim && stim logs --since 30s",
+          "output": "<persisted-output>\nOutput too large (299.9KB). Full output saved to: worktree/simulator-udid/tool-results/bon0bsa3a.txt\n\nPreview (first 2KB):\n00:51:20.918 info  build  launched com.appandflow.trailhead on <simulator-udid> against Metro port 8082\n00:51:21.419 info  device [0x10497fd20] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.daemon\n00:51:21.443 info  device [com.appandflow.trailhead] Creating a user notification center\n00:51:21.444 info  device [HybridObjectRegistry] Registering HybridObject \"MMKVFactory\"...\n00:51:21.445 info  device [HybridObjectRegistry] Successfully registered HybridObject \"MMKVFactory\"!\n00:51:21.445 info  device [HybridObjectRegistry] Registering HybridObject \"MMKVPlatformContext\"...\n00:51:21.445 info  device [HybridObjectRegistry] Successfully registered HybridObject \"MMKVPlatformContext\"!\n00:51:21.474 info  device No persisted cache on this platform.\n00:51:21.474 info  device [C:1] Alloc com.apple.frontboard.systemappservices\n00:51:21.475 info  device Creating new assertion because there is no existing background assertion.\n00:51:21.475 info  device [0x106200140] activating connection: mach=false listener=false peer=false name=(anonymous)\n00:51:21.475 info  device Creating new background assertion\n00:51:21.475 info  device Created new background assertion <BKSProcessAssertion: 0x104987a00>\n00:51:21.475 info  device Initializing connection\n00:51:21.481 info  device Removing all cached process handles\n00:51:21.481 info  device Sending handshake request attempt #1 to server\n00:51:21.481 info  device Creating connection to com.apple.runningboard\n00:51:21.481 info  device Acquiring assertion: <RBSAssertionDescriptor| \"Shared Background Assertion 0 for com.appandflow.trailhead\" ID:(null) target:10181>\n00:51:21.481 info  device [0x106200280] activating connection: mach=true listener=false peer=false name=com.apple.runningboard\n00:51:21.481 info  device Deactivation reason added: 10; deactivation reasons: 0 -> 1024; animating application lifecycle event: 0\n00:51:21.481 info  device Handshake succeeded\n...\n</persisted-output>\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim logs --since 30s",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
+        },
+        {
+          "id": "toolu_0184ksBJB3F2KzV6M8m7LveX",
+          "startSeconds": 97.732,
+          "endSeconds": 98.048,
+          "command": "cd ./worktrees/bench-launch-crash-stim && stim logs --since 60s | grep -E \"stim:readiness|STIM_BENCH|bundle\" | tail -20",
+          "output": "00:51:24.794 info  metro   INFO  [stim:readiness] pending\n00:51:26.229 error device  ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_5AC2C609595F]\n    > 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_5AC2C609595F');\n      at Route (http://localhost:8082/index.bundle//&platform=ios&dev=true&hot=false&lazy=true&transform.engine=hermes&<…>\n00:51:26.271 info  metro  > 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_5AC2C609595F');\n00:51:26.558 info  build  com.appandflow.trailhead fetched a bundle from this workspace's Metro on port 8082\n00:51:32.260 info  device [C5 <simulator-udid> Hostname#55e17dfb:8082 tcp, url: http://localhost:8082/index.bundle, definite, attribution: developer] cancel\n00:51:32.260 info  device [C5 <simulator-udid> Hostname#55e17dfb:8082 tcp, url: http://localhost:8082/index.bundle, definite, attribution: developer] cancelled\n00:51:32.260 info  device [C5 Hostname#55e17dfb:8082 tcp, url: http://localhost:8082/index.bundle, definite, attribution: developer] dealloc\n00:51:46.067 info  device [RCTMultipartDataTask] GET http://localhost:8082/index.bundle?platform=ios&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.bytecode=1&transform.routerRoot=app&transform.reactCompiler=true&unstable_transformProfile=hermes-stable\n00:51:46.069 info  device [C13 <simulator-udid> Hostname#55e17dfb:8082 tcp, url: http://localhost:8082/index.bundle, definite, attribution: developer, context: com.apple.CFNetwork.NSURLSession.{<simulator-udid>}{(null)}{Y}{2}{0x0} (private), proc: <simulator-udid>, delegated upid: 0] start\n00:51:46.071 debug metro  ios bundle response started\n00:51:46.115 debug metro  ios bundle response finished\n00:51:46.353 info  device [stim:readiness] pending\n00:51:46.468 info  metro   INFO  [stim:readiness] pending\n00:51:47.789 info  device [stim:readiness] ready\n00:51:47.789 info  metro   INFO  [stim:readiness] ready\n00:51:52.117 info  device [C13 <simulator-udid> Hostname#55e17dfb:8082 tcp, url: http://localhost:8082/index.bundle, definite, attribution: developer] cancel\n00:51:52.117 info  device [C13 <simulator-udid> Hostname#55e17dfb:8082 tcp, url: http://localhost:8082/index.bundle, definite, attribution: developer] cancelled\n00:51:52.117 info  device [C13 Hostname#55e17dfb:8082 tcp, url: http://localhost:8082/index.bundle, definite, attribution: developer] dealloc\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim logs --since 60s | grep -E \"stim:readiness|STIM_BENCH|bundle\" | tail -20",
+            "cwd": "./worktrees/bench-launch-crash-stim"
+          }
+        },
+        {
+          "id": "toolu_01KbWiX4a2i718PrncX72yDs",
+          "startSeconds": 102.369,
+          "endSeconds": 102.583,
+          "command": "cd ./worktrees/bench-launch-crash-stim && stim logs --errors --since 45s; echo \"exit=$?\"",
+          "output": "No matching log records in results/opus-ios-launch-error/launch-crash-stim/stim-home/workspaces/bench-opus-ios-launch-error-opus-launch-crash-st--0eee9614f323cb94/logs\nexit=0\nShell cwd was reset to ./worktrees/fixture-launch-crash-stim",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_013WJvKxXoxGm73kuJ1uzrdg",
+          "startSeconds": 108.712,
+          "endSeconds": 115.782,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 32 visible nodes\n@e1 [application] \"Trailhead\"\n@e2 [other] \"\"\n@e3 [other] \"Trails\"\n@e4 [text-field] \"Search trails\" [editable]\n@e5 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"All regions\"\n@e7 [button] \"All regions\" [selected]\n@e8 [button] \"Adirondacks\"\n@e9 [button] \"Bas-Saint-Laurent\"\n@e10 [button] \"Charlevoix\"\n@e11 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e12 [other] \"Any level\"\n@e13 [button] \"Any level\" [selected]\n@e14 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e16 [button] \"Hard\"\n@e17 [button] \"Expert\"\n@e18 [text] \"200 trails\"\n@e19 [button] \"Sort by name\" [selected]\n@e20 [button] \"Sort by distance\"\n@e21 [button] \"Sort by rating\"\n@e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e23 [other] [same label as parent]\n@e24 [button] [same label as parent]\n@e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e28 [other] \"Trails, tab, 1 of 4\"\n@e29 [button] \"Trails, tab, 1 of 4\" [selected]\n@e30 [button] \"Record, tab, 2 of 4\"\n@e31 [button] \"History, tab, 3 of 4\"\n@e32 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01AJq1p9ZynzRvyE9acG5Dyv",
+          "startSeconds": 121.096,
+          "endSeconds": 123.349,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record start tmp/launch-crash-stim-session.mp4 --scope device --quality high --hide-touches",
+          "output": "tmp/launch-crash-stim-session.mp4\nSession state: ./state/agent-device/sessions/launch-crash-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/launch-crash-stim-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01CaRkiV99J3BKKP8WHSLZUg",
+          "startSeconds": 138.727,
+          "endSeconds": 141.75,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device press @e32 --settle",
+          "output": "Tapped @e32 (352, 816)\nsettled after 2280ms: +32 -32 (~0 unchanged)\n- @e1 [application] \"Trailhead\"\n- @e2 [other] \"\"\n- @e3 [other] \"Trails\"\n- @e4 [text-field] \"Search trails\"\n- @e5 [scroll-area] \"All regions\"\n- @e6 [other] \"All regions\"\n- @e7 [button] \"All regions\"\n- @e8 [button] \"Adirondacks\"\n- @e9 [button] \"Bas-Saint-Laurent\"\n- @e10 [button] \"Charlevoix\"\n- @e11 [scroll-area] \"Any level\"\n- @e12 [other] \"Any level\"\n- @e13 [button] \"Any level\"\n- @e14 [button] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [button] \"Hard\"\n- @e17 [button] \"Expert\"\n- @e18 [text] \"200 trails\"\n- @e19 [button] \"Sort by name\"\n- @e20 [button] \"Sort by distance\"\n- @e21 [button] \"Sort by rating\"\n- @e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e23 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e24 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n- @e28 [other] \"Trails, tab, 1 of 4\"\n- @e29 [button] \"Trails, tab, 1 of 4\"\n- @e30 [button] \"Record, tab, 2 of 4\"\n- @e31 [button] \"History, tab, 3 of 4\"\n- @e32 [button] \"Settings, tab, 4 of 4\"\n+ @e1~s485039 [application] \"Trailhead\"\n+ @e2~s485039 [text] \"Settings\"\n+ @e3~s485039 [scroll-area]\n+ @e4~s485039 [text] \"UNITS\"\n+ @e5~s485039 [text] \"Distance\"\n+ @e6~s485039 [text] \"\"\n+ @e7~s485039 [button] \"Metric units\"\n+ @e8~s485039 [button] \"Imperial units\"\n+ @e9~s485039 [text] \"Used across the whole app\"\n+ @e10~s485039 [text] \"PREFERENCES\"\n+ @e11~s485039 [text] \"Hike reminders\"\n+ @e12~s485039 [switch] \"Hike reminders\"\n+ @e13~s485039 [text] \"\"\n+ @e14~s485039 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s485039 [text] \"Offline maps\"\n+ @e16~s485039 [switch] \"Offline maps\"\n+ @e17~s485039 [text] \"\"\n+ @e18~s485039 [text] \"Keep map tiles for saved trails on device\"\n+ @e19~s485039 [text] \"STORAGE\"\n+ @e20~s485039 [text] \"Recorded hikes\"\n+ @e21~s485039 [text] \"\"\n+ @e22~s485039 [text] \"48\"\n+ @e23~s485039 [text] \"Stored in a local database\"\n+ @e24~s485039 [button] \"Reset sample data\"\n+ @e25~s485039 [text] \"ABOUT\"\n+ @e26~s485039 [text] \"\"\n+ @e27~s485039 [text] \"Version\"\n+ @e28~s485039 [text] \"1.0.0\"\n+ @e29~s485039 [button] \"Trails, tab, 1 of 4\"\n+ @e30~s485039 [button] \"Record, tab, 2 of 4\"\n+ @e31~s485039 [button] \"History, tab, 3 of 4\"\n+ @e32~s485039 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e32 --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01TkBJ6Aq1pY5Rni7zWqdHje",
+          "startSeconds": 146.991,
+          "endSeconds": 147.148,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device wait text \"Keep map tiles for saved trails on device\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Keep map tiles for saved trails on device\"",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_019PPFAh5D255XnjLTxTGcw4",
+          "startSeconds": 151.838,
+          "endSeconds": 152.273,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device screenshot tmp/launch-crash-stim-settings.png",
+          "output": "tmp/launch-crash-stim-settings.png (402x874 @1x)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/launch-crash-stim-settings.png",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01Jgo4QhweLqCGvoYLQrkM8q",
+          "startSeconds": 156.497,
+          "endSeconds": 156.543,
+          "command": "cp tmp/launch-crash-stim-settings.png results/opus-ios-launch-error/launch-crash-stim/proof/settings.png",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01SS3fyaJ1S3P8AoSyogCx9A",
+          "startSeconds": 160.208,
+          "endSeconds": 161.176,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device record stop",
+          "output": "tmp/launch-crash-stim-session.mp4",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_016eWnPR8en77bQVgDhAXg9r",
+          "startSeconds": 166.382,
+          "endSeconds": 166.43,
+          "command": "cp tmp/launch-crash-stim-session.mp4 results/opus-ios-launch-error/launch-crash-stim/proof/session.mp4",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01HfZoKt65MXBkcZJHTJ79oi",
+          "startSeconds": 170.728,
+          "endSeconds": 170.876,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-stim agent-device close",
+          "output": "Closed: launch-crash-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01G6CSyonSNQpnzRWi8b1gbi",
+          "startSeconds": 174.33,
+          "endSeconds": 174.37,
+          "command": "ls -la results/opus-ios-launch-error/launch-crash-stim/proof/",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 65.168
+        },
+        {
+          "id": "diagnosis",
+          "kind": "diagnosis",
+          "label": "Actionable diagnosis",
+          "atSeconds": 70.464
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 152.273
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/opus-ios-launch-error/launch-crash-stim.png",
+        "expected": "Keep map tiles for saved trails on device",
+        "width": 402,
+        "height": 874
+      },
+      "recording": {
+        "src": "benchmarks/opus-ios-launch-error/launch-crash-stim.mp4",
+        "bytes": 119017
+      },
+      "timingOrigin": {
+        "kind": "first-recorded-activity",
+        "dispatchOffsetSeconds": 135.345,
+        "event": {
+          "kind": "message",
+          "id": "981cf154-d72d-4299-8623-45311e5f9d5b-0"
+        },
+        "dispatchSettingsReadySeconds": 287.618,
+        "dispatchDiagnosisSeconds": 205.809,
+        "dispatchTotalSeconds": 322.395
+      },
+      "appReadinessLogs": true
+    },
+    {
+      "id": "launch-crash-control",
+      "model": "opus",
+      "platform": "ios",
+      "recordedOn": "2026-09-11",
+      "variant": "launch-crash",
+      "arm": "control",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 673.806,
+      "appAliveSeconds": 441.219,
+      "diagnosisSeconds": 571.111,
+      "diagnosisCommandCount": 18,
+      "launchCrashAudit": {
+        "initialLaunchCommandId": "toolu_011Y6xpHKDajj2pHebEAmDQp",
+        "errorCaptureCommandId": "toolu_01HpndFW3NkEKmr2MSmVTfvp",
+        "diagnosisCommandId": "toolu_01HpndFW3NkEKmr2MSmVTfvp",
+        "screenshotCommandId": "toolu_01UN81SFffyFHrbXCMEhqKvD"
+      },
+      "diagnosisUsage": null,
+      "estimatedDiagnosisCostUsd": null,
+      "totalSeconds": 713.618,
+      "commandCount": 36,
+      "usage": {
+        "input_tokens": 990212,
+        "cached_input_tokens": 949375,
+        "cache_creation_input_tokens": 40763,
+        "output_tokens": 13087,
+        "reasoning_output_tokens": 2776
+      },
+      "estimatedTokenCostUsd": 1.2128554999999999,
+      "summary": "Created an isolated worktree and carried over dependencies or native outputs, worked on the JavaScript launch failure, and started the local Expo/Xcode workflow. It reached Settings and captured valid agent-device proof. The record includes 2 failed command attempts before completion.",
+      "messages": [
+        {
+          "id": "9ea1609c-d3be-4b3c-9499-85380cb4333a-0",
+          "atSeconds": 0,
+          "text": "I'll start by creating the run worktree from the fixture HEAD."
+        },
+        {
+          "id": "80350663-0d1c-4676-920d-5ba966796b14-0",
+          "atSeconds": 713.331,
+          "text": "All eight proof commands completed in order, and both artifacts exist.\n\n## Summary\n\n**Run worktree:** `./worktrees/launch-crash-control` (branch `bench/launch-crash-control`, created from fixture HEAD `8ec57b3`, with `node_modules`, `ios/Pods`, `ios/build` copied from the fixture).\n\n**Simulator:** `Trailhead launch-crash-control` — iPhone 17 / iOS 26.5, UDID `<simulator-udid>` (new, still booted with the app running).\n\n**Diagnosis:** After Metro (watch mode) and `expo run:ios` build/install/launch, a standalone `rg` over the Metro log printed:\n```\nERROR  [Error: STIM_BENCH_LAUNCH_CRASH_0ACC7819253D]\nRootLayout (app/_layout.tsx:27:18)\n```\n\n**Repair:** Removed the single unconditional `throw new Error('STIM_BENCH_LAUNCH_CRASH_0ACC7819253D');` at `app/_layout.tsx:27`. `tsc --noEmit` passes. A `Podfile.lock` checksum change introduced by `expo run:ios`'s pod step was reverted so the diff contains only the fix.\n\n**Proof artifacts:**\n- Screenshot: `results/opus-ios-launch-error/launch-crash-control/proof/settings.png`\n- Recording: `results/opus-ios-launch-error/launch-crash-control/proof/session.mp4`\n- Logs: `tmp/launch-crash-control-metro.log`, `tmp/...-native.log`\n\n**Notes:**\n- `expo run:ios` exited 1 only at its post-install `osascript` window-activation step (System Events is blocked in this sandbox); build and install succeeded. I completed the launch with `simctl launch` + `openurl` under `pipefail` (exit 0).\n- The dev-client deep link surfaced an \"Open in Trailhead?\" dialog, which I confirmed via agent-device; the Expo dev-menu onboarding sheet was present in the tree but not blocking, and the Settings tab was reached via its accessibility label.\n- Metro (PID 76238, `packager-status:running`) and the app on the simulator are left running for coordinator verification."
+        }
+      ],
+      "commands": [
+        {
+          "id": "toolu_018rCDSMLjdmLoNr6REESvBK",
+          "startSeconds": 2.311,
+          "endSeconds": 2.909,
+          "command": "git worktree add -b bench/launch-crash-control ./worktrees/launch-crash-control HEAD && ls -a && ls -a ios 2>/dev/null | head -30",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01NexLCDtZSoCLrxgEfPcYBx",
+          "startSeconds": 9.822,
+          "endSeconds": 113.702,
+          "command": "SRC=./worktrees/fixture-launch-crash-control; DST=./worktrees/launch-crash-control; git -C \"$SRC\" status --ignored --porcelain | grep '^!!' ; echo \"--- copying ---\"; for p in node_modules ios/Pods ios/build ios/.<local-host> android/.gradle android/build android/app/build .expo; do if [ -e \"$SRC/$p\" ]; then mkdir -p \"$DST/$(dirname $p)\"; cp -a \"$SRC/$p\" \"$DST/$p\" && echo \"copied $p\"; fi; done; echo \"exit=$?\"; du -sh \"$DST/node_modules\" \"$DST/ios/Pods\" \"$DST/ios/build\"",
+          "output": "!! ios/Pods/\n!! ios/build/\n!! node_modules/\n--- copying ---\ncopied node_modules\ncopied ios/Pods\ncopied ios/build\nexit=0\n8.0G\t./worktrees/launch-crash-control/node_modules\n1.4G\t./worktrees/launch-crash-control/ios/Pods\n1.2M\t./worktrees/launch-crash-control/ios/build",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01AMTc31wuXMuzzPuUWhRYZd",
+          "startSeconds": 117.897,
+          "endSeconds": 118.062,
+          "command": "cd ./worktrees/launch-crash-control && cat package.json | head -40 && xcrun simctl list runtimes | grep -i ios && xcrun simctl list devicetypes | grep -i \"iPhone 17\"",
+          "output": "{\n  \"name\": \"trailhead\",\n  \"description\": \"Reference Expo app for local stim-cli iOS and Android testing\",\n  \"license\": \"MIT\",\n  \"repository\": \"https://github.com/appandflow/trailhead\",\n  \"main\": \"index.js\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"start\": \"expo start\",\n    \"android\": \"expo run:android\",\n    \"ios\": \"expo run:ios\",\n    \"web\": \"expo start --web\",\n    \"lint\": \"expo lint\",\n    \"typecheck\": \"tsc --noEmit\",\n    \"bench\": \"node bench/bench.mjs\"\n  },\n  \"dependencies\": {\n    \"@expo/vector-icons\": \"^15.0.2\",\n    \"@react-navigation/bottom-tabs\": \"^7.3.10\",\n    \"@react-navigation/elements\": \"^2.3.8\",\n    \"@react-navigation/native\": \"^7.1.6\",\n    \"@shopify/flash-list\": \"2.0.2\",\n    \"@shopify/react-native-skia\": \"2.11.2\",\n    \"@tanstack/react-query\": \"^5.101.4\",\n    \"date-fns\": \"^4.4.0\",\n    \"drizzle-orm\": \"^0.45.2\",\n    \"expo\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-asset\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-blur\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-constants\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-crypto\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-dev-client\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-device\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-file-system\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-font\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-haptics\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-image\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-linear-gradient\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-linking\": \"58.0.0-canary-20260902-26df09e\",\n    \"expo-location\": \"58.0.0-canary-20260902-26df09e\",\niOS 26.5 (26.5 - 23F77) - com.apple.CoreSimulator.SimRuntime.iOS-26-5\niPhone 17 Pro (com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)\niPhone 17 Pro Max (com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max)\niPhone 17e (com.apple.CoreSimulator.SimDeviceType.iPhone-17e)\niPhone 17 (com.apple.CoreSimulator.SimDeviceType.iPhone-17)\nShell cwd was reset to ./worktrees/fixture-launch-crash-control",
+          "exitCode": 0,
+          "presentation": {
+            "command": "cat package.json | head -40 && xcrun simctl list runtimes | grep -i ios && xcrun simctl list devicetypes | grep -i \"iPhone 17\"",
+            "cwd": "./worktrees/launch-crash-control"
+          }
+        },
+        {
+          "id": "toolu_013A7fzKchunKS8tjPECjxxn",
+          "startSeconds": 122.796,
+          "endSeconds": 146.099,
+          "command": "UDID=$(xcrun simctl create \"Trailhead launch-crash-control\" com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-26-5) && echo \"UDID=$UDID\" && xcrun simctl boot \"$UDID\" && xcrun simctl bootstatus \"$UDID\" -b && echo \"booted\"",
+          "output": "UDID=<simulator-udid>\nMonitoring boot status for Trailhead launch-crash-control (<simulator-udid>).\n[2026-09-11 04:21:10 +0000] Status=2, isTerminal=NO, Elapsed=00:02.\n\tWaiting on Data Migration\n\t\tReason:(null)\n\t\tMigration Elapsed:00:00 seconds\n\n[2026-09-11 04:21:25 +0000] Status=2, isTerminal=NO, Elapsed=00:16.\n\tWaiting on Data Migration\n\t\tReason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)\n\t\tMigration Elapsed:00:14 seconds\n\n[2026-09-11 04:21:26 +0000] Status=2, isTerminal=NO, Elapsed=00:17.\n\tWaiting on Data Migration\n\t\tReason:Running plugin com.apple.managedconfiguration.migrator (MCProfile.migrator, user-agnostic)\n\t\tMigration Elapsed:00:15 seconds\n\n[2026-09-11 04:21:26 +0000] Status=2, isTerminal=NO, Elapsed=00:17.\n\tWaiting on Data Migration\n\t\tReason:Running plugin com.apple.MobileSafari.migrator (MobileSafari.migrator)\n\t\tMigration Elapsed:00:15 seconds\n\n[2026-09-11 04:21:27 +0000] Status=4, isTerminal=NO, Elapsed=00:18.\n\tWaiting on System App\n\n[2026-09-11 04:21:28 +0000] Status=4, isTerminal=NO, Elapsed=00:19.\n\tWaiting on System App\n\n[2026-09-11 04:21:29 +0000] Status=4, isTerminal=NO, Elapsed=00:20.\n\tWaiting on System App\n\n[2026-09-11 04:21:31 +0000] Status=4, isTerminal=NO, Elapsed=00:22.\n\tWaiting on System App\n\n[2026-09-11 04:21:31 +0000] Status=4294967295, isTerminal=YES, Elapsed=00:22.\n\tFinished\n\nbooted",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01981muGATfjZcRR39kwLb87",
+          "startSeconds": 154.531,
+          "endSeconds": 157.71,
+          "command": "cd ./worktrees/launch-crash-control && RUN=launch-crash-control && nohup env CI=1 npx expo start --dev-client --port 8081 > tmp/$RUN-metro.log 2>&1 &\necho \"METRO_PID=$!\"; for i in $(seq 1 60); do if grep -qE \"Waiting on http://localhost:8081|Metro waiting on|Logs for your project\" tmp/launch-crash-control-metro.log 2>/dev/null; then echo \"metro ready\"; break; fi; sleep 1; done; cat tmp/launch-crash-control-metro.log",
+          "output": "METRO_PID=76016\nmetro ready\nStarting project at ./worktrees/launch-crash-control\nReact Compiler enabled\nDependency validation might be unreliable when using canary SDK versions\nMetro is running in CI mode, reloads are disabled. Remove CI=true to enable watch mode.\nStarting Metro Bundler\n\nWaiting on http://localhost:8081\n\nLogs for your project will appear below.\nShell cwd was reset to ./worktrees/fixture-launch-crash-control",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01VHoR6Cq5y69xG2mRzyVFCA",
+          "startSeconds": 168.205,
+          "endSeconds": 174.41,
+          "command": "kill 76016; sleep 2; pkill -f \"expo start --dev-client --port 8081\" ; sleep 1; cd ./worktrees/launch-crash-control && RUN=launch-crash-control && nohup npx expo start --dev-client --port 8081 < /dev/null > tmp/$RUN-metro.log 2>&1 &\necho \"METRO_PID=$!\"; for i in $(seq 1 60); do if grep -qE \"Waiting on http://localhost:8081|Logs for your project\" tmp/launch-crash-control-metro.log 2>/dev/null; then echo \"metro ready\"; break; fi; sleep 1; done; cat tmp/launch-crash-control-metro.log; curl -s \"http://localhost:8081/status\"",
+          "output": "METRO_PID=76238\nmetro ready\nStarting project at ./worktrees/launch-crash-control\nReact Compiler enabled\nDependency validation might be unreliable when using canary SDK versions\nStarting Metro Bundler\n\nWaiting on http://localhost:8081\n\nLogs for your project will appear below.\n| (node:76264) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:76264) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:76264) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:76264) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:76264) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:76264) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:76264) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\npackager-status:running\nShell cwd was reset to ./worktrees/fixture-launch-crash-control",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_016ywEx2FHU9E5B1GgPAMeuA",
+          "startSeconds": 180.894,
+          "endSeconds": 210.513,
+          "command": "set -o pipefail; cd ./worktrees/launch-crash-control && npx expo run:ios --device <simulator-udid> --no-bundler --port 8081 2>&1 | tee tmp/launch-crash-control-native.log | tail -40; echo \"PIPELINE_EXIT=$?\"",
+          "output": "- Installing CocoaPods...\n✔ Installed CocoaPods\nCommandError: --port and --no-bundler are mutually exclusive arguments\nPIPELINE_EXIT=1\nShell cwd was reset to ./worktrees/fixture-launch-crash-control",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01TMGXbEZFdbid7cJXT2WL75",
+          "startSeconds": 216.69,
+          "endSeconds": 429.968,
+          "command": "set -o pipefail; cd ./worktrees/launch-crash-control && npx expo run:ios --device <simulator-udid> --no-bundler 2>&1 | tee tmp/launch-crash-control-native.log | tail -40; echo \"PIPELINE_EXIT=$?\"",
+          "output": "⚠️  (ios/Trailhead.xcodeproj:)\n\n\nignoring duplicate libraries: '-lc++'\n(warning truncated)\n› Generating debug Trailhead » Trailhead.app.dSYM\n› Linking   Trailhead » Trailhead\n› Generating debug Trailhead » Trailhead.app.dSYM\n› Executing Trailhead » Bundle React Native code and images\n› Executing Trailhead » [CP] Copy Pods Resources\n› Executing Trailhead » [CP] Embed Pods Frameworks\n› Signing   Trailhead » Trailhead.debug.dylib\n› Signing   Trailhead » __preview.dylib\n› Signing   Trailhead » Trailhead.app\n› Creating  Trailhead » Trailhead.app\n› Build Succeeded\n\n› 0 error(s), and 1 warning(s)\n\nWaiting on http://localhost:8081\n› Installing workspace/Trailhead.app\n› Installing on Trailhead launch-crash-control\n› Opening on Trailhead launch-crash-control (com.appandflow.trailhead)\n› Opening com.appandflow.trailhead://expo-development-client/?url=http%3A%2F%2F<local-ip>%3A8081 on Trailhead launch-crash-control\nError: osascript -e tell app \"System Events\" to count processes whose name is \"Simulator\" or name is \"DeviceHub\" exited with non-zero code: 1\nError: osascript -e tell app \"System Events\" to count processes whose name is \"Simulator\" or name is \"DeviceHub\" exited with non-zero code: 1\n    at ChildProcess.completionListener (./worktrees/launch-crash-control/node_modules/@expo/spawn-async/build/spawnAsync.js:113:23)\n    at ChildProcess.wrapper (node:events:639:12)\n    at ChildProcess.emit (node:events:514:20)\n    at maybeClose (node:internal/child_process:1125:16)\n    at ChildProcess._handle.onexit (node:internal/child_process:305:5)\n    ...\n    at spawnAsync (./worktrees/launch-crash-control/node_modules/@expo/spawn-async/build/spawnAsync.js:9:23)\n    at osascriptSpawnAsync (./worktrees/launch-crash-control/node_modules/@expo/osascript/build/index.js:110:44)\n    at isSimulatorAppRunningAsync (./worktrees/launch-crash-control/node_modules/@expo/cli/build/src/start/platforms/ios/ensureSimulatorAppRunning.js:98:58)\n    at ensureSimulatorAppRunningAsync (./worktrees/launch-crash-control/node_modules/@expo/cli/build/src/start/platforms/ios/ensureSimulatorAppRunning.js:75:15)\n    at AppleDeviceManager.activateWindowAsync (./worktrees/launch-crash-control/node_modules/@expo/cli/build/src/start/platforms/ios/AppleDeviceManager.js:277:77)\n    at ApplePlatformManager.openProjectInCustomRuntimeAsync (./worktrees/launch-crash-control/node_modules/@expo/cli/build/src/start/platforms/PlatformManager.js:136:29)\n    at async launchAppAsync (./worktrees/launch-crash-control/node_modules/@expo/cli/build/src/run/ios/launchApp.js:134:5)\n    at async runIosAsync (./worktrees/launch-crash-control/node_modules/@expo/cli/build/src/run/ios/runIosAsync.js:282:5)\nPIPELINE_EXIT=1\nShell cwd was reset to ./worktrees/fixture-launch-crash-control",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_011Y6xpHKDajj2pHebEAmDQp",
+          "startSeconds": 439.83,
+          "endSeconds": 443.307,
+          "command": "set -o pipefail; UDID=<simulator-udid>; { xcrun simctl terminate $UDID com.appandflow.trailhead 2>/dev/null; xcrun simctl launch $UDID com.appandflow.trailhead && sleep 3 && xcrun simctl openurl $UDID \"com.appandflow.trailhead://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081\" && echo \"LAUNCH_OK\"; } 2>&1 | tee -a tmp/launch-crash-control-native.log; echo \"PIPELINE_EXIT=$?\"",
+          "output": "com.appandflow.trailhead: 82652\nLAUNCH_OK\nPIPELINE_EXIT=0",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_014aubFhwM7XBpxE5u5kZnob",
+          "startSeconds": 449.013,
+          "endSeconds": 469.249,
+          "command": "sleep 20; rg -n -i \"error|exception|invariant|cannot|undefined is not|TypeError|ReferenceError\" tmp/launch-crash-control-metro.log | grep -v NO_COLOR | head -40; echo \"RG_EXIT=$?\"",
+          "output": "1:Starting project at ./worktrees/launch-crash-control\nRG_EXIT=0",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01B15DZqwbKxWE1EmVoAkdRk",
+          "startSeconds": 472.331,
+          "endSeconds": 472.38,
+          "command": "tail -30 tmp/launch-crash-control-metro.log | grep -v NO_COLOR | grep -v trace-warnings",
+          "output": "Starting project at ./worktrees/launch-crash-control\nReact Compiler enabled\nDependency validation might be unreliable when using canary SDK versions\nStarting Metro Bundler\n\nWaiting on http://localhost:8081\n\nLogs for your project will appear below.",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01YGvCsB1ZD6z9dWZN2atHhd",
+          "startSeconds": 479.257,
+          "endSeconds": 480.425,
+          "command": "xcrun simctl spawn <simulator-udid> log show --last 2m --predicate 'process == \"Trailhead\"' --style compact 2>/dev/null | grep -v -i \"layout\\|constraint\" | tail -40",
+          "output": "2026-09-11 00:26:47.978 Df Trailhead[82652:1a6837a] [com.apple.network:connection] nw_connection_report_state_with_handler_on_nw_queue [C4] reporting state cancelled\n2026-09-11 00:26:49.922 E  Trailhead[82652:1a6837a] [com.apple.network:connection] nw_resolver_start_query_timer_block_invoke [C4.1.1] Query fired: did not receive all answers in time for Hostname#607dc233:8081\n2026-09-11 00:26:58.275 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5 <simulator-udid> Bonjour#16a4b1cb tcp, attribution: developer, reuse local address, context: Default Network Context (private), proc: <simulator-udid>, delegated upid: 0, use awdl, prefer no proxy] start\n2026-09-11 00:26:58.275 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5 Bonjour#16a4b1cb initial parent-flow ((null))] event: path:start @0.000s\n2026-09-11 00:26:58.275 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5 Bonjour#16a4b1cb waiting parent-flow (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] event: path:satisfied @0.000s, uuid: <simulator-udid>\n2026-09-11 00:26:58.276 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5 Bonjour#16a4b1cb in_progress parent-flow (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] event: flow:start_connect @0.001s\n2026-09-11 00:26:58.276 Df Trailhead[82652:1a6837a] [com.apple.network:connection] nw_connection_report_state_with_handler_on_nw_queue [C5] reporting state preparing\n2026-09-11 00:26:58.277 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5 Bonjour#16a4b1cb in_progress parent-flow (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] event: flow:start_child @0.001s\n2026-09-11 00:26:58.277 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5.1 Bonjour#16a4b1cb initial path ((null))] event: path:start @0.001s\n2026-09-11 00:26:58.277 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5.1 Bonjour#16a4b1cb waiting path (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] event: path:satisfied @0.001s, uuid: <simulator-udid>\n2026-09-11 00:26:58.277 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5.1 Bonjour#16a4b1cb in_progress resolver (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] event: resolver:start_bonjour @0.002s\n2026-09-11 00:26:58.290 Df Trailhead[82652:1a6837a] [com.apple.network:connection] nw_endpoint_resolver_update [C5.1 Bonjour#16a4b1cb in_progress resolver (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] Adding endpoint handler for Hostname#607dc233:8081\n2026-09-11 00:26:58.290 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5.1 Bonjour#16a4b1cb in_progress resolver (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] event: resolver:receive_bonjour @0.015s\n2026-09-11 00:26:58.290 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5.1.1 Hostname#607dc233:8081 initial path ((null))] event: path:start @0.015s\n2026-09-11 00:26:58.290 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5.1.1 Hostname#607dc233:8081 waiting path (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] event: path:satisfied @0.015s, uuid: <simulator-udid>\n2026-09-11 00:26:58.291 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5.1.1 Hostname#607dc233:8081 in_progress resolver (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] event: resolver:start_dns @0.015s\n2026-09-11 00:26:58.352 Df Trailhead[82652:1a6837a] [com.apple.network:connection] nw_endpoint_resolver_update [C5.1.1 Hostname#607dc233:8081 in_progress resolver (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] Adding endpoint handler for IPv4#723ecc07:8081\n2026-09-11 00:26:58.352 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5.1.1 Hostname#607dc233:8081 in_progress resolver (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] event: resolver:receive_dns @0.077s\n2026-09-11 00:26:58.352 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C<local-ip> IPv4#723ecc07:8081 initial path ((null))] event: path:start @0.077s\n2026-09-11 00:26:58.353 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C<local-ip> IPv4#723ecc07:8081 waiting path (satisfied (Path is satisfied), interface: lo0)] event: path:satisfied @0.078s, uuid: <simulator-udid>\n2026-09-11 00:26:58.354 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C<local-ip> IPv4#723ecc07:8081 in_progress socket-flow (satisfied (Path is satisfied), interface: lo0)] event: flow:start_connect @0.079s\n2026-09-11 00:26:58.355 Df Trailhead[82652:1a6837a] [com.apple.network:connection] nw_socket_handle_socket_event [C<local-ip>:1] Socket received CONNECTED event\n2026-09-11 00:26:58.355 Df Trailhead[82652:1a6837a] [com.apple.network:connection] nw_flow_connected [C<local-ip> IPv4#723ecc07:8081 in_progress socket-flow (satisfied (Path is satisfied), interface: lo0)] Output protocol connected (socket)\n2026-09-11 00:26:58.355 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C<local-ip> IPv4#723ecc07:8081 ready socket-flow (satisfied (Path is satisfied), interface: lo0)] event: flow:child_finish_connect @0.080s\n2026-09-11 00:26:58.355 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5.1.1 Hostname#607dc233:8081 ready resolver (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] event: flow:child_finish_connect @0.080s\n2026-09-11 00:26:58.355 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5.1 Bonjour#16a4b1cb ready resolver (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] event: flow:child_finish_connect @0.080s\n2026-09-11 00:26:58.355 Df Trailhead[82652:1a6837a] [com.apple.network:connection] nw_flow_connected [C5 IPv4#723ecc07:8081 in_progress parent-flow (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] Output protocol connected (endpoint_flow)\n2026-09-11 00:26:58.355 Df Trailhead[82652:1a6837a] [com.apple.network:connection] [C5 IPv4#723ecc07:8081 ready parent-flow (satisfied (Path is satisfied), interface: en1[802.11], uses wifi, LQM: unknown)] event: flow:finish_connect @0.080s\n2026-09-11 00:26:58.355 Df Trailhead[82652:1a6837a] [com.apple.network:connection] nw_connection_report_state_with_handler_on_nw_queue [C5] reporting state ready\n2026-09-11 00:26:58.357 Df Trailhead[82652:1a6837a] [com.apple.network:connection] nw_socket_handle_socket_event [C<local-ip>:1] Socket received READ_CLOSE event\n2026-09-11 00:26:58.357 Df Trailhead[82652:1a68737] [com.apple.network:connection] [C5 <simulator-udid> Bonjour#16a4b1cb tcp, prefer no proxy, attribution: developer] cancel\n2026-09-11 00:26:58.358 Df Trailhead[82652:1a68737] [com.apple.network:connection] [C5 <simulator-udid> Bonjour#16a4b1cb tcp, prefer no proxy, attribution: developer] cancelled\n\t[C<local-ip> <simulator-udid> <local-ip>:63214<->IPv4#723ecc07:8081]\n\tConnected Path: satisfied (Path is satisfied), interface: lo0\n\tPrivacy Stance: Not Eligible\n\tDuration: 0.082s, Bonjour @0.002s took 0.013s, DNS @0.015s took 0.062s, TCP @0.079s took 0.001s\n\tbytes in/out: 460/73, packets in/out: 3/1, rtt: 0.001s, retransmitted bytes: 0, out-of-order bytes: 0\n\tecn packets sent/acked/marked/lost: 0/0/0/0\n2026-09-11 00:26:58.358 Df Trailhead[82652:1a68737] [com.apple.network:connection] nw_connection_report_state_with_handler_on_nw_queue [C5] reporting state cancelled\n2026-09-11 00:27:00.304 E  Trailhead[82652:1a68737] [com.apple.network:connection] nw_resolver_start_query_timer_block_invoke [C5.1.1] Query fired: did not receive all answers in time for Hostname#607dc233:8081",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01PdXPVwoN4xKCCk1CPCYhDW",
+          "startSeconds": 488.226,
+          "endSeconds": 488.439,
+          "command": "xcrun simctl io <simulator-udid> screenshot tmp/launch-crash-control-prefix.png && sips -Z 600 tmp/launch-crash-control-prefix.png --out tmp/launch-crash-control-prefix-small.png >/dev/null && echo ok",
+          "output": "Detected file type from extension: PNG\nNote: No display specified. Defaulting to display: <simulator-udid> (screenID: 1, name: LCD)\nWrote screenshot to: tmp/launch-crash-control-prefix.png\nok",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_012g3agq91MHnJ44YbbKVKNx",
+          "startSeconds": 495.963,
+          "endSeconds": 496.847,
+          "command": "xcrun simctl spawn <simulator-udid> log show --last 3m --predicate 'process == \"Trailhead\" AND NOT subsystem == \"com.apple.network\"' --style compact 2>/dev/null | grep -iv \"constraint\\|layout\\|CoreAnimation\\|UIKit\" | tail -30",
+          "output": "2026-09-11 00:26:26.928 Sd Trailhead[82652:0] (<simulator-udid>) IOHIDManager State\n{\n    DispatchQueue = 0;\n    RunLoop = 1;\n    createOptions = 0;\n    isOpen = 0;\n    openOptions = 0;\n}\n2026-09-11 00:26:26.929 A  Trailhead[82652:1a6837b] (RunningBoardServices) didChangeInheritances\n2026-09-11 00:26:26.930 Df Trailhead[82652:1a68347] [com.apple.Accessibility:AXCommon] Read Per-App on Init: Smart invert = (null)\n2026-09-11 00:26:26.932 A  Trailhead[82652:1a68375] (RunningBoardServices) didChangeInheritances\n2026-09-11 00:26:26.940 Df Trailhead[82652:1a68347] [com.apple.FrontBoard:SceneExtension] Realizing settings extension SBUISecureRenderingSettingsExtension on FBSSceneSettings\n2026-09-11 00:26:26.942 Df Trailhead[82652:1a68347] [com.apple.KeyboardArbiter:Client] Send setDeactivating: N (-DeactivationReason:SuspendedEventsOnly)\n2026-09-11 00:26:26.948 Df Trailhead[82652:1a68347] [com.apple.KeyboardArbiter:Client] startConnection\n2026-09-11 00:26:26.948 Df Trailhead[82652:1a68347] [com.apple.KeyboardArbiter:Client] handleKeyboardChange: set currentKeyboard:N (wasKeyboard:N)\n2026-09-11 00:26:26.988 Df Trailhead[82652:1a68347] [com.apple.app_launch_measurement:ApplicationLaunch] alm_release_pageins_recording_assertion: releasing pageins recording assertion\n2026-09-11 00:26:26.988 E  Trailhead[82652:1a68379] [com.apple.app_launch_measurement:General] Failed to send CA Event for app launch measurements for ca_event_type: 1 event_name: com.apple.app_launch_measurement.ExtendedLaunchMetrics\n2026-09-11 00:26:27.039 A  Trailhead[82652:1a68379] (RunningBoardServices) didChangeInheritances\n2026-09-11 00:26:27.525 A  Trailhead[82652:1a683a1] (RunningBoardServices) didChangeInheritances\n2026-09-11 00:26:28.786 Df Trailhead[82652:1a68379] [com.apple.BackBoard:EventDelivery] policyStatus:<BKSHIDEventDeliveryPolicyObserver: 0x10666d0e0; token: com.apple.frontboard.systemappservices/FBSceneManager:sceneID%3Acom.appandflow.trailhead-default; status: none> was:ancestor\n2026-09-11 00:26:28.832 Df Trailhead[82652:1a68347] [com.apple.runningboard:connection] Creating side-channel connection to com.apple.runningboard\n2026-09-11 00:26:28.832 Df Trailhead[82652:1a68347] [com.apple.xpc:connection] [0x113b2c640] activating connection: mach=true listener=false peer=false name=com.apple.runningboard\n2026-09-11 00:26:28.832 Df Trailhead[82652:1a68347] [com.apple.runningboard:process] Hit the server for a process handle 1184074b000142dc that resolved to: [app<com.appandflow.trailhead((null))>:82652]\n    subclassSettings = <BSSettingsDiff: 0x11d5e2d90> {\n        canShowAlerts = NO;\n    };\n}\n2026-09-11 00:26:32.439 Df Trailhead[82652:1a68375] [com.apple.CFNetwork:Default] Connection 1: read-side closed\n2026-09-11 00:26:32.440 Df Trailhead[82652:1a68375] [com.apple.CFNetwork:Default] Connection 1: cleaning up\n2026-09-11 00:26:32.441 Df Trailhead[82652:1a68375] [com.apple.CFNetwork:Default] Connection 1: done",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015eBMinn1bBn6N5r3gf6gUK",
+          "startSeconds": 514.381,
+          "endSeconds": 529.54,
+          "command": "xcrun simctl openurl <simulator-udid> \"com.appandflow.trailhead://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081\"; sleep 15; grep -v \"NO_COLOR\\|trace-warnings\" tmp/launch-crash-control-metro.log | tail -15",
+          "output": "Starting project at ./worktrees/launch-crash-control\nReact Compiler enabled\nDependency validation might be unreliable when using canary SDK versions\nStarting Metro Bundler\n\nWaiting on http://localhost:8081\n\nLogs for your project will appear below.",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01DTTXMJECwg3hRYjVenrgaH",
+          "startSeconds": 534.486,
+          "endSeconds": 543.443,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 4 nodes\n@e1 [alert] \"Open in “Trailhead”?\"\n@e2 [button] \"Cancel\"\n@e3 [button] \"Open\"\n@e4 [text] \"Open in “Trailhead”?\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01BznhtFY4czoMCQwWAFvoNR",
+          "startSeconds": 548.932,
+          "endSeconds": 553.508,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e3 --settle",
+          "output": "Tapped @e3 (275, 474)\nsettled after 3020ms: +0 -0 (~4 unchanged)\nunchanged interactive (4):\n= @e1~s418925 [alert] \"Open in “Trailhead”?\"\n= @e2~s418925 [button] \"Cancel\"\n= @e3~s418925 [button] \"Open\"\n= @e4~s418925 [text] \"Open in “Trailhead”?\"\nhint: Settled on a nearly-empty tree — the app may still be loading. Wait for specific content (wait text ...) before interacting.",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e3 --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01HpndFW3NkEKmr2MSmVTfvp",
+          "startSeconds": 565.925,
+          "endSeconds": 571.111,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e3 --settle; sleep 5; grep -v \"NO_COLOR\\|trace-warnings\" tmp/launch-crash-control-metro.log | tail -8",
+          "output": "Error (COMMAND_FAILED): Ref @e3 needs a complete snapshot — the current frame only authorizes its emitted refs\nHint: Capture a fresh interactive snapshot (snapshot -i) or use a stable selector, then retry.\nDiagnostic ID: mtwghme8-300cb1c9\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-control/requests/a2ef39850f3d1c0c.ndjson\n  26 | export default function RootLayout() {\n> 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_0ACC7819253D');\n     |                  ^\n  28 |   const { name, colors } = useTheme();\n  29 |\n  30 |   useEffect(() => {\nCall Stack\n  RootLayout (app/_layout.tsx:27:18)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e3 --settle; sleep 5; grep -v \"NO_COLOR\\|trace-warnings\" tmp/launch-crash-control-metro.log | tail -8",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01W7F7sxY41gsm6X3uH5AJBV",
+          "startSeconds": 576.054,
+          "endSeconds": 576.109,
+          "command": "rg -n \"STIM_BENCH_LAUNCH_CRASH|app/_layout.tsx\" tmp/launch-crash-control-metro.log",
+          "output": "27: ERROR  [Error: STIM_BENCH_LAUNCH_CRASH_0ACC7819253D] \n32:> 27 |   throw new Error('STIM_BENCH_LAUNCH_CRASH_0ACC7819253D');\n38:  RootLayout (app/_layout.tsx:27:18)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01FGHJP9WQ8kbWSZp5Q3gE2N",
+          "startSeconds": 580.928,
+          "endSeconds": 581.014,
+          "command": "cd ./worktrees/launch-crash-control && cat -n app/_layout.tsx && git log -1 --stat",
+          "output": "     1\timport { useEffect } from 'react';\n     2\timport { Stack } from 'expo-router';\n     3\timport { StatusBar } from 'expo-status-bar';\n     4\timport { GestureHandlerRootView } from 'react-native-gesture-handler';\n     5\timport { SafeAreaProvider } from 'react-native-safe-area-context';\n     6\timport { QueryClient, QueryClientProvider } from '@tanstack/react-query';\n     7\timport * as SplashScreen from 'expo-splash-screen';\n     8\t\n     9\timport { initializeDatabase } from '@/src/db/client';\n    10\timport { seedHikesIfEmpty } from '@/src/db/seed';\n    11\timport { useTheme } from '@/src/theme';\n    12\t\n    13\tSplashScreen.preventAutoHideAsync().catch(() => {});\n    14\t\n    15\tconst queryClient = new QueryClient({\n    16\t  defaultOptions: { queries: { staleTime: 60_000, retry: 1 } },\n    17\t});\n    18\t\n    19\t// Both are synchronous and idempotent, and the schema has to exist before any\n    20\t// screen queries it. Doing this at module scope rather than in an effect means\n    21\t// the first render already has a usable database, with no loading state and no\n    22\t// setState-in-effect cascade.\n    23\tinitializeDatabase();\n    24\tseedHikesIfEmpty();\n    25\t\n    26\texport default function RootLayout() {\n    27\t  throw new Error('STIM_BENCH_LAUNCH_CRASH_0ACC7819253D');\n    28\t  const { name, colors } = useTheme();\n    29\t\n    30\t  useEffect(() => {\n    31\t    let active = true;\n    32\t    SplashScreen.hideAsync()\n    33\t      .then(() => {\n    34\t        if (active && __DEV__) console.info('[stim:readiness] ready');\n    35\t      })\n    36\t      .catch(console.error);\n    37\t    return () => {\n    38\t      active = false;\n    39\t    };\n    40\t  }, []);\n    41\t\n    42\t  return (\n    43\t    <GestureHandlerRootView style={{ flex: 1 }}>\n    44\t      <SafeAreaProvider>\n    45\t        <QueryClientProvider client={queryClient}>\n    46\t          <StatusBar style={name === 'dark' ? 'light' : 'dark'} />\n    47\t          <Stack\n    48\t            screenOptions={{\n    49\t              headerStyle: { backgroundColor: colors.surface },\n    50\t              headerTintColor: colors.text,\n    51\t              contentStyle: { backgroundColor: colors.background },\n    52\t            }}\n    53\t          >\n    54\t            <Stack.Screen name=\"(tabs)\" options={{ headerShown: false }} />\n    55\t            <Stack.Screen name=\"trail/[id]\" options={{ title: 'Trail' }} />\n    56\t            <Stack.Screen name=\"hike/[id]\" options={{ title: 'Hike' }} />\n    57\t            <Stack.Screen name=\"+not-found\" options={{ title: 'Not found' }} />\n    58\t          </Stack>\n    59\t        </QueryClientProvider>\n    60\t      </SafeAreaProvider>\n    61\t    </GestureHandlerRootView>\n    62\t  );\n    63\t}\ncommit 8ec57b3cc0fe27bb3ff61f8a133c9c01a81907e7\nAuthor: Janic Duplessis <<local-user>@gmail.com>\nDate:   Fri Sep 11 00:16:46 2026 -0400\n\n    test: prepare launch failure fixture\n\n app/_layout.tsx | 1 +\n 1 file changed, 1 insertion(+)\nShell cwd was reset to ./worktrees/fixture-launch-crash-control",
+          "exitCode": 0,
+          "presentation": {
+            "command": "cat -n app/_layout.tsx && git log -1 --stat",
+            "cwd": "./worktrees/launch-crash-control"
+          }
+        },
+        {
+          "id": "toolu_01Ngw61C9CfzhSkaTDYhUY6K",
+          "startSeconds": 597.443,
+          "endSeconds": 600.143,
+          "command": "cd ./worktrees/launch-crash-control && sed -i '' \"27{/STIM_BENCH_LAUNCH_CRASH_0ACC7819253D/d;}\" app/_layout.tsx && git diff && npx tsc --noEmit && echo \"TYPECHECK_OK\"",
+          "output": "diff --git a/app/_layout.tsx b/app/_layout.tsx\nindex eb00458..c9d63e6 100644\n--- a/app/_layout.tsx\n+++ b/app/_layout.tsx\n@@ -24,7 +24,6 @@ initializeDatabase();\n seedHikesIfEmpty();\n \n export default function RootLayout() {\n-  throw new Error('STIM_BENCH_LAUNCH_CRASH_0ACC7819253D');\n   const { name, colors } = useTheme();\n \n   useEffect(() => {\ndiff --git a/ios/Podfile.lock b/ios/Podfile.lock\nindex ed3c5a1..e2d2f15 100644\n--- a/ios/Podfile.lock\n+++ b/ios/Podfile.lock\n@@ -2828,7 +2828,7 @@ SPEC CHECKSUMS:\n   ExpoLinking: ffe2437f26544668ceeac8186951016ca0215ec8\n   ExpoLocation: 34614de854119051aba6d71d2a95b0ea60345b40\n   ExpoLogBox: e33bfcd4164e070cadda300f737457f332579c73\n-  ExpoModulesCore: c84daf07d211c597d3249d8b827c8db7738fe461\n+  ExpoModulesCore: 1d47366a1ff61f5904c56b2a91b56084374e2247\n   ExpoModulesJSI: b2365c2f08e675bd64d38eb36720a391cc9d59f0\n   ExpoModulesWorklets: 5e05484a2c463056c753e3e09908a76be4bbfa33\n   ExpoModulesWorkletsAdapter: 717f50aa6e160afa206bc5a881289f89d33c89cc\nTYPECHECK_OK\nShell cwd was reset to ./worktrees/fixture-launch-crash-control",
+          "exitCode": 0,
+          "presentation": {
+            "command": "sed -i '' \"27{/STIM_BENCH_LAUNCH_CRASH_0ACC7819253D/d;}\" app/_layout.tsx && git diff && npx tsc --noEmit && echo \"TYPECHECK_OK\"",
+            "cwd": "./worktrees/launch-crash-control"
+          }
+        },
+        {
+          "id": "toolu_01WXZGz2RbShM9aoFFsWBfwX",
+          "startSeconds": 605.55,
+          "endSeconds": 605.623,
+          "command": "cd ./worktrees/launch-crash-control && git checkout -- ios/Podfile.lock && git status --short",
+          "output": " M app/_layout.tsx\nShell cwd was reset to ./worktrees/fixture-launch-crash-control",
+          "exitCode": 0,
+          "presentation": {
+            "command": "git checkout -- ios/Podfile.lock && git status --short",
+            "cwd": "./worktrees/launch-crash-control"
+          }
+        },
+        {
+          "id": "toolu_01MYuUZDiKH38amipdpVWn7s",
+          "startSeconds": 613.033,
+          "endSeconds": 614.709,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/launch-crash-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 4 nodes\n@e1 [alert] \"Open in “Trailhead”?\"\n@e2 [button] \"Cancel\"\n@e3 [button] \"Open\"\n@e4 [text] \"Open in “Trailhead”?\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01UCw9D5oeth35ESYyJw5wzu",
+          "startSeconds": 619.022,
+          "endSeconds": 620.474,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device record start tmp/launch-crash-control-session.mp4 --scope device --quality high --hide-touches",
+          "output": "tmp/launch-crash-control-session.mp4\nSession state: ./state/agent-device/sessions/launch-crash-control",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/launch-crash-control-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01PEqcQd3i7HtyPVLpX8enPa",
+          "startSeconds": 624.903,
+          "endSeconds": 629.97,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e3 --settle",
+          "output": "Tapped @e3 (275, 474)\nsettled after 3737ms: +57 -4 (~0 unchanged)\n- @e1 [alert] \"Open in “Trailhead”?\"\n- @e2 [button] \"Cancel\"\n- @e3 [button] \"Open\"\n- @e4 [text] \"Open in “Trailhead”?\"\n+ @e1~s418936 [application] \"Trailhead\"\n+ @e2~s418936 [other] \"Trailhead\"\n+ @e3~s418936 [text] \"Runtime version: exposdk:58.0.0\"\n+ @e4~s418936 [button] \"Close\"\n+ @e5~s418936 [scroll-area] \"Reload\"\n+ @e6~s418936 [other] \"Reload\"\n+ @e7~s418936 [button] \"Reload\"\n+ @e8~s418936 [button] \"Go home\"\n+ @e9~s418936 [button] \"Source code explorer\"\n+ @e10~s418936 [button] \"Toggle performance monitor\" [disabled]\n+ @e11~s418936 [button] \"Toggle element inspector\" [disabled]\n+ @e12~s418936 [text] \"Fast refresh\"\n+ @e13~s418936 [switch] \"0\" [disabled]\n+ @e14~s418936 [switch] \"0\" [disabled]\n+ @e15~s418936 [text] \"Tools button\"\n+ @e16~s418936 [switch] \"1\"\n+ @e17~s418936 [switch] \"1\"\n+ @e18~s418936 [text] \"Debugging not working? Try manually reloading first.\"\n+ @e19~s418936 [other] \"Vertical scroll bar, -1 page\"\n+ @e20~s418936 [scroll-area] \"dev-tools\"\n+ @e21~s418936 [other] \"dev-tools\"\n+ @e22~s418936 [image] \"dev-tools\"\n+ @e23~s418936 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n+ @e24~s418936 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n+ @e25~s418936 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n+ @e26~s418936 [button] \"Continue\"\n+ @e27~s418936 [other] \"Vertical scroll bar, -1 page\"\n+ @e28~s418936 [other] \"\"\n+ @e29~s418936 [text-field] \"Search trails\"\n+ @e30~s418936 [scroll-area] \"All regions\"\n+ @e31~s418936 [other] \"All regions\"\n+ @e32~s418936 [button] \"All regions\"\n+ @e33~s418936 [button] \"Adirondacks\"\n+ @e34~s418936 [button] \"Bas-Saint-Laurent\"\n+ @e35~s418936 [button] \"Charlevoix\"\n+ @e36~s418936 [scroll-area] \"Any level\"\n+ @e37~s418936 [other] \"Any level\"\n+ @e38~s418936 [button] \"Any level\"\n+ @e39~s418936 [button] \"Easy\"\n+ @e40~s418936 [button] \"Moderate\"\n+ @e41~s418936 [button] \"Hard\"\n+ @e42~s418936 [button] \"Expert\"\n+ @e43~s418936 [text] \"200 trails\"\n+ @e44~s418936 [button] \"Sort by name\"\n+ @e45~s418936 [button] \"Sort by distance\"\n+ @e46~s418936 [button] \"Sort by rating\"\n+ @e47~s418936 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e48~s418936 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e49~s418936 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e50~s418936 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n+ @e51~s418936 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n+ @e52~s418936 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e53~s418936 [other] \"Trails, tab, 1 of 4\"\n+ @e54~s418936 [button] \"Trails, tab, 1 of 4\"\n+ @e55~s418936 [button] \"Record, tab, 2 of 4\"\n+ @e56~s418936 [button] \"History, tab, 3 of 4\"\n+ @e57~s418936 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e3 --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01V1GmtxJYZR7W4yz81YaV8x",
+          "startSeconds": 636.767,
+          "endSeconds": 637.131,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press @e26~s418936 --settle",
+          "output": "Exit code 1\nError (COMMAND_FAILED): Ref @e26 is off-screen and not safe to press\nHint: Scroll down toward it in small steps (a single large scroll can overshoot; a short bounded gesture pan lands it more reliably), then retry press with a selector (e.g. text=/id=) rather than this @ref — the scroll expires the ref frame, so re-run snapshot -i before reusing any @ref.\nDiagnostic ID: mtwgj522-83a22976\nDiagnostics Log: ./state/agent-device/sessions/launch-crash-control/requests/4fbc7fcfc40e0f04.ndjson",
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device press @e26~s418936 --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01LreKcyUJNwHm2VGgs1hzhi",
+          "startSeconds": 640.611,
+          "endSeconds": 645.501,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device scroll down --settle",
+          "output": "Scrolled down\nsettled after 3796ms: +7 -6 (~51 unchanged)\n- @e47 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e48 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e49 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e50 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e51 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e52 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e47~s418942 [scroll-area] \"Cap de la Tour Panorama, Gaspesie, Easy, rated 3.7 out of 5\"\n+ @e48~s418942 [other] \"Cap de la Tour Panorama, Gaspesie, Easy, rated 3.7 out of 5\"\n+ @e49~s418942 [button] \"Cap de la Tour Panorama, Gaspesie, Easy, rated 3.7 out of 5\"\n+ @e50~s418942 [button] \"Cap du Loup des Caps, Gaspesie, Expert, rated 4.0 out of 5\"\n+ @e51~s418942 [button] \"Cap du Loup Lookout, Gaspesie, Moderate, rated 5.0 out of 5\"\n+ @e52~s418942 [button] \"Cap du Nord, Adirondacks, Hard, rated 4.8 out of 5\"\n+ @e53~s418942 [button] \"Cap Escarpment, Gaspesie, Moderate, rated 4.4 out of 5\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device scroll down --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_015VKSKGwuJVHeLJLMbVxg27",
+          "startSeconds": 652.386,
+          "endSeconds": 652.496,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press \"label=Settings, tab, 4 of 4\" --settle",
+          "output": "Exit code 1\nError (INVALID_ARGS): Target \"label=Settings, tab, 4 of 4\" is not a @ref, selector, or \"x y\" point. Selector values with spaces need quotes, e.g. text=\"Sign in\".\nHint: Check command arguments and run --help for usage examples.\nDiagnostic ID: mtwgjh2u-791e7cd4",
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device press \"label=Settings, tab, 4 of 4\" --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_0137KBdE2dxQMdsJyXo1ZJdH",
+          "startSeconds": 656.293,
+          "endSeconds": 658.879,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device press 'label=\"Settings, tab, 4 of 4\"' --settle",
+          "output": "Tapped label=\"Settings, tab, 4 of 4\" (352, 816)\nsettled after 1788ms: +28 -28 (~30 unchanged)\n- @e28 [other] \"\"\n- @e29 [text-field] \"Search trails\"\n- @e30 [scroll-area] \"All regions\"\n- @e31 [other] \"All regions\"\n- @e32 [button] \"All regions\"\n- @e33 [button] \"Adirondacks\"\n- @e34 [button] \"Bas-Saint-Laurent\"\n- @e35 [button] \"Charlevoix\"\n- @e36 [scroll-area] \"Any level\"\n- @e37 [other] \"Any level\"\n- @e38 [button] \"Any level\"\n- @e39 [button] \"Easy\"\n- @e40 [button] \"Moderate\"\n- @e41 [button] \"Hard\"\n- @e42 [button] \"Expert\"\n- @e43 [text] \"200 trails\"\n- @e44 [button] \"Sort by name\"\n- @e45 [button] \"Sort by distance\"\n- @e46 [button] \"Sort by rating\"\n- @e47 [scroll-area] \"Cap de la Tour Panorama, Gaspesie, Easy, rated 3.7 out of 5\"\n- @e48 [other] \"Cap de la Tour Panorama, Gaspesie, Easy, rated 3.7 out of 5\"\n- @e49 [button] \"Cap de la Tour Panorama, Gaspesie, Easy, rated 3.7 out of 5\"\n- @e50 [button] \"Cap du Loup des Caps, Gaspesie, Expert, rated 4.0 out of 5\"\n- @e51 [button] \"Cap du Loup Lookout, Gaspesie, Moderate, rated 5.0 out of 5\"\n- @e52 [button] \"Cap du Nord, Adirondacks, Hard, rated 4.8 out of 5\"\n- @e53 [button] \"Cap Escarpment, Gaspesie, Moderate, rated 4.4 out of 5\"\n+ @e28~s418948 [scroll-area] \"UNITS\"\n+ @e29~s418948 [other] \"UNITS\"\n+ @e30~s418948 [cell] \"Distance\"\n+ @e31~s418948 [text] \"\"\n+ @e32~s418948 [button] \"Metric units\"\n+ @e33~s418948 [button] \"Imperial units\"\n+ @e34~s418948 [text] \"Used across the whole app\"\n+ @e35~s418948 [text] \"PREFERENCES\"\n+ @e36~s418948 [other] \"Hike reminders\"\n+ @e37~s418948 [switch] \"Hike reminders\"\n+ @e38~s418948 [text] \"\"\n+ @e39~s418948 [text] \"Nudge me when I have not hiked in a while\"\n+ @e40~s418948 [text] \"Offline maps\"\n+ @e41~s418948 [switch] \"Offline maps\"\n+ @e42~s418948 [text] \"\"\n+ @e43~s418948 [text] \"Keep map tiles for saved trails on device\"\n+ @e44~s418948 [text] \"STORAGE\"\n+ @e45~s418948 [cell] \"Recorded hikes\"\n+ @e46~s418948 [text] \"\"\n+ @e47~s418948 [text] \"48\"\n+ @e48~s418948 [text] \"Stored in a local database\"\n+ @e49~s418948 [button] \"Reset sample data\"\n+ @e50~s418948 [text] \"ABOUT\"\n+ @e51~s418948 [cell] \"\"\n+ @e52~s418948 [text] \"Version\"\n+ @e53~s418948 [text] \"1.0.0\"\n- @e55 [button] \"Trails, tab, 1 of 4\"\n+ @e55~s418948 [button] \"Trails, tab, 1 of 4\"\n- @e58 [button] \"Settings, tab, 4 of 4\"\n+ @e58~s418948 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press 'label=\"Settings, tab, 4 of 4\"' --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01UUxHsbAXwByVccWWH8YsTG",
+          "startSeconds": 664.234,
+          "endSeconds": 664.426,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device wait text \"Keep map tiles for saved trails on device\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Keep map tiles for saved trails on device\"",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01UN81SFffyFHrbXCMEhqKvD",
+          "startSeconds": 673.374,
+          "endSeconds": 673.806,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device screenshot tmp/launch-crash-control-settings.png",
+          "output": "tmp/launch-crash-control-settings.png (402x874 @1x)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/launch-crash-control-settings.png",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01YXRTzZorphGCTQowcm1hhZ",
+          "startSeconds": 677.91,
+          "endSeconds": 677.943,
+          "command": "cp tmp/launch-crash-control-settings.png results/opus-ios-launch-error/launch-crash-control/proof/settings.png",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01C2hGCGYkzV1qJjtWyag3h2",
+          "startSeconds": 681.855,
+          "endSeconds": 686.753,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device record stop",
+          "output": "tmp/launch-crash-control-session.mp4",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01D23E4WqnH43xSFK1AV5EuL",
+          "startSeconds": 690.766,
+          "endSeconds": 690.834,
+          "command": "cp tmp/launch-crash-control-session.mp4 results/opus-ios-launch-error/launch-crash-control/proof/session.mp4",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01TUSkpxdpVC2yP4ZgoEZwgP",
+          "startSeconds": 694.74,
+          "endSeconds": 694.898,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=launch-crash-control agent-device close",
+          "output": "Closed: launch-crash-control",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01FXAHnWnyD8BXkRgEqMbTyv",
+          "startSeconds": 699.989,
+          "endSeconds": 700.17,
+          "command": "ls -la results/opus-ios-launch-error/launch-crash-control/proof/ && ps -p 76238 -o pid,command | tail -1 && curl -s http://localhost:8081/status && xcrun simctl list devices booted | grep -i trailhead",
+          "output": "<device inventory omitted from public artifact>",
+          "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 441.219
+        },
+        {
+          "id": "diagnosis",
+          "kind": "diagnosis",
+          "label": "Actionable diagnosis",
+          "atSeconds": 571.111
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 673.806
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/opus-ios-launch-error/launch-crash-control.png",
+        "expected": "Keep map tiles for saved trails on device",
+        "width": 402,
+        "height": 874
+      },
+      "recording": {
+        "src": "benchmarks/opus-ios-launch-error/launch-crash-control.mp4",
+        "bytes": 12430377
+      },
+      "timingOrigin": {
+        "kind": "first-recorded-activity",
+        "dispatchOffsetSeconds": 134.989,
+        "event": {
+          "kind": "message",
+          "id": "9ea1609c-d3be-4b3c-9499-85380cb4333a-0"
+        },
+        "dispatchSettingsReadySeconds": 808.795,
+        "dispatchDiagnosisSeconds": 706.1,
+        "dispatchTotalSeconds": 848.607
+      },
+      "appReadinessLogs": true
+    }
+  ],
+  "stageAliases": ["opus-ios-readiness-entry-error", "opus-ios-crash-rc23"]
+}

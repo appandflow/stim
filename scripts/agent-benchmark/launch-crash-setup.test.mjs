@@ -1,0 +1,61 @@
+import { expect, it } from 'vitest';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { launchCrashSetup } from './launch-crash-setup.mjs';
+
+const systemImage = 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a';
+
+it('selects only reusable iOS fixture inputs', () => {
+  expect(launchCrashSetup({ platform: 'ios', arm: 'control' }).ignoredPaths).toEqual([
+    'node_modules',
+    'ios/Pods',
+    'ios/build',
+  ]);
+});
+
+it('carries reusable Android outputs without importing a sibling autolinking cache', () => {
+  const root = mkdtempSync(join(tmpdir(), 'bench-android-carry-'));
+  const source = join(root, 'source');
+  const target = join(root, 'target');
+  const paths = [
+    'node_modules/native-lib/package.json',
+    'android/.gradle/cache.bin',
+    'android/.cxx/config.bin',
+    'android/app/build/outputs/apk/debug/app-debug.apk',
+    'android/local.properties',
+    'android/build/generated/autolinking/autolinking.json',
+    'android/build/generated/autolinking/package.json.sha',
+  ];
+  try {
+    for (const path of paths) {
+      mkdirSync(dirname(join(source, path)), { recursive: true });
+      writeFileSync(join(source, path), 'source checkout bytes');
+    }
+    for (const path of launchCrashSetup({ platform: 'android', arm: 'control', systemImage }).ignoredPaths) {
+      mkdirSync(dirname(join(target, path)), { recursive: true });
+      cpSync(join(source, path), join(target, path), { recursive: true });
+    }
+    for (const path of paths.slice(0, 5)) {
+      expect(readFileSync(join(target, path), 'utf8')).toBe('source checkout bytes');
+    }
+    for (const path of paths.slice(5)) {
+      expect(existsSync(join(target, path))).toBe(false);
+      expect(readFileSync(join(source, path), 'utf8')).toBe('source checkout bytes');
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it('refuses missing, non-arm64, or shell-injectable Android image pins', () => {
+  for (const image of [
+    undefined,
+    systemImage.replace('arm64-v8a', 'x86_64'),
+    systemImage.replace('google_apis_playstore_ps16k', "google'apis"),
+  ]) {
+    expect(() => launchCrashSetup({ platform: 'android', arm: 'stim', systemImage: image })).toThrow(
+      'pinned arm64 system image',
+    );
+  }
+});

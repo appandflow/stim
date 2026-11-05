@@ -1,0 +1,213 @@
+import Foundation
+
+/// The unified worktree page rule, mirrored by `apps/mobile/src/lib/worktree-page.ts`;
+/// both replay `Tests/StimKitTests/Fixtures/worktree-page-vectors.json`.
+public struct WorktreePage: Hashable, Sendable {
+  public struct Entry: Decodable, Hashable, Identifiable, Sendable {
+    public var path: String
+    public var platform: String
+    public var id: String { "\(path)|\(platform)" }
+
+    public init(path: String, platform: String) {
+      self.path = path
+      self.platform = platform
+    }
+  }
+
+  public struct Device: Identifiable, Sendable {
+    public var workspace: Workspace
+    public var device: DeviceRef
+    public var id: String { "\(workspace.path)|\(device.id)" }
+    public var entry: Entry { Entry(path: workspace.path, platform: device.platform) }
+  }
+
+  public var apps: [Workspace]
+  public var id: String { apps[0].path }
+  public var identity: String { apps[0].checkoutPath ?? apps[0].path }
+  public var isUnified: Bool { apps.count > 1 }
+  public var actionKey: String { "worktree:\(identity)" }
+
+  public init?(path: String, environments: [Workspace]) {
+    guard let page = Self.groups(environments: environments).first(where: { $0.apps.contains { $0.path == path } }) else {
+      return nil
+    }
+    self = page
+  }
+
+  private init(apps: [Workspace]) {
+    self.apps = apps
+  }
+
+  public static func groups(environments: [Workspace]) -> [WorktreePage] {
+    var groups: [[Workspace]] = []
+    var roots: [String: Int] = [:]
+    for app in environments {
+      if let root = app.checkoutPath, !root.isEmpty {
+        if let index = roots[root] {
+          groups[index].append(app)
+        } else {
+          roots[root] = groups.count
+          groups.append([app])
+        }
+      } else {
+        groups.append([app])
+      }
+    }
+    return groups.map { WorktreePage(apps: $0.sorted { $0.path < $1.path }) }
+  }
+
+  /// The path a sidebar row of a multi-app worktree is tagged with, for a selection on any of its apps.
+  public static func rowPath(containing path: String, in pages: [WorktreePage]) -> String? {
+    pages.first { $0.isUnified && $0.apps.contains { $0.path == path } }?.id
+  }
+
+  public var projects: [String] { apps.map(Self.project) }
+
+  public static func project(_ app: Workspace) -> String {
+    if let root = app.checkoutPath, !root.isEmpty, app.path.hasPrefix(root + "/") {
+      return String(app.path.dropFirst(root.count + 1))
+    }
+    return (app.path as NSString).lastPathComponent
+  }
+
+  public func lead(now: Date, among candidates: [Workspace]? = nil) -> Workspace {
+    let candidates = candidates ?? apps
+    return candidates.enumerated().min {
+      let a = Self.urgency($0.element.stage(now: now))
+      let b = Self.urgency($1.element.stage(now: now))
+      return a == b ? $0.offset < $1.offset : a < b
+    }!.element
+  }
+
+  private static func urgency(_ stage: WorkspaceStage) -> Int {
+    switch stage.label {
+    case .buildFailed: 0
+    case .running: stage.tone == .error ? 0 : 3
+    case .building: 1
+    case .warming: 2
+    case .ready: 4
+    case .stopped, .unknown: 5
+    }
+  }
+
+  public func subtitles(entries: [Entry]) -> [String?] {
+    entries.map { entry in
+      guard isUnified, Set(entries.filter { $0.platform == entry.platform }.map(\.path)).count > 1,
+        let app = apps.first(where: { $0.path == entry.path })
+      else { return nil }
+      return Self.project(app)
+    }
+  }
+
+  public func subtitle(for entry: Entry, among entries: [Entry]) -> String? {
+    subtitles(entries: entries + [entry]).last ?? nil
+  }
+
+  public func appLabels(entries: [Entry]) -> [String] {
+    let labels = apps.map { app in
+      let used = Self.platforms.filter { platform in
+        app.supportedPlatforms.contains(platform) || entries.contains { $0.path == app.path && $0.platform == platform }
+      }
+      let native = used.contains("ios") || used.contains("android")
+      return
+        ((native ? ["React Native"] : [])
+        + used.filter { native ? $0 != "ios" && $0 != "android" : true }
+        .map(platformName)).joined(separator: " \u{00B7} ")
+    }
+    return apps.indices.map { i in
+      if labels[i].isEmpty { return Self.project(apps[i]) }
+      return labels.filter { $0 == labels[i] }.count > 1 ? labels[i] + " \u{00B7} " + Self.project(apps[i]) : labels[i]
+    }
+  }
+
+  public var appLabels: [String] { appLabels(entries: buildEntries + canvasEntries) }
+
+  private static let platforms = ["ios", "android", "macos", "web"]
+
+  public var buildEntries: [Entry] {
+    let entries = apps.flatMap { app in
+      let platforms = app.supportedPlatforms.filter { $0 == "ios" || $0 == "android" }
+      return (app.supportedPlatforms.contains("macos") ? [Entry(path: app.path, platform: "macos")] : [])
+        + platforms.map { Entry(path: app.path, platform: $0) }
+    }
+    guard isUnified else { return entries }
+    return entries.enumerated().sorted {
+      let a = Self.platforms.firstIndex(of: $0.element.platform) ?? 4
+      let b = Self.platforms.firstIndex(of: $1.element.platform) ?? 4
+      return a == b ? $0.offset < $1.offset : a < b
+    }.map(\.element)
+  }
+
+  public var orderedDevices: [Device] {
+    apps.flatMap { app in app.devices.map { Device(workspace: app, device: $0) } }.enumerated().sorted {
+      if DeviceRef.orderedBefore($0.element.device, $1.element.device) { return true }
+      if DeviceRef.orderedBefore($1.element.device, $0.element.device) { return false }
+      return $0.offset < $1.offset
+    }.map(\.element)
+  }
+
+  public var canvasEntries: [Entry] {
+    orderedDevices.map(\.entry)
+  }
+
+  public func canvasScrollTarget(selectedPath: String, focusedID: String?, devices: [Device]) -> String? {
+    let selectedDevices = devices.filter { $0.workspace.path == selectedPath }
+    let device = selectedDevices.first { $0.device.id == focusedID } ?? selectedDevices.first
+    return device?.id
+  }
+
+  public var soleErrorApp: Workspace? {
+    let errors = apps.filter { ($0.logs?.errorsSinceMarker ?? 0) > 0 }
+    return errors.count == 1 ? errors[0] : nil
+  }
+
+  public var errors: Int? {
+    let counts = apps.compactMap { $0.logs?.errorsSinceMarker }
+    return counts.isEmpty ? nil : Format.sum(counts)
+  }
+
+  public var agents: [AgentSession] {
+    var seen = Set<String>()
+    return AgentSession.associated(
+      agents: apps.flatMap { $0.agents ?? [] }, endedAgents: apps.flatMap { $0.endedAgents ?? [] }
+    ).filter { seen.insert($0.id).inserted }
+  }
+
+  public func usage(machine: MachineUsage?, sampled: [String: WorkspaceUsage] = [:]) -> WorkspaceUsage {
+    let values = apps.map { app in
+      app.usage(machine: machine).filling(cpuPercent: sampled[app.path]?.cpuPercent, footprintMb: sampled[app.path]?.memoryMb)
+    }
+    return WorkspaceUsage(
+      cpuPercent: Self.sum(values.map(\.cpuPercent)), memoryMb: Self.sum(values.map(\.memoryMb)), diskBytes: diskBreakdown?.total)
+  }
+
+  private static func sum(_ values: [Double?]) -> Double? {
+    let measured = values.compactMap { $0 }
+    return measured.isEmpty ? nil : measured.reduce(0, +)
+  }
+
+  public var diskBreakdown: DiskBreakdown? {
+    let build = Self.sum(apps.map { $0.disk?.buildBytes })
+    if isUnified {
+      let worktree = apps.compactMap { app in
+        app.disk?.worktreeBytes.map { $0 - (app.diskBreakdown?.sharedNodeModules ?? 0) }
+      }.max()
+      return DiskBreakdown(worktree: worktree, nodeModules: nil, nodeModulesPrivate: nil, build: build)
+    }
+    let disk = apps[0].disk
+    return DiskBreakdown(
+      worktree: disk?.worktreeBytes, nodeModules: disk?.nodeModulesBytes,
+      nodeModulesPrivate: apps[0].worktree == nil ? nil : disk?.nodeModulesPrivateBytes, build: build)
+  }
+
+  /// Adds histories element-wise, aligning their newest samples; missing older samples contribute zero.
+  public static func summedHistory(_ histories: [[Double]]) -> [Double] {
+    let count = histories.map(\.count).max() ?? 0
+    return (0..<count).map { index in
+      histories.reduce(0) { sum, history in
+        let aligned = index - (count - history.count)
+        return sum + (aligned >= 0 ? history[aligned] : 0)
+      }
+    }
+  }
+}

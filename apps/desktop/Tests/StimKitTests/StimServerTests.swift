@@ -1,0 +1,178 @@
+import Foundation
+import Testing
+
+@testable import StimKit
+
+@Suite struct StimServerTests {
+  @Test func aPortWithAListenerThatNeverAnswersIsHeldUntilItCloses() async throws {
+    let listener = socket(AF_INET, SOCK_STREAM, 0)
+    #expect(listener >= 0)
+    var address = sockaddr_in()
+    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_addr.s_addr = inet_addr("127.0.0.1")
+    let bound = withUnsafePointer(to: &address) { pointer in
+      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        bind(listener, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+      }
+    }
+    #expect(bound == 0 && listen(listener, 1) == 0)
+    var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+    _ = withUnsafeMutablePointer(to: &address) { pointer in
+      pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(listener, $0, &length) }
+    }
+    let port = Int(UInt16(bigEndian: address.sin_port))
+    #expect(await StimServerCLI.portIsHeld(port))
+    close(listener)
+    #expect(await !StimServerCLI.portIsHeld(port))
+  }
+
+  @Test func decodesHealthWithEachTailscaleState() throws {
+    let stopped = try StimServerCLI.decoder.decode(
+      ServerHealth.self,
+      from: Data(
+        #"{"server":"stim-server","name":"Mac","version":"1.9.0","stim":"1.9.0","protocol":1,"stimHome":"/Users/me/.stim","tailscale":{"state":"not-running","backendState":"Stopped"}}"#
+          .utf8))
+    #expect(stopped.protocolVersion == 1 && stopped.stimHome == "/Users/me/.stim")
+    #expect(!stopped.tailscale.isRunning)
+    #expect(stopped.tailscale.summary == "Tailscale is not running (Stopped).")
+    #expect(stopped.route == nil && stopped.nativeViewerOpened == nil)
+    let opened = try StimServerCLI.decoder.decode(
+      ServerHealth.self,
+      from: Data(
+        #"{"server":"stim-server","name":"Mac","version":"1","stim":"1","protocol":1,"stimHome":"/Users/me/.stim","tailscale":{"state":"running"},"nativeViewerOpened":true}"#
+          .utf8))
+    #expect(opened.nativeViewerOpened == true)
+    let running = try StimServerCLI.decoder.decode(
+      TailscaleState.self,
+      from: Data(#"{"state":"running","dnsName":"mac.tail1.ts.net"}"#.utf8))
+    #expect(running.isRunning && running.dnsName == "mac.tail1.ts.net")
+  }
+
+  @Test func decodesReadyHealthWithStartupAndLegacyHealth() throws {
+    for startup in [
+      "", #","startup":{"state":"ready"}"#, #","startup":{"state":"pending"}"#,
+      #","startup":{"state":"degraded","reason":"Old status."}"#, #","startup":{"state":7}"#,
+    ] {
+      let data = Data(
+        #"{"server":"stim-server","name":"Mac","version":"1","stim":"1","protocol":1,"stimHome":"/Users/me/.stim","tailscale":{"state":"running"}\#(startup)}"#
+          .utf8)
+      let probe = try #require(StimServerCLI.decodeHealth(data, statusCode: 200))
+      guard case .ready(let health) = probe else {
+        Issue.record("Ready health must permit a server connection")
+        return
+      }
+      #expect(health.stimHome == "/Users/me/.stim" && health.tailscale.isRunning)
+    }
+  }
+
+  @Test func decodesNotReadyHealthAndKeepsItsHome() {
+    let pending = Data(
+      #"{"server":"stim-server","name":"Mac","version":"1","stim":"1","protocol":1,"stimHome":"/Users/me/.stim","tailscale":{"state":"running"},"startup":{"state":"pending"}}"#
+        .utf8)
+    #expect(StimServerCLI.decodeHealth(pending, statusCode: 503) == .notReady(.pending, stimHome: "/Users/me/.stim"))
+    let degraded = Data(
+      #"{"server":"stim-server","startup":{"state":"degraded","reason":"Volume /Volumes/Work is stalled."}}"#
+        .utf8)
+    #expect(
+      StimServerCLI.decodeHealth(degraded, statusCode: 503)
+        == .notReady(.degraded("Volume /Volumes/Work is stalled."), stimHome: nil))
+    let other = Data(#"{"server":"other","startup":{"state":"pending"}}"#.utf8)
+    #expect(StimServerCLI.decodeHealth(other, statusCode: 503) == nil)
+  }
+
+  @Test func treatsUnknownStartupStatesAsDegraded() throws {
+    let data = Data(#"{"server":"stim-server","startup":{"state":"recovering"}}"#.utf8)
+    #expect(
+      StimServerCLI.decodeHealth(data, statusCode: 503)
+        == .notReady(.degraded("Unknown server startup state: recovering."), stimHome: nil))
+    let ready = Data(
+      #"{"server":"stim-server","name":"Mac","version":"1","stim":"1","protocol":1,"stimHome":"/Users/me/.stim","tailscale":{"state":"running"},"startup":{"state":"recovering"}}"#
+        .utf8)
+    let probe = try #require(StimServerCLI.decodeHealth(ready, statusCode: 200))
+    guard case .ready(let health) = probe else {
+      Issue.record("HTTP 200 must permit a connection despite an unknown startup state")
+      return
+    }
+    #expect(health.stimHome == "/Users/me/.stim" && health.tailscale.isRunning)
+  }
+
+  @Test func recognizesTheDefaultHomeThroughSymlinks() throws {
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent("home-\(UUID().uuidString)").path
+    defer { try? FileManager.default.removeItem(atPath: home) }
+    try FileManager.default.createDirectory(atPath: "\(home)/.stim", withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(atPath: "\(home)/link", withDestinationPath: "\(home)/.stim")
+    func health(_ stimHome: String) throws -> ServerHealth {
+      try StimServerCLI.decoder.decode(
+        ServerHealth.self,
+        from: Data(
+          #"{"server":"stim-server","name":"Mac","version":"1","stim":"1","protocol":1,"stimHome":"\#(stimHome)","tailscale":{"state":"running"}}"#
+            .utf8))
+    }
+    #expect(try health("\(home)/.stim").servesDefaultHome(home: home))
+    #expect(try health("\(home)/link").servesDefaultHome(home: home))
+    #expect(try !health("\(home)/scratch/stimhome").servesDefaultHome(home: home))
+  }
+
+  @Test func namesTheEndpointAndSetupCommandOfEachRoute() throws {
+    func route(_ json: String) throws -> ServeRoute {
+      try StimServerCLI.decoder.decode(ServeRoute.self, from: Data(json.utf8))
+    }
+    #expect(try route(#"{"state":"routed","port":443}"#).endpoint(dnsName: "mac.ts.net") == "wss://mac.ts.net")
+    #expect(try route(#"{"state":"routed","port":7443}"#).endpoint(dnsName: "mac.ts.net") == "wss://mac.ts.net:7443")
+    let funneled = try route(#"{"state":"funneled","ports":[443],"port":7443}"#)
+    #expect(funneled.ports == [443])
+    #expect(funneled.setupCommand(serverPort: 7787) == "tailscale serve --bg --https=7443 http://127.0.0.1:7787")
+  }
+
+  @Test func encodesTheQRPayloadThePhoneParses() throws {
+    let code = try StimServerCLI.decoder.decode(
+      PairingCode.self,
+      from: Data(
+        #"{"qr":{"v":2,"name":"Mac","endpoint":"ws://127.0.0.1:7787","pairingToken":"abc_-1","fingerprint":"fp_-9"},"expiresAt":"2026-09-25T05:58:15.563Z"}"#
+          .utf8))
+    #expect(code.isLocalOnly)
+    #expect(code.expiresAt == ISO8601DateFormatter().date(from: "2026-09-25T05:58:15Z")!.addingTimeInterval(0.563))
+    let qr = try JSONSerialization.jsonObject(with: Data(code.qrText.utf8)) as? [String: Any]
+    #expect(qr?["v"] as? Int == 2)
+    #expect(qr?["endpoint"] as? String == "ws://127.0.0.1:7787")
+    #expect(qr?["pairingToken"] as? String == "abc_-1")
+    #expect(qr?["fingerprint"] as? String == "fp_-9")
+    #expect(qr?["name"] as? String == "Mac")
+  }
+
+  @Test func readsWhereADevicePairedFromAndItsKey() throws {
+    let devices = try StimServerCLI.decoder.decode(
+      PairedDeviceList.self,
+      from: Data(
+        #"""
+        {"devices":[
+          {"id":"a1","name":"Phone","from":"phone.tail1.ts.net","keyFingerprint":"k1","pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":null,"capabilities":["read"]},
+          {"id":"b2","name":"Sim","keyFingerprint":"k2","pairedAt":"2026-09-25T05:00:00.000Z","lastSeenAt":"2026-09-25T06:00:00.000Z","capabilities":["read","control"]}
+        ],"hostedSessions":[]}
+        """#.utf8)
+    ).devices
+    #expect(devices.map(\.from) == ["phone.tail1.ts.net", nil])
+    #expect(devices.map(\.keyFingerprint) == ["k1", "k2"])
+    #expect(devices[0].lastSeenAt == nil && devices[1].lastSeenAt != nil)
+    #expect(devices.map(\.canControl) == [false, true])
+  }
+
+  @Test func separatesDeviceHostClientsFromBuildClientsAndPhones() throws {
+    let devices = try StimServerCLI.decoder.decode(
+      PairedDeviceList.self,
+      from: Data(
+        #"""
+        {"devices":[
+          {"id":"build","name":"Build Mac","from":"mini","keyFingerprint":"k1","pairedAt":"2026-09-25T05:00:00Z","lastSeenAt":null,"capabilities":["build"]},
+          {"id":"host","name":"Device Mac","from":"mini","keyFingerprint":"k1","pairedAt":"2026-09-25T05:00:00Z","lastSeenAt":null,"capabilities":["device-host"]},
+          {"id":"phone","name":"Phone","from":"phone","keyFingerprint":"k2","pairedAt":"2026-09-25T05:00:00Z","lastSeenAt":null,"capabilities":["read"]}
+        ]}
+        """#.utf8)
+    ).devices
+    #expect(devices.filter(\.isBuildClient).map(\.id) == ["build"])
+    #expect(devices.filter(\.isDeviceHostClient).map(\.id) == ["host"])
+    #expect(devices.filter(\.isPhone).map(\.id) == ["phone"])
+    #expect(!devices.contains { $0.canControl })
+  }
+}

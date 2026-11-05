@@ -1,0 +1,64 @@
+import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { basename } from 'node:path';
+import { defineConfig } from 'tsdown';
+import { PROTOCOL_SCHEMA_FILE, protocolJsonSchema } from './src/protocol.ts';
+
+const { engines } = JSON.parse(readFileSync(new URL('package.json', import.meta.url), 'utf8'));
+const nodeFloor = /^>=(\d+\.\d+\.\d+)$/.exec(engines.node)?.[1];
+const viewer = (name: string) => readFileSync(`share-viewer/${name}`, 'utf8');
+if (!nodeFloor) throw new Error(`engines.node must have the form >=X.Y.Z, got ${engines.node}`);
+
+export default defineConfig({
+  entry: {
+    'stim-server': 'bin/node-check.ts',
+    'stim-service-runner': 'src/service-runner.ts',
+    protocol: 'src/protocol.ts',
+  },
+  format: 'esm',
+  dts: true,
+  outDir: 'dist',
+  target: 'node22.12',
+  platform: 'node',
+  define: { NODE_FLOOR: JSON.stringify(nodeFloor) },
+  tsconfig: 'tsconfig.json',
+  fixedExtension: true,
+  hooks: {
+    'build:done': () => {
+      writeFileSync(`dist/${PROTOCOL_SCHEMA_FILE}`, `${JSON.stringify(protocolJsonSchema(), null, 2)}\n`);
+      rmSync('dist/stim-host', { recursive: true, force: true });
+      mkdirSync('dist/stim-host');
+      for (const name of ['stim-host.c', 'Info.plist']) copyFileSync(`host/${name}`, `dist/stim-host/${name}`);
+      rmSync('dist/share-viewer', { recursive: true, force: true });
+      cpSync('share-viewer', 'dist/share-viewer', { recursive: true });
+      writeFileSync(
+        'dist/share-viewer/not-running.html',
+        viewer('not-running.html')
+          .replace('{{css}}', () => viewer('viewer.css'))
+          .replace('{{logo}}', () => viewer('logo.svg').trim()),
+      );
+      rmSync('dist/stim-frames', { recursive: true, force: true });
+      mkdirSync('dist/stim-frames');
+      const desktop = readFileSync('helper/desktop-sources.txt', 'utf8').split(/\s+/).filter(Boolean);
+      for (const source of [
+        'helper/main.swift',
+        'helper/VideoEncoder.swift',
+        'helper/PhoneSource.swift',
+        'helper/FrameArtwork.swift',
+        'helper/MacosSource.swift',
+        'helper/DuoFrameRenderer.swift',
+        'helper/DuoHingeMonitor.swift',
+        'helper/DuoCaptureSource.swift',
+        ...desktop.map((path) => `../../apps/desktop/Sources/${path}`),
+      ]) {
+        copyFileSync(source, `dist/stim-frames/${basename(source)}`);
+      }
+      copyFileSync('../../apps/desktop/Support/Siniulator-LICENSE.txt', 'dist/stim-frames/Siniulator-LICENSE.txt');
+      copyFileSync('../../apps/desktop/Support/SimFold/main.m', 'dist/stim-frames/sim-fold.m');
+      copyFileSync('../../apps/desktop/Support/SimFold/entitlements.plist', 'dist/stim-frames/sim-fold.entitlements');
+      rmSync('dist/scrcpy', { recursive: true, force: true });
+      mkdirSync('dist/scrcpy');
+      for (const name of ['scrcpy-server', 'LICENSE', 'NOTICE'])
+        copyFileSync(`helper/scrcpy/${name}`, `dist/scrcpy/${name}`);
+    },
+  },
+});

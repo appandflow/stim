@@ -1,0 +1,33 @@
+import { describe, expect, it, vi } from 'vitest';
+import { installTimelineWheelZoom, timelinePinchGeometry, type TimelineWheelZoom } from './timelineGesture';
+
+function wheel(ctrlKey: boolean, deltaY = -25, clientX = 240): Event {
+  const event = new Event('wheel', { cancelable: true });
+  Object.assign(event, { ctrlKey, deltaY, clientX });
+  return event;
+}
+
+describe('installTimelineWheelZoom', () => {
+  it('cancels Ctrl-wheel page zoom and reports the focal point and scale', () => {
+    const target = new EventTarget();
+    const onZoom = vi.fn<(gesture: TimelineWheelZoom) => void>();
+    const remove = installTimelineWheelZoom(target as HTMLElement, onZoom);
+    const event = wheel(true);
+
+    target.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(onZoom).toHaveBeenCalledWith({ clientX: 240, scale: Math.exp(0.25) });
+    remove();
+  });
+});
+describe('timelinePinchGeometry', () => {
+  it('reports a two-touch distance and midpoint', () => {
+    expect(
+      timelinePinchGeometry([
+        { clientX: 100, clientY: 20 },
+        { clientX: 200, clientY: 20 },
+      ]),
+    ).toEqual({ distance: 100, midpointX: 150 });
+  });
+});

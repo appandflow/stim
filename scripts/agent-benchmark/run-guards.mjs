@@ -1,0 +1,587 @@
+const platforms = new Set(['ios', 'android']);
+const variants = new Set(['javascript', 'native', 'launch-crash']);
+const arms = new Set(['stim', 'control']);
+
+function positiveSeconds(value, field, key) {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`benchmark target ${key}.${field} must be a positive number`);
+  }
+  return value;
+}
+
+function targetKey({ platform, variant, arm }) {
+  return `${platform}.${variant}.${arm}`;
+}
+
+export function parseBenchmarkTargets(contents) {
+  const config = typeof contents === 'string' ? JSON.parse(contents) : contents;
+  if (config?.schemaVersion !== 1) throw new Error('benchmark targets schemaVersion must be 1');
+  if (typeof config.machine !== 'string' || !config.machine.trim()) {
+    throw new Error('benchmark targets machine must be a non-empty string');
+  }
+  if (!config.targets || typeof config.targets !== 'object' || Array.isArray(config.targets)) {
+    throw new Error('benchmark targets must be an object');
+  }
+  for (const [key, target] of Object.entries(config.targets)) {
+    const [platform, variant, arm, extra] = key.split('.');
+    if (extra || !platforms.has(platform) || !variants.has(variant) || !arms.has(arm)) {
+      throw new Error(`unsupported benchmark target key: ${key}`);
+    }
+    positiveSeconds(target?.screenReadySeconds, 'screenReadySeconds', key);
+    positiveSeconds(target?.runTimeoutSeconds, 'runTimeoutSeconds', key);
+    if (target.runTimeoutSeconds < target.screenReadySeconds) {
+      throw new Error(`benchmark target ${key}.runTimeoutSeconds must be at least screenReadySeconds`);
+    }
+    if (target.platformCommandSeconds != null) {
+      positiveSeconds(target.platformCommandSeconds, 'platformCommandSeconds', key);
+      if (target.runTimeoutSeconds < target.platformCommandSeconds) {
+        throw new Error(`benchmark target ${key}.runTimeoutSeconds must be at least platformCommandSeconds`);
+      }
+    }
+    if (target.ccacheMinHitRatePercent != null) {
+      if (
+        platform !== 'android' ||
+        arm !== 'stim' ||
+        !Number.isFinite(target.ccacheMinHitRatePercent) ||
+        target.ccacheMinHitRatePercent <= 0 ||
+        target.ccacheMinHitRatePercent > 100
+      ) {
+        throw new Error(`benchmark target ${key}.ccacheMinHitRatePercent must be in (0, 100] for Android Stim`);
+      }
+    }
+  }
+  return config;
+}
+
+export function benchmarkTarget(config, selection) {
+  const key = targetKey(selection);
+  const value = config.targets[key];
+  if (!value) throw new Error(`benchmark target missing for ${key}`);
+  return { key, machine: config.machine, ...value };
+}
+
+export function topLevelShellCommand(command) {
+  const trimmed = String(command ?? '').trim();
+  const match = trimmed.match(/^\/bin\/(?:zsh|bash|sh) -l?c\s+([\s\S]+)$/);
+  if (!match) return trimmed;
+  const input = match[1];
+  let source = '';
+  let quote = null;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (quote === "'") {
+      if (char === "'") quote = null;
+      else source += char;
+    } else if (char === '\\') {
+      const next = input[index + 1];
+      if (next === undefined) return trimmed;
+      if (!quote || /["\\$`\n]/.test(next)) {
+        if (next !== '\n') source += next;
+        index += 1;
+      } else source += char;
+    } else if (char === quote) {
+      quote = null;
+    } else if (!quote && (char === "'" || char === '"')) {
+      quote = char;
+    } else if (!quote && /\s|[;&|<>]/.test(char)) {
+      return trimmed;
+    } else source += char;
+  }
+  return quote ? trimmed : source.trim();
+}
+
+export function shellCommandSegments(command) {
+  const source = topLevelShellCommand(command);
+  const segments = [];
+  let start = 0;
+  let quote = null;
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\' && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      quote = char;
+      continue;
+    }
+    const next = source[index + 1];
+    if (char === '&' && (source[index - 1] === '>' || source[index - 1] === '<' || next === '>')) continue;
+    const separator = char === '\n' || char === ';' || char === '|' || char === '&';
+    if (!separator) continue;
+    const segment = source.slice(start, index).trim();
+    if (segment) segments.push(segment);
+    if ((char === '|' || char === '&') && next === char) index += 1;
+    start = index + 1;
+  }
+  const tail = source.slice(start).trim();
+  if (tail) segments.push(tail);
+  return segments;
+}
+
+function literalShellArguments(command) {
+  const words = [];
+  let word = '';
+  let started = false;
+  let quote = null;
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index];
+    if (char === '\\' && quote !== "'") {
+      const next = command[++index];
+      if (next == null) return null;
+      if (quote === '"' && !['$', '`', '"', '\\', '\n'].includes(next)) word += '\\';
+      if (next !== '\n') {
+        word += next;
+        started = true;
+      }
+    } else if (quote) {
+      if (quote === '"' && /[$`]/.test(char)) return null;
+      if (char === quote) quote = null;
+      else word += char;
+    } else if (char === "'" || char === '"') {
+      quote = char;
+      started = true;
+    } else if (char === ' ' || char === '\t') {
+      if (started) words.push(word);
+      word = '';
+      started = false;
+    } else if (/[\s;&|<>*?[\]{}~()$`#]/.test(char)) return null;
+    else {
+      word += char;
+      started = true;
+    }
+  }
+  if (quote) return null;
+  if (started) words.push(word);
+  return words;
+}
+
+export function sameLiteralShellCommand(command, expected) {
+  let actual = literalShellArguments(String(command ?? '').trim());
+  const required = literalShellArguments(expected);
+  if (actual?.length === 3 && /^\/bin\/(?:zsh|bash|sh)$/.test(actual[0]) && /^-l?c$/.test(actual[1])) {
+    actual = literalShellArguments(actual[2]);
+  }
+  return Boolean(
+    actual &&
+    required?.length &&
+    actual.length === required.length &&
+    actual.every((word, index) => word === required[index]),
+  );
+}
+
+export function agentDeviceAuxiliarySessions(commands, expectedPrefix, target) {
+  if (!target?.device || !['ios', 'android'].includes(target.platform)) return [];
+  const prefix = expectedPrefix.match(
+    /^(env AGENT_DEVICE_STATE_DIR=\S+ AGENT_DEVICE_SESSION=)([\w.-]+)( agent-device )$/,
+  );
+  if (!prefix) return [];
+  const groups = new Map();
+  const proofOpens = commands.filter((entry) =>
+    shellCommandSegments(entry.command).some((segment) => segment.startsWith(`${expectedPrefix}open `)),
+  );
+  if (!proofOpens.length) return [];
+  commands.forEach((entry) => {
+    const command = topLevelShellCommand(entry.command);
+    if (!command.startsWith(`${prefix[1]}${prefix[2]}-`)) return;
+    const match = command.slice(prefix[1].length).match(/^([\w.-]+) agent-device ([\s\S]+)$/);
+    if (!match || !new RegExp(`^${prefix[2].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-[a-z][a-z0-9-]*$`).test(match[1]))
+      return;
+    const group = groups.get(match[1]) ?? [];
+    group.push({ ...entry, command, body: match[2] });
+    groups.set(match[1], group);
+  });
+  const open = `open com.appandflow.trailhead --foreground --platform ${target.platform} ${target.platform === 'ios' ? '--udid' : '--serial'} ${target.device}`;
+  return [...groups.entries()].flatMap(([session, entries]) => {
+    if (
+      entries.length < 2 ||
+      entries[0].body !== open ||
+      entries[0].exitCode !== 0 ||
+      entries.at(-1).body !== 'close' ||
+      entries.at(-1).exitCode !== 0 ||
+      proofOpens.some((proof) => !commandCompletedBefore(entries.at(-1), proof)) ||
+      entries.slice(1).some((entry, index) => !commandCompletedBefore(entries[index], entry)) ||
+      entries.some((entry) => shellCommandSegments(entry.command).length !== 1 || /[$`]/.test(entry.command)) ||
+      entries.slice(1, -1).some((entry) => {
+        const args = literalShellArguments(entry.body);
+        return (
+          !args ||
+          !/^(?:click|press|fill|snapshot|wait|screenshot|back|scroll)$/.test(args[0]) ||
+          args.some((arg) => /^--(?:session|state-dir|udid|serial|platform|device)(?:=|$)/.test(arg))
+        );
+      })
+    )
+      return [];
+    return [{ session, commands: entries.map(({ id, command }) => ({ commandId: id, command })) }];
+  });
+}
+
+function failedUnscopedRead(entry) {
+  const source = topLevelShellCommand(entry.command).replace(/\s+2>&1(?=\s*(?:;|$))/g, '');
+  if (/[$`|&]/.test(source)) return false;
+  const segments = shellCommandSegments(source);
+  if (segments.length < 1 || segments.length > 2) return false;
+  const args = literalShellArguments(segments[0]);
+  if (args?.[0] !== 'agent-device') return false;
+  const readOnly =
+    (args[1] === 'screenshot' && args.length === 3 && args[2].startsWith('/tmp/')) ||
+    (args[1] === 'snapshot' && (args.length === 2 || (args.length === 3 && args[2] === '-i')));
+  if (!readOnly) return false;
+  if (segments[1] && literalShellArguments(segments[1])?.[0] !== 'echo') return false;
+  const output = String(entry.output ?? '');
+  return (
+    /^(?:Exit code 1\n)?Error \(SESSION_NOT_FOUND\): No active session\. Run open first\./.test(output) &&
+    !/^(?:Opened:|Session state:|Page:)/m.test(output)
+  );
+}
+
+export function agentDeviceIsolationInvalidReasons(commands, expectedPrefix, target) {
+  const segments = commands.flatMap((command) =>
+    failedUnscopedRead(command)
+      ? []
+      : shellCommandSegments(command.command).map((segment) => segment.replace(/^do\s+/, '')),
+  );
+  const auxiliary = new Set(
+    agentDeviceAuxiliarySessions(commands, expectedPrefix, target).flatMap((session) =>
+      session.commands.map((entry) => entry.command),
+    ),
+  );
+  const reasons = [];
+  const lookup =
+    /^(?:command\s+-[vV]|which|type|whence)\s+(?:[\w./-]+\s+)*agent-device(?:\s+[\w./-]+)*(?:\s+(?:\d*>|&>)\s*(?:&\d+|[\w./-]+))?$/;
+  const help = /^agent-device(?:\s+--(?:help|version)|\s+help(?:\s+[\w-]+)*)(?:\s+(?:\d*>|&>)\s*(?:&\d+|[\w./-]+))?$/;
+  const deviceCommands = segments.filter(
+    (command) => /(?:^|[\s(`])agent-device(?:\s|[)`]|$)/.test(command) && !lookup.test(command) && !help.test(command),
+  );
+  if (deviceCommands.some((command) => /(?:^|[\s(`])agent-device\s+daemon\s+stop(?:\s|[)`]|$)/.test(command))) {
+    reasons.push('agent-device-daemon-recovery-inside-timer');
+  }
+  if (deviceCommands.some((command) => !command.startsWith(expectedPrefix) && !auxiliary.has(command))) {
+    reasons.push('agent-device-run-session-not-applied');
+  }
+  return reasons;
+}
+
+export function stimCommandSegments(command, expected) {
+  const required = literalShellArguments(expected);
+  return shellCommandSegments(command).filter((segment) => {
+    if (segment === expected || segment.startsWith(`${expected} `)) return true;
+    const words = literalShellArguments(segment);
+    if (words?.[0] !== 'env' || !required?.length) return false;
+    let index = 1;
+    while (/^(?:STIM_TMPDIR|TMPDIR)=\//.test(words[index] ?? '')) index++;
+    return index > 1 && required.every((word, offset) => words[index + offset] === word);
+  });
+}
+
+export function commandWithReportedStatus(command) {
+  const source = topLevelShellCommand(command.command);
+  const report = /(?:;|\n)\s*echo "([A-Za-z_][A-Za-z0-9_]*)=\$\?"\s*$/.exec(source);
+  if (!report || shellCommandSegments(source).at(-1) !== `echo "${report[1]}=$?"`) return command;
+  const body = source.slice(0, report.index).trim();
+  const statuses = [...String(command.output ?? '').matchAll(new RegExp(`^${report[1]}=(\\d+)\\s*$`, 'gm'))];
+  const valid = command.exitCode === 0 && !/[&|]$/.test(body) && statuses.length === 1;
+  return { ...command, command: body, exitCode: valid ? Number(statuses[0][1]) : null };
+}
+
+function successfulCommand(commands, expected) {
+  return commands.some((command) => {
+    command = commandWithReportedStatus(command);
+    if (command.exitCode !== 0) return false;
+    const segments = shellCommandSegments(command.command);
+    const final = segments.at(-1);
+    return stimCommandSegments(final, expected).length === 1;
+  });
+}
+
+function successfulGuideFirstChain(commands) {
+  return commands.some((command) => {
+    command = commandWithReportedStatus(command);
+    if (command.exitCode !== 0) return false;
+    const source = topLevelShellCommand(command.command);
+    const segments = shellCommandSegments(source);
+    if (segments.length < 2 || segments[0] !== 'stim guide agent' || /[$`]/.test(source)) return false;
+    if (segments.some((segment) => !literalShellArguments(segment)?.length)) return false;
+    const pattern = segments.map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*&&\\s*');
+    return new RegExp(`^${pattern}$`).test(source);
+  });
+}
+
+function dependencyInstallCommand(command) {
+  return shellCommandSegments(command).some((segment) =>
+    /^(?:npm\s+(?:install|i|ci)|pnpm\s+(?:install|i)|yarn(?:\s+install)?|bun\s+install)(?:\s|$)/.test(segment),
+  );
+}
+
+export function commandCompletedBefore(first, second) {
+  if (first.parallelTimingAmbiguous || second.parallelTimingAmbiguous) return false;
+  if (Number.isInteger(first.endEventOffset) && Number.isInteger(second.startEventOffset)) {
+    return first.endEventOffset < second.startEventOffset;
+  }
+  const end = Date.parse(first.endedAt);
+  const start = Date.parse(second.startedAt);
+  return Number.isFinite(end) && Number.isFinite(start) && end <= start;
+}
+
+export function benchmarkSetupInvalidReasons(meta, commands) {
+  const reasons = [];
+  if (commands.some((command) => dependencyInstallCommand(command.command))) {
+    reasons.push('dependencies-installed-inside-timer');
+  }
+  if (meta.arm !== 'stim') return reasons;
+  if (!successfulCommand(commands, 'stim guide agent') && !successfulGuideFirstChain(commands)) {
+    reasons.push('stim-guide-agent-missing-or-failed');
+  }
+  const warmRuns = commands.filter((command) => stimCommandSegments(command.command, 'stim worktree warm').length > 0);
+  const successfulWarms = warmRuns.filter((warm) => successfulCommand([warm], 'stim worktree warm'));
+  if (!successfulWarms.length) {
+    reasons.push('stim-worktree-warm-missing-or-failed');
+  }
+  const dependentRuns = commands.filter(
+    (command) =>
+      ['stim start', 'stim ios', 'stim android'].some(
+        (prefix) => stimCommandSegments(command.command, prefix).length > 0,
+      ) || dependencyInstallCommand(command.command),
+  );
+  if (
+    successfulWarms.length &&
+    dependentRuns.some(
+      (command) =>
+        !successfulWarms.some((warm) => commandCompletedBefore(warm, command)) ||
+        warmRuns.some((warm) => !commandCompletedBefore(warm, command) && !commandCompletedBefore(command, warm)),
+    )
+  ) {
+    reasons.push('stim-worktree-warm-not-complete-before-use');
+  }
+  const platformCommand = `stim ${meta.platform ?? 'ios'}`;
+  const platformRuns = commands.filter((command) => stimCommandSegments(command.command, platformCommand).length > 0);
+  const builtRun = platformRuns.find(
+    (command) => command.exitCode === 0 && /fingerprint\s+[0-9a-f]{6}\.\.\s+miss\b/.test(command.output),
+  );
+  if (
+    builtRun &&
+    meta.platform === 'android' &&
+    !/cache\s+gradle build cache on\s+\(--build-cache/.test(builtRun.output)
+  ) {
+    reasons.push('stim-gradle-build-cache-missing');
+  }
+  return reasons;
+}
+
+export function benchmarkTiming(target, commands, screenReadySeconds, timedOut) {
+  const invalidReasons = timedOut ? ['benchmark-run-timeout'] : [];
+  const warnings = [];
+  const screenSeconds = Number.isFinite(screenReadySeconds) && screenReadySeconds >= 0 ? screenReadySeconds : null;
+  if (!target) {
+    return {
+      target: null,
+      screenReadySeconds: screenSeconds,
+      screenReadyTargetMet: null,
+      platformCommandSeconds: null,
+      platformCommandTargetMet: null,
+      timedOut: Boolean(timedOut),
+      invalidReasons,
+      warnings: ['benchmark-target-missing'],
+    };
+  }
+  const platformPrefix = `stim ${target.key.split('.').at(0)}`;
+  const platformCommands = commands.filter(
+    (command) => stimCommandSegments(command.command, platformPrefix).length > 0,
+  );
+  const platformDurations = platformCommands
+    .map((command) => command.elapsedSeconds)
+    .filter((seconds) => Number.isFinite(seconds) && seconds >= 0);
+  const timingIncomplete = platformDurations.length === 0 || platformDurations.length < platformCommands.length;
+  const platformCommandSeconds = platformDurations.length ? Math.max(...platformDurations) : null;
+  const screenReadyTargetMet = screenSeconds == null ? null : screenSeconds <= target.screenReadySeconds;
+  const platformCommandTargetMet =
+    target.platformCommandSeconds == null
+      ? null
+      : platformCommandSeconds != null && platformCommandSeconds > target.platformCommandSeconds
+        ? false
+        : timingIncomplete
+          ? null
+          : true;
+  if (screenReadyTargetMet === false) warnings.push('screen-ready-target-exceeded');
+  if (platformCommandTargetMet === false) warnings.push('platform-command-target-exceeded');
+  if (target.platformCommandSeconds != null && timingIncomplete) warnings.push('platform-command-timing-unavailable');
+  return {
+    target,
+    screenReadySeconds: screenSeconds,
+    screenReadyTargetMet,
+    platformCommandSeconds,
+    platformCommandTargetMet,
+    timedOut: Boolean(timedOut),
+    invalidReasons,
+    warnings,
+  };
+}
+
+export function benchmarkMeasurementWarnings(record) {
+  return [
+    ...new Set([
+      ...(record.measurementWarnings ?? []),
+      ...(record.timing?.warnings ?? []),
+      ...(record.ccache?.warnings ?? []),
+      ...(record.variant === 'launch-crash' && record.runner !== 'claude' && !record.diagnosisUsage
+        ? ['launch-crash-diagnosis-usage-missing']
+        : []),
+      ...(record.diagnosis?.setupWarnings ?? []).map((warning) => `launch-crash-setup-command: ${warning.commandId}`),
+    ]),
+  ];
+}
+
+export function stimShellProvenanceInvalidReasons(meta) {
+  if (meta.arm !== 'stim') return [];
+  const probe = meta.stimShellProvenance;
+  if (!probe) return ['stim-shell-provenance-missing'];
+  const expected = meta.expectedStimShellProvenance;
+  if (!expected) return ['stim-shell-provenance-expectation-missing'];
+  return probe.resolvedPath === expected.resolvedPath &&
+    probe.version === expected.version &&
+    probe.executableSha256 === expected.executableSha256 &&
+    probe.cliSha256 === expected.cliSha256
+    ? []
+    : ['stim-shell-provenance-mismatch'];
+}
+
+export function ccacheMeasurements(output) {
+  const structured = structuredCcaches(output)
+    .filter(
+      ({ status, hits, misses }) =>
+        status === 'reported' && Number.isSafeInteger(hits) && Number.isSafeInteger(misses) && hits >= 0 && misses >= 0,
+    )
+    .map(({ hits, misses }) => ({
+      hits,
+      misses,
+      hitRatePercent: hits + misses > 0 ? (100 * hits) / (hits + misses) : null,
+    }));
+  const human = [
+    ...String(output ?? '').matchAll(/compilation cache\s+(\d+) hits\s*\/\s*(\d+) misses\s*\([\d.]+%\)/g),
+  ].map(([, hits, misses]) => {
+    hits = Number(hits);
+    misses = Number(misses);
+    return { hits, misses, hitRatePercent: hits + misses > 0 ? (100 * hits) / (hits + misses) : null };
+  });
+  return [...structured, ...human];
+}
+
+function structuredCcaches(output) {
+  return [...String(output ?? '').matchAll(/"ccache"\s*:\s*(\{[^{}]*\})/g)].flatMap((match) => {
+    try {
+      return [JSON.parse(match[1])];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function artifactCacheHit(entry) {
+  return (
+    (entry.exitCode === 0 ||
+      (entry.exitCode === 1 &&
+        /"code"\s*:\s*"STIM_LAUNCH_FAILED"|^\s*error\s+STIM_LAUNCH_FAILED:/m.test(entry.output))) &&
+    (structuredCcaches(entry.output).some((cache) => cache.status === 'not-run') ||
+      /cache\s+hit\b|fingerprint\s+[0-9a-f]+\.\.\s+hit\b|compilation cache\s+not run; artifact cache supplied the app/.test(
+        entry.output,
+      ))
+  );
+}
+
+const preBuildRefusalCodes = ['STIM_NO_METRO', 'STIM_SUPERVISOR_EXITED'];
+
+function preBuildRefusal(entry) {
+  return (
+    entry.exitCode === 1 &&
+    !/build\s+compiling|compilation cache|"ccache"\s*:/.test(entry.output) &&
+    preBuildRefusalCodes.some((code) =>
+      new RegExp(`"code"\\s*:\\s*"${code}"|^\\s*error\\s+${code}:`, 'm').test(entry.output),
+    )
+  );
+}
+
+export function benchmarkCcache(meta, commands, statsLogMeasurement = null) {
+  const minimum = meta.timingTarget?.ccacheMinHitRatePercent ?? null;
+  const result = {
+    minimumHitRatePercent: minimum,
+    status: 'not-applicable',
+    builds: [],
+    invalidReasons: [],
+    warnings: [],
+  };
+  if (meta.arm !== 'stim' || meta.platform !== 'android') return result;
+  if (meta.variant === 'native' && minimum == null) result.warnings.push('ccache-target-missing');
+  const attemptedBuilds = commands.filter(
+    (entry) => stimCommandSegments(entry.command, 'stim android').length > 0 && !preBuildRefusal(entry),
+  );
+  for (const entry of attemptedBuilds) {
+    const measurements = ccacheMeasurements(entry.output);
+    if (!measurements.length && statsLogMeasurement?.commandId === entry.id) measurements.push(statsLogMeasurement);
+    result.builds.push(...measurements.map((measurement) => ({ commandId: entry.id ?? null, ...measurement })));
+    if (
+      /compilation cache\s+unavailable/.test(entry.output) ||
+      structuredCcaches(entry.output).some((cache) => cache.status !== 'reported' && cache.status !== 'not-run')
+    ) {
+      result.warnings.push('ccache-evidence-missing');
+    }
+    if (
+      measurements.length === 0 &&
+      (!artifactCacheHit(entry) || /build\s+compiling|compilation cache\s+unavailable/.test(entry.output))
+    ) {
+      result.warnings.push('ccache-evidence-missing');
+    }
+  }
+  for (const measurement of result.builds) {
+    if (measurement.hitRatePercent == null) result.warnings.push('ccache-evidence-missing');
+    else if (minimum != null && measurement.hitRatePercent < minimum)
+      result.warnings.push('ccache-hit-rate-below-target');
+  }
+  if (
+    commands.some(
+      (entry) =>
+        stimCommandSegments(entry.command, 'stim doctor').length > 0 &&
+        /configured CMake cache|CMake launcher state could not be inspected/.test(entry.output),
+    )
+  ) {
+    result.warnings.push('stale-cmake-launcher-state');
+  }
+  result.warnings = [...new Set(result.warnings)];
+  if (!attemptedBuilds.length) result.warnings.push('ccache-evidence-missing');
+  result.warnings = [...new Set(result.warnings)];
+  result.status = result.warnings.length ? 'investigate' : result.builds.length ? 'measured' : 'artifact-hit';
+  return result;
+}
+
+export function assertAndroidDoctorClean(report) {
+  if (report?.platform !== 'android' || !Array.isArray(report.findings))
+    throw new Error('invalid Android doctor report');
+  const failures = report.findings.filter((finding) => finding.level === 'cost');
+  if (failures.length)
+    throw new Error(`Android fixture is not ready: ${failures.map((finding) => finding.title).join('; ')}`);
+  return { checkedAt: new Date().toISOString(), platform: report.platform, findings: report.findings };
+}
+
+export function runnerToolOutput(event) {
+  if (event?.type === 'item.completed' && event.item?.type === 'command_execution')
+    return event.item.aggregated_output ?? '';
+  if (event?.type === 'user' && Array.isArray(event.message?.content)) {
+    return event.message.content
+      .filter((part) => part.type === 'tool_result')
+      .map((part) =>
+        typeof part.content === 'string'
+          ? part.content
+          : (part.content ?? []).map((block) => block.text ?? '').join('\n'),
+      )
+      .join('\n');
+  }
+  return '';
+}

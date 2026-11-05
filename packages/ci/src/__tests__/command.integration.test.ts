@@ -1,0 +1,110 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { runCommand } from '../command.ts';
+
+let root: string;
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), 'stim-ci-command-'));
+});
+
+afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+test.skipIf(process.platform === 'win32')(
+  'cancellation kills a test process and its resistant descendant',
+  async () => {
+    const pidFile = join(root, 'descendant.pid');
+    const descendant = `process.on('SIGTERM', () => {}); const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(`${pidFile}.tmp`)}, String(process.pid)); fs.renameSync(${JSON.stringify(`${pidFile}.tmp`)}, ${JSON.stringify(pidFile)}); setInterval(() => {}, 1000);`;
+    const script = `process.on('SIGTERM', () => {}); require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], {stdio:'inherit'}); setInterval(() => {}, 1000);`;
+    const controller = new AbortController();
+    const running = runCommand({
+      command: [process.execPath, '-e', script],
+      cwd: root,
+      env: process.env,
+      artifactsDir: root,
+      signal: controller.signal,
+    });
+    try {
+      const deadline = Date.now() + 2000;
+      while (!existsSync(pidFile) && Date.now() < deadline) await delay(10);
+      expect(existsSync(pidFile)).toBe(true);
+      const pid = Number(readFileSync(pidFile, 'utf8'));
+      controller.abort();
+      const result = await running;
+      expect(result.signal).toBe('SIGKILL');
+      expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
+    } finally {
+      controller.abort();
+      await running;
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'reports failure when process group disappearance cannot be verified',
+  async () => {
+    const originalKill = process.kill;
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid < 0 && signal === 0) throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+      return originalKill(pid, signal);
+    });
+    try {
+      const result = await runCommand({
+        command: [process.execPath, '-e', 'process.exit(0)'],
+        cwd: root,
+        env: process.env,
+        artifactsDir: root,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.error).toContain('EPERM');
+    } finally {
+      kill.mockRestore();
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')('reaps a background child when the test leader exits', async () => {
+  const script = `require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio:'inherit'}); process.exit(0);`;
+  const result = await runCommand({
+    command: [process.execPath, '-e', script],
+    cwd: root,
+    env: process.env,
+    artifactsDir: root,
+    signal: AbortSignal.timeout(3000),
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.durationMs).toBeLessThan(2500);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'waits for a resistant background child with closed output streams before reporting completion',
+  async () => {
+    const pidFile = join(root, 'descendant.pid');
+    const descendant = `process.on('SIGTERM', () => {}); const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(`${pidFile}.tmp`)}, String(process.pid)); fs.renameSync(${JSON.stringify(`${pidFile}.tmp`)}, ${JSON.stringify(pidFile)}); setInterval(() => {}, 1000);`;
+    const script = `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], {stdio:'ignore'}); setInterval(() => { if (require('node:fs').existsSync(${JSON.stringify(pidFile)})) process.exit(0); }, 10);`;
+    try {
+      const result = await runCommand({
+        command: [process.execPath, '-e', script],
+        cwd: root,
+        env: process.env,
+        artifactsDir: root,
+        signal: AbortSignal.timeout(3000),
+      });
+      const pid = Number(readFileSync(pidFile, 'utf8'));
+      expect(result.exitCode).toBe(0);
+      expect(result.error).toBeUndefined();
+      expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
+    } finally {
+      const pid = existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8')) : NaN;
+      if (Number.isInteger(pid) && pid > 1) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch (caught) {
+          expect(caught).toMatchObject({ code: 'ESRCH' });
+        }
+      }
+    }
+  },
+);

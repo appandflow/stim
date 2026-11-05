@@ -1,0 +1,52 @@
+name: Set up Stim
+description: pnpm and Node from the lockfile, the workspace install, and the tsdown build every native lane drives.
+inputs:
+  node:
+    description: Node major to run on
+    default: '22'
+  install:
+    description: Run pnpm install --frozen-lockfile
+    default: 'true'
+  build:
+    description: Run pnpm run build after the install
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    # No pnpm store cache: a cold install from the registry takes the same
+    # time as one from a restored store on every runner here, and the store
+    # entries were most of the repository's 10 GB cache budget (#904).
+    # pnpm/setup@v2 fetches https://nodejs.org/download/release/index.json once, with no retry.
+    - name: Set up pnpm and Node ${{ inputs.node }}
+      id: setup-pnpm
+      continue-on-error: true
+      uses: pnpm/setup@v2
+      with:
+        runtime: node@${{ inputs.node }}
+        cache: false
+        install: false
+
+    - name: Wait before retrying the pnpm and Node setup
+      if: steps.setup-pnpm.outcome == 'failure'
+      shell: bash
+      run: sleep 20
+
+    - name: Retry setting up pnpm and Node ${{ inputs.node }}
+      if: steps.setup-pnpm.outcome == 'failure'
+      uses: pnpm/setup@v2
+      with:
+        runtime: node@${{ inputs.node }}
+        cache: false
+        install: false
+
+    - name: Install (workspace root)
+      if: inputs.install == 'true'
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    # The cache packages' declaration files are build output, so anything that
+    # typechecks or runs dist/cli.mjs needs this first.
+    - name: Build (tsdown, all packages)
+      if: inputs.build == 'true'
+      shell: bash
+      run: pnpm run build

@@ -1,0 +1,58 @@
+diff --git a/android/build.gradle b/android/build.gradle
+index 2d3e987e1a195cdbe643663ae4aa43ea245cecb7..b51fcb3a480e993384aac67f0789c8a9f4285dc0 100644
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -102,6 +102,13 @@ android {
+   buildFeatures {
+     buildConfig true
+     prefab true
++    prefabPublishing true
++  }
++
++  prefab {
++    NitroFetchWebsockets {
++      headers "${project.buildDir}/headers/nitrofetchwebsockets/"
++    }
+   }
+ 
+   buildTypes {
+@@ -147,3 +154,12 @@ dependencies {
+   implementation project(":react-native-nitro-modules")
+ }
+ 
++
++tasks.register('prepareHeaders', Copy) {
++  from fileTree('../nitrogen/generated/shared/c++').filter { it.isFile() }
++  include "*.hpp"
++  into "${project.buildDir}/headers/nitrofetchwebsockets/"
++  includeEmptyDirs = false
++}
++
++preBuild.dependsOn(prepareHeaders)
+diff --git a/android/src/main/cpp/WebSocketConnection.hpp b/android/src/main/cpp/WebSocketConnection.hpp
+index 82fb040c1bffc1f2b9c82ab21cee7015767926f2..8134d7b2929c6d89e03af9f05ef5668c4c78cd18 100644
+--- a/android/src/main/cpp/WebSocketConnection.hpp
++++ b/android/src/main/cpp/WebSocketConnection.hpp
+@@ -80,7 +80,7 @@ private:
+   std::atomic<bool> _isRedirecting{false};
+   std::atomic<int>  _redirectCount{0};
+   static constexpr int kMaxRedirects = 5;
+-  static constexpr size_t kMaxMessageSize = 16 * 1024 * 1024; // 16 MB
++  static constexpr size_t kMaxMessageSize = 16 * 1024 * 1024 + 17; // 16 MiB plus Stim's Noise type byte and tag
+ 
+   struct BufferedMessage { std::vector<uint8_t> data; bool isBinary; };
+   std::deque<BufferedMessage> _msgBuffer;
+diff --git a/ios/NWWebSocketConnection.mm b/ios/NWWebSocketConnection.mm
+index 03d63aa10ceba5459690fa16acd292572e453694..bd94a1ba119212bf11003984817155f85f16c0fc 100644
+--- a/ios/NWWebSocketConnection.mm
++++ b/ios/NWWebSocketConnection.mm
+@@ -162,6 +162,9 @@ - (void)URLSession:(NSURLSession *)session
+                                             delegateQueue:delegateQueue];
+ 
+   _impl->task = [_impl->session webSocketTaskWithRequest:request];
++  // NSURLSessionWebSocketTask closes with 1009 on messages over 1 MiB by default.
++  // Stim sends up to 16 MiB of plaintext, plus its type byte and 16-byte Noise tag.
++  _impl->task.maximumMessageSize = 16 * 1024 * 1024 + 17;
+ 
+   auto weakSelf =
+     std::weak_ptr<WebSocketConnectionBase>(shared_from_this());

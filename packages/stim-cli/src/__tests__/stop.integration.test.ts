@@ -1,0 +1,2068 @@
+import assert from 'node:assert';
+import { spawn } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
+import { tmpdir } from 'os';
+import { dirname, join } from 'path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { Command } from 'commander';
+import { clockTime } from '../command-output.ts';
+import { saveConfig, getProject } from '../workspace/config.ts';
+import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile } from '../workspace/paths.ts';
+import stopCommand, {
+  clearCollectorState,
+  clearSupervisorState,
+  readCollectorState,
+  readSupervisorState,
+  resolveCollectorTargets,
+  resolveSupervisorTarget,
+  runIdleStop,
+  runStop,
+} from '../commands/stop.ts';
+import { makeConfig, makeError, makeExecutor, makeMetroResolution } from './_factories.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
+import { endRecordedSession } from '../engine/device-remote.ts';
+import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+import { captureProcessToken } from '../process-identity.ts';
+import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { recordDeferredShutdown } from '../devices/deferred-shutdown.ts';
+import { readDeferredShutdowns } from '@stim-cli/core/state';
+import { teardownOwnedAvd } from '../devices/teardown.ts';
+import { recordPhoneReverse } from '../devices/phone-reverses.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { tryAcquireClaim } from '../ownership-claim.ts';
+import { serveShareList } from './_share-list-server.ts';
+
+test('a live legacy supervisor is retained without signalling or releasing its port', async () => {
+  const { calls, opts } = seams({
+    state: { pid: process.pid, port: 8083 },
+    isAlive: () => true,
+    inspectIdentity: undefined,
+  });
+  const result = await runStop(opts);
+  expect(result.ok).toBe(false);
+  expect(result.outcomes.supervisor.status).toBe('unverified');
+  expect(calls.signals).toEqual([]);
+  expect(calls.freed).toEqual([]);
+  expect(calls.stateCleared).toBe(0);
+});
+
+test('an authentic token for another PID cannot authorize a supervisor signal', async () => {
+  const token = captureProcessToken(process.pid);
+  expect(token).toBeTruthy();
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8083, processToken: token },
+    isAlive: () => true,
+    inspectIdentity: undefined,
+  });
+  const result = await runStop(opts);
+  expect(result.outcomes.supervisor.status).toBe('unverified');
+  expect(calls.signals).toEqual([]);
+});
+
+test('cleanup preserves a replacement supervisor even when the OS reused its PID', () => {
+  const old = { pid: 4242, processToken: 'old' };
+  const replacement = { pid: 4242, processToken: 'new' };
+  writeFileSync(supervisorPidFile(tmpRoot), '4242');
+  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: replacement, launches: { ios: {} } }));
+  expect(clearSupervisorState(tmpRoot, old)).toBe(false);
+  expect(readSupervisorState(tmpRoot)).toEqual(replacement);
+  expect(readFileSync(supervisorPidFile(tmpRoot), 'utf8')).toBe('4242');
+  expect(JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf8')).launches).toEqual({ ios: {} });
+});
+
+test('collector signal failure or unconfirmed exit retains the ownership record', async () => {
+  for (const signalFailure of [true, false]) {
+    const { calls, opts } = seams({
+      collectors: { ios: { pid: 111, processToken: 'fixture' } },
+      isAlive: () => true,
+      signalCollector: () => {
+        if (signalFailure) throw makeError('denied', { code: 'EPERM' });
+      },
+      waitForDeath: async () => false,
+    });
+    const result = await runStop(opts);
+    expect(result.ok).toBe(false);
+    expect(result.outcomes.collectors.entries[0]?.status).toBe('failed');
+    expect(calls.collectorsCleared).toBe(0);
+    expect(calls.freed).toEqual([]);
+  }
+});
+
+test('disagreeing pids are stale only once both recorded processes are proven gone', () => {
+  const resolve = (identities: Record<number, 'same' | 'different' | 'gone' | 'unknown'>) =>
+    resolveSupervisorTarget({
+      inspectIdentity: (record) => identities[Number(record?.pid)] ?? 'unknown',
+      state: { pid: 4242, port: 8083, processToken: 'state' },
+      record: { pid: 777, port: 8083, processToken: 'record' },
+      reservedPort: 8083,
+      isAlive: () => false,
+    }).status;
+  expect(resolve({ 4242: 'gone', 777: 'different' })).toBe('stale');
+  expect(resolve({ 4242: 'gone', 777: 'same' })).toBe('unverified');
+  expect(resolve({ 4242: 'unknown', 777: 'gone' })).toBe('unverified');
+});
+
+type TeardownCall =
+  | { udid: string; opts: { del?: boolean; label?: string } }
+  | { avd: string; opts: { del?: boolean } };
+
+function seams(over = {}) {
+  const calls: {
+    signals: (number | null | undefined)[];
+    teardowns: TeardownCall[];
+    freed: { root: string; port: number }[];
+    cleared: number;
+    stateCleared: number;
+    killedMetro: (number | null | undefined)[];
+    collectorSignals: number[];
+    collectorsCleared: number;
+  } = {
+    signals: [],
+    teardowns: [],
+    freed: [],
+    cleared: 0,
+    stateCleared: 0,
+    killedMetro: [],
+    collectorSignals: [],
+    collectorsCleared: 0,
+  };
+  const base = {
+    root: '/proj/a',
+    project: { metroPort: 8083, platforms: {} },
+    state: null,
+    collectors: {},
+    signalCollector: (pid: number) => {
+      calls.collectorSignals.push(pid);
+    },
+    verifyCollector: () => ({ status: 'ours' as const }),
+    clearCollectors: () => {
+      calls.collectorsCleared += 1;
+    },
+    isAlive: () => false,
+    killGroup: (pid: number | null | undefined) => {
+      calls.signals.push(pid);
+      return true;
+    },
+    waitForDeath: async () => true,
+    resolveMetro: async () => makeMetroResolution.missing(),
+    killMetro: (leader: number | null | undefined) => {
+      calls.killedMetro.push(leader);
+      return true;
+    },
+    inspectIdentity: () => 'same' as const,
+    teardownIos: async (udid: string, opts: { del?: boolean; label?: string }) => {
+      calls.teardowns.push({ udid, opts });
+      return { status: 'torn-down', label: 'stim-a' };
+    },
+    teardownAvd: async (name: string, opts: { del?: boolean }) => {
+      calls.teardowns.push({ avd: name, opts });
+      return { status: 'torn-down', label: name };
+    },
+    freePort: (root: string, port: number) => {
+      calls.freed.push({ root, port });
+    },
+    clearRegistration: async () => {
+      calls.cleared += 1;
+    },
+    clearState: () => {
+      calls.stateCleared += 1;
+    },
+    report: () => {},
+  };
+  return { calls, opts: { ...base, ...over } };
+}
+
+test('nothing running anywhere is a clean success', async () => {
+  const { calls, opts } = seams();
+  const r = await runStop(opts);
+  expect(r.ok).toBe(true);
+  expect(r.outcomes.supervisor.status).toBe('none');
+  expect(r.outcomes.metro.status).toBe('missing');
+  expect(r.outcomes.device.ios).toBe(null);
+  expect(r.outcomes.port.status).toBe('freed');
+  expect(r.outcomes.collectors.status).toBe('none');
+  expect(calls.signals).toEqual([]);
+  expect(calls.collectorSignals).toEqual([]);
+});
+
+test.each([true, false])(
+  'stim stop names itself before it signals, and withdraws that when the signal fails (signalled: %s)',
+  async (signalled) => {
+    const root = tmpRoot;
+    const { opts } = seams({
+      root,
+      state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'expo-child' },
+      isAlive: (pid: number) => pid === 4242,
+      killGroup: () => {
+        expect(readWorkspaceState(root)?.devServerStopRequest).toMatchObject({
+          processToken: 'upid1.supervisor',
+          by: 'stim stop',
+          pid: process.pid,
+        });
+        return signalled;
+      },
+    });
+    const lock = join(dirname(workspaceStateFile(root)), 'state.lock');
+    mkdirSync(lock);
+    const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+    try {
+      await runStop(opts);
+      expect(Boolean(readWorkspaceState(root)?.devServerStopRequest)).toBe(signalled);
+    } finally {
+      clearTimeout(release);
+      rmSync(lock, { recursive: true, force: true });
+    }
+  },
+);
+
+test('a stop made for another requester records that requester, as status shows it', async () => {
+  const root = tmpRoot;
+  let request: unknown;
+  const { opts } = seams({
+    root,
+    state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'expo-child' },
+    isAlive: (pid: number) => pid === 4242,
+    requester: { by: 'automatic maintenance (no real activity for 7h)' },
+    killGroup: () => {
+      request = readWorkspaceState(root)?.devServerStopRequest;
+      return false;
+    },
+  });
+  await runStop(opts);
+  expect(request).toMatchObject({ by: 'automatic maintenance (no real activity for 7h)' });
+});
+
+test('unavailable stop-request storage does not prevent signalling a verified supervisor', async () => {
+  const root = tmpRoot;
+  const area = dirname(workspaceStateFile(root));
+  rmSync(area, { recursive: true });
+  writeFileSync(area, 'unavailable workspace storage');
+  const { calls, opts } = seams({
+    root,
+    state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'expo-child' },
+    isAlive: (pid: number) => pid === 4242,
+  });
+  await expect(runStop(opts)).rejects.toMatchObject({ code: 'EEXIST' });
+  expect(calls.signals).toEqual([4242]);
+});
+
+test('a live supervisor is SIGTERMed as a group and its Metro is left to it', async () => {
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8083, mode: 'expo-child' },
+    isAlive: (pid: number) => pid === 4242,
+    resolveMetro: async () => {
+      throw new Error('the metro fallback must not run for a live supervisor');
+    },
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(true);
+  expect(r.outcomes.supervisor.status).toBe('stopped');
+  expect(r.outcomes.supervisor.pid).toBe(4242);
+  expect(calls.signals).toEqual([4242]);
+  expect(r.outcomes.metro.status).toBe('skipped');
+  expect(calls.cleared).toBe(1);
+  expect(calls.stateCleared).toBe(1);
+});
+
+test('the headline stop lines land in the label column, not as colon sentences', async () => {
+  const { opts } = seams({
+    state: { pid: 4242, port: 8083, mode: 'expo-child' },
+    collectors: { ios: { pid: 111 } },
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
+    isAlive: () => true,
+  });
+  const reported: string[] = [];
+  const r = await runStop({ ...opts, report: (line: string) => reported.push(line) });
+  expect(r.ok).toBe(true);
+  const text = reported.join('\n');
+  expect(text).toMatch(/^  stop {8}supervisor pid 4242$/m);
+  expect(text).toMatch(/^  stop {8}collector ios pid 111$/m);
+  expect(text).toMatch(/^  device {6}shut down stim-a$/m);
+  expect(text).toMatch(/^  port {8}released 8083$/m);
+  expect(text).not.toMatch(/^(supervisor|collectors|metro|ios|android|port|leases):/m);
+});
+
+test('an external Metro is reported in the same column and left alone', async () => {
+  const { opts } = seams({
+    project: { metroPort: 8083, platforms: {} },
+    resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 90, leader: 88, cwd: '/proj/a' } }),
+  });
+  const reported: string[] = [];
+  const r = await runStop({ ...opts, report: (line: string) => reported.push(line) });
+  expect(r.outcomes.metro.status).toBe('not-managed');
+  expect(reported.join('\n')).toMatch(/^  metro {7}leaving port 8083 alone:/m);
+});
+
+test('a supervisor that outlives the wait is reported, never SIGKILLed', async () => {
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8083 },
+    isAlive: (pid: number) => pid === 4242,
+    waitForDeath: async () => false,
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(false);
+  expect(r.outcomes.supervisor.status).toBe('timeout');
+  expect(calls.signals).toEqual([4242]);
+  expect(r.outcomes.port.status).toBe('kept');
+  expect(calls.cleared).toBe(0);
+  expect(calls.stateCleared).toBe(0);
+});
+
+test('a stale supervisor record is a success with a note, and the rest still runs', async () => {
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8083 },
+    isAlive: () => false,
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(true);
+  expect(r.outcomes.supervisor.status).toBe('already-stopped');
+  const ios = r.outcomes.device.ios;
+  assert(ios);
+  expect(ios.status).toBe('shut-down');
+  expect(r.outcomes.port.status).toBe('freed');
+  expect(calls.stateCleared).toBe(1);
+});
+
+test('an unverified supervisor record is refused without signalling anything', async () => {
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8099 },
+    isAlive: () => true,
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(false);
+  expect(r.outcomes.supervisor.status).toBe('unverified');
+  expect(calls.signals).toEqual([]);
+  expect(calls.freed.length).toBe(0);
+});
+
+test('a workspace Metro without a saved supervisor identity is left alone and keeps its reservation', async () => {
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8083 },
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
+    resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 90, leader: 90, cwd: '/proj/a' } }),
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(true);
+  expect(r.outcomes.metro.status).toBe('not-managed');
+  expect(r.outcomes.port.status).toBe('kept');
+  expect(calls.freed).toEqual([]);
+  expect(calls.stateCleared).toBe(1);
+  expect(r.outcomes.device.ios?.status).toBe('shut-down');
+  expect(calls.killedMetro).toEqual([]);
+});
+
+test('the dev server a dead supervisor left behind is stopped by its recorded identity', async () => {
+  const signalled: number[] = [];
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8083, serverPid: 4243, serverProcessToken: 'server-token' },
+    inspectIdentity: (record: { pid?: unknown }) => (record?.pid === 4243 ? 'same' : 'gone'),
+    signalServer: (pid: number) => {
+      signalled.push(pid);
+      return true;
+    },
+    resolveMetro: async () => {
+      throw new Error('a proven dev server is stopped without probing the port');
+    },
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(true);
+  expect(r.outcomes.supervisor.status).toBe('already-stopped');
+  expect(signalled).toEqual([4243]);
+  expect(r.outcomes.metro.status).toBe('stopped');
+  expect(r.outcomes.port.status).toBe('freed');
+  expect(calls.signals).toEqual([]);
+});
+
+test('a command-child server a dead supervisor left behind is stopped as its whole process group', async () => {
+  const signalled: [number, boolean][] = [];
+  const { opts } = seams({
+    state: { pid: 4242, port: 8083, mode: 'command-child', serverPid: 4243, serverProcessToken: 'server-token' },
+    inspectIdentity: (record: { pid?: unknown }) => (record?.pid === 4243 ? 'same' : 'gone'),
+    signalServer: (pid: number, group: boolean) => {
+      signalled.push([pid, group]);
+      return true;
+    },
+  });
+  const r = await runStop(opts);
+  expect(r.outcomes.metro.status).toBe('stopped');
+  expect(signalled).toEqual([[4243, true]]);
+});
+
+test.each([
+  ['unknown', 'refused', []],
+  ['same', 'failed', [4243]],
+] as const)(
+  'a recorded dev server with %s identity that stays up keeps its record and the port',
+  async (identity, metroStatus, signalled) => {
+    const signals: number[] = [];
+    const { calls, opts } = seams({
+      state: { pid: 4242, port: 8083, serverPid: 4243, serverProcessToken: 'server-token' },
+      inspectIdentity: (record: { pid?: unknown }) => (record?.pid === 4243 ? identity : 'gone'),
+      signalServer: (pid: number) => {
+        signals.push(pid);
+        return true;
+      },
+      waitForDeath: async () => false,
+      metroTunnel: { kind: 'managed', provider: 'cloudflared', pid: 7, processToken: 'tunnel' },
+      stopMetroTunnel: async () => ({ status: 'failed', reason: 'tunnel refused' }),
+      resolveMetro: async () => makeMetroResolution.identified({ metro: { pid: 4243, leader: 4243, cwd: '/proj/a' } }),
+    });
+    const r = await runStop(opts);
+    expect(signals).toEqual(signalled);
+    expect(r.ok).toBe(false);
+    expect(r.outcomes.metro.status).toBe(metroStatus);
+    expect(r.outcomes.port.status).toBe('kept');
+    expect(calls.freed).toEqual([]);
+    expect(calls.stateCleared).toBe(0);
+    expect(calls.cleared).toBe(0);
+  },
+);
+
+test('a recorded dev server that exited before its signal counts as stopped', async () => {
+  let checks = 0;
+  const { opts } = seams({
+    state: { pid: 4242, port: 8083, serverPid: 4243, serverProcessToken: 'server-token' },
+    inspectIdentity: (record: { pid?: unknown }) => (record?.pid === 4243 && checks++ === 0 ? 'same' : 'gone'),
+    signalServer: () => {
+      throw makeError('no such process', { code: 'ESRCH' });
+    },
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(true);
+  expect(r.outcomes.metro.status).toBe('stopped');
+  expect(r.outcomes.port.status).toBe('freed');
+});
+
+test('an unproven listener is named and left alone', async () => {
+  const { opts, calls } = seams({
+    resolveMetro: async () => makeMetroResolution.notOurs({ notOurs: 'pid 99 runs from /elsewhere' }),
+  });
+  const result = await runStop(opts);
+  expect(result.ok).toBe(true);
+  expect(result.outcomes.metro.status).toBe('not-managed');
+  expect(result.outcomes.metro.reason).toMatch(/elsewhere/);
+  expect(calls.killedMetro).toEqual([]);
+});
+
+test('owned devices are shut down with del:false, never deleted', async () => {
+  const { calls, opts } = seams({
+    project: {
+      metroPort: 8083,
+      platforms: {
+        ios: { deviceUdid: 'U1', owned: true },
+        android: { avdName: 'stim-a', owned: true },
+      },
+    },
+  });
+  const r = await runStop(opts);
+  const ios = r.outcomes.device.ios;
+  const android = r.outcomes.device.android;
+  assert(ios);
+  assert(android);
+  expect(ios.status).toBe('shut-down');
+  expect(android.status).toBe('shut-down');
+  for (const c of calls.teardowns) expect(c.opts.del).toBe(false);
+});
+
+test('a device Stim does not own is left alone', async () => {
+  const { calls, opts } = seams({
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: false } } },
+  });
+  const r = await runStop(opts);
+  const ios = r.outcomes.device.ios;
+  assert(ios);
+  expect(ios.status).toBe('skipped');
+  expect(ios.kind).toBe('not-owned');
+  expect(calls.teardowns).toEqual([]);
+});
+
+test('an occupied sim is reported as skipped and does not fail the run', async () => {
+  const { opts } = seams({
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
+    teardownIos: async () => ({ status: 'skipped', kind: 'occupied', reason: 'in use by another process (occupied)' }),
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(true);
+  const ios = r.outcomes.device.ios;
+  assert(ios);
+  expect(ios.status).toBe('skipped');
+  expect(ios.kind).toBe('occupied');
+});
+
+test('a failed device teardown fails the run and says why, with a remedy', async () => {
+  const { opts } = seams({
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
+    teardownIos: async () => ({
+      status: 'failed',
+      label: 'U1',
+      reason: 'simulator U1 is still Booted after 2 shutdown attempts and 30s of waiting',
+    }),
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(false);
+  const ios = r.outcomes.device.ios;
+  assert(ios);
+  expect(ios.status).toBe('failed');
+  expect(ios.reason).toMatch(/still Booted/);
+  expect(ios.remedy).toMatch(/xcrun simctl shutdown U1/);
+  expect(ios.remedy).toMatch(/stim gc --delete/);
+});
+
+test('a failed Android device teardown reports an adb-flavored remedy', async () => {
+  const { opts } = seams({
+    project: { metroPort: 8083, platforms: { android: { avdName: 'stim-app', owned: true } } },
+    teardownAvd: async () => ({
+      status: 'failed',
+      label: 'stim-app',
+      reason: 'Owned AVD stim-app did not finish shutting down within 60s.',
+    }),
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(false);
+  const android = r.outcomes.device.android;
+  assert(android);
+  expect(android.status).toBe('failed');
+  expect(android.remedy).toMatch(/adb devices/);
+  expect(android.remedy).toMatch(/stim gc --delete/);
+});
+
+describe('devices shut down concurrently', () => {
+  const bothDevices = {
+    metroPort: 8083,
+    platforms: { ios: { deviceUdid: 'U1', owned: true }, android: { avdName: 'stim-app', owned: true } },
+  };
+
+  test('the iOS teardown runs while a slow Android teardown is still pending', async () => {
+    const events: string[] = [];
+    let androidStarted!: () => void;
+    const started = new Promise<void>((resolve) => (androidStarted = resolve));
+    let iosDone!: () => void;
+    const iosFinished = new Promise<void>((resolve) => (iosDone = resolve));
+    const { opts } = seams({
+      project: bothDevices,
+      teardownIos: async () => {
+        events.push('ios:start');
+        await Promise.race([started, delay(300)]);
+        events.push('ios:end');
+        iosDone();
+        return { status: 'torn-down', label: 'sim' };
+      },
+      teardownAvd: async () => {
+        events.push('android:start');
+        androidStarted();
+        await Promise.race([iosFinished, delay(300)]);
+        events.push('android:end');
+        return { status: 'torn-down', label: 'stim-app' };
+      },
+    });
+    const r = await runStop(opts);
+    expect(events).toEqual(['ios:start', 'android:start', 'ios:end', 'android:end']);
+    expect(r.ok).toBe(true);
+  });
+
+  test('results are reported in slot order whichever device finishes first', async () => {
+    const lines: string[] = [];
+    const { opts } = seams({
+      project: bothDevices,
+      teardownIos: async () => {
+        await delay(30);
+        return { status: 'torn-down', label: 'sim' };
+      },
+      teardownAvd: async () => ({ status: 'torn-down', label: 'stim-app' }),
+      report: (line: string) => lines.push(line),
+    });
+    const r = await runStop(opts);
+    expect(r.ok).toBe(true);
+    const shutDown = lines.filter((line) => line.includes('shut down'));
+    expect(shutDown).toHaveLength(2);
+    expect(shutDown[0]).toContain('sim');
+    expect(shutDown[1]).toContain('stim-app');
+  });
+
+  test('a failed device is reported next to the one that shut down', async () => {
+    const { opts } = seams({
+      project: bothDevices,
+      teardownIos: async () => ({ status: 'failed', label: 'sim', reason: 'simulator U1 is still Booted' }),
+      teardownAvd: async () => {
+        await delay(30);
+        return { status: 'torn-down', label: 'stim-app' };
+      },
+    });
+    const r = await runStop(opts);
+    expect(r.ok).toBe(false);
+    expect(r.outcomes.device.ios?.status).toBe('failed');
+    expect(r.outcomes.device.android?.status).toBe('shut-down');
+    expect(r.summary).toMatch(/ios sim failed.*android stim-app shut down/);
+  });
+
+  test('a teardown that throws does not cut the other short', async () => {
+    const events: string[] = [];
+    const lines: string[] = [];
+    const { opts } = seams({
+      report: (line: string) => lines.push(line),
+      project: bothDevices,
+      teardownIos: async () => {
+        throw new Error('claims retained');
+      },
+      teardownAvd: async () => {
+        await delay(30);
+        events.push('android:end');
+        return { status: 'torn-down', label: 'stim-app' };
+      },
+    });
+    await expect(runStop(opts)).rejects.toThrow('claims retained');
+    expect(events).toEqual(['android:end']);
+    expect(lines.some((line) => line.includes('shut down stim-app'))).toBe(true);
+  });
+
+  const retained = (name: string, message: string) => {
+    const claim = tryAcquireClaim({ root: join(tmpHome, `${name}.claims`), mode: 'exclusive', label: name }).acquired;
+    if (!claim) throw new Error('The private fixture claim was not acquired');
+    return new WorkspaceProcessCleanupError([claim], message, 'Verify the child.');
+  };
+
+  test('two rejected teardowns surface one error naming both retained claims', async () => {
+    const { opts } = seams({
+      project: bothDevices,
+      teardownIos: async () => {
+        throw retained('ios', 'ios teardown unresolved.');
+      },
+      teardownAvd: async () => {
+        await delay(10);
+        throw retained('android', 'android teardown unresolved.');
+      },
+    });
+    const error = await runStop(opts).then(
+      () => null,
+      (reason: unknown) => reason,
+    );
+    expect(error).toBeInstanceOf(WorkspaceProcessCleanupError);
+    if (!(error instanceof WorkspaceProcessCleanupError)) return;
+    expect(error.code).toBe('STIM_CLAIM_UNAVAILABLE');
+    expect(error.claims.map((claim) => claim.label)).toEqual(['ios', 'android']);
+    for (const claim of error.claims) {
+      expect(error.message).toContain(claim.path);
+      expect(error.remedy).toContain(claim.path);
+    }
+    expect(error.message).toContain('ios teardown unresolved.');
+    expect(error.message).toContain('android teardown unresolved.');
+  });
+
+  test('a cleanup error is surfaced ahead of a non-cleanup rejection from another device', async () => {
+    const { opts } = seams({
+      project: bothDevices,
+      teardownIos: async () => {
+        throw new Error('aborted');
+      },
+      teardownAvd: async () => {
+        throw retained('android', 'android teardown unresolved.');
+      },
+    });
+    await expect(runStop(opts)).rejects.toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      claims: [{ label: 'android' }],
+    });
+  });
+
+  test('one rejected teardown names its claim while the finished device is still reported', async () => {
+    const lines: string[] = [];
+    const { opts } = seams({
+      report: (line: string) => lines.push(line),
+      project: bothDevices,
+      teardownIos: async () => {
+        throw retained('ios', 'ios teardown unresolved.');
+      },
+      teardownAvd: async () => ({ status: 'torn-down', label: 'stim-app' }),
+    });
+    await expect(runStop(opts)).rejects.toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      claims: [{ label: 'ios' }],
+    });
+    expect(lines.filter((line) => line.includes('shut down stim-app'))).toHaveLength(1);
+  });
+});
+
+const reverseEvents: string[] = [];
+const REVERSES_REMOVED = [
+  '-s emulator-5556 reverse --list',
+  '-s emulator-5556 reverse --remove tcp:8083',
+  '-s emulator-5558 reverse --list',
+  '-s emulator-5558 reverse --remove tcp:8083',
+];
+
+test.each([
+  [
+    'a verified supervisor',
+    { state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083 }, isAlive: (pid: number) => pid === 4242 },
+    [...REVERSES_REMOVED, 'supervisor'],
+  ],
+  [
+    'an unverified supervisor',
+    { state: { pid: 4242, processToken: 'upid1.supervisor', port: 9999 }, isAlive: (pid: number) => pid === 4242 },
+    [],
+  ],
+  [
+    'an unverifiable dev server left by the supervisor',
+    {
+      state: { pid: 4242, port: 8083, serverPid: 4243, serverProcessToken: 'server-token' },
+      inspectIdentity: (record: { pid?: unknown }) => (record?.pid === 4243 ? 'unknown' : 'gone'),
+    },
+    [],
+  ],
+  [
+    'a verified dev server left by the supervisor',
+    {
+      state: { pid: 4242, port: 8083, serverPid: 4243, serverProcessToken: 'server-token' },
+      inspectIdentity: (record: { pid?: unknown }) => (record?.pid === 4243 ? 'same' : 'gone'),
+      signalServer: () => {
+        reverseEvents.push('server');
+        return true;
+      },
+    },
+    [...REVERSES_REMOVED, 'server'],
+  ],
+  ['no dev server on the port', {}, REVERSES_REMOVED],
+])(
+  "stop removes owned emulators' Metro reverses only when it stops Metro or none listens: %s",
+  async (_case, over, expected) => {
+    const events = reverseEvents;
+    events.length = 0;
+    const { opts } = seams({
+      project: {
+        metroPort: 8083,
+        platforms: { android: { avdName: 'stim-app', owned: true, consolePort: 5556 } },
+        deviceSlots: {
+          mine: { android: { avdName: 'stim-app-mine', owned: true, consolePort: 5558 } },
+          theirs: { android: { avdName: 'Pixel_8', owned: false, consolePort: 5560 } },
+        },
+      },
+      killGroup: () => {
+        events.push('supervisor');
+        return true;
+      },
+      teardownAvd: async () => ({ status: 'skipped', reason: 'not under test' }),
+      ...over,
+    });
+    const consoles: Record<string, string> = { 'emulator-5556': 'stim-app', 'emulator-5558': 'stim-app-mine' };
+    setExecutor(
+      makeExecutor({
+        runFileQuietAsync: async (_file, args) => {
+          const serial = args[1] ?? '';
+          if (args.includes('emu')) return `${consoles[serial] ?? 'Pixel_8'}\nOK\n`;
+          events.push(args.join(' '));
+          return args.includes('--list') ? `host-21 tcp:8083 tcp:8083\n` : '';
+        },
+      }),
+    );
+    try {
+      await runStop(opts);
+    } finally {
+      resetExecutor();
+    }
+    expect(events).toEqual(expected);
+  },
+);
+
+describe('stop removes the adb reverses a --device run left on a physical phone', () => {
+  const listing =
+    'UsbFfs tcp:8083 tcp:8083\nUsbFfs tcp:8085 tcp:8085\nUsbFfs tcp:8081 tcp:8083\nUsbFfs tcp:9000 tcp:9000\n';
+  const PHONE_REVERSES_REMOVED = [
+    '-s RFCR7081Q9L reverse --list',
+    '-s RFCR7081Q9L reverse --remove tcp:8083',
+    '-s RFCR7081Q9L reverse --remove tcp:8085',
+    '-s RFCR7081Q9L reverse --remove tcp:8081',
+  ];
+
+  function recordAdb(events: string[]) {
+    setExecutor(
+      makeExecutor({
+        runFileQuietAsync: async (_file, args) => {
+          events.push(args.join(' '));
+          return args.includes('--list') ? listing : '';
+        },
+      }),
+    );
+  }
+
+  test.each([
+    [
+      'a verified supervisor',
+      { state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083 }, isAlive: (pid: number) => pid === 4242 },
+      [...PHONE_REVERSES_REMOVED, 'supervisor'],
+    ],
+    ['no dev server on the port', {}, PHONE_REVERSES_REMOVED],
+    ['no reserved port', { project: { platforms: {} } }, PHONE_REVERSES_REMOVED],
+    [
+      'an unverified supervisor',
+      { state: { pid: 4242, processToken: 'upid1.supervisor', port: 9999 }, isAlive: (pid: number) => pid === 4242 },
+      [],
+    ],
+  ])('before it stops Metro, and not while it refuses to: %s', async (_case, over, expected) => {
+    await recordPhoneReverse(tmpRoot, 'default', 'RFCR7081Q9L', 8085);
+    await recordPhoneReverse(tmpRoot, 'default', 'RFCR7081Q9L', 8083);
+    const events: string[] = [];
+    recordAdb(events);
+    const { opts } = seams({
+      root: tmpRoot,
+      killGroup: () => {
+        events.push('supervisor');
+        return true;
+      },
+      ...over,
+    });
+    await runStop(opts);
+    expect(events).toEqual(expected);
+    const recordKept = expected.length === 0;
+    expect(readWorkspaceState(tmpRoot)?.phoneReverses !== undefined).toBe(recordKept);
+  });
+
+  test('stop --slot removes only that slot phone, and keeps the others recorded', async () => {
+    await recordPhoneReverse(tmpRoot, 'default', 'DEFAULT-PHONE', 8083);
+    await recordPhoneReverse(tmpRoot, 'tablet', 'RFCR7081Q9L', 8083);
+    const events: string[] = [];
+    recordAdb(events);
+    const { opts } = seams({ root: tmpRoot });
+    await runStop({ ...opts, slot: 'tablet' });
+    expect(events).toEqual([
+      '-s RFCR7081Q9L reverse --list',
+      '-s RFCR7081Q9L reverse --remove tcp:8083',
+      '-s RFCR7081Q9L reverse --remove tcp:8081',
+    ]);
+    expect(readWorkspaceState(tmpRoot)?.phoneReverses).toEqual({ android: { serial: 'DEFAULT-PHONE', ports: [8083] } });
+  });
+
+  test("stop removes an owned emulator's reverses of reversed ports as well as Metro's", async () => {
+    await updateWorkspaceStateAsync(tmpRoot, (state) => ({ ...state, reversePorts: [8901] }));
+    const events: string[] = [];
+    setExecutor(
+      makeExecutor({
+        runFileQuietAsync: async (_file, args) => {
+          if (args.includes('emu')) return 'stim-app\nOK\n';
+          events.push(args.join(' '));
+          return args.includes('--list')
+            ? 'host-21 tcp:8083 tcp:8083\nhost-21 tcp:8901 tcp:8901\nhost-21 tcp:9 tcp:9\n'
+            : '';
+        },
+      }),
+    );
+    const { opts } = seams({
+      root: tmpRoot,
+      project: { metroPort: 8083, platforms: { android: { avdName: 'stim-app', owned: true, consolePort: 5556 } } },
+      teardownAvd: async () => ({ status: 'skipped', reason: 'not under test' }),
+    });
+    await runStop(opts);
+    expect(events).toEqual([
+      '-s emulator-5556 reverse --list',
+      '-s emulator-5556 reverse --remove tcp:8083',
+      '-s emulator-5556 reverse --remove tcp:8901',
+    ]);
+    expect(readWorkspaceState(tmpRoot)?.reversePorts).toEqual([8901]);
+  });
+
+  test('stop removes reversed ports from an owned emulator when no Metro port is reserved', async () => {
+    await updateWorkspaceStateAsync(tmpRoot, (state) => ({ ...state, reversePorts: [8901] }));
+    const events: string[] = [];
+    setExecutor(
+      makeExecutor({
+        runFileQuietAsync: async (_file, args) => {
+          if (args.includes('emu')) return 'stim-app\nOK\n';
+          events.push(args.join(' '));
+          return args.includes('--list') ? 'host-21 tcp:8901 tcp:8901\n' : '';
+        },
+      }),
+    );
+    const { opts } = seams({
+      root: tmpRoot,
+      project: { platforms: { android: { avdName: 'stim-app', owned: true, consolePort: 5556 } } },
+      teardownAvd: async () => ({ status: 'skipped', reason: 'not under test' }),
+    });
+    await runStop(opts);
+    expect(events).toEqual(['-s emulator-5556 reverse --list', '-s emulator-5556 reverse --remove tcp:8901']);
+  });
+
+  test('an unreachable phone does not fail stop, and its record is dropped', async () => {
+    await recordPhoneReverse(tmpRoot, 'default', 'RFCR7081Q9L', 8083);
+    setExecutor(
+      makeExecutor({
+        runFileQuietAsync: async () => {
+          throw makeError('device offline');
+        },
+      }),
+    );
+    const { opts } = seams({ root: tmpRoot });
+    const result = await runStop(opts);
+    expect(result.ok).toBe(true);
+    expect(readWorkspaceState(tmpRoot)?.phoneReverses).toBeUndefined();
+  });
+});
+
+test('a project with no reserved port has nothing to free', async () => {
+  const { calls, opts } = seams({ project: { platforms: {} } });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(true);
+  expect(r.outcomes.metro.status).toBe('none');
+  expect(r.outcomes.port.status).toBe('none');
+  expect(calls.freed).toEqual([]);
+});
+
+let tmpHome: string;
+let tmpRoot: string;
+
+beforeEach(() => {
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
+  tmpRoot = mkdtempSync(join(tmpdir(), 'stim-proj-'));
+  ensureWorkspaceStorage(tmpRoot);
+});
+
+afterEach(() => {
+  rmSync(tmpHome, { recursive: true, force: true });
+  rmSync(tmpRoot, { recursive: true, force: true });
+  delete process.env.STIM_HOME;
+  resetExecutor();
+});
+
+test('state-key cleanup waits for a concurrent state writer and retains its new session', async () => {
+  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7 } }));
+  const script = join(tmpRoot, 'write-session-under-lock.mjs');
+  const stateModule = new URL('../workspace/workspace-state.ts', import.meta.url).href;
+  writeFileSync(
+    script,
+    `import { withWorkspaceStateLock, writeWorkspaceState } from ${JSON.stringify(stateModule)};
+withWorkspaceStateLock(process.argv[2], () => {
+  process.stdout.write('LOCKED\\n');
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+  writeWorkspaceState(process.argv[2], { remoteDevice: { platform: 'ios', sessionId: 'drs_B' } });
+});
+`,
+  );
+  const writer = spawn(process.execPath, ['--experimental-strip-types', script, tmpRoot], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  await new Promise<void>((resolve, reject) => {
+    writer.once('error', reject);
+    writer.stdout?.on('data', (chunk) => {
+      if (String(chunk).includes('LOCKED')) resolve();
+    });
+  });
+
+  const startedAt = Date.now();
+  clearSupervisorState(tmpRoot);
+  const elapsedMs = Date.now() - startedAt;
+  await new Promise<void>((resolve, reject) => {
+    writer.once('error', reject);
+    writer.once('exit', (code) => (code === 0 ? resolve() : reject(new Error(`state writer exited ${code}`))));
+  });
+
+  expect(elapsedMs).toBeGreaterThanOrEqual(150);
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.supervisor).toBeUndefined();
+  expect(state.remoteDevice.sessionId).toBe('drs_B');
+});
+
+test('the idle stop asks the supervisor to record an idle stop, and keeps its port, launch records and leases', async () => {
+  saveConfig(
+    makeConfig({
+      projects: { [tmpRoot]: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } } },
+    }),
+  );
+  const supervisor = { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'expo-child' };
+  const launches = { ios: { appId: 'com.example', deviceId: 'U1', metroPort: 8083, release: false, launchedAt: '' } };
+  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor, launches }));
+  await takeLease({ root: tmpRoot, platform: 'android', id: 'PHONE', kind: 'declared' });
+  let request: unknown;
+  let teardownOptions: object | undefined;
+
+  const r = await runIdleStop({
+    root: tmpRoot,
+    idleMinutes: 15,
+    report: () => {},
+    state: supervisor,
+    isAlive: (pid: number) => pid === 4242,
+    inspectIdentity: () => 'same',
+    killGroup: () => {
+      request = readWorkspaceState(tmpRoot)?.devServerStopRequest;
+      return true;
+    },
+    waitForDeath: async () => true,
+    resolveMetro: async () => makeMetroResolution.missing(),
+    teardownIos: async (_udid: string, opts: object) => {
+      teardownOptions = opts;
+      return { status: 'torn-down', label: 'stim-a' };
+    },
+  });
+
+  expect(r.ok).toBe(true);
+  expect(teardownOptions).not.toHaveProperty('deferShutdown');
+  expect(request).toMatchObject({ by: 'stim daemon', idleMinutes: 15 });
+  expect(r.outcomes.port).toMatchObject({ status: 'kept', port: 8083 });
+  expect(getProject(tmpRoot)?.metroPort).toBe(8083);
+  expect(readWorkspaceState(tmpRoot)?.launches).toEqual(launches);
+  expect(r.outcomes.releasedLeases).toEqual([]);
+  expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['PHONE']);
+});
+
+test('stopping frees the reserved port in the registry and keeps the device record', async () => {
+  saveConfig(
+    makeConfig({
+      projects: {
+        [tmpRoot]: {
+          label: 'agent-1',
+          metroPort: 8083,
+          platforms: { ios: { deviceUdid: 'U1', owned: true } },
+        },
+      },
+    }),
+  );
+  writeFileSync(supervisorPidFile(tmpRoot), '4242');
+  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 4242, port: 8083 } }));
+
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    teardownIos: async () => ({ status: 'torn-down', label: 'stim-a' }),
+    clearRegistration: async () => {},
+    report: () => {},
+  });
+
+  expect(r.ok).toBe(true);
+  const after = getProject(tmpRoot);
+  assert(after);
+  assert(after.platforms);
+  expect(after.metroPort).toBe(null);
+  expect(after.platforms.ios).toEqual({ deviceUdid: 'U1', owned: true });
+  expect(existsSync(workspaceStateFile(tmpRoot))).toBe(false);
+  expect(existsSync(supervisorPidFile(tmpRoot))).toBe(false);
+});
+
+test('stopping clears the global supervisor registration', async () => {
+  saveConfig(
+    makeConfig({
+      projects: {
+        [tmpRoot]: {
+          label: 'agent-1',
+          metroPort: 8083,
+          supervisor: { pid: 4242, port: 8083, startedAt: '5' },
+          platforms: {},
+        },
+      },
+    }),
+  );
+
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    report: () => {},
+  });
+
+  expect(r.ok).toBe(true);
+  expect(r.outcomes.supervisor.status).toBe('already-stopped');
+  const proj = getProject(tmpRoot);
+  assert(proj);
+  expect(proj.supervisor).toBe(undefined);
+});
+
+test('resolveCollectorTargets refuses a record with no usable pid, and refuses our own', () => {
+  const targets = resolveCollectorTargets({
+    root: '/w/project',
+    collectors: { ios: { pid: 'nope' }, android: { pid: process.pid } },
+    isAlive: () => true,
+  });
+  expect(targets.map((t) => t.status)).toEqual(['invalid', 'invalid']);
+});
+
+test('stop SIGTERMs every recorded collector and clears the key', async () => {
+  const { calls, opts } = seams({
+    collectors: { ios: { pid: 111, startedAt: 'a' }, android: { pid: 222, startedAt: 'b' } },
+    isAlive: () => true,
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(true);
+  expect(calls.collectorSignals).toEqual([111, 222]);
+  expect(calls.collectorsCleared).toBe(1);
+  expect(r.outcomes.collectors.status).toBe('stopped');
+  expect(r.outcomes.collectors.entries).toEqual([
+    { platform: 'ios', pid: 111, status: 'stopped' },
+    { platform: 'android', pid: 222, status: 'stopped' },
+  ]);
+  expect(r.summary).toMatch(/2 collectors stopped/);
+});
+
+test('an already-dead collector is a success, not a failure', async () => {
+  const { calls, opts } = seams({
+    collectors: { ios: { pid: 111 } },
+    isAlive: () => false,
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(true);
+  expect(calls.collectorSignals).toEqual([]);
+  expect(r.outcomes.collectors.entries).toEqual([{ platform: 'ios', pid: 111, status: 'already-stopped' }]);
+});
+
+test('a collector that exits between the liveness check and the signal is not an error', async () => {
+  const { opts } = seams({
+    collectors: { ios: { pid: 111 } },
+    isAlive: () => true,
+    signalCollector: () => {
+      throw makeError('ESRCH', { code: 'ESRCH' });
+    },
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(true);
+  expect(r.outcomes.collectors.entries).toEqual([{ platform: 'ios', pid: 111, status: 'already-stopped' }]);
+});
+
+test('collectors are still reaped when the supervisor could not be verified', async () => {
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8099 },
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
+    collectors: { ios: { pid: 111 } },
+    isAlive: () => true,
+  });
+  const r = await runStop(opts);
+  expect(r.ok).toBe(false);
+  expect(r.outcomes.supervisor.status).toBe('unverified');
+  expect(calls.collectorSignals).toEqual([111]);
+  expect(calls.collectorsCleared).toBe(1);
+  expect(calls.teardowns).toEqual([]);
+});
+
+test('stop refuses to signal a collector pid it cannot prove, and keeps the record', async () => {
+  const { calls, opts } = seams({
+    collectors: { ios: { pid: 111 }, android: { pid: 222 } },
+    isAlive: () => true,
+    verifyCollector: ({ pid, platform }: { pid: number; platform: string }) =>
+      platform === 'ios'
+        ? ({ status: 'unverified', reason: `pid ${pid} does not run this workspace's ios log collector` } as const)
+        : ({ status: 'ours' } as const),
+  });
+  const reported: string[] = [];
+  const r = await runStop({ ...opts, report: (line: string) => reported.push(line) });
+  expect(calls.collectorSignals).toEqual([222]);
+  expect(calls.collectorsCleared).toBe(0);
+  expect(r.outcomes.collectors.entries).toEqual([
+    {
+      platform: 'ios',
+      pid: 111,
+      status: 'unverified',
+      reason: "pid 111 does not run this workspace's ios log collector",
+    },
+    { platform: 'android', pid: 222, status: 'stopped' },
+  ]);
+  expect(r.summary).toMatch(/1 collector left unsignalled/);
+  expect(reported.join('\n')).toMatch(/^  stop {8}refusing to signal collector ios pid 111/m);
+
+  const payload = JSON.parse(JSON.stringify({ root: '/proj/a', ok: r.ok, ...r.outcomes }));
+  expect(payload.collectors).toEqual({
+    status: 'stopped',
+    entries: [
+      {
+        platform: 'ios',
+        pid: 111,
+        status: 'unverified',
+        reason: "pid 111 does not run this workspace's ios log collector",
+      },
+      { platform: 'android', pid: 222, status: 'stopped' },
+    ],
+  });
+});
+
+test('a collector pid that died before the proof is already-stopped, not a refusal', async () => {
+  const { calls, opts } = seams({
+    collectors: { ios: { pid: 111 } },
+    isAlive: () => true,
+    verifyCollector: () => ({ status: 'gone' }) as const,
+  });
+  const r = await runStop(opts);
+  expect(calls.collectorSignals).toEqual([]);
+  expect(calls.collectorsCleared).toBe(1);
+  expect(r.outcomes.collectors.entries).toEqual([{ platform: 'ios', pid: 111, status: 'already-stopped' }]);
+});
+
+test('nothing recorded means no clear and no signal', async () => {
+  const { calls, opts } = seams({ collectors: {} });
+  const r = await runStop(opts);
+  expect(r.outcomes.collectors.status).toBe('none');
+  expect(calls.collectorsCleared).toBe(0);
+});
+
+test('clearCollectorState drops only the collectors key', () => {
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({
+      supervisor: { pid: 7 },
+      collectors: { ios: { pid: 9 } },
+      lastBuild: { fingerprint: 'abc' },
+    }),
+  );
+  clearCollectorState(tmpRoot);
+  const left = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(left).toEqual({ supervisor: { pid: 7 }, lastBuild: { fingerprint: 'abc' } });
+});
+
+test('an occupied sim names the UI-test runner that decided the skip', async () => {
+  const reports: string[] = [];
+  const { opts } = seams({
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
+    teardownIos: async () => ({
+      status: 'skipped',
+      kind: 'occupied',
+      reason: 'in use by another process (occupied)',
+      holders: ['com.example.app.xctrunner'],
+    }),
+    report: (l: string) => reports.push(String(l)),
+  });
+  const r = await runStop(opts);
+  const ios = r.outcomes.device.ios;
+  assert(ios);
+  expect(ios.status).toBe('skipped');
+  expect(ios.reason).toMatch(/held by UI-test runner com\.example\.app\.xctrunner/);
+  expect(reports.join('\n')).toMatch(/com\.example\.app\.xctrunner/);
+});
+
+test('an occupied skip with no holder list (fail-closed probe) still gets the generic hint', async () => {
+  const { opts } = seams({
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
+    teardownIos: async () => ({ status: 'skipped', kind: 'occupied', reason: 'in use by another process (occupied)' }),
+  });
+  const r = await runStop(opts);
+  const ios = r.outcomes.device.ios;
+  assert(ios);
+  expect(ios.reason).toMatch(/UI-test runner or device tool/);
+});
+
+test('a not-owned skip is not given an occupancy hint', async () => {
+  const { opts } = seams({
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
+    teardownIos: async () => ({ status: 'skipped', kind: 'not-owned', reason: 'sim is now named "other"' }),
+  });
+  const r = await runStop(opts);
+  const ios = r.outcomes.device.ios;
+  assert(ios);
+  const reason = ios.reason;
+  assert(reason);
+  expect(!/UI-test runner/.test(reason)).toBeTruthy();
+  expect(!/pid 1/.test(reason)).toBeTruthy();
+});
+
+function withRemoteSession(sessionId: string) {
+  saveConfig(
+    makeConfig({
+      projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } },
+    }),
+  );
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({ remoteDevice: { platform: 'ios', sessionId }, lastBuild: { hash: 'keepme' } }),
+  );
+}
+
+test('stopping ends the remote session this workspace created', async () => {
+  withRemoteSession('drs_42');
+  const stopped: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: (_root, sessionId) => {
+      stopped.push(sessionId);
+      return { status: 'torn-down' };
+    },
+    report: () => {},
+  });
+
+  expect(r.ok).toBe(true);
+  expect(stopped).toEqual(['drs_42']);
+  expect(r.outcomes.device.remote?.status).toBe('torn-down');
+});
+
+test('a session that could not be stopped fails the command, so it is not reported as clean', async () => {
+  withRemoteSession('drs_99');
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: () => ({ status: 'failed', reason: 'eas simulator:stop drs_99 failed: offline' }),
+    report: () => {},
+  });
+
+  expect(r.ok).toBe(false);
+  expect(r.outcomes.device.remote?.status).toBe('failed');
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice.sessionId).toBe('drs_99');
+});
+
+test('a successful stop drops the record but keeps lastBuild', async () => {
+  withRemoteSession('drs_7');
+  await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: () => ({ status: 'torn-down' }),
+    report: () => {},
+  });
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice).toBeUndefined();
+  expect(state.lastBuild.hash).toBe('keepme');
+});
+
+test('a stopped session with an unreconciled claim is reported and keeps its retry record', async () => {
+  withRemoteSession('drs_8');
+  const lines: string[] = [];
+
+  const result = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: () => ({
+      status: 'torn-down',
+      reason: 'The ownership claim could not be removed. Re-run stop to reconcile it.',
+    }),
+    report: (line) => lines.push(line),
+  });
+
+  expect(result.ok).toBe(false);
+  expect(lines.join('\n')).toMatch(/^  device {6}stopped remote session drs_8/m);
+  expect(lines.join('\n')).toMatch(/ownership claim.*could not be removed/i);
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice.sessionId).toBe('drs_8');
+});
+
+function verifiedTeardown(sessionOutput: string, calls: string[]) {
+  setExecutor({
+    runFile: (_file: string, args: string[]) => {
+      calls.push(args[0] ?? '');
+      if (args[0] === 'simulator:get') return sessionOutput;
+      if (args[0] === 'simulator:stop') return JSON.stringify({ id: 'drs_42', status: 'STOPPED' });
+      return '';
+    },
+    run: () => '',
+    runQuiet: () => null,
+    spawn: () => {},
+  });
+  return (root: string, sessionId: string) =>
+    endRecordedSession({
+      root,
+      sessionId,
+      easBin: '/bin/eas',
+      lookupAgentDevice: () => '/bin/agent-device',
+      ledgerRoot: tmpHome,
+    });
+}
+
+test.each([
+  ['unowned session', JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'IN_PROGRESS' })],
+  ['unowned terminal session', JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'STOPPED' })],
+  ['unnamed terminal session', JSON.stringify({ id: 'drs_42', status: 'STOPPED' })],
+  ['malformed output', 'not json'],
+  ['unknown status', JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'PAUSED' })],
+])('stop retains the session record after an unverifiable %s', async (_name, sessionOutput) => {
+  withRemoteSession('drs_42');
+  const calls: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: verifiedTeardown(sessionOutput, calls),
+    report: () => {},
+  });
+  expect(r.ok).toBe(false);
+  expect(calls).not.toContain('simulator:stop');
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice.sessionId).toBe('drs_42');
+});
+
+test('stop clears the record for a verified terminal session without issuing stop', async () => {
+  withRemoteSession('drs_42');
+  const calls: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: verifiedTeardown(
+      JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'STOPPED' }),
+      calls,
+    ),
+    report: () => {},
+  });
+  expect(r.ok).toBe(true);
+  expect(calls).not.toContain('simulator:stop');
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.remoteDevice).toBeUndefined();
+});
+
+test('a workspace with no remote session never calls the remote teardown', async () => {
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  let called = false;
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    teardownRemoteSession: () => {
+      called = true;
+      return { status: 'torn-down' };
+    },
+    report: () => {},
+  });
+  expect(called).toBe(false);
+  expect(r.outcomes.device.remote).toBeUndefined();
+});
+
+test('a remote session is stopped even when something still holds the port', async () => {
+  const stopped: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => true,
+    killGroup: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    remoteDevice: { platform: 'ios', sessionId: 'drs_42' },
+    teardownRemoteSession: (_root: string, id: string) => {
+      stopped.push(id);
+      return { status: 'torn-down' as const };
+    },
+    report: () => {},
+  });
+  expect(stopped).toEqual(['drs_42']);
+  expect(r.outcomes.device?.remote?.status).toBe('torn-down');
+});
+
+function withManagedTunnel(provider: 'ngrok' | 'tailscale' = 'ngrok') {
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({
+      metroTunnel: {
+        kind: 'managed',
+        provider,
+        pid: 4242,
+        url: provider === 'tailscale' ? 'https://host.tail123.ts.net:8083' : 'https://abc.ngrok.app',
+        port: 8083,
+        startedAt: 'T',
+        processToken: 'linux:100',
+      },
+      lastBuild: { hash: 'keepme' },
+    }),
+  );
+}
+
+test.each(['ngrok', 'tailscale'] as const)('stopping reaps a %s tunnel this workspace started', async (provider) => {
+  withManagedTunnel(provider);
+  const stopped: unknown[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async (record) => {
+      stopped.push(record);
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+
+  expect(r.ok).toBe(true);
+  expect(stopped).toEqual([
+    {
+      kind: 'managed',
+      provider,
+      pid: 4242,
+      url: provider === 'tailscale' ? 'https://host.tail123.ts.net:8083' : 'https://abc.ngrok.app',
+      port: 8083,
+      startedAt: 'T',
+      processToken: 'linux:100',
+    },
+  ]);
+  expect(r.outcomes.metroTunnel).toEqual({ status: 'stopped', provider, reason: undefined });
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.metroTunnel).toBeUndefined();
+  expect(state.lastBuild.hash).toBe('keepme');
+});
+
+test('stopping clears only the tunnel record that it verified', async () => {
+  withManagedTunnel();
+  const replacement = {
+    kind: 'managed',
+    provider: 'ngrok',
+    pid: 4242,
+    url: 'https://abc.ngrok.app',
+    port: 8083,
+    startedAt: 'T',
+    processToken: 'linux:200',
+  } as const;
+  const result = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async () => {
+      writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ metroTunnel: replacement }));
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.metroTunnel).toEqual(replacement);
+  expect(result.ok).toBe(false);
+  expect(result.outcomes.port.status).toBe('kept');
+  expect(getProject(tmpRoot)?.metroPort).toBe(8083);
+});
+
+test('a tunnel that fails to stop fails the command and keeps its record', async () => {
+  withManagedTunnel();
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async () => ({ status: 'failed', reason: 'pid 4242 did not exit within 5000ms.' }),
+    report: () => {},
+  });
+
+  expect(r.ok).toBe(false);
+  expect(r.outcomes.metroTunnel.status).toBe('failed');
+  expect(r.outcomes.port).toEqual({
+    status: 'kept',
+    port: 8083,
+    reason: 'pid 4242 did not exit within 5000ms.',
+  });
+  expect(getProject(tmpRoot)?.metroPort).toBe(8083);
+  const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
+  expect(state.metroTunnel.pid).toBe(4242);
+});
+
+test('a workspace with no recorded tunnel never calls stopMetroTunnel', async () => {
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  let called = false;
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+  expect(called).toBe(false);
+  expect(r.outcomes.metroTunnel.status).toBe('none');
+});
+
+test('the tunnel is stopped even when something still holds the port', async () => {
+  const stopped: number[] = [];
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8083 },
+    isAlive: (pid: number) => pid === 4242,
+    waitForDeath: async () => false,
+    metroTunnel: {
+      kind: 'managed',
+      provider: 'cloudflared',
+      pid: 999,
+      url: 'https://x.trycloudflare.com',
+      port: 8083,
+      startedAt: 'T',
+    },
+    stopMetroTunnel: async (record: { pid: number }) => {
+      stopped.push(record.pid);
+      return { status: 'stopped' };
+    },
+  });
+  const r = await runStop(opts);
+  expect(r.outcomes.port.status).toBe('kept');
+  expect(calls.stateCleared).toBe(0);
+  expect(stopped).toEqual([999]);
+  expect(r.outcomes.metroTunnel.status).toBe('stopped');
+});
+
+test('an Expo-hosted tunnel has no process of its own -- stopMetroTunnel is never called for it', async () => {
+  let called = false;
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    metroTunnel: { kind: 'expo', url: 'exp://abc123.exp.direct' },
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+  expect(called).toBe(false);
+  expect(r.outcomes.metroTunnel.status).toBe('not-managed');
+});
+
+test('an Expo tunnel record is dropped once the port is freed, not left stale for the next run', async () => {
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({ metroTunnel: { kind: 'expo', url: 'exp://abc123.exp.direct' } }),
+  );
+  await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    report: () => {},
+  });
+  expect(existsSync(workspaceStateFile(tmpRoot))).toBe(false);
+});
+
+test('an Expo tunnel record survives while something still holds the port', async () => {
+  const { calls, opts } = seams({
+    state: { pid: 4242, port: 8083 },
+    isAlive: (pid: number) => pid === 4242,
+    waitForDeath: async () => false,
+    metroTunnel: { kind: 'expo', url: 'exp://abc123.exp.direct' },
+  });
+  const r = await runStop(opts);
+  expect(r.outcomes.port.status).toBe('kept');
+  expect(calls.stateCleared).toBe(0);
+  expect(r.outcomes.metroTunnel.status).toBe('not-managed');
+});
+
+test('an operator-supplied tunnel (metro.publicUrl) is never recorded, so `stop` never touches it', async () => {
+  saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
+  let called = false;
+  const r = await runStop({
+    root: tmpRoot,
+    isAlive: () => false,
+    resolveMetro: async () => ({ missing: true }),
+    clearRegistration: async () => {},
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+    report: () => {},
+  });
+  expect(called).toBe(false);
+  expect(r.outcomes.metroTunnel.status).toBe('none');
+});
+
+test('stop releases the leases this workspace holds and lists them', async () => {
+  const taken = takeLease({ root: tmpRoot, platform: 'ios', id: 'UDID-1', deviceName: 'Old iPhone', kind: 'declared' });
+  assert(taken.status === 'taken');
+  takeLease({ root: '/w/other', platform: 'android', id: 'R5CT', kind: 'run' });
+
+  const reported: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    project: null,
+    state: null,
+    collectors: {},
+    report: (line: string) => reported.push(line),
+  });
+
+  expect(r.outcomes.releasedLeases).toEqual([
+    { platform: 'ios', id: 'UDID-1', deviceName: 'Old iPhone', expiresAt: taken.lease.expiresAt },
+  ]);
+  expect(r.summary).toMatch(/ios lease on UDID-1 released/);
+  expect(reported.join('\n')).toMatch(
+    new RegExp(
+      `^  lease {7}released the ios lease on UDID-1 \\(it ran until ${clockTime(taken.lease.expiresAt)}\\)$`,
+      'm',
+    ),
+  );
+  expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['R5CT']);
+
+  const payload = JSON.parse(JSON.stringify({ root: tmpRoot, ok: r.ok, ...r.outcomes }));
+  expect(payload.releasedLeases).toHaveLength(1);
+});
+
+test('stop says nothing about leases when this workspace holds none', async () => {
+  const reported: string[] = [];
+  const r = await runStop({
+    root: tmpRoot,
+    project: null,
+    state: null,
+    collectors: {},
+    report: (line) => reported.push(line),
+  });
+  expect(r.outcomes.releasedLeases).toEqual([]);
+  expect(r.summary).toBe(`Stopped: nothing was running (${tmpRoot})`);
+  expect(reported.join('\n')).not.toMatch(/^  lease\s/m);
+});
+
+test('stop --json prints exactly one line of JSON on stdout', async () => {
+  writeFileSync(join(tmpRoot, 'package.json'), JSON.stringify({ name: 'app' }));
+  const cwd = process.cwd();
+  const logs: string[] = [];
+  const originalLog = console.log;
+  const program = new Command();
+  stopCommand(program);
+  console.log = (msg) => logs.push(String(msg));
+  process.chdir(tmpRoot);
+  try {
+    await program.parseAsync(['node', 'stim', 'stop', '--json']);
+  } finally {
+    process.chdir(cwd);
+    console.log = originalLog;
+  }
+  expect(logs.length).toBe(1);
+  const [line] = logs;
+  assert(line);
+  expect(line).not.toContain('\n');
+  const payload = JSON.parse(line);
+  expect(typeof payload.root).toBe('string');
+  expect(typeof payload.ok).toBe('boolean');
+});
+
+test('stop visits all device slots and reports a named-slot failure without skipping siblings', async () => {
+  const placement = { decision: 'hosted', machine: 'mini', reason: 'busy' };
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({
+      ios: { devicePlacement: placement },
+      android: { devicePlacement: placement },
+      deviceSlots: { phone: { ios: { devicePlacement: placement } }, tablet: { ios: { devicePlacement: placement } } },
+    }),
+  );
+  const visited: string[] = [];
+  const { opts } = seams({
+    root: tmpRoot,
+    project: {
+      platforms: { ios: { deviceUdid: 'DEFAULT', owned: true } },
+      deviceSlots: {
+        phone: { ios: { deviceUdid: 'PHONE', owned: true } },
+        tablet: { ios: { deviceUdid: 'TABLET', owned: true } },
+        external: { ios: { deviceUdid: 'USER', owned: false } },
+      },
+    },
+    teardownIos: async (udid: string) => {
+      visited.push(udid);
+      return udid === 'PHONE' ? { status: 'failed', reason: 'busy' } : { status: 'torn-down', label: udid };
+    },
+  });
+  const result = await runStop(opts);
+  expect(visited).toEqual(['DEFAULT', 'PHONE', 'TABLET']);
+  expect(result.ok).toBe(false);
+  expect(result.outcomes.device['ios:phone']?.status).toBe('failed');
+  expect(result.outcomes.device['ios:tablet']?.status).toBe('shut-down');
+  expect(result.outcomes.device['ios:external']?.status).toBe('skipped');
+  expect(readWorkspaceState(tmpRoot)?.ios).not.toHaveProperty('devicePlacement');
+  expect(readWorkspaceState(tmpRoot)?.android).not.toHaveProperty('devicePlacement');
+  expect(readWorkspaceState(tmpRoot)?.deviceSlots).toEqual({
+    phone: { ios: { devicePlacement: placement } },
+    tablet: { ios: {} },
+  });
+});
+
+test.each([
+  ['phone', 'ios:phone', 'PHONE'],
+  ['default', 'ios', 'DEFAULT'],
+] as const)(
+  "stopping slot '%s' drops its launch record and preserves sibling collectors, leases and the shared server",
+  async (slot, stoppedCollectorKey, stoppedUdid) => {
+    const stopped = { pid: 111, processToken: slot };
+    const tablet = { pid: 222, processToken: 'tablet' };
+    const launch = { appId: 'com.app', deviceId: 'D', metroPort: 8083, release: false, launchedAt: 'now' };
+    writeFileSync(
+      workspaceStateFile(tmpRoot),
+      JSON.stringify({
+        collectors: { [stoppedCollectorKey]: stopped, 'ios:tablet': tablet },
+        supervisor: { pid: 333, processToken: 'metro' },
+        launches: { [stoppedCollectorKey]: launch, 'ios:tablet': launch },
+        ios: { devicePlacement: { decision: 'hosted', machine: 'mini', reason: 'busy' } },
+        android: { devicePlacement: { decision: 'local', reason: 'room' } },
+        deviceSlots: {
+          phone: {
+            ios: { devicePlacement: { decision: 'local', reason: 'room' } },
+            android: { devicePlacement: { decision: 'hosted', machine: 'mini', reason: 'busy' } },
+          },
+          tablet: { ios: { devicePlacement: { decision: 'local', reason: 'room' } } },
+        },
+      }),
+    );
+    takeLease({ root: tmpRoot, platform: 'ios', slot, id: 'STOPPED-HW', kind: 'declared', durationMs: 60000 });
+    takeLease({ root: tmpRoot, platform: 'ios', slot: 'tablet', id: 'TABLET-HW', kind: 'declared', durationMs: 60000 });
+    const { calls, opts } = seams({
+      root: tmpRoot,
+      project: {
+        metroPort: 8083,
+        platforms: { ios: { deviceUdid: 'DEFAULT', owned: true } },
+        deviceSlots: {
+          ...(slot === 'phone' ? { phone: { ios: { deviceUdid: 'PHONE', owned: true } } } : {}),
+          tablet: { ios: { deviceUdid: 'TABLET', owned: true } },
+        },
+      },
+      collectors: undefined,
+      isAlive: () => true,
+    });
+    const result = await runStop({ ...opts, slot });
+    expect(result.ok).toBe(true);
+    expect(calls.collectorSignals).toEqual([111]);
+    expect(calls.teardowns.map((call) => ('udid' in call ? call.udid : call.avd))).toEqual([stoppedUdid]);
+    expect(calls.signals).toEqual([]);
+    expect(calls.freed).toEqual([]);
+    expect(readCollectorState(tmpRoot)).toEqual({ 'ios:tablet': tablet });
+    expect(readWorkspaceState(tmpRoot)?.launches).toEqual({ 'ios:tablet': launch });
+    const state = readWorkspaceState(tmpRoot)!;
+    const records = slot === 'default' ? state : (state.deviceSlots as Record<string, Record<string, unknown>>).phone!;
+    expect(records.ios).not.toHaveProperty('devicePlacement');
+    expect(records.android).not.toHaveProperty('devicePlacement');
+    expect(state.deviceSlots).toMatchObject({ tablet: { ios: { devicePlacement: { decision: 'local' } } } });
+    expect(state.ios).toEqual(
+      slot === 'phone' ? { devicePlacement: { decision: 'hosted', machine: 'mini', reason: 'busy' } } : {},
+    );
+
+    expect(readSupervisorState(tmpRoot)?.pid).toBe(333);
+    expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['TABLET-HW']);
+    expect(result.outcomes.port).toMatchObject({ status: 'kept', port: 8083 });
+  },
+);
+
+test('stop --slot web closes only the owned Chrome, leaving the server, collectors and devices running', async () => {
+  const { calls, opts } = seams({
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'DEFAULT', owned: true } } },
+    state: { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'expo-child' },
+    collectors: { ios: { pid: 51, processToken: 'collector' } },
+    isAlive: () => true,
+    teardownBrowser: async () => ({ status: 'torn-down' as const, label: 'Chrome pid 77' }),
+  });
+  const result = await runStop({ ...opts, slot: 'web' });
+  expect(calls).toMatchObject({ signals: [], collectorSignals: [], teardowns: [], freed: [], stateCleared: 0 });
+  expect(result).toMatchObject({
+    ok: true,
+    outcomes: {
+      device: { ios: null, android: null, web: { status: 'shut-down', label: 'Chrome' } },
+      port: { status: 'kept', port: 8083 },
+    },
+  });
+  expect(result.summary).toMatch(/^Stopped: web Chrome shut down, port 8083 kept/);
+});
+
+test('stop --slot web says so when no owned Chrome was running', async () => {
+  const { opts } = seams({ teardownBrowser: async () => ({ status: 'missing' as const }) });
+  const result = await runStop({ ...opts, slot: 'web' });
+  expect(result).toMatchObject({ ok: true, outcomes: { device: { web: null } } });
+  expect(result.summary).toMatch(/^Stopped: no owned Chrome was running/);
+});
+
+test('stop --slot default never ends the workspace remote session', async () => {
+  let remoteTeardownCalled = false;
+  const { opts } = seams({
+    root: tmpRoot,
+    project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'DEFAULT', owned: true } } },
+    collectors: {},
+    isAlive: () => true,
+    remoteDevice: { platform: 'ios', sessionId: 'drs_9' },
+    teardownRemoteSession: () => {
+      remoteTeardownCalled = true;
+      return { status: 'torn-down' as const };
+    },
+  });
+  const result = await runStop({ ...opts, slot: 'default' });
+  expect(remoteTeardownCalled).toBe(false);
+  expect(result.outcomes.device.remote).toBeUndefined();
+});
+
+test('stop ends the web shares of the workspace, and stop --slot those of that slot only', async () => {
+  const asked: { method: string; params: unknown }[] = [];
+  const server = await serveShareList(
+    () => ({ shares: [] }),
+    (method, params) => asked.push({ method, params }),
+  );
+  try {
+    const { opts } = seams({ root: tmpRoot, project: { metroPort: 8083, platforms: {} }, collectors: {} });
+    await runStop(opts);
+    await runStop({ ...opts, slot: 'tablet' });
+    await runStop({ ...opts, slot: 'web' });
+  } finally {
+    await server.close();
+  }
+  expect(asked).toEqual([
+    { method: 'share.stop', params: { workspace: tmpRoot } },
+    { method: 'share.stop', params: { workspace: tmpRoot, slot: 'tablet' } },
+  ]);
+});
+
+test('stop --slot closes only the slot emulator sessions claimed in this workspace, or from its repository root after shutdown', async () => {
+  const claims = join(tmpHome, 'agent-device-claims');
+  mkdirSync(claims);
+  const other = mkdtempSync(join(tmpdir(), 'stim-other-'));
+  const claim = (file: string, serial: string, session: string, workspace: string) =>
+    writeFileSync(join(claims, file), JSON.stringify({ session, workspace, device: { id: serial } }));
+  claim('fold.json', 'emulator-5554', 'cwd:a504:android', join(tmpRoot, 'app'));
+  claim('phone.json', 'emulator-5556', 'phone-task', other);
+  claim('fold-other.json', 'emulator-5554', 'cwd:bbbb:android', other);
+  const repo = dirname(tmpRoot);
+  claim('fold-root.json', 'emulator-5554', 'root-task', repo);
+  claim('phone-root.json', 'emulator-5556', 'phone-root', repo);
+  let sessions = [
+    {
+      name: 'default',
+      address: 'cwd:a504:android',
+      platform: 'android',
+      device: 'stim-app-fold',
+      id: 'emulator-5554',
+      createdAt: 2,
+    },
+    { name: 'phone-task', platform: 'android', device: 'stim-other', id: 'emulator-5556', createdAt: 1 },
+    { name: 'earlier-emulator', platform: 'android', device: 'stim-old', id: 'emulator-5554', createdAt: 0 },
+    {
+      name: 'default',
+      address: 'cwd:bbbb:android',
+      platform: 'android',
+      device: 'stim-app-fold',
+      id: 'emulator-5554',
+      createdAt: 3,
+    },
+    { name: 'root-task', platform: 'android', device: 'stim-app-fold', id: 'emulator-5554', createdAt: 4 },
+    { name: 'phone-root', platform: 'android', device: 'stim-other', id: 'emulator-5556', createdAt: 5 },
+  ];
+  const closed: string[] = [];
+  let running = true;
+  let offlineListings = 1;
+  const previousClaims = process.env.AGENT_DEVICE_CLAIMS_DIR;
+  process.env.AGENT_DEVICE_CLAIMS_DIR = claims;
+  mkdirSync(join(tmpRoot, 'app'));
+  recordCreatedDevice('android', 'stim-app-fold');
+  setExecutor({
+    run: (cmd: string) =>
+      /adb\S* devices$/.test(cmd) && offlineListings-- > 0 ? 'List of devices attached\nemulator-5554\toffline\n' : '',
+    runQuiet: () => '',
+    spawn: () => {},
+    findExecutable: () => '/bin/agent-device',
+    runFileQuiet: () => null,
+    runFile: (file: string, args: string[] = []) => {
+      if (file === 'git' && args.includes('--show-toplevel')) return `${repo}\n`;
+      if (file !== 'agent-device') return '';
+      if (args[0] === 'close') {
+        closed.push(args[2]!);
+        sessions = sessions.filter((session) => (session.address ?? session.name) !== args[2]);
+        return '{"success":true}';
+      }
+      return JSON.stringify({ success: true, data: { sessions } });
+    },
+  });
+  try {
+    const { opts } = seams({
+      root: tmpRoot,
+      project: {
+        metroPort: 8083,
+        platforms: {},
+        deviceSlots: { fold: { android: { avdName: 'stim-app-fold', owned: true } } },
+      },
+      collectors: {},
+      teardownAvd: async (name: string, options: { del?: boolean; workspace?: string }) =>
+        await teardownOwnedAvd(name, {
+          ...options,
+          resolveAvd: () => (running ? { serial: 'emulator-5554' } : { notRunning: true }),
+          waitForShutdown: () => {
+            running = false;
+            closed.push('shutdown');
+          },
+        }),
+    });
+    const result = await runStop({ ...opts, slot: 'fold' });
+    expect(result.outcomes.device.android?.status).toBe('shut-down');
+    expect(closed).toEqual(['cwd:a504:android', 'shutdown', 'root-task']);
+  } finally {
+    if (previousClaims === undefined) delete process.env.AGENT_DEVICE_CLAIMS_DIR;
+    else process.env.AGENT_DEVICE_CLAIMS_DIR = previousClaims;
+    rmSync(other, { recursive: true, force: true });
+  }
+});
+
+describe('stop leaves the owned simulator booted when the booted-park gates hold', () => {
+  const UNTIL = '2026-11-04T12:15:00.000Z';
+  const ownedIos = {
+    metroPort: 8083,
+    bundleId: 'com.example.app',
+    platforms: { ios: { deviceUdid: 'U1', owned: true } },
+  };
+  const echoingTeardown =
+    (calls: TeardownCall[]) =>
+    async (udid: string, opts: { del?: boolean; label?: string; deferShutdown?: { until: string } }) => {
+      calls.push({ udid, opts });
+      const defer = opts.deferShutdown;
+      return { status: 'torn-down', label: 'stim-a', ...(defer ? { deferredUntil: defer.until } : {}) };
+    };
+
+  test('asks teardown to defer the shutdown, and reports the simulator as kept booted without failing the run', async () => {
+    const { calls, opts } = seams({ project: ownedIos, deferIosShutdown: async () => UNTIL });
+    opts.teardownIos = echoingTeardown(calls.teardowns);
+    const r = await runStop(opts);
+    expect(calls.teardowns).toEqual([
+      {
+        udid: 'U1',
+        opts: {
+          del: false,
+          label: undefined,
+          workspace: '/proj/a',
+          deferShutdown: { until: UNTIL, slot: 'default', appId: 'com.example.app' },
+        },
+      },
+    ]);
+    expect(r.ok).toBe(true);
+    expect(r.outcomes.device.ios).toEqual({ status: 'kept-booted', label: 'stim-a', until: UNTIL });
+    expect(r.summary).toContain(`ios stim-a kept booted until ${clockTime(UNTIL)}`);
+  });
+
+  test.each([
+    ['a gate fails', { deferIosShutdown: async () => null }],
+    ['the caller never asks, as the daemon idle stop does not', {}],
+  ])('shuts it down at once when %s', async (_name, over) => {
+    const { calls, opts } = seams({ project: ownedIos, ...over });
+    opts.teardownIos = echoingTeardown(calls.teardowns);
+    const r = await runStop(opts);
+    expect(calls.teardowns).toEqual([{ udid: 'U1', opts: { del: false, label: undefined, workspace: '/proj/a' } }]);
+    expect(r.outcomes.device.ios).toEqual({ status: 'shut-down', label: 'stim-a' });
+  });
+
+  test('reads the gates once for every slot and never for a workspace with no owned simulator', async () => {
+    let reads = 0;
+    const deferIosShutdown = async () => {
+      reads += 1;
+      return UNTIL;
+    };
+    const twoSlots = {
+      ...ownedIos,
+      deviceSlots: { second: { ios: { deviceUdid: 'U2', owned: true } } },
+    };
+    const { calls, opts } = seams({ project: twoSlots, deferIosShutdown });
+    opts.teardownIos = echoingTeardown(calls.teardowns);
+    await runStop(opts);
+    expect(calls.teardowns.map((call) => ('udid' in call ? call.udid : call.avd))).toEqual(['U1', 'U2']);
+    expect(reads).toBe(1);
+
+    reads = 0;
+    const { opts: androidOnly } = seams({
+      project: { metroPort: 8083, platforms: { android: { avdName: 'stim-app', owned: true } } },
+      deferIosShutdown,
+    });
+    await runStop(androidOnly);
+    expect(reads).toBe(0);
+  });
+
+  test('stop --slot shuts the slot down at once, since the workspace server it leaves running would end the deferral', async () => {
+    const { calls, opts } = seams({
+      root: tmpRoot,
+      project: { metroPort: 8083, platforms: {}, deviceSlots: { second: { ios: { deviceUdid: 'U2', owned: true } } } },
+      deferIosShutdown: async () => UNTIL,
+    });
+    opts.teardownIos = echoingTeardown(calls.teardowns);
+    const r = await runStop({ ...opts, slot: 'second' });
+    expect(calls.teardowns).toEqual([{ udid: 'U2', opts: { del: false, label: undefined, workspace: tmpRoot } }]);
+    expect(r.outcomes.device.ios?.status).toBe('shut-down');
+  });
+
+  test('a shutdown at once forgets the deferral an earlier stop recorded', async () => {
+    await recordDeferredShutdown(tmpRoot, 'default', { udid: 'U1', until: UNTIL });
+    const { opts } = seams({ root: tmpRoot, project: ownedIos, deferIosShutdown: async () => null });
+    await runStop(opts);
+    expect(readDeferredShutdowns(readWorkspaceState(tmpRoot))).toEqual({});
+  });
+});

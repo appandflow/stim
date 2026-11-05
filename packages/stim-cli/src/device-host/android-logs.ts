@@ -1,0 +1,88 @@
+import { createHash } from 'node:crypto';
+import { readHostedAppMetadata, readHostedDevice, readHostedNativeLogsCheckpoint } from '@stim-cli/core/state';
+import { androidClockOffset, parseLogcatLine, parsePidof } from '../collector/android.ts';
+import { androidToolPath } from '../devices/android.ts';
+import { getExecutor } from '../exec.ts';
+import { assertHostedAndroidSerial } from './android-app.ts';
+import { collectHostedNativeLogs } from './native-logs.ts';
+
+/** Captures bounded logcat output from the installed app on this home's exact ledger-owned serial. */
+export async function collectHostedAndroidLogs(
+  home: string,
+  session: string,
+  attempt: string,
+  since: number,
+  final = false,
+): Promise<boolean> {
+  const deadline = Date.now() + 10_000;
+  const device = readHostedDevice(home, 'android');
+  await assertHostedAndroidSerial(home, device);
+  const app = readHostedAppMetadata(session, attempt, home);
+  if (app.state !== 'installed') return false;
+  const exec = getExecutor();
+  const adb = androidToolPath('adb');
+  const clockOffsetMs =
+    (await androidClockOffset(device.serial, {
+      exec: {
+        ...exec,
+        runFileAsync: (file, args, options) => exec.runFileAsync(file === 'adb' ? adb : file, args, options),
+      },
+    })) ?? 0;
+  const previous = readHostedNativeLogsCheckpoint(home, 'android');
+  let current: number | null = null;
+  try {
+    current = parsePidof(
+      exec.runFile(adb, ['-s', device.serial, 'shell', 'pidof', app.bundleId], {
+        timeoutMs: 2000,
+        killSignal: 'SIGKILL',
+      }),
+    );
+  } catch (error) {
+    const failure = error as { status?: number | null; signal?: string | null; stdout?: string; stderr?: string };
+    // Android Toybox pidof reports no match with exit 1 and empty output: https://android.googlesource.com/platform/external/toybox/+/59a869a838cfadbf6bc41cb400471ca9d2cae9b5/toys/lsb/pidof.c
+    if (failure.status !== 1 || failure.signal != null || failure.stdout !== '' || failure.stderr !== '') {
+      throw error;
+    }
+  }
+  // Android logcat identifies historical records by PID and cannot distinguish reuse after a process exits.
+  const prior = previous?.appAttempt === attempt ? previous.pid : undefined;
+  const pids = new Set([current, prior].filter((pid): pid is number => typeof pid === 'number'));
+  if (!pids.size) return false;
+  return collectHostedNativeLogs({
+    home,
+    platform: 'android',
+    since,
+    final,
+    deadline,
+    tailOnly: true,
+    identity: { appAttempt: attempt, pid: current ?? undefined },
+    query: (from, _end, timeoutMs) =>
+      [...pids]
+        .map((pid) => {
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) throw new Error('Hosted native log query exceeded its collection budget.');
+          return exec.runFile(
+            adb,
+            [
+              '-s',
+              device.serial,
+              'logcat',
+              '-d',
+              '-v',
+              'epoch',
+              '-T',
+              ((from - clockOffsetMs) / 1000).toFixed(3),
+              '--pid',
+              String(pid),
+            ],
+            { timeoutMs: Math.min(remaining, timeoutMs), killSignal: 'SIGKILL' },
+          );
+        })
+        .join('\n'),
+    parse: (line) => {
+      const record = parseLogcatLine(line, { clockOffsetMs });
+      if (!record || !pids.has(Number(/\((\d+)\)$/.exec(String(record.proc))?.[1]))) return null;
+      return { record, digest: createHash('sha256').update(line.trim()).digest('hex') };
+    },
+  });
+}

@@ -1,0 +1,2185 @@
+{
+  "capturedAt": "2026-09-25T04:23:09.012Z",
+  "stimVersion": "1.9.0",
+  "home": "/Users/demo",
+  "command": "stim status --json (store demo, sanitized)",
+  "payload": {
+    "environments": [
+      {
+        "path": "/Users/demo/Developer/habitat-app/.worktrees/search-screen",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
+        "memoryMb": 6550,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": {
+          "name": "stim-search-screen (iPhone 17 Pro 27.1)",
+          "udid": "1D0E0000-0000-4000-8000-000000000010",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.example.habitat",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 3400000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:17:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "android": {
+          "name": "stim-search-screen",
+          "owned": true,
+          "physical": false,
+          "serial": "emulator-5560",
+          "state": "detected",
+          "deviceProfile": "pixel_9",
+          "app": {
+            "id": "com.example.habitat",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 5100000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "agent-device",
+              "pid": 41000,
+              "since": "2026-09-25T04:05:09.012Z"
+            },
+            "lastActivityAt": "2026-09-25T04:22:57.012Z",
+            "basis": ["agent-session"]
+          }
+        },
+        "metro": {
+          "port": 8084,
+          "running": true,
+          "pid": 58084,
+          "bundle": {
+            "bundling": false,
+            "last": {
+              "platform": "ios",
+              "status": "ok",
+              "durationMs": 1800,
+              "finishedAt": "2026-09-25T04:22:57.012Z"
+            }
+          }
+        },
+        "supervisor": {
+          "pid": 57084,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T03:41:09.012Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/demo/.stim/workspaces/search-screen-4f2a/logs",
+          "errorsSinceMarker": 2
+        },
+        "worktree": {
+          "path": "/Users/demo/Developer/habitat-app/.worktrees/search-screen",
+          "branch": "feat/search-screen",
+          "repository": "/Users/demo/Developer/habitat-app",
+          "git": {
+            "changed": 3,
+            "untracked": 0,
+            "upstream": "origin/feat/search-screen",
+            "ahead": 2,
+            "behind": 0,
+            "mergedInto": null
+          },
+          "pullRequest": {
+            "number": 118,
+            "url": "https://github.com/example/habitat-app/pull/118",
+            "title": "Add search to the home screen",
+            "state": "open",
+            "checks": {
+              "passing": 14,
+              "failing": 0,
+              "pending": 2
+            },
+            "reviewDecision": "review-required",
+            "checkedAt": "2026-09-25T04:21:09.012Z"
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T03:56:36.012Z",
+            "finishedAt": "2026-09-25T03:57:09.012Z"
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 62000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T02:22:07.012Z",
+            "finishedAt": "2026-09-25T02:23:09.012Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 33000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T03:56:36.012Z",
+              "finishedAt": "2026-09-25T03:57:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 31000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:38.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 158000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T02:20:31.012Z",
+              "finishedAt": "2026-09-24T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2100,
+                "cache-lookup": 1400,
+                "prebuild": 4000,
+                "pods": 21000,
+                "compile": 94000,
+                "install": 8000,
+                "launch": 27500
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 52000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T01:22:17.012Z",
+              "finishedAt": "2026-09-24T01:23:09.012Z",
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2000,
+                "cache-lookup": 1400,
+                "prebuild": 3800,
+                "pods": 20000,
+                "compile": 24800
+              },
+              "errorCode": "STIM_BUILD_FAILED"
+            }
+          ],
+          "android": [
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 62000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:07.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 58000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T23:22:11.012Z",
+              "finishedAt": "2026-09-24T23:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            }
+          ]
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 1200000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        },
+        "agents": [
+          {
+            "tool": "claude-code",
+            "sessionId": "00000000-0000-4000-8000-000000000000",
+            "cwd": "/Users/demo/Developer/habitat-app/.worktrees/search-screen",
+            "title": "Add search to the home screen",
+            "startedAt": "2026-09-25T03:10:00.000Z",
+            "lastActiveAt": "2026-09-25T04:20:00.000Z",
+            "pid": 20000,
+            "openUrl": "claude://code/continue?session=local_demo",
+            "webUrl": "https://claude.ai/code/session_demo"
+          }
+        ],
+        "endedAgents": [
+          {
+            "tool": "claude-code",
+            "sessionId": "00000000-0000-4000-8000-000000000000",
+            "cwd": "/Users/demo/Developer/habitat-app/.worktrees/search-screen",
+            "title": "Review the search design",
+            "startedAt": "2026-09-25T01:05:00.000Z",
+            "lastActiveAt": "2026-09-25T02:40:00.000Z",
+            "webUrl": "https://claude.ai/code/session_demo",
+            "endedAt": "2026-09-25T02:41:10.000Z"
+          }
+        ]
+      },
+      {
+        "path": "/Users/demo/Developer/habitat-app/.worktrees/tablet-layout",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
+        "memoryMb": 9360,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": {
+          "name": "stim-tablet-layout (iPhone 17 Pro 27.1)",
+          "udid": "1D0E0000-0000-4000-8000-000000000011",
+          "owned": true,
+          "state": "Booted",
+          "disk": {
+            "bytes": 3400000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:19:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "android": {
+          "name": "stim-tablet-layout",
+          "owned": true,
+          "physical": false,
+          "serial": "emulator-5562",
+          "state": "detected",
+          "deviceProfile": "pixel_9",
+          "app": {
+            "id": "com.example.habitat",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 5100000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:14:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "metro": {
+          "port": 8085,
+          "running": true,
+          "pid": 58085,
+          "bundle": {
+            "bundling": true,
+            "platform": "android",
+            "startedAt": "2026-09-25T04:23:05.012Z",
+            "percent": 62
+          }
+        },
+        "supervisor": {
+          "pid": 57085,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T03:41:09.012Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/demo/.stim/workspaces/tablet-layout-4f2a/logs",
+          "errorsSinceMarker": 0
+        },
+        "worktree": {
+          "path": "/Users/demo/Developer/habitat-app/.worktrees/tablet-layout",
+          "branch": "fix/tablet-layout",
+          "repository": "/Users/demo/Developer/habitat-app",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": "origin/fix/tablet-layout",
+            "ahead": 0,
+            "behind": 0,
+            "mergedInto": null
+          },
+          "pullRequest": {
+            "number": 121,
+            "url": "https://github.com/example/habitat-app/pull/121",
+            "title": "Fix list layout on wide screens",
+            "state": "draft",
+            "checks": null,
+            "reviewDecision": null,
+            "checkedAt": "2026-09-25T04:20:09.012Z"
+          }
+        },
+        "remoteDevices": [],
+        "build": {
+          "platform": "ios",
+          "slot": "default",
+          "state": "running",
+          "phase": "compile",
+          "startedAt": "2026-09-25T04:21:57.012Z",
+          "phaseStartedAt": "2026-09-25T04:22:22.012Z",
+          "outcome": "cold",
+          "expectedMs": 160000,
+          "expectedPhaseMs": 94000,
+          "basis": 3,
+          "detail": {
+            "step": "compile",
+            "unit": "targets",
+            "done": 97,
+            "total": 214,
+            "line": "CompileC RNGestureHandler.mm (in target RNGestureHandler)",
+            "updatedAt": "2026-09-25T04:23:08.012Z"
+          },
+          "missReason": {
+            "kind": "changed",
+            "summary": "Podfile.lock changed",
+            "changes": [
+              {
+                "source": "ios/Podfile.lock",
+                "change": "changed",
+                "category": "native-dependency"
+              }
+            ],
+            "changeCount": 1,
+            "baseline": {
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "from": "workspace"
+            },
+            "rekeyedBy": []
+          }
+        },
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T03:56:36.012Z",
+            "finishedAt": "2026-09-25T03:57:09.012Z"
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 62000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T02:22:07.012Z",
+            "finishedAt": "2026-09-25T02:23:09.012Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 33000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T03:56:36.012Z",
+              "finishedAt": "2026-09-25T03:57:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 31000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:38.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 158000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T02:20:31.012Z",
+              "finishedAt": "2026-09-24T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2100,
+                "cache-lookup": 1400,
+                "prebuild": 4000,
+                "pods": 21000,
+                "compile": 94000,
+                "install": 8000,
+                "launch": 27500
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 52000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T01:22:17.012Z",
+              "finishedAt": "2026-09-24T01:23:09.012Z",
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2000,
+                "cache-lookup": 1400,
+                "prebuild": 3800,
+                "pods": 20000,
+                "compile": 24800
+              },
+              "errorCode": "STIM_BUILD_FAILED"
+            }
+          ],
+          "android": [
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 62000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:07.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 58000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T23:22:11.012Z",
+              "finishedAt": "2026-09-24T23:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            }
+          ]
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 1200000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        }
+      },
+      {
+        "path": "/Users/demo/Developer/notes-app/.worktrees/offline-search",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
+        "memoryMb": 9360,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": {
+          "name": "stim-offline-search (iPhone 17 Pro 27.1)",
+          "udid": "1D0E0000-0000-4000-8000-000000000015",
+          "owned": true,
+          "state": "Booted",
+          "disk": {
+            "bytes": 3400000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:19:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "android": {
+          "name": "stim-offline-search",
+          "owned": true,
+          "physical": false,
+          "serial": "emulator-5562",
+          "state": "detected",
+          "deviceProfile": "pixel_9",
+          "app": {
+            "id": "com.example.notes",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 5100000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:14:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "metro": {
+          "port": 8085,
+          "running": true,
+          "pid": 58085,
+          "bundle": {
+            "bundling": true,
+            "platform": "android",
+            "startedAt": "2026-09-25T04:23:05.012Z",
+            "percent": 62
+          }
+        },
+        "supervisor": {
+          "pid": 57085,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T03:41:09.012Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/demo/.stim/workspaces/offline-search-4f2a/logs",
+          "errorsSinceMarker": 0
+        },
+        "worktree": {
+          "path": "/Users/demo/Developer/notes-app/.worktrees/offline-search",
+          "branch": "feat/offline-search",
+          "repository": "/Users/demo/Developer/notes-app",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": "origin/feat/offline-search",
+            "ahead": 0,
+            "behind": 0,
+            "mergedInto": null
+          }
+        },
+        "remoteDevices": [],
+        "build": {
+          "platform": "ios",
+          "slot": "default",
+          "state": "running",
+          "phase": "pods",
+          "startedAt": "2026-09-25T04:21:40.012Z",
+          "phaseStartedAt": "2026-09-25T04:22:13.012Z",
+          "outcome": "cold",
+          "expectedMs": 160000,
+          "expectedPhaseMs": 94000,
+          "basis": 3,
+          "outcomeKnown": true,
+          "missProvisional": true,
+          "missReason": {
+            "kind": "changed",
+            "summary": "Podfile.lock changed",
+            "changes": [
+              {
+                "source": "ios/Podfile.lock",
+                "change": "changed",
+                "category": "native-dependency"
+              }
+            ],
+            "changeCount": 1,
+            "baseline": {
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "from": "workspace"
+            },
+            "rekeyedBy": []
+          },
+          "placement": {
+            "host": "studio-mac:7869",
+            "phase": "pods",
+            "startedAt": "2026-09-25T04:21:52.012Z",
+            "phaseStartedAt": "2026-09-25T04:22:13.012Z"
+          }
+        },
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T03:56:36.012Z",
+            "finishedAt": "2026-09-25T03:57:09.012Z"
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 62000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T02:22:07.012Z",
+            "finishedAt": "2026-09-25T02:23:09.012Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 33000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T03:56:36.012Z",
+              "finishedAt": "2026-09-25T03:57:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 31000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:38.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 158000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T02:20:31.012Z",
+              "finishedAt": "2026-09-24T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2100,
+                "cache-lookup": 1400,
+                "prebuild": 4000,
+                "pods": 21000,
+                "compile": 94000,
+                "install": 8000,
+                "launch": 27500
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 52000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T01:22:17.012Z",
+              "finishedAt": "2026-09-24T01:23:09.012Z",
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2000,
+                "cache-lookup": 1400,
+                "prebuild": 3800,
+                "pods": 20000,
+                "compile": 24800
+              },
+              "errorCode": "STIM_BUILD_FAILED"
+            }
+          ],
+          "android": [
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 62000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:07.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 58000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T23:22:11.012Z",
+              "finishedAt": "2026-09-24T23:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            }
+          ]
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 1200000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        }
+      },
+      {
+        "path": "/Users/demo/Developer/notes-app/.worktrees/share-sheet",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
+        "memoryMb": 6550,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": {
+          "name": "stim-share-sheet (iPhone 17 Pro 27.1)",
+          "udid": "1D0E0000-0000-4000-8000-000000000016",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.example.notes",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 3400000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:17:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "android": {
+          "name": "stim-share-sheet",
+          "owned": true,
+          "physical": false,
+          "serial": "emulator-5560",
+          "state": "detected",
+          "deviceProfile": "pixel_9",
+          "app": {
+            "id": "com.example.notes",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 5100000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "agent-device",
+              "pid": 41000,
+              "since": "2026-09-25T04:05:09.012Z"
+            },
+            "lastActivityAt": "2026-09-25T04:22:57.012Z",
+            "basis": ["agent-session"]
+          }
+        },
+        "metro": {
+          "port": 8084,
+          "running": true,
+          "pid": 58084,
+          "bundle": {
+            "bundling": false,
+            "last": {
+              "platform": "ios",
+              "status": "ok",
+              "durationMs": 1800,
+              "finishedAt": "2026-09-25T04:22:57.012Z"
+            }
+          }
+        },
+        "supervisor": {
+          "pid": 57084,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T03:41:09.012Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/demo/.stim/workspaces/share-sheet-4f2a/logs",
+          "errorsSinceMarker": 0
+        },
+        "worktree": {
+          "path": "/Users/demo/Developer/notes-app/.worktrees/share-sheet",
+          "branch": "feat/share-sheet",
+          "repository": "/Users/demo/Developer/notes-app",
+          "git": {
+            "changed": 3,
+            "untracked": 0,
+            "upstream": "origin/feat/share-sheet",
+            "ahead": 2,
+            "behind": 0,
+            "mergedInto": null
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": false,
+            "cacheSkipped": false,
+            "durationMs": 71000,
+            "fingerprint": "a4f00d1111111111111111111111111111111111",
+            "startedAt": "2026-09-25T04:05:11.012Z",
+            "finishedAt": "2026-09-25T04:06:22.012Z",
+            "missReason": {
+              "kind": "changed",
+              "summary": "native dependency added: expo-clipboard",
+              "changes": [
+                {
+                  "source": "expo-clipboard",
+                  "change": "added",
+                  "category": "native-dependency"
+                }
+              ],
+              "changeCount": 1,
+              "baseline": {
+                "fingerprint": "a4f00d0000000000000000000000000000000000",
+                "from": "workspace"
+              },
+              "rekeyedBy": []
+            },
+            "offloadedTo": "studio-mac:7869"
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 62000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T02:22:07.012Z",
+            "finishedAt": "2026-09-25T02:23:09.012Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 71000,
+              "fingerprint": "a4f00d1111111111111111111111111111111111",
+              "startedAt": "2026-09-25T04:05:11.012Z",
+              "finishedAt": "2026-09-25T04:06:22.012Z",
+              "missReason": {
+                "kind": "changed",
+                "summary": "native dependency added: expo-clipboard",
+                "changes": [
+                  {
+                    "source": "expo-clipboard",
+                    "change": "added",
+                    "category": "native-dependency"
+                  }
+                ],
+                "changeCount": 1,
+                "baseline": {
+                  "fingerprint": "a4f00d0000000000000000000000000000000000",
+                  "from": "workspace"
+                },
+                "rekeyedBy": []
+              },
+              "offloadedTo": "studio-mac:7869",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1500,
+                "cache-lookup": 1200,
+                "compile": 47000,
+                "install": 8000,
+                "launch": 13300
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 33000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T03:56:36.012Z",
+              "finishedAt": "2026-09-25T03:57:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 31000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:38.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 158000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T02:20:31.012Z",
+              "finishedAt": "2026-09-24T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2100,
+                "cache-lookup": 1400,
+                "prebuild": 4000,
+                "pods": 21000,
+                "compile": 94000,
+                "install": 8000,
+                "launch": 27500
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 52000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T01:22:17.012Z",
+              "finishedAt": "2026-09-24T01:23:09.012Z",
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2000,
+                "cache-lookup": 1400,
+                "prebuild": 3800,
+                "pods": 20000,
+                "compile": 24800
+              },
+              "errorCode": "STIM_BUILD_FAILED"
+            }
+          ],
+          "android": [
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 62000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:07.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 58000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T23:22:11.012Z",
+              "finishedAt": "2026-09-24T23:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            }
+          ]
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 1200000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        }
+      },
+      {
+        "path": "/Users/demo/Developer/habitat-app/.worktrees/update-expo-sdk",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
+        "memoryMb": 5490,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": {
+          "name": "stim-update-expo-sdk (iPhone 17 Pro 27.1)",
+          "udid": "1D0E0000-0000-4000-8000-000000000012",
+          "owned": true,
+          "state": "Booted",
+          "disk": {
+            "bytes": 3400000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:20:09.012Z",
+            "basis": ["workspace-use"]
+          },
+          "app": {
+            "id": "com.example.habitat",
+            "state": "stopped"
+          }
+        },
+        "android": {
+          "name": "stim-update-expo-sdk",
+          "owned": true,
+          "physical": false,
+          "serial": "emulator-5566",
+          "state": "detected",
+          "deviceProfile": "pixel_9",
+          "app": {
+            "id": "com.example.habitat",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 5100000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:03:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "metro": {
+          "port": 8087,
+          "running": true,
+          "pid": 58087,
+          "bundle": {
+            "bundling": false,
+            "last": {
+              "platform": "android",
+              "status": "ok",
+              "durationMs": 1800,
+              "finishedAt": "2026-09-25T04:17:09.012Z"
+            }
+          }
+        },
+        "supervisor": {
+          "pid": 57087,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T03:41:09.012Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/demo/.stim/workspaces/update-expo-sdk-4f2a/logs",
+          "errorsSinceMarker": 1
+        },
+        "worktree": {
+          "path": "/Users/demo/Developer/habitat-app/.worktrees/update-expo-sdk",
+          "branch": "chore/update-expo-sdk",
+          "repository": "/Users/demo/Developer/habitat-app",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": null,
+            "ahead": null,
+            "behind": null,
+            "mergedInto": null
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "failed",
+            "cacheHit": false,
+            "cacheSkipped": false,
+            "durationMs": 52000,
+            "fingerprint": "a4f00d0000000000000000000000000000000001",
+            "startedAt": "2026-09-25T04:19:17.012Z",
+            "finishedAt": "2026-09-25T04:20:09.012Z",
+            "errorCode": "STIM_BUILD_FAILED",
+            "diagnostics": [
+              {
+                "file": null,
+                "line": null,
+                "column": null,
+                "message": "No profiles for 'com.example.habitat' were found: Xcode couldn't find any iOS App Development provisioning profiles."
+              }
+            ]
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 62000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T02:22:07.012Z",
+            "finishedAt": "2026-09-25T02:23:09.012Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 52000,
+              "fingerprint": "a4f00d0000000000000000000000000000000001",
+              "startedAt": "2026-09-25T04:19:17.012Z",
+              "finishedAt": "2026-09-25T04:20:09.012Z",
+              "errorCode": "STIM_BUILD_FAILED",
+              "diagnostics": [
+                {
+                  "file": null,
+                  "line": null,
+                  "column": null,
+                  "message": "No profiles for 'com.example.habitat' were found: Xcode couldn't find any iOS App Development provisioning profiles."
+                }
+              ],
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2000,
+                "cache-lookup": 1400,
+                "prebuild": 3800,
+                "pods": 20000,
+                "compile": 24800
+              }
+            }
+          ],
+          "android": [
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 62000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:07.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 58000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T23:22:11.012Z",
+              "finishedAt": "2026-09-24T23:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            }
+          ]
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 1200000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        }
+      },
+      {
+        "path": "/Users/demo/Developer/notes-app/.worktrees/onboarding",
+        "live": false,
+        "phase": "warming",
+        "phaseSince": "2026-09-25T04:22:31.012Z",
+        "memoryMb": 0,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": null,
+        "android": null,
+        "metro": null,
+        "supervisor": null,
+        "logs": null,
+        "worktree": {
+          "path": "/Users/demo/Developer/notes-app/.worktrees/onboarding",
+          "branch": "feat/onboarding",
+          "repository": "/Users/demo/Developer/notes-app",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": "origin/feat/onboarding",
+            "ahead": 0,
+            "behind": 0,
+            "mergedInto": null
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "disk": {
+          "worktreeBytes": 800000000,
+          "nodeModulesBytes": 400000000,
+          "buildBytes": null,
+          "measuredAt": "2026-09-25T04:22:49.012Z"
+        },
+        "warmStep": "refresh"
+      },
+      {
+        "path": "/Users/demo/Developer/notes-app/.worktrees/note-sorting",
+        "live": false,
+        "phase": "ready",
+        "phaseSince": "2026-09-25T03:53:09.012Z",
+        "memoryMb": 0,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": null,
+        "android": null,
+        "metro": null,
+        "supervisor": null,
+        "logs": null,
+        "worktree": {
+          "path": "/Users/demo/Developer/notes-app/.worktrees/note-sorting",
+          "branch": "fix/note-sorting",
+          "repository": "/Users/demo/Developer/notes-app",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": "origin/fix/note-sorting",
+            "ahead": 0,
+            "behind": 0,
+            "mergedInto": null
+          },
+          "pullRequest": {
+            "number": 214,
+            "url": "https://github.com/example/notes-app/pull/214",
+            "title": "Fix sort order of pinned notes",
+            "state": "open",
+            "checks": {
+              "passing": 16,
+              "failing": 0,
+              "pending": 0
+            },
+            "reviewDecision": "review-required",
+            "checkedAt": "2026-09-25T04:21:09.012Z"
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "disk": {
+          "worktreeBytes": 120000000,
+          "nodeModulesBytes": null,
+          "buildBytes": null,
+          "measuredAt": "2026-09-25T03:53:30.012Z"
+        },
+        "endedAgents": [
+          {
+            "tool": "claude-code",
+            "sessionId": "00000000-0000-4000-8000-000000000080",
+            "cwd": "/Users/demo/Developer/notes-app/.worktrees/note-sorting",
+            "title": "Plan the sort order fix",
+            "startedAt": "2026-09-24T22:10:00.000Z",
+            "lastActiveAt": "2026-09-24T23:30:00.000Z",
+            "openUrl": "claude://code/continue?session=local_demo",
+            "webUrl": "https://claude.ai/code/session_demo",
+            "endedAt": "2026-09-24T23:31:25.000Z"
+          },
+          {
+            "tool": "codex",
+            "sessionId": "00000000-0000-4000-8000-000000000081",
+            "cwd": "/Users/demo/Developer/notes-app/.worktrees/note-sorting",
+            "title": "Review the pinned notes change",
+            "startedAt": "2026-09-24T18:00:00.000Z",
+            "lastActiveAt": "2026-09-24T18:45:00.000Z",
+            "endedAt": "2026-09-24T19:15:30.000Z"
+          }
+        ]
+      },
+      {
+        "path": "/Users/demo/Developer/habitat-app/.worktrees/dark-mode",
+        "live": false,
+        "phase": "idle",
+        "phaseSince": null,
+        "memoryMb": 0,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": {
+          "name": "stim-dark-mode (iPhone 17 Pro 27.1)",
+          "udid": "1D0E0000-0000-4000-8000-000000000013",
+          "owned": true,
+          "state": "Shutdown",
+          "disk": {
+            "bytes": 3400000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          }
+        },
+        "android": null,
+        "metro": {
+          "port": 8089,
+          "running": false,
+          "pid": null,
+          "lastStop": {
+            "reason": "requested",
+            "at": "2026-09-25T02:23:09.012Z",
+            "by": "stop",
+            "byPid": 1
+          }
+        },
+        "supervisor": null,
+        "logs": {
+          "dir": "/Users/demo/.stim/workspaces/dark-mode-4f2a/logs",
+          "errorsSinceMarker": 0
+        },
+        "worktree": {
+          "path": "/Users/demo/Developer/habitat-app/.worktrees/dark-mode",
+          "branch": "feat/dark-mode",
+          "repository": "/Users/demo/Developer/habitat-app",
+          "git": {
+            "changed": 0,
+            "untracked": 0,
+            "upstream": "origin/feat/dark-mode",
+            "ahead": 0,
+            "behind": 0,
+            "mergedInto": "main"
+          },
+          "pullRequest": {
+            "number": 96,
+            "url": "https://github.com/example/habitat-app/pull/96",
+            "title": "Add a dark theme",
+            "state": "merged",
+            "checks": {
+              "passing": 18,
+              "failing": 0,
+              "pending": 0
+            },
+            "reviewDecision": "approved",
+            "checkedAt": "2026-09-25T04:13:09.012Z"
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T03:56:36.012Z",
+            "finishedAt": "2026-09-25T03:57:09.012Z"
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 62000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T02:22:07.012Z",
+            "finishedAt": "2026-09-25T02:23:09.012Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 33000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T03:56:36.012Z",
+              "finishedAt": "2026-09-25T03:57:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 31000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:38.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 158000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T02:20:31.012Z",
+              "finishedAt": "2026-09-24T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2100,
+                "cache-lookup": 1400,
+                "prebuild": 4000,
+                "pods": 21000,
+                "compile": 94000,
+                "install": 8000,
+                "launch": 27500
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 52000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T01:22:17.012Z",
+              "finishedAt": "2026-09-24T01:23:09.012Z",
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2000,
+                "cache-lookup": 1400,
+                "prebuild": 3800,
+                "pods": 20000,
+                "compile": 24800
+              },
+              "errorCode": "STIM_BUILD_FAILED"
+            }
+          ],
+          "android": [
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 62000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:07.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 58000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T23:22:11.012Z",
+              "finishedAt": "2026-09-24T23:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            }
+          ]
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 1200000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        }
+      },
+      {
+        "path": "/Users/demo/Developer/notes-app/.worktrees/sync-folders",
+        "macos": {
+          "launchId": "00000000-0000-4000-8000-000000000090",
+          "arguments": [],
+          "product": "Notes",
+          "bundle": "/Users/demo/.stim/workspaces/sync-folders-4f2a/macos/Notes.app",
+          "bundleId": "com.example.notes.mac",
+          "executable": "/Users/demo/.stim/workspaces/sync-folders-4f2a/macos/Notes.app/Contents/MacOS/Notes",
+          "build": {
+            "state": "ok",
+            "startedAt": "2026-09-25T04:20:11.000Z",
+            "finishedAt": "2026-09-25T04:20:38.000Z",
+            "durationMs": 27000
+          },
+          "host": {
+            "machine": "studio-mac:7443",
+            "session": "00000000-0000-4000-8000-000000000091",
+            "appSlot": 1,
+            "appAttempt": "attempt-1",
+            "bundleId": "com.example.notes.mac.hosted1",
+            "agent": {
+              "driver": "none",
+              "setting": "hosting.agentDriver"
+            }
+          },
+          "hostLaunched": true,
+          "state": "running"
+        },
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
+        "memoryMb": 7170,
+        "memorySource": "footprint",
+        "warnings": [],
+        "issues": [],
+        "ios": {
+          "name": "stim-sync-folders (iPhone 17 Pro 27.1)",
+          "udid": "1D0E0000-0000-4000-8000-000000000014",
+          "owned": true,
+          "state": "Booted",
+          "app": {
+            "id": "com.example.notes",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 3400000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "idle",
+            "lastActivityAt": "2026-09-25T04:15:09.012Z",
+            "basis": ["workspace-use"]
+          }
+        },
+        "android": {
+          "name": "stim-sync-folders",
+          "owned": true,
+          "physical": false,
+          "serial": "emulator-5568",
+          "state": "detected",
+          "deviceProfile": "pixel_9",
+          "app": {
+            "id": "com.example.notes",
+            "state": "running"
+          },
+          "disk": {
+            "bytes": 5100000000,
+            "measuredAt": "2026-09-25T04:20:09.012Z"
+          },
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "agent-device",
+              "pid": 41000,
+              "since": "2026-09-25T04:17:09.012Z"
+            },
+            "lastActivityAt": "2026-09-25T04:22:57.012Z",
+            "basis": ["agent-session"]
+          }
+        },
+        "metro": {
+          "port": 8090,
+          "running": true,
+          "pid": 58090,
+          "bundle": {
+            "bundling": false,
+            "last": {
+              "platform": "ios",
+              "status": "ok",
+              "durationMs": 1800,
+              "finishedAt": "2026-09-25T04:22:57.012Z"
+            }
+          }
+        },
+        "supervisor": {
+          "pid": 57090,
+          "mode": "expo-child",
+          "startedAt": "2026-09-25T03:41:09.012Z",
+          "healthy": true
+        },
+        "logs": {
+          "dir": "/Users/demo/.stim/workspaces/sync-folders-4f2a/logs",
+          "errorsSinceMarker": 0
+        },
+        "worktree": {
+          "path": "/Users/demo/Developer/notes-app/.worktrees/sync-folders",
+          "branch": "feat/sync-folders",
+          "repository": "/Users/demo/Developer/notes-app",
+          "git": {
+            "changed": 3,
+            "untracked": 0,
+            "upstream": "origin/feat/sync-folders",
+            "ahead": 2,
+            "behind": 0,
+            "mergedInto": null
+          }
+        },
+        "remoteDevices": [],
+        "build": null,
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T03:56:36.012Z",
+            "finishedAt": "2026-09-25T03:57:09.012Z"
+          },
+          "android": {
+            "platform": "android",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 62000,
+            "fingerprint": "a4f00d0000000000000000000000000000000000",
+            "startedAt": "2026-09-25T02:22:07.012Z",
+            "finishedAt": "2026-09-25T02:23:09.012Z"
+          }
+        },
+        "builds": {
+          "ios": [
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 33000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T03:56:36.012Z",
+              "finishedAt": "2026-09-25T03:57:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 31000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:38.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1700,
+                "cache-lookup": 1300,
+                "install": 9000,
+                "launch": 21000
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 158000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T02:20:31.012Z",
+              "finishedAt": "2026-09-24T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2100,
+                "cache-lookup": 1400,
+                "prebuild": 4000,
+                "pods": 21000,
+                "compile": 94000,
+                "install": 8000,
+                "launch": 27500
+              }
+            },
+            {
+              "platform": "ios",
+              "status": "failed",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 52000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T01:22:17.012Z",
+              "finishedAt": "2026-09-24T01:23:09.012Z",
+              "result": "failed",
+              "slot": "default",
+              "configuration": "Debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 2000,
+                "cache-lookup": 1400,
+                "prebuild": 3800,
+                "pods": 20000,
+                "compile": 24800
+              },
+              "errorCode": "STIM_BUILD_FAILED"
+            }
+          ],
+          "android": [
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 62000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-25T02:22:07.012Z",
+              "finishedAt": "2026-09-25T02:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            },
+            {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": "local",
+              "cacheSkipped": false,
+              "durationMs": 58000,
+              "fingerprint": "a4f00d0000000000000000000000000000000000",
+              "startedAt": "2026-09-24T23:22:11.012Z",
+              "finishedAt": "2026-09-24T23:23:09.012Z",
+              "result": "succeeded",
+              "slot": "default",
+              "configuration": "debug",
+              "cacheKey": null,
+              "phases": {
+                "prepare": 1800,
+                "cache-lookup": 1500,
+                "install": 27000,
+                "launch": 31700
+              }
+            }
+          ]
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 1200000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        },
+        "web": {
+          "browser": "chrome",
+          "version": "141.0.7390.54",
+          "running": true,
+          "pid": 61000,
+          "supervisorPid": 60999,
+          "url": "http://localhost:8090",
+          "headless": false,
+          "viewport": "desktop",
+          "profile": "/Users/demo/.stim/workspaces/sync-folders-4f2a/web/profile",
+          "cdpEndpoint": "ws://127.0.0.1:9322/devtools/browser/a4",
+          "targetId": "A4WEBTARGET0007",
+          "page": {
+            "url": "http://localhost:8090/",
+            "state": "loaded",
+            "route": "http://localhost:8090/settings"
+          },
+          "activity": {
+            "state": "driven",
+            "driver": {
+              "tool": "playwright-mcp",
+              "pid": 41000,
+              "since": "2026-09-25T04:20:09.012Z"
+            },
+            "lastActivityAt": "2026-09-25T04:22:57.012Z",
+            "basis": ["agent-session"]
+          }
+        }
+      }
+    ],
+    "capacity": {
+      "liveCount": 6,
+      "committedMb": 44480,
+      "totalMemoryMb": 49152,
+      "overCapacity": false
+    },
+    "deviceLeases": [],
+    "unprovisionedWorktrees": [],
+    "simctlAvailable": true,
+    "machine": {
+      "memorySource": "footprint",
+      "owners": [
+        {
+          "kind": "simulator",
+          "name": "simulator",
+          "workspace": "/Users/demo/Developer/habitat-app/.worktrees/search-screen",
+          "id": "1D0E0000-0000-4000-8000-000000000010",
+          "owned": true,
+          "cpuPercent": 9,
+          "residentMb": 2795,
+          "memoryMb": 2150,
+          "processes": 3
+        },
+        {
+          "kind": "emulator",
+          "name": "emulator",
+          "workspace": "/Users/demo/Developer/habitat-app/.worktrees/search-screen",
+          "id": "stim-search-screen",
+          "owned": true,
+          "cpuPercent": 14,
+          "residentMb": 3861,
+          "memoryMb": 2970,
+          "processes": 3
+        },
+        {
+          "kind": "metro",
+          "name": "metro",
+          "workspace": "/Users/demo/Developer/habitat-app/.worktrees/search-screen",
+          "id": "8084",
+          "owned": true,
+          "cpuPercent": 9,
+          "residentMb": 1859,
+          "memoryMb": 1430,
+          "processes": 3
+        },
+        {
+          "kind": "simulator",
+          "name": "simulator",
+          "workspace": "/Users/demo/Developer/habitat-app/.worktrees/tablet-layout",
+          "id": "1D0E0000-0000-4000-8000-000000000011",
+          "owned": true,
+          "cpuPercent": 4,
+          "residentMb": 2392,
+          "memoryMb": 1840,
+          "processes": 3
+        },
+        {
+          "kind": "emulator",
+          "name": "emulator",
+          "workspace": "/Users/demo/Developer/habitat-app/.worktrees/tablet-layout",
+          "id": "stim-tablet-layout",
+          "owned": true,
+          "cpuPercent": 11,
+          "residentMb": 3770,
+          "memoryMb": 2900,
+          "processes": 3
+        },
+        {
+          "kind": "metro",
+          "name": "metro",
+          "workspace": "/Users/demo/Developer/habitat-app/.worktrees/tablet-layout",
+          "id": "8085",
+          "owned": true,
+          "cpuPercent": 38,
+          "residentMb": 1976,
+          "memoryMb": 1520,
+          "processes": 3
+        },
+        {
+          "kind": "build",
+          "name": "build",
+          "workspace": "/Users/demo/Developer/habitat-app/.worktrees/tablet-layout",
+          "id": "ios",
+          "owned": true,
+          "cpuPercent": 259,
+          "residentMb": 4030,
+          "memoryMb": 3100,
+          "processes": 3
+        },
+        {
+          "kind": "simulator",
+          "name": "simulator",
+          "workspace": "/Users/demo/Developer/habitat-app/.worktrees/update-expo-sdk",
+          "id": "1D0E0000-0000-4000-8000-000000000012",
+          "owned": true,
+          "cpuPercent": 0,
+          "residentMb": 1599,
+          "memoryMb": 1230,
+          "processes": 3
+        },
+        {
+          "kind": "emulator",
+          "name": "emulator",
+          "workspace": "/Users/demo/Developer/habitat-app/.worktrees/update-expo-sdk",
+          "id": "stim-update-expo-sdk",
+          "owned": true,
+          "cpuPercent": 13,
+          "residentMb": 3835,
+          "memoryMb": 2950,
+          "processes": 3
+        },
+        {
+          "kind": "metro",
+          "name": "metro",
+          "workspace": "/Users/demo/Developer/habitat-app/.worktrees/update-expo-sdk",
+          "id": "8087",
+          "owned": true,
+          "cpuPercent": 2,
+          "residentMb": 1703,
+          "memoryMb": 1310,
+          "processes": 3
+        },
+        {
+          "kind": "simulator",
+          "name": "simulator",
+          "workspace": "/Users/demo/Developer/notes-app/.worktrees/sync-folders",
+          "id": "1D0E0000-0000-4000-8000-000000000014",
+          "owned": true,
+          "cpuPercent": 8,
+          "residentMb": 2860,
+          "memoryMb": 2200,
+          "processes": 3
+        },
+        {
+          "kind": "emulator",
+          "name": "emulator",
+          "workspace": "/Users/demo/Developer/notes-app/.worktrees/sync-folders",
+          "id": "stim-sync-folders",
+          "owned": true,
+          "cpuPercent": 16,
+          "residentMb": 3913,
+          "memoryMb": 3010,
+          "processes": 3
+        },
+        {
+          "kind": "browser",
+          "name": "browser",
+          "workspace": "/Users/demo/Developer/notes-app/.worktrees/sync-folders",
+          "id": null,
+          "owned": true,
+          "cpuPercent": 6,
+          "residentMb": 663,
+          "memoryMb": 510,
+          "processes": 3
+        },
+        {
+          "kind": "metro",
+          "name": "metro",
+          "workspace": "/Users/demo/Developer/notes-app/.worktrees/sync-folders",
+          "id": "8090",
+          "owned": true,
+          "cpuPercent": 7,
+          "residentMb": 1885,
+          "memoryMb": 1450,
+          "processes": 3
+        }
+      ]
+    }
+  },
+  "edits": []
+}

@@ -1,0 +1,779 @@
+import { processContext } from '../cli-operation.ts';
+import assert from 'node:assert';
+import { execFileSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { cloneIgnoredEntries, warmWorktreePaths } from '../workspace/worktree.ts';
+import { Command } from 'commander';
+import { registerWarm } from '../commands/worktree.ts';
+import { workspacePhase } from '../engine/warm-progress.ts';
+import { loadConfig, upsertProject } from '../workspace/config.ts';
+import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { READY_PHASE_MS, readWarmRecord } from '@stim-cli/core/state';
+import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
+import { fingerprintProject } from '../cache/build-cache.ts';
+import { recordPrebuild } from '../engine/prebuild.ts';
+
+const renameIo: { fail: boolean } = vi.hoisted(() => ({ fail: false }));
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...fs,
+    rename: async (...args: Parameters<typeof fs.rename>) => {
+      if (renameIo.fail) throw Object.assign(new Error('EXDEV: cross-device link not permitted'), { code: 'EXDEV' });
+      return fs.rename(...args);
+    },
+  };
+});
+
+let base: string;
+let root: string;
+let target: string;
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8', timeout: 15_000 }).trim();
+}
+
+function write(dir: string, rel: string, value: string): void {
+  mkdirSync(dirname(join(dir, rel)), { recursive: true });
+  writeFileSync(join(dir, rel), value);
+}
+
+beforeEach(() => {
+  base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-warm-')));
+  root = join(base, 'main');
+  target = join(base, 'linked');
+  process.env.STIM_HOME = join(base, 'home');
+  mkdirSync(root);
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'config', 'core.autocrlf', 'false');
+  git(root, 'config', 'user.name', 'test');
+  git(root, 'config', 'user.email', 'test@example.com');
+  git(root, 'config', 'commit.gpgsign', 'false');
+  write(root, '.gitignore', 'node_modules/\nios/Pods/\nios/build/\n.env*\nlocal/\n.worktrees/\n.DerivedData/\n');
+  write(root, 'package.json', '{"name":"warm-fixture"}\n');
+  write(root, 'ios/Podfile.lock', 'branch pods\n');
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', 'fixture');
+  git(root, 'worktree', 'add', '-qb', 'linked', target);
+}, 30_000);
+
+afterEach(() => {
+  renameIo.fail = false;
+  vi.restoreAllMocks();
+  resetExecutor();
+  process.exitCode = 0;
+  delete process.env.STIM_HOME;
+  rmSync(base, { recursive: true, force: true });
+});
+
+async function warm() {
+  return await cloneIgnoredEntries({ root, target, patterns: [], operation: processContext(target) });
+}
+
+test('missing-only copy preserves existing directories, files, and dangling symlinks wholesale', async () => {
+  write(root, 'node_modules/new/index.js', 'source package');
+  write(root, '.env', 'source env');
+  write(root, '.env.local', 'source local');
+  write(target, 'node_modules/own/index.js', 'destination package');
+  write(target, '.env', 'destination env');
+  symlinkSync('absent-env', join(target, '.env.local'));
+  const result = await warm();
+  expect(result.copied).toEqual([]);
+  expect(result.failed).toEqual([]);
+  expect(result.skipped).toHaveLength(3);
+  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('destination env');
+  expect(readlinkSync(join(target, '.env.local'))).toBe('absent-env');
+  expect(readdirSync(join(target, 'node_modules'))).toEqual(['own']);
+}, 30_000);
+
+test('missing-only copy refuses destination symlink ancestors', async () => {
+  write(root, 'ios/Pods/Manifest.lock', 'source pods');
+  rmSync(join(target, 'ios'), { recursive: true });
+  const outside = join(base, 'outside');
+  mkdirSync(outside);
+  symlinkSync(outside, join(target, 'ios'));
+  const result = await warm();
+  expect(result.copied).toEqual([]);
+  expect(result.skipped).toEqual([{ file: 'ios/Pods', reason: 'symlink ancestor: ios' }]);
+  expect(readdirSync(outside)).toEqual([]);
+}, 30_000);
+
+test('missing-only copy skips registered nested worktrees and their ignored parents on either side', async () => {
+  const sourceNested = join(root, '.worktrees', 'source');
+  const targetNested = join(target, 'local', 'linked');
+  git(root, 'worktree', 'add', '-qb', 'source-nested', sourceNested);
+  git(root, 'worktree', 'add', '-qb', 'target-nested', targetNested);
+  write(root, '.worktrees/other.txt', 'source sibling');
+  write(root, 'local/source.txt', 'must not enter target parent');
+  const result = await warm();
+  expect(result.copied).toEqual([]);
+  expect(existsSync(join(target, '.worktrees'))).toBe(false);
+  expect(existsSync(join(target, 'local/source.txt'))).toBe(false);
+  expect(git(targetNested, 'branch', '--show-current')).toBe('target-nested');
+}, 30_000);
+
+test.skipIf(process.platform === 'win32')(
+  'missing-only copy preserves relative symlinks without linking files back to the source (POSIX symlink and inode semantics; skipped on win32)',
+  async () => {
+    write(root, 'node_modules/pkg/index.js', 'source package');
+    const source = join(root, 'node_modules/pkg/index.js');
+    const destination = join(target, 'node_modules/pkg/index.js');
+    linkSync(source, join(root, 'node_modules/pkg/sibling.js'));
+    symlinkSync('pkg', join(root, 'node_modules/alias'));
+    mkdirSync(join(base, 'outside'));
+    symlinkSync('../../outside', join(root, 'node_modules/outside'));
+    const result = await warm();
+    expect(result.failed).toEqual([]);
+    expect(readlinkSync(join(target, 'node_modules/alias'))).toBe('pkg');
+    expect(readlinkSync(join(target, 'node_modules/outside'))).toBe('../../outside');
+    const published = lstatSync(destination);
+    expect(published.ino).not.toBe(lstatSync(source).ino);
+    expect(published.nlink).toBe(1);
+    expect(lstatSync(join(target, 'node_modules/pkg/sibling.js')).ino).not.toBe(published.ino);
+    write(target, 'node_modules/pkg/index.js', 'edited destination');
+    expect(readFileSync(source, 'utf-8')).toBe('source package');
+    expect(readFileSync(join(target, 'node_modules/pkg/sibling.js'), 'utf-8')).toBe('source package');
+    writeFileSync(source, 'edited source');
+    expect(readFileSync(destination, 'utf-8')).toBe('edited destination');
+  },
+  30_000,
+);
+
+test.skipIf(process.platform !== 'darwin')(
+  'direct cloning preserves source timestamps and clones a directory without a per-file copy',
+  async () => {
+    write(root, '.env', 'source config');
+    write(root, 'node_modules/pkg/index.js', 'source package');
+    const real = getExecutor();
+    const copiedByCp: string[] = [];
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, opts) {
+        if (file === 'cp') copiedByCp.push(args[args.length - 2]);
+        return real.runFileAsync(file, args, opts);
+      },
+    });
+    const files = ['.env', 'node_modules/pkg/index.js'];
+    for (const rel of files) utimesSync(join(root, rel), new Date('2020-01-01'), new Date('2021-01-01'));
+    const before = new Map(files.map((rel) => [rel, lstatSync(join(root, rel))]));
+    const result = await warm();
+    expect(result.failed).toEqual([]);
+    expect(result.cloned).toBe(true);
+    expect(copiedByCp).toEqual([join(root, '.env')]);
+    for (const [rel, source] of before) {
+      const copied = lstatSync(join(target, rel));
+      expect(copied.ino).not.toBe(source.ino);
+      expect(copied.atimeMs).toBe(source.atimeMs);
+      expect(copied.mtimeMs).toBe(source.mtimeMs);
+    }
+  },
+  30_000,
+);
+
+async function runWarm(cwd: string) {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const log = vi.spyOn(console, 'log').mockImplementation((value) => stdout.push(String(value)));
+  const error = vi.spyOn(console, 'error').mockImplementation((value) => stderr.push(`${String(value)}\n`));
+  const stream = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    stderr.push(String(chunk));
+    return true;
+  });
+  const previous = process.cwd();
+  try {
+    process.chdir(cwd);
+    const command = new Command();
+    registerWarm(command);
+    await command.parseAsync(['warm'], { from: 'user' });
+    return { stdout, stderr: stderr.join(''), code: process.exitCode || 0 };
+  } finally {
+    process.chdir(previous);
+    log.mockRestore();
+    error.mockRestore();
+    stream.mockRestore();
+  }
+}
+
+test('warm identifies canonical main and linked roots from a symlinked subdirectory', async () => {
+  const alias = join(base, 'alias');
+  symlinkSync(target, alias);
+  expect(await warmWorktreePaths(join(alias, 'ios'))).toEqual({ root, target, common: join(root, '.git') });
+}, 30_000);
+
+test('warm rejects the source checkout and non-repositories without changing them', async () => {
+  write(root, '.env', 'source env');
+  const main = await runWarm(root);
+  expect(main.code).toBe(1);
+  expect(main.stdout).toEqual([]);
+  expect(main.stderr).toMatch(/linked worktree, not the source checkout/);
+  process.exitCode = 0;
+  const outside = await runWarm(base);
+  expect(outside.code).toBe(1);
+  expect(outside.stderr).toMatch(/Not a git repository/);
+}, 30_000);
+
+test('warm refuses an unregistered target, missing source checkout, or mismatched Git common directory', async () => {
+  const real = getExecutor();
+  for (const kind of ['unregistered', 'missing main', 'different common']) {
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, opts) {
+        if (kind === 'unregistered' && args.includes('worktree') && args.includes('list')) {
+          return `worktree ${root}\nbranch refs/heads/main\n`;
+        }
+        if (kind === 'missing main' && args.includes('--show-toplevel') && args[args.indexOf('-C') + 1] === root)
+          throw new Error('source missing');
+        if (
+          kind === 'different common' &&
+          args.at(-1) === '--git-common-dir' &&
+          !args.includes('--git-dir') &&
+          args[args.indexOf('-C') + 1] === root
+        ) {
+          return base;
+        }
+        return real.runFileAsync(file, args, opts);
+      },
+    });
+    await expect(warmWorktreePaths(target)).rejects.toThrow(/Could not/);
+  }
+}, 30_000);
+
+test('warm copies main ignored state but preserves the linked branch and tracked edits', async () => {
+  write(root, 'node_modules/pkg/index.js', 'main dependency');
+  write(root, '.env', 'main env');
+  write(root, 'package.json', '{"name":"dirty-main"}\n');
+  write(target, 'package.json', '{"name":"dirty-linked"}\n');
+  write(target, '.env.local', 'linked local env');
+  const result = await runWarm(join(target, 'ios'));
+  expect(result.code).toBe(0);
+  expect(result.stdout).toEqual([]);
+  expect(result.stderr).toMatch(/complete: 2 ignored entries copied/);
+  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
+  expect(readFileSync(join(target, '.env.local'), 'utf-8')).toBe('linked local env');
+  expect(readFileSync(join(target, 'package.json'), 'utf-8')).toBe('{"name":"dirty-linked"}\n');
+  expect(git(target, 'branch', '--show-current')).toBe('linked');
+  expect(existsSync(join(base, 'home/config.json'))).toBe(false);
+  expect((await runWarm(target)).stderr).toMatch(/complete: 0 ignored entries copied, 2 kept, 0 failed/);
+}, 30_000);
+
+test('warm reads main exclusion settings and lets its nonempty pattern file replace them', async () => {
+  write(root, '.env', 'source env');
+  write(root, '.env.local', 'source local');
+  write(root, '.stim.json', '{"worktree":{"exclude":[".env"]}}');
+  write(target, '.stim.json', '{"worktree":{"exclude":[".env.local"]}}');
+  const settings = await runWarm(target);
+  expect(settings.code).toBe(0);
+  expect(existsSync(join(target, '.env'))).toBe(false);
+  expect(readFileSync(join(target, '.env.local'), 'utf-8')).toBe('source local');
+  rmSync(join(target, '.env.local'));
+  write(root, '.worktreeexclude', '.env.local\n');
+  const patterns = await runWarm(target);
+  expect(patterns.code).toBe(0);
+  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('source env');
+  expect(existsSync(join(target, '.env.local'))).toBe(false);
+}, 30_000);
+
+test('warm reports copy failures with nonzero status and no ready claim', async () => {
+  write(root, '.env', 'source env');
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    async runFileAsync(file, args, opts) {
+      if (file === 'cp') throw new Error('disk full');
+      return real.runFileAsync(file, args, opts);
+    },
+  });
+  const result = await runWarm(target);
+  expect(result.code).toBe(1);
+  expect(result.stdout).toEqual([]);
+  expect(result.stderr).toMatch(/could not copy .env: disk full/);
+  expect(result.stderr).toMatch(/incomplete: 0 ignored entries copied, 0 kept, 1 failed/);
+  expect(result.stderr).not.toMatch(/ready|warmed/);
+}, 30_000);
+
+test('warm refuses unreadable source or destination inventories instead of reporting an empty success', async () => {
+  const real = getExecutor();
+  for (const kind of ['ignored', 'tracked']) {
+    process.exitCode = 0;
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, opts) {
+        if (kind === 'ignored' && args.includes('--ignored')) throw new Error('ignored inventory failed');
+        if (kind === 'tracked' && args.includes('ls-files') && !args.includes('--ignored'))
+          throw new Error('tracked inventory failed');
+        return real.runFileAsync(file, args, opts);
+      },
+    });
+    const result = await runWarm(target);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toMatch(/Could not warm/);
+    expect(result.stderr).not.toMatch(/complete:/);
+  }
+}, 30_000);
+
+test('warm reports carried dependency and Pods lockfile mismatches against the linked branch', async () => {
+  write(root, 'package-lock.json', 'main lock');
+  write(target, 'package-lock.json', 'linked lock');
+  write(root, 'node_modules/pkg/index.js', 'source package');
+  write(root, 'ios/Pods/Manifest.lock', 'main pods');
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(result.stderr).toMatch(/carried dependencies may be stale.*package-lock.json.*`npm ci` deletes node_modules/);
+  expect(result.stderr).toMatch(/carried ios\/Pods does not match/);
+  expect(readFileSync(join(target, 'ios/Podfile.lock'), 'utf-8')).toBe('branch pods\n');
+}, 30_000);
+
+test('warm notes on stderr when carried prebuilt React Native frameworks are another flavor than the build', async () => {
+  write(root, 'ios/Pods/Manifest.lock', 'branch pods\n');
+  write(root, 'ios/Pods/React-Core-prebuilt/.last_build_configuration', 'Release');
+  write(target, 'ios/Podfile.lock', 'branch pods\n');
+  const mismatched = await runWarm(target);
+  expect(mismatched.code).toBe(0);
+  expect(mismatched.stdout).toEqual([]);
+  expect(mismatched.stderr).toMatch(/carried ios\/Pods: .*React-Core-prebuilt \(Release\).*builds Debug.*`stim ios`/);
+}, 30_000);
+
+test('warm does not note carried prebuilt frameworks that match the build configuration', async () => {
+  write(root, 'ios/Pods/Manifest.lock', 'branch pods\n');
+  write(root, 'ios/Pods/React-Core-prebuilt/.last_build_configuration', 'Debug');
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(result.stderr).not.toMatch(/prebuilt|Release/);
+}, 30_000);
+
+test('warm removes Manifest.lock from carried Pods with broken links so pod install runs', async () => {
+  write(root, 'ios/Pods/Manifest.lock', 'branch pods\n');
+  write(target, 'ios/Podfile.lock', 'branch pods\n');
+  mkdirSync(join(root, 'ios/Pods/Headers/Public'), { recursive: true });
+  symlinkSync('../../../build/rncore-facades/Missing.h', join(root, 'ios/Pods/Headers/Public/Missing.h'));
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toEqual([]);
+  expect(result.stderr).toMatch(
+    /carried ios\/Pods has 1 broken link, such as ios\/Pods\/Headers\/Public\/Missing\.h; removed/,
+  );
+  expect(result.stderr).toMatch(/pod install --clean-install/);
+  expect(result.stderr).not.toMatch(/pod install is not needed/);
+  expect(existsSync(join(target, 'ios/Pods/Manifest.lock'))).toBe(false);
+}, 30_000);
+
+test('warm reports carried node_modules installed from an older lockfile that both checkouts have moved past', async () => {
+  const fixture = (name: string) =>
+    readFileSync(join(import.meta.dirname, 'fixtures', 'installed-deps', 'npm', name), 'utf-8');
+  write(root, 'package-lock.json', fixture('lockfile.next.txt'));
+  write(target, 'package-lock.json', fixture('lockfile.next.txt'));
+  write(root, 'node_modules/.package-lock.json', fixture('installed.txt'));
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toEqual([]);
+  expect(result.stderr).toMatch(/carried node_modules was installed from a different package-lock.json.*npm ci/);
+  expect(result.stderr).toMatch(/`npm ci` deletes node_modules first.*private copy/);
+  expect(result.stderr).not.toMatch(/carried dependencies may be stale/);
+}, 30_000);
+
+test('warm does not call a pnpm install a private copy of the carried node_modules', async () => {
+  write(root, 'pnpm-lock.yaml', 'lockfileVersion: 9\nsource\n');
+  write(target, 'pnpm-lock.yaml', 'lockfileVersion: 9\nbranch\n');
+  write(root, 'node_modules/.pnpm/lock.yaml', 'lockfileVersion: 9\nsource\n');
+  const result = await runWarm(target);
+  expect(result.stderr).toMatch(/carried node_modules was installed from a different pnpm-lock.yaml.*pnpm install/);
+  expect(result.stderr).not.toMatch(/private copy/);
+}, 30_000);
+
+function seedPnpmStore(): void {
+  write(root, 'node_modules/.pnpm-store/v11/files/00/blob', 'store blob');
+  write(root, 'node_modules/.pnpm/pkg@1.0.0/node_modules/pkg/index.js', 'package');
+}
+
+function trashEntries(): string[] {
+  return readdirSync(join(base, 'home', 'trash')).map((name) => join(base, 'home', 'trash', name));
+}
+
+test.skipIf(process.platform === 'win32')(
+  'warm deletes the copied pnpm store in place when it cannot be renamed into the trash or the trash cannot be opened',
+  async () => {
+    seedPnpmStore();
+    renameIo.fail = true;
+    expect((await warm()).failed).toEqual([]);
+    expect(existsSync(join(target, 'node_modules/.pnpm-store'))).toBe(false);
+    expect(readFileSync(join(target, 'node_modules/.pnpm/pkg@1.0.0/node_modules/pkg/index.js'), 'utf-8')).toBe(
+      'package',
+    );
+    expect(trashEntries()).toEqual([]);
+
+    renameIo.fail = false;
+    rmSync(join(target, 'node_modules'), { recursive: true });
+    rmSync(join(base, 'home', 'trash'), { recursive: true, force: true });
+    write(base, 'home/trash', 'a file where the trash directory belongs');
+    expect((await warm()).failed).toEqual([]);
+    expect(existsSync(join(target, 'node_modules/.pnpm-store'))).toBe(false);
+    expect(readFileSync(join(target, 'node_modules/.pnpm/pkg@1.0.0/node_modules/pkg/index.js'), 'utf-8')).toBe(
+      'package',
+    );
+  },
+  30_000,
+);
+
+test('warm removes the Xcode derived data an Expo package left in node_modules, hoisted or in the pnpm store', async () => {
+  const hoisted = 'node_modules/expo-modules-jsi/apple';
+  const virtual = 'node_modules/.pnpm/expo-modules-jsi@58.0.4_react-native@0.88.0/node_modules/expo-modules-jsi/apple';
+  const other = 'node_modules/.pnpm/expo-modules-jsi-extra@1.0.0/node_modules/expo-modules-jsi/apple';
+  for (const dir of [hoisted, virtual, other]) {
+    write(root, `${dir}/.DerivedData/ModuleCache.noindex/foo.pcm`, 'baked source paths');
+    write(root, `${dir}/Package.swift`, 'import PackageDescription');
+  }
+  const result = await warm();
+  expect(result.failed).toEqual([]);
+  for (const dir of [hoisted, virtual]) {
+    expect(existsSync(join(target, dir, '.DerivedData'))).toBe(false);
+    expect(readFileSync(join(target, dir, 'Package.swift'), 'utf-8')).toBe('import PackageDescription');
+    expect(existsSync(join(root, dir, '.DerivedData/ModuleCache.noindex/foo.pcm'))).toBe(true);
+  }
+  expect(existsSync(join(target, other, '.DerivedData'))).toBe(true);
+}, 30_000);
+
+test.skipIf(process.platform === 'win32')(
+  'warm removes derived data reached through the pnpm symlink layout, and a symlinked known path without following it (POSIX symlinks; skipped on win32)',
+  async () => {
+    const real = 'node_modules/.pnpm/expo-modules-jsi@58.0.4/node_modules/expo-modules-jsi';
+    write(root, `${real}/apple/.DerivedData/foo.pcm`, 'baked source paths');
+    symlinkSync(
+      '.pnpm/expo-modules-jsi@58.0.4/node_modules/expo-modules-jsi',
+      join(root, 'node_modules/expo-modules-jsi'),
+    );
+    write(base, 'outside/store/blob', 'outside data');
+    symlinkSync(join(base, 'outside/store'), join(root, 'node_modules/.pnpm-store'));
+    const result = await warm();
+    expect(result.failed).toEqual([]);
+    expect(existsSync(join(target, real, 'apple/.DerivedData'))).toBe(false);
+    expect(lstatSync(join(target, real, 'apple')).isDirectory()).toBe(true);
+    expect(lstatSync(join(target, 'node_modules/expo-modules-jsi')).isSymbolicLink()).toBe(true);
+    expect(lstatSync(join(target, 'node_modules/.pnpm-store'), { throwIfNoEntry: false })).toBeUndefined();
+    expect(readFileSync(join(base, 'outside/store/blob'), 'utf-8')).toBe('outside data');
+  },
+  30_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'warm never removes known paths through a copied symlink that leaves the worktree (POSIX symlinks; skipped on win32)',
+  async () => {
+    write(base, 'outside/apple/.DerivedData/keep', 'outside data');
+    write(root, 'node_modules/pkg/index.js', 'package');
+    symlinkSync(join(base, 'outside'), join(root, 'node_modules/expo-modules-jsi'));
+    const result = await warm();
+    expect(result.failed).toEqual([]);
+    expect(readlinkSync(join(target, 'node_modules/expo-modules-jsi'))).toBe(join(base, 'outside'));
+    expect(readFileSync(join(base, 'outside/apple/.DerivedData/keep'), 'utf-8')).toBe('outside data');
+  },
+  30_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'warm removes known paths from read-only directories and restores their modes (POSIX directory modes; skipped on win32)',
+  async () => {
+    const apple = 'node_modules/expo-modules-jsi/apple';
+    write(root, `${apple}/Package.swift`, 'read-only package');
+    write(root, `${apple}/.DerivedData/large`, 'excluded');
+    chmodSync(join(root, apple), 0o555);
+    try {
+      const result = await runWarm(target);
+      expect(result.code).toBe(0);
+      expect(readFileSync(join(target, apple, 'Package.swift'), 'utf-8')).toBe('read-only package');
+      expect(lstatSync(join(target, apple)).mode & 0o777).toBe(0o555);
+      expect(existsSync(join(target, apple, '.DerivedData'))).toBe(false);
+    } finally {
+      chmodSync(join(root, apple), 0o755);
+      if (existsSync(join(target, apple))) chmodSync(join(target, apple), 0o755);
+    }
+  },
+  30_000,
+);
+
+test('warm copies project-owned .stim directories unless the main exclusion file skips them', async () => {
+  write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.stim/\n');
+  write(root, '.stim/project.json', 'root project data');
+  write(root, 'apps/mobile/.stim/project.json', 'nested project data');
+  write(root, '.worktreeexclude', '/.stim\n');
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(existsSync(join(target, '.stim'))).toBe(false);
+  expect(readFileSync(join(target, 'apps/mobile/.stim/project.json'), 'utf-8')).toBe('nested project data');
+}, 30_000);
+
+test('directly copied ignored files stay invisible to Git status and git add', async () => {
+  write(root, '.env', 'source secret');
+  const observations: { status: string; add: string; staged: string }[] = [];
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    async runFileAsync(file, args, opts) {
+      const result = real.runFile(file, args, opts);
+      if (file === 'cp') {
+        observations.push({
+          status: git(target, 'status', '--porcelain', '--untracked-files=all'),
+          add: git(target, 'add', '--dry-run', '--all'),
+          staged: readFileSync(args[2], 'utf-8'),
+        });
+      }
+      return result;
+    },
+  });
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(observations).toEqual([{ status: '', add: '', staged: 'source secret' }]);
+  expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('source secret');
+}, 30_000);
+
+test('warm preserves a deleted tracked file when main has ignored descendants at that path', async () => {
+  write(root, 'local/README', 'main readme');
+  git(root, 'add', '-f', 'local/README');
+  git(root, 'commit', '-qm', 'track main local readme');
+  write(root, 'local/data.cache', 'main cache');
+  write(target, 'local', 'linked tracked file');
+  git(target, 'add', '-f', 'local');
+  git(target, 'commit', '-qm', 'track local file');
+  rmSync(join(target, 'local'));
+  const result = await warm();
+  expect(result.copied).toEqual([]);
+  expect(result.skipped).toEqual([{ file: 'local/data.cache', reason: 'tracked' }]);
+  expect(result.failed).toEqual([]);
+  expect(existsSync(join(target, 'local'))).toBe(false);
+  expect(git(target, 'diff', '--name-status')).toBe('D\tlocal');
+}, 30_000);
+
+function bareLayout(): { bare: string; main: string; feature: string } {
+  const bare = join(base, 'bare');
+  mkdirSync(bare);
+  git(bare, 'init', '-q', '--bare', '-b', 'main', '.git');
+  const main = join(bare, 'main');
+  const feature = join(bare, 'feature');
+  git(bare, 'worktree', 'add', '-q', main);
+  git(main, 'config', 'user.name', 'test');
+  git(main, 'config', 'user.email', 'test@example.com');
+  git(main, 'config', 'commit.gpgsign', 'false');
+  write(main, '.gitignore', 'node_modules/\n.env*\n');
+  write(main, 'package.json', '{"name":"bare-fixture"}\n');
+  write(main, 'ios/Podfile.lock', 'branch pods\n');
+  git(main, 'add', '.');
+  git(main, 'commit', '-qm', 'fixture');
+  git(bare, 'worktree', 'add', '-qb', 'feature', feature, 'main');
+  return { bare, main, feature };
+}
+
+test('warm in a bare-repository layout seeds from the worktree on the bare HEAD branch', async () => {
+  const { bare, main, feature } = bareLayout();
+  expect(await warmWorktreePaths(join(feature, 'ios'))).toEqual({
+    root: main,
+    target: feature,
+    common: join(bare, '.git'),
+  });
+  write(main, '.env', 'main env');
+  const result = await runWarm(feature);
+  expect(result.code).toBe(0);
+  expect(readFileSync(join(feature, '.env'), 'utf-8')).toBe('main env');
+}, 30_000);
+
+test('warm in a bare-repository layout rejects the worktree on the bare HEAD branch as the source checkout', async () => {
+  const { main } = bareLayout();
+  const result = await runWarm(main);
+  expect(result.code).toBe(1);
+  expect(result.stderr).toMatch(/linked worktree, not the source checkout/);
+}, 30_000);
+
+test('warm refuses a deleted source worktree with the prune and re-add commands that restore it', async () => {
+  const { bare, main, feature } = bareLayout();
+  rmSync(main, { recursive: true, force: true });
+  await expect(warmWorktreePaths(feature)).rejects.toThrow(
+    `git -C ${bare} worktree prune\n  git -C ${bare} worktree add ${main} main`,
+  );
+}, 30_000);
+
+const APP_PACKAGE = '{"name":"warm-app","dependencies":{"react-native":"0.80.0"}}\n';
+
+test('warm registers the app it prepares and leaves it ready until the workspace is next used', async () => {
+  write(root, 'package.json', APP_PACKAGE);
+  git(root, 'commit', '-qam', 'app');
+  git(target, 'merge', '-q', 'main');
+  const result = await runWarm(target);
+  expect(result.code).toBe(0);
+  expect(result.stdout).toEqual([]);
+  expect(Object.keys(loadConfig()?.projects ?? {})).toEqual([target]);
+  const state = readWorkspaceState(target);
+  const record = readWarmRecord(state);
+  assert(record?.phase === 'ready');
+  expect(workspacePhase(false, state)).toEqual({ phase: 'ready', phaseSince: record.at });
+  recordWorkspaceUse(target, new Date(Date.now() + 1000));
+  expect(workspacePhase(false, readWorkspaceState(target))).toEqual({ phase: 'idle', phaseSince: null });
+}, 30_000);
+
+test('warm from a monorepo worktree root registers the app the source checkout registered', async () => {
+  write(root, 'apps/mobile/package.json', APP_PACKAGE);
+  write(root, 'apps/web/package.json', '{"name":"web"}\n');
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', 'apps');
+  git(target, 'merge', '-q', 'main');
+  upsertProject(join(root, 'apps/mobile'), {});
+  vi.stubEnv('CLAUDE_CODE_SESSION_ID', 'warm-shell');
+  const result = await runWarm(target);
+  vi.unstubAllEnvs();
+  expect(result.code).toBe(0);
+  expect(result.stdout).toEqual([]);
+  expect(readWorkspaceState(join(target, 'apps/mobile'))?.agentSession).toMatchObject({
+    tool: 'claude-code',
+    sessionId: 'warm-shell',
+  });
+  expect(Object.keys(loadConfig()?.projects ?? {}).toSorted()).toEqual([
+    join(target, 'apps/mobile'),
+    join(root, 'apps/mobile'),
+  ]);
+  expect(workspacePhase(false, readWorkspaceState(join(target, 'apps/mobile'))).phase).toBe('ready');
+}, 30_000);
+
+test('warm from a monorepo root that declares react-native still registers the registered app', async () => {
+  write(root, 'package.json', APP_PACKAGE);
+  write(root, 'apps/mobile/package.json', APP_PACKAGE);
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', 'apps');
+  git(target, 'merge', '-q', 'main');
+  upsertProject(join(root, 'apps/mobile'), {});
+  expect((await runWarm(target)).code).toBe(0);
+  expect(Object.keys(loadConfig()?.projects ?? {})).toContain(join(target, 'apps/mobile'));
+  expect(Object.keys(loadConfig()?.projects ?? {})).not.toContain(target);
+}, 30_000);
+
+test('status reads a warm as warming while it copies and as idle once it fails', async () => {
+  write(root, 'package.json', APP_PACKAGE);
+  git(root, 'commit', '-qam', 'app');
+  git(target, 'merge', '-q', 'main');
+  write(root, '.env', 'source env');
+  const during: unknown[] = [];
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    async runFileAsync(file, args, opts) {
+      if (file === 'cp') {
+        during.push(workspacePhase(false, readWorkspaceState(target)));
+        throw new Error('disk full');
+      }
+      return real.runFileAsync(file, args, opts);
+    },
+  });
+  const result = await runWarm(target);
+  expect(result.code).toBe(1);
+  expect(during[0]).toMatchObject({ phase: 'warming', warmStep: 'copy' });
+  expect(readWarmRecord(readWorkspaceState(target))).toBeNull();
+  expect(workspacePhase(false, readWorkspaceState(target)).phase).toBe('idle');
+}, 30_000);
+
+test('a warming record counts only while its claim holder lives, and ready lasts two hours', () => {
+  const warming = (claimId: string) => ({
+    warm: {
+      phase: 'warming',
+      step: 'refresh',
+      startedAt: '2026-09-26T10:00:00.000Z',
+      claim: { root: join(base, `${claimId}.lock`), claimId },
+    },
+  });
+  plantClaim(join(base, 'live.lock'), 'shared', liveClaimOwner(), { claimId: 'live' });
+  plantClaim(join(base, 'killed.lock'), 'shared', goneClaimOwner(), { claimId: 'killed' });
+  expect(workspacePhase(false, warming('live'))).toEqual({
+    phase: 'warming',
+    phaseSince: '2026-09-26T10:00:00.000Z',
+    warmStep: 'refresh',
+  });
+  expect(workspacePhase(false, warming('killed')).phase).toBe('idle');
+  const ready = { warm: { phase: 'ready', at: '2026-09-26T10:00:00.000Z' } };
+  const at = Date.parse('2026-09-26T10:00:00.000Z');
+  expect(workspacePhase(false, ready, { now: at + READY_PHASE_MS - 1 }).phase).toBe('ready');
+  expect(workspacePhase(false, ready, { now: at + READY_PHASE_MS }).phase).toBe('idle');
+});
+
+test.skipIf(process.platform === 'win32' || process.geteuid?.() === 0)(
+  'a destination permission error fails only that entry and preserves existing files',
+  async () => {
+    write(root, 'local/README', 'tracked file');
+    write(root, '.gitignore', `${readFileSync(join(root, '.gitignore'), 'utf8')}z.cache\n`);
+    git(root, 'add', '.gitignore');
+    git(root, 'add', '-f', 'local/README');
+    git(root, 'commit', '-qm', 'tracked local directory');
+    git(target, 'merge', '--ff-only', 'main');
+    write(root, 'local/a.cache', 'blocked cache');
+    write(root, 'z.cache', 'healthy cache');
+    chmodSync(join(target, 'local'), 0);
+    try {
+      const result = await warm();
+      expect(result.failed).toEqual([{ file: 'local/a.cache', error: expect.stringContaining('EACCES') }]);
+      expect(result.copied).toEqual(['z.cache']);
+      expect(readFileSync(join(target, 'z.cache'), 'utf8')).toBe('healthy cache');
+    } finally {
+      chmodSync(join(target, 'local'), 0o755);
+    }
+    expect(readFileSync(join(target, 'local/README'), 'utf8')).toBe('tracked file');
+  },
+  30_000,
+);
+
+describe('an Expo app whose native directories git ignores', () => {
+  const app = () => join(root, 'app');
+  beforeEach(() => {
+    write(root, '.gitignore', `${readFileSync(join(root, '.gitignore'), 'utf-8')}app/ios/\napp/android/\n`);
+    write(root, 'app/package.json', '{"name":"cng","dependencies":{"expo":"57.0.0"}}\n');
+    write(root, 'app/app.json', '{"expo":{"name":"cng","slug":"cng"}}\n');
+    write(root, 'app/fingerprint.config.js', 'module.exports = { useRNCoreAutolinkingFromExpo: false };\n');
+    // @expo/fingerprint falls back to `npx react-native config` without Expo autolinking.
+    const cli = 'app/node_modules/.bin/react-native';
+    write(root, cli, '#!/usr/bin/env node\nconsole.log(JSON.stringify({ root: process.cwd(), dependencies: {} }));\n');
+    chmodSync(join(root, cli), 0o755);
+    write(root, `${cli}.cmd`, '@node "%~dp0react-native" %*\r\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'cng app');
+    git(target, 'merge', '-q', '--ff-only', 'main');
+    write(root, 'app/ios/Podfile', "platform :ios, '15.1'\n");
+    write(root, 'app/android/build.gradle', '// generated\n');
+  });
+
+  test('warm carries a native directory only when Stim generated it from the current fingerprint', async () => {
+    const current = await fingerprintProject(app(), { platform: 'ios', iosProjectPath: 'ios' });
+    assert(current?.hash);
+    recordPrebuild(app(), 'ios', current.hash);
+    recordPrebuild(app(), 'android', 'an-earlier-fingerprint');
+    const result = await runWarm(join(target, 'app'));
+    expect(result.code).toBe(0);
+    expect(result.stdout).toEqual([]);
+    expect(readFileSync(join(target, 'app/ios/Podfile'), 'utf-8')).toBe("platform :ios, '15.1'\n");
+    expect(readWorkspaceState(join(target, 'app'))?.prebuild).toEqual({ ios: current.hash });
+    expect(existsSync(join(target, 'app/android'))).toBe(false);
+    expect(result.stderr).toMatch(
+      /left out app\/android: the source's android\/ was generated from fingerprint an-ear\.\./,
+    );
+  }, 30_000);
+
+  test('warm leaves out a native directory Stim has no prebuild record for', async () => {
+    const result = await runWarm(join(target, 'app'));
+    expect(result.code).toBe(0);
+    expect(existsSync(join(target, 'app/ios'))).toBe(false);
+    expect(existsSync(join(target, 'app/android'))).toBe(false);
+    expect(result.stderr).toMatch(/left out app\/ios: Stim has no record of generating the source's ios\//);
+    expect(result.stderr).toMatch(/left out app\/ios: .*installs its Pods there, a private copy instead of a clone/);
+    expect(result.stderr).not.toMatch(/left out app\/android: .*Pods/);
+  }, 30_000);
+});

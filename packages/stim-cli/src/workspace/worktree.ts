@@ -1,0 +1,1086 @@
+import type { StimContext } from '@stim-cli/core';
+import { isPathPrefix } from '@stim-cli/core/state';
+import { chmod, lstat, mkdir, readdir, realpath, utimes } from 'node:fs/promises';
+import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'path';
+import { getExecutor, isTimeoutError } from '../exec.ts';
+import { git, gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
+import { removeTemporaryEntryAsync } from '../temporary.ts';
+import { warmTrash } from './worktree-trash.ts';
+import { childEnvironment } from './git-read.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { clonefileHelper } from '../clonefile.ts';
+
+const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj', '.pnpm-store']);
+
+export function isCarrySkipped(rel: string): boolean {
+  return (
+    /(^|\/)android\/build\/generated\/autolinking(\/|$)/.test(rel) ||
+    /(^|\/)\.expo\/types(\/|$)/.test(rel) ||
+    String(rel)
+      .split('/')
+      .some((seg) => CARRY_SKIP_BASENAMES.has(seg))
+  );
+}
+
+// Git reports paths with forward slashes on every platform, including Windows.
+function nativePath(path: string): string {
+  return sep === '/' ? path : path.replaceAll('/', sep);
+}
+
+/** `removal` marks a read that gates worktree removal: a 60 s budget, and a timeout throws instead of reading as null. */
+interface ReadOptions {
+  removal?: boolean;
+}
+
+interface AsyncReadOptions extends ReadOptions {
+  /** A timeout throws its `ETIMEDOUT` error instead of reading as null; `removal` implies it. */
+  timeoutThrows?: boolean;
+  declareFor?: StimContext;
+  env?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+  untrimmed?: boolean;
+}
+
+async function gitReadAsync(
+  dir: string,
+  args: string[],
+  { removal, timeoutThrows, env, signal, declareFor, untrimmed }: AsyncReadOptions,
+): Promise<string | null> {
+  signal ??= getExecutor().reportSignal?.();
+  try {
+    return await gitAsync(dir, args, {
+      ...(env ? childEnvironment(env) : {}),
+      signal,
+      ...(removal ? { timeoutMs: REMOVAL_CHECK_TIMEOUT_MS } : {}),
+      killSignal: 'SIGKILL',
+      declareFor,
+      untrimmed,
+    });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    signal?.throwIfAborted();
+    if ((removal || timeoutThrows) && isTimeoutError(error)) throw error;
+    return null;
+  }
+}
+
+function gitRead(dir: string, args: string[], { removal }: ReadOptions): string | null {
+  return removal ? removalCheck(dir, args) : gitQuiet(dir, args);
+}
+
+export function gitCommonDir(cwd: string, opts: ReadOptions = {}): string | null {
+  const out = gitRead(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'], opts);
+  return out ? nativePath(out.trim()) : null;
+}
+
+export async function gitCommonDirAsync(cwd: string, options: AsyncReadOptions = {}): Promise<string | null> {
+  const out = await gitReadAsync(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'], options);
+  return out ? nativePath(out.trim()) : null;
+}
+
+export function repoRoot(cwd: string): string | null {
+  const out = gitQuiet(cwd, ['rev-parse', '--show-toplevel']);
+  return out ? nativePath(out.trim()) : null;
+}
+
+export async function repoRootAsync(cwd: string, options: AsyncReadOptions = {}): Promise<string | null> {
+  const out = await gitReadAsync(cwd, ['rev-parse', '--show-toplevel'], options);
+  return out ? nativePath(out.trim()) : null;
+}
+
+export interface UpstreamState {
+  name: string;
+  ahead: number;
+  behind: number;
+}
+
+function upstreamState(name: string, counts: string): UpstreamState | null {
+  const [ahead = NaN, behind = NaN] = counts.trim().split(/\s+/).map(Number);
+  if (!name || !Number.isInteger(ahead) || !Number.isInteger(behind)) return null;
+  return { name, ahead, behind };
+}
+
+export function locallyKnownUpstream(projectRoot: string): UpstreamState | null {
+  try {
+    const name = git(projectRoot, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], {
+      timeoutMs: 5000,
+    });
+    const counts = git(projectRoot, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], { timeoutMs: 5000 });
+    return upstreamState(name, counts);
+  } catch {
+    return null;
+  }
+}
+
+export async function locallyKnownUpstreamAsync(projectRoot: string): Promise<UpstreamState | null> {
+  try {
+    const name = await gitAsync(projectRoot, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], {
+      timeoutMs: 5000,
+    });
+    const counts = await gitAsync(projectRoot, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], {
+      timeoutMs: 5000,
+    });
+    return upstreamState(name, counts);
+  } catch {
+    return null;
+  }
+}
+
+export async function warmWorktreePaths(
+  cwd: string,
+  operation?: StimContext,
+): Promise<{ root: string; target: string; common: string }> {
+  const options = { env: operation?.env, signal: operation?.signal, declareFor: operation, timeoutThrows: true };
+  const currentRoot = await repoRootAsync(cwd, options);
+  if (!currentRoot) throw new Error('Not a git repository.');
+  const target = realpathSync(currentRoot);
+  const source = await resolveSourceCheckoutAsync(target, options);
+  if ('refusal' in source) throw new Error(source.refusal);
+  if (!source.entries.some((entry) => canonicalPath(entry.path) === target))
+    throw new Error('Could not identify the linked worktree and its source checkout.');
+  const root = realpathSync(source.path);
+  if (root === target) throw new Error('Run stim worktree warm from a linked worktree, not the source checkout.');
+  const sourceRoot = await repoRootAsync(root, options);
+  const sourceCommon = await gitCommonDirAsync(root, options);
+  const targetCommon = await gitCommonDirAsync(target, options);
+  if (
+    !sourceRoot ||
+    realpathSync(sourceRoot) !== root ||
+    !sourceCommon ||
+    !targetCommon ||
+    realpathSync(sourceCommon) !== realpathSync(targetCommon)
+  )
+    throw new Error('Could not verify that the source checkout belongs to this linked worktree.');
+  return { root, target, common: realpathSync(targetCommon) };
+}
+
+export function matchesInclude(path: string, patterns: string[] | null | undefined): boolean {
+  for (const pattern of patterns || []) {
+    const rooted = pattern.startsWith('/');
+    const body = rooted ? pattern.slice(1) : pattern;
+    const escaped = body
+      .replace(/[.+^${}()|[\]\\?]/g, '\\$&')
+      .replace(/\*\*\//g, '::GLOBSTAR::')
+      .replace(/\*/g, '[^/]+')
+      .replace(/::GLOBSTAR::/g, '(?:.*/)?')
+      .replace(/\\\?/g, '[^/]');
+    const anchor = rooted ? '^' : '(^|/)';
+    const re = new RegExp(`${anchor}${escaped}$`);
+    if (re.test(path)) return true;
+  }
+  return false;
+}
+
+export function readWorktreeExclude(root: string): string[] | null {
+  return readPatternFile(join(root, '.worktreeexclude'));
+}
+
+function readPatternFile(p: string): string[] | null {
+  if (!existsSync(p)) return null;
+  return readFileSync(p, 'utf-8')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'));
+}
+
+function canonicalPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+async function nestedWorktreePaths(root: string, options: AsyncReadOptions = {}): Promise<string[]> {
+  const out = await gitReadAsync(root, ['worktree', 'list', '--porcelain'], options);
+  if (out === null) {
+    throw new Error('Could not list Git worktrees. Refusing to carry ignored files.');
+  }
+  return relativeWorktreePaths(root, parseWorktrees(out));
+}
+
+function relativeWorktreePaths(root: string, entries: WorktreeEntry[]): string[] {
+  const source = canonicalPath(root);
+  const paths = new Set<string>();
+  for (const entry of entries) {
+    const rel = relative(source, canonicalPath(entry.path));
+    if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) continue;
+    paths.add(rel.split(sep).join('/'));
+  }
+  return [...paths];
+}
+
+function overlapsNestedWorktree(rel: string, nestedPaths: string[]): boolean {
+  const path = String(rel).replaceAll('\\', '/').replace(/^\.\//, '').replace(/\/$/, '');
+  return nestedPaths.some(
+    (nested) => path === nested || path.startsWith(`${nested}/`) || nested.startsWith(`${path}/`),
+  );
+}
+
+export async function listTrackedPaths(dir: string, options: AsyncReadOptions = {}): Promise<string[] | null> {
+  const out = await gitReadAsync(dir, ['ls-files', '-z'], { ...options, untrimmed: true });
+  if (out === null) return null;
+  return out.split('\0').filter(Boolean);
+}
+
+interface TrackedGuard {
+  known: boolean;
+  covers(rel: string): boolean;
+}
+
+function trackedPathsGuard(paths: string[] | null): TrackedGuard {
+  if (paths === null) return { known: false, covers: () => false };
+  const entries = new Set(paths);
+  const covered = new Set(paths);
+  for (const p of paths) {
+    for (let i = p.indexOf('/'); i !== -1; i = p.indexOf('/', i + 1)) covered.add(p.slice(0, i));
+  }
+  return {
+    known: true,
+    covers: (rel) => {
+      if (covered.has(rel)) return true;
+      for (let i = rel.indexOf('/'); i !== -1; i = rel.indexOf('/', i + 1)) {
+        if (entries.has(rel.slice(0, i))) return true;
+      }
+      return false;
+    },
+  };
+}
+
+interface SkippedEntry {
+  file: string;
+  reason: string;
+}
+interface FailedEntry {
+  file: string;
+  error: string;
+}
+interface CarryResult {
+  copied: string[];
+  skipped: SkippedEntry[];
+  failed: FailedEntry[];
+  withheld: SkippedEntry[];
+}
+
+export async function listGitignoredEntries(root: string, options: AsyncReadOptions = {}): Promise<string[]> {
+  const out = await gitAsync(
+    root,
+    ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '--no-empty-directory', '-z'],
+    {
+      ...(options.env ? childEnvironment(options.env) : {}),
+      signal: options.signal,
+      declareFor: options.declareFor,
+      timeoutMs: 'unbounded',
+      untrimmed: true,
+    },
+  );
+  return out
+    .split('\0')
+    .filter(Boolean)
+    .map((entry) => (entry.endsWith('/') ? entry.slice(0, -1) : entry));
+}
+
+export async function listCarryableIgnoredEntries(
+  root: string,
+  patterns: string[] | null | undefined,
+  options: AsyncReadOptions = {},
+): Promise<string[]> {
+  const nested = await nestedWorktreePaths(root, options);
+  return (await listGitignoredEntries(root, options)).filter(
+    (rel) => !isCarrySkipped(rel) && !overlapsNestedWorktree(rel, nested) && !matchesInclude(rel, patterns),
+  );
+}
+
+interface CloneResult extends CarryResult {
+  cloned: boolean;
+}
+
+function missingDestinationReason(target: string, rel: string): string | null {
+  const parts = rel.split('/');
+  for (let i = 1; i < parts.length; i++) {
+    const parent = parts.slice(0, i).join('/');
+    const stat = lstatSync(join(target, parent), { throwIfNoEntry: false });
+    if (stat?.isSymbolicLink()) return `symlink ancestor: ${parent}`;
+    if (stat && !stat.isDirectory()) return `non-directory ancestor: ${parent}`;
+  }
+  return lstatSync(join(target, rel), { throwIfNoEntry: false }) ? 'exists' : null;
+}
+
+const AUTOLINKING_PATH = ['android', 'build', 'generated', 'autolinking'];
+
+function knownCopiedPaths(rel: string): string[] {
+  const segments = rel.split('/');
+  const paths: string[] = [];
+  if (segments.at(-1) === 'node_modules') paths.push('.pnpm-store', 'expo-modules-jsi/apple/.DerivedData');
+  if (segments.at(-1) === '.expo') paths.push('types');
+  for (let covered = 1; covered < AUTOLINKING_PATH.length; covered++) {
+    if (AUTOLINKING_PATH.slice(0, covered).every((segment, i) => segments.at(i - covered) === segment)) {
+      paths.push(AUTOLINKING_PATH.slice(covered).join('/'));
+    }
+  }
+  return paths;
+}
+
+function isMissingError(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
+}
+
+type WarmTrash = ReturnType<typeof warmTrash>;
+
+async function removeCopiedPath(root: string, rel: string, signal: AbortSignal, trash: WarmTrash): Promise<void> {
+  signal.throwIfAborted();
+  const path = join(root, rel);
+  let parent: string;
+  try {
+    parent = await realpath(dirname(path));
+  } catch (error) {
+    if (isMissingError(error)) return;
+    throw error;
+  }
+  const inside = relative(root, parent);
+  if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) return;
+  const stat = await lstat(parent);
+  const target = join(parent, basename(path));
+  let targetStat;
+  try {
+    targetStat = await lstat(target);
+  } catch (error) {
+    if (isMissingError(error)) return;
+    throw error;
+  }
+  await chmod(parent, stat.mode | 0o700);
+  try {
+    if (!(targetStat.isDirectory() && (await trash.take(target)))) await removeTemporaryEntryAsync(target, signal);
+  } finally {
+    await utimes(parent, stat.atime, stat.mtime);
+    await chmod(parent, stat.mode);
+  }
+}
+
+async function removeKnownCopiedPaths(path: string, rel: string, signal: AbortSignal, trash: WarmTrash): Promise<void> {
+  const paths = knownCopiedPaths(rel);
+  if (basename(rel) === 'node_modules') {
+    const virtualStore = await readdir(join(path, '.pnpm')).catch((error: unknown) => {
+      if (isMissingError(error)) return [];
+      throw error;
+    });
+    for (const name of virtualStore) {
+      if (name.startsWith('expo-modules-jsi@')) {
+        paths.push(`.pnpm/${name}/node_modules/expo-modules-jsi/apple/.DerivedData`);
+      }
+    }
+  }
+  const root = await realpath(path);
+  for (const known of paths) await removeCopiedPath(root, known, signal, trash);
+}
+
+export async function cloneIgnoredEntries({
+  root,
+  target,
+  patterns,
+  operation,
+  withhold = () => null,
+}: {
+  root: string;
+  target: string;
+  patterns: string[] | null | undefined;
+  operation: StimContext;
+  /** For an entry that needs a check before it is carried, a promise of the reason to leave it out, or of null to carry it. */
+  withhold?: (rel: string) => Promise<string | null> | null;
+}): Promise<CloneResult> {
+  const options = {
+    ...childEnvironment(operation.env),
+    signal: operation.signal,
+    declareFor: operation,
+    timeoutMs: 'unbounded' as const,
+    untrimmed: true,
+  };
+  const reads = { env: operation.env, signal: operation.signal, declareFor: operation };
+  const guard = trackedPathsGuard(await listTrackedPaths(target, reads));
+  if (!guard.known) throw new Error("Could not list the destination's tracked files.");
+  const nested = await nestedWorktreePaths(target, reads);
+  const carryable = await listCarryableIgnoredEntries(root, patterns, reads);
+  const keptReason = (rel: string): string | null =>
+    guard.covers(rel)
+      ? 'tracked'
+      : overlapsNestedWorktree(rel, nested)
+        ? 'nested worktree'
+        : missingDestinationReason(target, rel);
+  const checks = new Map<string, Promise<string | null>>();
+  for (const rel of carryable) {
+    let copies: boolean;
+    try {
+      copies = keptReason(rel) === null;
+    } catch {
+      copies = true;
+    }
+    const check = copies ? withhold(rel) : null;
+    if (check) checks.set(rel, check);
+  }
+  const entries = [...carryable.filter((rel) => !checks.has(rel)), ...checks.keys()];
+  const copied: string[] = [];
+  const skipped: SkippedEntry[] = [];
+  const failed: FailedEntry[] = [];
+  const withheld: SkippedEntry[] = [];
+  let cloned = true;
+  let helper: Promise<string | null> | undefined;
+  const clonefile = () => (helper ??= clonefileHelper(operation));
+  const trash = warmTrash(target, { signal: operation.signal });
+  try {
+    for (const rel of entries) {
+      operation.signal.throwIfAborted();
+      const from = join(root, rel);
+      const to = join(target, rel);
+      let copying = false;
+      try {
+        const reason = keptReason(rel);
+        if (reason) {
+          skipped.push({ file: rel, reason });
+          continue;
+        }
+        const withholding = await checks.get(rel);
+        if (withholding) {
+          withheld.push({ file: rel, reason: withholding });
+          continue;
+        }
+        await mkdir(dirname(to), { recursive: true });
+        copying = true;
+        const copiedWith = async (file: string, args: string[]): Promise<boolean> => {
+          try {
+            await getExecutor().runFileAsync(file, args, options);
+            return true;
+          } catch (cause) {
+            if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
+              throw cause;
+            operation.signal.throwIfAborted();
+            await removeTemporaryEntryAsync(to);
+            return false;
+          }
+        };
+        const directoryClone = (await lstat(from)).isDirectory() ? await clonefile() : null;
+        if (
+          !(directoryClone && (await copiedWith(directoryClone, [from, to]))) &&
+          !(await copiedWith('cp', ['-Rc', from, to]))
+        ) {
+          await getExecutor().runFileAsync('cp', ['-R', from, to], options);
+          cloned = false;
+        }
+        if ((await lstat(to)).isDirectory()) await removeKnownCopiedPaths(to, rel, operation.signal, trash);
+        copied.push(rel);
+      } catch (cause) {
+        if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
+          throw cause;
+        if (copying) await removeTemporaryEntryAsync(to);
+        operation.signal.throwIfAborted();
+        failed.push({ file: rel, error: String((cause as Error)?.message || cause) });
+      }
+    }
+  } catch (error) {
+    await trash.dispose(operation).catch(() => {});
+    throw error;
+  }
+  await trash.dispose(operation);
+  return { copied, skipped, failed, withheld, cloned };
+}
+
+export function podsOutOfSync(
+  target: string,
+  copiedEntries: string[] | null | undefined,
+  { read = readFileSync }: { read?: typeof readFileSync } = {},
+): { dir: string; reason: 'missing' | 'mismatch' }[] {
+  const problems: { dir: string; reason: 'missing' | 'mismatch' }[] = [];
+  for (const rel of copiedEntries || []) {
+    if (rel !== 'Pods' && !rel.endsWith('/Pods')) continue;
+    const iosDir = rel === 'Pods' ? '' : rel.slice(0, -'/Pods'.length);
+    const manifest = join(target, rel, 'Manifest.lock');
+    const podfileLock = join(target, iosDir, 'Podfile.lock');
+    if (!existsSync(manifest)) continue;
+    if (!existsSync(podfileLock)) {
+      problems.push({ dir: iosDir || '.', reason: 'missing' });
+      continue;
+    }
+    try {
+      if (read(manifest, 'utf-8') !== read(podfileLock, 'utf-8')) {
+        problems.push({ dir: iosDir || '.', reason: 'mismatch' });
+      }
+    } catch {}
+  }
+  return problems;
+}
+
+const LOCKFILE_NAMES = ['pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb', 'package-lock.json'];
+
+interface NpmLockfile {
+  packages?: Record<string, { version?: string; link?: boolean; optional?: boolean; devOptional?: boolean }>;
+}
+
+function npmInstallMatches(wanted: NpmLockfile, installed: NpmLockfile): boolean | null {
+  if (!wanted.packages || !installed.packages) return null;
+  for (const [key, entry] of Object.entries(wanted.packages)) {
+    if (!key.includes('node_modules/') || entry.link) continue;
+    const present = installed.packages[key];
+    if (!present && (entry.optional || entry.devOptional)) continue;
+    if (present?.version !== entry.version) return false;
+  }
+  return true;
+}
+
+function lastYamlDocument(text: string): string {
+  return (text.split(/^---$/m).at(-1) ?? '').trim();
+}
+
+function yarnClassicInstallMatches(
+  lockfile: string,
+  integrity: { lockfileEntries?: Record<string, string> },
+): boolean | null {
+  if (!integrity.lockfileEntries) return null;
+  const wanted = [...lockfile.matchAll(/^ {2}resolved "([^"]+)"$/gm)].flatMap((m) => m[1] ?? []);
+  if (wanted.length === 0) return null;
+  const installed = new Set(Object.values(integrity.lockfileEntries));
+  return wanted.every((url) => installed.has(url));
+}
+
+// Yarn Berry's node-modules linker records peer-dependent packages under
+// virtual locators ("name@virtual:<hash>#npm:1.0.0") and omits packages whose
+// yarn.lock `conditions` exclude this platform.
+function yarnBerryInstallMatches(lockfile: string, state: string): boolean | null {
+  const installed = new Set(
+    [...state.matchAll(/^"?([^\s"#][^"]*?)"?:$/gm)].flatMap((m) => m[1]?.replace(/@virtual:[^#]+#/, '@') ?? []),
+  );
+  let entries = 0;
+  for (const entry of lockfile.split(/\n(?=\S)/)) {
+    const resolution = /^ {2}resolution: "([^"]+)"$/m.exec(entry)?.[1];
+    if (!resolution) continue;
+    entries += 1;
+    if (installed.has(resolution) || /^ {2}conditions: /m.test(entry)) continue;
+    return false;
+  }
+  return entries === 0 ? null : true;
+}
+
+function installedMatchesLockfile(
+  dir: string,
+  lockfile: string,
+  { read = readFileSync }: { read?: typeof readFileSync } = {},
+): boolean | null {
+  const text = (rel: string): string | null => {
+    try {
+      return read(join(dir, rel), 'utf-8').replaceAll('\r\n', '\n');
+    } catch {
+      return null;
+    }
+  };
+  const wanted = text(lockfile);
+  if (wanted === null) return null;
+  try {
+    if (lockfile === 'package-lock.json') {
+      const installed = text('node_modules/.package-lock.json');
+      return installed === null ? null : npmInstallMatches(JSON.parse(wanted), JSON.parse(installed));
+    }
+    if (lockfile === 'pnpm-lock.yaml') {
+      // pnpm writes node_modules/.pnpm/lock.yaml for what it installed, so a
+      // --filter or --prod install records part of the lockfile and reads as a mismatch.
+      const installed = text('node_modules/.pnpm/lock.yaml');
+      return installed === null ? null : lastYamlDocument(wanted) === lastYamlDocument(installed);
+    }
+    if (lockfile === 'yarn.lock') {
+      if (/^__metadata:$/m.test(wanted)) {
+        const berry = text('node_modules/.yarn-state.yml');
+        return berry === null ? null : yarnBerryInstallMatches(wanted, berry);
+      }
+      const classic = text('node_modules/.yarn-integrity');
+      return classic === null ? null : yarnClassicInstallMatches(wanted, JSON.parse(classic));
+    }
+  } catch {}
+  return null;
+}
+
+export interface StaleDependencies {
+  dir: string;
+  lockfile: string;
+  reason: 'installed' | 'lockfile';
+}
+
+function nearestLockfile(target: string, dir: string): { dir: string; name: string } | null {
+  for (let current = dir; ; current = posix.dirname(current)) {
+    const at = current === '.' ? '' : current;
+    const name = LOCKFILE_NAMES.find((candidate) => existsSync(join(target, at, candidate)));
+    if (name) return { dir: at, name };
+    if (at === '') return null;
+  }
+}
+
+export function depsOutOfSync(
+  root: string,
+  target: string,
+  copiedEntries: string[] | null | undefined,
+  { read = readFileSync }: { read?: typeof readFileSync } = {},
+): StaleDependencies[] {
+  const problems: StaleDependencies[] = [];
+  const checked = new Set<string>();
+  for (const rel of copiedEntries || []) {
+    if (rel !== 'node_modules' && !rel.endsWith('/node_modules')) continue;
+    const found = nearestLockfile(target, rel === 'node_modules' ? '' : rel.slice(0, -'/node_modules'.length));
+    if (!found || checked.has(found.dir)) continue;
+    checked.add(found.dir);
+    const { dir, name } = found;
+    const installed = copiedEntries?.includes(dir ? `${dir}/node_modules` : 'node_modules')
+      ? installedMatchesLockfile(join(target, dir), name, { read })
+      : null;
+    if (installed === false) {
+      problems.push({ dir: dir || '.', lockfile: name, reason: 'installed' });
+      continue;
+    }
+    const source = join(root, dir, name);
+    if (installed === true || !existsSync(source)) continue;
+    try {
+      if (read(source, 'utf-8') !== read(join(target, dir, name), 'utf-8')) {
+        problems.push({ dir: dir || '.', lockfile: name, reason: 'lockfile' });
+      }
+    } catch {}
+  }
+  return problems;
+}
+
+const FINGERPRINT_INPUT_FILES = ['app.json', 'app.config.ts', 'app.config.js', 'app.config.mjs', 'package.json'];
+
+export async function dirtyFingerprintFiles(root: string): Promise<string[]> {
+  const out = await gitQuietAsync(root, ['status', '--porcelain', '--', ...FINGERPRINT_INPUT_FILES]);
+  if (out === null || out.trim() === '') return [];
+  return out
+    .split('\n')
+    .map((line) => normalizePorcelainLine(line.trimEnd()))
+    .filter((line) => line !== '')
+    .map((line) => line.slice(3).trim())
+    .filter((path) => path !== '');
+}
+
+const REMOVAL_CHECK_TIMEOUT_MS = 60_000;
+
+/**
+ * A git read that decides whether a worktree is safe to remove. Null when git cannot answer; a timeout throws its
+ * `ETIMEDOUT` error, so a slow repository is never read as a clean one.
+ */
+function removalCheck(dir: string, args: string[]): string | null {
+  try {
+    return git(dir, args, { timeoutMs: REMOVAL_CHECK_TIMEOUT_MS });
+  } catch (error) {
+    if (isTimeoutError(error)) throw error;
+    return null;
+  }
+}
+
+function removalCheckAsync(dir: string, args: string[], options: AsyncReadOptions = {}): Promise<string | null> {
+  return gitReadAsync(dir, args, { ...options, removal: true });
+}
+
+export async function hasUncommittedWorkAsync(dir: string, options: AsyncReadOptions = {}): Promise<boolean | null> {
+  const out = await removalCheckAsync(dir, ['status', '--porcelain'], options);
+  if (out === null) return null;
+  return out.trim().length > 0;
+}
+
+/** The porcelain status lines, or null when git cannot answer; throws when git times out. */
+
+export async function dirtyPathsAsync(
+  dir: string,
+  { limit = 10 }: { limit?: number } = {},
+  options: AsyncReadOptions = {},
+): Promise<string[] | null> {
+  const out = await removalCheckAsync(dir, ['status', '--porcelain'], options);
+  if (out === null) return null;
+  return out
+    .split('\n')
+    .map((line) => normalizePorcelainLine(line.trimEnd()))
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function normalizePorcelainLine(line: string): string {
+  if (line === '' || line[2] === ' ') return line;
+  return ` ${line}`;
+}
+
+export function isPodInstallChurn(paths: string[] | null | undefined): boolean {
+  if (!paths || paths.length === 0) return false;
+  return paths.every((line) => /(?:^|\/)(?:Podfile\.lock|project\.pbxproj)$/.test(line.slice(3).trim()));
+}
+
+const SAFE_BRANCH_NAME = /^[A-Za-z0-9@._/-]+$/;
+
+export async function unpushedCommitsAsync(dir: string, options: AsyncReadOptions = {}): Promise<string[] | null> {
+  const branch = await removalCheckAsync(dir, ['symbolic-ref', '--quiet', '--short', 'HEAD'], options);
+  const own = branch === null ? '' : branch.trim();
+  const protection =
+    own && SAFE_BRANCH_NAME.test(own) ? ['--remotes', `--exclude=${own}`, '--branches'] : ['--remotes'];
+  if (!own && (await removalCheckAsync(dir, ['rev-parse', '--abbrev-ref', 'HEAD'], options)) === 'HEAD') {
+    protection.push('--branches');
+  }
+  const out = await removalCheckAsync(dir, ['log', '--oneline', 'HEAD', '--not', ...protection], options);
+  if (out === null) return null;
+  return out
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+export function resolveFullRef(cwd: string, ref: string, opts: ReadOptions = {}): string | null {
+  const out = gitRead(cwd, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`], opts);
+  return out && out.trim() ? out.trim() : null;
+}
+
+export async function resolveFullRefAsync(
+  cwd: string,
+  ref: string,
+  options: AsyncReadOptions = {},
+): Promise<string | null> {
+  const out = await gitReadAsync(
+    cwd,
+    ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`],
+    options,
+  );
+  return out && out.trim() ? out.trim() : null;
+}
+
+export async function hasRemoteAsync(dir: string, options: AsyncReadOptions = {}): Promise<boolean> {
+  const out = await gitReadAsync(dir, ['remote'], options);
+  return Boolean(out && out.trim().length > 0);
+}
+
+export async function branchExistsAsync(cwd: string, branch: string, options: AsyncReadOptions = {}): Promise<boolean> {
+  return Boolean(await gitReadAsync(cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], options));
+}
+
+export async function restoreFileAsync(dir: string, file: string, options: AsyncReadOptions = {}): Promise<boolean> {
+  try {
+    await gitAsync(dir, ['checkout', '--', file], {
+      ...(options.env ? childEnvironment(options.env) : {}),
+      signal: options.signal,
+      declareFor: options.declareFor,
+      write: true,
+    });
+    return true;
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
+    options.signal?.throwIfAborted();
+    return false;
+  }
+}
+
+// Windows refuses to delete a directory that is a running process's current
+// directory, so `from` names another checkout of the same repository. Git for
+// Windows also refuses paths past MAX_PATH (a built android/app/.cxx tree)
+// unless core.longpaths is on for the invocation.
+
+function worktreeRemoveArgs(path: string, force: boolean, platform: NodeJS.Platform): string[] {
+  return [
+    ...(platform === 'win32' ? ['-c', 'core.longpaths=true'] : []),
+    'worktree',
+    'remove',
+    ...(force ? ['--force'] : []),
+    '--',
+    path,
+  ];
+}
+
+export async function removeWorktreeAsync(
+  path: string,
+  {
+    from,
+    force = false,
+    platform = process.platform,
+    env,
+    signal,
+    declareFor,
+  }: {
+    from: string;
+    force?: boolean;
+    platform?: NodeJS.Platform;
+    env?: NodeJS.ProcessEnv;
+    signal?: AbortSignal;
+    declareFor?: StimContext;
+  },
+): Promise<void> {
+  await gitAsync(from, worktreeRemoveArgs(path, force, platform), {
+    ...(env ? childEnvironment(env) : {}),
+    signal,
+    declareFor,
+    write: true,
+    timeoutMs: 'unbounded',
+  });
+}
+
+function branchDeleteArgs(branch: string, expectedSha: string): string[] {
+  if (!SAFE_BRANCH_NAME.test(branch) || branch.startsWith('-')) {
+    throw new Error(`Refusing branch ${JSON.stringify(branch)}: it is not a safe local branch name.`);
+  }
+  return ['update-ref', '-d', `refs/heads/${branch}`, expectedSha];
+}
+
+export async function deleteBranchAsync(
+  cwd: string,
+  branch: string,
+  expectedSha: string,
+  options: AsyncReadOptions = {},
+): Promise<void> {
+  await gitAsync(cwd, branchDeleteArgs(branch, expectedSha), {
+    ...(options.env ? childEnvironment(options.env) : {}),
+    signal: options.signal,
+    declareFor: options.declareFor,
+    write: true,
+  });
+}
+
+export interface WorktreeEntry {
+  path: string;
+  branch?: string;
+  prunable?: boolean;
+  locked?: boolean;
+  bare?: boolean;
+}
+
+interface MatchedWorktreeEntry extends WorktreeEntry {
+  index: number;
+}
+
+// On Windows, Node's JS realpath keeps 8.3 short names (C:\Users\RUNNER~1) and
+// the caller's letter case, while git reports long names; the native realpath
+// resolves both.
+export function nativeCanonicalPath(path: string): string {
+  const missing: string[] = [];
+  for (let existing = resolve(path); ; existing = dirname(existing)) {
+    try {
+      return resolve(realpathSync.native(existing), ...missing);
+    } catch {
+      if (dirname(existing) === existing) return resolve(path);
+      missing.unshift(basename(existing));
+    }
+  }
+}
+
+export function matchWorktreeEntry(
+  entries: WorktreeEntry[] | null | undefined,
+  path: string,
+): MatchedWorktreeEntry | null {
+  let best: MatchedWorktreeEntry | null = null;
+  const target = nativeCanonicalPath(path);
+  (entries || []).forEach((entry, index) => {
+    if (!entry?.path || !isPathPrefix(nativeCanonicalPath(entry.path), target)) return;
+    if (!best || entry.path.length > best.path.length) best = { ...entry, index };
+  });
+  return best;
+}
+
+export const LOCKED_REASON = 'locked with git worktree lock';
+export const LOCK_UNKNOWN_REASON = 'git could not tell whether its worktree is locked';
+
+export type WorktreeLock = 'locked' | 'unknown';
+
+export function lockReason(lock: WorktreeLock): string {
+  return lock === 'locked' ? LOCKED_REASON : LOCK_UNKNOWN_REASON;
+}
+
+function parseWorktrees(out: string): WorktreeEntry[] {
+  const entries: WorktreeEntry[] = [];
+  let current: Partial<WorktreeEntry> = {};
+  for (const line of out.split('\n')) {
+    if (line.startsWith('worktree ')) {
+      if (current.path) entries.push(current as WorktreeEntry);
+      current = { path: nativePath(line.slice('worktree '.length)) };
+    } else if (line.startsWith('branch ')) {
+      current.branch = line.slice('branch '.length).replace('refs/heads/', '');
+    } else if (line === 'prunable' || line.startsWith('prunable ')) {
+      current.prunable = true;
+    } else if (line === 'locked' || line.startsWith('locked ')) {
+      current.locked = true;
+    } else if (line === 'bare') {
+      current.bare = true;
+    }
+  }
+  if (current.path) entries.push(current as WorktreeEntry);
+  return entries;
+}
+
+/** Null when git cannot list the index, so the answer is unknown; throws when git times out. */
+
+export async function hasPopulatedSubmodulesAsync(
+  worktree: string,
+  options: AsyncReadOptions = {},
+): Promise<boolean | null> {
+  const modules = await removalCheckAsync(worktree, ['rev-parse', '--git-path', 'modules'], options);
+  if (modules && existsSync(resolve(worktree, nativePath(modules)))) return true;
+  const staged = await removalCheckAsync(worktree, ['ls-files', '--stage', '-z'], options);
+  if (staged === null) return null;
+  return staged
+    .split('\0')
+    .some(
+      (line) => line.startsWith('160000 ') && existsSync(join(worktree, line.slice(line.indexOf('\t') + 1), '.git')),
+    );
+}
+
+export function listWorktrees(cwd: string, opts: ReadOptions = {}): WorktreeEntry[] {
+  const out = gitRead(cwd, ['worktree', 'list', '--porcelain'], opts);
+  return out ? parseWorktrees(out) : [];
+}
+
+export async function listWorktreesAsync(cwd: string, options: AsyncReadOptions = {}): Promise<WorktreeEntry[]> {
+  const out = await gitReadAsync(cwd, ['worktree', 'list', '--porcelain'], options);
+  return out ? parseWorktrees(out) : [];
+}
+
+function insideGitCheckout(root: string): boolean {
+  for (let dir = resolve(root); ; dir = dirname(dir)) {
+    if (existsSync(join(dir, '.git'))) return true;
+    if (dirname(dir) === dir) return false;
+  }
+}
+
+function lockOf(entries: WorktreeEntry[], root: string): WorktreeLock | null {
+  const entry = matchWorktreeEntry(entries, root);
+  if (entry) return entry.locked ? 'locked' : null;
+  return existsSync(root) && insideGitCheckout(root) ? 'unknown' : null;
+}
+
+/** Null when `root` is not in a locked worktree; 'unknown' when git lists nothing for a path inside a git checkout. */
+export function worktreeLock(root: string): WorktreeLock | null {
+  return lockOf(listWorktrees(root), root);
+}
+
+export async function worktreeLockAsync(root: string, options: AsyncReadOptions = {}): Promise<WorktreeLock | null> {
+  return lockOf(await listWorktreesAsync(root, options), root);
+}
+
+function branchOf(head: string): string | undefined {
+  return head.startsWith('ref: refs/heads/') ? head.slice('ref: refs/heads/'.length) : undefined;
+}
+
+/**
+ * The linked worktrees recorded under a git common dir, read from `worktrees/<id>/gitdir` and `HEAD` without running
+ * git or touching the worktree directories, sorted by path. The worktree with the branch the common dir's own `HEAD`
+ * names (the main checkout's branch, or a bare repository's source checkout) is left out.
+ */
+export function linkedWorktreesOnDisk(commonDir: string): WorktreeEntry[] {
+  const admin = join(commonDir, 'worktrees');
+  let ids: string[];
+  let sourceBranch: string | undefined;
+  try {
+    ids = readdirSync(admin);
+    sourceBranch = branchOf(readFileSync(join(commonDir, 'HEAD'), 'utf-8').trim());
+  } catch {
+    return [];
+  }
+  return ids
+    .flatMap((id) => {
+      try {
+        const gitdir = readFileSync(join(admin, id, 'gitdir'), 'utf-8').trim();
+        const branch = branchOf(readFileSync(join(admin, id, 'HEAD'), 'utf-8').trim());
+        if (branch && branch === sourceBranch) return [];
+        const path = dirname(resolve(admin, id, nativePath(gitdir)));
+        return [branch ? { path, branch } : { path }];
+      } catch {
+        return [];
+      }
+    })
+    .toSorted((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+/**
+ * The git common dir of the repository containing `start`, read from `.git` and `commondir` files without running
+ * git. Returns null when `start` is missing, unreadable, or not inside a repository.
+ */
+export function gitCommonDirOnDisk(start: string): string | null {
+  return gitLocationOnDisk(start)?.commonDir ?? null;
+}
+
+/** The canonical on-disk Git location; Git has not verified that it is a valid checkout. */
+export function gitLocationOnDisk(start: string): { path: string; commonDir: string } | null {
+  try {
+    for (let dir = realpathSync.native(start); ; dir = dirname(dir)) {
+      const dotGit = join(dir, '.git');
+      if (existsSync(dotGit)) {
+        if (statSync(dotGit).isDirectory()) return { path: dir, commonDir: realpathSync.native(dotGit) };
+        const gitdir = /^gitdir: (.+)$/m.exec(readFileSync(dotGit, 'utf-8'))?.[1]?.trim();
+        if (!gitdir) return null;
+        const linked = resolve(dir, gitdir);
+        const commondir = join(linked, 'commondir');
+        return {
+          path: dir,
+          commonDir: realpathSync.native(
+            existsSync(commondir) ? resolve(linked, readFileSync(commondir, 'utf-8').trim()) : linked,
+          ),
+        };
+      }
+      if (dirname(dir) === dir) return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+export type SourceCheckout = { path: string } | { refusal: string };
+
+export function selectSourceCheckout(entries: WorktreeEntry[], bareHead: string | null): SourceCheckout {
+  const first = entries[0];
+  if (!first) return { refusal: 'Git lists no worktrees for this repository.' };
+  if (!first.bare) return { path: first.path };
+  const bare = first.path;
+  const checkouts = entries.filter((entry) => !entry.bare && !entry.prunable);
+  const listed = checkouts.map((entry) => `${entry.branch ?? 'detached'} (${entry.path})`).join(', ') || 'none';
+  const pointHead = `  git -C ${bare} symbolic-ref HEAD refs/heads/<branch>`;
+  if (!bareHead) {
+    return {
+      refusal:
+        `The bare repository at ${bare} has a detached HEAD, so Stim cannot tell which worktree is the source checkout. ` +
+        `Point HEAD at the source branch, then retry:\n${pointHead}\nChecked-out branches: ${listed}`,
+    };
+  }
+  const matches = checkouts.filter((entry) => entry.branch === bareHead);
+  const [only] = matches;
+  if (only && matches.length === 1) return { path: only.path };
+  if (!only) {
+    const stale = entries.find((entry) => entry.prunable && entry.branch === bareHead);
+    const beside = checkouts[0] ? dirname(checkouts[0].path) : bare;
+    const recreate = stale
+      ? `Its worktree at ${stale.path} is missing. Recreate it, then retry:\n` +
+        `  git -C ${bare} worktree prune\n  git -C ${bare} worktree add ${stale.path} ${bareHead}\n`
+      : `Create one, then retry:\n  git -C ${bare} worktree add ${join(beside, bareHead)} ${bareHead}\n`;
+    return {
+      refusal:
+        `The bare repository at ${bare} points HEAD at ${bareHead}, but no worktree has ${bareHead} checked out, ` +
+        `so Stim has no source checkout to copy from. ${recreate}` +
+        `Or point HEAD at a branch that is checked out (${listed}):\n${pointHead}`,
+    };
+  }
+  return {
+    refusal:
+      `The bare repository at ${bare} points HEAD at ${bareHead}, which is checked out in more than one worktree: ` +
+      `${matches.map((entry) => entry.path).join(', ')}. Remove the extra worktrees, or point HEAD at a branch ` +
+      `checked out once, then retry:\n${pointHead}`,
+  };
+}
+
+function bareHeadBranch(bare: string): string | null {
+  const out = gitQuiet(bare, ['symbolic-ref', '--quiet', 'HEAD'])?.trim();
+  return out?.startsWith('refs/heads/') ? out.slice('refs/heads/'.length) : null;
+}
+
+export function sourceCheckoutOf(entries: WorktreeEntry[]): SourceCheckout {
+  const first = entries[0];
+  return selectSourceCheckout(entries, first?.bare ? bareHeadBranch(first.path) : null);
+}
+
+export async function resolveSourceCheckoutAsync(
+  cwd: string,
+  options: AsyncReadOptions = {},
+): Promise<{ entries: WorktreeEntry[] } & SourceCheckout> {
+  const entries = await listWorktreesAsync(cwd, options);
+  const first = entries[0];
+  const head = first?.bare
+    ? (await gitReadAsync(first.path, ['symbolic-ref', '--quiet', 'HEAD'], options))?.trim()
+    : null;
+  const branch = head?.startsWith('refs/heads/') ? head.slice('refs/heads/'.length) : null;
+  return { entries, ...selectSourceCheckout(entries, branch) };
+}

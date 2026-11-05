@@ -1,0 +1,219 @@
+import { readFileSync, realpathSync } from 'node:fs';
+import { isAbsolute, join, relative } from 'node:path';
+import chalk from 'chalk';
+import { phaseLine } from '../command-output.ts';
+import { machineNumber } from '../machine-number.ts';
+import { register } from '../cache/cache-manifest.ts';
+import { getExecutor } from '../exec.ts';
+import { loadConfig, type Config } from '../workspace/config.ts';
+import { sharedCcache, workspaceLogsDir } from '../workspace/paths.ts';
+import type { CcacheActivity } from './build-facts.ts';
+import { defaultAndroidLayout, type AndroidLayout } from '../workspace/settings.ts';
+
+const CCACHE_MAX_SIZE = '5G';
+
+export function ccacheInstallCommand(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'darwin'
+    ? 'brew install ccache'
+    : platform === 'linux'
+      ? 'sudo apt install ccache'
+      : 'install ccache';
+}
+
+// ccache manual, "SLOPPINESS": pch_defines is required for a precompiled
+// header to be reusable at all, and time_macros lets a translation unit that
+// expands __DATE__ or __TIME__ be cached.
+const CCACHE_SLOPPINESS = 'pch_defines,time_macros';
+
+const STATS_LOG_FILE = 'ccache-stats.log';
+
+export const CCACHE_UNAVAILABLE: CcacheActivity = {
+  status: 'unavailable',
+  hits: null,
+  misses: null,
+  hitRatePercent: null,
+};
+
+export const CCACHE_NOT_RUN: CcacheActivity = {
+  status: 'not-run',
+  hits: null,
+  misses: null,
+  hitRatePercent: null,
+};
+
+export interface CcacheSetup {
+  dir: string;
+  statsLog: string;
+  env: Record<string, string>;
+}
+
+function ccacheStatsLog(root: string): string {
+  return join(workspaceLogsDir(root), STATS_LOG_FILE);
+}
+
+export function ccacheMaxSize(config: Config | null = loadConfig(), env: NodeJS.ProcessEnv = process.env): string {
+  const { value, error } = machineNumber('caches.ccacheMaxGb', config, env);
+  return error || value === undefined ? CCACHE_MAX_SIZE : `${value}G`;
+}
+
+export function ccacheEnvironment({
+  binary,
+  dir,
+  workspaceRoot,
+  statsLog,
+  maxSize = CCACHE_MAX_SIZE,
+}: {
+  binary: string;
+  dir: string;
+  workspaceRoot: string;
+  statsLog: string;
+  maxSize?: string;
+}): Record<string, string> {
+  return {
+    CMAKE_C_COMPILER_LAUNCHER: binary,
+    CMAKE_CXX_COMPILER_LAUNCHER: binary,
+    CCACHE_DIR: dir,
+    CCACHE_BASEDIR: workspaceRoot,
+    // ccache manual, "CCACHE_NOHASHDIR": the boolean is read from this
+    // spelling only; CCACHE_HASHDIR=false is not honored.
+    CCACHE_NOHASHDIR: 'true',
+    CCACHE_SLOPPINESS,
+    CCACHE_MAXSIZE: maxSize,
+    CCACHE_STATSLOG: statsLog,
+  };
+}
+
+export function parseCcacheBinary(output: unknown): string | null {
+  const first = String(output ?? '')
+    .split('\n')[0]
+    ?.trim();
+  if (!first || !isAbsolute(first)) return null;
+  return first;
+}
+
+const CMAKE_LAUNCHER = /CMAKE_(C|CXX)_COMPILER_LAUNCHER\b/;
+
+export function projectCmakeLauncher(source: unknown): string | null {
+  if (typeof source !== 'string') return null;
+  const match = CMAKE_LAUNCHER.exec(source);
+  return match ? `CMAKE_${match[1]}_COMPILER_LAUNCHER` : null;
+}
+
+const HIT_COUNTERS = new Set(['direct_cache_hit', 'preprocessed_cache_hit']);
+
+export function parseCcacheStatsLog(text: unknown): CcacheActivity | null {
+  if (typeof text !== 'string') return null;
+  let hits = 0;
+  let misses = 0;
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (HIT_COUNTERS.has(line)) hits += 1;
+    else if (line === 'cache_miss') misses += 1;
+  }
+  const total = hits + misses;
+  if (total === 0) return null;
+  return {
+    status: 'reported',
+    hits,
+    misses,
+    hitRatePercent: Math.round((hits / total) * 1000) / 10,
+  };
+}
+
+export function readCcacheActivity(statsLog: string): CcacheActivity {
+  let text: string;
+  try {
+    text = readFileSync(statsLog, 'utf-8');
+  } catch {
+    return CCACHE_UNAVAILABLE;
+  }
+  return parseCcacheStatsLog(text) ?? CCACHE_UNAVAILABLE;
+}
+
+export function ccacheActivityLine(activity: CcacheActivity): string {
+  if (activity.status === 'reported') {
+    return `${activity.hits} hits / ${activity.misses} misses (${activity.hitRatePercent}%)`;
+  }
+  if (activity.status === 'not-run') return 'not run; artifact cache supplied the app';
+  return 'unavailable; no C++ compile went through ccache';
+}
+
+function lookupCcache(): string | null {
+  try {
+    return parseCcacheBinary(getExecutor().findExecutable('ccache'));
+  } catch {
+    return null;
+  }
+}
+
+function readOrNull(file: string): string | null {
+  try {
+    return readFileSync(file, 'utf-8');
+  } catch {
+    return null;
+  }
+}
+
+function canonical(root: string): string {
+  try {
+    return realpathSync(root);
+  } catch {
+    return root;
+  }
+}
+
+export function resolveCcache({
+  root,
+  layout = defaultAndroidLayout(root),
+  dir = sharedCcache(),
+  lookup = lookupCcache,
+  env = process.env,
+  onNote = (line: string) => console.error(line),
+}: {
+  root: string;
+  layout?: AndroidLayout;
+  dir?: string;
+  lookup?: () => string | null;
+  env?: NodeJS.ProcessEnv;
+  onNote?: (line: string) => void;
+}): CcacheSetup | null {
+  const binary = lookup();
+  if (!binary) {
+    onNote(chalk.dim(phaseLine('cache', `ccache off (not installed; ${ccacheInstallCommand()})`)));
+    return null;
+  }
+
+  const { moduleDir } = layout;
+  const declared = projectCmakeLauncher(
+    readOrNull(join(moduleDir, 'build.gradle')) ?? readOrNull(join(moduleDir, 'build.gradle.kts')),
+  );
+  if (declared) {
+    onNote(
+      chalk.dim(
+        phaseLine('cache', `ccache off (${join(relative(root, moduleDir), 'build.gradle')} sets ${declared} itself)`),
+      ),
+    );
+    return null;
+  }
+
+  const statsLog = ccacheStatsLog(root);
+  register({
+    dir,
+    registeredBy: root,
+    name: 'ccache',
+    prune: 'atomic',
+    note: 'ccache keeps itself under CCACHE_MAXSIZE, so it is emptied whole or not at all',
+  });
+  onNote(chalk.dim(phaseLine('cache', `ccache on (${dir})`)));
+  return {
+    dir,
+    statsLog,
+    env: ccacheEnvironment({
+      binary,
+      dir,
+      workspaceRoot: canonical(root),
+      statsLog,
+      maxSize: ccacheMaxSize(loadConfig(), env),
+    }),
+  };
+}

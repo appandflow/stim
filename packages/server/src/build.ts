@@ -1,0 +1,2538 @@
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { createHash, randomBytes, randomUUID, type Hash } from 'node:crypto';
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  statfsSync,
+  statSync,
+  writeFileSync,
+  type Dirent,
+} from 'node:fs';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
+import { totalmem } from 'node:os';
+import { basename, dirname, join, posix, win32 } from 'node:path';
+import { createInterface } from 'node:readline';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  clearFreeClaimSet,
+  markClaimChildPending,
+  processGroupAlive,
+  releaseClaim,
+  setClaimChild,
+  tryAcquireClaim,
+  type ClaimHandle,
+} from '@stim-cli/core/ownership-claim';
+import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
+import {
+  buildWorkerRoot,
+  isJsonObject,
+  loadConfig,
+  machineCapacity,
+  maxOffloadedBuilds,
+  saturation,
+  tryAcquireBuildSlotClaim,
+  windowsShortDir,
+  windowsShortDirKey,
+  workerAreaMaxAgeDays,
+} from '@stim-cli/core/state';
+import {
+  reactNativeArtifactQuery,
+  reusableDependencies,
+  swiftpmArtifactQuery,
+  validMacosResourceDestination,
+} from '@stim-cli/core';
+import type { BuildFingerprintSource, BuildOfferParams, BuildStartParams } from '@stim-cli/core/protocol';
+import { readAvailableMemory } from './machine.ts';
+import { listCommandLines } from './processes.ts';
+import { BuildArtifactCache, validArtifactIdentity } from 'stim/build-artifact-cache';
+import { runArtifactQuery, type ArtifactQueryResult } from './artifact-query.ts';
+import {
+  areaLastUsed,
+  areasToEvict,
+  measureTreeBytes,
+  evictionOf,
+  notRealDirectory,
+  readRootUsage,
+  readWorkerRecord,
+  recordAreaUse,
+  recordRootUsage,
+  type AreaEviction,
+  type DiskSpace,
+  type Eviction,
+  type WorkerArea,
+  type WorkerRootUsage,
+} from './worker-areas.ts';
+import {
+  BUILD_REPO_PATTERN,
+  BUILD_RUBY_VERSION_PATTERN,
+  type BuildAndroidOptions,
+  type BuildArtifactIdentity,
+  type BuildArtifactResult,
+  type BuildGradleArtifactQuery,
+  type BuildSwiftpmArtifactQuery,
+  type CachedBuildArtifact,
+  type BuildAttachResult,
+  type BuildCapacity,
+  type BuildFile,
+  type BuildJobOutcome,
+  type BuildOfferResult,
+  type BuildProgressEvent,
+  type BuildSyncResult,
+  type BuildToolchain,
+  type ErrorCode,
+  type ProtocolError,
+} from './protocol.ts';
+
+export interface BuildLimits {
+  /** Free bytes the worker root's volume must keep for a build to start there. */
+  minFreeBytes: number;
+  /** Sum of the declared file sizes one manifest may hold. */
+  maxManifestBytes: number;
+  timeoutMs: number;
+  killGraceMs: number;
+  /** How long a build whose connection dropped keeps running for a new connection to attach to it. */
+  detachGraceMs: number;
+  /** How long a toolchain report is reused before `build.offer` asks the toolchain again. */
+  toolchainTtlMs: number;
+  /** Available memory below which the idle Gradle daemons of offloaded builds are stopped. */
+  minFreeMemoryBytes: number;
+  /** How often the idle Gradle daemons of offloaded builds are checked. */
+  daemonSweepMs: number;
+  /** How long a fetched macOS bundle stays here for a hosted session on this machine to take. */
+  handoffMs: number;
+  /** Free bytes above `minFreeBytes` under which the least recently used repository areas are evicted. */
+  evictionMarginBytes: number;
+  /** How long since its last use an area stays safe from eviction for space while the volume is above `minFreeBytes`. */
+  evictionRecentMs: number;
+  /** How often unused repository areas are looked for while the volume is above that margin. */
+  areaSweepMs: number;
+  /** How often the worker root's size is measured. */
+  rootMeasureMs: number;
+}
+
+const DEFAULT_BUILD_LIMITS: BuildLimits = {
+  minFreeBytes: 10 * 1024 ** 3,
+  maxManifestBytes: 20 * 1024 ** 3,
+  timeoutMs: 60 * 60_000,
+  killGraceMs: 5000,
+  detachGraceMs: 5 * 60_000,
+  toolchainTtlMs: 60_000,
+  minFreeMemoryBytes: 2 * 1024 ** 3,
+  daemonSweepMs: 60_000,
+  handoffMs: 10 * 60_000,
+  evictionMarginBytes: 40 * 1024 ** 3,
+  evictionRecentMs: 3 * 60 * 60_000,
+  areaSweepMs: 15 * 60_000,
+  rootMeasureMs: 6 * 60 * 60_000,
+};
+
+const DIGEST_BYTES = 32;
+const MAX_MANIFEST_FILES = 200_000;
+const MAX_FILE_BYTES = 4 * 1024 ** 3;
+const MAX_PATH_CHARS = 1024;
+const ARTIFACT_CHUNK = 1024 * 1024;
+const MAX_BUFFERED = 16 * 1024 * 1024;
+const MAX_WORKER_LINE = 1024 * 1024;
+const GROUP_POLL_MS = 200;
+const HOUR_MS = 60 * 60_000;
+const DAY_MS = 24 * HOUR_MS;
+const EVICTED_DIR = 'evicted';
+
+type Refusal = { error: ProtocolError };
+
+interface BuildSocket {
+  readonly readyState: number;
+  readonly OPEN: number;
+  readonly bufferedAmount: number;
+  send(data: Buffer, options: { binary: boolean }): void;
+}
+
+const refusal = (code: ErrorCode, message: string): Refusal => ({ error: { code, message } });
+
+/** A manifest path the mirror can hold: relative, normalized, and never inside `.git`. */
+function validBuildPath(path: unknown): path is string {
+  if (typeof path !== 'string' || !path || path.length > MAX_PATH_CHARS || path.includes('\0')) return false;
+  return path.split('/').every((part) => part !== '' && part !== '.' && part !== '..' && part.toLowerCase() !== '.git');
+}
+
+function validFile(file: unknown): file is BuildFile {
+  if (!isJsonObject(file) || !validBuildPath(file.path)) return false;
+  if (file.kind !== 'file' && file.kind !== 'exec' && file.kind !== 'link' && file.kind !== 'directory') return false;
+  if (file.kind === 'directory' && (file.size !== 0 || file.sha256 !== createHash('sha256').update('').digest('hex')))
+    return false;
+  const size = file.size;
+  if (typeof size !== 'number' || !Number.isInteger(size) || size < 0 || size > MAX_FILE_BYTES) return false;
+  return typeof file.sha256 === 'string' && /^[0-9a-f]{64}$/.test(file.sha256);
+}
+
+const validRepo = (repo: unknown): repo is string =>
+  typeof repo === 'string' && new RegExp(BUILD_REPO_PATTERN).test(repo);
+
+const gb = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);
+
+function capacityLine(loadPerCore: number | null | undefined, running: number, diskFreeBytes: number | null): string {
+  const disk = diskFreeBytes === null ? 'free disk unknown' : `${gb(diskFreeBytes)} GB free`;
+  return `load ${loadPerCore}/core, ${running} offloaded build(s) running, ${disk}`;
+}
+
+const optional = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+
+const MAX_FINGERPRINT_SOURCES = 20_000;
+
+function fingerprintSources(value: unknown): BuildFingerprintSource[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_FINGERPRINT_SOURCES) return null;
+  const valid = value.every(
+    (source) =>
+      isJsonObject(source) &&
+      Object.keys(source).every((key) => key === 'id' || key === 'hash') &&
+      typeof source.id === 'string' &&
+      source.id.length > 0 &&
+      source.id.length <= MAX_PATH_CHARS &&
+      (source.hash === null || (typeof source.hash === 'string' && /^[0-9a-f]{1,128}$/.test(source.hash))),
+  );
+  return valid ? (value as BuildFingerprintSource[]) : null;
+}
+
+function fingerprintIgnored(value: unknown): string[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_FINGERPRINT_SOURCES) return null;
+  const paths: string[] = [];
+  for (const path of value) {
+    if (typeof path !== 'string' || path.length === 0 || path.length > MAX_PATH_CHARS) return null;
+    paths.push(path);
+  }
+  return paths;
+}
+
+function fingerprintTracked(value: unknown): string[] | null | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_FINGERPRINT_SOURCES) return null;
+  const names: string[] = [];
+  for (const name of value) {
+    const valid =
+      typeof name === 'string' &&
+      name.length > 0 &&
+      name.length <= 255 &&
+      name !== '.' &&
+      name !== '..' &&
+      !/[/\0]/.test(name);
+    if (!valid) return null;
+    names.push(name);
+  }
+  return names;
+}
+
+const GRADLE_NAME = /^[A-Za-z0-9_-]{1,100}$/;
+const GRADLE_ROOT = /^[A-Za-z0-9._/ -]{1,200}$/;
+const GRADLE_MODULE = /^(:(?!\.\.?(?::|$))[A-Za-z0-9._-]+){1,20}$/;
+
+/** The Gradle choices of an Android `build.start`, or null when they are malformed. */
+function androidOptions(value: unknown): BuildAndroidOptions | null {
+  if (!isJsonObject(value)) return null;
+  const { variant, abi, gradleBuildCache, pch, compilerCache, gradleRoot = null, module = null } = value;
+  if (variant !== null && !(typeof variant === 'string' && GRADLE_NAME.test(variant))) return null;
+  if (abi !== null && !(typeof abi === 'string' && GRADLE_NAME.test(abi))) return null;
+  if (typeof gradleBuildCache !== 'boolean') return null;
+  if (pch !== 'auto' && pch !== 'on' && pch !== 'off') return null;
+  if (compilerCache !== 'ccache' && compilerCache !== 'none') return null;
+  if (gradleRoot !== null && !(typeof gradleRoot === 'string' && GRADLE_ROOT.test(gradleRoot))) return null;
+  if (module !== null && !(typeof module === 'string' && GRADLE_MODULE.test(module))) return null;
+  return { variant, abi, gradleBuildCache, pch, compilerCache, gradleRoot, module };
+}
+
+function macosBuildOptions(
+  params: Record<string, unknown>,
+): { options: NonNullable<BuildStartParams['macos']> } | Refusal {
+  const options = params.macos;
+  if (
+    !isJsonObject(options) ||
+    typeof options.product !== 'string' ||
+    !/^[A-Za-z0-9_.-]{1,100}$/.test(options.product) ||
+    !validBuildPath(options.infoPlist) ||
+    typeof options.bundleId !== 'string' ||
+    !/^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$/.test(options.bundleId)
+  ) {
+    return refusal(
+      'bad-request',
+      'A macos build needs a valid product, relative infoPlist path and bundleId in params.macos.',
+    );
+  }
+  if (
+    (options.resources !== undefined &&
+      (!isJsonObject(options.resources) ||
+        Object.keys(options.resources).length > 256 ||
+        Object.entries(options.resources).some(
+          ([destination, source]) => !validMacosResourceDestination(destination) || !validBuildPath(source),
+        ))) ||
+    (options.assetCatalog !== undefined && options.assetCatalog !== null && !validBuildPath(options.assetCatalog))
+  ) {
+    return refusal(
+      'bad-request',
+      'params.macos needs contained resource destinations and repository-relative sources.',
+    );
+  }
+  const artifactQuery =
+    options.artifactInputs === undefined
+      ? null
+      : swiftpmArtifactQuery({
+          project: params.project,
+          sourceDigest: params.fingerprint,
+          ...(typeof params.compat === 'number' ? { compat: params.compat } : { stimBuild: params.stimBuild }),
+          inputs: options.artifactInputs,
+          build: {
+            product: options.product,
+            infoPlist: options.infoPlist,
+            resources: options.resources ?? {},
+            assetCatalog: options.assetCatalog ?? null,
+          },
+        });
+  if (options.artifactInputs !== undefined && !artifactQuery)
+    return refusal('bad-request', 'SwiftPM artifact retention needs a complete repeatable input declaration.');
+  return {
+    options: {
+      product: options.product,
+      infoPlist: options.infoPlist,
+      bundleId: options.bundleId,
+      ...(artifactQuery ? { artifactInputs: artifactQuery.inputs } : {}),
+      ...(options.resources !== undefined ? { resources: options.resources as Record<string, string> } : {}),
+      ...(options.assetCatalog !== undefined ? { assetCatalog: options.assetCatalog as string | null } : {}),
+    },
+  };
+}
+
+function gradleArtifactQuery(value: unknown): BuildGradleArtifactQuery | null {
+  if (
+    !isJsonObject(value) ||
+    Object.keys(value).some((key) => !['project', 'sourceDigest', 'inputs', 'android', 'jdk'].includes(key)) ||
+    (value.jdk !== undefined && (typeof value.jdk !== 'string' || !/^[0-9]{1,3}$/.test(value.jdk)))
+  )
+    return null;
+  const { project, sourceDigest, inputs } = value;
+  const path = (candidate: unknown): candidate is string => validBuildPath(candidate) && !/[\\:]/.test(candidate);
+  if (
+    typeof project !== 'string' ||
+    (project !== '' && !path(project)) ||
+    typeof sourceDigest !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(sourceDigest) ||
+    !isJsonObject(inputs) ||
+    inputs.complete !== true ||
+    Object.keys(inputs).some((key) => !['complete', 'ignored', 'outputs'].includes(key)) ||
+    !Array.isArray(inputs.ignored) ||
+    !inputs.ignored.every(path) ||
+    !Array.isArray(inputs.outputs) ||
+    !inputs.outputs.every(path)
+  )
+    return null;
+  const android = androidOptions(value.android);
+  return android && android.variant !== null
+    ? {
+        project,
+        ...(typeof value.jdk === 'string' ? { jdk: value.jdk } : {}),
+        sourceDigest,
+        inputs: { complete: true, ignored: inputs.ignored, outputs: inputs.outputs },
+        android: { ...android, variant: android.variant },
+      }
+    : null;
+}
+
+function freeBytes(path: string): number | null {
+  try {
+    const stats = statfsSync(path);
+    return stats.bavail * stats.bsize;
+  } catch {
+    return null;
+  }
+}
+
+/** Free bytes for builds under `root`; on Windows also on the drive that holds `windowsShortDir`s, whichever is less. */
+function workerFreeBytes(root: string): number | null {
+  const free = [root, ...(process.platform === 'win32' ? [dirname(dirname(windowsShortDir(root)))] : [])]
+    .map(freeBytes)
+    .filter((bytes) => bytes !== null);
+  return free.length ? Math.min(...free) : null;
+}
+
+const GRADLE_DAEMON = 'org.gradle.launcher.daemon.bootstrap.GradleDaemon';
+
+/** An area's Gradle home, shortened on Windows for the NDK's path limit. */
+function gradleUserHome(area: string, platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? windowsShortDir(win32.join(area, 'cache', 'gradle')) : join(area, 'cache', 'gradle');
+}
+
+function ownsWindowsGradleHome(area: string): boolean {
+  try {
+    return readFileSync(`${gradleUserHome(area, 'win32')}.owner`, 'utf8') === windowsShortDirKey('gradle', area);
+  } catch {
+    return false;
+  }
+}
+
+interface GradleScope {
+  client: string;
+  repo?: string;
+}
+
+/**
+ * Identifies worker Gradle homes on daemon classpaths. Windows also includes Kotlin processes whose open jars
+ * prevent home deletion, and needs the known areas because short homes are outside the worker root.
+ */
+export function workerGradleDaemons(
+  ps: string,
+  root: string,
+  platform: NodeJS.Platform = process.platform,
+  areas: readonly GradleScope[] = [],
+): Array<GradleScope & { pid: number }> {
+  const home = new RegExp(
+    `${posix.resolve(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/\\s]+)/(?:repos/([^/\\s]+)/)?cache/gradle/`,
+  );
+  const windowsHomes = areas.map((scope) => ({
+    ...scope,
+    home: `${gradleUserHome(win32.join(root, scope.client, ...(scope.repo ? ['repos', scope.repo] : [])), platform).toLowerCase()}\\`,
+  }));
+  const daemons: Array<GradleScope & { pid: number }> = [];
+  for (const line of ps.split(/\r?\n/)) {
+    const [, pid, command] = /^\s*(\d+)\s+(.*)$/.exec(line) ?? [];
+    if (!pid || !command) continue;
+    let scope: GradleScope | undefined;
+    if (platform === 'win32') {
+      const matched = windowsHomes.find((each) => command.toLowerCase().includes(each.home));
+      if (matched) scope = { client: matched.client, ...(matched.repo ? { repo: matched.repo } : {}) };
+    } else if (command.includes(GRADLE_DAEMON) || command.includes('KotlinCompileDaemon')) {
+      const matched = home.exec(command);
+      if (matched?.[1]) scope = { client: matched[1], ...(matched[2] ? { repo: matched[2] } : {}) };
+    }
+    if (scope) daemons.push({ pid: Number(pid), ...scope });
+  }
+  return daemons;
+}
+
+const isMissing = (error: unknown): boolean => error instanceof Error && 'code' in error && error.code === 'ENOENT';
+
+const areaKey = (client: string, repo: string): string => `${client}/${repo}`;
+
+async function deletionFailure(dir: string): Promise<string | null> {
+  try {
+    await rm(dir, { recursive: true, force: true, maxRetries: 10 });
+    return null;
+  } catch (error) {
+    return String(error);
+  }
+}
+
+function unknownGradleProcess(home: string, known: ReadonlySet<number>): Error | null {
+  const homes = [home];
+  if (existsSync(home))
+    homes.push(
+      ...readdirSync(home)
+        .filter((name) => /^n[a-f0-9]{12}$/.test(name))
+        .map((name) => join(home, name)),
+    );
+  for (const directory of homes) {
+    const logs = join(directory, 'daemon');
+    if (!existsSync(logs)) continue;
+    for (const version of readdirSync(logs, { withFileTypes: true }).filter((entry) => entry.isDirectory())) {
+      for (const log of readdirSync(join(logs, version.name))) {
+        const pid = Number(/^daemon-(\d+)\.out\.log$/.exec(log)?.[1]);
+        if (!pid || known.has(pid)) continue;
+        if (processGroupAlive(pid)) return new Error(`Gradle process ${pid} may still use ${directory}.`);
+        try {
+          process.kill(pid, 0);
+        } catch (error) {
+          if (error instanceof Error && 'code' in error && error.code === 'ESRCH') continue;
+          throw error;
+        }
+        return new Error(`Gradle process ${pid} may still use ${directory}.`);
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Windows has no process groups, and Node's SIGTERM there is TerminateProcess on the one process, so the build's
+ * Gradle and Java children are reached only through `taskkill /T`, which is always forceful.
+ */
+function killTree(pid: number): Promise<void> {
+  return new Promise((resolve) => {
+    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 30_000 }, () => resolve());
+  });
+}
+
+interface Job {
+  id: string;
+  client: string;
+  repo: string;
+  platform: unknown;
+  child: ChildProcess;
+  archive: string;
+  /** Whether the job holds one of this machine's `concurrency.maxBuilds` slots, which `machineCapacity` counts. */
+  slotted: boolean;
+  outcome: BuildJobOutcome | null;
+  cacheArtifact?: Record<string, unknown>;
+  reactNativeArtifact?: Record<string, unknown>;
+  swiftpmArtifact?: Record<string, unknown>;
+  settled: boolean;
+  cancel: () => void;
+  done: Promise<void>;
+  send: (event: BuildProgressEvent) => void;
+  session: BuildSession | null;
+  grace: NodeJS.Timeout | null;
+}
+
+type CachedArtifactRequest = Record<string, unknown> & { repo: string; artifact: BuildArtifactIdentity };
+
+const nowhere = (): void => {};
+
+function podsOnWorkerJob(params: Record<string, unknown>): { podsOnWorker?: true; reuseArtifact?: true } {
+  if (params.podsOnWorker !== true) return {};
+  return { podsOnWorker: true, ...(params.reuseArtifact === true ? { reuseArtifact: true } : {}) };
+}
+
+export interface BuildHostOptions {
+  /** The `offload-worker.mjs` entry of the bundled Stim. */
+  worker: string;
+  env: NodeJS.ProcessEnv;
+  /** The environment now: the tools installed since `env` was built, such as Homebrew's directory. Absent means `env`. */
+  currentEnv?: () => NodeJS.ProcessEnv;
+  limits?: Partial<BuildLimits>;
+  /** Called once a job ends, for the action log. */
+  finished?: (record: { client: string; repo: string; ok: boolean; error?: ProtocolError; durationMs: number }) => void;
+  /** Whether a client still holds `build`; the Gradle daemons of one that does not are stopped. */
+  allowed?: (client: string) => boolean;
+  /** Whether the periodic daemon sweep may read the Stim home yet; it runs unconditionally when absent. */
+  ready?: () => boolean;
+}
+
+/** Runs other machines' iOS and Android builds here for clients with `build`, each in its own area under the worker root. */
+export class BuildHost {
+  readonly limits: BuildLimits;
+  private readonly jobs = new Set<Job>();
+  private readonly owned = new Map<string, Job>();
+  private readonly sessions = new Map<BuildSession, string>();
+  private readonly served = new Set<string>();
+  private readonly removals = new Map<string, Promise<void>>();
+  private readonly queries = new Set<{
+    client: string;
+    repo: string;
+    run: ReturnType<typeof runArtifactQuery>;
+    settled: boolean;
+  }>();
+  private readonly retained = new Map<
+    string,
+    { client: string; repo: string; dir: string; bundle: string; sha256: string; timer: NodeJS.Timeout }
+  >();
+  private closed = false;
+  private draining: string | null = null;
+  private readonly toolchains = new Map<string, { at: number; value: Promise<BuildToolchain | null> }>();
+  private readonly options: BuildHostOptions;
+  private sweeping: Promise<void> = Promise.resolve();
+  private queued: Promise<void> | null = null;
+  private readonly forced = new Set<string>();
+  private readonly sweeper: NodeJS.Timeout;
+  private readonly pins = new Map<string, number>();
+  private readonly areaRefusals = new Map<string, string>();
+  private readonly reported = new Map<string, string>();
+  private readonly recoveries = new Map<string, Promise<unknown>>();
+  private reportedLow = false;
+  private evicting: Promise<void> | null = null;
+  private lastEviction = 0;
+  private lastMeasure = 0;
+  private readonly closing = new AbortController();
+  private rootUsage: WorkerRootUsage | null = null;
+
+  constructor(options: BuildHostOptions) {
+    this.options = options;
+    this.limits = { ...DEFAULT_BUILD_LIMITS, ...options.limits };
+    this.sweeper = setInterval(() => {
+      if (this.options.ready?.() ?? true) void this.sweepDaemons();
+      this.maintainAreas();
+    }, this.limits.daemonSweepMs);
+    this.sweeper.unref();
+  }
+
+  /**
+   * Stops the Gradle daemons that offloaded Android builds left warm, except those of a client with a running job:
+   * every one while no job runs and available memory is under `minFreeMemoryBytes`, and those of a client that lost `build` or that
+   * is `client`. Calls made while a sweep is queued join it. A daemon leaves its build's process group, so no claim or slot tracks it. A daemon whose Gradle home
+   * is deleted stops itself: Gradle expires a daemon once its registry file is gone.
+   */
+  sweepDaemons(client: string | null = null): Promise<void> {
+    if (client !== null) this.forced.add(client);
+    this.queued ??= this.sweeping
+      .then(() => {
+        this.queued = null;
+        const forced = new Set(this.forced);
+        this.forced.clear();
+        return this.sweep(forced);
+      })
+      .catch((error: unknown) =>
+        console.error(`stim-server: could not check the Gradle daemons of offloaded builds: ${String(error)}`),
+      );
+    this.sweeping = this.queued;
+    return this.queued;
+  }
+
+  private async sweep(forced: ReadonlySet<string>): Promise<void> {
+    if (this.closed) return;
+    const available = await readAvailableMemory();
+    const low = available !== null && available < this.limits.minFreeMemoryBytes;
+    let clients: string[] = [];
+    if (process.platform === 'win32') {
+      try {
+        clients = readdirSync(this.root());
+      } catch {}
+    }
+    const daemons = workerGradleDaemons(
+      await listCommandLines().catch(() => ''),
+      this.root(),
+      process.platform,
+      clients.flatMap((client) => this.gradleScopes(client)),
+    );
+    const busy = new Set([...this.jobs].map((job) => job.client));
+    for (const daemon of daemons) {
+      if (busy.has(daemon.client)) continue;
+      if ((!low || busy.size > 0) && !forced.has(daemon.client) && (this.options.allowed?.(daemon.client) ?? true))
+        continue;
+      try {
+        process.kill(daemon.pid, 'SIGTERM');
+      } catch {}
+    }
+  }
+
+  private environment(): NodeJS.ProcessEnv {
+    return this.options.currentEnv?.() ?? this.options.env;
+  }
+
+  private gradleScopes(client: string): GradleScope[] {
+    const clientDir = this.clientDir(client);
+    if (notRealDirectory(clientDir)) return [];
+    const scopes: GradleScope[] = [{ client }];
+    const repos = join(clientDir, 'repos');
+    try {
+      if (!notRealDirectory(repos)) {
+        for (const entry of readdirSync(repos, { withFileTypes: true })) {
+          if (entry.isDirectory() && new RegExp(BUILD_REPO_PATTERN).test(entry.name))
+            scopes.push({ client, repo: entry.name });
+        }
+      }
+    } catch {}
+    return process.platform === 'win32'
+      ? scopes.filter((scope) =>
+          ownsWindowsGradleHome(
+            scope.repo ? join(this.clientDir(client), 'repos', scope.repo) : this.clientDir(client),
+          ),
+        )
+      : scopes;
+  }
+
+  private async drainCancelledAndroid(client: string, repo: string): Promise<boolean> {
+    try {
+      const daemons = workerGradleDaemons(await listCommandLines(), this.root(), process.platform, [
+        { client, repo },
+      ]).filter((daemon) => daemon.client === client && daemon.repo === repo);
+      if (
+        process.platform === 'win32' &&
+        daemons.length > 0 &&
+        !ownsWindowsGradleHome(join(this.clientDir(client), 'repos', repo))
+      ) {
+        throw new Error('The repository Gradle home has no matching owner key.');
+      }
+      const identities = daemons.map(({ pid }) => {
+        const captured = captureProcessIdentity(pid);
+        if (!captured.ok) throw new Error(`Cannot identify Gradle daemon ${pid}.`);
+        return { pid, processToken: captured.token };
+      });
+      const home = gradleUserHome(join(this.clientDir(client), 'repos', repo));
+      const known = new Set(identities.map(({ pid }) => pid));
+      for (const identity of identities) {
+        const state = inspectProcessIdentity(identity);
+        if (state === 'gone') continue;
+        if (state !== 'same') throw new Error('Gradle daemon identity changed.');
+        if (process.platform === 'win32') await killTree(identity.pid);
+        else {
+          try {
+            process.kill(-identity.pid, 'SIGTERM');
+          } catch {
+            process.kill(identity.pid, 'SIGTERM');
+          }
+        }
+      }
+      const deadline = Date.now() + this.limits.killGraceMs;
+      let forced = false;
+      for (;;) {
+        const unknown = unknownGradleProcess(home, known);
+        const pending = identities.some(
+          (identity) => inspectProcessIdentity(identity) === 'same' || processGroupAlive(identity.pid),
+        );
+        if (!unknown && !pending) break;
+        if (unknown && !pending && !forced && Date.now() >= deadline) throw unknown;
+        if (Date.now() >= deadline + 5000) {
+          if (unknown) throw unknown;
+          return false;
+        }
+        if (!forced && Date.now() >= deadline) {
+          for (const identity of identities) {
+            const state = inspectProcessIdentity(identity);
+            if (state === 'unknown' || state === 'different') return false;
+            if (process.platform !== 'win32') {
+              try {
+                process.kill(-identity.pid, 'SIGKILL');
+              } catch {
+                if (state === 'same') process.kill(identity.pid, 'SIGKILL');
+              }
+            }
+          }
+          forced = true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, GROUP_POLL_MS));
+      }
+      return (
+        identities.every((identity) => ['gone', 'different'].includes(inspectProcessIdentity(identity))) &&
+        !workerGradleDaemons(await listCommandLines(), this.root(), process.platform, [{ client, repo }]).some(
+          (daemon) => daemon.client === client && daemon.repo === repo,
+        )
+      );
+    } catch (error) {
+      console.error(`stim-server: retaining cancelled Android claims for ${client}/${repo}: ${String(error)}`);
+      return false;
+    }
+  }
+
+  root(): string {
+    return buildWorkerRoot();
+  }
+
+  clientDir(client: string): string {
+    return join(this.root(), client);
+  }
+
+  toolchain(rubyVersion: string | null = null, native?: 'xcode' | 'gradle'): Promise<BuildToolchain | null> {
+    const key = JSON.stringify([native ?? null, native ? null : rubyVersion]);
+    const now = Date.now();
+    for (const [context, entry] of this.toolchains) {
+      if (now - entry.at >= this.limits.toolchainTtlMs) this.toolchains.delete(context);
+    }
+    const cached = this.toolchains.get(key);
+    if (cached) return cached.value;
+    const value = new Promise<BuildToolchain | null>((resolve) => {
+      const args = native ? [`offer-native-${native}`] : ['offer', ...(rubyVersion ? [rubyVersion] : [])];
+      const child = spawn(process.execPath, [this.options.worker, ...args], {
+        env: this.environment(),
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      let out = '';
+      const timer = setTimeout(() => child.kill('SIGKILL'), 60_000);
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => (out += chunk));
+      child.on('error', () => resolve(null));
+      child.on('close', () => {
+        clearTimeout(timer);
+        try {
+          const report = JSON.parse(out) as unknown;
+          resolve(isJsonObject(report) ? (report as unknown as BuildToolchain) : null);
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+    this.toolchains.set(key, { at: now, value });
+    void value.then((result) => {
+      if (!result && this.toolchains.get(key)?.value === value) this.toolchains.delete(key);
+      return undefined;
+    });
+    return value;
+  }
+
+  async offer(
+    client: string,
+    params: unknown,
+    signal: AbortSignal = new AbortController().signal,
+  ): Promise<{ result: BuildOfferResult } | Refusal> {
+    if (!isJsonObject(params) || !validRepo(params.repo)) {
+      return refusal('bad-request', 'build.offer needs params.repo.');
+    }
+    let dependencies: BuildOfferParams['dependencies'];
+    if (params.dependencies !== undefined) {
+      const value = params.dependencies;
+      if (
+        !isJsonObject(value) ||
+        typeof value.project !== 'string' ||
+        (value.project !== '' && (!validBuildPath(value.project) || /[\\:]/.test(value.project))) ||
+        (value.packageName !== null && typeof value.packageName !== 'string')
+      )
+        return refusal('bad-request', 'Dependency warmth needs a repository project and package name or null.');
+      dependencies = { project: value.project, packageName: value.packageName };
+    }
+    if (
+      params.rubyVersion !== undefined &&
+      (typeof params.rubyVersion !== 'string' || !new RegExp(BUILD_RUBY_VERSION_PATTERN).test(params.rubyVersion))
+    ) {
+      return refusal('bad-request', 'build.offer needs a Ruby installation name without path separators.');
+    }
+    if (params.native !== undefined && params.native !== 'xcode' && params.native !== 'gradle')
+      return refusal('bad-request', 'build.offer supports native Xcode or Gradle toolchains.');
+    if (params.artifact !== undefined && (params.native !== 'xcode' || !validArtifactIdentity(params.artifact)))
+      return refusal('bad-request', 'An artifact lookup needs a complete native Xcode identity.');
+    const query = params.gradleArtifact === undefined ? undefined : gradleArtifactQuery(params.gradleArtifact);
+    if (query === null || (query !== undefined && (params.native !== 'gradle' || params.artifact !== undefined)))
+      return refusal('bad-request', 'A native Gradle artifact lookup needs its completed source and build choices.');
+    const reactNative =
+      params.reactNativeArtifact === undefined ? undefined : reactNativeArtifactQuery(params.reactNativeArtifact);
+    if (
+      reactNative === null ||
+      (reactNative !== undefined &&
+        (params.native !== undefined || params.artifact !== undefined || query !== undefined))
+    )
+      return refusal(
+        'bad-request',
+        'A React Native artifact lookup needs its development fingerprint and build choices.',
+      );
+    const swiftpm = params.swiftpmArtifact === undefined ? undefined : swiftpmArtifactQuery(params.swiftpmArtifact);
+    if (
+      swiftpm === null ||
+      (swiftpm !== undefined &&
+        (params.native !== undefined ||
+          params.artifact !== undefined ||
+          query !== undefined ||
+          reactNative !== undefined))
+    )
+      return refusal('bad-request', 'A SwiftPM artifact lookup needs its completed source and declared build choices.');
+    const repo = params.repo;
+    const lookup = params.artifact;
+    const artifact = await this.pinned(client, repo, async () =>
+      swiftpm !== undefined
+        ? this.privateArtifact(client, repo, swiftpm, signal)
+        : reactNative !== undefined
+          ? this.cache(client, repo).lookupReactNative(reactNative, signal)
+          : query !== undefined
+            ? this.privateArtifact(client, repo, query, signal)
+            : lookup === undefined
+              ? undefined
+              : this.cache(client, repo).lookup(lookup, signal),
+    );
+    if (this.closed || this.removals.has(client) || signal.aborted || !(this.options.allowed?.(client) ?? true))
+      return refusal('build-refused', 'This build connection closed or lost access during the offer.');
+    const toolchain = await this.toolchain((params.rubyVersion as string | undefined) ?? null, params.native);
+    if (this.closed || this.removals.has(client) || signal.aborted || !(this.options.allowed?.(client) ?? true))
+      return refusal('build-refused', 'This build connection closed or lost access during the offer.');
+    if (!toolchain) return refusal('build-refused', 'This machine could not read its build toolchain.');
+    const root = this.root();
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    const area = join(this.clientDir(client), 'repos', params.repo);
+    const available = await readAvailableMemory();
+    const total = totalmem();
+    const memory = available === null ? {} : { memoryTotalBytes: total, memoryUsedBytes: total - available };
+    return {
+      result: {
+        toolchain,
+        capacity: { ...this.capacity(), ...memory },
+        warm: {
+          checkout: existsSync(join(area, 'src')),
+          dependencies:
+            typeof params.lockfile === 'string' &&
+            dependencies !== undefined &&
+            reusableDependencies(area, dependencies.project, params.lockfile, this.environment()),
+          build: false,
+        },
+        ...(artifact !== undefined ? { artifact } : {}),
+      },
+    };
+  }
+
+  private artifactCacheDir(client: string, repo: string): string {
+    return join(this.clientDir(client), 'repos', repo, 'artifact-cache');
+  }
+
+  cache(client: string, repo: string): BuildArtifactCache {
+    return new BuildArtifactCache(this.artifactCacheDir(client, repo));
+  }
+
+  private workerEnvironment(clientDir: string, area: string): NodeJS.ProcessEnv {
+    return {
+      ...this.environment(),
+      STIM_HOME: join(area, 'home'),
+      CP_HOME_DIR: join(clientDir, 'cache', 'cocoapods-home'),
+      CP_CACHE_DIR: join(clientDir, 'cache', 'cocoapods'),
+      npm_config_store_dir: join(clientDir, 'cache', 'pnpm-store'),
+      GRADLE_USER_HOME: gradleUserHome(area),
+    };
+  }
+
+  async privateArtifact(
+    client: string,
+    repo: string,
+    query: BuildGradleArtifactQuery | BuildSwiftpmArtifactQuery,
+    signal: AbortSignal,
+  ): Promise<CachedBuildArtifact | null> {
+    try {
+      if (
+        this.closed ||
+        this.removals.has(client) ||
+        !(this.options.allowed?.(client) ?? true) ||
+        this.queries.size >= 4
+      )
+        return null;
+      const cache = this.cache(client, repo);
+      const receipt = await cache.receipt(query, signal);
+      if (
+        !receipt ||
+        this.closed ||
+        this.removals.has(client) ||
+        signal.aborted ||
+        !(this.options.allowed?.(client) ?? true) ||
+        this.queries.size >= 4
+      )
+        return null;
+      const clientDir = this.clientDir(client),
+        area = join(clientDir, 'repos', repo);
+      const run = runArtifactQuery({
+        worker: this.options.worker,
+        area,
+        env: this.workerEnvironment(clientDir, area),
+        query,
+        receipt,
+        signal,
+        killGraceMs: this.limits.killGraceMs,
+      });
+      const entry = { client, repo, run, settled: false };
+      this.queries.add(entry);
+      this.served.add(client);
+      try {
+        const result = await run.done;
+        entry.settled = result.settled;
+        if (!result.settled)
+          throw new Error(
+            "Native artifact lookup cleanup is unresolved; inspect this machine's stim-server logs before retrying.",
+          );
+        if (!result.identity || signal.aborted || this.closed || !(this.options.allowed?.(client) ?? true)) return null;
+        const artifact = await cache.lookup(result.identity, signal);
+        return 'build' in query
+          ? artifact?.name.endsWith('.app')
+            ? artifact
+            : null
+          : artifact?.androidPackage
+            ? artifact
+            : null;
+      } finally {
+        if (entry.settled) this.queries.delete(entry);
+      }
+    } catch (error) {
+      console.error(`stim-server: Completed artifact lookup failed for ${client}/${repo}: ${String(error)}`);
+      throw new Error(
+        'This machine could not verify the completed artifact inputs or their cleanup; inspect its stim-server logs before retrying.',
+        { cause: error },
+      );
+    }
+  }
+
+  private async stopQueries(client?: string): Promise<boolean> {
+    const entries = [...this.queries].filter((entry) => client === undefined || entry.client === client);
+    for (const entry of entries) entry.run.cancel();
+    const results: ArtifactQueryResult[] = await Promise.all(entries.map((entry) => entry.run.done));
+    return results.every((result) => result.settled);
+  }
+
+  private async storeCompletedGradle(
+    client: string,
+    repo: string,
+    job: Record<string, unknown>,
+    entry: Job,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const outcome = entry.outcome,
+      metadata = entry.cacheArtifact,
+      native = job.native;
+    if (
+      !outcome?.ok ||
+      !isJsonObject(native) ||
+      native.provider !== 'gradle' ||
+      !isJsonObject(native.cache) ||
+      native.cache.write !== true ||
+      native.cache.remote !== true ||
+      outcome.fingerprint !== null ||
+      outcome.sourceDigest !== native.sourceDigest ||
+      typeof outcome.androidPackage !== 'string' ||
+      !metadata ||
+      !isJsonObject(metadata.identity) ||
+      !isJsonObject(metadata.receipt)
+    )
+      return;
+    const identity = { fingerprint: metadata.identity.hash, cacheKey: metadata.identity.key };
+    const query = gradleArtifactQuery({
+      project: job.project,
+      sourceDigest: native.sourceDigest,
+      inputs: native.inputs,
+      android: job.android,
+    });
+    if (!query || !validArtifactIdentity(identity)) return;
+    await this.cache(client, repo).storeCompleted(
+      query,
+      identity,
+      metadata.receipt,
+      entry.archive,
+      { ...outcome.artifact, androidPackage: outcome.androidPackage },
+      signal,
+    );
+  }
+
+  private async storeCompletedSwiftpm(
+    client: string,
+    repo: string,
+    job: Record<string, unknown>,
+    entry: Job,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const metadata = entry.swiftpmArtifact;
+    if (
+      !entry.outcome?.ok ||
+      job.platform !== 'macos' ||
+      job.cacheArtifact !== true ||
+      !isJsonObject(job.macos) ||
+      !metadata ||
+      !isJsonObject(metadata.identity) ||
+      !isJsonObject(metadata.receipt)
+    )
+      return;
+    const options = job.macos;
+    const query = swiftpmArtifactQuery({
+      project: job.project,
+      sourceDigest: job.expectedFingerprint,
+      ...(typeof job.compat === 'number' ? { compat: job.compat } : { stimBuild: job.stimBuild }),
+      inputs: options.artifactInputs,
+      build: {
+        product: options.product,
+        infoPlist: options.infoPlist,
+        resources: options.resources ?? {},
+        assetCatalog: options.assetCatalog ?? null,
+      },
+    });
+    const identity = { fingerprint: metadata.identity.hash, cacheKey: metadata.identity.key };
+    if (
+      !query ||
+      !validArtifactIdentity(identity) ||
+      identity.cacheKey !== `swiftpm-peer-${identity.fingerprint}` ||
+      entry.outcome.fingerprint !== query.sourceDigest ||
+      !isDeepStrictEqual(query, metadata.receipt.query) ||
+      !isDeepStrictEqual(metadata.identity, metadata.receipt.identity)
+    )
+      return;
+    await this.cache(client, repo).storeCompleted(
+      query,
+      identity,
+      metadata.receipt,
+      entry.archive,
+      entry.outcome.artifact,
+      signal,
+    );
+  }
+
+  running(): number {
+    return this.jobs.size;
+  }
+
+  drain(reason: string | null): void {
+    this.draining = reason;
+  }
+
+  /** Why the worker root's volume cannot take `bytes` more, or null when it can. */
+  lowDisk(bytes = 0): string | null {
+    const free = workerFreeBytes(this.root());
+    return free !== null && free - bytes < this.limits.minFreeBytes
+      ? `${gb(free)} GB free, builds need ${gb(this.limits.minFreeBytes)} GB`
+      : null;
+  }
+
+  capacity(): BuildCapacity {
+    return this.assess().capacity;
+  }
+
+  private assess(): { capacity: BuildCapacity; numbers: string | null } {
+    const machine = machineCapacity();
+    const running = this.jobs.size;
+    const max = maxOffloadedBuilds();
+    const diskFreeBytes = workerFreeBytes(this.root());
+    const builds = machine.builds + [...this.jobs].filter((job) => !job.slotted).length;
+    const limit =
+      max > 0 && running >= max
+        ? `already running ${running} offloaded build(s), its server.maxOffloadedBuilds limit`
+        : null;
+    const stopped =
+      this.draining ??
+      (loadConfig()?.server?.buildsPaused === true
+        ? 'Incoming builds are paused; resume with stim settings set server.buildsPaused false'
+        : null) ??
+      (limit ? null : this.lowDisk());
+    const busy = stopped ? null : (limit ?? saturation({ ...machine, builds }));
+    const capacity: BuildCapacity = {
+      running,
+      max,
+      diskFreeBytes,
+      minDiskFreeBytes: this.limits.minFreeBytes,
+      cpus: machine.cpus,
+      loadPerCore: machine.loadPerCore,
+      builds,
+      maxBuilds: machine.maxBuilds,
+      maxLoadPerCore: machine.maxLoadPerCore,
+      declined: stopped ?? busy,
+    };
+    return { capacity, numbers: busy && capacityLine(machine.loadPerCore, running, diskFreeBytes) };
+  }
+
+  session(client: string, socket: BuildSocket, send: (event: BuildProgressEvent) => void): BuildSession {
+    const session = new BuildSession(this, client, socket, send);
+    this.sessions.set(session, client);
+    this.served.add(client);
+    return session;
+  }
+
+  ended(session: BuildSession): void {
+    this.sessions.delete(session);
+  }
+
+  /**
+   * Deletes the blobs of `client` that no `mirror.json` of its repositories and no open connection's manifest
+   * references, unless a build of that client runs.
+   */
+  pruneBlobs(client: string): void {
+    if ([...this.jobs].some((job) => job.client === client)) return;
+    const keep = new Set<string>();
+    for (const [session, owner] of this.sessions) {
+      if (owner === client) for (const sha256 of session.digests()) keep.add(sha256);
+    }
+    try {
+      const clientDir = this.clientDir(client);
+      const repos = join(clientDir, 'repos');
+      const blobs = join(clientDir, 'blobs');
+      if ([clientDir, repos, blobs].some(notRealDirectory)) return;
+      for (const repo of readdirSync(repos, { withFileTypes: true })) {
+        if (!repo.isDirectory()) continue;
+        const mirror = readWorkerRecord(join(repos, repo.name, 'mirror.json'));
+        if (mirror === null) continue;
+        const record: unknown = JSON.parse(mirror);
+        if (typeof record !== 'object' || record === null) throw new Error('unreadable mirror record');
+        for (const entry of Object.values(record)) {
+          if (typeof entry?.sha256 !== 'string') throw new Error('unreadable mirror record');
+          keep.add(entry.sha256);
+        }
+      }
+      for (const prefix of readdirSync(blobs, { withFileTypes: true })) {
+        if (!prefix.isDirectory() || !/^[0-9a-f]{2}$/.test(prefix.name)) continue;
+        for (const blob of readdirSync(join(blobs, prefix.name), { withFileTypes: true })) {
+          if (blob.isFile() && /^[0-9a-f]{64}$/.test(blob.name) && !keep.has(blob.name))
+            rmSync(join(blobs, prefix.name, blob.name), { force: true });
+        }
+      }
+    } catch {}
+  }
+
+  /** Cancels the builds of `client`, a client that lost `build`, and deletes its area once they end. */
+  remove(client: string): Promise<void> {
+    if (!client || client === '.' || client === '..' || basename(client) !== client) return Promise.resolve();
+    const pending = this.removals.get(client);
+    if (pending) return pending;
+    const removal = this.removeClient(client)
+      .catch((error: unknown) => console.error(`stim-server: retaining the build area of ${client}: ${String(error)}`))
+      .finally(() => this.removals.delete(client));
+    this.removals.set(client, removal);
+    return removal;
+  }
+
+  private async removeClient(client: string): Promise<void> {
+    for (const [token, entry] of this.retained) if (entry.client === client) this.drop(token);
+    const jobs = [...this.jobs].filter((job) => job.client === client);
+    for (const job of jobs) job.cancel();
+    const queriesSettled = await this.stopQueries(client);
+    await Promise.all(jobs.map((job) => job.done));
+    if (!queriesSettled) {
+      console.error(`stim-server: retaining the build area of ${client} because artifact query cleanup is unresolved.`);
+      return;
+    }
+    const clientDir = this.clientDir(client);
+    if (notRealDirectory(clientDir)) {
+      await this.removeDir(client, clientDir);
+      return;
+    }
+    if (!(await this.resumeEvicted(client))) {
+      console.error(`stim-server: retaining the build area of ${client} because an evicted area is not deleted yet.`);
+      return;
+    }
+    let areas: string[];
+    try {
+      const repos = join(clientDir, 'repos');
+      areas = notRealDirectory(repos) ? [] : await readdir(repos);
+    } catch (error) {
+      if (!isMissing(error)) {
+        console.error(`stim-server: retaining unreadable build areas of ${client}: ${String(error)}`);
+        return;
+      }
+      areas = [];
+    }
+    for (const area of areas.filter((name) => name.endsWith('.claims'))) {
+      const root = join(clientDir, 'repos', area);
+      if (notRealDirectory(root)) {
+        console.error(`stim-server: not clearing the claims of ${client} through ${root}: it is not a real directory.`);
+        continue;
+      }
+      const clearance = clearFreeClaimSet({ root, label: 'build worker' });
+      if (clearance.status !== 'cleared') {
+        console.error(
+          `stim-server: retaining the build area of ${client}; ownership at ${root} is ${clearance.status}.`,
+        );
+        return;
+      }
+    }
+    if (process.platform === 'win32') await this.sweepDaemons(client);
+    if (process.platform === 'win32') {
+      const repos = join(clientDir, 'repos');
+      const dirs = areas.flatMap((repo) => this.windowsAreaDirs(join(repos, repo)));
+      if (ownsWindowsGradleHome(clientDir)) dirs.push(gradleUserHome(clientDir));
+      if (!(await this.removeWindowsDirs(client, dirs))) return;
+    }
+    await this.removeDir(client, clientDir);
+  }
+
+  private async removeDir(client: string, dir: string): Promise<boolean> {
+    const failure = await deletionFailure(dir);
+    if (failure) console.error(`stim-server: could not delete the build area of ${client}: ${failure}`);
+    return failure === null;
+  }
+
+  private windowsAreaDirs(area: string): string[] {
+    if (notRealDirectory(area)) return [];
+    const dirs: string[] = [];
+    try {
+      if (lstatSync(join(area, 'src')).isSymbolicLink()) {
+        const real = realpathSync(area);
+        const checkout = windowsShortDir(real);
+        if (
+          realpathSync(join(area, 'src')).toLowerCase() === checkout.toLowerCase() &&
+          readWorkerRecord(`${checkout}.owner`) === windowsShortDirKey('checkout', real)
+        )
+          dirs.push(checkout);
+      }
+    } catch {}
+    if (ownsWindowsGradleHome(area)) dirs.push(gradleUserHome(area));
+    return dirs;
+  }
+
+  private async removeWindowsDirs(client: string, dirs: readonly string[]): Promise<boolean> {
+    for (const dir of dirs) {
+      if (!(await this.removeDir(client, dir))) return false;
+      await rm(`${dir}.owner`, { force: true }).catch(() => {});
+    }
+    return true;
+  }
+
+  private diskSpace(): DiskSpace {
+    const free = workerFreeBytes(this.root());
+    if (free === null || free >= this.limits.minFreeBytes + this.limits.evictionMarginBytes) return 'ok';
+    return free < this.limits.minFreeBytes ? 'floor' : 'low';
+  }
+
+  private maintainAreas(): void {
+    try {
+      if (this.closed || !(this.options.ready?.() ?? true)) return;
+      const interval = this.diskSpace() === 'ok' ? this.limits.areaSweepMs : this.limits.daemonSweepMs;
+      if (Date.now() - this.lastEviction >= interval) void this.evictAreas();
+      if (Date.now() - this.lastMeasure >= this.limits.rootMeasureMs)
+        void this.measureRoot().catch((error: unknown) =>
+          console.error(`stim-server: could not measure the worker root: ${String(error)}`),
+        );
+    } catch (error) {
+      console.error(`stim-server: could not check the build areas: ${String(error)}`);
+    }
+  }
+
+  private async measureRoot(): Promise<void> {
+    this.lastMeasure = Date.now();
+    const path = this.root();
+    if (!existsSync(path)) {
+      this.lastMeasure = 0;
+      return;
+    }
+    const recorded = readRootUsage(path);
+    if (recorded) {
+      this.rootUsage = recorded;
+      const measured = Date.parse(recorded.measuredAt);
+      if (Date.now() - measured < this.limits.rootMeasureMs) {
+        this.lastMeasure = measured;
+        return;
+      }
+    }
+    const bytes = await measureTreeBytes(path, this.closing.signal);
+    if (bytes === null) return;
+    this.rootUsage = { path, bytes, measuredAt: new Date().toISOString() };
+    recordRootUsage(this.rootUsage);
+  }
+
+  workerRootUsage(): WorkerRootUsage | null {
+    if (this.options.ready?.() ?? true) {
+      try {
+        const path = this.root();
+        if (this.rootUsage && (this.rootUsage.path !== path || !existsSync(path))) {
+          this.rootUsage = null;
+          this.lastMeasure = 0;
+        }
+        this.rootUsage ??= readRootUsage(path);
+      } catch {}
+    }
+    return this.rootUsage;
+  }
+
+  /**
+   * Evicts repository areas of approved clients: those unused for longer than `server.workerAreaMaxAgeDays` and, while
+   * the volume is near the disk floor, the least recently used. Calls made during a pass join it.
+   */
+  evictAreas(): Promise<void> {
+    this.evicting ??= this.evictionPass()
+      .catch((error: unknown) => console.error(`stim-server: could not evict build areas: ${String(error)}`))
+      .finally(() => {
+        this.evicting = null;
+      });
+    return this.evicting;
+  }
+
+  private planEvictions(maxAgeMs: number): AreaEviction[] {
+    return areasToEvict(this.workerAreas(), {
+      now: Date.now(),
+      maxAgeMs,
+      recentMs: this.limits.evictionRecentMs,
+      space: this.diskSpace(),
+    });
+  }
+
+  private async evictionPass(): Promise<void> {
+    this.lastEviction = Date.now();
+    const maxAgeMs = workerAreaMaxAgeDays() * DAY_MS;
+    for (const client of this.workerClients()) {
+      if (this.closed) return;
+      await this.resumeEvicted(client);
+    }
+    const refused = new Set<string>();
+    const emptied = new Set<string>();
+    const unrefused = (area: AreaEviction) => !refused.has(areaKey(area.client, area.repo));
+    let processes: string | null = null;
+    while (!this.closed && this.planEvictions(maxAgeMs).some(unrefused)) {
+      processes ??= await listCommandLines();
+      if (this.closed) return;
+      const next = this.planEvictions(maxAgeMs).find(unrefused);
+      if (!next) continue;
+      const key = areaKey(next.client, next.repo);
+      const outcome = this.evictArea(next, processes);
+      if ('kept' in outcome) {
+        refused.add(key);
+        if (this.areaRefusals.get(key) !== outcome.kept)
+          console.error(`stim-server: retaining the build area ${key}: ${outcome.kept}.`);
+        this.areaRefusals.set(key, outcome.kept);
+        continue;
+      }
+      emptied.add(next.client);
+      this.areaRefusals.delete(key);
+      const days = ((Date.now() - next.usedAt) / DAY_MS).toFixed(1);
+      const why =
+        next.reason === 'age'
+          ? `unused for ${days} days, over the ${maxAgeMs / DAY_MS} of server.workerAreaMaxAgeDays`
+          : `the least recently used (${days} days ago) while the volume is near its disk floor`;
+      const { eviction } = outcome;
+      const failure =
+        outcome.failure ?? (await this.serialized(next.client, () => this.deleteEvicted(next.client, eviction)));
+      processes = null;
+      const free = workerFreeBytes(this.root());
+      if (failure) {
+        this.reported.set(eviction.id, failure);
+        console.error(
+          `stim-server: moved the build area ${key} out of repos (${why}) but could not delete it: ${failure}. ${this.evictedRemedy(next.client, eviction.id)}`,
+        );
+      } else
+        console.error(
+          `stim-server: removed the build area ${key}: ${why}; ${free === null ? 'free disk unknown' : `${gb(free)} GB free`}.`,
+        );
+    }
+    if (this.closed) return;
+    for (const key of this.areaRefusals.keys()) if (!refused.has(key)) this.areaRefusals.delete(key);
+    for (const client of emptied) this.pruneBlobs(client);
+    const stillLow = this.diskSpace() !== 'ok';
+    if (stillLow && !this.reportedLow)
+      console.error(
+        `stim-server: the worker root's volume stays under ${gb(this.limits.minFreeBytes + this.limits.evictionMarginBytes)} GB free: every area left is in use, a client's newest, or used in the last ${this.limits.evictionRecentMs / HOUR_MS} hours.`,
+      );
+    this.reportedLow = stillLow;
+  }
+
+  private workerClients(): string[] {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(this.root(), { withFileTypes: true });
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+      return [];
+    }
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((client) => !this.removals.has(client) && (this.options.allowed?.(client) ?? true));
+  }
+
+  private workerAreas(): WorkerArea[] {
+    return this.workerClients().flatMap((client) => {
+      const repos = join(this.clientDir(client), 'repos');
+      if (notRealDirectory(repos)) {
+        this.reportOnce(
+          repos,
+          `stim-server: retaining the build areas of ${client}: ${repos} is not a real directory.`,
+        );
+        return [];
+      }
+      try {
+        return readdirSync(repos, { withFileTypes: true })
+          .filter(
+            (entry) =>
+              entry.isDirectory() && !entry.name.endsWith('.claims') && new RegExp(BUILD_REPO_PATTERN).test(entry.name),
+          )
+          .map((entry) => ({ client, repo: entry.name, usedAt: areaLastUsed(join(repos, entry.name)) }));
+      } catch (error) {
+        if (!isMissing(error))
+          console.error(`stim-server: retaining unreadable build areas of ${client}: ${String(error)}`);
+        return [];
+      }
+    });
+  }
+
+  /** Runs `read`, which uses the area outside any claim; eviction retains the area until it settles. */
+  pinned<T>(client: string, repo: string, read: () => Promise<T>): Promise<T> {
+    const unpin = this.pin(client, repo);
+    return read().finally(unpin);
+  }
+
+  private pin(client: string, repo: string): () => void {
+    const key = areaKey(client, repo);
+    this.pins.set(key, (this.pins.get(key) ?? 0) + 1);
+    return () => {
+      const count = (this.pins.get(key) ?? 1) - 1;
+      if (count > 0) this.pins.set(key, count);
+      else this.pins.delete(key);
+    };
+  }
+
+  private areaBusy(client: string, repo: string): string | null {
+    const here = (entry: { client: string; repo: string }) => entry.client === client && entry.repo === repo;
+    if ([...this.jobs].some(here)) return 'a build is running in it';
+    if ([...this.owned.values()].some(here)) return 'a finished build in it waits to be fetched';
+    if ([...this.retained.values()].some(here)) return 'it holds a bundle for a hosted session to take';
+    if ([...this.queries].some(here)) return 'an artifact query is running in it';
+    if (this.pins.has(areaKey(client, repo))) return 'its artifacts are being read';
+    for (const [session, owner] of this.sessions)
+      if (owner === client && session.syncedRepo() === repo) return 'an open connection is sending it a manifest';
+    return null;
+  }
+
+  private evictArea(
+    { client, repo }: AreaEviction,
+    processes: string,
+  ): { kept: string } | { eviction: Eviction; failure: string | null } {
+    const area = join(this.clientDir(client), 'repos', repo);
+    const busy = this.areaBusy(client, repo);
+    if (busy) return { kept: busy };
+    try {
+      const daemons = workerGradleDaemons(processes, this.root(), process.platform, [{ client, repo }]);
+      if (daemons.some((daemon) => daemon.client === client && daemon.repo === repo))
+        return { kept: 'a Gradle daemon is running in it' };
+      const unknown = unknownGradleProcess(gradleUserHome(area), new Set());
+      if (unknown) return { kept: unknown.message };
+    } catch (error) {
+      return { kept: `its Gradle processes could not be checked: ${String(error)}` };
+    }
+    if (notRealDirectory(join(this.clientDir(client), EVICTED_DIR)))
+      return { kept: `${join(this.clientDir(client), EVICTED_DIR)} is not a real directory` };
+    const claims = `${area}.claims`;
+    const claim = this.areaClaim(client, repo);
+    if (typeof claim === 'string') return { kept: claim };
+    const uuid = randomUUID();
+    const eviction: Eviction = { id: `${repo}-${uuid}`, repo, uuid };
+    const parked = join(this.clientDir(client), EVICTED_DIR, eviction.id);
+    let failure: string | null;
+    try {
+      mkdirSync(dirname(parked), { recursive: true, mode: 0o700 });
+      writeFileSync(`${parked}.json`, '');
+      try {
+        renameSync(area, parked);
+      } catch (error) {
+        rmSync(`${parked}.json`, { force: true });
+        throw error;
+      }
+      failure = this.moveExternalsAside(client, eviction);
+    } catch (error) {
+      return { kept: `it could not be moved aside: ${String(error)}` };
+    } finally {
+      releaseClaim(claim);
+    }
+    const clearance = notRealDirectory(claims) ? null : clearFreeClaimSet({ root: claims, label: 'build worker' });
+    if (clearance?.status !== 'cleared')
+      console.error(
+        `stim-server: left the claim set of the evicted area at ${claims}: ${clearance?.status ?? 'not a real directory'}.`,
+      );
+    return { eviction, failure };
+  }
+
+  private areaClaim(client: string, repo: string): ClaimHandle | string {
+    const claims = `${join(this.clientDir(client), 'repos', repo)}.claims`;
+    if (notRealDirectory(claims)) return `${claims} is not a real directory`;
+    try {
+      const attempt = tryAcquireClaim({
+        root: claims,
+        mode: 'exclusive',
+        details: { client, repo, eviction: true },
+        label: 'build worker',
+      });
+      if (attempt.acquired) return attempt.acquired;
+      if (attempt.pending) releaseClaim(attempt.pending);
+      return `its claim at ${claims} is held${attempt.held ? ` by process ${attempt.held.owner.pid}` : ''}`;
+    } catch (error) {
+      return `its claim is unresolved: ${String(error)}`;
+    }
+  }
+
+  private externalDirs(client: string, repo: string): Array<{ dir: string; key: string }> {
+    if (process.platform !== 'win32') return [];
+    const repos = join(this.clientDir(client), 'repos');
+    const real = join(realpathSync(repos), repo);
+    const area = join(repos, repo);
+    return [
+      { dir: windowsShortDir(real), key: windowsShortDirKey('checkout', real) },
+      { dir: gradleUserHome(area), key: windowsShortDirKey('gradle', area) },
+    ];
+  }
+
+  /**
+   * Takes an evicted area's short directories out of use. Their names can collide (`makePrivateWindowsDirs`), so each
+   * moves only while its `.owner` names this area.
+   */
+  private moveExternalsAside(client: string, { repo, uuid }: Eviction): string | null {
+    try {
+      for (const { dir, key } of this.externalDirs(client, repo)) {
+        let owner: string | null = null;
+        try {
+          owner = readFileSync(`${dir}.owner`, 'utf8');
+        } catch {}
+        if (owner !== key) {
+          if (owner !== null || existsSync(dir))
+            console.error(
+              `stim-server: leaving ${dir} of the evicted build area ${areaKey(client, repo)}: ${owner === null ? 'it has no owner marker' : 'its owner marker names another area'}.`,
+            );
+          continue;
+        }
+        if (existsSync(dir)) renameSync(dir, `${dir}.evicted-${uuid}`);
+        rmSync(`${dir}.owner`, { force: true });
+      }
+      return null;
+    } catch (error) {
+      return String(error);
+    }
+  }
+
+  /** Deletes what an eviction moved aside, the record last; what could not be deleted stays for a later pass. */
+  private async deleteEvicted(client: string, { id, repo, uuid }: Eviction): Promise<string | null> {
+    const parked = join(this.clientDir(client), EVICTED_DIR, id);
+    try {
+      const asides = this.externalDirs(client, repo).map(({ dir }) => `${dir}.evicted-${uuid}`);
+      for (const dir of [...asides, parked]) {
+        const failure = await deletionFailure(dir);
+        if (failure) return failure;
+      }
+      rmSync(`${parked}.json`, { force: true });
+    } catch (error) {
+      return String(error);
+    }
+    this.reported.delete(id);
+    try {
+      rmdirSync(dirname(parked));
+    } catch {}
+    return null;
+  }
+
+  private evictedRemedy(client: string, id: string): string {
+    const parked = join(this.clientDir(client), EVICTED_DIR, id);
+    return `It stays at ${parked} and a later pass retries; if this repeats, fix the cause or delete it and ${parked}.json by hand.`;
+  }
+
+  private reportOnce(key: string, message: string): void {
+    if (this.reported.get(key) !== message) console.error(message);
+    this.reported.set(key, message);
+  }
+
+  private serialized<T>(client: string, work: () => Promise<T>): Promise<T> {
+    const run = (this.recoveries.get(client) ?? Promise.resolve()).then(work);
+    this.recoveries.set(client, run);
+    const forget = () => {
+      if (this.recoveries.get(client) === run) this.recoveries.delete(client);
+    };
+    run.then(forget, forget);
+    return run;
+  }
+
+  /** One client's recovery at a time, so a pass and a revocation never work through the same records together. */
+  private resumeEvicted(client: string): Promise<boolean> {
+    return this.serialized(client, () =>
+      this.finishEvictions(client).catch((error: unknown) => {
+        this.reportOnce(client, `stim-server: could not finish the evictions of ${client}: ${String(error)}.`);
+        return false;
+      }),
+    );
+  }
+
+  /**
+   * Finishes the evictions an earlier pass or server left, each directory outside the worker root before the area that
+   * names it. A directory a new area of the same repository took over is its own again. Returns whether none is left.
+   */
+  private async finishEvictions(client: string): Promise<boolean> {
+    const dir = join(this.clientDir(client), EVICTED_DIR);
+    if (notRealDirectory(this.clientDir(client))) return true;
+    if (notRealDirectory(dir)) {
+      this.reportOnce(
+        dir,
+        `stim-server: ignoring ${dir}: it is not a real directory. Delete it to allow evictions of ${client}.`,
+      );
+      return true;
+    }
+    let names: string[];
+    try {
+      names = readdirSync(dir).filter((name) => name.endsWith('.json'));
+    } catch (error) {
+      if (isMissing(error)) return true;
+      throw error;
+    }
+    let finished = true;
+    for (const name of names) {
+      const eviction = evictionOf(name);
+      if (!eviction) {
+        this.reportOnce(
+          join(dir, name),
+          `stim-server: keeping ${join(dir, name)}: stim-server does not name an eviction record that, so it deletes nothing for it. Check it and delete it by hand.`,
+        );
+        continue;
+      }
+      const parked = existsSync(join(dir, eviction.id));
+      const failure = this.claimExternals(client, eviction) ?? (await this.deleteEvicted(client, eviction));
+      if (failure) {
+        finished = false;
+        if (this.reported.get(eviction.id) !== failure)
+          console.error(
+            `stim-server: could not finish deleting the evicted build area ${client}/${eviction.id}: ${failure}. ${this.evictedRemedy(client, eviction.id)}`,
+          );
+        this.reported.set(eviction.id, failure);
+      } else if (parked)
+        console.error(`stim-server: finished deleting the evicted build area ${client}/${eviction.id}.`);
+    }
+    return finished;
+  }
+
+  private claimExternals(client: string, eviction: Eviction): string | null {
+    const repos = join(this.clientDir(client), 'repos');
+    if (notRealDirectory(repos)) return `${repos} is not a real directory`;
+    const externals = this.externalDirs(client, eviction.repo);
+    if (!externals.some(({ dir }) => existsSync(dir) || existsSync(`${dir}.owner`))) return null;
+    const claim = this.areaClaim(client, eviction.repo);
+    if (typeof claim === 'string') return claim;
+    try {
+      return existsSync(join(repos, eviction.repo)) ? null : this.moveExternalsAside(client, eviction);
+    } finally {
+      releaseClaim(claim);
+    }
+  }
+
+  /** Starts the build of one synced manifest; the job belongs to the caller's connection. */
+  launch({
+    client,
+    repo,
+    job,
+    session,
+    send,
+  }: {
+    client: string;
+    repo: string;
+    job: Record<string, unknown>;
+    session: BuildSession;
+    send: (event: BuildProgressEvent) => void;
+  }): Job | Refusal {
+    if (this.closed || this.removals.has(client))
+      return refusal('build-refused', 'This machine is shutting down or removing this build client.');
+    const { capacity, numbers } = this.assess();
+    if (capacity.declined)
+      return refusal(
+        'build-busy',
+        `This machine declines the build: ${capacity.declined}${numbers ? ` (${numbers})` : ''}.`,
+      );
+    const clientDir = this.clientDir(client);
+    const area = join(clientDir, 'repos', repo);
+    if (job.platform === 'android') {
+      try {
+        const unknown = unknownGradleProcess(gradleUserHome(clientDir), new Set());
+        if (unknown) throw unknown;
+      } catch (error) {
+        return refusal('build-busy', `Inspect this client's legacy Gradle processes before retrying: ${String(error)}`);
+      }
+    }
+    let claim: ClaimHandle;
+    try {
+      const attempt = tryAcquireClaim({
+        root: `${area}.claims`,
+        mode: 'exclusive',
+        details: { client, repo },
+        label: 'build worker',
+      });
+      if (!attempt.acquired) {
+        if (attempt.pending) releaseClaim(attempt.pending);
+        return refusal('build-busy', 'Another build of this repository is running on this machine.');
+      }
+      claim = attempt.acquired;
+    } catch (error) {
+      return refusal('build-refused', (error as Error).message);
+    }
+    const id = randomUUID();
+    let slot: ClaimHandle | null = null;
+    const releaseClaims = () => {
+      releaseClaim(slot);
+      releaseClaim(claim);
+    };
+    const maxBuilds = machineCapacity().maxBuilds;
+    try {
+      const taken =
+        maxBuilds > 0
+          ? tryAcquireBuildSlotClaim({ max: maxBuilds, details: { offloaded: true, client, repo, job: id } })
+          : null;
+      if (maxBuilds > 0 && !taken) {
+        releaseClaim(claim);
+        return refusal(
+          'build-busy',
+          `This machine declines the build: all ${maxBuilds} build slots busy (${capacityLine(capacity.loadPerCore, capacity.running, capacity.diskFreeBytes)}).`,
+        );
+      }
+      slot = taken?.claim ?? null;
+    } catch (error) {
+      releaseClaim(claim);
+      return refusal('build-refused', (error as Error).message);
+    }
+    try {
+      mkdirSync(join(area, 'home'), { recursive: true, mode: 0o700 });
+    } catch (error) {
+      releaseClaims();
+      return refusal('build-refused', String(error));
+    }
+    recordAreaUse(area);
+    const started = Date.now();
+    try {
+      markClaimChildPending(claim);
+      if (slot) markClaimChildPending(slot);
+    } catch (error) {
+      releaseClaims();
+      return refusal('build-refused', (error as Error).message);
+    }
+    let child: ChildProcess;
+    try {
+      child = spawn(process.execPath, [this.options.worker, 'build'], {
+        cwd: area,
+        detached: true,
+        stdio: ['pipe', 'pipe', 'ignore'],
+        env: this.workerEnvironment(clientDir, area),
+      });
+    } catch (error) {
+      releaseClaims();
+      return refusal('build-refused', (error as Error).message);
+    }
+    let treeKilled: Promise<void> | null = null;
+    const signalGroup = (signal: NodeJS.Signals) => {
+      if (child.pid === undefined) return;
+      if (process.platform === 'win32') {
+        treeKilled ??= killTree(child.pid);
+        return;
+      }
+      try {
+        process.kill(-child.pid, signal);
+      } catch {}
+    };
+    let killTimer: NodeJS.Timeout | null = null;
+    let finished = false;
+    const caching = new AbortController();
+    const cancel = () => {
+      caching.abort();
+      if (killTimer || finished) return;
+      signalGroup('SIGTERM');
+      killTimer = setTimeout(() => signalGroup('SIGKILL'), this.limits.killGraceMs);
+      killTimer.unref();
+    };
+    try {
+      const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+      // Gradle daemons detach from worker groups; Android claims must survive a server crash.
+      if (captured?.ok && job.platform !== 'android') {
+        setClaimChild(claim, { pid: child.pid, processToken: captured.token });
+        if (slot) setClaimChild(slot, { pid: child.pid, processToken: captured.token });
+      } else if (!captured?.ok) cancel();
+    } catch {
+      cancel();
+    }
+    child.stdin?.on('error', () => {});
+    child.stdin?.end(
+      JSON.stringify({
+        ...job,
+        job: id,
+        area,
+        blobs: join(clientDir, 'blobs'),
+        swiftpmCache: join(clientDir, 'cache', 'swiftpm'),
+        artifactCache: this.artifactCacheDir(client, repo),
+      }),
+    );
+    const timeout = setTimeout(cancel, this.limits.timeoutMs);
+    const entry: Job = {
+      id,
+      client,
+      repo,
+      platform: job.platform,
+      child,
+      archive: join(area, 'out', id, 'app.tgz'),
+      slotted: slot !== null,
+      outcome: null,
+      settled: false,
+      cancel,
+      done: Promise.resolve(),
+      send,
+      session,
+      grace: null,
+    };
+    const lines = createInterface({ input: child.stdout!, crlfDelay: Infinity });
+    lines.on('line', (line) => {
+      if (line.length > MAX_WORKER_LINE) return;
+      let value: unknown;
+      try {
+        value = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (!isJsonObject(value)) return;
+      if (value.type === 'phase' && typeof value.phase === 'string' && typeof value.msg === 'string') {
+        entry.send({ event: 'build.progress', job: id, phase: value.phase, msg: value.msg });
+      } else if (value.type === 'log' && isJsonObject(value.record)) {
+        entry.send({ event: 'build.progress', job: id, record: value.record });
+      } else if (value.type === 'result') {
+        if (isJsonObject(value.cacheArtifact)) entry.cacheArtifact = value.cacheArtifact;
+        if (isJsonObject(value.reactNativeArtifact)) entry.reactNativeArtifact = value.reactNativeArtifact;
+        if (isJsonObject(value.swiftpmArtifact)) entry.swiftpmArtifact = value.swiftpmArtifact;
+        entry.outcome = workerOutcome(
+          value,
+          isJsonObject(job.native) && job.native.provider === 'gradle' ? 'gradle' : undefined,
+        );
+      }
+    });
+    this.jobs.add(entry);
+    this.owned.set(id, entry);
+    entry.done = new Promise<void>((resolve) => {
+      child.on('error', () => {});
+      child.on('close', () => {
+        clearTimeout(timeout);
+        const outcome: BuildJobOutcome =
+          entry.outcome ??
+          (killTimer
+            ? { ok: false, code: 'cancelled', message: 'The build was cancelled.' }
+            : { ok: false, code: 'worker-exited', message: 'The build process exited without a result.' });
+        const abnormal = !entry.outcome;
+        entry.outcome = outcome;
+        if (child.pid !== undefined && processGroupAlive(child.pid)) cancel();
+        const drainAndroid = job.platform === 'android' && (killTimer !== null || abnormal || !outcome.ok);
+        const settle = async () => {
+          if (child.pid !== undefined && processGroupAlive(child.pid)) {
+            setTimeout(settle, GROUP_POLL_MS).unref();
+            return;
+          }
+          await treeKilled;
+          if (killTimer) clearTimeout(killTimer);
+          finished = true;
+          const drained = !drainAndroid || (await this.drainCancelledAndroid(client, repo));
+          if (drained) releaseClaims();
+          else
+            entry.outcome = {
+              ok: false,
+              code: 'cleanup-unresolved',
+              message: `Android cleanup is unresolved. Inspect ${claim.root} and this repository's Gradle processes, then recover its repository and build-slot claims before retrying.`,
+            };
+          if (
+            entry.outcome?.ok &&
+            isJsonObject(job.native) &&
+            job.native.provider === 'xcode' &&
+            typeof job.native.cacheKey === 'string' &&
+            isJsonObject(job.native.parameters) &&
+            typeof job.expectedFingerprint === 'string' &&
+            entry.outcome.fingerprint === job.expectedFingerprint &&
+            entry.outcome.sourceDigest === job.native.sourceDigest
+          ) {
+            try {
+              await this.cache(client, repo).store(
+                { cacheKey: job.native.cacheKey, fingerprint: job.expectedFingerprint },
+                job.native.parameters,
+                entry.archive,
+                entry.outcome.artifact,
+                caching.signal,
+              );
+            } catch (error) {
+              entry.send({
+                event: 'build.progress',
+                job: id,
+                record: {
+                  src: 'build',
+                  level: 'debug',
+                  msg: `Peer cache: ${error instanceof Error ? error.message : String(error)}`,
+                },
+              });
+            }
+          }
+          try {
+            await this.storeCompletedGradle(client, repo, job, entry, caching.signal);
+            await this.storeCompletedSwiftpm(client, repo, job, entry, caching.signal);
+            const metadata = entry.reactNativeArtifact;
+            const query =
+              metadata && isJsonObject(metadata.receipt) ? reactNativeArtifactQuery(metadata.receipt.query) : null;
+            if (
+              entry.outcome?.ok &&
+              job.cacheArtifact === true &&
+              !job.native &&
+              query &&
+              metadata &&
+              isJsonObject(metadata.identity) &&
+              query.fingerprint === entry.outcome.fingerprint &&
+              (entry.outcome.fingerprint === job.expectedFingerprint || job.podsOnWorker === true) &&
+              query.project === job.project &&
+              query.platform === job.platform
+            ) {
+              const identity = { fingerprint: metadata.identity.hash, cacheKey: metadata.identity.key };
+              if (validArtifactIdentity(identity))
+                await this.cache(client, repo).storeCompleted(
+                  query,
+                  identity,
+                  metadata.receipt,
+                  entry.archive,
+                  {
+                    ...entry.outcome.artifact,
+                    ...(entry.outcome.androidPackage ? { androidPackage: entry.outcome.androidPackage } : {}),
+                  },
+                  caching.signal,
+                );
+            }
+          } catch (error) {
+            console.error(
+              `stim-server: could not retain the completed artifact for ${client}/${repo}: ${String(error)}`,
+            );
+          }
+          entry.settled = true;
+          this.jobs.delete(entry);
+          entry.send({ event: 'build.progress', job: id, outcome: entry.outcome! });
+          this.options.finished?.({
+            client,
+            repo,
+            ok: entry.outcome!.ok,
+            ...(entry.outcome!.ok
+              ? {}
+              : { error: { code: 'build-refused', message: `${entry.outcome!.code}: ${entry.outcome!.message}` } }),
+            durationMs: Date.now() - started,
+          });
+          resolve();
+          this.pruneBlobs(client);
+        };
+        settle();
+      });
+    });
+    this.maintainAreas();
+    return entry;
+  }
+
+  /** Keeps a job whose connection dropped running for `detachGraceMs`, then cancels it. */
+  detach(job: Job): void {
+    if (this.closed) return this.abandon(job);
+    job.session = null;
+    job.send = nowhere;
+    job.grace = setTimeout(() => this.abandon(job), this.limits.detachGraceMs);
+    job.grace.unref();
+  }
+
+  /** Cancels a job and deletes its archive once its process group is gone. */
+  abandon(job: Job): void {
+    if (job.grace) clearTimeout(job.grace);
+    job.grace = null;
+    job.session = null;
+    job.send = nowhere;
+    job.cancel();
+    this.owned.delete(job.id);
+    void job.done.then(() => rmSync(dirname(job.archive), { recursive: true, force: true }));
+  }
+
+  /** Hands a job of `client` to `session`, taking it from the connection that held it; null when there is none. */
+  attach(client: string, id: string, session: BuildSession): Job | null {
+    const job = this.owned.get(id);
+    if (!job || job.client !== client) return null;
+    if (job.grace) clearTimeout(job.grace);
+    job.grace = null;
+    if (job.session !== session) job.session?.release(id);
+    job.session = session;
+    return job;
+  }
+
+  forget(job: Job): void {
+    this.owned.delete(job.id);
+  }
+
+  /**
+   * Deletes a fetched job's output. A native job keeps its staged app for `handoffMs` under a new single-use token,
+   * which this returns, in place of any bundle its client still had retained for the same repository.
+   */
+  retain(job: Job, artifact: BuildArtifactResult): string | null {
+    const dir = dirname(job.archive);
+    if (this.closed || basename(artifact.name) !== artifact.name) {
+      rmSync(dir, { recursive: true, force: true });
+      return null;
+    }
+    rmSync(job.archive, { force: true });
+    for (const [token, entry] of this.retained)
+      if (entry.client === job.client && entry.repo === job.repo) this.drop(token);
+    const token = randomBytes(32).toString('hex');
+    const timer = setTimeout(() => this.drop(token), this.limits.handoffMs);
+    timer.unref();
+    this.retained.set(token, {
+      client: job.client,
+      repo: job.repo,
+      dir,
+      bundle: join(dir, artifact.name),
+      sha256: artifact.sha256,
+      timer,
+    });
+    return token;
+  }
+
+  private drop(token: string): void {
+    const entry = this.retained.get(token);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    this.retained.delete(token);
+    rmSync(entry.dir, { recursive: true, force: true });
+  }
+
+  /**
+   * Takes the bundle `token` retained once its artifact digest is `sha256` and `accept` admits the client that built it.
+   * `release` deletes it.
+   */
+  takeBundle(
+    token: string,
+    sha256: string,
+    accept: (client: string) => boolean,
+  ): { bundle: string; release: () => void } | string {
+    const entry = this.retained.get(token);
+    if (!entry) return 'This machine no longer holds that build.';
+    if (entry.sha256 !== sha256) return 'This machine holds a different build under that handoff.';
+    if (!accept(entry.client))
+      return 'That build belongs to another machine: its build client and this device-host client have different keys.';
+    clearTimeout(entry.timer);
+    this.retained.delete(token);
+    const unpin = this.pin(entry.client, entry.repo);
+    return {
+      bundle: entry.bundle,
+      release: () => {
+        try {
+          rmSync(entry.dir, { recursive: true, force: true });
+        } finally {
+          unpin();
+        }
+      },
+    };
+  }
+
+  /**
+   * Cancels the jobs no connection holds, and deletes the retained bundles, of clients `allowed` no longer accepts,
+   * such as a revoked one. With `deleteAreas`, the area of each such client this server process served is deleted
+   * once its builds end.
+   */
+  abandonDetached(allowed: (client: string) => boolean, deleteAreas = false): void {
+    for (const job of this.owned.values()) {
+      if (!job.session && !allowed(job.client)) this.abandon(job);
+    }
+    for (const entry of this.queries) if (!allowed(entry.client)) entry.run.cancel();
+    for (const [token, entry] of this.retained) if (!allowed(entry.client)) this.drop(token);
+    for (const client of this.served) {
+      if (!deleteAreas || allowed(client)) continue;
+      this.served.delete(client);
+      void this.remove(client);
+    }
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    this.closing.abort();
+    clearInterval(this.sweeper);
+    for (const job of this.owned.values()) this.abandon(job);
+    for (const token of this.retained.keys()) this.drop(token);
+    await this.stopQueries();
+    await Promise.all([...this.jobs].map((job) => job.done));
+    await this.sweeping;
+    await Promise.all(this.removals.values());
+  }
+}
+
+function workerOutcome(value: Record<string, unknown>, native?: 'xcode' | 'gradle'): BuildJobOutcome {
+  const timings = isJsonObject(value.timings) ? (value.timings as Record<string, number>) : {};
+  const androidPackage =
+    typeof value.androidPackage === 'string' && /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/.test(value.androidPackage)
+      ? value.androidPackage
+      : undefined;
+  if (value.ok === true && isJsonObject(value.artifact)) {
+    const { name, size, sha256 } = value.artifact;
+    if (
+      typeof name === 'string' &&
+      typeof size === 'number' &&
+      typeof sha256 === 'string' &&
+      (native !== 'gradle' || (value.fingerprint === null && androidPackage !== undefined))
+    ) {
+      return {
+        ok: true,
+        artifact: { name, size, sha256 },
+        fingerprint: native === 'gradle' ? null : String(value.fingerprint),
+        ...(value.reused === true ? { reused: true } : {}),
+        ...(androidPackage ? { androidPackage } : {}),
+        ...(typeof value.sourceDigest === 'string' ? { sourceDigest: value.sourceDigest } : {}),
+        compilationCache: isJsonObject(value.compilationCache) ? value.compilationCache : {},
+        timings,
+      };
+    }
+  }
+  return {
+    ok: false,
+    code: typeof value.code === 'string' ? value.code : 'worker-failed',
+    message: typeof value.message === 'string' ? value.message.slice(0, 2000) : 'The build failed.',
+    timings,
+  };
+}
+
+/**
+ * One connection's manifest, blob uploads and jobs. Closing the connection cancels its jobs; a dropped connection
+ * leaves them to `BuildHost.detach`.
+ */
+export class BuildSession {
+  private repo: string | null = null;
+  private files = new Map<string, BuildFile>();
+  private bytes = 0;
+  private done = false;
+  private readonly expected = new Map<string, number>();
+  private incoming: { sha256: string; size: number; received: number; hash: Hash; tmp: string } | null = null;
+  private readonly jobs = new Map<string, Job>();
+  private closed = false;
+  private readonly transfers = new AbortController();
+  readonly signal: AbortSignal = this.transfers.signal;
+  private readonly host: BuildHost;
+  private readonly client: string;
+  private readonly socket: BuildSocket;
+  private readonly send: (event: BuildProgressEvent) => void;
+
+  constructor(host: BuildHost, client: string, socket: BuildSocket, send: (event: BuildProgressEvent) => void) {
+    this.host = host;
+    this.client = client;
+    this.socket = socket;
+    this.send = send;
+  }
+
+  private blobs(): string {
+    return join(this.host.clientDir(this.client), 'blobs');
+  }
+
+  private blobPath(sha256: string): string {
+    return join(this.blobs(), sha256.slice(0, 2), sha256);
+  }
+
+  sync(params: unknown): { result: BuildSyncResult } | Refusal {
+    if (!isJsonObject(params) || !validRepo(params.repo) || !Array.isArray(params.files)) {
+      return refusal('bad-request', 'build.sync needs params.repo, params.files and params.done.');
+    }
+    if (typeof params.done !== 'boolean') return refusal('bad-request', 'build.sync needs params.done.');
+    const low = this.host.lowDisk();
+    if (low) return refusal('build-busy', `This machine declines the upload: ${low}.`);
+    if (this.done || this.repo !== params.repo) {
+      this.repo = params.repo;
+      this.files = new Map();
+      this.bytes = 0;
+      this.done = false;
+    }
+    if (this.files.size + params.files.length > MAX_MANIFEST_FILES) {
+      return refusal('limit-exceeded', `A manifest holds at most ${MAX_MANIFEST_FILES} files.`);
+    }
+    const missing: string[] = [];
+    for (const file of params.files) {
+      if (!validFile(file)) {
+        return refusal('bad-request', `Invalid manifest entry ${JSON.stringify(file).slice(0, 200)}.`);
+      }
+      if (this.bytes + file.size > this.host.limits.maxManifestBytes) {
+        return refusal('limit-exceeded', `A manifest holds at most ${gb(this.host.limits.maxManifestBytes)} GB.`);
+      }
+      this.bytes += file.size;
+      this.files.set(file.path, file);
+      if (this.expected.has(file.sha256) || existsSync(this.blobPath(file.sha256))) continue;
+      this.expected.set(file.sha256, file.size);
+      missing.push(file.sha256);
+    }
+    this.done = params.done;
+    return { result: { missing } };
+  }
+
+  digests(): string[] {
+    return [...this.files.values()].map((file) => file.sha256);
+  }
+
+  syncedRepo(): string | null {
+    return this.repo;
+  }
+
+  /** One binary frame: a 32-byte sha256, then the next bytes of that blob. Returns why the frame is refused. */
+  blob(frame: Buffer): string | null {
+    if (frame.length < DIGEST_BYTES) return 'a blob frame starts with its 32-byte sha256';
+    const sha256 = frame.subarray(0, DIGEST_BYTES).toString('hex');
+    const data = frame.subarray(DIGEST_BYTES);
+    if (this.incoming && this.incoming.sha256 !== sha256) return 'a blob started before the previous one ended';
+    if (!this.incoming) {
+      const size = this.expected.get(sha256);
+      if (size === undefined) return `blob ${sha256} was not asked for`;
+      const low = this.host.lowDisk(size);
+      if (low) return `this machine declines the upload: ${low}`;
+      const tmp = join(this.blobs(), `.incoming-${randomUUID()}`);
+      mkdirSync(this.blobs(), { recursive: true, mode: 0o700 });
+      this.incoming = { sha256, size, received: 0, hash: createHash('sha256'), tmp };
+    }
+    const incoming = this.incoming;
+    incoming.received += data.length;
+    if (incoming.received > incoming.size) return `blob ${sha256} is larger than its manifest entry`;
+    incoming.hash.update(data);
+    appendFileSync(incoming.tmp, data);
+    if (incoming.received < incoming.size) return null;
+    this.incoming = null;
+    this.expected.delete(sha256);
+    if (incoming.hash.digest('hex') !== sha256) {
+      rmSync(incoming.tmp, { force: true });
+      return `blob ${sha256} does not match its digest`;
+    }
+    const target = this.blobPath(sha256);
+    mkdirSync(dirname(target), { recursive: true });
+    renameSync(incoming.tmp, target);
+    return null;
+  }
+
+  async start(params: unknown): Promise<{ result: { job: string } } | Refusal> {
+    if (!isJsonObject(params) || !validRepo(params.repo))
+      return refusal('bad-request', 'build.start needs params.repo.');
+    const strings = ['stimBuild'] as const;
+    if (strings.some((key) => typeof params[key] !== 'string' || !params[key])) {
+      return refusal('bad-request', `build.start needs params.${strings.join(', params.')}.`);
+    }
+    const platform = params.platform;
+    if (platform !== 'ios' && platform !== 'android' && platform !== 'macos') {
+      return refusal('bad-request', 'params.platform must be ios, android or macos.');
+    }
+    if (platform === 'ios' && (typeof params.runtime !== 'string' || !params.runtime)) {
+      return refusal('bad-request', 'An ios build needs params.runtime.');
+    }
+    let native: BuildStartParams['native'];
+    if (params.native !== undefined) {
+      const input = params.native;
+      if (!isJsonObject(input) || typeof input.sourceDigest !== 'string' || !/^[0-9a-f]{64}$/.test(input.sourceDigest))
+        return refusal('bad-request', 'A native build needs its source transfer digest.');
+      if (input.provider === 'gradle') {
+        const inputs = input.inputs;
+        const cache = input.cache;
+        if (
+          cache !== undefined &&
+          (!isJsonObject(cache) || ['read', 'write', 'remote'].some((key) => typeof cache[key] !== 'boolean'))
+        )
+          return refusal(
+            'bad-request',
+            'A native Gradle artifact cache policy needs boolean read, write and remote values.',
+          );
+        if (
+          platform !== 'android' ||
+          params.fingerprint !== null ||
+          !isJsonObject(inputs) ||
+          inputs.complete !== true ||
+          Object.keys(inputs).some((key) => !['complete', 'ignored', 'outputs'].includes(key)) ||
+          !Array.isArray(inputs.ignored) ||
+          !inputs.ignored.every(validBuildPath) ||
+          !Array.isArray(inputs.outputs) ||
+          !inputs.outputs.every(validBuildPath)
+        )
+          return refusal(
+            'bad-request',
+            'A native Gradle build needs declared complete inputs and a null artifact fingerprint.',
+          );
+      } else {
+        const optimizations = params.optimizations;
+        if (
+          platform !== 'ios' ||
+          input.provider !== 'xcode' ||
+          typeof input.cacheKey !== 'string' ||
+          !input.cacheKey ||
+          ![null, 'arm64', 'x86_64'].includes(input.arch as string | null) ||
+          !isJsonObject(input.parameters) ||
+          !isJsonObject(optimizations) ||
+          typeof optimizations.compilationCache !== 'boolean' ||
+          typeof optimizations.prefixMapping !== 'boolean' ||
+          (optimizations.swiftCompilationCache !== null && typeof optimizations.swiftCompilationCache !== 'boolean')
+        )
+          return refusal(
+            'bad-request',
+            'A native Xcode build needs its source digest, cache key, architecture and compiler options.',
+          );
+      }
+      native = input as unknown as NonNullable<BuildStartParams['native']>;
+    }
+    if (native?.provider !== 'gradle' && (typeof params.fingerprint !== 'string' || !params.fingerprint))
+      return refusal('bad-request', 'build.start needs params.fingerprint.');
+    const expectedSources = fingerprintSources(params.fingerprintSources);
+    if (expectedSources === null)
+      return refusal(
+        'bad-request',
+        `params.fingerprintSources must be at most ${MAX_FINGERPRINT_SOURCES} sources, each an id and a hex hash or null.`,
+      );
+    if (!native && [...this.files.values()].some((file) => file.kind === 'directory'))
+      return refusal('bad-request', 'Directory entries require a native build request.');
+    const expectedIgnored = fingerprintIgnored(params.fingerprintIgnored);
+    if (expectedIgnored === null)
+      return refusal(
+        'bad-request',
+        `params.fingerprintIgnored must be at most ${MAX_FINGERPRINT_SOURCES} paths of at most ${MAX_PATH_CHARS} characters.`,
+      );
+    const expectedTracked = fingerprintTracked(params.fingerprintTracked);
+    if (expectedTracked === null)
+      return refusal(
+        'bad-request',
+        `params.fingerprintTracked must be at most ${MAX_FINGERPRINT_SOURCES} top-level entry names.`,
+      );
+    const android = platform === 'android' ? androidOptions(params.android) : null;
+    if (platform === 'android' && !android) {
+      return refusal(
+        'bad-request',
+        'An android build needs params.android: variant and abi (string or null), gradleBuildCache, pch and compilerCache.',
+      );
+    }
+    let macos: BuildStartParams['macos'] = null;
+    if (platform === 'macos') {
+      const parsed = macosBuildOptions(params);
+      if ('error' in parsed) return parsed;
+      macos = parsed.options;
+    }
+    if (params.project !== '' && !validBuildPath(params.project)) {
+      return refusal('bad-request', 'params.project must be a relative path inside the repository.');
+    }
+    if (!this.done || this.repo !== params.repo) {
+      return refusal('bad-request', 'Send the whole manifest of this repo with build.sync first.');
+    }
+    if (this.incoming || [...this.files.values()].some((file) => this.expected.has(file.sha256))) {
+      return refusal('bad-request', 'Some files of the manifest were not uploaded.');
+    }
+    for (const file of this.files.values()) {
+      if (!existsSync(this.blobPath(file.sha256))) {
+        return refusal('bad-request', `The blob of ${file.path} is missing; sync again.`);
+      }
+    }
+    const toolchain = await this.host.toolchain(null, native?.provider);
+    if (this.closed) return refusal('build-refused', 'The connection closed.');
+    const compat = typeof params.compat === 'number' ? params.compat : undefined;
+    if (!toolchain) return refusal('build-refused', 'This machine runs Stim build unknown.');
+    if (compat !== undefined && toolchain.compat !== undefined) {
+      if (toolchain.compat !== compat)
+        return refusal(
+          'build-refused',
+          `This machine runs Stim build ${toolchain.stimBuild ?? 'unknown'} with build compatibility ${toolchain.compat}, not ${compat}.`,
+        );
+    } else if (toolchain.stimBuild !== params.stimBuild) {
+      return refusal('build-refused', `This machine runs Stim build ${toolchain.stimBuild ?? 'unknown'}.`);
+    }
+    const launched = this.host.launch({
+      client: this.client,
+      repo: params.repo,
+      session: this,
+      send: this.send,
+      job: {
+        manifest: [...this.files.values()],
+        platform,
+        ...(native ? { native } : {}),
+        android,
+        macos,
+        project: params.project,
+        isExpo: params.isExpo === true,
+        cacheArtifact: params.cacheArtifact === true,
+        ...podsOnWorkerJob(params),
+        stimBuild: params.stimBuild,
+        ...(compat !== undefined && toolchain.compat !== undefined ? { compat } : {}),
+        ...(typeof params.jdk === 'string' ? { jdk: params.jdk } : {}),
+        configuration: optional(params.configuration),
+        scheme: optional(params.scheme),
+        iosProjectPath: optional(params.iosProjectPath),
+        runtime: optional(params.runtime),
+        expectedFingerprint: params.fingerprint as string | null,
+        ...(expectedSources ? { expectedSources } : {}),
+        ...(expectedIgnored ? { expectedIgnored } : {}),
+        ...(expectedTracked ? { expectedTracked } : {}),
+        optimizations: isJsonObject(params.optimizations) ? params.optimizations : null,
+      },
+    });
+    if ('error' in launched) return launched;
+    this.jobs.set(launched.id, launched);
+    return { result: { job: launched.id } };
+  }
+
+  /** Takes over a job of this client that another connection started, including one whose connection dropped. */
+  attach(params: unknown): { result: BuildAttachResult } | Refusal {
+    const id = isJsonObject(params) && typeof params.job === 'string' ? params.job : null;
+    const job = id === null ? null : this.host.attach(this.client, id, this);
+    if (!job) return refusal('bad-request', 'No such build job for this device; it ended or was cancelled.');
+    this.jobs.set(job.id, job);
+    job.send = this.send;
+    return { result: { outcome: job.settled ? job.outcome : null } };
+  }
+
+  release(id: string): void {
+    this.jobs.delete(id);
+  }
+
+  cancel(params: unknown): { result: Record<string, never> } | Refusal {
+    const job = isJsonObject(params) && typeof params.job === 'string' ? this.jobs.get(params.job) : undefined;
+    if (!job) return refusal('bad-request', 'No such build job on this connection.');
+    job.cancel();
+    return { result: {} };
+  }
+
+  /** Streams the job's archive as binary frames, each a 32-byte sha256 and then the next bytes. */
+  async artifact(params: unknown): Promise<{ result: BuildArtifactResult } | Refusal> {
+    const job = isJsonObject(params) && typeof params.job === 'string' ? this.jobs.get(params.job) : undefined;
+    if (!job) return refusal('bad-request', 'No such build job on this connection.');
+    const outcome = job.outcome;
+    if (!job.settled || !outcome?.ok) {
+      return refusal('bad-request', 'The job has no artifact: it is still running or it failed.');
+    }
+    let size: number;
+    try {
+      size = statSync(job.archive).size;
+    } catch {
+      return refusal('build-refused', 'The artifact is gone; build again.');
+    }
+    if (size !== outcome.artifact.size) return refusal('build-refused', 'The artifact changed after the build.');
+    const streamed = await this.streamArtifact(job.archive, outcome.artifact);
+    if (streamed) return streamed;
+    const handoff = this.host.retain(job, outcome.artifact);
+    this.jobs.delete(job.id);
+    this.host.forget(job);
+    return { result: { ...outcome.artifact, ...(handoff ? { handoff } : {}) } };
+  }
+
+  async cachedArtifact(params: unknown): Promise<{ result: CachedBuildArtifact | null } | Refusal> {
+    if (!isJsonObject(params) || !validRepo(params.repo) || !validArtifactIdentity(params.artifact))
+      return refusal('bad-request', 'A cached artifact needs its repository and complete identity.');
+    if (this.closed) return refusal('build-refused', 'The connection closed.');
+    const request = { ...params, repo: params.repo, artifact: params.artifact };
+    return this.host.pinned(this.client, request.repo, () => this.serveCachedArtifact(request));
+  }
+
+  private async serveCachedArtifact(
+    params: CachedArtifactRequest,
+  ): Promise<{ result: CachedBuildArtifact | null } | Refusal> {
+    if (
+      params.gradleArtifact !== undefined ||
+      params.reactNativeArtifact !== undefined ||
+      params.swiftpmArtifact !== undefined
+    ) {
+      if (
+        [params.gradleArtifact, params.reactNativeArtifact, params.swiftpmArtifact].filter(
+          (value) => value !== undefined,
+        ).length > 1
+      )
+        return refusal('bad-request', 'Choose one completed artifact query.');
+      const query =
+        params.gradleArtifact !== undefined
+          ? gradleArtifactQuery(params.gradleArtifact)
+          : params.swiftpmArtifact !== undefined
+            ? swiftpmArtifactQuery(params.swiftpmArtifact)
+            : reactNativeArtifactQuery(params.reactNativeArtifact);
+      if (!query) return refusal('bad-request', 'Choose the completed source and build options.');
+      const current =
+        'sourceDigest' in query
+          ? await this.host.privateArtifact(this.client, params.repo, query, this.transfers.signal)
+          : await this.host.cache(this.client, params.repo).lookupReactNative(query, this.transfers.signal);
+      if (
+        !current ||
+        current.fingerprint !== params.artifact.fingerprint ||
+        current.cacheKey !== params.artifact.cacheKey
+      )
+        return { result: null };
+    } else if (
+      params.artifact.cacheKey.startsWith('react-native-') ||
+      params.artifact.cacheKey.startsWith('swiftpm-peer-') ||
+      (await this.host.cache(this.client, params.repo).lookup(params.artifact, this.transfers.signal))?.androidPackage
+    ) {
+      return refusal('bad-request', 'This cached artifact needs a current build query.');
+    }
+    if (!(await this.host.cache(this.client, params.repo).lookup(params.artifact, this.transfers.signal)))
+      return { result: null };
+    const area = join(this.host.clientDir(this.client), 'repos', params.repo);
+    const temporary = await mkdtemp(join(area, '.artifact-fetch-'));
+    try {
+      const cached = await this.host
+        .cache(this.client, params.repo)
+        .fetch(params.artifact, temporary, this.transfers.signal);
+      if (!cached) return { result: null };
+      recordAreaUse(area);
+      const streamed = await this.streamArtifact(cached.path, cached.artifact);
+      return streamed ?? { result: cached.artifact };
+    } catch (error) {
+      return refusal(
+        'build-refused',
+        `The cached artifact could not be read: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
+  }
+
+  private async streamArtifact(archive: string, artifact: BuildArtifactResult): Promise<Refusal | null> {
+    const header = Buffer.from(artifact.sha256, 'hex');
+    const fd = openSync(archive, 'r');
+    try {
+      const buffer = Buffer.alloc(ARTIFACT_CHUNK);
+      for (let offset = 0; offset < artifact.size;) {
+        if (this.socket.readyState !== this.socket.OPEN) return refusal('build-refused', 'The connection closed.');
+        const read = readSync(fd, buffer, 0, ARTIFACT_CHUNK, offset);
+        if (read <= 0) break;
+        offset += read;
+        this.socket.send(Buffer.concat([header, buffer.subarray(0, read)]), { binary: true });
+        while (this.socket.bufferedAmount > MAX_BUFFERED && this.socket.readyState === this.socket.OPEN) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+    } finally {
+      closeSync(fd);
+    }
+    return null;
+  }
+
+  close(dropped: boolean): void {
+    this.closed = true;
+    this.transfers.abort();
+    this.host.ended(this);
+    for (const job of this.jobs.values()) {
+      if (dropped) this.host.detach(job);
+      else this.host.abandon(job);
+    }
+    this.jobs.clear();
+    if (this.incoming) rmSync(this.incoming.tmp, { force: true });
+    this.incoming = null;
+  }
+}

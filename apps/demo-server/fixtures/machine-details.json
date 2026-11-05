@@ -1,0 +1,1738 @@
+{
+  "gc": {
+    "mode": "dry-run",
+    "idle": null,
+    "cacheScope": null,
+    "olderThan": null,
+    "worktreeSweep": {
+      "olderThan": 7,
+      "defaulted": true
+    },
+    "actionable": true,
+    "failures": null,
+    "sections": {
+      "deadProjects": [
+        {
+          "path": "/Users/demo/Developer/old-prototype"
+        }
+      ],
+      "invalidProjects": [],
+      "orphanedPorts": [],
+      "orphanedWorkspaces": [
+        {
+          "dir": "/Users/demo/.stim/workspaces/demo--00000000deadbeef",
+          "projectRoot": "/Users/demo/Developer/demo",
+          "bytes": 3300000000
+        }
+      ],
+      "linkedWorktrees": [
+        {
+          "path": "/Users/demo/Developer/habitat-app/.worktrees/ios27-uiscene",
+          "idleDays": 9,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "used 9 days ago",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/demo/Developer/habitat-app/.worktrees/wide-insets",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "in-use",
+          "detail": "in use",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/demo/Developer/habitat-app/.worktrees/wide-split-layout",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "in-use",
+          "detail": "in use",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/demo/Developer/habitat-app/.worktrees/chat-perf-demo",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "in-use",
+          "detail": "in use",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/demo/Developer/notes-app/.claude/worktrees/1123-mobile-app",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "in-use",
+          "detail": "in use",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/demo/Developer/habitat-app/.worktrees/new-composer",
+          "idleDays": 21,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "used 21 days ago",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/demo/Developer/habitat-app/.worktrees/fix-search",
+          "idleDays": 21,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "recent",
+          "detail": "used 21 days ago",
+          "eligibleAt": null
+        },
+        {
+          "path": "/Users/demo/Developer/notes-app/.worktrees/a4-running",
+          "idleDays": 0,
+          "mergedInto": null,
+          "pullRequest": null,
+          "pullRequestUnknown": null,
+          "willRemove": false,
+          "reason": "in-use",
+          "detail": "in use",
+          "eligibleAt": null
+        }
+      ],
+      "parkedSimulators": [
+        {
+          "udid": "P4RK0001-0000-4000-8000-000000000001",
+          "name": "stim-parked (iPhone 17 27.0) p4rk",
+          "model": "iPhone 17",
+          "runtime": "27.0",
+          "parkedAt": "2026-09-21T09:23:09.000Z",
+          "bytes": 1840000000,
+          "listed": true
+        }
+      ],
+      "parkedEmulators": [],
+      "orphanedDevices": [
+        {
+          "kind": "android",
+          "id": "stim-old-demo",
+          "name": "stim-old-demo",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-old-demo.avd"
+        }
+      ],
+      "unverifiedDevices": [],
+      "staleDevices": [],
+      "staleDeviceRecords": [],
+      "staleLedgerEntries": [],
+      "idleDevices": [],
+      "orphanedEasSessions": [],
+      "staleBuildLocks": [],
+      "staleBuildSlots": [],
+      "unresolvedBuildClaims": [],
+      "buildsInProgress": [],
+      "expiredDeviceLeases": [],
+      "keptDeviceLeases": [],
+      "deviceSweepNotices": [],
+      "easSessionSweepNotices": [],
+      "skipped": [],
+      "workspaceLogs": [
+        {
+          "dir": "/Users/demo/.stim/workspaces/notes-app--000000a1b2c3d400",
+          "projectRoot": "/Users/demo/Developer/notes-app",
+          "bytes": 31000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/helloworld--000000a1b2c3d401",
+          "projectRoot": "/Users/demo/Developer/react-native/private/helloworld",
+          "bytes": 25000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/web-login--000000a1b2c3d402",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/web-login",
+          "bytes": 30000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d403",
+          "projectRoot": "/Users/demo/Developer/habitat-app",
+          "bytes": 54000000,
+          "trimBytes": 38000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d404",
+          "projectRoot": "/Users/demo/Developer/habitat-app/apps/habitat-app",
+          "bytes": 54000000,
+          "trimBytes": 38000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/example--000000a1b2c3d405",
+          "projectRoot": "/Users/demo/Developer/habitat-app/example",
+          "bytes": 9000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/example--000000a1b2c3d406",
+          "projectRoot": "/Users/demo/Developer/notes-app/example",
+          "bytes": 29000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/notes-app--000000a1b2c3d407",
+          "projectRoot": "/Users/demo/Developer/notes-app",
+          "bytes": 10000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d408",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/ios27-uiscene/apps/habitat-app",
+          "bytes": 15000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d409",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/chat-perf/apps/habitat-app",
+          "bytes": 56000000,
+          "trimBytes": 40000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d40a",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/wide-insets/apps/habitat-app",
+          "bytes": 37000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d40b",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/ipad-support/apps/habitat-app",
+          "bytes": 26000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d40c",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/wide-split-layout/apps/habitat-app",
+          "bytes": 54000000,
+          "trimBytes": 38000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d40d",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/chat-perf-demo/apps/habitat-app",
+          "bytes": 48000000,
+          "trimBytes": 32000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d40e",
+          "projectRoot": "/Users/demo/Developer/notes-app/.claude/worktrees/1123-mobile-app/apps/mobile",
+          "bytes": 56000000,
+          "trimBytes": 40000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d40f",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/new-composer/apps/habitat-app",
+          "bytes": 40000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d410",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/fix-search/apps/habitat-app",
+          "bytes": 27000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d411",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-running/apps/mobile",
+          "bytes": 11000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d412",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-building/apps/mobile",
+          "bytes": 57000000,
+          "trimBytes": 41000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d413",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-crashed/apps/mobile",
+          "bytes": 31000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d414",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-build-failed/apps/mobile",
+          "bytes": 22000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d415",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-warming/apps/mobile",
+          "bytes": 47000000,
+          "trimBytes": 31000000,
+          "willTrim": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d416",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-stopped/apps/mobile",
+          "bytes": 29000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d417",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-multi-device/apps/mobile",
+          "bytes": 13000000,
+          "trimBytes": 0,
+          "willTrim": false,
+          "reason": null,
+          "detail": null
+        }
+      ],
+      "recordings": [
+        {
+          "dir": "/Users/demo/.stim/workspaces/notes-app--000000a1b2c3d400/recordings",
+          "projectRoot": "/Users/demo/Developer/notes-app",
+          "bytes": 49000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/web-login--000000a1b2c3d402/recordings",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/web-login",
+          "bytes": 45000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d404/recordings",
+          "projectRoot": "/Users/demo/Developer/habitat-app/apps/habitat-app",
+          "bytes": 132000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/example--000000a1b2c3d406/recordings",
+          "projectRoot": "/Users/demo/Developer/notes-app/example",
+          "bytes": 210000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d408/recordings",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/ios27-uiscene/apps/habitat-app",
+          "bytes": 215000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d40a/recordings",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/wide-insets/apps/habitat-app",
+          "bytes": 391000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d40c/recordings",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/wide-split-layout/apps/habitat-app",
+          "bytes": 177000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d40e/recordings",
+          "projectRoot": "/Users/demo/Developer/notes-app/.claude/worktrees/1123-mobile-app/apps/mobile",
+          "bytes": 41000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d410/recordings",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/fix-search/apps/habitat-app",
+          "bytes": 400000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d412/recordings",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-building/apps/mobile",
+          "bytes": 146000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d414/recordings",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-build-failed/apps/mobile",
+          "bytes": 347000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d416/recordings",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-stopped/apps/mobile",
+          "bytes": 201000000,
+          "deleteBytes": 0,
+          "willDelete": false,
+          "withWorkspace": false,
+          "reason": "retained",
+          "detail": "the last 15 minutes of footage per device stay"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/demo--00000000deadbeef/recordings",
+          "projectRoot": "/Users/demo/Developer/demo",
+          "bytes": 640000000,
+          "deleteBytes": 640000000,
+          "willDelete": true,
+          "withWorkspace": true,
+          "reason": null,
+          "detail": null
+        }
+      ],
+      "workspaceBuildOutputs": [
+        {
+          "dir": "/Users/demo/.stim/workspaces/notes-app--000000a1b2c3d400",
+          "projectRoot": "/Users/demo/Developer/notes-app",
+          "bytes": 6700000000,
+          "idleDays": 3,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/helloworld--000000a1b2c3d401",
+          "projectRoot": "/Users/demo/Developer/react-native/private/helloworld",
+          "bytes": 3400000000,
+          "idleDays": 1,
+          "willClear": false,
+          "reason": "recent",
+          "detail": "used 1 days ago"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/web-login--000000a1b2c3d402",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/web-login",
+          "bytes": 1700000000,
+          "idleDays": 1,
+          "willClear": false,
+          "reason": "recent",
+          "detail": "used 1 days ago"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d403",
+          "projectRoot": "/Users/demo/Developer/habitat-app",
+          "bytes": 1700000000,
+          "idleDays": 1,
+          "willClear": false,
+          "reason": "recent",
+          "detail": "used 1 days ago"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d404",
+          "projectRoot": "/Users/demo/Developer/habitat-app/apps/habitat-app",
+          "bytes": 9100000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "recent",
+          "detail": "used 0 days ago"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/example--000000a1b2c3d405",
+          "projectRoot": "/Users/demo/Developer/habitat-app/example",
+          "bytes": 3200000000,
+          "idleDays": 21,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/example--000000a1b2c3d406",
+          "projectRoot": "/Users/demo/Developer/notes-app/example",
+          "bytes": 8900000000,
+          "idleDays": 21,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/notes-app--000000a1b2c3d407",
+          "projectRoot": "/Users/demo/Developer/notes-app",
+          "bytes": 8800000000,
+          "idleDays": 1,
+          "willClear": false,
+          "reason": "recent",
+          "detail": "used 1 days ago"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d408",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/ios27-uiscene/apps/habitat-app",
+          "bytes": 3300000000,
+          "idleDays": 9,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d409",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/chat-perf/apps/habitat-app",
+          "bytes": 1600000000,
+          "idleDays": 21,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d40a",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/wide-insets/apps/habitat-app",
+          "bytes": 5900000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d40b",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/ipad-support/apps/habitat-app",
+          "bytes": 3800000000,
+          "idleDays": 3,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d40c",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/wide-split-layout/apps/habitat-app",
+          "bytes": 3000000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d40d",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/chat-perf-demo/apps/habitat-app",
+          "bytes": 7500000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d40e",
+          "projectRoot": "/Users/demo/Developer/notes-app/.claude/worktrees/1123-mobile-app/apps/mobile",
+          "bytes": 8600000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d40f",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/new-composer/apps/habitat-app",
+          "bytes": 9200000000,
+          "idleDays": 21,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/habitat-app--000000a1b2c3d410",
+          "projectRoot": "/Users/demo/Developer/habitat-app/.worktrees/fix-search/apps/habitat-app",
+          "bytes": 9200000000,
+          "idleDays": 21,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d411",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-running/apps/mobile",
+          "bytes": 2000000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d412",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-building/apps/mobile",
+          "bytes": 6900000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d413",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-crashed/apps/mobile",
+          "bytes": 3700000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d414",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-build-failed/apps/mobile",
+          "bytes": 6200000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d415",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-warming/apps/mobile",
+          "bytes": 4300000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "recent",
+          "detail": "used 0 days ago"
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d416",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-stopped/apps/mobile",
+          "bytes": 7100000000,
+          "idleDays": 21,
+          "willClear": true,
+          "reason": null,
+          "detail": null
+        },
+        {
+          "dir": "/Users/demo/.stim/workspaces/mobile--000000a1b2c3d417",
+          "projectRoot": "/Users/demo/Developer/notes-app/.worktrees/a4-multi-device/apps/mobile",
+          "bytes": 7100000000,
+          "idleDays": 0,
+          "willClear": false,
+          "reason": "in-use",
+          "detail": "in use: its dev server supervisor is running"
+        }
+      ],
+      "caches": [
+        {
+          "name": "Metro transform cache",
+          "dir": "/Users/demo/.stim/metro-cache/habitat-app",
+          "source": "registered",
+          "bytes": 1420000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Metro transform cache",
+          "dir": "/Users/demo/.stim/metro-cache/mobile",
+          "source": "registered",
+          "bytes": 880000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Metro transform cache",
+          "dir": "/Users/demo/.stim/metro-cache/example",
+          "source": "registered",
+          "bytes": 140000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Metro transform cache",
+          "dir": "/Users/demo/.stim/metro-cache/helloworld",
+          "source": "registered",
+          "bytes": 61000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Metro transform cache",
+          "dir": "/Users/demo/.stim/metro-cache/reserved-regions-example",
+          "source": "registered",
+          "bytes": 38000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Metro transform cache",
+          "dir": "/Users/demo/.stim/metro-cache/hinges-example",
+          "source": "registered",
+          "bytes": 44000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Stim build cache",
+          "dir": "/Users/demo/.stim/build-cache",
+          "source": "registered",
+          "bytes": 21400000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Gradle build cache",
+          "dir": "/Users/demo/.gradle/caches/build-cache-1",
+          "source": "registered",
+          "bytes": 6300000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "ccache",
+          "dir": "/Users/demo/Library/Caches/ccache",
+          "source": "registered",
+          "bytes": 4900000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "CocoaPods cache",
+          "dir": "/Users/demo/Library/Caches/CocoaPods",
+          "source": "registered",
+          "bytes": 2600000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Expo fingerprint cache",
+          "dir": "/Users/demo/.stim/fingerprints",
+          "source": "registered",
+          "bytes": 12000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "EAS build downloads",
+          "dir": "/Users/demo/.stim/eas-builds",
+          "source": "registered",
+          "bytes": 3800000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Android CAS",
+          "dir": "/Users/demo/.stim/android-cas",
+          "source": "registered",
+          "bytes": 9100000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        },
+        {
+          "name": "Xcode module cache",
+          "dir": "/Users/demo/Library/Developer/Xcode/DerivedData/ModuleCache.noindex",
+          "source": "registered",
+          "bytes": 1150000000,
+          "note": "shared cache; builds refill it",
+          "willEmpty": false,
+          "emptySkipped": null
+        }
+      ]
+    },
+    "results": [],
+    "inventory": {
+      "devices": [
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000100",
+          "name": "stim-habitat-app-example (iPhone Duo 27.1)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-25T01:23:09.000Z",
+          "bytes": 3100000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/example",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-habitat-app-example-f44c281f",
+          "name": "stim-habitat-app-example-f44c281f",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-24T12:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-habitat-app-example-f44c281f.avd",
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/example",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000101",
+          "name": "stim-notes-app-example (iPhone Duo 27.1)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-21T02:23:09.000Z",
+          "bytes": 1900000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/example",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-notes-app-example",
+          "name": "stim-notes-app-example",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-18T14:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-notes-app-example.avd",
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/example",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-notes-app-example-fold3-camera",
+          "name": "stim-notes-app-example-fold3-camera",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-23T02:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-notes-app-example-fold3-camera.avd",
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/example",
+          "slot": "fold3-camera"
+        },
+        {
+          "kind": "android",
+          "id": "stim-notes-app-fold3-camera",
+          "name": "stim-notes-app-fold3-camera",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-25T03:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-notes-app-fold3-camera.avd",
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app",
+          "slot": "fold3-camera"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000102",
+          "name": "stim-ios27-uiscene-habitat-app (iPhone 18 Pro 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-25T00:23:09.000Z",
+          "bytes": 4900000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/ios27-uiscene/apps/habitat-app",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-ios27-uiscene-habitat-app",
+          "name": "stim-ios27-uiscene-habitat-app",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-24T23:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-ios27-uiscene-habitat-app.avd",
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/ios27-uiscene/apps/habitat-app",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-wide-insets-habitat-app",
+          "name": "stim-wide-insets-habitat-app",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-23T20:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-wide-insets-habitat-app.avd",
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/wide-insets/apps/habitat-app",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000103",
+          "name": "stim-wide-insets-habitat-app-duo (iPhone Duo 27.1)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-24T22:23:09.000Z",
+          "bytes": 2300000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/wide-insets/apps/habitat-app",
+          "slot": "duo"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000104",
+          "name": "stim-wide-insets-habitat-app-iphone (iPhone 18 Pro 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-23T10:23:09.000Z",
+          "bytes": 1600000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/wide-insets/apps/habitat-app",
+          "slot": "iphone"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000105",
+          "name": "stim-ipad-support-habitat-app (iPhone 18 Pro 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-24T03:23:09.000Z",
+          "bytes": 5100000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/ipad-support/apps/habitat-app",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-ipad-support-habitat-app",
+          "name": "stim-ipad-support-habitat-app",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-23T09:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-ipad-support-habitat-app.avd",
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/ipad-support/apps/habitat-app",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000106",
+          "name": "stim-ipad-support-habitat-app-i (iPad Pro 11-inch (M5) 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-24T22:23:09.000Z",
+          "bytes": 6500000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/ipad-support/apps/habitat-app",
+          "slot": "ipad"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000107",
+          "name": "stim-wide-split-layout-habitat-app (iPhone 18 Pro 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-20T19:23:09.000Z",
+          "bytes": 5200000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/wide-split-layout/apps/habitat-app",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-wide-split-layout-habitat-app",
+          "name": "stim-wide-split-layout-habitat-app",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-18T23:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-wide-split-layout-habitat-app.avd",
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/wide-split-layout/apps/habitat-app",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000108",
+          "name": "stim-wide-split-layout-habitat-app (iPad Pro 11-inch (M5) 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-24T19:23:09.000Z",
+          "bytes": 2900000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/wide-split-layout/apps/habitat-app",
+          "slot": "ipad"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000109",
+          "name": "stim-wide-split-layout-habitat-app-duo (iPhone Duo 27.1)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-20T17:23:09.000Z",
+          "bytes": 6500000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/wide-split-layout/apps/habitat-app",
+          "slot": "duo"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000110",
+          "name": "stim-wide-split-layout-habitat-app (iPad mini (A17 Pro) 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-21T01:23:09.000Z",
+          "bytes": 4700000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/wide-split-layout/apps/habitat-app",
+          "slot": "mini"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000111",
+          "name": "stim-chat-perf-demo-habitat-app (iPhone 17 Pro 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-20T21:23:09.000Z",
+          "bytes": 5800000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/chat-perf-demo/apps/habitat-app",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-chat-perf-demo-habitat-app",
+          "name": "stim-chat-perf-demo-habitat-app",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-18T23:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-chat-perf-demo-habitat-app.avd",
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/chat-perf-demo/apps/habitat-app",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000112",
+          "name": "stim-chat-perf-demo-habitat-app-ios18 (iPhone 16 Pro 18.6)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-23T21:23:09.000Z",
+          "bytes": 3800000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/habitat-app/.worktrees/chat-perf-demo/apps/habitat-app",
+          "slot": "ios18"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000113",
+          "name": "stim-1123-mobile-app-mobile (iPhone Duo 27.1)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-24T19:23:09.000Z",
+          "bytes": 3400000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/.claude/worktrees/1123-mobile-app/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000114",
+          "name": "stim-1123-mobile-app-mobile-phone (iPhone 18 Pro 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-20T19:23:09.000Z",
+          "bytes": 4700000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/.claude/worktrees/1123-mobile-app/apps/mobile",
+          "slot": "phone"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000115",
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-20T11:23:09.000Z",
+          "bytes": 3400000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/.worktrees/a4-running/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-a4-running",
+          "name": "stim-a4-running",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-24T13:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-a4-running.avd",
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/.worktrees/a4-running/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000116",
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-20T14:23:09.000Z",
+          "bytes": 3400000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/.worktrees/a4-building/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-a4-building",
+          "name": "stim-a4-building",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-18T17:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-a4-building.avd",
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/.worktrees/a4-building/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000117",
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-24T09:23:09.000Z",
+          "bytes": 3400000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/.worktrees/a4-crashed/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-a4-crashed",
+          "name": "stim-a4-crashed",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-23T14:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-a4-crashed.avd",
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/.worktrees/a4-crashed/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000118",
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-23T15:23:09.000Z",
+          "bytes": 3400000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/.worktrees/a4-build-failed/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-a4-build-failed",
+          "name": "stim-a4-build-failed",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-23T12:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-a4-build-failed.avd",
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/.worktrees/a4-build-failed/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000119",
+          "name": "stim-a4-a400 (iPhone 18 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-24T13:23:09.000Z",
+          "bytes": 3400000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/.worktrees/a4-stopped/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "1D0E0000-0000-4000-8000-000000000120",
+          "name": "stim-a4-a400 (iPhone 18 Pro 27.0)",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Booted",
+          "lastUsedAt": "2026-09-20T17:23:09.000Z",
+          "bytes": 3400000000,
+          "directory": null,
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/.worktrees/a4-multi-device/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "android",
+          "id": "stim-a4-multi-device",
+          "name": "stim-a4-multi-device",
+          "model": "pixel_9",
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-18T15:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-a4-multi-device.avd",
+          "owner": "workspace",
+          "project": "/Users/demo/Developer/notes-app/.worktrees/a4-multi-device/apps/mobile",
+          "slot": "default"
+        },
+        {
+          "kind": "ios",
+          "id": "P4RK0001-0000-4000-8000-000000000001",
+          "name": "stim-parked (iPhone 17 27.0) p4rk",
+          "model": "iPhone 17",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-21T17:23:09.000Z",
+          "bytes": 1840000000,
+          "directory": null,
+          "owner": "parked",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "android",
+          "id": "stim-old-demo",
+          "name": "stim-old-demo",
+          "model": "pixel_6",
+          "runtime": "system-images;android-34;google_apis;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-08-15T22:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/stim-old-demo.avd",
+          "owner": "orphaned",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "ios",
+          "id": "USER0000-0000-4000-8000-000000000000",
+          "name": "iPhone 18 Pro",
+          "model": "iPhone 18 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-23T23:23:09.000Z",
+          "bytes": 4210000000,
+          "directory": null,
+          "owner": "user",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "ios",
+          "id": "USER0001-0000-4000-8000-000000000000",
+          "name": "iPad Pro 13-inch (M5)",
+          "model": "iPad Pro 13-inch (M5)",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-15T16:23:09.000Z",
+          "bytes": 6020000000,
+          "directory": null,
+          "owner": "user",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "ios",
+          "id": "USER0002-0000-4000-8000-000000000000",
+          "name": "iPhone 17",
+          "model": "iPhone 17",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-4",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-07-26T22:23:09.000Z",
+          "bytes": 2730000000,
+          "directory": null,
+          "owner": "user",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "ios",
+          "id": "USER0003-0000-4000-8000-000000000000",
+          "name": "iPhone SE (3rd generation)",
+          "model": "iPhone SE (3rd generation)",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-26-4",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-05-28T04:23:09.000Z",
+          "bytes": 980000000,
+          "directory": null,
+          "owner": "user",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "android",
+          "id": "Pixel_8_API_35",
+          "name": "Pixel_8_API_35",
+          "model": null,
+          "runtime": "system-images;android-35;google_apis;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-05T03:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/Pixel_8_API_35.avd",
+          "owner": "user",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "android",
+          "id": "Medium_Phone_API_36",
+          "name": "Medium_Phone_API_36",
+          "model": null,
+          "runtime": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "state": null,
+          "lastUsedAt": "2026-09-04T23:23:09.000Z",
+          "bytes": null,
+          "directory": "/Users/demo/.android/avd/Medium_Phone_API_36.avd",
+          "owner": "user",
+          "project": null,
+          "slot": null
+        },
+        {
+          "kind": "ios",
+          "id": "0THER001-0000-4000-8000-000000000000",
+          "name": "stim-demo (iPhone 17 Pro 27.0) 0the",
+          "model": "iPhone 17 Pro",
+          "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "state": "Shutdown",
+          "lastUsedAt": "2026-09-09T15:23:09.000Z",
+          "bytes": 2050000000,
+          "directory": null,
+          "owner": "otherStimHome",
+          "project": null,
+          "slot": null
+        }
+      ],
+      "runtimes": [
+        {
+          "identifier": "RT0000-0000-4000-8000-000000000000",
+          "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+          "version": "27.0",
+          "build": "24A434",
+          "bytes": 8067000161,
+          "lastUsedAt": "2026-09-23T15:23:09.000Z",
+          "deviceCount": 25,
+          "command": "xcrun simctl runtime delete RT0000-0000-4000-8000-000000000000"
+        },
+        {
+          "identifier": "RT0001-0000-4000-8000-000000000000",
+          "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-26-4",
+          "version": "26.4",
+          "build": "23E244",
+          "bytes": 7512000000,
+          "lastUsedAt": "2026-09-23T19:23:09.000Z",
+          "deviceCount": 2,
+          "command": "xcrun simctl runtime delete RT0001-0000-4000-8000-000000000000"
+        },
+        {
+          "identifier": "RT0002-0000-4000-8000-000000000000",
+          "runtimeIdentifier": "com.apple.CoreSimulator.SimRuntime.iOS-26-0",
+          "version": "26.0",
+          "build": "23A343",
+          "bytes": 7390000000,
+          "lastUsedAt": "2026-09-23T08:23:09.000Z",
+          "deviceCount": 0,
+          "command": "xcrun simctl runtime delete RT0002-0000-4000-8000-000000000000"
+        }
+      ],
+      "systemImages": [
+        {
+          "package": "system-images;android-36;google_apis_playstore;arm64-v8a",
+          "directory": "/Users/demo/Library/Android/sdk/system-images/android-36/google_apis_playstore/arm64-v8a",
+          "avdCount": 15,
+          "command": "sdkmanager --uninstall \"system-images;android-36;google_apis_playstore;arm64-v8a\""
+        },
+        {
+          "package": "system-images;android-35;google_apis;arm64-v8a",
+          "directory": "/Users/demo/Library/Android/sdk/system-images/android-35/google_apis/arm64-v8a",
+          "avdCount": 1,
+          "command": "sdkmanager --uninstall \"system-images;android-35;google_apis;arm64-v8a\""
+        },
+        {
+          "package": "system-images;android-34;google_apis;arm64-v8a",
+          "directory": "/Users/demo/Library/Android/sdk/system-images/android-34/google_apis/arm64-v8a",
+          "avdCount": 1,
+          "command": "sdkmanager --uninstall \"system-images;android-34;google_apis;arm64-v8a\""
+        },
+        {
+          "package": "system-images;android-33;default;arm64-v8a",
+          "directory": "/Users/demo/Library/Android/sdk/system-images/android-33/default/arm64-v8a",
+          "avdCount": 0,
+          "command": "sdkmanager --uninstall \"system-images;android-33;default;arm64-v8a\""
+        }
+      ],
+      "notices": []
+    }
+  },
+  "stats": {
+    "version": 1,
+    "project": null,
+    "machine": {
+      "ios": {
+        "runs": 359,
+        "failed": 50,
+        "hits": 160,
+        "misses": 149,
+        "coldRuns": 149,
+        "coldRunMs": 29295997,
+        "hitRuns": 153,
+        "hitRunMs": 9076520,
+        "timeSavedMs": 32403346,
+        "firstRunAt": "2026-08-31T16:23:09.000Z",
+        "lastRunAt": "2026-09-24T23:23:09.000Z",
+        "lastColdBuildMs": 520471
+      },
+      "android": {
+        "runs": 178,
+        "failed": 40,
+        "hits": 66,
+        "misses": 72,
+        "coldRuns": 72,
+        "coldRunMs": 12321501,
+        "hitRuns": 65,
+        "hitRunMs": 3189356,
+        "timeSavedMs": 12517184,
+        "firstRunAt": "2026-09-01T19:23:09.000Z",
+        "lastRunAt": "2026-09-24T16:23:09.000Z",
+        "lastColdBuildMs": 130382
+      }
+    },
+    "offload": {
+      "today": {
+        "here": 1,
+        "offloaded": 2,
+        "fellBack": 1
+      },
+      "machines": {
+        "studio-mac:7869": {
+          "today": {
+            "offloaded": 2,
+            "offloadedMs": 369000,
+            "savedMs": 134000,
+            "fallbacks": 0
+          },
+          "total": {
+            "offloaded": 14,
+            "offloadedMs": 2604000,
+            "savedMs": 731000,
+            "fallbacks": 1,
+            "lastOffloadAt": "2026-09-25T03:45:09.000Z"
+          }
+        },
+        "old-mac": {
+          "today": {
+            "offloaded": 0,
+            "offloadedMs": 0,
+            "savedMs": 0,
+            "fallbacks": 1
+          },
+          "total": {
+            "offloaded": 3,
+            "offloadedMs": 690000,
+            "savedMs": -42000,
+            "fallbacks": 4,
+            "lastFallbackAt": "2026-09-25T03:28:09.000Z"
+          }
+        }
+      },
+      "placements": [
+        {
+          "at": "2026-09-25T04:19:09.000Z",
+          "project": "/Users/demo/Developer/notes-app",
+          "platform": "ios",
+          "decision": "here",
+          "reason": "load 0.6/core, 1 of 3 build slots busy here",
+          "buildMs": 212000,
+          "localEstimateMs": 205000
+        },
+        {
+          "at": "2026-09-25T03:45:09.000Z",
+          "project": "/Users/demo/Developer/habitat-app",
+          "platform": "android",
+          "decision": "offloaded",
+          "machine": "studio-mac:7869",
+          "reason": "this Mac is busy: 3 of 3 build slots busy (load 2.4/core, 3 of 3 build slots busy); load 0.4/core, 0 builds there",
+          "buildMs": 171000,
+          "localEstimateMs": 262000
+        },
+        {
+          "at": "2026-09-25T03:28:09.000Z",
+          "project": "/Users/demo/Developer/habitat-app",
+          "platform": "ios",
+          "decision": "fell-back",
+          "machine": "old-mac",
+          "reason": "old-mac: Stim build 6bbe9 there, e774c here"
+        },
+        {
+          "at": "2026-09-25T03:13:09.000Z",
+          "project": "/Users/demo/Developer/notes-app",
+          "platform": "ios",
+          "decision": "offloaded",
+          "machine": "studio-mac:7869",
+          "reason": "this Mac is busy: load 2.1/core over 2; load 0.3/core, 0 builds there",
+          "buildMs": 198000,
+          "localEstimateMs": 241000
+        }
+      ]
+    }
+  },
+  "buildMachines": [
+    {
+      "machine": "studio-mac:7869",
+      "state": "approved",
+      "dnsName": "studio-mac.example.net",
+      "deviceId": "fff01a8e",
+      "requestedAt": "2026-09-24T23:34:58.162Z",
+      "offloadable": true,
+      "reasons": [],
+      "problems": [],
+      "capacity": {
+        "running": 0,
+        "max": 1,
+        "diskFreeBytes": 812000000000,
+        "minDiskFreeBytes": 10737418240,
+        "cpus": 10,
+        "loadPerCore": 0.4,
+        "builds": 0,
+        "maxBuilds": 0,
+        "maxLoadPerCore": 2,
+        "declined": null
+      }
+    },
+    {
+      "machine": "build-box",
+      "state": "approved",
+      "dnsName": "build-box.example.net",
+      "deviceId": "ab12cd34",
+      "requestedAt": "2026-09-22T15:10:00.000Z",
+      "offloadable": false,
+      "reasons": ["busy (load at or above 2/core; load 8.2/core, 2 builds)"],
+      "problems": [
+        {
+          "code": "busy",
+          "reason": "busy (load at or above 2/core; load 8.2/core, 2 builds)"
+        }
+      ],
+      "capacity": {
+        "running": 0,
+        "max": 1,
+        "diskFreeBytes": 812000000000,
+        "minDiskFreeBytes": 10737418240,
+        "cpus": 10,
+        "loadPerCore": 8.2,
+        "builds": 2,
+        "maxBuilds": 0,
+        "maxLoadPerCore": 2,
+        "declined": "load at or above 2/core"
+      }
+    },
+    {
+      "machine": "old-mac",
+      "state": "approved",
+      "dnsName": "old-mac.example.net",
+      "deviceId": "9f8e7d6c",
+      "requestedAt": "2026-09-20T09:00:00.000Z",
+      "offloadable": false,
+      "reasons": ["Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"],
+      "problems": [
+        {
+          "code": "stim-build",
+          "reason": "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"
+        }
+      ],
+      "capacity": {
+        "running": 0,
+        "max": 1,
+        "diskFreeBytes": 812000000000,
+        "minDiskFreeBytes": 10737418240,
+        "cpus": 10,
+        "loadPerCore": 0.1,
+        "builds": 0,
+        "maxBuilds": 0,
+        "maxLoadPerCore": 2,
+        "declined": null
+      }
+    }
+  ],
+  "buildClients": [
+    {
+      "id": "c0ffee12",
+      "name": "Demo MacBook Pro",
+      "builds": 21,
+      "failed": 2,
+      "buildMs": 4320000,
+      "today": {
+        "builds": 3,
+        "failed": 0,
+        "buildMs": 610000
+      },
+      "lastAt": "2026-09-25T04:11:09.000Z"
+    }
+  ],
+  "measuredAt": "2026-09-25T04:23:09.012Z"
+}

@@ -1,0 +1,16 @@
+node_modules/
+.pnpm-store/
+*.log
+.DS_Store
+.superpowers/
+dist/
+.stim-cli/
+
+# stray tsc/tsdown declaration output next to sources (real types ship from dist/)
+packages/*/index.d.ts
+packages/*/bin/*.d.ts
+packages/stim-cli/src/**/*.d.ts
+
+.claude/worktrees/
+
+!.github/actions/stim-ci/dist/

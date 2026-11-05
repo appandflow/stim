@@ -1,0 +1,657 @@
+import AppKit
+import QuartzCore
+import StimKit
+import SwiftUI
+
+public enum EmulatorStreamStatus: Equatable, Sendable {
+  case connecting
+  case noEndpoint
+  case streaming
+}
+
+/// Live frames of a running emulator's main display, read through the gRPC
+/// endpoint in its discovery file. When `interactive` is true, clicks, drags,
+/// trackpad scrolls and keys go to the emulator over the same endpoint.
+/// `onPixelSizeChange` receives the size of the frames as shown, which the
+/// emulator already turns upright.
+public struct EmulatorDisplayView: NSViewRepresentable {
+  public var serial: String
+  public var interactive: Bool
+  public var onStatus: (EmulatorStreamStatus) -> Void
+  public var onPixelSizeChange: (CGSize) -> Void
+  public var buttons: EmulatorButtons?
+  public var avdName: String?
+  public var showsDeviceFrame: Bool
+  public var onFrameSizeChange: ((CGSize?) -> Void)?
+  public var fullResolution: Bool
+  public var artworkScale: CGFloat?
+  public var accurateScreenSize: CGSize?
+
+  public init(
+    serial: String, interactive: Bool = false, onStatus: @escaping (EmulatorStreamStatus) -> Void,
+    onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, buttons: EmulatorButtons? = nil,
+    avdName: String? = nil, showsDeviceFrame: Bool = false, onFrameSizeChange: ((CGSize?) -> Void)? = nil,
+    fullResolution: Bool = false, artworkScale: CGFloat? = nil, accurateScreenSize: CGSize? = nil
+  ) {
+    self.serial = serial
+    self.interactive = interactive
+    self.onStatus = onStatus
+    self.onPixelSizeChange = onPixelSizeChange
+    self.buttons = buttons
+    self.avdName = avdName
+    self.showsDeviceFrame = showsDeviceFrame
+    self.onFrameSizeChange = onFrameSizeChange
+    self.fullResolution = fullResolution
+    self.artworkScale = artworkScale
+    self.accurateScreenSize = accurateScreenSize
+  }
+
+  @MainActor public static func frameSize(avdName: String) -> CGSize? {
+    EmulatorFrameArtwork.cached(avdName: avdName)?.geometry.size
+  }
+
+  public final class Coordinator {
+    var identity: String?
+  }
+
+  public func makeCoordinator() -> Coordinator { Coordinator() }
+
+  public func makeNSView(context: Context) -> DeviceFrameNSView {
+    let view = EmulatorDisplayNSView()
+    let canvas = DeviceFrameNSView(screen: view)
+    canvas.onFrameSizeChange = onFrameSizeChange ?? { _ in }
+    let frameIdentity = showsDeviceFrame || onFrameSizeChange != nil ? avdName : nil
+    context.coordinator.identity = frameIdentity
+    canvas.artwork = frameIdentity == nil ? nil : avdName.flatMap { EmulatorFrameArtwork.cached(avdName: $0) }
+    canvas.showsFrame = showsDeviceFrame
+    canvas.artworkScale = artworkScale
+    canvas.accurateScreenSize = accurateScreenSize
+    view.onRotationChange = { [weak canvas] rotation in canvas?.quarterTurns = -rotation }
+    view.onStatus = onStatus
+    view.onPixelSizeChange = onPixelSizeChange
+    view.setFullResolution(fullResolution)
+    view.attach(serial: serial)
+    view.setInteractive(interactive)
+    buttons?.view = view
+    return canvas
+  }
+
+  public func updateNSView(_ canvas: DeviceFrameNSView, context: Context) {
+    guard let view = canvas.screen as? EmulatorDisplayNSView else { return }
+    canvas.onFrameSizeChange = onFrameSizeChange ?? { _ in }
+    let frameIdentity = showsDeviceFrame || onFrameSizeChange != nil ? avdName : nil
+    if context.coordinator.identity != frameIdentity {
+      context.coordinator.identity = frameIdentity
+      canvas.artwork = frameIdentity == nil ? nil : avdName.flatMap { EmulatorFrameArtwork.cached(avdName: $0) }
+    }
+    canvas.showsFrame = showsDeviceFrame
+    canvas.artworkScale = artworkScale
+    canvas.accurateScreenSize = accurateScreenSize
+    view.onStatus = onStatus
+    view.onPixelSizeChange = onPixelSizeChange
+    view.setFullResolution(fullResolution)
+    view.attach(serial: serial)
+    view.setInteractive(interactive)
+    buttons?.view = view
+  }
+
+  public static func dismantleNSView(_ canvas: DeviceFrameNSView, coordinator: Coordinator) {
+    (canvas.screen as? EmulatorDisplayNSView)?.detach()
+  }
+}
+
+/// An emulator's hardware buttons, with the DOM key name the emulator's gRPC `sendKey` takes and the key event
+/// `adb shell input keyevent` takes. The emulator's gRPC `sendKey` accepts the `Power` key name but leaves the screen
+/// on, so Lock has no key name and always goes through adb.
+public enum EmulatorButton: Sendable {
+  case home, back, apps, lock
+
+  var domKey: String? {
+    switch self {
+    case .home: return "GoHome"
+    case .back: return "GoBack"
+    case .apps: return "AppSwitch"
+    case .lock: return nil
+    }
+  }
+
+  var keyEvent: String {
+    switch self {
+    case .home: return "KEYCODE_HOME"
+    case .back: return "KEYCODE_BACK"
+    case .apps: return "KEYCODE_APP_SWITCH"
+    case .lock: return "KEYCODE_POWER"
+    }
+  }
+}
+
+/// Presses an emulator's hardware buttons through the input client of the display view it is attached to, which
+/// accepts them only while that view is interactive.
+@MainActor
+public final class EmulatorButtons {
+  weak var view: EmulatorDisplayNSView?
+
+  public init() {}
+
+  /// Copies text to the controlled guest clipboard and pastes it into its focused field.
+  public func paste(_ text: String) async -> Bool { await view?.paste(text) ?? false }
+
+  /// Replaces the controlled guest clipboard's text without pasting it.
+  public func setClipboard(_ text: String) async -> Bool { await view?.setClipboard(text) ?? false }
+
+  /// Reads the controlled guest clipboard's text.
+  public func clipboard() async -> String? { await view?.clipboard() }
+
+  public func press(_ button: EmulatorButton) {
+    view?.press(button)
+  }
+}
+
+public final class EmulatorDisplayNSView: NSView {
+  private static let maxPixels = 960
+
+  var onStatus: ((EmulatorStreamStatus) -> Void)?
+  var onPixelSizeChange: (CGSize) -> Void = { _ in }
+  var onRotationChange: (Int) -> Void = { _ in }
+  private var serial: String?
+  private var stream: ScreenshotStream?
+  private var retryTimer: Timer?
+  private var status: EmulatorStreamStatus?
+  private var generation = 0
+  private var pending = PendingFrame()
+  private var endpoint: EmulatorEndpoint?
+  private var shown: (size: CGSize, rotation: Int, folded: CGSize?)?
+  private var interactive = false
+  private var input: EmulatorInput?
+  private var adb: AdbInput?
+  private var hasKeyboard: Bool?
+  private var displaySize: CGSize?
+  private var touchPoint: CGPoint?
+  private lazy var twoFinger = TwoFingerGesture(
+    view: self, enabled: { [weak self] in self?.interactive == true },
+    map: { [weak self] point, clamped in
+      guard let self, let shown = self.shown else { return nil }
+      return normalizedScreenPoint(point, viewSize: self.bounds.size, screenSize: shown.size, clamped: clamped)
+    },
+    project: { [weak self] point in
+      guard let self, let shown = self.shown else { return nil }
+      let fitted = fittedScreenSize(viewSize: self.bounds.size, screenSize: shown.size)
+      return CGPoint(
+        x: (self.bounds.width - fitted.width) / 2 + point.x * fitted.width,
+        y: (self.bounds.height - fitted.height) / 2 + (1 - point.y) * fitted.height)
+    },
+    send: { [weak self] phase, first, second in
+      guard let self, let input = phase == .up ? self.input : self.inputClient(),
+        let displaySize = self.displaySize, let shown = self.shown
+      else { return false }
+      let points = [first, second].map {
+        displayPixel($0, rotation: shown.rotation, displaySize: shown.folded ?? displaySize)
+      }
+      input.call("sendTouch", InputMessages.touches(points, pressed: phase != .up))
+      return true
+    })
+  private var keysDown: Set<UInt16> = []
+  private var lastShown: CFTimeInterval = 0
+  private var fullResolution = false
+
+  override init(frame: NSRect) {
+    super.init(frame: frame)
+    wantsLayer = true
+    layer = CALayer()
+    layer?.contentsGravity = .resizeAspect
+    layer?.minificationFilter = .trilinear
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  func attach(serial: String) {
+    guard serial != self.serial else { return }
+    disconnect()
+    self.serial = serial
+    connect()
+  }
+
+  func setFullResolution(_ fullResolution: Bool) {
+    guard self.fullResolution != fullResolution else { return }
+    self.fullResolution = fullResolution
+    disconnect()
+    onPixelSizeChange(.zero)
+    connect()
+  }
+
+  func detach() {
+    disconnect()
+    serial = nil
+  }
+
+  private func disconnect() {
+    retryTimer?.invalidate()
+    retryTimer = nil
+    stream?.cancel()
+    stream = nil
+    _ = pending.take()
+    layer?.contents = nil
+    releaseInput()
+    shown = nil
+    endpoint = nil
+  }
+
+  private func connect() {
+    guard let serial, window != nil, !framesPaused, stream == nil, retryTimer == nil else { return }
+    guard let endpoint = EmulatorDiscovery.endpoint(serial: serial) else {
+      report(.noEndpoint)
+      retry()
+      return
+    }
+    if endpoint != self.endpoint { releaseInput() }
+    self.endpoint = endpoint
+    report(.connecting)
+    generation += 1
+    let current = generation
+    let pending = PendingFrame()
+    self.pending = pending
+    var framesSeen = 0
+    let stream = ScreenshotStream(
+      endpoint: endpoint, width: fullResolution ? 0 : Self.maxPixels, height: fullResolution ? 0 : Self.maxPixels,
+      onFrame: { [weak self, pending] frame in
+        framesSeen += 1
+        if framesSeen > 1 { ScreenActivity.shared.record(serial) }
+        guard pending.store(frame) else { return }
+        DispatchQueue.main.async { self?.frameArrived(current) }
+      },
+      onEnd: { [weak self] in
+        DispatchQueue.main.async {
+          guard let self, self.stream != nil, self.generation == current else { return }
+          DebugLog.info(.stream, "emulator screenshot stream ended serial=\(serial)")
+          self.releaseInput()
+          self.stream = nil
+          self.report(.connecting)
+          self.retry()
+        }
+      })
+    self.stream = stream
+    DebugLog.info(.stream, "emulator screenshot stream start serial=\(serial)")
+    stream.start()
+  }
+
+  private func retry() {
+    retryTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
+      self?.retryTimer = nil
+      self?.connect()
+    }
+  }
+
+  private func frameArrived(_ generation: Int) {
+    guard generation == self.generation else { return }
+    let wait = lastShown + 1 / AppPreferences.maxFramesPerSecond - CACurrentMediaTime()
+    guard wait > 0 else {
+      show(pending.take())
+      return
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+      guard let self, self.generation == generation else { return }
+      self.show(self.pending.take())
+    }
+  }
+
+  private var framesPaused: Bool {
+    AppPreferences.pausesHiddenFrames && window?.occlusionState.contains(.visible) == false
+  }
+
+  private func show(_ frame: EmulatorFrame?) {
+    guard stream != nil, let frame, let image = Self.image(frame) else { return }
+    if let shown,
+      shown.rotation != frame.rotation
+        || shown.folded != frame.folded.map({ CGSize(width: $0.width, height: $0.height) })
+    {
+      releaseInput()
+    }
+    lastShown = CACurrentMediaTime()
+    layer?.contents = image
+    let size = CGSize(width: frame.width, height: frame.height)
+    if size != shown?.size { onPixelSizeChange(size) }
+    onRotationChange(frame.rotation)
+    self.shown = (size, frame.rotation, frame.folded.map { CGSize(width: $0.width, height: $0.height) })
+    _ = inputClient()
+    report(.streaming)
+  }
+
+  private func report(_ status: EmulatorStreamStatus) {
+    guard status != self.status else { return }
+    self.status = status
+    onStatus?(status)
+  }
+
+  private static func image(_ frame: EmulatorFrame) -> CGImage? {
+    guard let provider = CGDataProvider(data: frame.rgba as CFData) else { return nil }
+    return CGImage(
+      width: frame.width, height: frame.height, bitsPerComponent: 8, bitsPerPixel: 32,
+      bytesPerRow: frame.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+      bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+      provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+  }
+
+  public override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: nil)
+    NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
+    if let window {
+      NotificationCenter.default.addObserver(
+        self, selector: #selector(occlusionChanged), name: NSWindow.didChangeOcclusionStateNotification, object: window)
+      NotificationCenter.default.addObserver(
+        self, selector: #selector(windowResignedKey), name: NSWindow.didResignKeyNotification, object: window)
+      connect()
+    } else {
+      disconnect()
+    }
+  }
+
+  @objc private func windowResignedKey() { twoFinger.cancel() }
+
+  @objc private func occlusionChanged() {
+    if framesPaused {
+      disconnect()
+    } else {
+      connect()
+    }
+  }
+
+  func setInteractive(_ interactive: Bool) {
+    guard interactive != self.interactive else { return }
+    self.interactive = interactive
+    if interactive {
+      window?.makeFirstResponder(self)
+    } else {
+      releaseInput()
+    }
+  }
+
+  private func releaseInput() {
+    twoFinger.cancel()
+    if let touchPoint, let input, let displaySize, let shown {
+      let native = displayPixel(touchPoint, rotation: shown.rotation, displaySize: shown.folded ?? displaySize)
+      input.call("sendMouse", InputMessages.mouse(x: native.x, y: native.y, pressed: false))
+    }
+    for code in keysDown { input?.call("sendKey", InputMessages.key(macKeyCode: code, down: false)) }
+    touchPoint = nil
+    keysDown = []
+    input?.close()
+    input = nil
+    adb = nil
+    hasKeyboard = nil
+    displaySize = nil
+  }
+
+  private func inputClient() -> EmulatorInput? {
+    guard interactive, let endpoint, shown != nil else { return nil }
+    if let input { return input }
+    let input = EmulatorInput(endpoint: endpoint)
+    input.onDisconnect = { [weak self, weak input] in
+      DispatchQueue.main.async {
+        guard let self, input != nil, input === self.input else { return }
+        self.releaseInput()
+      }
+    }
+    self.input = input
+    input.call("getStatus", Data()) { [weak self, weak input] response in
+      guard let response else { return }
+      let size = InputMessages.displaySize(fromStatus: response)
+      let keyboard = InputMessages.hasKeyboard(fromStatus: response)
+      DispatchQueue.main.async {
+        guard let self, input != nil, input === self.input else { return }
+        if let size { self.displaySize = CGSize(width: size.width, height: size.height) }
+        self.hasKeyboard = keyboard
+      }
+    }
+    return input
+  }
+
+  func paste(_ text: String) async -> Bool {
+    guard interactive, let serial, let input = inputClient(), await setClipboard(text), !Task.isCancelled,
+      interactive, self.serial == serial, self.input === input
+    else { return false }
+    let adb = self.adb ?? AdbInput(serial: serial)
+    self.adb = adb
+    return await adb.paste()
+  }
+
+  func setClipboard(_ text: String) async -> Bool {
+    guard interactive, let serial, let input = inputClient(), let endpoint else { return false }
+    let clipboard = EmulatorInput(endpoint: endpoint)
+    defer { clipboard.close() }
+    guard await clipboard.call("setClipboard", InputMessages.clipboard(text), timeout: 5) != nil, interactive,
+      self.serial == serial, self.input === input
+    else { return false }
+    return true
+  }
+
+  func clipboard() async -> String? {
+    guard interactive, let serial, let input = inputClient(), let endpoint else { return nil }
+    let clipboard = EmulatorInput(endpoint: endpoint)
+    defer { clipboard.close() }
+    guard let result = await clipboard.call("getClipboard", Data(), timeout: 5), !Task.isCancelled,
+      interactive, self.serial == serial, self.input === input
+    else { return nil }
+    return InputMessages.clipboardText(result)
+  }
+
+  func press(_ button: EmulatorButton) {
+    guard interactive else { return }
+    if hasKeyboard != false, let key = button.domKey, let input = inputClient() {
+      input.call("sendKey", InputMessages.namedKey(key))
+    } else if let serial {
+      let adb = self.adb ?? AdbInput(serial: serial)
+      self.adb = adb
+      adb.keyEvent(button.keyEvent)
+    }
+  }
+
+  private func screenPoint(_ event: NSEvent, clamped: Bool) -> CGPoint? {
+    guard let shown else { return nil }
+    return normalizedScreenPoint(
+      convert(event.locationInWindow, from: nil), viewSize: bounds.size, screenSize: shown.size, clamped: clamped)
+  }
+
+  private func mouse(at point: CGPoint, pressed: Bool) {
+    guard let input = inputClient(), let displaySize, let shown else { return }
+    let native = displayPixel(point, rotation: shown.rotation, displaySize: shown.folded ?? displaySize)
+    input.call("sendMouse", InputMessages.mouse(x: native.x, y: native.y, pressed: pressed))
+    touchPoint = pressed ? point : nil
+  }
+
+  public override var acceptsFirstResponder: Bool { interactive }
+
+  public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { interactive }
+
+  public override func mouseDown(with event: NSEvent) {
+    guard interactive else { return super.mouseDown(with: event) }
+    window?.makeFirstResponder(self)
+    guard touchPoint == nil, !twoFinger.isActive else { return }
+    if twoFinger.mouseDown(event) { return }
+    guard !event.modifierFlags.contains(.option), let point = screenPoint(event, clamped: false) else { return }
+    mouse(at: point, pressed: true)
+  }
+
+  public override func mouseDragged(with event: NSEvent) {
+    if twoFinger.mouseDragged(event) { return }
+    guard touchPoint != nil, let point = screenPoint(event, clamped: true) else { return }
+    mouse(at: point, pressed: true)
+  }
+
+  public override func mouseUp(with event: NSEvent) {
+    if twoFinger.mouseUp(event) { return }
+    guard let last = touchPoint else { return }
+    mouse(at: screenPoint(event, clamped: true) ?? last, pressed: false)
+  }
+
+  // A trackpad scroll becomes a one-finger drag that follows the gesture's
+  // phases, as on iOS. Momentum events are dropped because Android flings on
+  // its own after the finger lifts.
+  public override func scrollWheel(with event: NSEvent) {
+    if twoFinger.isActive { return }
+    if interactive, event.hasPreciseScrollingDeltas, !event.momentumPhase.isEmpty { return }
+    guard interactive, event.hasPreciseScrollingDeltas else {
+      return super.scrollWheel(with: event)
+    }
+    if event.phase.contains(.began) {
+      guard touchPoint == nil, let point = screenPoint(event, clamped: false) else { return }
+      mouse(at: point, pressed: true)
+    } else if let last = touchPoint, let shown {
+      let fitted = fittedScreenSize(viewSize: bounds.size, screenSize: shown.size)
+      guard fitted.width > 0, fitted.height > 0 else { return }
+      let point = CGPoint(
+        x: min(max(last.x + event.scrollingDeltaX / fitted.width, 0), 1),
+        y: min(max(last.y + event.scrollingDeltaY / fitted.height, 0), 1))
+      let ended = event.phase.contains(.ended) || event.phase.contains(.cancelled)
+      mouse(at: point, pressed: !ended)
+    }
+  }
+
+  public override func layout() {
+    super.layout()
+    twoFinger.redraw()
+  }
+
+  public override func magnify(with event: NSEvent) {
+    guard touchPoint == nil else { return }
+    twoFinger.magnify(event)
+  }
+
+  public override func flagsChanged(with event: NSEvent) { twoFinger.flagsChanged(event) }
+
+  // Printable ASCII goes as text so the emulator picks the evdev keys and
+  // Shift itself; other keys go as macOS key codes, which the emulator
+  // translates. An emulator without a hardware keyboard drops both, so its
+  // keys go through `adb shell input`. A chord with Command, Control or Option
+  // goes through `adb shell input keycombination` with Command as Control, the
+  // shortcut key on Android.
+  public override func keyDown(with event: NSEvent) {
+    let flags = event.modifierFlags
+    if flags.contains(.command) || flags.contains(.control) || flags.contains(.option) {
+      if inputClient() == nil || !sendChord(event) { super.keyDown(with: event) }
+      return
+    }
+    guard let input = inputClient() else { return super.keyDown(with: event) }
+    let text = event.characters.flatMap { isPrintableASCII($0) ? $0 : nil }
+    if hasKeyboard == false, let serial {
+      let adb = self.adb ?? AdbInput(serial: serial)
+      self.adb = adb
+      if let text {
+        adb.text(text)
+      } else if let key = androidKeyEvent(macKeyCode: event.keyCode) {
+        adb.keyEvent(key)
+      }
+    } else if let text {
+      input.call("sendKey", InputMessages.text(text))
+    } else if !event.isARepeat {
+      keysDown.insert(event.keyCode)
+      input.call("sendKey", InputMessages.key(macKeyCode: event.keyCode, down: true))
+    }
+  }
+
+  private func sendChord(_ event: NSEvent) -> Bool {
+    let flags = event.modifierFlags
+    guard let serial, let key = androidKeyEvent(macKeyCode: event.keyCode) ?? letterOrDigitKeyEvent(event)
+    else { return false }
+    var combination: [String] = []
+    if flags.contains(.command) || flags.contains(.control) { combination.append("KEYCODE_CTRL_LEFT") }
+    if flags.contains(.shift) { combination.append("KEYCODE_SHIFT_LEFT") }
+    if flags.contains(.option) { combination.append("KEYCODE_ALT_LEFT") }
+    let adb = self.adb ?? AdbInput(serial: serial)
+    self.adb = adb
+    if !event.isARepeat { adb.keyCombination(combination + [key]) }
+    return true
+  }
+
+  public override func keyUp(with event: NSEvent) {
+    guard keysDown.remove(event.keyCode) != nil, let input = inputClient() else { return super.keyUp(with: event) }
+    input.call("sendKey", InputMessages.key(macKeyCode: event.keyCode, down: false))
+  }
+}
+
+func androidKeyEvent(macKeyCode: UInt16) -> String? {
+  let keys: [UInt16: String] = [
+    0x24: "KEYCODE_ENTER", 0x4C: "KEYCODE_ENTER", 0x30: "KEYCODE_TAB", 0x33: "KEYCODE_DEL",
+    0x75: "KEYCODE_FORWARD_DEL", 0x35: "KEYCODE_ESCAPE", 0x73: "KEYCODE_MOVE_HOME", 0x77: "KEYCODE_MOVE_END",
+    0x74: "KEYCODE_PAGE_UP", 0x79: "KEYCODE_PAGE_DOWN", 0x7B: "KEYCODE_DPAD_LEFT", 0x7C: "KEYCODE_DPAD_RIGHT",
+    0x7D: "KEYCODE_DPAD_DOWN", 0x7E: "KEYCODE_DPAD_UP",
+  ]
+  return keys[macKeyCode]
+}
+
+final class AdbInput {
+  private let serial: String
+  private let queue = DispatchQueue(label: "stim.emulator-adb")
+
+  init(serial: String) {
+    self.serial = serial
+  }
+
+  // `adb shell` joins its arguments into one device shell command, so text
+  // goes single-quoted; `input text` reads `%s` as a space.
+  func text(_ text: String) {
+    let quoted = text.replacingOccurrences(of: " ", with: "%s").replacingOccurrences(of: "'", with: "'\\''")
+    run(["shell", "input", "text", "'\(quoted)'"])
+  }
+
+  func paste() async -> Bool {
+    let request = ProcessRequest(Self.adbPath, ["-s", serial, "shell", "input", "keyevent", "KEYCODE_PASTE"], timeout: 10)
+    return (try? await request.run().succeeded) ?? false
+  }
+
+  func keyEvent(_ key: String) {
+    run(["shell", "input", "keyevent", key])
+  }
+
+  func keyCombination(_ keys: [String]) {
+    run(["shell", "input", "keycombination"] + keys)
+  }
+
+  private func run(_ arguments: [String]) {
+    let serial = serial
+    queue.async {
+      _ = try? ProcessRequest(Self.adbPath, ["-s", serial] + arguments, timeout: 10).runBlocking()
+    }
+  }
+
+  static let adbPath: String = {
+    let environment = ProcessInfo.processInfo.environment
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    let sdks = [environment["ANDROID_HOME"], environment["ANDROID_SDK_ROOT"], "\(home)/Library/Android/sdk"]
+    for case let sdk? in sdks where FileManager.default.isExecutableFile(atPath: "\(sdk)/platform-tools/adb") {
+      return "\(sdk)/platform-tools/adb"
+    }
+    return "/opt/homebrew/bin/adb"
+  }()
+}
+
+func letterOrDigitKeyEvent(_ event: NSEvent) -> String? {
+  guard let typed = event.charactersIgnoringModifiers?.lowercased(), typed.count == 1, let scalar = typed.unicodeScalars.first,
+    ("a"..."z").contains(scalar) || ("0"..."9").contains(scalar)
+  else { return nil }
+  return "KEYCODE_\(typed.uppercased())"
+}
+
+func isPrintableASCII(_ text: String) -> Bool {
+  !text.isEmpty && text.unicodeScalars.allSatisfy { (32..<127).contains($0.value) }
+}
+
+private final class PendingFrame: @unchecked Sendable {
+  private let lock = NSLock()
+  private var frame: EmulatorFrame?
+
+  func store(_ frame: EmulatorFrame) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    let wasEmpty = self.frame == nil
+    self.frame = frame
+    return wasEmpty
+  }
+
+  func take() -> EmulatorFrame? {
+    lock.lock()
+    defer { lock.unlock() }
+    defer { frame = nil }
+    return frame
+  }
+}

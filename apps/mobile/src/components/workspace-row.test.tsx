@@ -1,0 +1,374 @@
+import 'react-native-unistyles/mocks';
+import { receiveStatus } from '../../mock-server/receive-fixtures';
+import fixture from '../../mock-server/fixtures/status.json';
+import type { StatusPayload } from '@/protocol/types';
+
+import { fireEvent, render } from '@testing-library/react-native';
+import { i18n } from '@lingui/core';
+import { I18nProvider } from '@lingui/react';
+
+import '@/design/unistyles';
+
+import { RemoteTile } from './remote-tile';
+import { AgentIcon } from './agent-icon';
+import { PlatformGlyph } from './platform-glyph';
+import { MacStatus } from '@/screens/mac-status';
+
+import { mergeArchives } from '@/lib/home';
+import type { HomeItem, HomeWorktree } from '@/lib/home';
+import { homeSections } from '@/lib/home-list';
+
+import { WorkspaceGroupRow, WorktreeRow } from './workspace-row';
+
+let mockPresence = {
+  online: true,
+  cached: false,
+  lastSeenAt: null as number | null,
+};
+let mockStatus = receiveStatus(fixture.payload as StatusPayload);
+afterEach(() => {
+  mockPresence = { online: true, cached: false, lastSeenAt: null };
+});
+jest.mock('expo-router', () => ({
+  useIsFocused: () => false,
+  useRouter: () => ({ push: jest.fn() }),
+}));
+jest.mock('@/hooks/machines', () => ({
+  useArchives: () => {},
+  useMachinePresence: () => mockPresence,
+  useMachineStatus: () => mockStatus,
+  useMachineUsage: () => null,
+  useMacById: () => ({
+    mac: { name: 'Mac', endpoint: 'ws://mac' },
+    state: { kind: 'disconnected' },
+  }),
+}));
+jest.mock('@/hooks/machine-details', () => ({
+  useMachineDetails: () => ({ kind: 'unsupported' }),
+}));
+jest.mock('@/hooks/usage-history', () => ({ useUsageHistory: () => [] }));
+jest.mock('@/hooks/section-state', () => ({
+  useSectionState: () => [{ collapsed: false, showAll: true }, () => {}],
+}));
+jest.mock('@/components/collapsible', () => ({
+  Collapsible: ({ open, children }: { open: boolean; children: React.ReactNode }) => (open ? children : null),
+  DisclosureChevron: () => null,
+}));
+jest.mock('@/components/sheet-screen', () => ({
+  SheetScreen: ({ children }: { children: React.ReactNode }) => children,
+}));
+jest.mock('@/hooks/large-text', () => ({ useLargeText: () => false }));
+jest.mock('@/components/build-progress', () => ({ PhaseBar: () => null }));
+jest.mock('@/components/agent-sessions', () => ({
+  AgentSessionLine: () => null,
+}));
+jest.mock('@/components/text', () => ({
+  Text: jest.requireActual<typeof import('react-native')>('react-native').Text,
+}));
+jest.mock('@/components/touch', () => ({
+  Touch: jest.requireActual<typeof import('react-native')>('react-native').Pressable,
+}));
+jest.mock('react-native-reanimated', () => ({
+  __esModule: true,
+  default: {
+    View: jest.requireActual<typeof import('react-native')>('react-native').View,
+  },
+  useReducedMotion: () => true,
+  FadeInUp: { duration: () => undefined },
+  FadeOutUp: { duration: () => undefined },
+}));
+jest.mock('@/components/icon', () => ({
+  Icon: ({ name }: { name: string }) => {
+    const { View } = jest.requireActual<typeof import('react-native')>('react-native');
+    return <View accessibilityLabel={name} />;
+  },
+}));
+
+it('shows a multi-app checkout as one row that opens the checkout and the app with errors', async () => {
+  const app = (folder: string, live: boolean): HomeItem => ({
+    key: `mac\n/checkout/${folder}`,
+    macId: 'mac',
+    macName: 'MacBook',
+    project: 'stim',
+    title: 'feat/monorepo',
+    inCheckout: folder,
+    env: {
+      path: `/checkout/${folder}`,
+      live,
+      phase: 'ready',
+      memoryMb: 0,
+      warnings: [],
+      logs: { dir: '/logs', errorsSinceMarker: live ? 2 : 0 },
+      worktree: {
+        path: '/checkout',
+        branch: 'feat/monorepo',
+        git: {
+          changed: 15,
+          untracked: 0,
+          upstream: 'origin/main',
+          ahead: 0,
+          behind: 0,
+          mergedInto: null,
+        },
+        gitChip: { parts: [{ kind: 'changed', count: 15 }], ci: null },
+      },
+    },
+  });
+  const mobile = app('apps/mobile', false);
+  const desktop = app('apps/desktop', true);
+  const workspace = homeSections([mobile, desktop])[0].data[0];
+  if (!('apps' in workspace)) throw new Error('Expected the registered checkout');
+  const open = jest.fn();
+  const screen = await render(
+    <WorkspaceGroupRow workspace={workspace} now={Date.now()} folder showsMachine onOpen={open} />,
+  );
+  expect(screen.getAllByText('feat/monorepo')).toHaveLength(1);
+  expect(screen.getAllByText('15 changed')).toHaveLength(1);
+  expect(screen.getByText('Running')).toBeTruthy();
+  expect(screen.queryByText('Ready')).toBeNull();
+  expect(screen.queryByText('apps/mobile')).toBeNull();
+  expect(screen.queryByText('apps/desktop')).toBeNull();
+  await fireEvent.press(screen.getByLabelText(/^feat\/monorepo, /));
+  expect(open).toHaveBeenLastCalledWith(desktop, false, true);
+  await fireEvent.press(screen.getByText('2 errors'));
+  expect(open).toHaveBeenLastCalledWith(desktop, true);
+});
+
+describe('single-app row platforms', () => {
+  const single = (extra: Partial<HomeItem['env']> = {}): HomeItem => ({
+    key: 'mac\n/checkout',
+    macId: 'mac',
+    macName: 'MacBook',
+    project: 'stim',
+    title: 'feat/single',
+    inCheckout: '.',
+    env: { path: '/checkout', live: true, memoryMb: 0, warnings: [], worktree: { path: '/checkout' }, ...extra },
+  });
+  const renderRow = async (item: HomeItem) => {
+    const workspace = homeSections([item])[0].data[0];
+    if (!('apps' in workspace)) throw new Error('Expected a registered checkout');
+    return render(
+      <WorkspaceGroupRow workspace={workspace} now={Date.now()} folder showsMachine={false} onOpen={() => {}} />,
+    );
+  };
+
+  it('lists the platforms that ran and drops the device names', async () => {
+    const screen = await renderRow(
+      single({
+        ios: { name: 'sim', udid: 'u', owned: true, state: 'Booted' },
+        lastBuilds: {
+          android: { platform: 'android', status: 'failed', startedAt: new Date().toISOString() },
+        },
+      } as unknown as Partial<HomeItem['env']>),
+    );
+    expect(screen.getByText('iOS')).toBeTruthy();
+    expect(screen.getByText('Android')).toBeTruthy();
+    expect(screen.queryByText('iOS, Android')).toBeNull();
+  });
+
+  it('names the machine an offloaded build and a hosted device run on', async () => {
+    const now = new Date().toISOString();
+    const machine = 'janics-mac-mini-2:7443';
+    const screen = await renderRow(
+      single({
+        ios: {
+          name: 'hosted',
+          udid: '',
+          owned: false,
+          state: 'ready',
+          host: {
+            machine,
+            session: 's',
+            selected: machine,
+            agent: { driver: 'none', setting: 'hosting.agentDriver' },
+            device: null,
+          },
+        },
+        build: {
+          platform: 'ios',
+          slot: 'default',
+          state: 'running',
+          phase: 'pods',
+          startedAt: now,
+          phaseStartedAt: now,
+          outcome: 'cold',
+          expectedMs: null,
+          expectedPhaseMs: null,
+          basis: 0,
+          placement: { host: 'janics-mac-mini:7869', phase: 'pods', startedAt: now, phaseStartedAt: now },
+        },
+      }),
+    );
+    expect(screen.getByLabelText('Building on janics-mac-mini')).toBeTruthy();
+    expect(screen.getByLabelText('Running on janics-mac-mini-2')).toBeTruthy();
+  });
+
+  it('shows no platform line for an app that never ran', async () => {
+    const screen = await renderRow(single({ live: false }));
+    expect(screen.queryByText('iOS')).toBeNull();
+    expect(screen.queryByText('Android')).toBeNull();
+    expect(screen.queryByText('macOS')).toBeNull();
+    expect(screen.queryByText('Web')).toBeNull();
+  });
+});
+
+it('announces source-only git work without workspace controls and shows last seen when its machine is offline', async () => {
+  const item: HomeWorktree = {
+    key: 'mac\nsource',
+    macId: 'mac',
+    macName: 'MacBook',
+    project: 'stim',
+    title: 'feat/source',
+    facts: {
+      path: '/source',
+      branch: 'feat/source',
+      git: {
+        changed: 3,
+        untracked: 2,
+        upstream: 'origin/main',
+        ahead: 2,
+        behind: 1,
+        mergedInto: null,
+      },
+      gitChip: {
+        parts: [
+          { kind: 'arrows', ahead: 2, behind: 1 },
+          { kind: 'changed', count: 5 },
+        ],
+        ci: null,
+      },
+      pullRequest: {
+        number: 2440,
+        url: 'https://github.com/appandflow/stim/pull/2440',
+        title: 'Source work',
+        state: 'open',
+        checks: null,
+        reviewDecision: null,
+        checkedAt: '2026-10-05T12:00:00Z',
+      },
+    },
+  };
+  const now = Date.parse('2026-10-05T12:00:00Z');
+  const screen = await render(<WorktreeRow item={item} now={now} showsMachine />);
+  const row = screen.getByLabelText(
+    'feat/source, Not warmed, Pull request 2440, open, 5 uncommitted changes, 2 commits not pushed to origin/main, 1 commit behind origin/main, MacBook',
+  );
+  expect(row.props.accessibilityHint).toBeUndefined();
+  expect(row.props.accessibilityActions).toBeUndefined();
+  expect(row.props.onPress).toBeUndefined();
+  expect(screen.queryByRole('button')).toBeNull();
+  expect(screen.getByText('Not warmed')).toBeTruthy();
+  expect(screen.getByText('PR #2440')).toBeTruthy();
+  expect(screen.getByText('\u21912 \u21931')).toBeTruthy();
+  expect(screen.getByText('5 changed')).toBeTruthy();
+  mockPresence = { online: true, cached: true, lastSeenAt: now - 180_000 };
+  await screen.rerender(<WorktreeRow item={item} now={now} showsMachine={false} />);
+  expect(screen.getByText('Last seen 3m ago')).toBeTruthy();
+  expect(screen.queryByText('MacBook')).toBeNull();
+  expect(
+    screen.getByLabelText(
+      'feat/source, Not warmed, Last seen 3 minutes ago, Pull request 2440, open, 5 uncommitted changes, 2 commits not pushed to origin/main, 1 commit behind origin/main',
+    ),
+  ).toBeTruthy();
+});
+
+test.each(['platform', 'backend', 'state'])(
+  'keeps billable remote sessions visible with a neutral %s label',
+  async (field) => {
+    const session = receiveStatus(fixture.payload as StatusPayload).environments[0]!.remoteDevices![0]!;
+    const screen = await render(
+      <I18nProvider i18n={i18n}>
+        <RemoteTile session={{ ...session, [field]: 'future-kind' }} />
+      </I18nProvider>,
+    );
+    if (field === 'state') expect(screen.getByText(/Claim unknown/)).toBeTruthy();
+    else expect(screen.getByText('EAS Simulator')).toBeTruthy();
+    expect(screen.getByText('billable')).toBeTruthy();
+    expect(screen.getByText(session.sessionId)).toBeTruthy();
+  },
+);
+
+test.each(['future-kind', '__proto__', 'constructor'])(
+  'uses generic icons for unsupported %s platforms and tools',
+  async (value) => {
+    const screen = await render(
+      <>
+        <PlatformGlyph platform={value} size={16} />
+        <AgentIcon tool={value} size={16} color="black" />
+      </>,
+    );
+    expect(screen.getAllByLabelText('gearshape')).toHaveLength(2);
+  },
+);
+
+test('renders a future machine owner with a generic icon and omits an unknown memory-source explanation', async () => {
+  mockStatus = receiveStatus(fixture.payload as StatusPayload);
+  mockStatus.machine!.owners[0]!.kind = 'future-kind';
+  mockStatus.machine!.owners[0]!.name = 'Future service';
+  mockStatus.machine!.memorySource = 'future-kind';
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <MacStatus id="mac" />
+    </I18nProvider>,
+  );
+  expect(screen.getByText('Future service')).toBeTruthy();
+  expect(screen.getAllByLabelText('gearshape').length).toBeGreaterThan(0);
+  expect(screen.queryByText(/Each process counts in one row/)).toBeNull();
+});
+
+it('renders archives in the shared row with app labels, removal facts and monotonic PR state', async () => {
+  const now = Date.parse('2026-09-25T04:23:09.012Z');
+  const archive = fixture.payload.archived[0];
+  const items = mergeArchives([
+    {
+      id: 'mac',
+      name: 'Mac',
+      status: { ...fixture.payload, archived: [archive] } as StatusPayload,
+    },
+  ]);
+  const workspace = homeSections(items)[0].data[0];
+  if (!('apps' in workspace)) throw new Error('Expected archived checkout');
+  const open = jest.fn();
+  const screen = await render(<WorkspaceGroupRow workspace={workspace} now={now} folder showsMachine onOpen={open} />);
+  expect(screen.getByText('feat/archived-workspaces')).toBeTruthy();
+  expect(screen.getByText('apps/mobile')).toBeTruthy();
+  expect(screen.getByText('Removed 2h ago \u00B7 12 MB')).toBeTruthy();
+  expect(screen.getByText('#2600 Merged')).toBeTruthy();
+  expect(screen.queryByText('Draft')).toBeNull();
+  expect(screen.queryByText('Idle')).toBeNull();
+  await fireEvent.press(screen.getByText('feat/archived-workspaces'));
+  expect(open).toHaveBeenCalledWith(items[0], false);
+});
+
+it('does not label never-kept archive logs or recordings as expired content', async () => {
+  const archive = fixture.payload.archived[0];
+  const items = mergeArchives([
+    {
+      id: 'mac',
+      name: 'Mac',
+      status: {
+        ...fixture.payload,
+        archived: [
+          {
+            ...archive,
+            bytes: { ...archive.bytes, logs: 0, recordings: 0 },
+            expires: { ...archive.expires, logs: null, recordings: null },
+          },
+        ],
+      } as StatusPayload,
+    },
+  ]);
+  const workspace = homeSections(items)[0].data[0];
+  if (!('apps' in workspace)) throw new Error('Expected archived checkout');
+  const screen = await render(
+    <WorkspaceGroupRow
+      workspace={workspace}
+      now={Date.parse(archive.removedAt) + 86400000}
+      folder
+      showsMachine
+      onOpen={() => {}}
+    />,
+  );
+  expect(screen.queryByText('Expired content')).toBeNull();
+  expect(screen.queryByText('Expires soon')).toBeNull();
+});

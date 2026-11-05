@@ -1,0 +1,162 @@
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { spawnEntry } from '../spawn-entry.ts';
+import { workspaceAgentDeviceDir, workspaceDir } from '../workspace/paths.ts';
+import { sanitizeDeviceLabel } from '../devices/ios.ts';
+import type { RemoteDaemon } from './eas-simulator.ts';
+
+// agent-device and eas-cli share this token name. The token stays in the child environment.
+const DAEMON_TOKEN_ENV = 'AGENT_DEVICE_DAEMON_AUTH_TOKEN';
+
+const PROFILE_FILE = 'agent-device.remote.json';
+
+/** agent-device ADR 0007 requires generated profiles to omit bearer tokens. */
+export interface RemoteProfile {
+  daemonBaseUrl: string;
+  daemonTransport: 'http';
+  platform: 'ios' | 'android';
+  session: string;
+  tenant: string;
+  runId: string;
+  sessionIsolation: 'tenant';
+  leaseProvider?: 'proxy';
+  clientId?: string;
+}
+
+function sessionNameFor(label: string): string {
+  return `stim-${sanitizeDeviceLabel(label)}`;
+}
+
+export function remoteProfilePath(root: string): string {
+  return join(workspaceDir(root), PROFILE_FILE);
+}
+
+export function remoteProfile({
+  daemon,
+  platform,
+  label,
+}: {
+  daemon: RemoteDaemon;
+  platform: 'ios' | 'android';
+  label: string;
+}): RemoteProfile {
+  const scope = sessionNameFor(label);
+  // agent-device 0.20.10 requires metroProjectRoot to expose a bridge URL; the self-hosted proxy has none.
+  // agent-device 0.20.10 requires tenant and runId in remote profiles.
+  // agent-device 0.20.10 does not renew a lease while install uploads; the proxy lease lasts 5 min instead of the
+  // default 60 s, and proxy open admission requires clientId. agent-device 0.21.12 refuses iOS install and open
+  // under a proxy lease: the resolved device platform "apple" never equals the connection's "ios".
+  return {
+    daemonBaseUrl: daemon.baseUrl,
+    daemonTransport: 'http',
+    platform,
+    session: scope,
+    tenant: scope,
+    runId: scope,
+    sessionIsolation: 'tenant',
+    ...(platform === 'android' ? { leaseProvider: 'proxy', clientId: scope } : {}),
+  };
+}
+
+export function daemonEnv(daemon: RemoteDaemon): Record<string, string> {
+  return { [DAEMON_TOKEN_ENV]: daemon.token };
+}
+
+function withProfile(profilePath: string, args: string[]): string[] {
+  // Explicit profiles prevent agent-device from reusing another workspace's active connection.
+  return [...args, '--remote-config', profilePath];
+}
+
+export function connectArgs(profilePath: string): string[] {
+  // agent-device 0.20.10 rejects a changed daemon URL unless connect uses --force.
+  return withProfile(profilePath, ['connect', '--force']);
+}
+
+export function installArgs(profilePath: string, artifactPath: string): string[] {
+  return withProfile(profilePath, ['install', artifactPath]);
+}
+
+export function openArgs(
+  profilePath: string,
+  bundleId: string,
+  url: string | null,
+  metro: { host: string; port: string } | null = null,
+): string[] {
+  const positional = url ? [bundleId, url] : [bundleId];
+  // The deep link bypasses https://github.com/callstack/agent-device/issues/1245 for Expo dev clients.
+  const hint = metro ? ['--metro-host', metro.host, '--metro-port', metro.port] : [];
+  return withProfile(profilePath, ['open', ...positional, '--relaunch', ...hint]);
+}
+
+export function metroHintFrom(origin: string): { host: string; port: string } | null {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return null;
+  }
+  // agent-device writes RCT_jsLocation, so portless tunnels must override any stale Metro port.
+  const port = url.port || (url.protocol === 'https:' ? '443' : url.protocol === 'http:' ? '80' : '');
+  return port ? { host: url.hostname, port } : null;
+}
+
+export function acceptAlertArgs(profilePath: string): string[] {
+  // Fresh iOS simulators block the first app URL behind a confirmation alert.
+  return withProfile(profilePath, ['alert', 'accept']);
+}
+
+export function disconnectArgs(profilePath: string): string[] {
+  return withProfile(profilePath, ['disconnect']);
+}
+
+export function closeArgs(profilePath: string): string[] {
+  // agent-device claims outlive leases, so close clears a prior workspace claim.
+  return withProfile(profilePath, ['close']);
+}
+
+export type SimulatorArch = 'arm64' | 'x86_64';
+
+const HEALTH_TIMEOUT_MS = 3_000;
+
+function archField(value: unknown): SimulatorArch | null {
+  if (!value || typeof value !== 'object') return null;
+  const arch = (value as { hostArch?: unknown }).hostArch;
+  return arch === 'arm64' || arch === 'x86_64' ? arch : null;
+}
+
+/** agent-device proxies report the daemon machine under `upstream`; a daemon reports itself at the top level. */
+function parseHealthHostArch(body: unknown): SimulatorArch | null {
+  if (!body || typeof body !== 'object') return null;
+  return archField((body as { upstream?: unknown }).upstream) ?? archField(body);
+}
+
+export async function readRemoteSimulatorArch(
+  daemon: Pick<RemoteDaemon, 'baseUrl'> | null | undefined,
+  { fetch: fetchImpl = fetch, timeoutMs = HEALTH_TIMEOUT_MS }: { fetch?: typeof fetch; timeoutMs?: number } = {},
+): Promise<SimulatorArch> {
+  if (!daemon) return 'arm64';
+  try {
+    const response = await fetchImpl(`${daemon.baseUrl.replace(/\/+$/, '')}/health`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) return 'arm64';
+    return parseHealthHostArch(await response.json()) ?? 'arm64';
+  } catch {
+    return 'arm64';
+  }
+}
+
+export function writeAgentDeviceBootHook(root: string): void {
+  const dir = workspaceAgentDeviceDir(root);
+  const file = join(dir, 'boot-hook.json');
+  const hook = { command: [process.execPath, spawnEntry('cli'), 'revive', '--json'], cwd: root };
+  mkdirSync(dir, { recursive: true });
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  try {
+    writeFileSync(tmp, `${JSON.stringify(hook, null, 2)}\n`);
+    renameSync(tmp, file);
+  } catch (error) {
+    rmSync(tmp, { force: true });
+    throw error;
+  }
+}

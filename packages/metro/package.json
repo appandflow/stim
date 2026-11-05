@@ -1,0 +1,39 @@
+{
+  "name": "@stim-cli/metro",
+  "version": "1.40.0",
+  "description": "Metro integration for Stim: shared transforms across worktrees and structured logs.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/appandflow/stim.git",
+    "directory": "packages/metro"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "module-sync": "./dist/index.mjs",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@stim-cli/cache": "workspace:*",
+    "@stim-cli/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "metro-cache": "*"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

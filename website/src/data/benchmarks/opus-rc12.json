@@ -1,0 +1,1417 @@
+{
+  "schemaVersion": 1,
+  "stage": "opus-rc12",
+  "title": "Opus iOS",
+  "suite": "readiness",
+  "platform": "ios",
+  "protocolVersion": 4,
+  "recordedOn": "2026-09-11",
+  "primaryMetric": "First recorded agent activity to validated Settings screenshot",
+  "pricing": null,
+  "environment": {
+    "machine": {
+      "model": "Mac mini",
+      "chip": "Apple M4",
+      "memory": "16 GB"
+    },
+    "macos": "macOS 26.5.2 (25F84)",
+    "xcode": "Xcode 26.6 (17F113)",
+    "node": "Node 26.7.0",
+    "simulator": "iPhone 17 / iOS 26.5"
+  },
+  "runs": [
+    {
+      "id": "javascript-stim",
+      "model": "opus",
+      "platform": "ios",
+      "recordedOn": "2026-09-11",
+      "variant": "javascript",
+      "arm": "stim",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 103.544,
+      "appAliveSeconds": 62.64,
+      "diagnosisSeconds": null,
+      "diagnosisCommandCount": null,
+      "launchCrashAudit": null,
+      "diagnosisUsage": null,
+      "estimatedDiagnosisCostUsd": null,
+      "totalSeconds": 129.502,
+      "commandCount": 16,
+      "usage": {
+        "input_tokens": 340008,
+        "cached_input_tokens": 320350,
+        "cache_creation_input_tokens": 19618,
+        "output_tokens": 4805,
+        "reasoning_output_tokens": 343
+      },
+      "estimatedTokenCostUsd": 0.479331,
+      "summary": "Created an isolated worktree, worked on the JavaScript change, and ran Stim's iOS workflow. It reached Settings and captured valid agent-device proof.",
+      "messages": [
+        {
+          "id": "9396ecda-288c-46d6-acf2-a56843aa3187-0",
+          "atSeconds": 0,
+          "text": "I'll start by creating the run worktree exactly as specified."
+        },
+        {
+          "id": "71de2444-3068-473f-9e4f-73e1e5036279-0",
+          "atSeconds": 129.206,
+          "text": "All eight proof commands succeeded in order, and the screenshot shows the Offline maps row with the new subtitle \"Keep saved trail maps available offline\".\n\n**Summary**\n\n- **Change**: `app/(tabs)/settings.tsx:112` — subtitle changed from \"Keep map tiles for saved trails on device\" to \"Keep saved trail maps available offline\". Applied live via Fast Refresh (no native rebuild needed).\n- **Stim run**: `com.appandflow.trailhead` on `stim-bench-opus-ios-opus-javascript-stim-17 (iPhone 17 26.5)`, UDID `<simulator-udid>` — Stim reported the parked simulator as **adopted**; launch OK with app readiness reported; artifact cache hit; 23.2s total. Metro is still running on port 8082 (left running as instructed).\n- **agent-device**: isolated session opened on that UDID, no Expo onboarding appeared, navigated to Settings via the `Settings, tab, 4 of 4` ref, `wait text` found the expected string, recording stopped and reported the saved video, session closed.\n\n**Paths**\n\n- Run worktree: `./worktrees/bench-javascript-stim` (branch `worktree-bench/javascript-stim`)\n- Screenshot: `results/opus-ios/javascript-stim/proof/settings.png` (69,655 bytes)\n- Recording: `results/opus-ios/javascript-stim/proof/session.mp4` (118,499 bytes)\n\nStopping here; Metro and the worktree are left in place for the coordinator to verify and clean up."
+        }
+      ],
+      "commands": [
+        {
+          "id": "toolu_01U12HCUPutACfijoR88qghq",
+          "startSeconds": 1.204,
+          "endSeconds": 1.811,
+          "command": "git worktree add -b worktree-bench/javascript-stim './worktrees/bench-javascript-stim' HEAD",
+          "output": "Preparing worktree (new branch 'worktree-bench/javascript-stim')\nHEAD is now at 075990b chore: prepare local field QA pod checksum",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01EMb6SneQScgRLRRisz8hf9",
+          "startSeconds": 3.906,
+          "endSeconds": 4.026,
+          "command": "cd ./worktrees/bench-javascript-stim && stim guide agent",
+          "output": "Commands use `stim`. If it is not installed globally, replace `stim` with `npx stim`.\n\nAGENT WORKFLOW\n\nUse Stim to run React Native and Expo apps without sharing a Metro port or\ndevice with another workspace. Prefer plain output: it streams each phase and\nends with the facts the next step needs. Use --json only when a script must\nparse a stable payload.\n\nNORMAL WORKFLOW\n\nWork in the current checkout by default. When the task needs another branch or\nan isolated environment, create a linked worktree with Git and warm its\nignored state. If a harness already created this linked worktree, run\nstim worktree warm here instead of creating another one. It copies missing\nignored paths from the main checkout, including eligible .env and local\nconfiguration files. It preserves the branch, tracked files, and every existing\ndestination entry; existing ignored directories are skipped whole, not filled in.\nRead guide lifecycle options for exclusions and incomplete-copy remedies.\n\nWait for warm to exit successfully (exit code 0) before running stim start,\nstim ios, stim android, or a dependency install in that worktree. If the shell\ntool returns a running session or job ID, poll or wait for that job to finish;\nthe ID is not completion. Concurrent writes to the destination are unsafe:\nwarm checks for existing entries before copying, not during the copy. Do not\nedit files, install dependencies, or run another warm in that worktree until\nit finishes; concurrent files can be overwritten or removed.\nIf warm fails or reports incomplete, resolve the reported failure first.\n\nBefore native worktree work, run doctor for the platform in scope. It checks\nthe main checkout from a linked worktree. Fix relevant findings and inspect the\nupstream gap. It also prints the running CLI version and the stim installation\nresolved from PATH. If that resolved installation is older than another one,\nfix PATH or the installation before continuing so commands and guidance match.\nDoctor reports cross-volume staging and build-cache copies; read guide settings\nfor placement overrides and guide lifecycle options for warm behavior.\nFor iOS Debug architecture findings, review the project's overrides and imported\nPodfile helpers using guide lifecycle options. Doctor --fix does not change them.\nFor a linked native library carrying Git metadata, add the printed .git entries to\n.fingerprintignore only when the native build does not read Git state.\n\n  stim doctor --platform ios          # or: --platform android\n\nFor stale Android CMake launcher findings, stop native builds and run\nstim doctor --fix --platform android in the affected checkout before warming\nmore worktrees. It removes affected ignored, untracked generated .cxx\nconfigurations, including installed native modules; the next build recreates\nthem. It preserves source, custom launcher settings, and the shared ccache.\n\n  # Skip Git creation if the harness already created this linked worktree.\n  git worktree add -b <branch> <worktree-path> HEAD\n  cd <worktree-path>\n  stim worktree warm\n\n  stim start\n  stim ios                             # or: stim android\n\n  # Reproduce the affected behavior and capture the baseline errors.\n  stim logs --errors\n\n  # If a native process exits with no report, inspect the captured device output.\n  # An empty query is not proof that a crashed app was healthy.\n  # See guide logs for JS/native symbolication and capture limits.\n\n  # Edit JavaScript or TypeScript; Fast Refresh applies the change.\n  # For UI work, wait for the expected UI and repeat the affected interaction\n  # on the reported device. Keep using the existing automation session, if any.\n  stim logs --errors\n  # Retain proof before cleanup: a screenshot, recording, or relevant runtime output.\n\n  stim stop\n  stim worktree remove\n\nRULES DURING THE LOOP\n\n- Run Stim from the app directory: the one whose package.json depends on\n  react-native or expo. Anywhere else -- a monorepo root, a tools package --\n  start, ios and android refuse with STIM_NO_PROJECT naming that package.json,\n  and doctor reports it as a finding.\n- Put runtime .stim.json beside that app's package.json. Monorepo apps do not\n  inherit a repository-root runtime file. Keep repository-wide worktree-copy\n  rules at the main checkout root; see guide settings for the two scopes.\n- Run start before a debug ios or android build. If it returns STIM_NO_METRO,\n  run stim start and retry.\n- Run ios or android again after a native input changes. A JavaScript-only\n  change does not need one.\n- For stale Metro transforms or file-map state, use stim start --reset-cache.\n  It restarts only this app's verified owned Metro, preserving devices and other\n  apps' caches. See guide lifecycle for reset scope and Expo requirements.\n- Reload is not part of the normal workflow. Use stim reload on an owned local\n  simulator or emulator after a failed first bundle load, when an error screen\n  remains after the fix, or when you explicitly need an app restart. For a\n  physical device that reached Metro, use agent-device metro reload with the\n  reported port. The detected iOS Local Network first-load remedy uses UI\n  automation instead because that app never established a Metro connection.\n- A successful stim reload confirms that the request was sent, not that new\n  JavaScript loaded or the screen recovered. Verify the expected UI on the\n  reported device and inspect stim logs --errors before claiming recovery.\n- If launch reports an app error but also says the native process is alive,\n  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh. If\n  the error screen remains, follow the printed reload remedy instead of\n  running ios or android again. If launch says FATAL because the app process exited,\n  fix the crash and run the platform command again; Metro cannot restart it.\n- A native build can outlive a shell timeout. Retry the same command and\n  follow its printed remedy if waiting times out. See guide lifecycle concurrency.\n- ios and android install the app, launch it, and check readiness. Trust the\n  exact device, app, Metro, and launch facts in the final summary. Use the full\n  reported device ID. Never assume a simulator named booted belongs to this\n  workspace.\n- After each ios or android run, give the user one compact result: exact device,\n  app id, launch state, cache result, total duration, and whether stim logs\n  --errors passed. Include a remedy only when action remains. Do not repeat the\n  phase transcript.\n- An OK summary with no launch qualifier proves the launch. \"bundle requested,\n  still building\" means Metro has not finished; wait and query the logs. For\n  launch UNVERIFIED, follow the printed remedy before claiming success. JSON\n  reports these as true, \"bundling\", and \"unverified\" in launched.\n  WARNING means the native launch completed with app errors, or an app readiness\n  signal was expected but not confirmed; inspect the output before claiming a healthy UI.\n- A clean logs --errors check requires exit code 0 AND no matching errors in\n  captured logs. Exit code 0 alone means the query succeeded, even when errors\n  were printed. Human output shows \"No matching log records\" on stderr for\n  zero matches; JSON mode prints zero bytes. This does not prove launch or log\n  capture succeeded. Do not read the NDJSON files directly.\n- Use stim status when resuming a workspace or recovering missing device,\n  port, server, or build facts. A normal start and platform run already print\n  them. Use stim doctor when a build is unexpectedly slow or the environment\n  looks incomplete.\n\nOWNERSHIP AND DELETION\n\nStim creates, boots, and deletes only devices it created. Owned simulators use\nthe stim-<label> (<model> <runtime>) name. Never point Stim at a user-created\nemulator or simulator.\n\nworktree remove parks the workspace's simulator or emulator for later adoption.\nA parked device is Stim-owned: never delete one by hand. gc --delete clears verified\nentries and keeps failures; see guide lifecycle pool. First launch on a\nphysical iPhone can need the one-time taps named by the remedy.\n\nstim android --device [serial] and stim ios --device [udid] install on a\nconnected physical device. Stim never creates, boots, shuts down, or deletes\nhardware. It records a temporary lease, not an owned-device registry entry.\n\nA --device run leases that device for the run. stim device lock ios --for 10m\nholds it across runs; stim device unlock gives it back. Never delete another\nworkspace's lease file under ~/.stim/device-locks; gc --delete removes expired\nones.\n\nstop and worktree remove release this workspace's leases. On a physical\niPhone, stop also closes the app by ending its log collector; it does not\nshut down the phone or uninstall the app.\n\nTreat a refusal as an ownership or state mismatch: read its code and remedy.\nNever reach for --force first.\nStim leaves externally started servers alone. Stop them with their original\ntool; neither a matching port nor --force grants process ownership.\n\nAsk the user before these actions:\n\n- worktree remove, because it deletes the worktree and gives up its owned\n  device. It works with any linked worktree, warmed or not, without requiring\n  a Stim registry entry. Git-created branches are kept; a branch with an\n  existing Stim ownership record is deleted only when it has no unique commits.\n- worktree remove --force, because it also discards uncommitted and untracked\n  files.\n- gc --delete, because it deletes orphaned resources. gc --delete --cache all\n  empties the shared build caches instead; it inspects nothing else.\n- stop when the workspace owns an EAS session, because it irreversibly ends\n  that remote session. For a local device, stop shuts it down but does not\n  delete it. An explicit stop shuts down a Stim-owned simulator even when\n  another process uses it. It never shuts down an unowned simulator.\n\nSANDBOXES\n\nAn agent harness that sandboxes shell commands usually permits writes inside\nthe project and little else. Stim also needs writes to STIM_HOME (~/.stim by\ndefault), simulator service access, and local access to the adb server. When\nthose sit outside the harness allowlist, the failure looks like an unwritable\ndirectory or unavailable device service rather than a broken machine. Decide\nat the start of a session whether to run Stim outside the sandbox or ask the\nuser to allow those operations. guide errors sandbox lists the exact\nrequirements.\n\nLOAD ADVANCED GUIDANCE WHEN NEEDED\n\n  stim guide                      # list topics\n  stim guide errors               # index of every refusal code and message\n  stim guide errors <CODE>        # one refusal, e.g. stim guide errors STIM_NO_METRO\n  stim guide errors sandbox       # running under a sandboxing harness\n  stim guide errors unverified    # launch unverified, and the Local Network reason\n  stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit\n  stim guide lifecycle            # the ordered flow, consent rules, and capacity\n  stim guide lifecycle verification # reproduce, edit, verify the UI, and retain proof\n  stim guide lifecycle readiness  # add optional app readiness logs; no package required\n  stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints\n  stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits\n  stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image\n  stim guide lifecycle devices    # ios --device and android --device on a physical phone\n  stim guide lifecycle release    # Release configurations and ...Release variants\n  stim guide facts                # the --json payloads\n  stim guide facts devmenu        # the Expo dev menu or Tools button over the app\n  stim guide metro                # supervisor, custom Metro, tunnels, and remote devices\n  stim guide logs                 # filters, record shape, and capture limits\n  stim guide cleanup              # what reclaims a device, and what deletes\n  stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed\n  stim guide settings             # configuration files and supported keys\n\nA refusal prints a CODE such as STIM_NO_METRO. Run stim guide errors <CODE>\nwith the code exactly as printed and read only that section; every code in a\nshared header (STIM_BAD_ARG / STIM_NO_PROJECT) resolves to the same section. A\nrefusal with no code is quoted by message in stim guide errors. A topic with\nsections called bare prints its section index, so read the narrowest section\nbefore release configurations or Android variants; remote devices; custom\nMetro processes or tunnels; cache misses, bypasses, or concurrent builds;\ncapacity limits; cache statistics from stim stats; worktree carry-over;\nfingerprint exclusions; gc; --force; cleanup failures; or unfamiliar states\nand error codes. Ordinary stim stop and an authorized clean\nstim worktree remove do not need the cleanup guide.\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim guide agent",
+            "cwd": "./worktrees/bench-javascript-stim"
+          }
+        },
+        {
+          "id": "toolu_01WTETrma6zMQFNXEqj1dyEC",
+          "startSeconds": 7.162,
+          "endSeconds": 29.884,
+          "command": "cd ./worktrees/bench-javascript-stim && stim worktree warm",
+          "output": "  carry       copied .expo, android/.gradle, android/app/.cxx, +6 from worktree/bench-fixture-1.0.0\n  carry       complete: 9 ignored entries copied, 0 kept, 0 failed\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim worktree warm",
+            "cwd": "./worktrees/bench-javascript-stim"
+          }
+        },
+        {
+          "id": "toolu_01LQjmkruiRtAKfT9wupfWrB",
+          "startSeconds": 33.484,
+          "endSeconds": 33.533,
+          "command": "cd ./worktrees/bench-javascript-stim && grep -rn \"Keep map tiles for saved trails on device\" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.json' . --exclude-dir=node_modules --exclude-dir=ios --exclude-dir=android",
+          "output": "app/(tabs)/settings.tsx:112:            subtitle=\"Keep map tiles for saved trails on device\"\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0,
+          "presentation": {
+            "command": "grep -rn \"Keep map tiles for saved trails on device\" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.json' . --exclude-dir=node_modules --exclude-dir=ios --exclude-dir=android",
+            "cwd": "./worktrees/bench-javascript-stim"
+          }
+        },
+        {
+          "id": "toolu_01HaboDAfgguDm2K65d7c14M",
+          "startSeconds": 41.663,
+          "endSeconds": 43.541,
+          "command": "cd ./worktrees/bench-javascript-stim && stim start",
+          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 51622)\nOK: dev server on port 8082, supervisor pid 51622 (expo-child) (1.7s)\n  logs        results/opus-ios/javascript-stim/stim-home/workspaces/bench-opus-ios-opus-javascript-stim-178909814847--0298383ca12fbef7/logs\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim start",
+            "cwd": "./worktrees/bench-javascript-stim"
+          }
+        },
+        {
+          "id": "toolu_01FK4wCvga7PqEyVbqvSB6Hd",
+          "startSeconds": 45.759,
+          "endSeconds": 69.127,
+          "command": "cd ./worktrees/bench-javascript-stim && stim ios",
+          "output": "  device      booting stim-bench-opus-ios-opus-javascript-stim-17 (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint 065903.. hit (7.1s)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  device      stim-bench-opus-ios-opus-javascript-stim-17 (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (7.6s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     unchanged (stim-bench-opus-ios-opus-javascript-stim-17 (iPhone 17 26.5) already has this build) (631ms)\n  install     dev client prepared (2.2s)\n  launch      com.appandflow.trailhead (1.6s)\n  readiness   waiting for app readiness (up to 30s after bundle load)\n  readiness   app reported ready (6.6s verification total)\n  verify      bundle loaded, process alive (6.6s total)\nOK: com.appandflow.trailhead on stim-bench-opus-ios-opus-javascript-stim-17 (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (from cache, 23.2s)\n  device      stim-bench-opus-ios-opus-javascript-stim-17 (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       from cache\n  compilation cache not run; artifact cache supplied the app\n  logs        results/opus-ios/javascript-stim/stim-home/workspaces/bench-opus-ios-opus-javascript-stim-178909814847--0298383ca12fbef7/logs\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim ios",
+            "cwd": "./worktrees/bench-javascript-stim"
+          }
+        },
+        {
+          "id": "toolu_01V3ypo42HnW65AGaM7Ldp9J",
+          "startSeconds": 74.104,
+          "endSeconds": 84.503,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/javascript-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 32 visible nodes\n@e1 [application] \"Trailhead\"\n@e2 [other] \"\"\n@e3 [other] \"Trails\"\n@e4 [text-field] \"Search trails\" [editable]\n@e5 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"All regions\"\n@e7 [button] \"All regions\" [selected]\n@e8 [button] \"Adirondacks\"\n@e9 [button] \"Bas-Saint-Laurent\"\n@e10 [button] \"Charlevoix\"\n@e11 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e12 [other] \"Any level\"\n@e13 [button] \"Any level\" [selected]\n@e14 [button] \"Easy\"\n@e15 [button] \"Moderate\"\n@e16 [button] \"Hard\"\n@e17 [button] \"Expert\"\n@e18 [text] \"200 trails\"\n@e19 [button] \"Sort by name\" [selected]\n@e20 [button] \"Sort by distance\"\n@e21 [button] \"Sort by rating\"\n@e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e23 [other] [same label as parent]\n@e24 [button] [same label as parent]\n@e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e28 [other] \"Trails, tab, 1 of 4\"\n@e29 [button] \"Trails, tab, 1 of 4\" [selected]\n@e30 [button] \"Record, tab, 2 of 4\"\n@e31 [button] \"History, tab, 3 of 4\"\n@e32 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_0194BWigmv7dr2JsjovayDvw",
+          "startSeconds": 88.86,
+          "endSeconds": 91.08,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device record start tmp/javascript-stim-session.mp4 --scope device --quality high --hide-touches",
+          "output": "tmp/javascript-stim-session.mp4\nSession state: ./state/agent-device/sessions/javascript-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/javascript-stim-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_017nKee8secLC9MRC4arWNPg",
+          "startSeconds": 93.6,
+          "endSeconds": 96.579,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device press @e32 --settle",
+          "output": "Tapped @e32 (352, 816)\nsettled after 2262ms: +32 -32 (~0 unchanged)\n- @e1 [application] \"Trailhead\"\n- @e2 [other] \"\"\n- @e3 [other] \"Trails\"\n- @e4 [text-field] \"Search trails\"\n- @e5 [scroll-area] \"All regions\"\n- @e6 [other] \"All regions\"\n- @e7 [button] \"All regions\"\n- @e8 [button] \"Adirondacks\"\n- @e9 [button] \"Bas-Saint-Laurent\"\n- @e10 [button] \"Charlevoix\"\n- @e11 [scroll-area] \"Any level\"\n- @e12 [other] \"Any level\"\n- @e13 [button] \"Any level\"\n- @e14 [button] \"Easy\"\n- @e15 [button] \"Moderate\"\n- @e16 [button] \"Hard\"\n- @e17 [button] \"Expert\"\n- @e18 [text] \"200 trails\"\n- @e19 [button] \"Sort by name\"\n- @e20 [button] \"Sort by distance\"\n- @e21 [button] \"Sort by rating\"\n- @e22 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e23 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e24 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e25 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e26 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e27 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n- @e28 [other] \"Trails, tab, 1 of 4\"\n- @e29 [button] \"Trails, tab, 1 of 4\"\n- @e30 [button] \"Record, tab, 2 of 4\"\n- @e31 [button] \"History, tab, 3 of 4\"\n- @e32 [button] \"Settings, tab, 4 of 4\"\n+ @e1~s882706 [application] \"Trailhead\"\n+ @e2~s882706 [text] \"Settings\"\n+ @e3~s882706 [scroll-area]\n+ @e4~s882706 [text] \"UNITS\"\n+ @e5~s882706 [text] \"Distance\"\n+ @e6~s882706 [text] \"\"\n+ @e7~s882706 [button] \"Metric units\"\n+ @e8~s882706 [button] \"Imperial units\"\n+ @e9~s882706 [text] \"Used across the whole app\"\n+ @e10~s882706 [text] \"PREFERENCES\"\n+ @e11~s882706 [text] \"Hike reminders\"\n+ @e12~s882706 [switch] \"Hike reminders\"\n+ @e13~s882706 [text] \"\"\n+ @e14~s882706 [text] \"Nudge me when I have not hiked in a while\"\n+ @e15~s882706 [text] \"Offline maps\"\n+ @e16~s882706 [switch] \"Offline maps\"\n+ @e17~s882706 [text] \"\"\n+ @e18~s882706 [text] \"Keep saved trail maps available offline\"\n+ @e19~s882706 [text] \"STORAGE\"\n+ @e20~s882706 [text] \"Recorded hikes\"\n+ @e21~s882706 [text] \"\"\n+ @e22~s882706 [text] \"48\"\n+ @e23~s882706 [text] \"Stored in a local database\"\n+ @e24~s882706 [button] \"Reset sample data\"\n+ @e25~s882706 [text] \"ABOUT\"\n+ @e26~s882706 [text] \"\"\n+ @e27~s882706 [text] \"Version\"\n+ @e28~s882706 [text] \"1.0.0\"\n+ @e29~s882706 [button] \"Trails, tab, 1 of 4\"\n+ @e30~s882706 [button] \"Record, tab, 2 of 4\"\n+ @e31~s882706 [button] \"History, tab, 3 of 4\"\n+ @e32~s882706 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e32 --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01VquiHBq33WxHndTxhXMRnB",
+          "startSeconds": 100.24,
+          "endSeconds": 100.401,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device wait text \"Keep saved trail maps available offline\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Keep saved trail maps available offline\"",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01XNgRhUo1Gb7DuBAgLxtxTG",
+          "startSeconds": 103.115,
+          "endSeconds": 103.544,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device screenshot tmp/javascript-stim-settings.png",
+          "output": "tmp/javascript-stim-settings.png (402x874 @1x)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/javascript-stim-settings.png",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01JiGkKhMxpwiXJ5QtG1xYBk",
+          "startSeconds": 105.918,
+          "endSeconds": 105.966,
+          "command": "cp tmp/javascript-stim-settings.png results/opus-ios/javascript-stim/proof/settings.png",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01CTRUsehwQRoUb9EZtnyjDa",
+          "startSeconds": 108.494,
+          "endSeconds": 109.474,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device record stop",
+          "output": "tmp/javascript-stim-session.mp4",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01WyUMfdUzsEeVgaQVhEYaKN",
+          "startSeconds": 111.843,
+          "endSeconds": 111.888,
+          "command": "cp tmp/javascript-stim-session.mp4 results/opus-ios/javascript-stim/proof/session.mp4",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_011muyaBnrTEPaP9f6ZHEy8t",
+          "startSeconds": 114.633,
+          "endSeconds": 114.8,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-stim agent-device close",
+          "output": "Closed: javascript-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_015U8qpmisaCw8nzj3uqNcPz",
+          "startSeconds": 117.252,
+          "endSeconds": 117.299,
+          "command": "ls -l results/opus-ios/javascript-stim/proof/",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 62.64
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 103.544
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/opus-rc12/javascript-stim.png",
+        "expected": "Keep saved trail maps available offline",
+        "width": 402,
+        "height": 874
+      },
+      "recording": {
+        "src": "benchmarks/opus-rc12/javascript-stim.mp4",
+        "bytes": 118499
+      },
+      "timingOrigin": {
+        "kind": "first-recorded-activity",
+        "dispatchOffsetSeconds": 133.943,
+        "event": {
+          "kind": "message",
+          "id": "9396ecda-288c-46d6-acf2-a56843aa3187-0"
+        },
+        "dispatchSettingsReadySeconds": 237.487,
+        "dispatchDiagnosisSeconds": null,
+        "dispatchTotalSeconds": 263.445
+      }
+    },
+    {
+      "id": "javascript-control",
+      "model": "opus",
+      "platform": "ios",
+      "recordedOn": "2026-09-11",
+      "variant": "javascript",
+      "arm": "control",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 621.379,
+      "appAliveSeconds": 552.364,
+      "diagnosisSeconds": null,
+      "diagnosisCommandCount": null,
+      "launchCrashAudit": null,
+      "diagnosisUsage": null,
+      "estimatedDiagnosisCostUsd": null,
+      "totalSeconds": 656.138,
+      "commandCount": 46,
+      "usage": {
+        "input_tokens": 1902410,
+        "cached_input_tokens": 1844281,
+        "cache_creation_input_tokens": 58023,
+        "output_tokens": 18884,
+        "reasoning_output_tokens": 5180
+      },
+      "estimatedTokenCostUsd": 1.9776025,
+      "summary": "Created an isolated worktree and carried over dependencies or native outputs, worked on the JavaScript change, and started the local Expo/Xcode workflow. It reached Settings and captured valid agent-device proof. The record includes 2 failed command attempts before completion.",
+      "messages": [
+        {
+          "id": "cf472041-b233-4168-aab8-72afac2c2127-0",
+          "atSeconds": 0,
+          "text": "I'll start by inspecting the source checkout to understand the project layout and what needs to be carried into the worktree."
+        },
+        {
+          "id": "4ed22254-17cf-4130-9bc6-cd13183a5758-0",
+          "atSeconds": 588.52,
+          "text": "Metro bundled and the app reports ready, but a second queued alert (from my two `openurl` calls) is still up. Accepting it too."
+        },
+        {
+          "id": "b2180af7-b6b2-4200-8c03-9dd87254e066-0",
+          "atSeconds": 655.871,
+          "text": "All eight proof commands succeeded in order; the app is left running on the new simulator with Metro still serving.\n\n## Summary\n\n**Run worktree:** `./worktrees/javascript-control` (branch `bench/javascript-control`, based on `075990b`)\n\n**Change:** `app/(tabs)/settings.tsx:112` — offline-map subtitle is now `\"Keep saved trail maps available offline\"`.\n\n**Proof artifacts:**\n- Screenshot: `results/opus-ios/javascript-control/proof/settings.png` (67,700 bytes)\n- Recording: `results/opus-ios/javascript-control/proof/session.mp4` (3,103,166 bytes)\n\n**Simulator:** `Trailhead javascript-control` — UDID `<simulator-udid>`, iPhone 17 / iOS 26.5, newly created, still booted with the app running. Simulator.app was opened against it.\n\n**Still running (left intentionally):** Metro PID 40248 on port 8081 (`packager-status:running`, log at `tmp/javascript-control-metro.log`, started in CI mode so it bundled the already-edited source; log shows `iOS Bundled ... index.js` and `[stim:readiness] ready`).\n\n**Things worth knowing:**\n- Dependencies were carried via APFS clonefile (`cp -Rc`): `node_modules`, `ios/Pods`, `ios/build`, `ios/.<local-host>`, `.expo`, `expo-env.d.ts`, and the Android `build`/`.cxx`/`.gradle` outputs. No DerivedData matched the source checkout, so the Xcode build was cold (~4 min).\n- `expo run:ios` itself ran `pod install` automatically before building; that regenerated one checksum line in `ios/Podfile.lock` (`ExpoModulesCore`), which shows up as an unstaged change alongside the subtitle edit. I did not revert it since it reflects the actual installed pod.\n- `expo run:ios` built and installed the app, but crashed at its final \"activate Simulator window\" step (`osascript` to System Events is blocked in this shell) before issuing the launch URL. I completed the launch with `xcrun simctl openurl` using the exact dev-client URL the CLI logged. That produced iOS's \"Open in Trailhead?\" alerts (two, since I retried once after pre-approving the scheme the way the CLI does); both were accepted inside the agent-device session before step 3, then I tapped the Settings tab via `label=\"Settings, tab, 4 of 4\"`.\n- The first `expo run:ios` attempt was rejected because `--port` and `--no-bundler` are mutually exclusive; the second attempt without `--port` is the one that built.\n\nNothing was committed; the coordinator can verify and clean up."
+        }
+      ],
+      "commands": [
+        {
+          "id": "toolu_01KJWv1fJoj8JSbfyRnJRARS",
+          "startSeconds": 1.289,
+          "endSeconds": 1.907,
+          "command": "ls -la && cat package.json && git branch --show-current && git worktree list",
+          "output": "<branch inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_017s4DF4i9ESWnPuFxzRoqts",
+          "startSeconds": 4.197,
+          "endSeconds": 4.228,
+          "command": "cat AGENTS.md CLAUDE.md .gitignore; ls ios android .expo; grep -rn \"Keep map tiles\" src app --include=*.ts --include=*.tsx",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_016xLwifFmaH1jyn7kQCPHm2",
+          "startSeconds": 7.446,
+          "endSeconds": 11.853,
+          "command": "grep -rn \"Keep map tiles\" src app; ls ios/build; du -sh ios/Pods ios/build node_modules 2>/dev/null; git status --ignored --short | head -30; ls -la ios/Trailhead.xcodeproj/xcuserdata 2>/dev/null; ls ~system/Library/Developer/Xcode/DerivedData 2>/dev/null | head",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Dbh8b1zMY1673L1xh53Lqq",
+          "startSeconds": 17.913,
+          "endSeconds": 42.262,
+          "command": "ls -d ~system/Library/Developer/Xcode/DerivedData/Trailhead-* 2>/dev/null; for d in ~system/Library/Developer/Xcode/DerivedData/Trailhead-*; do echo \"$d\"; cat \"$d/info.plist\" 2>/dev/null | grep -A1 WorkspacePath; du -sh \"$d\"; done; cat ios/.<local-host>; cat .expo/devices.json; ls android/app/build android/.gradle 2>/dev/null | head; du -sh android/app/build android/.gradle android/app/.cxx 2>/dev/null; ls bench scripts docs",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_0137r572Kh6wTr6a1vgoU15E",
+          "startSeconds": 45.885,
+          "endSeconds": 46.039,
+          "command": "grep -l \"bench-fixture-1.0.0/ios/Trailhead.xcworkspace\" ~system/Library/Developer/Xcode/DerivedData/Trailhead-*/info.plist 2>/dev/null | head; echo ---; cat ios/.<local-host>; echo ---; cat .expo/devices.json; echo ---; du -sh android/app/build android/.gradle android/app/.cxx 2>/dev/null; ls bench scripts docs",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_016LSJxTNBoDD2XWL5FAbFpa",
+          "startSeconds": 51.402,
+          "endSeconds": 51.476,
+          "command": "cat ~system/Library/Developer/Xcode/DerivedData/Trailhead-acepsdjplplywuhftzaozqfltcua/info.plist; grep -h -A1 WorkspacePath ~system/Library/Developer/Xcode/DerivedData/Trailhead-*/info.plist | grep string | grep -c bench; grep -h -A1 WorkspacePath ~system/Library/Developer/Xcode/DerivedData/Trailhead-*/info.plist | grep string | grep -i \"bench-fixture\\|bench-1.0.0\" | head -5; cat bench/README.md | head -80",
+          "output": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n\t<key>LastAccessedDate</key>\n\t<date>2026-09-08T02:45:59Z</date>\n\t<key>WorkspacePath</key>\n\t<string>worktree/bench-launch-error-rc21/worktrees/sol-ios-launch-error-gpt-5-6-sol-launch-crash-control-1788835336615/ios/Trailhead.xcworkspace</string>\n</dict>\n</plist>\n41\n\t<string>./worktrees/luna-ios-gpt-5-6-luna-javascript-control-1789085476440/ios/Trailhead.xcworkspace</string>\n\t<string>./worktrees/luna-ios-gpt-5-6-luna-native-control-1789086724771/ios/Trailhead.xcworkspace</string>\n\t<string>./worktrees/sol-ios-gpt-5-6-sol-native-control-1789083214417/ios/Trailhead.xcworkspace</string>\n\t<string>./worktrees/luna-ios-launch-error-gpt-5-6-luna-launch-crash-control-1789088129320/ios/Trailhead.xcworkspace</string>\n\t<string>./worktrees/sonnet-ios-sonnet-native-control-1789094397266/ios/Trailhead.xcworkspace</string>\n# Trailhead loop benchmark\n\n`bench/bench.mjs` times the seven things an AI coding agent has to wait for when it\nbuilds, implements, validates and ships a change in this repo. It has no\ndependencies beyond Node 20+ built-ins.\n\nCompare runs against **your own earlier baseline**, not against someone else's\nnumbers. Machines vary enough that absolute seconds mostly measure hardware. Run\nthe harness once before you change anything, keep that JSON, and compare every\nlater run against it.\n\n## Running it\n\n```bash\n# from the repo root, before you optimise anything\nnpm run bench -- --label day0\n\n# later, after optimising\nnpm run bench -- --label after-ccache\n\n# just the loop-shaped stages\nnpm run bench -- --only ios-incremental,metro-cold\n\n# everything except the two slowest\nnpm run bench -- --skip android-cold,worktree-to-running\n```\n\n| flag | meaning |\n| --- | --- |\n| `--only <a,b>` | run only these stages |\n| `--skip <a,b>` | drop these stages (applied after `--only`) |\n| `--label <name>` | goes in the result filename; default `baseline` |\n| `--json` | print the result JSON on stdout, summary table on stderr |\n| `--help` | usage |\n\n`BENCH_SIM_UDID=<udid>` pins a specific simulator instead of letting the harness\npick one.\n\nA full run is slow — expect the better part of an hour, most of it in\n`ios-cold`, `android-cold` and `worktree-to-running`. Close Xcode, quit other\nbuilds, and plug the laptop in first; thermal throttling and a competing build\nboth show up as noise in the numbers.\n\nThe harness must be run from the repo root. `npm run bench` always does that.\n\n## Output\n\n- `bench/results/<timestamp>-<label>.json` — the full record.\n- `bench/results/logs/<timestamp>-<label>/<stage>.log` — the complete stdout and\n  stderr of every subprocess that stage ran.\n- A summary table on stdout.\n\n`bench/results/logs/` is gitignored; the result JSON is not. **Commit your\nbaseline** so later runs have something to compare against:\n\n```bash\nnpm run bench -- --label baseline\ngit add bench/results && git commit -m \"chore: day-0 baseline\"\n```\n\n## The stages\n\nRun in this order, because each one leaves the tree in the state the next one\nneeds to start cold.\n\n### `install`\n`rm -rf node_modules`, then a cold install. The package manager is detected from\n`package.json`'s `packageManager` field, then from the lockfile\n(`package-lock.json` → npm, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm,\n`bun.lockb`/`bun.lock` → bun). With a lockfile present it uses the frozen-lockfile\nform (`npm ci`, `yarn install --immutable`/`--frozen-lockfile`,\n`pnpm install --frozen-lockfile`, `bun install --frozen-lockfile`). The resolved\nmanager, its version and the exact command are recorded in the result.\n\nThis is what an agent pays every time it starts from a clean checkout.\n\n### `pods`\n`rm -rf ios/Pods ios/build`, then a CocoaPods install: `bundle exec pod install`\nif there is a Gemfile that mentions cocoapods, otherwise `pod install`, otherwise\n`npx pod-install`.",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01FGY7JsdFVvTXgABtH3EMas",
+          "startSeconds": 55.029,
+          "endSeconds": 55.083,
+          "command": "grep -n \"worktree\" bench/bench.mjs | head -40; grep -n \"clone\\|cp -\\|rsync\\|DerivedData\\|derived\" bench/bench.mjs | head -30",
+          "output": "21:  'worktree-to-running',\n31:  'worktree-to-running': 90 * 60_000,\n57:    worktree-to-running   Fresh git worktree of HEAD -> app installed on a\n58:                          simulator -> worktree torn down.\n430:// Gitignored files a fresh worktree needs but git will not carry across. An\n431:// optional `.worktreeinclude` at the repo root can name more of them, one\n433:function worktreeCarryList(root) {\n435:  const file = path.join(root, '.worktreeinclude');\n751:  async 'worktree-to-running'(ctx) {\n753:    if (!gitRoot) return ctx.skip('not a git repository, cannot create a worktree');\n767:    const holder = fs.mkdtempSync(path.join(os.tmpdir(), 'bench-worktree-'));\n770:    let worktreeDerivedData = null;\n776:      // The worktree gets its own hashed derived data directory keyed on its path;\n777:      // removing the worktree would otherwise strand gigabytes of it.\n778:      if (worktreeDerivedData) rmrf(worktreeDerivedData);\n779:      await exec({ ...ctx.cmdBase(), cmd: 'git', args: ['worktree', 'remove', '--force', wt], cwd: gitRoot });\n780:      await exec({ ...ctx.cmdBase(), cmd: 'git', args: ['worktree', 'prune'], cwd: gitRoot });\n791:    await step('worktree-add', () =>\n792:      ctx.sh({ cmd: 'git', args: ['worktree', 'add', '--detach', wt, head], cwd: gitRoot })\n795:    const carried = worktreeCarryList(REPO_ROOT);\n844:    worktreeDerivedData = derivedDataDirs(wtProject.scheme).filter((d) => !ddBefore.has(d))[0] ?? null;\n299:// The harness deliberately does not pass -derivedDataPath: `ios/build` already\n300:// holds React Native's codegen output and pointing derived data at it breaks the\n303:function derivedDataRoot() {\n304:  const custom = capture('defaults', ['read', 'com.apple.dt.Xcode', 'IDECustomDerivedDataLocation']);\n307:    : path.join(os.homedir(), 'Library', 'Developer', 'Xcode', 'DerivedData');\n310:function derivedDataDirs(scheme) {\n313:      .readdirSync(derivedDataRoot())\n315:      .map((name) => path.join(derivedDataRoot(), name));\n322:// learn where the .app landed when the derived data path is Xcode's hashed one.\n368:// <derived data>/Build/Products/Debug-iphonesimulator/Foo.app -> <derived data>,\n369:// but only when it really is a child of the derived data root.\n370:function derivedDataDirForApp(appPath) {\n372:  return path.dirname(dir) === derivedDataRoot() ? dir : null;\n601:      for (const dir of derivedDataDirs(project.scheme)) rmrf(dir);\n624:    if (!derivedDataDirs(project.scheme).length) {\n770:    let worktreeDerivedData = null;\n776:      // The worktree gets its own hashed derived data directory keyed on its path;\n778:      if (worktreeDerivedData) rmrf(worktreeDerivedData);\n811:    const ddBefore = new Set(derivedDataDirs(wtProject.scheme));\n844:    worktreeDerivedData = derivedDataDirs(wtProject.scheme).filter((d) => !ddBefore.has(d))[0] ?? null;\n849:    // The run script opens the app against a LAN address derived from the current",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01U4rVPCbeJqHYGEzocz8gMh",
+          "startSeconds": 69.663,
+          "endSeconds": 69.756,
+          "command": "ls ./ ./worktrees/ 2>&1 | head -30; git branch --list 'bench/javascript-control'; ls results/opus-ios/javascript-control/proof 2>&1",
+          "output": "<branch inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01KK5uzPRBAhiwtRpkTqf2Rt",
+          "startSeconds": 72.576,
+          "endSeconds": 72.619,
+          "command": "ls -d ./worktrees results/opus-ios/javascript-control/proof 2>&1; git branch --list 'bench/*' | head",
+          "output": "<branch inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01GiiVaDXactTDuwnkG2hXmT",
+          "startSeconds": 75.472,
+          "endSeconds": 75.612,
+          "command": "git worktree add -b bench/javascript-control ./worktrees/javascript-control HEAD && git worktree list",
+          "output": "<branch inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_015Vw8GRsuhnGR1bT48qp9t6",
+          "startSeconds": 82.25,
+          "endSeconds": 106.196,
+          "command": "SRC=worktree/bench-fixture-1.0.0; WT=./worktrees/javascript-control; time ( cp -Rc \"$SRC/node_modules\" \"$WT/node_modules\" && cp -Rc \"$SRC/ios/Pods\" \"$WT/ios/Pods\" && cp -Rc \"$SRC/ios/build\" \"$WT/ios/build\" && cp -c \"$SRC/ios/.<local-host>\" \"$WT/ios/.<local-host>\" && cp -Rc \"$SRC/.expo\" \"$WT/.expo\" && cp -c \"$SRC/expo-env.d.ts\" \"$WT/expo-env.d.ts\" && cp -Rc \"$SRC/android/.gradle\" \"$WT/android/.gradle\" && cp -Rc \"$SRC/android/app/build\" \"$WT/android/app/build\" && cp -Rc \"$SRC/android/app/.cxx\" \"$WT/android/app/.cxx\" ); echo \"exit=$?\"; ls -a \"$WT\" \"$WT/ios\"; du -sh \"$WT/node_modules\" \"$WT/ios/Pods\"",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01U8xfTht9RWiHJCkqXPJ5f3",
+          "startSeconds": 118.165,
+          "endSeconds": 118.485,
+          "command": "cd ./worktrees/javascript-control && xcrun simctl list runtimes | grep -i ios; xcrun simctl list devicetypes | grep -i \"iPhone 17\"; xcode-select -p; xcodebuild -version | head -1",
+          "output": "iOS 26.5 (26.5 - 23F77) - com.apple.CoreSimulator.SimRuntime.iOS-26-5\niPhone 17 Pro (com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)\niPhone 17 Pro Max (com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max)\niPhone 17e (com.apple.CoreSimulator.SimDeviceType.iPhone-17e)\niPhone 17 (com.apple.CoreSimulator.SimDeviceType.iPhone-17)\nworkspace/Developer\nXcode 26.6\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01Y3768fPMcwhEK23eenkGGs",
+          "startSeconds": 122.602,
+          "endSeconds": 145.683,
+          "command": "cd ./worktrees/javascript-control && UDID=$(xcrun simctl create \"Trailhead javascript-control\" com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-26-5) && echo \"UDID=$UDID\" && xcrun simctl boot \"$UDID\" && xcrun simctl bootstatus \"$UDID\" -b && xcrun simctl list devices | grep \"$UDID\"",
+          "output": "<device inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_013Sb3ffB9qdbbsjPsVm5SH7",
+          "startSeconds": 151.533,
+          "endSeconds": 152.13,
+          "command": "lsof -nP -iTCP:8081 -sTCP:LISTEN; ls ./worktrees/javascript-control/node_modules/.bin/expo && ./worktrees/javascript-control/node_modules/.bin/expo --version",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01RYn9gUYrvHDXpqKU24FuNi",
+          "startSeconds": 156.345,
+          "endSeconds": 156.396,
+          "command": "cd ./worktrees/javascript-control && export CI=1 EXPO_NO_TELEMETRY=1 && nohup ./node_modules/.bin/expo start --port 8081 > tmp/javascript-control-metro.log 2>&1 &\necho \"METRO_PID=$!\"",
+          "output": "METRO_PID=40248\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01YUgPGUV8Qo1qVsPkXtwwuS",
+          "startSeconds": 159.858,
+          "endSeconds": 160.016,
+          "command": "for i in $(seq 1 30); do if curl -fsS http://localhost:8081/status 2>/dev/null | grep -q \"packager-status:running\"; then echo \"READY after ${i}s\"; break; fi; sleep 1; done; curl -sS http://localhost:8081/status; echo; ps -p 40248 -o pid,command | cat; tail -n 15 tmp/javascript-control-metro.log",
+          "output": "<process output omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_0128Si2iuBsvnkR6Jgobn9oJ",
+          "startSeconds": 169.3,
+          "endSeconds": 169.334,
+          "command": "cd ./worktrees/javascript-control && export CI=1 EXPO_NO_TELEMETRY=1 && nohup ./node_modules/.bin/expo run:ios --device <simulator-udid> --no-bundler --port 8081 > tmp/javascript-control-run-ios.log 2>&1 &\necho \"RUN_IOS_PID=$!\"",
+          "output": "RUN_IOS_PID=40397\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WoqpX4m9hHdnH1SA9LW7P1",
+          "startSeconds": 171.692,
+          "endSeconds": 216.775,
+          "command": "sleep 45; kill -0 40397 2>/dev/null && echo \"build running\" || echo \"build process exited\"; tail -n 20 tmp/javascript-control-run-ios.log",
+          "output": "build process exited\n[Expo-precompiled]   📦 ExpoFont (58.0.0-canary-20260902-26df09e)\n[Expo-precompiled]   📦 ExpoImage (58.0.0-canary-20260902-26df09e)\n[Expo-precompiled]       ∟ SDWebImage.xcframework (5.21.6)\n[Expo-precompiled]       ∟ SDWebImageAVIFCoder.xcframework (0.12.0)\n[Expo-precompiled]       ∟ SDWebImageSVGCoder.xcframework (1.8.0)\n[Expo-precompiled]       ∟ SDWebImageWebPCoder.xcframework (0.15.0)\n[Expo-precompiled]       ∟ libavif.xcframework (1.0.0)\n[Expo-precompiled]   📦 ExpoLocation (58.0.0-canary-20260902-26df09e)\n[Expo-precompiled]   📦 ExpoModulesCore (58.0.0-canary-20260902-26df09e)\n[Expo-precompiled]   📦 ExpoModulesWorklets (58.0.0-canary-20260902-26df09e)\n[Expo] Disabling SWIFT_EMIT_MODULE_INTERFACE for pod targets (prebuilt React compatibility)\n[Expo] Ensured modular React header flags on 0 xcconfig(s)\n[Expo-precompiled] Looking for ExpoModulesCore.xcframework at: ./worktrees/javascript-control/ios/Pods/ExpoModulesCore/ExpoModulesCore.xcframework\n[Expo-precompiled] Adding ExpoModulesJSI header search paths to all targets\n[Expo-precompiled] Adding ExpoModulesWorklets header search paths to ExpoModulesWorkletsAdapter\n[Expo-precompiled] Adding ExpoModulesWorklets header search paths to ExpoUI\n[Expo] Adding '[Expo] Remove duplicate codegen output' build phase to ReactCodegen\n[Expo] Raised resource bundle deployment targets to match their pods: RNSVG-RNSVGFilters, lottie-ios-LottiePrivacyInfo, lottie-react-native-Lottie_React_Native_Privacy\n✔ Installed CocoaPods\nCommandError: --port and --no-bundler are mutually exclusive arguments",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01PiWNMPiGk8dMm24QnjNEvq",
+          "startSeconds": 223.149,
+          "endSeconds": 223.205,
+          "command": "head -n 12 tmp/javascript-control-run-ios.log; cd ./worktrees/javascript-control && export CI=1 EXPO_NO_TELEMETRY=1 && nohup ./node_modules/.bin/expo run:ios --device <simulator-udid> --no-bundler > tmp/javascript-control-run-ios.log 2>&1 &\necho \"RUN_IOS_PID=$!\"",
+          "output": "- Installing CocoaPods...\n> pod install\n- Installing CocoaPods...\nUsing Expo modules\n[Expo] Enabling modular headers for pod ExpoModulesCore\n[Expo] Enabling modular headers for pod ExpoModulesWorklets\n[Expo] Enabling modular headers for pod React-RCTFabric\n[Expo] Enabling modular headers for pod ExpoModulesJSI\n[Expo] Enabling modular headers for pod React-RCTAppDelegate\n[Expo] Enabling modular headers for pod ReactAppDependencyProvider\n[Expo] Enabling modular headers for pod React-Core\n[Expo] Enabling modular headers for pod ReactCodegen\nRUN_IOS_PID=41094\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019KueY36mBdK6RGwNvHikMv",
+          "startSeconds": 225.95,
+          "endSeconds": 286.095,
+          "command": "sleep 60; kill -0 41094 2>/dev/null && echo \"build running\" || echo \"build process exited\"; grep -c \"\" tmp/javascript-control-run-ios.log; tail -n 8 tmp/javascript-control-run-ios.log | cut -c1-300",
+          "output": "build running\n298\n› Compiling react-native-screens Pods/RNScreens » RNSSplitScreenComponentViewManager.mm\n› Compiling react-native-screens Pods/RNScreens » RNSSplitScreenComponentView.mm\n› Compiling react-native-screens Pods/RNScreens » RNSSplitScreenComponentEventEmitter.mm\n› Compiling react-native-screens Pods/RNScreens » RNSSplitNavigationControllerFrameObserver.mm\n› Compiling react-native-screens Pods/RNScreens » RNSSplitNavigationController.mm\n› Compiling react-native-screens Pods/RNScreens » RNSSplitHostController.mm\n› Compiling react-native-screens Pods/RNScreens » RNSSplitHostComponentViewManager.mm\n› Compiling react-native-screens Pods/RNScreens » RNSSplitHostComponentView.mm",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_016ra1Ymt3x717iqiM6BtdiN",
+          "startSeconds": 291.052,
+          "endSeconds": 441.256,
+          "command": "for i in $(seq 1 18); do sleep 30; if ! kill -0 41094 2>/dev/null; then echo \"build process exited after ~$((i*30))s\"; break; fi; if grep -q \"Opening on\\|Build Succeeded\\|❌\\|error:\\|CommandError\" tmp/javascript-control-run-ios.log; then echo \"marker found at ~$((i*30))s\"; fi; done; kill -0 41094 2>/dev/null && echo \"still running\" || echo \"exited\"; grep -c \"\" tmp/javascript-control-run-ios.log; tail -n 12 tmp/javascript-control-run-ios.log | cut -c1-300",
+          "output": "build process exited after ~150s\nexited\n927\n    at ChildProcess.emit (node:events:514:20)\n    at maybeClose (node:internal/child_process:1125:16)\n    at ChildProcess._handle.onexit (node:internal/child_process:305:5)\n    ...\n    at spawnAsync (./worktrees/javascript-control/node_modules/@expo/spawn-async/build/spawnAsync.js:9:23)\n    at osascriptSpawnAsync (./worktrees/javascript-control/node_modules/@expo/osascript/build/index.js:110:44)\n    at isSimulatorAppRunningAsync (./worktrees/javascript-control/node_modules/@expo/cli/build/src/start/platforms/ios/ensureSimulatorAppRunning.js:98:58)\n    at ensureSimulatorAppRunningAsync (./worktrees/javascript-control/node_modules/@expo/cli/build/src/start/platforms/ios/ensureSimulatorAppRunning.js:75:15)\n    at AppleDeviceManager.activateWindowAsync (./worktrees/javascript-control/node_modules/@expo/cli/build/src/start/platforms/ios/AppleDeviceManager.js:277:77)\n    at ApplePlatformManager.openProjectInCustomRuntimeAsync (./worktrees/javascript-control/node_modules/@expo/cli/build/src/start/platforms/PlatformManager.js:136:29)\n    at async launchAppAsync (./worktrees/javascript-control/node_modules/@expo/cli/build/src/run/ios/launchApp.js:134:5)\n    at async runIosAsync (./worktrees/javascript-control/node_modules/@expo/cli/build/src/run/ios/runIosAsync.js:282:5)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_011APZMW2zr8vVYxqHQoByp6",
+          "startSeconds": 444.53,
+          "endSeconds": 444.587,
+          "command": "grep -n \"Build Succeeded\\|Installing\\|Opening\\|osascript\\|Error\\|error\" tmp/javascript-control-run-ios.log | grep -v \"Compiling\\|node_modules\" | head -20; sed -n '/Build Succeeded/,/at ChildProcess/p' tmp/javascript-control-run-ios.log | head -30 | cut -c1-400",
+          "output": "903:› Build Succeeded\n905:› 0 error(s), and 1 warning(s)\n908:› Installing workspace/Trailhead.app\n909:› Installing on Trailhead javascript-control\n910:› Opening on Trailhead javascript-control (com.appandflow.trailhead)\n911:› Opening com.appandflow.trailhead://expo-development-client/?url=http%3A%2F%2F<local-ip>%3A8081 on Trailhead javascript-control\n912:Error: osascript -e tell app \"System Events\" to count processes whose name is \"Simulator\" or name is \"DeviceHub\" exited with non-zero code: 1\n913:Error: osascript -e tell app \"System Events\" to count processes whose name is \"Simulator\" or name is \"DeviceHub\" exited with non-zero code: 1\n› Build Succeeded\n\n› 0 error(s), and 1 warning(s)\n\nWaiting on http://localhost:8081\n› Installing workspace/Trailhead.app\n› Installing on Trailhead javascript-control\n› Opening on Trailhead javascript-control (com.appandflow.trailhead)\n› Opening com.appandflow.trailhead://expo-development-client/?url=http%3A%2F%2F<local-ip>%3A8081 on Trailhead javascript-control\nError: osascript -e tell app \"System Events\" to count processes whose name is \"Simulator\" or name is \"DeviceHub\" exited with non-zero code: 1\nError: osascript -e tell app \"System Events\" to count processes whose name is \"Simulator\" or name is \"DeviceHub\" exited with non-zero code: 1\n    at ChildProcess.completionListener (./worktrees/javascript-control/node_modules/@expo/spawn-async/build/spawnAsync.js:113:23)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_014PYnGAm8V3px88ecJoKhUY",
+          "startSeconds": 452.691,
+          "endSeconds": 453.073,
+          "command": "xcrun simctl listapps <simulator-udid> 2>/dev/null | grep -A3 \"com.appandflow.trailhead\" | head -8; xcrun simctl spawn <simulator-udid> launchctl list 2>/dev/null | grep -i trailhead; grep -n \"activateWindowAsync\\|openUrlAsync\\|launchApplicationAsync\" ./worktrees/javascript-control/node_modules/@expo/cli/build/src/start/platforms/PlatformManager.js | head; sed -n 125,145p ./worktrees/javascript-control/node_modules/@expo/cli/build/src/start/platforms/PlatformManager.js",
+          "output": "    \"com.appandflow.trailhead\" =     {\n        ApplicationType = User;\n        Bundle = \"file:///workspace/Trailhead.app\";\n        BundleContainer = \"file:///workspace/simulator-udid\";\n--\n        CFBundleIdentifier = \"com.appandflow.trailhead\";\n        CFBundleName = Trailhead;\n        CFBundleVersion = 1;\n101:        deviceManager.activateWindowAsync();\n102:        await deviceManager.openUrlAsync(url, {\n136:        await deviceManager.activateWindowAsync();\n137:        await deviceManager.openUrlAsync(url, {\n170:        await deviceManager.activateWindowAsync();\n171:        await deviceManager.openUrlAsync(url);\n        // TODO: It's unclear why we do application id validation when opening with a URL\n        // NOTE: But having it enables us to allow the deep link to directly open on iOS simulators without the modal.\n        const applicationId = props.applicationId ?? await this._getAppIdResolver().getAppIdAsync();\n        const deviceManager = await this.props.resolveDeviceAsync(resolveSettings);\n        if (!await deviceManager.isAppInstalledAndIfSoReturnContainerPathForIOSAsync(applicationId)) {\n            throw new _errors.CommandError(`No development build (${applicationId}) for this project is installed. ` + `Install a development build on the target device and try again.\\n${(0, _link.learnMore)('https://docs.expo.dev/development/build/')}`);\n        }\n        if (!url) {\n            url = this._resolveAlternativeLaunchUrl(applicationId, props);\n        }\n        deviceManager.logOpeningUrl(url);\n        await deviceManager.activateWindowAsync();\n        await deviceManager.openUrlAsync(url, {\n            appId: applicationId\n        });\n        event('open', {\n            platform: this.props.platform,\n            target: 'custom',\n            appId: applicationId\n        });\n        return {",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01EELqJBL5yzF4Nyz5eZm4rJ",
+          "startSeconds": 466.926,
+          "endSeconds": 478.458,
+          "command": "open -a Simulator --args -CurrentDeviceUDID <simulator-udid>; sleep 3; xcrun simctl openurl <simulator-udid> 'com.appandflow.trailhead://expo-development-client/?url=http%3A%2F%2F<local-ip>%3A8081'; echo \"openurl exit=$?\"; sleep 8; xcrun simctl spawn <simulator-udid> launchctl list 2>/dev/null | grep -i \"trailhead\"; tail -n 6 tmp/javascript-control-metro.log | cut -c1-200",
+          "output": "openurl exit=0\n| (node:40248) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:40248) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:40248) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01AHnv9jm11hsw49MgfXD5bK",
+          "startSeconds": 481.346,
+          "endSeconds": 481.646,
+          "command": "grep -v \"NO_COLOR\\|trace-warnings\" tmp/javascript-control-metro.log | tail -n 12 | cut -c1-250; xcrun simctl spawn <simulator-udid> launchctl list 2>&1 | grep -ci \"trailhead\"",
+          "output": "Starting project at ./worktrees/javascript-control\nReact Compiler enabled\nDependency validation might be unreliable when using canary SDK versions\nMetro is running in CI mode, reloads are disabled. Remove CI=true to enable watch mode.\nStarting Metro Bundler\n\nWaiting on http://localhost:8081\n\nLogs for your project will appear below.\n0",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01BYRbv83bQq2aca15yKix2X",
+          "startSeconds": 485.905,
+          "endSeconds": 486.124,
+          "command": "xcrun simctl io <simulator-udid> screenshot tmp/javascript-control-diag.png && echo ok",
+          "output": "Detected file type from extension: PNG\nNote: No display specified. Defaulting to display: <simulator-udid> (screenID: 1, name: LCD)\nWrote screenshot to: tmp/javascript-control-diag.png\nok",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01RcSvaL24fL8L7x18NGqXoB",
+          "startSeconds": 496.427,
+          "endSeconds": 496.465,
+          "command": "grep -n -B2 -A25 \"async openUrlAsync\" ./worktrees/javascript-control/node_modules/@expo/cli/build/src/start/platforms/ios/AppleDeviceManager.js | head -60",
+          "output": "250-        }) ?? false;\n251-    }\n252:    async openUrlAsync(url, options = {}) {\n253-        // Non-compliant URLs will be treated as application identifiers.\n254-        if (!(0, _url.validateUrl)(url, {\n255-            requireProtocol: true\n256-        })) {\n257-            return await this.launchApplicationIdAsync(url);\n258-        }\n259-        try {\n260-            await _simctl.openUrlAsync(this.device, {\n261-                url,\n262-                appId: options.appId\n263-            });\n264-        } catch (error) {\n265-            // 194 means the device does not conform to a given URL, in this case we'll assume that the desired app is not installed.\n266-            if (error.status === 194) {\n267-                // An error was encountered processing the command (domain=NSOSStatusErrorDomain, code=-10814):\n268-                // The operation couldn’t be completed. (OSStatus error -10814.)\n269-                //\n270-                // This can be thrown when no app conforms to the URI scheme that we attempted to open.\n271-                throw new _errors.CommandError('APP_NOT_INSTALLED', `Device ${this.device.name} (${this.device.udid}) has no app to handle the URI: ${url}`);\n272-            }\n273-            throw error;\n274-        }\n275-    }\n276-    async activateWindowAsync() {\n277-        await (0, _ensureSimulatorAppRunning.ensureSimulatorAppRunningAsync)(this.device);",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_018Tjpqye8jLT9wbpVYgsCf6",
+          "startSeconds": 499.643,
+          "endSeconds": 499.676,
+          "command": "grep -n -A20 \"async function openUrlAsync\" ./worktrees/javascript-control/node_modules/@expo/cli/build/src/start/platforms/ios/simctl.js | head -40",
+          "output": "251:async function openUrlAsync(device, options) {\n252-    if (options.appId) {\n253-        await (0, _profile.profile)(updateSimulatorLinkingPermissionsAsyncMemo, 'updateSimulatorLinkingPermissionsAsync')({\n254-            udid: device.udid\n255-        }, options);\n256-    }\n257-    try {\n258-        // Skip logging since this is likely to fail.\n259-        await simctlAsync([\n260-            'openurl',\n261-            resolveId(device),\n262-            options.url\n263-        ]);\n264-    } catch (error) {\n265-        if (!error.stderr?.match(/Unable to lookup in current state: Shut/)) {\n266-            throw error;\n267-        }\n268-        // If the device was in a weird in-between state (\"Shutting Down\" or \"Shutdown\"), then attempt to reboot it and try again.\n269-        // This can happen when quitting the Simulator app, and immediately pressing `i` to reopen the project.\n270-        // First boot the simulator\n271-        await bootDeviceAsync({",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01S6k2SWV56gHYwggkf4ca1D",
+          "startSeconds": 508.312,
+          "endSeconds": 508.34,
+          "command": "grep -n -A40 \"async function updateSimulatorLinkingPermissionsAsync\" ./worktrees/javascript-control/node_modules/@expo/cli/build/src/start/platforms/ios/simctl.js | head -60",
+          "output": "204:/** Rewrite the simulator permissions to allow opening deep links without needing to prompt the user first. */ async function updateSimulatorLinkingPermissionsAsync(device, { url, appId }) {\n205-    if (!device.udid || !appId) {\n206-        (0, _events.event)('simctl_skip_deep_link_perms', {\n207-            url,\n208-            appId,\n209-            udid: device.udid\n210-        });\n211-        return;\n212-    }\n213-    (0, _events.event)('simctl_deep_link_perms', {\n214-        url,\n215-        appId,\n216-        udid: device.udid\n217-    });\n218-    let scheme;\n219-    try {\n220-        // Attempt to extract the scheme from the URL.\n221-        scheme = new URL(url).protocol.slice(0, -1);\n222-    } catch (error) {\n223-        (0, _events.event)('simctl_url_scheme_parse_error', {\n224-            error: _events.event.error(error)\n225-        });\n226-        return;\n227-    }\n228-    // Get the hard-coded path to the simulator's scheme approval plist file.\n229-    const plistPath = _path().default.join(_os().default.homedir(), `Library/Developer/CoreSimulator/Devices`, device.udid, `data/Library/Preferences/com.apple.launchservices.schemeapproval.plist`);\n230-    const plistData = _fs().default.existsSync(plistPath) ? await (0, _plist.parsePlistAsync)(plistPath) : // Can be tested by launching a new simulator or by deleting the file and relaunching the simulator.\n231-    {};\n232-    (0, _events.event)('simctl_allowed_links', {\n233-        plistData: plistData\n234-    });\n235-    const key = `com.apple.CoreSimulator.CoreSimulatorBridge-->${scheme}`;\n236-    // Replace any existing value for the scheme with the new appId.\n237-    plistData[key] = appId;\n238-    (0, _events.event)('simctl_allow_deep_link', {\n239-        key,\n240-        appId\n241-    });\n242-    try {\n243-        const data = (0, _bplistcreator().default)(plistData);\n244-        // Write the updated plist back to disk",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01AASm169Tc8VKJYFfGNJVHL",
+          "startSeconds": 519.83,
+          "endSeconds": 532.167,
+          "command": "P=~system/Library/Developer/CoreSimulator/Devices/simulator-udid/data/Library/Preferences/com.apple.launchservices.schemeapproval.plist; ls -la \"$P\" 2>&1; /usr/libexec/PlistBuddy -c \"Add :com.apple.CoreSimulator.CoreSimulatorBridge-->com.appandflow.trailhead string com.appandflow.trailhead\" \"$P\" 2>&1 || /usr/libexec/PlistBuddy -c \"Set :com.apple.CoreSimulator.CoreSimulatorBridge-->com.appandflow.trailhead com.appandflow.trailhead\" \"$P\"; plutil -p \"$P\"; xcrun simctl openurl <simulator-udid> 'com.appandflow.trailhead://expo-development-client/?url=http%3A%2F%2F<local-ip>%3A8081'; echo \"openurl exit=$?\"; sleep 12; grep -v \"NO_COLOR\\|trace-warnings\" tmp/javascript-control-metro.log | tail -n 5 | cut -c1-200; xcrun simctl io <simulator-udid> screenshot tmp/javascript-control-diag.png >/dev/null 2>&1",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01ENYWptEfN51KJZqM2ne2EL",
+          "startSeconds": 550.182,
+          "endSeconds": 560.972,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/javascript-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 4 nodes\n@e1 [alert] \"Open in “Trailhead”?\"\n@e2 [button] \"Cancel\"\n@e3 [button] \"Open\"\n@e4 [text] \"Open in “Trailhead”?\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01HPVrPB1UH3Kimm8qWSYzib",
+          "startSeconds": 564.435,
+          "endSeconds": 566.268,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device record start tmp/javascript-control-session.mp4 --scope device --quality high --hide-touches",
+          "output": "tmp/javascript-control-session.mp4\nSession state: ./state/agent-device/sessions/javascript-control",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/javascript-control-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01XMpXgHtk9dUfjYCirqfjtA",
+          "startSeconds": 570.634,
+          "endSeconds": 575.151,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device press @e3 --settle",
+          "output": "Tapped @e3 (275, 474)\nsettled after 2986ms: +0 -0 (~4 unchanged)\nunchanged interactive (4):\n= @e1~s605823 [alert] \"Open in “Trailhead”?\"\n= @e2~s605823 [button] \"Cancel\"\n= @e3~s605823 [button] \"Open\"\n= @e4~s605823 [text] \"Open in “Trailhead”?\"\nhint: Settled on a nearly-empty tree — the app may still be loading. Wait for specific content (wait text ...) before interacting.",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e3 --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01HnLCpRSvheQGGSvoDLJoua",
+          "startSeconds": 579.073,
+          "endSeconds": 585.113,
+          "command": "sleep 5; env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device snapshot -i; grep -v \"NO_COLOR\\|trace-warnings\" tmp/javascript-control-metro.log | tail -n 5 | cut -c1-200",
+          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 4 nodes\n@e1 [alert] \"Open in “Trailhead”?\"\n@e2 [button] \"Cancel\"\n@e3 [button] \"Open\"\n@e4 [text] \"Open in “Trailhead”?\"\n WARN  Attempted to import the module \"./worktrees/javascript-control/node_modules/react-native/src/private/feature\niOS Bundled 5711ms index.js (2741 modules)\n INFO  [stim:readiness] pending\n WARN  DrawerLayoutAndroid is deprecated and will be removed in a future release. Use 'react-native-drawer-layout' instead. See https://reactnavigation.org/docs/drawer-layout/\n INFO  [stim:readiness] ready",
+          "exitCode": 0,
+          "presentation": {
+            "command": "sleep 5; agent-device snapshot -i; grep -v \"NO_COLOR\\|trace-warnings\" tmp/javascript-control-metro.log | tail -n 5 | cut -c1-200",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_012xTKXaN9voRRbcu4tMFA74",
+          "startSeconds": 589.834,
+          "endSeconds": 594.543,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device press @e3 --settle",
+          "output": "Tapped @e3 (275, 474)\nsettled after 3364ms: +57 -4 (~0 unchanged)\n- @e1 [alert] \"Open in “Trailhead”?\"\n- @e2 [button] \"Cancel\"\n- @e3 [button] \"Open\"\n- @e4 [text] \"Open in “Trailhead”?\"\n+ @e1~s605833 [application] \"Trailhead\"\n+ @e2~s605833 [other] \"Trailhead\"\n+ @e3~s605833 [text] \"Runtime version: exposdk:58.0.0\"\n+ @e4~s605833 [button] \"Close\"\n+ @e5~s605833 [scroll-area] \"Reload\"\n+ @e6~s605833 [other] \"Reload\"\n+ @e7~s605833 [button] \"Reload\"\n+ @e8~s605833 [button] \"Go home\"\n+ @e9~s605833 [button] \"Source code explorer\"\n+ @e10~s605833 [button] \"Toggle performance monitor\" [disabled]\n+ @e11~s605833 [button] \"Toggle element inspector\" [disabled]\n+ @e12~s605833 [text] \"Fast refresh\"\n+ @e13~s605833 [switch] \"0\" [disabled]\n+ @e14~s605833 [switch] \"0\" [disabled]\n+ @e15~s605833 [text] \"Tools button\"\n+ @e16~s605833 [switch] \"1\"\n+ @e17~s605833 [switch] \"1\"\n+ @e18~s605833 [text] \"Debugging not working? Try manually reloading first.\"\n+ @e19~s605833 [other] \"Vertical scroll bar, -1 page\"\n+ @e20~s605833 [scroll-area] \"dev-tools\"\n+ @e21~s605833 [other] \"dev-tools\"\n+ @e22~s605833 [image] \"dev-tools\"\n+ @e23~s605833 [text] \"This is the developer menu. It gives you access to useful tools in development builds.\"\n+ @e24~s605833 [text] \"You can open it at any time by pressing the blue button with the gear icon, or with the ⌃ + d keyboard shortcut.\"\n+ @e25~s605833 [text] \"(Connect Hardware Keyboard must be enabled on your simulator to use this shortcut, you can toggle it with ⌘ + shift + K.)\"\n+ @e26~s605833 [button] \"Continue\"\n+ @e27~s605833 [other] \"Vertical scroll bar, -1 page\"\n+ @e28~s605833 [other] \"\"\n+ @e29~s605833 [text-field] \"Search trails\"\n+ @e30~s605833 [scroll-area] \"All regions\"\n+ @e31~s605833 [other] \"All regions\"\n+ @e32~s605833 [button] \"All regions\"\n+ @e33~s605833 [button] \"Adirondacks\"\n+ @e34~s605833 [button] \"Bas-Saint-Laurent\"\n+ @e35~s605833 [button] \"Charlevoix\"\n+ @e36~s605833 [scroll-area] \"Any level\"\n+ @e37~s605833 [other] \"Any level\"\n+ @e38~s605833 [button] \"Any level\"\n+ @e39~s605833 [button] \"Easy\"\n+ @e40~s605833 [button] \"Moderate\"\n+ @e41~s605833 [button] \"Hard\"\n+ @e42~s605833 [button] \"Expert\"\n+ @e43~s605833 [text] \"200 trails\"\n+ @e44~s605833 [button] \"Sort by name\"\n+ @e45~s605833 [button] \"Sort by distance\"\n+ @e46~s605833 [button] \"Sort by rating\"\n+ @e47~s605833 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e48~s605833 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e49~s605833 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n+ @e50~s605833 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n+ @e51~s605833 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n+ @e52~s605833 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e53~s605833 [other] \"Trails, tab, 1 of 4\"\n+ @e54~s605833 [button] \"Trails, tab, 1 of 4\"\n+ @e55~s605833 [button] \"Record, tab, 2 of 4\"\n+ @e56~s605833 [button] \"History, tab, 3 of 4\"\n+ @e57~s605833 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e3 --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_0165bFWUX6MGCswsF6Pjx9Ur",
+          "startSeconds": 598.203,
+          "endSeconds": 598.537,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device press @e26~s605833 --settle",
+          "output": "Exit code 1\nError (COMMAND_FAILED): Ref @e26 is off-screen and not safe to press\nHint: Scroll down toward it in small steps (a single large scroll can overshoot; a short bounded gesture pan lands it more reliably), then retry press with a selector (e.g. text=/id=) rather than this @ref — the scroll expires the ref frame, so re-run snapshot -i before reusing any @ref.\nDiagnostic ID: mtwerf06-debb3b0b\nDiagnostics Log: ./state/agent-device/sessions/javascript-control/requests/1c759b7f4953c3dd.ndjson",
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device press @e26~s605833 --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01XhQ5YZ4XPCqC6k2nZKt9eG",
+          "startSeconds": 601.809,
+          "endSeconds": 602.287,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device screenshot tmp/javascript-control-diag2.png",
+          "output": "tmp/javascript-control-diag2.png (402x874 @1x)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/javascript-control-diag2.png",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01BGhNyEwYag9YmB9fSRh2LV",
+          "startSeconds": 609.1,
+          "endSeconds": 609.205,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device press \"label=Settings, tab, 4 of 4\" --settle",
+          "output": "Exit code 1\nError (INVALID_ARGS): Target \"label=Settings, tab, 4 of 4\" is not a @ref, selector, or \"x y\" point. Selector values with spaces need quotes, e.g. text=\"Sign in\".\nHint: Check command arguments and run --help for usage examples.\nDiagnostic ID: mtwernen-8d6ae5ef",
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device press \"label=Settings, tab, 4 of 4\" --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_0184xyUDgdDoLUmoCPEUkhM7",
+          "startSeconds": 612.304,
+          "endSeconds": 614.897,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device press 'label=\"Settings, tab, 4 of 4\"' --settle",
+          "output": "Tapped label=\"Settings, tab, 4 of 4\" (352, 816)\nsettled after 1784ms: +28 -27 (~30 unchanged)\n- @e28 [other] \"\"\n- @e29 [text-field] \"Search trails\"\n- @e30 [scroll-area] \"All regions\"\n- @e31 [other] \"All regions\"\n- @e32 [button] \"All regions\"\n- @e33 [button] \"Adirondacks\"\n- @e34 [button] \"Bas-Saint-Laurent\"\n- @e35 [button] \"Charlevoix\"\n- @e36 [scroll-area] \"Any level\"\n- @e37 [other] \"Any level\"\n- @e38 [button] \"Any level\"\n- @e39 [button] \"Easy\"\n- @e40 [button] \"Moderate\"\n- @e41 [button] \"Hard\"\n- @e42 [button] \"Expert\"\n- @e43 [text] \"200 trails\"\n- @e44 [button] \"Sort by name\"\n- @e45 [button] \"Sort by distance\"\n- @e46 [button] \"Sort by rating\"\n- @e47 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e48 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e49 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e50 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e51 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e52 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e28~s605839 [scroll-area] \"UNITS\"\n+ @e29~s605839 [other] \"UNITS\"\n+ @e30~s605839 [cell] \"Distance\"\n+ @e31~s605839 [text] \"\"\n+ @e32~s605839 [button] \"Metric units\"\n+ @e33~s605839 [button] \"Imperial units\"\n+ @e34~s605839 [text] \"Used across the whole app\"\n+ @e35~s605839 [text] \"PREFERENCES\"\n+ @e36~s605839 [other] \"Hike reminders\"\n+ @e37~s605839 [switch] \"Hike reminders\"\n+ @e38~s605839 [text] \"\"\n+ @e39~s605839 [text] \"Nudge me when I have not hiked in a while\"\n+ @e40~s605839 [text] \"Offline maps\"\n+ @e41~s605839 [switch] \"Offline maps\"\n+ @e42~s605839 [text] \"\"\n+ @e43~s605839 [text] \"Keep saved trail maps available offline\"\n+ @e44~s605839 [text] \"STORAGE\"\n+ @e45~s605839 [cell] \"Recorded hikes\"\n+ @e46~s605839 [text] \"\"\n+ @e47~s605839 [text] \"48\"\n+ @e48~s605839 [text] \"Stored in a local database\"\n+ @e49~s605839 [button] \"Reset sample data\"\n+ @e50~s605839 [text] \"ABOUT\"\n+ @e51~s605839 [cell] \"\"\n+ @e52~s605839 [text] \"Version\"\n+ @e53~s605839 [text] \"1.0.0\"\n- @e54 [button] \"Trails, tab, 1 of 4\"\n+ @e55~s605839 [button] \"Trails, tab, 1 of 4\"\n- @e57 [button] \"Settings, tab, 4 of 4\"\n+ @e58~s605839 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press 'label=\"Settings, tab, 4 of 4\"' --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01KaMQT2uUv9KMCyFWBrNuDK",
+          "startSeconds": 617.939,
+          "endSeconds": 618.127,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device wait text \"Keep saved trail maps available offline\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Keep saved trail maps available offline\"",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01UvoQyqSNf5AkfNPe94hVi6",
+          "startSeconds": 621.02,
+          "endSeconds": 621.379,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device screenshot tmp/javascript-control-settings.png",
+          "output": "tmp/javascript-control-settings.png (402x874 @1x)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/javascript-control-settings.png",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01VmtNuCxf4KbJCsjedMhZdz",
+          "startSeconds": 623.615,
+          "endSeconds": 623.662,
+          "command": "cp tmp/javascript-control-settings.png results/opus-ios/javascript-control/proof/settings.png",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01UHezFsyXEwGAuhQddxyRLS",
+          "startSeconds": 626.348,
+          "endSeconds": 631.272,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device record stop",
+          "output": "tmp/javascript-control-session.mp4",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01RagwuzngbyJY6SQUKcJQbg",
+          "startSeconds": 633.866,
+          "endSeconds": 633.917,
+          "command": "cp tmp/javascript-control-session.mp4 results/opus-ios/javascript-control/proof/session.mp4",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01AZGqY3uea24eReJxqmPyce",
+          "startSeconds": 636.692,
+          "endSeconds": 636.838,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=javascript-control agent-device close",
+          "output": "Closed: javascript-control",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01CxowhPzLdMYcuuMqoVMT7G",
+          "startSeconds": 641.139,
+          "endSeconds": 641.359,
+          "command": "ls -la results/opus-ios/javascript-control/proof/; curl -sS http://localhost:8081/status; echo; xcrun simctl list devices | grep <simulator-udid-prefix>; cd ./worktrees/javascript-control && git status --short && git diff",
+          "output": "<device inventory omitted from public artifact>",
+          "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 552.364
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 621.379
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/opus-rc12/javascript-control.png",
+        "expected": "Keep saved trail maps available offline",
+        "width": 402,
+        "height": 874
+      },
+      "recording": {
+        "src": "benchmarks/opus-rc12/javascript-control.mp4",
+        "bytes": 3103166
+      },
+      "timingOrigin": {
+        "kind": "first-recorded-activity",
+        "dispatchOffsetSeconds": 135,
+        "event": {
+          "kind": "message",
+          "id": "cf472041-b233-4168-aab8-72afac2c2127-0"
+        },
+        "dispatchSettingsReadySeconds": 756.379,
+        "dispatchDiagnosisSeconds": null,
+        "dispatchTotalSeconds": 791.138
+      }
+    },
+    {
+      "id": "native-stim",
+      "model": "opus",
+      "platform": "ios",
+      "recordedOn": "2026-09-11",
+      "variant": "native",
+      "arm": "stim",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 218.15,
+      "appAliveSeconds": 176.248,
+      "diagnosisSeconds": null,
+      "diagnosisCommandCount": null,
+      "launchCrashAudit": null,
+      "diagnosisUsage": null,
+      "estimatedDiagnosisCostUsd": null,
+      "totalSeconds": 248.357,
+      "commandCount": 17,
+      "usage": {
+        "input_tokens": 363163,
+        "cached_input_tokens": 344677,
+        "cache_creation_input_tokens": 18446,
+        "output_tokens": 5346,
+        "reasoning_output_tokens": 691
+      },
+      "estimatedTokenCostUsd": 0.49338649999999995,
+      "summary": "Created an isolated worktree, worked on the native iOS change, and opened the app with agent-device. It reached Settings and captured valid agent-device proof.",
+      "messages": [
+        {
+          "id": "61eb8de1-5cbf-48bc-a594-1aa4ec7f89f8-0",
+          "atSeconds": 0,
+          "text": "I'll start by creating the run worktree exactly as specified."
+        },
+        {
+          "id": "e12f2732-db5c-494a-b787-866d042e3cdc-0",
+          "atSeconds": 248.064,
+          "text": "Done. Both proof artifacts exist and are non-empty.\n\n## Summary\n\n**Run worktree:** `./worktrees/bench-native-stim` (branch `worktree-bench/native-stim`)\n\n**Code change:** `ios/Trailhead/AppDelegate.swift:25` — added `window?.accessibilityIdentifier = \"Trailhead native-stim\"` immediately after the window assignment. Confirmed live in the accessibility tree (`@e2 [window] \"Trailhead native-stim\"`).\n\n**Stim:**\n- `stim worktree warm` — exit 0, 9 ignored entries copied\n- `stim doctor --platform ios` — PASS, 0 findings, resolved 1.0.0 from PATH\n- `stim start` — Metro on port 8082 (supervisor pid 67063), still running\n- `stim ios` — `com.appandflow.trailhead` on `stim-bench-opus-ios-opus-native-stim-178909 (iPhone 17 26.5)`, UDID `<simulator-udid>`, **adopted**; launch OK (app reported ready, bundle loaded, process alive); Debug build 1m52s with 1497/1497 compilation cache hits; 2m09s total\n- `stim logs --errors` — exit 0, no matching log records\n\n**agent-device proof protocol:** all 8 steps succeeded in order. No Expo onboarding appeared; navigated to Settings by pressing `@e33` (\"Settings, tab, 4 of 4\"). `wait text \"Offline maps\"` found the text; `record stop` reported the saved video; session closed.\n\n**Proof paths:**\n- Screenshot: `results/opus-ios/native-stim/proof/settings.png` (69,866 bytes, 402x874)\n- Recording: `results/opus-ios/native-stim/proof/session.mp4` (120,920 bytes)\n\nMetro and the simulator are left running for the coordinator to verify and clean up."
+        }
+      ],
+      "commands": [
+        {
+          "id": "toolu_01V7xXKzBRDrMNnFsfyZM85P",
+          "startSeconds": 1.404,
+          "endSeconds": 2.022,
+          "command": "git worktree add -b worktree-bench/native-stim './worktrees/bench-native-stim' HEAD",
+          "output": "Preparing worktree (new branch 'worktree-bench/native-stim')\nHEAD is now at 075990b chore: prepare local field QA pod checksum",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_012vKkpBEndYdNWwe4hmpiGQ",
+          "startSeconds": 4.705,
+          "endSeconds": 4.832,
+          "command": "cd ./worktrees/bench-native-stim && stim guide agent",
+          "output": "Commands use `stim`. If it is not installed globally, replace `stim` with `npx stim`.\n\nAGENT WORKFLOW\n\nUse Stim to run React Native and Expo apps without sharing a Metro port or\ndevice with another workspace. Prefer plain output: it streams each phase and\nends with the facts the next step needs. Use --json only when a script must\nparse a stable payload.\n\nNORMAL WORKFLOW\n\nWork in the current checkout by default. When the task needs another branch or\nan isolated environment, create a linked worktree with Git and warm its\nignored state. If a harness already created this linked worktree, run\nstim worktree warm here instead of creating another one. It copies missing\nignored paths from the main checkout, including eligible .env and local\nconfiguration files. It preserves the branch, tracked files, and every existing\ndestination entry; existing ignored directories are skipped whole, not filled in.\nRead guide lifecycle options for exclusions and incomplete-copy remedies.\n\nWait for warm to exit successfully (exit code 0) before running stim start,\nstim ios, stim android, or a dependency install in that worktree. If the shell\ntool returns a running session or job ID, poll or wait for that job to finish;\nthe ID is not completion. Concurrent writes to the destination are unsafe:\nwarm checks for existing entries before copying, not during the copy. Do not\nedit files, install dependencies, or run another warm in that worktree until\nit finishes; concurrent files can be overwritten or removed.\nIf warm fails or reports incomplete, resolve the reported failure first.\n\nBefore native worktree work, run doctor for the platform in scope. It checks\nthe main checkout from a linked worktree. Fix relevant findings and inspect the\nupstream gap. It also prints the running CLI version and the stim installation\nresolved from PATH. If that resolved installation is older than another one,\nfix PATH or the installation before continuing so commands and guidance match.\nDoctor reports cross-volume staging and build-cache copies; read guide settings\nfor placement overrides and guide lifecycle options for warm behavior.\nFor iOS Debug architecture findings, review the project's overrides and imported\nPodfile helpers using guide lifecycle options. Doctor --fix does not change them.\nFor a linked native library carrying Git metadata, add the printed .git entries to\n.fingerprintignore only when the native build does not read Git state.\n\n  stim doctor --platform ios          # or: --platform android\n\nFor stale Android CMake launcher findings, stop native builds and run\nstim doctor --fix --platform android in the affected checkout before warming\nmore worktrees. It removes affected ignored, untracked generated .cxx\nconfigurations, including installed native modules; the next build recreates\nthem. It preserves source, custom launcher settings, and the shared ccache.\n\n  # Skip Git creation if the harness already created this linked worktree.\n  git worktree add -b <branch> <worktree-path> HEAD\n  cd <worktree-path>\n  stim worktree warm\n\n  stim start\n  stim ios                             # or: stim android\n\n  # Reproduce the affected behavior and capture the baseline errors.\n  stim logs --errors\n\n  # If a native process exits with no report, inspect the captured device output.\n  # An empty query is not proof that a crashed app was healthy.\n  # See guide logs for JS/native symbolication and capture limits.\n\n  # Edit JavaScript or TypeScript; Fast Refresh applies the change.\n  # For UI work, wait for the expected UI and repeat the affected interaction\n  # on the reported device. Keep using the existing automation session, if any.\n  stim logs --errors\n  # Retain proof before cleanup: a screenshot, recording, or relevant runtime output.\n\n  stim stop\n  stim worktree remove\n\nRULES DURING THE LOOP\n\n- Run Stim from the app directory: the one whose package.json depends on\n  react-native or expo. Anywhere else -- a monorepo root, a tools package --\n  start, ios and android refuse with STIM_NO_PROJECT naming that package.json,\n  and doctor reports it as a finding.\n- Put runtime .stim.json beside that app's package.json. Monorepo apps do not\n  inherit a repository-root runtime file. Keep repository-wide worktree-copy\n  rules at the main checkout root; see guide settings for the two scopes.\n- Run start before a debug ios or android build. If it returns STIM_NO_METRO,\n  run stim start and retry.\n- Run ios or android again after a native input changes. A JavaScript-only\n  change does not need one.\n- For stale Metro transforms or file-map state, use stim start --reset-cache.\n  It restarts only this app's verified owned Metro, preserving devices and other\n  apps' caches. See guide lifecycle for reset scope and Expo requirements.\n- Reload is not part of the normal workflow. Use stim reload on an owned local\n  simulator or emulator after a failed first bundle load, when an error screen\n  remains after the fix, or when you explicitly need an app restart. For a\n  physical device that reached Metro, use agent-device metro reload with the\n  reported port. The detected iOS Local Network first-load remedy uses UI\n  automation instead because that app never established a Metro connection.\n- A successful stim reload confirms that the request was sent, not that new\n  JavaScript loaded or the screen recovered. Verify the expected UI on the\n  reported device and inspect stim logs --errors before claiming recovery.\n- If launch reports an app error but also says the native process is alive,\n  the app did not crash. Fix JavaScript or TypeScript and use Fast Refresh. If\n  the error screen remains, follow the printed reload remedy instead of\n  running ios or android again. If launch says FATAL because the app process exited,\n  fix the crash and run the platform command again; Metro cannot restart it.\n- A native build can outlive a shell timeout. Retry the same command and\n  follow its printed remedy if waiting times out. See guide lifecycle concurrency.\n- ios and android install the app, launch it, and check readiness. Trust the\n  exact device, app, Metro, and launch facts in the final summary. Use the full\n  reported device ID. Never assume a simulator named booted belongs to this\n  workspace.\n- After each ios or android run, give the user one compact result: exact device,\n  app id, launch state, cache result, total duration, and whether stim logs\n  --errors passed. Include a remedy only when action remains. Do not repeat the\n  phase transcript.\n- An OK summary with no launch qualifier proves the launch. \"bundle requested,\n  still building\" means Metro has not finished; wait and query the logs. For\n  launch UNVERIFIED, follow the printed remedy before claiming success. JSON\n  reports these as true, \"bundling\", and \"unverified\" in launched.\n  WARNING means the native launch completed with app errors, or an app readiness\n  signal was expected but not confirmed; inspect the output before claiming a healthy UI.\n- A clean logs --errors check requires exit code 0 AND no matching errors in\n  captured logs. Exit code 0 alone means the query succeeded, even when errors\n  were printed. Human output shows \"No matching log records\" on stderr for\n  zero matches; JSON mode prints zero bytes. This does not prove launch or log\n  capture succeeded. Do not read the NDJSON files directly.\n- Use stim status when resuming a workspace or recovering missing device,\n  port, server, or build facts. A normal start and platform run already print\n  them. Use stim doctor when a build is unexpectedly slow or the environment\n  looks incomplete.\n\nOWNERSHIP AND DELETION\n\nStim creates, boots, and deletes only devices it created. Owned simulators use\nthe stim-<label> (<model> <runtime>) name. Never point Stim at a user-created\nemulator or simulator.\n\nworktree remove parks the workspace's simulator or emulator for later adoption.\nA parked device is Stim-owned: never delete one by hand. gc --delete clears verified\nentries and keeps failures; see guide lifecycle pool. First launch on a\nphysical iPhone can need the one-time taps named by the remedy.\n\nstim android --device [serial] and stim ios --device [udid] install on a\nconnected physical device. Stim never creates, boots, shuts down, or deletes\nhardware. It records a temporary lease, not an owned-device registry entry.\n\nA --device run leases that device for the run. stim device lock ios --for 10m\nholds it across runs; stim device unlock gives it back. Never delete another\nworkspace's lease file under ~/.stim/device-locks; gc --delete removes expired\nones.\n\nstop and worktree remove release this workspace's leases. On a physical\niPhone, stop also closes the app by ending its log collector; it does not\nshut down the phone or uninstall the app.\n\nTreat a refusal as an ownership or state mismatch: read its code and remedy.\nNever reach for --force first.\nStim leaves externally started servers alone. Stop them with their original\ntool; neither a matching port nor --force grants process ownership.\n\nAsk the user before these actions:\n\n- worktree remove, because it deletes the worktree and gives up its owned\n  device. It works with any linked worktree, warmed or not, without requiring\n  a Stim registry entry. Git-created branches are kept; a branch with an\n  existing Stim ownership record is deleted only when it has no unique commits.\n- worktree remove --force, because it also discards uncommitted and untracked\n  files.\n- gc --delete, because it deletes orphaned resources. gc --delete --cache all\n  empties the shared build caches instead; it inspects nothing else.\n- stop when the workspace owns an EAS session, because it irreversibly ends\n  that remote session. For a local device, stop shuts it down but does not\n  delete it. An explicit stop shuts down a Stim-owned simulator even when\n  another process uses it. It never shuts down an unowned simulator.\n\nSANDBOXES\n\nAn agent harness that sandboxes shell commands usually permits writes inside\nthe project and little else. Stim also needs writes to STIM_HOME (~/.stim by\ndefault), simulator service access, and local access to the adb server. When\nthose sit outside the harness allowlist, the failure looks like an unwritable\ndirectory or unavailable device service rather than a broken machine. Decide\nat the start of a session whether to run Stim outside the sandbox or ask the\nuser to allow those operations. guide errors sandbox lists the exact\nrequirements.\n\nLOAD ADVANCED GUIDANCE WHEN NEEDED\n\n  stim guide                      # list topics\n  stim guide errors               # index of every refusal code and message\n  stim guide errors <CODE>        # one refusal, e.g. stim guide errors STIM_NO_METRO\n  stim guide errors sandbox       # running under a sandboxing harness\n  stim guide errors unverified    # launch unverified, and the Local Network reason\n  stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit\n  stim guide lifecycle            # the ordered flow, consent rules, and capacity\n  stim guide lifecycle verification # reproduce, edit, verify the UI, and retain proof\n  stim guide lifecycle readiness  # add optional app readiness logs; no package required\n  stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints\n  stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits\n  stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image\n  stim guide lifecycle devices    # ios --device and android --device on a physical phone\n  stim guide lifecycle release    # Release configurations and ...Release variants\n  stim guide facts                # the --json payloads\n  stim guide facts devmenu        # the Expo dev menu or Tools button over the app\n  stim guide metro                # supervisor, custom Metro, tunnels, and remote devices\n  stim guide logs                 # filters, record shape, and capture limits\n  stim guide cleanup              # what reclaims a device, and what deletes\n  stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed\n  stim guide settings             # configuration files and supported keys\n\nA refusal prints a CODE such as STIM_NO_METRO. Run stim guide errors <CODE>\nwith the code exactly as printed and read only that section; every code in a\nshared header (STIM_BAD_ARG / STIM_NO_PROJECT) resolves to the same section. A\nrefusal with no code is quoted by message in stim guide errors. A topic with\nsections called bare prints its section index, so read the narrowest section\nbefore release configurations or Android variants; remote devices; custom\nMetro processes or tunnels; cache misses, bypasses, or concurrent builds;\ncapacity limits; cache statistics from stim stats; worktree carry-over;\nfingerprint exclusions; gc; --force; cleanup failures; or unfamiliar states\nand error codes. Ordinary stim stop and an authorized clean\nstim worktree remove do not need the cleanup guide.\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim guide agent",
+            "cwd": "./worktrees/bench-native-stim"
+          }
+        },
+        {
+          "id": "toolu_01D4ySF7DpAC3qbSSog4YR1j",
+          "startSeconds": 8.007,
+          "endSeconds": 30.746,
+          "command": "cd ./worktrees/bench-native-stim && stim worktree warm; echo \"EXIT=$?\"",
+          "output": "  carry       copied .expo, android/.gradle, android/app/.cxx, +6 from worktree/bench-fixture-1.0.0\n  carry       complete: 9 ignored entries copied, 0 kept, 0 failed\nEXIT=0\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim worktree warm",
+            "cwd": "./worktrees/bench-native-stim"
+          }
+        },
+        {
+          "id": "toolu_017uQ9sJSkmrvojHJ1cBTDtq",
+          "startSeconds": 39.408,
+          "endSeconds": 44.973,
+          "command": "cd ./worktrees/bench-native-stim && stim doctor --platform ios; echo \"EXIT=$?\"",
+          "output": "Doctor (iOS)\n  result      PASS\n  findings    0\n  version     1.0.0\n  resolved    1.0.0 at ./bin/stim\n  installs    1 distinct PATH install\n\nProject\n  project     main checkout, dependencies, local upstream\n  settings    every Stim setting type\n\niOS\n  setup       CocoaPods, warm state, dev client, effective Debug simulator architectures\n  caches      Metro, Xcode compilation, ccache, build provider\n  devices     remote device, SimSlim profile\n\nShared\n  services    EAS session\n  storage     temporary staging and build-cache volume placement\n  fingerprint parity when dependencies are absent\n\nHandled automatically\n  caches      Metro transform store, Xcode compilation cache\n  meaning     missing project cache settings are healthy\nEXIT=0\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim doctor --platform ios",
+            "cwd": "./worktrees/bench-native-stim"
+          }
+        },
+        {
+          "id": "toolu_01NoWHmbdzCEwFiAi88KTWu9",
+          "startSeconds": 47.563,
+          "endSeconds": 49.348,
+          "command": "cd ./worktrees/bench-native-stim && stim start; echo \"EXIT=$?\"",
+          "output": "  metro       starting on port 8082 (expo-child, supervisor pid 67063)\nOK: dev server on port 8082, supervisor pid 67063 (expo-child) (1.7s)\n  logs        results/opus-ios/native-stim/stim-home/workspaces/bench-native-stim--df607b085db6a1f6/logs\nEXIT=0\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim start",
+            "cwd": "./worktrees/bench-native-stim"
+          }
+        },
+        {
+          "id": "toolu_01RShEBNBwsCBqUBnwMPzYt5",
+          "startSeconds": 52.157,
+          "endSeconds": 181.563,
+          "command": "cd ./worktrees/bench-native-stim && stim ios; echo \"EXIT=$?\"",
+          "output": "  device      booting stim-bench-opus-ios-opus-native-stim-178909 (iPhone 17 26.5) (<simulator-udid>)\n  fingerprint 78dbde.. miss (3.9s)\n  build       compiling Debug with xcodebuild\n  cache       compilation cache on (CAS at results/opus-ios/native-stim/stim-home/compilation-cache)\n  device      resetting privacy grants and the keychain on <simulator-udid>\n  build       still compiling (30s of ~2m00s)\n  build       still compiling (1m00s of ~2m00s)\n  build       still compiling (1m30s of ~2m00s)\n  cache       compilation cache 1497/1497 hits (100%)\n  build       ok (1m52s)\n  device      stim-bench-opus-ios-opus-native-stim-178909 (iPhone 17 26.5) (<simulator-udid-prefix>) adopted (12.9s)\n  install     removed <agent-device-helper>, left by the previous workspace\n  install     Trailhead.app -> stim-bench-opus-ios-opus-native-stim-178909 (iPhone 17 26.5) (<simulator-udid-prefix>) (3.7s)\n  install     dev client prepared (686ms)\n  launch      com.appandflow.trailhead (874ms)\n  readiness   waiting for app readiness (up to 30s after bundle load)\n  readiness   app reported ready (5.9s verification total)\n  verify      bundle loaded, process alive (5.9s total)\nOK: com.appandflow.trailhead on stim-bench-opus-ios-opus-native-stim-178909 (iPhone 17 26.5) (<simulator-udid-prefix>), Metro port 8082 (built, 2m09s)\n  device      stim-bench-opus-ios-opus-native-stim-178909 (iPhone 17 26.5) (<simulator-udid>)\n  app         com.appandflow.trailhead\n  metro       running on port 8082\n  cache       built\n  compilation cache 1497/1497 hits (100%)\n  logs        results/opus-ios/native-stim/stim-home/workspaces/bench-native-stim--df607b085db6a1f6/logs\nEXIT=0\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim ios",
+            "cwd": "./worktrees/bench-native-stim"
+          }
+        },
+        {
+          "id": "toolu_01ELFocivAXTzZgiKV9ExwKF",
+          "startSeconds": 185.761,
+          "endSeconds": 186.341,
+          "command": "cd ./worktrees/bench-native-stim && stim logs --errors; echo \"EXIT=$?\"",
+          "output": "No matching log records in results/opus-ios/native-stim/stim-home/workspaces/bench-native-stim--df607b085db6a1f6/logs\nEXIT=0\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0,
+          "presentation": {
+            "command": "stim logs --errors",
+            "cwd": "./worktrees/bench-native-stim"
+          }
+        },
+        {
+          "id": "toolu_01CegKYySwz4GerAsrvPJg79",
+          "startSeconds": 190.081,
+          "endSeconds": 197.498,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/native-stim\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 33 visible nodes\n@e1 [application] \"Trailhead\"\n@e2 [window] \"Trailhead native-stim\"\n@e3 [other] \"\"\n@e4 [other] \"Trails\"\n@e5 [text-field] \"Search trails\" [editable]\n@e6 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e7 [other] \"All regions\"\n@e8 [button] \"All regions\" [selected]\n@e9 [button] \"Adirondacks\"\n@e10 [button] \"Bas-Saint-Laurent\"\n@e11 [button] \"Charlevoix\"\n@e12 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e13 [other] \"Any level\"\n@e14 [button] \"Any level\" [selected]\n@e15 [button] \"Easy\"\n@e16 [button] \"Moderate\"\n@e17 [button] \"Hard\"\n@e18 [button] \"Expert\"\n@e19 [text] \"200 trails\"\n@e20 [button] \"Sort by name\" [selected]\n@e21 [button] \"Sort by distance\"\n@e22 [button] \"Sort by rating\"\n@e23 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e24 [other] [same label as parent]\n@e25 [button] [same label as parent]\n@e26 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e27 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e28 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e29 [other] \"Trails, tab, 1 of 4\"\n@e30 [button] \"Trails, tab, 1 of 4\" [selected]\n@e31 [button] \"Record, tab, 2 of 4\"\n@e32 [button] \"History, tab, 3 of 4\"\n@e33 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01GPd2FDDMbBDtSVjQWFAjnd",
+          "startSeconds": 201.546,
+          "endSeconds": 203.97,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device record start tmp/native-stim-session.mp4 --scope device --quality high --hide-touches",
+          "output": "tmp/native-stim-session.mp4\nSession state: ./state/agent-device/sessions/native-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/native-stim-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01Bt1MFtMbjRNxaDUgYmaBBm",
+          "startSeconds": 207.157,
+          "endSeconds": 210.162,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device press @e33 --settle",
+          "output": "Tapped @e33 (352, 816)\nsettled after 2280ms: +33 -33 (~0 unchanged)\n- @e1 [application] \"Trailhead\"\n- @e2 [window] \"Trailhead native-stim\"\n- @e3 [other] \"\"\n- @e4 [other] \"Trails\"\n- @e5 [text-field] \"Search trails\"\n- @e6 [scroll-area] \"All regions\"\n- @e7 [other] \"All regions\"\n- @e8 [button] \"All regions\"\n- @e9 [button] \"Adirondacks\"\n- @e10 [button] \"Bas-Saint-Laurent\"\n- @e11 [button] \"Charlevoix\"\n- @e12 [scroll-area] \"Any level\"\n- @e13 [other] \"Any level\"\n- @e14 [button] \"Any level\"\n- @e15 [button] \"Easy\"\n- @e16 [button] \"Moderate\"\n- @e17 [button] \"Hard\"\n- @e18 [button] \"Expert\"\n- @e19 [text] \"200 trails\"\n- @e20 [button] \"Sort by name\"\n- @e21 [button] \"Sort by distance\"\n- @e22 [button] \"Sort by rating\"\n- @e23 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e24 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e25 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e26 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e27 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e28 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n- @e29 [other] \"Trails, tab, 1 of 4\"\n- @e30 [button] \"Trails, tab, 1 of 4\"\n- @e31 [button] \"Record, tab, 2 of 4\"\n- @e32 [button] \"History, tab, 3 of 4\"\n- @e33 [button] \"Settings, tab, 4 of 4\"\n+ @e1~s345231 [application] \"Trailhead\"\n+ @e2~s345231 [window] \"Trailhead native-stim\"\n+ @e3~s345231 [text] \"Settings\"\n+ @e4~s345231 [scroll-area]\n+ @e5~s345231 [text] \"UNITS\"\n+ @e6~s345231 [text] \"Distance\"\n+ @e7~s345231 [text] \"\"\n+ @e8~s345231 [button] \"Metric units\"\n+ @e9~s345231 [button] \"Imperial units\"\n+ @e10~s345231 [text] \"Used across the whole app\"\n+ @e11~s345231 [text] \"PREFERENCES\"\n+ @e12~s345231 [text] \"Hike reminders\"\n+ @e13~s345231 [switch] \"Hike reminders\"\n+ @e14~s345231 [text] \"\"\n+ @e15~s345231 [text] \"Nudge me when I have not hiked in a while\"\n+ @e16~s345231 [text] \"Offline maps\"\n+ @e17~s345231 [switch] \"Offline maps\"\n+ @e18~s345231 [text] \"\"\n+ @e19~s345231 [text] \"Keep map tiles for saved trails on device\"\n+ @e20~s345231 [text] \"STORAGE\"\n+ @e21~s345231 [text] \"Recorded hikes\"\n+ @e22~s345231 [text] \"\"\n+ @e23~s345231 [text] \"48\"\n+ @e24~s345231 [text] \"Stored in a local database\"\n+ @e25~s345231 [button] \"Reset sample data\"\n+ @e26~s345231 [text] \"ABOUT\"\n+ @e27~s345231 [text] \"\"\n+ @e28~s345231 [text] \"Version\"\n+ @e29~s345231 [text] \"1.0.0\"\n+ @e30~s345231 [button] \"Trails, tab, 1 of 4\"\n+ @e31~s345231 [button] \"Record, tab, 2 of 4\"\n+ @e32~s345231 [button] \"History, tab, 3 of 4\"\n+ @e33~s345231 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e33 --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01VaoYN7sr8tQnb3C45rYP2v",
+          "startSeconds": 213.767,
+          "endSeconds": 213.922,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device wait text \"Offline maps\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Offline maps\"",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01CyREtexwW5gYtk2zgQuoRQ",
+          "startSeconds": 217.706,
+          "endSeconds": 218.15,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device screenshot tmp/native-stim-settings.png",
+          "output": "tmp/native-stim-settings.png (402x874 @1x)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/native-stim-settings.png",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_013WM3erK1HEngZxdzVVRQY6",
+          "startSeconds": 220.798,
+          "endSeconds": 220.847,
+          "command": "cp tmp/native-stim-settings.png results/opus-ios/native-stim/proof/settings.png",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01FT667m9BksdTFro6NnPWk5",
+          "startSeconds": 223.862,
+          "endSeconds": 228.082,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device record stop",
+          "output": "tmp/native-stim-session.mp4",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_013QKSgWbTVHBvUcyeDWS7JB",
+          "startSeconds": 230.863,
+          "endSeconds": 230.913,
+          "command": "cp tmp/native-stim-session.mp4 results/opus-ios/native-stim/proof/session.mp4",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019WqLqT7hacPM9YFCpwPw6F",
+          "startSeconds": 233.731,
+          "endSeconds": 233.9,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-stim agent-device close",
+          "output": "Closed: native-stim",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01K3TARhYkhuLs2sxe3uzseA",
+          "startSeconds": 236.648,
+          "endSeconds": 236.697,
+          "command": "ls -la results/opus-ios/native-stim/proof/",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 176.248
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 218.15
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/opus-rc12/native-stim.png",
+        "expected": "Offline maps",
+        "width": 402,
+        "height": 874
+      },
+      "recording": {
+        "src": "benchmarks/opus-rc12/native-stim.mp4",
+        "bytes": 120920
+      },
+      "timingOrigin": {
+        "kind": "first-recorded-activity",
+        "dispatchOffsetSeconds": 134.4,
+        "event": {
+          "kind": "message",
+          "id": "61eb8de1-5cbf-48bc-a594-1aa4ec7f89f8-0"
+        },
+        "dispatchSettingsReadySeconds": 352.55,
+        "dispatchDiagnosisSeconds": null,
+        "dispatchTotalSeconds": 382.757
+      }
+    },
+    {
+      "id": "native-control",
+      "model": "opus",
+      "platform": "ios",
+      "recordedOn": "2026-09-11",
+      "variant": "native",
+      "arm": "control",
+      "valid": true,
+      "invalidReasons": [],
+      "settingsReadySeconds": 430.033,
+      "appAliveSeconds": 346.853,
+      "diagnosisSeconds": null,
+      "diagnosisCommandCount": null,
+      "launchCrashAudit": null,
+      "diagnosisUsage": null,
+      "estimatedDiagnosisCostUsd": null,
+      "totalSeconds": 463.915,
+      "commandCount": 29,
+      "usage": {
+        "input_tokens": 768397,
+        "cached_input_tokens": 740535,
+        "cache_creation_input_tokens": 27796,
+        "output_tokens": 10137,
+        "reasoning_output_tokens": 1665
+      },
+      "estimatedTokenCostUsd": 0.9046374999999997,
+      "summary": "Created an isolated worktree and carried over dependencies or native outputs, worked on the native iOS change, and started the local Expo/Xcode workflow. It reached Settings and captured valid agent-device proof. The record includes 4 failed command attempts before completion.",
+      "messages": [
+        {
+          "id": "23e4b9cf-703f-40cc-a37f-7d92815e65a7-0",
+          "atSeconds": 0,
+          "text": "I'll start by inspecting the source checkout and creating the run worktree."
+        },
+        {
+          "id": "68c31ebe-be5b-47e2-af26-1dcd99f30e62-0",
+          "atSeconds": 463.639,
+          "text": "Done. All eight proof commands succeeded in order; the app is still running on the simulator with Metro serving it.\n\n**Run worktree:** `./worktrees/native-control` (branch `bench/native-control`)\n\n**Proof artifacts:**\n- Screenshot: `results/opus-ios/native-control/proof/settings.png` (70 KB)\n- Recording: `results/opus-ios/native-control/proof/session.mp4` (1.7 MB)\n\n**Details:**\n- Simulator: `Trailhead native-control` — UDID `<simulator-udid>` (iPhone 17, iOS 26.5), newly created and still booted.\n- `ios/Trailhead/AppDelegate.swift:25` sets `window?.accessibilityIdentifier` right after the window assignment. The agent-device tree showed `[window] \"Trailhead native-control\"`, proving the modified native build is what's running.\n- Dependencies were APFS-cloned (`cp -Rc`) from the fixture checkout: `node_modules`, `ios/Pods`, `ios/build`, `.expo`, `expo-env.d.ts`. No installs were run; Expo did re-run `pod install` itself because the Pods manifest is path-sensitive (this modified `ios/Podfile.lock` in the worktree).\n- App PID 62673 (`com.appandflow.trailhead`) is running; Metro (PID 62578) is serving on port 8081 from the run worktree. Logs: `tmp/native-control-run-ios.log`, `tmp/native-control-metro.log`.\n\n**One deviation to note:** `expo run:ios` built and installed successfully but crashed at its final \"open\" step on an `osascript` System Events call that this sandbox denies, which took its bundled Metro down. I restarted Metro with the local `expo start --dev-client` from the worktree and launched the installed app via `simctl launch` + the dev-client deep link; the \"Open in Trailhead?\" confirmation this produced was accepted during the recorded session before navigating to Settings."
+        }
+      ],
+      "commands": [
+        {
+          "id": "toolu_01Fqa4ivyyvDsUbnbGXinhMY",
+          "startSeconds": 1.655,
+          "endSeconds": 2.178,
+          "command": "ls -la && cat package.json && ls ios && git branch --list 'bench/*' && ls -d node_modules ios/Pods ios/build android/build 2>&1",
+          "output": "<branch inventory omitted from public artifact>",
+          "exitCode": 1
+        },
+        {
+          "id": "toolu_01UzUY4Yyq2YVKw6Bx9r9MDW",
+          "startSeconds": 4.583,
+          "endSeconds": 6.767,
+          "command": "cat AGENTS.md CLAUDE.md .gitignore; cat ios/Trailhead/AppDelegate.swift; git worktree list; ls ios/build; du -sh node_modules ios/Pods ios/build .expo 2>/dev/null",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01HWSDja3owSmk3ZtXwV3q7X",
+          "startSeconds": 12.647,
+          "endSeconds": 12.753,
+          "command": "git worktree add -b bench/native-control ./worktrees/native-control HEAD 2>&1 | tail -5; echo \"exit=$?\"; ls ./worktrees/native-control",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01LgBqSw38cysJWuBjFUifdY",
+          "startSeconds": 18.482,
+          "endSeconds": 39.726,
+          "command": "SRC=worktree/bench-fixture-1.0.0; DST=./worktrees/native-control; time cp -Rc \"$SRC/node_modules\" \"$DST/node_modules\" && time cp -Rc \"$SRC/ios/Pods\" \"$DST/ios/Pods\" && cp -Rc \"$SRC/ios/build\" \"$DST/ios/build\" && cp -Rc \"$SRC/.expo\" \"$DST/.expo\" && cp -c \"$SRC/expo-env.d.ts\" \"$DST/expo-env.d.ts\" && [ -f \"$SRC/.env\" ] && cp -c \"$SRC/.env\" \"$DST/.env\"; echo \"exit=$?\"; ls -a \"$DST\"; du -sh \"$DST/node_modules\" \"$DST/ios/Pods\"",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01T2zM28ADjczCqqTj45atgs",
+          "startSeconds": 48.855,
+          "endSeconds": 49.017,
+          "command": "xcrun simctl list runtimes | grep -i 'iOS 26.5'; xcrun simctl list devicetypes | grep -i 'iPhone 17'",
+          "output": "iOS 26.5 (26.5 - 23F77) - com.apple.CoreSimulator.SimRuntime.iOS-26-5\niPhone 17 Pro (com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro)\niPhone 17 Pro Max (com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max)\niPhone 17e (com.apple.CoreSimulator.SimDeviceType.iPhone-17e)\niPhone 17 (com.apple.CoreSimulator.SimDeviceType.iPhone-17)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_014wch1z7YR43ZngkzDZXaBC",
+          "startSeconds": 51.457,
+          "endSeconds": 51.69,
+          "command": "xcrun simctl create \"Trailhead native-control\" com.apple.CoreSimulator.SimDeviceType.iPhone-17 com.apple.CoreSimulator.SimRuntime.iOS-26-5",
+          "output": "<simulator-udid>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01PuM4qNenE2RTRVXgGSgDWt",
+          "startSeconds": 58.201,
+          "endSeconds": 78.268,
+          "command": "cd ./worktrees/native-control && export CI=1 EXPO_NO_TELEMETRY=1 && nohup ./node_modules/.bin/expo run:ios --device <simulator-udid> > tmp/native-control-run-ios.log 2>&1 &\necho \"pid=$!\"; sleep 20; tail -20 tmp/native-control-run-ios.log",
+          "output": "pid=56307\n-- SK_GRAPHITE: OFF (detected via libs/.graphite marker file)\nDownloading dependencies\nInstalling ExpoModulesCore 58.0.0-canary-20260902-26df09e\n[Expo] Ensuring required slices in ExpoModulesJSI.xcframework\n[Expo] Staged 5/5 shared SPM xcframework(s) (debug)\nGenerating Pods project\nSetting USE_HERMES build settings\nSetting REACT_NATIVE_PATH build settings\nSetting SWIFT_ACTIVE_COMPILATION_CONDITIONS build settings\n[Ccache]: Ccache found at ./allowed-bin/ccache\n[Ccache]: Pass ':ccache_enabled => true' to 'react_native_post_install' in your Podfile or set environment variable 'USE_CCACHE=1' to increase the speed of subsequent builds\n[ReactNativeCore] Configuring xcconfig for prebuilt React Native Core...\n[ReactNativeCore] Prebuilt xcconfig configuration complete\n[ReactNativeDependencies] Configuring xcconfig for prebuilt React Native Dependencies...\n[ReactNativeDependencies] Prebuilt deps xcconfig configuration complete\n[SPM] Cleaning old SPM dependencies from Pods project\n[SPM] Adding SPM dependencies to Pods project\n[Privacy Manifest Aggregation] Appending aggregated reasons to existing PrivacyInfo.xcprivacy file.\n[Privacy Manifest Aggregation] Reading .xcprivacy files to aggregate all used Required Reason APIs.\nSetting CLANG_CXX_LANGUAGE_STANDARD to c++20 on ./worktrees/native-control/ios/Trailhead.xcodeproj\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_019v1fhRHuqT8U56k3gvXfzs",
+          "startSeconds": 83.705,
+          "endSeconds": 324.391,
+          "command": "for i in $(seq 1 28); do sleep 20; if grep -qE 'error:|BUILD FAILED|Build succeeded|Successfully|Opening on|Metro waiting|Bundling|Logs for your project' tmp/native-control-run-ios.log; then break; fi; done; kill -0 56307 2>/dev/null && echo \"pid alive\" || echo \"pid exited\"; tail -c 3000 tmp/native-control-run-ios.log",
+          "output": "pid exited\nred due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n› Opening on Trailhead native-control (com.appandflow.trailhead)\n› Opening com.appandflow.trailhead://expo-development-client/?url=http%3A%2F%2F<local-ip>%3A8081 on Trailhead native-control\nError: osascript -e tell app \"System Events\" to count processes whose name is \"Simulator\" or name is \"DeviceHub\" exited with non-zero code: 1\nError: osascript -e tell app \"System Events\" to count processes whose name is \"Simulator\" or name is \"DeviceHub\" exited with non-zero code: 1\n    at ChildProcess.completionListener (./worktrees/native-control/node_modules/@expo/spawn-async/build/spawnAsync.js:113:23)\n    at ChildProcess.wrapper (node:events:639:12)\n    at ChildProcess.emit (node:events:514:20)\n    at maybeClose (node:internal/child_process:1125:16)\n    at Socket.<anonymous> (node:internal/child_process:497:11)\n    at Socket.emit (node:events:514:20)\n    at Pipe.<anonymous> (node:net:362:12)\n    ...\n    at spawnAsync (./worktrees/native-control/node_modules/@expo/spawn-async/build/spawnAsync.js:9:23)\n    at osascriptSpawnAsync (./worktrees/native-control/node_modules/@expo/osascript/build/index.js:110:44)\n    at isSimulatorAppRunningAsync (./worktrees/native-control/node_modules/@expo/cli/build/src/start/platforms/ios/ensureSimulatorAppRunning.js:98:58)\n    at ensureSimulatorAppRunningAsync (./worktrees/native-control/node_modules/@expo/cli/build/src/start/platforms/ios/ensureSimulatorAppRunning.js:75:15)\n    at AppleDeviceManager.activateWindowAsync (./worktrees/native-control/node_modules/@expo/cli/build/src/start/platforms/ios/AppleDeviceManager.js:277:77)\n    at ApplePlatformManager.openProjectInCustomRuntimeAsync (./worktrees/native-control/node_modules/@expo/cli/build/src/start/platforms/PlatformManager.js:136:29)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async launchAppAsync (./worktrees/native-control/node_modules/@expo/cli/build/src/run/ios/launchApp.js:134:5)\n    at async runIosAsync (./worktrees/native-control/node_modules/@expo/cli/build/src/run/ios/runIosAsync.js:282:5)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01TNnfUw1Pw256SJCXCWNujS",
+          "startSeconds": 331.608,
+          "endSeconds": 331.869,
+          "command": "grep -nE 'BUILD SUCCEEDED|Build succeeded|Installing|Planning build|Waiting on|error:' tmp/native-control-run-ios.log | head; grep -n 'Opening on' -B8 tmp/native-control-run-ios.log | head -20; echo ---; xcrun simctl list devices | grep native-control; xcrun simctl listapps <simulator-udid> 2>/dev/null | grep -A3 'com.appandflow.trailhead' | head -5; echo ---; lsof -nP -iTCP:8081 -sTCP:LISTEN | head",
+          "output": "<device inventory omitted from public artifact>",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WGJrV8eC9ZPD4S83wnwZ1q",
+          "startSeconds": 340.175,
+          "endSeconds": 342.27,
+          "command": "cd ./worktrees/native-control && export CI=1 EXPO_NO_TELEMETRY=1 && nohup ./node_modules/.bin/expo start --dev-client --port 8081 > tmp/native-control-metro.log 2>&1 &\necho \"metro pid=$!\"; for i in $(seq 1 30); do sleep 2; if curl -sf http://localhost:8081/status | grep -q running; then echo \"metro ready\"; break; fi; done; tail -5 tmp/native-control-metro.log",
+          "output": "metro pid=62578\nmetro ready\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:62578) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\n| (node:62578) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.\n| (Use `node --trace-warnings ...` to show where the warning was created)\nShell cwd was reset to worktree/bench-fixture-1.0.0",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_017qnP6kxMpd5brMNT2yjHja",
+          "startSeconds": 345.987,
+          "endSeconds": 364.432,
+          "command": "xcrun simctl launch <simulator-udid> com.appandflow.trailhead && sleep 3 && xcrun simctl openurl <simulator-udid> \"com.appandflow.trailhead://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081\" && echo \"openurl ok\"; sleep 15; grep -E 'Bundling|Bundled|error' tmp/native-control-metro.log | tail -5",
+          "output": "com.appandflow.trailhead: 62673\nopenurl ok",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01WVgMzbZC3rAnpuQoLU9Mhj",
+          "startSeconds": 369.27,
+          "endSeconds": 377.277,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+          "output": "Opened: com.appandflow.trailhead\nSession state: ./state/agent-device/sessions/native-control\nPage: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 4 nodes\n@e1 [alert] \"Open in “Trailhead”?\"\n@e2 [button] \"Cancel\"\n@e3 [button] \"Open\"\n@e4 [text] \"Open in “Trailhead”?\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device open com.appandflow.trailhead --foreground --platform ios --udid <simulator-udid>",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01TPcgVhkKQ7P3WRsztzi7X5",
+          "startSeconds": 380.508,
+          "endSeconds": 382.073,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device record start tmp/native-control-session.mp4 --scope device --quality high --hide-touches",
+          "output": "tmp/native-control-session.mp4\nSession state: ./state/agent-device/sessions/native-control",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record start tmp/native-control-session.mp4 --scope device --quality high --hide-touches",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_0169h9HxKVDagXsh2uXW3CT4",
+          "startSeconds": 385.247,
+          "endSeconds": 389.94,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device press @e3 --settle",
+          "output": "Tapped @e3 (275, 474)\nsettled after 3128ms: +4 -4 (~0 unchanged)\n- @e1 [alert] \"Open in “Trailhead”?\"\n- @e2 [button] \"Cancel\"\n- @e3 [button] \"Open\"\n- @e4 [text] \"Open in “Trailhead”?\"\n+ @e1~s463965 [application] \"Trailhead\"\n+ @e2~s463965 [other] \"Bundling 22%…\"\n+ @e3~s463965 [window] \"Trailhead native-control\"\n+ @e4~s463965 [image] \"SplashScreenLogo\"\nhint: Settled on a nearly-empty tree — the app may still be loading. Wait for specific content (wait text ...) before interacting.",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e3 --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_0183CYjyy1eLu81ms2k8tYsu",
+          "startSeconds": 393.568,
+          "endSeconds": 393.676,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device wait text \"Settings\" --timeout 120000",
+          "output": "Exit code 1\nError (INVALID_ARGS): Flag --timeout is not supported for command wait.\nHint: Check command arguments and run --help for usage examples.\nDiagnostic ID: mtwfh9fy-5fe54056\nDiagnostics Log: workspace/2026-09-11T04-00-15-121Z-mtwfh9fy-5fe54056.ndjson",
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device wait text \"Settings\" --timeout 120000",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_018jLoYDE5ZSfdfC16K4YCFw",
+          "startSeconds": 396.34,
+          "endSeconds": 396.564,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device wait text \"Settings\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Settings\"",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_017nSM2kqioGQmbpjRGeJzA6",
+          "startSeconds": 399.566,
+          "endSeconds": 399.85,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device snapshot -i",
+          "output": "Page: com.appandflow.trailhead\nApp: com.appandflow.trailhead\nSnapshot: 41 visible nodes (60 total)\n@e1 [application] \"Trailhead\"\n@e2 [other] \"Trailhead\"\n@e4 [button] \"Close\"\n@e5 [scroll-area] \"Reload\" [scrollable]\n  [content below scroll-area hidden]\n@e6 [other] \"Reload\"\n@e20 [other] \"Vertical scroll bar, -1 page\"\n@e21 [scroll-area] \"dev-tools\" [scrollable]\n  [content below scroll-area hidden]\n@e22 [other] \"dev-tools\"\n@e28 [other] \"Vertical scroll bar, -1 page\"\n@e29 [window] \"Trailhead native-control\"\n@e30 [other] \"\"\n@e31 [other] \"Trails\"\n@e32 [text-field] \"Search trails\" [editable]\n@e33 [scroll-area] \"All regions\" [scrollable]\n  [content below scroll-area hidden]\n@e34 [other] \"All regions\"\n@e35 [button] \"All regions\" [selected]\n@e36 [button] \"Adirondacks\"\n@e37 [button] \"Bas-Saint-Laurent\"\n@e38 [button] \"Charlevoix\"\n@e39 [scroll-area] \"Any level\" [scrollable]\n  [content below scroll-area hidden]\n@e40 [other] \"Any level\"\n@e41 [button] \"Any level\" [selected]\n@e42 [button] \"Easy\"\n@e43 [button] \"Moderate\"\n@e44 [button] \"Hard\"\n@e45 [button] \"Expert\"\n@e46 [text] \"200 trails\"\n@e47 [button] \"Sort by name\" [selected]\n@e48 [button] \"Sort by distance\"\n@e49 [button] \"Sort by rating\"\n@e50 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\" [scrollable]\n  [content below scroll-area hidden]\n@e51 [other] [same label as parent]\n@e52 [button] [same label as parent]\n@e53 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n@e54 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n@e55 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n@e56 [other] \"Trails, tab, 1 of 4\"\n@e57 [button] \"Trails, tab, 1 of 4\" [selected]\n@e58 [button] \"Record, tab, 2 of 4\"\n@e59 [button] \"History, tab, 3 of 4\"\n@e60 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device snapshot -i",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01CJ9cnCG5VB912DSC3HnudG",
+          "startSeconds": 403.348,
+          "endSeconds": 404.858,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device press @e4 --settle",
+          "output": "Tapped @e4 (16, 62)\nsettled after 797ms: +0 -0 (~60 unchanged)\nunchanged interactive (20):\n= @e2~s463969 [other] \"Trailhead\"\n= @e3~s463969 [text] \"Runtime version: exposdk:58.0.0\"\n= @e4~s463969 [button] \"Close\"\n= @e5~s463969 [scroll-area] \"Reload\"\n= @e6~s463969 [other] \"Reload\"\n= @e7~s463969 [button] \"Reload\"\n= @e8~s463969 [button] \"Go home\"\n= @e9~s463969 [button] \"Source code explorer\"\n= @e10~s463969 [button] \"Toggle performance monitor\"\n= @e11~s463969 [button] \"Toggle element inspector\"\n= @e12~s463969 [button] \"Open DevTools\"\n= @e13~s463969 [text] \"Fast refresh\"\n= @e14~s463969 [switch] \"1\"\n= @e15~s463969 [switch] \"1\"\n= @e16~s463969 [text] \"Tools button\"\n= @e17~s463969 [switch] \"1\"\n= @e18~s463969 [switch] \"1\"\n= @e19~s463969 [text] \"Debugging not working? Try manually reloading first.\"\n= @e20~s463969 [other] \"Vertical scroll bar, -1 page\"\n= @e21~s463969 [scroll-area] \"dev-tools\"\n… more interactive elements not shown, use snapshot -i",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press @e4 --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01LkLyMjCNPgfYE4g2tkJdVD",
+          "startSeconds": 408.777,
+          "endSeconds": 409.271,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device screenshot tmp/native-control-check.png",
+          "output": "tmp/native-control-check.png (402x874 @1x)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/native-control-check.png",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01U8JB1XDC6GWiPcQaadLF1C",
+          "startSeconds": 414.359,
+          "endSeconds": 414.47,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device press \"Settings, tab, 4 of 4\" --settle",
+          "output": "Exit code 1\nError (INVALID_ARGS): Target \"Settings, tab, 4 of 4\" is not a @ref, selector, or \"x y\" point. To match by visible text, use text=\"Settings, tab, 4 of 4\" (or label=/id=/role=), or pass an @ref from snapshot.\nHint: Check command arguments and run --help for usage examples.\nDiagnostic ID: mtwfhphw-b499ab86",
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device press \"Settings, tab, 4 of 4\" --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01GsEa1Cm2rHDb5HgUr1VYge",
+          "startSeconds": 417.813,
+          "endSeconds": 417.92,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device press 'label=Settings, tab, 4 of 4' --settle",
+          "output": "Exit code 1\nError (INVALID_ARGS): Target \"label=Settings, tab, 4 of 4\" is not a @ref, selector, or \"x y\" point. Selector values with spaces need quotes, e.g. text=\"Sign in\".\nHint: Check command arguments and run --help for usage examples.\nDiagnostic ID: mtwfhs5q-b2892a93",
+          "exitCode": 1,
+          "presentation": {
+            "command": "agent-device press 'label=Settings, tab, 4 of 4' --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01Pg6dTakYRkNs1XTKkwEUBq",
+          "startSeconds": 420.655,
+          "endSeconds": 423.26,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device press 'label=\"Settings, tab, 4 of 4\"' --settle",
+          "output": "Tapped label=\"Settings, tab, 4 of 4\" (352, 816)\nsettled after 1785ms: +29 -28 (~32 unchanged)\n- @e30 [other] \"\"\n- @e31 [other] \"Trails\"\n- @e32 [text-field] \"Search trails\"\n- @e33 [scroll-area] \"All regions\"\n- @e34 [other] \"All regions\"\n- @e35 [button] \"All regions\"\n- @e36 [button] \"Adirondacks\"\n- @e37 [button] \"Bas-Saint-Laurent\"\n- @e38 [button] \"Charlevoix\"\n- @e39 [scroll-area] \"Any level\"\n- @e40 [other] \"Any level\"\n- @e41 [button] \"Any level\"\n- @e42 [button] \"Easy\"\n- @e43 [button] \"Moderate\"\n- @e44 [button] \"Hard\"\n- @e45 [button] \"Expert\"\n- @e46 [text] \"200 trails\"\n- @e47 [button] \"Sort by name\"\n- @e48 [button] \"Sort by distance\"\n- @e49 [button] \"Sort by rating\"\n- @e50 [scroll-area] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e51 [other] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e52 [button] \"Belvedere de la Chute, Gaspesie, Moderate, rated 3.8 out of 5\"\n- @e53 [button] \"Belvedere de la Tour Bleu, Mont-Tremblant, Hard, rated 5.0 out of 5\"\n- @e54 [button] \"Belvedere de la Tour de la Chute, Charlevoix, Easy, rated 3.5 out of 5\"\n- @e55 [button] \"Belvedere de la Tour des Caps, Laurentians, Moderate, rated 3.9 out of 5\"\n+ @e30~s463975 [other] \"Settings\"\n+ @e31~s463975 [scroll-area] \"UNITS\"\n+ @e32~s463975 [other] \"UNITS\"\n+ @e33~s463975 [cell] \"Distance\"\n+ @e34~s463975 [text] \"\"\n+ @e35~s463975 [button] \"Metric units\"\n+ @e36~s463975 [button] \"Imperial units\"\n+ @e37~s463975 [text] \"Used across the whole app\"\n+ @e38~s463975 [text] \"PREFERENCES\"\n+ @e39~s463975 [other] \"Hike reminders\"\n+ @e40~s463975 [switch] \"Hike reminders\"\n+ @e41~s463975 [text] \"\"\n+ @e42~s463975 [text] \"Nudge me when I have not hiked in a while\"\n+ @e43~s463975 [text] \"Offline maps\"\n+ @e44~s463975 [switch] \"Offline maps\"\n+ @e45~s463975 [text] \"\"\n+ @e46~s463975 [text] \"Keep map tiles for saved trails on device\"\n+ @e47~s463975 [text] \"STORAGE\"\n+ @e48~s463975 [cell] \"Recorded hikes\"\n+ @e49~s463975 [text] \"\"\n+ @e50~s463975 [text] \"48\"\n+ @e51~s463975 [text] \"Stored in a local database\"\n+ @e52~s463975 [button] \"Reset sample data\"\n+ @e53~s463975 [text] \"ABOUT\"\n+ @e54~s463975 [cell] \"\"\n+ @e55~s463975 [text] \"Version\"\n+ @e56~s463975 [text] \"1.0.0\"\n- @e57 [button] \"Trails, tab, 1 of 4\"\n+ @e58~s463975 [button] \"Trails, tab, 1 of 4\"\n- @e60 [button] \"Settings, tab, 4 of 4\"\n+ @e61~s463975 [button] \"Settings, tab, 4 of 4\"",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device press 'label=\"Settings, tab, 4 of 4\"' --settle",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01KyYGaraNpH6YQ6SxXhdzHr",
+          "startSeconds": 426.346,
+          "endSeconds": 426.54,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device wait text \"Offline maps\"",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device wait text \"Offline maps\"",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01NazicnVofVeNHNEgQLjjmk",
+          "startSeconds": 429.659,
+          "endSeconds": 430.033,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device screenshot tmp/native-control-settings.png",
+          "output": "tmp/native-control-settings.png (402x874 @1x)",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device screenshot tmp/native-control-settings.png",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01VsUagn9YQ6bC1GMwez14ZD",
+          "startSeconds": 432.612,
+          "endSeconds": 432.66,
+          "command": "cp tmp/native-control-settings.png results/opus-ios/native-control/proof/settings.png",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01E3tbgYKZyfCSorwWAhrq7t",
+          "startSeconds": 435.685,
+          "endSeconds": 440.511,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device record stop",
+          "output": "tmp/native-control-session.mp4",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device record stop",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_012Rmvrrymxw5VJrouAeBxN8",
+          "startSeconds": 443.232,
+          "endSeconds": 443.282,
+          "command": "cp tmp/native-control-session.mp4 results/opus-ios/native-control/proof/session.mp4",
+          "output": "(Bash completed with no output)",
+          "exitCode": 0
+        },
+        {
+          "id": "toolu_01HQgYDBeGZ7oPCoNr1vvHB4",
+          "startSeconds": 445.858,
+          "endSeconds": 446.034,
+          "command": "env AGENT_DEVICE_STATE_DIR=./state/agent-device AGENT_DEVICE_SESSION=native-control agent-device close",
+          "output": "Closed: native-control",
+          "exitCode": 0,
+          "presentation": {
+            "command": "agent-device close",
+            "isolatedAgentDevice": true
+          }
+        },
+        {
+          "id": "toolu_01WVUFxzngfJLYkgvLJ6qnNz",
+          "startSeconds": 451.769,
+          "endSeconds": 452.207,
+          "command": "ls -la results/opus-ios/native-control/proof/; xcrun simctl spawn <simulator-udid> launchctl list 2>/dev/null | grep -i trailhead; curl -sf http://localhost:8081/status; echo; cd ./worktrees/native-control && git status --short && git diff ios/Trailhead/AppDelegate.swift",
+          "output": "<directory inventory omitted from public artifact>",
+          "exitCode": 0
+        }
+      ],
+      "backgroundProcesses": [],
+      "markers": [
+        {
+          "id": "app-alive",
+          "kind": "appAlive",
+          "label": "App process alive",
+          "atSeconds": 346.853
+        },
+        {
+          "id": "settings-ready",
+          "kind": "settingsReady",
+          "label": "Settings proof ready",
+          "atSeconds": 430.033
+        }
+      ],
+      "proof": {
+        "src": "benchmarks/opus-rc12/native-control.png",
+        "expected": "Offline maps",
+        "width": 402,
+        "height": 874
+      },
+      "recording": {
+        "src": "benchmarks/opus-rc12/native-control.mp4",
+        "bytes": 1689378
+      },
+      "timingOrigin": {
+        "kind": "first-recorded-activity",
+        "dispatchOffsetSeconds": 132.682,
+        "event": {
+          "kind": "message",
+          "id": "23e4b9cf-703f-40cc-a37f-7d92815e65a7-0"
+        },
+        "dispatchSettingsReadySeconds": 562.715,
+        "dispatchDiagnosisSeconds": null,
+        "dispatchTotalSeconds": 596.597
+      }
+    }
+  ]
+}

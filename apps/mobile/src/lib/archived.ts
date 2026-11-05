@@ -1,0 +1,109 @@
+import { t } from '@lingui/core/macro';
+
+import { RequestError } from '@/lib/connection';
+import type { DevicePlatform, StatusPayload } from '@/protocol/types';
+
+export type ArchivedWorkspace = NonNullable<StatusPayload['archived']>[number];
+export type WorkspaceTarget = { workspace: string; archive?: never } | { archive: string; workspace?: never };
+
+export function removedByWords(removedBy: string): string {
+  switch (removedBy) {
+    case 'worktree-remove':
+      return t`worktree removal`;
+    case 'gc':
+      return t`cleanup`;
+    case 'maintenance':
+      return t`automatic maintenance`;
+    default:
+      return removedBy;
+  }
+}
+
+export function archiveError(error: Error, kind: 'logs' | 'replay' | 'detail'): string {
+  if (error instanceof RequestError && (error.error.code === 'bad-request' || error.error.code === 'unknown-method')) {
+    if (kind === 'detail') return t`Update stim-server to view full archived history and recordings`;
+    return kind === 'logs'
+      ? t`Update stim-server to view archived logs`
+      : t`Update stim-server to view archived replay`;
+  }
+  return error.message;
+}
+
+export function newestArchive(path: string, archives: readonly ArchivedWorkspace[]): ArchivedWorkspace | null {
+  return archives
+    .filter((entry) => entry.projectRoot === path)
+    .reduce<ArchivedWorkspace | null>(
+      (newest, entry) => (!newest || Date.parse(entry.removedAt) > Date.parse(newest.removedAt) ? entry : newest),
+      null,
+    );
+}
+
+export const ARCHIVE_GRACE_MS = 5000;
+
+/**
+ * What a workspace screen does when its path is not listed. A screen opened by a link can run ahead of status, so
+ * the newest archive of a re-created path opens only once status refreshed since the screen opened or the grace
+ * period passed. A workspace that was live on this screen and is now gone is confirmed gone and opens at once.
+ */
+export function workspaceArchiveDecision({
+  path,
+  archives,
+  wasListed,
+  refreshed,
+  graceElapsed,
+}: {
+  path: string;
+  archives: readonly ArchivedWorkspace[];
+  wasListed: boolean;
+  refreshed: boolean;
+  graceElapsed: boolean;
+}): { kind: 'open'; archive: ArchivedWorkspace } | { kind: 'wait' } | { kind: 'none' } {
+  const archive = newestArchive(path, archives);
+  if (!archive) return { kind: 'none' };
+  return wasListed || refreshed || graceElapsed ? { kind: 'open', archive } : { kind: 'wait' };
+}
+
+export function archivedDeviceRoute({
+  macId,
+  path,
+  platform,
+  slot,
+  physical = false,
+  at,
+  hasStatus,
+  workspaceListed,
+  archives,
+}: {
+  macId: string;
+  path: string;
+  platform: DevicePlatform;
+  slot: string;
+  physical?: boolean;
+  at?: string;
+  hasStatus: boolean;
+  workspaceListed: boolean;
+  archives: readonly ArchivedWorkspace[];
+}):
+  | { pathname: '/mac/[id]/archived'; params: { id: string; archive: string } }
+  | {
+      pathname: '/mac/[id]/archived-replay';
+      params: { id: string; archive: string; platform: 'ios' | 'android' | 'web'; at?: string };
+    }
+  | null {
+  if (!hasStatus || workspaceListed) return null;
+  const archive = newestArchive(path, archives);
+  if (!archive) return null;
+  const params = { id: macId, archive: archive.id };
+  if (
+    archive.bytes.recordings > 0 &&
+    slot === 'default' &&
+    !physical &&
+    (platform === 'ios' || platform === 'android' || platform === 'web')
+  ) {
+    return {
+      pathname: '/mac/[id]/archived-replay',
+      params: { ...params, platform, ...(at === undefined ? {} : { at }) },
+    };
+  }
+  return { pathname: '/mac/[id]/archived', params };
+}

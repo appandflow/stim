@@ -1,0 +1,115 @@
+import StimKit
+import StimStores
+import SwiftUI
+
+/// The "..." menu on a simulator, emulator or macOS app tile: the same Build and Run and Stop for each, and for a
+/// macOS app its window and build logs.
+struct DeviceTileMenu: View {
+  var device: DeviceRef
+  var owner: ServerOwner
+  var workspace: String
+  var building: Bool
+  @ObservedObject var choice: MacosWindowChoice
+  var openBuildLogs: (() -> Void)?
+
+  static func applies(to device: DeviceRef, owner: ServerOwner) -> Bool {
+    if device.isPhysical || !owner.isLocal { return false }
+    switch device {
+    case .ios, .android, .macos: return true
+    case .remote, .web: return false
+    }
+  }
+
+  var body: some View {
+    if Self.applies(to: device, owner: owner) { menu }
+  }
+
+  private var menu: some View {
+    Menu {
+      DeviceTileMenuItems(
+        device: device, workspace: workspace, building: building, choice: choice, openBuildLogs: openBuildLogs)
+    } label: {
+      Image(systemName: "ellipsis")
+    }
+    .menuStyle(.button)
+    .menuIndicator(.hidden)
+    .buttonStyle(.borderless)
+    .fixedSize()
+    .help("Device actions")
+    .accessibilityLabel("Device actions")
+  }
+}
+
+struct DeviceTileMenuItems: View {
+  var device: DeviceRef
+  var workspace: String
+  var building: Bool
+  var choice: MacosWindowChoice?
+  var openBuildLogs: (() -> Void)?
+  @EnvironmentObject private var actions: ActionCenter
+
+  var body: some View {
+    let busy = actions.active(for: workspace) != nil
+    Group {
+      if let run = runCommand(for: device, cwd: workspace) {
+        Button("Build and Run", systemImage: "play.fill") {
+          actions.run("Run \(device.label)", steps: [run], present: false)
+        }
+        .disabled(building || busy)
+      }
+      if device.canShare {
+        Button("Share\u{2026}", systemImage: "link") {
+          OpenRequests.shared.shareRequest = ShareRequest(workspace: workspace, platform: device.platform, slot: device.slot)
+        }
+      }
+      Button("Stop", systemImage: "stop.fill") {
+        actions.run("Stop \(device.label)", steps: [stopCommand(for: device, cwd: workspace)], present: false)
+      }
+      .disabled(
+        !(device.isRunning || device.state == "orphaned" || device.hostedMachine != nil && device.state != "stopped") || busy)
+      if case .macos = device, let choice {
+        MacosWindowItems(
+          choice: choice, hosted: device.hostedMachine != nil, openBuildLogs: openBuildLogs)
+      }
+    }
+  }
+}
+
+private struct MacosWindowItems: View {
+  @ObservedObject var choice: MacosWindowChoice
+  var hosted: Bool
+  var openBuildLogs: (() -> Void)?
+
+  var body: some View {
+    if !hosted {
+      Button("Bring to Front", systemImage: "arrow.up.forward.app") { choice.open() }
+        .disabled(!choice.canOpen)
+    }
+    if choice.windows.count > 1 || choice.pinned {
+      Divider()
+      Toggle("Follow Front Window", isOn: Binding(get: { !choice.pinned }, set: { if $0 { choice.select(nil) } }))
+        .disabled(!choice.canSelect)
+      ForEach(choice.windows) { window in
+        Toggle(
+          window.title.isEmpty ? "Untitled Window" : window.title,
+          isOn: Binding(get: { choice.pinned && window.id == choice.current }, set: { if $0 { choice.select(window.id) } })
+        )
+        .disabled(!choice.canSelect)
+      }
+    }
+    if let openBuildLogs {
+      Divider()
+      Button("Build Logs", systemImage: "doc.text.magnifyingglass", action: openBuildLogs)
+    }
+  }
+}
+
+extension DeviceRef {
+  /// A running simulator or emulator on this Mac, which `share.start` serves.
+  var canShare: Bool {
+    switch self {
+    case .ios, .android: isRunning && !isPhysical && hostedMachine == nil
+    case .remote, .web, .macos: false
+    }
+  }
+}

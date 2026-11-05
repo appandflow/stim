@@ -1,0 +1,361 @@
+import { t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
+import { Image } from 'expo-image';
+import { usePathname, useRouter, type Href } from 'expo-router';
+import { useState } from 'react';
+import { Modal, Platform, Pressable, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+
+import { IconButton } from '@/components/button';
+import { Icon, type IconName } from '@/components/icon';
+import { ScrollView } from '@/components/lists';
+import { Text } from '@/components/text';
+import { Touch } from '@/components/touch';
+import { confirmRestartToUpdate, useAppUpdate } from '@/hooks/app-update';
+import { useHomeFilters, type HomeView } from '@/hooks/home-filters';
+import { useInbox } from '@/hooks/inbox';
+import { useMacs } from '@/hooks/machines';
+import { useRecents } from '@/hooks/recents';
+import { worktreeApps } from '@/lib/worktree-page';
+import { drawerStatus, type DrawerMachine } from '@/lib/drawer-status';
+import { hapticFeedback } from '@/lib/haptics';
+import { machineStats } from '@/lib/home';
+import { workspaceTitleAt } from '@/lib/workspace-names';
+import { isShownLive } from '@/lib/workspaces';
+import { About } from '@/screens/about';
+
+const WORDMARK = require('@/assets/images/wordmark.png');
+
+export function Menu({ onClose }: { onClose: () => void }) {
+  const { theme } = useUnistyles();
+  const router = useRouter();
+  const pathname = usePathname();
+  const insets = useSafeAreaInsets();
+  const { connections, macs } = useMacs();
+  const { view, setView } = useHomeFilters();
+  const { recents } = useRecents();
+  const update = useAppUpdate();
+  const inbox = useInbox();
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const go = (href: Href) => {
+    onClose();
+    router.push(href);
+  };
+  const show = (next: HomeView) => {
+    if (pathname !== '/' || view !== next) hapticFeedback('selection');
+    setView(next);
+    onClose();
+    if (pathname !== '/') router.replace('/');
+  };
+  const shownCheckouts = new Set<string>();
+  const recentRows = recents.flatMap((recent) => {
+    const connection = connections.find((c) => c.mac.id === recent.macId);
+    if (!connection) return [];
+    const apps = worktreeApps(recent.path, connection.status?.environments ?? []);
+    const checkout = `${recent.macId}\n${apps[0]?.checkout ?? apps[0]?.worktree?.path ?? recent.path}`;
+    if (shownCheckouts.has(checkout)) return [];
+    shownCheckouts.add(checkout);
+    return [{ ...recent, title: workspaceTitleAt(recent.path, connection.status), live: apps.some(isShownLive) }];
+  });
+  const machines: DrawerMachine[] = connections.map((c) => ({
+    id: c.mac.id,
+    name: c.mac.name,
+    state: c.state,
+    missing: c.missing,
+    diskTone: machineStats(c.usage).find((s) => s.kind === 'disk')?.tone ?? 'normal',
+  }));
+  const status = drawerStatus(machines);
+  const statusText = macs === null ? '' : status.text;
+  const statusTone = status.tone === 'critical' ? 'error' : status.tone === 'warn' ? 'warning' : 'secondary';
+
+  return (
+    <View
+      style={[
+        styles.screen,
+        {
+          paddingTop: insets.top + theme.space.lg,
+          paddingBottom: insets.bottom + theme.space.md,
+          paddingLeft: insets.left,
+          paddingRight: insets.right,
+        },
+      ]}
+    >
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustContentInsets={false}
+        alwaysBounceHorizontal={false}
+        directionalLockEnabled
+      >
+        <Image
+          source={WORDMARK}
+          tintColor={theme.colors.text}
+          style={styles.wordmark}
+          contentFit="contain"
+          accessibilityLabel={t`Stim`}
+        />
+        <NavRow
+          icon="rectangle.stack"
+          title={t`Workspaces`}
+          selected={pathname === '/' && view === 'workspaces'}
+          onPress={() => show('workspaces')}
+        />
+        <NavRow
+          icon="square.grid.2x2"
+          title={t`Devices`}
+          selected={pathname === '/' && view === 'devices'}
+          onPress={() => show('devices')}
+        />
+        <NavRow
+          icon="laptopcomputer"
+          title={t`Machines`}
+          selected={pathname === '/' && view === 'machines'}
+          onPress={() => show('machines')}
+        />
+        {inbox.supported ? (
+          <NavRow
+            icon="bell"
+            title={t`Notifications`}
+            count={inbox.unread}
+            selected={pathname === '/inbox'}
+            onPress={() => {
+              if (pathname !== '/inbox') hapticFeedback('selection');
+              onClose();
+              if (pathname !== '/inbox') router.replace('/inbox');
+            }}
+          />
+        ) : null}
+        <NavRow icon="plus" title={t`Pair a Machine`} selected={false} onPress={() => router.push('/pair')} />
+        {recentRows.length > 0 ? (
+          <>
+            <Text
+              variant="callout"
+              weight="medium"
+              tone="secondary"
+              accessibilityRole="header"
+              style={styles.sectionTitle}
+            >
+              <Trans>Recent Workspaces</Trans>
+            </Text>
+            {recentRows.map((recent) => {
+              const { title } = recent;
+              return (
+                <Touch
+                  key={`${recent.macId}\n${recent.path}`}
+                  feedback="row"
+                  onPress={() =>
+                    go({ pathname: '/mac/[id]/workspace', params: { id: recent.macId, path: recent.path } })
+                  }
+                  accessibilityLabel={recent.live ? t`${title}, active` : title}
+                  style={styles.recent}
+                >
+                  <Icon
+                    name="arrow.triangle.branch"
+                    size={15}
+                    color={recent.live ? theme.colors.success : theme.colors.tertiary}
+                  />
+                  <Text variant="body" numberOfLines={1} ellipsizeMode="middle" style={styles.grow}>
+                    {recent.title}
+                  </Text>
+                </Touch>
+              );
+            })}
+          </>
+        ) : null}
+      </ScrollView>
+      {update.status === 'ready' ? (
+        <Touch feedback="row" accessibilityRole="button" onPress={confirmRestartToUpdate} style={styles.updateReady}>
+          <Icon name="arrow.clockwise" size={15} color={theme.colors.primary} />
+          <Text variant="footnote" tone="brand" style={styles.grow}>
+            <Trans>Update ready, tap to restart</Trans>
+          </Text>
+        </Touch>
+      ) : update.status !== null ? (
+        <Text variant="footnote" tone="secondary" style={styles.updateText}>
+          {update.status === 'checking' ? t`Checking for updates\u2026` : t`Downloading update\u2026`}
+        </Text>
+      ) : null}
+      <View style={styles.footer}>
+        <Touch
+          onPress={() =>
+            status.macId
+              ? router.push({ pathname: '/mac/[id]', params: { id: status.macId } })
+              : Platform.OS === 'android'
+                ? setAboutOpen(true)
+                : router.push('/about')
+          }
+          accessibilityLabel={statusText}
+          style={styles.footerLeft}
+        >
+          <View style={styles.badge}>
+            <Icon name="laptopcomputer" size={18} color={theme.colors.text} />
+          </View>
+          <View style={styles.footerStatusRow}>
+            <Text variant="footnote" tone={statusTone} numberOfLines={1} style={styles.grow}>
+              {statusText}
+            </Text>
+          </View>
+        </Touch>
+        <IconButton icon="gearshape" accessibilityLabel={t`Settings`} onPress={() => go('/settings')} />
+      </View>
+      {/* react-native-screens draws an Android formSheet inside the stack, which sits in the drawer's scene card. */}
+      {Platform.OS === 'android' ? (
+        <Modal
+          visible={aboutOpen}
+          transparent
+          animationType="fade"
+          statusBarTranslucent
+          navigationBarTranslucent
+          onRequestClose={() => setAboutOpen(false)}
+        >
+          <Pressable
+            style={styles.scrim}
+            onPress={() => setAboutOpen(false)}
+            accessibilityRole="button"
+            accessibilityLabel={t`Close About`}
+          />
+          <GestureHandlerRootView style={[styles.sheet, { paddingBottom: insets.bottom }]}>
+            <About onClose={() => setAboutOpen(false)} />
+          </GestureHandlerRootView>
+        </Modal>
+      ) : null}
+    </View>
+  );
+}
+
+function NavRow({
+  icon,
+  title,
+  count = 0,
+  selected,
+  onPress,
+}: {
+  icon: IconName;
+  title: string;
+  /** Shown as a pill, and read out as unread, when above zero. */
+  count?: number;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  const { theme } = useUnistyles();
+  return (
+    <Touch
+      feedback="row"
+      onPress={onPress}
+      accessibilityLabel={count > 0 ? t`${title}, ${count} unread` : title}
+      accessibilityState={{ selected }}
+      style={styles.row(selected)}
+    >
+      <Icon name={icon} size={20} color={theme.colors.text} />
+      <Text
+        variant="headline"
+        weight="medium"
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.6}
+        style={styles.grow}
+      >
+        {title}
+      </Text>
+      {count > 0 ? (
+        <View style={styles.count}>
+          <Text variant="caption" weight="semibold" style={styles.countText}>
+            {count > 99 ? '99+' : count}
+          </Text>
+        </View>
+      ) : null}
+    </Touch>
+  );
+}
+
+const styles = StyleSheet.create((theme) => ({
+  screen: { flex: 1, minWidth: 0 },
+  scroll: { flex: 1, width: '100%' },
+  content: { width: '100%', paddingHorizontal: theme.space.lg, paddingBottom: theme.space.xl },
+  wordmark: {
+    width: 88,
+    height: 42,
+    marginLeft: theme.space.lg,
+    marginTop: theme.space.md,
+    marginBottom: theme.space.xxxl,
+  },
+  row: (selected: boolean) => ({
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.lg,
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.lg,
+    borderRadius: theme.radius.card,
+    borderCurve: 'continuous',
+    backgroundColor: selected ? theme.colors.border : undefined,
+  }),
+  sectionTitle: { marginTop: theme.space.xxxl, marginBottom: theme.space.sm, marginLeft: theme.space.lg },
+  recent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.lg,
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.md,
+    minHeight: 44,
+    borderRadius: theme.radius.card,
+    borderCurve: 'continuous',
+  },
+  grow: { flex: 1, minWidth: 0 },
+  updateReady: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.sm,
+    paddingLeft: theme.space.lg + theme.space.md + 36 + theme.space.lg,
+    paddingRight: theme.space.lg,
+  },
+  updateText: {
+    paddingLeft: theme.space.lg + theme.space.md + 36 + theme.space.lg,
+    paddingRight: theme.space.lg,
+  },
+  footer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.md,
+    paddingHorizontal: theme.space.lg,
+    paddingTop: theme.space.md,
+  },
+  footerLeft: {
+    flex: 1,
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.lg,
+    paddingHorizontal: theme.space.md,
+  },
+  badge: {
+    width: 36,
+    height: 36,
+    borderRadius: theme.radius.round,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.raised,
+  },
+  footerStatusRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
+  scrim: { flex: 1, backgroundColor: theme.colors.scrim },
+  sheet: {
+    maxHeight: '85%',
+    borderTopLeftRadius: theme.radius.sheet,
+    borderTopRightRadius: theme.radius.sheet,
+    overflow: 'hidden',
+    backgroundColor: theme.colors.background,
+  },
+  count: {
+    minWidth: 22,
+    minHeight: 22,
+    paddingHorizontal: theme.space.sm,
+    borderRadius: theme.radius.round,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.primary,
+  },
+  countText: { color: theme.colors.onPrimary, fontVariant: ['tabular-nums'] },
+}));

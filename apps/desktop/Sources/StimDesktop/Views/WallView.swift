@@ -1,0 +1,282 @@
+import StimKit
+import StimStores
+import SwiftUI
+
+struct WallView: View {
+  @ObservedObject var store: StatusStore
+  var metrics: MetricsStore
+  var project: Project?
+  var scope = ProjectScope.active
+  var setScope: (ProjectScope) -> Void = { _ in }
+  @Binding var selection: SidebarItem?
+  var openLogs: (String) -> Void
+  var openDevice: (WorkspaceKey, String) -> Void
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
+  @AppStorage(AppPreferences.Key.machineScope) private var machineScope = MachineScope.all
+
+  var body: some View {
+    let machines = project == nil ? store.pairedMachines(pairedSessions.entries) : []
+    VStack(spacing: 0) {
+      if !machines.isEmpty {
+        HStack(spacing: Space.lg) {
+          if machineScope == .all { UnavailableMachinesNote(machines: machines) }
+          Spacer(minLength: 0)
+          if machines.contains(where: \.isAvailable) { MachineScopeControl(scope: $machineScope) }
+        }
+        .padding(.horizontal, PageInset.horizontal).padding(.top, Space.xl)
+      }
+      page(machines: machines)
+    }
+  }
+
+  @ViewBuilder private func page(machines: [PairedMachine]) -> some View {
+    let content = ProjectPage.content(environments: store.environments(in: project), scope: project == nil ? .active : scope)
+    let shown: [Workspace] = if case .worktrees(let environments) = content { environments } else { [] }
+    let cards = WallCard.merged(local: WallCard.cards(environments: shown), machines: machines, scope: machineScope)
+    if store.payload == nil {
+      if let error = store.error {
+        EmptyState(title: "Cannot Read stim status", message: error, showsHero: true)
+      } else {
+        ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+    } else if let project, content == .noneActive {
+      VStack(spacing: Space.lg) {
+        Text("No Active Workspaces in \(store.title(of: project))").font(.stim(.headline))
+        Text("The project has workspaces, but none is running or being set up.").foregroundStyle(Palette.secondary)
+        Button("Show All") { setScope(.all) }
+          .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
+      }
+      .padding(Space.huge)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .id(project.id)
+    } else if cards.isEmpty {
+      EmptyState(
+        title: project.map { "Nothing Running in \(store.title(of: $0))" } ?? "Nothing Running",
+        message: "Workspaces appear here when an agent warms a worktree or runs stim ios or stim android.",
+        showsHero: true, showsPrompts: true
+      )
+      .id(project?.id)
+    } else {
+      ScrollView {
+        LazyVStack(alignment: .leading, spacing: Space.xl) {
+          if let project {
+            HStack(spacing: Space.lg) {
+              Text(store.title(of: project)).font(.stim(.title))
+              if scope == .all {
+                Button {
+                  setScope(.active)
+                } label: {
+                  Pill {
+                    Text("Showing all workspaces")
+                    Image(systemName: "xmark").font(.stim(.caption))
+                  }
+                }
+                .buttonStyle(.hoverRow())
+                .help("Show only active workspaces")
+                .accessibilityLabel("Showing all workspaces. Show only active workspaces")
+              }
+            }
+          }
+          WorkspaceCardGrid(
+            cards: cards, store: store, metrics: metrics,
+            open: { card in
+              selection =
+                card.pairedDestination
+                ?? (project == nil ? .project(store.project(of: card.apps[0].workspace)) : .environment(card.id))
+            },
+            openDevice: openDevice, openLogs: openLogs)
+        }
+        .finiteAccessibilityFrame()
+        .padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl)
+      }
+    }
+  }
+}
+
+struct CardPressAppearance: ViewModifier {
+  var pressed: Bool
+  var tint: Color = Palette.accent
+  var radius: CGFloat = Radius.card
+  @State private var hovering = false
+
+  func body(content: Content) -> some View {
+    content
+      .overlay {
+        RoundedRectangle(cornerRadius: radius)
+          .fill(tint.opacity(pressed ? 0.06 : 0))
+          .overlay {
+            RoundedRectangle(cornerRadius: radius)
+              .stroke(Palette.shadow.opacity(pressed ? 0.08 : 0), lineWidth: 4)
+              .blur(radius: 2)
+              .offset(y: 1)
+              .clipShape(RoundedRectangle(cornerRadius: radius))
+          }
+          .overlay {
+            RoundedRectangle(cornerRadius: radius)
+              .strokeBorder(tint.opacity(pressed ? 0.35 : hovering ? 0.22 : 0), lineWidth: 1)
+          }
+          .allowsHitTesting(false)
+      }
+      .animation(pressed ? nil : .easeOut(duration: 0.08), value: pressed)
+      .animation(.easeOut(duration: 0.1), value: hovering)
+      .onHover { hovering = $0 }
+  }
+}
+
+struct CardPressedKey: PreferenceKey {
+  static let defaultValue = false
+
+  static func reduce(value: inout Bool, nextValue: () -> Bool) {
+    value = nextValue() || value
+  }
+}
+
+struct CardPressStyle: ButtonStyle {
+  var highlightsDevice = false
+
+  @ViewBuilder
+  func makeBody(configuration: Configuration) -> some View {
+    if highlightsDevice {
+      CardPressBody(configuration: configuration, reportsPress: false)
+        .modifier(CardPressAppearance(pressed: configuration.isPressed, tint: Palette.secondary, radius: 0))
+    } else {
+      CardPressBody(configuration: configuration)
+    }
+  }
+}
+
+struct CardPressBody: View {
+  var configuration: ButtonStyleConfiguration
+  var reportsPress = true
+  @State private var cursorPushed = false
+  @Environment(\.isEnabled) private var isEnabled
+
+  var body: some View {
+    configuration.label
+      .contentShape(Rectangle())
+      .preference(key: CardPressedKey.self, value: reportsPress && configuration.isPressed)
+      .onHover { inside in
+        updateCursor(inside && isEnabled)
+      }
+      .onChange(of: isEnabled) { _, enabled in
+        if !enabled { updateCursor(false) }
+      }
+      .onDisappear { updateCursor(false) }
+  }
+
+  private func updateCursor(_ pushed: Bool) {
+    guard cursorPushed != pushed else { return }
+    cursorPushed = pushed
+    if pushed { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+  }
+}
+
+struct WorkspaceHeader: View {
+  var env: Workspace
+  var project: Project
+  var usage: UsageHistory?
+  var compact = false
+  var stacked = false
+  var showsProgress = true
+  var openLogs: () -> Void
+
+  var body: some View {
+    VStack(alignment: stacked ? .center : .leading, spacing: Space.md) {
+      row
+      if showsProgress {
+        if let build = env.build, build.isRunning {
+          BuildProgressBar(build: build).frame(maxWidth: 520)
+        } else if !env.live, env.isSettingUp {
+          SetupBadge(env: env).frame(maxWidth: 520, alignment: .leading)
+        }
+      }
+    }
+    .contentShape(Rectangle())
+  }
+
+  @ViewBuilder private var row: some View {
+    if stacked {
+      chips
+    } else {
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: Space.lg) {
+          titleGroup
+          Spacer(minLength: 12)
+          chips
+        }
+        VStack(alignment: .leading, spacing: Space.md) {
+          titleGroup
+          chips
+        }
+      }
+    }
+  }
+
+  private var titleGroup: some View {
+    HStack(spacing: Space.lg) {
+      Text(env.names.title).font(.stim(.headline)).lineLimit(1).truncationMode(.middle)
+      if project.name != env.names.title {
+        Text(project.name).font(.stim(.callout)).foregroundStyle(Palette.primary).lineLimit(1).fixedSize()
+      }
+      if let inCheckout = env.names.inCheckout {
+        Text(inCheckout).font(.stim(.callout)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
+      }
+    }
+  }
+
+  private var chips: some View {
+    WorkspaceChips(env: env, usage: usage, compact: compact, stacked: stacked, openLogs: openLogs)
+  }
+}
+
+struct WorkspaceChips: View {
+  var env: Workspace
+  var usage: UsageHistory?
+  var compact = false
+  var stacked = false
+  var openLogs: () -> Void
+
+  var body: some View {
+    FlowLayout(spacing: Space.md, lineSpacing: Space.sm, centered: stacked) {
+      if let metro = env.metro, let health = env.metroHealth {
+        let state = health == .healthy ? "running" : health.rawValue
+        Pill(tone: health == .healthy ? .neutral : .error) {
+          StatusDot(color: health == .healthy ? Palette.success : Palette.error)
+          Text("Metro")
+          Text(":\(String(metro.port))").font(.stim(.caption, mono: true))
+        }
+        .help("Metro on port \(String(metro.port)), \(state)")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Metro on port \(String(metro.port)), \(state)")
+      }
+      if env.devices.contains(where: { $0.isRunning && $0.activity?.state == "driven" }) {
+        DriversPill(activities: env.devices.filter(\.isRunning).map(\.activity))
+      }
+      if !compact, let cpu = usage?.latest.cpuPercent, let usage {
+        Pill {
+          Sparkline(values: usage.cpu, minimumPeak: 100).frame(width: 34, height: 12)
+          Text("CPU")
+          Text(formatPercent(cpu)).font(.stim(.caption, mono: true))
+        }
+        .help("CPU of the workspace's processes, simulators and emulators, as a percent of one core")
+      }
+      if !compact, let usage, usage.isFootprint {
+        Pill {
+          Sparkline(values: usage.memory, minimumPeak: 1_073_741_824).frame(width: 34, height: 12)
+          Text("RAM")
+          Text(Format.memory(usage.memoryBytes)).font(.stim(.caption, mono: true))
+        }
+        .help("Memory the workspace's processes, simulators and emulators use, as Activity Monitor counts it")
+      } else if !compact, let mb = env.memoryMb, mb > 0 {
+        MemoryPill(mb: mb, source: env.memorySource)
+      }
+      if let errors = env.logs?.errorsSinceMarker, !compact || errors > 0 {
+        Button(action: openLogs) {
+          Pill(tone: errors > 0 ? .error : .neutral) { Text(countLabel(errors, "error")) }
+        }
+        .buttonStyle(.hoverRow())
+        .help("\(countLabel(errors, "error")) in the logs since the last marker \u{2014} click to open the logs")
+      }
+    }
+  }
+}

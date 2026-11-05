@@ -1,0 +1,25 @@
+import { defineConfig } from 'tsdown';
+
+export default defineConfig({
+  entry: {
+    index: 'index.ts',
+    noise: 'noise.ts',
+    'noise-session': 'noise-session.ts',
+    'ownership-claim': 'ownership-claim.ts',
+    'process-identity': 'process-identity.ts',
+    state: 'state/index.ts',
+    protocol: 'protocol.ts',
+    'phone-protocol': 'phone-protocol.ts',
+    'receive-protocol': 'receive-protocol.ts',
+    oversight: 'oversight.ts',
+    toolchain: 'toolchain.ts',
+    'workspace-link': 'workspace-link.ts',
+  },
+  format: 'esm',
+  dts: true,
+  outDir: 'dist',
+  target: 'node22.12',
+  platform: 'node',
+  tsconfig: 'tsconfig.json',
+  fixedExtension: true,
+});

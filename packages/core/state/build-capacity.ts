@@ -1,0 +1,176 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { availableParallelism, loadavg } from 'node:os';
+import { join } from 'node:path';
+import { configDir } from '../index.ts';
+import {
+  isClaimRefusal,
+  readClaimSet,
+  releaseClaim,
+  tryAcquireClaim,
+  type ClaimHandle,
+  type ClaimRefusedError,
+} from '../ownership-claim.ts';
+import { admissionLimits, loadConfig } from './config.ts';
+import { isJsonObject } from './json-file.ts';
+import { settingDefinition } from './settings-registry.ts';
+import type { LoadState } from './status.ts';
+
+const NATIVE_PHASES = new Set(['prebuild', 'pods', 'compile']);
+const SLOT_PREFIX = 'slot-';
+const SLOT_LABEL = 'build slot';
+
+export function buildSlotsDir(): string {
+  return join(configDir(), 'build-slots');
+}
+
+export function buildSlotPath(index: number): string {
+  return join(buildSlotsDir(), `${SLOT_PREFIX}${index}`);
+}
+
+/**
+ * Takes the first free one of `max` `concurrency.maxBuilds` slots, recording `details` and the slot `index`. Returns
+ * null while every slot is held; throws the claim refusal when no slot is busy but one cannot be resolved.
+ */
+export function tryAcquireBuildSlotClaim({
+  max,
+  details,
+}: {
+  max: number;
+  details: Record<string, unknown>;
+}): { claim: ClaimHandle; index: number; path: string } | null {
+  let refusal: ClaimRefusedError | null = null;
+  let busy = false;
+  for (let index = 0; index < max; index++) {
+    const path = buildSlotPath(index);
+    let attempt;
+    try {
+      attempt = tryAcquireClaim({ root: path, mode: 'exclusive', label: SLOT_LABEL, details: { ...details, index } });
+    } catch (err) {
+      if (!isClaimRefusal(err)) throw err;
+      refusal ??= err;
+      continue;
+    }
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (!attempt.acquired) {
+      busy = true;
+      continue;
+    }
+    return { claim: attempt.acquired, index, path };
+  }
+  if (refusal && !busy) throw refusal;
+  return null;
+}
+
+/** Build slots held for a remote machine's offloaded builds, which run under another Stim home. */
+function liveOffloadedSlots(): number {
+  let names: string[];
+  try {
+    names = readdirSync(buildSlotsDir());
+  } catch {
+    return 0;
+  }
+  let count = 0;
+  for (const name of names) {
+    if (!name.startsWith(SLOT_PREFIX)) continue;
+    try {
+      if (readClaimSet(join(buildSlotsDir(), name)).live.some((holder) => holder.details.offloaded === true))
+        count += 1;
+    } catch {}
+  }
+  return count;
+}
+
+/**
+ * How busy this machine is for native builds. `loadPerCore` is the 5-minute load average divided by the CPU count,
+ * rounded to one decimal. `builds` counts this Stim home's runs that hold a live native-run claim and are in
+ * prebuild, pods or compile here, not on a remote machine, plus the build slots this machine holds for other machines'
+ * offloaded builds. `maxBuilds` is `concurrency.maxBuilds`, or the derived cap when it is 0.
+ */
+export interface MachineCapacity {
+  cpus: number;
+  loadPerCore: number;
+  builds: number;
+  maxBuilds: number;
+  maxLoadPerCore: number;
+}
+
+export function maxLoadPerCore(): number {
+  const value = loadConfig()?.server?.maxLoadPerCore;
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
+  return settingDefinition('server.maxLoadPerCore')!.default as number;
+}
+
+/** `server.maxOffloadedBuilds`: how many builds from other machines run here at once, 0 when unlimited. */
+export function maxOffloadedBuilds(): number {
+  const value = loadConfig()?.server?.maxOffloadedBuilds;
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
+  return Number(settingDefinition('server.maxOffloadedBuilds')?.default ?? 0);
+}
+
+/** `server.workerAreaMaxAgeDays`: the days a repository area stays unused on a build worker, 0 when age removes none. */
+export function workerAreaMaxAgeDays(): number {
+  const value = loadConfig()?.server?.workerAreaMaxAgeDays;
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
+  return Number(settingDefinition('server.workerAreaMaxAgeDays')?.default ?? 0);
+}
+
+function liveNativeBuilds(): number {
+  const dir = join(configDir(), 'workspaces');
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  let count = 0;
+  for (const name of names) {
+    let active: unknown;
+    try {
+      const state: unknown = JSON.parse(readFileSync(join(dir, name, 'state.json'), 'utf8'));
+      active = isJsonObject(state) ? state.activeBuild : undefined;
+    } catch {
+      continue;
+    }
+    if (!isJsonObject(active)) continue;
+    const { phase, claim, placement } = active;
+    if (typeof phase !== 'string' || !NATIVE_PHASES.has(phase) || placement) continue;
+    if (!isJsonObject(claim)) continue;
+    const { root, claimId } = claim;
+    if (typeof root !== 'string' || typeof claimId !== 'string') continue;
+    try {
+      if (readClaimSet(root).live.some((holder) => holder.claimId === claimId)) count += 1;
+    } catch {}
+  }
+  return count;
+}
+
+/** The 5-minute load average per CPU, rounded to one decimal, and the CPU count it divides by. */
+export function loadPerCore(): { cpus: number; loadPerCore: number } {
+  const cpus = Math.max(1, availableParallelism());
+  return { cpus, loadPerCore: Math.round((loadavg()[1]! / cpus) * 10) / 10 };
+}
+
+export function loadState(load: number, busyAt: number, limit: number | null): LoadState {
+  if (limit !== null && limit > 0 && load >= limit) return 'holding';
+  return load >= busyAt ? 'busy' : 'free';
+}
+
+export function machineCapacity(): MachineCapacity {
+  return {
+    ...loadPerCore(),
+    builds: liveNativeBuilds() + liveOffloadedSlots(),
+    maxBuilds: admissionLimits().maxBuilds,
+    maxLoadPerCore: maxLoadPerCore(),
+  };
+}
+
+/** Why a machine with this capacity should not take another native build; null when it can. */
+export function saturation(capacity: MachineCapacity): string | null {
+  if (capacity.maxBuilds > 0 && capacity.builds >= capacity.maxBuilds) {
+    return `all ${capacity.maxBuilds} build slots busy`;
+  }
+  if (capacity.loadPerCore >= capacity.maxLoadPerCore) {
+    return `load at or above ${capacity.maxLoadPerCore}/core`;
+  }
+  return null;
+}

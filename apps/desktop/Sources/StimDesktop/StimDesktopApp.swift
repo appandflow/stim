@@ -1,0 +1,455 @@
+import AppKit
+import Combine
+import SimulatorFrames
+import StimKit
+import StimStores
+import SwiftUI
+
+struct AddMachineRequest {
+  var machineID: String?
+  var hostedSimulators: Bool
+  var checkout: String? = nil
+}
+
+enum TutorialEntry { case resume, begin }
+
+@MainActor
+final class OpenRequests: ObservableObject {
+  static let shared = OpenRequests()
+  @Published var viewer: ViewedDevice?
+  @Published var workspaceLink: WorkspaceLink?
+  @Published var workspacePath: String?
+  /// The workspace selected in the main window, which the Settings window edits.
+  @Published var selectedWorkspace: String?
+  @Published var showsMachine = false
+  @Published var pairsPhone = false
+  @Published var addMachine: AddMachineRequest?
+  @Published var tutorialRequest: TutorialEntry?
+  @Published var showsDiscover = false
+  @Published var showsViewOptions = false
+  @Published var showsSetupGuide = false
+  @Published var shareRequest: ShareRequest?
+  @Published var target: OversightTarget?
+  var openMainWindow: (() -> Void)?
+
+  func showTutorial(_ entry: TutorialEntry = .resume) {
+    MainWindow.show()
+    tutorialRequest = entry
+  }
+
+  func showDiscover() {
+    MainWindow.show()
+    showsDiscover = true
+  }
+
+  /// Brings the main window forward, opening one when none is left, and shows the setup guide over it.
+  func showSetupGuide() {
+    MainWindow.show()
+    showsSetupGuide = true
+  }
+}
+
+extension Notification.Name {
+  static let stimQuitRequested = Notification.Name("stimQuitRequested")
+}
+
+extension View {
+  func onQuitRequested(_ dismiss: @escaping () -> Void) -> some View {
+    onReceive(NotificationCenter.default.publisher(for: .stimQuitRequested)) { _ in dismiss() }
+  }
+}
+
+/// AppKit refuses `terminate:` while a window has an attached sheet, such as the device viewer. The sheets are
+/// dismissed through the state that presents them, which tears down the viewer and releases a device it took over,
+/// and the quit retries until none is attached. AppKit's own quit Apple Event handler fails with "User cancelled
+/// (-128)" without calling `terminate:`, so `AppDelegate` handles that event itself.
+final class StimApplication: NSApplication {
+  private var sheetRetries = 0
+
+  override func terminate(_ sender: Any?) {
+    guard windows.contains(where: { $0.attachedSheet != nil }), sheetRetries < 20 else {
+      sheetRetries = 0
+      super.terminate(sender)
+      return
+    }
+    sheetRetries += 1
+    NotificationCenter.default.post(name: .stimQuitRequested, object: nil)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { self.terminate(sender) }
+  }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+  private var terminationSource: DispatchSourceSignal?
+
+  func application(
+    _ application: NSApplication, continue userActivity: NSUserActivity,
+    restorationHandler: @escaping ([NSUserActivityRestoring]) -> Void
+  ) -> Bool {
+    guard userActivity.activityType == NSUserActivityTypeBrowsingWeb, let url = userActivity.webpageURL,
+      let link = workspaceLink(fromOpenURL: url)
+    else { return false }
+    MainActor.assumeIsolated {
+      OpenRequests.shared.workspaceLink = link
+      MainWindow.show()
+    }
+    return true
+  }
+
+  func application(_ application: NSApplication, open urls: [URL]) {
+    if let link = urls.lazy.compactMap(workspaceLink(fromOpenURL:)).last {
+      MainActor.assumeIsolated {
+        OpenRequests.shared.workspaceLink = link
+        MainWindow.show()
+      }
+    }
+    guard urls.contains(where: { deviceOpenRequest(fromOpenURL: $0) != nil }) else { return }
+    MainActor.assumeIsolated {
+      if !MainWindow.isOpen { MainWindow.show() }
+    }
+  }
+
+  func applicationWillFinishLaunching(_ notification: Notification) {
+    NSAppleEventManager.shared().setEventHandler(
+      self, andSelector: #selector(handleQuitEvent(_:withReplyEvent:)),
+      forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEQuitApplication))
+    MainActor.assumeIsolated { NotificationResponder.shared.install() }
+  }
+
+  func applicationDidFinishLaunching(_ notification: Notification) {
+    // `swift run` starts a bare executable as a background process with no Dock icon or focus.
+    NSApp.setActivationPolicy(.regular)
+    if !LaunchActivation.isBackgroundLaunch(ProcessInfo.processInfo.environment) {
+      NSApp.activate(ignoringOtherApps: true)
+    }
+    // AppKit exits on SIGTERM without posting willTerminateNotification, which would orphan stim-server
+    // and the stim children the stores stop from that notification.
+    signal(SIGTERM, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    source.setEventHandler {
+      MainActor.assumeIsolated { NSApp.terminate(nil) }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+        LogFollower.stopAll()
+        MainActor.assumeIsolated { ServerController.shared.stopForQuit() }
+        exit(0)
+      }
+    }
+    source.resume()
+    terminationSource = source
+    MainActor.assumeIsolated {
+      _ = AppUpdater.shared
+      Theme.apply(Appearance(rawValue: UserDefaults.standard.string(forKey: AppPreferences.Key.appearance) ?? "") ?? .auto)
+    }
+  }
+
+  @objc private func handleQuitEvent(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+    NSApp.terminate(nil)
+  }
+
+  private var confirmingQuit = false
+
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    guard MainActor.assumeIsolated({ ServerController.shared.runsOwnedServer }) else { return .terminateNow }
+    guard !confirmingQuit else { return .terminateCancel }
+    confirmingQuit = true
+    Task { @MainActor in
+      let shares = await WebSharesModel.shared.liveShares(within: .seconds(2))
+      let prompt = WebShareQuitPrompt(shares: shares) { PathNames(path: $0).title }
+      let quits = prompt.map(Self.confirmQuit) ?? true
+      confirmingQuit = false
+      NSApp.reply(toApplicationShouldTerminate: quits)
+    }
+    return .terminateLater
+  }
+
+  /// A modal alert: `StimApplication.terminate` has already dismissed every sheet by the time this runs.
+  @MainActor private static func confirmQuit(_ prompt: WebShareQuitPrompt) -> Bool {
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = prompt.title
+    alert.informativeText = (prompt.lines + ["", WebShareQuitPrompt.detail]).joined(separator: "\n")
+    alert.addButton(withTitle: "Cancel")
+    alert.addButton(withTitle: "Quit")
+    alert.buttons[1].hasDestructiveAction = true
+    NSApp.activate(ignoringOtherApps: true)
+    return alert.runModal() == .alertSecondButtonReturn
+  }
+
+  func applicationWillTerminate(_ notification: Notification) {
+    LogFollower.stopAll()
+    MainActor.assumeIsolated { ServerController.shared.stopForQuit() }
+  }
+
+  func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    false
+  }
+
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+    MainActor.assumeIsolated {
+      let background = LaunchActivation.isBackgroundLaunch(ProcessInfo.processInfo.environment)
+      if LaunchActivation.reopenActivates(backgroundLaunch: background, appIsActive: NSApp.isActive) {
+        MainWindow.show()
+      }
+    }
+    return true
+  }
+}
+
+struct StimDesktopApp: App {
+  @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+  private let store: StatusStore
+  private let notifier: Notifier
+  private let oversight: OversightNotifier
+  private let tips: TipCoordinator
+  private let discovery: DiscoveryCoordinator
+  private let actions: ActionCenter
+  private let pressure: DaemonPressureMonitor
+  private let onboarding: Onboarding
+  private let gc: GcReportStore
+  private let machineSettings: MachineSettingsStore
+  private let buildMachines: BuildMachinesModel
+  private let statsReader: StatsReader
+  private let serverStatus: AnyCancellable
+  private let pairedStatus: AnyCancellable
+  private let metrics: MetricsStore
+  private let storage: StorageStore
+  private let planChecks: BuildPlanChecks
+  @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
+  private let environment: Task<[String: String], Never>
+
+  init() {
+    CrashReporter.start()
+    DebugLog.info(
+      .app,
+      "launch version=\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev") pid=\(ProcessInfo.processInfo.processIdentifier) verbose=\(DebugLog.isVerbose)"
+    )
+    MainThreadWatchdog.shared.start()
+    BrandAssets.registerFonts()
+    UserDefaults.standard.register(defaults: AppPreferences.defaults)
+    AppPreferences.migrate(.standard)
+    FeatureFlags.seed(
+      servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones), pairedPhones: nil)
+    FeatureFlags.resetServingWithoutPhoneApp()
+    CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
+    let stimHome = UserDefaults.standard.string(forKey: AppPreferences.Key.stimHome)
+    let overrides = UserDefaults.standard.string(forKey: AppPreferences.Key.environmentOverrides)
+    let environment = Task.detached {
+      var environment = await Toolchain.environment(
+        launch: ProcessInfo.processInfo.environment, stimHome: stimHome, overrides: overrides)
+      if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
+      return environment
+    }
+    self.environment = environment
+    let settingsEnvironment = Toolchain.settingsEnvironment(
+      launch: ProcessInfo.processInfo.environment, stimHome: stimHome, overrides: overrides)
+    ServerController.shared.configure(environment: environment, settingsEnvironment: settingsEnvironment)
+    let statsReader = StatsReader(environment: environment) { ServerSession.shared.statsConnection }
+    self.statsReader = statsReader
+    _ = ServerSession.shared
+    let store = StatusStore(environment: environment, stimHome: StimHome.path(environment: settingsEnvironment))
+    self.store = store
+    serverStatus = ServerSession.shared.objectWillChange.sink { [weak store] _ in
+      DispatchQueue.main.async {
+        MainActor.assumeIsolated {
+          store?.useServer(ServerSession.shared.feedConnection)
+          PairedServerSessions.shared.localServerChanged()
+        }
+      }
+    }
+    pairedStatus = PairedServerSessions.shared.objectWillChange.sink { [weak store] _ in
+      DispatchQueue.main.async {
+        MainActor.assumeIsolated {
+          store?.usePairedServers(PairedServerSessions.shared.sessions.compactMapValues(\.client))
+        }
+      }
+    }
+    DispatchQueue.main.async { MainActor.assumeIsolated { PairedServerSessions.shared.start() } }
+    notifier = Notifier(store: store)
+    let actions = ActionCenter(environment: environment) { ServerSession.shared.statsConnection }
+    self.actions = actions
+    let gc = GcReportStore(reader: GcReportReader(environment: environment) { ServerSession.shared.statsConnection })
+    self.gc = gc
+    let disks = DiskVolumeStore(status: store)
+    let oversight = OversightNotifier(store: store, disks: disks)
+    self.oversight = oversight
+    let metrics = MetricsStore(status: store, gc: gc, disks: disks)
+    self.metrics = metrics
+    storage = StorageStore(status: store, environment: environment)
+    planChecks = BuildPlanChecks { platform, workspace in
+      let connection = await ServerSession.shared.statsConnection
+      return try await readServerBuildPlan(
+        platform: platform, workspace: workspace, stimHome: StimHome.path(environment: await environment.value),
+        connection: connection)
+    }
+    planChecks.onCancelledRefusal = { workspace, platform, refusal in
+      guard refusal.code == "STIM_CLAIM_UNAVAILABLE" else { return }
+      let notification = OversightNotification(
+        id: "plan-cleanup:\(workspace):\(platform)", category: .attention,
+        title: "Build preview cleanup needs attention",
+        body: ["[\(refusal.code)] \(refusal.message)", refusal.remedy].compactMap { $0 }.joined(separator: " "),
+        quiet: true, thread: workspace, target: .build(path: workspace, platform: platform), remedy: refusal.remedy)
+      NotificationInbox.shared.add(InboxEntry(notification: notification, date: Date()))
+    }
+    actions.onFinish = { [store, gc] run in
+      let worktree = run.steps.contains { $0.program == "stim" && $0.arguments.first == "worktree" }
+      let visibility = run.steps.contains { Array($0.arguments.prefix(3)) == ["settings", "set", "workspace.hidden"] }
+      if !store.watching || worktree || visibility { store.refresh() }
+      if run.steps.contains(where: GcReport.changed(by:)) { gc.changed() }
+      for step in run.steps where step.arguments.first == "doctor" && step.arguments.contains("--fix") {
+        store.doctorChanged(in: step.cwd)
+      }
+    }
+    let machineSettings = MachineSettingsStore(
+      environment: environment, server: { ServerSession.shared.statsConnection },
+      actions: { ServerSession.shared.statsConnection })
+    self.machineSettings = machineSettings
+    let buildMachines = BuildMachinesModel(environment: environment, settings: machineSettings, statsReader: statsReader)
+    self.buildMachines = buildMachines
+    let pressure = DaemonPressureMonitor(status: store, actions: actions)
+    self.pressure = pressure
+    let discovery = DiscoveryCoordinator(
+      status: store, machines: buildMachines, stats: statsReader, pressure: pressure, gc: gc, environment: environment)
+    self.discovery = discovery
+    let tips = TipCoordinator(status: store, machines: buildMachines)
+    self.tips = tips
+    let onboarding = Onboarding(environment: environment, actions: actions)
+    self.onboarding = onboarding
+    DispatchQueue.main.async {
+      store.start()
+      oversight.start()
+      discovery.start(actions: actions)
+      tips.start()
+      metrics.start()
+      pressure.start()
+      buildMachines.keepMachinesCurrent(status: store)
+      onboarding.check()
+    }
+  }
+
+  private static let windowTitle =
+    (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Stim"
+
+  var body: some Scene {
+    Window(Self.windowTitle, id: "main") {
+      RootView(
+        environment: environment, store: store, actions: actions, pressure: pressure, onboarding: onboarding, gc: gc,
+        buildMachines: buildMachines, metrics: metrics, storage: storage, planChecks: planChecks, statsReader: statsReader,
+        tips: tips
+      )
+      .frame(minWidth: 700, minHeight: 720)
+      .onAppear { notifier.start() }
+    }
+    .windowToolbarStyle(.unified(showsTitle: false))
+    .handlesExternalEvents(matching: [])
+    .commands {
+      UpdateCommands()
+      CommandGroup(replacing: .newItem) {
+        Button("Add Remote Machine\u{2026}") {
+          MainWindow.show()
+          OpenRequests.shared.addMachine = AddMachineRequest(machineID: nil, hostedSimulators: false)
+        }
+        .keyboardShortcut("b", modifiers: [.command, .shift])
+      }
+      CommandGroup(replacing: .help) {
+        Button("Discover Stim") { OpenRequests.shared.showDiscover() }
+        Button("Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }
+        Button("Stim Tutorial\u{2026}") { OpenRequests.shared.showTutorial() }
+        Divider()
+        Button("Reveal Debug Log") { DebugLogActions.reveal() }
+        Button("Copy Diagnostics") { DebugLogActions.copyDiagnostics(environment: environment) }
+        #if DEBUG
+          Button("Replay Notification Animation") {
+            NotificationInbox.shared.arrivals.send(nil)
+          }
+        #endif
+      }
+      SidebarCommands()
+      InspectorCommands()
+      NavigationCommands()
+      GoCommands()
+    }
+
+    #if DEBUG
+      Window("SwiftUI Playground", id: ComponentGallery.windowID) { ComponentGallery() }
+    #endif
+
+    Settings {
+      SettingsView(
+        environment: environment, store: store, machine: machineSettings, buildMachines: buildMachines, actions: actions
+      )
+      .environmentObject(pressure)
+      .environmentObject(onboarding)
+    }
+
+    MenuBarExtra(isInserted: menuBarExtraInserted) {
+      MenuBarContent(store: store)
+    } label: {
+      MenuBarLabel(store: store)
+    }
+  }
+
+  // SwiftUI's MenuBarExtra writes its status item's visibility back to `isInserted` on every app graph update, and
+  // an @AppStorage write posts UserDefaults.didChangeNotification even when the value is unchanged, which updates
+  // every @AppStorage view and so the app graph again.
+  private var menuBarExtraInserted: Binding<Bool> {
+    Binding(
+      get: { showsMenuBarExtra },
+      set: { if $0 != showsMenuBarExtra { showsMenuBarExtra = $0 } })
+  }
+}
+
+private struct MenuBarLabel: View {
+  @ObservedObject var store: StatusStore
+
+  var body: some View {
+    Label("\(store.payload?.environments.filter(\.live).count ?? 0)", systemImage: "iphone.gen3")
+      .labelStyle(.titleAndIcon)
+  }
+}
+
+struct UpdateCommands: Commands {
+  @ObservedObject private var updater = AppUpdater.shared
+
+  var body: some Commands {
+    CommandGroup(after: .appInfo) {
+      Button("Check for Updates\u{2026}") { updater.checkForUpdates() }
+        .disabled(!updater.canCheckForUpdates)
+    }
+  }
+}
+
+struct InspectorCommands: Commands {
+  @FocusedValue(\.inspectorToggle) private var inspector
+
+  var body: some Commands {
+    CommandGroup(after: .sidebar) {
+      Button(inspector?.isShown == true ? "Hide Inspector" : "Show Inspector") { inspector?.toggle() }
+        .keyboardShortcut("i", modifiers: [.command, .option])
+        .disabled(inspector == nil)
+    }
+  }
+}
+
+struct NavigationCommands: Commands {
+  @FocusedValue(\.sidebarNavigation) private var navigation
+
+  var body: some Commands {
+    CommandGroup(after: .sidebar) {
+      Divider()
+      Button("Overview") { navigation?.go(.overview) }
+        .keyboardShortcut("1", modifiers: .command)
+        .disabled(navigation == nil)
+      Button("Active Workspaces") { navigation?.go(.wall) }
+        .keyboardShortcut("2", modifiers: .command)
+        .disabled(navigation == nil)
+      Button("Notifications") { navigation?.go(.notifications) }
+        .keyboardShortcut("3", modifiers: .command)
+        .disabled(navigation == nil)
+      Button("Machines") { navigation?.go(.machine) }
+        .keyboardShortcut("4", modifiers: .command)
+        .disabled(navigation == nil)
+      Button("Builds") { navigation?.go(.builds) }
+        .keyboardShortcut("5", modifiers: .command)
+        .disabled(navigation == nil)
+    }
+  }
+}

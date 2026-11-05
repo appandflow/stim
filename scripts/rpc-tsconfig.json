@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "isolatedDeclarations": false,
+    "module": "preserve",
+    "moduleResolution": "bundler"
+  },
+  "include": ["../packages/core/phone-protocol.ts"]
+}

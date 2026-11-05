@@ -1,0 +1,1290 @@
+import { t } from '@lingui/core/macro';
+import { Trans } from '@lingui/react/macro';
+import * as Clipboard from 'expo-clipboard';
+import { Image } from 'expo-image';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Keyboard,
+  PixelRatio,
+  useWindowDimensions,
+  View,
+  type GestureResponderEvent,
+  type NativeTouchEvent,
+  type TextInputInstance,
+  type ViewInstance,
+} from 'react-native';
+import {
+  GestureDetector,
+  GestureHandlerRootView,
+  useExclusiveGestures,
+  useTapGesture,
+} from 'react-native-gesture-handler';
+import Animated, { useAnimatedReaction, useAnimatedStyle, useReducedMotion, withTiming } from 'react-native-reanimated';
+import { useKeyboardState, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { scheduleOnRN } from 'react-native-worklets';
+import { useHinges } from 'react-native-hinges';
+import { useReservedRegions } from 'react-native-reserved-regions';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { NavigationBar } from 'expo-navigation-bar';
+import { StatusBar } from 'expo-status-bar';
+
+import { Button } from '@/components/button';
+import { CopyButton } from '@/components/copy-button';
+import { AgentFeed } from '@/components/agent-feed';
+import { DeviceFrame } from '@/components/device-frame';
+import { DeviceScreen } from '@/components/device-screen';
+import { Icon } from '@/components/icon';
+import { HostLabel } from '@/components/host-label';
+import { ViewerToolbar, type ViewerAction, type ViewerToolbarAction } from '@/components/viewer-toolbar';
+import { ScrollView } from '@/components/lists';
+import { Pill } from '@/components/pill';
+import { ReplayBar } from '@/components/replay-bar';
+import { Text } from '@/components/text';
+import { Touch } from '@/components/touch';
+import { ViewerKeyboard } from '@/components/viewer-keyboard';
+import { ViewerBackdrop } from '@/components/viewer-backdrop';
+import { useAutoHide } from '@/hooks/auto-hide';
+import { useDeviceStream, useReplayAt } from '@/hooks/device-stream';
+import { useReplayRange } from '@/hooks/replay-range';
+import { useAnnounce, useScreenReaderEnabled } from '@/hooks/screen-reader';
+import { LANDED_SCREEN_RADIUS, useDeviceZoom, zoomKey } from '@/hooks/device-zoom';
+import { useScreenZoom } from '@/hooks/screen-zoom';
+import { grantCommand, readOnlyReason, allowControlSteps } from '@/components/read-only';
+import { useDeviceControl } from '@/hooks/device-control';
+import {
+  useArchivesPending,
+  useHasStatus,
+  useMachinePresence,
+  useMachineStatus,
+  useMacConnection,
+  useWorkspace,
+} from '@/hooks/machines';
+import { useSettings, type VideoQuality } from '@/hooks/settings';
+import { CLIPBOARD_LIMIT_KIB, clipboardAvailable, copyDeviceClipboard, pasteFromPhone } from '@/lib/device-clipboard';
+import { framePoint, orientationOf, otherDriver } from '@/lib/device-control';
+import { matchingDeviceFrame } from '@/lib/device-frame';
+import { createTouchTracker, type TouchMessage } from '@/lib/touch-tracker';
+import { deviceUnavailable } from '@/lib/device-unavailable';
+import { foldOf } from '@/lib/fold';
+import { buildTimeline, clampReplayTime } from '@/lib/replay';
+import { LIVE_VIEW, replayView } from '@/lib/replay-view';
+import { aspectOf, liftAbove } from '@/lib/zoom';
+import { workspaceTitleAt } from '@/lib/workspace-names';
+import { devicesOf, shortUrl, streamsFrames } from '@/lib/workspaces';
+import type {
+  DevicePlatform,
+  DevicePosture,
+  FrameEvent,
+  InputButton,
+  ReplayRate,
+  RotateDirection,
+} from '@/protocol/types';
+
+const LIVE_FPS = 60;
+const MAX_EDGE = 1600;
+const MOVE_INTERVAL_MS = 16;
+const SECOND_FINGER_WAIT_MS = 40;
+
+const DATA_SAVER_FPS = 10;
+const DATA_SAVER_MAX_EDGE = 640;
+const TYPING_BAR_HEIGHT = 56;
+const MIN_TARGET = 44;
+const ROTATE_WAIT_MS = 2500;
+const ROTATE_NOTE_MS = 4000;
+const ROTATE_NOTE_SCREEN_READER_MS = 16_000;
+const NOTE_INSET = 64;
+const CONTROLS_FADE_MS = 200;
+const CONTROLS_MIN_WIDTH = 320;
+
+/** Maps the Settings screen's video quality choice to the fps, max edge and codecs requested from the server. */
+const QUALITY_PRESETS: Record<VideoQuality, { fps: number; maxEdge: number | null; video: 'h264'[] }> = {
+  auto: { fps: LIVE_FPS, maxEdge: null, video: ['h264'] },
+  high: { fps: LIVE_FPS, maxEdge: MAX_EDGE, video: ['h264'] },
+  dataSaver: { fps: DATA_SAVER_FPS, maxEdge: DATA_SAVER_MAX_EDGE, video: [] },
+};
+
+function postureLabel(posture: DevicePosture): string {
+  switch (posture) {
+    case 'folded':
+      return t`Fold`;
+    case 'half-open':
+      return t`Half Open`;
+    case 'unfolded':
+      return t`Unfold`;
+  }
+}
+
+function orientationName(orientation: 'landscape' | 'portrait'): string {
+  return orientation === 'landscape' ? t`landscape` : t`portrait`;
+}
+
+export function DeviceView({
+  workspace,
+  platform,
+  slot,
+  physical = false,
+  openAt,
+}: {
+  workspace: string;
+  platform: DevicePlatform;
+  slot: string;
+  physical?: boolean;
+  openAt?: number;
+}) {
+  const router = useRouter();
+  const { theme } = useUnistyles();
+  const window = useWindowDimensions();
+  const [rootHeight, setRootHeight] = useState(0);
+  const [rootWidth, setRootWidth] = useState(0);
+  const paneWidth = rootWidth || window.width;
+  const paneHeight = rootHeight || window.height;
+  const landscape = paneWidth > paneHeight;
+  const fold = foldOf(useReservedRegions(), paneWidth, paneHeight);
+  const book = fold?.axis === 'vertical' ? fold : null;
+  const halfOpen = useHinges()[0]?.status === 'partiallyOpen';
+  const table = fold?.axis === 'horizontal' && halfOpen ? fold : null;
+  const sideBySide = book !== null;
+  const { videoQuality } = useSettings();
+  const preset = QUALITY_PRESETS[videoQuality];
+  const windowMaxEdge = Math.min(MAX_EDGE, Math.round(Math.max(window.width, window.height) * PixelRatio.get()));
+  const maxEdge = preset.maxEdge ?? windowMaxEdge;
+  const { id: macId } = useLocalSearchParams<{ id?: string }>();
+  const item = useWorkspace(macId ?? '', workspace);
+  const loaded = useHasStatus(macId ?? '');
+  const cached = useMachinePresence(macId ?? '').cached;
+  const hasStatus = loaded && !cached;
+  const status = useMachineStatus(macId);
+  const archivesPending = useArchivesPending(macId ?? '');
+  const env = item?.env;
+  const device = env
+    ? devicesOf(env).find(
+        (entry) => entry.platform === platform && entry.slot === slot && Boolean(entry.physical) === physical,
+      )
+    : undefined;
+  const { mac, state: link, connection } = useMacConnection();
+  const running = Boolean(
+    device &&
+    (device.running || (device.host && device.state !== 'stopped')) &&
+    streamsFrames(device, link.kind === 'open' ? link.features : null),
+  );
+  const viewOnly =
+    (physical && platform === 'ios') ||
+    (platform === 'macos' && (link.kind !== 'open' || !link.features.includes('macos-window-control')));
+  const slotRange = useReplayRange({ workspace, platform, slot });
+  const range = physical || device?.host ? null : slotRange;
+  const replayOff = !physical && env?.recording?.enabled === false;
+  const timeline = useMemo(() => (range && !replayOff ? buildTimeline(range.spans) : null), [range, replayOff]);
+  const hasFootage = timeline !== null && preset.video.length > 0;
+  const [view, setView] = useState(LIVE_VIEW);
+  const replayStart = hasFootage ? view.startAt : null;
+  const streams = running || replayStart !== null;
+  const [scrubbing, setScrubbing] = useState(false);
+  const [showsFrame, setShowsFrame] = useState(false);
+  const frameSupported =
+    !physical &&
+    !(platform === 'android' && device?.host) &&
+    (platform === 'ios' || platform === 'android') &&
+    link.kind === 'open' &&
+    link.features?.includes('device-frames') === true;
+  const duoSupported =
+    !device?.host &&
+    !physical &&
+    platform === 'ios' &&
+    /\bDuo\b/.test(device?.model ?? '') &&
+    link.kind === 'open' &&
+    link.features?.includes('duo-frames') === true;
+  const streamOptions = {
+    enabled: streams,
+    fps: preset.fps,
+    maxEdge,
+    video: preset.video,
+    startAt: replayStart,
+    deviceFrame: frameSupported,
+    duoFrame: duoSupported && showsFrame,
+  };
+  const stream = useDeviceStream({ workspace, platform, slot, physical }, streamOptions);
+  const canReplay = hasFootage && stream.replayable !== false;
+  const replaying = stream.replay !== null;
+  const [opened, setOpened] = useState(false);
+  const resumeAt = useReplayAt(view.replayedLive && !running ? stream.playhead : null);
+  let synced = replayView(view, {
+    type: 'sync',
+    replaying,
+    running,
+    at: resumeAt,
+    timelineStart: timeline?.start ?? null,
+  });
+  if (!opened && hasStatus) {
+    if (running || replaying || view.startAt !== null) {
+      setOpened(true);
+    } else if (hasFootage && timeline && openAt !== undefined) {
+      setOpened(true);
+      synced = replayView(synced, { type: 'seek', at: clampReplayTime(timeline, openAt), running, hasFootage });
+    }
+  }
+  if (synced !== view) setView(synced);
+  const control = useDeviceControl(workspace, platform, slot, physical);
+  const [heldFrame, setHeldFrame] = useState<FrameEvent | null>(null);
+  if (heldFrame && control.state.kind !== 'on') setHeldFrame(null);
+  const source = heldFrame ?? stream.video ?? stream.frame;
+  const artwork = replaying ? null : matchingDeviceFrame(stream.artwork, source);
+  const activeArtwork = showsFrame ? artwork : null;
+  const readOnly = !viewOnly && control.allowed === false;
+  const deviceId = link.kind === 'open' ? link.deviceId : null;
+  const controlling = control.state.kind === 'on';
+  const [ownLease, setOwnLease] = useState<string | null>(null);
+  const leaseSince = control.state.kind === 'on' ? control.state.leaseSince : null;
+  if (leaseSince && leaseSince !== ownLease) setOwnLease(leaseSince);
+  const driver = otherDriver(device?.activity, leaseSince ?? ownLease);
+  const insets = useSafeAreaInsets();
+  const root = useRef<ViewInstance>(null);
+  const stage = useRef<ViewInstance>(null);
+  const screenZoom = useScreenZoom(!controlling && streams);
+  const replayPlaying = stream.replay !== null && stream.replay.rate > 0 && !stream.replay.ended;
+  const controls = useAutoHide(scrubbing || (stream.replay !== null && !replayPlaying), !controlling);
+  const hideControls = controls.hide;
+  useEffect(() => {
+    if (controlling) hideControls();
+  }, [controlling, hideControls]);
+  const reduceMotion = useReducedMotion();
+  const controlsFade = useAnimatedStyle(() => ({
+    opacity: withTiming(controls.shown ? 1 : 0, { duration: reduceMotion ? 0 : CONTROLS_FADE_MS }),
+  }));
+  const revealTap = useTapGesture({
+    enabled: !controlling && streams,
+    onActivate: () => {
+      'worklet';
+      scheduleOnRN(controls.toggle);
+    },
+  });
+  const screenGesture = useExclusiveGestures(screenZoom.gesture, revealTap);
+  const zoom = useDeviceZoom(
+    zoomKey({ macId: mac?.id ?? '', workspace, platform, slot, physical }),
+    activeArtwork ? activeArtwork.width / activeArtwork.height : aspectOf(source),
+    platform === 'web' || platform === 'macos' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
+    !controlling && !((landscape || book || table) && readOnly) && !screenZoom.zoomed && !scrubbing,
+    root,
+    stage,
+    screenZoom.lens,
+  );
+  const [underBar, setUnderBar] = useState(false);
+  const zoomScale = screenZoom.lens.scale;
+  useAnimatedReaction(
+    () => zoomScale.get() > 1.001,
+    (now, before) => {
+      if (now !== before) scheduleOnRN(setUnderBar, now);
+    },
+  );
+  const snapshot = zoom.landed && source ? null : zoom.snapshot;
+  const touchSize = useRef<{ width: number; height: number } | null>(null);
+  const keyboard = useRef<TextInputInstance>(null);
+  const [typing, setTyping] = useState(false);
+  const [scrolling, setScrolling] = useState(false);
+  const [moving, setMoving] = useState<DevicePosture | null>(null);
+  const [changingOption, setChangingOption] = useState(false);
+  const [barBottom, setBarBottom] = useState(0);
+  const [bannerHeight, setBannerHeight] = useState(0);
+  const [barSides, setBarSides] = useState<[number, number]>([0, 0]);
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const keyboardShown = useKeyboardState((state) => state.isVisible);
+  const [typingBarHeight, setTypingBarHeight] = useState(TYPING_BAR_HEIGHT);
+  const typingBarShown = typing && keyboardShown;
+  useEffect(() => {
+    if (!keyboardShown || !controlling) keyboard.current?.blur();
+  }, [keyboardShown, controlling]);
+  const rest = zoom.screenRect;
+  const headerGap = theme.space.md;
+  const lift = useAnimatedStyle(() => {
+    const covered = -keyboardHeight.get();
+    if (!rest || covered <= 0 || rootHeight <= 0) return { transform: [{ translateY: 0 }] };
+    const shift = liftAbove(
+      rest[1],
+      rest[3],
+      rootHeight - covered - typingBarHeight,
+      insets.top + barBottom + headerGap,
+    );
+    return { transform: [{ translateY: -shift }] };
+  });
+  const [note, setNote] = useState<{ text: string; success: boolean } | null>(null);
+  useAnnounce(rest ? note?.text : null);
+  const screenReader = useScreenReaderEnabled();
+  useEffect(() => {
+    if (!note) return;
+    const timer = setTimeout(() => setNote(null), screenReader ? ROTATE_NOTE_SCREEN_READER_MS : ROTATE_NOTE_MS);
+    return () => clearTimeout(timer);
+  }, [note, screenReader]);
+  const orientation = orientationOf(source);
+  const [rotating, setRotating] = useState<'landscape' | 'portrait' | null>(null);
+  if (rotating && orientation && orientation !== rotating) {
+    setRotating(null);
+    const name = orientationName(orientation);
+    setNote({ text: t`Rotated to ${name}`, success: true });
+  }
+  useEffect(() => {
+    if (!rotating) return;
+    const timer = setTimeout(() => {
+      const name = orientationName(rotating);
+      setNote({
+        text: t`The screen stayed in ${name}. The app in front may not support rotating.`,
+        success: false,
+      });
+      setRotating(null);
+    }, ROTATE_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [rotating]);
+  const rotate = (direction: RotateDirection) => {
+    control.rotate(direction);
+    setNote(null);
+    setRotating(orientation);
+  };
+
+  const touches = useRef({
+    active: false,
+    lastMove: 0,
+    pending: null as { x: number; y: number } | null,
+    revision: undefined as string | undefined,
+  });
+  useEffect(() => {
+    if (!controlling) {
+      touches.current.active = false;
+    }
+  }, [controlling]);
+  const point = (x: number, y: number, clamp: boolean) =>
+    source && touchSize.current ? framePoint(x, y, touchSize.current, source, clamp) : null;
+  const touchHandlers = {
+    onStartShouldSetResponder: () => true,
+    onMoveShouldSetResponder: () => true,
+    onResponderGrant: (event: GestureResponderEvent) => {
+      const revision = stream.frame?.duo?.revision;
+      if (revision && stream.displayedDuoRevision !== revision) return;
+      const at = point(event.nativeEvent.locationX, event.nativeEvent.locationY, false);
+      touches.current = { active: at !== null, lastMove: Date.now(), pending: at, revision };
+      if (at && !scrolling) {
+        if (revision) setHeldFrame(stream.frame);
+        control.touch('down', at.x, at.y, revision);
+      }
+    },
+    onResponderMove: (event: GestureResponderEvent) => {
+      if (!touches.current.active) return;
+      const at = point(event.nativeEvent.locationX, event.nativeEvent.locationY, true);
+      if (!at) return;
+      const previous = touches.current.pending;
+      const now = Date.now();
+      if (now - touches.current.lastMove < MOVE_INTERVAL_MS) return;
+      touches.current.lastMove = now;
+      touches.current.pending = at;
+      if (scrolling && previous && source) {
+        control.scroll(
+          at.x,
+          at.y,
+          Math.max(-1000, Math.min(1000, (at.x - previous.x) * source.width)),
+          Math.max(-1000, Math.min(1000, (at.y - previous.y) * source.height)),
+        );
+      } else control.touch('move', at.x, at.y, touches.current.revision);
+    },
+    onResponderRelease: (event: GestureResponderEvent) => {
+      if (!touches.current.active) return;
+      const at = point(event.nativeEvent.locationX, event.nativeEvent.locationY, true) ?? touches.current.pending;
+      touches.current.active = false;
+      if (at && !scrolling) control.touch('up', at.x, at.y, touches.current.revision);
+      setHeldFrame(null);
+    },
+    onResponderTerminate: () => {
+      const at = touches.current.pending;
+      if (!touches.current.active || !at) return;
+      touches.current.active = false;
+      if (!scrolling) control.touch('up', at.x, at.y, touches.current.revision);
+      setHeldFrame(null);
+    },
+  };
+
+  const takesTwoFingers =
+    (platform === 'ios' || platform === 'android') &&
+    !stream.frame?.duo &&
+    !(control.state.kind === 'on' && platform === 'ios' && control.state.postures.length > 0);
+  const [fingers] = useState(createTouchTracker);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearSettle = () => {
+    if (settleTimer.current) clearTimeout(settleTimer.current);
+    settleTimer.current = null;
+  };
+  const sendFingers = (messages: TouchMessage[]) => {
+    for (const { phase, first, second } of messages) {
+      if (phase === 'move') {
+        const now = Date.now();
+        if (now - touches.current.lastMove < MOVE_INTERVAL_MS) continue;
+        touches.current.lastMove = now;
+      }
+      control.touch(phase, first.x, first.y, undefined, second);
+    }
+  };
+  useEffect(() => {
+    if (controlling) return;
+    clearSettle();
+    fingers.cancel();
+  }, [controlling, fingers]);
+  useEffect(() => clearSettle, []);
+  const fingerDown = (changed: readonly NativeTouchEvent[]) => {
+    for (const finger of changed) {
+      const at = point(finger.locationX, finger.locationY, false);
+      if (at) sendFingers(fingers.down(finger.identifier, at));
+    }
+    if (fingers.pending && !settleTimer.current) {
+      settleTimer.current = setTimeout(() => {
+        settleTimer.current = null;
+        sendFingers(fingers.settle());
+      }, SECOND_FINGER_WAIT_MS);
+    }
+  };
+  const multiTouchHandlers = {
+    onStartShouldSetResponder: () => true,
+    onMoveShouldSetResponder: () => true,
+    onResponderGrant: (event: GestureResponderEvent) => fingerDown(event.nativeEvent.changedTouches),
+    onResponderStart: (event: GestureResponderEvent) => fingerDown(event.nativeEvent.changedTouches),
+    onResponderMove: (event: GestureResponderEvent) => {
+      const updates: [number, { x: number; y: number }][] = [];
+      for (const finger of event.nativeEvent.touches) {
+        const at = point(finger.locationX, finger.locationY, true);
+        if (at) updates.push([finger.identifier, at]);
+      }
+      sendFingers(fingers.move(updates));
+    },
+    onResponderEnd: (event: GestureResponderEvent) => {
+      for (const finger of event.nativeEvent.changedTouches) {
+        const at = point(finger.locationX, finger.locationY, true);
+        sendFingers(fingers.up(finger.identifier, at ?? undefined));
+      }
+    },
+    onResponderRelease: () => {
+      clearSettle();
+      sendFingers(fingers.cancel());
+    },
+    onResponderTerminate: () => {
+      clearSettle();
+      sendFingers(fingers.cancel());
+    },
+  };
+
+  const takeOver = () => control.begin(true);
+  const seek = (at: number, rate: ReplayRate) => {
+    setOpened(true);
+    if (controlling) control.end();
+    setView((current) => replayView(current, { type: 'seek', at, running, hasFootage }));
+    stream.seek(at, rate);
+  };
+  const goLive = () => {
+    setOpened(true);
+    if (view.startAt !== null) return setView((current) => replayView(current, { type: 'live' }));
+    stream.live();
+  };
+  const toggle = () => {
+    if (control.state.kind === 'starting') return;
+    if (controlling) return control.end();
+    if (driver) return takeOver();
+    control.begin(false);
+  };
+  const press = (button: InputButton) => control.button(button);
+  const [clipboardBusy, setClipboardBusy] = useState(false);
+  const showClipboard = clipboardAvailable(
+    { platform, physical, controlling },
+    link.kind === 'open' ? link.features : null,
+  );
+  const clipboardFailed = (title: string) => (cause: Error) => Alert.alert(title, cause.message);
+  const pasteFromPhoneToDevice = () => {
+    setClipboardBusy(true);
+    pasteFromPhone({ read: Clipboard.getStringAsync, set: control.clipboardSet })
+      .then(
+        (outcome) => {
+          if (outcome === 'empty') return setNote({ text: t`The phone clipboard is empty.`, success: false });
+          if (outcome === 'too-large')
+            return setNote({
+              text: t`The phone clipboard is over ${CLIPBOARD_LIMIT_KIB} KiB. Copy a shorter text to paste it.`,
+              success: false,
+            });
+          setNote({
+            text:
+              platform === 'ios' && outcome === 'pasted'
+                ? t`Pasted. If nothing appears, tap the paste suggestion on the device.`
+                : t`Pasted from the phone.`,
+            success: true,
+          });
+        },
+        clipboardFailed(t`Paste Failed`),
+      )
+      .finally(() => setClipboardBusy(false));
+  };
+  const copyFromDevice = () => {
+    setClipboardBusy(true);
+    copyDeviceClipboard({
+      get: control.clipboardGet,
+      write: (text) => Clipboard.setStringAsync(text).then(() => undefined),
+    })
+      .then(
+        (outcome) => {
+          setNote(
+            outcome === 'empty'
+              ? { text: t`The device clipboard is empty.`, success: false }
+              : { text: t`Copied the device clipboard.`, success: true },
+          );
+        },
+        clipboardFailed(t`Copy Failed`),
+      )
+      .finally(() => setClipboardBusy(false));
+  };
+  const postures = control.state.kind === 'on' ? control.state.postures : [];
+  const shown = stream.frame?.posture ?? stream.video?.posture;
+  const move = (posture: DevicePosture) => {
+    setMoving(posture);
+    control
+      .posture(posture)
+      .catch((cause: Error) => Alert.alert(t`Posture Not Changed`, cause.message))
+      .finally(() => setMoving(null));
+  };
+  const simulator = control.state.kind === 'on' ? control.state.simulator : null;
+  const changeSimulator = (command: Parameters<typeof control.simulator>[0]) => {
+    setChangingOption(true);
+    control
+      .simulator(command)
+      .catch((cause: Error) => Alert.alert(t`Simulator Option Not Changed`, cause.message))
+      .finally(() => setChangingOption(false));
+  };
+  const readOnlyBanner = readOnly ? (
+    <View style={styles.banner(true)}>
+      <View style={styles.bannerBody}>
+        <Text weight="semibold" style={styles.mediaText}>
+          {readOnlyReason()}
+        </Text>
+        <Text variant="footnote" style={styles.mediaText}>
+          {allowControlSteps(mac?.name, deviceId)}
+        </Text>
+        <View style={styles.bannerActions}>
+          {deviceId ? <CopyButton text={grantCommand(deviceId)} title={t`Copy Command`} filled={false} /> : null}
+          <Button title={t`Reconnect`} variant="plain" size="small" onPress={() => connection?.reconnect()} />
+        </View>
+      </View>
+    </View>
+  ) : null;
+  const replayBar =
+    (timeline && canReplay) || replaying ? (
+      <ReplayBar
+        timeline={canReplay ? timeline : null}
+        markers={range?.markers ?? []}
+        replay={stream.replay}
+        playhead={stream.playhead}
+        seeking={stream.seeking}
+        canGoLive={running}
+        recording={range?.recording ?? false}
+        onSeek={seek}
+        onLive={goLive}
+        onScrubbing={setScrubbing}
+      />
+    ) : null;
+  const agentFeed =
+    (!landscape || book || table) && !physical && device?.id && streams ? (
+      <AgentFeed
+        workspace={workspace}
+        slot={slot}
+        deviceId={device.id}
+        playhead={replaying ? stream.playhead : null}
+        onOpen={() =>
+          router.push({
+            pathname: '/mac/[id]/agent',
+            params: { id: mac?.id ?? '', path: workspace, platform, slot, device: device.id ?? '' },
+          })
+        }
+      />
+    ) : null;
+  const overlayControls = !table && replayBar !== null && streams && rest !== null && rootHeight > 0;
+  const windows = stream.windows;
+  const windowActions: ViewerToolbarAction[] =
+    platform === 'macos' &&
+    controlling &&
+    link.kind === 'open' &&
+    link.features.includes('macos-window-select') &&
+    windows &&
+    (windows.windows.length > 1 || windows.pinned)
+      ? [
+          {
+            id: 'window',
+            icon: 'macwindow.on.rectangle',
+            label: t`Window`,
+            actions: [
+              {
+                id: 'follow',
+                icon: 'macwindow.on.rectangle',
+                label: t`Follow Front Window`,
+                selected: !windows.pinned,
+                onPress: () => control.selectWindow(null),
+              },
+              ...windows.windows.map((window): ViewerAction => ({
+                id: String(window.id),
+                icon: 'macwindow.on.rectangle',
+                label: window.title || t`Untitled Window`,
+                selected: windows.pinned && window.id === windows.current?.id,
+                onPress: () => control.selectWindow(window.id),
+              })),
+            ],
+          },
+        ]
+      : [];
+  const primary: ViewerToolbarAction[] =
+    controlling || readOnly
+      ? [
+          {
+            id: 'keyboard',
+            icon: 'keyboard',
+            label: typing ? t`Hide Keyboard` : t`Keyboard`,
+            selected: typing,
+            disabled: readOnly,
+            onPress: () => (typing ? keyboard.current?.blur() : keyboard.current?.focus()),
+          },
+          ...(platform === 'ios'
+            ? [
+                {
+                  id: 'home',
+                  icon: 'circle' as const,
+                  label: t`Home`,
+                  disabled: readOnly,
+                  onPress: () => press('home'),
+                },
+              ]
+            : []),
+          ...(platform === 'web' || platform === 'android'
+            ? [
+                {
+                  id: 'back',
+                  icon: 'chevron.backward' as const,
+                  label: t`Back`,
+                  disabled: readOnly,
+                  onPress: () => press('back'),
+                },
+              ]
+            : []),
+          ...(platform === 'macos'
+            ? [
+                {
+                  id: 'scroll',
+                  icon: 'hand.raised' as const,
+                  label: t`Scroll`,
+                  selected: scrolling,
+                  disabled: readOnly,
+                  onPress: () => setScrolling(!scrolling),
+                },
+              ]
+            : []),
+          ...windowActions,
+          ...((platform === 'ios' || platform === 'android') && !physical && !(platform === 'android' && device?.host)
+            ? [
+                {
+                  id: 'rotate-left',
+                  icon: 'arrow.counterclockwise' as const,
+                  label: t`Rotate Left`,
+                  disabled: readOnly,
+                  onPress: () => rotate('left'),
+                },
+                {
+                  id: 'rotate-right',
+                  icon: 'arrow.clockwise' as const,
+                  label: t`Rotate Right`,
+                  disabled: readOnly,
+                  onPress: () => rotate('right'),
+                },
+              ]
+            : []),
+        ]
+      : [];
+  const secondary: ViewerAction[] = [];
+  if (controlling || readOnly) {
+    if (controlling && overlayControls && !controls.shown)
+      secondary.push({ id: 'replay', icon: 'play.circle', label: t`Replay`, onPress: controls.reveal });
+    if (platform === 'android')
+      secondary.push(
+        { id: 'home', icon: 'circle', label: t`Home`, disabled: readOnly, onPress: () => press('home') },
+        { id: 'apps', icon: 'rectangle.stack', label: t`Apps`, disabled: readOnly, onPress: () => press('app-switch') },
+      );
+    if (platform === 'ios' || platform === 'android')
+      secondary.push({ id: 'lock', icon: 'lock', label: t`Lock`, disabled: readOnly, onPress: () => press('lock') });
+    if (simulator?.canShake)
+      secondary.push({
+        id: 'shake',
+        icon: 'arrow.triangle.2.circlepath',
+        label: t`Shake`,
+        disabled: changingOption,
+        onPress: () => changeSimulator({ action: 'shake' }),
+      });
+    if (typeof simulator?.slowAnimations === 'boolean')
+      secondary.push({
+        id: 'slow-animations',
+        icon: 'hourglass',
+        label: t`Slow Animations`,
+        selected: simulator.slowAnimations,
+        disabled: changingOption,
+        onPress: () => changeSimulator({ action: 'slow-animations', enabled: !simulator.slowAnimations }),
+      });
+    if (showClipboard)
+      secondary.push(
+        {
+          id: 'paste-from-phone',
+          icon: 'doc.on.clipboard',
+          label: t`Paste from Phone`,
+          disabled: clipboardBusy,
+          onPress: pasteFromPhoneToDevice,
+        },
+        {
+          id: 'copy-device-clipboard',
+          icon: 'doc.on.doc',
+          label: t`Copy Device Clipboard`,
+          disabled: clipboardBusy,
+          onPress: copyFromDevice,
+        },
+      );
+    secondary.push(
+      ...postures.map((posture): ViewerAction => ({
+        id: posture,
+        icon: posture === 'folded' ? 'rectangle.portrait' : posture === 'half-open' ? 'book' : 'rectangle',
+        label: moving === posture ? t`Moving...` : postureLabel(posture),
+        selected: posture === shown,
+        disabled: readOnly || moving !== null || posture === shown,
+        onPress: () => move(posture),
+      })),
+    );
+  }
+  if (artwork || (duoSupported && !replaying))
+    secondary.push({
+      id: 'device-frame',
+      icon: 'rectangle.portrait',
+      label: t`Device Frame`,
+      selected: showsFrame,
+      onPress: () => setShowsFrame(!showsFrame),
+    });
+  const toolbars =
+    primary.length || secondary.length ? <ViewerToolbar primary={primary} secondary={secondary} /> : null;
+  const model = device?.page
+    ? shortUrl(device.page.url)
+    : (device?.model ?? (platform === 'ios' ? t`iOS Simulator` : platform === 'web' ? t`Web` : t`Android Emulator`));
+  const title = item?.title ?? workspaceTitleAt(workspace, null);
+  const subtitle = platform === 'web' ? t`Web \u00B7 ${model}` : t`${model} \u00B7 ${slot}`;
+  const scrubHint = t`Scrub below to replay what it recorded.`;
+
+  return (
+    <GestureHandlerRootView style={styles.root}>
+      <StatusBar style="light" />
+      <NavigationBar style="light" />
+      <GestureDetector gesture={zoom.pan}>
+        <View
+          ref={root}
+          style={styles.root}
+          collapsable={false}
+          onLayout={(event) => {
+            setRootHeight(event.nativeEvent.layout.height);
+            setRootWidth(event.nativeEvent.layout.width);
+          }}
+        >
+          <Animated.View style={[styles.backdrop, zoom.fadeStyle]} pointerEvents="none" />
+          <Animated.View style={[styles.root, zoom.fadeStyle]}>
+            <View
+              style={[
+                styles.root,
+                {
+                  paddingTop: insets.top,
+                  paddingBottom: insets.bottom,
+                  paddingLeft: insets.left,
+                  paddingRight: insets.right,
+                },
+              ]}
+            >
+              <View style={styles.root}>
+                <View style={table ? { height: table.start - insets.top } : styles.root}>
+                  <View style={{ height: barBottom + headerGap }} />
+                  {book || table ? null : readOnlyBanner}
+                  <View
+                    style={book && { width: book.start - insets.left }}
+                    onLayout={(event) => setBannerHeight(event.nativeEvent.layout.height)}
+                  >
+                    <Banner
+                      control={control.state}
+                      canTakeOver={control.allowed === true && !replaying}
+                      readOnly={readOnly}
+                      onTakeOver={takeOver}
+                    />
+                    {stream.delayed || replayOff ? (
+                      <View style={styles.chips}>
+                        {stream.delayed ? (
+                          <Pill tone="warning">{stream.delayedReason ?? t`Screen updates delayed`}</Pill>
+                        ) : null}
+                        {replayOff ? (
+                          <Pill>
+                            <Trans>Replay off</Trans>
+                          </Pill>
+                        ) : null}
+                      </View>
+                    ) : null}
+                  </View>
+                  <View style={sideBySide ? styles.row : styles.root}>
+                    <View
+                      ref={stage}
+                      style={[
+                        styles.stage,
+                        book && { flex: 0, width: book.start - insets.left },
+                        table && {
+                          maxHeight: Math.max(0, table.start - insets.top - barBottom - headerGap - bannerHeight),
+                        },
+                      ]}
+                      onLayout={barBottom > 0 ? zoom.measure : undefined}
+                      collapsable={false}
+                    >
+                      {streams ? null : !item && archivesPending ? (
+                        <ActivityIndicator color={theme.colors.primary} />
+                      ) : (
+                        <Text style={styles.placeholder}>
+                          {deviceUnavailable({
+                            hasStatus,
+                            workspaceListed: item !== undefined,
+                            hasArchive: status?.archived?.some((archive) => archive.projectRoot === workspace) ?? false,
+                            recordingDisabled: replayOff,
+                            hasFootage,
+                            range,
+                            device,
+                          })}
+                          {canReplay ? ` ${scrubHint}` : ''}
+                        </Text>
+                      )}
+                    </View>
+                    {book ? (
+                      <View style={[styles.pane, { marginLeft: book.end - book.start }]}>
+                        <ScrollView style={styles.root} contentContainerStyle={styles.sideContent}>
+                          {readOnlyBanner}
+                        </ScrollView>
+                        {agentFeed}
+                        {toolbars}
+                      </View>
+                    ) : table ? null : (
+                      toolbars
+                    )}
+                  </View>
+                </View>
+                {table ? (
+                  <>
+                    <View style={{ height: table.end - table.start }} />
+                    <ScrollView style={styles.root} contentContainerStyle={styles.sideContent}>
+                      {readOnlyBanner}
+                    </ScrollView>
+                    {toolbars}
+                  </>
+                ) : null}
+                {overlayControls || !replayBar ? null : (
+                  <View style={book && { width: book.start - insets.left }}>{replayBar}</View>
+                )}
+                {book ? null : agentFeed}
+              </View>
+            </View>
+          </Animated.View>
+          {streams ? (
+            <GestureDetector gesture={screenGesture}>
+              <View
+                style={[StyleSheet.absoluteFill, table && { bottom: rootHeight - table.start }]}
+                pointerEvents="box-none"
+              >
+                <Animated.View style={[styles.flying, zoom.screenStyle, lift]}>
+                  <DeviceFrame artwork={snapshot ? null : activeArtwork}>
+                    <DeviceScreen
+                      stream={heldFrame ? { ...stream, frame: heldFrame, video: null } : stream}
+                      label={model}
+                      style={StyleSheet.absoluteFill}
+                      requested={{ fps: preset.fps, maxEdge }}
+                    >
+                      {snapshot ? (
+                        <Image
+                          source={{ uri: `data:${snapshot.mime};base64,${snapshot.data}` }}
+                          style={StyleSheet.absoluteFill}
+                          contentFit="contain"
+                          transition={0}
+                        />
+                      ) : null}
+                      {source ? (
+                        <View
+                          onLayout={(event) => {
+                            touchSize.current = event.nativeEvent.layout;
+                          }}
+                          style={[styles.overlay, controlling && styles.overlayActive]}
+                          pointerEvents={controlling ? 'auto' : 'none'}
+                          {...(controlling ? (takesTwoFingers ? multiTouchHandlers : touchHandlers) : {})}
+                        />
+                      ) : null}
+                    </DeviceScreen>
+                  </DeviceFrame>
+                </Animated.View>
+              </View>
+            </GestureDetector>
+          ) : null}
+          <Animated.View
+            style={[
+              styles.header,
+              {
+                paddingTop: insets.top,
+                paddingLeft: insets.left,
+                paddingRight: book ? 0 : insets.right,
+                right: book ? rootWidth - book.start : 0,
+              },
+              zoom.fadeStyle,
+            ]}
+          >
+            {underBar ? <ViewerBackdrop /> : null}
+            <View style={styles.bar} onLayout={(event) => setBarBottom(event.nativeEvent.layout.height)}>
+              <Touch
+                onLayout={(event) => {
+                  const { width } = event.nativeEvent.layout;
+                  setBarSides(([, right]) => [width, right]);
+                }}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  zoom.close();
+                }}
+                accessibilityLabel={t`Close`}
+                style={styles.barButton}
+              >
+                <Icon name="xmark" size={22} color={theme.media.text} />
+              </Touch>
+              <View
+                style={[
+                  styles.titles,
+                  {
+                    paddingLeft: Math.max(0, barSides[1] - barSides[0]),
+                    paddingRight: Math.max(0, barSides[0] - barSides[1]),
+                  },
+                ]}
+              >
+                <Text
+                  variant="body"
+                  weight="semibold"
+                  style={styles.mediaText}
+                  numberOfLines={1}
+                  maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
+                >
+                  {title}
+                </Text>
+                <View style={styles.subtitleRow}>
+                  <Text
+                    variant="caption"
+                    style={styles.subtitle}
+                    numberOfLines={1}
+                    maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
+                  >
+                    {subtitle}
+                  </Text>
+                  {device?.host ? (
+                    <HostLabel
+                      host={device.host}
+                      color={theme.media.textTertiary}
+                      mode={device.running ? 'running' : 'placed'}
+                    />
+                  ) : null}
+                  {range?.recording && !replayOff ? (
+                    <View style={styles.driver} accessible accessibilityLabel={t`Recording for replay`}>
+                      <View style={styles.recordingDot} />
+                      <Text
+                        variant="caption2"
+                        weight="medium"
+                        style={styles.driverText}
+                        numberOfLines={1}
+                        maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
+                      >
+                        <Trans>Recording</Trans>
+                      </Text>
+                    </View>
+                  ) : null}
+                  {driver ? (
+                    <View
+                      style={styles.driver}
+                      accessible
+                      accessibilityLabel={controlling ? t`Also driven by ${driver}` : t`Driven by ${driver}`}
+                    >
+                      <Icon name="cursorarrow.rays" size={11} color={theme.colors.accent} />
+                      <Text
+                        variant="caption2"
+                        weight="medium"
+                        style={styles.driverText}
+                        numberOfLines={1}
+                        maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}
+                      >
+                        {driver}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+              <View
+                onLayout={(event) => {
+                  const { width } = event.nativeEvent.layout;
+                  setBarSides(([left]) => [left, width]);
+                }}
+              >
+                {!viewOnly && control.allowed !== null && (running || replaying) ? (
+                  <ControlButton on={controlling} disabled={readOnly || replaying} onPress={toggle} />
+                ) : null}
+              </View>
+            </View>
+          </Animated.View>
+          {overlayControls && rest ? (
+            <Animated.View
+              pointerEvents={controls.shown ? 'box-none' : 'none'}
+              accessibilityElementsHidden={!controls.shown}
+              importantForAccessibility={controls.shown ? 'auto' : 'no-hide-descendants'}
+              style={[
+                styles.controlsLayer,
+                {
+                  ...controlsSpan(rest[0], rest[2], insets.left, book ? book.start : paneWidth - insets.right),
+                  bottom: rootHeight - rest[1] - rest[3],
+                },
+                zoom.fadeStyle,
+                lift,
+              ]}
+            >
+              <Animated.View
+                style={[
+                  styles.controlsPanel,
+                  rest[2] >= CONTROLS_MIN_WIDTH && styles.controlsPanelRounded,
+                  controlsFade,
+                ]}
+                onTouchStart={controls.reveal}
+              >
+                {replayBar}
+              </Animated.View>
+            </Animated.View>
+          ) : null}
+          {note && rest ? (
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.noteRow,
+                { top: rest[1] + rest[3] - NOTE_INSET, left: rest[0], width: rest[2] },
+                zoom.fadeStyle,
+                lift,
+              ]}
+            >
+              <Text
+                variant="footnote"
+                weight="semibold"
+                tone={note.success ? 'success' : 'warning'}
+                accessibilityLiveRegion="polite"
+                accessibilityRole="alert"
+                style={styles.note}
+              >
+                {note.text}
+              </Text>
+            </Animated.View>
+          ) : null}
+          <ViewerKeyboard
+            key={control.state.kind === 'on' ? control.state.session : 'off'}
+            keyboard={keyboard}
+            shown={typingBarShown}
+            macos={platform === 'macos'}
+            extendedKeys={link.kind === 'open' && link.features.includes('macos-keyboard-extended')}
+            onFocus={() => setTyping(true)}
+            onBlur={() => setTyping(false)}
+            onHeight={setTypingBarHeight}
+            text={control.text}
+            onKey={control.key}
+          />
+        </View>
+      </GestureDetector>
+    </GestureHandlerRootView>
+  );
+}
+
+function Banner({
+  control,
+  canTakeOver,
+  readOnly,
+  onTakeOver,
+}: {
+  control: ReturnType<typeof useDeviceControl>['state'];
+  canTakeOver: boolean;
+  readOnly: boolean;
+  onTakeOver: () => void;
+}) {
+  const { theme } = useUnistyles();
+  const ended = control.kind === 'off' ? control.ended : undefined;
+  const message =
+    control.kind === 'busy'
+      ? control.message
+      : control.kind === 'failed'
+        ? control.message
+        : ended
+          ? t`Control ended. ${ended}`
+          : control.kind === 'starting'
+            ? t`Starting control...`
+            : null;
+  if (!message) return null;
+  const offer = (canTakeOver || readOnly) && control.kind === 'busy';
+  return (
+    <View style={styles.banner(control.kind === 'failed')}>
+      <Text variant="footnote" style={[styles.mediaText, styles.bannerText]}>
+        {message}
+      </Text>
+      {offer ? (
+        <Touch
+          onPress={onTakeOver}
+          disabled={readOnly}
+          defaultOpacity={readOnly ? theme.opacity.disabled : 1}
+          accessibilityHint={readOnly ? readOnlyReason() : undefined}
+          style={styles.bannerButton}
+        >
+          <Text weight="semibold" tone="brand" style={readOnly && styles.mutedAction}>
+            <Trans>Take Over</Trans>
+          </Text>
+        </Touch>
+      ) : null}
+    </View>
+  );
+}
+
+const BAR_MAX_FONT_SCALE = 1.5;
+
+function ControlButton({ on, disabled, onPress }: { on: boolean; disabled: boolean; onPress: () => void }) {
+  const { theme } = useUnistyles();
+  return (
+    <Touch
+      onPress={onPress}
+      disabled={disabled}
+      defaultOpacity={disabled ? theme.opacity.disabled : 1}
+      accessibilityRole="switch"
+      accessibilityLabel={t`Control`}
+      accessibilityState={{ checked: on, disabled }}
+      hitSlop={7}
+      style={styles.control(on)}
+    >
+      {on ? <Icon name="checkmark" size={13} color={theme.colors.onPrimary} /> : null}
+      <Text weight="semibold" style={styles.controlText(on)} maxFontSizeMultiplier={BAR_MAX_FONT_SCALE}>
+        <Trans>Control</Trans>
+      </Text>
+    </Touch>
+  );
+}
+
+function controlsSpan(left: number, width: number, from: number, to: number) {
+  const span = Math.min(Math.max(width, CONTROLS_MIN_WIDTH), to - from);
+  return { left: Math.min(Math.max(left + width / 2 - span / 2, from), to - span), width: span };
+}
+
+const styles = StyleSheet.create((theme) => ({
+  root: { flex: 1 },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: theme.media.screen,
+  },
+  header: { position: 'absolute', top: 0, left: 0, right: 0 },
+  bar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.lg,
+    paddingHorizontal: theme.space.xl,
+    paddingVertical: theme.space.xs,
+  },
+  titles: { flex: 1, alignItems: 'center' },
+  mediaText: { color: theme.media.text },
+  subtitle: { color: theme.media.textTertiary, flexShrink: 1 },
+  subtitleRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    columnGap: theme.space.md,
+    maxWidth: '100%',
+  },
+  driver: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.xs,
+    paddingHorizontal: theme.space.sm,
+    paddingVertical: 1,
+    borderRadius: theme.radius.chip,
+    backgroundColor: theme.media.fill,
+  },
+  recordingDot: { width: 6, height: 6, borderRadius: theme.radius.round, backgroundColor: theme.colors.error },
+  driverText: { color: theme.media.textSecondary },
+  chips: {
+    flexDirection: 'row',
+    gap: theme.space.md,
+    paddingHorizontal: theme.space.xl,
+    paddingBottom: theme.space.sm,
+  },
+  controlsLayer: { position: 'absolute' },
+  controlsPanel: {
+    overflow: 'hidden',
+    backgroundImage: 'linear-gradient(to bottom, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.7) 65%, rgba(0, 0, 0, 0.78))',
+  },
+  controlsPanelRounded: {
+    borderBottomLeftRadius: LANDED_SCREEN_RADIUS,
+    borderBottomRightRadius: LANDED_SCREEN_RADIUS,
+  },
+  noteRow: { position: 'absolute', alignItems: 'center', paddingHorizontal: theme.space.xl },
+  note: {
+    overflow: 'hidden',
+    paddingHorizontal: theme.space.lg,
+    paddingVertical: theme.space.md,
+    borderRadius: theme.radius.control,
+    backgroundColor: theme.media.note,
+    textAlign: 'center',
+  },
+  row: { flex: 1, flexDirection: 'row' },
+  pane: { flex: 1 },
+  sideContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: theme.space.md },
+  stage: { flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
+  flying: { position: 'absolute', overflow: 'hidden' },
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  overlayActive: { borderColor: theme.colors.primary },
+  placeholder: { color: theme.media.textTertiary, textAlign: 'center', paddingHorizontal: theme.space.xxxl },
+  banner: (warning: boolean) => ({
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.lg,
+    marginHorizontal: theme.space.xl,
+    marginBottom: theme.space.sm,
+    padding: theme.space.md,
+    borderRadius: theme.radius.control,
+    borderWidth: 1,
+    borderColor: warning ? theme.colors.warning : theme.colors.border,
+    backgroundColor: theme.media.fillSubtle,
+  }),
+  bannerText: { flex: 1 },
+  bannerBody: { flex: 1, gap: theme.space.xs },
+  bannerActions: { flexDirection: 'row', gap: theme.space.xxl, paddingTop: theme.space.xs },
+  bannerButton: {
+    minWidth: MIN_TARGET,
+    minHeight: MIN_TARGET,
+    paddingHorizontal: theme.space.xs,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mutedAction: { color: theme.media.textTertiary },
+  barButton: {
+    width: MIN_TARGET,
+    height: MIN_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  control: (on: boolean) => ({
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.xs,
+    height: 30,
+    paddingHorizontal: theme.space.lg,
+    borderRadius: theme.radius.round,
+    backgroundColor: on ? theme.colors.primary : theme.media.fill,
+  }),
+  controlText: (on: boolean) => ({ color: on ? theme.colors.onPrimary : theme.media.text }),
+}));

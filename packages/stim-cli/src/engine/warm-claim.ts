@@ -1,0 +1,304 @@
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { workspaceName, type StimContext } from '@stim-cli/core';
+import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
+import { WorkspaceProcessCleanupError } from './workspace-process-lock.ts';
+import { formatElapsed, phaseLine } from '../command-output.ts';
+import { getConfigDir } from '../workspace/config.ts';
+import { captureProcessIdentity } from '../process-identity.ts';
+import {
+  ClaimUnavailableError,
+  claimRemoveCommand,
+  clearClaimChild,
+  markClaimChildPending,
+  processGroupAlive,
+  releaseClaim,
+  setClaimChild,
+  settleClaim,
+  tryAcquireClaim,
+  type ClaimAttempt,
+  type ClaimHandle,
+  type ClaimHolder,
+} from '../ownership-claim.ts';
+
+type WarmPhase = 'refresh' | 'copy';
+
+const WARM_CLAIM_LABEL = 'worktree warm';
+const WARM_CLAIM_POLL_MS = 250;
+const WARM_CLAIM_PROGRESS_MS = 30_000;
+const WARM_CLAIM_CEILING_MS = 90 * 60 * 1000;
+const INSTALLER_POLL_MS = 50;
+// An installer's process group empties in milliseconds once the manager itself has exited; this is the
+// bound on a descendant that never does, and exceeding it keeps the claim rather than freeing it.
+const INSTALLER_CEILING_MS = 5 * 60 * 1000;
+
+interface WarmClaimHolder {
+  pid: number;
+  phase: WarmPhase;
+}
+
+export interface WarmClaimWait {
+  waitedMs: number;
+  holder: WarmClaimHolder | null;
+}
+
+/**
+ * The installer a refresh spawns can outlive the Stim process that started it, so the claim records it
+ * as its child: declared before the spawn, recorded once its identity is known, and released only once
+ * the whole process group it leads is gone. A package manager's postinstall writer is a member of that
+ * group, so the direct child's exit says nothing about whether anything is still writing.
+ */
+export interface InstallerClaim {
+  declare: () => void;
+  record: (pid: number | null) => void;
+  /** Resolves once nothing that install spawned is running. `settled` is false when one still is, and the
+   * claim then stays held: nothing may copy, and this process must not release it. */
+  settle: () => Promise<{ settled: boolean; pid: number | null; waitedMs: number }>;
+}
+
+export interface WarmClaimHold {
+  claim: ClaimHandle;
+  wait: WarmClaimWait;
+  installer: InstallerClaim;
+}
+
+export interface WarmClaimOptions {
+  signal?: AbortSignal;
+  declareSpawnsFor?: StimContext;
+  repositoryRoot: string;
+  phase: WarmPhase;
+  mode?: 'shared' | 'exclusive';
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  pollMs?: number;
+  progressMs?: number;
+  ceilingMs?: number;
+  out?: (line: string) => void;
+}
+
+export const NO_INSTALLER_CLAIM: InstallerClaim = {
+  declare: () => {},
+  record: () => {},
+  settle: async () => ({ settled: true, pid: null, waitedMs: 0 }),
+};
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function warmClaimsDir(): string {
+  return join(getConfigDir(), 'warm-locks');
+}
+
+export function warmClaimPath(repositoryRoot: string): string {
+  return join(warmClaimsDir(), `${workspaceName(repositoryRoot)}.lock`);
+}
+
+function warmCommand(phase: WarmPhase): string {
+  return phase === 'refresh' ? 'stim worktree warm --refresh' : 'stim worktree warm';
+}
+
+function asHolder(holder: ClaimHolder): WarmClaimHolder {
+  return {
+    pid: holder.owner.pid,
+    phase: holder.details.phase === 'copy' ? 'copy' : holder.mode === 'exclusive' ? 'refresh' : 'copy',
+  };
+}
+
+function waitingLine(holder: WarmClaimHolder, elapsedMs: number): string {
+  return phaseLine(
+    'lock',
+    `waiting ${formatElapsed(elapsedMs)} for ${warmCommand(holder.phase)} (pid ${holder.pid}) -- stim guide lifecycle options`,
+  );
+}
+
+export function warmClaimAcquiredLine(wait: WarmClaimWait, detail = ''): string {
+  const acquired = `acquired${detail ? ` ${detail}` : ''}`;
+  if (!wait.holder || wait.waitedMs < 1000) return phaseLine('lock', acquired);
+  return phaseLine(
+    'lock',
+    `${acquired} (waited ${formatElapsed(wait.waitedMs)} for ${warmCommand(wait.holder.phase)} pid ${wait.holder.pid}) -- stim guide lifecycle options`,
+  );
+}
+
+function installerWaitingLine(pid: number, elapsedMs: number): string {
+  return phaseLine(
+    'lock',
+    `waiting on the install this refresh spawned (pid ${pid}, ${formatElapsed(elapsedMs)} elapsed) -- stim guide lifecycle options`,
+  );
+}
+
+function installerUnrecordedLine(reason: string): string {
+  return phaseLine(
+    'lock',
+    `could not record the install this refresh spawned (${reason}); holding the claim here until it exits`,
+  );
+}
+
+interface InstallerHold extends InstallerClaim {
+  /** Whether a writer this refresh spawned may still be alive, in which case the claim must not be released. */
+  holding: () => boolean;
+}
+
+function installerClaim(
+  claim: ClaimHandle,
+  { now, progressMs, out }: { now: () => number; progressMs: number; out: (line: string) => void },
+): InstallerHold {
+  // Every group this claim has spawned and not yet watched die. The claim file records only the most
+  // recent one, so a crash is covered for that group; the list covers all of them for this process.
+  let groups: number[] = [];
+
+  const forget = (): void => {
+    groups = [];
+    try {
+      clearClaimChild(claim);
+    } catch {
+      // The claim store stopped accepting writes; releasing it will fail the same way and leave the
+      // pending record, which reads as unresolvable rather than as free.
+    }
+  };
+
+  const alive = (): number | null => groups.find((pid) => processGroupAlive(pid)) ?? null;
+
+  return {
+    declare: () => markClaimChildPending(claim),
+    record: (pid) => {
+      // Node leaves pid undefined when the spawn itself failed, so there is no group and nothing to hold.
+      if (pid === null) {
+        forget();
+        return;
+      }
+      groups.push(pid);
+      const captured = captureProcessIdentity(pid);
+      let failure = captured.ok ? null : captured.reason;
+      if (captured.ok) {
+        try {
+          setClaimChild(claim, { pid, processToken: captured.token });
+          return;
+        } catch (error) {
+          failure = (error as Error)?.message ?? String(error);
+        }
+      }
+      // The record is the only thing that outlives this process, so without it the claim can only be
+      // held from here: never released while the group is alive, and never released at all if this
+      // process cannot establish that it is gone.
+      if (!processGroupAlive(pid)) {
+        forget();
+        return;
+      }
+      out(installerUnrecordedLine(String(failure)));
+    },
+    settle: async () => {
+      const started = now();
+      let lastProgress = started;
+      for (;;) {
+        const pid = alive();
+        if (pid === null) {
+          forget();
+          return { settled: true, pid: null, waitedMs: now() - started };
+        }
+        const elapsed = now() - started;
+        if (elapsed >= INSTALLER_CEILING_MS) return { settled: false, pid, waitedMs: elapsed };
+        if (now() - lastProgress >= progressMs) {
+          lastProgress = now();
+          out(installerWaitingLine(pid, elapsed));
+        }
+        await defaultSleep(INSTALLER_POLL_MS);
+      }
+    },
+    holding: () => alive() !== null,
+  };
+}
+
+function timeoutError(holder: WarmClaimHolder | null, elapsedMs: number, root: string): Error {
+  const who = holder ? `${warmCommand(holder.phase)} (pid ${holder.pid})` : 'another stim worktree warm';
+  const error = new Error(
+    `Waited ${formatElapsed(elapsedMs)} for ${who} to release the warm lock on this repository. ` +
+      `The lock is ${root}; remove it if nothing is really warming:\n  ${claimRemoveCommand(root)}`,
+  ) as Error & { code?: string };
+  error.code = 'STIM_LOCK_TIMEOUT';
+  return error;
+}
+
+export async function acquireWarmClaim({
+  signal,
+  declareSpawnsFor,
+  repositoryRoot,
+  phase,
+  mode = phase === 'refresh' ? 'exclusive' : 'shared',
+  now = Date.now,
+  sleep = (ms) => delay(ms, undefined, { signal }),
+  pollMs = WARM_CLAIM_POLL_MS,
+  progressMs = WARM_CLAIM_PROGRESS_MS,
+  ceilingMs = WARM_CLAIM_CEILING_MS,
+  out = () => {},
+}: WarmClaimOptions): Promise<WarmClaimHold & { release: (retained?: boolean) => void }> {
+  const root = warmClaimPath(repositoryRoot);
+  const started = now();
+  let lastProgress = started;
+  let waitedOn: WarmClaimHolder | null = null;
+  let pending: ClaimHandle | null = null;
+
+  try {
+    for (;;) {
+      signal?.throwIfAborted();
+      const attempt: ClaimAttempt = pending
+        ? settleClaim(pending)
+        : tryAcquireClaim({
+            root,
+            mode,
+            label: WARM_CLAIM_LABEL,
+            details: { phase },
+          });
+      const acquired = attempt.acquired;
+      if (acquired) {
+        if (declareSpawnsFor) declareSpawnsOn(declareSpawnsFor, acquired);
+        const installer = installerClaim(acquired, { now, progressMs, out });
+        return {
+          claim: acquired,
+          wait: { waitedMs: now() - started, holder: waitedOn },
+          installer,
+          release: (retained = false) => {
+            if (declareSpawnsFor) stopDeclaringSpawnsOn(declareSpawnsFor, acquired);
+            if (retained || installer.holding()) return;
+            releaseClaim(acquired);
+          },
+        };
+      }
+      // A writer keeps the slot it published while live readers drain, so new readers wait on it.
+      pending = attempt.pending ?? null;
+      const holder = attempt.held ?? attempt.waitingFor?.[0];
+      if (holder) waitedOn = asHolder(holder);
+
+      const elapsed = now() - started;
+      if (elapsed >= ceilingMs) throw timeoutError(waitedOn, elapsed, root);
+      if (waitedOn && now() - lastProgress >= progressMs) {
+        lastProgress = now();
+        out(waitingLine(waitedOn, elapsed));
+      }
+      await sleep(pollMs);
+    }
+  } catch (error) {
+    releaseClaim(pending);
+    if (['EACCES', 'EPERM', 'EROFS', 'ENOENT'].includes((error as NodeJS.ErrnoException)?.code ?? '')) {
+      throw new ClaimUnavailableError((error as Error).message, { claimPath: root });
+    }
+    throw error;
+  }
+}
+
+export async function withWarmClaim<T>(
+  options: WarmClaimOptions,
+  fn: (hold: WarmClaimHold) => Promise<T> | T,
+): Promise<T> {
+  const { release, ...hold } = await acquireWarmClaim(options);
+  let retained = false;
+  try {
+    return await fn(hold);
+  } catch (cause) {
+    retained = cause instanceof WorkspaceProcessCleanupError && cause.claims.includes(hold.claim);
+    throw cause;
+  } finally {
+    release(retained);
+  }
+}

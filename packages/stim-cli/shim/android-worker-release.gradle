@@ -1,0 +1,16 @@
+gradle.beforeProject { project ->
+    project.tasks.matching { it.name ==~ /(?:create)?[bB]undle.*JsAndAssets/ }.configureEach { task ->
+        // React Native's bundle task declares no .env inputs and only sources under its root, so Gradle could
+        // otherwise leave a synced checkout's new JS out of the APK.
+        task.doNotTrackState("A release APK must carry the JS of the checkout the client synced.")
+    }
+    project.pluginManager.withPlugin("com.android.application") {
+        project.extensions.getByName("androidComponents").finalizeDsl { android ->
+            ([android.defaultConfig] + android.buildTypes.toList() + android.productFlavors.toList()).each { config ->
+                if (config.signingConfig?.storeFile?.name == "debug.keystore") return
+                // AGP overloads setSigningConfig, so Groovy cannot pick one for a null argument.
+                config.class.methods.find { it.name == "setSigningConfig" }.invoke(config, [null] as Object[])
+            }
+        }
+    }
+}

@@ -1,0 +1,791 @@
+# SLOW native e2e -- a real xcodebuild / gradle build on a real
+# simulator/emulator, across the framework x platform matrix:
+#
+#     framework in {bare, expo}   x   platform in {ios, android, windows}
+#
+# FOUR SUITES RUN ON THIS MATRIX:
+#   smoke   test/e2e/native/run-native-e2e.mjs --smoke -- one worktree: create
+#           -> start -> build -> launch -> stop -> cleanup checks. One
+#           framework per platform (Expo on iOS and Linux, bare on Windows).
+#   loop    test/e2e/native/run-native-e2e.mjs -- docs/field-test-protocol.md as
+#           code: create -> start -> build -> second worktree hits the cache ->
+#           teardown. What the nightly runs.
+#   caches  test/e2e/native/run-cache-e2e.mjs -- for every cache stim-cli supplies,
+#           prove it is ENGAGED (read off the real argv/log), that it STORES (the
+#           directory gained files), and that a second workspace REUSED it. It
+#           costs two extra cold compiles per variant, so it is ON DEMAND ONLY:
+#           run it before a release, or after a change that touches caching.
+#   pool    test/e2e/native/run-pool-e2e.mjs -- iOS only: park, evict, adopt,
+#           and empty the simulator pool on real CoreSimulator devices.
+#   all     loop, caches and pool, as separate parallel matrix jobs.
+#
+# Per platform: iOS runs smoke, loop, caches and pool; Linux Android smoke,
+# loop and caches; Windows Android smoke and loop (one emulator at a time, no named slots).
+#
+# WHAT RUNS WHEN. A cold native build is ~10-20 minutes and occasionally flaky
+# (device boot, toolchain), so nothing native runs on an unlabeled pull request:
+#   - never on a push to main or in the merge queue;
+#   - nightly (schedule), against main: the loop suite;
+#   - on demand (workflow_dispatch): the `suite` input;
+#   - before a stable release: the Full suite workflow calls this one with
+#     `suite: smoke` (workflow_call);
+#   - on a pull request: the union of its labels `e2e-smoke`, `e2e-loop`,
+#     `e2e-caches`, `e2e-pool` and `e2e-all` (loop, caches, pool). No label,
+#     no native job. Adding a label re-triggers via the `labeled` event.
+# The `plan` job turns event, labels and input into one suite list per
+# platform through scripts/e2e-plan.mjs (unit-tested in e2e-plan.test.mjs);
+# each platform job reads its list as the `suite` matrix axis and is skipped
+# when the list is empty.
+#
+# VARIANT LAYOUT. Each platform is its own job. Framework and selected suite are
+# matrix axes. iOS and Android are separate jobs because iOS needs macOS and
+# Xcode, while Android needs Linux and KVM; Windows Android proves the paths
+# the unit suite fakes (gradlew.bat through cross-spawn, netstat, taskkill).
+# Bare and Expo exercise different stim-cli Metro paths. Both run on iOS and
+# Linux Android; Windows runs bare only, so an
+# `all` dispatch is six iOS jobs and four Linux Android jobs.
+#
+# THE iOS RUNNER IS `xcode-27`, NOT `macos-latest`. Automatic Swift compilation
+# caching needs Swift 6.4, which ships with Xcode 27; the macos-26 images top out
+# at Xcode 26.6, so on `macos-latest` that branch is unreachable and the `caches`
+# suite can only ever observe SWIFT_ENABLE_COMPILE_CACHE=NO. `xcode-27` is a
+# GitHub PREVIEW image (actions/runner-images#14404): capacity and stability are
+# weaker than a GA image, which is the price of covering the on-path at all.
+name: Native E2E
+run-name: ${{ github.event.action == 'labeled' && !contains(fromJSON('["e2e-smoke","e2e-loop","e2e-caches","e2e-pool","e2e-all"]'), github.event.label.name) && 'Native E2E (unrelated label)' || 'Native E2E' }}
+
+on:
+  workflow_call:
+    inputs:
+      suite:
+        description: 'Which suite to run on the framework x platform matrix'
+        type: string
+        default: smoke
+  schedule:
+    # 07:00 UTC nightly. Cron has no notion of "against main" -- schedule always
+    # runs on the default branch, which is what we want.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      hosted_native_android:
+        description: Run only hosted native Android acceptance
+        type: boolean
+        default: false
+      native_ios_only:
+        description: 'Run only the native Xcode acceptance fixture'
+        type: boolean
+        default: false
+      native_ios_project:
+        description: 'Native Xcode acceptance project'
+        type: choice
+        default: fixture
+        options: [fixture, food-truck]
+
+      native_gradle:
+        description: Run only native Gradle provider validation
+        type: boolean
+        default: false
+      native_gradle_project:
+        description: Native Gradle acceptance project
+        type: choice
+        default: fixture
+        options: [fixture, architecture-samples]
+      suite:
+        description: 'Which suite to run on the framework x platform matrix'
+        type: choice
+        default: loop
+        options: [smoke, loop, caches, pool, all]
+  pull_request:
+    # `labeled` is what makes "add the label to run it" work; the others let a
+    # push to an already-labeled PR re-run. The `plan` job is the actual gate
+    # -- these types only decide when to EVALUATE it.
+    types: [labeled, opened, synchronize, reopened]
+    paths-ignore:
+      [
+        'apps/desktop/**',
+        '.github/workflows/desktop.yml',
+        'apps/mobile/**',
+        '.github/workflows/mobile.yml',
+        'website/docs/**',
+      ]
+
+concurrency:
+  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ github.event.action == 'labeled' && !contains(fromJSON('["e2e-smoke","e2e-loop","e2e-caches","e2e-pool","e2e-all"]'), github.event.label.name) && '-unrelated-label' || '' }}${{ inputs.native_gradle && '-gradle' || '' }}${{ inputs.hosted_native_android && '-hosted-android' || '' }}
+  cancel-in-progress: ${{ !inputs.hosted_native_android }}
+
+permissions:
+  contents: read
+
+env:
+  STIM_E2E_STRICT_QA: '1'
+
+jobs:
+  plan:
+    name: plan
+    if: github.event_name != 'workflow_dispatch' || (!inputs.native_ios_only && !inputs.native_gradle && !inputs.hosted_native_android)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      ios: ${{ steps.plan.outputs.ios }}
+      android: ${{ steps.plan.outputs.android }}
+      windows: ${{ steps.plan.outputs.windows }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: plan
+        env:
+          E2E_PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          E2E_PR_ACTION: ${{ github.event.action }}
+          E2E_PR_LABEL: ${{ github.event.label.name }}
+          E2E_SUITE: ${{ inputs.suite }}
+        # An explicit `shell: bash` runs with `-o pipefail`; the runner's
+        # default shell does not, and tee would turn a script error into
+        # success.
+        shell: bash
+        run: node scripts/e2e-plan.mjs | tee -a "$GITHUB_OUTPUT"
+
+  ios:
+    name: ios ${{ matrix.framework }} (${{ matrix.suite }})
+    needs: plan
+    if: needs.plan.outputs.ios != '[]'
+    runs-on: xcode-27
+    # The caches suite adds a second cold compile (the single-flight race) plus a
+    # third cache-hit build, so it needs headroom the loop suite never did.
+    timeout-minutes: ${{ matrix.suite == 'caches' && 120 || matrix.suite == 'smoke' && 45 || 60 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [bare, expo]
+        suite: ${{ fromJSON(needs.plan.outputs.ios) }}
+        exclude:
+          - suite: smoke
+            framework: bare
+    env:
+      STIM_ARCHIVE_ENABLED: '1'
+      STIM_E2E_SUITE: ${{ matrix.suite }}
+      # The registry stays throwaway per run (the driver makes its own temp home)
+      # for deterministic device/project state; the SHARED build cache is
+      # persisted across runs here, so the cross-run cache path is itself
+      # exercised. Kept per-variant so bare and expo never address one another's
+      # entries.
+      STIM_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/ios-${{ matrix.framework }}
+      STIM_BUILD_CACHE_KEY: stim-cli-buildcache-v2-ios-${{ matrix.framework }}
+      # Keep the throwaway STIM_HOME under the workspace so the failure
+      # artifact step can find global workspace logs.
+      TMPDIR: ${{ github.workspace }}/.e2e-tmp
+      # The default blank template is SDK 57; the harness enables scene support
+      # for Xcode 27. Pin SDK 58 here to exercise RN 0.88 Swift compilation
+      # caching while keeping the preview SDK out of other fixture lanes.
+      STIM_E2E_EXPO_INIT: npx --yes create-expo-app@latest {dir} --template expo-template-blank@sdk-58 --no-install
+      STIM_E2E_BARE_INIT: npx --yes @react-native-community/cli@latest init StimE2E --directory {dir} --skip-git-init --install-pods false --pm npm --version 0.88.1
+    steps:
+      # The xcode-27 image indexes with Spotlight, and mds_stores competes with
+      # each simulator's first boot for the runner's 3 vCPUs and 7 GB. Turn it off
+      # before the install and the fixture write thousands of files.
+      - name: Turn off Spotlight indexing
+        continue-on-error: true
+        run: |
+          sudo mdutil -a -i off
+          mdutil -a -s
+
+      - uses: actions/checkout@v4
+      - run: mkdir -p "$TMPDIR" "$STIM_BUILD_CACHE"
+
+      - uses: ./.github/actions/setup-stim
+
+      - name: Set up Ruby and Bundler for the fixture's Gemfile
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+
+      - name: Pin Xcode 27 and prove its Swift 6.4 toolchain
+        # maxim-lobanov/setup-xcode cannot pin this image: it keeps only candidates
+        # whose LicenseInfo.plist marks them stable, and the sole Xcode here is a
+        # prerelease whose real bundle name moves between image revisions
+        # (Xcode_27_beta_3.app, then Xcode_27_Release_Candidate.app). The image
+        # documents the stable 27.0 symlink, so select it directly. The Swift floor
+        # is asserted because a silently older toolchain would leave the caches
+        # suite green while never reaching the Swift branch it is here to cover.
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.0.app
+          xcodebuild -version
+          xcrun swift --version
+          swift_version=$(xcrun swift --version | sed -n 's/.*Swift version \([0-9.]*\).*/\1/p' | head -1)
+          if [ "$(printf '%s\n6.4\n' "$swift_version" | sort -V | head -1)" != 6.4 ]; then
+            echo "::error::runner reports Swift ${swift_version:-unknown}, below the 6.4 the Swift compilation-cache branch needs"
+            exit 1
+          fi
+
+      - name: Install SimSlim for generated iOS fixtures
+        run: brew install mobai-app/tap/simslim
+
+      # The fixture is generated from the latest templates at run time, so no
+      # file in this repository predicts its fingerprint. The key is the lane
+      # prefix alone, which no saved entry matches exactly, so restore-keys
+      # picks the newest entry for the lane; Stim looks the fingerprint up
+      # inside it, and the save step after the suite stores a new entry only
+      # when the set of fingerprints changed. A restored entry means the first
+      # build may be a legitimate cross-run HIT rather than a cold miss.
+      - name: Restore cross-run build cache
+        if: matrix.suite == 'loop' || matrix.suite == 'smoke'
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.STIM_BUILD_CACHE }}
+          key: ${{ env.STIM_BUILD_CACHE_KEY }}-
+          restore-keys: |
+            ${{ env.STIM_BUILD_CACHE_KEY }}-
+
+      - name: Detect a warmed cross-run cache
+        if: matrix.suite == 'loop' || matrix.suite == 'smoke'
+        run: |
+          echo "build cache: ${{ steps.cache.outputs.cache-matched-key && format('HIT {0}', steps.cache.outputs.cache-matched-key) || 'MISS (no entry for this lane)' }}"
+          echo "STIM_E2E_WARM_CACHE=${{ steps.cache.outputs.cache-matched-key && 1 || 0 }}" >> "$GITHUB_ENV"
+
+      - name: Monitor host memory during iOS QA
+        continue-on-error: true
+        run: |
+          node test/e2e/native/monitor-macos-memory.mjs > "$GITHUB_WORKSPACE/ios-memory.jsonl" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/stim-memory-monitor.pid"
+
+      - name: Loop suite (ios, ${{ matrix.framework }})
+        if: matrix.suite == 'loop'
+        # --keep leaves the temp worktrees in place on this ephemeral runner so
+        # the artifact step below can collect their build logs.
+        run: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform ios --keep --home "$TMPDIR/stim-cli-home"
+
+      - name: Smoke suite (ios, ${{ matrix.framework }})
+        if: matrix.suite == 'smoke'
+        run: node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform ios --keep --smoke --home "$TMPDIR/stim-cli-home"
+
+      - name: Cache suite (ios, ${{ matrix.framework }})
+        if: matrix.suite == 'caches'
+        # It forces its own STIM_BUILD_CACHE / STIM_METRO_CACHE under a
+        # throwaway home ON PURPOSE (see the file header): every number it
+        # reports is a before/after around a COLD compile, and the persisted
+        # cross-run cache above would turn each of them into a measurement of
+        # nothing. Cache-suite jobs skip the cross-run cache restore.
+        # --summary writes the machine-readable verdict where the artifact step
+        # can pick it up whether the run passed or failed.
+        run: >-
+          node test/e2e/native/run-cache-e2e.mjs
+          --framework ${{ matrix.framework }} --platform ios --keep --home "$TMPDIR/stim-cli-cache-home"
+          --summary "$GITHUB_WORKSPACE/cache-summary-ios-${{ matrix.framework }}.json"
+
+      - name: Simulator pool suite (ios, ${{ matrix.framework }})
+        if: matrix.suite == 'pool'
+        run: node test/e2e/native/run-pool-e2e.mjs --framework ${{ matrix.framework }} --keep --home "$TMPDIR/stim-cli-pool-home"
+
+      # GitHub scopes a cache to the ref that saved it: an entry from main is
+      # visible to every ref, one from a pull request to that pull request
+      # alone, so only main saves.
+      - name: Trim the cross-run build cache to its newest entries
+        if: (matrix.suite == 'loop' || matrix.suite == 'smoke') && github.ref == 'refs/heads/main'
+        id: trim
+        shell: bash
+        run: node scripts/e2e-build-cache.mjs "$STIM_BUILD_CACHE" "$STIM_BUILD_CACHE_KEY" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Save cross-run build cache
+        if: steps.trim.outputs.key != '' && steps.trim.outputs.key != steps.cache.outputs.cache-matched-key
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.STIM_BUILD_CACHE }}
+          key: ${{ steps.trim.outputs.key }}
+
+      - name: Stop host memory monitor
+        continue-on-error: true
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/stim-memory-monitor.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/stim-memory-monitor.pid")" 2>/dev/null || true
+          fi
+
+      - name: Upload iOS host memory diagnostics
+        continue-on-error: true
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-memory-ios-${{ matrix.framework }}-${{ matrix.suite }}
+          path: ios-memory.jsonl
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload the cache-suite summary
+        # `always()`: a FAILING cache run is exactly when the per-check evidence
+        # is worth reading, and the summary carries it.
+        if: always() && matrix.suite == 'caches'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-summary-ios-${{ matrix.framework }}
+          path: cache-summary-ios-${{ matrix.framework }}.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-ios-${{ matrix.framework }}-${{ matrix.suite }}
+          path: |
+            ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-home/archive/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-cache-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-cache-home/archive/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-pool-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-pool-home/archive/**/logs/*
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+  android:
+    name: android ${{ matrix.framework }} (${{ matrix.suite }})
+    needs: plan
+    if: needs.plan.outputs.android != '[]'
+    # A Linux host with KVM: the Android emulator needs hardware acceleration,
+    # which the ubuntu-latest GitHub runners provide once /dev/kvm is exposed.
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.suite == 'caches' && 120 || matrix.suite == 'smoke' && 45 || 60 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [bare, expo]
+        suite: ${{ fromJSON(needs.plan.outputs.android) }}
+        # The smoke suite is one job per platform; Expo matches the iOS side.
+        exclude:
+          - suite: smoke
+            framework: bare
+    env:
+      STIM_ARCHIVE_ENABLED: '1'
+      STIM_E2E_SUITE: ${{ matrix.suite }}
+      STIM_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/android-${{ matrix.framework }}
+      STIM_BUILD_CACHE_KEY: stim-cli-buildcache-v2-android-${{ matrix.framework }}
+      TMPDIR: ${{ github.workspace }}/.e2e-tmp
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p "$TMPDIR" "$STIM_BUILD_CACHE"
+
+      - uses: ./.github/actions/setup-stim
+
+      - name: Set up JDK 17
+        # gradle for a modern RN/Expo Android build needs a JDK; 17 is the
+        # current baseline.
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      # Gradle's dependency cache and wrapper distribution, the download phase
+      # of every cold build. The month in the key rotates the entry so it
+      # follows the fixture's templates; restore-keys warm a month's first run
+      # from the previous entry. An exact hit skips the save, so a dependency
+      # the templates add mid-month is downloaded on every run until the
+      # rollover, and the week after a rollover holds two entries per lane
+      # (4 to 6 GB across the three Android lanes). The caches suite seeds its
+      # throwaway Gradle home from these two directories and writes nothing
+      # back, so only the other suites save, and only from main (see the build
+      # cache save). The daemon holds modules-2.lock open, which fails the
+      # archive on Windows (actions/setup-java#633); actions/cache resolves a
+      # bare directory pattern to the directory itself and archives it whole,
+      # so the pattern lists the children for the exclusion to apply.
+      - name: Stamp the Gradle cache key
+        id: gradle-key
+        run: echo "key=gradle-v1-${{ runner.os }}-${{ matrix.framework }}-$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Gradle dependency cache
+        id: gradle
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2/*
+            !~/.gradle/caches/modules-2/*.lock
+            !~/.gradle/caches/modules-2/gc.properties
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-key.outputs.key }}
+          restore-keys: |
+            gradle-v1-${{ runner.os }}-${{ matrix.framework }}-
+
+      # See the iOS job for the key design.
+      - name: Restore cross-run build cache
+        if: matrix.suite == 'loop' || matrix.suite == 'smoke'
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.STIM_BUILD_CACHE }}
+          key: ${{ env.STIM_BUILD_CACHE_KEY }}-
+          restore-keys: |
+            ${{ env.STIM_BUILD_CACHE_KEY }}-
+
+      # Expose /dev/kvm to the emulator (the standard incantation the
+      # android-emulator-runner README recommends).
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Detect a warmed cross-run cache
+        if: matrix.suite == 'loop' || matrix.suite == 'smoke'
+        run: |
+          echo "build cache: ${{ steps.cache.outputs.cache-matched-key && format('HIT {0}', steps.cache.outputs.cache-matched-key) || 'MISS (no entry for this lane)' }}"
+          echo "STIM_E2E_WARM_CACHE=${{ steps.cache.outputs.cache-matched-key && 1 || 0 }}" >> "$GITHUB_ENV"
+
+      - name: Native e2e (android, ${{ matrix.framework }}) -- runs the selected suite(s)
+        # reactivecircus/android-emulator-runner installs the SDK + system image,
+        # enables acceleration, and runs `script` once an emulator is up. stim-cli
+        # then creates and boots its OWN owned AVD (the ownership rule forbids it
+        # from touching a device it did not create -- see CLAUDE.md item 2), so
+        # the action's emulator is only there to guarantee the SDK/KVM
+        # environment; stim-cli does the device work itself.
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          # A fast, headless boot; the assertions do not need a window.
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          # The runner image can leave less than the emulator's 7.4 GB userdata requirement after SDK setup.
+          pre-emulator-launch-script: >-
+            df -h "$HOME/.android/avd" &&
+            if df -Pk "$HOME/.android/avd" | awk 'NR == 2 { exit ($4 >= 12 * 1024 * 1024) }'; then
+            sudo rm -rf /usr/share/dotnet /usr/local/.ghcup &&
+            df -h "$HOME/.android/avd";
+            fi
+          # The action's own emulator only proved the SDK/KVM environment; kill it
+          # before the driver runs so stim-cli's owned emulator gets the runner's
+          # full memory and CPU (two emulators on a 7 GB runner starve the boot).
+          script: |
+            adb -s emulator-5554 emu kill || true
+            sleep 3
+            if [ "$STIM_E2E_SUITE" = loop ]; then node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-home"; fi
+            if [ "$STIM_E2E_SUITE" = smoke ]; then node test/e2e/native/run-native-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --smoke --home "$TMPDIR/stim-cli-home"; fi
+            if [ "$STIM_E2E_SUITE" = caches ]; then node test/e2e/native/run-cache-e2e.mjs --framework ${{ matrix.framework }} --platform android --keep --home "$TMPDIR/stim-cli-cache-home" --summary "$GITHUB_WORKSPACE/cache-summary-android-${{ matrix.framework }}.json"; fi
+
+      - name: Trim the cross-run build cache to its newest entries
+        if: (matrix.suite == 'loop' || matrix.suite == 'smoke') && github.ref == 'refs/heads/main'
+        id: trim
+        shell: bash
+        run: node scripts/e2e-build-cache.mjs "$STIM_BUILD_CACHE" "$STIM_BUILD_CACHE_KEY" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Save cross-run build cache
+        if: steps.trim.outputs.key != '' && steps.trim.outputs.key != steps.cache.outputs.cache-matched-key
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.STIM_BUILD_CACHE }}
+          key: ${{ steps.trim.outputs.key }}
+
+      - name: Save the Gradle dependency cache
+        if: matrix.suite != 'caches' && github.ref == 'refs/heads/main' && steps.gradle.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2/*
+            !~/.gradle/caches/modules-2/*.lock
+            !~/.gradle/caches/modules-2/gc.properties
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-key.outputs.key }}
+
+      - name: Upload the cache-suite summary
+        if: always() && matrix.suite == 'caches'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cache-summary-android-${{ matrix.framework }}
+          path: cache-summary-android-${{ matrix.framework }}.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-android-${{ matrix.framework }}-${{ matrix.suite }}
+          path: |
+            ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-home/archive/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-cache-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-cache-home/archive/**/logs/*
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+  # The Android half of the dev loop on Windows, driven by the same fixture and
+  # driver as the lanes above, bare framework only. Real proof of the paths the
+  # unit suite fakes: gradlew.bat through cross-spawn, Metro listener discovery
+  # through netstat, adb and the emulator, and the taskkill tree kill on stop.
+  #
+  # The SDK, system image and acceleration facts live in
+  # .github/actions/windows-android-sdk, shared with windows-debug.yml.
+  windows:
+    name: android bare (${{ matrix.suite }}, windows)
+    needs: plan
+    if: needs.plan.outputs.windows != '[]'
+    runs-on: windows-latest
+    timeout-minutes: ${{ matrix.suite == 'loop' && 90 || 45 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJSON(needs.plan.outputs.windows) }}
+    env:
+      STIM_ARCHIVE_ENABLED: '1'
+      # os.tmpdir() reads TEMP on Windows, and the driver builds its fixture
+      # under it. It is D:\e rather than a path inside the workspace because
+      # every CMake object path is built from the fixture root and Windows caps
+      # a path at 260 characters.
+      TEMP: D:\e
+      TMP: D:\e
+      STIM_BUILD_CACHE: D:\e\build-cache
+      STIM_BUILD_CACHE_KEY: stim-cli-buildcache-v2-windows-android-bare
+    steps:
+      - uses: actions/checkout@v4
+      - run: New-Item -ItemType Directory -Force -Path "D:\e", "D:\e\build-cache"
+      - uses: ./.github/actions/setup-stim
+      - uses: ./.github/actions/windows-android-sdk
+
+      # See the Linux Android job for the Gradle key design.
+      - name: Stamp the Gradle cache key
+        id: gradle-key
+        shell: bash
+        run: echo "key=gradle-v1-${{ runner.os }}-bare-$(date -u +%Y-%m)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Gradle dependency cache
+        id: gradle
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2/*
+            !~/.gradle/caches/modules-2/*.lock
+            !~/.gradle/caches/modules-2/gc.properties
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-key.outputs.key }}
+          restore-keys: |
+            gradle-v1-${{ runner.os }}-bare-
+
+      # See the iOS job for the key design.
+      - name: Restore cross-run build cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.STIM_BUILD_CACHE }}
+          key: ${{ env.STIM_BUILD_CACHE_KEY }}-
+          restore-keys: |
+            ${{ env.STIM_BUILD_CACHE_KEY }}-
+
+      - name: Detect a warmed cross-run cache
+        run: |
+          "build cache: ${{ steps.cache.outputs.cache-matched-key && format('HIT {0}', steps.cache.outputs.cache-matched-key) || 'MISS (no entry for this lane)' }}"
+          "STIM_E2E_WARM_CACHE=${{ steps.cache.outputs.cache-matched-key && 1 || 0 }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Doctor (android)
+        continue-on-error: true
+        run: node packages/stim-cli/dist/cli.mjs doctor --platform android
+
+      - name: Android ${{ matrix.suite }} e2e (bare)
+        run: >-
+          node test/e2e/native/run-native-e2e.mjs
+          --framework bare --platform android --keep --home "D:\e\stim-home"
+          ${{ matrix.suite == 'smoke' && '--smoke' || '' }}
+
+      - name: Trim the cross-run build cache to its newest entries
+        if: github.ref == 'refs/heads/main'
+        id: trim
+        shell: bash
+        run: node scripts/e2e-build-cache.mjs "$STIM_BUILD_CACHE" "$STIM_BUILD_CACHE_KEY" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Save cross-run build cache
+        if: steps.trim.outputs.key != '' && steps.trim.outputs.key != steps.cache.outputs.cache-matched-key
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.STIM_BUILD_CACHE }}
+          key: ${{ steps.trim.outputs.key }}
+
+      - name: Save the Gradle dependency cache
+        if: github.ref == 'refs/heads/main' && steps.gradle.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2/*
+            !~/.gradle/caches/modules-2/*.lock
+            !~/.gradle/caches/modules-2/gc.properties
+            ~/.gradle/wrapper
+          key: ${{ steps.gradle-key.outputs.key }}
+
+      - name: Upload build and device logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-android-${{ matrix.suite }}-logs
+          path: |
+            D:\e\stim-home\workspaces\**\logs\*
+            D:\e\stim-home\logs\debug\*
+            D:\e\stim-home\archive\**\logs\*
+            D:\e\adb.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+  native-xcode:
+    name: native Xcode acceptance
+    if: github.event_name == 'workflow_dispatch' && !inputs.hosted_native_android && (inputs.native_ios_only || (!inputs.native_gradle && inputs.suite == 'all'))
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      CI: '1'
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      STIM_NATIVE_XCODE_EVIDENCE: ${{ github.workspace }}/artifacts/native-xcode
+      STIM_NATIVE_XCODE_PROJECT: ${{ inputs.native_ios_project || 'fixture' }}
+      NATIVE_XCODE_VERSION: '27.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+      - name: Select native fixture Xcode
+        shell: bash
+        run: sudo xcode-select -s "/Applications/Xcode_${NATIVE_XCODE_VERSION}.app/Contents/Developer"
+      - name: Install pinned UI driver
+        shell: bash
+        run: |
+          npm install --global --prefix "$HOME/.local" agent-device@0.21.22
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install SimSlim for the native fixture
+        if: inputs.native_ios_project != 'food-truck'
+        run: brew install mobai-app/tap/simslim
+      - name: Monitor native fixture host memory and load
+        shell: bash
+        run: |
+          mkdir -p artifacts/native-xcode
+          node test/e2e/native/monitor-macos-memory.mjs > artifacts/native-xcode/host-memory.jsonl 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/stim-native-xcode-monitor.pid"
+      - name: Native Xcode lifecycle acceptance
+        shell: bash
+        run: |
+          mkdir -p artifacts/native-xcode
+          node test/e2e/native/run-native-xcode-e2e.mjs 2>&1 | tee artifacts/native-xcode/driver.log
+      - name: Stop native fixture host monitor
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/stim-native-xcode-monitor.pid" ]; then
+            read -r monitor_pid < "$RUNNER_TEMP/stim-native-xcode-monitor.pid"
+            kill "$monitor_pid" 2>/dev/null || true
+          fi
+      - name: Upload native Xcode evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-xcode-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/native-xcode
+          if-no-files-found: warn
+
+  native-gradle:
+    name: native Gradle Android
+    if: github.event_name == 'workflow_dispatch' && !inputs.hosted_native_android && inputs.native_gradle
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NATIVE_GRADLE_DRIVER: ${{ inputs.native_gradle_project == 'architecture-samples' && 'test/e2e/native/run-architecture-samples-e2e.mjs' || 'test/e2e/native/run-gradle-e2e.mjs' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+          cache-disabled: true
+      - name: Install pinned agent-device for native UI assertions
+        run: |
+          npm install --global --prefix "$RUNNER_TEMP/native-agent-device" agent-device@0.21.22
+          echo "$RUNNER_TEMP/native-agent-device/bin" >> "$GITHUB_PATH"
+      - name: Prepare pinned native Android project
+        run: node "$NATIVE_GRADLE_DRIVER" prepare "$RUNNER_TEMP/native-gradle"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Gradle model, configuration cache and owned emulator lifecycle
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: |
+            adb -s emulator-5554 emu kill
+            sleep 3
+            node "$NATIVE_GRADLE_DRIVER" run "$RUNNER_TEMP/native-gradle"
+      - name: Preserve native evidence and fixture sources
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-gradle-${{ github.run_id }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          path: |
+            ${{ runner.temp }}/native-gradle/evidence
+            ${{ runner.temp }}/native-gradle/stim-home
+            ${{ runner.temp }}/native-gradle/direct-model.json
+            ${{ runner.temp }}/native-gradle/project/*.gradle*
+            ${{ runner.temp }}/native-gradle/project/gradle
+            ${{ runner.temp }}/native-gradle/project/gradle.properties
+            ${{ runner.temp }}/native-gradle/project/.stim.json
+            ${{ runner.temp }}/native-gradle/project/mobile/build/outputs/apk/**/*.apk
+            ${{ runner.temp }}/native-gradle/project/app/build/outputs/apk/**/*.apk
+            ${{ runner.temp }}/native-gradle/project/mobile/build.gradle.kts
+            ${{ runner.temp }}/native-gradle/project/mobile/src
+            ${{ runner.temp }}/native-gradle/project/build/reports
+            ${{ runner.temp }}/native-gradle/gradle-home/daemon
+
+  hosted-native-android:
+    if: github.event_name == 'workflow_dispatch' && inputs.hosted_native_android
+    runs-on: macos-15-intel
+    timeout-minutes: 65
+    env:
+      STIM_QA_ANDROID_SYSTEM_IMAGE: system-images;android-30;aosp_atd;x86_64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Verify accelerated emulator support before building
+        run: |
+          mkdir -p "$RUNNER_TEMP/hosted-native-android/evidence"
+          sdkmanager 'emulator' 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0' "$STIM_QA_ANDROID_SYSTEM_IMAGE"
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 | tee "$RUNNER_TEMP/hosted-native-android/evidence/acceleration.txt"
+      - uses: ./.github/actions/setup-stim
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+          cache-disabled: true
+      - name: Install pinned remote UI driver
+        run: |
+          npm install --global --prefix "$HOME/.local" agent-device@0.21.31
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Prepare native fixture and record source
+        run: |
+          git rev-parse HEAD > "$RUNNER_TEMP/hosted-native-android/evidence/source.txt"
+          node test/e2e/native/run-gradle-e2e.mjs prepare "$RUNNER_TEMP/hosted-native-android"
+      - name: Hosted native build, UI, reuse, failure recovery and scoped stop
+        run: node --experimental-transform-types test/e2e/native/run-hosted-native-android-e2e.mjs "$RUNNER_TEMP/hosted-native-android"
+      - name: Upload hosted acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-native-android-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hosted-native-android/evidence
+          if-no-files-found: error
+          retention-days: 14

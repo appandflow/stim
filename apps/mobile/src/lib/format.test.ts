@@ -1,0 +1,371 @@
+import { resultEnumCases, replaceReceivedField } from '../../mock-server/receive-fixtures';
+import { platformName } from '@/lib/workspaces';
+import {
+  activityBadge,
+  activityLabel,
+  buildProgress,
+  buildTiming,
+  slotWait,
+  clockTime,
+  gitBadges,
+  durationBars,
+  historyDetail,
+  historyTitle,
+  lastBuildSummary,
+  outcomeLabel,
+  recheckNote,
+  nextBuild,
+  planDetail,
+} from '@/lib/format';
+import type { BuildHistoryEntry, BuildMissReason, BuildPlan, BuildReport, DeviceActivity } from '@/protocol/types';
+
+const now = Date.parse('2026-09-25T12:00:00Z');
+const ago = (ms: number) => new Date(now - ms).toISOString();
+const reason = (summary: string): BuildMissReason => ({
+  kind: 'changed',
+  summary,
+  changes: [],
+  changeCount: 0,
+  baseline: null,
+  rekeyedBy: [],
+});
+
+describe('clockTime', () => {
+  const at = Date.parse('2026-09-25T22:31:05Z');
+
+  it('follows the requested locale\u2019s 12- or 24-hour convention', () => {
+    expect(clockTime(at, 'en-US')).toMatch(/^\d{1,2}:\d{2}:\d{2} (AM|PM)$/);
+    expect(clockTime(at, 'en-GB')).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('reads the seconds from `at`, not from the current time', () => {
+    const later = Date.parse('2026-09-25T22:31:42Z');
+    const secondsOf = (ms: number) => String(new Date(ms).getSeconds()).padStart(2, '0');
+    expect(clockTime(at, 'en-GB')).toMatch(new RegExp(`:${secondsOf(at)}$`));
+    expect(clockTime(later, 'en-GB')).toMatch(new RegExp(`:${secondsOf(later)}$`));
+    expect(clockTime(at, 'en-GB')).not.toBe(clockTime(later, 'en-GB'));
+  });
+});
+
+describe('activityBadge', () => {
+  it('shows no idle badge for a device used in the last 10 minutes', () => {
+    expect(activityBadge({ state: 'idle', lastActivityAt: ago(9 * 60_000), basis: [] }, now)).toBeNull();
+    expect(activityBadge({ state: 'idle', lastActivityAt: ago(3 * 3600_000), basis: [] }, now)?.text).toBe('Idle 3h');
+  });
+
+  it('names the tool driving the device and for how long', () => {
+    const badge = activityBadge(
+      { state: 'driven', driver: { tool: 'agent-device', pid: 1, since: ago(12 * 60_000) }, basis: [] },
+      now,
+    );
+    expect(badge).toEqual({ kind: 'driven', text: 'Driven by agent-device \u00B7 12m' });
+  });
+});
+
+describe('activityLabel', () => {
+  const driven = (tool: string, minutesAgo: number): DeviceActivity => ({
+    state: 'driven',
+    driver: { tool, pid: 1, since: ago(minutesAgo * 60_000) },
+    basis: [],
+  });
+
+  it('spells the driving and idle time out for assistive technology', () => {
+    expect(activityLabel(driven('agent-device', 47), now)).toBe('driven by agent-device for 47 minutes');
+    expect(activityLabel(driven('claude', 61), now)).toBe('driven by claude for 1 hour 1 minute');
+    expect(activityLabel({ state: 'idle', lastActivityAt: ago(22 * 60_000), basis: [] }, now)).toBe(
+      'idle for 22 minutes',
+    );
+    expect(activityLabel({ state: 'unknown', basis: [] }, now)).toBe('activity unknown');
+    expect(activityLabel({ state: 'idle', basis: [] }, now)).toBe('idle');
+    expect(activityLabel({ state: 'driven', driver: { tool: 'claude', pid: 1, since: null }, basis: [] }, now)).toBe(
+      'driven by claude',
+    );
+  });
+
+  it('says nothing for a device used in the last 10 minutes, like the badge', () => {
+    expect(activityLabel({ state: 'idle', lastActivityAt: ago(3 * 60_000), basis: [] }, now)).toBeNull();
+    expect(activityLabel({ state: 'active', basis: [] }, now)).toBeNull();
+    expect(activityLabel(undefined, now)).toBeNull();
+  });
+});
+
+describe('buildProgress', () => {
+  const build = (expectedMs: number | null): BuildReport => ({
+    platform: 'ios',
+    slot: 'default',
+    state: 'running',
+    phase: 'compile',
+    startedAt: ago(90_000),
+    phaseStartedAt: ago(30_000),
+    outcome: expectedMs ? 'cold' : null,
+    expectedMs,
+    expectedPhaseMs: null,
+    basis: expectedMs ? 5 : 0,
+  });
+
+  it('is indeterminate without comparable runs', () => {
+    expect(buildProgress(build(null), now)).toEqual({ elapsedMs: 90_000, fraction: null, remaining: null });
+    const cleanup = { ...build(300_000), phase: 'cleanup', completedPhaseMs: { cleanup: 30_000 } };
+    expect(buildProgress(cleanup, now)).toEqual({ elapsedMs: 90_000, fraction: null, remaining: null });
+    expect(buildProgress({ ...cleanup, phase: 'compile', slot: 'cleaned' }, now)).toMatchObject({
+      elapsedMs: 90_000,
+      fraction: 0.2,
+      remaining: 'about 4 min left',
+    });
+  });
+
+  it('does not move backwards when the run revises its estimate', () => {
+    const revised = (expectedMs: number) => ({ ...build(expectedMs), slot: 'revised' });
+    expect(buildProgress(revised(180_000), now).fraction).toBe(0.5);
+    expect(buildProgress(revised(900_000), now).fraction).toBe(0.5);
+    expect(buildProgress({ ...revised(900_000), slot: 'tablet' }, now).fraction).toBe(0.1);
+  });
+
+  it('never reaches 100% while the build still runs', () => {
+    expect(buildProgress(build(300_000), now)).toMatchObject({ fraction: 0.3, remaining: 'about 4 min left' });
+    expect(buildProgress(build(60_000), now)).toMatchObject({ fraction: 0.99, remaining: 'longer than usual' });
+  });
+});
+
+describe('buildTiming', () => {
+  const build = (expectedMs: number | null): BuildReport => ({
+    platform: 'ios',
+    slot: 'default',
+    state: 'running',
+    phase: 'compile',
+    startedAt: ago(90_000),
+    phaseStartedAt: ago(30_000),
+    outcome: null,
+    expectedMs,
+    expectedPhaseMs: null,
+    basis: 0,
+  });
+
+  it('reports the elapsed clock and the estimate when runs are comparable', () => {
+    expect(buildTiming(build(300_000), now)).toEqual({ elapsed: '1:30', estimate: '~5:00' });
+  });
+
+  it('has no estimate without comparable runs', () => {
+    expect(buildTiming(build(null), now)).toEqual({ elapsed: '1:30', estimate: null });
+    expect(buildTiming({ ...build(300_000), phase: 'cleanup' }, now)).toEqual({ elapsed: '1:30', estimate: null });
+  });
+
+  it('times slot waits from their own start during any phase and skips absent or future kinds', () => {
+    const run = build(null);
+    for (const kind of ['build-slot', 'device-slot']) {
+      const waiting = { ...run, waitingFor: { kind, inUse: 3, max: 3, since: ago(42_000) } };
+      for (const phase of ['compile', 'wait']) {
+        expect(slotWait({ ...waiting, phase }, now)?.endsWith('0:42')).toBe(true);
+        expect(slotWait({ ...waiting, phase }, now + 1000)?.endsWith('0:43')).toBe(true);
+      }
+      expect(slotWait(waiting, now - 43_000)?.endsWith('0:00')).toBe(true);
+      expect(slotWait({ ...waiting, waitingFor: { ...waiting.waitingFor, kind: 'future-slot' } }, now)).toBeNull();
+    }
+    expect(slotWait(run, now)).toBeNull();
+  });
+});
+
+describe('build cache outcome', () => {
+  it('marks the running outcome likely until the run reaches a phase that settles it', () => {
+    expect(outcomeLabel({ outcome: 'cold', phase: 'cache-lookup' })).toBe('Likely cold');
+    expect(outcomeLabel({ outcome: 'cold', phase: 'compile' })).toBe('Cold build');
+    expect(outcomeLabel({ outcome: 'hit', phase: 'install' })).toBe('Cache hit');
+    expect(outcomeLabel({ outcome: null, phase: 'prepare' })).toBeNull();
+    expect(outcomeLabel({ outcome: 'hit', phase: 'device', outcomeKnown: false })).toBe('Likely cache hit');
+    expect(outcomeLabel({ outcome: 'hit', phase: 'device', outcomeKnown: true })).toBe('Cache hit');
+    const missReason: BuildMissReason = {
+      kind: 'changed',
+      summary: 'x',
+      changes: [],
+      changeCount: 0,
+      baseline: null,
+      rekeyedBy: [],
+    };
+    expect(outcomeLabel({ outcome: 'cold', phase: 'pods', outcomeKnown: true, missReason })).toBe('Cache miss');
+    expect(outcomeLabel({ outcome: 'cold', phase: 'pods', outcomeKnown: true })).toBe('Cold build');
+    expect(recheckNote({ phase: 'pods', missProvisional: true })).toBe('Checks the cache again after pods');
+    expect(recheckNote({ phase: 'compile' })).toBeNull();
+    expect(recheckNote({ phase: 'pods', missProvisional: false })).toBeNull();
+  });
+
+  it('reads a last build whose cacheHit is false as compiled, and a failed one by its code', () => {
+    const last = {
+      platform: 'ios' as const,
+      status: 'ok' as const,
+      cacheHit: false as const,
+      cacheSkipped: false,
+      durationMs: 83_123,
+      fingerprint: '1b62',
+      startedAt: ago(90_000),
+      finishedAt: ago(7_000),
+    };
+    expect(lastBuildSummary(last, now)).toBe('Cold build \u00B7 1:23 \u00B7 <1m ago');
+    expect(lastBuildSummary({ ...last, cacheSkipped: true }, now)).toBe(
+      'Cold build (cache reads off) \u00B7 1:23 \u00B7 <1m ago',
+    );
+    expect(lastBuildSummary({ ...last, cacheSkipped: true, missReason: reason('cache reuse off') }, now, false)).toBe(
+      'Cold build \u00B7 1:23 \u00B7 <1m ago',
+    );
+    expect(lastBuildSummary({ ...last, missReason: reason('app config changed') }, now)).toBe(
+      'Cold build: app config changed \u00B7 1:23 \u00B7 <1m ago',
+    );
+    expect(lastBuildSummary({ ...last, cacheHit: 'local' }, now)).toBe('Cache hit (local) \u00B7 1:23 \u00B7 <1m ago');
+    expect(lastBuildSummary({ ...last, offloadedTo: 'janics-mac-mini:7869' }, now)).toBe(
+      'Built on janics-mac-mini \u00B7 1:23 \u00B7 <1m ago',
+    );
+    expect(
+      lastBuildSummary(
+        { ...last, status: 'failed', errorCode: 'STIM_BUILD_FAILED', finishedAt: ago(3 * 3600_000) },
+        now,
+      ),
+    ).toBe('Failed (STIM_BUILD_FAILED) \u00B7 1:23 \u00B7 3h ago');
+  });
+
+  it('describes a planned hit, a miss that regenerates, and a refusal', () => {
+    const hit: BuildPlan = {
+      platform: 'ios',
+      fingerprint: '1b62',
+      cacheKey: 'k',
+      cacheHit: 'remote',
+      provider: 'eas',
+      cacheSkipped: false,
+      prebuild: null,
+      outcome: 'hit',
+      expectedMs: 2656,
+      basis: 1,
+    };
+    expect([nextBuild(hit), planDetail(hit)]).toEqual(['cache hit (remote)', 'From eas. Median of 1 hit run']);
+    const miss: BuildPlan = {
+      ...hit,
+      cacheHit: false,
+      provider: null,
+      prebuild: 'regenerate',
+      outcome: 'cold',
+      expectedMs: null,
+      basis: 0,
+    };
+    expect([nextBuild(miss), planDetail(miss)]).toEqual([
+      'cold build, regenerates the native dir',
+      'No cold run of this project recorded yet',
+    ]);
+    expect(
+      nextBuild({ ...miss, prebuild: null, expectedMs: 340_000, missReason: reason('Podfile.lock changed') }),
+    ).toBe('cold build, Podfile.lock changed');
+    expect(
+      nextBuild({ ...miss, missReason: reason('no earlier build of this project in the cache to compare with') }),
+    ).toBe('cold build, regenerates the native dir, no earlier build of this project in the cache to compare with');
+    const pending = {
+      ...reason('Podfile.lock changed (before prebuild regenerates ios/)'),
+      kind: 'prebuild-pending' as const,
+    };
+    expect(nextBuild({ ...miss, missReason: pending }, false)).toBe('cold build');
+    expect(nextBuild({ ...miss, missReason: pending })).toBe(
+      'cold build, Podfile.lock changed (before prebuild regenerates ios/)',
+    );
+    const refused: BuildPlan = {
+      ...miss,
+      outcome: null,
+      refusal: { code: 'STIM_EAS_BUILD_MISSING', message: 'No build.', remedy: 'Build one.' },
+    };
+    expect([nextBuild(refused), planDetail(refused)]).toEqual(['would refuse (STIM_EAS_BUILD_MISSING)', null]);
+  });
+});
+
+describe('gitBadges', () => {
+  const git = { changed: 0, untracked: 0, upstream: 'origin/x', ahead: 0, behind: 0, mergedInto: null };
+
+  it('shows nothing for a clean branch level with its upstream, or when git is unknown', () => {
+    expect(gitBadges(git)).toBeNull();
+    expect(gitBadges(null)).toBeNull();
+    expect(gitBadges({ ...git, upstream: null, ahead: null, behind: null })).toBeNull();
+  });
+
+  it('counts changed and untracked files together and shows ahead and behind as arrows', () => {
+    expect(gitBadges({ ...git, changed: 2, untracked: 1, ahead: 3, behind: 1 })).toEqual({
+      uncommitted: 3,
+      ahead: 3,
+      behind: 1,
+      arrows: '\u21913 \u21931',
+      merged: false,
+      label: '3 uncommitted changes, 3 commits not pushed to origin/x, 1 commit behind origin/x',
+    });
+  });
+
+  it('flags a merged branch', () => {
+    expect(gitBadges({ ...git, ahead: null, behind: null, mergedInto: 'origin/main' })).toEqual({
+      uncommitted: 0,
+      ahead: 0,
+      behind: 0,
+      arrows: null,
+      merged: true,
+      label: 'merged into origin/main',
+    });
+  });
+});
+
+describe('build history rows', () => {
+  const entry = (extra: Partial<BuildHistoryEntry> = {}): BuildHistoryEntry => ({
+    platform: 'ios',
+    status: 'ok',
+    result: 'succeeded',
+    cacheHit: false,
+    cacheSkipped: false,
+    durationMs: 83_000,
+    fingerprint: 'abc',
+    startedAt: ago(2 * 3600_000 + 83_000),
+    finishedAt: ago(2 * 3600_000),
+    slot: 'default',
+    configuration: 'Debug',
+    cacheKey: 'abc-debug-sim',
+    phases: {},
+    ...extra,
+  });
+
+  test('the title says how the run ended, and where a finished app came from', () => {
+    expect(historyTitle(entry({ cacheHit: 'local' }))).toBe('Cache hit (local)');
+    expect(historyTitle(entry())).toBe('Cold build');
+    expect(historyTitle(entry({ offloadedTo: 'janics-mac-mini' }))).toBe('Built on janics-mac-mini');
+    expect(historyTitle(entry({ result: 'failed', status: 'failed', errorCode: 'STIM_BUILD_FAILED' }))).toBe(
+      'Failed (STIM_BUILD_FAILED)',
+    );
+    expect(historyTitle(entry({ result: 'cancelled', status: 'failed', errorCode: 'STIM_CANCELLED' }))).toBe(
+      'Cancelled',
+    );
+    expect(historyTitle(entry({ result: 'interrupted', status: 'failed', durationMs: null }))).toBe('Interrupted');
+  });
+
+  test('the detail gives the cache outcome only where the title does not, then when and which slot', () => {
+    expect(historyDetail(entry({ cacheHit: 'local' }), now)).toBe('2h ago');
+    expect(historyDetail(entry({ missReason: reason('app config changed'), slot: 'tablet' }), now)).toBe(
+      'miss: app config changed \u00B7 2h ago \u00B7 slot tablet',
+    );
+    expect(historyDetail(entry({ result: 'failed', status: 'failed', cacheHit: 'local' }), now)).toBe(
+      'local cache hit \u00B7 2h ago',
+    );
+    expect(historyDetail(entry({ cacheSkipped: true }), now)).toBe('cache reads off \u00B7 2h ago');
+    expect(historyDetail(entry({ result: 'interrupted', status: 'failed', cacheSkipped: true }), now)).toBe('2h ago');
+  });
+
+  test('sparkline bars run oldest first, scaled to the longest run, and skip runs without a duration', () => {
+    const bars = durationBars([
+      entry({ durationMs: 20_000 }),
+      entry({ result: 'interrupted', durationMs: null }),
+      entry({ result: 'failed', durationMs: 80_000 }),
+    ]);
+    expect(bars).toEqual([
+      { fraction: 1, result: 'failed' },
+      { fraction: 0.25, result: 'succeeded' },
+    ]);
+  });
+});
+
+test.each(resultEnumCases.filter(([method]) => method === 'build.plan'))(
+  'shows a neutral plan or its server summary for future %s values at %s',
+  (_method, fixture, path, value) => {
+    const plan = replaceReceivedField(fixture, path, value) as BuildPlan;
+    if (path === 'platform') expect(platformName(plan.platform)).toBe('Unknown');
+    else if (path.startsWith('missReason.') || path === 'prebuild' || path === 'outcome')
+      expect(nextBuild(plan)).toBe('cold build, Native files changed');
+    else expect(nextBuild(plan)).toBe('Unknown');
+  },
+);

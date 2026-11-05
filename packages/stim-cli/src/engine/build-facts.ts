@@ -1,0 +1,111 @@
+export type CacheHitLevel = 'local' | 'remote' | false;
+
+type LaunchStatus = boolean | 'unverified' | 'bundling';
+
+export interface WaitedForBuild {
+  pid?: number | null;
+  ms?: number;
+}
+
+interface LogsInfo {
+  dir?: string;
+}
+
+export interface CompilationCacheActivity {
+  status: 'reported' | 'unavailable' | 'not-run';
+  hits: number | null;
+  cacheableTasks: number | null;
+  hitRatePercent: number | null;
+  swiftTargetsWithoutExplicitModules?: number;
+}
+
+export interface CcacheActivity {
+  status: 'reported' | 'unavailable' | 'not-run';
+  hits: number | null;
+  misses: number | null;
+  hitRatePercent: number | null;
+}
+
+export interface DevServerStart {
+  started: true;
+  reason: 'not running' | 'stopped (idle)';
+}
+
+interface RunLeaseFacts {
+  kind: string;
+  expiresAt: string;
+}
+
+export interface IosFacts {
+  devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
+  host?: import('@stim-cli/core/state').HostedIosStatus;
+  slot?: string;
+  platform: string;
+  udid: string | null;
+  deviceName: string | null;
+  deviceType: string | null;
+  runtime: string | null;
+  fingerprint?: string | null;
+  configuration: string | null;
+  scheme?: string;
+  cacheKey?: string | null;
+  cacheHit: CacheHitLevel;
+  cacheSkipped: boolean;
+  buildMachine?: string;
+  builtOn?: string;
+  /** The remote machine that compiled the app when the build was offloaded; absent otherwise. */
+  offloadedTo?: string;
+  /** Why the app was built here after the run considered offloading it; absent otherwise. */
+  offloadFallback?: string;
+  compilationCache: CompilationCacheActivity;
+  waitedForBuild: { pid: number | null; ms: number } | null;
+  appPath?: string | null;
+  bundleId?: string | null;
+  installSkipped: boolean;
+  launched: LaunchStatus;
+  metroPort?: number | null;
+  logs: LogsInfo;
+  agentDevice?: { stateDir: string };
+  durationMs?: number;
+  webPreviewUrl?: string | null;
+  lease?: RunLeaseFacts | null;
+  devServer?: DevServerStart;
+}
+
+export interface AndroidFacts {
+  devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
+  host?: import('@stim-cli/core/state').HostedAndroidStatus;
+  slot?: string;
+  platform: string;
+  serial: string | null;
+  avdName: string | null;
+  deviceName: string | null;
+  systemImage: string | null;
+  deviceProfile: string | null;
+  fingerprint: string | null;
+  cacheKey: string | null;
+  variant: string | null;
+  metroPort: number | null;
+  cacheHit: CacheHitLevel;
+  cacheSkipped: boolean;
+  buildMachine?: string;
+  builtOn?: string;
+  /** The remote machine that compiled the APK when the build was offloaded; absent otherwise. */
+  offloadedTo?: string;
+  /** Why the APK was built here after the run considered offloading it; absent otherwise. */
+  offloadFallback?: string;
+  waitedForBuild: { pid: number | null; ms: number } | null;
+  appPath: string | null;
+  bundleId: string | null;
+  installSkipped: boolean;
+  launched: LaunchStatus;
+  ccache: CcacheActivity;
+  debugHttpHost: string | null;
+  debugHttpHostNote: string | null;
+  devClientUrl: string | null;
+  logs: string | null;
+  agentDevice?: { stateDir: string };
+  durationMs: number | null;
+  lease?: RunLeaseFacts | null;
+  devServer?: DevServerStart;
+}

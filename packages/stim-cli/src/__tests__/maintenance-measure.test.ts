@@ -1,0 +1,110 @@
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import * as os from 'node:os';
+import { join } from 'node:path';
+import { sharedCompilationCache } from '@stim-cli/core/state';
+import { cacheBlocked, measureSizes, sizeScanDeferred } from '../maintenance/measure.ts';
+import { buildLockPath } from '../engine/build-lock.ts';
+import { cacheClaimRoot } from '../cache/cache-claim.ts';
+import { captureProcessToken } from '../process-identity.ts';
+import { plantClaim } from './_factories.ts';
+import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
+import { saveConfig } from '../workspace/config.ts';
+import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+import { register } from '../cache/cache-manifest.ts';
+
+vi.mock('node:os', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:os')>();
+  return {
+    ...original,
+    freemem: vi.fn<typeof original.freemem>(original.freemem),
+    totalmem: vi.fn<typeof original.totalmem>(original.totalmem),
+    loadavg: vi.fn<typeof original.loadavg>(original.loadavg),
+  };
+});
+
+let home: string;
+beforeEach(() => {
+  home = realpathSync(mkdtempSync(join(os.tmpdir(), 'stim-maintenance-measure-')));
+  process.env.STIM_HOME = home;
+});
+afterEach(() => {
+  resetExecutor();
+  vi.restoreAllMocks();
+  rmSync(home, { recursive: true, force: true });
+  delete process.env.STIM_HOME;
+});
+
+test('high load defers scans and every measured output/cache uses a bounded du call without deleting data', async () => {
+  const app = join(home, 'app');
+  mkdirSync(app);
+  saveConfig({ projects: { [app]: {} }, repos: {} });
+  const workspace = ensureWorkspaceStorage(app);
+  mkdirSync(join(workspace, 'derived-data'));
+  const cas = sharedCompilationCache();
+  mkdirSync(cas);
+  const sentinel = join(cas, 'keep');
+  writeFileSync(sentinel, 'cache bytes');
+  const registered = join(home, 'registered');
+  mkdirSync(registered);
+  register({ dir: registered, name: 'Test cache', prune: 'entries' });
+  const calls: { file: string; args: readonly string[]; timeout: number | undefined }[] = [];
+  setExecutor({
+    runFile: (file, args, opts) => {
+      calls.push({ file, args, timeout: opts?.timeoutMs });
+      if (file === 'du') return `123\t${args[1]}\n`;
+      return '';
+    },
+    runFileQuiet: () => null,
+    runQuiet: () => null,
+    findExecutable: () => null,
+  });
+  const load = vi.spyOn(os, 'loadavg').mockReturnValue([os.cpus().length * 5, 0, 0]);
+  expect(sizeScanDeferred()).toBe(true);
+  load.mockReturnValue([0, 0, 0]);
+  expect(sizeScanDeferred()).toBe(false);
+  const failures: string[] = [];
+  const sizes = await measureSizes(100, (target) => failures.push(target));
+  expect(sizes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ category: 'workspace-outputs', workspace: app, bytes: 123 * 1024, measuredAt: 100 }),
+      expect.objectContaining({ category: 'compilation-cache', dir: cas, bytes: 123 * 1024 }),
+      expect.objectContaining({ category: 'other', dir: registered, bytes: 123 * 1024 }),
+    ]),
+  );
+  expect(failures).toEqual([]);
+  const duCalls = calls.filter((call) => call.file === 'du');
+  expect(duCalls.length).toBeGreaterThanOrEqual(3);
+  for (const call of duCalls) {
+    expect(call.args[0]).toBe('-sk');
+    expect(call.timeout).toBe(120_000);
+  }
+  expect(existsSync(sentinel)).toBe(true);
+});
+
+const cas = () => ({
+  name: 'Swift compilation cache',
+  dir: sharedCompilationCache(),
+  category: 'compilation-cache' as const,
+});
+
+test('only a claim on the Swift compilation cache blocks emptying it, not build locks or slots', () => {
+  const dir = sharedCompilationCache();
+  const token = captureProcessToken(process.ppid);
+  if (!token) throw new Error('no process identity for the parent process');
+  plantClaim(buildLockPath('ios', 'app'), 'exclusive', { pid: process.ppid, processToken: token });
+  const slot = tryAcquireBuildSlot({ max: 2, root: '/w/ios' });
+  expect(cacheBlocked(cas(), [])).toBeUndefined();
+  releaseBuildSlot(slot);
+  const claim = plantClaim(
+    cacheClaimRoot(dir),
+    'shared',
+    { pid: process.ppid, processToken: token },
+    {
+      details: { platform: 'ios', projectRoot: '/w/ios' },
+    },
+  );
+  expect(cacheBlocked(cas(), [])).toBe(`the ios build (pid ${process.ppid} in /w/ios) may be using it`);
+  writeFileSync(claim, '{');
+  expect(cacheBlocked(cas(), [])).toBe(`the cache claim ${claim} is unresolved, so a build may be using it`);
+});

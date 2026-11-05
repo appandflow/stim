@@ -1,0 +1,976 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import type { DeviceAppProcess } from '@stim-cli/core/state';
+import { getExecutor, type Executor } from '../exec.ts';
+import { debugLog } from '../debug-log.ts';
+import { approvableSchemes, readBundleSchemes } from './app-schemes.ts';
+import { deviceHoldsApk, deviceHoldsBundle } from './installed-artifact.ts';
+import {
+  iosSimulatorFailureAdvice,
+  listUserApps,
+  parseSimctlList,
+  resolveOwnedIosSim,
+  uninstallIosApp,
+} from '../devices/ios.ts';
+import { DEV_MENU_LAUNCH_ARGS } from '../collector/ios-device.ts';
+
+export const INSTALL_ERROR = 'STIM_INSTALL_FAILED';
+export const LAUNCH_ERROR = 'STIM_LAUNCH_FAILED';
+
+export const DEFAULT_METRO_PORT = 8081;
+
+const IOS_SCHEME_APPROVAL_DOMAIN = 'com.apple.launchservices.schemeapproval';
+const IOS_SCHEME_APPROVAL_OPENER = 'com.apple.CoreSimulator.CoreSimulatorBridge';
+const IOS_TCC_QUERY_TIMEOUT_MS = 30000;
+const IOS_DEV_MENU_OFF_KEYS = ['EXDevMenuShowsAtLaunch', 'EXDevMenuShowFloatingActionButton'];
+const DEV_CLIENT_ONBOARDING_QUERY = 'disableOnboarding=1';
+const DEV_CLIENT_DISABLE_FAB_QUERY = 'disableFab=1';
+const DEV_CLIENT_DEV_MENU_OFF_QUERY = 'disableFab=1&disableAutoLaunch=1';
+const DEV_CLIENT_RESERVED_DEV_MENU_OFF_QUERY = '__expo_disable_fab=1&__expo_disable_auto_launch=1';
+export const ANDROID_DISABLE_AUTO_LAUNCH_EXTRA = 'EXDevMenuDisableAutoLaunch';
+
+export const IOS_DEV_MENU_OFF_DEFAULTS_PLIST: string = [
+  '<?xml version="1.0" encoding="UTF-8"?>',
+  '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+  '<plist version="1.0">',
+  '<dict>',
+  ...IOS_DEV_MENU_OFF_KEYS.flatMap((key) => [`  <key>${key}</key>`, '  <false/>']),
+  '</dict>',
+  '</plist>',
+  '',
+].join('\n');
+
+async function writeIosDevMenuOffDefaults(udid: string, bundleId: string, exec: Executor): Promise<void> {
+  for (const key of IOS_DEV_MENU_OFF_KEYS) {
+    await exec.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, key, '-bool', 'false'], {
+      timeoutMs: 60000,
+    });
+  }
+}
+
+// `simctl privacy` has no pasteboard service: "Paste from Other Apps" is this app's kTCCServicePasteboard row in the
+// simulator's own TCC.db, where auth_value 2 is Allow.
+async function grantIosPasteboardAccess(udid: string, bundleId: string, exec: Executor): Promise<string | null> {
+  try {
+    const listing = await exec.runFileAsync('xcrun', ['simctl', 'list', 'devices', '--json'], {
+      timeoutMs: IOS_TCC_QUERY_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+    });
+    const resolved = resolveOwnedIosSim(udid, parseSimctlList(listing));
+    if (!resolved.sim) return `${udid} is not a Stim-owned simulator, so Stim left its paste permission alone`;
+    const database = resolved.sim.dataPath ? join(resolved.sim.dataPath, 'Library', 'TCC', 'TCC.db') : null;
+    if (!database || !existsSync(database)) return 'the simulator has no TCC.db yet';
+    const client = `'${bundleId.replaceAll("'", "''")}'`;
+    await exec.runFileAsync(
+      '/usr/bin/sqlite3',
+      [
+        '-cmd',
+        '.timeout 5000',
+        database,
+        `insert or replace into access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier, boot_uuid) values ('kTCCServicePasteboard', ${client}, 0, 2, 4, 2, 'UNUSED', 'UNUSED')`,
+      ],
+      { timeoutMs: IOS_TCC_QUERY_TIMEOUT_MS, killSignal: 'SIGKILL' },
+    );
+    return null;
+  } catch (err) {
+    return describe(err);
+  }
+}
+
+async function describeIosSimulatorFailure(error: unknown, exec: Executor): Promise<string> {
+  const detail = describe(error);
+  return (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT'
+    ? `${detail}. ${await iosSimulatorFailureAdvice(exec)}`
+    : detail;
+}
+
+interface ExecOpt {
+  exec?: Executor | null;
+  now?: (() => number) | null;
+}
+
+export type IosInstallResult = {
+  ok?: boolean;
+  appPath?: string;
+  skipped?: boolean;
+  artifactDurationMs?: number;
+  devClientPreparationDurationMs?: number;
+  schemeApprovals?: string[];
+  pasteboardNote?: string;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+};
+
+export type IosLaunchResult = {
+  ok?: boolean;
+  mode?: string;
+  url?: string;
+  jsLocation?: string;
+  pid?: number | null;
+  restartedPid?: number;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+};
+
+export type AndroidInstallResult = {
+  ok?: boolean;
+  apkPath?: string;
+  skipped?: boolean;
+  uninstalled?: boolean;
+  note?: string;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+};
+
+export type AndroidLaunchResult = {
+  ok?: boolean;
+  mode?: string;
+  component?: string;
+  devClientUrl?: string;
+  devClientNote?: string | null;
+  reversed?: string[];
+  debugHttpHost?: string | null;
+  debugHttpHostNote?: string | null;
+  restartedPid?: number;
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+};
+
+export async function installIosApp(
+  {
+    udid,
+    appPath,
+    bundleId = null,
+    devClientScheme = null,
+    schemeApprovals = [],
+    proveInstalled = true,
+  }: {
+    udid: string;
+    appPath: string;
+    bundleId?: string | null;
+    devClientScheme?: string | null;
+    schemeApprovals?: string[];
+    proveInstalled?: boolean;
+  },
+  { exec = null, now = null }: ExecOpt = {},
+): Promise<IosInstallResult> {
+  const e = exec || getExecutor();
+  const artifactStartedAt = now?.();
+  const skipped =
+    bundleId && proveInstalled ? await deviceHoldsBundle({ udid, bundleId, appPath }, { exec: e }) : false;
+  if (!skipped) {
+    try {
+      await e.runFileAsync('xcrun', ['simctl', 'install', udid, appPath], { timeoutMs: 300000, killSignal: 'SIGKILL' });
+    } catch (err) {
+      return {
+        failed: true,
+        code: INSTALL_ERROR,
+        reason: `simctl install failed for ${appPath}: ${await describeIosSimulatorFailure(err, e)}`,
+      };
+    }
+  }
+  const artifactFinishedAt = now?.();
+  const artifactDurationMs =
+    artifactStartedAt !== undefined && artifactFinishedAt !== undefined
+      ? artifactFinishedAt - artifactStartedAt
+      : undefined;
+  // expo-dev-launcher reads these only from the persisted domain on a launch
+  // Stim did not make (agent-device relaunches, crash restarts, home-screen
+  // taps). A skipped install keeps the domain the last install wrote, or the
+  // one adoption imported when it cleared the app's data.
+  const devMenuKeys = bundleId && devClientScheme && !skipped ? IOS_DEV_MENU_OFF_KEYS : [];
+  const approvalKeys = bundleId
+    ? iosSchemeApprovalKeys(bundleId, [
+        ...approvableSchemes(readBundleSchemes(appPath, { exec: e })),
+        ...(devClientScheme ? [devClientScheme] : []),
+      ])
+    : [];
+  const missingApprovals = approvalKeys.filter((key) => !schemeApprovals.includes(`${key}=${bundleId}`));
+  const preparing = bundleId && (devMenuKeys.length > 0 || missingApprovals.length > 0);
+  const preparationStartedAt = preparing ? artifactFinishedAt : undefined;
+  if (bundleId && preparing) {
+    try {
+      if (devMenuKeys.length > 0) await writeIosDevMenuOffDefaults(udid, bundleId, e);
+      for (const key of missingApprovals) {
+        await e.runFileAsync(
+          'xcrun',
+          ['simctl', 'spawn', udid, 'defaults', 'write', IOS_SCHEME_APPROVAL_DOMAIN, key, '-string', bundleId],
+          { timeoutMs: 60000 },
+        );
+      }
+    } catch (err) {
+      return {
+        failed: true,
+        code: INSTALL_ERROR,
+        reason: `Installed ${bundleId}, but could not prepare the dev client: ${await describeIosSimulatorFailure(err, e)}`,
+      };
+    }
+  }
+  const devClientPreparationDurationMs =
+    now && preparationStartedAt !== undefined ? now() - preparationStartedAt : undefined;
+  const pasteboardFailure = bundleId ? await grantIosPasteboardAccess(udid, bundleId, e) : null;
+  const timing = {
+    ...(pasteboardFailure
+      ? {
+          pasteboardNote: `could not allow Paste from Other Apps for ${bundleId}: ${pasteboardFailure}. Pasting text Stim cannot type may show a prompt or do nothing`,
+        }
+      : {}),
+    ...(artifactDurationMs === undefined ? {} : { artifactDurationMs }),
+    ...(devClientPreparationDurationMs === undefined ? {} : { devClientPreparationDurationMs }),
+    ...(missingApprovals.length > 0
+      ? { schemeApprovals: [...schemeApprovals, ...missingApprovals.map((key) => `${key}=${bundleId}`)] }
+      : {}),
+  };
+  return skipped ? { ok: true, appPath, skipped: true, ...timing } : { ok: true, appPath, ...timing };
+}
+
+export async function clearOtherUserApps(
+  { udid, keep }: { udid: string; keep?: string | null },
+  {
+    list = listUserApps,
+    uninstall = uninstallIosApp,
+  }: { list?: typeof listUserApps; uninstall?: typeof uninstallIosApp } = {},
+): Promise<{ listed: boolean; kept: boolean; removed: string[]; failed: string[] }> {
+  const removed: string[] = [];
+  const failed: string[] = [];
+  let installed: string[];
+  try {
+    installed = await list(udid);
+  } catch {
+    return { listed: false, kept: false, removed, failed };
+  }
+  for (const bundleId of installed) {
+    // Xcode names every UI test runner app <test bundle id>.xctrunner.
+    if (bundleId === keep || bundleId.endsWith('.xctrunner')) continue;
+    try {
+      await uninstall(udid, bundleId);
+      removed.push(bundleId);
+    } catch {
+      failed.push(bundleId);
+    }
+  }
+  return { listed: true, kept: keep ? installed.includes(keep) : false, removed, failed };
+}
+
+function jsLocationValue(metroPort: number | string): string {
+  return `localhost:${metroPort}`;
+}
+
+// Before expo-dev-launcher 58.0.0, iOS reads disableOnboarding off the PROJECT
+// url only: EXDevLauncherController.m hands `devLauncherUrl.url` to
+// EXDevLauncherURLHelper.disableOnboardingPopupIfNeeded. Android reads it on
+// either url. From 58.0.0 (expo/expo#49651) iOS `loadApp:` reads disableFab and
+// disableAutoLaunch off the url it is handed, which is the project url alone
+// under `simctl launch --initialUrl`. From 58.0.7 (expo/expo#50287) `loadApp:`
+// reads only the `__expo_` spellings there, so the project url carries both.
+// Android and `simctl openurl` read the legacy names on the outer link.
+export function devClientDeepLink(
+  scheme: string,
+  projectOrigin: string,
+  { devMenuParams = false }: { devMenuParams?: boolean } = {},
+): string {
+  const projectQuery = devMenuParams
+    ? `${DEV_CLIENT_ONBOARDING_QUERY}&${DEV_CLIENT_DEV_MENU_OFF_QUERY}&${DEV_CLIENT_RESERVED_DEV_MENU_OFF_QUERY}`
+    : DEV_CLIENT_ONBOARDING_QUERY;
+  const projectUrl = `${projectOrigin.replace(/\/+$/, '')}/?${projectQuery}`;
+  const outerQuery = devMenuParams ? DEV_CLIENT_DEV_MENU_OFF_QUERY : DEV_CLIENT_DISABLE_FAB_QUERY;
+  return `${scheme}://expo-development-client/?url=${encodeURIComponent(projectUrl)}&${outerQuery}`;
+}
+
+export function devClientUrl(
+  scheme: string,
+  metroPort: number | string,
+  host = 'localhost',
+  options: { devMenuParams?: boolean } = {},
+): string {
+  return devClientDeepLink(scheme, `http://${host}:${metroPort}`, options);
+}
+
+function iosSchemeApprovalKeys(bundleId: string, schemes: string[]): string[] {
+  return [...new Set([bundleId, ...schemes])].map((target) => `${IOS_SCHEME_APPROVAL_OPENER}-->${target}`);
+}
+
+export function restartedAppNote(restartedPid: number | undefined, lead = ' '): string {
+  return restartedPid ? `${lead}restarted running app (was pid ${restartedPid})` : '';
+}
+
+export function parseLaunchedPid(text: unknown): number | null {
+  if (typeof text !== 'string') return null;
+  const match = text.trim().match(/:\s*(\d+)\s*$/);
+  if (!match) return null;
+  const pid = Number(match[1]);
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+export type AppProcessProbe =
+  | { state: Extract<DeviceAppProcess['state'], 'running'>; pid: number }
+  | { state: Exclude<DeviceAppProcess['state'], 'running'> };
+
+export function appProcessFromPid(pid: number | null): AppProcessProbe {
+  return pid === null ? { state: 'stopped' } : { state: 'running', pid };
+}
+
+export async function iosAppProcess(
+  udid: string,
+  bundleId: string,
+  { exec = null, timeoutMs = 2000 }: ExecOpt & { timeoutMs?: number } = {},
+): Promise<AppProcessProbe> {
+  const e = exec || getExecutor();
+  const started = performance.now();
+  let probe: AppProcessProbe = { state: 'unknown' };
+  let failure: { code?: string; exit?: number } = {};
+  try {
+    const out = await e.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs });
+    const label = `UIKitApplication:${bundleId}[`;
+    probe = { state: 'stopped' };
+    for (const line of out.split('\n')) {
+      if (!line.includes(label)) continue;
+      const candidate = Number(line.trim().split(/\s+/)[0]);
+      if (Number.isInteger(candidate) && candidate > 0) {
+        probe = { state: 'running', pid: candidate };
+        break;
+      }
+    }
+    return probe;
+  } catch (error) {
+    const { code, status } = (error ?? {}) as { code?: unknown; status?: unknown };
+    failure = {
+      ...(typeof code === 'string' ? { code } : {}),
+      ...(typeof status === 'number' ? { exit: status } : {}),
+    };
+    return probe;
+  } finally {
+    debugLog.log('ios.app-process', {
+      deviceId: udid,
+      bundleId,
+      state: probe.state === 'stopped' ? 'absent' : probe.state,
+      ...(probe.state === 'running' ? { appPid: probe.pid } : {}),
+      ms: Math.round(performance.now() - started),
+      ...failure,
+    });
+  }
+}
+
+async function launchedIosAppAfterNoHandle(
+  error: unknown,
+  udid: string,
+  bundleId: string,
+  exec: Executor,
+): Promise<number | null> {
+  const stderr = String((error as { stderr?: unknown })?.stderr ?? '');
+  if (
+    !stderr.includes('domain=NSPOSIXErrorDomain, code=3') ||
+    !stderr.includes(`Application launch for '${bundleId}' did not return a process handle nor launch error.`)
+  )
+    return null;
+  const probe = await iosAppProcess(udid, bundleId, { exec });
+  return probe.state === 'running' ? probe.pid : null;
+}
+
+export async function launchIosApp(
+  {
+    udid,
+    bundleId,
+    metroPort,
+    devClientScheme = null,
+    devMenuParams = false,
+    consolePaths,
+  }: {
+    udid: string;
+    bundleId: string;
+    metroPort: number | string | null;
+    devClientScheme?: string | null;
+    devMenuParams?: boolean;
+    consolePaths?: { stdout: string; stderr: string };
+  },
+  { exec = null }: ExecOpt = {},
+): Promise<IosLaunchResult> {
+  const e = exec || getExecutor();
+  const launchRestarts = metroPort === null || !devClientScheme || Boolean(consolePaths);
+  const writeJsLocation = async (port: number | string): Promise<IosLaunchResult | null> => {
+    try {
+      await e.runFileAsync(
+        'xcrun',
+        ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, 'RCT_jsLocation', jsLocationValue(port)],
+        { timeoutMs: 60000 },
+      );
+      return null;
+    } catch (err) {
+      return {
+        failed: true,
+        code: LAUNCH_ERROR,
+        reason: `Could not point ${bundleId} at Metro port ${port} (defaults write RCT_jsLocation): ${await describeIosSimulatorFailure(err, e)}`,
+      };
+    }
+  };
+  const runningProbe = iosAppProcess(udid, bundleId, { exec: e });
+  const earlyWrite = metroPort !== null && launchRestarts ? writeJsLocation(metroPort) : null;
+  const running = await runningProbe;
+  const stateUnknown = running.state === 'unknown';
+  const launchArgs = [
+    'simctl',
+    'launch',
+    ...(consolePaths ? [`--stdout=${consolePaths.stdout}`, `--stderr=${consolePaths.stderr}`] : []),
+    ...(stateUnknown || (running.state === 'running' && launchRestarts) ? ['--terminate-running-process'] : []),
+    udid,
+    bundleId,
+  ];
+  const restart: { restartedPid?: number } = {};
+  if (running.state === 'running' && launchRestarts) {
+    restart.restartedPid = running.pid;
+  } else if (running.state === 'running') {
+    try {
+      await e.runFileAsync('xcrun', ['simctl', 'terminate', udid, bundleId], { timeoutMs: 30000 });
+    } catch (err) {
+      return {
+        failed: true,
+        code: LAUNCH_ERROR,
+        reason: `simctl terminate ${bundleId} failed, so the running app (pid ${running.pid}) was not restarted: ${await describeIosSimulatorFailure(err, e)}`,
+      };
+    }
+    restart.restartedPid = running.pid;
+  }
+  if (metroPort !== null) {
+    const writeFailure = await (earlyWrite ?? writeJsLocation(metroPort));
+    if (writeFailure) return writeFailure;
+
+    if (devClientScheme) {
+      const url = devClientUrl(devClientScheme, metroPort, 'localhost', { devMenuParams });
+      const viaInitialUrl = Boolean(consolePaths) || stateUnknown;
+      if (!viaInitialUrl) {
+        // simctl openurl carries no launch arguments, so it needs the
+        // dev-menu keys in the persisted defaults instead of DEV_MENU_LAUNCH_ARGS.
+        try {
+          await writeIosDevMenuOffDefaults(udid, bundleId, e);
+        } catch (err) {
+          return {
+            failed: true,
+            code: LAUNCH_ERROR,
+            reason: `Could not turn off ${bundleId}'s dev menu before opening it (defaults write): ${await describeIosSimulatorFailure(err, e)}`,
+          };
+        }
+      }
+      let launchedWithInitialUrl = false;
+      try {
+        if (viaInitialUrl) {
+          // Expo's EXDevLauncherController.initialUrlFromProcessInfo loads this
+          // project directly; launch-then-openurl can create two React hosts.
+          const initialUrl = new URL(url).searchParams.get('url')!;
+          launchedWithInitialUrl = true;
+          const pid = parseLaunchedPid(
+            await e.runFileAsync('xcrun', [...launchArgs, '--initialUrl', initialUrl, ...DEV_MENU_LAUNCH_ARGS], {
+              timeoutMs: 60000,
+            }),
+          );
+          return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid, ...restart };
+        }
+        await e.runFileAsync('xcrun', ['simctl', 'openurl', udid, url], { timeoutMs: 60000 });
+        return { ok: true, mode: 'openurl', url, jsLocation: jsLocationValue(metroPort), ...restart };
+      } catch (err) {
+        const pid =
+          launchedWithInitialUrl && !stateUnknown ? await launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
+        if (pid && pid !== restart.restartedPid)
+          return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid, ...restart };
+        return {
+          failed: true,
+          code: LAUNCH_ERROR,
+          reason: `simctl ${launchedWithInitialUrl ? `launch ${bundleId}` : `openurl ${url}`} failed: ${await describeIosSimulatorFailure(err, e)}`,
+        };
+      }
+    }
+  }
+
+  try {
+    const out = await e.runFileAsync('xcrun', launchArgs, { timeoutMs: 60000 });
+    const result: IosLaunchResult = { ok: true, mode: 'launch', pid: parseLaunchedPid(out), ...restart };
+    if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
+    return result;
+  } catch (err) {
+    const pid = stateUnknown ? null : await launchedIosAppAfterNoHandle(err, udid, bundleId, e);
+    if (pid && pid !== restart.restartedPid) {
+      const result: IosLaunchResult = { ok: true, mode: 'launch', pid, ...restart };
+      if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
+      return result;
+    }
+    return {
+      failed: true,
+      code: LAUNCH_ERROR,
+      reason: `simctl launch ${bundleId} failed: ${await describeIosSimulatorFailure(err, e)}`,
+    };
+  }
+}
+
+export function installConflictKind(text: unknown): 'signature' | 'downgrade' | null {
+  const out = String(text ?? '');
+  if (
+    /INSTALL_FAILED_UPDATE_INCOMPATIBLE|INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES|signatures do not match/i.test(
+      out,
+    )
+  ) {
+    return 'signature';
+  }
+  if (/INSTALL_FAILED_VERSION_DOWNGRADE/i.test(out)) return 'downgrade';
+  return null;
+}
+
+export const ADB_INSTALL_TIMEOUT_MS = 300_000;
+const ADB_UNINSTALL_TIMEOUT_MS = 120_000;
+const ADB_SHELL_TIMEOUT_MS = 30_000;
+const ADB_SHELL_OPTIONS = { timeoutMs: ADB_SHELL_TIMEOUT_MS, killSignal: 'SIGKILL' } as const;
+
+export async function installAndroidApp(
+  {
+    serial,
+    apkPath,
+    packageName = null,
+    allowUninstall = false,
+  }: { serial: string; apkPath: string; packageName?: string | null; allowUninstall?: boolean },
+  { exec = null }: ExecOpt = {},
+): Promise<AndroidInstallResult> {
+  const e = exec || getExecutor();
+  if (packageName && (await deviceHoldsApk({ serial, packageName, apkPath }, { exec: e }))) {
+    return { ok: true, apkPath, skipped: true };
+  }
+  const install = async () => {
+    await e.runFileAsync('adb', ['-s', serial, 'install', '-r', apkPath], { timeoutMs: ADB_INSTALL_TIMEOUT_MS });
+  };
+  try {
+    await install();
+    return { ok: true, apkPath };
+  } catch (err) {
+    const conflict = installConflictKind(describe(err));
+    if (!conflict || !allowUninstall || !packageName) {
+      return { failed: true, code: INSTALL_ERROR, reason: `adb install failed for ${apkPath}: ${describe(err)}` };
+    }
+    try {
+      await e.runFileAsync('adb', ['-s', serial, 'uninstall', packageName], {
+        timeoutMs: ADB_UNINSTALL_TIMEOUT_MS,
+        killSignal: 'SIGKILL',
+      });
+    } catch (uninstallErr) {
+      return {
+        failed: true,
+        code: INSTALL_ERROR,
+        reason:
+          `adb install failed for ${apkPath} (${conflict}) and ${packageName} could not be uninstalled: ` +
+          describe(uninstallErr),
+      };
+    }
+    try {
+      await install();
+    } catch (retryErr) {
+      return {
+        failed: true,
+        code: INSTALL_ERROR,
+        reason: `adb install failed for ${apkPath} even after uninstalling ${packageName}: ${describe(retryErr)}`,
+      };
+    }
+    return {
+      ok: true,
+      apkPath,
+      uninstalled: true,
+      note:
+        conflict === 'signature'
+          ? `${packageName} was already installed with a different signer, so it was uninstalled (its data went with it) before this APK could be installed`
+          : `${packageName} was already installed at a higher versionCode, so it was uninstalled (its data went with it) before this APK could be installed`,
+    };
+  }
+}
+
+function parseResolvedActivity(text: unknown): string | null {
+  if (typeof text !== 'string') return null;
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^No activity found/i.test(line)) return null;
+    if (line.includes('=')) continue;
+    if (!line.includes('/')) continue;
+    return line;
+  }
+  return null;
+}
+
+async function resolveLaunchActivity(serial: string, packageName: string, { exec = null }: ExecOpt = {}) {
+  const e = exec || getExecutor();
+  try {
+    const out = await e.runFileAsync(
+      'adb',
+      [
+        '-s',
+        serial,
+        'shell',
+        'cmd',
+        'package',
+        'resolve-activity',
+        '--brief',
+        '-c',
+        'android.intent.category.LAUNCHER',
+        packageName,
+      ],
+      ADB_SHELL_OPTIONS,
+    );
+    return parseResolvedActivity(out);
+  } catch {
+    return null;
+  }
+}
+
+export async function reverseMetroPorts(
+  {
+    serial,
+    metroPort,
+    devicePorts = null,
+  }: { serial: string; metroPort: number | string; devicePorts?: (number | string)[] | null },
+  { exec = null }: ExecOpt = {},
+): Promise<{ ok?: boolean; reversed?: string[]; failed?: boolean; code?: string; reason?: string }> {
+  const e = exec || getExecutor();
+  const pairs = (devicePorts ?? [metroPort]).map((device) => [device, metroPort]);
+  for (const [device, host] of pairs) {
+    try {
+      await e.runFileAsync('adb', ['-s', serial, 'reverse', `tcp:${device}`, `tcp:${host}`], ADB_SHELL_OPTIONS);
+    } catch (err) {
+      return {
+        failed: true,
+        code: LAUNCH_ERROR,
+        reason: `adb reverse tcp:${device} tcp:${host} failed on ${serial}: ${describe(err)}`,
+      };
+    }
+  }
+  return { ok: true, reversed: pairs.map(([device, host]) => `tcp:${device}->tcp:${host}`) };
+}
+
+export function hasMetroReverse(listing: unknown, metroPort: number): boolean {
+  return String(listing ?? '')
+    .split('\n')
+    .some((line) => {
+      const cols = line.trim().split(/\s+/);
+      return cols[1] === `tcp:${metroPort}` && cols[2] === `tcp:${metroPort}`;
+    });
+}
+
+/** Re-applies the launch's `metroPort` reverse when the device no longer has it. */
+export async function ensureMetroReverse(
+  { serial, metroPort }: { serial: string; metroPort: number },
+  { exec = null }: ExecOpt = {},
+): Promise<{ restored: boolean; failed?: undefined; reason?: undefined } | { failed: true; reason: string }> {
+  const e = exec || getExecutor();
+  let listing: string;
+  try {
+    listing = await e.runFileAsync('adb', ['-s', serial, 'reverse', '--list'], ADB_SHELL_OPTIONS);
+  } catch {
+    return { failed: true, reason: `adb reverse --list failed on ${serial}` };
+  }
+  if (hasMetroReverse(listing, metroPort)) return { restored: false };
+  const reversed = await reverseMetroPorts({ serial, metroPort }, { exec: e });
+  return reversed.failed ? { failed: true, reason: reversed.reason ?? 'adb reverse failed' } : { restored: true };
+}
+
+const EMULATOR_HOST_LOOPBACK = '127.0.0.1';
+const PHYSICAL_HOST_LOOPBACK = 'localhost';
+
+function androidMetroHost(physical: boolean): string {
+  return physical ? PHYSICAL_HOST_LOOPBACK : EMULATOR_HOST_LOOPBACK;
+}
+
+export function deviceShellArg(text: unknown): string {
+  return `'${String(text).replace(/'/g, "'\\''")}'`;
+}
+
+export function debugHttpHostScript({
+  packageName,
+  host,
+  dataDir = null,
+}: {
+  packageName: string;
+  host: string;
+  dataDir?: string | null;
+}): string {
+  const dir = dataDir || `/data/data/${packageName}`;
+  const prefs = `shared_prefs/${packageName}_preferences.xml`;
+  const tmp = `${prefs}.stim.tmp`;
+  return [
+    `cd ${dir} || exit 1`,
+    'mkdir -p shared_prefs || exit 1',
+    `printf '%s\\n' '<?xml version="1.0" encoding="utf-8" standalone="yes" ?>' '<map>' > ${tmp} || exit 1`,
+    `if [ -f ${prefs} ]; then grep -v 'debug_http_host' ${prefs} | grep -v '<?xml' | grep -v '<map' | grep -v '</map>' >> ${tmp}; fi`,
+    `printf '%s\\n' '    <string name="debug_http_host">${host}</string>' '</map>' >> ${tmp} || exit 1`,
+    `mv ${tmp} ${prefs} || exit 1`,
+    `grep -q '>${host}<' ${prefs} || exit 1`,
+  ].join('\n');
+}
+
+export async function writeDebugHttpHost(
+  {
+    serial,
+    packageName,
+    metroPort,
+    physical = false,
+  }: { serial: string; packageName: string; metroPort: number | string; physical?: boolean },
+  { exec = null }: ExecOpt = {},
+): Promise<{ ok: boolean; host?: string; reason?: string }> {
+  const e = exec || getExecutor();
+  const host = `${androidMetroHost(physical)}:${metroPort}`;
+  const script = debugHttpHostScript({ packageName, host });
+  try {
+    await e.runFileAsync(
+      'adb',
+      ['-s', serial, 'shell', 'run-as', packageName, 'sh', '-c', deviceShellArg(script)],
+      ADB_SHELL_OPTIONS,
+    );
+    return { ok: true, host };
+  } catch (err) {
+    return { ok: false, reason: `debug_http_host not written (${describe(err)}); relying on adb reverse` };
+  }
+}
+
+export function androidDevClientUrl(scheme: string, metroPort: number | string, physical = false): string {
+  return devClientUrl(scheme, metroPort, androidMetroHost(physical));
+}
+
+function amStartError(text: unknown): string | null {
+  const out = String(text ?? '');
+  for (const raw of out.split('\n')) {
+    const line = raw.trim();
+    if (/^Error:/i.test(line)) return line;
+  }
+  return null;
+}
+
+async function openAndroidDevClientUrl(
+  {
+    serial,
+    url,
+    packageName,
+    stopOnStart = false,
+  }: { serial: string; url: string; packageName?: string; stopOnStart?: boolean },
+  { exec = null }: ExecOpt = {},
+): Promise<{ ok?: boolean; url?: string; failed?: boolean; reason?: string }> {
+  const e = exec || getExecutor();
+  let out;
+  try {
+    const args = [
+      '-s',
+      serial,
+      'shell',
+      'am',
+      'start',
+      ...(stopOnStart ? ['-S'] : []),
+      '-a',
+      'android.intent.action.VIEW',
+      '-d',
+      deviceShellArg(url),
+      ...(packageName ? ['-p', packageName] : []),
+      '--ez',
+      ANDROID_DISABLE_AUTO_LAUNCH_EXTRA,
+      'true',
+    ];
+    out = await e.runFileAsync('adb', args, ADB_SHELL_OPTIONS);
+  } catch (err) {
+    return { failed: true, reason: `am start -d ${url} failed on ${serial}: ${describe(err)}` };
+  }
+  const error = amStartError(out);
+  if (error) return { failed: true, reason: `am start -d ${url} did not start anything on ${serial}: ${error}` };
+  return { ok: true, url };
+}
+
+async function stopRunningAndroidApp(
+  serial: string,
+  packageName: string,
+  exec: Executor,
+): Promise<{ restartedPid?: number; stopOnStart?: true; failed?: true; code?: string; reason?: string }> {
+  const running = await androidAppProcess(serial, packageName, { exec });
+  if (running.state === 'stopped') return {};
+  if (running.state !== 'running') return { stopOnStart: true };
+  try {
+    await exec.runFileAsync('adb', ['-s', serial, 'shell', 'am', 'force-stop', packageName], ADB_SHELL_OPTIONS);
+  } catch (err) {
+    return {
+      failed: true,
+      code: LAUNCH_ERROR,
+      reason: `am force-stop ${packageName} failed on ${serial}, so the running app (pid ${running.pid}) was not restarted: ${describe(err)}`,
+    };
+  }
+  return { restartedPid: running.pid };
+}
+
+async function launchAndroidWithMonkey(
+  serial: string,
+  packageName: string,
+  stopOnStart: boolean,
+  exec: Executor,
+): Promise<void> {
+  if (stopOnStart) {
+    try {
+      await exec.runFileAsync('adb', ['-s', serial, 'shell', 'am', 'force-stop', packageName], ADB_SHELL_OPTIONS);
+    } catch {}
+  }
+  await exec.runFileAsync('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1'], ADB_SHELL_OPTIONS);
+}
+
+export async function launchAndroidApp(
+  {
+    serial,
+    packageName,
+    metroPort,
+    devClientScheme = null,
+    physical = false,
+    bridgePort,
+  }: {
+    serial: string;
+    packageName: string;
+    metroPort: number | string;
+    devClientScheme?: string | null;
+    physical?: boolean;
+    bridgePort?: number;
+  },
+  { exec = null }: ExecOpt = {},
+): Promise<AndroidLaunchResult> {
+  const e = exec || getExecutor();
+  const { stopOnStart = false, ...restart } = await stopRunningAndroidApp(serial, packageName, e);
+  if (restart.failed) return restart;
+  const reversed = await reverseMetroPorts(
+    { serial, metroPort: bridgePort ?? metroPort, devicePorts: [metroPort] },
+    { exec: e },
+  );
+  if (reversed.failed) return reversed;
+  const prefs = await writeDebugHttpHost({ serial, packageName, metroPort, physical }, { exec: e });
+  let reversedPairs = reversed.reversed ?? [];
+  if (!prefs.ok && Number(metroPort) !== DEFAULT_METRO_PORT) {
+    const fallback = await reverseMetroPorts(
+      { serial, metroPort: bridgePort ?? metroPort, devicePorts: [DEFAULT_METRO_PORT] },
+      { exec: e },
+    );
+    if (fallback.failed) return fallback;
+    reversedPairs = [...reversedPairs, ...(fallback.reversed ?? [])];
+  }
+  const wiring = {
+    reversed: reversedPairs,
+    debugHttpHost: prefs.ok ? prefs.host : null,
+    debugHttpHostNote: prefs.ok ? null : prefs.reason,
+    ...restart,
+  };
+
+  let devClientNote = null;
+  if (devClientScheme) {
+    const url = androidDevClientUrl(devClientScheme, metroPort, physical);
+    const opened = await openAndroidDevClientUrl({ serial, url, stopOnStart }, { exec: e });
+    if (opened.ok) return { ok: true, mode: 'deep-link', devClientUrl: url, ...wiring };
+    devClientNote = `${opened.reason}; fell back to the launcher activity`;
+  }
+
+  const component = await resolveLaunchActivity(serial, packageName, { exec: e });
+  if (component) {
+    try {
+      await e.runFileAsync(
+        'adb',
+        ['-s', serial, 'shell', 'am', 'start', ...(stopOnStart ? ['-S'] : []), '-n', component],
+        ADB_SHELL_OPTIONS,
+      );
+      return { ok: true, mode: 'am-start', component, devClientNote, ...wiring };
+    } catch (err) {
+      return {
+        failed: true,
+        code: LAUNCH_ERROR,
+        reason: `am start -n ${component} failed on ${serial}: ${describe(err)}`,
+      };
+    }
+  }
+
+  try {
+    await launchAndroidWithMonkey(serial, packageName, stopOnStart, e);
+    return { ok: true, mode: 'monkey', devClientNote, ...wiring };
+  } catch (err) {
+    return {
+      failed: true,
+      code: LAUNCH_ERROR,
+      reason: `Could not launch ${packageName} on ${serial}: no launcher activity resolved and monkey failed: ${describe(err)}`,
+    };
+  }
+}
+
+export async function launchAndroidReleaseApp(
+  { serial, packageName }: { serial: string; packageName: string },
+  { exec = null }: ExecOpt = {},
+): Promise<AndroidLaunchResult> {
+  const e = exec || getExecutor();
+  const { stopOnStart = false, ...restart } = await stopRunningAndroidApp(serial, packageName, e);
+  if (restart.failed) return restart;
+  const component = await resolveLaunchActivity(serial, packageName, { exec: e });
+  if (component) {
+    try {
+      await e.runFileAsync(
+        'adb',
+        ['-s', serial, 'shell', 'am', 'start', ...(stopOnStart ? ['-S'] : []), '-n', component],
+        ADB_SHELL_OPTIONS,
+      );
+      return { ok: true, mode: 'am-start', component, ...restart };
+    } catch (err) {
+      return {
+        failed: true,
+        code: LAUNCH_ERROR,
+        reason: `am start -n ${component} failed on ${serial}: ${describe(err)}`,
+      };
+    }
+  }
+  try {
+    await launchAndroidWithMonkey(serial, packageName, stopOnStart, e);
+    return { ok: true, mode: 'monkey', ...restart };
+  } catch (err) {
+    return {
+      failed: true,
+      code: LAUNCH_ERROR,
+      reason: `Could not launch ${packageName} on ${serial}: no launcher activity resolved and monkey failed: ${describe(err)}`,
+    };
+  }
+}
+
+function describe(err: unknown) {
+  const e = err as { stderr?: unknown; message?: unknown };
+  const stderr = e?.stderr ? String(e.stderr).trim() : '';
+  const message = e?.message ? String(e.message).trim() : String(err);
+  return stderr ? `${message}: ${stderr}` : message;
+}
+
+function parsePidof(text: unknown): number | null {
+  const first = String(text ?? '')
+    .trim()
+    .split(/\s+/)[0];
+  const pid = Number(first);
+  return Number.isFinite(pid) && pid > 0 ? pid : null;
+}
+
+function parsePsPid(text: unknown, packageName: string): number | null {
+  for (const raw of String(text ?? '').split('\n')) {
+    const cols = raw.trim().split(/\s+/);
+    if (cols.length < 2) continue;
+    if (cols[cols.length - 1] !== packageName) continue;
+    const pid = Number(cols[1]);
+    if (Number.isFinite(pid) && pid > 0) return pid;
+  }
+  return null;
+}
+
+export async function androidAppProcess(
+  serial: string,
+  packageName: string,
+  { exec = null }: ExecOpt = {},
+): Promise<AppProcessProbe> {
+  const e = exec || getExecutor();
+  try {
+    const pid = parsePidof(
+      await e.runFileAsync('adb', ['-s', serial, 'shell', 'pidof', packageName], ADB_SHELL_OPTIONS),
+    );
+    if (pid !== null) return { state: 'running', pid };
+  } catch {}
+  try {
+    return appProcessFromPid(
+      parsePsPid(await e.runFileAsync('adb', ['-s', serial, 'shell', 'ps', '-A'], ADB_SHELL_OPTIONS), packageName),
+    );
+  } catch {
+    return { state: 'unknown' };
+  }
+}

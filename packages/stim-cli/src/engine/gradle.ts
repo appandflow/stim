@@ -1,0 +1,724 @@
+import type { ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import chalk from 'chalk';
+import { phaseLine } from '../command-output.ts';
+import { getExecutor } from '../exec.ts';
+import type { NdjsonWriter } from '../ndjson.ts';
+import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
+import { spawnDeclared } from './spawn-claims.ts';
+import { androidHome } from '../devices/android.ts';
+import { capDiagnostics, type Diagnostic, extractGradleDiagnostics } from './errors-gradle.ts';
+import { CCACHE_UNAVAILABLE, type CcacheSetup, readCcacheActivity } from './ccache.ts';
+import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
+import type { CcacheActivity } from './build-facts.ts';
+import type { AndroidCasSetup } from './android-cas.ts';
+import { ambientContext } from '@stim-cli/core';
+import { withReleaseMetroCache } from './release-metro.ts';
+
+export const BUILD_ERROR = 'STIM_BUILD_FAILED';
+
+type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
+
+export interface ApkLayout {
+  directory: string;
+  outputsDir: string;
+}
+
+export interface GradleProject extends ApkLayout {
+  gradlew: string;
+  module: string;
+}
+
+export interface GradlePreflightFailure {
+  code: string;
+  reason: string;
+  remedy: string;
+}
+
+export const ASSEMBLE_TASK = 'assembleDebug';
+
+export function assembleTaskFor(variant?: string | null): string {
+  const name = typeof variant === 'string' ? variant.trim() : '';
+  if (!name) return ASSEMBLE_TASK;
+  return `assemble${name[0]!.toUpperCase()}${name.slice(1)}`;
+}
+
+const LAST_LINES = 20;
+
+const TRANSCRIPT_LINES = 2000;
+
+export function androidSdkRefusal({
+  sdkPath,
+  sdkExists,
+  hasLocalProperties,
+  localPropertiesPath,
+}: {
+  sdkPath: string;
+  sdkExists: boolean;
+  hasLocalProperties: boolean;
+  localPropertiesPath: string;
+}): { code: string; reason: string; remedy: string } | null {
+  if (sdkExists || hasLocalProperties) return null;
+  return {
+    code: BUILD_ERROR,
+    reason: `No Android SDK at ${sdkPath}.`,
+    remedy: `Set ANDROID_HOME to the Android SDK (Android Studio installs it at ~/Library/Android/sdk on macOS and ~/Android/Sdk on Linux), or write sdk.dir into ${localPropertiesPath}. JAVA_HOME must point at a JDK 17 install as well.`,
+  };
+}
+
+export function pickDebugApk(files: unknown): string | null | undefined {
+  const list = (Array.isArray(files) ? files : [])
+    .filter((f) => typeof f === 'string' && f.endsWith('.apk'))
+    .filter((f) => !/-(?:unsigned|unaligned)\.apk$/.test(f));
+  if (list.length === 0) return null;
+  const named = list.find((f) => baseName(f) === 'app-debug.apk');
+  if (named) return named;
+  const debug = list.filter((f) => baseName(f).endsWith('-debug.apk'));
+  const pool = debug.length ? debug : list;
+  return pool.toSorted((a, b) => baseName(a).length - baseName(b).length || baseName(a).localeCompare(baseName(b)))[0];
+}
+
+export function parseOutputMetadata(text: unknown): string | null | undefined {
+  let parsed;
+  try {
+    parsed = JSON.parse(String(text));
+  } catch {
+    return null;
+  }
+  const elements = Array.isArray(parsed?.elements) ? parsed.elements : [];
+  const files = elements
+    .map((e: { outputFile?: unknown }) => e?.outputFile)
+    .filter((f: unknown) => typeof f === 'string');
+  return pickDebugApk(files);
+}
+
+const TRANSCRIPT_APK = [
+  /(?:Wrote APK to|APK (?:written|generated|copied) (?:to|at)|Built the following APKs?:)\s*(\S+\.apk)/i,
+  /Installing APK '([^']+\.apk)'/i,
+];
+
+export function parseApkFromTranscript(text: unknown): string | null | undefined {
+  if (typeof text !== 'string') return null;
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    for (const pattern of TRANSCRIPT_APK) {
+      const m = pattern.exec(line);
+      if (m) return m[1];
+    }
+  }
+  return null;
+}
+
+export function variantNameOf(segments: unknown): string {
+  return (Array.isArray(segments) ? segments : [])
+    .filter((s) => typeof s === 'string' && s.trim())
+    .map((s: string, i: number) => (i === 0 ? s : `${s[0]!.toUpperCase()}${s.slice(1)}`))
+    .join('');
+}
+
+function apkInDir(dir: string): string | null {
+  const metadata = readOrNull(join(dir, 'output-metadata.json'));
+  if (metadata) {
+    const named = parseOutputMetadata(metadata);
+    if (named) {
+      const abs = isAbsolute(named) ? named : join(dir, named);
+      if (existsSync(abs)) return abs;
+    }
+  }
+  const listed = pickDebugApk(safeList(dir));
+  return listed ? join(dir, listed) : null;
+}
+
+/** The one APK this build's `output-metadata.json` names, signed or not: a retained build directory can hold an older one. */
+function builtApkInDir(dir: string): string | null {
+  let names: unknown[];
+  try {
+    names = JSON.parse(readOrNull(join(dir, 'output-metadata.json')) ?? '').elements.map(
+      (element: { outputFile?: unknown }) => element.outputFile,
+    );
+  } catch {
+    return null;
+  }
+  const apk = names.length === 1 && typeof names[0] === 'string' ? join(dir, names[0]) : null;
+  return apk && existsSync(apk) ? apk : null;
+}
+
+function listApkSubdirs(base: string, prefix: string[] = [], depth = 0): string[][] {
+  if (depth > 3) return [];
+  const dirs: string[][] = [];
+  for (const name of safeList(base)) {
+    const path = join(base, name);
+    let isDir = false;
+    try {
+      isDir = statSync(path).isDirectory();
+    } catch {
+      continue;
+    }
+    if (!isDir) continue;
+    const rel = [...prefix, name];
+    dirs.push(rel);
+    dirs.push(...listApkSubdirs(path, rel, depth + 1));
+  }
+  return dirs;
+}
+
+function findVariantApkDir(base: string, variant: string): string | null {
+  const wanted = variant.trim().toLowerCase();
+  for (const segments of listApkSubdirs(base)) {
+    if (variantNameOf(segments).toLowerCase() === wanted) return join(base, ...segments);
+  }
+  return null;
+}
+
+function findDebugApksUnder(base: string): string[] {
+  const found: string[] = [];
+  for (const segments of [[], ...listApkSubdirs(base)]) {
+    const dir = join(base, ...segments);
+    for (const name of safeList(dir)) {
+      if (!name.endsWith('-debug.apk')) continue;
+      if (/-(?:unsigned|unaligned)\.apk$/.test(name)) continue;
+      found.push(join(dir, name));
+    }
+  }
+  return found.toSorted();
+}
+
+export interface LocateApkResult {
+  apkPath?: string | null;
+  note?: string | null;
+  candidates?: string[];
+  androidPackage?: string;
+}
+
+export function locateApk(
+  project: ApkLayout,
+  transcript = '',
+  variant: string | null = null,
+  { unsigned = false }: { unsigned?: boolean } = {},
+): LocateApkResult {
+  const fromTranscript = parseApkFromTranscript(transcript);
+  if (fromTranscript) {
+    const abs = isAbsolute(fromTranscript) ? fromTranscript : join(project.directory, fromTranscript);
+    if (existsSync(abs)) return { apkPath: abs };
+  }
+
+  if (variant) {
+    const dir = findVariantApkDir(project.outputsDir, variant);
+    const apk = dir ? ((unsigned ? builtApkInDir(dir) : null) ?? apkInDir(dir)) : null;
+    return { apkPath: apk };
+  }
+
+  const direct = apkInDir(join(project.outputsDir, 'debug'));
+  if (direct) return { apkPath: direct };
+
+  const found = findDebugApksUnder(project.outputsDir);
+  if (found.length === 1) {
+    const apk = found[0]!;
+    const rel = relative(project.outputsDir, apk).split(sep).slice(0, -1);
+    const suggested = variantNameOf(rel);
+    return {
+      apkPath: apk,
+      note:
+        `no APK in ${relative(project.directory, join(project.outputsDir, 'debug'))}; using ${relative(project.directory, apk)}` +
+        `${suggested ? ` -- set the android.variant setting to "${suggested}" to build this variant explicitly` : ''}`,
+    };
+  }
+  if (found.length > 1) return { apkPath: null, candidates: found };
+  return { apkPath: null };
+}
+
+export interface ProductFlavors {
+  known: boolean;
+  dimensions: string[][];
+}
+
+const UNKNOWN_FLAVORS: ProductFlavors = { known: false, dimensions: [] };
+
+function stripGroovyComments(text: string): string {
+  let out = '';
+  let quote = '';
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    const next = text[i + 1];
+    if (quote) {
+      out += ch;
+      if (ch === '\\') {
+        out += next ?? '';
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = '';
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      while (i < text.length && text[i] !== '\n') i += 1;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i += 1;
+      i += 2;
+      out += ' ';
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
+function closingBrace(text: string, open: number): number {
+  let depth = 1;
+  let quote = '';
+  for (let i = open; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (quote) {
+      if (ch === '\\') i += 1;
+      else if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+function productFlavorsBody(text: string): string | null {
+  const match = /(?:^|[^\w.])productFlavors\s*\{/.exec(text);
+  if (!match) return null;
+  const open = match.index + match[0].length;
+  const close = closingBrace(text, open);
+  return close < 0 ? null : text.slice(open, close);
+}
+
+function parseFlavorBlocks(body: string): { name: string; body: string }[] | null {
+  const entry = /([A-Za-z_][A-Za-z0-9_]*)\s*\{/y;
+  const blocks: { name: string; body: string }[] = [];
+  let i = 0;
+  while (i < body.length) {
+    if (/\s/.test(body[i]!)) {
+      i += 1;
+      continue;
+    }
+    entry.lastIndex = i;
+    const match = entry.exec(body);
+    if (!match) return null;
+    const open = i + match[0].length;
+    const close = closingBrace(body, open);
+    if (close < 0) return null;
+    blocks.push({ name: match[1]!, body: body.slice(open, close) });
+    i = close + 1;
+  }
+  return blocks;
+}
+
+function parseDimensionNames(text: string): string[] | null | undefined {
+  const statements = [...text.matchAll(/\bflavorDimensions\b([^\n]*)/g)];
+  if (statements.length === 0) return undefined;
+  const names: string[] = [];
+  for (const statement of statements) {
+    const line = statement[1] ?? '';
+    for (const quoted of line.matchAll(/(["'])([^"']*)\1/g)) names.push(quoted[2]!);
+    const rest = line.replace(/(["'])[^"']*\1/g, '').replace(/[[\]()=+,;]/g, '');
+    if (rest.trim() !== '') return null;
+  }
+  return names.length ? names : null;
+}
+
+function declaredDimensionOf(flavorBody: string): string | null {
+  const match = /\bdimension\b\s*=?\s*(["'])([^"']*)\1/.exec(flavorBody);
+  return match ? match[2]! : null;
+}
+
+export function parseProductFlavors(source: unknown): ProductFlavors {
+  if (typeof source !== 'string') return UNKNOWN_FLAVORS;
+  const text = stripGroovyComments(source);
+  if (/\bvariantFilter\b/.test(text)) return UNKNOWN_FLAVORS;
+  if (!/\bproductFlavors\b/.test(text)) return { known: true, dimensions: [] };
+  const body = productFlavorsBody(text);
+  if (body === null) return UNKNOWN_FLAVORS;
+  const flavors = parseFlavorBlocks(body);
+  if (!flavors) return UNKNOWN_FLAVORS;
+  if (flavors.length === 0) return { known: true, dimensions: [] };
+
+  const declared = parseDimensionNames(text);
+  if (declared === null) return UNKNOWN_FLAVORS;
+  const named = flavors.map((flavor) => declaredDimensionOf(flavor.body));
+  const used = [...new Set(named.filter((name) => name !== null))];
+  if (!declared || declared.length === 1) {
+    const only = declared ? declared[0] : used[0];
+    if (used.some((name) => name !== only)) return UNKNOWN_FLAVORS;
+    return { known: true, dimensions: [flavors.map((flavor) => flavor.name)] };
+  }
+  if (named.some((name) => name === null || !declared.includes(name))) return UNKNOWN_FLAVORS;
+  const dimensions: string[][] = [];
+  for (const dimension of declared) {
+    const group = flavors.filter((_, i) => named[i] === dimension).map((flavor) => flavor.name);
+    if (group.length === 0) return UNKNOWN_FLAVORS;
+    dimensions.push(group);
+  }
+  return { known: true, dimensions };
+}
+
+export type BuildAndroidResult = {
+  lastLines: string[];
+  durationMs: number;
+  ccache?: CcacheActivity;
+} & (
+  | { ok: true; apkPath: string; apkNote: string | null; androidPackage?: string }
+  | {
+      ok: false;
+      code: string;
+      reason: string;
+      remedy?: string;
+      diagnostics: Diagnostic[];
+      truncated: number;
+    }
+);
+
+function shimScript(name: string): string {
+  const script = [`../shim/${name}`, `../../shim/${name}`]
+    .map((path) => fileURLToPath(new URL(path, import.meta.url)))
+    .find((path) => existsSync(path));
+  if (!script) throw new Error(`Stim installation is missing shim/${name}.`);
+  return script;
+}
+
+export function gradleArgs(
+  task: string,
+  { buildCache = true, projectArgs = [] }: { buildCache?: boolean; projectArgs?: string[] } = {},
+): string[] {
+  return [task, ...(buildCache ? ['--build-cache'] : ['--no-build-cache']), ...projectArgs];
+}
+
+export function buildGradle(
+  input: Parameters<typeof buildGradleWithEnv>[0],
+  options: NonNullable<Parameters<typeof buildGradleWithEnv>[1]> = {},
+): Promise<BuildAndroidResult> {
+  return withReleaseMetroCache(
+    input.root,
+    /release$/i.test(input.variant ?? ''),
+    options.env ?? ambientContext()?.env ?? process.env,
+    (env) => buildGradleWithEnv(input, { ...options, env }),
+  );
+}
+
+async function buildGradleWithEnv(
+  {
+    root,
+    logWriter,
+    variant = null,
+    project,
+    task,
+    projectArgs = [],
+    preflightFailure = null,
+    locate,
+  }: {
+    root: string;
+    logWriter?: NdjsonWriter | null;
+    variant?: string | null;
+    project: GradleProject;
+    task: string;
+    projectArgs?: string[];
+    preflightFailure?: GradlePreflightFailure | null;
+    locate?: () => Promise<LocateApkResult | GradlePreflightFailure> | LocateApkResult | GradlePreflightFailure;
+  },
+  {
+    spawnFn = null,
+    now = Date.now,
+    env = ambientContext()?.env ?? process.env,
+    buildCache = true,
+    ccache = null,
+    cas = null,
+    pch = 'auto',
+    compilerCacheDisabled = false,
+    workerRelease = false,
+    heartbeatMs = HEARTBEAT_INTERVAL_MS,
+    estimateMs = null,
+    onHeartbeat = (line: string) => console.error(line),
+    onNote = (line: string) => console.error(line),
+  }: {
+    spawnFn?: SpawnFn | null;
+    now?: () => number;
+    env?: NodeJS.ProcessEnv;
+    buildCache?: boolean;
+    ccache?: CcacheSetup | null;
+    cas?: AndroidCasSetup | null;
+    pch?: 'auto' | 'on' | 'off';
+    compilerCacheDisabled?: boolean;
+    /** For a machine that holds no key: builds any signing but a `debug.keystore` as unsigned, and always rebundles JS. */
+    workerRelease?: boolean;
+    heartbeatMs?: number;
+    estimateMs?: number | null;
+    onHeartbeat?: (line: string) => void;
+    onNote?: (line: string) => void;
+  } = {},
+): Promise<BuildAndroidResult> {
+  const sdk = androidHome(env);
+  const sdkExists = existsSync(sdk);
+  const refusal = androidSdkRefusal({
+    sdkPath: sdk,
+    sdkExists,
+    hasLocalProperties: existsSync(join(project.directory, 'local.properties')),
+    localPropertiesPath: relative(root, join(project.directory, 'local.properties')).split(sep).join('/'),
+  });
+  if (refusal) return { ok: false, ...refusal, diagnostics: [], truncated: 0, lastLines: [], durationMs: 0 };
+
+  if (preflightFailure)
+    return { ok: false, ...preflightFailure, diagnostics: [], truncated: 0, lastLines: [], durationMs: 0 };
+
+  const wrapper = `./${relative(project.directory, project.gradlew).split(sep).join('/')}`;
+  const moduleTask = task.includes(':') ? task : `${project.module === ':' ? '' : project.module}:${task}`;
+  const tasksTask = `${project.module === ':' ? '' : project.module}:tasks`;
+  const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
+  const args = gradleArgs(task, { buildCache, projectArgs });
+  if (cas) {
+    args.push('--init-script', cas.initScript);
+    onNote(chalk.dim(phaseLine('cache', `Apple Clang CAS on (${cas.dir})`)));
+  }
+  const nativeScript = shimScript('android-optimizations.gradle');
+  args.push('--init-script', nativeScript);
+  if (workerRelease) args.push('--init-script', shimScript('android-worker-release.gradle'));
+  const nativeBackend = cas
+    ? cas.id
+    : ccache
+      ? ccache.env.CMAKE_CXX_COMPILER_LAUNCHER
+      : compilerCacheDisabled
+        ? 'none'
+        : 'project';
+  const profile = createHash('sha256')
+    .update(readFileSync(nativeScript))
+    .update(JSON.stringify({ backend: nativeBackend, pch }))
+    .digest('hex')
+    .slice(0, 16);
+  const nativeEnv: Record<string, string> = {
+    STIM_ANDROID_NATIVE_PROFILE: profile,
+    STIM_ANDROID_PCH: pch,
+    STIM_ANDROID_CCACHE: ccache && !cas ? 'on' : compilerCacheDisabled || cas ? 'off' : 'project',
+  };
+  if (compilerCacheDisabled) {
+    Object.assign(nativeEnv, { CCACHE_DISABLE: '1', CMAKE_C_COMPILER_LAUNCHER: '', CMAKE_CXX_COMPILER_LAUNCHER: '' });
+  }
+  if (ccache && !cas && pch === 'auto') {
+    onNote(
+      chalk.dim(phaseLine('cache', 'CMake PCH off by default for ccache reuse (explicit project settings preserved)')),
+    );
+  } else if (pch !== 'auto') {
+    onNote(chalk.dim(phaseLine('cache', `CMake PCH ${pch} by configuration`)));
+  }
+  if (buildCache) {
+    onNote(chalk.dim(phaseLine('cache', 'gradle build cache on (--build-cache, shared under the Gradle user home)')));
+  }
+
+  logWriter?.write?.({
+    src: 'build',
+    level: 'info',
+    msg: `${project.gradlew} ${args.join(' ')}`,
+    event: 'build_start',
+  });
+
+  const startedAt = now();
+  const tail: string[] = [];
+  const window: string[] = [];
+  const push = (line: unknown) => {
+    const msg = stripAnsi(String(line)).trimEnd();
+    if (!msg.trim()) return;
+    tail.push(msg);
+    if (tail.length > LAST_LINES) tail.shift();
+    window.push(msg);
+    if (window.length > TRANSCRIPT_LINES) window.shift();
+    logWriter?.write?.({ src: 'build', level: 'debug', msg, raw: true, event: 'gradle' });
+  };
+
+  if (ccache) resetStatsLog(ccache.statsLog);
+
+  let child: ChildProcess;
+  try {
+    child = spawnDeclared(
+      ambientContext(),
+      () =>
+        spawn(project.gradlew, args, {
+          cwd: project.directory,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: {
+            ...env,
+            ...(sdkExists && !env.ANDROID_HOME && !env.ANDROID_SDK_ROOT ? { ANDROID_HOME: sdk } : {}),
+            ...ccache?.env,
+            ...cas?.env,
+            ...nativeEnv,
+            TERM: 'dumb',
+            FORCE_COLOR: '0',
+          },
+        }),
+      { until: process.platform === 'win32' ? 'close' : 'exit' },
+    );
+  } catch (err) {
+    return spawnFailure(err, root, project, now() - startedAt);
+  }
+
+  const outReader = createLineReader(push);
+  const errReader = createLineReader(push);
+  child.stdout?.setEncoding?.('utf-8');
+  child.stderr?.setEncoding?.('utf-8');
+  child.stdout?.on('data', (chunk) => outReader.push(chunk));
+  child.stderr?.on('data', (chunk) => errReader.push(chunk));
+
+  const stopHeartbeat = startBuildHeartbeat({
+    intervalMs: heartbeatMs,
+    elapsed: () => now() - startedAt,
+    emit: onHeartbeat,
+    estimateMs,
+  });
+
+  const closed =
+    process.platform === 'win32' ? new Promise<void>((resolve) => child.once('close', () => resolve())) : undefined;
+  const result = await waitForChild(child);
+  await closed;
+  stopHeartbeat();
+  outReader.flush();
+  errReader.flush();
+  const durationMs = now() - startedAt;
+  const transcript = window.join('\n');
+  const ccacheActivity = ccache ? readCcacheActivity(ccache.statsLog) : CCACHE_UNAVAILABLE;
+
+  if (result.error)
+    return {
+      ...spawnFailure(result.error, root, project, durationMs),
+      lastLines: tail.slice(),
+      ccache: ccacheActivity,
+    };
+
+  if (result.code !== 0) {
+    const how = result.signal ? `signal ${result.signal}` : `exit code ${result.code}`;
+    const { shown, truncated } = capDiagnostics(extractGradleDiagnostics(transcript));
+    return {
+      ok: false,
+      code: BUILD_ERROR,
+      reason: `\`${wrapper} ${task}\` failed (${how}).`,
+      diagnostics: shown,
+      truncated,
+      lastLines: tail.slice(),
+      durationMs,
+      ccache: ccacheActivity,
+    };
+  }
+
+  const located = locate ? await locate() : locateApk(project, transcript, variant, { unsigned: workerRelease });
+  if ('code' in located)
+    return {
+      ok: false,
+      ...located,
+      diagnostics: [],
+      truncated: 0,
+      lastLines: tail.slice(),
+      durationMs,
+      ccache: ccacheActivity,
+    };
+  if (!located.apkPath && located.candidates?.length) {
+    return {
+      ok: false,
+      code: BUILD_ERROR,
+      reason: `\`${wrapper} ${task}\` left ${located.candidates.length} debug APKs under ${project.outputsDir}, and nothing says which flavor to install.`,
+      remedy: `Set the android.variant setting to the variant to install -- e.g. {"android": {"variant": "${variantNameOf(relative(project.outputsDir, located.candidates[0]!).split(sep).slice(0, -1))}"}} in .stim.json.`,
+      diagnostics: [],
+      truncated: 0,
+      lastLines: located.candidates.map((c) => relative(project.directory, c)),
+      durationMs,
+      ccache: ccacheActivity,
+    };
+  }
+  if (!located.apkPath) {
+    return {
+      ok: false,
+      code: BUILD_ERROR,
+      reason: variant
+        ? `\`${wrapper} ${task}\` succeeded but produced no APK under ${project.outputsDir} for variant "${variant}".`
+        : `\`${wrapper} ${task}\` succeeded but produced no APK in ${join(project.outputsDir, 'debug')}.`,
+      remedy: variant
+        ? `Check that the android.variant setting ("${variant}") names a real variant (\`${wrapper} ${tasksTask}\` lists the assemble tasks).`
+        : `Check that ${task} builds the ${project.module.replace(/^:/, '') || 'root'} module (\`${wrapper} ${moduleTask}\` in ${relative(root, project.directory).split(sep).join('/') || '.'}/) and that no flavour redirects the output.`,
+      diagnostics: [],
+      truncated: 0,
+      lastLines: tail.slice(),
+      durationMs,
+      ccache: ccacheActivity,
+    };
+  }
+  const apkPath = located.apkPath;
+
+  return {
+    ok: true,
+    apkPath,
+    apkNote: located.note ?? null,
+    ...(located.androidPackage ? { androidPackage: located.androidPackage } : {}),
+    durationMs,
+    lastLines: tail.slice(),
+    ccache: ccacheActivity,
+  };
+}
+
+function resetStatsLog(statsLog: string): void {
+  try {
+    mkdirSync(dirname(statsLog), { recursive: true });
+    rmSync(statsLog, { force: true });
+  } catch {}
+}
+
+function spawnFailure(
+  err: unknown,
+  root: string,
+  project: GradleProject,
+  durationMs: number,
+): Extract<BuildAndroidResult, { ok: false }> {
+  const nodeErr = err as NodeJS.ErrnoException;
+  const message = String(nodeErr?.message || err || '');
+  const permissionDenied = nodeErr?.code === 'EACCES' || /EACCES|permission denied/i.test(message);
+  return {
+    ok: false,
+    code: BUILD_ERROR,
+    reason: `Could not run ${project.gradlew}: ${message}`,
+    remedy: permissionDenied
+      ? `Make the wrapper executable: \`chmod +x ${project.gradlew}\`.`
+      : `Check that the gradle wrapper is intact (${relative(root, project.gradlew)} and ${relative(root, join(project.directory, 'gradle', 'wrapper'))}/) and that JAVA_HOME points at a JDK 17 install.`,
+    diagnostics: [],
+    truncated: 0,
+    lastLines: [],
+    durationMs,
+  };
+}
+
+function baseName(file: string) {
+  const parts = String(file).split('/');
+  return parts[parts.length - 1] ?? String(file);
+}
+
+function safeList(dir: string) {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+function readOrNull(file: string) {
+  try {
+    return readFileSync(file, 'utf-8');
+  } catch {
+    return null;
+  }
+}

@@ -1,0 +1,292 @@
+name: Mobile release
+
+on:
+  push:
+    tags: ['mobile-v*']
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: auto publishes an update when the latest production build has the same runtime, and builds and distributes otherwise. rollback and republish change what channel production serves.
+        type: choice
+        options: [auto, update, build, rollback, republish]
+        default: auto
+      runtime:
+        description: rollback only. The runtime to roll back to its embedded update; empty takes the latest finished production build's.
+        type: string
+        default: ''
+      group:
+        description: republish only. The update group to publish again on channel production.
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ (inputs.mode == 'rollback' || inputs.mode == 'republish') && 'mobile-rollback' || 'mobile-release' }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The ref is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::$GITHUB_REF_NAME is not on main. Release from main."
+            exit 1
+          fi
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          cache: false
+          install: false
+
+      - run: pnpm install --frozen-lockfile --filter stim-mobile... --filter stim-monorepo
+
+      - name: Build the shared notification rules
+        run: pnpm --filter @stim-cli/core run build
+
+      - name: The app boots in the tests before anything is published
+        if: inputs.mode != 'rollback' && inputs.mode != 'republish'
+        run: pnpm test --ci
+
+      - name: The tag matches the app version
+        if: github.event_name == 'push'
+        run: |
+          version="$(npx expo config --json | jq -r .version)"
+          if [ "$GITHUB_REF_NAME" != "mobile-v$version" ]; then
+            echo "::error::$GITHUB_REF_NAME does not match version $version in app.config.ts."
+            exit 1
+          fi
+
+  demo-server:
+    needs: verify
+    if: inputs.mode != 'rollback' && inputs.mode != 'republish'
+    uses: ./.github/workflows/demo-server-deploy.yml
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DEMO_TOKEN: ${{ secrets.DEMO_TOKEN }}
+
+  release:
+    needs: [verify, demo-server]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && (needs.demo-server.result == 'success' || needs.demo-server.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          cache: false
+          install: false
+
+      - name: Install before any secret is loaded
+        run: pnpm install --frozen-lockfile --filter stim-mobile... --filter stim-monorepo
+
+      - name: Build the shared notification rules
+        run: pnpm --filter @stim-cli/core run build
+
+      - uses: expo/expo-github-action@eab7a230208c952974db8c3245cfd78402c7b385 # 9.0.0
+        with:
+          eas-version: 24.10.0
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Choose update or build
+        id: mode
+        env:
+          INPUT_MODE: ${{ inputs.mode }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            mode=build
+          else
+            mode="$INPUT_MODE"
+          fi
+          if [ "$mode" = auto ]; then
+            fingerprint="$(npx expo-updates fingerprint:generate --platform ios | jq -r .hash)"
+            runtime="$(eas build:list --platform ios --build-profile production --status finished --limit 1 --json --non-interactive | jq -r '.[0].runtime.version // empty')"
+            echo "fingerprint=$fingerprint latest production build runtime=${runtime:-none}"
+            if [ -n "$runtime" ] && [ "$runtime" = "$fingerprint" ]; then
+              mode=update
+            else
+              mode=build
+            fi
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "::notice::Mobile release mode: $mode"
+
+      - name: Publish an update
+        if: steps.mode.outputs.mode == 'update'
+        run: |
+          message="$(git log -1 --format=%s)"
+          eas update --channel production --environment production --platform ios --message "$message" --non-interactive
+
+      - name: Upload the update's source maps to Sentry
+        if: steps.mode.outputs.mode == 'update'
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_URL: https://sentry.io/
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "SENTRY_AUTH_TOKEN is not set; skipping the Sentry source map upload."
+            exit 0
+          fi
+          npx sentry-expo-upload-sourcemaps dist
+
+      - name: Roll back to the embedded update
+        if: steps.mode.outputs.mode == 'rollback'
+        env:
+          INPUT_RUNTIME: ${{ inputs.runtime }}
+        run: |
+          runtime="$INPUT_RUNTIME"
+          if [ -z "$runtime" ]; then
+            build="$(eas build:list --platform ios --build-profile production --status finished --limit 1 --json --non-interactive | jq -c '.[0] // {}')"
+            runtime="$(jq -r '.runtime.version // empty' <<<"$build")"
+            echo "Latest finished production build: $(jq -r '"\(.id // "none") build \(.appBuildVersion // "?") from \(.gitCommitHash // "?")"' <<<"$build")"
+          fi
+          if [ -z "$runtime" ]; then
+            echo "::error::No runtime given and no finished production build has one. Pass -f runtime=<runtime>."
+            exit 1
+          fi
+          eas update:roll-back-to-embedded --channel production --runtime-version "$runtime" --platform ios \
+            --message "Roll back to embedded (run $GITHUB_RUN_ID)" --non-interactive --json > rollback.json
+          group="$(jq -r '.[0].group' rollback.json)"
+          echo "::notice::Channel production on runtime $runtime now serves the embedded update (group $group)."
+
+      - name: Republish an update group
+        if: steps.mode.outputs.mode == 'republish'
+        env:
+          INPUT_GROUP: ${{ inputs.group }}
+        run: |
+          if ! [[ "$INPUT_GROUP" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+            echo "::error::group must be an update group id, not '$INPUT_GROUP'. List them with eas update:list --branch production."
+            exit 1
+          fi
+          update="$(eas update:view "$INPUT_GROUP" --json | jq -c '[.[] | select(.platform == "ios")][0] // empty')"
+          if [ -z "$update" ]; then
+            echo "::error::Update group $INPUT_GROUP has no iOS update."
+            exit 1
+          fi
+          branch="$(jq -r .branch <<<"$update")"
+          runtime="$(jq -r .runtimeVersion <<<"$update")"
+          echo "Group $INPUT_GROUP: branch $branch, runtime $runtime, rollback to embedded $(jq -r .isRollBackToEmbedded <<<"$update"), message: $(jq -r .message <<<"$update")"
+          latest="$(eas build:list --platform ios --build-profile production --status finished --limit 1 --json --non-interactive | jq -r '.[0].runtime.version // empty')"
+          if [ "$runtime" != "$latest" ]; then
+            echo "::warning::Runtime $runtime is not the latest production build's runtime (${latest:-none}); only builds on $runtime get this update."
+          fi
+          destination=()
+          if [ "$branch" != production ]; then destination=(--destination-channel production); fi
+          eas update:republish --group "$INPUT_GROUP" "${destination[@]}" --platform ios \
+            --message "Republish $INPUT_GROUP (run $GITHUB_RUN_ID)" --non-interactive --json > republish.json
+          echo "::notice::Channel production on runtime $runtime now serves group $INPUT_GROUP, republished as $(jq -r '.[0].group' republish.json)."
+
+      - name: Build for TestFlight
+        id: build
+        if: steps.mode.outputs.mode == 'build'
+        env:
+          EXPO_APPLE_TEAM_ID: R7E8P23K3N
+          EXPO_APPLE_TEAM_TYPE: COMPANY_OR_ORGANIZATION
+        run: |
+          eas build --platform ios --profile production --non-interactive --json > build.json
+          build_id="$(jq -r '.[0].id // empty' build.json)"
+          build_number="$(jq -r '.[0].appBuildVersion // empty' build.json)"
+          app_version="$(jq -r '.[0].appVersion // empty' build.json)"
+          if [ -z "$build_id" ] || [ -z "$build_number" ] || [ -z "$app_version" ]; then
+            echo "::error::eas build printed no build id, build number or app version."
+            exit 1
+          fi
+          {
+            echo "build_id=$build_id"
+            echo "build_number=$build_number"
+            echo "app_version=$app_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload to TestFlight and distribute to external testers
+        if: steps.mode.outputs.mode == 'build'
+        env:
+          BUILD_ID: ${{ steps.build.outputs.build_id }}
+          BUILD_NUMBER: ${{ steps.build.outputs.build_number }}
+          APP_VERSION: ${{ steps.build.outputs.app_version }}
+        run: |
+          changelog="$(git log -1 --format='%s (%h)')"
+          testflight_build() {
+            eas submit:status --platform ios --json --non-interactive |
+              jq -c --arg number "$BUILD_NUMBER" --arg version "$APP_VERSION" '[.ios.testFlightBuilds[] | select(.buildNumber == $number and .appVersion == $version)][0] // empty'
+          }
+
+          workflow_status=0
+          eas workflow:run .eas/workflows/testflight.yml --non-interactive --wait \
+            -F "build_id=$BUILD_ID" -F "changelog=$changelog" </dev/null || workflow_status=$?
+
+          read_status=0
+          build="$(testflight_build)" || read_status=$?
+          if [ "$read_status" -eq 0 ] && [ -z "$build" ] && [ "$workflow_status" -eq 11 ]; then
+            echo "::warning::The TestFlight job failed before the upload. Uploading the same build with eas submit; it will reach internal testers only."
+            eas submit --platform ios --profile production --id "$BUILD_ID" --non-interactive --wait || true
+            build="$(testflight_build)" || read_status=$?
+          fi
+          if [ "$read_status" -ne 0 ]; then
+            echo "::warning::Could not read the TestFlight state with eas submit:status. The TestFlight job exited $workflow_status."
+            exit $((workflow_status != 0))
+          fi
+          if [ -z "$build" ]; then
+            if [ "$workflow_status" -eq 0 ]; then
+              echo "::warning::The TestFlight job succeeded but build $BUILD_NUMBER is not listed by eas submit:status. Check the TestFlight tab in App Store Connect."
+              exit 0
+            fi
+            echo "::error::Build $BUILD_NUMBER ($BUILD_ID) did not reach TestFlight (TestFlight job exit $workflow_status). Run mode=build again."
+            exit 1
+          fi
+
+          number="$(jq -r .buildNumber <<<"$build")"
+          processing="$(jq -r .processingState <<<"$build")"
+          external="$(jq -r '.externalState // "unknown"' <<<"$build")"
+          case "$processing/$external" in
+            PROCESSING/*) level=warning; text="uploaded and still processing at Apple" ;;
+            VALID/READY_FOR_BETA_SUBMISSION) level=warning; text="uploaded and processed, not submitted for Beta App Review" ;;
+            VALID/WAITING_FOR_BETA_REVIEW) level=notice; text="awaiting Beta App Review" ;;
+            VALID/IN_BETA_REVIEW) level=notice; text="in Beta App Review" ;;
+            VALID/IN_EXPORT_COMPLIANCE_REVIEW) level=notice; text="in export compliance review" ;;
+            VALID/BETA_REJECTED) level=warning; text="rejected by Beta App Review" ;;
+            VALID/IN_BETA_TESTING | VALID/BETA_APPROVED) level=notice; text="available to external testers" ;;
+            *) level=warning; text="in an unexpected state" ;;
+          esac
+          message="iOS build $number is $text (processing $processing, external $external)."
+          if [ "$workflow_status" -ne 0 ]; then
+            message="$message The TestFlight job exited $workflow_status. Fix the cause in the EAS workflow run, then add the build to the External group in App Store Connect."
+            level=warning
+          fi
+          echo "::$level::$message"
+          echo "$message" >> "$GITHUB_STEP_SUMMARY"

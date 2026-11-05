@@ -1,0 +1,191 @@
+@font-face {
+  font-family: Inter;
+  src: url('./fonts/InterVariable.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: Inter;
+  src: url('./fonts/InterVariable-Italic.woff2') format('woff2');
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./fonts/JetBrainsMono-Regular.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+:root {
+  --stim-purple: #5521ff;
+  --stim-lavender: #aa90ff;
+  --stim-ink: #121212;
+  --stim-muted: #6b6b6b;
+  --stim-font-heading: Inter, sans-serif;
+  --ifm-color-primary: var(--stim-purple);
+  --ifm-color-primary-dark: #4312e5;
+  --ifm-color-primary-darker: #3d10d2;
+  --ifm-color-primary-darkest: #320da9;
+  --ifm-color-primary-light: #7045ff;
+  --ifm-color-primary-lighter: #8966ff;
+  --ifm-color-primary-lightest: var(--stim-lavender);
+  --ifm-background-color: #fff;
+  --ifm-background-surface-color: #fff;
+  --ifm-font-color-base: var(--stim-ink);
+  --ifm-font-family-base: Inter, sans-serif;
+  --ifm-heading-font-family: var(--stim-font-heading);
+  --ifm-font-family-monospace: 'JetBrains Mono', monospace;
+  --ifm-heading-font-weight: 650;
+  --ifm-code-font-size: 90%;
+  --ifm-menu-color-active: var(--ifm-color-primary);
+  --ifm-menu-color-background-active: #f3efff;
+  --ifm-navbar-shadow: 0 1px 0 #ece7fa;
+  --docusaurus-highlighted-code-line-bg: rgba(85, 33, 255, 0.08);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #b39cff;
+  --ifm-color-primary-dark: #a589ff;
+  --ifm-color-primary-darker: #9776ff;
+  --ifm-color-primary-darkest: #8966ff;
+  --ifm-color-primary-light: #c2b0ff;
+  --ifm-color-primary-lighter: #d1c3ff;
+  --ifm-color-primary-lightest: #e1d8ff;
+  --ifm-background-color: #15121d;
+  --ifm-background-surface-color: #201b2b;
+  --ifm-font-color-base: #f3efff;
+  --ifm-menu-color-background-active: #2e2445;
+  --ifm-navbar-shadow: 0 1px 0 #352a48;
+  --docusaurus-highlighted-code-line-bg: rgba(170, 144, 255, 0.14);
+}
+
+::selection {
+  color: #fff;
+  background: var(--stim-purple);
+}
+
+.docs-wrapper[data-theme='dark'] {
+  --ifm-link-hover-color: #d1c3ff;
+  --ifm-background-color: #18181b;
+  --ifm-background-surface-color: #202024;
+  --ifm-font-color-base: #ededf0;
+  --ifm-font-color-secondary: #b8b8c2;
+  --ifm-color-emphasis-200: #303036;
+  --ifm-color-emphasis-300: #3f3f48;
+  --ifm-color-emphasis-600: #aaaab5;
+  --ifm-color-emphasis-700: #c5c5ce;
+  --ifm-menu-color: #c5c5ce;
+  --ifm-menu-color-background-active: rgb(170 144 255 / 14%);
+  --ifm-menu-color-background-hover: rgb(255 255 255 / 5%);
+  --ifm-navbar-link-color: #c5c5ce;
+  --ifm-navbar-shadow: 0 1px 0 #303036;
+  --ifm-code-background: #29292f;
+  --ifm-table-stripe-background: rgb(255 255 255 / 3%);
+  background: var(--ifm-background-color);
+}
+
+.docs-wrapper[data-theme='dark'] ::selection {
+  color: #18181b;
+  background: var(--stim-lavender);
+}
+
+.docs-wrapper[data-theme='dark'] .theme-doc-markdown a:not(.hash-link) {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.docs-wrapper[data-theme='dark'] .navbar__logo {
+  filter: brightness(0) invert(1);
+}
+
+.docs-wrapper[data-theme='dark'] .footer--dark {
+  --ifm-footer-background-color: var(--ifm-background-surface-color);
+  border-top: 1px solid var(--ifm-color-emphasis-300);
+}
+
+.docs-wrapper[data-theme='dark'] .theme-code-block {
+  background: var(--ifm-background-surface-color);
+  box-shadow: none;
+}
+
+.docs-wrapper[data-theme='dark'] .theme-code-block pre {
+  background: transparent !important;
+}
+
+.docs-wrapper[data-theme='dark'] .theme-code-block .token.comment {
+  color: #aaaab5 !important;
+}
+
+.docs-wrapper[data-theme='dark'] .theme-code-block button {
+  color: var(--ifm-color-primary);
+  background: var(--ifm-background-surface-color);
+}
+
+.navbar__logo {
+  height: 2.25rem;
+}
+
+.navbar__toggle {
+  margin-right: 1rem;
+}
+
+@keyframes stim-logo-wiggle {
+  25% {
+    transform: rotate(-5deg);
+  }
+  60% {
+    transform: rotate(3deg);
+  }
+  85% {
+    transform: rotate(-1deg);
+  }
+  100% {
+    transform: rotate(0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) and (hover: hover) and (pointer: fine) {
+  .stim-logo:hover img,
+  .navbar__brand:hover .navbar__logo {
+    animation: stim-logo-wiggle 450ms ease-in-out;
+  }
+}
+
+@keyframes stim-squish {
+  33% {
+    transform: scale(1.02, 0.98);
+  }
+  66% {
+    transform: scale(0.99, 1.01);
+  }
+}
+
+.stim-squish {
+  transform-origin: bottom center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .stim-squish:hover {
+    animation: stim-squish 300ms ease-out;
+  }
+}
+
+.footer--dark {
+  --ifm-footer-background-color: #20162e;
+}
+
+::view-transition {
+  pointer-events: none;
+}
+
+/* Alias anchors on the generated troubleshooting page sit before the heading
+   they name, so they need the scroll margin the sticky navbar requires. */
+a[id^='STIM_']:empty {
+  scroll-margin-top: calc(var(--ifm-navbar-height) + 1rem);
+}

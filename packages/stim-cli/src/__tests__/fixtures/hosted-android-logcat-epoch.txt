@@ -1,0 +1,6 @@
+--------- beginning of main
+1700000000.100   321   321 E AndroidRuntime: FATAL EXCEPTION: main
+1700000000.200   321   321 E AndroidRuntime: java.lang.IllegalStateException: fixture crash
+1700000000.300   999   999 E AndroidRuntime: another app failure
+1700000000.400   321   322 I Fixture : before restart
+1700000001.100   456   456 E AndroidRuntime: restarted app failure

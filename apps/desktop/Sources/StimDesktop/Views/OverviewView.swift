@@ -1,0 +1,270 @@
+import StimKit
+import StimStores
+import SwiftUI
+
+struct OverviewView: View {
+  @ObservedObject var store: StatusStore
+  var metrics: MetricsStore
+  @Binding var selection: SidebarItem?
+  var openLogs: (String) -> Void
+  var openDevice: (WorkspaceKey, String) -> Void
+  var openIdleProject: (Project) -> Void
+  @State private var showsAllActive = false
+  @State private var showsAllIdle = false
+  @State private var showsAllArchived = false
+  @State private var contentWidth: CGFloat = 1000
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
+  @AppStorage(AppPreferences.Key.machineScope) private var machineScope = MachineScope.all
+
+  private static let projectCardMinimum: CGFloat = 220
+
+  private var projectColumns: Int {
+    max(1, Int((contentWidth + Space.lg) / (Self.projectCardMinimum + Space.lg)))
+  }
+
+  var body: some View {
+    if store.payload == nil {
+      if let error = store.error {
+        EmptyState(title: "Cannot Read stim status", message: error, showsHero: true)
+      } else {
+        ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+    } else {
+      content
+    }
+  }
+
+  private var projects: [ProjectSummary] { store.projectList }
+
+  private var machines: [PairedMachine] { store.pairedMachines(pairedSessions.entries) }
+
+  private var running: [WallCard] {
+    WallCard.merged(
+      local: WallCard.cards(environments: (store.payload?.environments ?? []).filter(\.isActive)), machines: machines,
+      scope: machineScope)
+  }
+
+  @ViewBuilder private var content: some View {
+    let running = running
+    let idle = Overview.idleProjects(
+      summaries: projects, environments: store.payload?.environments ?? [], project: store.project(ofPath:))
+    let archived = store.newestArchives
+    if running.isEmpty && idle.isEmpty && archived.isEmpty {
+      VStack(spacing: 0) {
+        if !machines.isEmpty {
+          machinesSection(machines)
+            .padding(.horizontal, PageInset.horizontal).padding(.top, Space.xxxl)
+        }
+        EmptyState(
+          title: "Nothing Here Yet",
+          message: "Projects appear here when an agent warms a worktree or runs stim ios or stim android.",
+          showsHero: true, showsPrompts: true)
+      }
+    } else {
+      ScrollView {
+        VStack(alignment: .leading, spacing: Space.huge) {
+          Text("Overview")
+            .font(.stim(.title))
+            .foregroundStyle(Palette.text)
+          if !machines.isEmpty { machinesSection(machines) }
+          runningSection(running)
+          if !idle.isEmpty { idleSection(idle) }
+          if !archived.isEmpty { archivedSection(archived) }
+        }
+        .padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self, of: { max(0, $0.size.width - PageInset.horizontal * 2) }) { contentWidth = $0 }
+      }
+    }
+  }
+
+  private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+    VStack(alignment: .leading, spacing: Space.lg) {
+      Text(title)
+        .font(.stim(.headline))
+        .foregroundStyle(Palette.text)
+      content()
+    }
+  }
+
+  private func machinesSection(_ machines: [PairedMachine]) -> some View {
+    let tallies = MachineTally.list(
+      local: store.payload?.environments ?? [], machines: machines, scope: machineScope)
+    return VStack(alignment: .leading, spacing: Space.lg) {
+      HStack(spacing: Space.lg) {
+        SectionLabel(title: "Machines")
+        Spacer(minLength: 0)
+        if machines.contains(where: \.isAvailable) { MachineScopeControl(scope: $machineScope) }
+      }
+      if !tallies.isEmpty {
+        LazyVGrid(
+          columns: [GridItem(.adaptive(minimum: Self.projectCardMinimum, maximum: 320), spacing: Space.lg, alignment: .top)],
+          alignment: .leading, spacing: Space.lg
+        ) {
+          ForEach(tallies) { MachineTallyCard(tally: $0) }
+        }
+        .finiteAccessibilityFrame()
+      }
+      if machineScope == .all { UnavailableMachinesNote(machines: machines) }
+    }
+  }
+
+  private func runningSection(_ cards: [WallCard]) -> some View {
+    let columns = WallCard.columns(forWidth: contentWidth)
+    let shown = showsAllActive ? cards : Array(cards.prefix(columns))
+    return section("Active") {
+      if cards.isEmpty {
+        Card {
+          InlineEmpty("Active projects will appear here when an agent or you start one, for example with `stim start`.")
+            .font(.stim(.callout))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Space.xl)
+            .padding(.vertical, Space.lg)
+        }
+      } else {
+        WorkspaceCardGrid(
+          cards: shown, store: store, metrics: metrics,
+          open: { selection = $0.pairedDestination ?? .environment($0.id) }, openDevice: openDevice, openLogs: openLogs)
+        if cards.count > columns {
+          Button(showsAllActive ? "Show less" : "Show more (\(cards.count - shown.count))") {
+            withAnimation(.easeInOut(duration: 0.15)) { showsAllActive.toggle() }
+          }
+          .buttonStyle(.hoverRow(outset: Space.xs))
+          .foregroundStyle(Palette.primary)
+        }
+      }
+    }
+  }
+
+  private func idleSection(_ items: [IdleProject]) -> some View {
+    let (shown, hidden) = Overview.visibleIdle(items, expanded: showsAllIdle, limit: projectColumns)
+    return section("Idle projects") {
+      LazyVGrid(
+        columns: [GridItem(.adaptive(minimum: Self.projectCardMinimum, maximum: 320), spacing: Space.lg, alignment: .top)],
+        alignment: .leading, spacing: Space.lg
+      ) {
+        ForEach(shown) { idleCard($0) }
+      }
+      .finiteAccessibilityFrame()
+      if items.count > projectColumns {
+        Button(showsAllIdle ? "Show less" : "Show more (\(hidden))") {
+          withAnimation(.easeInOut(duration: 0.15)) { showsAllIdle.toggle() }
+        }
+        .buttonStyle(.hoverRow(outset: Space.xs))
+        .foregroundStyle(Palette.primary)
+      }
+    }
+  }
+
+  private func idleCard(_ item: IdleProject) -> some View {
+    let metadata =
+      [countLabel(item.workspaces, "worktree"), item.lastActivity.map { Format.age(Date().timeIntervalSince($0)) }]
+      .compactMap { $0 }.joined(separator: " \u{00B7} ")
+    let pullRequest = item.pullRequest.map { "PR #\(String($0.number)) \u{00B7} \($0.state)" }
+    let failedBuild = item.failedBuild.map { "\($0.platform == "ios" ? "iOS" : "Android") build failed" }
+    let errors = item.errors > 0 ? countLabel(item.errors, "error") : nil
+    return Button {
+      openIdleProject(item.project)
+    } label: {
+      Card {
+        VStack(alignment: .leading, spacing: Space.md) {
+          Text(store.title(of: item.project)).font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text).lineLimit(1)
+          VStack(alignment: .leading, spacing: Space.xs) {
+            Text(metadata).foregroundStyle(Palette.tertiary)
+            if let pullRequest {
+              Text(pullRequest).foregroundStyle(Color(item.pullRequest?.state == "draft" ? Tone.neutral : Tone.brand))
+            }
+            if let failedBuild {
+              Text(failedBuild).foregroundStyle(Palette.error)
+            }
+            if let errors {
+              Text(errors).foregroundStyle(Palette.error)
+            }
+          }
+          .font(.stim(.caption)).lineLimit(1)
+          .help([metadata, pullRequest, failedBuild, errors].compactMap { $0 }.joined(separator: " \u{00B7} "))
+        }
+        .padding(Space.xl)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+      }
+    }
+    .buttonStyle(CardPressStyle())
+    .hoverHighlight(radius: Radius.card)
+    .contextMenu {
+      Button("Open Project", systemImage: "arrow.up.right.square") { openIdleProject(item.project) }
+      Divider()
+      WorkspaceActionsMenu(kind: .idleProject, path: item.project.root, busy: false, removalAllowed: true)
+    }
+    .accessibilityHint("Open project")
+  }
+
+  private func archivedSection(_ items: [ArchivedWorkspace]) -> some View {
+    let shown = showsAllArchived ? items : Array(items.prefix(projectColumns))
+    return section("Recently archived") {
+      LazyVGrid(
+        columns: [GridItem(.adaptive(minimum: Self.projectCardMinimum, maximum: 320), spacing: Space.lg, alignment: .top)],
+        alignment: .leading, spacing: Space.lg
+      ) {
+        ForEach(shown) { archive in
+          Button {
+            selection = .archived(archive.id)
+          } label: {
+            Card {
+              VStack(alignment: .leading, spacing: Space.md) {
+                Text(archive.title).font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text).lineLimit(1)
+                Text(archive.removedLabel(now: Date()).replacingOccurrences(of: "Removed ", with: ""))
+                  .font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1)
+              }
+              .padding(Space.xl)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .contentShape(Rectangle())
+            }
+          }
+          .buttonStyle(CardPressStyle())
+          .hoverHighlight(radius: Radius.card)
+          .help("Open the archive of \(archive.title)")
+        }
+      }
+      .finiteAccessibilityFrame()
+      if items.count > projectColumns {
+        Button(showsAllArchived ? "Show less" : "Show more (\(items.count - shown.count))") {
+          withAnimation(.easeInOut(duration: 0.15)) { showsAllArchived.toggle() }
+        }
+        .buttonStyle(.hoverRow(outset: Space.xs))
+        .foregroundStyle(Palette.primary)
+      }
+    }
+  }
+}
+
+private struct MachineTallyCard: View {
+  var tally: MachineTally
+
+  var body: some View {
+    Card {
+      VStack(alignment: .leading, spacing: Space.xs) {
+        HStack(spacing: Space.sm) {
+          Text(verbatim: tally.name).font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text).lineLimit(1)
+            .truncationMode(.middle)
+          if let access = tally.access {
+            Pill(tone: access == "View and Control" ? .brand : .neutral, size: .small) { Text(access) }
+          }
+        }
+        Text(verbatim: summary).font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(2)
+          .help("Active workspaces, builds running and devices running")
+      }
+      .padding(.horizontal, Space.lg)
+      .padding(.vertical, Space.md)
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .accessibilityElement(children: .combine)
+  }
+
+  private var summary: String {
+    guard tally.isAvailable else { return "Unavailable" }
+    return [
+      "\(tally.activeWorkspaces.formatted()) active", countLabel(tally.builds, "build"), countLabel(tally.devices, "device"),
+    ].joined(separator: " \u{00B7} ")
+  }
+}

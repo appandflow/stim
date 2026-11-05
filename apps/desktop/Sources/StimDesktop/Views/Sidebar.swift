@@ -1,0 +1,663 @@
+import StimKit
+import StimStores
+import SwiftUI
+
+struct Sidebar: View {
+  @ObservedObject var store: StatusStore
+  @ObservedObject var pressure: DaemonPressureMonitor
+  @ObservedObject var onboarding: Onboarding
+  let actions: ActionCenter
+  @Binding var selection: SidebarItem?
+  var openLogs: (String) -> Void
+  @ObservedObject private var openRequests = OpenRequests.shared
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
+  @ObservedObject private var pairedState = PairedViewState.shared
+  @State private var migratedHidden: [String: Bool] = [:]
+  @State private var showsViewOptions = false
+  @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.tutorialHint) private var tutorialHint
+  let prefs = SidebarPreferences()
+
+  var body: some View {
+    let options = prefs.options
+    let pages = store.sidebarList(options).compactMap { entry -> WorktreePage? in
+      switch entry {
+      case .workspace(let app): return WorktreePage(path: app.path, environments: [app])
+      case .worktreeGroup(let page): return page
+      default: return nil
+      }
+    }
+    let rowSelection = listSelection(pages: pages)
+    List(selection: rowSelection) {
+      Section {
+        switch options.grouping {
+        case .project:
+          let trees = store.sidebarTrees(options)
+          ForEach(trees, id: \.summary.project) { tree in
+            let folders = Set(store.environments(in: tree.summary.project).map { $0.names.inCheckout ?? "" })
+            DisclosureGroup(isExpanded: isExpanded(tree)) {
+              ForEach(tree.entries) { entry in
+                EntryRow(
+                  entry: entry, subtitle: nil, showsFolder: folders.count > 1, showsGit: options.showsGitStatus,
+                  selection: rowSelection.wrappedValue, openLogs: openLogs)
+              }
+            } label: {
+              if tree.isArchiveOnly {
+                Label(store.title(of: tree.summary.project), systemImage: "archivebox")
+              } else {
+                ProjectRow(store: store, summary: tree.summary, selected: selection == .project(tree.summary.project))
+                  .tutorialGlowInPlace(
+                    tutorialHint, .sidebarRow,
+                    workspaces: isExpanded(tree).wrappedValue
+                      ? [] : store.environments(in: tree.summary.project).map(\.path)
+                  )
+                  .sidebarTag(.project(tree.summary.project), selection: selection)
+              }
+            }
+          }
+          if trees.isEmpty { emptyText(options) }
+        case .none:
+          let entries = store.sidebarList(options)
+          ForEach(entries) { entry in
+            let project =
+              if let project = entry.archiveProject { project } else { store.project(ofPath: entry.path) }
+            EntryRow(
+              entry: entry, subtitle: store.title(of: project), showsFolder: true,
+              showsGit: options.showsGitStatus, selection: rowSelection.wrappedValue, openLogs: openLogs)
+          }
+          if entries.isEmpty { emptyText(options) }
+        }
+      } header: {
+        Text(options.grouping == .project ? "Projects" : "Workspaces")
+          .font(.stim(.caption, weight: .semibold))
+          .foregroundStyle(Palette.secondary)
+          .padding(.top, Space.md)
+          .background(PlainSelectionHighlight())
+      }
+      ForEach(pairedSessions.entries) { entry in
+        PairedSidebarSection(
+          entry: entry, session: pairedSessions.sessions[entry.id], status: store.paired[entry.id], options: options,
+          selection: rowSelection.wrappedValue, state: pairedState)
+      }
+    }
+    .scrollContentBackground(.hidden)
+    .background(Palette.sidebar)
+    .safeAreaInset(edge: .top, spacing: 0) {
+      VStack(spacing: 0) {
+        brand
+        pinned
+      }
+      .background(Palette.sidebar)
+    }
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      VStack(spacing: 0) {
+        Button {
+          selection = .discover
+        } label: {
+          Label("Explore Stim's features", systemImage: "sparkles")
+            .font(.stim(.callout))
+            .foregroundStyle(Palette.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.hoverRow(outset: Space.sm))
+        .padding(Space.lg)
+        .accessibilityAddTraits(selection == .discover ? .isSelected : [])
+        HiddenWorkspacesFooter(
+          count: store.sidebarStatusCounts(options)[.hidden] ?? 0, showing: options.statuses.contains(.hidden)
+        ) {
+          var updated = options.statuses
+          if updated.contains(.hidden) {
+            updated.remove(.hidden)
+            if updated.isEmpty { updated = StatusFilter.defaultSelection }
+          } else {
+            updated.insert(.hidden)
+          }
+          prefs.statuses = StatusFilter.encode(updated)
+        }
+        SidebarFooter(store: store, pressure: pressure, onboarding: onboarding, actions: actions, selection: $selection)
+      }
+      .background(Palette.sidebar)
+    }
+    .onAppear {
+      forgetStaleHidden()
+      migrateHidden(store.payload)
+    }
+    .onReceive(openRequests.$showsViewOptions) { requested in
+      guard requested else { return }
+      showsViewOptions = true
+      openRequests.showsViewOptions = false
+    }
+    .onChange(of: staleHidden) { forgetStaleHidden() }
+    .onChange(of: prefs.hiddenWorkspacesRaw) { migrateHidden(store.payload) }
+    .onReceive(store.$payload) { migrateHidden($0) }
+    .onReceive(ServerSession.shared.$client) { _ in migrateHidden(store.payload) }
+    .onChange(of: store.payload == nil, initial: true) { _, missing in
+      if !missing { LaunchMilestones.reach("sidebar-rows") }
+    }
+  }
+
+  private func reconciledHidden() -> HiddenWorkspaces? {
+    guard let payload = store.payload else { return nil }
+    let current = prefs.hiddenWorkspaces
+    guard !current.isEmpty else { return nil }
+    let reconciled = current.reconciled(
+      environments: payload.environments, unprovisioned: payload.unprovisionedWorktrees, archived: payload.archived,
+      isBusy: { actions.active(for: $0) != nil })
+    return reconciled == current ? nil : reconciled
+  }
+
+  private var staleHidden: HiddenWorkspaces? { reconciledHidden() }
+
+  private func forgetStaleHidden() {
+    if let reconciled = reconciledHidden() { prefs.hiddenWorkspacesRaw = HiddenWorkspaces.encode(reconciled) }
+  }
+
+  private func migrateHidden(_ payload: StatusPayload?) {
+    let legacyPaths = prefs.hiddenWorkspaces.paths
+    migratedHidden = migratedHidden.filter { legacyPaths.contains($0.key) }
+    guard let payload, let connection = ServerSession.shared.statsConnection, connection.client.hasDesktopAuthority,
+      connection.home == store.stimHome
+    else { return }
+    for item in prefs.hiddenWorkspaces.migrations(environments: payload.environments) {
+      guard migratedHidden[item.path] != item.hidden else { continue }
+      let run = prefs.setHidden(item.hidden, apps: item.apps, actions: actions, migrating: true)
+      if run != nil { migratedHidden[item.path] = item.hidden }
+    }
+  }
+
+  private func listSelection(pages: [WorktreePage]) -> Binding<SidebarItem?> {
+    func rowTag(_ item: SidebarItem?) -> SidebarItem? {
+      guard case .environment(let path) = item, let row = WorktreePage.rowPath(containing: path, in: pages)
+      else { return item }
+      return .environment(row)
+    }
+    return Binding(
+      get: { rowTag(selection) },
+      set: { item in
+        if case .environment(let path) = item, pages.contains(where: { $0.id == path }), rowTag(selection) == item {
+          return
+        }
+        selection = item
+      })
+  }
+
+  private var pinned: some View {
+    VStack(spacing: Space.xs) {
+      PinnedRow(item: .overview, selection: $selection) {
+        SidebarLabel(title: "Overview", icon: "square.grid.2x2", selected: selection == .overview)
+      }
+      PinnedRow(item: .wall, selection: $selection) {
+        SidebarLabel(title: "Active Workspaces", icon: "rectangle.stack", selected: selection == .wall)
+      }
+      PinnedRow(item: .machine, selection: $selection) {
+        SidebarLabel(title: "Machines", icon: "internaldrive", selected: selection == .machine)
+        Spacer()
+        if let daemon = pressure.daemon, daemon.isRaised {
+          Image(systemName: "exclamationmark.circle.fill").iconFont(IconSize.small).foregroundStyle(Palette.warning)
+            .help(daemon.headline)
+            .accessibilityLabel(daemon.headline)
+        }
+      }
+      PinnedRow(item: .builds, selection: $selection) {
+        SidebarLabel(title: "Builds", icon: "hammer", selected: selection == .builds)
+      }
+    }
+    .padding(.horizontal, Space.md)
+    .padding(.bottom, Space.lg)
+  }
+
+  private var brand: some View {
+    HStack(spacing: Space.md) {
+      StimWordmark()
+      Spacer()
+      ViewOptionsButton(
+        projects: Array(Set(store.projectList.map(\.project) + (store.payload?.archived ?? []).map(\.sidebarProject))).sorted {
+          $0.name.lowercased() < $1.name.lowercased()
+        },
+        counts: store.sidebarStatusCounts(prefs.options), title: store.title(of:), isPresented: $showsViewOptions)
+    }
+    .padding(.horizontal, Space.xl)
+    .padding(.top, Space.lg)
+    .padding(.bottom, Space.xl)
+  }
+
+  @ViewBuilder
+  private func emptyText(_ options: SidebarOptions) -> some View {
+    HStack(spacing: Space.xs) {
+      if options.statuses.isEmpty {
+        InlineEmpty("No status selected \u{00B7}")
+        Button("Show All") { prefs.statuses = StatusFilter.encode(StatusFilter.all) }
+          .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
+      } else if options.statuses.count == 1, let status = options.statuses.first {
+        InlineEmpty("No \(status.title.lowercased()) workspaces \u{00B7}")
+        Button("Show All") { prefs.statuses = StatusFilter.encode(StatusFilter.all) }
+          .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
+      } else if options.differsFromDefaults(projects: store.projectList.map(\.project)) {
+        InlineEmpty("Nothing matches \u{00B7}")
+        Button("Reset") { prefs.reset() }.buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
+      } else {
+        InlineEmpty("No workspaces")
+      }
+    }
+    .font(.stim(.callout))
+  }
+
+  private func isExpanded(_ tree: ProjectTree) -> Binding<Bool> {
+    let root = tree.summary.project.root
+    let choices = (try? JSONDecoder().decode([String: Bool].self, from: expandedProjects)) ?? [:]
+    return Binding(
+      get: { choices[root] ?? (tree.showsOnlyArchives || tree.summary.hasActive) },
+      set: { expanded in
+        var updated = choices
+        updated[root] = expanded
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+          expandedProjects = (try? JSONEncoder().encode(updated)) ?? expandedProjects
+        }
+      })
+  }
+}
+
+struct SidebarLabel: View {
+  var title: String
+  var icon: String
+  var selected: Bool
+
+  var body: some View {
+    Label {
+      Text(title)
+        .font(.stim(.callout, weight: selected ? .semibold : .regular))
+        .foregroundStyle(selected ? Palette.primary : Palette.text)
+        .lineLimit(1)
+    } icon: {
+      Image(systemName: icon)
+        .font(.system(size: 14, weight: selected ? .semibold : .regular))
+        .foregroundStyle(selected ? Palette.primary : Palette.secondary)
+        .frame(width: 20)
+    }
+  }
+}
+
+private struct PinnedRow<Content: View>: View {
+  var item: SidebarItem
+  @Binding var selection: SidebarItem?
+  @ViewBuilder var content: Content
+
+  var body: some View {
+    Button {
+      selection = item
+    } label: {
+      HStack(spacing: Space.md) { content }
+        .padding(.horizontal, Space.lg)
+        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+    }
+    .buttonStyle(.hoverRow(selected: selection == item))
+    .accessibilityAddTraits(selection == item ? .isSelected : [])
+  }
+}
+
+struct ProjectRow: View {
+  @ObservedObject var store: StatusStore
+  var summary: ProjectSummary
+  var selected: Bool
+  @EnvironmentObject private var actions: ActionCenter
+  @State private var confirmingStopAll = false
+
+  var body: some View {
+    HStack(spacing: Space.md) {
+      Image(systemName: "folder")
+        .foregroundStyle(selected || summary.hasActive ? Palette.primary : Palette.tertiary)
+        .accessibilityHidden(true)
+      Text(store.title(of: summary.project))
+        .font(.stim(.callout, weight: .medium))
+        .lineLimit(1)
+        .truncationMode(.middle)
+      Spacer()
+      if summary.live == 0, summary.settingUp > 0 {
+        Text("\(summary.settingUp) new").font(.stim(.caption)).foregroundStyle(Palette.accent).fixedSize()
+          .help("\(countLabel(summary.settingUp, "workspace")) warming or warmed, none active yet")
+      } else if summary.live == 0 {
+        Text("\(summary.total)").font(.stim(.caption)).foregroundStyle(Palette.tertiary).fixedSize()
+          .help("\(countLabel(summary.total, "workspace")), none active")
+      }
+    }
+    .contextMenu {
+      WorkspaceActionsMenu(
+        kind: .project, path: summary.project.root, busy: false, removalAllowed: true,
+        onStopAllLiveWorkspaces: { confirmingStopAll = true })
+    }
+    .confirmationDialog(
+      "Stop Every Active Workspace in \(summary.project.name)?", isPresented: $confirmingStopAll,
+      titleVisibility: .visible
+    ) {
+      Button("Run stim stop", role: .destructive) {
+        let live = store.environments(in: summary.project).filter(\.live)
+        actions.run(
+          "Stop \(summary.project.name)", steps: live.map { StimCommand(["stop"], cwd: $0.path) },
+          key: "project:\(summary.project.root)")
+      }
+    } message: {
+      Text("This also ends any billable EAS Simulator sessions those workspaces hold.")
+    }
+  }
+}
+
+struct EntryRow: View {
+  let prefs = SidebarPreferences()
+  var entry: SidebarEntry
+  var subtitle: String?
+  var showsFolder: Bool
+  var showsGit: Bool
+  var selection: SidebarItem?
+  var openLogs: (String) -> Void
+  #if DEBUG
+    @Environment(\.fixtureDate) private var fixtureDate
+  #else
+    private var fixtureDate: Date? { nil }
+  #endif
+
+  var body: some View {
+    switch entry {
+    case .archived(let archive):
+      TimelineView(.everyMinute) { context in
+        ArchivedRow(
+          archive: archive, now: fixtureDate ?? context.date, subtitle: subtitle, showsGit: showsGit,
+          isHidden: prefs.hiddenWorkspaces.archives.contains(archive.id))
+      }
+      .sidebarTag(.archived(archive.id), selection: selection)
+      .contextMenu {
+        let isHidden = prefs.hiddenWorkspaces.archives.contains(archive.id)
+        Button(isHidden ? "Unhide" : "Hide", systemImage: isHidden ? "eye" : "eye.slash") {
+          prefs.setHidden(!isHidden, archives: [archive.id])
+        }
+      }
+    case .archivedGroup(let archives):
+      let apps = archives.map { ArchivedPage(archive: $0, now: Date()).workspace }
+      let page = WorktreePage.groups(environments: apps)[0]
+      DisclosureGroup {
+        ForEach(archives) { archive in
+          TimelineView(.everyMinute) { context in
+            ArchivedRow(archive: archive, now: fixtureDate ?? context.date, showsGit: showsGit)
+          }.sidebarTag(.archived(archive.id), selection: selection)
+        }
+      } label: {
+        SidebarWorktreeRow(
+          page: page, subtitle: subtitle, showsGit: showsGit, selection: selection,
+          openLogs: openLogs, archives: archives)
+      }
+    case .workspace(let env):
+      WorkspaceRow(
+        env: env, place: place(env.names), showsGit: showsGit, selection: selection, openLogs: openLogs)
+    case .worktreeGroup(let page):
+      SidebarWorktreeRow(page: page, subtitle: subtitle, showsGit: showsGit, selection: selection, openLogs: openLogs)
+    case .worktree(let worktree):
+      NoEnvironmentRow(worktree: worktree, place: subtitle.map { [$0] } ?? [], showsGit: showsGit, selection: selection)
+    }
+  }
+
+  private func place(_ names: PathNames) -> [String] {
+    [subtitle, showsFolder ? names.inCheckout : nil].compactMap { $0 }.filter { $0 != names.title }
+  }
+}
+
+struct WorkspaceRow: View {
+  var env: Workspace
+  var place: [String]
+  var showsGit: Bool
+  var selection: SidebarItem?
+  var openLogs: (String) -> Void
+  @Environment(\.tutorialHint) private var tutorialHint
+  let prefs = SidebarPreferences()
+
+  var body: some View {
+    let isHidden = prefs.hiddenWorkspaces.contains(.workspace(env))
+    WorkspaceActions(env: env, openLogs: openLogs) { menu in
+      TimelineView(.everyMinute) { _ in
+        WorkspaceRowContent(env: env, now: Date(), place: place, showsGit: showsGit, openLogs: openLogs, isHidden: isHidden)
+      }
+      .tutorialGlowInPlace(tutorialHint, .sidebarRow, workspaces: [env.path])
+      .sidebarTag(.environment(env.path), selection: selection)
+      .contextMenu { menu }
+    }
+  }
+}
+
+struct WorkspaceRowContent: View {
+  var env: Workspace
+  var now: Date
+  var place: [String]
+  var showsGit: Bool
+  var openLogs: ((String) -> Void)?
+  var archive: ArchivedPage? = nil
+  var isHidden = false
+  var owner: ServerOwner = .local
+
+  var body: some View {
+    let status = archive?.rowStatus ?? env.rowStatus(now: now)
+    let sessions = AgentSession.associated(agents: env.agents, endedAgents: env.endedAgents)
+    let live = env.isActive
+    HStack(alignment: .top, spacing: Space.md) {
+      StatusDot(color: Color(status.tone), filled: live)
+        .padding(.top, Space.sm - 1)
+      VStack(alignment: .leading, spacing: Space.xs) {
+        RowTitleLine(
+          title: env.names.title, titleColor: live ? Palette.text : Palette.secondary, status: status.text,
+          statusColor: Color(status.tone), isHidden: isHidden)
+        if let archive {
+          RowDetailLine(
+            context: RowDetailLine.joined(
+              (place + [archive.record.removedLabel(now: now), archive.sizeLabel]).map {
+                Text($0).foregroundStyle(Palette.tertiary)
+              }), git: nil)
+          ArchiveRowFacts(page: archive, showsGit: showsGit)
+        } else {
+          if let session = sessions.first {
+            SessionLine(session: session, others: sessions.count - 1)
+          }
+          RowDetailLine(context: context(env.rowDevices(now: now)), git: showsGit ? GitChip(env.worktree) : nil)
+        }
+        if archive == nil {
+          ForEach(env.orderedDevices.map { OwnedDevice(owner: owner, ref: $0) }.filter { $0.placementBadge != nil }) {
+            device in
+            if let badge = device.placementBadge { PlacementBadgeView(badge: badge) }
+          }
+        }
+      }
+    }
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(
+      archive.map {
+        [env.names.title, $0.statusLine, $0.sizeLabel, $0.pullRequestLabel, $0.expiryLabel]
+          .compactMap { $0 }.joined(separator: ", ")
+      }
+        ?? env.rowLabel(now: now, folder: place.isEmpty ? nil : place.joined(separator: ", "), showsGit: showsGit)
+    )
+    .accessibilityActions {
+      if let openLogs, archive == nil && (env.logs?.errorsSinceMarker ?? 0) > 0 {
+        Button("Show Errors") { openLogs(env.path) }
+      }
+    }
+  }
+
+  private func context(_ devices: RowDevices) -> Text? {
+    var parts: [Text] = []
+    if env.pathMissing == true, !env.isActive {
+      parts.append(Text("Run \(env.removalCommand) to drop it").foregroundStyle(Palette.warning))
+    }
+    if let names = devices.names { parts.append(Text(names).foregroundStyle(Palette.secondary)) }
+    if let drivers = devices.drivers {
+      parts.append(Text("\(Image(systemName: "cursorarrow.rays")) \(drivers)").foregroundStyle(Palette.primary))
+    }
+    if let idle = devices.idle { parts.append(Text(idle.text).foregroundStyle(Palette.tertiary)) }
+    if devices.remote > 0 {
+      let text = devices.remote == 1 ? "EAS session" : "\(devices.remote) EAS sessions"
+      parts.append(Text(text).foregroundStyle(Palette.info))
+    }
+    parts += place.map { Text($0).foregroundStyle(Palette.tertiary) }
+    return RowDetailLine.joined(parts)
+  }
+}
+
+struct NoEnvironmentRow: View {
+  var worktree: UnprovisionedWorktree
+  var place: [String]
+  var showsGit: Bool
+  var selection: SidebarItem?
+  @EnvironmentObject private var actions: ActionCenter
+  @State private var removal: WorktreeRemoval?
+  let prefs = SidebarPreferences()
+
+  var body: some View {
+    let names = worktree.names
+    let isHidden = prefs.hiddenWorkspaces.paths.contains(worktree.path)
+    let git = showsGit ? GitChip(worktree.info) : nil
+    HStack(alignment: .top, spacing: Space.md) {
+      StatusDot(color: Palette.tertiary, filled: false)
+        .padding(.top, Space.sm - 1)
+      VStack(alignment: .leading, spacing: Space.xs) {
+        RowTitleLine(
+          title: names.title, titleColor: Palette.secondary, status: "Not set up", statusColor: Palette.tertiary,
+          isHidden: isHidden)
+        RowDetailLine(
+          context: RowDetailLine.joined(place.map { Text($0).foregroundStyle(Palette.tertiary) }), git: git)
+      }
+    }
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(([names.title, "Not set up", git?.label].compactMap { $0 } + place).joined(separator: ", "))
+    .sidebarTag(.worktree(worktree.path), selection: selection)
+    .contextMenu {
+      WorkspaceActionsMenu(
+        kind: .worktree,
+        path: worktree.path,
+        busy: actions.active(for: worktree.path) != nil,
+        removalAllowed: worktreeRemovalAllowed(git: worktree.git),
+        onWarmWorktree: {
+          actions.run("Warm \(names.title)", StimCommand(["worktree", "warm"], cwd: worktree.path))
+        },
+        onRemoveWorktree: { resolveRemovalBranch(at: worktree.path) { removal = WorktreeRemoval(branch: $0) } },
+        hidden: isHidden, canHide: actions.active(for: worktree.path) == nil,
+        onToggleHidden: { prefs.setHidden(!isHidden, path: worktree.path) })
+    }
+    .confirmationDialog(
+      "Remove This Worktree?",
+      isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
+      titleVisibility: .visible,
+      presenting: removal
+    ) { _ in
+      Button("Run stim worktree remove", role: .destructive) {
+        actions.run("Remove \(names.title)", StimCommand(["worktree", "remove"], cwd: worktree.path))
+      }
+    } message: { removal in
+      Text(worktreeRemovalMessage(path: worktree.path, branch: removal.branch))
+    }
+  }
+}
+
+/// AppKit draws the selected source-list row as emphasized, which turns its disclosure chevron white on the
+/// light `Palette.selection` background. The row background already marks the selection.
+struct PlainSelectionHighlight: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSView { NSView() }
+
+  func updateNSView(_ view: NSView, context: Context) {
+    DispatchQueue.main.async {
+      var ancestor = view.superview
+      while let current = ancestor, !(current is NSTableView) { ancestor = current.superview }
+      (ancestor as? NSTableView)?.selectionHighlightStyle = .none
+    }
+  }
+}
+
+extension View {
+  func sidebarTag(_ item: SidebarItem, selection: SidebarItem?) -> some View {
+    modifier(SidebarRowBackground(item: item, selection: selection))
+  }
+}
+
+private struct SidebarRowBackground: ViewModifier {
+  var item: SidebarItem
+  var selection: SidebarItem?
+  @State private var hovering = false
+
+  func body(content: Content) -> some View {
+    content
+      .contentShape(Rectangle())
+      .onHover { hovering = $0 }
+      .tag(item)
+      .listRowBackground(
+        item == selection || hovering
+          ? HoverFill(hovering: hovering, selected: item == selection).padding(.horizontal, Space.md)
+          : nil)
+  }
+}
+
+/// The hand-lettered "Stim" wordmark, tinted to `Palette.primary` for both appearances.
+struct StimWordmark: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var wiggles = 0
+
+  var body: some View {
+    if let wordmark = BrandAssets.wordmark {
+      Image(nsImage: wordmark)
+        .resizable()
+        .renderingMode(.template)
+        .aspectRatio(contentMode: .fit)
+        .frame(height: 22)
+        .foregroundStyle(Palette.primary)
+        .keyframeAnimator(initialValue: Wiggle(), trigger: wiggles) { content, value in
+          content.rotationEffect(.degrees(value.angle)).scaleEffect(value.scale)
+        } keyframes: { _ in
+          KeyframeTrack(\.angle) {
+            CubicKeyframe(-6, duration: 0.1)
+            CubicKeyframe(5, duration: 0.1)
+            CubicKeyframe(-3, duration: 0.1)
+            CubicKeyframe(1.5, duration: 0.1)
+            CubicKeyframe(0, duration: 0.1)
+          }
+          KeyframeTrack(\.scale) {
+            CubicKeyframe(1.06, duration: 0.15)
+            SpringKeyframe(1, duration: 0.35)
+          }
+        }
+        .onHover { inside in
+          if inside && !reduceMotion { wiggles += 1 }
+        }
+        .accessibilityLabel("Stim")
+    }
+  }
+
+  private struct Wiggle {
+    var angle = 0.0
+    var scale = 1.0
+  }
+}
+
+struct HiddenIndicator: View {
+  var body: some View {
+    Image(systemName: "eye.slash").iconFont(IconSize.small).foregroundStyle(Palette.tertiary)
+      .help("Hidden").accessibilityLabel("Hidden")
+  }
+}
+
+struct HiddenWorkspacesFooter: View {
+  var count: Int
+  var showing: Bool
+  var toggle: () -> Void
+
+  var body: some View {
+    if count > 0 {
+      HStack(spacing: Space.xs) {
+        Text(showing ? "\(count) hidden shown" : "\(count) hidden").foregroundStyle(Palette.tertiary)
+        Text("\u{00B7}").foregroundStyle(Palette.tertiary).accessibilityHidden(true)
+        Button(showing ? "Hide again" : "Show", action: toggle)
+          .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
+          .accessibilityLabel(showing ? "Hide hidden workspaces again" : "Show \(count) hidden workspaces")
+        Spacer(minLength: 0)
+      }
+      .font(.stim(.caption))
+      .padding(.horizontal, Space.xl)
+      .padding(.vertical, Space.sm)
+      .background(Palette.sidebar)
+    }
+  }
+}

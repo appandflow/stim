@@ -1,0 +1,538 @@
+import { watchHostedMetro } from './hosted-metro.ts';
+import { existsSync, realpathSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { clearSupervisor, setSupervisor } from '../workspace/config.ts';
+import { LOG_ROTATE_BYTES } from '@stim-cli/core';
+import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
+import { captureProcessToken } from '../process-identity.ts';
+import { detectIsExpo } from '../workspace/project.ts';
+import { nativeProjectIntegration } from '../integrations/projects.ts';
+import { resolveProjectSettings, runnableMetroCommand, type SettingsObject } from '../workspace/settings.ts';
+import type { ServerHandle, ServerStarter } from './types.ts';
+
+export type { ServerExitInfo } from './types.ts';
+import { describeError } from './errors.ts';
+import { relaunchWithLogFile } from '../detached-entry.ts';
+import { MODE_COMMAND, MODE_EXPO, clearExpoMetroTunnel, clearWorkspaceSupervisor, writePidFile } from './state.ts';
+import {
+  clearWorkspaceStateKeys,
+  writeWorkspaceState,
+  readWorkspaceState,
+  withWorkspaceStateLock,
+} from '../workspace/workspace-state.ts';
+import {
+  DEVICE_METRO_IDLE_STOP_REASON,
+  DEV_SERVER_STOP_REQUEST_KEY,
+  IDLE_STOP_KEY,
+  readDevServerStopRequest,
+  type DevServerStopRecord,
+} from '@stim-cli/core/state';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import {
+  trackDevServerActivity,
+  watchIdleDevices,
+  watchIdleDevServer,
+  workspaceIdleProbe,
+  type IdleProbe,
+} from './idle-stop.ts';
+import { workspaceDeviceLastUseAt } from '../devices/activity.ts';
+import { dueIdleDevices, shutDownIdleDevices as shutDownWorkspaceIdleDevices } from '../devices/idle-shutdown.ts';
+import { withIdleWorkspace } from '../workspace/in-use.ts';
+import {
+  describeDevServerStop,
+  devServerStopLevel,
+  devServerStopRecord,
+  vanishedSupervisorMessage,
+  type SupervisorExitTrigger,
+} from './stop-cause.ts';
+import { trackMetroWatchRoots } from './watchman-roots.ts';
+import { daemonClaimHeld } from '../daemon/client.ts';
+import { liveShareKeepReason } from '../local-server.ts';
+import { runWatchman, type WatchmanCommand } from '../watchman.ts';
+
+export {
+  MODE_BARE,
+  MODE_EXPO,
+  clearExpoMetroTunnel,
+  clearWorkspaceSupervisor,
+  readPidFile,
+  writePidFile,
+} from './state.ts';
+
+interface ParsedSupervisorArgs {
+  root?: string;
+  port?: number;
+  tunnel?: boolean;
+  resetCache?: boolean;
+  idleStopMinutes?: number;
+  deviceIdleMinutes?: number;
+  error?: string;
+}
+
+const USAGE =
+  'Usage: run.js --root <path> --port <n> [--tunnel] [--reset-cache] [--idle-stop-minutes <n>] [--device-idle-minutes <n>]';
+
+export function parseArgs(argv: string[]): ParsedSupervisorArgs {
+  let root: string | undefined;
+  let port: string | undefined;
+  let tunnel = false;
+  let resetCache = false;
+  let idleStopMinutes = '0';
+  let deviceIdleMinutes = '0';
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--root') {
+      root = argv[++i];
+      continue;
+    }
+    if (arg === '--port') {
+      port = argv[++i];
+      continue;
+    }
+    if (arg === '--tunnel') {
+      tunnel = true;
+      continue;
+    }
+    if (arg === '--reset-cache') {
+      resetCache = true;
+      continue;
+    }
+    if (arg === '--idle-stop-minutes') {
+      idleStopMinutes = argv[++i] ?? '';
+      continue;
+    }
+    if (arg === '--device-idle-minutes') {
+      deviceIdleMinutes = argv[++i] ?? '';
+      continue;
+    }
+    return { error: `Unknown supervisor argument "${arg}". ${USAGE}` };
+  }
+  if (!root) return { error: `Missing --root. ${USAGE}` };
+  if (!isAbsolute(root)) return { error: `--root must be an absolute path, got "${root}".` };
+  const parsedPort = Number(port);
+  if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
+    return { error: `--port must be a TCP port number, got "${port}".` };
+  }
+  for (const [flag, value] of [
+    ['--idle-stop-minutes', idleStopMinutes],
+    ['--device-idle-minutes', deviceIdleMinutes],
+  ]) {
+    if (!/^\d+$/.test(value!)) return { error: `${flag} must be a whole number of minutes, got "${value}".` };
+  }
+  return {
+    root: resolve(root),
+    port: parsedPort,
+    tunnel,
+    resetCache,
+    idleStopMinutes: Number(idleStopMinutes),
+    deviceIdleMinutes: Number(deviceIdleMinutes),
+  };
+}
+
+export interface DeviceIdleOps {
+  due: typeof dueIdleDevices;
+  shutDown: typeof shutDownWorkspaceIdleDevices;
+}
+
+const DEVICE_IDLE_OPS: DeviceIdleOps = { due: dueIdleDevices, shutDown: shutDownWorkspaceIdleDevices };
+
+export interface RunSupervisorOptions {
+  root: string;
+  port: number;
+  tunnel?: boolean;
+  resetCache?: boolean;
+  idleStopMinutes?: number;
+  idleProbe?: IdleProbe;
+  deviceIdleMinutes?: number;
+  deviceIdle?: DeviceIdleOps;
+  isExpo?: (projectRoot: string) => boolean;
+  startBare?: ServerStarter | null;
+  startExpo?: ServerStarter | null;
+  startCommand?:
+    | ((opts: Parameters<ServerStarter>[0] & { command: readonly string[] }) => Promise<ServerHandle>)
+    | null;
+  settings?: SettingsObject | null;
+  now?: () => number;
+  onExit?: (code: number) => void;
+  attachSignals?: boolean;
+  stderr?: (line: string) => void;
+  watchman?: WatchmanCommand;
+  /** Whether a stim-daemon holds this home's claim; the supervisor's own idle timers act only while none does. */
+  daemonHeld?: () => boolean;
+}
+
+export async function runSupervisor({
+  root,
+  port,
+  tunnel = false,
+  resetCache = false,
+  idleStopMinutes = 0,
+  idleProbe,
+  deviceIdleMinutes = 0,
+  deviceIdle = DEVICE_IDLE_OPS,
+  isExpo = detectIsExpo,
+  startBare = null,
+  startExpo = null,
+  startCommand = null,
+  settings: settingsOverride = null,
+  now = Date.now,
+  onExit = (code: number) => process.exit(code),
+  attachSignals = true,
+  stderr = (line: string) => console.error(line),
+  watchman = runWatchman,
+  daemonHeld = daemonClaimHeld,
+}: RunSupervisorOptions): Promise<{
+  mode: string;
+  server: ServerHandle | undefined;
+  shutdown: (code: number, event: string, msg: string, stop?: DevServerStopRecord) => Promise<void>;
+  startedAt: string;
+} | null> {
+  root = realpathSync(root);
+  const logsDir = workspaceLogsDir(root);
+  const writer = createNdjsonWriter(join(logsDir, 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+  const integration = nativeProjectIntegration(root, isExpo);
+  const settings = settingsOverride ?? resolveProjectSettings(root).settings;
+  const command = runnableMetroCommand(settings);
+  const mode = command ? MODE_COMMAND : integration.mode;
+  const startedAt = new Date(now()).toISOString();
+  const processToken = captureProcessToken(process.pid);
+  if (!processToken) {
+    stderr('Stim supervisor: could not capture process identity; refusing to start an unmanaged server.');
+    writer.close();
+    onExit(1);
+    return null;
+  }
+  const record = { pid: process.pid, processToken, port, mode, startedAt };
+  const vanished = vanishedSupervisorMessage(readWorkspaceState(root)?.supervisor);
+  if (vanished) writer.write({ src: 'metro', level: 'warn', event: 'supervisor_vanished', msg: vanished });
+
+  clearExpoMetroTunnel(root);
+  writePidFile(root, process.pid);
+  writeWorkspaceState(root, { supervisor: record });
+  clearWorkspaceStateKeys(root, [IDLE_STOP_KEY]);
+  try {
+    setSupervisor(root, record);
+  } catch (err) {
+    writer.write({
+      src: 'metro',
+      level: 'warn',
+      event: 'supervisor_registration_failed',
+      msg: `Could not record the supervisor in the global config: ${describeError(err)}`,
+    });
+    stderr(`Stim supervisor: global registration failed: ${describeError(err)}`);
+  }
+
+  writer.write({
+    src: 'metro',
+    level: 'info',
+    event: 'supervisor_started',
+    msg: `supervisor pid ${process.pid} starting the ${mode} dev server on port ${port} for ${root}`,
+  });
+
+  let stopping = false;
+  let stopWatchingIdle: (() => void) | null = null;
+  let stopWatchingDevices: (() => void) | null = null;
+  let closeHostedMetro: (() => Promise<void>) | null = null;
+  const stopCause = (trigger: SupervisorExitTrigger): DevServerStopRecord => {
+    const request = readDevServerStopRequest(readWorkspaceState(root));
+    return devServerStopRecord(
+      trigger,
+      request?.processToken === processToken ? request : null,
+      new Date(now()).toISOString(),
+    );
+  };
+  const finish = (code: number, event: string, level: string, msg: string, stop?: DevServerStopRecord) => {
+    stopWatchingIdle?.();
+    stopWatchingDevices?.();
+    writer.write({ src: 'metro', level, event, msg, ...(stop ? { stop } : {}) });
+    try {
+      withWorkspaceStateLock(root, () => {
+        const current = readWorkspaceState(root)?.supervisor;
+        if (current && current.processToken !== processToken) return;
+        if (stop) writeWorkspaceState(root, { [IDLE_STOP_KEY]: stop });
+        clearWorkspaceStateKeys(root, [DEV_SERVER_STOP_REQUEST_KEY]);
+      });
+    } catch {}
+    try {
+      clearSupervisor(root, record);
+    } catch {}
+    try {
+      clearWorkspaceSupervisor(root, record);
+    } catch {}
+    const closed = writer.close();
+    if (closed.dropped > 0) {
+      stderr(
+        `Stim supervisor: dropped ${closed.dropped} log record(s); last error: ${describeError(closed.lastError)}`,
+      );
+    }
+    onExit(code);
+  };
+
+  let server: ServerHandle | undefined;
+  const watchRoots = trackMetroWatchRoots({ workspaceRoot: root, writer, watchman });
+  const shutdown = async (code: number, event: string, msg: string, stop?: DevServerStopRecord) => {
+    if (stopping || !server) return;
+    stopping = true;
+    await watchRoots.beforeClose();
+    try {
+      await server.close();
+    } catch (err) {
+      writer.write({ src: 'metro', level: 'warn', event: 'server_close_failed', msg: describeError(err) });
+      stopping = false;
+      return;
+    }
+    await closeHostedMetro?.();
+    stopWatchingIdle?.();
+    stopWatchingDevices?.();
+    await watchRoots.afterClose();
+    finish(code, event, stop ? devServerStopLevel(stop) : code === 0 ? 'info' : 'error', msg, stop);
+  };
+
+  if (attachSignals) {
+    for (const signal of ['SIGTERM', 'SIGINT']) {
+      process.on(signal, () => {
+        if (server) {
+          const stop = stopCause({ kind: 'signal', signal });
+          shutdown(0, 'supervisor_stopped', `stopping the ${mode} dev server: ${describeDevServerStop(stop)}`, stop);
+          return;
+        }
+        // Node runs signal listeners from the event loop, and startExpoServer spawns and returns
+        // without awaiting, so a listener that finds no server runs before any child exists.
+        if (stopping) return;
+        stopping = true;
+        const stop = stopCause({ kind: 'signal', signal });
+        finish(
+          signal === 'SIGINT' ? 130 : 143,
+          'supervisor_stopped',
+          'warn',
+          `stopping before the ${mode} dev server started: ${describeDevServerStop(stop)}`,
+          stop,
+        );
+      });
+    }
+  }
+
+  const serverActivity = trackDevServerActivity(now);
+  const serverWriter: NdjsonWriter = Object.assign(Object.create(writer) as NdjsonWriter, {
+    write(entry: unknown) {
+      serverActivity.record(entry);
+      return writer.write(entry);
+    },
+  });
+
+  try {
+    let start: ServerStarter;
+    if (command) {
+      const startServer = startCommand ?? (await import('./server-command.ts')).startCommandServer;
+      start = (opts) => startServer({ ...opts, command });
+    } else {
+      start = (mode === MODE_EXPO ? startExpo : startBare) ?? (await integration.loadDevServer());
+    }
+    server = await start({
+      root,
+      port,
+      logsDir,
+      writer: serverWriter,
+      tunnel,
+      resetCache,
+      settings,
+      onTunnelUrl: (url: string) => {
+        try {
+          withWorkspaceStateLock(root, () => {
+            if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
+              writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url } });
+            }
+          });
+        } catch (err) {
+          stderr(`Stim supervisor: could not record the Expo tunnel URL: ${describeError(err)}`);
+        }
+        writer.write({ src: 'metro', level: 'info', event: 'expo_tunnel_ready', msg: `Expo tunnel ready: ${url}` });
+      },
+    });
+  } catch (err) {
+    if (stopping) return null;
+    stderr(`Stim supervisor: failed to start the ${mode} dev server: ${describeError(err)}`);
+    finish(1, 'supervisor_failed', 'fatal', `failed to start the ${mode} dev server: ${describeError(err)}`);
+    return null;
+  }
+
+  if (stopping) {
+    try {
+      await server.close();
+    } catch {}
+    return null;
+  }
+
+  const serverPid = server.serverPid;
+  const hmrUpdates = server.observesRequests === true;
+  if (serverPid || hmrUpdates) {
+    const serverProcessToken = serverPid ? captureProcessToken(serverPid) : null;
+    withWorkspaceStateLock(root, () => {
+      if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
+        writeWorkspaceState(root, {
+          supervisor: {
+            ...record,
+            ...(serverPid ? { serverPid, ...(serverProcessToken ? { serverProcessToken } : {}) } : {}),
+            ...(hmrUpdates ? { hmrUpdates } : {}),
+          },
+        });
+      }
+    });
+  }
+  watchRoots.started(serverPid ?? process.pid);
+  writer.write({
+    src: 'metro',
+    level: 'info',
+    event: 'server_started',
+    msg: `${mode} dev server listening on port ${port}`,
+  });
+
+  closeHostedMetro = watchHostedMetro(root, port, processToken);
+  const deviceIdleMs = deviceIdleMinutes * 60_000;
+  const requestsVisible = mode !== MODE_COMMAND && hmrUpdates;
+
+  if (deviceIdleMinutes > 0 && requestsVisible) {
+    stopWatchingDevices = watchIdleDevices({
+      idleMs: deviceIdleMs,
+      now,
+      lastUseAt: () => workspaceDeviceLastUseAt(root),
+      hasDue: () => deviceIdle.due(root, deviceIdleMs).length > 0,
+      onDue: async () => {
+        if (daemonHeld() || (await liveShareKeepReason(root))) return;
+        try {
+          await withIdleWorkspace(
+            root,
+            async () => {
+              if (!stopping && !(await liveShareKeepReason(root)))
+                await deviceIdle.shutDown(root, deviceIdleMs, (entry) => writer.write({ src: 'metro', ...entry }));
+            },
+            { purpose: 'device idle shutdown', supervisor: false, managedLocks: false },
+          );
+        } catch (err) {
+          stderr(`Stim supervisor: could not shut down idle devices: ${describeError(err)}`);
+        }
+      },
+    });
+  }
+
+  if (idleStopMinutes > 0 && requestsVisible) {
+    stopWatchingIdle = watchIdleDevServer({
+      idleStopMs: idleStopMinutes * 60_000,
+      now,
+      serverActivityAt: serverActivity.lastActivityAt,
+      probe: idleProbe ?? workspaceIdleProbe(root),
+      onIdle: async (idleMinutesNow) => {
+        if (daemonHeld()) return;
+        const stopIfStillIdle = async () => {
+          const idleMinutes = await idleMinutesNow();
+          if (stopping || idleMinutes === null) return;
+          const devices: string[] = [];
+          if (deviceIdleMinutes > 0) {
+            try {
+              await deviceIdle.shutDown(
+                root,
+                Math.min(deviceIdleMs, idleStopMinutes * 60_000),
+                (entry) => {
+                  writer.write({ src: 'metro', ...entry });
+                  devices.push(entry.msg);
+                },
+                now(),
+                { reason: DEVICE_METRO_IDLE_STOP_REASON, kept: (line) => devices.push(line) },
+              );
+            } catch (err) {
+              stderr(`Stim supervisor: could not shut down idle devices: ${describeError(err)}`);
+            }
+          } else devices.push('idle.minutes is 0 for devices, so no device was shut down');
+          const stop = { reason: 'idle' as const, at: new Date(now()).toISOString(), idleMinutes };
+          withWorkspaceStateLock(root, () => {
+            if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
+              writeWorkspaceState(root, { [IDLE_STOP_KEY]: stop });
+            }
+          });
+          await shutdown(
+            0,
+            'supervisor_idle_stopped',
+            `no Metro request or Stim command for ${idleMinutes} minutes (idle.minutes is ${idleStopMinutes}) and no stim-daemon running; stopped the ${mode} dev server${devices.map((line) => `; ${line}`).join('')}`,
+            stop,
+          );
+        };
+        try {
+          await withIdleWorkspace(
+            root,
+            () =>
+              withWorkspaceProcessLock(dirname(logsDir), 'metro-start', stopIfStillIdle, {
+                external: true,
+                waitMs: 0,
+                ownerPurpose: 'idle stop',
+              }),
+            { purpose: 'idle stop', supervisor: false, managedLocks: false },
+          );
+        } catch (err) {
+          stderr(`Stim supervisor: could not stop the idle dev server: ${describeError(err)}`);
+        }
+      },
+    });
+  }
+
+  server.onExit?.((info) => {
+    if (stopping) return;
+    const stop = stopCause({ kind: 'server-exit', mode, code: info?.code ?? null, signal: info?.signal ?? null });
+    shutdown(
+      stop.reason === 'requested' ? 0 : 1,
+      'supervisor_stopped',
+      stop.reason === 'requested'
+        ? `the ${mode} dev server exited; ${describeDevServerStop(stop)}`
+        : `${describeDevServerStop(stop)}; shutting the supervisor down`,
+      stop,
+    );
+  });
+
+  return { mode, server, shutdown, startedAt };
+}
+
+export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+  if (relaunchWithLogFile(argv)) return;
+  const parsed = parseArgs(argv);
+  if (parsed.error) {
+    console.error(`Stim supervisor: ${parsed.error}`);
+    process.exit(2);
+    return;
+  }
+  const root = parsed.root as string;
+  if (!existsSync(root)) {
+    console.error(`Stim supervisor: --root ${root} does not exist.`);
+    process.exit(2);
+    return;
+  }
+  try {
+    process.chdir(root);
+  } catch {}
+  process.title = 'stim-supervisor';
+  await runSupervisor({
+    root,
+    port: parsed.port as number,
+    tunnel: parsed.tunnel ?? false,
+    resetCache: parsed.resetCache ?? false,
+    idleStopMinutes: parsed.idleStopMinutes ?? 0,
+    deviceIdleMinutes: parsed.deviceIdleMinutes ?? 0,
+  });
+}
+
+function invokedDirectly(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return resolve(entry) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+if (invokedDirectly()) {
+  main().catch((err) => {
+    console.error(`Stim supervisor: ${describeError(err)}`);
+    process.exit(1);
+  });
+}

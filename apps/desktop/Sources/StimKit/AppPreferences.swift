@@ -1,0 +1,244 @@
+import Foundation
+
+/// Stim Desktop's own preferences. They live in `UserDefaults`, never in Stim's config.
+public enum AppPreferences {
+  public enum Key {
+    public static let appearance = "appearance"
+    public static let showsIdleWorkspaces = "showsIdleWorkspaces"
+    public static let hidesUnprovisionedWorktrees = "hidesUnprovisionedWorktrees"
+    public static let sidebarStatus = "sidebar.status"
+    public static let sidebarStatuses = "sidebar.statuses"
+    public static let hiddenProjects = "sidebar.hiddenProjects"
+    public static let hiddenWorkspaces = "sidebar.hiddenWorkspaces"
+    public static let sidebarGrouping = "sidebar.grouping"
+    public static let sidebarSort = "sidebar.sort"
+    public static let showsGitStatus = "sidebar.showsGitStatus"
+    public static let showsEmptyProjects = "sidebar.showsEmptyProjects"
+    public static let expandedProjects = "sidebar.expandedProjects"
+    public static let defaultView = "defaultView"
+    public static let lastProjectPath = "lastProjectPath"
+    public static let dismissedStimUpdate = "dismissedStimUpdate"
+    /// Whether Sparkle also offers the `next` channel's prerelease builds. Unset follows `UpdateChannel.prereleaseUpdatesDefault`.
+    public static let prereleaseUpdates = "updates.prerelease"
+    public static let tileSize = "tileSize"
+    /// Whether Active Workspaces, the Overview and Builds also list paired machines' workspaces; a `MachineScope`.
+    public static let machineScope = "machineScope"
+    public static let maxFramesPerSecond = "maxFramesPerSecond"
+    public static let streamQuality = "streamQuality"
+    public static let pausesHiddenFrames = "pausesHiddenFrames"
+    public static let editorBundleID = "editorBundleID"
+    public static let terminalBundleID = "terminalBundleID"
+    public static let diffViewer = "diffViewer"
+    public static let showsMenuBarExtra = "showsMenuBarExtra"
+    public static let remoteSessionMinutes = "remoteSessionMinutes"
+    public static let notifiesDiskPressure = "notify.diskPressure"
+    public static let servesPhones = "servesPhones"
+    public static let updatesBuildMachines = "updatesBuildMachines"
+    public static let stimServerExecutable = "stimServerExecutable"
+    /// The loopback port Stim Desktop runs or looks for stim-server on; unset means 7787. Set only with `defaults write`.
+    public static let stimServerPort = "stimServerPort"
+    /// The Stim home before Settings held one; `migrate` moves it into `stimHome` once.
+    static let lastLoginStimHome = "lastLoginStimHome"
+    /// The Stim home Desktop runs Stim with. Empty or unset means `~/.stim`; a launch `STIM_HOME` wins.
+    public static let stimHome = "stimHome"
+    /// `KEY=VALUE` lines Desktop adds to the environment of every Stim command and of stim-server.
+    public static let environmentOverrides = "environmentOverrides"
+    public static let showsInspector = "showsInspector"
+    public static let showsLogs = "workspace.showsLogs"
+    public static let logsDrawerHeight = "workspace.logsDrawerHeight"
+    public static let viewerShowsActions = "viewer.showsActions"
+    public static let syncsClipboard = "viewer.syncsClipboard"
+    public static let viewerOfferDismissed = "onboarding.viewerOfferDismissed"
+    /// Turns on the verbose Desktop debug log. Set only with `defaults write dev.stim.desktop debugLogging -bool YES`.
+    public static let debugLogging = "debugLogging"
+
+    public static let tipsEnabled = "tips.enabled"
+    public static let showsWorkspaceCards = "cards.showsNewWorkspace"
+    public static let offersTutorial = "tutorial.offered"
+    public static let usageRecord = "tips.usageRecord"
+
+    public static let discoveryLaunches = "discovery.launches"
+    public static let discoveryLastShown = "discovery.lastShown"
+    /// The build peers (Macs, Linux and Windows machines) already seen. A new key, since the older `discovery.seenPeers` held only
+    /// Macs, so the first read after an upgrade records a fresh baseline instead of announcing every Linux or Windows peer.
+    public static let discoverySeenPeers = "discovery.seenBuildPeers"
+    public static let discoveryMacSuggested = "discovery.macSuggested"
+    public static let discoveryMigrations = "discovery.migrations"
+    public static func discovery(_ type: DiscoveryType) -> String { "discovery.\(type.rawValue)" }
+
+    public static func notifies(_ kind: StatusEvent.Kind) -> String { "notify.\(kind.rawValue)" }
+    public static func sectionCollapsed(_ id: String) -> String { "section.\(id).collapsed" }
+    public static func sectionShowsAll(_ id: String) -> String { "section.\(id).showsAll" }
+  }
+
+  public static func removeLegacyRunDestinations(_ defaults: UserDefaults) {
+    for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("runDestination.") {
+      defaults.removeObject(forKey: key)
+    }
+  }
+
+  public static let frameRates: [Double] = [60, 30, 15, 5]
+
+  public static var defaults: [String: Any] {
+    [
+      Key.notifiesDiskPressure: true,
+      Key.showsInspector: true,
+      Key.tipsEnabled: true,
+      Key.showsWorkspaceCards: true,
+      Key.offersTutorial: true,
+      Key.viewerShowsActions: true,
+      Key.syncsClipboard: true,
+    ].merging(NotificationSettings.defaults) { current, _ in current }
+  }
+
+  /// Carries the retired "Show idle workspaces" and "Show no-environment worktrees" switches and the single sidebar status
+  /// over to the sidebar status selection.
+  public static func migrate(_ defaults: UserDefaults) {
+    removeLegacyRunDestinations(defaults)
+    for key in [
+      "autopilot.log", "autopilot.idleShutdown", "autopilot.idleMinutes", "autopilot.nightly", "autopilot.nightlyHour",
+      "autopilot.nightlyOlderThanDays", "autopilot.pressure", "autopilot.lastNightly",
+    ] {
+      defaults.removeObject(forKey: key)
+    }
+    if let home = defaults.string(forKey: Key.lastLoginStimHome) {
+      if defaults.string(forKey: Key.stimHome) == nil, home.hasPrefix("/"), !StimHome.isDefault(home) {
+        defaults.set(home, forKey: Key.stimHome)
+      }
+      defaults.removeObject(forKey: Key.lastLoginStimHome)
+    }
+    if let showsIdle = defaults.object(forKey: Key.showsIdleWorkspaces) as? Bool {
+      if !showsIdle, defaults.string(forKey: Key.sidebarStatus) == nil {
+        defaults.set(StatusFilter.live.rawValue, forKey: Key.sidebarStatus)
+      }
+      defaults.removeObject(forKey: Key.showsIdleWorkspaces)
+    }
+    let oldStatus = defaults.object(forKey: Key.sidebarStatus)
+    let hides = defaults.object(forKey: Key.hidesUnprovisionedWorktrees)
+    if defaults.object(forKey: Key.sidebarStatuses) == nil, oldStatus != nil || hides != nil {
+      var statuses: Set<StatusFilter>
+      var showedNotSetUp = true
+      switch defaults.string(forKey: Key.sidebarStatus) {
+      case "live": (statuses, showedNotSetUp) = ([.live], false)
+      case "idle": statuses = [.idle]
+      case "archived": (statuses, showedNotSetUp) = ([.archived], false)
+      default: statuses = StatusFilter.defaultSelection
+      }
+      if showedNotSetUp, let hides = hides as? Bool, !hides { statuses.insert(.notSetUp) }
+      defaults.set(StatusFilter.encode(statuses), forKey: Key.sidebarStatuses)
+    }
+    if oldStatus != nil { defaults.removeObject(forKey: Key.sidebarStatus) }
+    if hides != nil { defaults.removeObject(forKey: Key.hidesUnprovisionedWorktrees) }
+  }
+
+  public static let olderThanDayChoices = [0, 1, 3, 7, 14, 30]
+  public static let idleShutdownMinuteChoices = [0, 15, 30, 60, 120, 240]
+
+  /// The live-frame cap the simulator and emulator views read on every frame.
+  public static var maxFramesPerSecond: Double {
+    let value = UserDefaults.standard.double(forKey: Key.maxFramesPerSecond)
+    return value > 0 ? value : 60
+  }
+
+  public static func showsWorkspaceCards(_ defaults: UserDefaults = .standard) -> Bool {
+    isOn(Key.showsWorkspaceCards, defaults)
+  }
+
+  public static func offersTutorial(_ defaults: UserDefaults = .standard) -> Bool {
+    isOn(Key.offersTutorial, defaults)
+  }
+
+  private static func isOn(_ key: String, _ defaults: UserDefaults) -> Bool {
+    defaults.object(forKey: key) == nil || defaults.bool(forKey: key)
+  }
+
+  public static var pausesHiddenFrames: Bool {
+    UserDefaults.standard.object(forKey: Key.pausesHiddenFrames) as? Bool ?? true
+  }
+}
+
+public enum Appearance: String, CaseIterable, Sendable {
+  case auto, light, dark
+
+  public var title: String {
+    switch self {
+    case .auto: return "Auto"
+    case .light: return "Light"
+    case .dark: return "Dark"
+    }
+  }
+}
+
+public enum DiffViewer: String, CaseIterable, Sendable {
+  case builtIn, visualStudioCode
+
+  public var title: String { self == .builtIn ? "Built-in" : "Visual Studio Code" }
+}
+
+public enum DefaultView: String, CaseIterable, Sendable {
+  case overview, allDevices, lastProject
+
+  public var title: String {
+    switch self {
+    case .overview: return "Overview"
+    case .allDevices: return "Active Workspaces"
+    case .lastProject: return "Last Project"
+    }
+  }
+}
+
+/// How much a device viewer asks stim-server for on a hosted, remote or physical device's stream. Standard keeps
+/// bandwidth low; High asks for 60 fps, which the server serves only over H.264 video.
+public enum StreamQuality: String, CaseIterable, Sendable {
+  case standard, high
+
+  public var title: String { rawValue.capitalized }
+
+  public var fps: Double { self == .high ? 60 : 30 }
+
+  public var maxEdge: Double? { self == .high ? 1600 : nil }
+}
+
+public enum TileSize: String, CaseIterable, Sendable {
+  case small, medium, large
+
+  public var title: String { rawValue.capitalized }
+
+  public var screenHeight: Double {
+    switch self {
+    case .small: return 300
+    case .medium: return 400
+    case .large: return 540
+    }
+  }
+}
+
+/// An app Stim Desktop can hand a workspace directory to.
+public struct ExternalApp: Hashable, Identifiable, Sendable {
+  public var name: String
+  public var bundleID: String
+
+  public var id: String { bundleID }
+
+  public static let editors: [ExternalApp] = [
+    ExternalApp(name: "Visual Studio Code", bundleID: "com.microsoft.VSCode"),
+    ExternalApp(name: "Cursor", bundleID: "com.todesktop.230313mzl4w4u92"),
+    ExternalApp(name: "Xcode", bundleID: "com.apple.dt.Xcode"),
+    ExternalApp(name: "Zed", bundleID: "dev.zed.Zed"),
+  ]
+
+  public static let terminals: [ExternalApp] = [
+    ExternalApp(name: "Terminal", bundleID: "com.apple.Terminal"),
+    ExternalApp(name: "iTerm", bundleID: "com.googlecode.iterm2"),
+    ExternalApp(name: "Ghostty", bundleID: "com.mitchellh.ghostty"),
+    ExternalApp(name: "Warp", bundleID: "dev.warp.Warp-Stable"),
+  ]
+
+  /// The preferred app when it is installed, otherwise the first installed one.
+  public static func choose(
+    _ preferred: String?, from apps: [ExternalApp], isInstalled: (String) -> Bool
+  ) -> ExternalApp? {
+    let installed = apps.filter { isInstalled($0.bundleID) }
+    return installed.first { $0.bundleID == preferred } ?? installed.first
+  }
+}

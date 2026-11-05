@@ -1,0 +1,434 @@
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { readInputs, runAction } from './action.ts';
+
+const github = vi.hoisted(() => ({
+  inputs: {} as Record<string, string>,
+  output: vi.fn<(name: string, value: unknown) => void>(),
+  warning: vi.fn<(message: string) => void>(),
+  upload:
+    vi.fn<
+      (
+        name: string,
+        files: string[],
+        rootDirectory: string,
+        options?: { retentionDays?: number },
+      ) => Promise<{ id?: number }>
+    >(),
+  tables: [] as string[][][],
+}));
+vi.mock('@actions/core', () => ({
+  getInput: (name: string) => github.inputs[name] ?? '',
+  setOutput: github.output,
+  warning: github.warning,
+  summary: {
+    addHeading() {
+      return this;
+    },
+    addTable(rows: string[][]) {
+      github.tables.push(rows);
+      return this;
+    },
+    async write() {},
+  },
+}));
+vi.mock('@actions/artifact', () => ({
+  DefaultArtifactClient: class {
+    uploadArtifact = github.upload;
+  },
+}));
+
+let root: string;
+beforeEach(() => {
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ci-action-')));
+  github.inputs = {
+    platform: 'web',
+    command: 'printf "%s" "$MESSAGE"',
+    'cli-path': 'fixture.mjs',
+    artifacts: 'results',
+  };
+  github.tables = [];
+  github.output.mockReset();
+  github.warning.mockReset();
+  github.upload.mockReset().mockResolvedValue({ id: 123 });
+  vi.stubEnv('GITHUB_WORKSPACE', root);
+  vi.stubEnv('GITHUB_STEP_SUMMARY', '');
+  vi.stubEnv('GITHUB_REPOSITORY', 'owner/repo');
+  vi.stubEnv('GITHUB_RUN_ID', '456');
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  rmSync(root, { recursive: true, force: true });
+});
+
+it('validates explicit inputs and preserves command source and argument paths', () => {
+  github.inputs.home = 'home with spaces';
+  github.inputs['build-cache'] = 'cache with spaces';
+  github.inputs['upload-artifacts'] = 'false';
+  const input = readInputs((name) => github.inputs[name] ?? '', root, 'linux');
+  expect(input).toMatchObject({
+    command: 'printf "%s" "$MESSAGE"',
+    home: join(root, 'home with spaces'),
+    cache: join(root, 'cache with spaces'),
+    upload: false,
+  });
+  expect(() => readInputs((name) => github.inputs[name] ?? '', root, 'win32')).toThrow('macOS and Linux');
+  expect(readInputs((key) => (key === 'command' ? ' \n' : (github.inputs[key] ?? '')), root, 'linux').command).toBe('');
+  for (const [name, value] of [
+    ['platform', 'windows'],
+    ['timeout', '0'],
+    ['retention-days', '-1'],
+    ['upload-artifacts', 'perhaps'],
+    ['build-only', 'perhaps'],
+  ]) {
+    expect(() => readInputs((key) => (key === name ? value! : (github.inputs[key] ?? '')), root, 'linux')).toThrow(
+      /required|must/,
+    );
+  }
+  expect(() =>
+    readInputs((key) => (key === 'build-only' ? 'true' : (github.inputs[key] ?? '')), root, 'linux'),
+  ).toThrow('no native build');
+  expect(() =>
+    readInputs(
+      (key) => (key === 'platform' ? 'ios' : key === 'build-only' ? 'true' : (github.inputs[key] ?? '')),
+      root,
+      'linux',
+    ),
+  ).toThrow('command does not apply');
+  github.inputs.arch = 'arm64';
+  expect(() => readInputs((name) => github.inputs[name] ?? '', root, 'linux')).toThrow(
+    'apply only when the action builds',
+  );
+  delete github.inputs.arch;
+  delete github.inputs['cli-path'];
+  github.inputs.version = 'latest';
+  expect(() => readInputs((name) => github.inputs[name] ?? '', root, 'linux')).toThrow('exact published version');
+});
+
+function fixture(exitCode: number, extra = '', stale = false): void {
+  writeFileSync(
+    join(root, 'fixture.mjs'),
+    `
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+const args = process.argv.slice(2);
+const value = name => args[args.indexOf(name) + 1];
+const dir = value('--artifacts');
+writeFileSync(join(dir, 'argv.json'), JSON.stringify(args));
+writeFileSync(join(dir, 'test.stderr.log'), 'test evidence');
+writeFileSync(join(dir, 'app.apk'), 'never upload');
+const result = { version: 1, platform: value('--platform'), artifactsDir: dir, startedAt: ${stale ? "'2000-01-01T00:00:00Z'" : 'new Date().toISOString()'}, durationMs: 1, exitCode: ${exitCode} };
+const save = () => writeFileSync(join(dir, 'result.json'), JSON.stringify(result));
+${extra || 'save();'}
+process.exitCode = ${exitCode};
+`,
+  );
+}
+
+test.each([false, true])(
+  'uploads failure evidence and preserves the original exit code if transport fails (build-only=%s)',
+  { skip: process.platform === 'win32' },
+  async (onlyBuild) => {
+    if (onlyBuild) {
+      github.inputs['build-only'] = 'true';
+      github.inputs.platform = 'macos';
+      delete github.inputs.command;
+    }
+    fixture(23);
+    github.upload.mockRejectedValue(new Error('transport unavailable'));
+    github.inputs.home = 'home with spaces';
+    const code = await runAction();
+    expect(code).toBe(23);
+    const files = github.upload.mock.calls[0]![1];
+    expect(files).toEqual([join(root, 'results/result.json'), join(root, 'results/test.stderr.log')]);
+    const args = JSON.parse(readFileSync(join(root, 'results/argv.json'), 'utf8'));
+    expect(onlyBuild ? args[0] : args.slice(-7)).toEqual(
+      onlyBuild ? 'build' : ['--', 'bash', '-e', '-o', 'pipefail', '-c', github.inputs.command],
+    );
+    expect(args).toContain(join(root, 'home with spaces'));
+    expect(github.output).toHaveBeenCalledWith('result', join(root, 'results/result.json'));
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'returns a failure when requested upload fails after a passing run',
+  async () => {
+    fixture(0);
+    vi.stubEnv('GITHUB_STEP_SUMMARY', join(root, 'summary'));
+    github.upload.mockRejectedValue(new Error('transport unavailable'));
+    expect(await runAction()).toBe(1);
+    expect(github.tables[0]).toContainEqual(['Exit code', '1']);
+  },
+);
+
+test.skipIf(process.platform === 'win32')('publishes artifact ID and URL only after successful upload', async () => {
+  fixture(0);
+  expect(await runAction()).toBe(0);
+  expect(github.output).toHaveBeenCalledWith('artifact-id', 123);
+  expect(github.output).toHaveBeenCalledWith(
+    'artifact-url',
+    'https://github.com/owner/repo/actions/runs/456/artifacts/123',
+  );
+});
+
+test.skipIf(process.platform === 'win32')(
+  'keeps local paths and the original exit status when uploads are disabled',
+  async () => {
+    fixture(23);
+    github.inputs['upload-artifacts'] = 'false';
+    expect(await runAction()).toBe(23);
+    expect(github.upload).not.toHaveBeenCalled();
+    expect(existsSync(join(root, 'results/result.json'))).toBe(true);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'rejects old evidence before launch and refuses a stale result returned by a child',
+  async () => {
+    fixture(23);
+    mkdirSync(join(root, 'results'));
+    writeFileSync(join(root, 'results/result.json'), 'previous evidence');
+    await expect(runAction()).rejects.toThrow('must be empty');
+    expect(readFileSync(join(root, 'results/result.json'), 'utf8')).toBe('previous evidence');
+    expect(existsSync(join(root, 'results/argv.json'))).toBe(false);
+    rmSync(join(root, 'results'), { recursive: true });
+    fixture(23, '', true);
+    expect(await runAction()).toBe(23);
+    expect(github.upload).not.toHaveBeenCalled();
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'retains fresh partial test output when the child cannot save its result',
+  async () => {
+    fixture(1, '');
+    const path = join(root, 'fixture.mjs');
+    writeFileSync(path, readFileSync(path, 'utf8').replace('save();', ''));
+    expect(await runAction()).toBe(1);
+    expect(github.upload.mock.calls[0]![1]).toEqual([join(root, 'results/test.stderr.log')]);
+  },
+);
+
+test.each([false, true])(
+  'forwards cancellation while allowing the child to finish cleanup and retain evidence (build-only=%s)',
+  { skip: process.platform === 'win32' },
+  async (onlyBuild) => {
+    if (onlyBuild) {
+      github.inputs['build-only'] = 'true';
+      github.inputs.platform = 'macos';
+      delete github.inputs.command;
+    }
+    fixture(
+      0,
+      `
+process.on('SIGTERM', () => { result.exitCode = 130; save(); process.exit(130); });
+setInterval(() => {}, 1000);
+writeFileSync(join(dir, 'ready'), 'ready');
+`,
+    );
+    const running = runAction();
+    const until = Date.now() + 2000;
+    while (!existsSync(join(root, 'results/ready')) && Date.now() < until)
+      await new Promise((done) => setTimeout(done, 10));
+    expect(existsSync(join(root, 'results/ready'))).toBe(true);
+    process.emit('SIGTERM');
+    expect(await running).toBe(130);
+    expect(JSON.parse(readFileSync(join(root, 'results/argv.json'), 'utf8'))[0]).toBe(onlyBuild ? 'build' : 'run');
+    expect(JSON.parse(readFileSync(join(root, 'results/result.json'), 'utf8')).exitCode).toBe(130);
+    expect(github.upload).toHaveBeenCalled();
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'uses the same canonical artifacts root for the child, outputs and upload',
+  async () => {
+    fixture(0);
+    const target = join(root, 'actual-results');
+    mkdirSync(target);
+    symlinkSync(target, join(root, 'results'), 'junction');
+    expect(await runAction()).toBe(0);
+    expect(github.output).toHaveBeenCalledWith('result', join(target, 'result.json'));
+    expect(github.output).toHaveBeenCalledWith('artifacts', target);
+    expect(github.upload.mock.calls[0]![1]).toEqual([join(target, 'result.json'), join(target, 'test.stderr.log')]);
+    expect(github.upload.mock.calls[0]![2]).toBe(target);
+  },
+);
+
+function recorder(): { calls(): string[][] } {
+  const log = join(root, 'calls.jsonl');
+  writeFileSync(
+    join(root, 'fixture.mjs'),
+    `import { appendFileSync } from 'node:fs'; appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');`,
+  );
+  return {
+    calls: () =>
+      existsSync(log)
+        ? readFileSync(log, 'utf8')
+            .trim()
+            .split('\n')
+            .map((line): string[] => JSON.parse(line))
+        : [],
+  };
+}
+
+test.each([false, true])(
+  'builds once and writes and uploads nothing without artifacts (build-only=%s)',
+  { skip: process.platform === 'win32' },
+  async (onlyBuild) => {
+    const seen = recorder();
+    github.inputs.platform = 'ios';
+    github.inputs['build-only'] = String(onlyBuild);
+    if (onlyBuild) delete github.inputs.command;
+    delete github.inputs.artifacts;
+    github.inputs.export = 'out/app.tar.gz';
+    expect(await runAction()).toBe(0);
+    const [build, run] = seen.calls();
+    expect(build?.slice(0, 3)).toEqual(['build', '--platform', 'ios']);
+    expect(build).toEqual(expect.arrayContaining(['--export', join(root, 'out/app.tar.gz')]));
+    expect(build).not.toContain('--artifacts');
+    expect(seen.calls().map((call) => call[0])).toEqual(onlyBuild ? ['build'] : ['build', 'run']);
+    expect(run ?? []).not.toContain('--artifacts');
+    expect(github.upload).not.toHaveBeenCalled();
+    expect(github.output).not.toHaveBeenCalledWith('result', expect.anything());
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'builds, then runs without a test command when command is empty',
+  async () => {
+    const seen = recorder();
+    github.inputs.platform = 'ios';
+    delete github.inputs.artifacts;
+    delete github.inputs.command;
+    expect(await runAction()).toBe(0);
+    const [build, run] = seen.calls();
+    expect(build?.[0]).toBe('build');
+    expect(run?.[0]).toBe('run');
+    expect(run).not.toContain('--');
+    expect(github.output).toHaveBeenCalledWith('exit-code', '0');
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'passes build selectors to build and run, and build-only flags to build alone',
+  async () => {
+    const seen = recorder();
+    github.inputs.platform = 'ios';
+    delete github.inputs.artifacts;
+    github.inputs.scheme = 'App';
+    github.inputs.configuration = 'Release';
+    github.inputs.arch = 'arm64';
+    github.inputs['eas-profile'] = 'preview';
+    expect(await runAction()).toBe(0);
+    const [build, run] = seen.calls();
+    const selectors = ['--scheme', 'App', '--configuration', 'Release'];
+    expect(build).toEqual(expect.arrayContaining([...selectors, '--arch', 'arm64', '--eas-profile', 'preview']));
+    expect(run).toEqual(expect.arrayContaining(selectors));
+    expect(run).not.toContain('--arch');
+    expect(run).not.toContain('--eas-profile');
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'sets build and run facts as outputs from the results stim-ci prints',
+  async () => {
+    github.inputs.platform = 'ios';
+    delete github.inputs.artifacts;
+    writeFileSync(
+      join(root, 'fixture.mjs'),
+      `const build = process.argv[2] === 'build';
+console.log('progress line');
+console.log(JSON.stringify(build
+  ? { stage: 'build', artifactPath: '/out/app.tar.gz', build: { facts: { appPath: '/w/App.app', bundleId: 'com.example', cacheHit: 'local' } } }
+  : { exitCode: 0, run: { facts: { udid: 'UDID-1', deviceName: 'stim-App', bundleId: 'com.example', metroPort: null } } }));`,
+    );
+    expect(await runAction()).toBe(0);
+    const outputs = Object.fromEntries(github.output.mock.calls);
+    expect(outputs).toEqual({
+      'app-id': 'com.example',
+      'app-path': '/w/App.app',
+      'export-path': '/out/app.tar.gz',
+      'cache-hit': 'true',
+      'device-id': 'UDID-1',
+      'device-name': 'stim-App',
+      'exit-code': '0',
+    });
+  },
+);
+
+test.skipIf(process.platform === 'win32')('sets the Android build facts when the run prints no result', async () => {
+  github.inputs.platform = 'android';
+  delete github.inputs.artifacts;
+  writeFileSync(
+    join(root, 'fixture.mjs'),
+    `if (process.argv[2] === 'build') console.log(JSON.stringify({ stage: 'build', artifactPath: null, build: { facts: { apkPath: '/w/app.apk', androidPackage: 'com.example', cacheHit: false } } }));
+else process.exitCode = 4;`,
+  );
+  expect(await runAction()).toBe(4);
+  expect(Object.fromEntries(github.output.mock.calls)).toEqual({
+    'app-id': 'com.example',
+    'app-path': '/w/app.apk',
+    'cache-hit': 'false',
+    'exit-code': '4',
+  });
+});
+
+test.each([true, false])(
+  'sets the macOS cache output from native facts (build-only=%s)',
+  { skip: process.platform === 'win32' },
+  async (onlyBuild) => {
+    github.inputs.platform = 'macos';
+    if (onlyBuild) {
+      github.inputs['build-only'] = 'true';
+      github.inputs.export = 'out/App.tar.gz';
+    }
+    delete github.inputs.command;
+    delete github.inputs.artifacts;
+    writeFileSync(
+      join(root, 'fixture.mjs'),
+      `if (process.argv[2] === 'build') console.log(JSON.stringify({ stage: 'build', artifactPath: '/out/App.tar.gz', build: { facts: { bundle: '/w/App.app', bundleId: 'com.example', build: { cacheHit: false } } } }));
+else console.log(JSON.stringify({ exitCode: 0, run: { facts: { bundle: '/w/App.app', bundleId: 'com.example', build: { cacheHit: false } } } }));`,
+    );
+    expect(await runAction()).toBe(0);
+    expect(github.output).toHaveBeenCalledWith('cache-hit', 'false');
+  },
+);
+
+test.skipIf(process.platform === 'win32')('stops before run when the build fails, and never builds web', async () => {
+  const seen = recorder();
+  delete github.inputs.artifacts;
+  github.inputs.platform = 'android';
+  writeFileSync(join(root, 'fixture.mjs'), `process.exitCode = process.argv[2] === 'build' ? 7 : 0;`);
+  expect(await runAction()).toBe(7);
+  github.inputs.platform = 'web';
+  recorder();
+  expect(await runAction()).toBe(0);
+  expect(seen.calls().map((call) => call[0])).toEqual(['run']);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'reuses the CLI installed for this version without installing again',
+  async () => {
+    const seen = recorder();
+    const script = join(root, 'tools', 'stim-ci-action', '1.2.3', 'node_modules/@stim-cli/ci/dist/stim-ci.mjs');
+    mkdirSync(join(script, '..'), { recursive: true });
+    writeFileSync(script, readFileSync(join(root, 'fixture.mjs'), 'utf8'));
+    vi.stubEnv('RUNNER_TOOL_CACHE', join(root, 'tools'));
+    delete github.inputs['cli-path'];
+    github.inputs.version = '1.2.3';
+    delete github.inputs.artifacts;
+    github.inputs.platform = 'web';
+    expect(await runAction()).toBe(0);
+    expect(seen.calls()).toHaveLength(1);
+  },
+);

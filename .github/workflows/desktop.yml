@@ -1,0 +1,151 @@
+name: Desktop
+
+on:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Also run swift test, the Release compile, the frames helper, the hardened-runtime server start and an ad-hoc release package
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      full:
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths:
+      - 'apps/desktop/**'
+      - '!apps/desktop/**/*.md'
+      - 'apps/mobile/src/design/tokens.ts'
+      - 'apps/mobile/src/lib/agent-prompts.ts'
+      - 'apps/mobile/mock-server/fixtures/status.json'
+      - 'packages/core/__tests__/fixtures/noise-*.json'
+      - 'packages/core/noise.ts'
+      - 'packages/core/noise-session.ts'
+      - 'packages/server/helper/**'
+      - '.github/workflows/desktop.yml'
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - '!apps/desktop/**/*.md'
+      - 'apps/mobile/src/design/tokens.ts'
+      - 'apps/mobile/src/lib/agent-prompts.ts'
+      - 'apps/mobile/mock-server/fixtures/status.json'
+      - 'packages/core/__tests__/fixtures/noise-*.json'
+      - 'packages/core/noise.ts'
+      - 'packages/core/noise-session.ts'
+      - 'packages/server/helper/**'
+      - '.github/workflows/desktop.yml'
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.full && '-full' || '' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Check the generated design tokens, agent prompts and tutorial steps
+        run: node apps/desktop/scripts/generate-tokens.mjs --check
+      - name: Check Sources stay ASCII
+        run: node apps/desktop/scripts/check-ascii.mjs
+
+  build:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.3.app
+          xcodebuild -version
+          xcrun swift-format --version
+      - name: Lint Swift formatting
+        run: scripts/format.sh --check
+      - run: swift build -Xswiftc -warnings-as-errors
+      - name: Check the linked SDK
+        run: |
+          otool -l .build/debug/StimDesktop | awk '
+            /LC_BUILD_VERSION/ { build_version = 1 }
+            build_version && $1 == "sdk" { sdk = $2; exit }
+            END {
+              print "Linked SDK: " sdk
+              if (sdk + 0 < 26) {
+                print "Linked SDK must be 26 or newer for Liquid Glass." > "/dev/stderr"
+                exit 1
+              }
+            }
+          '
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: inputs.full
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        if: inputs.full
+        with:
+          cache: false
+          install: false
+      - name: Install the bundled server's workspace packages
+        if: inputs.full
+        run: pnpm install --frozen-lockfile --filter '@stim-cli/server...' --filter stim-monorepo
+      - name: Stage the bundled stim-server
+        if: inputs.full
+        run: node scripts/server-runtime.mjs "$RUNNER_TEMP/stim-server"
+      - run: swift test -Xswiftc -warnings-as-errors
+        if: inputs.full
+        env:
+          STIM_BUILD_MACHINES_SHOTS: ${{ runner.temp }}/build-machines-screenshots
+          STIM_TEST_SERVER_RUNTIME: ${{ runner.temp }}/stim-server
+      - name: Upload build machine screenshots
+        if: always() && inputs.full
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-machines-screenshots
+          path: ${{ runner.temp }}/build-machines-screenshots
+          if-no-files-found: warn
+      - name: Compile the Release configuration
+        if: inputs.full
+        run: swift build -c release -Xswiftc -warnings-as-errors
+      - name: Compile the stim-server frames helper
+        if: inputs.full
+        run: |
+          sed 's|^|Sources/|' ../../packages/server/helper/desktop-sources.txt \
+            | xargs xcrun swiftc -O -swift-version 5 -module-name StimFrames -o "$RUNNER_TEMP/stim-frames" \
+              ../../packages/server/helper/main.swift ../../packages/server/helper/VideoEncoder.swift \
+              ../../packages/server/helper/PhoneSource.swift ../../packages/server/helper/MacosSource.swift \
+              ../../packages/server/helper/FrameArtwork.swift ../../packages/server/helper/DuoFrameRenderer.swift \
+              ../../packages/server/helper/DuoHingeMonitor.swift ../../packages/server/helper/DuoCaptureSource.swift
+      - name: Start the bundled stim-server under the hardened runtime
+        if: inputs.full
+        run: |
+          runtime="$RUNNER_TEMP/stim-server"
+          codesign --force --options runtime --sign - --entitlements Support/Node/node.entitlements "$runtime/bin/node"
+          home=$(mktemp -d)
+          env -i HOME="$home" "$runtime/bin/node" --input-type=module \
+            -e "const { capture } = await import('$runtime/node_modules/unique-pid/index.mjs'); if (!capture(process.pid).ok) process.exit(1);"
+          env -i HOME="$home" STIM_HOME="$home/.stim" SHELL=/bin/sh "$runtime/bin/node" \
+            "$runtime/node_modules/@stim-cli/server/dist/stim-server.mjs" --port 7999 --loopback-only &
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:7999/health; then
+              kill %1
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "The bundled stim-server did not answer /health within 30 s." >&2
+          exit 1
+      - name: Package an ad-hoc release build
+        if: inputs.full
+        run: scripts/release.sh 0.0.0

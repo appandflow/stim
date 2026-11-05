@@ -1,0 +1,55 @@
+diff --git a/ios/Trailhead/AppDelegate.swift b/ios/Trailhead/AppDelegate.swift
+index 0dd14a1..148094e 100644
+--- a/ios/Trailhead/AppDelegate.swift
++++ b/ios/Trailhead/AppDelegate.swift
+@@ -3,7 +3,7 @@ import React
+ import ReactAppDependencyProvider
+ 
+ @main
+-class AppDelegate: ExpoAppDelegate {
++class AppDelegate: ExpoAppDelegate, ExpoReactNativeFactoryProvider {
+   var window: UIWindow?
+ 
+   var reactNativeDelegate: ExpoReactNativeFactoryDelegate?
+@@ -20,13 +20,7 @@ class AppDelegate: ExpoAppDelegate {
+     reactNativeDelegate = delegate
+     reactNativeFactory = factory
+ 
+-#if os(iOS) || os(tvOS)
+-    window = UIWindow(frame: UIScreen.main.bounds)
+-    factory.startReactNative(
+-      withModuleName: "main",
+-      in: window,
+-      launchOptions: launchOptions)
+-#endif
++
+ 
+     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+   }
+diff --git a/ios/Trailhead/Info.plist b/ios/Trailhead/Info.plist
+index 13b5437..bb69e0c 100644
+--- a/ios/Trailhead/Info.plist
++++ b/ios/Trailhead/Info.plist
+@@ -88,5 +88,22 @@
+ 	<string>Automatic</string>
+ 	<key>UIViewControllerBasedStatusBarAppearance</key>
+ 	<false/>
++	<key>UIApplicationSceneManifest</key>
++	<dict>
++		<key>UIApplicationSupportsMultipleScenes</key>
++		<false/>
++		<key>UISceneConfigurations</key>
++		<dict>
++			<key>UIWindowSceneSessionRoleApplication</key>
++			<array>
++				<dict>
++					<key>UISceneConfigurationName</key>
++					<string>Default Configuration</string>
++					<key>UISceneDelegateClassName</key>
++					<string>EXExpoAppSceneDelegate</string>
++				</dict>
++			</array>
++		</dict>
++	</dict>
+ </dict>
+ </plist>

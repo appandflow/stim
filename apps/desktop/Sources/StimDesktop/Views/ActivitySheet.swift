@@ -1,0 +1,366 @@
+import StimKit
+import StimStores
+import SwiftUI
+
+struct ActivitySheet: View {
+  @ObservedObject var run: ActionRun
+  @EnvironmentObject private var actions: ActionCenter
+  @Environment(\.dismiss) private var dismiss
+  @State private var confirmingDelete = false
+  @State private var showsCommandOutput = false
+  @State private var showsKept = false
+
+  private var steps: [ProgressStep] { run.progress }
+
+  private var deleteArguments: [String]? {
+    run.steps.count == 1 ? GcPreview.deleteArguments(after: run.command.arguments) : nil
+  }
+
+  private var report: Result<GcPreview, Error>? {
+    guard deleteArguments != nil, run.exitStatus != nil else { return nil }
+    return Result { try GcPreview(json: run.stdout) }
+  }
+
+  private var outcome: Result<GcOutcome, Error>? {
+    guard run.exitStatus != nil else { return nil }
+    return run.gcOutcome
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.xl) {
+      header
+      content
+      commandOutput
+      footer
+    }
+    .font(.stim(.callout))
+    .padding(Space.xxl)
+    .frame(width: 560)
+    .background(Palette.background)
+  }
+
+  @ViewBuilder private var content: some View {
+    if run.isRunning {
+      runningView
+    } else if let failure = failureMessage {
+      failureView(failure)
+    } else if case .success(let report) = report {
+      GcPreviewView(report: report).frame(height: report.sections.isEmpty ? nil : 360)
+    } else if case .success(let outcome) = outcome {
+      outcomeView(outcome)
+    } else {
+      Label(Self.pastTense(run.title), systemImage: "checkmark.circle.fill")
+        .font(.stim(.body, weight: .medium))
+        .foregroundStyle(Palette.success)
+    }
+  }
+
+  @ViewBuilder private var header: some View {
+    HStack(alignment: .top) {
+      VStack(alignment: .leading, spacing: Space.xxs) {
+        Text(run.isRunning ? Self.gerund(run.title) : run.title).font(.stim(.headline))
+        if abbreviatingHome(run.command.cwd) != "~" {
+          Text(abbreviatingHome(run.command.cwd)).foregroundStyle(Palette.tertiary).lineLimit(1).truncationMode(.middle)
+        }
+      }
+      Spacer()
+    }
+  }
+
+  private var runningView: some View {
+    TimelineView(.periodic(from: run.startedAt, by: 1)) { context in
+      Card(radius: Radius.chip, border: nil, clipsContent: false) {
+        VStack(alignment: .leading, spacing: Space.md) {
+          HStack(spacing: Space.md) {
+            ProgressView().controlSize(.small)
+            Text(currentStep)
+              .foregroundStyle(Palette.text)
+              .lineLimit(1)
+              .truncationMode(.middle)
+            Spacer()
+            Text(Format.elapsed(ms: context.date.timeIntervalSince(run.startedAt) * 1000))
+              .font(.stim(.caption, mono: true))
+              .foregroundStyle(Palette.tertiary)
+          }
+          if let waiting = ActivityProgress.waitingStep(steps) {
+            Label(abbreviatingHome(waiting.fact), systemImage: "hourglass")
+              .foregroundStyle(Palette.warning)
+              .lineLimit(2)
+          }
+        }
+        .padding(Space.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
+      }
+    }
+  }
+
+  private var currentStep: String {
+    guard let step = steps.last(where: { $0.state != .failed }) else { return "Working\u{2026}" }
+    return abbreviatingHome(step.statusText)
+  }
+
+  private var failureMessage: String? {
+    if let launchError = run.launchError { return launchError }
+    if case .failure(let error) = report {
+      if let failure = error as? GcPreview.Failure, case .unreadable = failure, let status = run.exitStatus, status != 0,
+        let refusal = run.summary
+      {
+        return refusal
+      }
+      return error.localizedDescription
+    }
+    if case .failure(let error as GcPreview.Failure) = outcome, case .refused = error { return error.localizedDescription }
+    if case .success = outcome { return nil }
+    guard let status = run.exitStatus, status != 0 else { return nil }
+    return steps.last { $0.state == .failed }.map { $0.fact.isEmpty ? $0.label : $0.fact }
+      ?? run.summary
+      ?? "Exited \(status)"
+  }
+
+  private func failureView(_ message: String) -> some View {
+    VStack(alignment: .leading, spacing: Space.md) {
+      Label(abbreviatingHome(message), systemImage: "xmark.octagon.fill")
+        .foregroundStyle(Palette.error)
+        .textSelection(.enabled)
+      ForEach(steps.filter { $0.label == "remedy" }) { remedy in
+        Text(abbreviatingHome(remedy.fact)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+      }
+    }
+  }
+
+  private func outcomeView(_ outcome: GcOutcome) -> some View {
+    VStack(alignment: .leading, spacing: Space.lg) {
+      Label(outcome.headline, systemImage: outcome.failures > 0 ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+        .font(.stim(.body, weight: .medium))
+        .foregroundStyle(outcome.failures > 0 ? Palette.warning : Palette.success)
+      if !outcome.done.isEmpty, outcome.done.count <= 6 {
+        VStack(alignment: .leading, spacing: Space.xs) {
+          ForEach(outcome.done, id: \.self) { item in itemRow(item, icon: "checkmark", tint: Palette.tertiary) }
+        }
+      }
+      if !outcome.failed.isEmpty {
+        VStack(alignment: .leading, spacing: Space.sm) {
+          Text(outcome.failed.count == 1 ? "1 failed" : "\(outcome.failed.count) failed")
+            .font(.stim(.body, weight: .semibold))
+            .foregroundStyle(Palette.error)
+          ForEach(outcome.failed, id: \.self) { item in itemRow(item, icon: "xmark.octagon.fill", tint: Palette.error) }
+        }
+      } else if outcome.failures > 0 {
+        Text("\(outcome.failures) could not be cleaned up. Open Command output for the reason, then run it again.")
+          .foregroundStyle(Palette.error)
+      }
+      if !outcome.kept.isEmpty {
+        DisclosureGroup(isExpanded: $showsKept) {
+          let rows = VStack(alignment: .leading, spacing: Space.sm) {
+            ForEach(outcome.kept, id: \.self) { item in itemRow(item, icon: "minus.circle", tint: Palette.tertiary) }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          if outcome.kept.count > 5 {
+            ScrollView { rows }.frame(height: 200)
+          } else {
+            rows
+          }
+        } label: {
+          Text("\(outcome.kept.count) left alone").foregroundStyle(Palette.secondary)
+        }
+      }
+    }
+  }
+
+  private func itemRow(_ item: GcOutcome.Item, icon: String, tint: Color) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+      Image(systemName: icon).foregroundStyle(tint).frame(width: 14)
+      VStack(alignment: .leading, spacing: Space.xxs) {
+        Text(abbreviatingHome(item.label)).lineLimit(2).truncationMode(.middle)
+        if let detail = item.detail {
+          Text(abbreviatingHome(detail)).foregroundStyle(Palette.tertiary).lineLimit(3)
+        }
+      }
+      Spacer()
+      if let bytes = item.bytes, bytes > 0 {
+        Text(Format.fileSize(bytes))
+          .font(.stim(.caption, mono: true))
+          .foregroundStyle(Palette.tertiary)
+      }
+    }
+    .textSelection(.enabled)
+  }
+
+  private var commandOutput: some View {
+    DisclosureGroup("Command Output", isExpanded: $showsCommandOutput) {
+      VStack(alignment: .leading, spacing: Space.md) {
+        HStack(alignment: .top, spacing: Space.md) {
+          CommandText(command: run.steps.map { $0.displayLine() }.joined(separator: "\n"))
+          CopyButton(
+            run.steps.map { $0.shellLine }.joined(separator: "\n"), showsTitle: false, help: "Copy the command",
+            accessibilityLabel: "Copy the command")
+        }
+        output.frame(height: 160)
+      }
+    }
+    .font(.stim(.footnote))
+    .foregroundStyle(Palette.tertiary)
+  }
+
+  /// A present-tense header for common action verbs, falling back to the plain title.
+  private static func gerund(_ title: String) -> String {
+    rewrite(
+      title,
+      [
+        ("Shut down idle devices", "Shutting down idle devices"),
+        ("Preview cleanup", "Previewing cleanup"),
+        ("Reclaim disk space", "Reclaiming disk space"),
+        ("Nightly cleanup", "Cleaning up"),
+        ("Reclaim ", "Reclaiming "),
+        ("Clean up", "Cleaning up"),
+        ("Stop ", "Stopping "),
+        ("Reload ", "Reloading "),
+        ("Start ", "Starting "),
+        ("Remove ", "Removing "),
+        ("Warm ", "Warming "),
+      ])
+  }
+
+  /// The sentence a finished action confirms itself with.
+  private static func pastTense(_ title: String) -> String {
+    rewrite(
+      title,
+      [
+        ("Shut down idle devices", "Shut down idle devices"),
+        ("Clean up", "Cleaned up"),
+        ("Stop ", "Stopped "),
+        ("Reload ", "Reloaded "),
+        ("Start ", "Started "),
+        ("Remove ", "Removed "),
+        ("Warm ", "Warmed "),
+      ], fallback: "Done")
+  }
+
+  private static func rewrite(_ title: String, _ mapping: [(String, String)], fallback: String? = nil) -> String {
+    for (prefix, replacement) in mapping {
+      if title == prefix.trimmingCharacters(in: .whitespaces) { return replacement.trimmingCharacters(in: .whitespaces) }
+      if title.hasPrefix(prefix) { return replacement + title.dropFirst(prefix.count) }
+    }
+    return fallback ?? title
+  }
+
+  @ViewBuilder private var footer: some View {
+    HStack {
+      if run.isRunning {
+        Text("Closing keeps it running. Find it under Operations in the sidebar footer.").foregroundStyle(Palette.tertiary)
+      }
+      Spacer()
+      if case .success(let report) = report, let deleteArguments {
+        Button("Delete\u{2026}", role: .destructive) { confirmingDelete = true }
+          .disabled(!report.actionable)
+          .confirmationDialog(
+            "Delete What stim gc Reported?", isPresented: $confirmingDelete, titleVisibility: .visible
+          ) {
+            Button("Run stim \(deleteArguments.filter { $0 != "--json" }.joined(separator: " "))", role: .destructive) {
+              actions.run("Clean up", StimCommand(deleteArguments, cwd: run.command.cwd), key: ActionCenter.machineKey)
+            }
+          } message: {
+            Text(deleteMessage(report))
+          }
+      }
+      if let status = run.exitStatus, status != 0 {
+        Button("Retry") { actions.retry(run) }
+          .buttonStyle(.stim(.primary))
+      }
+      Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+    }
+  }
+
+  private func deleteMessage(_ report: GcPreview) -> String {
+    var text = "Stim reclaims \(report.deletableCount) reported entries"
+    if report.reclaimableBytes > 0 {
+      text += " (\(Format.fileSize(report.reclaimableBytes)) measured)"
+    }
+    return text + ". Stim collects the report again when it runs, so it acts on what it finds then."
+  }
+
+  private var output: some View {
+    ScrollViewReader { proxy in
+      Card(radius: Radius.chip, clipsContent: false) {
+        ScrollView {
+          LazyVStack(alignment: .leading, spacing: 1) {
+            if run.output.droppedCount > 0 {
+              Text("\(run.output.droppedCount) earlier lines not shown").foregroundStyle(Palette.tertiary)
+            }
+            ForEach(Array(run.logLines.enumerated()), id: \.offset) { index, line in
+              Text(line.text.isEmpty ? " " : abbreviatingHome(line.text))
+                .foregroundStyle(line.channel == .stderr ? Palette.secondary : Palette.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .id(index)
+            }
+          }
+          .finiteAccessibilityFrame()
+          .font(.stim(.caption, mono: true))
+          .textSelection(.enabled)
+          .padding(Space.md)
+        }
+      }
+      .onAppear {
+        if !run.logLines.isEmpty { proxy.scrollTo(run.logLines.count - 1, anchor: .bottom) }
+      }
+    }
+  }
+}
+
+struct GcPreviewView: View {
+  var report: GcPreview
+
+  var body: some View {
+    if report.sections.isEmpty {
+      EmptyState(title: "Nothing to Clean Up", message: "stim gc found nothing left behind.")
+    } else {
+      ScrollView {
+        VStack(alignment: .leading, spacing: Space.lg) {
+          Text(
+            report.actionable
+              ? "stim gc --delete would act on the entries not marked kept."
+              : "stim gc --delete would remove nothing: every entry is kept."
+          )
+          .foregroundStyle(Palette.secondary)
+          ForEach(report.sections, id: \.key) { section in
+            VStack(alignment: .leading, spacing: Space.sm) {
+              HStack(spacing: Space.md) {
+                Text(section.title).font(.stim(.body, weight: .semibold))
+                Text("\(section.entries.count)").foregroundStyle(Palette.tertiary)
+              }
+              ForEach(Array(section.entries.enumerated()), id: \.offset) { _, entry in
+                entryRow(entry)
+              }
+            }
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+      }
+    }
+  }
+
+  private func entryRow(_ entry: GcPreview.Entry) -> some View {
+    HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+      Image(systemName: entry.kept == nil ? "trash" : "lock")
+        .foregroundStyle(entry.kept == nil ? Palette.warning : Palette.tertiary)
+        .frame(width: 14)
+        .help(entry.kept == nil ? "stim gc --delete deletes this" : "Kept by stim gc --delete")
+      VStack(alignment: .leading, spacing: Space.xxs) {
+        Text(abbreviatingHome(entry.label))
+          .font(.stim(.caption, mono: true))
+          .foregroundStyle(entry.kept == nil ? Palette.text : Palette.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        if let kept = entry.kept {
+          Text("kept: \(abbreviatingHome(kept))").foregroundStyle(Palette.tertiary).fixedSize(horizontal: false, vertical: true)
+        }
+      }
+      Spacer()
+      if let bytes = entry.bytes, bytes > 0 {
+        Text(Format.fileSize(bytes))
+          .font(.stim(.caption, mono: true))
+          .foregroundStyle(Palette.tertiary)
+      }
+    }
+    .textSelection(.enabled)
+  }
+}

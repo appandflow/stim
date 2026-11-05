@@ -1,0 +1,1969 @@
+import { readArchives } from '@stim-cli/core/state';
+import { execSync, spawn, type ChildProcess } from 'node:child_process';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
+import {
+  excludePodChurn,
+  porcelainPath,
+  registerRemove,
+  removeWorktreeTarget,
+  removalRemedy,
+} from '../commands/worktree.ts';
+import type { Command } from 'commander';
+import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
+import { serviceRunningFrom } from '../workspace/service-guard.ts';
+import { registerStart } from '../commands/start.ts';
+import { asProcessExit } from './_factories.ts';
+import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { upsertProject, getProject } from '../workspace/config.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
+import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+import * as measurements from '../maintenance/measure.ts';
+
+type ActionFn = (target: string | undefined, opts: Record<string, unknown>) => void | Promise<void>;
+
+interface CommandStub {
+  command(nameAndArgs?: string): CommandStub;
+  description(str?: string): CommandStub;
+  option(flags?: string, description?: string): CommandStub;
+  action(fn: ActionFn): CommandStub;
+}
+
+test('porcelainPath reads the path out of each status form', () => {
+  expect(porcelainPath(' M ios/Podfile.lock')).toBe('ios/Podfile.lock');
+  expect(porcelainPath('R  old/name.js -> new/name.js')).toBe('new/name.js');
+  expect(porcelainPath('?? "we\u00e4rd path"')).toBe('we\u00e4rd path');
+  expect(porcelainPath('   ')).toBe(null);
+});
+
+test('pod-install churn keeps its exact restore command', () => {
+  const lines = removalRemedy([' M ios/Podfile.lock', ' M ios/App.xcodeproj/project.pbxproj']).join('\n');
+  expect(lines).toMatch(/pod install` rewrites/);
+  expect(lines).toMatch(/ios\/Podfile\.lock/);
+  expect(lines).not.toMatch(/clean -fd/);
+});
+
+test('the remedy carries the paths themselves, capped, quoting what needs it', () => {
+  expect(removalRemedy([' M src/app.js', '?? scratch.txt'], { worktree: '/tmp/wt' }).join('\n')).toMatch(
+    /checkout -- src\/app\.js/,
+  );
+  expect(removalRemedy(['?? "we ird.txt"'], { worktree: '/tmp/wt' }).join('\n')).toMatch(/clean -fd "we ird\.txt"/);
+  const many = removalRemedy([' M a', ' M b', ' M c', ' M d', ' M e', ' M f'], { worktree: '/tmp/wt' }).join('\n');
+  expect(many).toMatch(/checkout -- a b c d e \.\.\./);
+  expect(!many.includes('<path>')).toBeTruthy();
+});
+
+function canon(p: string) {
+  try {
+    return realpathSync.native(resolve(p));
+  } catch {
+    return resolve(p);
+  }
+}
+
+function captureAction(register: (cmd: Command) => void) {
+  let captured: ActionFn | undefined;
+  const stub: CommandStub = {
+    command() {
+      return stub;
+    },
+    description() {
+      return stub;
+    },
+    option() {
+      return stub;
+    },
+    action(fn: ActionFn) {
+      captured = fn;
+      return stub;
+    },
+  };
+  register(stub as Command);
+  return (target: string | undefined, opts: Record<string, unknown> = {}) => {
+    if (!captured) throw new Error('register did not register an action');
+    return captured(target, opts);
+  };
+}
+
+function captureStartAction(overrides: Parameters<typeof registerStart>[1]) {
+  let captured: ((opts: Record<string, unknown>) => void | Promise<void>) | undefined;
+  const stub: CommandStub = {
+    command() {
+      return stub;
+    },
+    description() {
+      return stub;
+    },
+    option() {
+      return stub;
+    },
+    action(fn) {
+      captured = fn as unknown as (opts: Record<string, unknown>) => void | Promise<void>;
+      return stub;
+    },
+  };
+  registerStart(stub as Command, overrides);
+  if (!captured) throw new Error('registerStart did not register an action');
+  return captured;
+}
+
+interface PorcelainEntry {
+  path: string;
+  branch?: string;
+}
+
+function porcelain(entries: PorcelainEntry[]) {
+  return entries
+    .map(
+      (e) =>
+        `worktree ${e.path}\nHEAD 0000000000000000000000000000000000000000\n${e.branch ? `branch refs/heads/${e.branch}` : 'detached'}\n`,
+    )
+    .join('\n');
+}
+
+const TIMED_OUT = 'timed out';
+
+interface MakeExecutorOptions {
+  dirty?: string | null;
+  unpushed?: string | null;
+  remote?: string;
+  worktrees?: string | null;
+  simctlList?: string;
+  occupied?: Record<string, boolean>;
+  diffs?: Record<string, string>;
+  bare?: { path: string; head: string | null };
+  worktreeRemoveError?: string;
+  branchDeleteError?: string;
+  refSha?: string | null;
+  statusAnswers?: (string | null)[];
+  staged?: string | null;
+  commonDir?: string | null;
+}
+
+function makeExecutor({
+  dirty = '',
+  unpushed = '',
+  remote = 'origin',
+  worktrees = '',
+  simctlList = '{"devices":{}}',
+  occupied = {},
+  diffs = {},
+  bare,
+  worktreeRemoveError,
+  branchDeleteError,
+  refSha = 'abc123',
+  statusAnswers = [],
+  staged = '',
+  commonDir = null,
+}: MakeExecutorOptions = {}) {
+  const runCalls: string[] = [];
+  const runQuietCalls: string[] = [];
+  const exec = {
+    calls: { run: runCalls, runQuiet: runQuietCalls },
+    run(cmd: string) {
+      runCalls.push(cmd);
+      if (/simctl list devices --json/.test(cmd)) return simctlList;
+      throw new Error(`unexpected run: ${cmd}`);
+    },
+    runFile(file: string, args: string[] = []) {
+      const cmd = [file, ...args].join(' ');
+      runCalls.push(cmd);
+      if (/simctl list devices --json/.test(cmd)) return simctlList;
+      if (/simctl delete|delete avd/.test(cmd)) return '';
+      if (/worktree remove/.test(cmd)) {
+        if (worktreeRemoveError) throw new Error(worktreeRemoveError);
+        return '';
+      }
+      if (/update-ref -d/.test(cmd)) {
+        if (branchDeleteError) throw new Error(branchDeleteError);
+        return '';
+      }
+      if (/rev-parse --verify/.test(cmd)) return refSha;
+      if (file === 'git') {
+        const out = exec.runFileQuiet(file, args);
+        if (out === TIMED_OUT)
+          throw Object.assign(new Error(`Command timed out after 60000ms: ${cmd}`), { code: 'ETIMEDOUT' });
+        if (out === null) throw new Error(`Command failed: ${cmd}`);
+        return out;
+      }
+      throw new Error(`unexpected runFile: ${cmd}`);
+    },
+    runQuiet(cmd: string) {
+      runQuietCalls.push(cmd);
+      return null;
+    },
+    runFileQuiet(file: string, args: string[] = []) {
+      const cmd = [file, ...args].join(' ');
+      runQuietCalls.push(cmd);
+      const spawnMatch = cmd.match(/simctl spawn (\S+) launchctl list/);
+      if (spawnMatch) {
+        const udid = spawnMatch[1] ?? '';
+        return occupied[udid] ? '082a\t0\tUIKitApplication:com.example.MyAppUITests.xctrunner[082a][rb-legacy]' : '';
+      }
+      if (args.includes('symbolic-ref') && bare && args[args.indexOf('-C') + 1] === bare.path) {
+        return bare.head ? `refs/heads/${bare.head}` : null;
+      }
+      if (/status --porcelain/.test(cmd)) return statusAnswers.length ? (statusAnswers.shift() ?? null) : dirty;
+      if (/ls-files --stage/.test(cmd)) return staged;
+      if (/--git-common-dir/.test(cmd)) return commonDir;
+      const diffMatch = cmd.match(/ diff -- (.+)$/);
+      if (diffMatch) return diffs[diffMatch[1] ?? ''] ?? '';
+      if (/ checkout -- /.test(cmd)) return '';
+      if (/log --oneline HEAD --not --remotes/.test(cmd)) return unpushed;
+      if (/worktree list --porcelain/.test(cmd)) return worktrees;
+      if (cmd.endsWith('remote')) return remote;
+      return null;
+    },
+    spawn() {},
+  };
+  return exec;
+}
+
+function simctlJson(sims: unknown[]) {
+  return JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-17-0': sims.map((sim) => ({
+        deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-15',
+        ...(sim as object),
+      })),
+    },
+  });
+}
+
+let tmpHome: string, mainDir: string, wtDir: string;
+let liveProcesses: ChildProcess[];
+
+function liveUnrelatedProcess(): ChildProcess {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  if (!child.pid) throw new Error('test process did not start');
+  liveProcesses.push(child);
+  return child;
+}
+
+function writeManagedTunnel(root: string, pid: number): void {
+  ensureWorkspaceStorage(root);
+  writeFileSync(
+    workspaceStateFile(root),
+    JSON.stringify({
+      metroTunnel: {
+        kind: 'managed',
+        provider: 'ngrok',
+        pid,
+        url: 'https://recorded.ngrok.app',
+        port: 8081,
+        startedAt: 'T',
+        processToken: 'linux:100',
+      },
+    }),
+  );
+}
+
+function writeRemoteSession(root: string, sessionId: string): void {
+  ensureWorkspaceStorage(root);
+  writeFileSync(
+    workspaceStateFile(root),
+    JSON.stringify({ remoteDevice: { platform: 'ios', sessionId, startedAt: 'T' } }),
+  );
+}
+
+beforeEach(() => {
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-home-'));
+  process.env.STIM_HOME = tmpHome;
+  vi.stubEnv('HOME', tmpHome);
+  for (const udid of ['U1', 'U3', 'U4', 'U5', 'U6', 'U7', 'U8', 'U9', 'UDID-1']) recordCreatedDevice('ios', udid);
+  for (const name of [
+    'stim-a',
+    'stim-b',
+    'stim-c',
+    'stim-d',
+    'stim-held',
+    'stim-main',
+    'stim-missing',
+    'stim-plain',
+    'stim-x',
+  ])
+    recordCreatedDevice('android', name);
+  mainDir = canon(mkdtempSync(join(tmpdir(), 'stim-test-main-')));
+  wtDir = canon(mkdtempSync(join(tmpdir(), 'stim-test-wt-')));
+  liveProcesses = [];
+});
+
+afterEach(() => {
+  for (const child of liveProcesses) child.kill('SIGKILL');
+  resetExecutor();
+  process.exitCode = 0;
+  rmSync(tmpHome, { recursive: true, force: true });
+  rmSync(mainDir, { recursive: true, force: true });
+  rmSync(wtDir, { recursive: true, force: true });
+  delete process.env.STIM_HOME;
+  vi.unstubAllEnvs();
+  delete process.env.STIM_ARCHIVE_ENABLED;
+});
+
+test('action: on the source checkout, reclaims the environment with the owned device deleted and the tree untouched', async () => {
+  process.env.STIM_ARCHIVE_ENABLED = 'true';
+  upsertProject(mainDir, {
+    metroPort: 8081,
+    platforms: { ios: { deviceUdid: 'U9', owned: true, deviceName: 'stim-main' } },
+  });
+  writeFileSync(join(mainDir, 'keep.txt'), 'source file');
+  mkdirSync(join(mainDir, '.stim', 'logs'), { recursive: true });
+  writeFileSync(join(mainDir, '.stim', 'state.json'), '{}');
+  ensureWorkspaceStorage(mainDir);
+  writeFileSync(workspaceStateFile(mainDir), '{"lastUsedAt":"2026-01-01T00:00:00Z"}');
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+    simctlList: simctlJson([{ udid: 'U9', name: 'stim-main', state: 'Shutdown', isAvailable: true }]),
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).not.toBe(1);
+  expect(exec.calls.run.some((c) => /xcrun simctl delete U9/.test(c))).toBeTruthy();
+  expect(getProject(mainDir)).toBe(null);
+  expect(existsSync(join(mainDir, '.stim'))).toBe(true);
+  expect(existsSync(workspaceDir(mainDir))).toBe(false);
+  expect(readFileSync(join(mainDir, 'keep.txt'), 'utf-8')).toBe('source file');
+  expect(![...exec.calls.run, ...exec.calls.runQuiet].some((c) => /worktree remove/.test(c))).toBeTruthy();
+  expect(errs.join('\n')).toMatch(/working tree stays \(it is the source checkout\)/);
+  expect(readArchives().find((entry) => entry.projectRoot === mainDir)?.removedBy).toBe('worktree-remove');
+});
+
+test('action: a dirty source checkout still reclaims, without a refusal and without mentioning the dirt', async () => {
+  upsertProject(mainDir, { metroPort: 8084 });
+  writeFileSync(join(mainDir, 'uncommitted.txt'), 'not yet committed');
+  const exec = makeExecutor({
+    dirty: ' M src/app.js\n?? uncommitted.txt\n',
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(mainDir)).toBe(null);
+  expect(readFileSync(join(mainDir, 'uncommitted.txt'), 'utf-8')).toBe('not yet committed');
+  const text = errs.join('\n');
+  expect(text).not.toMatch(/Refusing/);
+  expect(text).not.toMatch(/uncommitted/);
+  expect(!exec.calls.runQuiet.some((c) => /status --porcelain/.test(c))).toBeTruthy();
+  expect(text).toMatch(/working tree stays/);
+});
+
+test('action: --force changes nothing on the source checkout -- reclaim only, tree stays', async () => {
+  upsertProject(mainDir, { metroPort: 8085 });
+  writeFileSync(join(mainDir, 'keep.txt'), 'source file');
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, { force: true });
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(mainDir)).toBe(null);
+  expect(readFileSync(join(mainDir, 'keep.txt'), 'utf-8')).toBe('source file');
+  expect(![...exec.calls.run, ...exec.calls.runQuiet].some((c) => /worktree remove/.test(c))).toBeTruthy();
+  expect(errs.join('\n')).toMatch(/working tree stays/);
+});
+
+test('action: a failed device teardown on the source checkout keeps the record and exits 1', async () => {
+  upsertProject(mainDir, {
+    metroPort: 8086,
+    platforms: { ios: { deviceUdid: 'U7', owned: true, deviceName: 'stim-held' } },
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+    simctlList: simctlJson([{ udid: 'U7', name: 'stim-held', state: 'Shutdown', isAvailable: true }]),
+  });
+  const originalRunFile = exec.runFile.bind(exec);
+  exec.runFile = (file: string, args: string[] = []) => {
+    if (args.join(' ') === 'simctl delete U7') throw new Error('Unable to delete');
+    return originalRunFile(file, args);
+  };
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(mainDir)).not.toBe(null);
+  expect(errs.join('\n')).toMatch(/still tracks/);
+});
+
+test('action: source-checkout artifact deletion blocks a concurrent replacement tunnel start', async () => {
+  upsertProject(mainDir, { label: 'main' });
+  ensureWorkspaceStorage(mainDir);
+  writeFileSync(workspaceStateFile(mainDir), '{}');
+  setExecutor(
+    makeExecutor({
+      worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+    }),
+  );
+  let competingStart: Promise<'started' | 'refused'> | null = null;
+  const original = console.error;
+  console.error = (message) => {
+    if (/^\s*workspace\s+removed\s/.test(String(message))) {
+      competingStart = withManagedRemoteWorktreeLock(mainDir, async () => {
+        ensureWorkspaceStorage(mainDir);
+        writeFileSync(workspaceStateFile(mainDir), JSON.stringify({ metroTunnel: { pid: 5252 } }));
+      }).then(
+        () => 'started',
+        () => 'refused',
+      );
+    }
+  };
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(competingStart).not.toBeNull();
+  await expect(competingStart).resolves.toBe('refused');
+  expect(existsSync(workspaceStateFile(mainDir))).toBe(false);
+});
+
+describe('on the source checkout, from a subfolder', () => {
+  const sourceCheckout = () => {
+    const mobile = join(mainDir, 'apps', 'mobile');
+    const web = join(mainDir, 'apps', 'web');
+    mkdirSync(join(mobile, 'src'), { recursive: true });
+    mkdirSync(web, { recursive: true });
+    upsertProject(mobile, { metroPort: 8085 });
+    upsertProject(web, { metroPort: 8086 });
+    setExecutor(makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) }));
+    return { mobile, web };
+  };
+
+  test.each(['project folder', 'folder below the project'])(
+    'reclaims only the project at or above the %s',
+    async (where) => {
+      const { mobile, web } = sourceCheckout();
+      const run = captureAction(registerRemove);
+      await run(where === 'project folder' ? mobile : join(mobile, 'src'), {});
+
+      expect(process.exitCode).not.toBe(1);
+      expect(getProject(mobile)).toBe(null);
+      expect(getProject(web)?.metroPort).toBe(8086);
+    },
+  );
+
+  test('reclaims projects nested under that project, and treats a root spelled differently as the root', async () => {
+    const { mobile, web } = sourceCheckout();
+    const example = join(mobile, 'example');
+    mkdirSync(example);
+    upsertProject(example, { metroPort: 8087 });
+    await captureAction(registerRemove)(mobile, {});
+    expect(getProject(example)).toBe(null);
+    expect(getProject(web)?.metroPort).toBe(8086);
+
+    await captureAction(registerRemove)(join(mainDir, '..', basename(mainDir)), {});
+    expect(process.exitCode).not.toBe(1);
+    expect(getProject(web)).toBe(null);
+  });
+
+  test('from the checkout root still reclaims every project under it', async () => {
+    const { mobile, web } = sourceCheckout();
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+
+    expect(process.exitCode).not.toBe(1);
+    expect(getProject(mobile)).toBe(null);
+    expect(getProject(web)).toBe(null);
+  });
+
+  test('refuses from a folder with no registered project at or above it, leaving every project', async () => {
+    const { mobile, web } = sourceCheckout();
+    const docs = join(mainDir, 'docs');
+    mkdirSync(docs);
+    const run = captureAction(registerRemove);
+    await run(docs, {});
+
+    expect(process.exitCode).toBe(1);
+    expect(getProject(mobile)?.metroPort).toBe(8085);
+    expect(getProject(web)?.metroPort).toBe(8086);
+  });
+});
+
+describe('in a linked worktree, from a subfolder', () => {
+  const linkedWorktree = () => {
+    const mobile = join(wtDir, 'apps', 'mobile');
+    const web = join(wtDir, 'apps', 'web');
+    mkdirSync(join(mobile, 'src'), { recursive: true });
+    mkdirSync(web, { recursive: true });
+    upsertProject(mobile, { metroPort: 8085 });
+    upsertProject(web, { metroPort: 8086 });
+    const exec = makeExecutor({
+      worktrees: porcelain([
+        { path: mainDir, branch: 'main' },
+        { path: wtDir, branch: 'feat-x' },
+      ]),
+    });
+    setExecutor(exec);
+    return { mobile, web, removedTree: () => exec.calls.run.some((cmd) => /worktree remove/.test(cmd)) };
+  };
+
+  test.each(['project folder', 'folder below the project'])(
+    'reclaims only the project at or above the %s and leaves the tree',
+    async (where) => {
+      const { mobile, web, removedTree } = linkedWorktree();
+      await captureAction(registerRemove)(where === 'project folder' ? mobile : join(mobile, 'src'), {});
+
+      expect(process.exitCode).not.toBe(1);
+      expect(getProject(mobile)).toBe(null);
+      expect(getProject(web)?.metroPort).toBe(8086);
+      expect(removedTree()).toBe(false);
+      expect(existsSync(wtDir)).toBe(true);
+    },
+  );
+
+  test('refuses from a folder with no registered project at or above it, leaving the tree and every project', async () => {
+    const { mobile, web, removedTree } = linkedWorktree();
+    const docs = join(wtDir, 'docs');
+    mkdirSync(docs);
+    await captureAction(registerRemove)(docs, {});
+
+    expect(process.exitCode).toBe(1);
+    expect(getProject(mobile)?.metroPort).toBe(8085);
+    expect(getProject(web)?.metroPort).toBe(8086);
+    expect(removedTree()).toBe(false);
+  });
+
+  test('a root project run from a subfolder keeps the branch ownership the later root removal needs', async () => {
+    upsertProject(wtDir, { worktreeRoot: true, worktreeBranch: 'worktree-feat-x', worktreeBranchOwned: true });
+    const sub = join(wtDir, 'src');
+    mkdirSync(sub);
+    const exec = makeExecutor({
+      worktrees: porcelain([
+        { path: mainDir, branch: 'main' },
+        { path: wtDir, branch: 'worktree-feat-x' },
+      ]),
+    });
+    setExecutor(exec);
+    await captureAction(registerRemove)(sub, {});
+    expect(process.exitCode).not.toBe(1);
+    expect(getProject(wtDir)?.worktreeBranchOwned).toBe(true);
+    expect(exec.calls.run.some((cmd) => /worktree remove/.test(cmd))).toBe(false);
+
+    await captureAction(registerRemove)(wtDir, {});
+    expect(exec.calls.run.some((cmd) => /update-ref -d .*worktree-feat-x/.test(cmd))).toBe(true);
+  });
+
+  test('the worktree root removes the whole worktree and every project under it', async () => {
+    const { mobile, web, removedTree } = linkedWorktree();
+    await captureAction(registerRemove)(wtDir, {});
+
+    expect(process.exitCode).not.toBe(1);
+    expect(removedTree()).toBe(true);
+    expect(getProject(mobile)).toBe(null);
+    expect(getProject(web)).toBe(null);
+  });
+
+  test('resolves a symlinked path to its real location before deciding', async () => {
+    const { mobile, web, removedTree } = linkedWorktree();
+    const links = canon(mkdtempSync(join(tmpdir(), 'stim-test-links-')));
+    try {
+      symlinkSync(join(wtDir, 'apps'), join(links, 'apps-link'));
+      await captureAction(registerRemove)(join(links, 'apps-link', 'mobile'), {});
+      expect(process.exitCode).not.toBe(1);
+      expect(getProject(mobile)).toBe(null);
+      expect(getProject(web)?.metroPort).toBe(8086);
+      expect(removedTree()).toBe(false);
+
+      symlinkSync(wtDir, join(links, 'root-link'));
+      await captureAction(registerRemove)(join(links, 'root-link'), {});
+      expect(process.exitCode).not.toBe(1);
+      expect(removedTree()).toBe(true);
+      expect(getProject(web)).toBe(null);
+    } finally {
+      rmSync(links, { recursive: true, force: true });
+    }
+  });
+});
+
+test('action: a registered project directory that is not a git repo gets the same environment reclaim', async () => {
+  process.env.STIM_ARCHIVE_ENABLED = 'true';
+  upsertProject(wtDir, {
+    metroPort: 8087,
+    platforms: { ios: { deviceUdid: 'U8', owned: true, deviceName: 'stim-plain' } },
+  });
+  writeFileSync(join(wtDir, 'keep.txt'), 'source file');
+  mkdirSync(join(wtDir, '.stim'), { recursive: true });
+  writeFileSync(join(wtDir, '.stim', 'state.json'), '{}');
+  ensureWorkspaceStorage(wtDir);
+  writeFileSync(workspaceStateFile(wtDir), '{"lastUsedAt":"2026-01-01T00:00:00Z"}');
+  const exec = makeExecutor({
+    worktrees: null,
+    simctlList: simctlJson([{ udid: 'U8', name: 'stim-plain', state: 'Shutdown', isAvailable: true }]),
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).not.toBe(1);
+  expect(exec.calls.run.some((c) => /xcrun simctl delete U8/.test(c))).toBeTruthy();
+  expect(getProject(wtDir)).toBe(null);
+  expect(existsSync(join(wtDir, '.stim'))).toBe(true);
+  expect(readFileSync(join(wtDir, 'keep.txt'), 'utf-8')).toBe('source file');
+  expect(errs.join('\n')).toMatch(/working tree stays \(it is not a git repository\)/);
+  expect(readArchives().find((entry) => entry.projectRoot === wtDir)?.removedBy).toBe('worktree-remove');
+});
+
+test('action: refuses when git cannot answer the status check, leaving config untouched', async () => {
+  upsertProject(wtDir, { metroPort: 8082 });
+  const before = getProject(wtDir);
+  const exec = makeExecutor({
+    dirty: null,
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(wtDir)).toEqual(before);
+  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
+});
+
+test.each([
+  [
+    'cannot answer the dirty-path listing',
+    { statusAnswers: [' M a.txt', null] },
+    /could not determine git status/,
+    true,
+  ],
+  ['cannot answer the submodule check', { staged: null }, /could not check for initialized submodules/, true],
+  ['times out on the status check', { statusAnswers: [TIMED_OUT] }, /git safety check timed out/, false],
+  ['times out on the submodule check', { staged: TIMED_OUT }, /git safety check timed out/, false],
+])('action: refuses before any teardown when git %s', async (_probe, answers, reason, suggestsForce) => {
+  upsertProject(wtDir, { platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } } });
+  const before = getProject(wtDir);
+  const exec = makeExecutor({
+    ...answers,
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+    simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
+  });
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(errs.join('\n')).toMatch(reason);
+  expect(/--force/.test(errs.join('\n'))).toBe(suggestsForce);
+  expect(getProject(wtDir)).toEqual(before);
+  expect(exec.calls.run.some((c) => /simctl delete|worktree remove/.test(c))).toBe(false);
+});
+
+test.each([
+  ['listing worktrees', { worktrees: TIMED_OUT }],
+  ['reading the common git directory', { worktrees: '', commonDir: TIMED_OUT }],
+])(
+  'action: a registered worktree whose git times out on %s is refused, not reclaimed as a plain folder',
+  async (_read, answers) => {
+    upsertProject(wtDir, { platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } } });
+    const before = getProject(wtDir);
+    const exec = makeExecutor({
+      ...answers,
+      simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
+    });
+    setExecutor(exec);
+    const errs: string[] = [];
+    const original = console.error;
+    console.error = (m) => errs.push(String(m));
+    try {
+      const run = captureAction(registerRemove);
+      await run(wtDir, {});
+    } finally {
+      console.error = original;
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/git safety check timed out/);
+    expect(errs.join('\n')).not.toMatch(/not a git repository/);
+    expect(getProject(wtDir)).toEqual(before);
+    expect(exec.calls.run.some((c) => /simctl delete|worktree remove/.test(c))).toBe(false);
+  },
+);
+
+test('action: force removal keeps an owned branch that has unique commits', async () => {
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+  });
+  const exec = makeExecutor({
+    unpushed: 'abc123 unique work',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'worktree-feat-x' },
+    ]),
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (message) => errs.push(String(message));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, { force: true });
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).not.toBe(1);
+  expect(exec.calls.run.some((call) => /worktree remove --force/.test(call))).toBe(true);
+  expect(exec.calls.run.some((call) => /branch -D/.test(call))).toBe(false);
+  expect(errs.some((line) => /branch\s+kept worktree-feat-x \(it has 1 unique commit/.test(line))).toBe(true);
+});
+
+test('action: a branch deletion failure keeps ownership state and exits unsuccessfully', async () => {
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+    worktreeMainRoot: mainDir,
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'worktree-feat-x' },
+    ]),
+    branchDeleteError: 'branch is locked',
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(wtDir)).toMatchObject({
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+    worktreeRemovalComplete: true,
+    worktreePendingBranchSha: 'abc123',
+  });
+
+  rmSync(wtDir, { recursive: true, force: true });
+  process.exitCode = 0;
+  const changedExec = makeExecutor({ refSha: 'def456' });
+  const changedRunFileQuiet = changedExec.runFileQuiet.bind(changedExec);
+  changedExec.runFileQuiet = (file, args = []) => {
+    if (/rev-parse --verify --quiet/.test([file, ...args].join(' '))) return 'def456';
+    return changedRunFileQuiet(file, args);
+  };
+  setExecutor(changedExec);
+
+  await run(wtDir, {});
+
+  expect(process.exitCode).toBe(1);
+  expect(changedExec.calls.run.some((call) => /branch -D/.test(call))).toBe(false);
+  expect(getProject(wtDir)).not.toBe(null);
+
+  process.exitCode = 0;
+  const retryExec = makeExecutor({ refSha: 'abc123' });
+  const originalRunFileQuiet = retryExec.runFileQuiet.bind(retryExec);
+  retryExec.runFileQuiet = (file, args = []) => {
+    if (/rev-parse --verify --quiet/.test([file, ...args].join(' '))) return 'abc123';
+    return originalRunFileQuiet(file, args);
+  };
+  setExecutor(retryExec);
+
+  await run(wtDir, {});
+
+  expect(process.exitCode).not.toBe(1);
+  expect(retryExec.calls.run.some((call) => /update-ref -d refs\/heads\/worktree-feat-x abc123/.test(call))).toBe(true);
+  expect(getProject(wtDir)).toBe(null);
+});
+
+test('action: removing a deleted worktree drops the record of its project and the projects inside it', async () => {
+  const app = join(wtDir, 'apps/mobile');
+  upsertProject(wtDir, { worktreeRoot: true });
+  upsertProject(app, { platforms: {} });
+  ensureWorkspaceStorage(app);
+  rmSync(wtDir, { recursive: true, force: true });
+  setExecutor(makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) }));
+
+  await captureAction(registerRemove)(wtDir, {});
+
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(wtDir)).toBe(null);
+  expect(getProject(app)).toBe(null);
+  expect(existsSync(workspaceDir(app))).toBe(false);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'action: removing a worktree whose volume is not mounted keeps its record and says why',
+  async () => {
+    const unmounted = '/Volumes/StimTestVolumeThatDoesNotExist/wt';
+    upsertProject(unmounted, { platforms: {} });
+    const errs: string[] = [];
+    const original = console.error;
+    console.error = (m) => errs.push(String(m));
+    try {
+      await captureAction(registerRemove)(unmounted, {});
+    } finally {
+      console.error = original;
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(getProject(unmounted)).not.toBe(null);
+    expect(errs.join('\n')).toMatch(/volume \/Volumes\/StimTestVolumeThatDoesNotExist is not mounted/);
+  },
+);
+
+test('removing a deleted worktree for the automatic sweep leaves its record to the sweep', async () => {
+  upsertProject(wtDir, { worktreeRoot: true });
+  rmSync(wtDir, { recursive: true, force: true });
+  setExecutor(makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) }));
+  const output = { error: () => {}, fail: () => {} };
+
+  await removeWorktreeTarget(wtDir, { linkedOnly: true, output });
+
+  expect(getProject(wtDir)).not.toBe(null);
+});
+
+test('action: a timed-out worktree list after removal keeps the branch and the retry state', async () => {
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+    worktreeMainRoot: mainDir,
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'worktree-feat-x' },
+    ]),
+  });
+  const runFileQuiet = exec.runFileQuiet.bind(exec);
+  exec.runFileQuiet = (file, args = []) =>
+    /worktree list --porcelain/.test([file, ...args].join(' ')) && exec.calls.run.some((c) => /worktree remove/.test(c))
+      ? TIMED_OUT
+      : runFileQuiet(file, args);
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    await captureAction(registerRemove)(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(exec.calls.run.some((c) => /update-ref -d/.test(c))).toBe(false);
+  expect(errs.join('\n')).toMatch(/kept worktree-feat-x/);
+  expect(getProject(wtDir)).toMatchObject({ worktreeRemovalComplete: true, worktreePendingBranchSha: 'abc123' });
+});
+
+test('action: a HEAD read that times out after reclaim still reports what was released', async () => {
+  upsertProject(wtDir, { platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } } });
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+    simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
+  });
+  const runFile = exec.runFile.bind(exec);
+  exec.runFile = (file, args = []) => {
+    if (/rev-parse --verify/.test([file, ...args].join(' ')) && exec.calls.run.some((c) => /simctl delete/.test(c))) {
+      throw Object.assign(new Error('Command timed out after 60000ms'), { code: 'ETIMEDOUT' });
+    }
+    return runFile(file, args);
+  };
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    await captureAction(registerRemove)(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(errs.join('\n')).toMatch(/git safety check timed out/);
+  expect(errs.join('\n')).toMatch(/device/);
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(false);
+});
+
+test('action: pending cleanup keeps a branch that another worktree checks out', async () => {
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+    worktreeMainRoot: mainDir,
+    worktreeRemovalComplete: true,
+    worktreePendingBranchSha: 'abc123',
+  });
+  rmSync(wtDir, { recursive: true, force: true });
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'worktree-feat-x' }]),
+  });
+  const originalRunFileQuiet = exec.runFileQuiet.bind(exec);
+  exec.runFileQuiet = (file, args = []) => {
+    if (/rev-parse --verify --quiet/.test([file, ...args].join(' '))) return 'abc123';
+    return originalRunFileQuiet(file, args);
+  };
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(process.exitCode).toBe(1);
+  expect(exec.calls.run.some((call) => /update-ref -d/.test(call))).toBe(false);
+  expect(getProject(wtDir)).not.toBe(null);
+});
+
+test('action: tunnel verification failure retains state and refuses worktree removal even with force', async () => {
+  const child = liveUnrelatedProcess();
+  upsertProject(wtDir, { label: 'feature' });
+  writeManagedTunnel(wtDir, child.pid!);
+  const exec = makeExecutor({
+    dirty: '',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (message) => errs.push(String(message));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, { force: true });
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(wtDir)).not.toBeNull();
+  expect(existsSync(workspaceStateFile(wtDir))).toBe(true);
+  expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(false);
+  expect(errs.join('\n')).toMatch(/Refusing to remove/);
+  expect(errs.join('\n')).toMatch(/identity could not be verified/i);
+  expect(errs.join('\n')).not.toMatch(new RegExp(`kill\\s+${child.pid}`));
+  await expect(withManagedTunnelLock(wtDir, async () => true)).resolves.toBe(true);
+});
+
+test('action: a missing recorded tunnel does not block normal worktree removal', async () => {
+  upsertProject(wtDir, { label: 'feature' });
+  writeManagedTunnel(wtDir, 99_999_999);
+  const exec = makeExecutor({
+    dirty: '',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(wtDir)).toBeNull();
+  expect(existsSync(workspaceDir(wtDir))).toBe(false);
+  expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(true);
+});
+
+test('action: a retained EAS session prevents generic worktree removal', async () => {
+  upsertProject(wtDir, { label: 'feature' });
+  writeRemoteSession(wtDir, 'drs_retained');
+  const exec = makeExecutor({
+    dirty: '',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (message) => errs.push(String(message));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(wtDir)).not.toBeNull();
+  expect(existsSync(workspaceStateFile(wtDir))).toBe(true);
+  expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(false);
+  expect(errs.join('\n')).toContain('eas simulator:stop --id drs_retained');
+});
+
+test('action: reclaims a nested monorepo app-dir project registered under the worktree root, not just the root itself', async () => {
+  const nestedDir = join(wtDir, 'apps', 'mobile');
+  upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
+  upsertProject(nestedDir, { metroPort: 8085, platforms: { ios: { deviceUdid: 'UDID-1' } } });
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(wtDir)).toBe(null);
+  expect(getProject(nestedDir)).toBe(null);
+});
+
+test('action: a concurrent tunnel start cannot publish a replacement during worktree removal', async () => {
+  upsertProject(wtDir, { metroPort: 8092 });
+  ensureWorkspaceStorage(wtDir);
+  writeFileSync(workspaceStateFile(wtDir), '{}');
+  const exec = makeExecutor({
+    dirty: '',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  let competingStart: Promise<'started' | 'refused'> | null = null;
+  const originalRunFile = exec.runFile.bind(exec);
+  exec.runFile = (file, args = []) => {
+    if (/worktree remove/.test([file, ...args].join(' '))) {
+      competingStart = withManagedRemoteWorktreeLock(wtDir, async () => {
+        ensureWorkspaceStorage(wtDir);
+        writeFileSync(workspaceStateFile(wtDir), JSON.stringify({ metroTunnel: { pid: 5252 } }));
+      }).then(
+        () => 'started',
+        () => 'refused',
+      );
+    }
+    return originalRunFile(file, args);
+  };
+  setExecutor(exec);
+
+  const run = captureAction(registerRemove);
+  await run(wtDir, {});
+
+  expect(competingStart).not.toBeNull();
+  await expect(competingStart).resolves.toBe('refused');
+  expect(existsSync(workspaceStateFile(wtDir))).toBe(false);
+});
+
+test('action: an unregistered nested remote start cannot bypass the worktree removal lock', async () => {
+  const nestedDir = join(wtDir, 'apps', 'new-mobile');
+  mkdirSync(nestedDir, { recursive: true });
+  writeFileSync(join(nestedDir, 'package.json'), JSON.stringify({ name: 'new-mobile' }));
+  upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
+  const exec = makeExecutor({
+    dirty: '',
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+  });
+  const originalRunFileQuiet = exec.runFileQuiet.bind(exec);
+  exec.runFileQuiet = (file, args = []) => {
+    if ([file, ...args].join(' ').includes('rev-parse --show-toplevel')) return wtDir;
+    return originalRunFileQuiet(file, args);
+  };
+  let nestedStart: Promise<void> | null = null;
+  const originalRunFile = exec.runFile.bind(exec);
+  const originalExit = process.exit;
+  exec.runFile = (file, args = []) => {
+    if (/worktree remove/.test([file, ...args].join(' '))) {
+      const originalCwd = process.cwd();
+      process.chdir(nestedDir);
+      try {
+        const runStart = captureStartAction({
+          providers: () => ['ngrok'],
+          startTunnelSequence: async () => ({
+            provider: 'ngrok',
+            url: 'https://replacement.ngrok.app',
+            pid: 5252,
+            processToken: 'linux:200',
+            cleanup: async () => ({ status: 'stopped' }),
+          }),
+          writeTunnelRecord: (projectRoot, patch) => {
+            writeFileSync(workspaceStateFile(projectRoot), JSON.stringify(patch));
+            throw new Error('stop after attempted publication');
+          },
+        });
+        nestedStart = Promise.resolve(runStart({ remote: true, wait: '1', json: true })).catch(() => {});
+      } finally {
+        process.chdir(originalCwd);
+      }
+    }
+    return originalRunFile(file, args);
+  };
+  process.exit = asProcessExit(() => {});
+  setExecutor(exec);
+
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+    expect(nestedStart).not.toBeNull();
+    await nestedStart;
+  } finally {
+    process.exit = originalExit;
+  }
+
+  expect(getProject(nestedDir)).toBeNull();
+  expect(existsSync(workspaceStateFile(nestedDir))).toBe(false);
+  await expect(withManagedRemoteWorktreeLock(wtDir, async () => 'released')).resolves.toBe('released');
+});
+
+test('against a real repo: remove on the source checkout reclaims the environment and leaves the repo intact', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-main-')));
+  const repo = join(base, 'repo');
+  const errs: string[] = [];
+  const originalError = console.error;
+  const originalLog = console.log;
+  try {
+    mkdirSync(repo, { recursive: true });
+    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8', timeout: 15_000 });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    writeFileSync(join(repo, 'package.json'), '{}');
+    git('git add -A');
+    git('git commit -q -m init');
+    writeFileSync(join(repo, 'marker.txt'), 'still here');
+
+    upsertProject(repo, { metroPort: null });
+    mkdirSync(join(repo, '.stim', 'logs'), { recursive: true });
+    writeFileSync(join(repo, '.stim', 'state.json'), '{}');
+
+    console.error = (m) => errs.push(String(m));
+    console.log = () => {};
+    const run = captureAction(registerRemove);
+    await run(repo, {});
+    console.error = originalError;
+    console.log = originalLog;
+
+    expect(process.exitCode).not.toBe(1);
+    expect(readFileSync(join(repo, 'package.json'), 'utf-8')).toBe('{}');
+    expect(readFileSync(join(repo, 'marker.txt'), 'utf-8')).toBe('still here');
+    expect(
+      execSync('git rev-parse --is-inside-work-tree', { cwd: repo, encoding: 'utf-8', timeout: 15_000 }).trim(),
+    ).toBe('true');
+    expect(existsSync(join(repo, '.stim'))).toBe(true);
+    expect(getProject(repo)).toBe(null);
+    expect(errs.join('\n')).toMatch(/working tree stays \(it is the source checkout\)/);
+  } finally {
+    console.error = originalError;
+    console.log = originalLog;
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
+
+function realRepoWithWorktree(base: string) {
+  const repo = join(base, 'repo');
+  const remote = join(base, 'remote.git');
+  mkdirSync(repo, { recursive: true });
+  const git = (cmd: string, cwd = repo) => execSync(cmd, { cwd, encoding: 'utf-8', timeout: 15_000 });
+  git(`git init -q --bare "${remote}"`, base);
+  git('git init -q');
+  git('git config user.email test@example.com');
+  git('git config user.name test');
+  git(`git remote add origin "${remote}"`);
+  writeFileSync(join(repo, 'package.json'), '{}');
+  git('git add -A');
+  git('git commit -q -m init');
+  git('git push -q -u origin HEAD');
+  const wt = join(base, 'wt');
+  git(`git worktree add -q "${wt}" -b feat-x`);
+  return { repo, wt, git };
+}
+
+function realGitFakeSimctl(simctlList: string) {
+  resetExecutor();
+  const real = getExecutor();
+  const deleted: string[] = [];
+  const fake = (cmd: string) => {
+    if (/simctl list/.test(cmd)) return simctlList;
+    const deletion = cmd.match(/simctl delete (\S+)/);
+    if (deletion) deleted.push(deletion[1] ?? '');
+    return '';
+  };
+  const exec = {
+    run: fake,
+    runQuiet: fake,
+    runFile(file: string, args: string[] = [], opts: Parameters<typeof real.runFile>[2] = { timeoutMs: 60_000 }) {
+      return file === 'git' ? real.runFile(file, args, opts) : fake([file, ...args].join(' '));
+    },
+    runFileQuiet(file: string, args: string[] = [], opts: Parameters<typeof real.runFile>[2] = { timeoutMs: 60_000 }) {
+      return file === 'git' ? real.runFileQuiet(file, args, opts) : fake([file, ...args].join(' '));
+    },
+    spawn() {
+      throw new Error('unexpected spawn');
+    },
+    findExecutable: () => null,
+  };
+  setExecutor(exec);
+  return { deleted };
+}
+
+test('against a real repo: a locked worktree is refused before its owned sim is torn down, even with --force', async () => {
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-locked-')));
+  const errs: string[] = [];
+  const originalError = console.error;
+  try {
+    const { repo, wt, git } = realRepoWithWorktree(base);
+    git(`git worktree lock --reason "on a usb disk" "${wt}"`);
+    upsertProject(wt, { platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } } });
+    const sims = realGitFakeSimctl(simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]));
+
+    console.error = (m) => errs.push(String(m));
+    const run = captureAction(registerRemove);
+    await run(wt, { force: true });
+    console.error = originalError;
+
+    expect(process.exitCode).toBe(1);
+    expect(sims.deleted).toEqual([]);
+    expect(existsSync(wt)).toBe(true);
+    expect(getProject(wt)?.platforms?.ios).toMatchObject({ deviceUdid: 'U1', owned: true });
+    expect(errs.join('\n')).toMatch(/locked/);
+    expect(errs.join('\n')).toContain(`git -C ${repo} worktree unlock ${wt}`);
+  } finally {
+    console.error = originalError;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
+
+function worktreeWithIgnoredTrees(base: string) {
+  const made = realRepoWithWorktree(base);
+  const { wt, git } = made;
+  writeFileSync(join(wt, '.gitignore'), 'node_modules/\nios/Pods/\nlinked\n');
+  mkdirSync(join(wt, 'ios'));
+  writeFileSync(join(wt, 'ios', 'Podfile'), "platform :ios, '15.1'");
+  git('git add .gitignore ios/Podfile', wt);
+  git('git commit -q -m ignore', wt);
+  git('git push -q -u origin feat-x', wt);
+  mkdirSync(join(wt, 'node_modules', 'pkg'), { recursive: true });
+  writeFileSync(join(wt, 'node_modules', 'pkg', 'index.js'), 'module.exports = 1;');
+  mkdirSync(join(wt, 'ios', 'Pods', 'Foo'), { recursive: true });
+  writeFileSync(join(wt, 'ios', 'Pods', 'Foo', 'a.h'), '#pragma once');
+  const outside = join(base, 'outside');
+  mkdirSync(outside);
+  writeFileSync(join(outside, 'keep.txt'), 'outside the worktree');
+  symlinkSync(outside, join(wt, 'linked'));
+  return { ...made, outside };
+}
+
+test.skipIf(process.platform === 'win32')(
+  'against a real repo: removal moves the ignored directories into the Stim trash, git removes the rest and a background rm empties the trash',
+  async () => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-trash-')));
+    const errs: string[] = [];
+    const outs: string[] = [];
+    const originalError = console.error;
+    const originalLog = console.log;
+    try {
+      const { wt, outside, git } = worktreeWithIgnoredTrees(base);
+      realGitFakeSimctl('{"devices":{}}');
+      const exec = getExecutor();
+      resetExecutor();
+      const real = getExecutor();
+      setExecutor({ ...exec, spawn: real.spawn.bind(real) });
+
+      console.error = (m) => errs.push(String(m));
+      console.log = (m) => outs.push(String(m));
+      await captureAction(registerRemove)(wt, {});
+      console.error = originalError;
+      console.log = originalLog;
+
+      expect(process.exitCode).not.toBe(1);
+      expect(outs).toEqual([]);
+      expect(existsSync(wt)).toBe(false);
+      expect(git('git worktree list --porcelain')).not.toContain(wt);
+      expect(git('git status --porcelain')).toBe('');
+      expect(readFileSync(join(outside, 'keep.txt'), 'utf-8')).toBe('outside the worktree');
+      expect(errs.join('\n')).toMatch(
+        /(deleting 2 ignored directories in the background|deleted 2 ignored directories)/,
+      );
+      const deadline = Date.now() + 20_000;
+      while (readdirSync(join(tmpHome, 'trash')).length && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 100));
+      expect(readdirSync(join(tmpHome, 'trash'))).toEqual([]);
+    } finally {
+      console.error = originalError;
+      console.log = originalLog;
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'against a real repo: when git worktree remove fails, the ignored directories move back into the worktree',
+  async () => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-trash-back-')));
+    const errs: string[] = [];
+    const originalError = console.error;
+    try {
+      const { wt } = worktreeWithIgnoredTrees(base);
+      realGitFakeSimctl('{"devices":{}}');
+      const exec = getExecutor();
+      setExecutor({
+        ...exec,
+        runFile(...params: Parameters<typeof exec.runFile>) {
+          const [file, args = []] = params;
+          if (file === 'git' && args.includes('worktree') && args.includes('remove'))
+            throw new Error('fatal: simulated');
+          return exec.runFile(...params);
+        },
+      });
+
+      console.error = (m) => errs.push(String(m));
+      await captureAction(registerRemove)(wt, {});
+      console.error = originalError;
+
+      expect(process.exitCode).toBe(1);
+      expect(errs.join('\n')).toMatch(/git worktree remove failed: fatal: simulated/);
+      expect(readFileSync(join(wt, 'node_modules', 'pkg', 'index.js'), 'utf-8')).toBe('module.exports = 1;');
+      expect(readFileSync(join(wt, 'ios', 'Pods', 'Foo', 'a.h'), 'utf-8')).toBe('#pragma once');
+      expect(readdirSync(join(tmpHome, 'trash'))).toEqual([]);
+    } finally {
+      console.error = originalError;
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'against a real repo: when git worktree remove fails and a directory cannot move back, the command names it and the trash entry',
+  async () => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-trash-stuck-')));
+    const errs: string[] = [];
+    const originalError = console.error;
+    try {
+      const { wt } = worktreeWithIgnoredTrees(base);
+      realGitFakeSimctl('{"devices":{}}');
+      const exec = getExecutor();
+      setExecutor({
+        ...exec,
+        runFile(...params: Parameters<typeof exec.runFile>) {
+          const [file, args = []] = params;
+          if (file === 'git' && args.includes('worktree') && args.includes('remove')) {
+            mkdirSync(join(wt, 'node_modules'));
+            throw new Error('fatal: simulated');
+          }
+          return exec.runFile(...params);
+        },
+      });
+
+      console.error = (m) => errs.push(String(m));
+      await captureAction(registerRemove)(wt, {});
+      console.error = originalError;
+
+      const [entry] = readdirSync(join(tmpHome, 'trash'));
+      expect(process.exitCode).toBe(1);
+      expect(errs.join('\n')).toContain(
+        `Could not move node_modules back into ${wt}; it stays in ${join(tmpHome, 'trash', entry ?? '')}, which stim gc keeps while ${wt} exists.`,
+      );
+      expect(readFileSync(join(wt, 'ios', 'Pods', 'Foo', 'a.h'), 'utf-8')).toBe('#pragma once');
+      expect(readdirSync(join(tmpHome, 'trash', entry ?? '', 'entries'))).toHaveLength(1);
+    } finally {
+      console.error = originalError;
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
+const launchAgentPlist = (label: string, script: string, marked: boolean) => `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/node</string>
+		<string>${script}</string>
+	</array>${marked ? '\n\t<key>StimService</key>\n\t<dict>\n\t\t<key>Managed</key>\n\t\t<true/>\n\t</dict>' : ''}
+</dict>
+</plist>
+`;
+
+const systemdUnit = (
+  label: string,
+  script: string,
+  managed: boolean,
+) => `# Written by \`stim-server service install\`; change it with \`stim-server service\`.
+[Unit]
+Description=stim-server (${label})
+
+[Service]
+ExecStart="/usr/bin/node" "${script}" "--port" "7787"
+Environment="STIM_SERVICE_LABEL=${label}"
+Restart=always
+${managed ? '\n[X-Stim]\nManaged=true\n' : ''}
+[Install]
+WantedBy=default.target
+`;
+
+describe('stim-server service guard for systemd user units', () => {
+  const identity = (path: string) => path;
+  test.each([
+    {
+      name: 'a unit stim-server installed that runs a script inside the folder',
+      managed: true,
+      script: '/w/a b/server.mjs',
+      found: true,
+    },
+    { name: 'a unit stim-server did not install', managed: false, script: '/w/a b/server.mjs', found: false },
+    { name: 'a unit that runs from another folder', managed: true, script: '/elsewhere/server.mjs', found: false },
+  ])('$name', ({ managed, script, found }) => {
+    const units = mkdtempSync(join(tmpdir(), 'stim-test-units-'));
+    try {
+      writeFileSync(join(units, 'dev.stim.server.service'), systemdUnit('dev.stim.server', script, managed));
+      const use = serviceRunningFrom('/w/a b', identity, '/nonexistent', units, 'linux');
+      expect(use).toEqual(
+        found ? { label: 'dev.stim.server', plist: join(units, 'dev.stim.server.service'), argument: script } : null,
+      );
+    } finally {
+      rmSync(units, { recursive: true, force: true });
+    }
+  });
+
+  test('a Stim unit whose ExecStart cannot be read blocks removal with no argument', () => {
+    const units = mkdtempSync(join(tmpdir(), 'stim-test-units-'));
+    try {
+      writeFileSync(
+        join(units, 'dev.stim.server.service'),
+        systemdUnit('dev.stim.server', '/w/server.mjs', true).replace(/^ExecStart=.*$/m, 'ExecStart="/usr/bin/node'),
+      );
+      expect(serviceRunningFrom('/w', identity, '/nonexistent', units, 'linux')).toMatchObject({ argument: null });
+    } finally {
+      rmSync(units, { recursive: true, force: true });
+    }
+  });
+});
+
+test.skipIf(process.platform !== 'linux')(
+  'against a real repo: a systemd unit stim-server installed refuses removal of the checkout it runs, even with --force',
+  async () => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-unit-')));
+    const errs: string[] = [];
+    const originalError = console.error;
+    vi.stubEnv('HOME', base);
+    try {
+      const { wt } = realRepoWithWorktree(base);
+      const units = join(base, '.config', 'systemd', 'user');
+      mkdirSync(units, { recursive: true });
+      writeFileSync(
+        join(units, 'dev.stim.server.service'),
+        systemdUnit('dev.stim.server', join(wt, 'server.mjs'), true),
+      );
+      console.error = (m) => errs.push(String(m));
+      const run = captureAction(registerRemove);
+      await run(wt, { force: true });
+      console.error = originalError;
+      expect(existsSync(wt)).toBe(true);
+      expect(process.exitCode).toBe(1);
+      expect(errs.join('\n')).toContain('STIM_WORKTREE_SERVICE');
+    } finally {
+      console.error = originalError;
+      vi.unstubAllEnvs();
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
+describe.skipIf(process.platform !== 'darwin')('stim-server service guard', () => {
+  test.each([
+    { name: 'a stim-server service script inside the worktree refuses removal, even with --force', marked: true },
+    { name: 'a LaunchAgent that stim-server did not install does not block removal', marked: false },
+  ])(
+    'against a real repo: $name',
+    async ({ marked }) => {
+      const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-service-')));
+      const errs: string[] = [];
+      const originalError = console.error;
+      vi.stubEnv('HOME', base);
+      try {
+        const { wt } = realRepoWithWorktree(base);
+        const agents = join(base, 'Library', 'LaunchAgents');
+        mkdirSync(agents, { recursive: true });
+        writeFileSync(
+          join(agents, 'dev.stim.server.plist'),
+          launchAgentPlist('dev.stim.server', join(wt, 'server.mjs'), marked),
+        );
+
+        console.error = (m) => errs.push(String(m));
+        const run = captureAction(registerRemove);
+        await run(wt, { force: true });
+        console.error = originalError;
+
+        expect(existsSync(wt)).toBe(marked);
+        expect(process.exitCode === 1).toBe(marked);
+        expect(errs.join('\n').includes('STIM_WORKTREE_SERVICE')).toBe(marked);
+      } finally {
+        console.error = originalError;
+        vi.unstubAllEnvs();
+        rmSync(base, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+});
+
+test.each(['submodule add', 'embedded repository'] as const)(
+  'against a real repo: a worktree with an initialized submodule (%s) is refused before its owned sim is torn down',
+  async (layout) => {
+    const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-submodule-')));
+    const errs: string[] = [];
+    const originalError = console.error;
+    try {
+      const { wt, git } = realRepoWithWorktree(base);
+      const sub = layout === 'submodule add' ? join(base, 'sub') : join(wt, 'sub');
+      mkdirSync(sub);
+      git('git init -q', sub);
+      git('git -c user.email=t@e.com -c user.name=t commit -q --allow-empty -m s', sub);
+      if (layout === 'submodule add') git(`git -c protocol.file.allow=always submodule add -q "${sub}" sub`, wt);
+      else git('git -c advice.addEmbeddedRepo=false add sub', wt);
+      git('git commit -q -m sub', wt);
+      git('git push -q -u origin feat-x', wt);
+      upsertProject(wt, { platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } } });
+      const sims = realGitFakeSimctl(
+        simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
+      );
+
+      console.error = (m) => errs.push(String(m));
+      const run = captureAction(registerRemove);
+      await run(wt, {});
+      console.error = originalError;
+
+      expect(process.exitCode).toBe(1);
+      expect(sims.deleted).toEqual([]);
+      expect(existsSync(wt)).toBe(true);
+      expect(getProject(wt)?.platforms?.ios).toMatchObject({ deviceUdid: 'U1', owned: true });
+      expect(errs.join('\n')).toMatch(/submodule/);
+    } finally {
+      console.error = originalError;
+      rmSync(base, { recursive: true, force: true });
+    }
+  },
+  30_000,
+);
+
+function barePorcelain(bareRoot: string, entries: PorcelainEntry[]) {
+  return `worktree ${bareRoot}\nbare\n\n${porcelain(entries)}`;
+}
+
+test('action: in a bare-repository layout, the worktree on the bare HEAD branch is the source checkout and only its environment is reclaimed', async () => {
+  const bareRoot = join(tmpHome, 'bare');
+  upsertProject(mainDir, { metroPort: 8081 });
+  writeFileSync(join(mainDir, 'keep.txt'), 'source file');
+  const exec = makeExecutor({
+    worktrees: barePorcelain(bareRoot, [
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+    bare: { path: bareRoot, head: 'main' },
+  });
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).not.toBe(1);
+  expect(getProject(mainDir)).toBe(null);
+  expect(readFileSync(join(mainDir, 'keep.txt'), 'utf-8')).toBe('source file');
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(false);
+  expect(errs.join('\n')).toMatch(/working tree stays \(it is the source checkout\)/);
+});
+
+test('action: in a bare-repository layout with a detached bare HEAD, removal refuses and prints the symbolic-ref command', async () => {
+  const bareRoot = join(tmpHome, 'bare');
+  upsertProject(wtDir, { metroPort: 8083 });
+  const exec = makeExecutor({
+    worktrees: barePorcelain(bareRoot, [
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+    bare: { path: bareRoot, head: null },
+  });
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(getProject(wtDir)).not.toBe(null);
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(false);
+  expect(errs.join('\n')).toContain(`git -C ${bareRoot} symbolic-ref HEAD refs/heads/<branch>`);
+});
+
+test('action: the bare repository directory itself is refused as a removal target', async () => {
+  mkdirSync(join(tmpHome, 'bare'));
+  const bareRoot = canon(join(tmpHome, 'bare'));
+  const exec = makeExecutor({
+    worktrees: barePorcelain(bareRoot, [{ path: mainDir, branch: 'main' }]),
+    bare: { path: bareRoot, head: 'main' },
+  });
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(bareRoot, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(false);
+  expect(errs.join('\n')).toMatch(/is the bare repository, not a worktree/);
+});
+
+test('excludePodChurn restores pod-install churn in an app whose Xcode project is outside ios/', () => {
+  const rnTester = { dir: 'packages/rn-tester', project: 'RNTesterPods' };
+  const { lines, restore } = excludePodChurn(
+    [' M packages/rn-tester/Podfile.lock', ' M packages/rn-tester/RNTesterPods.xcodeproj/project.pbxproj'],
+    [rnTester],
+  );
+  expect(restore).toEqual([
+    'packages/rn-tester/Podfile.lock',
+    'packages/rn-tester/RNTesterPods.xcodeproj/project.pbxproj',
+  ]);
+  expect(lines).toEqual([]);
+  expect(excludePodChurn([' M packages/rn-tester/Desktop.xcodeproj/project.pbxproj'], [rnTester]).restore).toEqual([]);
+  expect(excludePodChurn([' M packages/other/Podfile.lock'], [rnTester]).restore).toEqual([]);
+});
+
+function cookieRepo(base: string): string {
+  const repo = join(base, 'repo');
+  mkdirSync(join(repo, 'apps', 'mobile'), { recursive: true });
+  const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8', timeout: 15_000 });
+  git('git init -q');
+  git('git config user.email test@example.com');
+  git('git config user.name test');
+  writeFileSync(join(repo, 'apps', 'mobile', 'App.tsx'), 'export default 1;\n');
+  git('git add -A');
+  git('git commit -q -m init');
+  const wt = join(base, 'wt');
+  git(`git worktree add -q "${wt}" -b feat-cookies`);
+  writeFileSync(join(wt, '.watchman-cookie-host.local-123-4'), '');
+  writeFileSync(join(wt, 'apps', 'mobile', '.watchman-cookie-host.local-123-5'), '');
+  return wt;
+}
+
+async function removeCapturingErrors(wt: string): Promise<string> {
+  const errs: string[] = [];
+  const originalError = console.error;
+  const originalLog = console.log;
+  try {
+    console.error = (m) => errs.push(String(m));
+    console.log = () => {};
+    await captureAction(registerRemove)(wt, {});
+  } finally {
+    console.error = originalError;
+    console.log = originalLog;
+  }
+  return errs.join('\n');
+}
+
+test('against a real repo: a worktree dirty only with watchman cookies is removed without --force', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-cookies-')));
+  const originalCwd = process.cwd();
+  try {
+    const wt = cookieRepo(base);
+    expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8', timeout: 15_000 })).toMatch(
+      /\?\? \.watchman-cookie-/,
+    );
+    process.env.STIM_ARCHIVE_ENABLED = 'true';
+    upsertProject(wt, {});
+    ensureWorkspaceStorage(wt);
+    writeFileSync(workspaceStateFile(wt), '{"lastUsedAt":"2026-01-01T00:00:00Z"}');
+    const stdout = vi.spyOn(console, 'log');
+    await removeCapturingErrors(wt);
+    expect(stdout).not.toHaveBeenCalled();
+    stdout.mockRestore();
+    expect(readArchives().find((entry) => entry.projectRoot === wt)?.removedBy).toBe('worktree-remove');
+    expect(process.exitCode).not.toBe(1);
+    expect(existsSync(wt)).toBe(false);
+  } finally {
+    vi.restoreAllMocks();
+    delete process.env.STIM_ARCHIVE_ENABLED;
+    process.chdir(originalCwd);
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test('against a real repo: an untracked file beside watchman cookies is still refused and nothing is deleted', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-cookies-real-')));
+  const originalCwd = process.cwd();
+  try {
+    const wt = cookieRepo(base);
+    writeFileSync(join(wt, 'notes.txt'), 'keep me\n');
+    const text = await removeCapturingErrors(wt);
+    expect(process.exitCode).toBe(1);
+    expect(existsSync(wt)).toBe(true);
+    expect(text).toMatch(/notes\.txt/);
+    expect(text).not.toMatch(/watchman-cookie/);
+    expect(existsSync(join(wt, '.watchman-cookie-host.local-123-4'))).toBe(true);
+  } finally {
+    process.chdir(originalCwd);
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
+
+function podChurnRepo(base: string, { extraDirt = false }: { extraDirt?: boolean } = {}) {
+  const repo = join(base, 'repo');
+  const bareRemote = join(base, 'remote.git');
+  mkdirSync(bareRemote, { recursive: true });
+  execSync(`git init -q --bare "${bareRemote}"`, { timeout: 15_000 });
+  mkdirSync(join(repo, 'apps', 'app', 'ios', 'Tlon.xcodeproj'), { recursive: true });
+  const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8', timeout: 15_000 });
+  git('git init -q');
+  git('git config user.email test@example.com');
+  git('git config user.name test');
+  git(`git remote add origin "${bareRemote}"`);
+  writeFileSync(join(repo, '.gitignore'), '.stim/\n');
+  writeFileSync(join(repo, 'apps', 'app', 'ios', 'Podfile.lock'), 'PODS:\n  - hermes-engine\n');
+  writeFileSync(join(repo, 'apps', 'app', 'ios', 'Tlon.xcodeproj', 'project.pbxproj'), '// !$*UTF8*$!\n');
+  writeFileSync(join(repo, 'apps', 'app', 'App.tsx'), 'export default 1;\n');
+  git('git add -A');
+  git('git commit -q -m init');
+  git('git push -q -u origin HEAD');
+  const wt = join(base, 'wt');
+  git(`git worktree add -q "${wt}" -b feat-pods`);
+
+  writeFileSync(
+    join(wt, 'apps', 'app', 'ios', 'Podfile.lock'),
+    `PODS:\n  - hermes-engine (from \`${wt}/node_modules\`)\n`,
+  );
+  writeFileSync(join(wt, 'apps', 'app', 'ios', 'Tlon.xcodeproj', 'project.pbxproj'), '// !$*UTF8*$!\n// regenerated\n');
+  if (extraDirt) writeFileSync(join(wt, 'apps', 'app', 'App.tsx'), 'export default 2;\n');
+  return wt;
+}
+
+test('against a real repo: a worktree dirty only with pod-install churn is restored and removed', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-pods-')));
+  const originalCwd = process.cwd();
+  const errs: string[] = [];
+  const originalError = console.error;
+  const originalLog = console.log;
+  try {
+    const wt = podChurnRepo(base);
+    expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8', timeout: 15_000 }).trim()).toBe(
+      'M apps/app/ios/Podfile.lock\n M apps/app/ios/Tlon.xcodeproj/project.pbxproj',
+    );
+
+    console.error = (m) => errs.push(String(m));
+    console.log = () => {};
+    const run = captureAction(registerRemove);
+    await run(wt, {});
+    console.error = originalError;
+    console.log = originalLog;
+
+    const text = errs.join('\n');
+    expect(process.exitCode).not.toBe(1);
+    expect(existsSync(wt)).toBe(false);
+    expect(text).toMatch(/restored apps\/app\/ios\/Podfile\.lock \(pod install churn; the worktree is being removed\)/);
+    expect(text).toMatch(/restored apps\/app\/ios\/Tlon\.xcodeproj\/project\.pbxproj \(pod install churn/);
+  } finally {
+    console.error = originalError;
+    console.log = originalLog;
+    process.chdir(originalCwd);
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test('against a real repo: pod churn PLUS a modified source file is refused exactly as before', async () => {
+  resetExecutor();
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-pods-dirty-')));
+  const originalCwd = process.cwd();
+  const errs: string[] = [];
+  const originalError = console.error;
+  const originalLog = console.log;
+  try {
+    const wt = podChurnRepo(base, { extraDirt: true });
+    console.error = (m) => errs.push(String(m));
+    console.log = () => {};
+    const run = captureAction(registerRemove);
+    await run(wt, {});
+    console.error = originalError;
+    console.log = originalLog;
+
+    const text = errs.join('\n');
+    expect(process.exitCode).toBe(1);
+    expect(existsSync(wt)).toBe(true);
+    expect(text).toMatch(/Refusing to remove/);
+    expect(text).toMatch(/App\.tsx/);
+    expect(text).not.toMatch(/restored/);
+    expect(readFileSync(join(wt, 'apps', 'app', 'ios', 'Podfile.lock'), 'utf-8')).toMatch(/node_modules/);
+  } finally {
+    console.error = originalError;
+    console.log = originalLog;
+    process.chdir(originalCwd);
+    process.exitCode = 0;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test('action: removal releases this workspace lease and leaves another workspace lease alone', async () => {
+  upsertProject(mainDir, { metroPort: 8086 });
+  ensureWorkspaceStorage(mainDir);
+  expect(takeLease({ root: mainDir, platform: 'ios', id: 'UDID-MINE', kind: 'declared' }).status).toBe('taken');
+  expect(takeLease({ root: wtDir, platform: 'android', id: 'R5CT', kind: 'run' }).status).toBe('taken');
+  const exec = makeExecutor({
+    worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+  });
+  setExecutor(exec);
+
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).not.toBe(1);
+  expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['R5CT']);
+  expect(
+    errs.some((line) =>
+      /^\s*lease\s+released the ios lease on UDID-MINE \(it ran until \d{2}:\d{2}:\d{2}\)/.test(line),
+    ),
+  ).toBe(true);
+});
+
+const PARKING_PRESSURE: [number, boolean][] = [
+  [100, false],
+  [10, true],
+];
+
+test.each(PARKING_PRESSURE)(
+  'action: with %i GB free and parking enabled, removal parks the owned simulator unless disk pressure is high',
+  async (freeGb, deletes) => {
+    vi.stubEnv('STIM_POOL_IOS_PARKED_MAX', '3');
+    const disk = [{ volume: '/', freeMb: freeGb * 1024 }];
+    vi.spyOn(measurements, 'measureDisk').mockReturnValue(disk);
+    vi.spyOn(measurements, 'measureDiskAsync').mockResolvedValue(disk);
+    upsertProject(mainDir, {
+      metroPort: 8081,
+      platforms: { ios: { deviceUdid: 'U9', owned: true, deviceName: 'stim-main' } },
+    });
+    const exec = makeExecutor({
+      worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
+      simctlList: simctlJson([{ udid: 'U9', name: 'stim-main', state: 'Shutdown', isAvailable: true }]),
+    });
+    setExecutor(exec);
+
+    const errs: string[] = [];
+    const original = console.error;
+    console.error = (m) => errs.push(String(m));
+    try {
+      await captureAction(registerRemove)(mainDir, {});
+    } finally {
+      console.error = original;
+      vi.restoreAllMocks();
+    }
+
+    const output = errs.join('\n');
+    expect(output.includes('disk pressure high: deleted the owned devices instead of parking them')).toBe(deletes);
+    expect(/could not park|parked stim/.test(output)).toBe(!deletes);
+    expect(exec.calls.run.some((c) => /xcrun simctl delete U9/.test(c))).toBe(true);
+  },
+);

@@ -1,0 +1,416 @@
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { ProcessStart } from '../process-identity.ts';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
+import { withAmbientContext } from '@stim-cli/core';
+import { readClaimSet } from '../ownership-claim.ts';
+import { runReport } from '../report-runtime.ts';
+import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { testContext } from './_context.ts';
+import {
+  agentDeviceLiveness,
+  createActivityReader,
+  createActivityReaderAsync,
+  parseAgentDeviceRecord,
+  readWebActivity,
+  type ActivityTarget,
+  type DeviceProcessTables,
+  type HostProcess,
+} from '../devices/activity.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { workspaceAgentDeviceDir, workspaceLogsDir } from '../workspace/paths.ts';
+
+const UDID = '7466D06C-1AE4-4EDB-8A93-6B8A43A7A47A';
+const OWNER_START = 'Thu Sep 24 21:59:30 2026';
+const RUNNER_START = 'Thu Sep 24 22:00:05 2026';
+const NOW = Date.parse('Thu Sep 24 23:00:00 2026');
+
+test('concurrent activity reads serialize native children on their actual ownership claim', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-native-activity-'));
+  const workspace = join(home, 'workspace');
+  mkdirSync(workspace);
+  const context = testContext({
+    home,
+    projectRoot: workspace,
+    cwd: workspace,
+    env: {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      STIM_HOME: home,
+      AGENT_DEVICE_STATE_DIR: join(home, 'agent-device'),
+      AGENT_DEVICE_IOS_RUNNER_LEASE_DIR: join(home, 'leases'),
+    },
+  });
+  const executor = getExecutor();
+  const original = executor.runFileAsync.bind(executor);
+  const children: { pid: number; processToken: string }[] = [];
+  const recorded: (number | undefined)[] = [];
+  let claimRoot = '';
+  let active = 0;
+  let peak = 0;
+  const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, _args, options) => {
+    if (file === 'ps') return Promise.resolve('');
+    if (file !== 'adb') throw new Error(`Unexpected activity probe ${file}`);
+    return original(process.execPath, ['-e', 'setTimeout(()=>process.stdout.write(""),80)'], {
+      ...options,
+      onSpawn: (child) => {
+        options.onSpawn?.(child);
+        const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+        if (!birth?.ok || child.pid === undefined) throw new Error('The activity probe has no identity');
+        children.push({ pid: child.pid, processToken: birth.token });
+        recorded.push(readClaimSet(claimRoot).live[0]?.child?.pid);
+        peak = Math.max(peak, ++active);
+        child.once('close', () => active--);
+      },
+    });
+  });
+  try {
+    const result = await runReport(context, (operation) =>
+      withAmbientContext(operation, () =>
+        withWorkspaceProcessLock(
+          workspace,
+          'activity',
+          async (claim) => {
+            claimRoot = claim.root;
+            const read = createActivityReaderAsync({ operation, signal: operation.signal, env: operation.env });
+            return Promise.all(
+              ['emulator-5562', 'emulator-5564'].map((id) =>
+                read({ platform: 'android', id, workspace, slot: 'default' }),
+              ),
+            );
+          },
+          { external: true, declareSpawnsFor: operation },
+        ),
+      ),
+    );
+    expect(result).toHaveLength(2);
+    expect(children).toHaveLength(2);
+    expect(recorded).toEqual(children.map((child) => child.pid));
+    expect(peak).toBe(1);
+    expect(active).toBe(0);
+    expect(readClaimSet(claimRoot).live).toEqual([]);
+  } finally {
+    probe.mockRestore();
+    for (const child of children) {
+      if (inspectProcessIdentity(child) === 'same') process.kill(child.pid, 'SIGKILL');
+      await vi.waitFor(async () => expect(await waitForProcessExit(child, 0)).toBe(true), { timeout: 5000 });
+    }
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+function starts(table: Record<number, string | 'gone' | 'unknown'>): (pid: number) => ProcessStart {
+  return (pid) => {
+    const entry = table[pid];
+    if (entry === undefined || entry === 'gone') return { status: 'gone' };
+    if (entry === 'unknown') return { status: 'unknown' };
+    return { status: 'running', startedAtMs: Date.parse(entry) + 417 };
+  };
+}
+
+function runnerLease(over: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    schemaVersion: 1,
+    deviceId: UDID,
+    ownerPid: 100,
+    ownerStartTime: OWNER_START,
+    runnerPid: 200,
+    runnerStartTime: RUNNER_START,
+    createdAtMs: Date.parse(RUNNER_START),
+    futureField: { anything: true },
+    ...over,
+  });
+}
+
+describe('agent-device lease liveness', () => {
+  test('a device claim needs only its owner and preserves ambiguous repeated-hour identities', () => {
+    vi.stubEnv('TZ', 'America/Toronto');
+    try {
+      const claim = parseAgentDeviceRecord(
+        'claim',
+        '/claims/abc.json',
+        JSON.stringify({ device: { id: UDID }, ownerPid: 100, ownerStartTime: 'Sun Nov  1 01:50:03 2026' }),
+      );
+      expect(claim.deviceId).toBe(UDID);
+      expect(agentDeviceLiveness(claim, starts({ 100: '2026-11-01T05:50:03Z' }))).toBe('live');
+      expect(agentDeviceLiveness(claim, starts({ 100: '2026-11-01T06:50:03Z' }))).toBe('unknown');
+      expect(agentDeviceLiveness(claim, starts({ 100: '2026-11-02T06:50:03Z' }))).toBe('dead');
+      expect(
+        agentDeviceLiveness(
+          { ...claim, owner: { pid: 100, startTime: '2026-11-01T01:50:03-04:00' } },
+          starts({ 100: '2026-11-01T06:50:03Z' }),
+        ),
+      ).toBe('dead');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe('createActivityReader', () => {
+  let home: string;
+  let stimHome: string;
+  const workspace = '/projects/app';
+  let ps: string;
+  let adb: string | null;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'stim-activity-home-'));
+    stimHome = mkdtempSync(join(tmpdir(), 'stim-activity-state-'));
+    process.env.STIM_HOME = stimHome;
+    ps = '';
+    adb = '  PID ARGS\n    1 init\n';
+    setExecutor({
+      runFileQuiet: (file: string) => (file === 'ps' ? ps : file === 'adb' ? adb : null),
+    });
+  });
+
+  afterEach(() => {
+    resetExecutor();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(stimHome, { recursive: true, force: true });
+    delete process.env.STIM_HOME;
+  });
+
+  function writeLease(text: string, name = `${UDID}.json`) {
+    const dir = join(home, '.agent-device', 'apple-runner', 'leases');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, name), text);
+  }
+
+  function writeLogs(device: object[], metro: object[] = []) {
+    const dir = workspaceLogsDir(workspace);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'device.ndjson'), device.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    writeFileSync(join(dir, 'metro.ndjson'), metro.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  }
+
+  const target: ActivityTarget = { platform: 'ios', id: UDID, slot: 'default', workspace };
+  const read = (table: Record<number, string>, t: ActivityTarget = target) =>
+    createActivityReader({ now: NOW, home, startOf: starts(table), leaseFiles: () => [] })(t);
+
+  test("a live claim's agent actions count as activity, so an agent working without app logs is not quiet", () => {
+    const claims = join(home, '.agent-device', 'device-claims');
+    mkdirSync(claims, { recursive: true });
+    writeFileSync(
+      join(claims, 'claim.json'),
+      JSON.stringify({
+        session: 'cwd:11fe14a563f7aed6:ios',
+        device: { id: UDID },
+        ownerPid: 100,
+        ownerStartTime: OWNER_START,
+      }),
+    );
+    const events = join(home, '.agent-device', 'sessions', 'cwd_11fe14a563f7aed6_ios', 'events.ndjson');
+    mkdirSync(join(events, '..'), { recursive: true });
+    writeFileSync(events, '{}\n');
+    const actedAt = NOW - 120_000;
+    utimesSync(events, actedAt / 1000, actedAt / 1000);
+    writeLogs([{ ts: NOW - 3_600_000, src: 'device', platform: 'ios', msg: 'old' }]);
+    expect(read({ 100: OWNER_START })).toMatchObject({
+      state: 'driven',
+      lastActivityAt: new Date(actedAt).toISOString(),
+      recent: {
+        'agent-action': new Date(actedAt).toISOString(),
+        'device-log': new Date(NOW - 3_600_000).toISOString(),
+      },
+    });
+  });
+
+  test.each(['ios', 'android'] as const)('a shared %s claim finds actions only in workspace state', (platform) => {
+    const id = platform === 'ios' ? UDID : 'emulator-5554';
+    const claims = join(home, '.agent-device', 'device-claims');
+    mkdirSync(claims, { recursive: true });
+    writeFileSync(
+      join(claims, 'claim.json'),
+      JSON.stringify({
+        session: 'workspace-task',
+        device: { id },
+        ownerPid: 100,
+        ownerStartTime: OWNER_START,
+      }),
+    );
+    const events = join(workspaceAgentDeviceDir(workspace), 'sessions', 'workspace-task', 'events.ndjson');
+    mkdirSync(join(events, '..'), { recursive: true });
+    writeFileSync(events, '{}\n');
+    const actedAt = NOW - 120_000;
+    utimesSync(events, actedAt / 1000, actedAt / 1000);
+    expect(read({ 100: OWNER_START }, { ...target, platform, id })).toMatchObject({
+      state: 'driven',
+      recent: { 'agent-action': new Date(actedAt).toISOString() },
+    });
+  });
+
+  const runnerRow = (start: string) =>
+    `   200     1 204800   1.0 ${start}     /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -only-testing AgentDeviceRunnerUITests/RunnerTests/testCommand -xctestrun /Users/me/.agent-device/apple-runner/derived/ios-simulator/cache-54ec312d5fba03bd/Build/Products/AgentDeviceRunner.env.session-${UDID}-owner-100-8ffad543-52731.xctestrun -destination platform=iOS Simulator,id=${UDID}\n`;
+
+  test("an open session's claim still drives a device whose runner declares the claim protocol", () => {
+    writeLease(runnerLease({ deviceClaimProtocol: 1 }));
+    ps = runnerRow(RUNNER_START);
+    const claims = join(home, '.agent-device', 'device-claims');
+    mkdirSync(claims, { recursive: true });
+    writeFileSync(
+      join(claims, 'claim.json'),
+      JSON.stringify({ device: { id: UDID }, ownerPid: 100, ownerStartTime: OWNER_START }),
+    );
+    expect(read({ 100: OWNER_START, 200: RUNNER_START })).toMatchObject({
+      state: 'driven',
+      driver: { tool: 'agent-device', pid: 100 },
+      basis: ['agent-device-claim'],
+    });
+  });
+
+  test('a runner from an agent-device build without device claims still drives the device', () => {
+    writeLease(runnerLease());
+    ps = runnerRow(RUNNER_START);
+    expect(read({ 100: OWNER_START, 200: RUNNER_START })).toMatchObject({
+      state: 'driven',
+      basis: ['agent-device-lease', 'driver-process'],
+    });
+  });
+
+  test("stim-server's own screenshot captures do not drive a device, another tool's simctl io still does", () => {
+    const simctl = (output: string) =>
+      `   300     1 20480   1.0 ${RUNNER_START}     /Applications/Xcode.app/Contents/Developer/usr/bin/simctl io ${UDID} screenshot --type=jpeg --display=primary ${output}\n`;
+    ps = simctl('/Users/me/.stim/server/frames-aB3dE9/frame.jpg');
+    expect(read({})).toMatchObject({ state: 'idle' });
+    ps = simctl('/tmp/shot.png');
+    expect(read({})).toMatchObject({ state: 'driven', driver: { tool: 'simctl', pid: 300 } });
+  });
+
+  test('input a stim-server client sent dates a device, frames it only streams count for nothing, and its logs never do', () => {
+    const inputAt = new Date(NOW - 60_000).toISOString();
+    writeLogs([{ ts: NOW - 30_000, src: 'device', platform: 'ios', msg: 'chatty app' }]);
+    const reader = createActivityReader({
+      now: NOW,
+      home,
+      startOf: starts({}),
+      leaseFiles: () => [],
+      viewers: () => [
+        { platform: 'ios', id: UDID, lastInputAt: inputAt },
+        { platform: 'ios', id: 'WATCHED' },
+      ],
+    });
+    expect(reader(target)).toMatchObject({ state: 'active', lastActivityAt: inputAt, recent: { viewer: inputAt } });
+    const watched = reader({ ...target, id: 'WATCHED' });
+    expect(watched.recent).toEqual({ 'device-log': new Date(NOW - 30_000).toISOString() });
+    expect(watched.lastActivityAt).toBeUndefined();
+    expect(reader({ ...target, platform: 'android', id: UDID }).recent?.viewer).toBeUndefined();
+  });
+
+  test('an unexpired Stim device lock is a live claim', () => {
+    const reader = createActivityReader({
+      now: NOW,
+      home,
+      startOf: starts({}),
+      leaseFiles: () => [
+        {
+          path: '/locks/ios.json',
+          name: 'ios.json',
+          platform: 'ios',
+          id: UDID,
+          lease: {
+            version: 1,
+            platform: 'ios',
+            id: UDID,
+            deviceName: null,
+            holder: workspace,
+            token: 't',
+            grantedAt: new Date(NOW - 1000).toISOString(),
+            expiresAt: new Date(NOW + 60_000).toISOString(),
+          },
+        },
+      ],
+    });
+    expect(reader(target)).toMatchObject({ state: 'driven', driver: { tool: 'stim device lock' } });
+  });
+});
+
+describe('readWebActivity', () => {
+  const PORT = 9391;
+  const CHROME = 77807;
+  const SUPERVISOR = 66500;
+  let stimHome: string;
+  const workspace = '/projects/web';
+
+  beforeEach(() => {
+    stimHome = mkdtempSync(join(tmpdir(), 'stim-web-activity-'));
+    process.env.STIM_HOME = stimHome;
+  });
+
+  afterEach(() => {
+    rmSync(stimHome, { recursive: true, force: true });
+    delete process.env.STIM_HOME;
+  });
+
+  const row = (pid: number, command: string): HostProcess => ({
+    pid,
+    ppid: 1,
+    rssKb: 0,
+    cpuPercent: 0,
+    startedAt: '2026-09-24T22:00:00.000Z',
+    command,
+  });
+
+  function client(pid: number, localPort: number): string {
+    return `p${pid}\nf12\nn127.0.0.1:${localPort}->127.0.0.1:${PORT}\n`;
+  }
+
+  function tables(connections: string | null, host: HostProcess[] | null): DeviceProcessTables {
+    return { host: () => host, android: () => null, tcpConnections: () => connections };
+  }
+
+  const target = { port: PORT, ownPids: [CHROME, SUPERVISOR], workspace };
+  const chromeSide = `p${CHROME}\nf157\nn127.0.0.1:${PORT}->127.0.0.1:49288\nf158\nn127.0.0.1:${PORT}->127.0.0.1:49300\n`;
+
+  test('a DevTools client that is not Stim makes the browser driven by its tool', () => {
+    const connections =
+      chromeSide + client(SUPERVISOR, 49288) + client(700, 49290) + client(800, 49300) + client(900, 49310);
+    const activity = readWebActivity(
+      target,
+      tables(connections, [
+        row(SUPERVISOR, 'stim-web'),
+        row(700, '/Users/me/.stim/server/helpers/stim-frames-0123456789abcdef web http://127.0.0.1:9391 77807 ABC'),
+        row(800, '/Applications/Stim.app/Contents/MacOS/StimDesktop'),
+        row(
+          900,
+          'node /Users/me/.npm/_npx/1/node_modules/.bin/mcp-server-playwright --cdp-endpoint http://127.0.0.1:9391',
+        ),
+      ]),
+      NOW,
+    );
+    expect(activity).toMatchObject({
+      state: 'driven',
+      driver: { tool: 'playwright', pid: 900, since: '2026-09-24T22:00:00.000Z' },
+      basis: ['cdp-client'],
+    });
+  });
+
+  test('agent input the supervisor recorded dates agent-action, and page-log keeps to page records', () => {
+    const dir = workspaceLogsDir(workspace);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'web.ndjson'),
+      [
+        { ts: NOW - 120_000, src: 'client', msg: 'hi' },
+        { ts: NOW - 60_000, src: 'agent', event: 'agent_action', msg: 'Clicked button "Save"' },
+      ]
+        .map((record) => `${JSON.stringify(record)}\n`)
+        .join(''),
+    );
+    const activity = readWebActivity(target, tables(chromeSide, []), NOW);
+    expect(activity).toMatchObject({
+      lastActivityAt: new Date(NOW - 60_000).toISOString(),
+      recent: {
+        'agent-action': new Date(NOW - 60_000).toISOString(),
+        'page-log': new Date(NOW - 120_000).toISOString(),
+      },
+    });
+  });
+
+  test('an unreadable connection list is unknown, never idle', () => {
+    expect(readWebActivity(target, tables(null, []), NOW)).toMatchObject({ state: 'unknown', basis: ['cdp-client'] });
+  });
+});

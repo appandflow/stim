@@ -1,0 +1,194 @@
+import 'react-native-unistyles/mocks';
+
+import { i18n } from '@lingui/core';
+import { I18nProvider } from '@lingui/react';
+import { fireEvent, render } from '@testing-library/react-native';
+
+import '@/design/unistyles';
+
+import mockRealArchive from '../../mock-server/fixtures/real-archive/archive.json';
+import mockRealDetail from '../../mock-server/fixtures/real-archive/detail.json';
+import type { EnvironmentState } from '@/protocol/types';
+
+import { BuildDetails } from './build-details';
+
+let mockEnvironments: EnvironmentState[] = [];
+const mockPush = jest.fn();
+jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }) }));
+jest.mock('@/hooks/machines', () => ({
+  useArchivesPending: () => false,
+  useStatus: () => ({ environments: mockEnvironments, archived: [mockRealArchive] }),
+  useMacConnection: () => ({ mac: { id: 'mac' }, home: null }),
+}));
+jest.mock('@/hooks/archive-detail', () => ({ useArchiveDetail: () => ({ data: mockRealDetail, error: null }) }));
+jest.mock('@/hooks/build-plans', () => ({ useBuildPlan: () => ({ plan: undefined, checkedAt: null, recheck: null }) }));
+jest.mock('@/hooks/use-now', () => ({ useNow: () => Date.parse('2026-10-05T12:00:00Z') }));
+jest.mock('@/hooks/workspace-logs', () => ({ useBuildOutput: () => [] }));
+jest.mock('react-native-reanimated', () => ({ useReducedMotion: () => false }));
+jest.mock('react-native-ease', () => ({
+  EaseView: jest.requireActual<typeof import('react-native')>('react-native').View,
+}));
+jest.mock('@/components/collapsible', () => ({ Collapsible: () => null, DisclosureChevron: () => null }));
+jest.mock('@/components/lists', () => ({
+  ScrollView: jest.requireActual<typeof import('react-native')>('react-native').ScrollView,
+}));
+jest.mock('@/components/text', () => ({
+  Text: jest.requireActual<typeof import('react-native')>('react-native').Text,
+}));
+jest.mock('@/components/touch', () => ({
+  Touch: jest.requireActual<typeof import('react-native')>('react-native').Pressable,
+}));
+jest.mock('@/components/icon', () => ({ Icon: () => null }));
+jest.mock('@/components/platform-glyph', () => ({ PlatformGlyph: () => null }));
+
+function app(folder: string, platform: 'ios' | 'macos'): EnvironmentState {
+  const path = `/w/apps/${folder}`;
+  const env: EnvironmentState = { path, live: true, memoryMb: 0, warnings: [], worktree: { path: '/w' } };
+  if (platform === 'macos')
+    env.macos = {
+      launchId: 'mac',
+      product: 'Stim',
+      arguments: [],
+      bundle: '/Stim.app',
+      executable: '/Stim',
+      bundleId: 'com.stim',
+      state: 'running',
+      build: { state: 'failed', error: 'desktop error', durationMs: 4000, startedAt: '2026-10-05T11:00:00Z' },
+    };
+  else
+    env.lastBuilds = {
+      ios: {
+        platform: 'ios',
+        status: 'failed',
+        cacheHit: false,
+        cacheSkipped: false,
+        startedAt: '2026-10-05T11:00:00Z',
+        finishedAt: '2026-10-05T11:00:04Z',
+        fingerprint: 'abc',
+        durationMs: 4000,
+        diagnostics: [{ file: `${path}/main.ts`, line: 1, column: null, message: `${folder} error` }],
+      },
+    };
+  return env;
+}
+const body = (path: string, platform: 'ios' | 'macos') => (
+  <I18nProvider i18n={i18n}>
+    <BuildDetails path={path} platform={platform} />
+  </I18nProvider>
+);
+
+it('switches among the native and macOS builds and opens the selected macOS app logs', async () => {
+  const desktop = app('desktop', 'macos');
+  Object.assign(desktop.macos?.build ?? {}, { buildMachine: 'mini:7744', errorCode: 'STIM_OFFLOAD_REFUSED' });
+  const mobile = app('mobile', 'ios');
+  Object.assign(mobile.lastBuilds?.ios ?? {}, { buildMachine: 'remote-only', builtOn: 'mini:7744' });
+  mockEnvironments = [desktop, mobile];
+  const screen = await render(body('/w/apps/mobile', 'ios'));
+  expect(screen.getAllByRole('tab')).toHaveLength(3);
+  expect(screen.queryAllByTestId('project-subtitle')).toHaveLength(0);
+  expect(screen.getByText('mobile error')).toBeTruthy();
+  expect(screen.getByText('Selected: Remote only')).toBeTruthy();
+  expect(screen.getByText('Compiled on mini')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('tab', { name: 'macOS' }));
+  expect(screen.getByRole('tab', { name: 'macOS' }).props.accessibilityState.selected).toBe(true);
+  expect(screen.getByText('desktop error')).toBeTruthy();
+  expect(screen.getByText('Selected: mini')).toBeTruthy();
+  expect(screen.getByText('Build destination refused')).toBeTruthy();
+  expect(screen.queryByText(/Compiled on/)).toBeNull();
+  expect(screen.queryByText('mobile error')).toBeNull();
+  await fireEvent.press(screen.getByText('Build Logs'));
+  expect(mockPush).toHaveBeenLastCalledWith({
+    pathname: '/mac/[id]/logs',
+    params: { id: 'mac', path: '/w/apps/desktop', source: 'build' },
+  });
+});
+
+it('offers the macOS build of a single app that also has a macOS app', async () => {
+  mockEnvironments = [
+    { ...app('mobile', 'ios'), platforms: ['ios', 'android', 'macos'], macos: app('mobile', 'macos').macos },
+  ];
+  Object.assign(mockEnvironments[0]?.macos?.build ?? {}, {
+    cacheHit: true,
+    builtOn: 'mini:7744',
+    buildMachine: 'remote-only',
+  });
+  const screen = await render(body('/w/apps/mobile', 'ios'));
+  expect(screen.getAllByRole('tab').map((tab) => tab.props.accessibilityLabel)).toEqual(['iOS', 'Android', 'macOS']);
+  await fireEvent.press(screen.getByRole('tab', { name: 'macOS' }));
+  expect(screen.getByText('desktop error')).toBeTruthy();
+  expect(screen.getByText('Selected: Remote only')).toBeTruthy();
+  expect(screen.queryByText(/Compiled on/)).toBeNull();
+});
+
+it('opens the build logs of the last native build, limited to the time it ran', async () => {
+  const cached = app('b', 'ios');
+  Object.assign(cached.lastBuilds?.ios ?? {}, {
+    status: 'ok',
+    cacheHit: 'remote',
+    buildMachine: 'remote-only',
+    builtOn: 'mini:7744',
+    offloadedTo: 'mini:7744',
+  });
+  mockEnvironments = [app('a', 'ios'), cached];
+  const screen = await render(body('/w/apps/b', 'ios'));
+  expect(screen.getByText('Selected: Remote only')).toBeTruthy();
+  expect(screen.queryByText(/Compiled on/)).toBeNull();
+  await fireEvent.press(screen.getByText('Build Logs'));
+  expect(mockPush).toHaveBeenLastCalledWith({
+    pathname: '/mac/[id]/logs',
+    params: {
+      id: 'mac',
+      path: '/w/apps/b',
+      source: 'build',
+      since: String(Date.parse('2026-10-05T11:00:00Z')),
+      until: String(Date.parse('2026-10-05T11:00:04Z') + 2000),
+    },
+  });
+});
+
+it('distinguishes shared platforms and shows the selected app diagnostics', async () => {
+  mockEnvironments = [app('a', 'ios'), app('b', 'ios')];
+  const screen = await render(body('/w/apps/b', 'ios'));
+  expect(screen.getByText('b error')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('tab', { name: 'iOS, apps/a' }));
+  expect(screen.getByText('a error')).toBeTruthy();
+  expect(screen.queryByText('b error')).toBeNull();
+  expect(screen.getByRole('tab', { name: 'iOS, apps/a' }).props.accessibilityState.selected).toBe(true);
+});
+
+it('renders all five real archived runs with durations, failure codes and build locations, without planning', async () => {
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <BuildDetails archive={mockRealArchive.id} platform="ios" />
+    </I18nProvider>,
+  );
+  for (const duration of ['0:13', '0:29', '1:06', '0:09', '2:09']) expect(screen.getByText(duration)).toBeTruthy();
+  expect(screen.getAllByText('Failed (STIM_BUILD_FAILED)')).toHaveLength(2);
+  expect(screen.getAllByText('Built on janics-mac-mini')).toHaveLength(2);
+  expect(screen.getAllByText(/on the machine/)).toHaveLength(3);
+  expect(screen.queryByText('Next Build')).toBeNull();
+  expect(screen.queryByText('Check Again')).toBeNull();
+});
+
+it('links archived builds to their archived logs, with the build slot and window', async () => {
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <BuildDetails archive={mockRealArchive.id} platform="ios" />
+    </I18nProvider>,
+  );
+  await fireEvent.press(screen.getByText('Build Logs'));
+  expect(mockPush).toHaveBeenLastCalledWith({
+    pathname: '/mac/[id]/logs',
+    params: expect.objectContaining({
+      id: 'mac',
+      archive: mockRealArchive.id,
+      source: 'build',
+      slot: 'default',
+      since: expect.stringMatching(/^\d+$/),
+      until: expect.stringMatching(/^\d+$/),
+    }),
+  });
+  expect(mockPush).not.toHaveBeenLastCalledWith(
+    expect.objectContaining({ params: expect.objectContaining({ path: expect.anything() }) }),
+  );
+});

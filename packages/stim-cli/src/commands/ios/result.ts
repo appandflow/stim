@@ -1,0 +1,454 @@
+import type { IosRuntimeKind } from './launch.ts';
+import chalk from 'chalk';
+import { workspaceAgentDeviceDir } from '../../workspace/paths.ts';
+import {
+  cacheLevel,
+  UPLOAD_TIMEOUT_MS,
+  easAuthNote,
+  isEasAuthFailureText,
+  type LoadProjectProviderResult,
+} from '../../engine/remote-cache.ts';
+import { PLATFORM, deviceLabel } from './support.ts';
+import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/launch-verify.ts';
+import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../engine/xcode.ts';
+import type { CompilationCacheActivity, DevServerStart, IosFacts, CacheHitLevel } from '../../engine/build-facts.ts';
+import type { WaitedForBuild, RemoteUploadLike, DeviceLike } from './types.ts';
+import type { StimOutput } from '@stim-cli/core';
+import { recordFinishedBuild } from '../../engine/build-progress.ts';
+import type { BuildLedgerExtras } from '../../engine/build-ledger.ts';
+import { buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
+import { formatDuration, phaseLine } from '../../command-output.ts';
+import type { RunRecorder } from '../../engine/stats.ts';
+import { type WorkspaceLinks, workspaceLinkLine } from '../../devices/stim-desktop.ts';
+
+export function lastBuildRecord({
+  devicePlacement,
+  fingerprint = null,
+  cacheKey = null,
+  cacheHit = false,
+  cacheSkipped = false,
+  durationMs = 0,
+  appPath = null,
+  bundleId = null,
+  startedAt,
+  status,
+  errorCode = null,
+  missReason = null,
+  diagnostics = null,
+  configuration = null,
+  buildMachine = 'auto',
+  builtOn,
+  offloadedTo = null,
+  offloadFallback = null,
+  ledger,
+}: {
+  ledger?: BuildLedgerExtras;
+  devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
+  buildMachine?: string;
+  builtOn?: string;
+  offloadedTo?: string | null;
+  offloadFallback?: string | null;
+  configuration?: string | null;
+  missReason?: BuildMissReason | null;
+  diagnostics?: readonly unknown[] | null;
+  fingerprint?: string | null;
+  cacheKey?: string | null;
+  cacheHit?: boolean | string;
+  cacheSkipped?: boolean;
+  durationMs?: number;
+  appPath?: string | null;
+  bundleId?: string | null;
+  startedAt: string;
+  status: string;
+  errorCode?: string | null;
+}): Record<string, unknown> {
+  const record: Record<string, unknown> = {
+    platform: PLATFORM,
+    fingerprint,
+    cacheKey,
+    cacheHit: cacheLevel(cacheHit),
+    cacheSkipped: Boolean(cacheSkipped),
+    durationMs,
+    appPath,
+    bundleId,
+    startedAt,
+    status,
+    configuration,
+  };
+  if (errorCode) record.errorCode = errorCode;
+  if (devicePlacement) record.devicePlacement = devicePlacement;
+  record.buildMachine = buildMachine;
+  if (builtOn) record.builtOn = builtOn;
+  if (offloadedTo) record.offloadedTo = offloadedTo;
+  if (offloadFallback) record.offloadFallback = offloadFallback;
+  if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
+  const recorded = status === 'failed' ? buildDiagnostics(diagnostics) : [];
+  if (recorded.length) record.diagnostics = recorded;
+  if (ledger) record.ledger = ledger;
+  return record;
+}
+
+export function iosFacts({
+  root,
+  slot,
+  udid,
+  deviceName,
+  deviceType = null,
+  runtime = null,
+  fingerprint,
+  configuration = null,
+  scheme = null,
+  cacheKey,
+  cacheHit,
+  cacheSkipped = false,
+  compilationCache = COMPILATION_CACHE_NOT_RUN,
+  waitedForBuild = null,
+  appPath,
+  bundleId,
+  installSkipped = false,
+  metroPort,
+  logsDir,
+  durationMs,
+  launched = true,
+  webPreviewUrl = null,
+  lease,
+  devServer = null,
+  buildMachine = 'auto',
+  builtOn,
+  offloadedTo = null,
+  offloadFallback = null,
+}: {
+  buildMachine?: string;
+  builtOn?: string;
+  offloadedTo?: string | null;
+  offloadFallback?: string | null;
+  root?: string;
+  slot?: string;
+  udid: string | null;
+  deviceName?: string | null;
+  deviceType?: string | null;
+  runtime?: string | null;
+  fingerprint?: string | null;
+  configuration?: string | null;
+  scheme?: string | null;
+  cacheKey?: string | null;
+  cacheHit?: boolean | string;
+  cacheSkipped?: boolean;
+  compilationCache?: CompilationCacheActivity;
+  waitedForBuild?: WaitedForBuild | null;
+  appPath?: string | null;
+  bundleId?: string | null;
+  installSkipped?: boolean;
+  metroPort?: number | null;
+  logsDir?: string;
+  durationMs?: number;
+  launched?: boolean | string;
+  webPreviewUrl?: string | null;
+  lease?: { kind: string; expiresAt: string } | null;
+  devServer?: DevServerStart | null;
+}): IosFacts {
+  return {
+    platform: PLATFORM,
+    ...(slot && slot !== 'default' ? { slot } : {}),
+    udid,
+    deviceName: deviceName ?? null,
+    deviceType: deviceType ?? null,
+    runtime: runtime ?? null,
+    fingerprint,
+    configuration: configuration ?? null,
+    ...(scheme ? { scheme } : {}),
+    cacheKey,
+    cacheHit: cacheLevel(cacheHit),
+    cacheSkipped: Boolean(cacheSkipped),
+    buildMachine,
+    ...(builtOn ? { builtOn } : {}),
+    ...(offloadedTo ? { offloadedTo } : {}),
+    ...(offloadFallback ? { offloadFallback } : {}),
+    compilationCache,
+    waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
+    appPath,
+    bundleId,
+    installSkipped: Boolean(installSkipped),
+    launched: launched === LAUNCH_UNVERIFIED || launched === LAUNCH_BUNDLING ? launched : Boolean(launched),
+    metroPort,
+    logs: { dir: logsDir },
+    ...(root ? { agentDevice: { stateDir: workspaceAgentDeviceDir(root) } } : {}),
+    durationMs,
+    ...(webPreviewUrl ? { webPreviewUrl } : {}),
+    ...(lease === undefined ? {} : { lease }),
+    ...(devServer ? { devServer } : {}),
+  };
+}
+
+export function iosLedgerDevice(
+  device:
+    | { deviceName?: string | null; deviceUdid?: string | null; name?: string | null; runtime?: string | null }
+    | null
+    | undefined,
+): BuildLedgerExtras['device'] {
+  const name = device?.deviceName ?? device?.name;
+  return name && name !== device?.deviceUdid ? { name, runtime: device?.runtime ?? null } : null;
+}
+
+export function writeLastBuild(
+  root: string,
+  record: Record<string, unknown>,
+  { record: recordBuild = recordFinishedBuild }: { record?: typeof recordFinishedBuild } = {},
+): Record<string, unknown> {
+  try {
+    recordBuild(root, record);
+  } catch {}
+  return record;
+}
+
+export async function finishIosUpload(
+  uploadPending: Promise<RemoteUploadLike> | null,
+  remote: LoadProjectProviderResult | null,
+  phase: (name: unknown, text: string) => void,
+  note: (line: string) => void,
+): Promise<boolean> {
+  if (!uploadPending) return false;
+  const upload = await uploadPending;
+  if (upload?.uploaded) {
+    phase('cache', `uploaded (${remote?.name})`);
+  } else if (upload?.timedOut) {
+    note(
+      chalk.yellow(
+        phaseLine(
+          'cache',
+          `${remote?.name} upload still running after ${formatDuration(UPLOAD_TIMEOUT_MS)}; not waiting`,
+        ),
+      ),
+    );
+    return true;
+  } else if (upload?.failed) {
+    const authNote =
+      remote?.name === 'eas' && isEasAuthFailureText(upload.failed)
+        ? easAuthNote({ code: 'logged-out', reason: upload.failed, phase: 'upload' })
+        : null;
+    note(chalk.yellow(phaseLine('cache', authNote || `${remote?.name} upload failed: ${upload.failed}`)));
+  }
+  return false;
+}
+
+export interface ReportIosResultArgs {
+  output: StimOutput;
+  devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
+  host?: import('@stim-cli/core/state').HostedIosStatus;
+  slot?: string;
+  root: string;
+  json: boolean;
+  release: boolean;
+  runtimeKind?: IosRuntimeKind;
+  configuration: string | null;
+  buildScheme?: string | null;
+  metroCheck: boolean;
+  metroPort: number | null;
+  logsDir: string;
+  device: DeviceLike;
+  udid: string | null;
+  appPath: string | null;
+  bundleId: string;
+  installSkipped: boolean;
+  elapsed: () => number;
+  startedAt: string;
+  storeHash: string | null;
+  storeKey: string | null;
+  cacheHit: CacheHitLevel;
+  missReason: BuildMissReason | null;
+  compilationCache: CompilationCacheActivity;
+  useBuildCache: boolean;
+  waitedForBuild: WaitedForBuild | null;
+  launchState: boolean | string;
+  launchWarning?: string;
+  providerName: string | null;
+  buildMachine?: string;
+  builtOn?: string;
+  offloadedTo?: string | null;
+  offloadFallback?: string | null;
+  closeWriter: () => void;
+  webPreviewUrl: string | null;
+  lease?: { kind: string; expiresAt: string } | null;
+  recordRun: RunRecorder['record'];
+  devServer?: DevServerStart | null;
+  links?: WorkspaceLinks;
+}
+
+export function reportIosResult({
+  output,
+  devicePlacement,
+  host,
+  slot,
+  root,
+  json,
+  release,
+  runtimeKind = release ? 'embedded-js' : 'metro',
+  configuration,
+  buildScheme = null,
+  metroCheck,
+  metroPort,
+  logsDir,
+  device,
+  udid,
+  appPath,
+  bundleId,
+  installSkipped,
+  elapsed,
+  startedAt,
+  storeHash,
+  storeKey,
+  cacheHit,
+  missReason,
+  compilationCache,
+  useBuildCache,
+  waitedForBuild,
+  launchState,
+  launchWarning,
+  providerName,
+  buildMachine = 'auto',
+  builtOn,
+  offloadedTo = null,
+  offloadFallback = null,
+  closeWriter,
+  webPreviewUrl,
+  lease,
+  recordRun,
+  devServer = null,
+  links,
+}: ReportIosResultArgs): IosFacts {
+  const emit = (line: string) => output('stdout', `${line}\n`);
+  const note = (line: string) => output('stderr', `${line}\n`);
+  const durationMs = elapsed();
+  recordRun({ failed: false, cacheHit, waited: waitedForBuild, durationMs, offloadedTo });
+  writeLastBuild(
+    root,
+    lastBuildRecord({
+      devicePlacement,
+      fingerprint: storeHash,
+      cacheKey: storeKey,
+      cacheHit,
+      cacheSkipped: !useBuildCache,
+      missReason,
+      durationMs,
+      appPath,
+      bundleId,
+      startedAt,
+      status: 'ok',
+      configuration: configuration ?? 'Debug',
+      buildMachine,
+      builtOn,
+      offloadedTo,
+      offloadFallback,
+      ledger: {
+        scheme: buildScheme,
+        device: iosLedgerDevice(device),
+      },
+    }),
+  );
+  closeWriter();
+
+  const facts = iosFacts({
+    root,
+    slot,
+    udid,
+    deviceName: device?.deviceName ?? null,
+    deviceType: device?.deviceType,
+    runtime: device?.runtime,
+    fingerprint: storeHash,
+    configuration,
+    scheme: buildScheme,
+    cacheKey: storeKey,
+    cacheHit,
+    compilationCache,
+    cacheSkipped: !useBuildCache,
+    waitedForBuild,
+    appPath,
+    bundleId,
+    installSkipped,
+    metroPort,
+    logsDir,
+    durationMs,
+    launched: launchState,
+    webPreviewUrl,
+    lease,
+    devServer,
+    buildMachine,
+    builtOn,
+    offloadedTo,
+    offloadFallback,
+  });
+  if (devicePlacement) facts.devicePlacement = devicePlacement;
+  if (host) {
+    facts.host = host;
+    delete facts.agentDevice;
+  }
+  if (json) {
+    emit(JSON.stringify({ ...facts, ...(links ? { links } : {}) }));
+  } else {
+    const summary =
+      `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${host ? `${device.deviceName} (iOS ${device.runtime?.replace(/^iOS /, '')}) on ${host.machine}` : deviceLabel(device, udid)}, ` +
+      (runtimeKind === 'process'
+        ? `${configuration ?? 'Debug'} (native process, no Metro)`
+        : runtimeKind === 'embedded-js'
+          ? `${configuration} (embedded JS, no Metro)`
+          : `Metro port ${metroPort}`) +
+      ` (${cacheDescription(cacheHit, providerName, offloadedTo)}, ${formatDuration(durationMs)})`;
+    const outcome = launchWarning
+      ? chalk.yellow(`${summary} -- ${launchWarning}`)
+      : launchState === LAUNCH_UNVERIFIED
+        ? chalk.yellow(`${summary} -- launch UNVERIFIED`)
+        : launchState === LAUNCH_BUNDLING
+          ? chalk.green(`${summary} -- bundle requested, still building`)
+          : chalk.green(summary);
+    const deviceName = device?.deviceName ?? device?.name ?? udid;
+    const cacheResult = useBuildCache
+      ? cacheDescription(cacheHit, providerName, offloadedTo)
+      : `bypassed; ${cacheDescription(false, null, offloadedTo)}`;
+    const metroResult =
+      runtimeKind === 'process'
+        ? 'native process (no Metro)'
+        : runtimeKind === 'embedded-js'
+          ? `embedded (${configuration})`
+          : !metroCheck
+            ? `check skipped on port ${metroPort}`
+            : launchState === LAUNCH_UNVERIFIED
+              ? `state unverified on port ${metroPort}`
+              : `running on port ${metroPort}${devServer ? ` (started: ${devServer.reason})` : ''}`;
+    emit(
+      [
+        outcome,
+        phaseLine(
+          'device',
+          host
+            ? `${deviceName} (iOS ${device.runtime?.replace(/^iOS /, '')}) on ${host.machine}`
+            : `${deviceName} (${udid})`,
+        ),
+        phaseLine('app', bundleId),
+        phaseLine(runtimeKind === 'process' ? 'runtime' : 'metro', metroResult),
+        phaseLine('cache', cacheResult),
+        ...(compilationCache.status === 'not-run'
+          ? [phaseLine('compilation cache', compilationCacheActivityLine(compilationCache))]
+          : []),
+        phaseLine('logs', logsDir),
+        ...(host
+          ? 'command' in host.agent
+            ? [phaseLine('agent-device', host.agent.command)]
+            : []
+          : [phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`)]),
+      ].join('\n'),
+    );
+    if (facts.webPreviewUrl) note(chalk.dim(`Watch this device: ${facts.webPreviewUrl}`));
+    if (links) note(chalk.dim(workspaceLinkLine(links)));
+  }
+  return facts;
+}
+
+export function cacheDescription(
+  cacheHit: CacheHitLevel,
+  providerName: string | null = null,
+  offloadedTo: string | null = null,
+): string {
+  if (cacheHit === 'remote') return `from ${providerName || 'the remote cache'}`;
+  if (cacheHit === 'local') return 'from cache';
+  return offloadedTo ? `built on ${offloadedTo}` : 'built';
+}

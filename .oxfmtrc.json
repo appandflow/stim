@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "singleQuote": true,
+  "printWidth": 120,
+  "ignorePatterns": [
+    "**/dist/**",
+    "**/node_modules/**",
+    "website/build/**",
+    "website/.docusaurus/**",
+    "website/static/img/branding/stim-jar-*.json",
+    "website/static/img/branding/stim-build-*.json",
+    "website/static/img/branding/stim-tutorial-*.json",
+    "website/static/img/branding/stim-step-done-*.json",
+    ".claude/**",
+    "apps/mobile/**",
+    "apps/desktop/Support/Assets.xcassets/**",
+    "apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json",
+    "apps/desktop/Tests/StimKitTests/Fixtures/live-views.json",
+    "packages/core/receive-validators.mjs",
+    "packages/stim-cli/src/__tests__/__snapshots__/**"
+  ]
+}

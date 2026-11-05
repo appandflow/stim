@@ -1,0 +1,399 @@
+import Foundation
+import StimKit
+
+/// One or more Stim commands run one after another. The exit status is the first non-zero status, and a
+/// failed step does not stop the ones after it.
+@MainActor
+public final class ActionRun: ObservableObject, Identifiable {
+  typealias Launch =
+    @MainActor @Sendable (
+      StimCommand, @escaping @Sendable (OutputLine) -> Void, @escaping @Sendable (Int32) -> Void
+    ) throws -> Void
+
+  public let id = UUID()
+  public let title: String
+  public let steps: [StimCommand]
+  public let key: String
+  fileprivate var completion: ((ActionRun) -> Void)?
+  public let startedAt = Date()
+  public private(set) var finishedAt: Date?
+  @Published public private(set) var output: ActionOutput
+  @Published public private(set) var exitStatus: Int32?
+  @Published public private(set) var launchError: String?
+
+  public init(title: String, steps: [StimCommand], key: String) {
+    self.title = title
+    self.steps = steps
+    self.key = key
+    output = ActionOutput(keepsStdout: steps.count == 1 && steps[0].arguments.contains("--json"))
+  }
+
+  public var lines: [OutputLine] { output.lines }
+
+  public var progress: [ProgressStep] { output.steps }
+
+  public var command: StimCommand { steps[0] }
+
+  public var isRunning: Bool { exitStatus == nil && launchError == nil }
+
+  /// The whole stdout of a single `--json` command; empty for any other run.
+  public var stdout: Data { output.stdout }
+
+  /// What a finished `gc --delete --json` run did, or nil for any other command.
+  public var gcOutcome: Result<GcOutcome, Error>? {
+    guard steps.count == 1, exitStatus != nil, GcOutcome.describes(command.arguments) else { return nil }
+    return Result { try GcOutcome(json: stdout) }
+  }
+
+  public var needsAttention: Bool {
+    if launchError != nil { return true }
+    guard let exitStatus else { return false }
+    if exitStatus != 0 { return true }
+    if case .success(let outcome) = gcOutcome { return outcome.failures > 0 }
+    return false
+  }
+
+  public var statusLine: String? {
+    if isRunning {
+      return progress.last { $0.state != .failed }.map { $0.fact.isEmpty ? $0.label : $0.fact } ?? summary
+    }
+    if needsAttention, launchError == nil, let failed = progress.last(where: { $0.state == .failed }) {
+      return failed.fact.isEmpty ? failed.label : failed.fact
+    }
+    if let exitStatus, exitStatus != 0 { return summary ?? "Exited \(exitStatus)" }
+    return summary
+  }
+
+  /// The output to show as text: everything but the JSON payload of a `--json` command.
+  public var logLines: [OutputLine] {
+    command.arguments.contains("--json") ? lines.filter { $0.channel != .stdout } : lines
+  }
+
+  /// One line for the run: the cleanup summary, or the last line the command printed.
+  public var summary: String? {
+    if let launchError { return launchError }
+    if case .success(let outcome) = gcOutcome { return outcome.headline }
+    return logLines.last { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty && !$0.text.hasPrefix("$ ") }?.text
+  }
+
+  func start(launch: @escaping Launch, onFinish: @escaping @MainActor () -> Void) {
+    start(step: 0, launch: launch, worst: 0, onFinish: onFinish)
+  }
+
+  private func start(step: Int, launch: @escaping Launch, worst: Int32, onFinish: @escaping @MainActor () -> Void) {
+    let command = steps[step]
+    if steps.count > 1 {
+      output.append([OutputLine(.stderr, "$ \(([command.program] + command.arguments).joined(separator: " "))")])
+    }
+    // ProcessStream calls back on background queues in order; the batcher hands
+    // the lines to the main queue in that order, one batch per 100 ms.
+    let batcher = OutputBatcher { [weak self] batch in self?.output.append(batch) }
+    do {
+      try launch(
+        command,
+        { line in batcher.receive(OutputLine(line.channel, line.text.strippingANSI)) },
+        { status in
+          DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+              batcher.flush()
+              let worst = worst != 0 ? worst : status
+              if step + 1 < self.steps.count {
+                self.start(step: step + 1, launch: launch, worst: worst, onFinish: onFinish)
+              } else {
+                self.finishedAt = Date()
+                self.exitStatus = worst
+                onFinish()
+              }
+            }
+          }
+        })
+    } catch {
+      finishedAt = Date()
+      launchError = error.localizedDescription
+      onFinish()
+    }
+  }
+}
+
+/// Runs Stim commands, at most one at a time per workspace.
+@MainActor
+public final class ActionCenter: ObservableObject {
+  public static let machineKey = "machine"
+
+  @Published public private(set) var runs: [String: ActionRun] = [:]
+  @Published public var presented: ActionRun? {
+    didSet { if let presented { operations.markSeen(presented) } }
+  }
+  public let operations = OperationLog()
+  public var onFinish: ((ActionRun) -> Void)?
+  private let environment: Task<[String: String], Never>
+  private let server: @MainActor @Sendable () -> (client: ServerClient, home: String)?
+
+  #if DEBUG
+    private var fixtureAction: ((String) -> Void)?
+
+    public convenience init(fixtureAction: @escaping (String) -> Void, running: [ActionRun] = []) {
+      self.init(environment: Task { [String: String]() })
+      self.fixtureAction = fixtureAction
+      runs = Dictionary(uniqueKeysWithValues: running.map { ($0.key, $0) })
+    }
+  #endif
+
+  public init(
+    environment: Task<[String: String], Never>,
+    server: @escaping @MainActor @Sendable () -> (client: ServerClient, home: String)? = { nil }
+  ) {
+    self.environment = environment
+    self.server = server
+  }
+
+  public func active(for key: String) -> ActionRun? {
+    runs[key].flatMap { $0.isRunning ? $0 : nil }
+  }
+
+  public func latest(for key: String) -> ActionRun? { runs[key] }
+
+  /// Changes the workspace's owned device through its private same-home server.
+  public func deviceTool(_ tool: DeviceTool, platform: String, slot: String, cwd: String) async throws -> DeviceToolResult {
+    let environment = await environment.value
+    return try await runServerDeviceTool(
+      tool, platform: platform, slot: slot, cwd: cwd,
+      stimHome: StimHome.path(environment: environment), connection: server())
+  }
+
+  public func run(_ title: String, _ command: StimCommand, key: String? = nil) {
+    run(title, steps: [command], key: key)
+  }
+
+  /// Starts `steps` unless a run already holds `key`. With `present`, the activity sheet shows the new
+  /// run, or the one already running. Returns the new run, or nil when one was already running.
+  @discardableResult
+  public func run(
+    _ title: String, steps: [StimCommand], key: String? = nil, present: Bool = true,
+    completion: ((ActionRun) -> Void)? = nil
+  ) -> ActionRun? {
+    #if DEBUG
+      if let fixtureAction {
+        fixtureAction(title)
+        return nil
+      }
+    #endif
+    let key = key ?? steps[0].cwd
+    if let active = active(for: key) {
+      if present { presented = active }
+      return nil
+    }
+    let run = ActionRun(title: title, steps: steps, key: key)
+    run.completion = completion
+    runs[key] = run
+    operations.began(run)
+    if present { presented = run }
+    let environment = environment
+    let server = server
+    Task { [weak self] in
+      let environment = await environment.value
+      run.start(launch: { command, onLine, onExit in
+        if command.program == "stim",
+          (command.arguments.first == "doctor" && command.arguments.contains("--fix"))
+            || (command.program == "stim" && Array(command.arguments.prefix(2)) == ["device", "unlock"])
+        {
+          Task {
+            do {
+              let result = try await runServerRemedy(
+                command, stimHome: StimHome.path(environment: environment), connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else if command.program == "stim", command.arguments.first == "doctor" {
+          try Self.runDoctor(
+            command, stimHome: StimHome.path(environment: environment), connection: server(), onLine: onLine, onExit: onExit)
+        } else if command.program == "stim", command.arguments.first == "settings",
+          ["set", "unset"].contains(command.arguments.dropFirst().first)
+        {
+          try Self.runSettings(
+            command, stimHome: StimHome.path(environment: environment), connection: server(), onLine: onLine, onExit: onExit)
+        } else if command.program == "stim", Array(command.arguments.prefix(2)) == ["worktree", "warm"] {
+          Task {
+            do {
+              let result = try await runServerWorktreeWarm(
+                command, stimHome: StimHome.path(environment: environment), connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else if command.program == "stim", command.arguments.first == "stop" {
+          Task {
+            do {
+              let result = try await runServerStop(
+                command, stimHome: StimHome.path(environment: environment), connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else if command.program == "stim", command.arguments.first == "reload" {
+          Task {
+            do {
+              let result = try await runServerReload(
+                command, stimHome: StimHome.path(environment: environment), connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else if command.program == "stim", command.arguments.first == "start" {
+          Task {
+            do {
+              let result = try await runServerStart(
+                command, stimHome: StimHome.path(environment: environment), connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else if command.program == "stim", command.arguments.first == "gc" {
+          Task {
+            do {
+              let result = try await runServerGc(
+                command, stimHome: StimHome.path(environment: environment), connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else if command.program == "stim", Array(command.arguments.prefix(2)) == ["worktree", "remove"] {
+          Task {
+            do {
+              let result = try await runServerWorktreeRemove(
+                command, stimHome: StimHome.path(environment: environment), connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else if command.program == "stim", let platform = command.arguments.first,
+          ["ios", "android", "macos", "web"].contains(platform)
+        {
+          Task {
+            do {
+              let result = try await runServerPlatform(
+                command, stimHome: StimHome.path(environment: environment), connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else {
+          try ProcessStream.start(command, environment: environment, onLine: onLine, onExit: onExit)
+        }
+      }) { [weak self] in
+        self?.objectWillChange.send()
+        if let self { operations.finished(run, viewed: presented?.id == run.id) }
+        self?.onFinish?(run)
+        completion?(run)
+      }
+    }
+    return run
+  }
+
+  @discardableResult
+  public func retry(_ run: ActionRun) -> ActionRun? {
+    self.run(run.title, steps: run.steps, key: run.key, completion: run.completion)
+  }
+
+  public func runApp(_ env: Workspace, platform: String) {
+    run(
+      "Run \(env.names.title) on \(platformName(platform))",
+      steps: [env.runCommand(platform: platform)], present: false)
+  }
+
+  private static func runSettings(
+    _ command: StimCommand, stimHome: String, connection: (client: ServerClient, home: String)?,
+    onLine: @escaping @Sendable (OutputLine) -> Void, onExit: @escaping @Sendable (Int32) -> Void
+  ) throws {
+    let set = command.arguments[1] == "set"
+    let scopeIndex = set ? 4 : 3
+    let json = command.arguments.count == scopeIndex + 3 && command.arguments.last == "--json"
+    let arguments = json ? Array(command.arguments.dropLast()) : command.arguments
+    guard arguments.count == scopeIndex + 2, arguments[scopeIndex] == "--scope",
+      let scope = SettingScope(rawValue: arguments[scopeIndex + 1])
+    else { throw ServerError(code: "bad-request", message: "Unsupported Desktop settings command.") }
+    let key = arguments[2]
+    let value = set ? arguments[3] : nil
+    Task {
+      do {
+        let response = try await writeServerSetting(
+          key, value: value, scope: scope, cwd: command.cwd, stimHome: stimHome, connection: connection)
+        if json {
+          onLine(OutputLine(.stdout, String(decoding: try JSONEncoder().encode(response.payload), as: UTF8.self)))
+        }
+        switch response.result {
+        case .written:
+          if !json { onLine(OutputLine(.stdout, "Updated \(key) in \(scope.rawValue) settings.")) }
+          onExit(0)
+        case .refused(let refusal):
+          onLine(
+            OutputLine(.stderr, ["\(refusal.code): \(refusal.message)", refusal.remedy].compactMap { $0 }.joined(separator: " ")))
+          onExit(1)
+        }
+      } catch {
+        onLine(OutputLine(.stderr, error.localizedDescription))
+        onExit(1)
+      }
+    }
+  }
+
+  private static func runDoctor(
+    _ command: StimCommand, stimHome: String, connection: (client: ServerClient, home: String)?,
+    onLine: @escaping @Sendable (OutputLine) -> Void, onExit: @escaping @Sendable (Int32) -> Void
+  ) throws {
+    let json = command.arguments.contains("--json")
+    let arguments = command.arguments.filter { $0 != "--json" }
+    var params: [String: JSONValue] = ["cwd": .string(command.cwd)]
+    if arguments.count == 3, arguments[0] == "doctor", arguments[1] == "--platform",
+      ["ios", "android"].contains(arguments[2])
+    {
+      params["platform"] = .string(arguments[2])
+    } else if arguments != ["doctor"] {
+      throw ServerError(code: "bad-request", message: "Unsupported Desktop doctor command.")
+    }
+    guard let client = readCapableServer(connection, stimHome: stimHome) else {
+      throw ServerError(
+        code: "not-connected", message: "The local stim-server is not ready to check this project for this Stim home.")
+    }
+    guard case .open(let hello) = client.state, hello.features?.contains("desktop-doctor-run") == true else {
+      throw ServerError(code: "unsupported", message: "Update the local stim-server to check projects from the setup guide.")
+    }
+    Task {
+      do {
+        let report = try await client.request("desktop.doctor.run", params)
+        let data = try JSONEncoder().encode(report)
+        if json {
+          onLine(OutputLine(.stdout, String(decoding: data, as: UTF8.self)))
+        } else {
+          let report = try JSONDecoder().decode(DoctorReport.self, from: data)
+          for finding in report.findings {
+            onLine(OutputLine(.stdout, "\(finding.title): \(finding.detail)"))
+            if let fix = finding.fix { onLine(OutputLine(.stdout, fix)) }
+          }
+          onLine(OutputLine(.stdout, "Doctor completed with \(report.findings.count) finding(s)."))
+        }
+        onExit(0)
+      } catch {
+        onLine(OutputLine(.stderr, error.localizedDescription))
+        onExit(1)
+      }
+    }
+  }
+}

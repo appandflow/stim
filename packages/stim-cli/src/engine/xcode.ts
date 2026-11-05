@@ -1,0 +1,1001 @@
+import type { ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { getExecutor, type Executor, type ExecOptions } from '../exec.ts';
+import type { NdjsonWriter } from '../ndjson.ts';
+import { workspaceDerivedData } from '../workspace/paths.ts';
+import { formatElapsed, phaseLine } from '../command-output.ts';
+import { createLineReader } from '../process-output.ts';
+import { declareSpawnsOn, spawnDeclared, stopDeclaringSpawnsOn } from './spawn-claims.ts';
+import { shareCompilationCache } from '../cache/cache-claim.ts';
+import { runCancellationSignal } from './native-run.ts';
+import { releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
+import {
+  COMPILATION_CACHE_CORRUPTION,
+  capDiagnostics,
+  createXcodeDiagnosticCollector,
+  describeDiagnostic,
+  type Diagnostic,
+} from './errors-xcode.ts';
+import { cleanLine } from '../supervisor/server-expo.ts';
+import type { CompilationCacheActivity } from './build-facts.ts';
+import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
+import { ambientContext, type StimContext } from '@stim-cli/core';
+import { killOnAbort } from '../workspace/git-read.ts';
+import { readPlistFile } from './app-schemes.ts';
+import { withReleaseMetroCache } from './release-metro.ts';
+
+export interface XcodeProject {
+  kind?: string;
+  flag?: string;
+  file?: string;
+  name?: string | null;
+  dir?: string;
+  appRoot?: string;
+  path?: string;
+  error?: { code: string; message: string; remedy: string | null };
+}
+
+interface SchemeResult {
+  error?: { code: string; message: string; remedy: string };
+  scheme?: string;
+  schemes?: string[];
+}
+
+export function pickXcodeProject(entries: unknown): { kind: string; flag: string; file: string; name: string } | null {
+  const names = (Array.isArray(entries) ? entries : []).filter((e) => typeof e === 'string');
+  const workspaces = names.filter((e) => e.endsWith('.xcworkspace')).toSorted();
+  const projects = names.filter((e) => e.endsWith('.xcodeproj')).toSorted();
+
+  if (workspaces.length > 0) {
+    const projectNames = new Set(projects.map((p) => basename(p, '.xcodeproj')));
+    const match = workspaces.find((w) => projectNames.has(basename(w, '.xcworkspace')));
+    const file = match || workspaces[0];
+    if (file === undefined) return null;
+    return { kind: 'workspace', flag: '-workspace', file, name: basename(file, '.xcworkspace') };
+  }
+  if (projects.length > 0) {
+    const file = projects[0];
+    if (file === undefined) return null;
+    return { kind: 'project', flag: '-project', file, name: basename(file, '.xcodeproj') };
+  }
+  return null;
+}
+
+export function parseSchemeList(text: unknown): { name: string | null; schemes: string[] } {
+  const empty = { name: null, schemes: [] };
+  if (typeof text !== 'string') return empty;
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end <= start) return empty;
+  let data: unknown;
+  try {
+    data = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return empty;
+  }
+  if (!data || typeof data !== 'object') return empty;
+  const record = data as { workspace?: unknown; project?: unknown };
+  const container = record.workspace || record.project;
+  if (!container || typeof container !== 'object') return empty;
+  const info = container as { schemes?: unknown; name?: unknown };
+  const schemes: string[] = Array.isArray(info.schemes)
+    ? info.schemes.filter((s: unknown) => typeof s === 'string' && s.trim() !== '')
+    : [];
+  return { name: typeof info.name === 'string' ? info.name : null, schemes };
+}
+
+const TEST_SCHEME = /(?:UI)?Tests$/;
+
+export function pickScheme(schemes: unknown, containerName: unknown): string | null | undefined {
+  const list: string[] = (Array.isArray(schemes) ? schemes : []).filter(
+    (s: unknown) => typeof s === 'string' && s.trim() !== '',
+  );
+  if (list.length === 0) return null;
+  const name = typeof containerName === 'string' ? containerName.trim() : '';
+  if (name) {
+    const exact = list.find((s) => s === name);
+    if (exact) return exact;
+    const insensitive = list.find((s) => s.toLowerCase() === name.toLowerCase());
+    if (insensitive) return insensitive;
+  }
+  const app = list.filter((s) => !TEST_SCHEME.test(s));
+  return app.length === 1 ? app[0] : null;
+}
+
+const LIST_TIMEOUT_MS = 180000;
+
+async function probe(executor: Executor, file: string, args: string[], options: ExecOptions): Promise<string> {
+  const context = ambientContext();
+  context?.signal.throwIfAborted();
+  try {
+    return await executor.runFileAsync(file, args, {
+      ...options,
+      declareFor: context,
+      onSpawn: killOnAbort(context?.signal),
+    });
+  } finally {
+    context?.signal.throwIfAborted();
+  }
+}
+
+async function listSchemes(
+  project: XcodeProject,
+  { exec = null }: { exec?: Executor | null } = {},
+): Promise<{ name: string | null; schemes: string[] } | null> {
+  const executor = exec || getExecutor();
+  try {
+    const out = await probe(
+      executor,
+      'xcodebuild',
+      [project.flag as string, project.path as string, '-list', '-json'],
+      {
+        timeoutMs: LIST_TIMEOUT_MS,
+      },
+    );
+    return parseSchemeList(out);
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveScheme(
+  project: XcodeProject,
+  { exec = null, scheme: requested = null }: { exec?: Executor | null; scheme?: string | null } = {},
+): Promise<SchemeResult> {
+  const listing = await listSchemes(project, { exec });
+  if (listing === null) {
+    return {
+      error: {
+        code: 'STIM_NO_SCHEME',
+        message: `Could not list schemes for ${project.path}.`,
+        remedy: `Run \`xcodebuild ${project.flag} ${project.path} -list\` to see what it reports.`,
+      },
+    };
+  }
+  if (requested !== null) {
+    if (listing.schemes.includes(requested)) return { scheme: requested, schemes: listing.schemes };
+    return {
+      error: {
+        code: 'STIM_NO_SCHEME',
+        message: `No shared Xcode scheme named ${JSON.stringify(requested)} in ${project.path}. Available schemes: ${listing.schemes.join(', ') || 'none'}.`,
+        remedy:
+          'Pass an exact available name with --scheme or set it in ios.scheme, or share the intended app scheme in Xcode.',
+      },
+    };
+  }
+  let scheme = pickScheme(listing.schemes, listing.name || project.name);
+  if (!scheme && project.dir) {
+    try {
+      const app = JSON.parse(readFileSync(join(project.appRoot ?? join(project.dir, '..'), 'app.json'), 'utf8'));
+      scheme = pickScheme(listing.schemes, app?.name);
+    } catch {}
+  }
+  if (!scheme) {
+    const found = listing.schemes.length ? listing.schemes.join(', ') : 'none';
+    return {
+      error: {
+        code: 'STIM_NO_SCHEME',
+        message: `Could not select an app scheme in ${project.path} (schemes: ${found}).`,
+        remedy:
+          listing.schemes.length > 0
+            ? 'Pass --scheme <name>, or set ios.scheme, to select the intended shared app scheme. Stim does not guess between unmatched schemes.'
+            : 'Share the app scheme in Xcode (Product > Scheme > Manage Schemes, tick Shared) so xcodebuild can see it.',
+      },
+    };
+  }
+  return { scheme, schemes: listing.schemes };
+}
+
+export const COMPILATION_CACHE_MIN_XCODE = 26;
+
+const PREFIX_MAP_TARGET = '/^src';
+
+function prefixMapping(workspaceRoot: string): string {
+  return `${String(workspaceRoot).replace(/\/+$/, '')}=${PREFIX_MAP_TARGET}`;
+}
+
+function compilationPrefixMappings(workspaceRoot: string, derivedDataPath: string): string {
+  const source = resolve(workspaceRoot);
+  const derived = resolve(derivedDataPath);
+  const mappings = [prefixMapping(source)];
+  const rel = relative(source, derived);
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    mappings.push(`${derived}=/^derived-data`);
+  }
+  return mappings
+    .map((mapping) => (/[\s"\\]/.test(mapping) ? `"${mapping.replace(/["\\]/g, '\\$&')}"` : mapping))
+    .join(' ');
+}
+
+export interface SwiftVersion {
+  major: number;
+  minor: number;
+}
+
+// swift-frontend crashed when a compile batch mixed prefix-mapped and unmapped
+// sources; swiftlang/swift#90700 fixed it on release/6.4.x (Xcode 27).
+export const SWIFT_PREFIX_MAPPING_MIN_SWIFT: SwiftVersion = { major: 6, minor: 4 };
+
+export function swiftPrefixMappingSupported(version: SwiftVersion | null): boolean {
+  if (!version) return false;
+  const min = SWIFT_PREFIX_MAPPING_MIN_SWIFT;
+  return version.major > min.major || (version.major === min.major && version.minor >= min.minor);
+}
+
+export function compilationCacheSettings({
+  workspaceRoot,
+  derivedDataPath,
+  casPath,
+  xcodeMajor,
+  swiftVersion = null,
+  swiftCacheCompatible = false,
+  ccache = false,
+  optimizations = resolveOptimizations({}, {}).ios,
+}: {
+  workspaceRoot: string;
+  derivedDataPath: string;
+  casPath: string;
+  xcodeMajor: number | null;
+  swiftVersion?: SwiftVersion | null;
+  swiftCacheCompatible?: boolean;
+  ccache?: boolean;
+  optimizations?: Optimizations['ios'];
+}): string[] {
+  if (xcodeMajor === null || xcodeMajor === undefined) return [];
+  if (xcodeMajor < COMPILATION_CACHE_MIN_XCODE) return [];
+  if (ccache) return [];
+  const swiftMappable = swiftPrefixMappingSupported(swiftVersion);
+  const auto = swiftMappable && swiftCacheCompatible;
+  const swift = optimizations.compilationCache && (optimizations.swiftCompilationCache ?? auto);
+  const mappings = optimizations.prefixMapping ? compilationPrefixMappings(workspaceRoot, derivedDataPath) : '';
+  return [
+    `COMPILATION_CACHE_ENABLE_CACHING=${optimizations.compilationCache ? 'YES' : 'NO'}`,
+    `COMPILATION_CACHE_CAS_PATH=${casPath}`,
+    `SWIFT_ENABLE_COMPILE_CACHE=${swift ? 'YES' : 'NO'}`,
+    `CLANG_ENABLE_PREFIX_MAPPING=${optimizations.prefixMapping ? 'YES' : 'NO'}`,
+    `CLANG_OTHER_PREFIX_MAPPINGS=${mappings}`,
+    ...(swift && swiftMappable && optimizations.prefixMapping
+      ? ['SWIFT_ENABLE_PREFIX_MAPPING=YES', `SWIFT_OTHER_PREFIX_MAPPINGS=${mappings}`]
+      : ['SWIFT_ENABLE_PREFIX_MAPPING=NO']),
+  ];
+}
+
+export function parseSwiftVersion(output: unknown): SwiftVersion | null {
+  const m = /\bSwift version (\d+)\.(\d+)/.exec(String(output || ''));
+  if (!m || m[1] === undefined || m[2] === undefined) return null;
+  const major = parseInt(m[1], 10);
+  const minor = parseInt(m[2], 10);
+  return Number.isFinite(major) && Number.isFinite(minor) ? { major, minor } : null;
+}
+
+export function parseXcodeMajor(output: unknown): number | null {
+  const m = /^Xcode\s+(\d+)/m.exec(String(output || ''));
+  if (!m) return null;
+  const digits = m[1];
+  if (digits === undefined) return null;
+  const major = parseInt(digits, 10);
+  return Number.isFinite(major) ? major : null;
+}
+
+export async function detectXcodeMajorAsync(exec: Executor | null = null): Promise<number | null> {
+  return parseXcodeMajor(
+    await (exec || getExecutor()).runFileQuietAsync('xcodebuild', ['-version'], { timeoutMs: 10000 }),
+  );
+}
+
+export function xcodebuildArgs({
+  project,
+  scheme,
+  udid = null,
+  destination = null,
+  configuration = 'Debug',
+  derivedDataPath,
+  extraArgs = [],
+  buildSettings = [],
+}: {
+  project: XcodeProject;
+  scheme: string;
+  udid?: string | null;
+  destination?: string | null;
+  configuration?: string;
+  derivedDataPath: string;
+  extraArgs?: string[];
+  buildSettings?: string[];
+}): string[] {
+  return [
+    project.flag as string,
+    project.path as string,
+    '-scheme',
+    scheme,
+    '-configuration',
+    configuration,
+    '-destination',
+    destination || `id=${udid}`,
+    '-derivedDataPath',
+    derivedDataPath,
+    ...extraArgs,
+    'build',
+    ...buildSettings,
+  ];
+}
+
+export function productsDir(
+  derivedDataPath: string,
+  { configuration = 'Debug', sdk = 'iphonesimulator' }: { configuration?: string; sdk?: string } = {},
+): string {
+  return join(derivedDataPath, 'Build', 'Products', `${configuration}-${sdk}`);
+}
+
+export function pickAppBundle(entries: unknown, preferredName: string | null = null): string | null | undefined {
+  const apps = (Array.isArray(entries) ? entries : [])
+    .filter((e) => typeof e === 'string' && e.endsWith('.app'))
+    .toSorted();
+  if (apps.length === 0) return null;
+  if (preferredName) {
+    const wanted = `${preferredName}.app`;
+    const exact = apps.find((a) => a === wanted);
+    if (exact) return exact;
+  }
+  return apps[0];
+}
+
+function findAppBundle(dir: string, preferredName: string | null = null): string | null {
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const app = pickAppBundle(entries, preferredName);
+  return app ? join(dir, app) : null;
+}
+
+function parseBundleId(plistJson: unknown): string | null {
+  if (typeof plistJson !== 'string') return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(plistJson);
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== 'object') return null;
+  const id = (data as { CFBundleIdentifier?: unknown }).CFBundleIdentifier;
+  return typeof id === 'string' && id.trim() !== '' ? id.trim() : null;
+}
+
+export async function readBundleId(
+  appPath: string,
+  { exec = null }: { exec?: Executor | null } = {},
+): Promise<string | null> {
+  const executor = exec || getExecutor();
+  try {
+    const json = await probe(executor, 'plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')], {
+      timeoutMs: 10_000,
+    });
+    const id = parseBundleId(json);
+    if (id) return id;
+  } catch {}
+  try {
+    const value = await probe(executor, 'defaults', ['read', join(appPath, 'Info'), 'CFBundleIdentifier'], {
+      timeoutMs: 10_000,
+    });
+    const trimmed = String(value).trim();
+    if (trimmed !== '') return trimmed;
+  } catch {}
+  const plist = readPlistFile(join(appPath, 'Info.plist'));
+  const id =
+    typeof plist === 'object' && plist !== null && 'CFBundleIdentifier' in plist ? plist.CFBundleIdentifier : null;
+  return typeof id === 'string' && id.trim() !== '' ? id.trim() : null;
+}
+
+export function parseBundleExecutable(plistJson: unknown): string | null {
+  if (typeof plistJson !== 'string') return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(plistJson);
+  } catch {
+    return null;
+  }
+  if (!data || typeof data !== 'object') return null;
+  const name = (data as { CFBundleExecutable?: unknown }).CFBundleExecutable;
+  return typeof name === 'string' && name.trim() !== '' ? name.trim() : null;
+}
+
+export async function readBundleExecutable(
+  appPath: string,
+  { exec = null }: { exec?: Executor | null } = {},
+): Promise<string | null> {
+  const executor = exec || getExecutor();
+  try {
+    const json = await probe(executor, 'plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')], {
+      timeoutMs: 10_000,
+    });
+    const name = parseBundleExecutable(json);
+    if (name) return name;
+  } catch {}
+  try {
+    const value = await probe(executor, 'defaults', ['read', join(appPath, 'Info'), 'CFBundleExecutable'], {
+      timeoutMs: 10_000,
+    });
+    const trimmed = String(value).trim();
+    return trimmed === '' ? null : trimmed;
+  } catch {
+    return null;
+  }
+}
+
+const TAIL_LINES = 5;
+
+export function tailLines(lines: unknown, count: number = TAIL_LINES): string[] {
+  const nonEmpty = (Array.isArray(lines) ? lines : []).filter((l) => typeof l === 'string' && l.trim() !== '');
+  return nonEmpty.slice(-count);
+}
+
+export const HEARTBEAT_INTERVAL_MS = 30_000;
+
+const HEARTBEAT_ACTIVITY: Record<string, string> = { build: 'compiling', deps: 'installing', pods: 'installing' };
+
+function heartbeatLine(elapsedMs: number, label = 'build', estimateMs: number | null = null): string {
+  const activity = HEARTBEAT_ACTIVITY[label] ?? 'running';
+  const elapsed = formatElapsed(elapsedMs);
+  const inside =
+    estimateMs && estimateMs > 0
+      ? elapsedMs > estimateMs
+        ? `${elapsed}, usually ~${formatElapsed(estimateMs)}`
+        : `${elapsed} of ~${formatElapsed(estimateMs)}`
+      : elapsed;
+  return phaseLine(label, `still ${activity} (${inside})`);
+}
+
+export type HeartbeatSchedule = (run: () => void, delayMs: number) => () => void;
+
+const defaultSchedule: HeartbeatSchedule = (run, delayMs) => {
+  const timer = setTimeout(run, delayMs);
+  timer.unref?.();
+  return () => clearTimeout(timer);
+};
+
+export function startBuildHeartbeat({
+  intervalMs,
+  elapsed,
+  emit,
+  label = 'build',
+  estimateMs = null,
+  schedule = defaultSchedule,
+}: {
+  intervalMs: number;
+  elapsed: () => number;
+  emit: (line: string) => void;
+  label?: string;
+  estimateMs?: number | null;
+  schedule?: HeartbeatSchedule;
+}): () => void {
+  if (!(intervalMs > 0)) return () => {};
+  let stopped = false;
+  let lastBeat = 0;
+  let cancel: (() => void) | null = null;
+  function tick() {
+    if (stopped) return;
+    const ms = elapsed();
+    const beat = Math.floor(ms / intervalMs) * intervalMs;
+    if (beat > lastBeat) {
+      lastBeat = beat;
+      emit(heartbeatLine(beat, label, estimateMs));
+    }
+    cancel = schedule(tick, intervalMs - (ms % intervalMs));
+  }
+  cancel = schedule(tick, intervalMs);
+  return () => {
+    stopped = true;
+    cancel?.();
+  };
+}
+
+function failedResult({
+  code,
+  diagnostics,
+  durationMs,
+  exitCode = null,
+  transcriptLines = 0,
+  tail = [],
+  compilationCache = COMPILATION_CACHE_UNAVAILABLE,
+  compilationCacheCorruption = null,
+}: {
+  code: string;
+  diagnostics: Diagnostic[];
+  durationMs: number;
+  exitCode?: number | null;
+  transcriptLines?: number;
+  tail?: string[];
+  compilationCache?: CompilationCacheActivity;
+  compilationCacheCorruption?: CompilationCacheCorruption | null;
+}): Extract<BuildIosResult, { ok: false }> {
+  const capped = capDiagnostics(diagnostics);
+  return {
+    ok: false,
+    code,
+    diagnostics: capped.diagnostics,
+    truncated: capped.truncated,
+    durationMs,
+    exitCode,
+    transcriptLines,
+    tail,
+    compilationCache,
+    ...(compilationCacheCorruption ? { compilationCacheCorruption } : {}),
+  };
+}
+
+/** A failed build's transcript line that reports a damaged object in the compilation cache the build was given. */
+export interface CompilationCacheCorruption {
+  dir: string;
+  line: string;
+}
+
+export type BuildIosResult = {
+  durationMs: number;
+  transcriptLines: number;
+  compilationCache: CompilationCacheActivity;
+} & (
+  | {
+      ok: true;
+      appPath: string;
+      bundleId: string;
+      scheme: string;
+      project: XcodeProject;
+      derivedDataPath: string;
+      productsDir: string;
+    }
+  | {
+      ok: false;
+      code: string;
+      diagnostics: Diagnostic[];
+      truncated: number;
+      exitCode: number | null;
+      tail: string[];
+      compilationCacheCorruption?: CompilationCacheCorruption;
+    }
+);
+
+export const COMPILATION_CACHE_UNAVAILABLE: CompilationCacheActivity = {
+  status: 'unavailable',
+  hits: null,
+  cacheableTasks: null,
+  hitRatePercent: null,
+};
+
+export const COMPILATION_CACHE_NOT_RUN: CompilationCacheActivity = {
+  status: 'not-run',
+  hits: null,
+  cacheableTasks: null,
+  hitRatePercent: null,
+};
+
+function parseCompilationCacheActivity(line: unknown): CompilationCacheActivity | null {
+  if (typeof line !== 'string') return null;
+  const match = line.match(/(?:note:\s*)?(\d+) hits \/ (\d+) cacheable tasks \((\d+(?:\.\d+)?)%\)/);
+  if (!match) return null;
+  return {
+    status: 'reported',
+    hits: Number(match[1]),
+    cacheableTasks: Number(match[2]),
+    hitRatePercent: Number(match[3]),
+  };
+}
+
+// swift-build refuses Swift caching for a target without explicit modules and
+// warns once per target; React Native's prebuilt core sets
+// SWIFT_ENABLE_EXPLICIT_MODULES=NO on every target (react_native_pods.rb).
+const SWIFT_CACHING_NEEDS_EXPLICIT_MODULES = /warning: swift compiler caching requires explicit module build/;
+
+export function compilationCacheActivityLine(activity: CompilationCacheActivity): string {
+  if (activity.status === 'reported') {
+    const swift = activity.swiftTargetsWithoutExplicitModules
+      ? `; Swift excluded: ${activity.swiftTargetsWithoutExplicitModules} targets build without explicit modules (SWIFT_ENABLE_EXPLICIT_MODULES=NO)`
+      : '';
+    return `${activity.hits}/${activity.cacheableTasks} hits (${activity.hitRatePercent}%)${swift}`;
+  }
+  if (activity.status === 'not-run') return 'not run; artifact cache supplied the app';
+  return 'unavailable; Xcode did not report reliable statistics';
+}
+
+export function buildXcode(input: Parameters<typeof buildXcodeWithEnv>[0]): Promise<BuildIosResult> {
+  const context = input.context ?? ambientContext();
+  return withReleaseMetroCache(
+    input.root,
+    (input.configuration ?? 'Debug') !== 'Debug',
+    input.env ?? context?.env ?? process.env,
+    (env) => buildXcodeWithEnv({ ...input, context, env }),
+  );
+}
+
+async function buildXcodeWithEnv({
+  context = ambientContext(),
+  env = context?.env ?? process.env,
+  root,
+  udid = null,
+  logWriter,
+  project,
+  scheme = null,
+  configuration = 'Debug',
+  applicationTarget,
+  sdk = 'iphonesimulator',
+  destination = null,
+  arch = null,
+  derivedDataPath = null,
+  extraArgs = [],
+  compilationCache,
+  startedAt: clockStart,
+  now = () => Date.now(),
+  exec = null,
+  heartbeatMs = HEARTBEAT_INTERVAL_MS,
+  estimateMs = null,
+  onHeartbeat = (line: string) => console.error(line),
+}: {
+  context?: StimContext;
+  env?: NodeJS.ProcessEnv;
+  root: string;
+  udid?: string | null;
+  logWriter: NdjsonWriter;
+  project: XcodeProject;
+  scheme?: string | null;
+  configuration?: string;
+  applicationTarget?: { name: string; projectPath: string };
+  sdk?: string;
+  destination?: string | null;
+  arch?: string | null;
+  derivedDataPath?: string | null;
+  extraArgs?: string[];
+  compilationCache:
+    | string[]
+    | null
+    | ((context: { derivedDataPath: string; exec: Executor }) => string[] | Promise<string[]>);
+  startedAt?: number;
+  now?: () => number;
+  exec?: Executor | null;
+  heartbeatMs?: number;
+  estimateMs?: number | null;
+  onHeartbeat?: (line: string) => void;
+}): Promise<BuildIosResult> {
+  if (!root || typeof root !== 'string') throw new TypeError('buildXcode requires {root}');
+  if (!logWriter || typeof logWriter.write !== 'function')
+    throw new TypeError('buildXcode requires {logWriter} with a write() method');
+  if (!udid && !destination) throw new TypeError('buildXcode requires {udid} (or an explicit {destination})');
+
+  const executor = exec || getExecutor();
+  const dd =
+    derivedDataPath ||
+    (scheme
+      ? join(workspaceDerivedData(root), `scheme-${createHash('sha256').update(scheme).digest('hex')}`)
+      : workspaceDerivedData(root));
+  const startedAt = clockStart ?? now();
+  const elapsed = () => now() - startedAt;
+
+  const reportError = (message: string, remedy?: string | null) => {
+    logWriter.write({
+      src: 'build',
+      level: 'error',
+      msg: message,
+      event: 'build_diagnostic',
+      ...(remedy ? { remedy } : {}),
+    });
+  };
+
+  if (project.error) {
+    reportError(project.error.message, project.error.remedy);
+    return failedResult({
+      code: project.error.code,
+      diagnostics: [{ message: project.error.message, remedy: project.error.remedy ?? undefined }],
+      durationMs: elapsed(),
+    });
+  }
+  const resolvedTarget = project;
+
+  const selected = await resolveScheme(resolvedTarget, { exec: executor, scheme });
+  if (selected.error) {
+    reportError(selected.error.message, selected.error.remedy);
+    return failedResult({
+      code: selected.error.code,
+      diagnostics: [{ message: selected.error.message, remedy: selected.error.remedy }],
+      durationMs: elapsed(),
+    });
+  }
+  const buildScheme = selected.scheme as string;
+
+  const cacheSettings =
+    typeof compilationCache === 'function'
+      ? await compilationCache({ derivedDataPath: dd, exec: executor })
+      : compilationCache || [];
+  // Xcode forces ONLY_ACTIVE_ARCH=NO for a generic destination; only an explicit ARCHS narrows the build.
+  const debugSettings =
+    configuration === 'Debug' && sdk === 'iphonesimulator' ? ['DEBUG_INFORMATION_FORMAT=dwarf'] : [];
+  const buildSettings = [
+    ...cacheSettings,
+    ...debugSettings,
+    ...(arch ? [`ARCHS=${arch}`, 'ONLY_ACTIVE_ARCH=YES'] : []),
+  ];
+  const casPathSetting = 'COMPILATION_CACHE_CAS_PATH=';
+  const casDir = cacheSettings.includes('COMPILATION_CACHE_ENABLE_CACHING=YES')
+    ? (cacheSettings.find((setting) => setting.startsWith(casPathSetting))?.slice(casPathSetting.length) ?? null)
+    : null;
+
+  const args = xcodebuildArgs({
+    project: resolvedTarget,
+    scheme: buildScheme,
+    udid,
+    destination,
+    configuration,
+    derivedDataPath: dd,
+    extraArgs,
+    buildSettings,
+  });
+
+  logWriter.write({
+    src: 'build',
+    level: 'info',
+    msg: `xcodebuild ${args.join(' ')}`,
+    event: 'build_start',
+  });
+
+  const diagnosticCollector = createXcodeDiagnosticCollector(root, sdk, resolvedTarget.dir || root);
+  const tail: string[] = [];
+  let transcriptLines = 0;
+  let compilationCacheActivity: CompilationCacheActivity = COMPILATION_CACHE_UNAVAILABLE;
+  let swiftTargetsWithoutExplicitModules = 0;
+  let compilationCacheCorruption: CompilationCacheCorruption | null = null;
+  const onLine = (line: unknown) => {
+    const msg = cleanLine(line);
+    transcriptLines += 1;
+    diagnosticCollector.push(msg);
+    if (msg.trim() === '') return;
+    if (casDir && !compilationCacheCorruption && COMPILATION_CACHE_CORRUPTION.test(msg))
+      compilationCacheCorruption = { dir: casDir, line: msg.trim() };
+    tail.push(msg);
+    if (tail.length > TAIL_LINES) tail.shift();
+    logWriter.write({ src: 'build', level: 'debug', msg });
+    if (SWIFT_CACHING_NEEDS_EXPLICIT_MODULES.test(msg)) swiftTargetsWithoutExplicitModules += 1;
+    const parsed = parseCompilationCacheActivity(msg);
+    if (parsed) {
+      const activity = swiftTargetsWithoutExplicitModules ? { ...parsed, swiftTargetsWithoutExplicitModules } : parsed;
+      compilationCacheActivity = activity;
+      logWriter.write({
+        src: 'build',
+        level: 'info',
+        msg: compilationCacheActivityLine(activity),
+        event: 'compilation_cache',
+        hits: activity.hits,
+        cacheableTasks: activity.cacheableTasks,
+        hitRatePercent: activity.hitRatePercent,
+        ...(swiftTargetsWithoutExplicitModules ? { swiftTargetsWithoutExplicitModules } : {}),
+      });
+    }
+  };
+
+  let cacheClaim: ClaimHandle | null = null;
+  if (casDir) {
+    const shared = await shareCompilationCache({
+      dir: casDir,
+      projectRoot: root,
+      note: onHeartbeat,
+      signal: AbortSignal.any([context?.signal, runCancellationSignal(context)].filter((each) => each !== undefined)),
+    });
+    if ('failure' in shared) {
+      reportError(shared.failure.message, shared.failure.remedy);
+      return failedResult({
+        code: shared.failure.code,
+        diagnostics: [{ message: shared.failure.message, remedy: shared.failure.remedy }],
+        durationMs: elapsed(),
+      });
+    }
+    cacheClaim = shared.claim;
+    declareSpawnsOn(context, cacheClaim);
+  }
+  const releaseCache = () => {
+    stopDeclaringSpawnsOn(context, cacheClaim);
+    releaseClaim(cacheClaim);
+  };
+
+  let child: ChildProcess;
+  try {
+    child = spawnDeclared(context, () =>
+      executor.spawn('xcodebuild', args, {
+        cwd: resolvedTarget.dir || root,
+        // stdin is ignored: xcodebuild never prompts in this mode, and a build
+        // run from a detached agent has no terminal to prompt to.
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: false,
+        env: {
+          ...env,
+          NSUnbufferedIO: 'YES',
+          FORCE_COLOR: '0',
+        },
+      }),
+    );
+  } catch (err) {
+    releaseCache();
+    const message = `Could not run xcodebuild: ${(err as Error).message}`;
+    const remedy = 'Install Xcode and select it with `sudo xcode-select -s /Applications/Xcode.app`.';
+    reportError(message, remedy);
+    return failedResult({ code: 'STIM_BUILD_FAILED', diagnostics: [{ message, remedy }], durationMs: elapsed() });
+  }
+
+  const outReader = createLineReader(onLine);
+  const errReader = createLineReader(onLine);
+  child.stdout?.setEncoding?.('utf-8');
+  child.stderr?.setEncoding?.('utf-8');
+  child.stdout?.on('data', (chunk) => outReader.push(chunk));
+  child.stderr?.on('data', (chunk) => errReader.push(chunk));
+
+  const stopHeartbeat = startBuildHeartbeat({
+    intervalMs: heartbeatMs,
+    elapsed,
+    emit: onHeartbeat,
+    estimateMs,
+  });
+
+  const outcome = await new Promise<{ code?: number | null; signal?: NodeJS.Signals | null; error?: Error }>(
+    (settlePromise) => {
+      let settled = false;
+      const finish = (value: { code?: number | null; signal?: NodeJS.Signals | null; error?: Error }) => {
+        if (settled) return;
+        settled = true;
+        outReader.flush();
+        errReader.flush();
+        settlePromise(value);
+      };
+      child.on('close', (code, signal) => finish({ code, signal }));
+      child.on('error', (error) => finish({ code: null, signal: null, error }));
+    },
+  );
+
+  releaseCache();
+  stopHeartbeat();
+  const durationMs = elapsed();
+
+  if (outcome.error) {
+    const message = `Could not run xcodebuild: ${outcome.error.message}`;
+    const remedy = 'Install Xcode and select it with `sudo xcode-select -s /Applications/Xcode.app`.';
+    reportError(message, remedy);
+    return failedResult({
+      code: 'STIM_BUILD_FAILED',
+      diagnostics: [{ message, remedy }],
+      durationMs,
+      transcriptLines,
+      tail,
+      compilationCache: compilationCacheActivity,
+    });
+  }
+
+  if (outcome.code !== 0) {
+    const diagnostics = diagnosticCollector.diagnostics;
+    const capped = capDiagnostics(diagnostics);
+    for (const d of capped.diagnostics) reportError(describeDiagnostic(d), d.remedy);
+    if (capped.diagnostics.length === 0) {
+      reportError(
+        `xcodebuild exited ${outcome.code ?? `on ${outcome.signal}`} with no recognizable diagnostic; see the transcript above.`,
+        null,
+      );
+    }
+    return failedResult({
+      code: 'STIM_BUILD_FAILED',
+      diagnostics,
+      durationMs,
+      exitCode: outcome.code,
+      transcriptLines,
+      tail,
+      compilationCache: compilationCacheActivity,
+      compilationCacheCorruption,
+    });
+  }
+
+  const products = productsDir(dd, { configuration, sdk });
+  let appPath: string | null = null;
+  if (scheme) {
+    try {
+      const targets = JSON.parse(
+        await probe(
+          executor,
+          'xcodebuild',
+          [
+            resolvedTarget.flag as string,
+            resolvedTarget.path as string,
+            '-scheme',
+            buildScheme,
+            '-configuration',
+            configuration,
+            '-destination',
+            destination || `id=${udid}`,
+            '-derivedDataPath',
+            dd,
+            ...extraArgs,
+            ...buildSettings,
+            '-showBuildSettings',
+            '-json',
+          ],
+          { timeoutMs: 30_000 },
+        ),
+      );
+      const paths = new Set<string>();
+      for (const item of Array.isArray(targets) ? targets : []) {
+        const settings = item?.buildSettings;
+        if (settings?.PRODUCT_TYPE !== 'com.apple.product-type.application' || settings.PLATFORM_NAME !== sdk) continue;
+        if (
+          applicationTarget &&
+          (settings.TARGET_NAME !== applicationTarget.name ||
+            typeof settings.PROJECT_FILE_PATH !== 'string' ||
+            realpathSync(settings.PROJECT_FILE_PATH) !== realpathSync(applicationTarget.projectPath))
+        )
+          continue;
+        const dir = settings.TARGET_BUILD_DIR;
+        const name = settings.FULL_PRODUCT_NAME;
+        if (
+          typeof dir !== 'string' ||
+          !isAbsolute(dir) ||
+          typeof name !== 'string' ||
+          basename(name) !== name ||
+          !name.endsWith('.app')
+        )
+          continue;
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) paths.add(path);
+      }
+      if (paths.size === 1) appPath = [...paths][0]!;
+    } catch {}
+  } else {
+    appPath = findAppBundle(products, buildScheme);
+  }
+  if (!appPath) {
+    const message = scheme
+      ? `xcodebuild succeeded, but the built app for scheme ${JSON.stringify(buildScheme)} could not be identified unambiguously from its build settings.`
+      : `xcodebuild reported success but no .app is in ${products}.`;
+    const remedy =
+      'Check that the scheme builds one application target for this platform, not a library, test bundle, or several apps.';
+    reportError(message, remedy);
+    return failedResult({
+      code: 'STIM_BUILD_FAILED',
+      diagnostics: [{ message, remedy }],
+      durationMs,
+      exitCode: 0,
+      transcriptLines,
+      tail,
+      compilationCache: compilationCacheActivity,
+    });
+  }
+
+  const bundleId = await readBundleId(appPath, { exec: executor });
+  if (!bundleId) {
+    const message = `No readable CFBundleIdentifier in ${join(appPath, 'Info.plist')}.`;
+    const remedy = "Check PRODUCT_BUNDLE_IDENTIFIER in the target's Debug configuration.";
+    reportError(message, remedy);
+    return failedResult({
+      code: 'STIM_BUILD_FAILED',
+      diagnostics: [{ message, remedy }],
+      durationMs,
+      exitCode: 0,
+      transcriptLines,
+      tail,
+      compilationCache: compilationCacheActivity,
+    });
+  }
+
+  logWriter.write({
+    src: 'build',
+    level: 'info',
+    msg: `BUILD SUCCEEDED ${appPath} (${bundleId}) in ${durationMs}ms`,
+    event: 'build_done',
+  });
+
+  return {
+    ok: true,
+    appPath,
+    bundleId,
+    durationMs,
+    scheme: buildScheme,
+    project: resolvedTarget,
+    derivedDataPath: dd,
+    productsDir: products,
+    transcriptLines,
+    compilationCache: compilationCacheActivity,
+  };
+}

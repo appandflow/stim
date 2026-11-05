@@ -1,0 +1,1353 @@
+import Foundation
+import Testing
+
+@testable import StimKit
+
+@Suite struct StatusDecodingTests {
+  let workspace: Workspace = {
+    let url = Bundle.module.url(forResource: "status", withExtension: "json", subdirectory: "Fixtures")!
+    let payload = try! JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    return payload.environments[0]
+  }()
+
+  @Test func placementLabelsDescribeHostedAndEasDevices() throws {
+    let url = try #require(Bundle.module.url(forResource: "status-placement", withExtension: "json", subdirectory: "Fixtures"))
+    let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let hosted = payload.environments[0]
+    #expect(hosted.ios?.host?.selected == "auto")
+    #expect(hosted.ios?.host?.reason == "load 3.1/core here")
+    #expect(hosted.ios?.devicePlacement?.decision == "hosted")
+    #expect(hosted.ios?.devicePlacement?.machine == "janics-mac-mini")
+    #expect(hosted.android?.host?.selected == "janics-mac-mini")
+    #expect(hosted.android?.host?.reason == "selected janics-mac-mini")
+    #expect(hosted.android?.devicePlacement?.reason == "selected janics-mac-mini")
+    #expect(hosted.devices[0].placement == DevicePlacementLabel(machine: "janics-mac-mini", reason: "auto: load 3.1/core here"))
+    #expect(hosted.devices[1].placement == DevicePlacementLabel(machine: "janics-mac-mini", reason: "selected janics-mac-mini"))
+    let local = payload.environments[1]
+    #expect(local.ios?.devicePlacement?.decision == "local")
+    #expect(local.android?.devicePlacement?.decision == "waited-locally")
+    #expect(local.devices.allSatisfy { $0.placement == nil })
+    #expect(workspace.devices.map(\.placement) == [nil, nil, nil, DevicePlacementLabel(machine: "EAS", reason: nil)])
+    #expect(workspace.ios?.host?.selected == nil)
+    #expect(workspace.ios?.devicePlacement == nil)
+  }
+
+  @Test func hostedPlacementUsesDisplayNameAndFallsBackToTheRecordedDecisionReason() throws {
+    let url = try #require(Bundle.module.url(forResource: "status-placement", withExtension: "json", subdirectory: "Fixtures"))
+    var hosted = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url)).environments[0]
+    hosted.ios?.host?.machine = "mini:7443"
+    hosted.ios?.host?.reason = nil
+    #expect(
+      hosted.devices[0].placement == DevicePlacementLabel(machine: "mini", reason: "auto: load 3.1/core here"))
+    hosted.ios?.devicePlacement = nil
+    #expect(hosted.devices[0].placement == DevicePlacementLabel(machine: "mini", reason: nil))
+    hosted.android?.host?.machine = "android-host:7787"
+    hosted.android?.host?.reason = nil
+    #expect(
+      hosted.devices[1].placement == DevicePlacementLabel(machine: "android-host", reason: "selected janics-mac-mini"))
+  }
+
+  @Test func listsDefaultDevicesBeforeSlotsAndRemoteSessionsLast() {
+    #expect(workspace.devices.map(\.slot) == ["default", "default", "ipad", "default"])
+    #expect(workspace.devices.map(\.isRunning) == [false, true, true, true])
+  }
+
+  @Test func hostedIosSlotsWithoutUdidsHaveDistinctDeviceIds() {
+    let hosted = IosDevice(name: "iPhone 17 Pro", udid: "", owned: false, state: "ready")
+    let devices: [DeviceRef] = [.ios(slot: "default", hosted), .ios(slot: "tablet", hosted)]
+    #expect(Set(devices.map(\.id)).count == devices.count)
+  }
+
+  @Test func namesDefaultSlotsAfterTheirDeviceAndNamedSlotsAfterTheSlot() {
+    #expect(workspace.devices.map(\.label) == ["iPhone 18 Pro", "Pixel Fold", "ipad", "EAS iOS"])
+    #expect(workspace.devices.map(\.detail) == ["iOS 27.0", "stim-wide-insets-mobile", "iPad Pro 11-inch (M5) 27.0", nil])
+  }
+
+  @Test func stripsTheDisambiguationSuffixStimAppendsAfterTheClosingParen() {
+    let sim = IosDevice(
+      name: "stim-1347-expo-sdk-58 (iPhone 18 Pro 27.0) ff9a999768f466d6", udid: "U1", owned: true, state: "Booted")
+    let device: DeviceRef = .ios(slot: "default", sim)
+    #expect(device.label == "iPhone 18 Pro")
+    #expect(device.detail == "iOS 27.0")
+  }
+
+  @Test func doesNotInventARuntimeForAnUnownedSimulatorNamedLikeAModelAndVersion() {
+    let sim = IosDevice(name: "iPhone 16", udid: "U1", owned: false, state: "Booted")
+    let device: DeviceRef = .ios(slot: "default", sim)
+    #expect(device.label == "iPhone 16")
+    #expect(device.detail == nil)
+  }
+
+  @Test func doesNotParseParensOutOfAnUnownedSimulatorsOwnName() {
+    let se = IosDevice(name: "iPhone SE (3rd generation)", udid: "U1", owned: false, state: "Shutdown")
+    let ipad = IosDevice(name: "iPad Pro 11-inch (M4)", udid: "U2", owned: false, state: "Shutdown")
+    #expect(DeviceRef.ios(slot: "default", se).label == "iPhone SE (3rd generation)")
+    #expect(DeviceRef.ios(slot: "default", se).detail == nil)
+    #expect(DeviceRef.ios(slot: "default", ipad).label == "iPad Pro 11-inch (M4)")
+  }
+
+  @Test func readsAnAndroidDeviceProfileAndFallsBackWithoutOne() {
+    let fold = AndroidDevice(
+      name: "stim-a", owned: true, physical: false, serial: "S1", state: "detected", deviceProfile: "pixel_fold")
+    let unknown = AndroidDevice(name: "stim-b", owned: true, physical: false, serial: "S2", state: "detected")
+    #expect(DeviceRef.android(slot: "default", fold).label == "Pixel Fold")
+    #expect(DeviceRef.android(slot: "default", unknown).label == "Android emulator")
+  }
+
+  @Test func appendsTheKindWhenTwoDevicesShareALabel() {
+    let sim = IosDevice(name: "Pixel", udid: "U1", owned: false, state: "Booted")
+    let phone = AndroidDevice(name: "Pixel", owned: false, physical: true, serial: "S1", state: "detected")
+    let devices: [DeviceRef] = [.ios(slot: "default", sim), .android(slot: "default", phone)]
+    #expect(devices.map { $0.label(among: devices) } == ["Pixel \u{00B7} iOS", "Pixel \u{00B7} Android"])
+    #expect(workspace.devices.map { $0.label(among: workspace.devices) } == workspace.devices.map(\.label))
+  }
+
+  @Test func appendsTheRuntimeWhenTwoIosDevicesShareAModel() {
+    let newer = IosDevice(name: "stim-a (iPhone 18 Pro 27.0)", udid: "U1", owned: true, state: "Booted")
+    let older = IosDevice(name: "stim-b (iPhone 18 Pro 18.6)", udid: "U2", owned: true, state: "Shutdown")
+    let devices: [DeviceRef] = [.ios(slot: "default", newer), .ios(slot: "default", older)]
+    #expect(devices.map { $0.label(among: devices) } == ["iPhone 18 Pro \u{00B7} 27.0", "iPhone 18 Pro \u{00B7} 18.6"])
+  }
+
+  @Test func decodesARemoteSessionWithItsPreviewURL() {
+    guard case .remote(let remote) = workspace.devices.last else {
+      Issue.record("expected a remote device last")
+      return
+    }
+    #expect(remote.backend == "eas")
+    #expect(remote.sessionId == "drs_9")
+    #expect(remote.webPreviewUrl == "https://preview.example/9")
+    #expect(workspace.devices.last?.id == "remote:drs_9")
+  }
+
+  @Test func decodesDeviceActivityAndIgnoresUnknownFields() {
+    #expect(workspace.devices[2].activity?.driver?.tool == "agent-device")
+    #expect(workspace.devices[1].activity?.state == "idle")
+    #expect(workspace.devices[1].activityKey == "emulator-5554")
+    #expect(workspace.devices[0].activity == nil)
+  }
+
+  @Test func listsLeasedPhysicalDevicesAfterTheSlotsWithoutARunCommand() throws {
+    let lease = #"{"holder":"/w","kind":"declared","grantedAt":null,"expiresAt":"2026-09-27T21:04:53.577Z"}"#
+    let json = #"""
+      {"path":"/w","live":false,"warnings":[],
+       "ios":{"name":"stim-w (iPhone 18 Pro 27.0)","udid":"SIM","owned":true,"state":"Booted"},
+       "physicalDevices":[
+        {"platform":"ios","slot":"default","id":"PHONE","name":"Old iPhone","model":"iPhone 12 Pro","owned":false,
+         "physical":true,"connection":"connected","lease":\#(lease)},
+        {"platform":"android","slot":"pixel","id":"R5","name":null,"model":null,"owned":false,"physical":true,
+         "connection":"disconnected","lease":\#(lease)}]}
+      """#
+    let env = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+    #expect(env.isActive)
+    #expect(env.devices.map(\.id) == ["ios:SIM", "ios:PHONE", "android:pixel:physical:R5"])
+    #expect(env.devices.map(\.isPhysical) == [false, true, true])
+    #expect(env.devices.map(\.isRunning) == [true, true, false])
+    #expect(env.devices.map(\.label) == ["iPhone 18 Pro", "Old iPhone", "pixel"])
+    #expect(env.devices.map(\.detail) == ["iOS 27.0", "iPhone 12 Pro", "R5"])
+    #expect(env.devices[1].leaseExpiresAt != nil)
+    #expect(env.devices.compactMap { runCommand(for: $0, cwd: "/w") }.count == 1)
+
+    let older = try JSONDecoder().decode(Workspace.self, from: Data(#"{"path":"/w","live":false,"warnings":[]}"#.utf8))
+    #expect(older.physicalDevices == nil)
+    #expect(older.devices.isEmpty)
+  }
+
+  @Test func decodesAMissingSimulatorWithoutAName() throws {
+    let json = #"{"name":null,"udid":"1F11A62B","owned":true,"state":"missing"}"#
+    let device = try JSONDecoder().decode(IosDevice.self, from: Data(json.utf8))
+    #expect(device.name == "Missing simulator")
+    #expect(device.state == "missing")
+  }
+
+  @Test func decodesAWorktreeGitSummary() throws {
+    let url = Bundle.module.url(forResource: "status", withExtension: "json", subdirectory: "Fixtures")!
+    let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let git = try #require(payload.unprovisionedWorktrees?.first?.git)
+    #expect(git.uncommitted == 3)
+    #expect(git.ahead == 3 && git.behind == 1)
+    #expect(workspace.worktree?.git == nil)
+  }
+
+  @Test func showsNothingForACleanBranchAndFlagsAMergedOne() {
+    #expect(!WorktreeGit(changed: 0, untracked: 0, upstream: "origin/x", ahead: 0, behind: 0).isNotable)
+    #expect(!WorktreeGit(changed: 0, untracked: 0).isNotable)
+    let merged = WorktreeGit(changed: 0, untracked: 0, upstream: "origin/x", mergedInto: "origin/main")
+    #expect(merged.isNotable && merged.mergedInto == "origin/main")
+  }
+
+  @Test func keepsNestedParenthesesInTheModel() {
+    #expect(workspace.devices[2].model == "iPad Pro 11-inch (M5) 27.0")
+    #expect(workspace.devices[2].formFactor == .tablet)
+  }
+  @Test func estimatesTheRunningBuildFromComparableRuns() throws {
+    let build = try #require(workspace.build)
+    #expect(build.isRunning && build.phase == "compile" && build.basis == 4)
+    let started = ISO8601DateFormatter().date(from: "2026-09-24T19:50:00Z")!
+    let early = build.progress(at: started.addingTimeInterval(60))
+    #expect(early.fraction == 0.25)
+    #expect(early.remaining == "about 3 min left")
+    #expect(build.progress(at: started.addingTimeInterval(200)).remaining == "under a minute left")
+    let late = build.progress(at: started.addingTimeInterval(600))
+    #expect(late.fraction == 0.99 && late.remaining == "longer than usual")
+    var cleaned = build
+    cleaned.slot = "cleaned"
+    cleaned.completedPhaseMs = ["cleanup": 30_000]
+    let resumed = cleaned.progress(at: started.addingTimeInterval(90))
+    #expect(resumed.elapsedMs == 90_000 && resumed.fraction == 0.25)
+    cleaned.phase = "cleanup"
+    #expect(cleaned.progress(at: started.addingTimeInterval(90)).fraction == nil)
+    #expect(cleaned.progress(at: started.addingTimeInterval(90)).remaining == nil)
+    #expect(cleaned.estimateSuffix(at: started.addingTimeInterval(90)).isEmpty)
+  }
+
+  @Test func attachesTheBuildOnlyToTheDeviceItTargets() {
+    #expect(workspace.devices.map { workspace.runningBuild(for: $0) != nil } == [true, false, false, false])
+  }
+
+  @Test func doesNotMoveBackwardsWhenTheRunRevisesItsEstimate() throws {
+    var build = try #require(workspace.build)
+    build.slot = "revised"
+    let started = ISO8601DateFormatter().date(from: "2026-09-24T19:50:00Z")!
+    build.expectedMs = 180_000
+    #expect(build.progress(at: started.addingTimeInterval(90)).fraction == 0.5)
+    build.expectedMs = 900_000
+    #expect(build.progress(at: started.addingTimeInterval(90)).fraction == 0.5)
+    build.slot = "tablet"
+    #expect(build.progress(at: started.addingTimeInterval(90)).fraction == 0.1)
+  }
+
+  @Test func anEstimatePastIntsRangeDoesNotTrap() throws {
+    var build = try #require(workspace.build)
+    build.slot = "estimate"
+    build.expectedMs = 1e300
+    #expect(build.progress(at: Date()).remaining == "about 9223372036854775807 min left")
+  }
+
+  @Test func leavesABuildWithoutHistoryIndeterminate() throws {
+    var build = try #require(workspace.build)
+    build.expectedMs = nil
+    let progress = build.progress(at: Date())
+    #expect(progress.fraction == nil && progress.remaining == nil)
+  }
+}
+
+@Suite struct NamingTests {
+  @Test func titlesAWorktreeByItsBranchThenItsFolder() {
+    let nested = PathNames(
+      path: "/Users/dev/app/.worktrees/wide-insets/apps/mobile", branch: "fix/insets",
+      worktree: "/Users/dev/app/.worktrees/wide-insets")
+    #expect(nested.title == "fix/insets")
+    #expect(nested.inCheckout == "apps/mobile")
+    let detached = PathNames(path: "/Users/dev/projects/shop-feature", worktree: "/Users/dev/projects/shop-feature")
+    #expect(detached.title == "shop-feature")
+    #expect(detached.inCheckout == nil)
+    #expect(PathNames(path: "/Users/dev/app/.worktrees/sdk58").title == "sdk58")
+  }
+
+  @Test func titlesAMainCheckoutByItsProject() {
+    let names = PathNames(path: "/Users/dev/stim/apps/mobile", project: Project(root: "/Users/dev/stim"))
+    #expect(names.title == "stim")
+    #expect(names.inCheckout == "apps/mobile")
+    #expect(PathNames(path: "/Users/dev/stim/apps/mobile").title == "mobile")
+  }
+
+  @Test func doesNotTitleAWorkspaceOutsideItsProjectByTheProject() {
+    let outside = PathNames(
+      path: "/private/tmp/scratch/recipes-71/apps/mobile", project: Project(root: "/Users/dev/appandflow-template"))
+    #expect(outside.title == "mobile")
+    #expect(outside.inCheckout == nil)
+    #expect(PathNames(path: "/Users/dev/stim-two", project: Project(root: "/Users/dev/stim")).title == "stim-two")
+  }
+
+  @Test func abbreviatesOnlyPathsThatStartAtHome() {
+    #expect(abbreviatingHome("/Users/jan", home: "/Users/jan") == "~")
+    #expect(abbreviatingHome("/Users/jan/app/.worktrees/x", home: "/Users/jan") == "~/app/.worktrees/x")
+    #expect(abbreviatingHome("/Users/janic/x", home: "/Users/jan") == "/Users/janic/x")
+    #expect(abbreviatingHome("/private/Users/jan/x", home: "/Users/jan") == "/private/Users/jan/x")
+    #expect(
+      abbreviatingHome("kept: '/Users/jan/a' and /Users/janic/b, /Users/jan/c", home: "/Users/jan")
+        == "kept: '~/a' and /Users/janic/b, ~/c")
+  }
+
+  @Test func namesTheFolderInsideItsCheckout() {
+    #expect(pathInCheckout("/u/tlon/.worktrees/chat/apps/tlon-mobile", worktree: nil) == "apps/tlon-mobile")
+    #expect(pathInCheckout("/u/stim/.claude/worktrees/1123/apps/mobile", worktree: nil) == "apps/mobile")
+    #expect(pathInCheckout("/u/tlon/apps/tlon-mobile", worktree: "/u/tlon") == "apps/tlon-mobile")
+    #expect(pathInCheckout("/u/tlon/.worktrees/chat", worktree: "/u/tlon/.worktrees/chat") == nil)
+    #expect(pathInCheckout("/u/tlonx/app", worktree: "/u/tlon") == nil)
+  }
+
+  @Test func projectFromGitCommonDir() {
+    #expect(Project(gitCommonDir: "/Users/dev/app/.git").root == "/Users/dev/app")
+    #expect(Project(gitCommonDir: "/srv/app.git").root == "/srv/app.git")
+    #expect(Project(fallbackFor: "/Users/dev/app/.worktrees/x/apps/mobile").root == "/Users/dev/app")
+  }
+
+  @Test func groupsAWorktreeOutsideTheRepositoryWithItsRepository() throws {
+    let tmp = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("stimkit-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: tmp) }
+    let repo = tmp.appendingPathComponent("app").path
+    let outside = tmp.appendingPathComponent("elsewhere/wt").path
+    try git(["init", "-q", repo])
+    try git(["-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init"])
+    try git(["-C", repo, "worktree", "add", "-q", outside])
+    try FileManager.default.createDirectory(atPath: outside + "/apps/mobile", withIntermediateDirectories: true)
+
+    let expected = (repo as NSString).resolvingSymlinksInPath
+    #expect(Project.resolve(workspace: outside + "/apps/mobile").root == expected)
+    #expect(Project.resolve(workspace: repo).root == expected)
+  }
+
+  @Test func groupsWorktreesWithNoEnvironmentUnderTheirProject() throws {
+    let json = #"""
+      [{"path":"/r/app","live":false,"warnings":[]},{"path":"/r/zed/.worktrees/a","live":true,"warnings":[]}]
+      """#
+    let envs = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
+    let worktrees = [
+      UnprovisionedWorktree(path: "/r/app/.worktrees/b", branch: "feat/b"),
+      UnprovisionedWorktree(path: "/r/new/.worktrees/c", branch: nil),
+    ]
+    let summaries = projectSummaries(environments: envs, unprovisioned: worktrees, project: Project.init(fallbackFor:))
+    #expect(
+      summaries == [
+        ProjectSummary(project: Project(root: "/r/zed"), live: 1, total: 1, active: 1),
+        ProjectSummary(project: Project(root: "/r/app"), live: 0, total: 2),
+        ProjectSummary(project: Project(root: "/r/new"), live: 0, total: 1),
+      ])
+  }
+
+  @Test func laysOutTheSidebarFromItsViewOptions() throws {
+    let json = #"""
+      [{"path":"/r/app/.worktrees/idle","live":false,"warnings":[],"memoryMb":900,
+        "lastBuilds":{"ios":{"platform":"ios","status":"ok","cacheHit":"local","startedAt":"2026-09-25T10:00:00Z",
+          "finishedAt":"2026-09-25T10:05:00Z"}}},
+       {"path":"/r/app/.worktrees/live","live":true,"warnings":[],"memoryMb":2000,
+        "supervisor":{"startedAt":"2026-09-25T09:00:00Z"}},
+       {"path":"/r/zed","live":false,"warnings":[]}]
+      """#
+    let envs = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
+    let worktrees = [
+      UnprovisionedWorktree(path: "/r/app/.worktrees/b", branch: "feat/b"),
+      UnprovisionedWorktree(path: "/r/new/.worktrees/c", branch: nil),
+    ]
+    func tree(_ change: (inout SidebarOptions) -> Void = { _ in }) -> [String] {
+      var options = SidebarOptions()
+      options.statuses = StatusFilter.all
+      change(&options)
+      return sidebarTrees(
+        environments: envs, unprovisioned: worktrees, project: Project.init(fallbackFor:), options: options
+      ).map { node in
+        "\(node.summary.project.name) \(node.summary.live)/\(node.summary.total): "
+          + node.entries.map(\.path).joined(separator: ",")
+      }
+    }
+    func list(_ change: (inout SidebarOptions) -> Void) -> [String] {
+      var options = SidebarOptions()
+      options.statuses = StatusFilter.all
+      change(&options)
+      return sidebarList(
+        environments: envs, unprovisioned: worktrees, project: Project.init(fallbackFor:), options: options
+      ).map(\.path)
+    }
+    #expect(
+      tree() == [
+        "app 1/3: /r/app/.worktrees/b,/r/app/.worktrees/idle,/r/app/.worktrees/live",
+        "new 0/1: /r/new/.worktrees/c", "zed 0/1: /r/zed",
+      ])
+    #expect(
+      tree { $0.sort = .lastActivity } == [
+        "app 1/3: /r/app/.worktrees/idle,/r/app/.worktrees/live,/r/app/.worktrees/b",
+        "new 0/1: /r/new/.worktrees/c", "zed 0/1: /r/zed",
+      ])
+    #expect(tree { $0.statuses = [.live] } == ["app 1/3: /r/app/.worktrees/live"])
+    #expect(
+      tree { $0.statuses = [.idle] } == [
+        "app 1/3: /r/app/.worktrees/idle", "zed 0/1: /r/zed",
+      ])
+    #expect(tree { $0.statuses = [.notSetUp] } == ["app 1/3: /r/app/.worktrees/b", "new 0/1: /r/new/.worktrees/c"])
+    #expect(tree { $0.statuses = [] }.isEmpty)
+    #expect(
+      tree {
+        $0.statuses = [.live]
+        $0.showsEmptyProjects = true
+        $0.hiddenProjects = ["/r/zed"]
+      } == ["app 1/3: /r/app/.worktrees/live", "new 0/1: "])
+    #expect(
+      tree {
+        $0.statuses = StatusFilter.defaultSelection
+        $0.sort = .name
+      } == ["app 1/3: /r/app/.worktrees/idle,/r/app/.worktrees/live", "zed 0/1: /r/zed"])
+    #expect(
+      list { $0.sort = .memory } == [
+        "/r/app/.worktrees/live", "/r/app/.worktrees/idle", "/r/new/.worktrees/c", "/r/app/.worktrees/b", "/r/zed",
+      ])
+    #expect(list { $0.hiddenProjects = ["/r/app"] } == ["/r/new/.worktrees/c", "/r/zed"])
+  }
+
+  @Test func filtersAndSortsMultiAppWorktreesAsOneRowAndCountsThemOnce() throws {
+    let envs = try JSONDecoder().decode(
+      [Workspace].self,
+      from: Data(
+        """
+        [
+          {"path":"/r/app/.worktrees/z/apps/b","live":true,"warnings":[],"memoryMb":600,
+            "worktree":{"path":"/r/app/.worktrees/z","branch":"z"},
+            "supervisor":{"startedAt":"2026-10-05T11:00:00Z"}},
+          {"path":"/r/app/.worktrees/z/apps/a","live":false,"warnings":[],"memoryMb":600,"phase":"warming",
+            "worktree":{"path":"/r/app/.worktrees/z","branch":"z"}},
+          {"path":"/r/app/.worktrees/a","live":true,"warnings":[],"memoryMb":1000,
+            "worktree":{"path":"/r/app/.worktrees/a","branch":"a"},
+            "supervisor":{"startedAt":"2026-10-05T10:00:00Z"}},
+          {"path":"/r/app/.worktrees/idle","live":false,"warnings":[],
+            "worktree":{"path":"/r/app/.worktrees/idle","branch":"idle"}},
+          {"path":"/unknown/a","live":false,"warnings":[],"worktree":{"path":""}},
+          {"path":"/unknown/b","live":false,"warnings":[],"worktree":{"path":""}}
+        ]
+        """.utf8))
+    let project = Project.init(fallbackFor:)
+    var options = SidebarOptions()
+    let tree = try #require(
+      sidebarTrees(environments: envs, unprovisioned: [], project: project, options: options).first {
+        $0.summary.project.root == "/r/app"
+      })
+    #expect(tree.summary == ProjectSummary(project: Project(root: "/r/app"), live: 2, total: 3, settingUp: 1, active: 2))
+    #expect(tree.entries.map(\.path) == [envs[2].path, envs[3].path, envs[1].path])
+    let group = try #require(tree.entries.last)
+    guard case .worktreeGroup(let page) = group else {
+      Issue.record("Expected a multi-app worktree row")
+      return
+    }
+    #expect(page.apps.map(\.path) == [envs[1].path, envs[0].path])
+    #expect(group.active)
+    #expect(group.memoryMb == 1200)
+    #expect(group.lastActivityAt == parseTimestamp("2026-10-05T11:00:00Z"))
+    for sort in [SidebarSort.memory, .lastActivity] {
+      options.sort = sort
+      #expect(sidebarList(environments: envs, unprovisioned: [], project: project, options: options).first?.path == envs[1].path)
+    }
+    options.statuses = [.live]
+    #expect(
+      sidebarList(environments: envs, unprovisioned: [], project: project, options: options).map(\.path) == [
+        envs[1].path, envs[2].path,
+      ])
+    options.statuses = [.idle]
+    #expect(
+      Set(sidebarList(environments: envs, unprovisioned: [], project: project, options: options).map(\.path))
+        == Set(envs[3...].map(\.path)))
+    options.statuses = StatusFilter.all
+    options.hiddenProjects = ["/r/app"]
+    #expect(
+      sidebarList(environments: envs, unprovisioned: [], project: project, options: options)
+        == envs[4...].map(SidebarEntry.workspace))
+    #expect(tree.entries.first == .workspace(envs[2]))
+    var changed = envs
+    changed[1].phase = nil
+    options.hiddenProjects = []
+    options.statuses = [.live]
+    #expect(
+      sidebarList(environments: changed, unprovisioned: [], project: project, options: options).map(\.path) == [
+        envs[1].path, envs[2].path,
+      ])
+    changed[0].live = false
+    #expect(sidebarList(environments: changed, unprovisioned: [], project: project, options: options) == [.workspace(envs[2])])
+    options.statuses = [.idle]
+    #expect(sidebarList(environments: changed, unprovisioned: [], project: project, options: options).first?.path == envs[1].path)
+  }
+
+  @Test func keepsTheDefaultSidebarOrderWhenActivityChanges() throws {
+    func envs(_ appStarted: String, _ zedStarted: String) throws -> [Workspace] {
+      let json = """
+        [{"path":"/r/zed/.worktrees/a","live":true,"warnings":[],"supervisor":{"startedAt":"\(zedStarted)"}},
+         {"path":"/r/app/.worktrees/b","live":true,"warnings":[],"supervisor":{"startedAt":"\(appStarted)"}},
+         {"path":"/r/app/.worktrees/a","live":false,"warnings":[]}]
+        """
+      return try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
+    }
+    func order(_ envs: [Workspace], _ change: (inout SidebarOptions) -> Void = { _ in }) -> [String] {
+      var options = SidebarOptions()
+      change(&options)
+      return sidebarTrees(
+        environments: envs, unprovisioned: [], project: Project.init(fallbackFor:), options: options
+      ).flatMap { $0.entries.map(\.path) }
+    }
+    let before = try envs("2026-09-25T09:00:00Z", "2026-09-25T10:00:00Z")
+    let after = try envs("2026-09-25T11:00:00Z", "2026-09-25T10:00:00Z")
+    let stable = ["/r/app/.worktrees/a", "/r/app/.worktrees/b", "/r/zed/.worktrees/a"]
+    #expect(order(before) == stable)
+    #expect(order(after) == stable)
+    #expect(order(before) { $0.sort = .lastActivity } != order(after) { $0.sort = .lastActivity })
+    var flat = SidebarOptions()
+    flat.grouping = .none
+    #expect(
+      sidebarList(environments: after, unprovisioned: [], project: Project.init(fallbackFor:), options: flat)
+        .map(\.path) == stable)
+  }
+
+  @Test func showsWarmingAndReadyWorkspacesAsLiveAndNewestFirst() throws {
+    let json = #"""
+      [{"path":"/r/app/.worktrees/live","live":true,"phase":"live","phaseSince":null,"warnings":[],
+        "supervisor":{"startedAt":"2026-09-25T09:00:00Z"}},
+       {"path":"/r/app/.worktrees/ready","live":false,"phase":"ready","phaseSince":"2026-09-25T10:00:00Z",
+        "warnings":[]},
+       {"path":"/r/app/.worktrees/killed","live":false,"phase":"idle","phaseSince":null,"warnings":[]},
+       {"path":"/r/new/.worktrees/warming","live":false,"phase":"warming","phaseSince":"2026-09-25T11:00:00Z",
+        "warmStep":"copy","warnings":[]}]
+      """#
+    let envs = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
+    var options = SidebarOptions()
+    options.statuses = [.live]
+    options.sort = .lastActivity
+    #expect(
+      sidebarList(environments: envs, unprovisioned: [], project: Project.init(fallbackFor:), options: options)
+        .map(\.path) == ["/r/new/.worktrees/warming", "/r/app/.worktrees/ready", "/r/app/.worktrees/live"])
+    #expect(envs.filter(\.isActive).map(\.path).count == 3)
+    #expect(envs[3].isWarming && envs[3].warmStep == "copy")
+    let summaries = projectSummaries(environments: envs, unprovisioned: [], project: Project.init(fallbackFor:))
+    #expect(
+      summaries == [
+        ProjectSummary(project: Project(root: "/r/app"), live: 1, total: 3, settingUp: 1, active: 2),
+        ProjectSummary(project: Project(root: "/r/new"), live: 0, total: 1, settingUp: 1, active: 1),
+      ])
+  }
+
+  @Test func listsAWorkspaceHeldOnlyByAnEasSessionUnderLive() throws {
+    let json = #"""
+      [{"path":"/r/app/.worktrees/eas","live":false,"warnings":[],
+        "remoteDevices":[{"platform":"ios","backend":"eas","sessionId":"S","state":"running"}]},
+       {"path":"/r/app/.worktrees/idle","live":false,"warnings":[]}]
+      """#
+    let envs = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
+    var options = SidebarOptions()
+    options.statuses = [.live]
+    #expect(
+      sidebarList(environments: envs, unprovisioned: [], project: Project.init(fallbackFor:), options: options)
+        .map(\.path) == ["/r/app/.worktrees/eas"])
+    let summary = projectSummaries(environments: envs, unprovisioned: [], project: Project.init(fallbackFor:))
+    #expect(summary.map(\.active) == [1])
+  }
+
+  @Test func countsOnlyExistingHiddenProjectsAsAChangedOption() {
+    var options = SidebarOptions()
+    options.hiddenProjects = ["/r/gone"]
+    #expect(!options.differsFromDefaults(projects: [Project(root: "/r/app")]))
+    options.hiddenProjects.insert("/r/app")
+    #expect(options.differsFromDefaults(projects: [Project(root: "/r/app")]))
+    #expect(
+      SidebarOptions.decode(hiddenProjects: SidebarOptions.encode(hiddenProjects: options.hiddenProjects))
+        == options.hiddenProjects)
+  }
+
+  @Test func removesLegacyRunDestinationsWithoutWritingOtherPreferences() throws {
+    let name = "stim.tests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: name))
+    defer { defaults.removePersistentDomain(forName: name) }
+    defaults.set("auto", forKey: "runDestination./w.ios")
+    defaults.set("mini", forKey: "runDestination./w.android")
+    defaults.set("other", forKey: "runDestination./other.ios")
+    defaults.set("keep", forKey: "runDestination")
+    defaults.set("keep too", forKey: "runDestinationOther")
+    defaults.set("dark", forKey: AppPreferences.Key.appearance)
+    let expected: NSDictionary = [
+      "runDestination": "keep", "runDestinationOther": "keep too", AppPreferences.Key.appearance: "dark",
+    ]
+
+    AppPreferences.migrate(defaults)
+    #expect((defaults.persistentDomain(forName: name)! as NSDictionary) == expected)
+    AppPreferences.migrate(defaults)
+    #expect((defaults.persistentDomain(forName: name)! as NSDictionary) == expected)
+  }
+
+  @Test func movesTheLastLoginShellStimHomeIntoTheSettingOnce() throws {
+    let cases: [(last: String, existing: String?, expected: String?)] = [
+      ("/Volumes/Work/stim", nil, "/Volumes/Work/stim"),
+      ("/Volumes/Work/stim", "/kept", "/kept"),
+      (NSHomeDirectory() + "/.stim", nil, nil),
+    ]
+    for (last, existing, expected) in cases {
+      let name = "stim-test-home-\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: name))
+      defer { defaults.removePersistentDomain(forName: name) }
+      defaults.set(last, forKey: "lastLoginStimHome")
+      if let existing { defaults.set(existing, forKey: AppPreferences.Key.stimHome) }
+      AppPreferences.migrate(defaults)
+      #expect(defaults.string(forKey: AppPreferences.Key.stimHome) == expected)
+      #expect(defaults.object(forKey: "lastLoginStimHome") == nil)
+    }
+  }
+
+  @Test func migratesSavedSidebarChoicesWithoutAddingUnsavedCheckboxDefaults() throws {
+    let cases: [(saved: [String: Any], expected: Set<StatusFilter>?)] = [
+      ([:], nil),
+      (
+        [AppPreferences.Key.sidebarStatus: "all", AppPreferences.Key.hidesUnprovisionedWorktrees: false],
+        [.live, .idle, .notSetUp]
+      ),
+      ([AppPreferences.Key.sidebarStatus: "live"], [.live]),
+      ([AppPreferences.Key.sidebarStatus: "idle"], [.idle]),
+      ([AppPreferences.Key.sidebarStatus: "idle", AppPreferences.Key.hidesUnprovisionedWorktrees: false], [.idle, .notSetUp]),
+      ([AppPreferences.Key.sidebarStatus: "live", AppPreferences.Key.hidesUnprovisionedWorktrees: false], [.live]),
+      ([AppPreferences.Key.sidebarStatus: "archived", AppPreferences.Key.hidesUnprovisionedWorktrees: false], [.archived]),
+      ([AppPreferences.Key.sidebarStatus: "unknown"], [.live, .idle]),
+      ([AppPreferences.Key.sidebarStatus: "archived", AppPreferences.Key.hidesUnprovisionedWorktrees: true], [.archived]),
+      ([AppPreferences.Key.hidesUnprovisionedWorktrees: false], [.live, .idle, .notSetUp]),
+      ([AppPreferences.Key.hidesUnprovisionedWorktrees: true], [.live, .idle]),
+      (
+        [
+          AppPreferences.Key.sidebarStatuses: "[]", AppPreferences.Key.sidebarStatus: "all",
+          AppPreferences.Key.hidesUnprovisionedWorktrees: false,
+        ], []
+      ),
+      ([AppPreferences.Key.showsIdleWorkspaces: false], [.live]),
+    ]
+    for (saved, expected) in cases {
+      let name = "stim.tests.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: name))
+      defer { defaults.removePersistentDomain(forName: name) }
+      for (key, value) in saved { defaults.set(value, forKey: key) }
+      AppPreferences.migrate(defaults)
+      let raw = defaults.string(forKey: AppPreferences.Key.sidebarStatuses)
+      #expect(raw.map(StatusFilter.decode) == expected)
+      if let existing = saved[AppPreferences.Key.sidebarStatuses] as? String { #expect(raw == existing) }
+      #expect(defaults.object(forKey: AppPreferences.Key.sidebarStatus) == nil)
+      #expect(defaults.object(forKey: AppPreferences.Key.hidesUnprovisionedWorktrees) == nil)
+      #expect(defaults.object(forKey: AppPreferences.Key.showsIdleWorkspaces) == nil)
+      AppPreferences.migrate(defaults)
+      #expect(defaults.string(forKey: AppPreferences.Key.sidebarStatuses) == raw)
+    }
+  }
+
+  @Test func statusSelectionsRoundTripAndRejectUnreadableStorage() {
+    let statuses: Set<StatusFilter> = [.archived, .live, .notSetUp]
+    #expect(StatusFilter.encode(statuses) == #"["live","notSetUp","archived"]"#)
+    #expect(StatusFilter.decode(StatusFilter.encode(statuses)) == statuses)
+    #expect(StatusFilter.decode(#"["idle","future"]"#) == [.idle])
+    #expect(StatusFilter.decode("unreadable") == [.live, .idle])
+    #expect(StatusFilter.decode("{}") == [.live, .idle])
+    #expect(StatusFilter.decode("[]").isEmpty)
+  }
+
+  @Test func statusSummaryNamesEveryStatusAsAll() {
+    #expect(StatusFilter.all == [.live, .idle, .notSetUp, .archived])
+    #expect(StatusFilter.summary(StatusFilter.all) == "All")
+    #expect(StatusFilter.summary([.live, .idle, .notSetUp]) == "3 selected")
+    #expect(StatusFilter.summary([]) == "None")
+    #expect(StatusFilter.summary([.notSetUp]) == "Not Set Up")
+    #expect(StatusFilter.summary([.idle, .live]) == "Active, Idle")
+    #expect(StatusFilter.summary([.idle, .notSetUp, .archived]) == "3 selected")
+  }
+
+  private func git(_ args: [String]) throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.arguments = args
+    try process.run()
+    process.waitUntilExit()
+    #expect(process.terminationStatus == 0)
+  }
+}
+
+@Suite struct RemedyTests {
+  private func workspace(_ json: String) throws -> Workspace {
+    try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+  }
+
+  @Test func setupMapsAppsFromMainAndLinkedCheckoutsWithoutMixingRepositories() throws {
+    let worktree = UnprovisionedWorktree(path: "/r/.claude/worktrees/x", branch: "x")
+    let environments = try JSONDecoder().decode(
+      [Workspace].self,
+      from: Data(
+        #"""
+        [
+          {"path":"/r/apps/mobile","live":false,"warnings":[],"platforms":["android"]},
+          {"path":"/r/.worktrees/other/apps/mobile","live":false,"warnings":[],"platforms":["ios"],"worktree":{"path":"/r/.worktrees/other"}},
+          {"path":"/r/apps/desktop","live":false,"warnings":[],"platforms":["macos"]},
+          {"path":"/r","live":false,"warnings":[],"platforms":["web"]},
+          {"path":"/other/apps/mobile","live":false,"warnings":[],"platforms":["web"]},
+          {"path":"/r/outside","live":false,"warnings":[],"worktree":{"path":"/r/elsewhere"}}
+        ]
+        """#.utf8))
+    let project: (String) -> Project = { Project(root: $0.hasPrefix("/other/") ? "/other" : "/r") }
+    let main = notSetUpApps(for: worktree, environments: [environments[0]], project: project)
+    #expect(main == [NotSetUpApp(path: worktree.path + "/apps/mobile", label: "apps/mobile", platforms: ["android"])])
+    let linked = notSetUpApps(for: worktree, environments: [environments[1]], project: project)
+    #expect(linked == [NotSetUpApp(path: worktree.path + "/apps/mobile", label: "apps/mobile", platforms: ["ios"])])
+    let apps = notSetUpApps(for: worktree, environments: environments, project: project)
+    #expect(
+      apps == [
+        NotSetUpApp(path: worktree.path, label: nil, platforms: ["web"]),
+        NotSetUpApp(path: worktree.path + "/apps/desktop", label: "apps/desktop", platforms: ["macos"]),
+        NotSetUpApp(path: worktree.path + "/apps/mobile", label: "apps/mobile", platforms: ["ios", "android"]),
+      ])
+    #expect(
+      notSetUpApps(for: worktree, environments: [environments[4]], project: project) == [
+        NotSetUpApp(path: worktree.path, label: nil, platforms: ["ios", "android"])
+      ])
+  }
+
+  @Test func displaysHomePathsFromTildeAndStaysAShellLine() {
+    #expect(
+      StimCommand(["worktree", "remove", "/Users/jan/app/.worktrees/x"], cwd: "/Users/jan/it's here").displayLine(
+        home: "/Users/jan") == "cd ~/'it'\\''s here' && stim worktree remove ~/app/.worktrees/x")
+    #expect(StimCommand(["gc"], cwd: "/Users/jan").displayLine(home: "/Users/jan") == "cd ~ && stim gc")
+    #expect(StimCommand(["gc"], cwd: "/Users/janic").displayLine(home: "/Users/jan") == "cd '/Users/janic' && stim gc")
+  }
+
+  @Test func stopsOneDeviceByItsSlot() {
+    let ios = IosDevice(name: "stim-a (iPhone 17.0)", udid: "IOS-UDID", owned: true, state: "Booted")
+    #expect(
+      stopCommand(for: .ios(slot: "default", ios), cwd: "/w") == StimCommand(["stop", "--slot", "default"], cwd: "/w"))
+    #expect(
+      stopCommand(for: .ios(slot: "tablet", ios), cwd: "/w") == StimCommand(["stop", "--slot", "tablet"], cwd: "/w"))
+
+    let android = AndroidDevice(name: "stim-b", owned: true, physical: false, serial: "emulator-5554", state: "detected")
+    #expect(
+      stopCommand(for: .android(slot: "phone", android), cwd: "/w")
+        == StimCommand(["stop", "--slot", "phone"], cwd: "/w"))
+  }
+
+  @Test func stopsTheWholeWorkspaceForARemoteSession() {
+    let remote = RemoteDevice(platform: "ios", backend: "eas", sessionId: "drs_9", state: "running")
+    #expect(stopCommand(for: .remote(remote), cwd: "/w") == StimCommand(["stop"], cwd: "/w"))
+  }
+
+  @Test func showsTheOwnedChromeAsAWebDeviceWithItsPageAndCommands() throws {
+    let env = try workspace(
+      #"{"path":"/w","live":true,"warnings":[],"ios":{"name":"stim-a (iPhone 17 27.0)","udid":"U","owned":true,"state":"Booted"},"web":{"browser":"chrome","version":null,"running":true,"pid":42,"supervisorPid":41,"url":"http://localhost:8081/","headless":true,"viewport":"desktop","profile":"/s/web/profile","cdpEndpoint":"http://127.0.0.1:8900","targetId":"T","page":{"url":"https://localhost:5173/apps/groups/","state":"failed","error":"GET https://localhost:5173/apps/groups/ failed: net::ERR_CONNECTION_REFUSED"},"activity":{"state":"driven","driver":{"tool":"playwright","pid":7,"since":null},"basis":["cdp-client"]}},"logs":{"dir":"/l","errorsSinceMarker":1}}"#
+    )
+    let web = try #require(env.devices.last)
+    #expect(env.devices.map(\.platform) == ["ios", "web"])
+    #expect(web.label == "Web")
+    #expect(web.detail == "localhost:5173/apps/groups")
+    #expect(web.isRunning && web.pageFailed && !web.appStopped)
+    #expect(web.formFactor == .desktop)
+    #expect(web.activity?.driver?.tool == "playwright")
+    #expect(stopCommand(for: web, cwd: "/w") == StimCommand(["stop", "--slot", "web"], cwd: "/w"))
+    #expect(runCommand(for: web, cwd: "/w") == StimCommand(["web"], cwd: "/w"))
+    #expect(env.usedPlatforms == ["ios", "web"])
+    #expect(platformName("web") == "Web")
+  }
+
+  @Test func titlesTheWebDeviceWithTheInAppRouteAfterTheLoadedDocument() throws {
+    let env = try workspace(
+      #"{"path":"/w","live":true,"warnings":[],"web":{"browser":"chrome","version":null,"running":true,"pid":42,"supervisorPid":41,"url":"http://localhost:8081/","headless":true,"viewport":"desktop","profile":"/s/web/profile","cdpEndpoint":"http://127.0.0.1:8900","targetId":"T","page":{"url":"http://localhost:8081/","state":"loaded","route":"http://localhost:8081/apps/groups/"}}}"#
+    )
+    let web = try #require(env.devices.last)
+    #expect(web.detail == "localhost:8081/apps/groups")
+  }
+}
+
+@Suite struct LineBufferTests {
+  @Test func holdsASplitLineAndCharacterUntilTheNewline() {
+    var buffer = LineBuffer()
+    let bytes = Array("caf\u{00E9} ok\r\nnext".utf8)
+    let cut = 4
+    #expect(buffer.append(Data(bytes[..<cut])) == [])
+    #expect(buffer.append(Data(bytes[cut...])) == ["caf\u{00E9} ok"])
+    #expect(buffer.finish() == ["next"])
+    #expect(buffer.finish() == [])
+  }
+}
+
+@Suite struct ProcessStreamTests {
+  private final class Collector: @unchecked Sendable {
+    let lock = NSLock()
+    var lines: [OutputLine] = []
+    var linesAtExit: Int?
+    var status: Int32?
+  }
+
+  private func run(_ script: String, bootstrap: Bool = false) async throws -> Collector {
+    let collector = Collector()
+    try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, Error>) in
+      do {
+        let onLine: @Sendable (OutputLine) -> Void = { line in collector.lock.withLock { collector.lines.append(line) } }
+        let onExit: @Sendable (Int32) -> Void = { status in
+          collector.lock.withLock {
+            collector.status = status
+            collector.linesAtExit = collector.lines.count
+          }
+          done.resume()
+        }
+        if bootstrap {
+          try ProcessStream.start(
+            StimCommand(["-c", script], cwd: NSTemporaryDirectory(), program: "sh"),
+            environment: ["PATH": "/usr/bin:/bin"], onLine: onLine, onExit: onExit)
+        } else {
+          try ProcessStream.start(
+            executable: "/bin/sh", arguments: ["-c", script], cwd: NSTemporaryDirectory(),
+            onLine: onLine, onExit: onExit)
+        }
+      } catch {
+        done.resume(throwing: error)
+      }
+    }
+    return collector
+  }
+
+  @Test func deliversEveryLineOfBothStreamsBeforeTheExitStatus() async throws {
+    let result = try await run("i=0; while [ $i -lt 2000 ]; do echo out$i; i=$((i+1)); done; printf 'err tail' >&2; exit 3")
+    #expect(result.status == 3)
+    #expect(result.linesAtExit == 2001)
+    #expect(result.lines.filter { $0.channel == .stdout }.last == OutputLine(.stdout, "out1999"))
+    #expect(result.lines.filter { $0.channel == .stderr } == [OutputLine(.stderr, "err tail")])
+  }
+
+  @Test func bootstrapToolsKeepOutputExitStatusAndReceiptEnvironment() async throws {
+    let result = try await run(
+      "printf '%s|%s' \"$NO_COLOR\" \"$FORCE_COLOR\"; [ -n \"$STIM_RUN_ID\" ] && printf '|receipt'; printf 'failure tail' >&2; exit 7",
+      bootstrap: true)
+    #expect(result.status == 7)
+    #expect(result.linesAtExit == 2)
+    #expect(result.lines.filter { $0.channel == .stdout } == [OutputLine(.stdout, "1|0|receipt")])
+    #expect(result.lines.filter { $0.channel == .stderr } == [OutputLine(.stderr, "failure tail")])
+  }
+
+  @Test func bootstrapRefusesStimInsteadOfStartingAnExternalFallback() {
+    let error = #expect(throws: ServerError.self) {
+      try ProcessStream.start(
+        StimCommand(["--version"], cwd: NSTemporaryDirectory()), environment: ["PATH": "/usr/bin:/bin"],
+        onLine: { _ in }, onExit: { _ in })
+    }
+    #expect(error?.code == "unsupported")
+  }
+
+  @Test func reportsTheExitWhenABackgroundChildKeepsThePipeOpen() async throws {
+    let started = Date()
+    let result = try await run("sleep 30 & echo started")
+    #expect(result.status == 0)
+    #expect(result.lines == [OutputLine(.stdout, "started")])
+    #expect(Date().timeIntervalSince(started) < 10)
+  }
+}
+
+@Suite struct ActivityBadgeTests {
+  let now = ISO8601DateFormatter().date(from: "2026-09-25T02:00:00Z")!
+
+  func activity(_ state: String, last: String? = nil, since: String? = nil) -> DeviceActivity {
+    DeviceActivity(
+      state: state, driver: since.map { DeviceActivity.Driver(tool: "maestro", pid: 1, since: $0) },
+      lastActivityAt: last, basis: [])
+  }
+
+  @Test func aRecentScreenChangeOverridesTheCLIsIdle() {
+    let idle = activity("idle", last: "2026-09-24T20:00:00.000Z")
+    #expect(ActivityBadge(idle, screenChangedAt: now.addingTimeInterval(-120), now: now) == nil)
+    #expect(ActivityBadge(idle, screenChangedAt: now.addingTimeInterval(-3600), now: now) == .idle(3600))
+  }
+
+}
+
+@Suite struct GcPreviewTests {
+  @Test func unrecognizedDevicesAreKeptAndTheLadderAtHighIsWhatDeleteRuns() throws {
+    let json = """
+      {"mode":"dry-run","actionable":true,"failures":null,"sections":{
+        "unverifiedDevices":[{"kind":"ios","id":"U9","name":"stim-desktop-duo-test","command":"xcrun simctl delete U9"}]
+      },"ladder":{"pressure":{"level":"normal","disk":"normal","memory":"normal","reasons":[]},"workspaces":[],"levels":[
+        {"level":"high","command":"stim gc --delete","actions":[
+          {"rung":1,"kind":"delete-build-outputs","target":"/w/app","outcome":"would","bytes":2048,"detail":""}]},
+        {"level":"critical","command":"stim gc --delete --cache all","actions":[
+          {"rung":5,"kind":"delete-dependencies","target":"/w/app/node_modules","outcome":"would","bytes":9,"detail":""}]}]}}
+      """
+    let report = try GcPreview(json: Data(json.utf8))
+    #expect(report.sections.map(\.key) == ["unverifiedDevices", "ladder"])
+    #expect(report.sections[0].entries.allSatisfy { $0.kept != nil })
+    #expect(report.sections[1].entries == [GcPreview.Entry(label: "delete build outputs /w/app", bytes: 2048, kept: nil)])
+    #expect(report.deletableCount == 1)
+  }
+
+  @Test func leftoverSimulatorLaunchdFoldersAreKeptAndNotCountedAsReclaimable() throws {
+    let json = """
+      {"mode":"dry-run","actionable":false,"failures":null,"sections":{
+        "simulatorLaunchdFolders":[{"udid":"A48B2B1E-3768-48D8-9816-86B2AC7F2188","path":"/private/var/tmp/com.apple.CoreSimulator.SimDevice.A48B2B1E-3768-48D8-9816-86B2AC7F2188","bytes":2097152,"command":"rm -rf \\"/private/var/tmp/com.apple.CoreSimulator.SimDevice.A48B2B1E-3768-48D8-9816-86B2AC7F2188\\""}]
+      }}
+      """
+    let report = try GcPreview(json: Data(json.utf8))
+    #expect(report.sections.map(\.title) == ["Simulator launchd folders with no simulator"])
+    #expect(report.sections[0].entries.count == 1)
+    #expect(
+      report.sections[0].entries[0].kept?.hasSuffix(
+        "run: rm -rf \"/private/var/tmp/com.apple.CoreSimulator.SimDevice.A48B2B1E-3768-48D8-9816-86B2AC7F2188\"") == true)
+    #expect(report.deletableCount == 0)
+    #expect(report.reclaimableBytes == 0)
+  }
+
+  @Test func marksWhatDeleteLeavesAlone() throws {
+    let json = """
+      {"mode":"dry-run","actionable":true,"failures":null,"sections":{
+        "deadProjects":[],
+        "orphanedWorkspaces":[{"dir":"/s/workspaces/a","projectRoot":"/p","bytes":4096}],
+        "workspaceBuildOutputs":[
+          {"dir":"/s/workspaces/b","bytes":1000,"willClear":false,"reason":"in-use","detail":"in use: supervisor running"},
+          {"dir":"/s/workspaces/c","bytes":500,"willClear":true,"reason":null,"detail":null}],
+        "buildsInProgress":[{"path":"/s/build-locks/x.lock","pid":1}],
+        "workspaceLogs":[
+          {"dir":"/s/workspaces/d","bytes":900,"trimBytes":700,"willTrim":true,"reason":null,"detail":null},
+          {"dir":"/s/workspaces/e","bytes":300,"trimBytes":0,"willTrim":false,"reason":null,"detail":null},
+          {"dir":"/s/workspaces/f","bytes":90,"trimBytes":50,"willTrim":false,"reason":"collector",
+           "detail":"a device log collector is recorded for ios"}],
+        "recordings":[
+          {"dir":"/s/workspaces/g/recordings","projectRoot":"/pg","bytes":3000,"deleteBytes":0,"willDelete":false,
+           "withWorkspace":false,"reason":"retained","detail":"the last 15 minutes of footage per device stay"},
+          {"dir":"/s/workspaces/h/recordings","projectRoot":"/ph","bytes":2000,"deleteBytes":1500,"willDelete":true,
+           "withWorkspace":false,"reason":null,"detail":null},
+          {"dir":"/s/workspaces/a/recordings","projectRoot":"/p","bytes":800,"deleteBytes":800,"willDelete":true,
+           "withWorkspace":true,"reason":null,"detail":null}],
+        "caches":[{"name":"Metro transform cache","dir":"/s/metro","bytes":7,"willEmpty":false,"note":"no eviction"}],
+        "futureSection":[{"id":"z"}]
+      }}
+      """
+    let report = try GcPreview(json: Data(json.utf8))
+    #expect(report.actionable)
+    #expect(
+      report.sections.map(\.key) == [
+        "orphanedWorkspaces", "buildsInProgress", "workspaceLogs", "workspaceBuildOutputs", "recordings", "caches",
+        "futureSection",
+      ])
+    let recordings = report.sections.first { $0.key == "recordings" }!
+    #expect(recordings.entries.map(\.label) == ["/pg", "/ph", "/p"])
+    #expect(recordings.entries.map(\.bytes) == [3000, 1500, 800])
+    #expect(
+      recordings.entries.map(\.kept) == [
+        "the last 15 minutes of footage per device stay", nil, "deleted with its workspace directory, counted there",
+      ])
+    let logs = report.sections.first { $0.key == "workspaceLogs" }!.entries
+    #expect(logs.map(\.bytes) == [700, 50])
+    #expect(logs.map(\.kept) == [nil, "a device log collector is recorded for ios"])
+    let outputs = report.sections.first { $0.key == "workspaceBuildOutputs" }!.entries
+    #expect(outputs.map(\.kept) == ["in use: supervisor running", nil])
+    #expect(report.sections.first { $0.key == "buildsInProgress" }!.entries[0].kept != nil)
+    #expect(report.sections.first { $0.key == "caches" }!.entries[0].kept == "no eviction")
+    #expect(report.deletableCount == 5)
+    #expect(report.reclaimableBytes == 6796)
+  }
+
+  @Test func surfacesTheRefusalContract() {
+    let json = #"{"code":"STIM_BAD_ARG","message":"No shared cache carries \"x\".","remedy":"Pass --cache all."}"#
+    #expect {
+      try GcPreview(json: Data(json.utf8))
+    } throws: { error in
+      (error as? GcPreview.Failure)?.errorDescription == "No shared cache carries \"x\". Pass --cache all."
+    }
+  }
+}
+
+@Suite struct GcOutcomeTests {
+  @Test func summarizesWhatARunDidApartFromWhatItLeftAlone() throws {
+    let json = """
+      {"mode":"delete","idle":null,"actionable":true,"failures":1,"sections":{
+        "orphanedDevices":[{"kind":"ios","id":"U1","name":"stim-a (iPhone 18 Pro 27.0)","bytes":null}],
+        "idleDevices":[{"kind":"ios","id":"U1","name":"stim-a (iPhone 18 Pro 27.0)","idleForMs":86400000}],
+        "skipped":[{"path":"/s/workspaces/x","detail":"workspace directory not resolved: it has no workspace.json"},
+                   {"path":"/s/workspaces/x","detail":"workspace directory not resolved: it has no workspace.json"}],
+        "unverifiedDevices":[{"kind":"ios","id":"U9","name":"stim-1362-mobile (iPhone 18 Pro 27.0)","command":"xcrun simctl delete U9"}]
+      },"results":[
+        {"kind":"device","status":"done","label":"stim-a (iPhone 18 Pro 27.0)","id":"U1","bytes":null,"detail":null},
+        {"kind":"device","status":"done","label":"stim-b (iPhone 18 Pro 27.0)","id":"U2","bytes":null,"detail":null},
+        {"kind":"workspaceOutputs","status":"done","label":"/p/app","id":null,"bytes":21690000000,"detail":null},
+        {"kind":"worktree","status":"kept","label":"/p/wip","id":null,"bytes":null,"detail":"dirty"},
+        {"kind":"cache","status":"failed","label":"Build cache","id":"/s/build-cache","bytes":null,"detail":"2 entries could not be removed"}
+      ]}
+      """
+    let outcome = try GcOutcome(json: Data(json.utf8))
+    #expect(outcome.done.map(\.label) == ["stim-a (iPhone 18 Pro 27.0)", "stim-b (iPhone 18 Pro 27.0)", "/p/app"])
+    #expect(outcome.failed.map(\.label) == ["Build cache"])
+    #expect(outcome.kept.map(\.label) == ["/p/wip", "stim-1362-mobile (iPhone 18 Pro 27.0)", "/s/workspaces/x"])
+    #expect(outcome.freedBytes == 21_690_000_000)
+    #expect(outcome.failures == 1)
+  }
+
+  @Test func namesWatchmanAndDaemonResultsInsteadOfCallingThemStaleRecords() throws {
+    let json = """
+      {"mode":"delete","failures":0,"sections":{},"results":[
+        {"kind":"watchmanRoot","status":"done","label":"/gone/worktree","id":null,"bytes":null,"detail":"directory is gone"},
+        {"kind":"watchman","status":"done","label":"watchman (pid 41)","id":"41","bytes":4456448000,"detail":null},
+        {"kind":"gradleDaemon","status":"done","label":"Gradle daemon (pid 52)","id":"52","bytes":393216000,"detail":null},
+        {"kind":"kotlinDaemon","status":"kept","label":"Kotlin daemon (pid 53)","id":"53","bytes":370000000,"detail":"a Gradle daemon is busy"}
+      ]}
+      """
+    let outcome = try GcOutcome(json: Data(json.utf8))
+    #expect(outcome.reclaimedMemoryBytes == 4_849_664_000)
+    #expect(outcome.freedBytes == 0)
+    #expect(outcome.done.map(\.kind) == ["watchmanRoot", "watchman", "gradleDaemon"])
+    #expect(outcome.kept.map(\.detail) == ["a Gradle daemon is busy"])
+  }
+
+  @Test func summarizesStatusCacheResultsWithoutCountingResultsAsRecords() throws {
+    let json = """
+      {"mode":"delete","failures":0,"sections":{},"results":[
+        {"kind":"statusCache","status":"done","label":"3 stale disk-usage cache entries","id":null,"bytes":900,"detail":null},
+        {"kind":"statusCache","status":"done","label":"1 stale pull-request cache entry","id":null,"bytes":100,"detail":null},
+        {"kind":"deviceLease","status":"done","label":"expired lease","id":null,"bytes":null,"detail":null}
+      ]}
+      """
+    let outcome = try GcOutcome(json: Data(json.utf8))
+    #expect(outcome.headline == "Freed 1 KB \u{00B7} Removed stale status cache entries \u{00B7} Cleared 1 stale record")
+  }
+
+  @Test func keepsDistinctEntriesThatShareALabelAndSkipsNotesOnAnIdleRun() throws {
+    let json = """
+      {"mode":"dry-run","idle":3600000,"failures":0,"sections":{
+        "skipped":[{"path":"/s/workspaces/x","detail":"workspace directory not resolved"}]
+      },"results":[
+        {"kind":"cache","status":"done","label":"Metro transform cache","id":"/s/metro/a","bytes":1000,"detail":null},
+        {"kind":"cache","status":"done","label":"Metro transform cache","id":"/s/metro/b","bytes":2000,"detail":null}
+      ]}
+      """
+    let outcome = try GcOutcome(json: Data(json.utf8))
+    #expect(outcome.done.count == 2)
+    #expect(outcome.freedBytes == 3000)
+    #expect(outcome.kept.isEmpty)
+  }
+
+  @Test func onlyActingGcJsonRunsHaveAnOutcome() {
+    #expect(GcOutcome.describes(["gc", "--delete", "--json"]))
+    #expect(!GcOutcome.describes(["gc", "--idle", "30m", "--json"]))
+    #expect(!GcOutcome.describes(["gc", "--json"]))
+    #expect(!GcOutcome.describes(["gc", "--delete"]))
+  }
+}
+
+@Suite struct ResourceTests {
+  let ps = """
+        1     0  20176 14:27.71 /sbin/launchd
+      500     1  10240   0:01.00 stim-supervisor
+      501   500  20480 229:34.42 node metro
+      502   501   1024   0:00.50 node worker
+      600     1   2048   0:00.10 launchd_sim /Users/dev/Library/Developer/CoreSimulator/Devices/7466D06C-1AE4-4EDB-8A93-6B8A43A7A47A/data/var/run/launchd_bootstrap.plist
+      601   600   4096 1-02:03:04.50 SpringBoard
+      700     1   8192   0:02.00 /sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd stim-app -port 5604
+      701     1   8192   0:02.00 /sdk/emulator/qemu/darwin-aarch64/qemu-system-aarch64 -avd stim-app-duo -port 5606
+      800     1   1024   0:00.00 launchd_sim /Users/dev/Library/Developer/CoreSimulator/Devices/00000000-0000-0000-0000-000000000000/data/var/run/launchd_bootstrap.plist
+    """
+
+  func workspace(supervisor: Int? = 500, metro: Int? = 501, live: Bool = true) throws -> Workspace {
+    let json = """
+      {"path":"/w","live":\(live),"warnings":[],
+       "supervisor":{"pid":\(supervisor.map(String.init) ?? "null")},
+       "metro":{"port":8081,"running":true,"pid":\(metro.map(String.init) ?? "null")},
+       "ios":{"name":"stim-app (iPhone 18 Pro 27.0)","udid":"7466d06c-1ae4-4edb-8a93-6b8a43a7a47a","owned":true,"state":"Booted"},
+       "android":{"name":"stim-app","owned":true,"physical":false,"serial":"emulator-5604","state":"detected"}}
+      """
+    return try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+  }
+
+  @Test func parsesPsIncludingLongCpuTimes() {
+    let rows = ProcessTable.parse(ps)
+    #expect(rows.count == 9)
+    #expect(rows[2] == ProcessEntry(pid: 501, ppid: 500, residentBytes: 20480 * 1024, cpuSeconds: 13774.42, args: "node metro"))
+    let expected: Double = 86_400 + 7_384.5
+    #expect(rows[5].cpuSeconds == expected)
+  }
+
+  @Test func findsSimulatorAndEmulatorByIdentityNotPrefix() throws {
+    let roots = workspaceRoots(try workspace(), in: ProcessTable.parse(ps))
+    #expect(roots == [500, 501, 600, 700])
+  }
+
+  @Test func countsAnOwnedMacosAppAsARoot() throws {
+    let json = """
+      {"path":"/w","live":true,"warnings":[],
+       "macos":{"launchId":"l","product":"App","bundle":"/b","bundleId":"id","executable":"/e","state":"running",
+                "app":{"pid":502,"startedAtMicros":1},"build":{"state":"ok","startedAt":"2026-10-08T00:00:00Z"}}}
+      """
+    let env = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+    #expect(workspaceRoots(env, in: ProcessTable.parse(ps)) == [502])
+  }
+
+  @Test func ignoresASupervisorPidOfAWorkspaceThatIsNotLive() throws {
+    let roots = workspaceRoots(try workspace(metro: nil, live: false), in: ProcessTable.parse(ps))
+    #expect(!roots.contains(500))
+  }
+
+  @Test func countsEachProcessOnceWhenRootsNest() throws {
+    var sampler = ResourceSampler()
+    let processes = ProcessTable.parse(ps)
+    let usage = sampler.sample([try workspace()], processes: processes, at: Date(timeIntervalSince1970: 0))["/w"]
+    #expect(usage?.processCount == 6)
+    let resident: Int64 = 46_080 * 1024
+    #expect(usage?.residentBytes == resident)
+    #expect(usage?.cpuPercent == nil)
+  }
+
+  @Test func cpuIsTheChangeInCpuTimeOverTheInterval() throws {
+    var sampler = ResourceSampler()
+    let env = try workspace(supervisor: nil, metro: 700)
+    let first = [ProcessEntry(pid: 700, ppid: 1, residentBytes: 0, cpuSeconds: 10, args: "")]
+    _ = sampler.sample([env], processes: first, at: Date(timeIntervalSince1970: 0))
+    let second = [
+      ProcessEntry(pid: 700, ppid: 1, residentBytes: 0, cpuSeconds: 13, args: ""),
+      ProcessEntry(pid: 701, ppid: 700, residentBytes: 0, cpuSeconds: 1.5, args: ""),
+    ]
+    let usage = sampler.sample([env], processes: second, at: Date(timeIntervalSince1970: 3))["/w"]
+    #expect(usage?.cpuPercent == 150)
+    #expect(sampler.sample([], processes: [], at: Date(timeIntervalSince1970: 4)).isEmpty)
+    let resumed = sampler.sample([env], processes: first, at: Date(timeIntervalSince1970: 100))["/w"]
+    #expect(resumed?.cpuPercent == nil)
+    let next = sampler.sample([env], processes: second, at: Date(timeIntervalSince1970: 103))["/w"]
+    #expect(next?.cpuPercent == 150)
+  }
+
+  @Test func sumsOnlyWhatGcDeleteWouldFree() throws {
+    let json = """
+      {"mode":"dry-run","sections":{
+        "orphanedWorkspaces":[{"dir":"/a","projectRoot":"/p","bytes":4096}],
+        "orphanedDevices":[{"kind":"ios","id":"X","name":"n","bytes":null,"directory":null}],
+        "parkedSimulators":[{"udid":"Y","bytes":1000}],
+        "workspaceBuildOutputs":[{"dir":"/b","bytes":9000000000,"willClear":false},{"dir":"/c","bytes":500,"willClear":true}],
+        "workspaceLogs":[
+          {"dir":"/e","projectRoot":"/pe","bytes":90000,"trimBytes":80000,"willTrim":true,"reason":null,"detail":null},
+          {"dir":"/f","projectRoot":"/pf","bytes":70000,"trimBytes":60000,"willTrim":false,"reason":"in-use","detail":"in use"}],
+        "caches":[{"name":"c","dir":"/d","bytes":7000,"willEmpty":false}],
+        "staleBuildLocks":[{"path":"/l"}]}}
+      """
+    let reclaimable = try JSONDecoder().decode(GcReport.self, from: Data(json.utf8)).reclaimable
+    #expect(reclaimable == GcReport.Reclaimable(bytes: 4096 + 1000 + 500 + 80000, entries: 5, unsized: 1))
+  }
+
+  @Test func mergesLocationsOnTheSameVolume() {
+    let volumes = DiskUsage.merge([
+      DiskVolume(id: "/", name: "Macintosh HD", availableBytes: 1, totalBytes: 2, holds: ["Repositories"]),
+      DiskVolume(id: "/Volumes/X", name: "X", availableBytes: 3, totalBytes: 4, holds: ["Simulators"]),
+      DiskVolume(id: "/", name: "Macintosh HD", availableBytes: 1, totalBytes: 2, holds: ["Stim home"]),
+    ])
+    #expect(volumes.map(\.holds) == [["Repositories", "Stim home"], ["Simulators"]])
+  }
+}
+
+@Suite struct UsageThresholdsTests {
+  @Test func normalizesWholeMachineCpuByCoresAndCapsAtOne() {
+    #expect(UsageThresholds.cpuFraction(percentOfOneCore: 668, cores: 10) == 0.668)
+    #expect(UsageThresholds.cpuFraction(percentOfOneCore: 1040, cores: 10) == 1)
+  }
+
+  @Test func combinedStatShowsTheWorseTone() {
+    #expect(UsageThresholds.worse(.normal, .caution) == .caution)
+    #expect(UsageThresholds.worse(.error, .caution) == .error)
+    #expect(UsageThresholds.worse(.normal, .normal) == .normal)
+  }
+}
+
+@Suite struct MachineCpuTicksTests {
+  @Test func computesBusyShareOfAllTicksBetweenTwoReadings() {
+    let before = MachineCpuTicks(busy: 1_000, idle: 9_000)
+    let after = MachineCpuTicks(busy: 1_300, idle: 9_700)
+    #expect(MachineCpuTicks.fraction(from: before, to: after) == 0.3)
+  }
+
+  @Test func survivesA32BitCounterWrap() {
+    let before = MachineCpuTicks(busy: UInt32.max - 99, idle: 0)
+    let after = MachineCpuTicks(busy: 100, idle: 200)
+    #expect(MachineCpuTicks.fraction(from: before, to: after) == 0.5)
+  }
+
+  @Test func reportsNothingWhenNoTickElapsed() {
+    let ticks = MachineCpuTicks(busy: 5, idle: 5)
+    #expect(MachineCpuTicks.fraction(from: ticks, to: ticks) == nil)
+  }
+}
+
+@Suite struct OpenURLTests {
+  @Test func readsTheDeviceOnlyFromAnOpenURL() {
+    #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?udid=U1")!) == .simulator(udid: "U1"))
+    #expect(
+      deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?serial=emulator-5554")!)
+        == .emulator(serial: "emulator-5554"))
+    #expect(
+      deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?udid=U1&serial=emulator-5554")!)
+        == .simulator(udid: "U1"))
+    #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://close?udid=U1")!) == nil)
+    #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://close?serial=emulator-5554")!) == nil)
+    #expect(deviceOpenRequest(fromOpenURL: URL(string: "siniulator://open?udid=U1")!) == nil)
+    #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?udid=")!) == nil)
+    #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?serial=")!) == nil)
+  }
+
+  @Test func readsAWorkspaceLink() {
+    func link(_ string: String) -> WorkspaceLink? { workspaceLink(fromOpenURL: URL(string: string)!) }
+    #expect(
+      link("stim-desktop://workspace?path=/Users/me/My%20Apps/a%26b%20%231%2Bx")
+        == .workspace(WorkspaceOpenRequest(path: "/Users/me/My Apps/a&b #1+x")))
+    #expect(link("stim-desktop://workspace?path=%2Fw%2Fapp") == .workspace(WorkspaceOpenRequest(path: "/w/app")))
+    #expect(
+      link("stim-desktop://workspace?path=/w&platform=android&slot=tablet%20b")
+        == .workspace(WorkspaceOpenRequest(path: "/w", platform: "android", slot: "tablet b")))
+    #expect(link("stim-desktop://workspace?path=/w&slot=") == .workspace(WorkspaceOpenRequest(path: "/w")))
+    #expect(
+      link("stim-desktop://workspace?path=/w&archive=older%20run")
+        == .workspace(WorkspaceOpenRequest(path: "/w", archive: "older run")))
+    #expect(link("stim-desktop://workspace?path=/w&archive=") == .workspace(WorkspaceOpenRequest(path: "/w")))
+    #expect(link("stim-desktop://workspace?path=/w&archive") == .workspace(WorkspaceOpenRequest(path: "/w")))
+    #expect(link("stim-desktop://workspace") == .malformed)
+    #expect(link("stim-desktop://workspace?path=") == .malformed)
+    #expect(link("stim-desktop://workspace?path=w/app") == .malformed)
+    #expect(link("stim-desktop://workspace?path=/w&platform=tvos") == .malformed)
+    #expect(link("stim-desktop://open?udid=U1") == nil)
+    #expect(link("siniulator://workspace?path=/w") == nil)
+  }
+
+  @Test func findsTheWorkspaceAndDeviceALinkNames() throws {
+    let url = Bundle.module.url(forResource: "status", withExtension: "json", subdirectory: "Fixtures")!
+    let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let path = "/Users/dev/app/.worktrees/wide-insets/apps/mobile"
+    let bare = try #require(payload.target(of: WorkspaceOpenRequest(path: path)))
+    #expect(bare.workspace.path == path)
+    #expect(bare.device == nil)
+    let ipad = try #require(payload.target(of: WorkspaceOpenRequest(path: path, platform: "ios", slot: "ipad")))
+    #expect(ipad.device?.id == "ios:D39CAF14-F4A4-4C0A-B8A4-3A30B2D268F0")
+    let android = try #require(payload.target(of: WorkspaceOpenRequest(path: path, platform: "android")))
+    #expect(android.device?.id == "android:default:stim-wide-insets-mobile")
+    #expect(payload.target(of: WorkspaceOpenRequest(path: path, platform: "ios", slot: "phone"))?.device == nil)
+    #expect(payload.target(of: WorkspaceOpenRequest(path: "/Users/dev/app/.worktrees")) == nil)
+  }
+
+  @Test func opensTheNewestArchiveOrTheExplicitRunOnlyForTheExactPath() throws {
+    let url = Bundle.module.url(forResource: "archived-status", withExtension: "json", subdirectory: "Fixtures")!
+    var payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let older = try #require(payload.archived?.first)
+    var newer = older
+    newer.id = "newer"
+    newer.removedAt = "2026-10-05T12:00:00Z"
+    var other = newer
+    other.id = "other"
+    other.projectRoot = "/work/other/app"
+    other.removedAt = "2026-10-06T12:00:00Z"
+    let path = older.projectRoot
+    for archives in [[older, other, newer], [newer, other, older]] {
+      payload.archived = archives
+      #expect(payload.target(of: WorkspaceOpenRequest(path: path)) == nil)
+      #expect(payload.archive(for: WorkspaceOpenRequest(path: path), waited: true)?.id == "newer")
+      #expect(payload.archive(for: WorkspaceOpenRequest(path: path, archive: older.id), waited: true)?.id == older.id)
+      #expect(payload.archive(for: WorkspaceOpenRequest(path: path, archive: "missing"), waited: true) == nil)
+      #expect(payload.archive(for: WorkspaceOpenRequest(path: path, archive: "other"), waited: true) == nil)
+      for missing in ["/unknown", "/work/feature", path + "/", "/work/feature/./app"] {
+        #expect(payload.archive(for: WorkspaceOpenRequest(path: missing), waited: true) == nil)
+        #expect(payload.archive(for: WorkspaceOpenRequest(path: missing, archive: older.id), waited: true) == nil)
+      }
+    }
+    payload.archived = nil
+    #expect(payload.archive(for: WorkspaceOpenRequest(path: path), waited: true) == nil)
+  }
+
+  @Test func aLinkWithoutAnArchiveIdWaitsForTheLiveWorkspaceBeforeOpeningTheNewestArchive() throws {
+    let url = Bundle.module.url(forResource: "archived-status", withExtension: "json", subdirectory: "Fixtures")!
+    var payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let archive = try #require(payload.archived?.first)
+    let path = archive.projectRoot
+    let bare = WorkspaceOpenRequest(path: path)
+    let live = payload.environments[0]
+    var relisted = live
+    relisted.path = path
+    payload.environments = []
+
+    #expect(payload.archive(for: bare, waited: false) == nil)
+    #expect(payload.archive(for: bare, waited: true)?.id == archive.id)
+
+    payload.environments = [relisted]
+    #expect(payload.target(of: bare)?.workspace.path == path)
+    #expect(payload.archive(for: bare, waited: true) == nil)
+  }
+
+  @Test func aLinkWithAnArchiveIdOpensItAtOnce() throws {
+    let url = Bundle.module.url(forResource: "archived-status", withExtension: "json", subdirectory: "Fixtures")!
+    var payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let archive = try #require(payload.archived?.first)
+    payload.environments = []
+    let request = WorkspaceOpenRequest(path: archive.projectRoot, archive: archive.id)
+    #expect(payload.archive(for: request, waited: false)?.id == archive.id)
+  }
+
+  @Test func aLiveWorkspaceWinsEvenWhenTheLinkNamesAnArchive() throws {
+    let url = Bundle.module.url(forResource: "archived-status", withExtension: "json", subdirectory: "Fixtures")!
+    var payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let archive = try #require(payload.archived?.first)
+    payload.environments[0].path = archive.projectRoot
+    for id in [nil, archive.id, "missing"] {
+      let request = WorkspaceOpenRequest(path: archive.projectRoot, archive: id)
+      #expect(payload.target(of: request)?.workspace.path == archive.projectRoot)
+      #expect(payload.archive(for: request, waited: true) == nil)
+    }
+  }
+}
+
+@Suite struct LoginShellTests {
+  @Test func parsesValuesWithEqualsSignsAndNewlines() {
+    let output = Data("PATH=/a:/b\0OPTS=-Dx=1 -Dy=2\0MULTI=one\ntwo=2\n\0EMPTY=\0".utf8)
+    #expect(
+      LoginShell.parseEnvironment(output) == [
+        "PATH": "/a:/b", "OPTS": "-Dx=1 -Dy=2", "MULTI": "one\ntwo=2\n", "EMPTY": "",
+      ])
+  }
+
+  @Test func capturesTheLoginShellEnvironment() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try Data("export STIM_LOGIN_SHELL_TEST=controlled\n".utf8).write(to: dir.appendingPathComponent(".zprofile"))
+    let shell = dir.appendingPathComponent("shell")
+    let script = "#!/bin/sh\nexport ZDOTDIR=\"${0%/*}\"\nexec /bin/zsh \"$@\"\n"
+    FileManager.default.createFile(
+      atPath: shell.path, contents: Data(script.utf8), attributes: [.posixPermissions: 0o755])
+
+    let environment = try #require(await LoginShell.environment(shell: shell.path))
+    #expect(environment["STIM_LOGIN_SHELL_TEST"] == "controlled")
+    #expect(environment["HOME"] == NSHomeDirectory())
+    #expect(environment["PATH"]?.contains("/usr/bin") == true)
+  }
+
+  @Test func killsALoginShellThatNeverExits() async throws {
+    let shell = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: shell) }
+    let script = "#!/bin/sh\nexec /usr/bin/perl -e '$SIG{TERM} = \"IGNORE\"; sleep 30'\n"
+    FileManager.default.createFile(
+      atPath: shell.path, contents: Data(script.utf8), attributes: [.posixPermissions: 0o755])
+
+    let started = Date()
+    #expect(await LoginShell.environment(shell: shell.path, timeout: 0.5) == nil)
+    #expect(Date().timeIntervalSince(started) < 10)
+  }
+
+  @Test func fallbackPutsHomebrewFirstAndKeepsSystemDirectories() {
+    let environment = LoginShell.fallback(["PATH": "/usr/bin:/usr/local/bin:/custom", "HOME": "/Users/dev"])
+    #expect(environment["PATH"] == "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/custom:/bin:/usr/sbin:/sbin")
+    #expect(environment["HOME"] == "/Users/dev")
+  }
+
+}
+
+@Suite struct AgentSessionTests {
+  let agents: [AgentSession] = {
+    let json = """
+      [{"tool":"claude-code","sessionId":"a","cwd":"/w","title":"Fix the login bug","lastActiveAt":"2026-09-28T11:55:00.000Z",
+        "openUrl":"claude://code/continue?session=local_1"},
+       {"tool":"codex","sessionId":"b","cwd":"/w","openUrl":"file:///etc/passwd"}]
+      """
+    return try! JSONDecoder().decode([AgentSession].self, from: Data(json.utf8))
+  }()
+
+  struct Vectors: Decodable {
+    struct Order: Decodable {
+      var name: String
+      var agents: [AgentSession]?
+      var endedAgents: [AgentSession]?
+      var ids: [String]
+    }
+
+    var order: [Order]
+  }
+
+  static let vectors: Vectors = {
+    let url = Bundle.module.url(forResource: "agent-sessions-vectors", withExtension: "json", subdirectory: "Fixtures")!
+    return try! JSONDecoder().decode(Vectors.self, from: Data(contentsOf: url))
+  }()
+
+  @Test(arguments: vectors.order.map(\.name))
+  func ordersLikeThePhone(name: String) throws {
+    let c = try #require(Self.vectors.order.first { $0.name == name })
+    #expect(AgentSession.associated(agents: c.agents, endedAgents: c.endedAgents).map(\.id) == c.ids)
+  }
+
+  @Test func opensOnlyClaudeAndCodexLinks() {
+    #expect(agents.map(\.openURL?.absoluteString) == ["claude://code/continue?session=local_1", nil])
+  }
+}

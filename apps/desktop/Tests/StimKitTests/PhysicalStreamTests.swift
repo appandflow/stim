@@ -1,0 +1,415 @@
+import Foundation
+import Testing
+
+@testable import StimKit
+
+@Suite @MainActor struct PhysicalStreamTests {
+  let target = ReplayTarget(workspace: "/w", platform: "android", slot: "default")
+
+  private func started() async throws -> (PhysicalStream, FakeServer, String) {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target)
+    stream.connect(server)
+    stream.begin()
+    await settle()
+    try #require(server.take("control.begin")).reply.resume(returning: .object(["session": .string("c1")]))
+    await settle()
+    #expect(stream.control == .on(session: "c1"))
+    return (stream, server, "c1")
+  }
+
+  @Test func asksForThePhysicalDeviceSoAnOlderServerCannotStreamTheSlotsEmulator() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target)
+    stream.connect(server)
+    let params = try #require(server.subs.first).params()
+    #expect(params["physical"] == .bool(true))
+    #expect(params["video"] == .array([.string("h264")]))
+  }
+
+  @Test func asksForThirtyFramesAtTheServersDefaultSizeUnlessHighQualityIsChosen() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target)
+    stream.connect(server)
+    let standard = try #require(server.subs.first).params()
+    #expect(standard["fps"] == .number(30))
+    #expect(standard["maxEdge"] == nil)
+    let high = PhysicalStream(target: target, quality: .high)
+    high.connect(server)
+    let params = try #require(server.subs.last).params()
+    #expect(params["fps"] == .number(60))
+    #expect(params["maxEdge"] == .number(1600))
+  }
+
+  @Test func resubscribesAtTheNewQualityAndKeepsTheControlSession() async throws {
+    let (stream, server, _) = try await started()
+    stream.setQuality(.high)
+    #expect(server.subs.first?.cancelled == true)
+    let params = try #require(server.subs.last).params()
+    #expect(server.subs.count == 2)
+    #expect(params["fps"] == .number(60))
+    #expect(stream.control == .on(session: "c1"))
+  }
+
+  @Test func asksAgainAtStandardWhenTheServerAnswersHighWithoutVideo() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    try #require(server.subs.first).onSubscribed(["subscription": .string("s1")])
+    #expect(server.subs.first?.cancelled == true)
+    #expect(server.subs.count == 2)
+    let params = try #require(server.subs.last).params()
+    #expect(params["fps"] == .number(30))
+    #expect(params["maxEdge"] == nil)
+    server.subs.last?.onSubscribed(["subscription": .string("s2")])
+    #expect(server.subs.count == 2)
+    #expect(stream.quality == .high)
+  }
+
+  @Test func keepsHighWhenTheServerOffersVideo() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    try #require(server.subs.first).onSubscribed(["subscription": .string("s1"), "video": .string("h264")])
+    #expect(server.subs.count == 1)
+    #expect(server.subs.first?.cancelled == false)
+  }
+
+  @Test func asksAgainAtStandardWhenAnOlderServerRefusesHigh() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    let refusal = ServerEvent(
+      name: "error", subscription: "",
+      fields: [
+        "error": .object([
+          "code": .string("bad-request"), "message": .string("fps must be a whole number from 1 to 30."),
+        ])
+      ])
+    try #require(server.subs.first).onEvent(refusal)
+    #expect(server.subs.count == 2)
+    #expect(try #require(server.subs.last).params()["fps"] == .number(30))
+    #expect(stream.problem == nil)
+    server.subs.last?.onEvent(refusal)
+    #expect(server.subs.count == 2)
+    #expect(stream.problem == "fps must be a whole number from 1 to 30.")
+  }
+
+  @Test func asksAgainAtStandardWhenARelayReportsTheHostRefusedHigh() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    try #require(server.subs.first).onEvent(
+      ServerEvent(
+        name: "error", subscription: "",
+        fields: ["error": .object(["code": .string("frames-failed"), "message": .string("Mini: refused.")])]))
+    #expect(try #require(server.subs.last).params()["fps"] == .number(30))
+  }
+
+  @Test func triesHighAgainAfterTheViewerPicksItAgain() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    try #require(server.subs.first).onSubscribed(["subscription": .string("s1")])
+    stream.setQuality(.standard)
+    stream.setQuality(.high)
+    #expect(try #require(server.subs.last).params()["fps"] == .number(60))
+  }
+
+  @Test func beginsControlOfThePhysicalDeviceAndSendsInputOnlyInItsSession() async throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target)
+    stream.connect(server)
+    stream.touch("down", x: 0.5, y: 0.5)
+    stream.begin()
+    await settle()
+    #expect(server.requests.map(\.method) == ["control.begin"])
+    let begin = try #require(server.take("control.begin"))
+    #expect(begin.params["physical"] == .bool(true))
+    begin.reply.resume(returning: .object(["session": .string("c1")]))
+    await settle()
+    stream.button("back")
+    await settle()
+    let button = try #require(server.take("input.button"))
+    #expect(button.params == ["session": .string("c1"), "button": .string("back")])
+  }
+
+  @Test func setsAndReadsTheDeviceClipboardInTheControlSessionOnly() async throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target)
+    stream.connect(server)
+    await #expect(throws: ServerError.self) { try await stream.setClipboard("hi", paste: false) }
+    await #expect(throws: ServerError.self) { _ = try await stream.clipboard() }
+    #expect(server.requests.isEmpty)
+    stream.begin()
+    await settle()
+    try #require(server.take("control.begin")).reply.resume(returning: .object(["session": .string("c1")]))
+    await settle()
+
+    let set = Task { try await stream.setClipboard("h\u{e9}llo\n\u{1F600}", paste: false) }
+    await settle()
+    let plain = try #require(server.take("input.clipboard.set"))
+    #expect(plain.params == ["session": .string("c1"), "text": .string("h\u{e9}llo\n\u{1F600}")])
+    plain.reply.resume(returning: .object([:]))
+    _ = try await set.value
+
+    let paste = Task { try await stream.setClipboard("x", paste: true) }
+    await settle()
+    let pasted = try #require(server.take("input.clipboard.set"))
+    #expect(pasted.params["paste"] == .bool(true))
+    pasted.reply.resume(returning: .object([:]))
+    #expect(try await paste.value == false)
+
+    let typedPaste = Task { try await stream.setClipboard("x", paste: true) }
+    await settle()
+    try #require(server.take("input.clipboard.set")).reply.resume(returning: .object(["typed": .bool(true)]))
+    #expect(try await typedPaste.value == true)
+
+    let read = Task { try await stream.clipboard() }
+    await settle()
+    let get = try #require(server.take("input.clipboard.get"))
+    #expect(get.params == ["session": .string("c1")])
+    get.reply.resume(returning: .object(["text": .string("from the device")]))
+    #expect(try await read.value == "from the device")
+  }
+
+  @Test func refusesClipboardTextOverTheSetLimitWithoutSendingIt() async throws {
+    let (stream, server, _) = try await started()
+    let atLimit = String(repeating: "a", count: 8192)
+    let accepted = Task { try await stream.setClipboard(atLimit, paste: false) }
+    await settle()
+    try #require(server.take("input.clipboard.set")).reply.resume(returning: .object([:]))
+    _ = try await accepted.value
+
+    let wide = String(repeating: "\u{e9}", count: 4097)
+    await #expect(throws: ClipboardTooLarge(bytes: wide.utf8.count)) { try await stream.setClipboard(wide, paste: false) }
+    #expect(server.requests.isEmpty)
+  }
+
+  @Test func offersTheClipboardOnlyForADeviceTheServerCanMoveTextTo() {
+    let on = PhysicalStream.Control.on(session: "c1")
+    func access(
+      _ platform: String, physical: Bool = false, features: [String]? = ["device-clipboard"], control: PhysicalStream.Control = on
+    )
+      -> ServerClipboard.Access
+    {
+      ServerClipboard.Access(
+        platform: platform, physical: physical, link: .open(features: features, capabilities: ["read", "control"]),
+        control: control, server: "Mini")
+    }
+    #expect(access("ios") == .ready(session: "c1"))
+    #expect(access("android", physical: true) == .ready(session: "c1"))
+    #expect(access("ios", physical: true) == .none)
+    #expect(access("macos") == .none)
+    #expect(access("ios", control: .starting) == .none)
+    #expect(
+      access("ios", features: ["ios-hosted"]) == .unsupported("Update stim-server on Mini to copy text to and from this device."))
+    #expect(access("android", features: nil) != .none)
+    #expect(
+      ServerClipboard.Access(platform: "ios", physical: false, link: .connecting, control: on, server: nil) == .none)
+  }
+
+  @Test func endsASessionTheServerGrantsAfterTheUserReleased() async throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target)
+    stream.connect(server)
+    stream.begin()
+    await settle()
+    let begin = try #require(server.take("control.begin"))
+    stream.end()
+    begin.reply.resume(returning: .object(["session": .string("late")]))
+    await settle()
+    #expect(stream.control == .off(ended: nil))
+    #expect(try #require(server.take("control.end")).params == ["session": .string("late")])
+  }
+
+  @Test func stopsControllingWhenTheServerEndsTheSessionOrTheConnectionDrops() async throws {
+    let (stream, server, session) = try await started()
+    for observer in server.controlObservers {
+      observer(ControlEnded(session: "other", reason: "idle", message: "Another session ended."))
+    }
+    #expect(stream.control == .on(session: session))
+    for observer in server.controlObservers {
+      observer(ControlEnded(session: session, reason: "device-gone", message: "The phone disconnected."))
+    }
+    #expect(stream.control == .off(ended: "The phone disconnected."))
+    stream.touch("down", x: 0.1, y: 0.1)
+    await settle()
+    #expect(server.take("input.touch") == nil)
+
+    let (dropped, droppedServer, _) = try await started()
+    for observer in droppedServer.controlObservers {
+      observer(ControlEnded(session: nil, reason: "failed", message: "Connection lost."))
+    }
+    #expect(dropped.control == .off(ended: "Connection lost."))
+  }
+
+  @Test func liftsAFingerStillDownBeforeEndingTheSession() async throws {
+    let (stream, server, session) = try await started()
+    stream.touch("down", x: 0.2, y: 0.3)
+    stream.touch("move", x: 0.4, y: 0.5)
+    stream.end()
+    await settle()
+    let touches = server.requests.filter { $0.method == "input.touch" }.map { $0.params["phase"] }
+    #expect(touches == [.string("down"), .string("move"), .string("up")])
+    let up = try #require(server.requests.last { $0.method == "input.touch" })
+    #expect(up.params["x"] == .number(0.4) && up.params["session"] == .string(session))
+    #expect(server.requests.contains { $0.method == "control.end" })
+  }
+
+  @Test func sendsTheSecondFingerOfEveryPhaseAndLiftsBothWhenTheSessionEnds() async throws {
+    let (stream, server, _) = try await started()
+    #expect(stream.touch("down", x: 0.3, y: 0.5, second: (0.7, 0.5)))
+    #expect(stream.touch("move", x: 0.2, y: 0.5, second: (0.8, 0.5)))
+    stream.end()
+    await settle()
+    let touches = server.requests.filter { $0.method == "input.touch" }
+    #expect(touches.map { $0.params["phase"] } == [.string("down"), .string("move"), .string("up")])
+    for touch in touches {
+      #expect(touch.params["x2"] != nil && touch.params["y2"] != nil)
+    }
+    let up = try #require(touches.last)
+    #expect(up.params["x"] == .number(0.2) && up.params["x2"] == .number(0.8))
+    #expect(!stream.touch("down", x: 0.3, y: 0.5, second: (0.7, 0.5)))
+  }
+
+  @Test func sendsNoSecondFingerForAOneFingerTouch() async throws {
+    let (stream, server, _) = try await started()
+    stream.touch("down", x: 0.3, y: 0.5)
+    await settle()
+    let touch = try #require(server.take("input.touch"))
+    #expect(touch.params["x2"] == nil && touch.params["y2"] == nil)
+  }
+
+  @Test func keepsWhyControlEndedWhenTheTileReleasesAfterwards() async throws {
+    let (stream, server, session) = try await started()
+    for observer in server.controlObservers {
+      observer(ControlEnded(session: session, reason: "idle", message: "No input for 5 minutes."))
+    }
+    stream.end()
+    #expect(stream.control == .off(ended: "No input for 5 minutes."))
+
+    let refused = FakeServer()
+    let other = PhysicalStream(target: target)
+    other.connect(refused)
+    other.begin()
+    await settle()
+    try #require(refused.take("control.begin")).reply.resume(
+      throwing: ServerError(code: "forbidden", message: "/w does not hold the lease on this device."))
+    await settle()
+    other.end()
+    #expect(other.control == .failed("/w does not hold the lease on this device."))
+  }
+
+  @Test func showsWhyFramesStoppedUntilTheyFlowAgain() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target)
+    stream.connect(server)
+    let sub = try #require(server.subs.first)
+    sub.onSubscribed(["subscription": .string("s1")])
+    sub.onEvent(
+      ServerEvent(
+        name: "frame-delayed", subscription: "s1",
+        fields: ["delayed": .bool(true), "reason": .string("The iPhone is locked.")]))
+    #expect(stream.problem == "The iPhone is locked.")
+    sub.onEvent(ServerEvent(name: "frame-delayed", subscription: "s1", fields: ["delayed": .bool(false)]))
+    #expect(stream.problem == nil)
+    sub.onEvent(
+      ServerEvent(
+        name: "error", subscription: "",
+        fields: ["error": .object(["code": .string("action-failed"), "message": .string("No helper.")])]))
+    #expect(stream.problem == "No helper.")
+  }
+
+  @Test func listsAHostedAppsWindowsAndPinsOrFollowsInTheControlSession() async throws {
+    let (stream, server, session) = try await started()
+    let sub = try #require(server.subs.first)
+    let window = { (id: Double, title: String, width: Double) -> JSONValue in
+      .object([
+        "id": .number(id), "title": .string(title),
+        "frame": .object(["x": .number(0), "y": .number(0), "width": .number(width), "height": .number(600)]),
+      ])
+    }
+    sub.onEvent(
+      ServerEvent(
+        name: "macos-windows", subscription: "s1",
+        fields: [
+          "current": window(7, "Main", 1600),
+          "windows": .array([window(7, "Main", 1600), window(1e300, "Huge", 800), window(9, "", 800)]),
+          "pinned": .bool(false),
+        ]))
+    #expect(
+      stream.windows?.windows == [MacosWindows.Window(id: 7, title: "Main"), MacosWindows.Window(id: 9, title: "")])
+    #expect(stream.windows?.current == 7)
+    #expect(stream.windows?.currentPointSize == CGSize(width: 1600, height: 600))
+    #expect(stream.windows?.pinned == false)
+    stream.selectWindow(9)
+    stream.selectWindow(nil)
+    await settle()
+    #expect(server.take("input.window")?.params == ["session": .string(session), "window": .number(9)])
+    #expect(server.take("input.window")?.params == ["session": .string(session), "window": .null])
+    sub.onEvent(
+      ServerEvent(
+        name: "macos-windows", subscription: "s1",
+        fields: ["current": window(9, "", 800), "windows": .array([window(7, "Main", 1600), window(9, "", 800)])]))
+    #expect(stream.windows?.current == 9)
+    #expect(stream.windows?.currentPointSize == CGSize(width: 800, height: 600))
+    sub.onEvent(
+      ServerEvent(
+        name: "macos-windows", subscription: "s1",
+        fields: ["current": .object(["id": .number(9), "title": .string("")]), "windows": .array([])]))
+    #expect(stream.windows?.current == 9)
+    #expect(stream.windows?.currentPointSize == nil)
+  }
+
+  @Test func keepsOneKeyframeRequestOutstandingWhileTheServerDoesNotAnswer() async throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target)
+    stream.connect(server)
+    try #require(server.subs.first).onSubscribed(["subscription": .string("s1")])
+    for _ in 0..<5 { stream.requestKeyframe() }
+    await settle()
+    #expect(server.requests.map(\.method) == ["frames.keyframe"])
+    try #require(server.take("frames.keyframe")).reply.resume(returning: .object([:]))
+    await settle()
+    stream.requestKeyframe()
+    await settle()
+    #expect(server.requests.map(\.method) == ["frames.keyframe"])
+  }
+}
+
+@Suite @MainActor struct ServerClientControlTests {
+  @Test func routesControlEndedBySessionAndEndsEverySessionWhenTheConnectionDrops() async throws {
+    var transports: [FakeTransport] = []
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Stim Desktop", clientVersion: "1",
+      transport: { _, onEvent in
+        let transport = FakeTransport(onEvent: onEvent)
+        transports.append(transport)
+        return transport
+      }, scheduler: { _, _ in {} })
+    var ended: [ControlEnded] = []
+    _ = client.observeControlEnded { ended.append($0) }
+    client.start()
+    await settle()
+    let transport = try #require(transports.first)
+    transport.answer(
+      "hello",
+      .object([
+        "protocol": .number(1),
+        "server": .object(["name": .string("Mac"), "version": .string("1"), "stim": .string("1")]),
+        "capabilities": .array([.string("read"), .string("control")]),
+        "features": .array([.string("physical-android")]),
+      ]))
+    await settle()
+    let hello = try #require({ if case .open(let hello) = client.state { return hello } else { return nil } }())
+    #expect(hello.features == ["physical-android"])
+    transport.reply([
+      "event": .string("control-ended"), "session": .string("c1"), "reason": .string("idle"),
+      "message": .string("No input for 5 minutes."),
+    ])
+    #expect(ended == [ControlEnded(session: "c1", reason: "idle", message: "No input for 5 minutes.")])
+    transport.onEvent(.closed("Connection lost."))
+    #expect(ended.last == ControlEnded(session: nil, reason: "failed", message: "Connection lost."))
+  }
+}

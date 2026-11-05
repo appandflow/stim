@@ -1,0 +1,15 @@
+diff --git a/cxx/shadowTree/ShadowTreeDiagnostics.cpp b/cxx/shadowTree/ShadowTreeDiagnostics.cpp
+index 91f93108b4d16ec41382fa731f7cf078fc8c88ce..a1452c89b8c929250e7645fe4f536adb20189ce1 100644
+--- a/cxx/shadowTree/ShadowTreeDiagnostics.cpp
++++ b/cxx/shadowTree/ShadowTreeDiagnostics.cpp
+@@ -61,6 +61,10 @@ std::string serialize(const SharedColor& color) {
+     return buffer.data();
+ }
+ 
++std::string serialize(const std::optional<SharedColor>& color) {
++    return color ? serialize(*color) : "undefined";
++}
++
+ std::string serialize(Float value) {
+     return folly::to<std::string>(value);
+ }

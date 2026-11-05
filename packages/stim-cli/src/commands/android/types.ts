@@ -1,0 +1,101 @@
+import type { BuildMissReason } from '@stim-cli/core/state';
+import type { LaunchErrorRecord } from '../../command-output.ts';
+import type { LeaseFacts } from '../../engine/device-lease-run.ts';
+import type { AndroidFacts } from '../../engine/build-facts.ts';
+import type { createNdjsonWriter } from '../../ndjson.ts';
+
+export interface RemoteUploadLike {
+  uploaded?: boolean;
+  timedOut?: boolean;
+  failed?: string | null;
+}
+
+export interface InstallResultLike {
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+  note?: string;
+  skipped?: boolean;
+}
+
+export interface LaunchResultLike {
+  failed?: boolean;
+  code?: string;
+  reason?: string;
+  mode?: string;
+  component?: string;
+  devClientNote?: string | null;
+  devClientUrl?: string;
+  jsLocation?: string;
+  reversed?: string[];
+  debugHttpHost?: string | null;
+  debugHttpHostNote?: string | null;
+  restartedPid?: number;
+}
+
+export interface VerifyLaunchResultLike {
+  record?: Record<string, unknown>;
+  readiness?: 'ready' | 'timed-out' | 'error';
+  verified?: boolean;
+  skipped?: boolean;
+  requested?: boolean;
+  unattributed?: boolean;
+  fatal?: boolean;
+  processAlive?: boolean | null;
+  errors?: LaunchErrorRecord[];
+  waitedMs?: number;
+  jsRunning?: boolean;
+}
+
+export interface FailExtra {
+  retainedClaimRoots?: string[];
+  setup?: boolean;
+  lastBuildStatus?: boolean;
+  diagnostics?: string[];
+  buildDiagnostics?: readonly unknown[];
+  lines?: string[];
+  logPath?: string | null;
+  lease?: LeaseFacts | null;
+}
+
+export interface AndroidRecord {
+  devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
+  buildMachine?: string;
+  builtOn?: string;
+  configuration?: string | null;
+  missReason?: BuildMissReason | null;
+  fingerprint?: string | null;
+  cacheKey?: string | null;
+  cacheHit?: boolean | string;
+  cacheSkipped?: boolean;
+  appPath?: string | null;
+  bundleId?: string | null;
+  avdName?: string | null;
+  deviceName?: string | null;
+  /** The serial `deviceName` falls back to for a device with no known model; never recorded as a name. */
+  deviceSerial?: string | null;
+  systemImage?: string | null;
+  deviceProfile?: string | null;
+  /** The remote machine that compiled the APK, when the build was offloaded. */
+  offloadedTo?: string | null;
+  /** Why the APK was built here after the run considered offloading it. */
+  offloadFallback?: string | null;
+}
+
+export interface RunAndroidResult {
+  ok: boolean;
+  error?: { code?: string; message?: string | null; remedy?: string | null; retainedClaimRoots?: string[] };
+  facts?: AndroidFacts;
+  uploadsAbandoned?: boolean;
+}
+
+export interface AndroidBootLike {
+  ok?: boolean;
+  failed?: boolean;
+  serial?: string;
+  reason?: string;
+  code?: string;
+  remedy?: string;
+}
+
+export type AndroidWriter = ReturnType<typeof createNdjsonWriter>;

@@ -1,0 +1,430 @@
+import {
+  assignSlotDevice,
+  deviceSlotPlatforms,
+  projectDeviceSlots,
+  removeSlotDevice,
+} from '../devices/device-slots.ts';
+import { existsSync, renameSync, unlinkSync, writeFileSync } from 'fs';
+import { isAbsolute } from 'path';
+import { configDir, ensurePrivateDir } from '@stim-cli/core';
+import {
+  getConfigPath,
+  loadConfig,
+  withConfigLock,
+  withConfigLockAsync,
+  validateAutomaticPool,
+  cannotHost,
+  isJsonObject,
+  type Config,
+  type DeviceRecord,
+  type ProjectRecord,
+  type SupervisorRecord,
+} from '@stim-cli/core/state';
+import { isOnMountedVolume } from '../fs-util.ts';
+import { realIo, tailscaleStatusAsync } from '../offload/tailnet.ts';
+import { acquireAvdClaim } from '../devices/avd-claim.ts';
+import { releaseClaim } from '../ownership-claim.ts';
+import { sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
+
+export {
+  allMetroPorts,
+  configCorruptRepair,
+  findEnclosingWorktreeRoot,
+  admissionLimits,
+  getConcurrencyLimits,
+  getConfigPath,
+  getPlatformDeviceLimits,
+  getProject,
+  getProjectSettings,
+  getRepoSettings,
+  isPathPrefix,
+  loadConfig,
+  withConfigLock,
+  withConfigLockAsync,
+  type Config,
+  type ConcurrencyLimits,
+  type DeviceRecord,
+  type PlatformDeviceLimits,
+  type ProjectRecord,
+  type SupervisorRecord,
+} from '@stim-cli/core/state';
+
+export function getConfigDir(): string {
+  return configDir();
+}
+
+export function refuseRelativeStimPaths(env: NodeJS.ProcessEnv = process.env): void {
+  for (const name of ['STIM_HOME', 'STIM_BUILD_CACHE', 'STIM_METRO_CACHE']) {
+    const value = env[name];
+    if (!value || isAbsolute(value)) continue;
+    const error = new Error(
+      `${name}=${value} is not an absolute path. Set it to an absolute path, or unset it to use the default.`,
+    ) as Error & { code?: string };
+    error.code = 'STIM_RELATIVE_PATH';
+    throw error;
+  }
+}
+
+export function saveConfig(config: Config): void {
+  ensurePrivateDir(getConfigDir());
+  const target = getConfigPath();
+  const tmp = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
+  try {
+    renameSync(tmp, target);
+  } catch (err) {
+    try {
+      unlinkSync(tmp);
+    } catch {}
+    throw err;
+  }
+}
+
+const CONFIG_VERSION = 2;
+
+export function ensureConfig(): Config {
+  return withConfigLock(() => {
+    const existing = loadConfig();
+    if (existing) {
+      if (existing.version !== CONFIG_VERSION) {
+        existing.version = CONFIG_VERSION;
+        saveConfig(existing);
+      }
+      return existing;
+    }
+    const fresh = { version: CONFIG_VERSION, projects: {}, repos: {} };
+    saveConfig(fresh);
+    return fresh;
+  });
+}
+
+function requireAbsoluteProjectPath(projectPath: string): void {
+  if (isAbsolute(projectPath)) return;
+  throw new Error(
+    `Project key "${projectPath}" is not an absolute path. ` +
+      'The registry is keyed by the realpath of a workspace root, so a relative key can never resolve.',
+  );
+}
+
+export function upsertProject(
+  projectPath: string,
+  fields: Partial<ProjectRecord> | ((existing: ProjectRecord) => Partial<ProjectRecord>),
+): ProjectRecord {
+  requireAbsoluteProjectPath(projectPath);
+  return withConfigLock(() => {
+    const cfg = ensureConfig();
+    const existing = cfg.projects[projectPath] || {
+      metroPort: null,
+      platforms: {},
+    };
+    cfg.projects[projectPath] = {
+      ...existing,
+      ...(typeof fields === 'function' ? fields(existing) : fields),
+    };
+    saveConfig(cfg);
+    return cfg.projects[projectPath];
+  });
+}
+
+export function removeProject(projectPath: string): void {
+  withConfigLock(() => {
+    const cfg = loadConfig();
+    if (!cfg?.projects?.[projectPath]) return;
+    if (Object.keys(cfg.projects[projectPath].ports ?? {}).length) {
+      throw new Error(
+        `Named ports remain for ${projectPath}; stop or release them before removing its registry entry.`,
+      );
+    }
+    for (const { platforms } of projectDeviceSlots(cfg.projects[projectPath])) {
+      if (platforms.android?.owned && platforms.android.avdName) {
+        releaseClaim(acquireAvdClaim(platforms.android.avdName));
+      }
+    }
+    delete cfg.projects[projectPath];
+    saveConfig(cfg);
+  });
+}
+
+export function claimMetroPort(projectPath: string, port: number): number | null {
+  return withConfigLock(() => {
+    const cfg = ensureConfig();
+    if (!cfg.projects[projectPath]) {
+      throw new Error(`Project not registered: ${projectPath}`);
+    }
+    for (const [path, proj] of Object.entries(cfg.projects)) {
+      if (path !== projectPath && proj?.metroPort === port) return null;
+      if (Object.values(proj?.ports ?? {}).includes(port)) return null;
+    }
+    cfg.projects[projectPath].metroPort = port;
+    saveConfig(cfg);
+    return port;
+  });
+}
+
+export function releaseMetroPort(projectPath: string, port: number): void {
+  withConfigLock(() => {
+    const cfg = loadConfig();
+    const project = cfg?.projects?.[projectPath];
+    if (!cfg || project?.metroPort !== port) return;
+    project.metroPort = null;
+    saveConfig(cfg);
+  });
+}
+
+export function setDevice(projectPath: string, platform: string, deviceFields: DeviceRecord, slot = 'default'): void {
+  requireAbsoluteProjectPath(projectPath);
+  withConfigLock(() => {
+    const cfg = ensureConfig();
+    if (!cfg.projects[projectPath]) {
+      throw new Error(`Project not registered: ${projectPath}`);
+    }
+    assignSlotDevice(cfg.projects[projectPath], platform, deviceFields, slot);
+    saveConfig(cfg);
+  });
+}
+
+export function releaseAndroidConsolePort(projectPath: string, consolePort: number, slot = 'default'): boolean {
+  return withConfigLock(() => {
+    const cfg = loadConfig();
+    const android = deviceSlotPlatforms(cfg?.projects?.[projectPath], slot)?.android;
+    if (!cfg || !android || android.consolePort !== consolePort) return false;
+    delete android.consolePort;
+    saveConfig(cfg);
+    return true;
+  });
+}
+
+export function recordIosSchemeApprovals(
+  projectPath: string,
+  deviceUdid: string,
+  schemeApprovals: string[],
+  slot = 'default',
+): Promise<void> {
+  return withConfigLockAsync(() => {
+    const cfg = loadConfig();
+    const ios = deviceSlotPlatforms(cfg?.projects?.[projectPath], slot)?.ios;
+    if (!cfg || !ios?.owned || ios.deviceUdid !== deviceUdid) return;
+    ios.schemeApprovals = schemeApprovals;
+    saveConfig(cfg);
+  });
+}
+
+export function clearAndroidBootPending(projectPath: string, avdName: string, slot = 'default'): void {
+  withConfigLock(() => {
+    const cfg = loadConfig();
+    const android = deviceSlotPlatforms(cfg?.projects?.[projectPath], slot)?.android;
+    if (!cfg || android?.avdName !== avdName || !android.bootPending) return;
+    delete android.bootPending;
+    saveConfig(cfg);
+  });
+}
+
+export function clearDevice(projectPath: string, platform: string, slot = 'default', expectedId?: string): boolean {
+  return withConfigLock(() => {
+    const cfg = loadConfig();
+    const project = cfg?.projects?.[projectPath];
+    if (!cfg || !project) return false;
+    const current = deviceSlotPlatforms(project, slot)?.[platform];
+    if (expectedId !== undefined && (platform === 'ios' ? current?.deviceUdid : current?.avdName) !== expectedId)
+      return false;
+    removeSlotDevice(project, platform, slot);
+    saveConfig(cfg);
+    return true;
+  });
+}
+
+export function setSupervisor(
+  projectPath: string,
+  { pid, port, startedAt, processToken }: SupervisorRecord,
+): SupervisorRecord {
+  requireAbsoluteProjectPath(projectPath);
+  return withConfigLock(() => {
+    const cfg = ensureConfig();
+    if (!cfg.projects[projectPath]) {
+      cfg.projects[projectPath] = { metroPort: null, platforms: {} };
+    }
+    cfg.projects[projectPath].supervisor = { pid, port, startedAt, processToken };
+    saveConfig(cfg);
+    return cfg.projects[projectPath].supervisor;
+  });
+}
+
+export function clearSupervisor(projectPath: string, expected?: ProcessRecord | null): boolean {
+  return withConfigLock(() => {
+    const cfg = loadConfig();
+    const current = cfg?.projects?.[projectPath]?.supervisor;
+    if (!current) return true;
+    if (expected !== undefined && !sameProcessRecord(current, expected)) return false;
+    delete cfg.projects[projectPath]!.supervisor;
+    saveConfig(cfg);
+    return true;
+  });
+}
+
+export type ConfigSettingsTarget =
+  | { scope: 'machine' }
+  | { scope: 'workspace'; projectPath: string }
+  | { scope: 'repo'; gitCommonDir: string };
+
+function targetSettings(cfg: Config, target: ConfigSettingsTarget, create: boolean): Record<string, unknown> | null {
+  if (target.scope === 'machine') return cfg;
+  if (target.scope === 'workspace') {
+    if (!cfg.projects[target.projectPath]) {
+      if (!create) return null;
+      cfg.projects[target.projectPath] = { metroPort: null, platforms: {} };
+    }
+    const project = cfg.projects[target.projectPath]!;
+    if (!project.settings && create) project.settings = {};
+    return project.settings ?? null;
+  }
+  if (!cfg.repos[target.gitCommonDir]) {
+    if (!create) return null;
+    cfg.repos[target.gitCommonDir] = {};
+  }
+  const repo = cfg.repos[target.gitCommonDir]!;
+  if (!repo.settings && create) repo.settings = {};
+  return repo.settings ?? null;
+}
+
+function localDevicePoolOff(dottedKey: string, value: unknown): boolean {
+  if (dottedKey === 'remote.devicePoolDisabled') return Array.isArray(value) && value.includes('local');
+  if (dottedKey !== 'remote.machines') return false;
+  const disabled = loadConfig()?.remote?.devicePoolDisabled;
+  return Array.isArray(disabled) && disabled.includes('local');
+}
+
+export function writeConfigSetting(target: ConfigSettingsTarget, dottedKey: string, value: unknown): boolean {
+  if (target.scope === 'workspace') requireAbsoluteProjectPath(target.projectPath);
+  const status = target.scope === 'machine' && localDevicePoolOff(dottedKey, value) ? realIo.status() : null;
+  return withConfigLock(() => applyConfigSetting(target, dottedKey, value, status));
+}
+
+/** Waits for the config lock and device-pool probe asynchronously; cancellation prevents a pending write. */
+export async function writeConfigSettingAsync(
+  target: ConfigSettingsTarget,
+  dottedKey: string,
+  value: unknown,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (target.scope === 'workspace') requireAbsoluteProjectPath(target.projectPath);
+  signal?.throwIfAborted();
+  const status =
+    target.scope === 'machine' && (dottedKey === 'remote.machines' || localDevicePoolOff(dottedKey, value))
+      ? await tailscaleStatusAsync(signal)
+      : null;
+  return withConfigLockAsync(() => applyConfigSetting(target, dottedKey, value, status), signal);
+}
+
+/**
+ * Replaces machine-scope `remote.machines` with `change` applied to the list read under the config lock, so a
+ * concurrent writer's entries are kept. `status` is the `tailscale status` the automatic device pool check reads.
+ * Returns the list before and after; null before when the setting is not a list of strings, in which case nothing is
+ * written.
+ */
+export async function updateRemoteMachinesAsync(
+  change: (machines: string[]) => string[],
+  status: unknown,
+  signal?: AbortSignal,
+): Promise<{ before: string[] | null; after: string[] }> {
+  signal?.throwIfAborted();
+  return withConfigLockAsync(() => {
+    const remote: unknown = loadConfig()?.remote;
+    const current: unknown =
+      remote === undefined ? [] : isJsonObject(remote) ? (remote.machines === undefined ? [] : remote.machines) : null;
+    if (!Array.isArray(current) || !current.every((each) => typeof each === 'string'))
+      return { before: null, after: [] };
+    const after = change(current);
+    if (after.length !== current.length || after.some((each, at) => each !== current[at]))
+      applyConfigSetting({ scope: 'machine' }, 'remote.machines', after, status);
+    return { before: current, after };
+  }, signal);
+}
+
+function applyConfigSetting(target: ConfigSettingsTarget, dottedKey: string, value: unknown, status: unknown): boolean {
+  const cfg = value === undefined ? loadConfig() : ensureConfig();
+  const settings = cfg ? targetSettings(cfg, target, value !== undefined) : null;
+  if (!cfg || !settings) return false;
+  if (value === undefined) {
+    if (!deleteNested(settings, dottedKey)) return false;
+  } else {
+    writeNested(settings, dottedKey, value);
+  }
+  if (target.scope === 'machine') {
+    if (dottedKey === 'remote.buildPoolDisabled' || dottedKey === 'remote.machines')
+      validateAutomaticPool('build', cfg);
+    if (dottedKey === 'remote.devicePoolDisabled' || dottedKey === 'remote.machines')
+      validateAutomaticPool('device', cfg, (machine) => !cannotHost(status, machine));
+  }
+  saveConfig(cfg);
+  return true;
+}
+
+function writeNested(obj: Record<string, unknown>, dottedKey: string, value: unknown): void {
+  const keys = dottedKey.split('.');
+  let cur = obj;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const k = keys[i];
+    if (k === undefined) continue;
+    const next = cur[k];
+    if (typeof next !== 'object' || next === null) {
+      cur[k] = {};
+    }
+    cur = cur[k] as Record<string, unknown>;
+  }
+  const leaf = keys[keys.length - 1];
+  if (leaf !== undefined) cur[leaf] = value;
+}
+
+function deleteNested(obj: Record<string, unknown>, dottedKey: string): boolean {
+  const keys = dottedKey.split('.');
+  const chain: Record<string, unknown>[] = [obj];
+  let cur = obj;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const k = keys[i];
+    if (k === undefined) return false;
+    const next = cur[k];
+    if (next == null || typeof next !== 'object') return false;
+    cur = next as Record<string, unknown>;
+    chain.push(cur);
+  }
+  const leaf = keys[keys.length - 1];
+  if (leaf === undefined) return false;
+  if (!(leaf in cur)) return false;
+  delete cur[leaf];
+  for (let i = chain.length - 2; i >= 0; i--) {
+    const parent = chain[i];
+    const key = keys[i];
+    const child = chain[i + 1];
+    if (parent === undefined || key === undefined || child === undefined) break;
+    if (Object.keys(child).length === 0) {
+      delete parent[key];
+    } else {
+      break;
+    }
+  }
+  return true;
+}
+
+export function allConsolePortsAndSerials({
+  isMounted = isOnMountedVolume,
+}: { isMounted?: (p: string) => boolean } = {}): { androidConsolePorts: number[]; androidPhysicalSerials: string[] } {
+  const cfg = loadConfig();
+  const result: { androidConsolePorts: number[]; androidPhysicalSerials: string[] } = {
+    androidConsolePorts: [],
+    androidPhysicalSerials: [],
+  };
+  if (!cfg) return result;
+  for (const [path, proj] of Object.entries(cfg.projects || {})) {
+    if (!existsSync(path) && isMounted(path)) continue;
+    for (const { platforms } of projectDeviceSlots(proj)) {
+      const android = platforms.android;
+      if (typeof android?.consolePort === 'number') {
+        result.androidConsolePorts.push(android.consolePort);
+      }
+      if (android?.serial && !android.avdName) {
+        result.androidPhysicalSerials.push(android.serial);
+      }
+    }
+  }
+  return result;
+}

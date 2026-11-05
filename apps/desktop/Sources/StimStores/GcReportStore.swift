@@ -1,0 +1,93 @@
+import AppKit
+import Observation
+import StimKit
+
+/// The GC dry-run report the Machine page and the metrics share. At most one run is in
+/// flight; a caller that asks while it runs gets its result.
+@MainActor @Observable
+public final class GcReportStore {
+  public private(set) var latest = Fetched<GcReport>()
+  public private(set) var at: Date?
+  public private(set) var running = false
+
+  private let run: @Sendable () async throws -> GcReport
+  private let now: @MainActor () -> Date
+  private let settleDelay: TimeInterval
+  @ObservationIgnored private var task: Task<GcReport?, Never>?
+  @ObservationIgnored private var taskStartedAt = Date.distantPast
+  @ObservationIgnored private var changedAt = Date.distantPast
+  @ObservationIgnored private var settle: Timer?
+
+  init(
+    run: @escaping @Sendable () async throws -> GcReport, now: @escaping @MainActor () -> Date = { Date() },
+    settleDelay: TimeInterval = 2
+  ) {
+    self.run = run
+    self.now = now
+    self.settleDelay = settleDelay
+  }
+
+  public convenience init(reader: GcReportReader) {
+    self.init(run: { try await reader.refresh() })
+  }
+
+  #if DEBUG
+    public convenience init(fixture: GcReport) {
+      self.init(run: { fixture })
+      latest.record(.success(fixture))
+    }
+  #endif
+
+  public var report: GcReport? { latest.value }
+  public var error: String? { latest.error }
+
+  /// The last report while it is younger than `maxAge` and no action changed what it reports since it started;
+  /// otherwise the result of a run that started after that change, nil when that run fails.
+  public func report(maxAge: TimeInterval) async -> GcReport? {
+    if let report, let at, at >= changedAt, now().timeIntervalSince(at) < maxAge { return report }
+    return await current().value
+  }
+
+  public func refresh() {
+    _ = current()
+  }
+
+  /// Marks the report stale after an action that can change it, and runs gc once actions have settled for
+  /// `settleDelay`, unless a run has started since.
+  public func changed() {
+    changedAt = now()
+    settle?.invalidate()
+    settle = Timer.scheduledTimer(withTimeInterval: settleDelay, repeats: false) { [weak self] _ in
+      MainActor.assumeIsolated {
+        guard let self, self.task == nil || self.taskStartedAt < self.changedAt else { return }
+        if let at = self.at, at >= self.changedAt { return }
+        self.refresh()
+      }
+    }
+  }
+
+  private func current() -> Task<GcReport?, Never> {
+    if let task, taskStartedAt >= changedAt { return task }
+    let previous = task
+    let startedAt = now()
+    let run = run
+    let next = Task { [weak self] () -> GcReport? in
+      _ = await previous?.value
+      let result = await Result.awaiting { try await run() }
+      self?.finish(result, startedAt: startedAt)
+      return try? result.get()
+    }
+    task = next
+    taskStartedAt = startedAt
+    running = true
+    return next
+  }
+
+  private func finish(_ result: Result<GcReport, any Error>, startedAt: Date) {
+    latest.record(result)
+    if case .success = result { at = startedAt }
+    guard startedAt == taskStartedAt else { return }
+    task = nil
+    running = false
+  }
+}

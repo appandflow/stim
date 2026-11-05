@@ -1,0 +1,17 @@
+{
+  "name": "stim-mobile-tester-army-pilot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "list": "e2e list",
+    "test": "node run.mjs"
+  },
+  "devDependencies": {
+    "@e2e-dev/mobile": "0.9.2",
+    "ai": "7.0.27",
+    "e2e": "0.17.0"
+  },
+  "engines": {
+    "node": ">=24.8.0"
+  }
+}

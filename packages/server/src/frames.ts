@@ -1,0 +1,1065 @@
+import { spawn, type ChildProcess } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { connect, type ClientHttp2Session } from 'node:http2';
+import { join } from 'node:path';
+import type { DeviceLeaseState, MacosAppState, StatusPayload } from '@stim-cli/core/state';
+import type { ClaimHandle } from '@stim-cli/core/ownership-claim';
+import type { DevicePosture, FrameTarget, DeviceFrameArtwork, DuoFramePose, MacosWindow } from './protocol.ts';
+import { serverDir } from './registry.ts';
+import { DEFAULT_FRAME_HINT, HelperSource, RECORD_HINT, type FrameHint } from './frame-helper.ts';
+import { Pending, terminate } from './stim-command.ts';
+import type { AccessUnit } from './video.ts';
+import type { DeviceViewers } from './viewers.ts';
+import { connectOwnedPage, type OwnedPage } from './web-page.ts';
+
+/**
+ * `foldable` marks an iPhone Duo, whose posture lights one of two panels, and `physical` a leased iPhone, which
+ * streams over USB and takes no input; `name` is its device name, which tells it apart when several are cabled. A
+ * `physical` Android target uses scrcpy over adb for a leased phone or an exact hosted emulator serial. A web
+ * device is the owned page `targetId` of the Chrome `pid` serving DevTools at `endpoint`.
+ */
+export type Device =
+  | { platform: 'ios'; udid: string; foldable: boolean; physical?: true; name?: string }
+  | { platform: 'android'; serial: string; physical?: true; avdName?: string }
+  | { platform: 'web'; endpoint: string; pid: number; targetId: string }
+  | { platform: 'macos'; app: MacosAppState & { app: NonNullable<MacosAppState['app']> } };
+
+export type Posture = 'folded' | 'unfolded';
+
+export interface Frame {
+  width: number;
+  height: number;
+  capturedAt: string;
+  data: string;
+  posture?: Posture;
+  artworkTurns?: number;
+  duo?: DuoFramePose;
+}
+
+export interface DeviceInput {
+  send: (command: Record<string, unknown>) => void;
+  /** Whether the helper can type and press buttons on an emulator: once it reports a hardware keyboard. */
+  keys: () => boolean;
+  clipboard: (request: { text: string; paste: boolean } | null) => Promise<string | null>;
+  detach: () => void;
+}
+
+export interface FrameListener {
+  frame: (frame: Frame) => void;
+  artwork?: (artwork: DeviceFrameArtwork | null) => void;
+  /** macOS only. */
+  windows?: (windows: { current: MacosWindow | null; windows: MacosWindow[]; pinned: boolean }) => void;
+  duo?: (frame: Frame) => void;
+  /**
+   * With `video`, a device the helper streams sends H.264 access units here instead of JPEG frames; a device on
+   * screenshots still sends `frame`.
+   */
+  video?: (unit: AccessUnit) => void;
+  /**
+   * Makes the listener a recorder: the helper runs a second encoder at {@link RECORD_HINT} and sends its access
+   * units here, and the listener gets no JPEG frames.
+   */
+  record?: (unit: AccessUnit) => void;
+  /**
+   * A capture is taking longer than usual, or a timed-out capture is being retried, or the device cannot send
+   * frames for `reason`; the last frame stays valid.
+   */
+  delayed: (delayed: boolean, reason?: string) => void;
+  failed: (message: string) => void;
+  inputFailed?: (message: string, session?: string) => void;
+}
+
+/** Tunables for capture timing; a busy Mac makes `xcrun simctl` and the emulator's gRPC call slow, not broken. */
+export interface FrameLimits {
+  /** Per-capture timeout for `simctl`, `sips`, and the emulator's gRPC call. */
+  toolTimeoutMs: number;
+  /** A capture slower than this is reported as delayed, even when it succeeds. */
+  slowCaptureMs: number;
+  /** Wait before retrying after a timed-out capture. */
+  failureBackoffMs: number;
+  /** Consecutive timed-out captures before the subscription ends with `frames-failed`. */
+  maxConsecutiveFailures: number;
+  /** How long a device's `stim-frames` helper keeps running after its last subscriber leaves. */
+  lingerMs: number;
+}
+
+export const DEFAULT_FRAME_LIMITS: FrameLimits = {
+  toolTimeoutMs: 30_000,
+  slowCaptureMs: 3_000,
+  failureBackoffMs: 3_000,
+  maxConsecutiveFailures: 3,
+  lingerMs: 10_000,
+};
+
+const MIN_INTERVAL_MS = 200;
+const MAX_INTERVAL_MS = 1000;
+const MAX_CAPTURES = 2;
+const MAX_EDGE = 1280;
+const JPEG_QUALITY = 70;
+
+export function deviceKey(device: Device): string {
+  if (device.platform === 'macos') return `macos:${device.app.launchId}:${device.app.app.pid}`;
+  if (device.platform === 'web') return `web:${device.pid}:${device.targetId}`;
+  if (device.platform === 'ios') return `ios:${device.udid}`;
+  return device.physical ? `android-device:${device.serial}` : `android:${device.serial}`;
+}
+
+const EMULATOR_SERIAL = /^emulator-\d+$/;
+
+/** How {@link workspaceLease} picks a lease. */
+export interface LeaseLookup {
+  now?: number;
+  /**
+   * The server's test switch: an emulator the workspace leases, its own included, resolves as a physical Android
+   * device, driven over adb the way a phone is. It never widens an iPhone lookup.
+   */
+  adbEmulators?: boolean;
+}
+
+/**
+ * The unexpired lease `target.workspace` holds on a physical device for `target.platform` in its slot. A workspace can
+ * also lock its own simulator or emulator, so a lease on the slot's owned device, or on any emulator, is skipped.
+ */
+export function workspaceLease(
+  payload: StatusPayload,
+  target: FrameTarget,
+  { now = Date.now(), adbEmulators = false }: LeaseLookup = {},
+): (DeviceLeaseState & { id: string }) | null {
+  const slot = target.slot ?? 'default';
+  const environment = payload.environments?.find((candidate) => candidate.path === target.workspace);
+  const devices = slot === 'default' ? environment : environment?.slots?.find((candidate) => candidate.slot === slot);
+  const owned = target.platform === 'ios' ? devices?.ios?.udid : devices?.android?.serial;
+  const lease = (Array.isArray(payload.deviceLeases) ? payload.deviceLeases : []).find(
+    (candidate) =>
+      candidate.holder === target.workspace &&
+      candidate.platform === target.platform &&
+      (candidate.slot ?? 'default') === slot &&
+      !candidate.expired &&
+      (candidate.expiresAt === null ? target.platform === 'ios' : Date.parse(candidate.expiresAt) > now) &&
+      candidate.id !== null &&
+      ((adbEmulators && target.platform === 'android') ||
+        (candidate.id !== owned && !EMULATOR_SERIAL.test(candidate.id))),
+  );
+  return lease ? (lease as DeviceLeaseState & { id: string }) : null;
+}
+
+export function ownedDevice(
+  payload: StatusPayload,
+  target: FrameTarget,
+  attached: string | null,
+  lookup: LeaseLookup = {},
+): Device | string {
+  const slot = target.slot ?? 'default';
+  if (!Array.isArray(payload.environments)) return 'stim status printed a payload without environments.';
+  const environment = payload.environments.find((candidate) => candidate.path === target.workspace);
+  if (!environment) return `${target.workspace} is not a Stim workspace on this machine.`;
+  const devices =
+    slot === 'default'
+      ? { ios: environment.ios, android: environment.android }
+      : environment.slots?.find((candidate) => candidate.slot === slot);
+  const where = `${target.platform} in slot ${slot} of ${target.workspace}`;
+  if (target.platform === 'macos') {
+    if (target.physical || slot !== 'default') return 'A native macOS app has only the default owned window target.';
+    const app = environment.macos;
+    if (!app?.app || app.state !== 'running')
+      return `No verified owned macOS app runs for ${target.workspace}. Run stim macos there.`;
+    return { platform: 'macos', app: { ...app, app: app.app } };
+  }
+  if (target.physical) {
+    if (target.platform === 'web') return 'A web page has no physical device.';
+    const lease = workspaceLease(payload, target, lookup);
+    if (target.platform === 'android') {
+      if (!lease)
+        return `${target.workspace} leases no physical Android device in slot ${slot}. Run stim android --device there.`;
+      return { platform: 'android', serial: lease.id, physical: true };
+    }
+    if (!lease) return `${target.workspace} leases no physical iPhone in slot ${slot}. Run stim ios --device there.`;
+    return {
+      platform: 'ios',
+      udid: lease.id,
+      foldable: false,
+      physical: true,
+      ...(lease.deviceName ? { name: lease.deviceName } : {}),
+    };
+  }
+  if (target.platform === 'web') {
+    if (slot !== 'default') return `A workspace has one Stim-owned Chrome, in the default slot, not in slot ${slot}.`;
+    const web = environment.web;
+    if (!web?.running || !web.cdpEndpoint || !web.pid || !web.targetId) {
+      return `No Stim-owned Chrome runs for ${target.workspace}. Run stim web there.`;
+    }
+    return { platform: 'web', endpoint: web.cdpEndpoint, pid: web.pid, targetId: web.targetId };
+  }
+  if (target.platform === 'ios') {
+    const sim = devices?.ios;
+    if (!sim?.owned) return `No simulator Stim owns runs ${where}.`;
+    if (sim.state !== 'Booted') return `The simulator for ${where} is ${sim.state}, not booted.`;
+    return { platform: 'ios', udid: sim.udid, foldable: /\bDuo\b/.test(sim.name ?? '') };
+  }
+  const emulator = devices?.android;
+  if (!emulator?.owned || emulator.physical) return `No emulator Stim owns runs ${where}.`;
+  const avdName = emulator.name && !/[/\\]/.test(emulator.name) ? { avdName: emulator.name } : {};
+  if (emulator.state === 'unknown' && attached?.startsWith('android:')) {
+    return { platform: 'android', serial: attached.slice('android:'.length), ...avdName };
+  }
+  if (emulator.state !== 'detected' || !emulator.serial) return `The emulator for ${where} is not running.`;
+  return { platform: 'android', serial: emulator.serial, ...avdName };
+}
+
+function jpegSize(bytes: Buffer): { width: number; height: number } | null {
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  let offset = 2;
+  while (offset + 9 <= bytes.length) {
+    if (bytes[offset] !== 0xff) return null;
+    const marker = bytes[offset + 1]!;
+    if (marker === 0xff) {
+      offset += 1;
+      continue;
+    }
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) {
+      offset += 2;
+      continue;
+    }
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      return { height: bytes.readUInt16BE(offset + 5), width: bytes.readUInt16BE(offset + 7) };
+    }
+    offset += 2 + bytes.readUInt16BE(offset + 2);
+  }
+  return null;
+}
+
+/** A rejection with `transient: true` is a timeout on a machine that is merely busy, not a broken capturer. */
+function timeoutError(message: string): Error {
+  return Object.assign(new Error(message), { transient: true });
+}
+
+function isTransient(error: unknown): boolean {
+  return error instanceof Error && (error as { transient?: boolean }).transient === true;
+}
+
+function runTool(
+  file: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  running: Set<ChildProcess>,
+  timeoutMs: number,
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    running.add(child);
+    child.once('close', () => running.delete(child));
+    const chunks: Buffer[] = [];
+    let stderr = '';
+    const timer = setTimeout(() => {
+      void terminate(child);
+      reject(timeoutError(`${file} ${args[0]} did not finish within ${timeoutMs / 1000} s.`));
+    }, timeoutMs);
+    child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => {
+      stderr = (stderr + chunk).slice(-1000);
+    });
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(new Error(`${file} could not start (${error.message}).`));
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve(Buffer.concat(chunks));
+      else
+        reject(
+          Object.assign(new Error(`${file} ${args.join(' ')} exited (code ${code}): ${stderr.trim()}`), { stderr }),
+        );
+    });
+  });
+}
+
+interface Capture {
+  raw: Buffer;
+  jpeg: () => Promise<Buffer>;
+  posture?: Posture;
+}
+
+interface Capturer {
+  capture: () => Promise<Capture>;
+  close: () => Promise<void>;
+}
+
+async function stopTools(running: Set<ChildProcess>, tmp: string | null): Promise<void> {
+  await Promise.all([...running].map((child) => terminate(child)));
+  if (tmp) rmSync(tmp, { recursive: true, force: true });
+}
+
+/**
+ * Without `--display`, simctl captures the first panel it finds; `primary` is the panel CoreDevice reports as
+ * primary. A simctl that rejects `primary` gets the default display instead.
+ *
+ * An iPhone Duo lights one of two panels: `primary` is the cover, lit when folded, and `primary-1` the inner
+ * panel, lit when unfolded; the other one's framebuffer is all black. `litPanels` remembers the lit panel per
+ * simulator across subscriptions, and a black capture tries the other panel.
+ */
+function simulatorCapturer(
+  device: { udid: string; foldable: boolean },
+  env: NodeJS.ProcessEnv,
+  limits: FrameLimits,
+  litPanels: Map<string, DuoPanel>,
+): Capturer {
+  let tmp: string | null = null;
+  let display: string[] = ['--display=primary'];
+  let closed = false;
+  const running = new Set<ChildProcess>();
+  const screenshot = async (panel: string[]): Promise<Buffer> => {
+    tmp ??= mkdtempSync(join(serverDir(), 'frames-'));
+    const output = join(tmp, 'frame.jpg');
+    await runTool(
+      'xcrun',
+      ['simctl', 'io', device.udid, 'screenshot', '--type=jpeg', ...panel, output],
+      env,
+      running,
+      limits.toolTimeoutMs,
+    );
+    return readFileSync(output);
+  };
+  const isBlack = async (jpeg: Buffer): Promise<boolean> => {
+    const input = join(tmp!, 'check.jpg');
+    const output = join(tmp!, 'check.bmp');
+    writeFileSync(input, jpeg);
+    await runTool(
+      'sips',
+      ['-s', 'format', 'bmp', '-z', '24', '24', input, '--out', output],
+      env,
+      running,
+      limits.toolTimeoutMs,
+    );
+    return bmpIsBlack(readFileSync(output));
+  };
+  const open = () => {
+    if (closed) throw new Error('The capture was stopped.');
+  };
+  const captureDuo = async (): Promise<Capture> => {
+    const lit = litPanels.get(device.udid) ?? 'primary';
+    const jpeg = await screenshot([`--display=${lit}`]);
+    open();
+    if (!(await isBlack(jpeg))) {
+      litPanels.set(device.udid, lit);
+      return { raw: jpeg, jpeg: async () => jpeg, posture: POSTURES[lit] };
+    }
+    const other: DuoPanel = lit === 'primary' ? 'primary-1' : 'primary';
+    open();
+    const otherJpeg = await screenshot([`--display=${other}`]);
+    open();
+    if (await isBlack(otherJpeg)) return { raw: jpeg, jpeg: async () => jpeg };
+    litPanels.set(device.udid, other);
+    return { raw: otherJpeg, jpeg: async () => otherJpeg, posture: POSTURES[other] };
+  };
+  return {
+    capture: async () => {
+      if (device.foldable) return captureDuo();
+      let jpeg: Buffer;
+      try {
+        jpeg = await screenshot(display);
+      } catch (error) {
+        if (closed || !display.length || !/display/i.test((error as { stderr?: string }).stderr ?? '')) throw error;
+        display = [];
+        jpeg = await screenshot(display);
+      }
+      return { raw: jpeg, jpeg: async () => jpeg };
+    },
+    close: () => {
+      closed = true;
+      return stopTools(running, tmp);
+    },
+  };
+}
+
+type DuoPanel = 'primary' | 'primary-1';
+
+/** The Duo's panels in the order the helper indexes CoreSimulator's displays, by screen ID. */
+const DUO_PANELS: readonly DuoPanel[] = ['primary', 'primary-1'];
+
+const POSTURES: Record<DuoPanel, Posture> = { primary: 'folded', 'primary-1': 'unfolded' };
+
+/** Whether every pixel of an uncompressed 24- or 32-bit BMP, as `sips -s format bmp` writes it, is black. */
+function bmpIsBlack(bmp: Buffer): boolean {
+  if (bmp.length < 54 || bmp.toString('latin1', 0, 2) !== 'BM') throw new Error('sips did not write a BMP image.');
+  const offset = bmp.readUInt32LE(10);
+  const bytesPerPixel = bmp.readUInt16LE(28) / 8;
+  for (let at = offset; at + 3 <= bmp.length; at += bytesPerPixel) {
+    if (bmp[at]! > 8 || bmp[at + 1]! > 8 || bmp[at + 2]! > 8) return false;
+  }
+  return true;
+}
+
+interface EmulatorEndpoint {
+  grpcPort: number;
+  token: string | null;
+}
+
+/**
+ * The emulator writes `pid_<pid>.ini` to this directory on macOS when it was started with `-grpc`, which
+ * Stim passes when it boots an owned AVD (#1064).
+ */
+function emulatorEndpoint(env: NodeJS.ProcessEnv, serial: string): EmulatorEndpoint | null {
+  const console = /^emulator-(\d+)$/.exec(serial)?.[1];
+  if (!console || !env.HOME) return null;
+  const dir = join(env.HOME, 'Library/Caches/TemporaryItems/avd/running');
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return null;
+  }
+  for (const name of names) {
+    const pid = /^pid_(\d+)\.ini$/.exec(name)?.[1];
+    if (!pid) continue;
+    try {
+      process.kill(Number(pid), 0);
+    } catch {
+      continue;
+    }
+    let text: string;
+    try {
+      text = readFileSync(join(dir, name), 'utf8');
+    } catch {
+      continue;
+    }
+    const values = new Map(
+      text.split(/\r?\n/).flatMap((line) => {
+        const at = line.indexOf('=');
+        return at > 0 ? [[line.slice(0, at), line.slice(at + 1)] as const] : [];
+      }),
+    );
+    const grpcPort = Number(values.get('grpc.port'));
+    if (values.get('port.serial') === console && Number.isInteger(grpcPort) && grpcPort > 0) {
+      return { grpcPort, token: values.get('grpc.token') ?? null };
+    }
+  }
+  return null;
+}
+
+function varint(value: number): number[] {
+  const out: number[] = [];
+  let rest = value;
+  while (rest >= 0x80) {
+    out.push((rest & 0x7f) | 0x80);
+    rest = Math.floor(rest / 128);
+  }
+  out.push(rest);
+  return out;
+}
+
+type ProtoField = { field: number; varint: number } | { field: number; bytes: Buffer };
+
+function* protoFields(bytes: Buffer): Generator<ProtoField> {
+  let offset = 0;
+  const readVarint = () => {
+    let result = 0;
+    let scale = 1;
+    for (;;) {
+      if (offset >= bytes.length) throw new Error('truncated protobuf');
+      const byte = bytes[offset++]!;
+      result += (byte & 0x7f) * scale;
+      if (byte < 0x80) return result;
+      scale *= 128;
+    }
+  };
+  while (offset < bytes.length) {
+    const key = readVarint();
+    const field = Math.floor(key / 8);
+    const type = key % 8;
+    if (type === 0) yield { field, varint: readVarint() };
+    else if (type === 2) {
+      const length = readVarint();
+      if (offset + length > bytes.length) throw new Error('truncated protobuf');
+      yield { field, bytes: bytes.subarray(offset, offset + length) };
+      offset += length;
+    } else if (type === 1) offset += 8;
+    else if (type === 5) offset += 4;
+    else throw new Error(`unsupported protobuf wire type ${type}`);
+  }
+}
+
+function grpcMessage(message: number[]): Buffer {
+  const header = Buffer.alloc(5);
+  header.writeUInt32BE(message.length, 1);
+  return Buffer.concat([header, Buffer.from(message)]);
+}
+
+function grpcReply(body: Buffer, method: string): Buffer {
+  if (body.length < 5 || body[0] !== 0) throw new Error(`${method} returned no message.`);
+  return body.subarray(5, 5 + body.readUInt32BE(1));
+}
+
+/**
+ * `ImageFormat` and `Image` in the emulator's emulator_controller.proto; format 0 is PNG. The reply's
+ * format carries `foldedDisplay` (field 7) while a foldable is folded.
+ */
+function screenshotReply(body: Buffer): { png: Buffer; folded: boolean } {
+  let png: Buffer | null = null;
+  let folded = false;
+  for (const entry of protoFields(grpcReply(body, 'getScreenshot'))) {
+    if (entry.field === 4 && 'bytes' in entry) png = Buffer.from(entry.bytes);
+    if (entry.field === 1 && 'bytes' in entry) {
+      folded = [...protoFields(entry.bytes)].some((format) => format.field === 7);
+    }
+  }
+  if (!png) throw new Error('getScreenshot returned no image.');
+  return { png, folded };
+}
+
+/**
+ * `PhysicalModelValue` for POSTURE (PhysicalType 16), whose one float is a `Posture.PostureValue`; 1 to 5
+ * are real postures, so any of them means the emulator has a hinge.
+ */
+function hasHinge(body: Buffer): boolean {
+  for (const entry of protoFields(grpcReply(body, 'getPhysicalModel'))) {
+    if (entry.field === 2 && 'varint' in entry && entry.varint !== 0) return false;
+    if (entry.field !== 3 || !('bytes' in entry)) continue;
+    for (const value of protoFields(entry.bytes)) {
+      if (value.field !== 1 || !('bytes' in value) || value.bytes.length < 4) continue;
+      const posture = Math.round(value.bytes.readFloatLE(0));
+      return posture >= 1 && posture <= 5;
+    }
+  }
+  return false;
+}
+
+function grpcSession(endpoint: EmulatorEndpoint): ClientHttp2Session {
+  const session = connect(`http://127.0.0.1:${endpoint.grpcPort}`);
+  session.on('error', () => {});
+  return session;
+}
+
+function grpcCall(
+  session: ClientHttp2Session,
+  endpoint: EmulatorEndpoint,
+  serial: string,
+  method: string,
+  requestBody: Buffer,
+  timeoutMs: number,
+): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const request = session.request({
+      ':method': 'POST',
+      ':path': `/android.emulation.control.EmulatorController/${method}`,
+      'content-type': 'application/grpc',
+      te: 'trailers',
+      ...(endpoint.token ? { authorization: `Bearer ${endpoint.token}` } : {}),
+    });
+    const chunks: Buffer[] = [];
+    let status: string | undefined;
+    let message: string | undefined;
+    let timedOut = false;
+    const record = (headers: Record<string, unknown>) => {
+      if (headers['grpc-status'] !== undefined) status = String(headers['grpc-status']);
+      if (headers['grpc-message'] !== undefined) message = String(headers['grpc-message']);
+    };
+    request.setTimeout(timeoutMs, () => {
+      timedOut = true;
+      request.close();
+    });
+    request.on('response', record);
+    request.on('trailers', record);
+    request.on('data', (chunk: Buffer) => chunks.push(chunk));
+    request.on('error', (error) => {
+      const text = `${method} failed on ${serial}: ${error.message}`;
+      reject(timedOut ? timeoutError(text) : new Error(text));
+    });
+    request.on('close', () => {
+      if (status === '0') return resolve(Buffer.concat(chunks));
+      const text = `${method} failed on ${serial}: ${message ?? `status ${status ?? 'missing'}`}`;
+      reject(timedOut ? timeoutError(text) : new Error(text));
+    });
+    request.end(requestBody);
+  });
+}
+
+const POSTURE_MODEL = grpcMessage([1 << 3, 16]);
+
+/**
+ * The postures `input.posture` accepts for an owned device: the two panels of an iPhone Duo, and the hinge
+ * positions of an emulator whose physical model has a posture.
+ */
+export async function devicePostures(
+  device: Device,
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+): Promise<DevicePosture[]> {
+  if (device.platform === 'web' || device.platform === 'macos') return [];
+  if (device.platform === 'ios') return device.foldable ? ['folded', 'unfolded'] : [];
+  if (device.physical) return [];
+  const endpoint = emulatorEndpoint(env, device.serial);
+  if (!endpoint) return [];
+  const session = grpcSession(endpoint);
+  try {
+    const hinged = hasHinge(
+      await grpcCall(session, endpoint, device.serial, 'getPhysicalModel', POSTURE_MODEL, timeoutMs),
+    );
+    return hinged ? ['folded', 'half-open', 'unfolded'] : [];
+  } catch {
+    return [];
+  } finally {
+    session.close();
+  }
+}
+
+function emulatorCapturer(serial: string, env: NodeJS.ProcessEnv, limits: FrameLimits): Capturer {
+  let session: ClientHttp2Session | null = null;
+  let tmp: string | null = null;
+  const running = new Set<ChildProcess>();
+  let hinged: boolean | null = null;
+  const call = (endpoint: EmulatorEndpoint, method: string, requestBody: Buffer) => {
+    if (!session || session.closed || session.destroyed) session = grpcSession(endpoint);
+    return grpcCall(session, endpoint, serial, method, requestBody, limits.toolTimeoutMs);
+  };
+  return {
+    capture: async () => {
+      const endpoint = emulatorEndpoint(env, serial);
+      if (!endpoint) {
+        throw new Error(`${serial} has no gRPC endpoint. Frames appear after Stim next boots this emulator.`);
+      }
+      hinged ??= await call(endpoint, 'getPhysicalModel', POSTURE_MODEL)
+        .then(hasHinge)
+        .catch(() => false);
+      const { png, folded } = screenshotReply(
+        await call(endpoint, 'getScreenshot', grpcMessage([3 << 3, ...varint(MAX_EDGE), 4 << 3, ...varint(MAX_EDGE)])),
+      );
+      return {
+        raw: png,
+        ...(hinged ? { posture: folded ? ('folded' as const) : ('unfolded' as const) } : {}),
+        jpeg: async () => {
+          tmp ??= mkdtempSync(join(serverDir(), 'frames-'));
+          const input = join(tmp, 'frame.png');
+          const output = join(tmp, 'frame.jpg');
+          writeFileSync(input, png);
+          const format = ['-s', 'format', 'jpeg', '-s', 'formatOptions', String(JPEG_QUALITY)];
+          await runTool('sips', [...format, input, '--out', output], env, running, limits.toolTimeoutMs);
+          return readFileSync(output);
+        },
+      };
+    },
+    close: () => {
+      session?.close();
+      return stopTools(running, tmp);
+    },
+  };
+}
+
+/** Screenshots of the owned page, through a DevTools connection verified to reach its Chrome. */
+function webCapturer(device: Extract<Device, { platform: 'web' }>, limits: FrameLimits): Capturer {
+  let page: Promise<OwnedPage> | null = null;
+  return {
+    capture: async () => {
+      const current = (page ??= connectOwnedPage(device.endpoint, device.pid, device.targetId, limits.toolTimeoutMs));
+      let reply: Record<string, unknown>;
+      try {
+        reply = await (await current).send('Page.captureScreenshot', { format: 'jpeg', quality: JPEG_QUALITY });
+      } catch (error) {
+        if (page === current) page = null;
+        (await current.catch(() => null))?.close();
+        throw error;
+      }
+      const jpeg = Buffer.from(String(reply.data ?? ''), 'base64');
+      return { raw: jpeg, jpeg: async () => jpeg };
+    },
+    close: async () => {
+      const open = page;
+      page = null;
+      (await open?.catch(() => null))?.close();
+    },
+  };
+}
+
+class Limiter {
+  private active = 0;
+  private readonly waiting: (() => void)[] = [];
+  private readonly max: number;
+
+  constructor(max: number) {
+    this.max = max;
+  }
+
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    if (this.active >= this.max) await new Promise<void>((resolve) => this.waiting.push(resolve));
+    else this.active++;
+    try {
+      return await task();
+    } finally {
+      const next = this.waiting.shift();
+      if (next) next();
+      else this.active--;
+    }
+  }
+}
+
+class FrameSource {
+  private readonly listeners = new Set<FrameListener>();
+  private last: Frame | null = null;
+  private lastHash: string | null = null;
+  private interval = MIN_INTERVAL_MS;
+  private timer: NodeJS.Timeout | null = null;
+  private stopped = false;
+  private delayed = false;
+  private consecutiveFailures = 0;
+
+  private readonly capturer: Capturer;
+  private readonly limiter: Limiter;
+  private readonly limits: FrameLimits;
+  private readonly ended: (stopped: Promise<void>) => void;
+
+  constructor(capturer: Capturer, limiter: Limiter, limits: FrameLimits, ended: (stopped: Promise<void>) => void) {
+    this.capturer = capturer;
+    this.limiter = limiter;
+    this.limits = limits;
+    this.ended = ended;
+    void this.tick();
+  }
+
+  add(listener: FrameListener): () => void {
+    this.listeners.add(listener);
+    if (this.last) listener.frame(this.last);
+    if (this.delayed) listener.delayed(true);
+    return () => {
+      if (this.listeners.delete(listener) && this.listeners.size === 0) void this.stop();
+    };
+  }
+
+  stop(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    this.stopped = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.listeners.clear();
+    const stopped = this.capturer.close();
+    this.ended(stopped);
+    return stopped;
+  }
+
+  private setDelayed(delayed: boolean): void {
+    if (this.delayed === delayed) return;
+    this.delayed = delayed;
+    for (const listener of this.listeners) listener.delayed(delayed);
+  }
+
+  private async tick(): Promise<void> {
+    this.timer = null;
+    let took = 0;
+    try {
+      const changed = await this.limiter.run(async () => {
+        if (this.stopped) return false;
+        const started = Date.now();
+        const capture = await this.capturer.capture();
+        const hash = createHash('sha256').update(capture.raw).digest('hex');
+        took = Date.now() - started;
+        if (hash === this.lastHash || this.stopped) return false;
+        const jpeg = await capture.jpeg();
+        const size = jpegSize(jpeg);
+        if (!size) throw new Error('The screenshot is not a JPEG image.');
+        this.lastHash = hash;
+        this.last = {
+          ...size,
+          capturedAt: new Date(started).toISOString(),
+          data: jpeg.toString('base64'),
+          ...(capture.posture ? { posture: capture.posture } : {}),
+        };
+        took = Date.now() - started;
+        return true;
+      });
+      if (this.stopped) return;
+      this.consecutiveFailures = 0;
+      this.setDelayed(took > this.limits.slowCaptureMs);
+      if (changed) for (const listener of this.listeners) listener.frame(this.last!);
+      this.interval = changed ? MIN_INTERVAL_MS : Math.min(this.interval * 2, MAX_INTERVAL_MS);
+      this.timer = setTimeout(() => void this.tick(), Math.max(this.interval - took, took));
+    } catch (error) {
+      if (this.stopped) return;
+      if (isTransient(error) && this.consecutiveFailures + 1 < this.limits.maxConsecutiveFailures) {
+        this.consecutiveFailures++;
+        this.setDelayed(true);
+        this.timer = setTimeout(() => void this.tick(), this.limits.failureBackoffMs);
+        return;
+      }
+      const listeners = [...this.listeners];
+      void this.stop();
+      for (const listener of listeners) listener.failed((error as Error).message);
+    }
+  }
+}
+
+/**
+ * One capture per device, shared by its subscribers. A `stim-frames` helper stops `lingerMs` after the last of
+ * them leaves, so a client that takes one frame at a time reuses it; a screenshot loop stops with the last of
+ * them. With the `stim-frames`
+ * helper, a device streams frames as its screen changes, at the rate its subscribers ask for; an iPhone Duo
+ * streams its lit panel, which is its posture. Without the helper, and while it is still being built, a
+ * screenshot loop sends a frame only when the screen changed: up to 5 times a second while it changes, backing
+ * off to once a second while it does not, spending at most half of its time capturing, with at most two
+ * captures at once across all devices. A helper that fails before its first frame gives way to the screenshot
+ * loop. A subscriber on screenshots because the helper was being built moves onto it when it is ready.
+ */
+export class FramePool {
+  private readonly sources = new Map<string, FrameSource | HelperSource>();
+  private readonly stopping = new Pending();
+  private readonly limiter = new Limiter(MAX_CAPTURES);
+  private readonly litPanels = new Map<string, DuoPanel>();
+  private readonly upgrades = new Set<() => void>();
+  private readonly env: NodeJS.ProcessEnv;
+  private readonly limits: FrameLimits;
+  private readonly helper: () => string | null;
+  private readonly viewers: DeviceViewers | null;
+  private readonly claim: ClaimHandle | undefined;
+  private readonly foldHelper: (() => Promise<string>) | undefined;
+
+  constructor(
+    env: NodeJS.ProcessEnv,
+    limits: FrameLimits = DEFAULT_FRAME_LIMITS,
+    helper: () => string | null = () => null,
+    viewers: DeviceViewers | null = null,
+    claim?: ClaimHandle,
+    foldHelper?: () => Promise<string>,
+  ) {
+    this.env = env;
+    this.limits = limits;
+    this.helper = helper;
+    this.viewers = viewers;
+    this.claim = claim;
+    this.foldHelper = foldHelper;
+  }
+
+  /** Moves the subscribers streaming screenshots while the helper was being built onto it. */
+  helperReady(): void {
+    for (const upgrade of this.upgrades) upgrade();
+  }
+
+  subscribe(device: Device, listener: FrameListener, hint: FrameHint = DEFAULT_FRAME_HINT): () => void {
+    const detach = this.attach(device, listener, hint);
+    const unview = this.viewers?.add(device);
+    return () => {
+      unview?.();
+      detach();
+    };
+  }
+
+  private attach(device: Device, listener: FrameListener, hint: FrameHint): () => void {
+    const helper = this.helper();
+    const physical = (device.platform === 'ios' || device.platform === 'android') && device.physical === true;
+    const helperOnly = physical || device.platform === 'macos';
+    if (helper === null && helperOnly) {
+      queueMicrotask(() =>
+        listener.failed(
+          'This app or physical device streams through the stim-frames helper, which this Mac has not built.',
+        ),
+      );
+      return () => {};
+    }
+    if (helper === null) {
+      let delayed = false;
+      let current = this.screenshots(device).add({
+        ...listener,
+        delayed: (value, reason) => {
+          delayed = value;
+          listener.delayed(value, reason);
+        },
+      });
+      const upgrade = () => {
+        if (this.helper() === null) return;
+        this.upgrades.delete(upgrade);
+        current();
+        if (delayed) listener.delayed(false);
+        current = this.attach(device, listener, hint);
+      };
+      this.upgrades.add(upgrade);
+      return () => {
+        this.upgrades.delete(upgrade);
+        current();
+      };
+    }
+    let streamed = false;
+    let cancelled = false;
+    const { video } = listener;
+    let detach = this.stream(helper, device).add(
+      {
+        frame: (frame) => {
+          streamed = true;
+          listener.frame(frame);
+        },
+        ...(video
+          ? {
+              video: (unit: AccessUnit) => {
+                streamed = true;
+                video(unit);
+              },
+            }
+          : {}),
+        ...(listener.artwork ? { artwork: listener.artwork } : {}),
+        ...(listener.windows ? { windows: listener.windows } : {}),
+        ...(listener.duo
+          ? {
+              duo: (frame: Frame) => {
+                streamed = true;
+                listener.duo!(frame);
+              },
+            }
+          : {}),
+        delayed: listener.delayed,
+        failed: (message) => {
+          if (streamed || cancelled || helperOnly || this.claim) return listener.failed(message);
+          console.error(`stim-server: ${message} Falling back to screenshots.`);
+          detach = this.screenshots(device).add(listener);
+        },
+      },
+      hint,
+    );
+    return () => {
+      cancelled = true;
+      detach();
+    };
+  }
+
+  /**
+   * Records `device` through its `stim-frames` helper, sharing it with live subscribers, or returns null without a
+   * helper: screenshots are not recorded.
+   */
+  record(device: Device, listener: FrameListener): (() => void) | null {
+    if (device.platform === 'macos') return null;
+    const helper = this.helper();
+    return helper === null ? null : this.stream(helper, device).add(listener, RECORD_HINT);
+  }
+
+  /** The posture of an iPhone Duo as its last frame showed it; null before a frame and for other devices. */
+  litPosture(device: Device): Posture | null {
+    const lit = device.platform === 'ios' && device.foldable ? this.litPanels.get(device.udid) : undefined;
+    return lit ? POSTURES[lit] : null;
+  }
+
+  /** The index `input.touch` takes for the panel an iPhone Duo's last frame showed; 0 for other devices. */
+  litDisplay(device: Device): number {
+    const lit = device.platform === 'ios' && device.foldable ? this.litPanels.get(device.udid) : undefined;
+    return lit ? DUO_PANELS.indexOf(lit) : 0;
+  }
+
+  /** Records the panel a finished fold lit, so a request before the next frame sees the new posture. */
+  folded(udid: string, posture: Posture): void {
+    this.litPanels.set(udid, posture === 'folded' ? 'primary' : 'primary-1');
+  }
+
+  /** Makes the next video frame of `device` a keyframe, for a subscriber whose decoder lost its state. */
+  keyframe(device: Device): void {
+    this.helperSource(device)?.keyframe();
+  }
+
+  /** Makes the next frame `device`'s recording encoder writes a keyframe. */
+  recordKeyframe(device: Device): void {
+    this.helperSource(device)?.recordKeyframe();
+  }
+
+  /** A subscriber of `device` is behind; called until its socket drains, it lowers the shared bitrate. */
+  congested(device: Device): void {
+    this.helperSource(device)?.congested();
+  }
+
+  private helperSource(device: Device): HelperSource | null {
+    const source = this.sources.get(`helper:${deviceKey(device)}`);
+    return source instanceof HelperSource ? source : null;
+  }
+
+  /**
+   * Keeps the device's helper running to send it input, or returns null without a helper. `failed` runs when
+   * the helper exits.
+   */
+  control(device: Device, failed: (message: string) => void): DeviceInput | null {
+    const helper = this.helper();
+    if (helper === null) return null;
+    const source = this.stream(helper, device);
+    if (!source.active) return null;
+    const controlSession = device.platform === 'macos' ? randomUUID() : null;
+    const detach = source.add(
+      {
+        frame: () => {},
+        delayed: () => {},
+        failed,
+        ...(controlSession
+          ? {
+              inputFailed: (message: string, session?: string) => {
+                if (session === controlSession) failed(message);
+              },
+            }
+          : {}),
+      },
+      null,
+    );
+    if (controlSession) source.send({ control: { session: controlSession, enabled: true } });
+    return {
+      send: (command) => source.send(controlSession ? { ...command, controlSession } : command),
+      keys: () => source.keyboard === true,
+      clipboard: (request) => source.clipboard(request),
+      detach: () => {
+        if (controlSession) source.send({ control: { session: controlSession, enabled: false } });
+        if (device.platform === 'ios' && device.foldable) source.send({ input: 'duo-release' });
+        detach();
+      },
+    };
+  }
+
+  private stream(helper: string, device: Device): HelperSource {
+    const key = `helper:${deviceKey(device)}`;
+    const existing = this.sources.get(key);
+    if (existing instanceof HelperSource) return existing;
+    const lit =
+      device.platform === 'ios' && device.foldable
+        ? (display: number) => {
+            const panel = DUO_PANELS[display];
+            if (!panel) return undefined;
+            this.litPanels.set(device.udid, panel);
+            return POSTURES[panel];
+          }
+        : undefined;
+    const created: HelperSource = new HelperSource(
+      helper,
+      device,
+      this.env,
+      (stopped) => {
+        const remove = () => {
+          if (this.sources.get(key) === created) this.sources.delete(key);
+        };
+        if (this.claim) void this.stopping.track(stopped).then(remove, remove);
+        else {
+          remove();
+          void this.stopping.track(stopped);
+        }
+      },
+      this.limits.lingerMs,
+      lit,
+      this.claim,
+      this.foldHelper,
+    );
+    this.sources.set(key, created);
+    return created;
+  }
+
+  private screenshots(device: Device): FrameSource {
+    if (device.platform === 'macos') throw new Error('Native macOS capture requires the owned-window helper.');
+    const key = deviceKey(device);
+    const existing = this.sources.get(key);
+    if (existing instanceof FrameSource) return existing;
+    const capturer =
+      device.platform === 'ios'
+        ? simulatorCapturer(device, this.env, this.limits, this.litPanels)
+        : device.platform === 'web'
+          ? webCapturer(device, this.limits)
+          : emulatorCapturer(device.serial, this.env, this.limits);
+    const created: FrameSource = new FrameSource(capturer, this.limiter, this.limits, (stopped) => {
+      if (this.sources.get(key) === created) this.sources.delete(key);
+      void this.stopping.track(stopped);
+    });
+    this.sources.set(key, created);
+    return created;
+  }
+
+  async close(): Promise<void> {
+    this.upgrades.clear();
+    this.viewers?.clear();
+    await Promise.all([...this.sources.values()].map((source) => source.stop()));
+    await this.stopping.settled();
+  }
+}
