@@ -60,7 +60,7 @@ final class HybridVideoStream: HybridVideoStreamSpec {
 
   private static let fixedHeaderBytes = 21
   private static let maxBacklogBytes = 4 * 1024 * 1024
-  private static let progressInterval: TimeInterval = 0.2
+  private static let progressInterval: TimeInterval = 0
 
   private let lock = NSLock()
   private var formatListener: ((VideoFormat) -> Void)?

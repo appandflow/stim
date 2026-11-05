@@ -55,7 +55,7 @@ function spanUnits(recording, span) {
   return recording.units.map((unit) => ({ ...unit, at: unit.at * scale }));
 }
 
-function packet(subscription, sequence, unit, capturedAt) {
+export function packet(subscription, sequence, unit, capturedAt) {
   const id = Buffer.from(subscription, 'ascii');
   const header = Buffer.alloc(21 + id.length);
   header.writeUInt8(1, 0);

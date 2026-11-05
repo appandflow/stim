@@ -269,6 +269,12 @@ export class StimConnection {
     };
   }
 
+  /** Proof of concept: sends a WebRTC offer for a video subscription and returns the server's answer. */
+  rtcOffer(subscription: string, sdp: string): Promise<{ sdp: string }> {
+    if (!this.open || !this.socket) return Promise.reject(new Error('Not connected.'));
+    return this.send(this.socket, 'frames.webrtc' as never, { subscription, sdp } as never) as Promise<{ sdp: string }>;
+  }
+
   /** The current session's timing, in development builds; null while not connected. */
   timing(): SessionTiming | null {
     return this.open && this.socket ? this.socket.timing() : null;
@@ -451,7 +457,11 @@ export class StimConnection {
       this.pending.delete(message.id as number);
       if ('error' in message && !('result' in message) && isRpcError(message.error)) {
         pending.reject(new RequestError(message.error));
-      } else if ('result' in message && !('error' in message) && isRpcResult(pending.method, message.result)) {
+      } else if (
+        'result' in message &&
+        !('error' in message) &&
+        (String(pending.method) === 'frames.webrtc' || isRpcResult(pending.method, message.result))
+      ) {
         pending.resolve(message.result);
       } else {
         reportFailure(responseFailure(pending.method, message));

@@ -60,6 +60,7 @@ const config: ExpoConfig = {
       },
     ],
     'expo-secure-store',
+    ['@config-plugins/react-native-webrtc', { cameraPermission: false, microphonePermission: false }],
     ['expo-navigation-bar', { enforceContrast: false }],
     ['expo-notifications', { mode: dev ? 'development' : 'production' }],
     '@sentry/react-native/expo',

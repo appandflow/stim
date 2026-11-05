@@ -21,6 +21,8 @@ import {
   secretValues,
 } from '@stim-cli/core/noise-session';
 import { loadRecording, replayKeyframe, replayRange, VideoFeed } from './replay.mjs';
+import { ClipFeed, loadClip, wsSink } from './clip.mjs';
+import { openRtc } from '../../../packages/server/src/webrtc-sender.ts';
 
 const { values } = parseArgs({
   options: {
@@ -33,6 +35,10 @@ const { values } = parseArgs({
     'slot-waits': { type: 'boolean', default: false },
     capacity: { type: 'boolean', default: false },
     'linux-owner': { type: 'boolean', default: false },
+    clip: { type: 'string' },
+    'clip-size': { type: 'string', default: '590x1280' },
+    'clip-fps': { type: 'string', default: '60' },
+    'rtc-proxy': { type: 'string' },
   },
 });
 
@@ -42,6 +48,13 @@ const IDENTITY_FILE = join(tmpdir(), 'stim-mobile-mock-server-identity.key');
 const fixtures = loadFixtures({ slotWaits: values['slot-waits'], capacity: values.capacity });
 const legacyArchives = process.env.STIM_MOCK_LEGACY_ARCHIVES === '1';
 const recording = loadRecording();
+const clip = values.clip
+  ? loadClip(values.clip, {
+      width: Number(values['clip-size'].split('x')[0]),
+      height: Number(values['clip-size'].split('x')[1]),
+      fps: Number(values['clip-fps']),
+    })
+  : null;
 const recordingFor = (params) => {
   if (!params.archive) return recording;
   const device = fixtures.archiveDetails[params.archive]?.recordings.find(
@@ -386,6 +399,7 @@ function serve(socket, device) {
     clearInterval(timers.get(subscription));
     timers.delete(subscription);
     feeds.get(subscription)?.stop();
+    feeds.get(subscription)?.rtc?.close();
     feeds.delete(subscription);
   };
   const every = (ms, fn) => {
@@ -474,10 +488,13 @@ function serve(socket, device) {
         return { error: ['no-recording', 'No archived recording remains.'] };
       if ((params.platform === 'ios' || params.archive) && params.video?.includes('h264')) {
         const subscription = `s${nextSubscription++}`;
-        const feed = new VideoFeed(recordingFor(params), subscription, socket, send);
+        const feed = clip
+          ? new ClipFeed(clip, subscription, wsSink(subscription, socket))
+          : new VideoFeed(recordingFor(params), subscription, socket, send);
         feed.archived = Boolean(params.archive);
         feeds.set(subscription, feed);
-        if (params.at === undefined) setImmediate(() => feed.live());
+        if (params.rtc) feed.waitingForRtc = true;
+        else if (params.at === undefined) setImmediate(() => feed.live());
         else setImmediate(() => feed.seek(params.at, params.rate ?? 0));
         return { result: { subscription, video: 'h264' } };
       }
@@ -604,6 +621,57 @@ function serve(socket, device) {
     },
     'frames.keyframe'() {
       return { result: {} };
+    },
+    'frames.webrtc'(params, id) {
+      const feed = feeds.get(params.subscription);
+      if (!feed || !clip) return { error: ['unknown-subscription', `No clip subscription ${params.subscription}.`] };
+      let offer = params.sdp;
+      if (values['rtc-proxy']) {
+        offer = offer
+          .split(/\r?\n/)
+          .filter((line) => !line.startsWith('a=candidate:'))
+          .join('\r\n');
+        offer = offer.replace(
+          /(m=application[^\r\n]*\r\n)/,
+          '$1a=candidate:1 1 UDP 2122252543 192.168.254.254 9 typ host\r\n',
+        );
+      }
+      const rtcFeed = {
+        subscribe: (video) => {
+          feed.stop();
+          feed.sink = (unit, capturedAt) =>
+            video({ keyframe: unit.keyframe, capturedAt, width: unit.width, height: unit.height, data: unit.data });
+          feed.live();
+          return () => feed.stop();
+        },
+        keyframe: () => feed.restart(),
+        congested: () => {},
+      };
+      openRtc(offer, rtcFeed, (reason) => console.log(`rtc closed: ${reason}`)).then(
+        (session) => {
+          feed.rtc = session;
+          let answer = session.answer;
+          if (values['rtc-proxy']) {
+            const [host, port] = values['rtc-proxy'].split(':');
+            const seen = new Set();
+            answer = answer
+              .split(/\r?\n/)
+              .map((line) =>
+                line.startsWith('a=candidate:')
+                  ? line.replace(/^(a=candidate:\S+ \d+ \S+ \d+) \S+ \d+/, `$1 ${host} ${port}`)
+                  : line,
+              )
+              .filter((line) => !line.startsWith('a=candidate:') || (!seen.has(line) && seen.add(line)))
+              .join('\r\n');
+          }
+          send({ id, result: { sdp: answer } });
+        },
+        (cause) => {
+          console.log('webrtc failed', String(cause));
+          fail(id, 'webrtc-failed', String(cause));
+        },
+      );
+      return { deferred: true };
     },
     'recording.set'(params) {
       if (values.read) return { error: ['forbidden', 'This device can only read (mock server started with --read).'] };

@@ -3,6 +3,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla';
 
 import { frameTarget, type FrameTarget } from '@/hooks/frame-target';
 import { useMacConnection } from '@/hooks/machines';
+import { poc, record, startRtc } from '@/lib/rtc-poc';
 import { SeekQueue, type Seek } from '@/lib/replay-seek';
 import { VideoMeter } from '@/lib/video';
 import { supportsFrame } from '@/lib/device-frame';
@@ -180,6 +181,7 @@ export function useDeviceStream(
     if (!connection || key === null) return;
     let cancelled = false;
     let current: VideoStream | null = null;
+    let closeRtc: (() => void) | null = null;
     let format: VideoFormat | null = null;
     let showing = false;
     orientation.current = null;
@@ -204,6 +206,7 @@ export function useDeviceStream(
         ...(deviceFrame ? { deviceFrame: true } : {}),
         ...(duoFrame ? { duoFrame: true } : {}),
         ...(startAt !== null ? { at: startAt, rate: 0 as const } : {}),
+        ...(poc.transport === 'rtc' ? { rtc: true } : {}),
       },
       (event) => {
         if (event.event === 'frame') {
@@ -268,6 +271,8 @@ export function useDeviceStream(
         if (cancelled) return;
         current = stream;
         if (!stream) {
+          closeRtc?.();
+          closeRtc = null;
           format = null;
           showing = false;
           update({ stream: null, video: null });
@@ -292,6 +297,7 @@ export function useDeviceStream(
         stream.onProgress = (progress) => {
           if (!live() || subscription.current === null) return;
           meter.add(progress, Date.now());
+          record(progress, stream);
           if (!showing && format) show(format);
           const shown = replaying.current;
           if (shown && queue.settled) {
@@ -300,10 +306,17 @@ export function useDeviceStream(
           }
         };
         update({ stream });
+        if (poc.transport === 'rtc' && subscription.current) {
+          startRtc(connection, subscription.current, stream).then(
+            (close) => (closeRtc = close),
+            (cause) => console.warn('rtc failed', cause),
+          );
+        }
       },
     );
     return () => {
       cancelled = true;
+      closeRtc?.();
       current = null;
       subscription.current = null;
       replaying.current = null;
