@@ -1150,7 +1150,6 @@ export class ShareHub {
             control: access === 'control',
             viewOnly: control && access === 'view',
             upgrade: control && access === 'view' && share.viewDigest !== null,
-            askName: share.passwordDigest === null,
             platform,
             buttons: BUTTONS[platform],
             rotate,
@@ -1196,13 +1195,15 @@ export class ShareHub {
     if (share.failures.length >= this.limits.maxFailures) {
       return existing
         ? back('?upgrade=limited')
-        : this.respond(response, 429, loginPage('Too many wrong passwords. Try again later.', share.app));
+        : this.respond(response, 429, loginPage('Too many wrong access codes. Try again later.', share.app));
     }
     const form = new URLSearchParams(body);
-    const matched = accessFor(form.get('password') ?? '', share.passwordDigest, share.viewDigest);
+    const matched = accessFor(form.get('access') ?? form.get('password') ?? '', share.passwordDigest, share.viewDigest);
     if (!matched) {
       share.failures.push(now);
-      return existing ? back('?upgrade=wrong') : this.respond(response, 401, loginPage('Wrong password.', share.app));
+      return existing
+        ? back('?upgrade=wrong')
+        : this.respond(response, 401, loginPage('Wrong access code.', share.app));
     }
     const access: ShareAccess = share.request.control ? matched : 'view';
     if (existing) {

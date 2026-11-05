@@ -106,7 +106,7 @@ value out to have one generated, and put it last or write
 `--no-password`, and when it equals `--password`. A viewer that signed in with
 the view password sees "View only" in the bar and gets no device controls; the
 server drops every input it sends. It can enter the control password from the
-bar ("Have the control password?") to raise itself to control, and keeps its
+bar ("Have the control access code?") to raise itself to control, and keeps its
 name and place. `--json` adds `viewAuth` and, when it was generated,
 `viewPassword`. A share keeps 32 signed-in sessions. A new login drops the
 oldest session with the same access first, so logging in with the view password
@@ -136,8 +136,7 @@ window. With `--control`, button groups under the device hold:
 Everyone watching sees who touches the screen: a colored dot with the person's
 name, a short trail while they drag, and a ripple for a tap, for every viewer
 with the share open and for the host when the device is controlled from Stim
-Desktop or the phone app. The login page has an optional name field; a share
-without a password asks for a name when you first open it, and you can skip.
+Desktop or the phone app. A viewer is asked for a name when it first opens the share, and can skip.
 Without a name a viewer is "Guest 1", "Guest 2" and so on. Host, Agent and
 Guest N belong to the server, so a viewer that chooses one of them is shown as
 its own Guest N. A viewer sees only the people of its own share, even when two
@@ -172,7 +171,7 @@ is the shortcut key, and Option and, on a Mac, Control go with it, as in Command
 Command-Z and Option-Left. On Android, Command acts as Control. Command-V keeps
 pasting your clipboard. While the screen has focus the page keeps these shortcuts
 from the browser, such as Command-R and Command-L; click outside the screen to use
-them. Keys do not reach the device while the focus is in a field of the page, such as the password or rename boxes.
+them. Keys do not reach the device while the focus is in a field of the page, such as the access code or rename boxes.
 
 With `--control` on an iOS simulator, an Android emulator or an Android phone,
 Command-V (Control-V on Windows and Linux) while the screen has focus pastes the

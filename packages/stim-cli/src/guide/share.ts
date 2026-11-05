@@ -119,8 +119,7 @@ project, workspace or branch name, and the viewer tab follows the app when it ch
 
 VIEWERS SEE EACH OTHER
 
-Every viewer has a name (the optional name field on the login page, or on first
-load for a share without a password; empty means Guest 1, Guest 2 and so on)
+Every viewer has a name (asked on first load, optional; empty means Guest 1, Guest 2 and so on)
 and a color. The names Host, Agent (also "Agent \u00b7 <command>") and Guest N
 are the server's own, so a viewer that picks one of them is shown as its Guest
 N. Viewers of one share see each other's touches live, with the name, and never
