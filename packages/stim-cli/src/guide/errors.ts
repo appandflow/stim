@@ -1781,6 +1781,15 @@ not on any remote"  (worktree remove)
   source path and warm cannot move it, it prints "removed <dir>/Pods/Manifest.lock
   so pod install runs" and \`stim ios\` runs \`pod install\`.
 
+"carry       carried <dir>/Pods has N broken link(s), such as <path>; removed <dir>/Pods/Manifest.lock so pod install runs"
+  The carried Pods contain symlinks that do not resolve, usually header links
+  into <dir>/build/ that the source checkout lost. Matching locks do not make
+  such Pods usable, so warm removes Manifest.lock and \`stim ios\` runs
+  \`pod install\` here, which recreates the links. The line also names the
+  \`pod install --clean-install\` command for the source checkout, which
+  \`stim doctor\` reports as well; until that is run, every new worktree
+  warmed from it pays one \`pod install\`.
+
 "carry       carried <dir>/Pods: The source checkout's Pods were last built as ..."
   Warm copied Pods whose React-Core-prebuilt, ReactNativeDependencies or
   hermes-engine were last built in Debug or Release, and this workspace builds
