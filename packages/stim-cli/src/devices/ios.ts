@@ -393,8 +393,8 @@ class BootCommandError extends Error {
   }
 }
 
-// `simctl boot` exits 22 (NSPOSIXErrorDomain code 22, EINVAL) when CoreSimulator rejects the request itself.
-// The state it leaves is not fixed: soak run a05 (#4802) booted anyway, b04 stayed shut down.
+// `simctl boot` exits 22 (NSPOSIXErrorDomain code 22, EINVAL) when CoreSimulator rejects the request itself;
+// the simulator may still boot afterwards.
 const BOOT_REJECTED_EXIT_CODE = 22;
 const BOOT_REJECTED_RETRY_DELAY_MS = 2000;
 
@@ -462,7 +462,7 @@ export async function bootIosSim(
   const recovery =
     "Stop unused slots in workspaces you own with `stim stop --slot <name>`, reduce concurrent builds, and retry after pressure falls. Ask before closing other agents' devices or apps. Repeated reboots under unchanged pressure may stall again.";
   const rejectedBootNote =
-    'CoreSimulator rejected the boot request (exit 22, EINVAL) and the simulator did not boot. Memory pressure was not read as high, so this is not a shortage Stim can see. Run `stim ios` again.';
+    'CoreSimulator rejected the boot request (exit 22, EINVAL) and the simulator did not boot. Memory pressure was not read as high. Run `stim ios` again.';
   const coverage = () =>
     longestGapMs > 30000
       ? ` Observations were delayed: longest gap ${Math.round(longestGapMs / 1000)}s. Pressure during gaps is unobserved; blocking CLI work can also delay progress and timeout handling.`
@@ -500,7 +500,11 @@ export async function bootIosSim(
         const state = await simulatorState(udid);
         if (state === 'Shutdown') {
           await cancellableSleep(BOOT_REJECTED_RETRY_DELAY_MS);
-          await awaitBootCommand(['simctl', 'boot', udid], Math.max(1, deadline - Date.now()), onLine);
+          await awaitBootCommand(['simctl', 'boot', udid], Math.max(1, deadline - Date.now()), onLine).catch(
+            (retryError: unknown) => {
+              if (!String((retryError as Error)?.message || retryError).includes('Booted')) throw retryError;
+            },
+          );
         } else if (state !== 'Booting' && state !== 'Booted') throw e;
         phase = 'waiting for boot completion';
       } else if (!String((e as Error)?.message || e).includes('Booted')) throw e;

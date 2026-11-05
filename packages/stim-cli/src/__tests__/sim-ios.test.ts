@@ -372,7 +372,6 @@ test('boot diagnostics retain peak pressure after recovery and unknown readings,
   }
 });
 
-// Captured from `xcrun simctl boot` on an adopted simulator in the 2026-11-01 soak (#4802).
 const BOOT_EXIT_22_STDERR =
   'An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=22):\nThe operation couldn\u2019t be completed. Invalid argument\nInvalid argument\n';
 
