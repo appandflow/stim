@@ -214,6 +214,53 @@ describe('buildAndroid', () => {
     );
   });
 
+  test.each([
+    { workerRelease: true, finds: true },
+    { workerRelease: false, finds: false },
+  ])('an unsigned release APK with workerRelease $workerRelease is found: $finds', async ({ workerRelease, finds }) => {
+    makeAndroidProject();
+    const dir = join(apkOutputsDir(defaultAndroidLayout(root)), 'release');
+    const unsigned = join(dir, 'app-release-unsigned.apk');
+    let args: string[] = [];
+    const result = await buildAndroid(
+      { root, variant: 'release' },
+      {
+        workerRelease,
+        spawnFn: (_cmd, spawned) => {
+          args = spawned;
+          return fakeChild({
+            lines: ['BUILD SUCCESSFUL in 1s'],
+            onExit: () => {
+              mkdirSync(dir, { recursive: true });
+              writeFileSync(unsigned, 'apk');
+              writeFileSync(
+                join(dir, 'output-metadata.json'),
+                JSON.stringify({ elements: [{ outputFile: 'app-release-unsigned.apk' }] }),
+              );
+            },
+          });
+        },
+      },
+    );
+    expect(result.ok ? result.apkPath : null).toBe(finds ? unsigned : null);
+    expect(args.some((arg) => arg.endsWith('android-worker-release.gradle'))).toBe(workerRelease);
+  });
+
+  test.each([
+    { built: 'app-release-unsigned.apk', stale: 'app-release.apk' },
+    { built: 'app-release.apk', stale: 'app-release-unsigned.apk' },
+  ])('a worker release build takes $built, not the older $stale beside it', ({ built, stale }) => {
+    const outputsDir = join(root, 'outputs');
+    const dir = join(outputsDir, 'release');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, built), 'new');
+    writeFileSync(join(dir, stale), 'old');
+    writeFileSync(join(dir, 'output-metadata.json'), JSON.stringify({ elements: [{ outputFile: built }] }));
+    expect(locateProjectApk({ directory: root, outputsDir }, '', 'release', { unsigned: true }).apkPath).toBe(
+      join(dir, built),
+    );
+  });
+
   test('the build_start record shows --no-build-cache when the cache is off', async () => {
     makeAndroidProject();
     const writer = recordingWriter();

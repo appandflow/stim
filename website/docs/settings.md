@@ -539,11 +539,13 @@ a person on the worker approves this machine by running the `stim-server setup`
 command it printed. To change placement,
 rerun with `--remote-build auto`, `remote` or `local`.
 
-Device, Android release variant, `--remote`, Android CAS compiler,
+Device, `--remote`, Android CAS compiler,
 build-cache-off and unknown simulator runtime builds refuse a named worker on a
 cache miss, with a remedy to rerun with `--remote-build local` or `auto`. An iOS
 simulator Release or other non-Debug build can build on a worker, which bundles
-the JS of the synced checkout into the app.
+the JS of the synced checkout into the app. An Android release variant can too,
+and a real release key stays on this machine; see
+[Android release variants](./remote-machines.md#android-release-variants).
 Invalid values, unlisted names and unpaired names refuse at setup before the
 cache is consulted, without a build record or failed-run stats. A listed paired
 name with a cache hit needs no build and contacts no worker. Prebuild and pod
@@ -582,7 +584,7 @@ iOS, Android and macOS placement. It is the load per core at which a machine
 counts as saturated: each machine applies its own value, a remote machine
 declines offloaded builds past it, and automatic placement skips it.
 
-Device builds, Android release variants,
+Device builds,
 `--remote eas|proxy` builds, Android builds with the Apple Clang CAS compiler cache, and
 iOS/Android runs with the build cache off, always build here. Hosted iOS
 builds can use a separate `--remote-build`, targeting the hosting Mac's
@@ -994,7 +996,7 @@ the same cap. Under disk pressure the
 unused before that sweep removes it: workspace build outputs, shared cache
 entries, parked simulators and emulators, and clean, pushed linked worktrees
 (only with `maintenance.removeIdleWorktrees`, off by default). The age sweep
-also stops idle Gradle and Kotlin daemons, deletes Gradle versions no project
+also stops idle Gradle and Kotlin daemons, shuts down an unused watchman over 2 GiB, deletes Gradle versions no project
 pins once unmodified for `maintenance.gradleVersionIdleDays` (7; 0 keeps
 them), and deletes TMPDIR leftovers and the worktree trash.
 `maintenance.removeFinishedWorktrees` controls the worktree check. Manual

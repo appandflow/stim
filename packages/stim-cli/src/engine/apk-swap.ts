@@ -215,6 +215,88 @@ function apksignerArgs({ keystore, apkPath }: { keystore: KeystoreConfig; apkPat
   return ['sign', '--ks', keystore.path, '--ks-pass', keystore.pass, apkPath];
 }
 
+/** Writes `input` to `output` zipaligned, then signs `output`; the step that failed and why, or null. */
+export async function zipalignAndSignApk({
+  context,
+  exec = null,
+  input,
+  output,
+  keystore,
+  buildTools = null,
+  findTool = findBuildTool,
+  exists = existsSync,
+  platform = process.platform,
+}: {
+  context?: StimContext;
+  exec?: Executor | null;
+  input: string;
+  output: string;
+  keystore: KeystoreConfig;
+  buildTools?: BuildToolsEntry | null;
+  findTool?: typeof findBuildTool;
+  exists?: (p: string) => boolean;
+  platform?: NodeJS.Platform;
+}): Promise<{ step: 'zipalign' | 'apksigner'; reason: string } | null> {
+  const e = exec ?? getExecutor();
+  const tools = buildTools ?? findTool(['zipalign']);
+  if (!tools) {
+    return {
+      step: 'zipalign',
+      reason: 'no zipalign found under the Android SDK build-tools; install one with `sdkmanager "build-tools;36.0.0"`',
+    };
+  }
+  try {
+    await runOperationFile(context, e, tools.path, zipalignArgs({ buildToolsMajor: tools.major, input, output }), {
+      timeoutMs: 'unbounded',
+    });
+  } catch (err) {
+    return { step: 'zipalign', reason: `zipalign failed on ${input}: ${describe(err)}` };
+  }
+
+  const signer = buildTools
+    ? { ...buildTools, path: join(dirname(buildTools.path), androidBuildToolName('apksigner')) }
+    : findTool(['apksigner']);
+  if (!signer) {
+    return {
+      step: 'apksigner',
+      reason:
+        'no apksigner found under the Android SDK build-tools; install one with `sdkmanager "build-tools;36.0.0"`',
+    };
+  }
+  try {
+    let signerFile = signer.path;
+    const signerArgs = apksignerArgs({ keystore, apkPath: output });
+    if (platform === 'win32') {
+      const javaHome = ((context?.env ?? process.env).JAVA_HOME ?? '').replaceAll('"', '');
+      signerFile = javaHome ? join(javaHome, 'bin', 'java.exe') : 'java.exe';
+      const fallbackJar = join(dirname(signer.path), '..', 'framework', 'apksigner.jar');
+      const signerJar =
+        [join(dirname(signer.path), 'apksigner.jar'), join(dirname(signer.path), 'lib', 'apksigner.jar')].find(
+          exists,
+        ) ?? fallbackJar;
+      // Android SDK apksigner.bat uses these heap/stack defaults and jar search paths.
+      // https://android.googlesource.com/platform/tools/apksig/+/5889dfb13b754dc723e3c906e927ce3e8faab917/etc/apksigner.bat
+      signerArgs.unshift('-Xmx1024M', '-Xss1m', '-jar', signerJar);
+    }
+    await runOperationFile(
+      context,
+      e,
+      signerFile,
+      signerArgs,
+      keystore.password === null
+        ? { timeoutMs: 'unbounded' }
+        : {
+            timeoutMs: 'unbounded',
+            env: { [KEYSTORE_PASSWORD_ENV]: keystore.password },
+            redact: [keystore.password],
+          },
+    );
+  } catch (err) {
+    return { step: 'apksigner', reason: `apksigner sign failed on ${output} with ${keystore.path}: ${describe(err)}` };
+  }
+  return null;
+}
+
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
 export type ApkSwapResult = {
@@ -442,67 +524,18 @@ export async function swapApkBundle({
     return fail('zip', `${jar} --update ${work} failed: ${describe(err)}`);
   }
 
-  const tools = buildTools ?? findTool(['zipalign']);
-  if (!tools) {
-    return fail(
-      'zipalign',
-      'no zipalign found under the Android SDK build-tools; install one with `sdkmanager "build-tools;36.0.0"`',
-    );
-  }
-  try {
-    await runOperationFile(
-      context,
-      e,
-      tools.path,
-      zipalignArgs({ buildToolsMajor: tools.major, input: work, output: final }),
-      {
-        timeoutMs: 'unbounded',
-      },
-    );
-  } catch (err) {
-    return fail('zipalign', `zipalign failed on ${work}: ${describe(err)}`);
-  }
-
-  const signer = buildTools
-    ? { ...buildTools, path: join(dirname(buildTools.path), androidBuildToolName('apksigner')) }
-    : findTool(['apksigner']);
-  if (!signer) {
-    return fail(
-      'apksigner',
-      'no apksigner found under the Android SDK build-tools; install one with `sdkmanager "build-tools;36.0.0"`',
-    );
-  }
-  try {
-    let signerFile = signer.path;
-    const signerArgs = apksignerArgs({ keystore, apkPath: final });
-    if (platform === 'win32') {
-      const javaHome = ((context?.env ?? process.env).JAVA_HOME ?? '').replaceAll('"', '');
-      signerFile = javaHome ? join(javaHome, 'bin', 'java.exe') : 'java.exe';
-      const fallbackJar = join(dirname(signer.path), '..', 'framework', 'apksigner.jar');
-      const signerJar =
-        [join(dirname(signer.path), 'apksigner.jar'), join(dirname(signer.path), 'lib', 'apksigner.jar')].find(
-          exists,
-        ) ?? fallbackJar;
-      // Android SDK apksigner.bat uses these heap/stack defaults and jar search paths.
-      // https://android.googlesource.com/platform/tools/apksig/+/5889dfb13b754dc723e3c906e927ce3e8faab917/etc/apksigner.bat
-      signerArgs.unshift('-Xmx1024M', '-Xss1m', '-jar', signerJar);
-    }
-    await runOperationFile(
-      context,
-      e,
-      signerFile,
-      signerArgs,
-      keystore.password === null
-        ? { timeoutMs: 'unbounded' }
-        : {
-            timeoutMs: 'unbounded',
-            env: { [KEYSTORE_PASSWORD_ENV]: keystore.password },
-            redact: [keystore.password],
-          },
-    );
-  } catch (err) {
-    return fail('apksigner', `apksigner sign failed on ${final} with ${keystore.path}: ${describe(err)}`);
-  }
+  const unsigned = await zipalignAndSignApk({
+    context,
+    exec: e,
+    input: work,
+    output: final,
+    keystore,
+    buildTools,
+    findTool,
+    exists,
+    platform,
+  });
+  if (unsigned) return fail(unsigned.step, unsigned.reason);
 
   logWriter?.write?.({
     src: 'build',

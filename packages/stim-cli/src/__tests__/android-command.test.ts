@@ -7,6 +7,7 @@ import { operationState } from '../engine/operation-state.ts';
 import { nativeAndroidFixture } from './_native-android-project.ts';
 import { readWorkspaceLaunches } from '../supervisor/state.ts';
 import { runReload } from '../commands/reload.ts';
+import * as buildCache from '../cache/build-cache.ts';
 import { resolveBuild, type FingerprintTarget, type ProjectFingerprint } from '../cache/build-cache.ts';
 import { projectIntegrations } from '../integrations/projects.ts';
 import { createProjectRegistry } from '../integrations/project-registry.ts';
@@ -5044,24 +5045,18 @@ describe('the release APK swap', () => {
   });
 
   test('an entry with NO manifest never swaps, and the note says so without blaming AAPT', async () => {
+    const swapApk = vi.fn<() => never>();
     const h = harness({
       variant: 'productionRelease',
       resolveCached: () => cached,
       storedAssets: () => null,
-      swapApk: async (args: SwapArgs = {}) => {
-        expect(args.storedAssets).toBe(null);
-        return {
-          assetMismatch: true,
-          reason:
-            'this cache entry predates asset tracking (no assets-manifest.json beside the artifact), ' +
-            'so its asset set cannot be proven to match this one',
-        };
-      },
+      swapApk,
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
+    expect(swapApk).not.toHaveBeenCalled();
     const errs = h.stderr.join('\n');
-    expect(errs).toMatch(/predates asset tracking/);
+    expect(errs).toMatch(/no asset list/);
     expect(errs).toMatch(/building fresh instead/);
     expect(errs).not.toMatch(/an APK cannot be made to carry an asset AAPT did not package/);
     expect(h.calls.build.length).toBe(1);
@@ -7673,15 +7668,185 @@ describe('strict remote machine selection', () => {
     expect(readLastBuilds(readWorkspaceState(root)).android?.errorCode).toBe('STIM_OFFLOAD_REFUSED');
   });
 
-  test('a Release cache miss refuses strict placement before Gradle', async () => {
+  function offloadedRelease(artifactPath = fakeApk('app-release.apk')) {
+    const choose = vi
+      .spyOn(offloadClient, 'chooseBuildMachine')
+      .mockResolvedValue({ machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice);
+    const offload = vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
+      ok: true,
+      machine: 'mini',
+      artifactPath,
+      compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
+      ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
+      timings: {
+        offerMs: 0,
+        syncMs: 0,
+        workerMs: 10,
+        fetchMs: 0,
+        totalMs: 10,
+        worker: {},
+        uploadedBytes: 0,
+        artifactBytes: 0,
+      },
+    });
+    return { choose, offload };
+  }
+
+  test("a Release miss on a named machine installs its APK and replaces the entry with the worker's bytes", async () => {
     configureMini();
+    offloadedRelease();
+    const store = vi.fn<(_platform: string, _key: string, path: string, options?: unknown) => string>(
+      (_platform, _key, path) => path,
+    );
     const build = vi.fn<() => never>();
     const slot = vi.fn<() => never>();
-    const result = await harness({ buildMachine: 'mini', variant: 'release', build, acquireSlot: slot }).run();
-    expect(result.error?.code).toBe('STIM_OFFLOAD_REFUSED');
-    expect(result.error?.message).toContain('release builds build here');
+    const h = harness({ buildMachine: 'mini', variant: 'release', storeCached: store, build, acquireSlot: slot });
+    expect((await h.run()).ok).toBe(true);
     expect(build).not.toHaveBeenCalled();
     expect(slot).not.toHaveBeenCalled();
+    expect(h.calls.swapApk).toHaveLength(0);
+    expect(store.mock.calls[0]?.[3]).toMatchObject({ overwrite: true });
+    expect(store.mock.calls[0]?.[3]).not.toHaveProperty('assetManifest');
+    expect(readLastBuilds(readWorkspaceState(root)).android).toMatchObject({ builtOn: 'mini', status: 'ok' });
+  });
+
+  test('a cached APK with no asset list rebuilds on the machine without bundling for a swap', async () => {
+    configureMini();
+    offloadedRelease();
+    const h = harness({
+      buildMachine: 'mini',
+      variant: 'release',
+      resolveCached: () => fakeApk('app-release.apk'),
+      storedAssets: () => null,
+      build: vi.fn<() => never>(),
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.swapApk).toHaveLength(0);
+    expect(offloadClient.offloadBuild).toHaveBeenCalledTimes(1);
+    expect(h.stderr.join('\n')).toMatch(/no asset list.*building fresh instead/);
+  });
+
+  test.each([
+    { variant: null, asks: true, retained: true },
+    { variant: 'release', asks: false, retained: false },
+  ])('a $variant miss asks machines for an APK built elsewhere: $asks', async ({ variant, asks, retained }) => {
+    configureMini();
+    const { choose, offload } = offloadedRelease();
+    await harness({ buildMachine: 'mini', variant, build: vi.fn<() => never>() }).run();
+    expect(choose.mock.calls[0]?.[0].reactNativeArtifact !== undefined).toBe(asks);
+    expect(offload.mock.calls[0]?.[0].request).toMatchObject({ cacheArtifact: retained });
+  });
+
+  test.each([
+    { variant: 'release', sent: true },
+    { variant: null, sent: false },
+  ])('an Expo $variant offload sends the gitignored .env.production: $sent', async ({ variant, sent }) => {
+    configureMini();
+    const { offload } = offloadedRelease();
+    vi.spyOn(buildCache, 'gitignoredFingerprintInputs').mockResolvedValue([]);
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ scripts: { ios: 'expo run:ios' }, dependencies: { expo: '*' } }),
+    );
+    writeFileSync(join(root, '.env.production'), 'EXPO_PUBLIC_API=https://api.example.com\n');
+    await harness({
+      buildMachine: 'mini',
+      variant,
+      planPrebuildFor: () => 'none',
+      build: vi.fn<() => never>(),
+    }).run();
+    const inputs = await offload.mock.calls[0]?.[0].fingerprintInputs?.();
+    expect(inputs?.ignored.includes(join(root, '.env.production'))).toBe(sent);
+  });
+
+  test.each([
+    { variant: 'release', refused: true },
+    { variant: null, refused: false },
+  ])('a $variant offload refuses a file that sets a signing password: $refused', async ({ variant, refused }) => {
+    configureMini();
+    const { offload } = offloadedRelease();
+    writeFileSync(join(root, 'signing.properties'), 'storePassword=hunter2\n');
+    await harness({ buildMachine: 'mini', variant, build: vi.fn<() => never>() }).run();
+    const plan = await offload.mock.calls[0]?.[0].syncPlan?.(root, ['signing.properties']);
+    expect(plan?.refusal?.includes('signing.properties') ?? false).toBe(refused);
+  });
+
+  test('an unsigned Release APK from the machine is signed here, and the signed APK is what gets stored', async () => {
+    configureMini();
+    const unsigned = fakeApk('app-release-unsigned.apk');
+    offloadedRelease(unsigned);
+    mkdirSync(join(root, 'android', 'app'), { recursive: true });
+    writeFileSync(join(root, 'android', 'app', 'debug.keystore'), 'key');
+    const signApk = vi.fn<NonNullable<ReactNativeAndroidDependencies['signApk']>>(async () => null);
+    const store = vi.fn<(_platform: string, _key: string, path: string) => string>((_platform, _key, path) => path);
+    const result = await harness({
+      buildMachine: 'mini',
+      variant: 'release',
+      signApk,
+      storeCached: store,
+      build: vi.fn<() => never>(),
+    }).run();
+    expect(result.ok).toBe(true);
+    expect(signApk.mock.calls[0]?.[0]).toMatchObject({
+      input: unsigned,
+      output: unsigned.replace('-unsigned.apk', '.apk'),
+    });
+    expect(store.mock.calls[0]?.[2]).toBe(unsigned.replace('-unsigned.apk', '.apk'));
+  });
+
+  test.each([
+    { name: 'no build tools', keystore: true, failure: 'no zipalign found under the Android SDK build-tools' },
+    { name: 'no keystore', keystore: false, failure: 'no keystore at' },
+  ])('$name here refuses an unsigned Release APK without storing it', async ({ keystore, failure }) => {
+    configureMini();
+    offloadedRelease(fakeApk('app-release-unsigned.apk'));
+    if (keystore) {
+      mkdirSync(join(root, 'android', 'app'), { recursive: true });
+      writeFileSync(join(root, 'android', 'app', 'debug.keystore'), 'key');
+    }
+    const store = vi.fn<() => never>();
+    const result = await harness({
+      buildMachine: 'mini',
+      variant: 'release',
+      signApk: async () => ({ step: 'zipalign' as const, reason: failure }),
+      storeCached: store,
+      build: vi.fn<() => never>(),
+    }).run();
+    expect(result.error?.code).toBe('STIM_OFFLOAD_REFUSED');
+    expect(result.error?.message).toContain(failure);
+    expect(result.error?.remedy).toContain('android.keystore');
+    expect(store).not.toHaveBeenCalled();
+  });
+
+  test('a machine without Android release support gets a remedy to update it', async () => {
+    configureMini();
+    const { offload } = offloadedRelease();
+    offload.mockResolvedValue({
+      ok: false,
+      machine: 'mini',
+      reason: 'its stim-server cannot build an Android release variant',
+    });
+    const result = await harness({ buildMachine: 'mini', variant: 'release', build: vi.fn<() => never>() }).run();
+    expect(result.error?.remedy).toContain('stim-server service update');
+  });
+
+  test('a password file in the sync gets a remedy about that file, not about signing here', async () => {
+    configureMini();
+    const reason = 'signing.properties holds an Android signing key or its password, and it stays here';
+    const { offload } = offloadedRelease();
+    offload.mockResolvedValue({ ok: false, machine: 'mini', reason });
+    const result = await harness({ buildMachine: 'mini', variant: 'release', build: vi.fn<() => never>() }).run();
+    expect(result.error?.remedy).toContain('Remove that key or password');
+  });
+
+  test('a worker build stopped by a missing keystore carries the signing remedy', async () => {
+    configureMini();
+    const reason = 'gradle-failed: Keystore file not set for signing config release';
+    const { offload } = offloadedRelease();
+    offload.mockResolvedValue({ ok: false, machine: 'mini', reason });
+    const result = await harness({ buildMachine: 'mini', variant: 'release', build: vi.fn<() => never>() }).run();
+    expect(result.error?.message).toContain(reason);
+    expect(result.error?.remedy).toContain('--remote-build local');
   });
 
   test('a listed paired named cache hit contacts no worker and records no compilation', async () => {
@@ -7718,9 +7883,9 @@ describe('strict remote machine selection', () => {
     },
   );
 
-  test('auto still builds a Release cache miss here without contacting a paired worker', async () => {
+  test('auto with a free slot here builds a Release miss here without asking a machine for a cached APK', async () => {
     configureMini();
-    writeConfigSetting({ scope: 'machine' }, 'remote.build', 'remote');
+    writeConfigSetting({ scope: 'machine' }, 'server.maxLoadPerCore', 100000);
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
     const h = harness({ buildMachine: 'auto', variant: 'release' });
     expect((await h.run()).ok).toBe(true);

@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
+import { androidSyncPlan } from '../offload/signing-files.ts';
 import * as buildMachines from '../offload/build-machines.ts';
 import {
   buildPlacementSettings,
@@ -562,6 +563,131 @@ describe('strict client routing', () => {
       expect(close).toHaveBeenCalled();
     },
   );
+
+  it('an Android sync leaves signing keys out and keeps debug.keystore', async () => {
+    mkdirSync(join(root, 'android', 'app'), { recursive: true });
+    const names = ['android/app/debug.keystore', 'android/app/release.keystore', 'android/keystore.properties'];
+    for (const name of names) writeFileSync(join(root, name), 'bytes');
+    writeFileSync(join(root, 'android', 'app', 'ignored.jks'), 'bytes');
+    setExecutor({
+      runFile: (_file, args) =>
+        args?.includes('--git-common-dir') ? join(root, '.git') : args?.includes('ls-files') ? names.join('\0') : root,
+    });
+    const synced: string[] = [];
+    const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method, params) => {
+      if (method === 'build.offer') return { result: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) };
+      if (method === 'build.sync') {
+        synced.push(...(params as { files: { path: string }[] }).files.map((file) => file.path));
+        return { result: { missing: [] } };
+      }
+      return { error: { code: 'busy', message: 'stop here' } };
+    });
+    const connection = Object.assign(Object.create(BuildConnection.prototype), {
+      features: [],
+      request,
+      close: vi.fn<() => void>(),
+      onProgress: () => {},
+    }) as BuildConnection;
+    vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
+    const choice = await choose();
+    assert(typeof choice !== 'string');
+    await offloadBuild({
+      choice,
+      expectedFingerprint: 'fingerprint',
+      request: {
+        platform: 'android',
+        isExpo: false,
+        android: { variant: null, abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'ccache' },
+      },
+      fingerprintInputs: async () => ({ sources: [], ignored: [join(root, 'android', 'app', 'ignored.jks')] }),
+      syncPlan: (repoRoot, paths) =>
+        androidSyncPlan(repoRoot, paths, { release: true, configured: [], projectScripts: [] }),
+      stagingDir: join(root, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(synced).toEqual(['android/app/debug.keystore']);
+  });
+
+  it.each([
+    { variant: 'release', features: [], synced: false },
+    { variant: 'release', features: ['build-android-release'], synced: true },
+    { variant: null, features: [], synced: true },
+  ])('a $variant build with features $features syncs: $synced', async ({ variant, features, synced }) => {
+    const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method) => {
+      if (method === 'build.offer') return { result: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) };
+      if (method === 'build.sync') return { result: { missing: [] } };
+      return { error: { code: 'busy', message: 'stop here' } };
+    });
+    const connection = Object.assign(Object.create(BuildConnection.prototype), {
+      features,
+      request,
+      close: vi.fn<() => void>(),
+      onProgress: () => {},
+    }) as BuildConnection;
+    vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
+    const choice = await choose();
+    assert(typeof choice !== 'string');
+    await offloadBuild({
+      choice,
+      expectedFingerprint: 'fingerprint',
+      request: {
+        platform: 'android',
+        isExpo: false,
+        android: { variant, abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'ccache' },
+      },
+      stagingDir: join(root, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(request.mock.calls.some(([method]) => method === 'build.sync')).toBe(synced);
+  });
+
+  it('a sync plan refusal stops the build before any file list or byte reaches the worker', async () => {
+    const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method) => {
+      if (method === 'build.offer') return { result: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) };
+      return { result: {} };
+    });
+    const connection = Object.assign(Object.create(BuildConnection.prototype), {
+      features: [],
+      request,
+      close: vi.fn<() => void>(),
+      onProgress: () => {},
+    }) as BuildConnection;
+    vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
+    const choice = await choose();
+    assert(typeof choice !== 'string');
+    const syncPlan = vi.fn<NonNullable<Parameters<typeof offloadBuild>[0]['syncPlan']>>(async () => ({
+      omit: new Set<string>(),
+      refusal: 'release.jks holds a signing key',
+    }));
+    const outcome = await offloadBuild({
+      choice,
+      expectedFingerprint: 'fingerprint',
+      request: {
+        platform: 'ios',
+        runtime: RUNTIME,
+        configuration: null,
+        scheme: null,
+        iosProjectPath: 'ios',
+        isExpo: false,
+        optimizations: {},
+      },
+      syncPlan,
+      stagingDir: join(root, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(outcome).toEqual({ ok: false, machine: 'mini', reason: 'release.jks holds a signing key' });
+    expect(syncPlan).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls.map(([method]) => method)).toEqual(['build.offer']);
+  });
 });
 
 test('excluded local builds require a remote regardless of relative load and refuse unsupported fallback', () => {

@@ -1128,6 +1128,7 @@ describe('linked worktree sweep classification', () => {
     ['dirty', linked({ porcelain: ['?? notes.txt'], merge: merged() }), 'dirty'],
     ['in use', linked({ inUse: ['its dev server supervisor (pid 1) is running'], merge: merged() }), 'in-use'],
     ['locked', linked({ locked: true, merge: merged() }), 'locked'],
+    ['pinned', linked({ pinned: true, merge: merged() }), 'pinned'],
     ['the source checkout', linked({ source: 'source', merge: merged() }), 'source-checkout'],
     ['with submodules', linked({ submodules: true, merge: merged(true) }), 'submodules'],
     [

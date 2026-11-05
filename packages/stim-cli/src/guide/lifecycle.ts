@@ -2224,7 +2224,9 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   looks exactly like a cache that is not there.
 
   Stim ignores paths a fresh checkout never has and no native Debug build
-  reads: android/local.properties, android/.idea, *.xcodeproj/xcuserdata, .git (and its contents), .expo, and,
+  reads: android/local.properties, android/.idea, *.xcodeproj/xcuserdata, .git (and its contents), .expo,
+  on Android the signing files *.keystore, *.jks, *.p12, *.pfx and keystore.properties (but not debug.keystore or
+  an APK's own src/*/assets and src/*/res), which an Android offload does not send, and,
   while a .gitignore pattern matches them (even when committed), the
   \`react-native bundle\` output ios/main.jsbundle and ios/assets. A project
   does not repeat those.
@@ -2485,13 +2487,15 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
        install) goes after the measured ones, longest-idle first. The daemon
        measures each tree in the background, one walk at a time on the
        machine, after its install changes and at least every 6 hours
-    6. idle Gradle and Kotlin daemons, unpinned Gradle versions unmodified for
+    6. idle Gradle and Kotlin daemons, an unused watchman (over 2 GiB, or over
+       1 GiB under memory pressure), unpinned Gradle versions unmodified for
        maintenance.gradleVersionIdleDays, Stim TMPDIR leftovers unmodified for
        24 hours, and the worktree trash; automatic maintenance's daily sweep
        runs this rung at normal
 
   A level raised only by memory runs only what frees memory: the idle stage
-  of rung 1, which shuts devices down, and the Gradle daemons of rung 6.
+  of rung 1, which shuts devices down, and the Gradle daemons and watchman of
+  rung 6.
   Memory never refuses: it holds boots (\`guide lifecycle concurrency\`).
 
   Every action goes to $STIM_HOME/daemon/daemon.ndjson and to the workspace's
@@ -3303,6 +3307,12 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   when an EXPO_PUBLIC_ value, EXPO_NO_DOTENV, NODE_ENV or a .env* file in the
   project root differs from the previous swap's. A metro.config.js that sets
   its own cacheStores keeps its own cache location.
+
+  A release APK built on a remote machine (\`stim guide settings\`, remote.build)
+  carries the JS of the checkout this machine synced, including gitignored
+  .env.production files. A real release key stays on this machine: that machine
+  builds it unsigned and this one zipaligns and signs it as above. It has no asset
+  list, so a later cache hit does not swap it and builds again on that machine.
 
   Native Release bundling on Expo SDK 54-57 replaces ALL transform stores with
   a fresh build-private store and removes it when the build ends. Project

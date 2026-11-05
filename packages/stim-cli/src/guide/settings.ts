@@ -1183,14 +1183,32 @@ REMOVED SETTINGS below.
 
 A name never prompts for pairing, tries another remote machine or falls back here.
 remote-only refuses instead of building here for a build that cannot leave this
-machine (device, Android release, an unknown simulator runtime, the build cache
-off), and when no pairing or approval exists.
+machine (device, an unknown simulator runtime, the build cache off), and when no
+pairing or approval exists.
 Any refusal or failure is STIM_OFFLOAD_REFUSED with the remote machine and reason.
-Device, Android release variant, --remote, Android CAS compiler builds, builds
-with the build cache off, and an unknown simulator runtime cannot build there
+Device, --remote, Android CAS compiler builds, builds with the build cache off, and an unknown simulator runtime cannot build there
 and refuse on a cache miss, with a remedy to rerun with --remote-build local or
 auto. An iOS simulator Release or other non-Debug build can: the remote machine
 bundles the JS of the synced checkout into the app.
+An Android release variant can too. A release offload leaves out keystores
+(*.keystore, *.jks, *.p12, *.pfx) other than debug.keystore and those under an APK's
+src/*/assets or src/*/res, and keystore.properties. A release build type signed with
+debug.keystore, as the React Native and Expo templates are, is signed there. Any
+other signing config builds as an unsigned APK, which this machine zipaligns and signs
+with android.keystore, or android/app/debug.keystore when that is unset; it needs the
+Android SDK build-tools and refuses without them. Gradle scripts that read a missing
+key or password while configuring fail there. A release offload refuses before
+uploading anything when the android.keystore or android.keystorePassword file has
+another name inside the repository, or a .properties, credentials.json or Gradle file
+sets a signing password. The remote machine's stim-server must have this release's
+Android release support, and it always rebundles the JS of the synced checkout. Any of
+these falls back to a local build unless a machine was named.
+A debug offload leaves out those same signing files unless a build.gradle or
+build.gradle.kts names one, because a script can need it to configure, and it is never
+refused over them. All other gitignored files the fingerprint reads, and .env files,
+are sent as before.
+An APK built on a remote machine has no asset list, so its JS cannot be swapped: a
+later run with the same fingerprint builds again there.
 Invalid values, unlisted names and unpaired names refuse
 at setup before consulting the cache; they create no build record or failed-run
 stats. A listed paired name with a cache hit compiles nothing, contacts no worker
@@ -1270,7 +1288,7 @@ machine counts as saturated: each machine applies its own value, and a remote
 machine past it is skipped like a full one. \`stim status\` shows this machine's
 load per core against it, as \`capacity.load\` in JSON.
 
-Device builds, Android release variants,
+Device builds,
 \`--remote eas|proxy\` builds, Android builds with the Apple Clang CAS compiler cache,
 and iOS/Android runs with the build cache off, always build here. Hosted iOS
 builds can use a separate --remote-build, targeting the hosting Mac's

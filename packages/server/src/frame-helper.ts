@@ -237,7 +237,8 @@ export async function buildFoldHelper(
 
 /**
  * One `stim-frames` process per device, shared by its subscribers and stopped `lingerMs` after the last of them
- * leaves, unchanged meanwhile, so a subscriber that comes back within that time gets the latest frame at once. It runs
+ * leaves, paused meanwhile (fps 0, no encoders), so a subscriber that comes back within that time gets a frame without
+ * a helper start. It runs
  * at the highest fps and the largest edge any subscriber asked for; each subscriber paces its own frames. The
  * helper exits when its stdin closes, so it cannot outlive the server. `lit` turns the display the helper
  * reports it streams into a posture, which the frames and access units after it carry.
@@ -251,6 +252,7 @@ export class HelperSource {
   private artwork: DeviceFrameArtwork | null | undefined;
   private windows: { current: MacosWindow | null; windows: MacosWindow[]; pinned: boolean } | undefined;
   private config = '';
+  private maxEdge: number = FRAME_EDGE.min;
   private stopped = false;
   private notice: string | null = null;
   keyboard: boolean | null = null;
@@ -335,8 +337,8 @@ export class HelperSource {
     if (this.stalled) listener.delayed(true, this.stalled);
     return () => {
       if (!this.listeners.delete(listener)) return;
-      if (this.listeners.size > 0) this.configure();
-      else this.lingerTimer = setTimeout(() => void this.stop(), this.lingerMs);
+      this.configure();
+      if (this.listeners.size === 0) this.lingerTimer = setTimeout(() => void this.stop(), this.lingerMs);
     };
   }
 
@@ -411,7 +413,6 @@ export class HelperSource {
   }
 
   private configure(): void {
-    if (this.listeners.size === 0) return;
     const watching = [...this.listeners].flatMap(([listener, hint]) => (hint ? [{ listener, hint }] : []));
     const hints = watching.map(({ hint }) => hint);
     const viewers = watching.filter(({ listener }) => !listener.record);
@@ -432,9 +433,10 @@ export class HelperSource {
     const jpegFps = raw.flatMap(({ listener, hint }) => (listener.video ? [] : [hint.fps]));
     const recording = viewers.length < watching.length;
     this.bitrate.limit(Math.min(DEFAULT_VIDEO_LIMITS.maxBitrate, ...hints.map((hint) => hint.maxBitrate ?? Infinity)));
+    if (hints.length) this.maxEdge = Math.max(FRAME_EDGE.min, ...hints.map((hint) => hint.maxEdge));
     const config = JSON.stringify({
       fps: Math.max(0, ...hints.map((hint) => hint.fps)),
-      maxEdge: Math.max(FRAME_EDGE.min, ...hints.map((hint) => hint.maxEdge)),
+      maxEdge: this.maxEdge,
       jpeg: jpegFps.length > 0,
       ...(viewers.some(({ listener }) => listener.artwork !== undefined) ? { deviceFrame: true } : {}),
       ...(duo.length && this.hingeHelper
@@ -451,7 +453,7 @@ export class HelperSource {
       bitrate: this.bitrate.current,
       ...(recording ? { record: { maxEdge: RECORD_HINT.maxEdge, fps: RECORD_HINT.fps, bitrate: RECORD_BITRATE } } : {}),
     });
-    if (!jpegFps.length) this.last = null;
+    if (!jpegFps.length && this.listeners.size > 0) this.last = null;
     if (config === this.config || this.stopped) return;
     this.config = config;
     this.child.stdin!.write(`${config}\n`);
