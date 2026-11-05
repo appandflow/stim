@@ -1,3 +1,4 @@
+import { homedir } from 'node:os';
 import {
   daemonNdjsonFile,
   daemonSnapshotFile,
@@ -20,6 +21,7 @@ import { getProject, loadConfig } from '../workspace/config.ts';
 import {
   projectSettingsContextAsync,
   resolveAndroidLayout,
+  settingValueAt,
   type ProjectSettingsContext,
   type SettingsObject,
 } from '../workspace/settings.ts';
@@ -56,6 +58,11 @@ import { inspectBuildMachines, type BuildMachinesInspection } from '../offload/b
 import { doctorIo, keyConfirmer, type GeneratedTickets } from '../offload/tailnet.ts';
 import { confirmInTerminal } from './device-provision.ts';
 import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
+import { readServerSetup } from '../diagnostics/server-setup-probe.ts';
+import { isServerFinding, serverSetupFindings } from '../diagnostics/server-setup.ts';
+import { serverNetworkFindings } from '../diagnostics/server-network.ts';
+import { serverPermissionFindings } from '../diagnostics/server-permissions.ts';
+import { serviceToolchainEntries, serviceToolchainFindings } from '../diagnostics/server-toolchain.ts';
 import { configuredMachines, inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectWatchmanMemory, memorySweepIsScoped } from './gc/memory.ts';
 import { memoryCulpritFindings, readMemoryCulpritsAsync } from '../memory-culprits.ts';
@@ -96,6 +103,18 @@ async function iosTargetRuntime(root: string, settings: SettingsObject | null): 
   } catch {
     return null;
   }
+}
+
+function shareSettings(settings: SettingsObject | null): {
+  exposure: 'auto' | 'tailscale' | 'proxy';
+  publicUrl: string | null;
+} {
+  const exposure = settingValueAt(settings, 'share.exposure');
+  const publicUrl = settingValueAt(settings, 'share.publicUrl');
+  return {
+    exposure: exposure === 'tailscale' || exposure === 'proxy' ? exposure : 'auto',
+    publicUrl: typeof publicUrl === 'string' && publicUrl ? publicUrl : null,
+  };
 }
 
 function withoutUnhandledRejection<T>(started: Promise<T>): Promise<T> {
@@ -142,6 +161,7 @@ export interface ToolchainReport {
     version: string | null;
     match: 'exact' | 'major' | null;
   } | null;
+  services?: Array<{ label: string; entries: ToolchainEntry[] }>;
 }
 
 export function toolchainReport(root: string, env: NodeJS.ProcessEnv = process.env): ToolchainReport {
@@ -162,7 +182,7 @@ export function toolchainReport(root: string, env: NodeJS.ProcessEnv = process.e
   };
 }
 
-function toolchainLine(entry: ToolchainEntry): string {
+function toolchainLine(entry: ToolchainEntry, name: string = entry.name): string {
   const where =
     entry.source === 'environment'
       ? 'from the environment'
@@ -170,13 +190,16 @@ function toolchainLine(entry: ToolchainEntry): string {
         ? `found from ${entry.from ?? 'a standard location'}`
         : 'not found';
   const override = OVERRIDES[entry.name] ? `; ${OVERRIDES[entry.name]} to override` : '';
-  return phaseLine(entry.name, `${entry.value ?? 'unset'} (${where}${override})`);
+  return phaseLine(name, `${entry.value ?? 'unset'} (${where}${override})`);
 }
 
 function toolchainLines(report: ToolchainReport): string[] {
   const project = report.projectNode;
   return [
-    ...report.entries.map(toolchainLine),
+    ...report.entries.map((entry) => toolchainLine(entry)),
+    ...(report.services ?? []).flatMap((service) =>
+      service.entries.map((entry) => toolchainLine(entry, `${service.label} ${entry.name}`)),
+    ),
     ...(project
       ? [
           phaseLine(
@@ -640,6 +663,7 @@ async function assembleDoctorReport(
     ),
   );
 
+  const serverSetup = withoutUnhandledRejection(readServerSetup(version, shareSettings(settings)));
   const watchman = await watchmanMemory;
   if (watchman) findings.push(watchman);
   if (!memorySweepIsScoped(env)) findings.push(...memoryCulpritFindings(await readMemoryCulpritsAsync()));
@@ -652,8 +676,22 @@ async function assembleDoctorReport(
   findings.push(...deviceHostMachines.findings.filter((each) => !reported.has(each.title)));
   const agentDriver = inspectHostedAgentDriver();
   if (agentDriver) findings.push(agentDriver);
+  const setup = await serverSetup;
+  if (setup)
+    findings.push(
+      ...serverSetupFindings(setup),
+      ...serverNetworkFindings(setup),
+      ...serviceToolchainFindings(setup),
+      ...serverPermissionFindings(setup),
+    );
 
   const toolchain = host === 'darwin' ? toolchainReport(root, env) : null;
+  if (toolchain && setup?.services.length) {
+    toolchain.services = setup.services.map(({ label, installed }) => ({
+      label,
+      entries: serviceToolchainEntries(installed, homedir()),
+    }));
+  }
   const maintenance = maintenanceStatus(env);
   const daemon = daemonStatus(env);
   findings.push(...daemonFindings(daemon));
@@ -766,15 +804,21 @@ export default function doctorCommand(
         for (const line of toolchainLines(toolchain)) console.log(chalk.dim(line));
       }
       for (const f of ordered) {
-        const tag = f.level === 'cost' ? chalk.yellow('costs time') : chalk.dim('note');
+        const tag =
+          f.level !== 'cost'
+            ? chalk.dim('note')
+            : isServerFinding(f)
+              ? chalk.yellow('problem')
+              : chalk.yellow('costs time');
         console.log(`\n${tag}  ${chalk.bold(f.title)}`);
         console.log(`  ${f.detail}`);
         if (f.fix) console.log(chalk.dim(`  -> ${f.fix}`));
       }
 
+      const serverOnly = findings.every(isServerFinding);
       console.log(
         chalk.dim(
-          `\n${findings.length} finding(s). Fix relevant "costs time" findings before copying the source checkout into a native worktree.`,
+          `\n${findings.length} finding(s).${serverOnly ? '' : ' Fix relevant "costs time" findings before copying the source checkout into a native worktree.'}${findings.some(isServerFinding) ? ' Doctor reports stim-server problems and never changes a server.' : ''}`,
         ),
       );
       recordDoctorRun(root, opts.platform, version, undefined, selected.platforms);

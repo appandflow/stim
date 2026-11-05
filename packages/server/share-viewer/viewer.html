@@ -15,11 +15,11 @@
     data-control="{{control}}"
     data-view-only="{{viewOnly}}"
     data-upgrade="{{upgrade}}"
-    data-ask-name="{{askName}}"
     data-platform="{{platform}}"
     data-buttons="{{buttons}}"
     data-can-rotate="{{rotate}}"
     data-webrtc="{{webrtc}}"
+    data-stun="{{stun}}"
   >
     <header class="topbar">
       <p class="status" id="status" role="status" data-state="waiting">
@@ -46,12 +46,12 @@
         </div>
       </div>
       <form class="upgrade" id="upgrade" method="post" action="login" hidden>
-        <button class="link" id="upgrade-open" type="button">Have the control password?</button>
+        <button class="link" id="upgrade-open" type="button">Have the control access code?</button>
         <span class="upgrade-fields" id="upgrade-fields" hidden>
           <input
             class="field secret"
             type="text"
-            name="password"
+            name="access"
             autocomplete="off"
             autocapitalize="off"
             autocorrect="off"
@@ -62,8 +62,8 @@
             data-form-type="other"
             required
             maxlength="128"
-            placeholder="Control password"
-            aria-label="Control password"
+            placeholder="Control access code"
+            aria-label="Control access code"
           />
           <button class="primary small" type="submit">Control</button>
         </span>
@@ -185,6 +185,7 @@
     <script src="/s/assets/gestures.js"></script>
     <script src="/s/assets/keys.js"></script>
     <script src="/s/assets/people.js"></script>
+    <script src="/s/assets/rtcpolicy.js"></script>
     <script src="/s/assets/webrtc.js"></script>
     <script src="/s/assets/reconnect.js"></script>
     <script src="/s/assets/viewer.js"></script>

@@ -40,6 +40,7 @@ beforeEach(() => {
     'packages/stim-cli/src/__tests__/_fixture.ts',
     'README.md',
     'packages/stim-cli/src/__tests__/example.compat.test.ts',
+    'packages/server/__tests__/example.browser.test.ts',
   ])
     write(file, 'before');
   commit();
@@ -62,6 +63,7 @@ test.each([
   'packages/stim-cli/src/__tests__/_fixture.ts',
   'README.md',
   'packages/stim-cli/src/__tests__/example.compat.test.ts',
+  'packages/server/__tests__/example.browser.test.ts',
 ])('changing %s alongside a unit test falls back to the full suite', (file) => {
   write(unit, 'after');
   write(file, 'after');

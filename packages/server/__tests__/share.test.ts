@@ -84,6 +84,7 @@ interface Fixture {
     keyframes: number;
     offers: string[];
     peersClosed: number;
+    peerEnded: ((reason: string) => void)[];
   }[];
 }
 
@@ -218,6 +219,7 @@ function fixture(limits: Partial<ShareLimits> = {}, deps: Partial<ShareDeps> = {
         keyframes: 0,
         offers: [] as string[],
         peersClosed: 0,
+        peerEnded: [] as ((reason: string) => void)[],
       };
       f.hostedSources.push(record);
       const source: ShareSource = {
@@ -229,8 +231,9 @@ function fixture(limits: Partial<ShareLimits> = {}, deps: Partial<ShareDeps> = {
         },
         keyframe: () => record.keyframes++,
         congested: () => {},
-        webrtc: async (offer) => {
+        webrtc: async (offer, closed) => {
           record.offers.push(offer);
+          record.peerEnded.push(closed);
           return { answer: 'answer-sdp', close: () => record.peersClosed++ };
         },
         begin: async () => ({ session: 'h1', platform: 'ios', lease: { grantedAt: 'l', expiresAt: '' }, postures: [] }),
@@ -404,8 +407,10 @@ describe('a web share', () => {
     const url = local(share, f.hub.port!);
     const page = await http(url);
     expect(page.status).toBe(200);
-    expect(page.body).toContain('name="password"');
+    expect(page.body).toContain('name="access"');
     expect(page.body).not.toContain('type="password"');
+    expect(page.body).not.toMatch(/password/i);
+    expect(page.body.match(/<input/g)).toHaveLength(1);
     expect(page.headers['cache-control']).toBe('no-store');
     for (let attempt = 0; attempt < 3; attempt++) {
       expect((await http(`${url}login`, { method: 'POST', body: 'password=wrong' })).status).toBe(401);
@@ -413,6 +418,16 @@ describe('a web share', () => {
     const locked = await http(`${url}login`, { method: 'POST', body: `password=${share.password!}` });
     expect(locked.status).toBe(429);
     expect(locked.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('admits the access code field and still the earlier password field a page left open across an update posts', async () => {
+    const share = await started(f);
+    const url = local(share, f.hub.port ?? 0);
+    const named = await http(`${url}login`, { method: 'POST', body: `access=${share.password ?? ''}` });
+    expect(named.status).toBe(303);
+    expect(String(named.headers['set-cookie'])).toContain('stim_share=');
+    const legacy = await http(`${url}login`, { method: 'POST', body: `password=${share.password ?? ''}` });
+    expect(legacy.status).toBe(303);
   });
 
   it('sets an HttpOnly, Secure, SameSite=Strict session cookie scoped to the share and ending with it', async () => {
@@ -1090,7 +1105,6 @@ describe('a web share', () => {
       const share = await started(f, { passwordless: true, control: true });
       const url = local(share, f.hub.port ?? 0);
       const headers = { origin: origin(url) };
-      expect((await http(url)).body).toContain('data-ask-name="true"');
       const { socket } = await connect(url, headers);
       const other = await connect(url, headers);
       const seen = new Promise<Record<string, unknown>[]>((resolve) => {
@@ -1207,7 +1221,7 @@ describe('a web share', () => {
       for (let attempt = 0; attempt < 40; attempt++)
         views.push(cookieOf(await http(`${url}login`, body('view%20pass'))));
       expect((await http(url, { cookie: control })).body).toContain('data-control="true"');
-      expect((await http(url, { cookie: firstView })).body).toContain('name="password"');
+      expect((await http(url, { cookie: firstView })).body).toContain('name="access"');
       expect((await http(url, { cookie: views.at(-1) })).body).toContain('data-view-only="true"');
     });
 
@@ -1222,7 +1236,7 @@ describe('a web share', () => {
       expect(refused.status).toBe(429);
       expect(refused.headers['set-cookie']).toBeUndefined();
       const another = cookieOf(await http(`${url}login`, body('control%20pass')));
-      expect((await http(url, { cookie: controls[0] })).body).toContain('name="password"');
+      expect((await http(url, { cookie: controls[0] })).body).toContain('name="access"');
       expect((await http(url, { cookie: controls[1] })).body).toContain('data-control="true"');
       expect((await http(url, { cookie: another })).body).toContain('data-control="true"');
     });
@@ -1250,11 +1264,11 @@ describe('a web share', () => {
         control: true,
         viewOnly: false,
         upgrade: false,
-        askName: false,
         platform,
         buttons: BUTTONS[platform],
         rotate: true,
         webrtc: false,
+        stun: '',
       });
       for (const button of BUTTONS[platform]) expect(page).toContain(`data-button="${button}"`);
       for (const direction of ['left', 'right']) expect(page).toContain(`data-rotate="${direction}"`);
@@ -1424,7 +1438,7 @@ describe('a web share', () => {
       expect(f.hub.list()).toMatchObject([{ slug: 'pokedex' }]);
       const url = local(share, f.hub.port ?? 0);
       const page = await http(url);
-      expect(page.body).toContain('name="password"');
+      expect(page.body).toContain('name="access"');
       expect(page.body).not.toContain('id="screen"');
       expect((await connect(url, { origin: origin(url) })).status).toBe(401);
       expect((await http(`${url}login`, { method: 'POST', body: 'password=wrong' })).status).toBe(401);
@@ -1453,7 +1467,7 @@ describe('a web share', () => {
       const second = await started(f, { slug: 'pokedex' });
       expect(second.url).toBe(first.url);
       const url = local(second, f.hub.port ?? 0);
-      expect((await http(url, { cookie: oldCookie })).body).toContain('name="password"');
+      expect((await http(url, { cookie: oldCookie })).body).toContain('name="access"');
       expect((await connect(url, { origin: origin(url), cookie: oldCookie })).status).toBe(401);
     });
 
@@ -1776,7 +1790,7 @@ describe('a web share', () => {
       expect(first.url.endsWith(`/s/${TOKEN}/`)).toBe(true);
       expect(first.expiresAt).toBe(new Date(expiresAt).toISOString());
       const url = local(first, f.hub.port ?? 0);
-      expect((await http(url)).body).toContain('name="password"');
+      expect((await http(url)).body).toContain('name="access"');
       expect(await login(url, 'saved-password')).toContain('stim_share=');
 
       await f.hub.stop(WORKSPACE);
@@ -1881,26 +1895,89 @@ describe('a web share', () => {
       ],
     });
 
-    it('answers a WebRTC offer from the source and leaves the video off the share socket', async () => {
+    const useHosted = (target: Fixture): void => target.status(hostedPayload() as never);
+
+    it('keeps a viewer on socket video until it reports a keyframe from its WebRTC peer, and takes it back after', async () => {
       f = fixture({}, { webrtc: () => true });
-      f.status(hostedPayload() as never);
+      useHosted(f);
       const share = await started(f);
       const url = local(share, f.hub.port ?? 0);
-      const cookie = await login(url, share.password!);
-      const record = f.hostedSources[0]!;
-      const plain = await connect(url, { origin: origin(url), cookie }, '?codec=h264');
-      plain.socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp' }));
-      await vi.waitFor(() => expect(plain.messages.some((m) => m.type === 'webrtc-failed')).toBe(true));
-      expect(record.offers).toEqual([]);
-      plain.socket.close();
+      const cookie = await login(url, share.password ?? '');
+      const [record] = f.hostedSources;
+      if (!record) throw new Error('no hosted source');
+      const { socket, messages } = await connect(url, { origin: origin(url), cookie }, '?codec=h264');
+      expect(record.subscribed.at(-1)?.video).toBeDefined();
 
-      const { socket, messages } = await connect(url, { origin: origin(url), cookie }, '?codec=h264&transport=webrtc');
-      expect(record.subscribed.at(-1)!.video).toBeUndefined();
-      socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp' }));
-      await vi.waitFor(() => expect(messages).toContainEqual({ type: 'webrtc-answer', sdp: 'answer-sdp' }));
+      socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp', attempt: 3 }));
+      await vi.waitFor(() => expect(messages).toContainEqual({ type: 'webrtc-answer', sdp: 'answer-sdp', attempt: 3 }));
       expect(record.offers).toEqual(['offer-sdp']);
+      expect(record.subscribed).toHaveLength(1);
+
+      socket.send(JSON.stringify({ type: 'transport', via: 'webrtc', attempt: 3 }));
+      await vi.waitFor(() => expect(record.subscribed).toHaveLength(2));
+      expect(record.subscribed.at(-1)?.video).toBeUndefined();
+      expect(record.unsubscribed).toBe(1);
+
+      socket.send(JSON.stringify({ type: 'transport', via: 'ws' }));
+      await vi.waitFor(() => expect(record.subscribed).toHaveLength(3));
+      expect(record.subscribed.at(-1)?.video).toBeDefined();
+      expect(record.unsubscribed).toBe(2);
+      expect(record.peersClosed).toBe(0);
+
       socket.close();
       await vi.waitFor(() => expect(record.peersClosed).toBe(1));
+    });
+
+    it('puts the video back on the socket when the peer carrying it ends, and refuses a switch with no peer', async () => {
+      f = fixture({}, { webrtc: () => true });
+      useHosted(f);
+      const share = await started(f);
+      const url = local(share, f.hub.port ?? 0);
+      const cookie = await login(url, share.password ?? '');
+      const [record] = f.hostedSources;
+      if (!record) throw new Error('no hosted source');
+      const { socket, messages } = await connect(url, { origin: origin(url), cookie }, '?codec=h264');
+
+      socket.send(JSON.stringify({ type: 'transport', via: 'webrtc', attempt: 1 }));
+      await vi.waitFor(() =>
+        expect(messages).toContainEqual({ type: 'webrtc-failed', message: 'The WebRTC peer is gone.', attempt: 1 }),
+      );
+      expect(record.subscribed).toHaveLength(1);
+
+      socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp', attempt: 2 }));
+      await vi.waitFor(() => expect(record.peerEnded).toHaveLength(1));
+      socket.send(JSON.stringify({ type: 'transport', via: 'webrtc', attempt: 2 }));
+      await vi.waitFor(() => expect(record.subscribed).toHaveLength(2));
+      expect(record.subscribed.at(-1)?.video).toBeUndefined();
+
+      record.peerEnded[0]?.('WebRTC failed');
+      await vi.waitFor(() => expect(record.subscribed).toHaveLength(3));
+      expect(record.subscribed.at(-1)?.video).toBeDefined();
+      await vi.waitFor(() =>
+        expect(messages).toContainEqual({ type: 'webrtc-failed', message: 'WebRTC failed', attempt: 2 }),
+      );
+      socket.close();
+    });
+
+    it('answers a viewer that offers faster than a few a second with a refusal, not a peer', async () => {
+      f = fixture({}, { webrtc: () => true });
+      useHosted(f);
+      const share = await started(f);
+      const url = local(share, f.hub.port ?? 0);
+      const [record] = f.hostedSources;
+      if (!record) throw new Error('no hosted source');
+      const { socket, messages } = await connect(
+        url,
+        { origin: origin(url), cookie: await login(url, share.password ?? '') },
+        '?codec=h264',
+      );
+      for (let attempt = 1; attempt <= 6; attempt++) {
+        socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp', attempt }));
+        while (!messages.some((m) => m.attempt === attempt)) await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(messages).toContainEqual({ type: 'webrtc-failed', message: 'Too many WebRTC offers.', attempt: 6 });
+      expect(record.offers).toHaveLength(4);
+      socket.close();
     });
 
     it('keeps the video on the share socket and refuses offers while share.webrtc is off', async () => {
@@ -1912,7 +1989,7 @@ describe('a web share', () => {
       expect(viewer.body).toContain('data-webrtc="false"');
       expect(viewer.headers['set-cookie']).toBeUndefined();
       const record = f.hostedSources[0]!;
-      const { socket, messages } = await connect(url, { origin: origin(url), cookie }, '?codec=h264&transport=webrtc');
+      const { socket, messages } = await connect(url, { origin: origin(url), cookie }, '?codec=h264');
       expect(record.subscribed.at(-1)!.video).toBeDefined();
       socket.send(JSON.stringify({ type: 'webrtc-offer', sdp: 'offer-sdp' }));
       await vi.waitFor(() => expect(messages.some((m) => m.type === 'webrtc-failed')).toBe(true));
@@ -1928,6 +2005,26 @@ describe('a web share', () => {
       const viewer = await http(`${url}?transport=webrtc`, { cookie: await login(url, share.password!) });
       expect(viewer.body).toContain('data-webrtc="true"');
       expect(String(viewer.headers['set-cookie'])).toContain('stim_transport=webrtc');
+    });
+
+    it('offers WebRTC to a local share only when this machine can send it, and to a hosted share whenever the setting is on', async () => {
+      const canSendHere = false;
+      f = fixture({}, { webrtc: (hosted) => hosted || canSendHere });
+      const localShare = await started(f);
+      const localUrl = local(localShare, f.hub.port ?? 0);
+      expect((await http(localUrl, { cookie: await login(localUrl, localShare.password ?? '') })).body).toContain(
+        'data-webrtc="false"',
+      );
+      await f.hub.close();
+      f.presence.close();
+
+      f = fixture({}, { webrtc: (hosted) => hosted || canSendHere });
+      useHosted(f);
+      const remote = await started(f);
+      const remoteUrl = local(remote, f.hub.port ?? 0);
+      expect((await http(remoteUrl, { cookie: await login(remoteUrl, remote.password ?? '') })).body).toContain(
+        'data-webrtc="true"',
+      );
     });
 
     it('streams and drives through the hosted source, never the local frame pool or control hub', async () => {

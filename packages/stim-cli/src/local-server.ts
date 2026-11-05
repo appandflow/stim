@@ -92,6 +92,49 @@ export function requestLocalServer<M extends LocalMethod>(
   });
 }
 
+/** What the server on this Stim home's local socket reports in `hello`. */
+export interface LocalHello {
+  version: string;
+  port: number | null;
+  features: string[];
+}
+
+/** Asks the server on this Stim home's local Unix socket for its `hello`; null when none answers within `timeoutMs`. */
+export function readLocalHello(version: string, timeoutMs: number): Promise<LocalHello | null> {
+  const path = serverLocalSocket();
+  if (process.platform === 'win32' || !existsSync(path)) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const socket = new WebSocket(`ws+unix://${path}:/`);
+    const finish = (hello: LocalHello | null) => {
+      clearTimeout(timer);
+      socket.terminate();
+      resolve(hello);
+    };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    socket.on('open', () =>
+      socket.send(JSON.stringify({ id: 1, method: 'hello', params: { client: { name: 'stim', version } } })),
+    );
+    socket.on('message', (data) => {
+      try {
+        const { result } = JSON.parse(data.toString()) ?? {};
+        const server = isJsonObject(result) && isJsonObject(result.server) ? result.server : null;
+        if (!server || typeof server.version !== 'string') return finish(null);
+        finish({
+          version: server.version,
+          port: typeof server.port === 'number' ? server.port : null,
+          features: Array.isArray(result.features)
+            ? result.features.filter((each: unknown) => typeof each === 'string')
+            : [],
+        });
+      } catch {
+        finish(null);
+      }
+    });
+    socket.on('error', () => finish(null));
+    socket.on('close', () => finish(null));
+  });
+}
+
 /**
  * Ends the web shares of `workspace`, or of its `slot` alone, in this Stim home's stim-server. A share waits for its
  * device when the device goes away on its own, so stopping a workspace or slot ends its shares explicitly. Best effort:

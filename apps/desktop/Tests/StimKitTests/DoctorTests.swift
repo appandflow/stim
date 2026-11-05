@@ -17,6 +17,18 @@ struct DoctorTests {
     #expect(items.allSatisfy { $0.workspace == "/Users/dev/stim/apps/mobile" && $0.category == .attention })
   }
 
+  @Test func listsAStimServerSetupFindingOnceAcrossCheckouts() throws {
+    func report(_ project: String) throws -> DoctorReport {
+      let finding =
+        #"{"code":"server-multiple","level":"cost","title":"2 stim-servers serve /h","detail":"d","fix":"Keep pid 1."}"#
+      return try JSONDecoder().decode(
+        DoctorReport.self, from: Data(#"{"project":"\#(project)","findings":[\#(finding)]}"#.utf8))
+    }
+    let items = setupItems([try report("/a"), try report("/b")])
+    #expect(items.map(\.workspace) == ["/a"])
+    #expect(items.map(\.body) == ["Setup: 2 stim-servers serve /h"])
+  }
+
   @Test func anAskKeepsItsOwnStateExceptForMachinesTheRefreshApproves() throws {
     func report(_ machines: String) throws -> DoctorReport {
       try JSONDecoder().decode(

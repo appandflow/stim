@@ -1,6 +1,7 @@
 import type { DataChannel, PeerConnection } from 'node-datachannel';
 import { FRAME_RETRY_MS } from './frame-delivery.ts';
 import { videoPacket, VideoGate, type AccessUnit } from './video.ts';
+import { filterCandidates } from './webrtc-candidates.ts';
 
 /**
  * Sends a device's H.264 access units to one browser over a WebRTC data channel the browser opened
@@ -10,7 +11,12 @@ import { videoPacket, VideoGate, type AccessUnit } from './video.ts';
 
 type NodeDataChannel = typeof import('node-datachannel');
 
-const STUN = (process.env.STIM_WEBRTC_STUN ?? 'stun:stun.l.google.com:19302').split(',').filter(Boolean);
+/**
+ * STUN servers, none by default: the sender then offers only host candidates on private, link-local and tailnet
+ * addresses, and ignores a viewer's candidates anywhere else. Setting `STIM_WEBRTC_STUN` is the explicit opt-in to
+ * public candidates in both directions, which shows this machine's public address to every viewer.
+ */
+const STUN = (process.env.STIM_WEBRTC_STUN ?? '').split(',').filter(Boolean);
 /** Data waiting in the SCTP send queue above which a viewer's video drops until its next keyframe. */
 const QUEUE_BYTES = Number(process.env.STIM_WEBRTC_QUEUE_KB ?? 96) * 1024;
 /**
@@ -60,6 +66,14 @@ function load(): Promise<NodeDataChannel> {
   return loading;
 }
 
+/** Whether node-datachannel loads on this machine; the first call loads it. */
+export function rtcAvailable(): Promise<boolean> {
+  return load().then(
+    () => true,
+    () => false,
+  );
+}
+
 /** Releases the native WebRTC threads so the process can exit; a no-op when no session ever opened. */
 export async function cleanupRtc(): Promise<void> {
   if (!loading) return;
@@ -84,6 +98,9 @@ function describe(pair: ReturnType<PeerConnection['getSelectedCandidatePair']>) 
  */
 export async function openRtc(offer: string, feed: RtcFeed, closed: (reason: string) => void): Promise<RtcSession> {
   const rtc = await load();
+  const publicCandidates = STUN.length > 0;
+  const remote = publicCandidates ? { sdp: offer, kept: 1 } : filterCandidates(offer);
+  if (remote.kept === 0) throw new Error('The viewer offered no address on a local network or tailnet.');
   const pc = new rtc.PeerConnection('stim-share', {
     iceServers: STUN,
     maxMessageSize: MAX_MESSAGE_BYTES,
@@ -238,7 +255,7 @@ export async function openRtc(offer: string, feed: RtcFeed, closed: (reason: str
     setTimeout(resolve, GATHER_MS).unref();
   });
   try {
-    pc.setRemoteDescription(offer, 'offer');
+    pc.setRemoteDescription(remote.sdp, 'offer');
   } catch (cause) {
     end('WebRTC refused the offer');
     throw cause;
@@ -249,5 +266,10 @@ export async function openRtc(offer: string, feed: RtcFeed, closed: (reason: str
     end('WebRTC produced no answer');
     throw new Error('WebRTC produced no answer.');
   }
-  return { answer: description.sdp, close: () => end('closed') };
+  const answer = publicCandidates ? { sdp: description.sdp, kept: 1 } : filterCandidates(description.sdp);
+  if (answer.kept === 0) {
+    end('WebRTC has no local address');
+    throw new Error('This machine has no address on a local network or tailnet to offer.');
+  }
+  return { answer: answer.sdp, close: () => end('closed') };
 }

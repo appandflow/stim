@@ -740,6 +740,13 @@ export async function runReload({
     };
   }
   const strategy: ReloadFacts['strategy'] = reloaded.broadcast ? 'metro-broadcast' : 'metro-websocket';
+  const knownDevices = live.filter(
+    (c) =>
+      c.platform === target.platform &&
+      !c.record.release &&
+      c.record.metroPort === port &&
+      c.record.appId === target.record.appId,
+  ).length;
 
   return {
     ok: true,
@@ -750,7 +757,7 @@ export async function runReload({
       appId: target.record.appId,
       metroPort: port,
       strategy,
-      targets: reloaded.targets ?? null,
+      targets: reloaded.targets === undefined ? null : Math.min(reloaded.targets, knownDevices),
       reverseRestored,
     },
   };

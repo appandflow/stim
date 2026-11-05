@@ -1437,6 +1437,63 @@ watchers, native helpers or recorder; it reads again every 30 seconds and
 serves once a read returns. It preserves claims and recordings; it does not
 restore an inaccessible volume or grant filesystem access.
 
+STIM-SERVER SETUP CHECKS (stim doctor)
+\`stim doctor\` reads this machine's stim-server setup in any app directory and
+reports problems as findings with the exact command or step; it never stops,
+starts, updates or reconfigures a server. It reads the installed service (the
+LaunchAgent on macOS, the systemd user unit on Linux), the process list, each
+server's \`/health\` on 127.0.0.1 (1.5 seconds at most) and the Stim home's
+local socket, and does nothing beyond the process list when no service, server
+process or socket exists. Findings carry a code that starts with \`server-\`;
+a \`cost\` finding is shown as a problem and reaches Stim Desktop's needs-attention
+list, a \`note\` finding only the doctor report:
+  server-multiple        cost: several servers serve one Stim home (the service,
+                         Stim Desktop's bundled server, a server started by hand);
+                         it names the one to keep (the service, else the one holding
+                         the local socket) and how to stop each other
+  server-service-crash   cost: the service is installed but not running, or keeps
+                         exiting (run count and last exit code, the log path and
+                         \`stim-server service rollback\` when a previous server
+                         exists); note: it restarted but runs now
+  server-desktop-authority  cost: the server on the local socket (not Desktop's own)
+                         does not advertise desktop-local-authority, so Desktop
+                         cannot run actions through it; update it
+  server-version         note: a server's stim version differs from this stim; the
+                         service updates with \`stim-server service update --release
+                         <version>\`, Desktop's bundled server with the app
+  server-home            note: a server serves another Stim home than this stim's
+  server-leftover        note: servers started by hand, with pid, home and port
+  server-keep-awake      note: this Mac serves approved build or device-host clients
+                         with server.keepAwake off
+  server-tailscale       cost: Tailscale is off or signed out while a service has a tailnet
+                         route or approved clients depend on the tailnet
+  server-tailscale-route cost/note: no tailscale serve route reaches the server, or the
+                         route install recorded points at another port; it prints the
+                         exact tailscale serve --bg --https=<port> command
+  server-funnel          cost: a public Tailscale Funnel route reaches stim-server, or one is
+                         open while a share has no password (tailscale funnel --https=<port> off)
+  server-share-proxy     note: share.exposure resolves to proxy with share.publicUrl unset
+  server-tcp-lowat       note: on a Linux share host net.ipv4.tcp_notsent_lowat is unlimited;
+                         advice to set 16384, never changed by doctor
+  server-service-paths   cost/note: the service file names a launcher, node, server script or
+                         directory that no longer exists
+  server-socket-permissions  cost: the Stim home's local.sock is not mode 600 or its directory
+                         is not mode 700 and owned by this user (Desktop's write authority
+                         on a server without Desktop's key depends on it)
+  server-macos-permission  cost/note: the server's host app lacks Screen Recording or device
+                         control, or macOS blocks the Android SDK or AVDs on an external
+                         volume (Files & Folders > Removable Volumes); read from /health,
+                         a read of the volume and the service log, never a TCC change
+  server-linger          cost/note: a systemd user service stops at logout; run
+                         sudo loginctl enable-linger <user>
+The doctor toolchain section also lists, for each installed service, where it finds each
+tool the way the server does at start: tool discovery over launchd's default PATH with the
+service's own node, with its --env entries and --path-prepend directories. The tailscale checks read \`tailscale
+status --json\` and \`tailscale serve status --json\` (3 seconds each) only when a service,
+server process or socket exists. A build machine in build-machines.json that no longer proves
+its pinned stim-server key is the existing build-machine finding with state key-changed, and one
+that left the tailnet is not-on-tailnet; doctor adds nothing for them.
+
 THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
 \`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes
 a merged or idle linked worktree. The clock starts at the worktree's latest
@@ -1465,11 +1522,14 @@ reverse proxy setup:
                    https://demo.example.com
   share.port       the loopback port proxy mode binds (default 7790), so the
                    proxy can name it
-One more machine setting, experimental and off by default:
-  share.webrtc     true lets a share viewer that opens the link with
-                   ?transport=webrtc take video over a WebRTC data channel
-                   from the machine that owns the device, with WebSocket as
-                   the fallback. Needs the optional node-datachannel package
+One more machine setting, on by default:
+  share.webrtc     false keeps every share viewer on WebSocket video. True lets
+                   a viewer try a WebRTC data channel from the machine that
+                   owns the device in the background and switch to it when it
+                   works, with WebSocket as the fallback. Only viewers on the
+                   same LAN or tailnet connect; STIM_WEBRTC_STUN opts in to
+                   public addresses. Needs the optional node-datachannel
+                   package
 
 DEVICE RECORDINGS CAN BE TURNED OFF
 stim-server records the screens of owned simulators, emulators and the

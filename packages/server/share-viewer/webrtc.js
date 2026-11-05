@@ -1,24 +1,42 @@
 'use strict';
 
 /**
- * Carries the share's H.264 access units over a WebRTC data channel and shows transport stats. The page
- * asks for it with ?transport=webrtc (remembered in a cookie) and ?stats shows the panel on either transport.
+ * Carries the share's H.264 access units over a WebRTC data channel when that works better than the share socket.
+ * Every page starts on the socket; a data channel is opened in the background and takes over only after it delivers
+ * a keyframe the decoder can start from, and gives the video back to the socket when it fails or loses too much.
+ * ?transport=ws keeps a page on the socket (remembered in a cookie), ?transport=webrtc forces the channel, and ?stats
+ * shows a panel on either transport.
  */
 (function () {
+  const policy = globalThis.stimRtcPolicy;
   const query = new URLSearchParams(location.search);
   const cookieMatch = /(?:^|; )stim_transport=(webrtc|ws)/.exec(document.cookie);
-  const preferred = query.get('transport') || (cookieMatch && cookieMatch[1]) || 'ws';
   const offered = document.body.dataset.webrtc === 'true';
-  const wanted = offered && preferred === 'webrtc' && typeof RTCPeerConnection === 'function';
-  const visible = wanted || query.has('stats');
+  const mode = policy.wanted(
+    offered,
+    typeof RTCPeerConnection === 'function',
+    query.get('transport'),
+    cookieMatch && cookieMatch[1],
+  );
+  const wanted = mode !== 'off';
+  const visible = query.has('stats') || mode === 'force';
   const basePath = location.pathname.replace(/[^/]*$/, '');
-  const STUN = 'stun:stun.l.google.com:19302';
+  const iceServers = (document.body.dataset.stun || '')
+    .split(',')
+    .filter(Boolean)
+    .map((urls) => ({ urls }));
+  const BEGIN_DELAY_MS = 1000;
   const GATHER_MS = 2500;
-  const CONNECT_MS = 12000;
+  const CONNECT_MS = 8000;
+  const PROBE_MS = 6000;
+  const PROBE_ASK_MS = 1000;
+  const FIRST_DRAW_MS = 3000;
+  const QUIET_MS = 4000;
+  const DEFAULT_TTL_MS = 100;
   const WINDOW_MS = 1000;
 
   const state = {
-    active: 'ws',
+    phase: 'idle',
     note: '',
     drawn: [],
     bytes: [],
@@ -26,6 +44,7 @@
     gaps: 0,
     late: 0,
     keyframes: 0,
+    attempts: 0,
     serverDropped: 0,
     serverRtt: null,
     queued: 0,
@@ -38,13 +57,16 @@
     samples: { rtc: [], ws: [] },
   };
 
-  let pc = null;
-  let video = null;
-  let ctl = null;
-  let connectTimer = null;
-  let pingTimer = null;
-  let statsTimer = null;
   let handlers = null;
+  let pc = null;
+  let ctl = null;
+  let attempt = 0;
+  let never = 0;
+  let fellBack = 0;
+  let drawnSince = false;
+  let lastStatsAt = 0;
+  let lossMonitor = policy.createLossMonitor();
+  let timers = {};
   let box = null;
   let lines = null;
 
@@ -105,6 +127,16 @@
       typeof selected.currentRoundTripTime === 'number' ? Math.round(selected.currentRoundTripTime * 1000) : null;
   }
 
+  function active() {
+    return state.phase === 'active';
+  }
+
+  function setPhase(phase) {
+    state.phase = phase;
+    document.body.dataset.transport = active() ? 'webrtc' : 'ws';
+    document.body.dataset.rtcPhase = phase;
+  }
+
   function render() {
     if (!lines) return;
     const now = performance.now();
@@ -113,22 +145,20 @@
     const fps = state.drawn.length;
     const bits = state.bytes.reduce((total, entry) => total + entry[1], 0) * 8;
     const latencies = state.latency.slice(-120).map((entry) => entry[1]);
-    const offsetKind = state.active === 'webrtc' ? 'rtc' : 'ws';
+    const offsetKind = active() ? 'rtc' : 'ws';
     const rows = [
-      ['transport', state.active === 'webrtc' ? 'WebRTC data channel' : 'WebSocket' + (wanted ? ' (fallback)' : '')],
+      ['transport', active() ? 'WebRTC data channel' : 'WebSocket' + (wanted ? ' (' + state.phase + ')' : '')],
       [
         'path',
-        state.active === 'webrtc' && state.pair
+        active() && state.pair
           ? state.pair.type + ' ' + state.pair.remote
-          : state.active === 'webrtc'
+          : active()
             ? 'connecting'
             : 'TCP via the share URL',
       ],
       [
         'rtt',
-        (state.active === 'webrtc' ? [state.pcRtt, state.ctlRtt] : [state.wsRtt])
-          .filter((value) => value !== null)
-          .join(' / ') + ' ms',
+        (active() ? [state.pcRtt, state.ctlRtt] : [state.wsRtt]).filter((value) => value !== null).join(' / ') + ' ms',
       ],
       ['fps', String(fps)],
       ['bitrate', (bits / 1e6).toFixed(2) + ' Mbps'],
@@ -139,9 +169,9 @@
           : 'n/a',
       ],
       ['loss', 'gaps ' + state.gaps + ' late ' + state.late + ' keyframe asks ' + state.keyframes],
+      ['attempts', String(state.attempts)],
     ];
-    if (state.active === 'webrtc')
-      rows.push(['sender', 'queued ' + state.queued + ' B dropped ' + state.serverDropped]);
+    if (active()) rows.push(['sender', 'queued ' + state.queued + ' B dropped ' + state.serverDropped]);
     if (state.note) rows.push(['note', state.note]);
     lines.textContent = rows.map((row) => row[0].padEnd(10) + row[1]).join('\n');
   }
@@ -156,7 +186,7 @@
     toggle.addEventListener('click', () => {
       setTransportCookie(wanted ? 'ws' : 'webrtc');
       const next = new URL(location.href);
-      next.searchParams.delete('transport');
+      next.searchParams.set('transport', wanted ? 'ws' : 'webrtc');
       location.replace(next.toString());
     });
     const hide = document.createElement('button');
@@ -169,106 +199,189 @@
     setInterval(render, 500);
   }
 
+  function clearTimers() {
+    for (const name of Object.keys(timers)) {
+      clearTimeout(timers[name]);
+      clearInterval(timers[name]);
+    }
+    timers = {};
+  }
+
+  function closePeer() {
+    const retry = timers.retry;
+    const start = timers.begin;
+    clearTimers();
+    timers.retry = retry;
+    timers.begin = start;
+    const peer = pc;
+    pc = ctl = null;
+    peer?.close();
+  }
+
+  function ask() {
+    if (ctl && ctl.readyState === 'open') ctl.send(JSON.stringify({ t: 'keyframe' }));
+  }
+
   function ping() {
     if (ctl && ctl.readyState === 'open') ctl.send(JSON.stringify({ t: 'ping', c: Date.now() }));
   }
 
-  function failed(reason) {
-    if (!pc) return;
-    stop();
-    state.active = 'ws';
+  function fail(reason) {
+    if (state.phase === 'idle' || state.phase === 'waiting' || state.phase === 'gave-up') return;
+    const carried = active();
+    closePeer();
     state.note = reason;
-    if (handlers) handlers.failed(reason);
-  }
-
-  function stop() {
-    clearTimeout(connectTimer);
-    clearInterval(pingTimer);
-    clearInterval(statsTimer);
-    if (pc) {
-      pc.close();
-    }
-    pc = video = ctl = null;
-    if (state.active === 'webrtc') state.active = 'ws';
-  }
-
-  async function start(options) {
-    handlers = options;
-    stop();
-    state.active = 'ws';
-    state.note = '';
     state.pair = null;
+    if (carried) fellBack++;
+    else never++;
+    const delay = policy.retryDelay(never, fellBack, mode === 'force');
+    setPhase(delay === null ? 'gave-up' : 'waiting');
+    if (carried) handlers.fallback(reason);
+    if (delay !== null) timers.retry = setTimeout(begin, delay);
+  }
+
+  function commit() {
+    clearInterval(timers.probe);
+    clearTimeout(timers.probeEnd);
+    never = 0;
+    drawnSince = false;
+    lossMonitor.reset();
+    lastStatsAt = Date.now();
+    setPhase('active');
+    state.note = '';
+    handlers.commit(attempt);
+    timers.firstDraw = setTimeout(
+      () => !drawnSince && document.visibilityState === 'visible' && fail('WebRTC video was not drawn'),
+      FIRST_DRAW_MS,
+    );
+    timers.quiet = setInterval(() => Date.now() - lastStatsAt > QUIET_MS && fail('WebRTC went quiet'), 1000);
+    timers.stable = setTimeout(() => {
+      fellBack = 0;
+    }, policy.STABLE_MS);
+  }
+
+  function onVideo(buffer) {
+    if (state.phase === 'probing') {
+      if (!policy.usableKeyframe(buffer)) return;
+      commit();
+    } else if (!active()) return;
+    handlers.video(buffer);
+  }
+
+  function opened(peer) {
+    if (peer !== pc) return;
+    clearTimeout(timers.connect);
+    setPhase('probing');
+    ask();
+    timers.probe = setInterval(ask, PROBE_ASK_MS);
+    timers.probeEnd = setTimeout(() => fail('WebRTC delivered no keyframe'), PROBE_MS);
+  }
+
+  async function begin() {
+    timers.begin = timers.retry = undefined;
+    if (!handlers || !handlers.ready() || state.phase === 'probing' || active() || state.phase === 'connecting') return;
+    attempt++;
+    state.attempts++;
     state.samples.rtc = [];
     state.offsets.rtc = null;
-    const peer = new RTCPeerConnection({ iceServers: [{ urls: STUN }] });
+    state.pair = null;
+    setPhase('connecting');
+    const peer = new RTCPeerConnection({ iceServers });
     pc = peer;
-    const lifetime = Number(query.get('ttl'));
-    video = peer.createDataChannel(
+    const ttl = query.get('ttl') === null ? DEFAULT_TTL_MS : Number(query.get('ttl'));
+    const video = peer.createDataChannel(
       'video',
-      lifetime > 0 ? { ordered: false, maxPacketLifeTime: lifetime } : { ordered: false, maxRetransmits: 0 },
+      ttl > 0 ? { ordered: false, maxPacketLifeTime: ttl } : { ordered: false, maxRetransmits: 0 },
     );
     video.binaryType = 'arraybuffer';
-    video.addEventListener('message', (event) => handlers.video(event.data));
-    ctl = peer.createDataChannel('ctl');
-    ctl.addEventListener('message', (event) => {
-      if (typeof event.data !== 'string') return;
+    video.addEventListener('message', (event) => peer === pc && onVideo(event.data));
+    const control = peer.createDataChannel('ctl');
+    ctl = control;
+    control.addEventListener('message', (event) => {
+      if (peer !== pc || typeof event.data !== 'string') return;
       const message = JSON.parse(event.data);
       if (message.t === 'pong') sample('rtc', message.c, message.s);
       else if (message.t === 'stats') {
+        lastStatsAt = Date.now();
         state.serverDropped = message.dropped;
         state.queued = message.queued;
         state.serverRtt = message.rtt;
         state.serverPair = message.pair;
       }
     });
-    video.addEventListener('open', () => {
+    video.addEventListener('open', () => opened(peer));
+    control.addEventListener('open', () => {
       if (peer !== pc) return;
-      clearTimeout(connectTimer);
-      state.active = 'webrtc';
-      handlers.opened();
-    });
-    ctl.addEventListener('open', () => {
-      ping();
-      pingTimer = setInterval(ping, 2000);
+      if (state.phase === 'probing') ask();
+      if (visible) {
+        ping();
+        timers.ping = setInterval(ping, 2000);
+      }
     });
     peer.addEventListener('connectionstatechange', () => {
       if (peer !== pc) return;
       if (peer.connectionState === 'failed' || peer.connectionState === 'closed')
-        failed('WebRTC ' + peer.connectionState);
+        fail('WebRTC ' + peer.connectionState);
       else if (peer.connectionState === 'disconnected')
-        setTimeout(() => peer === pc && peer.connectionState === 'disconnected' && failed('WebRTC disconnected'), 3000);
+        setTimeout(() => peer === pc && peer.connectionState === 'disconnected' && fail('WebRTC disconnected'), 3000);
     });
-    statsTimer = setInterval(() => void readPair().catch(() => {}), 1000);
-    connectTimer = setTimeout(() => peer === pc && failed('WebRTC did not connect'), CONNECT_MS);
-    await peer.setLocalDescription(await peer.createOffer());
-    if (peer.iceGatheringState !== 'complete') {
-      await new Promise((resolve) => {
-        const done = () => peer.iceGatheringState === 'complete' && resolve();
-        peer.addEventListener('icegatheringstatechange', done);
-        setTimeout(resolve, GATHER_MS);
-      });
+    if (visible) timers.stats = setInterval(() => void readPair().catch(() => {}), 1000);
+    timers.connect = setTimeout(() => peer === pc && fail('WebRTC did not connect'), CONNECT_MS);
+    try {
+      await peer.setLocalDescription(await peer.createOffer());
+      if (peer.iceGatheringState !== 'complete') {
+        await new Promise((resolve) => {
+          const done = () => peer.iceGatheringState === 'complete' && resolve();
+          peer.addEventListener('icegatheringstatechange', done);
+          setTimeout(resolve, GATHER_MS);
+        });
+      }
+      if (peer !== pc) return;
+      handlers.send({ type: 'webrtc-offer', sdp: peer.localDescription.sdp, attempt });
+    } catch (error) {
+      if (peer === pc) fail(String(error));
     }
-    if (peer !== pc) return;
-    handlers.send({ type: 'webrtc-offer', sdp: peer.localDescription.sdp });
   }
 
-  async function answer(sdp) {
-    if (!pc) return;
-    await pc.setRemoteDescription({ type: 'answer', sdp });
+  function stop() {
+    clearTimeout(timers.retry);
+    clearTimeout(timers.begin);
+    closePeer();
+    timers = {};
+    setPhase('idle');
   }
 
   window.stimRtc = {
     wanted,
     visible,
-    start,
-    answer,
+    attach(options) {
+      handlers = options;
+    },
+    schedule() {
+      if (!wanted || timers.begin || timers.retry || state.phase !== 'idle') return;
+      if (policy.retryDelay(never, fellBack, mode === 'force') === null) return;
+      timers.begin = setTimeout(begin, BEGIN_DELAY_MS);
+    },
     stop,
-    failed,
-    /** Asks for a keyframe over the data channel; false when it is not open. */
+    answer(message) {
+      if (!pc || message.attempt !== attempt) return;
+      const peer = pc;
+      peer
+        .setRemoteDescription({ type: 'answer', sdp: message.sdp })
+        .catch((error) => peer === pc && fail(String(error)));
+    },
+    refused(message) {
+      if (message.attempt !== undefined && message.attempt !== attempt) return;
+      fail(message.message || 'WebRTC failed');
+    },
     keyframe() {
-      if (!ctl || ctl.readyState !== 'open') return false;
+      if (!active() || !ctl || ctl.readyState !== 'open') return false;
       state.keyframes++;
-      ctl.send(JSON.stringify({ t: 'keyframe' }));
+      ask();
+      if (mode !== 'force') {
+        const why = lossMonitor.ask(Date.now());
+        if (why) fail('WebRTC kept asking for keyframes');
+      }
       return true;
     },
     countKeyframe() {
@@ -282,10 +395,11 @@
       state.bytes.push([performance.now(), bytes]);
     },
     drawn(capturedAt) {
+      drawnSince = true;
       if (!visible) return;
       const now = performance.now();
       state.drawn.push([now]);
-      const offset = state.offsets[state.active === 'webrtc' ? 'rtc' : 'ws'];
+      const offset = state.offsets[active() ? 'rtc' : 'ws'];
       if (offset !== null && capturedAt) {
         state.latency.push([now, Date.now() + offset - capturedAt]);
         if (state.latency.length > 600) state.latency.splice(0, 300);
@@ -293,6 +407,7 @@
     },
     gap() {
       state.gaps++;
+      if (active() && mode !== 'force' && lossMonitor.gap(Date.now())) fail('WebRTC lost too much video');
     },
     late() {
       state.late++;
@@ -308,9 +423,10 @@
       };
     },
     get active() {
-      return state.active;
+      return active() ? 'webrtc' : 'ws';
     },
   };
 
+  setPhase('idle');
   if (visible) buildPanel();
 })();

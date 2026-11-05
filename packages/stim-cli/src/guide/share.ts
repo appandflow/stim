@@ -119,8 +119,7 @@ project, workspace or branch name, and the viewer tab follows the app when it ch
 
 VIEWERS SEE EACH OTHER
 
-Every viewer has a name (the optional name field on the login page, or on first
-load for a share without a password; empty means Guest 1, Guest 2 and so on)
+Every viewer has a name (asked on first load, optional; empty means Guest 1, Guest 2 and so on)
 and a color. The names Host, Agent (also "Agent \u00b7 <command>") and Guest N
 are the server's own, so a viewer that picks one of them is shown as its Guest
 N. Viewers of one share see each other's touches live, with the name, and never
@@ -314,15 +313,36 @@ $connection_upgrade comes from the usual map block):
     root /var/www/stim-share;
   }
 
-WEBRTC VIDEO (EXPERIMENTAL)
-share.webrtc is a machine setting, false by default. Off, viewers get WebSocket
-video only: the page never starts WebRTC, the share refuses WebRTC offers and
-the choice is not remembered. On, a viewer that opens the link with
-?transport=webrtc (remembered in a cookie for a day) takes video over a WebRTC
-data channel from the machine that owns the device, so a hosted device's video
-does not cross this machine, and ?stats shows a stats panel. A missing
-node-datachannel package, an older worker without hosted-webrtc, or any WebRTC
-failure drops the viewer back to WebSocket. Input stays on the share socket.
+WEBRTC VIDEO
+share.webrtc is a machine setting, true by default. Off, viewers get WebSocket
+video only: the page never starts WebRTC and the share refuses WebRTC offers.
+On, every viewer starts on WebSocket video. A browser with WebRTC then opens a
+data channel to the machine that owns the device in the background, and takes
+its video from the channel only once the channel has delivered a keyframe it can
+decode. A channel that fails, or loses more than a few packets in a few seconds,
+hands the video back to the WebSocket without a reload; the page tries again
+after 30 s, then 60 s, doubling to 10 minutes, and gives up after three attempts
+that never connected. Input stays on the share socket. ?stats shows a stats
+panel.
+
+The machine that sends the video offers only host candidates on private,
+link-local and Tailscale (100.64.0.0/10) addresses, does no STUN, and ignores a
+viewer's candidates at any other address. A viewer on the same LAN or tailnet
+gets a direct channel, often with a lower median latency. A viewer on the
+public internet never learns this machine's public address and stays on
+WebSocket; its browser still offers an mDNS name, so its channel attempt runs
+until it times out, which the page does in the background. The answer lists this
+machine's LAN and tailnet addresses to every viewer with the link. There is no
+TURN relay. STIM_WEBRTC_STUN=stun:host:port (comma separated) on the sending
+machine, and on the machine serving the share page when they differ, switches
+the filter off and lets viewers connect over public addresses; the sending
+machine's public address is then visible to every viewer.
+
+?transport=ws keeps one page on WebSocket and ?transport=webrtc forces the data
+channel with no loss fallback; both are remembered in a cookie for a day. Off, a
+missing node-datachannel package, or a hosted device whose worker lacks
+hosted-webrtc-private leaves the viewer on WebSocket with no attempt or a
+refused one.
 
 SECURITY MODEL
 

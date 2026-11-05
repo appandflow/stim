@@ -48,11 +48,21 @@ extension DoctorReport.Finding {
 /// The `stim doctor` finding code for a folder that is not a React Native or Expo app.
 public let notAnAppFindingCode = "not-an-app"
 
-/// Needs-attention items for the doctor findings that need project judgment, one per `cost` finding.
+/// The `stim doctor` finding code prefix for a problem with this machine's stim-server setup.
+public let serverFindingCodePrefix = "server-"
+
+/// Needs-attention items for the doctor findings that need project judgment, one per `cost` finding. A stim-server
+/// setup finding describes the machine, so every checkout's report repeats it; it is listed once, under the first report.
 public func setupItems(_ reports: [DoctorReport]) -> [NeedsAttentionItem] {
-  reports.flatMap { report in
-    report.costFindings.map { finding in
-      NeedsAttentionItem(
+  var machineFindings = Set<String>()
+  return reports.flatMap { report in
+    report.costFindings.compactMap { finding -> NeedsAttentionItem? in
+      if finding.code?.hasPrefix(serverFindingCodePrefix) == true,
+        !machineFindings.insert("\(finding.code ?? ""):\(finding.title)").inserted
+      {
+        return nil
+      }
+      return NeedsAttentionItem(
         id: "setup-\(finding.code ?? finding.title):\(report.project)", category: .attention, severity: "warning",
         workspace: report.project, body: "Setup: \(finding.title)", remedy: doctorRemedy(finding.fix))
     }

@@ -841,11 +841,16 @@ stim settings set share.port 7790                           # loopback port the 
 
 See [Share a running app](./share.md#custom-domain) for the Caddyfile.
 
-`share.webrtc` is an experimental machine setting, off by default. Set it to
-`true` and a viewer that opens a share link with `?transport=webrtc` takes video
-over a WebRTC data channel from the machine that owns the device, and falls back
-to WebSocket when WebRTC fails. It needs the optional `node-datachannel` package
-on that machine.
+`share.webrtc` is a machine setting, on by default. Every viewer starts on
+WebSocket video and tries a WebRTC data channel from the machine that owns the
+device in the background, switching only once the channel delivers a keyframe
+and returning to WebSocket when it fails or loses too much video. That machine
+offers only private, link-local and Tailscale addresses and uses no STUN server,
+so a viewer on the same network or tailnet connects directly and a viewer on the
+internet stays on WebSocket and never learns the machine's public address. Set
+it to `false` to keep every viewer on WebSocket. It needs the optional
+`node-datachannel` package on that machine. See
+[Share a running app](./share.md#webrtc-video).
 
 ## Device recordings
 

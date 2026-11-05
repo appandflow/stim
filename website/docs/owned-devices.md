@@ -408,6 +408,12 @@ Synchronous CLI work can delay observations, progress, and timeout handling.
 Diagnostics report observation gaps over 30 seconds; pressure during those gaps
 is unobserved, even when surrounding readings are normal.
 
+When `simctl boot` itself exits 22 (EINVAL), Stim checks the simulator's
+state. It continues the boot wait when the simulator is Booting or Booted and
+boots once more after two seconds when it is Shutdown. If the boot is still
+refused, the failure keeps the exit code and does not recommend memory relief
+unless the highest observed pressure was warning or critical.
+
 An agent should stop unused slots in workspaces it owns, reduce concurrent
 builds, and retry after pressure falls. Ask before closing another agent's
 simulator or a user's app. Repeated reboots under unchanged pressure can repeat

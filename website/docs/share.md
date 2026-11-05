@@ -106,7 +106,7 @@ value out to have one generated, and put it last or write
 `--no-password`, and when it equals `--password`. A viewer that signed in with
 the view password sees "View only" in the bar and gets no device controls; the
 server drops every input it sends. It can enter the control password from the
-bar ("Have the control password?") to raise itself to control, and keeps its
+bar ("Have the control access code?") to raise itself to control, and keeps its
 name and place. `--json` adds `viewAuth` and, when it was generated,
 `viewPassword`. A share keeps 32 signed-in sessions. A new login drops the
 oldest session with the same access first, so logging in with the view password
@@ -136,8 +136,7 @@ window. With `--control`, button groups under the device hold:
 Everyone watching sees who touches the screen: a colored dot with the person's
 name, a short trail while they drag, and a ripple for a tap, for every viewer
 with the share open and for the host when the device is controlled from Stim
-Desktop or the phone app. The login page has an optional name field; a share
-without a password asks for a name when you first open it, and you can skip.
+Desktop or the phone app. A viewer is asked for a name when it first opens the share, and can skip.
 Without a name a viewer is "Guest 1", "Guest 2" and so on. Host, Agent and
 Guest N belong to the server, so a viewer that chooses one of them is shown as
 its own Guest N. A viewer sees only the people of its own share, even when two
@@ -172,7 +171,7 @@ is the shortcut key, and Option and, on a Mac, Control go with it, as in Command
 Command-Z and Option-Left. On Android, Command acts as Control. Command-V keeps
 pasting your clipboard. While the screen has focus the page keeps these shortcuts
 from the browser, such as Command-R and Command-L; click outside the screen to use
-them. Keys do not reach the device while the focus is in a field of the page, such as the password or rename boxes.
+them. Keys do not reach the device while the focus is in a field of the page, such as the access code or rename boxes.
 
 With `--control` on an iOS simulator, an Android emulator or an Android phone,
 Command-V (Control-V on Windows and Linux) while the screen has focus pastes the
@@ -235,6 +234,35 @@ through Funnel on the same Mac:
 
 A video viewer that joins while capture already runs sees its first frame in
 about 50 ms; when it starts capture, the first frame takes several seconds.
+
+### WebRTC video
+
+`share.webrtc` is on by default (see [Settings](./settings.md#web-share-exposure)). A viewer that can use WebRTC still
+starts on the WebSocket, so the first frame never waits for a connection. In the
+background the page opens a WebRTC data channel to the machine that owns the
+device, which for a hosted device is the worker, and takes its video from the
+channel only after the channel delivers a keyframe the decoder can start from.
+When the channel fails, or loses more than a few packets in a few seconds, the
+video goes back to the WebSocket without a reload. The page tries again after 30
+seconds, then 60, doubling up to 10 minutes, and stops after three attempts that
+never connected. Input stays on the WebSocket.
+
+The sending machine offers only addresses on a private network, a link-local
+address or a Tailscale address, uses no STUN server, and ignores a viewer's
+candidates at any other address. A viewer on the same network or tailnet gets a
+direct channel. A viewer on the internet never learns the machine's public
+address and stays on the WebSocket; its browser offers only an mDNS name, so its
+channel attempt runs in the background until it times out and its video does not
+change. The answer lists the machine's LAN and tailnet addresses to every viewer
+with the link. There is no TURN relay. Setting
+`STIM_WEBRTC_STUN` to a `stun:` URL on the sending machine, and on the machine
+that serves the share when they differ, lets viewers connect over public
+addresses and shows the sending machine's public address to every viewer.
+
+Add `?transport=ws` to the link to keep one page on the WebSocket, or
+`?transport=webrtc` to force the channel without the loss fallback; the page remembers
+the choice in a cookie for a day. `?stats` shows a panel with the transport, round-trip
+time, frame rate and lost packets.
 
 ## Start a stopped share again
 
