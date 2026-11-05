@@ -1178,8 +1178,7 @@ if (control) {
     if (typing()) {
       dropQueued();
       resetField();
-    }
-    else screen.focus();
+    } else screen.focus();
     screen.setPointerCapture(event.pointerId);
     event.preventDefault();
     if (!live) return;
