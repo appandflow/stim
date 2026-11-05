@@ -70,8 +70,9 @@ stim share stop keeps the saved links and lists them (platform, slot, expiry;
 reusable in --json, never a secret): stop is a pause, not a revocation, until
 the expiry. stim share stop --forget also deletes them, with or without a
 running stim-server. Each saved link records whether its share should be
-running (live) or was stopped on purpose (stopped); stim share, stim stop and
-share.stop (also Stim Desktop's Stop) change it, so a stim-server restart or
+running (live) or was stopped (stopped), on purpose or because its device could
+not stream; stim share, stim stop, share.stop (also Stim Desktop's Stop) and
+that give-up change it, so a stim-server restart or
 crash leaves it live. When a full stim-server starts (not the --share one) it
 starts every live, unexpired
 saved share again by itself, with the same link, passwords and expiry; one whose

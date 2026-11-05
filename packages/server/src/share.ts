@@ -132,8 +132,12 @@ export interface ShareDeps {
   appName?: (udid: string, bundleId: string) => Promise<string | null>;
   lookup?: LeaseLookup;
   limits?: Partial<ShareLimits>;
-  /** Called when a share ended because its device could not stream, so its saved link must not start it again. */
-  gaveUp?: (request: ShareTarget) => void;
+  /**
+   * Called when a share ends because its device could not stream, with the digest of its link. The share is not
+   * released (its link cannot be started again, and the hub is not idle) until the returned promise settles, so a
+   * saved link is marked stopped before an idle stim-server exits.
+   */
+  gaveUp?: (request: ShareTarget, link: string) => Promise<void>;
   /** Called when {@link ShareHub.unrecordedTargets} changed. */
   recordingChanged?: () => void;
   /** Called when the last share has ended and its route is gone. */
@@ -373,6 +377,8 @@ export class ShareHub {
   private readonly deps: ShareDeps;
   private readonly limits: ShareLimits;
   private readonly shares = new Map<string, Share>();
+  /** Keys of shares that gave up and whose saved link is being marked stopped: their link is not yet free to start. */
+  private readonly marking = new Set<string>();
   private readonly controlled = new Map<string, number>();
   private readonly wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
   private listener: Server | null = null;
@@ -441,7 +447,12 @@ export class ShareHub {
    */
   isIdle(): boolean {
     return (
-      !this.shares.size && !this.listener && !this.starting && !this.opening && this.deps.route.stranded() === null
+      !this.shares.size &&
+      !this.marking.size &&
+      !this.listener &&
+      !this.starting &&
+      !this.opening &&
+      this.deps.route.stranded() === null
     );
   }
 
@@ -471,7 +482,9 @@ export class ShareHub {
   }
 
   private reusedLive(request: ShareRequest): boolean {
-    return request.token !== undefined && this.shares.has(digest(request.token).toString('hex'));
+    if (request.token === undefined) return false;
+    const key = digest(request.token).toString('hex');
+    return this.shares.has(key) || this.marking.has(key);
   }
 
   private async begin(request: ShareRequest, restore: boolean): Promise<StartedShare | Refusal> {
@@ -611,7 +624,10 @@ export class ShareHub {
   /** The refusal for a slug a live share already uses: a share never takes over another's link. */
   private slugTaken(slug: string | undefined): Refusal | null {
     if (slug === undefined) return null;
-    const holder = this.shares.get(digest(slug).toString('hex'));
+    const key = digest(slug).toString('hex');
+    if (this.marking.has(key))
+      return { code: 'action-failed', message: `The slug ${slug} is still being released. Try again.` };
+    const holder = this.shares.get(key);
     if (!holder) return null;
     return {
       code: 'action-failed',
@@ -872,7 +888,7 @@ export class ShareHub {
     }
   }
 
-  private async end(share: Share, message: string, viewerMessage = VIEWER_TEXT.ended): Promise<void> {
+  private async end(share: Share, message: string, viewerMessage = VIEWER_TEXT.ended, gaveUp = false): Promise<void> {
     if (share.ended) return;
     share.ended = true;
     clearTimeout(share.timer);
@@ -899,6 +915,16 @@ export class ShareHub {
     share.source?.endFor(share.owner, message);
     share.source?.close();
     this.releaseRecording(share);
+    if (gaveUp && this.deps.gaveUp) {
+      this.marking.add(share.key);
+      try {
+        await this.deps.gaveUp(share.request, share.key);
+      } catch (cause) {
+        console.error(`stim-server: could not mark the saved link of web share ${share.id} stopped: ${String(cause)}`);
+      } finally {
+        this.marking.delete(share.key);
+      }
+    }
     await this.teardown();
   }
 
@@ -1388,9 +1414,8 @@ export class ShareHub {
               }
               share.failingSince ??= now;
               if (now - share.failingSince >= STREAM_GIVE_UP_MS) {
-                this.deps.gaveUp?.(share.request);
                 const helper = message.includes('stim-frames helper, which this Mac has not built');
-                return void this.end(share, message, helper ? VIEWER_TEXT.noHelper : VIEWER_TEXT.noStream);
+                return void this.end(share, message, helper ? VIEWER_TEXT.noHelper : VIEWER_TEXT.noStream, true);
               }
               share.resumeAt = Date.now() + share.backoff;
               share.backoff = Math.min(share.backoff * 2, RESUME_MAX_MS);

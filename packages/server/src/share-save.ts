@@ -1,4 +1,5 @@
 import { splitShareUrl, type SavedShare } from '@stim-cli/core/state';
+import { digest } from './share-identity.ts';
 import type { ShareRequest, StartedShare } from './share.ts';
 
 /**
@@ -40,4 +41,10 @@ export function savedShareFor(
     createdAt: same ? existing.createdAt : now.toISOString(),
     expiresAt: started.expiresAt,
   };
+}
+
+/** Whether a saved entry holds the link a running share has, given as the hex digest of its token or slug. */
+export function savedLinkIs(saved: SavedShare, linkDigest: string): boolean {
+  const secret = saved.token ?? saved.slug;
+  return secret !== undefined && digest(secret).toString('hex') === linkDigest;
 }
