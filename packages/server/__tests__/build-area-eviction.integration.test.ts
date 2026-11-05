@@ -726,9 +726,13 @@ test('revoking a symlinked client does not act on what the link points at', asyn
   const outside = join(home, 'outside');
   mkdirSync(join(outside, 'evicted', `z-${UUID}`), { recursive: true });
   writeFileSync(join(outside, 'evicted', `z-${UUID}.json`), '');
+  const staging = join(outside, 'repos', 'subject.claims', '.staging-backup');
+  mkdirSync(staging, { recursive: true });
+  writeFileSync(join(staging, 'user-data'), 'keep');
   symlinkSync(outside, join(root, 'linked'), 'junction');
   await start().remove('linked');
   expect(existsSync(join(outside, 'evicted', `z-${UUID}`))).toBe(true);
+  expect(readFileSync(join(staging, 'user-data'), 'utf8')).toBe('keep');
 });
 
 function linkedClaims(repo: string): string {
@@ -953,6 +957,38 @@ function windowsArea(repo: string): { path: string; checkout: string; gradle: st
 }
 
 test(
+  "revoking a Windows client preserves another client's checkout behind a junction",
+  { skip: process.platform !== 'win32' },
+  async () => {
+    const { path, checkout } = windowsArea('subject');
+    const repos = join(root, 'revoked', 'repos');
+    mkdirSync(repos, { recursive: true });
+    symlinkSync(path, join(repos, 'subject.claims'), 'junction');
+
+    await start().remove('revoked');
+
+    expect(existsSync(join(root, 'revoked'))).toBe(false);
+    expect(readFileSync(join(checkout, 'file'), 'utf8')).toBe('x');
+    expect(existsSync(`${checkout}.owner`)).toBe(true);
+  },
+);
+
+test.each([true, false])(
+  'revoking a Windows client deletes its short checkout only with a matching owner (%s)',
+  { skip: process.platform !== 'win32' },
+  async (owned) => {
+    const { checkout } = windowsArea('subject');
+    if (!owned) writeFileSync(`${checkout}.owner`, 'another-area');
+
+    await start().remove('a');
+
+    expect(existsSync(join(root, 'a'))).toBe(false);
+    expect(existsSync(join(checkout, 'file'))).toBe(!owned);
+    expect(existsSync(`${checkout}.owner`)).toBe(!owned);
+  },
+);
+
+test(
   'recovery on windows derives the same short directories eviction used',
   { skip: process.platform !== 'win32' },
   async () => {
@@ -1115,6 +1151,47 @@ test("prunes the removed area's blobs and keeps those of a kept area", async () 
   expect(existsSync(blob('only-evicted'))).toBe(false);
   expect(existsSync(blob('kept'))).toBe(true);
 });
+
+test("pruning after eviction preserves another client's blobs behind a junction", async () => {
+  area('a', 'subject', 30);
+  area('a', 'newest', 0);
+  const otherBlobs = join(root, 'b', 'blobs');
+  const blob = join(otherBlobs, sha('keep').slice(0, 2), sha('keep'));
+  mkdirSync(dirname(blob), { recursive: true });
+  writeFileSync(blob, 'keep');
+  symlinkSync(otherBlobs, join(root, 'a', 'blobs'), 'junction');
+
+  await start().evictAreas();
+
+  expect(removed()).toEqual(['a/subject']);
+  expect(readFileSync(blob, 'utf8')).toBe('keep');
+});
+
+test(
+  'cleanup does not open usage or mirror records that are named pipes',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const path = area('a', 'newest', null);
+    area('a', 'subject', 30);
+    const records = [join(path, 'last-used'), join(path, 'mirror.json')];
+    expect(spawnSync('mkfifo', records).status).toBe(0);
+    const read = fs.readFileSync;
+    const attempted: string[] = [];
+    vi.spyOn(fs, 'readFileSync').mockImplementation((file, options) => {
+      if (typeof file === 'string' && records.includes(file)) {
+        attempted.push(file);
+        throw new Error('fixture: opening a named pipe would block');
+      }
+      return read(file, options);
+    });
+    syncBuiltinESMExports();
+
+    await start().evictAreas();
+
+    expect(removed()).toEqual(['a/subject']);
+    expect(attempted).toEqual([]);
+  },
+);
 
 test('a build near the floor starts a pass and is admitted without waiting for its deletion', async () => {
   area('a', 'stale', 30);

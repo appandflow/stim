@@ -64,6 +64,7 @@ import {
   evictionOf,
   notRealDirectory,
   readRootUsage,
+  readWorkerRecord,
   recordAreaUse,
   recordRootUsage,
   type AreaEviction,
@@ -615,11 +616,16 @@ export class BuildHost {
   }
 
   private gradleScopes(client: string): GradleScope[] {
+    const clientDir = this.clientDir(client);
+    if (notRealDirectory(clientDir)) return [];
     const scopes: GradleScope[] = [{ client }];
+    const repos = join(clientDir, 'repos');
     try {
-      for (const entry of readdirSync(join(this.clientDir(client), 'repos'), { withFileTypes: true })) {
-        if (entry.isDirectory() && new RegExp(BUILD_REPO_PATTERN).test(entry.name))
-          scopes.push({ client, repo: entry.name });
+      if (!notRealDirectory(repos)) {
+        for (const entry of readdirSync(repos, { withFileTypes: true })) {
+          if (entry.isDirectory() && new RegExp(BUILD_REPO_PATTERN).test(entry.name))
+            scopes.push({ client, repo: entry.name });
+        }
       }
     } catch {}
     return process.platform === 'win32'
@@ -1106,12 +1112,15 @@ export class BuildHost {
       if (owner === client) for (const sha256 of session.digests()) keep.add(sha256);
     }
     try {
-      const repos = join(this.clientDir(client), 'repos');
-      const blobs = join(this.clientDir(client), 'blobs');
-      for (const repo of readdirSync(repos)) {
-        const mirror = join(repos, repo, 'mirror.json');
-        if (!existsSync(mirror)) continue;
-        const record: unknown = JSON.parse(readFileSync(mirror, 'utf8'));
+      const clientDir = this.clientDir(client);
+      const repos = join(clientDir, 'repos');
+      const blobs = join(clientDir, 'blobs');
+      if ([clientDir, repos, blobs].some(notRealDirectory)) return;
+      for (const repo of readdirSync(repos, { withFileTypes: true })) {
+        if (!repo.isDirectory()) continue;
+        const mirror = readWorkerRecord(join(repos, repo.name, 'mirror.json'));
+        if (mirror === null) continue;
+        const record: unknown = JSON.parse(mirror);
         if (typeof record !== 'object' || record === null) throw new Error('unreadable mirror record');
         for (const entry of Object.values(record)) {
           if (typeof entry?.sha256 !== 'string') throw new Error('unreadable mirror record');
@@ -1150,15 +1159,19 @@ export class BuildHost {
       console.error(`stim-server: retaining the build area of ${client} because artifact query cleanup is unresolved.`);
       return;
     }
+    const clientDir = this.clientDir(client);
+    if (notRealDirectory(clientDir)) {
+      await this.removeDir(client, clientDir);
+      return;
+    }
     if (!(await this.resumeEvicted(client))) {
       console.error(`stim-server: retaining the build area of ${client} because an evicted area is not deleted yet.`);
       return;
     }
     let areas: string[];
     try {
-      areas = notRealDirectory(join(this.clientDir(client), 'repos'))
-        ? []
-        : await readdir(join(this.clientDir(client), 'repos'));
+      const repos = join(clientDir, 'repos');
+      areas = notRealDirectory(repos) ? [] : await readdir(repos);
     } catch (error) {
       if (!isMissing(error)) {
         console.error(`stim-server: retaining unreadable build areas of ${client}: ${String(error)}`);
@@ -1167,7 +1180,7 @@ export class BuildHost {
       areas = [];
     }
     for (const area of areas.filter((name) => name.endsWith('.claims'))) {
-      const root = join(this.clientDir(client), 'repos', area);
+      const root = join(clientDir, 'repos', area);
       if (notRealDirectory(root)) {
         console.error(`stim-server: not clearing the claims of ${client} through ${root}: it is not a real directory.`);
         continue;
@@ -1182,12 +1195,12 @@ export class BuildHost {
     }
     if (process.platform === 'win32') await this.sweepDaemons(client);
     if (process.platform === 'win32') {
-      const repos = join(this.clientDir(client), 'repos');
+      const repos = join(clientDir, 'repos');
       const dirs = areas.flatMap((repo) => this.windowsAreaDirs(join(repos, repo)));
-      if (ownsWindowsGradleHome(this.clientDir(client))) dirs.push(gradleUserHome(this.clientDir(client)));
+      if (ownsWindowsGradleHome(clientDir)) dirs.push(gradleUserHome(clientDir));
       if (!(await this.removeWindowsDirs(client, dirs))) return;
     }
-    await this.removeDir(client, this.clientDir(client));
+    await this.removeDir(client, clientDir);
   }
 
   private async removeDir(client: string, dir: string): Promise<boolean> {
@@ -1197,11 +1210,17 @@ export class BuildHost {
   }
 
   private windowsAreaDirs(area: string): string[] {
+    if (notRealDirectory(area)) return [];
     const dirs: string[] = [];
     try {
       if (lstatSync(join(area, 'src')).isSymbolicLink()) {
-        const checkout = windowsShortDir(realpathSync(area));
-        if (realpathSync(join(area, 'src')).toLowerCase() === checkout.toLowerCase()) dirs.push(checkout);
+        const real = realpathSync(area);
+        const checkout = windowsShortDir(real);
+        if (
+          realpathSync(join(area, 'src')).toLowerCase() === checkout.toLowerCase() &&
+          readWorkerRecord(`${checkout}.owner`) === windowsShortDirKey('checkout', real)
+        )
+          dirs.push(checkout);
       }
     } catch {}
     if (ownsWindowsGradleHome(area)) dirs.push(gradleUserHome(area));
@@ -1619,9 +1638,9 @@ export class BuildHost {
 
   private claimExternals(client: string, eviction: Eviction): string | null {
     const repos = join(this.clientDir(client), 'repos');
+    if (notRealDirectory(repos)) return `${repos} is not a real directory`;
     const externals = this.externalDirs(client, eviction.repo);
     if (!externals.some(({ dir }) => existsSync(dir) || existsSync(`${dir}.owner`))) return null;
-    if (notRealDirectory(repos)) return `${repos} is not a real directory`;
     const claim = this.areaClaim(client, eviction.repo);
     if (typeof claim === 'string') return claim;
     try {

@@ -376,7 +376,11 @@ function refuseNonDirectory(root: string, path: string, label: string): never {
 
 function names(dir: string): string[] | 'unreadable' {
   try {
-    return settledAnswer(dir, () => readdirSync(dir)).toSorted();
+    return settledAnswer(dir, () => {
+      const entry = lstatSync(dir, { throwIfNoEntry: false });
+      if (!entry) return [];
+      return entry.isDirectory() ? readdirSync(dir).toSorted() : 'unreadable';
+    });
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return [];
     return 'unreadable';
@@ -425,6 +429,17 @@ function survey(dir: string, mode: ClaimMode, into: ClaimSurvey): void {
 /** Classify every claim in a claim set without removing anything and without refusing. */
 export function readClaimSet(root: string): ClaimSurvey {
   const state: ClaimSurvey = { live: [], dead: [], unresolved: [], orphans: [] };
+  try {
+    const entry = settledAnswer(root, () => lstatSync(root, { throwIfNoEntry: false }));
+    if (!entry) return state;
+    if (!entry.isDirectory()) {
+      state.unresolved.push({ path: root, reason: 'it is not a real directory' });
+      return state;
+    }
+  } catch {
+    state.unresolved.push({ path: root, reason: 'its directory could not be read' });
+    return state;
+  }
   survey(exclusiveClaimDir(root), 'exclusive', state);
   survey(sharedClaimDir(root), 'shared', state);
   return state;

@@ -48,7 +48,10 @@ export function evictionOf(recordName: string): Eviction | null {
   return repo && uuid && new RegExp(BUILD_REPO_PATTERN).test(repo) ? { id: `${repo}-${uuid}`, repo, uuid } : null;
 }
 
-/** Whether something other than a real directory, such as a symlink, is at `path`. */
+/**
+ * Whether something other than a real directory, such as a symlink, is at `path`.
+ * Node's path-based filesystem calls cannot pin this check against a concurrent replacement.
+ */
 export function notRealDirectory(path: string): boolean {
   try {
     const stats = lstatSync(path, { throwIfNoEntry: false });
@@ -56,6 +59,14 @@ export function notRealDirectory(path: string): boolean {
   } catch {
     return true;
   }
+}
+
+/** Reads only regular files so worker cleanup never waits for a special file or follows a record symlink. */
+export function readWorkerRecord(path: string): string | null {
+  const entry = lstatSync(path, { throwIfNoEntry: false });
+  if (!entry) return null;
+  if (!entry.isFile()) throw new Error(`${path} is not a regular file`);
+  return readFileSync(path, 'utf8');
 }
 
 /** Records now as the last use of `area`. An unwritable record never stops the build or fetch that uses the area. */
@@ -76,7 +87,7 @@ export function recordAreaUse(area: string): void {
  */
 export function areaLastUsed(area: string): number {
   try {
-    const recorded = Number(readFileSync(join(area, USE_RECORD), 'utf8'));
+    const recorded = Number(readWorkerRecord(join(area, USE_RECORD)));
     if (Number.isSafeInteger(recorded) && recorded > 0 && recorded <= Date.now()) return recorded;
   } catch {}
   let latest = 0;
