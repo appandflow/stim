@@ -1128,7 +1128,9 @@ test.skipIf(process.platform === 'win32')(
 
     for (const name of ['start', 'ios', 'android', 'doctor', 'web', 'macos', 'revive', 'logs', 'status'])
       await beforeCommand(name, env);
-    expect(ran.mock.calls).toEqual(['start', 'ios', 'android', 'doctor'].map((name) => [name, { report: false }]));
+    expect(ran.mock.calls).toEqual(
+      ['start', 'ios', 'android', 'doctor'].map((name) => [name, expect.objectContaining({ report: false })]),
+    );
 
     ran.mockClear();
     for (const name of ['start', 'doctor']) await beforeCommand(name, { ...env, STIM_DAEMON: 'off' });
@@ -1219,7 +1221,9 @@ describe('on win32, which has no daemon', () => {
 
     for (const name of ['start', 'ios', 'android', 'doctor']) await beforeCommand(name, env);
 
-    expect(ran.mock.calls).toEqual(['start', 'ios', 'android', 'doctor'].map((name) => [name, { report: false }]));
+    expect(ran.mock.calls).toEqual(
+      ['start', 'ios', 'android', 'doctor'].map((name) => [name, expect.objectContaining({ report: false })]),
+    );
     expect(spawned).toEqual([]);
   });
 

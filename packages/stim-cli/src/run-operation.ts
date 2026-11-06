@@ -21,7 +21,7 @@ const API_COMMANDS: Partial<Record<ApiOperation, string>> = {
   collectGarbage: 'gc',
 };
 
-const PLATFORM_COMMANDS = ['ios', 'android', 'macos'];
+const PLATFORM_COMMANDS = ['ios', 'android', 'macos', 'web'];
 
 function apiCommand(operation: ApiOperation, platform: string | undefined): string | null {
   if (operation === 'build' || operation === 'run')
@@ -34,8 +34,8 @@ function apiCommand(operation: ApiOperation, platform: string | undefined): stri
  * while the environment sets a removed setting's variable or a leftover setting turns a mechanism off; otherwise the
  * operation takes the daemon's admission (`beforeCommand`) under the CLI command it shares a policy with. A CLI
  * subcommand, `--plan`, an API operation that creates no running state and an API caller inside a Stim resident
- * (`admission: 'none'`) take no admission. An API operation records its workspace's use itself, after the caller's
- * `before*` hook, so its admission does not. Returns the refusal, or the command admitted (null when none was).
+ * (`admission: 'none'`) take no admission. API `start` records its workspace's use itself, after the caller's
+ * `beforeStart`, so its admission does not. Returns the refusal, or the command admitted (null when none was).
  */
 export async function runOperation(
   entry: OperationEntry,
@@ -52,7 +52,10 @@ export async function runOperation(
   if (entry.caller === 'cli' && entry.plan) return { admitted: null };
   try {
     const { beforeCommand } = await import('./daemon/client.ts');
-    await beforeCommand(command, entry.env, { cwd: entry.cwd, recordUse: entry.caller === 'cli' });
+    await beforeCommand(command, entry.env, {
+      cwd: entry.cwd,
+      recordUse: entry.caller === 'cli' || entry.operation !== 'start',
+    });
   } catch {}
   return { admitted: command };
 }

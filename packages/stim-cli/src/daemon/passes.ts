@@ -449,7 +449,7 @@ export async function runPassesInProcess(
     const mode = daemonMode(env);
     if (env[HOME_PASSES_TEST_GUARD_ENV] || mode === 'off' || daemonClaimHeld()) return;
     await runCommandIdle(trigger, env, protectedRoot ?? undefined);
-    await runMaintenance(trigger, { report: mode === 'report' });
+    await runMaintenance(trigger, { report: mode === 'report', protectedRoot: protectedRoot ?? undefined });
     await runCommandLadder(trigger, env, protectedRoot ?? undefined);
   } catch {}
 }

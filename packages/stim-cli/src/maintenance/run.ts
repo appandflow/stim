@@ -288,7 +288,7 @@ function tickDeviceActivity({ measured }: MaintenanceTick) {
  */
 export async function runMaintenance(
   trigger: string,
-  { report = false, tick }: { report?: boolean; tick?: MaintenanceTick } = {},
+  { report = false, tick, protectedRoot }: { report?: boolean; tick?: MaintenanceTick; protectedRoot?: string } = {},
 ): Promise<string | void> {
   const startedAt = Date.now();
   let claim: ClaimHandle | undefined;
@@ -449,6 +449,7 @@ export async function runMaintenance(
         worktrees: plannedWorktrees,
         idle: ran.has('idle'),
         background,
+        protectedRoot,
         ...(tick ? { operation: tick.operation, deviceActivity: tickDeviceActivity(tick) } : {}),
       });
     } catch (error) {
@@ -472,7 +473,7 @@ export async function runMaintenance(
       const context = {
         settings,
         background,
-        protectedRoot: triggeringRoot(),
+        protectedRoot: protectedRoot ?? triggeringRoot(),
         worktreeSweep: result.worktreeSweep,
         ...(tick ? { operation: tick.operation } : {}),
       };

@@ -20,9 +20,14 @@ Import { createStim, StimError } from 'stim'. Node 22.12 or later is required.
 
 createStim takes projectRoot, optional absolute home and buildCache paths, an
 env object (default process.env) that Stim reads its settings overrides from
-and passes to its child processes, and onProgress({ stream, message }). message is an
-output chunk. Without onProgress, operations write nothing to the caller's
-stdout or stderr. The home is fixed when the client is created: home, else
+and passes to its child processes, onProgress({ stream, message }), and
+admission ('command' by default, 'none' for a caller inside a Stim resident
+process such as stim-server). message is an output chunk. Without onProgress,
+operations write nothing to the caller's stdout or stderr, except a diagnostic
+about an unresolvable stim-daemon claim. With admission 'command', start, build
+and run refuse and start the home's daemon as stim start, ios, android, macos
+and web do; gc and collectGarbage take the same refusals; doctor and
+repairDoctor run the daemon's passes when no daemon holds the home. The home is fixed when the client is created: home, else
 STIM_HOME from env, else the default home. All operations run in the calling
 process against the client's home and project and call the same lifecycle
 operations as the CLI. None parses CLI arguments or changes the caller's

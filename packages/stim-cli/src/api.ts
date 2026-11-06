@@ -338,7 +338,7 @@ export function createStim(options: StimOptions): StimClient {
         },
         120_000,
       );
-      return read(begin('requestMachineAccess', signal), async (context) => {
+      return read(begin(null, signal), async (context) => {
         await recordDoctorCheck(result.project, 'ios', version, context.signal);
         return result;
       });
