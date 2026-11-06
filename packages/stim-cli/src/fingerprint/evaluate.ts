@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -518,7 +518,21 @@ async function evaluate(
     buildEnv = buildEnvRows(texts, opts.env, platform, form);
     owners = buildEnv.paths.map(packageRoot);
   }
-  const pathRows = walk({ roots, trees: buildEnv.paths.filter((path) => !packageRoot(path)), tracked: null });
+  const { _internal: _, ...configValues } = record(output.config);
+  const configFiles = pathStrings(configValues).flatMap((value) => {
+    try {
+      const real = realpathSync.native(value);
+      const outside = !within(real, roots.project) && !within(real, roots.install) && !packageRoot(real);
+      return outside && statSync(real).isFile() ? [real] : [];
+    } catch {
+      return [];
+    }
+  });
+  const pathRows = walk({
+    roots,
+    trees: [...buildEnv.paths.filter((path) => !packageRoot(path)), ...configFiles],
+    tracked: null,
+  });
   if (isUncertain(pathRows)) return pathRows;
   const closure = entryPoints(root, expo);
   rows.push(...buildEnv.rows, ...pathRows.inputs, ...packageRows([...packages, ...closure.dirs], closure.missing));
