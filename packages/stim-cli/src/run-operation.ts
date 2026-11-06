@@ -68,7 +68,9 @@ export async function runOperation(
       ...(entry.caller === 'api' ? { held } : {}),
     });
   } catch {}
-  return { admitted: command, end: () => held.forEach((socket) => socket.destroy()) };
+  return held.length
+    ? { admitted: command, end: () => held.forEach((socket) => socket.destroy()) }
+    : { admitted: command };
 }
 
 /**
