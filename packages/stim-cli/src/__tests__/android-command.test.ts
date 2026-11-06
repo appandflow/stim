@@ -20,6 +20,7 @@ import { androidProcessRuntime } from '../commands/android/launch.ts';
 import type { HostedNativeTarget } from '../device-host/hosted-native.ts';
 import { workspaceId } from '@stim-cli/core';
 import * as offloadClient from '../offload/client.ts';
+import * as iosDevices from '../devices/ios.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { hashFile } from '../engine/installed-artifact.ts';
 import { vi } from 'vitest';
@@ -7501,7 +7502,7 @@ test('a named Android run scopes allocation, launch verification and collector s
 describe('strict remote machine selection', () => {
   beforeEach(() => {
     setExecutor(makeExecutor());
-    vi.spyOn(offloadClient, 'simulatorRuntime').mockReturnValue('iOS-27-0');
+    vi.spyOn(iosDevices, 'simulatorRuntime').mockReturnValue('iOS-27-0');
     vi.spyOn(offloadClient, 'closeOffload').mockImplementation(() => {});
     vi.spyOn(offloadClient, 'offloadCheck').mockReturnValue(async () => ({ capacity: null, problems: [] }));
   });

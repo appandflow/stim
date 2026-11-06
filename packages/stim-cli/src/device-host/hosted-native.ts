@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { workspaceDir } from '../workspace/paths.ts';
 import { phaseLine } from '../command-output.ts';
 import { agentAccess, removeAgentAccess } from './hosted-agent.ts';
-import { closeAgentConnection, hostedAgentSessionName } from './agent-connection.ts';
+import { closeAgentConnection } from './agent-connection.ts';
+import { hostedAgentSessionName } from '../hosted-names.ts';
 import { randomUUID } from 'node:crypto';
 import type { BuildHandoff } from '../offload/client.ts';
 import { pullHostedNativeLogs } from './hosted-logs.ts';
@@ -51,7 +52,7 @@ import {
   type HostedSession,
 } from './hosted-client.ts';
 import { requestHostedMetro, closeHostedMetro, hostedAgentPort, requireHostedMetro } from './metro-request.ts';
-import { writeHostedNative } from './ios-state.ts';
+import { writeHostedNative } from '../workspace/placement-state.ts';
 import { requireReverseLinks, syncHostedReverses } from './reverse.ts';
 import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { cancellableSleep } from '../cancellation.ts';

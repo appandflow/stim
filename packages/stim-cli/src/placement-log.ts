@@ -1,5 +1,5 @@
 import type { PlacementSkip } from './device-host/placement.ts';
-import { buildPlacementSettings } from './offload/selection.ts';
+import { buildPlacementSettings } from './build-placement.ts';
 
 export type SettingSource = 'flag' | 'env' | 'setting' | 'default';
 

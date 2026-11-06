@@ -5,7 +5,7 @@ import type { AndroidRunPlan } from './plan.ts';
 import type { DevicePlacement, HostedDeviceSelectors, HostedAppOffer } from '@stim-cli/core/state';
 import type { EasFallbackCheck } from '../../device-host/placement.ts';
 import { prepareHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
-import { readHostedAndroid } from '../../device-host/ios-state.ts';
+import { readHostedAndroid } from '../../workspace/placement-state.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import { avdStorageExists, isEmulatorToolAbsent, resolveOwnedAvdSerialAsync } from '../../devices/android.ts';
 import { getProject } from '../../workspace/config.ts';

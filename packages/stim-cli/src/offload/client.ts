@@ -59,7 +59,12 @@ import { isReleaseVariant } from '../commands/android/support.ts';
 import { isReleaseConfiguration } from '../commands/ios/support.ts';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
 import type { SyncPlan } from './signing-files.ts';
-import { ANDROID_RELEASE_UNSUPPORTED, namedBuildMachine, OffloadRefusal, workerFailureReason } from './selection.ts';
+import {
+  ANDROID_RELEASE_UNSUPPORTED,
+  namedBuildMachine,
+  OffloadRefusal,
+  workerFailureReason,
+} from '../build-placement.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import {
   buildsOnlyOnWorker,
@@ -1997,18 +2002,6 @@ function ccacheActivity(value: unknown): CcacheActivity {
 const mb = (bytes: number) => `${(bytes / 1024 ** 2).toFixed(1)} MB`;
 
 const seconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
-
-export function simulatorRuntime(udid: string): string | null {
-  try {
-    const listed = JSON.parse(
-      getExecutor().runFileQuiet('xcrun', ['simctl', 'list', 'devices', '-j'], { timeoutMs: 20_000 }) ?? '{}',
-    ) as { devices?: Record<string, Array<{ udid: string }>> };
-    for (const [runtime, devices] of Object.entries(listed.devices ?? {})) {
-      if (devices.some((device) => device.udid === udid)) return runtime;
-    }
-  } catch {}
-  return null;
-}
 
 /**
  * Every reason a machine's offer would not take this app's builds, judged for each of `targets`. A target the machine

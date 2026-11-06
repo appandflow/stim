@@ -7,7 +7,7 @@ import { automaticDevicePlacement } from '../../device-host/auto-placement.ts';
 import { checkEasFallback } from '../../engine/eas-fallback.ts';
 import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
 import { hostedMetroPortProbe } from '../../device-host/hosted-native.ts';
-import { readHostedIos, writeHostedIosAsync } from '../../device-host/ios-state.ts';
+import { readHostedIos, writeHostedIosAsync } from '../../workspace/placement-state.ts';
 import { followHostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { buildIos, discoverXcodeProject } from '../../integrations/react-native-build.ts';

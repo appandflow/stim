@@ -9,7 +9,7 @@ import {
 } from '@stim-cli/core/state';
 import type { EasFallbackCheck, PlacementOffer } from './placement.ts';
 import { automaticDevicePlacement, probeHost } from './auto-placement.ts';
-import { readHostedNative } from './ios-state.ts';
+import { readHostedNative } from '../workspace/placement-state.ts';
 import { hostingMachines } from './machines.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { buildPreferenceRefusal } from '../workspace/settings-payload.ts';

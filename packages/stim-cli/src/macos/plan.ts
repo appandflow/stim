@@ -2,7 +2,7 @@ import type { StimContext } from '@stim-cli/core';
 import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import type { MacosBuildPlanPayload } from '@stim-cli/core/state';
-import { resolveBuildPlacement } from '../offload/selection.ts';
+import { resolveBuildPlacement } from '../build-placement.ts';
 import { resolveProjectSettingsAsync, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 
 export async function planMacos(
