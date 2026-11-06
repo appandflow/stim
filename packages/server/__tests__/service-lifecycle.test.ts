@@ -301,7 +301,7 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     );
     expect(installed?.env).toEqual(['ANDROID_HOME=/sdk']);
     expect(installed?.pathPrepend).toEqual(['/jdk/bin']);
-    expect(installed?.script).toBe(realpathSync(join(import.meta.dirname, '../../stim-cli/bin/stim.mjs')));
+    expect(installed?.script).toBe(realpathSync(process.argv[1]!));
     const bootstraps = launchd.bootstraps.length;
     await finish(
       installJob(

@@ -58,7 +58,7 @@ export interface ServiceOptions {
   env: string[];
   pathPrepend: string[];
   serve: boolean;
-  stimHome?: string;
+  stimHome?: string | null;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -267,7 +267,7 @@ export async function installService(options?: ServiceOptions): Promise<string[]
             port: installed.port,
             env: installed.env,
             pathPrepend: installed.pathPrepend,
-            stimHome: installed.stimHome ?? undefined,
+            stimHome: installed.stimHome,
             serve: false,
           });
         })),
@@ -285,7 +285,7 @@ export async function installJob(
   setup?: { script: string; host: HostApp | null; requestPermissions: false },
 ): Promise<string[]> {
   const script = realpathSync(
-    join(dirname(createRequire(import.meta.url).resolve('stim/package.json')), 'bin', 'stim.mjs'),
+    setup?.script ?? join(dirname(createRequire(import.meta.url).resolve('stim/package.json')), 'bin', 'stim.mjs'),
   );
   const previous = await requireManaged(options.label);
   if (previous?.serve?.created && previous.port !== options.port) {
@@ -301,7 +301,7 @@ export async function installJob(
     createRoute = prepared.create;
   }
   const environment: Record<string, string> = {};
-  const stimHome = options.stimHome ?? process.env.STIM_HOME;
+  const stimHome = options.stimHome === undefined ? process.env.STIM_HOME : options.stimHome;
   if (stimHome) environment.STIM_HOME = stimHome;
   if (process.env.SHELL) environment.SHELL = process.env.SHELL;
   const manager = serviceManager();

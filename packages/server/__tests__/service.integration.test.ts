@@ -425,14 +425,14 @@ describe.skipIf(process.platform !== 'darwin')('managed unit conversion', () => 
       if (!running.has(`dev.stim.convert${port}`)) throw new Error('not listening');
       return new Response(JSON.stringify({ server: 'stim-server', version: '1.42.0', startup: { state: 'ready' } }));
     });
-    const records = Array.from([7790, 7791], (port) => ({
+    const records = Array.from([7790, 7791], (port): ServiceSpec => ({
       ...SPEC,
       label: `dev.stim.convert${port}`,
       port,
       script: join(home, 'old', 'stim-server.mjs'),
       env: [`TOOL_PORT=${port}`],
       pathPrepend: [join(home, `tools-${port}`)],
-      environment: { STIM_HOME: join(home, `state-${port}`) },
+      environment: port === 7790 ? { STIM_HOME: join(home, `state-${port}`) } : {},
       serve: { port: port + 100, created: port === 7790 },
     }));
     try {
@@ -450,7 +450,7 @@ describe.skipIf(process.platform !== 'darwin')('managed unit conversion', () => 
           port: record.port,
           env: record.env,
           pathPrepend: record.pathPrepend,
-          stimHome: record.environment.STIM_HOME,
+          stimHome: record.environment.STIM_HOME ?? null,
           serve: record.serve,
           managed: true,
         });

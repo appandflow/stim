@@ -1,9 +1,20 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
 import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, sep } from 'node:path';
+import {
+  isJsonObject,
   machineEndpoint,
   parseMachine,
   readBuildMachines,
@@ -14,6 +25,7 @@ import { Upstream } from './hosted-relay.ts';
 import type { MachineUpdateStatus, ProtocolError, EngineUpdateProgress } from './protocol.ts';
 
 const CHUNK_BYTES = 24 * 1024;
+const DEPENDENCY_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies'] as const;
 
 type Answer<T> = { result: T } | { error: ProtocolError };
 
@@ -24,6 +36,54 @@ interface Manifest {
   [field: string]: unknown;
 }
 
+const readManifest = (dir: string) => JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Manifest;
+
+function publishedRange(range: string, version: string): string {
+  const spec = range.slice('workspace:'.length);
+  if (spec === '*') return version;
+  if (spec === '^' || spec === '~') return `${spec}${version}`;
+  return spec;
+}
+
+function installedDir(from: string, name: string): string | null {
+  for (let dir = from; ; dir = dirname(dir)) {
+    const candidate = join(dir, 'node_modules', ...name.split('/'));
+    if (existsSync(join(candidate, 'package.json'))) return realpathSync(candidate);
+    if (dirname(dir) === dir) return null;
+  }
+}
+
+/**
+ * The packages of the Stim checkout `stimDir` runs from: it and every package it reaches through `workspace:`
+ * ranges, by name. Null when `stimDir` is an installed package, which a release update matches instead.
+ */
+export function workspacePackages(stimDir: string): Map<string, string> | null {
+  if (stimDir.split(sep).includes('node_modules')) return null;
+  let checkout = false;
+  for (let dir = stimDir, depth = 0; !checkout && depth < 4 && dirname(dir) !== dir; dir = dirname(dir), depth++) {
+    checkout = existsSync(join(dir, 'pnpm-workspace.yaml'));
+  }
+  if (!checkout) return null;
+  const found = new Map<string, string>();
+  const visit = (dir: string) => {
+    const manifest = readManifest(dir);
+    if (found.has(manifest.name)) return;
+    found.set(manifest.name, dir);
+    for (const field of DEPENDENCY_FIELDS) {
+      const ranges = isJsonObject(manifest[field]) ? manifest[field] : {};
+      for (const [name, range] of Object.entries(ranges)) {
+        if (typeof range !== 'string' || !range.startsWith('workspace:')) continue;
+        const dependency = installedDir(dir, name);
+        if (!dependency)
+          throw new Error(`${manifest.name} depends on ${name}, which is not installed in the checkout.`);
+        visit(dependency);
+      }
+    }
+  };
+  visit(stimDir);
+  return found;
+}
+
 function run(file: string, args: string[], env: NodeJS.ProcessEnv = process.env): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(file, args, { timeout: 120_000, killSignal: 'SIGKILL', env }, (error, _stdout, stderr) =>
@@ -32,37 +92,54 @@ function run(file: string, args: string[], env: NodeJS.ProcessEnv = process.env)
   });
 }
 
-/** Packs this machine's bundled Stim package for an approved worker. */
-export async function packStim(dir: string): Promise<{ name: string; bytes: Buffer; sha256: string }> {
-  const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Manifest;
+/**
+ * Packs each package as `npm pack` lays it out: its `files`, README and LICENSE under `package/`, with every
+ * `workspace:` range rewritten to the published range and without dev dependencies or scripts.
+ */
+export async function packWorkspace(
+  packages: Map<string, string>,
+): Promise<{ name: string; bytes: Buffer; sha256: string }[]> {
+  const versions = new Map([...packages].map(([name, dir]) => [name, readManifest(dir).version]));
   const out = mkdtempSync(join(tmpdir(), 'stim-engine-pack-'));
   try {
-    const contents = join(out, 'package');
-    mkdirSync(contents);
-    const entries = new Set([
-      ...(manifest.files ?? []),
-      ...readdirSync(dir).filter((entry) => /^(readme|license|licence)/i.test(entry)),
-    ]);
-    for (const entry of entries) {
-      if (existsSync(join(dir, entry))) cpSync(join(dir, entry), join(contents, entry), { recursive: true });
+    const packed = [];
+    for (const [name, dir] of packages) {
+      const manifest = readManifest(dir);
+      const stage = join(out, name.replace('@', '').replace('/', '-'));
+      const contents = join(stage, 'package');
+      mkdirSync(contents, { recursive: true });
+      const entries = new Set([
+        ...(manifest.files ?? []),
+        ...readdirSync(dir).filter((entry) => /^(readme|license|licence)/i.test(entry)),
+      ]);
+      for (const entry of entries) {
+        if (existsSync(join(dir, entry))) cpSync(join(dir, entry), join(contents, entry), { recursive: true });
+      }
+      for (const field of DEPENDENCY_FIELDS) {
+        const ranges = manifest[field];
+        if (!isJsonObject(ranges)) continue;
+        for (const [dependency, range] of Object.entries(ranges)) {
+          if (typeof range === 'string' && range.startsWith('workspace:')) {
+            ranges[dependency] = publishedRange(range, versions.get(dependency) ?? '*');
+          }
+        }
+      }
+      delete manifest.devDependencies;
+      delete manifest.scripts;
+      writeFileSync(join(contents, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+      const file = `${name.replace('@', '').replace('/', '-')}-${manifest.version}.tgz`;
+      // macOS tar writes AppleDouble entries for extended attributes unless COPYFILE_DISABLE is set.
+      await run(
+        process.platform === 'win32'
+          ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+          : '/usr/bin/tar',
+        ['-czf', join(out, file), '-C', stage, 'package'],
+        { ...process.env, COPYFILE_DISABLE: '1' },
+      );
+      const bytes = readFileSync(join(out, file));
+      packed.push({ name: file, bytes, sha256: createHash('sha256').update(bytes).digest('hex') });
     }
-    delete manifest.devDependencies;
-    delete manifest.scripts;
-    writeFileSync(join(contents, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
-    const name = `stim-${manifest.version}.tgz`;
-    // macOS tar writes AppleDouble entries for extended attributes unless COPYFILE_DISABLE is set.
-    await run(
-      process.platform === 'win32'
-        ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
-        : '/usr/bin/tar',
-      ['-czf', join(out, name), '-C', out, 'package'],
-      {
-        ...process.env,
-        COPYFILE_DISABLE: '1',
-      },
-    );
-    const bytes = readFileSync(join(out, name));
-    return { name, bytes, sha256: createHash('sha256').update(bytes).digest('hex') };
+    return packed;
   } finally {
     rmSync(out, { recursive: true, force: true });
   }
@@ -142,7 +219,8 @@ export class MachineUpdates {
         return 'error' in reply ? this.refusal(machine, reply) : { result: reply.result as EngineUpdateProgress };
       }
       // compat end
-      const packages = [await packStim(this.options.stimDir)];
+      const workspace = workspacePackages(this.options.stimDir) ?? new Map([['stim', this.options.stimDir]]);
+      const packages = await packWorkspace(workspace);
       const reply = await upstream.request('engine.update', {
         packages: packages.map(({ name, bytes, sha256 }) => ({ name, size: bytes.length, sha256 })),
       });
