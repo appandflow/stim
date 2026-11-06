@@ -438,7 +438,8 @@ console.log(JSON.stringify({ pid: process.pid, processToken: identity.token }));
           : kind === 'workspace' || kind === 'browser'
             ? join(area, 'state.lock')
             : deviceLeaseLockPath('android', 'fixture-phone');
-    mkdirSync(lock);
+    const held = tryAcquireClaim({ root: `${lock}.claims`, mode: 'exclusive' }).acquired;
+    if (!held) throw new Error('Could not acquire fixture claim.');
     const controller = new AbortController();
     let ticked = false;
     let whileLocked = '';
@@ -448,7 +449,7 @@ console.log(JSON.stringify({ pid: process.pid, processToken: identity.token }));
     }, 10);
     const release = setTimeout(() => {
       whileLocked = readFileSync(file, 'utf8');
-      rmSync(lock, { recursive: true });
+      releaseClaim(held);
     }, 50);
     try {
       await expect(createStim({ projectRoot: root, home }).stop({ signal: controller.signal })).rejects.toMatchObject({
@@ -463,7 +464,7 @@ console.log(JSON.stringify({ pid: process.pid, processToken: identity.token }));
       clearTimeout(cancel);
       clearTimeout(release);
       controller.abort();
-      rmSync(lock, { recursive: true, force: true });
+      releaseClaim(held);
     }
   },
 );
@@ -480,9 +481,10 @@ test('stop requests native cancellation through a contended state lock and clear
   });
   if (!claim.acquired) throw new Error('Could not acquire fixture claim.');
   const lock = join(area, 'state.lock');
-  mkdirSync(lock);
+  const held = tryAcquireClaim({ root: `${lock}.claims`, mode: 'exclusive' }).acquired;
+  if (!held) throw new Error('Could not acquire fixture claim.');
   let observed = false;
-  const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+  const release = setTimeout(() => releaseClaim(held), 50);
   const observe = setInterval(() => {
     if (!readWorkspaceState(root)?.nativeRunCancel) return;
     observed = true;
@@ -496,7 +498,7 @@ test('stop requests native cancellation through a contended state lock and clear
   } finally {
     clearTimeout(release);
     clearInterval(observe);
-    rmSync(lock, { recursive: true, force: true });
+    releaseClaim(held);
     releaseClaim(claim.acquired);
   }
 });
@@ -514,8 +516,9 @@ test('stop reports every lease released across lock retries and keeps another wo
   const foreign = takeLease({ root: other, platform: 'android', id: 'foreign-fixture', kind: 'run' });
   if (foreign.status !== 'taken') throw new Error('Could not take the other workspace lease.');
   const lock = deviceLeaseLockPath('android', 'blocked-fixture');
-  mkdirSync(lock);
-  const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+  const held = tryAcquireClaim({ root: `${lock}.claims`, mode: 'exclusive' }).acquired;
+  if (!held) throw new Error('Could not acquire fixture claim.');
+  const release = setTimeout(() => releaseClaim(held), 50);
   try {
     const result = await createStim({ projectRoot: root, home }).stop();
     expect(result.ok).toBe(true);
@@ -530,7 +533,7 @@ test('stop reports every lease released across lock retries and keeps another wo
     expect(readWorkspaceState(other)?.deviceLeases).toMatchObject({ android: { id: 'foreign-fixture' } });
   } finally {
     clearTimeout(release);
-    rmSync(lock, { recursive: true, force: true });
+    releaseClaim(held);
   }
 });
 
@@ -911,7 +914,8 @@ test('device unlock filters this client home, project, platform and slot and can
     expect(takeLease({ root: holder, platform, slot, id, kind: 'declared' }).status).toBe('taken');
   }
   const lock = deviceLeaseLockPath('ios', 'own');
-  mkdirSync(lock);
+  const held = tryAcquireClaim({ root: `${lock}.claims`, mode: 'exclusive' }).acquired;
+  if (!held) throw new Error('Could not acquire fixture claim.');
   const controller = new AbortController();
   const client = createStim({ projectRoot: root, home });
   const pending = client.unlockDevice({ platform: 'ios', slot: 'secondary', signal: controller.signal });
@@ -920,7 +924,7 @@ test('device unlock filters this client home, project, platform and slot and can
     await expect(pending).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
   } finally {
     clearTimeout(cancel);
-    rmSync(lock, { recursive: true, force: true });
+    releaseClaim(held);
   }
   expect(existsSync(deviceLeasePath('ios', 'own'))).toBe(true);
   const cwd = process.cwd();

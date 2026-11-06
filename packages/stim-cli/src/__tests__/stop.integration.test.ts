@@ -30,7 +30,7 @@ import { readDeferredShutdowns } from '@stim-cli/core/state';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { recordPhoneReverse } from '../devices/phone-reverses.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import { tryAcquireClaim } from '../ownership-claim.ts';
+import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { serveShareList } from './_share-list-server.ts';
 
 test('a live legacy supervisor is retained without signalling or releasing its port', async () => {
@@ -204,14 +204,15 @@ test.each([true, false])(
       },
     });
     const lock = join(dirname(workspaceStateFile(root)), 'state.lock');
-    mkdirSync(lock);
-    const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+    const held = tryAcquireClaim({ root: `${lock}.claims`, mode: 'exclusive' }).acquired;
+    assert(held);
+    const release = setTimeout(() => releaseClaim(held), 50);
     try {
       await runStop(opts);
       expect(Boolean(readWorkspaceState(root)?.devServerStopRequest)).toBe(signalled);
     } finally {
       clearTimeout(release);
-      rmSync(lock, { recursive: true, force: true });
+      releaseClaim(held);
     }
   },
 );

@@ -7434,8 +7434,8 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
   it('keeps a canonical folder busy while yielding and cancels a timed-out pending write', async () => {
     await start({ actionLimits: { timeoutMs: 1000 } });
     const client = await desktop();
-    const lock = join(root, 'home', 'config.lock');
-    mkdirSync(lock);
+    const lock = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' }).acquired;
+    assert(lock);
     const alias = join(root, 'alias');
     symlinkSync(workspace, alias, 'dir');
     const request = { cwd: alias, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
@@ -7451,18 +7451,18 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
       });
       await until(() => readAudit().some((entry) => entry.action === 'settings.set'));
       expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
-      rmSync(lock, { recursive: true });
+      releaseClaim(lock);
       expect(await client.request('desktop.settings.write', request)).toHaveProperty('result.changed', true);
     } finally {
-      rmSync(lock, { recursive: true, force: true });
+      releaseClaim(lock);
     }
   });
 
   it('cancels a pending write on disconnect without changing its setting', async () => {
     await start();
     const client = await desktop();
-    const lock = join(root, 'home', 'config.lock');
-    mkdirSync(lock);
+    const lock = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' }).acquired;
+    assert(lock);
     try {
       void client.request('desktop.settings.write', {
         cwd: workspace,
@@ -7483,7 +7483,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
       );
       expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
     } finally {
-      rmSync(lock, { recursive: true, force: true });
+      releaseClaim(lock);
     }
   });
 
@@ -7604,8 +7604,8 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
     const state = join(workspaceStateDir(workspace), 'state.json');
     mkdirSync(dirname(state), { recursive: true });
     writeFileSync(state, JSON.stringify({ launches: {} }));
-    const lock = join(root, 'home', 'config.lock');
-    mkdirSync(lock);
+    const lock = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' }).acquired;
+    assert(lock);
     return lock;
   }
 
@@ -7733,7 +7733,7 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
       expect(await other.request('machine.history')).toHaveProperty('result');
       release = setTimeout(() => {
         released = true;
-        rmSync(lock, { recursive: true });
+        releaseClaim(lock);
       }, 50);
       assert(server);
       await server.close();
@@ -7741,7 +7741,7 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
       expect(released).toBe(true);
     } finally {
       clearTimeout(release);
-      rmSync(lock, { recursive: true, force: true });
+      releaseClaim(lock);
     }
   });
 
@@ -7767,13 +7767,13 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
           'error.code',
           'action-busy',
         );
-        rmSync(lock, { recursive: true });
+        releaseClaim(lock);
         await until(() =>
           readAudit().some((entry) => entry.action === 'stop' && entry.error?.message.includes('STIM_CANCELLED')),
         );
         expect(stimCalls()).toEqual([]);
       } finally {
-        rmSync(lock, { recursive: true, force: true });
+        releaseClaim(lock);
       }
     },
   );
@@ -8461,12 +8461,12 @@ describe('action', () => {
     ]);
   });
 
-  function holdConfigDuringStop(): string {
+  function holdConfigDuringStop() {
     const state = join(workspaceStateDir(workspace), 'state.json');
     mkdirSync(dirname(state), { recursive: true });
     writeFileSync(state, JSON.stringify({ launches: {} }));
-    const lock = join(root, 'home', 'config.lock');
-    mkdirSync(lock);
+    const lock = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' }).acquired;
+    assert(lock);
     return lock;
   }
 
@@ -8686,7 +8686,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
       });
       release = setTimeout(() => {
         released = true;
-        rmSync(lock, { recursive: true });
+        releaseClaim(lock);
       }, 50);
       const active = server;
       if (!active) throw new Error('Server was not started.');
@@ -8696,7 +8696,7 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
       expect(stimCalls()).toEqual([]);
     } finally {
       clearTimeout(release);
-      rmSync(lock, { recursive: true, force: true });
+      releaseClaim(lock);
       await createStim({ projectRoot: workspace, home: join(root, 'home') }).stop();
     }
   });
@@ -8713,11 +8713,11 @@ setTimeout(() => { fs.writeFileSync(${JSON.stringify(escaped)}, ''); process.exi
       await client.closed;
       expect(await other.request('machine.history')).toMatchObject({ result: expect.anything() });
       expect(readAudit()).toEqual([]);
-      rmSync(lock, { recursive: true });
+      releaseClaim(lock);
       await until(() => readAudit().some((record) => record.action === 'stop' && record.ok));
       expect(stimCalls()).toEqual([]);
     } finally {
-      rmSync(lock, { recursive: true, force: true });
+      releaseClaim(lock);
       await createStim({ projectRoot: workspace, home: join(root, 'home') }).stop();
     }
   });
