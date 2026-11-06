@@ -71,7 +71,6 @@ export const pathRules = [
   { path: 'packages/cache', rows: ['caches', 'remote-provider'] },
   { path: 'packages/cache-s3', rows: ['caches', 'remote-provider'] },
   { path: 'packages/metro', rows: ['caches', 'logs'] },
-  { path: 'packages/expo-build-cache', rows: ['caches'] },
   { path: 'packages/server', rows: ['loop'] },
   { path: 'packages/agent-driver', rows: ['loop'] },
   { path: 'packages/agent-driver-agent-device', rows: ['loop'] },

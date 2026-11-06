@@ -116,10 +116,6 @@ const config: Config = {
           items: [
             { label: 'stim', href: 'https://www.npmjs.com/package/stim' },
             { label: '@stim-cli/metro', href: 'https://www.npmjs.com/package/@stim-cli/metro' },
-            {
-              label: '@stim-cli/expo-build-cache',
-              href: 'https://www.npmjs.com/package/@stim-cli/expo-build-cache',
-            },
           ],
         },
         {

@@ -223,7 +223,7 @@ the type and priority.
   defect or a feature that unblocks other work. `priority: P2` is normal and the
   default when unsure. `priority: P3` is nice to have.
 - `area: cli` is `packages/stim-cli`, including its README and guide.
-  `area: core`, `area: cache` (with `packages/expo-build-cache`),
+  `area: core`, `area: cache`,
   `area: metro`, `area: server` and `area: ci` are the matching `packages/`
   directories; `area: ci` is the `@stim-cli/ci` package, not GitHub workflows.
   `area: desktop` is `apps/desktop`. `area: mobile` is `apps/mobile` and its
@@ -325,8 +325,7 @@ outside it moves to its own issue and pull request.
 - **Single exec wrapper.** Route all child processes through
   `packages/stim-cli/src/exec.ts`. Use `runFile` for user-controlled paths.
   Lint rejects value imports of `node:child_process` and `cross-spawn`
-  elsewhere in the CLI source. `expo-build-cache` cannot import CLI code, so it
-  calls `node:child_process` directly.
+  elsewhere in the CLI source.
 - **Pure parsing and decision logic.** Keep parsers and selectors separate from
   thin I/O wrappers. Test complex logic directly when it adds distinct coverage;
   simple helpers remain covered through their callers.

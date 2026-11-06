@@ -18,7 +18,6 @@ packages/stim-cli            stim                          the CLI
 packages/ci                  @stim-cli/ci                  CI lifecycle and stim-ci executable
 packages/cache               @stim-cli/cache               cache provider contract and tier coordination
 packages/cache-s3            @stim-cli/cache-s3            optional S3-compatible cache provider
-packages/expo-build-cache    @stim-cli/expo-build-cache    Expo build cache provider
 packages/metro               @stim-cli/metro               shared Metro transform cache + log reporter
 packages/agent-driver        @stim-cli/agent-driver        hosted agent driver contract for stim-server
 packages/agent-driver-agent-device @stim-cli/agent-driver-agent-device agent-device hosted agent driver
@@ -88,7 +87,7 @@ Every package name must already exist on npm, because trusted publishing can
 only be configured for an existing package:
 
 ```bash
-for p in @stim-cli/core @stim-cli/cache @stim-cli/cache-s3 @stim-cli/agent-driver @stim-cli/agent-driver-agent-device @stim-cli/metro @stim-cli/expo-build-cache stim @stim-cli/ci @stim-cli/transport @stim-cli/transport-tailscale @stim-cli/transport-local @stim-cli/server; do
+for p in @stim-cli/core @stim-cli/cache @stim-cli/cache-s3 @stim-cli/agent-driver @stim-cli/agent-driver-agent-device @stim-cli/metro stim @stim-cli/ci @stim-cli/transport @stim-cli/transport-tailscale @stim-cli/transport-local @stim-cli/server; do
   npm view "$p" name >/dev/null || echo "$p: first publication required"
 done
 ```
@@ -203,7 +202,7 @@ preparation, `git status --short` may show only the draft
 
    ```bash
    out=$(mktemp -d)
-   for p in core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server; do
+   for p in core cache cache-s3 agent-driver agent-driver-agent-device metro stim-cli ci transport transport-tailscale transport-local server; do
      tgz=$(cd "packages/$p" && pnpm pack --pack-destination "$out" | tail -1)
      echo "== $p ($(tar -tzf "$tgz" | wc -l | tr -d ' ') files)"
      tar -tzf "$tgz" | grep -E 'README|LICENSE'
@@ -515,7 +514,6 @@ and repeat the affected gate rather than waiving it.
    npm pack "stim@$version" --dry-run 2>&1 | grep ' README.md$'
    npm view "@stim-cli/core@$version" version
    npm view "@stim-cli/cache@$version" version
-   npm view "@stim-cli/expo-build-cache@$version" version
    npm view "@stim-cli/metro@$version" version
    cd /tmp && npx -p "@stim-cli/ci@$version" stim-ci --version
    cd /tmp && npx -p "@stim-cli/server@$version" stim-server --version

@@ -79,7 +79,6 @@
     "ws": "^8.21.3"
   },
   "devDependencies": {
-    "@stim-cli/expo-build-cache": "workspace:*",
     "@types/cross-spawn": "^6.0.6",
     "@types/which": "^3.0.4",
     "@types/ws": "^8.18.1",

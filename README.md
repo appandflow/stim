@@ -66,8 +66,6 @@ stim guide settings
 
 - [`stim`](./packages/stim-cli) provides the `stim` command.
 - [`@stim-cli/metro`](./packages/metro) shares Metro transforms and records logs.
-- [`@stim-cli/expo-build-cache`](./packages/expo-build-cache) lets direct Expo
-  builds share native artifacts with Stim.
 - [`@stim-cli/cache`](./packages/cache) holds the cache provider contract and
   the local-first tier coordination behind both caches.
 - [`@stim-cli/core`](./packages/core) contains shared internal cache contracts.
