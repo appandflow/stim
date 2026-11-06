@@ -22,14 +22,15 @@ function buildId(dir: string): string {
   return hash.digest('hex').slice(0, 12);
 }
 
-const IGNORED_ENV = new Set(['STIM_RUN_ID', 'STIM_TRACE', 'STIM_NO_UPDATE_CHECK', 'STIM_ROUTER_FALLBACK']);
-
-/** The digest of this process's `STIM_` variables that stimd's status snapshot compares with its own. */
-function stimEnv(): string {
-  const entries = Object.entries(process.env)
-    .filter(([name, value]) => name.startsWith('STIM_') && !IGNORED_ENV.has(name) && value !== undefined)
-    .toSorted(([a], [b]) => (a < b ? -1 : 1));
-  return createHash('sha256').update(JSON.stringify(entries)).digest('hex');
+/** This process's `STIM_` variables, each value as a short sha256, for stimd to compare with its own. */
+function stimEnv(): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(process.env).flatMap(([name, value]) =>
+      name.startsWith('STIM_') && value !== undefined
+        ? [[name, createHash('sha256').update(value).digest('hex').slice(0, 16)]]
+        : [],
+    ),
+  );
 }
 
 /** stimd's answer to `status`, or null when no stimd of this build answers in time. */

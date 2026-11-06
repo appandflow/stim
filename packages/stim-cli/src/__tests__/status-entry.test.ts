@@ -63,7 +63,7 @@ test('--json prints the snapshot stimd answers for this directory, with its age,
   expect(printed()).toEqual({ environments: [], daemon: { running: true }, ageMs: 4200 });
   expect(requests).toEqual([
     { kind: 'cli', build: expect.stringMatching(/^[0-9a-f]{12}$/) },
-    { op: 'status', params: { cwd: process.cwd(), fresh: false, env: expect.stringMatching(/^[0-9a-f]{64}$/) } },
+    { op: 'status', params: { cwd: process.cwd(), fresh: false, env: expect.any(Object) } },
   ]);
   expect(cli.main).not.toHaveBeenCalled();
 });

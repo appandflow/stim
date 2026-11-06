@@ -4,6 +4,7 @@ import { isAbsolute } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { isJsonObject } from '@stim-cli/core/state';
 import { spawnEntry } from '../spawn-entry.ts';
+import { STIMD_ENV } from '../daemon/client.ts';
 
 const IDLE_MS = 2 * 60_000;
 const BOOTING_WAIT_MS = 1000;
@@ -13,17 +14,23 @@ const READ_AT_BOOT = 4;
 const failed = (error: unknown): string =>
   JSON.stringify({ op: 'status', error: error instanceof Error ? error.message : String(error) });
 
-const IGNORED_ENV = new Set(['STIM_RUN_ID', 'STIM_TRACE', 'STIM_NO_UPDATE_CHECK', 'STIM_ROUTER_FALLBACK']);
+const kept = (name: string): boolean => STIMD_ENV.has(process.platform === 'win32' ? name.toUpperCase() : name);
+const own = (name: string): string | undefined => {
+  const value = process.env[name];
+  return value === undefined ? undefined : createHash('sha256').update(value).digest('hex').slice(0, 16);
+};
 
 /**
- * A digest of the `STIM_` variables of `env` that can change a status payload. The status entry computes the same one
- * for its caller, and stimd answers only a caller whose digest matches its own.
+ * Whether the caller's `STIM_` variables, each a short sha256 of its value as the status entry sends them, agree with
+ * stimd's own on every name stimd would keep from a command that starts it ({@link STIMD_ENV}); the others never reach
+ * stimd, so they cannot tell the two apart.
  */
-function stimEnv(env: NodeJS.ProcessEnv): string {
-  const entries = Object.entries(env)
-    .filter(([name, value]) => name.startsWith('STIM_') && !IGNORED_ENV.has(name) && value !== undefined)
-    .toSorted(([a], [b]) => (a < b ? -1 : 1));
-  return createHash('sha256').update(JSON.stringify(entries)).digest('hex');
+function sameStimEnv(caller: unknown): boolean {
+  if (!isJsonObject(caller)) return false;
+  const names = new Set(
+    [...Object.keys(caller), ...Object.keys(process.env)].filter((name) => name.startsWith('STIM_')),
+  );
+  return [...names].filter(kept).every((name) => caller[name] === own(name));
 }
 
 type Log = (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void;
@@ -114,7 +121,6 @@ export function createStatusSnapshots(log: Log, file: string): StatusSnapshots {
       log('warn', 'status_snapshot_failed', `status for ${cwd}: ${error instanceof Error ? error.message : error}`),
     );
 
-  const ownEnv = stimEnv(process.env);
   let recent: string[] = [];
   try {
     const saved: unknown = JSON.parse(readFileSync(file, 'utf8'));
@@ -133,7 +139,7 @@ export function createStatusSnapshots(log: Log, file: string): StatusSnapshots {
     async answer(params) {
       const { cwd, fresh, env } = isJsonObject(params) ? params : {};
       if (typeof cwd !== 'string' || !isAbsolute(cwd)) return failed('status names no absolute directory');
-      if (env !== ownEnv) return failed("the caller's STIM_ settings differ from stimd's");
+      if (!sameStimEnv(env)) return failed("the caller's STIM_ settings differ from stimd's");
       used(cwd);
       if (fresh === true) {
         try {
