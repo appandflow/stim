@@ -533,7 +533,7 @@ export function traceReads(
   const realInModules = new Map<string, boolean>();
   const linkables = new Map<string, boolean>();
   for (const { path, kind, hash } of entries) {
-    const inside = within(path, roots.project) || within(path, roots.install);
+    const inside = within(path, roots.install) || within(path, roots.project);
     const root = packageRoot(path);
     const owner = root ?? path;
     const throughModules = inside && modulesSegment(path);

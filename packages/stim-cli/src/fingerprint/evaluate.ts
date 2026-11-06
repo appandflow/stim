@@ -319,7 +319,7 @@ function traceRows(
   const compiled = new Set(trace.modules.map((module) => module.path));
   const configPart = name === 'config' || name === 'configEmbedded';
   for (const { path, kind } of trace.reads) {
-    if (ours(path) || packageRoot(path)) continue;
+    if (packageRoot(path) || ours(path)) continue;
     if (kind === 'resolve') continue;
     if (kind !== 'file') {
       if (inApp(path) && (name === 'config' || name === 'configEmbedded'))
