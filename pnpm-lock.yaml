@@ -505,6 +505,9 @@ importers:
       '@stim-cli/metro':
         specifier: workspace:*
         version: link:../metro
+      '@stim-cli/server':
+        specifier: workspace:*
+        version: link:../server
       '@xmldom/xmldom':
         specifier: 0.9.12
         version: 0.9.12

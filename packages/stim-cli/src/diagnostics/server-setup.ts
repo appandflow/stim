@@ -124,16 +124,19 @@ export interface NetworkReading {
 /** The launcher a macOS service runs the server under repeats the server's command line; its node child is the server. */
 const STIM_HOST_LAUNCHER = /\/Contents\/MacOS\/stim-host run /;
 
-const SERVER_COMMAND = /^\S*[/\\]?node(?:\.exe)?\s+(?:-\S+\s+)*(.*?stim-server(?:\.mjs)?)(?=\s|$)(?:\s+(.*))?$/;
+const SERVER_COMMAND =
+  /^\S*[/\\]?node(?:\.exe)?\s+(?:-\S+\s+)*(.*?(?:stim-server(?:\.mjs)?|(?:bin\/stim|dist\/cli)\.mjs))(?=\s|$)(?:\s+(.*))?$/;
 const SERVER_SCRIPT = /(?:^|\/)stim-server(?:\.mjs)?$/;
+const CLI_SCRIPT = /(?:^|\/)(?:bin\/stim|dist\/cli)\.mjs$/;
 
 export function parseServerProcesses(ps: string): ServerProcess[] {
   const servers: ServerProcess[] = [];
   for (const row of parseProcessRows(ps)) {
     if (STIM_HOST_LAUNCHER.test(row.command)) continue;
     const [, script, rest = ''] = SERVER_COMMAND.exec(row.command) ?? [];
-    if (script === undefined || !SERVER_SCRIPT.test(script)) continue;
+    if (script === undefined) continue;
     const args = rest.split(/\s+/).filter(Boolean);
+    if (!SERVER_SCRIPT.test(script) && (!CLI_SCRIPT.test(script) || args.shift() !== 'serve')) continue;
     if (args[0] !== undefined && !args[0].startsWith('-')) continue;
     if (args.includes('--version') || args.includes('--help')) continue;
     const flag = args.findIndex((each) => each === '--port' || each.startsWith('--port='));

@@ -713,12 +713,6 @@ test('a registry hint completes only this ticket grant before the next approval 
   }
 });
 
-test('setup refuses a ticket on the command line and names the environment variable instead', () => {
-  expect(() => parseSetupArgs([...args, '--ticket', ticket], now, undefined)).toThrow(
-    /no longer takes --ticket.*STIM_SETUP_TICKET=<ticket>/,
-  );
-});
-
 test.each([
   ['', true],
   ['y', true],

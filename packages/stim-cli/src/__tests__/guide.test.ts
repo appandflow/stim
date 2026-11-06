@@ -306,7 +306,7 @@ test('the errors topic documents every code the build commands, the Node check a
       'engine/ios-device.ts',
     ].map((f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8')),
     readFileSync(new URL('../../bin/node-check.ts', import.meta.url), 'utf-8'),
-    readFileSync(new URL('../../../server/bin/node-check.ts', import.meta.url), 'utf-8'),
+    readFileSync(new URL('../../../server/bin/stim-server.ts', import.meta.url), 'utf-8'),
   ].join('\n');
   const codes = scrapedCodes(sources);
   expect(codes.size).toBeGreaterThan(0);

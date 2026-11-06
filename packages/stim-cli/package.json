@@ -23,9 +23,10 @@
     "directory": "packages/stim-cli"
   },
   "bin": {
-    "stim": "dist/cli.mjs"
+    "stim": "bin/stim.mjs"
   },
   "files": [
+    "bin/stim.mjs",
     "dist",
     "shim",
     "skill",
@@ -71,6 +72,7 @@
     "@stim-cli/cache": "workspace:*",
     "@stim-cli/core": "workspace:*",
     "@stim-cli/metro": "workspace:*",
+    "@stim-cli/server": "workspace:*",
     "@xmldom/xmldom": "0.9.12",
     "chalk": "^6.0.0",
     "commander": "^15.0.0",

@@ -218,12 +218,11 @@ const version = execFileSync(process.execPath, ['packages/stim-cli/dist/cli.mjs'
 const cliPackage = JSON.parse(readFileSync(join(repositoryRoot, 'packages', 'stim-cli', 'package.json'), 'utf8'));
 assert.equal(version, cliPackage.version);
 
-const serverVersion = execFileSync(process.execPath, ['packages/server/dist/stim-server.mjs', '--version'], {
+const serverVersion = execFileSync(process.execPath, ['packages/stim-cli/bin/stim.mjs', 'serve', '--version'], {
   cwd: repositoryRoot,
   encoding: 'utf8',
 }).trim();
-const serverPackage = JSON.parse(readFileSync(join(repositoryRoot, 'packages', 'server', 'package.json'), 'utf8'));
-assert.equal(serverVersion, serverPackage.version);
+assert.equal(serverVersion, cliPackage.version);
 
 const ciRequire = createRequire(join(repositoryRoot, 'packages', 'ci', 'package.json'));
 assert.equal(typeof ciRequire('@stim-cli/ci').runCI, 'function');

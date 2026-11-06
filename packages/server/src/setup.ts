@@ -99,8 +99,6 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
   const { values } = parseArgs({
     args,
     options: {
-      client: { type: 'string' },
-      ticket: { type: 'string' },
       expires: { type: 'string' },
       build: { type: 'boolean' },
       'device-host': { type: 'boolean' },
@@ -114,14 +112,6 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
       'no-wait': { type: 'boolean' },
     },
   });
-  if (values.ticket !== undefined)
-    throw new SetupRefusal(
-      'setup no longer takes --ticket, because other users on this machine can read command-line arguments. Set STIM_SETUP_TICKET=<ticket> before stim-server setup, or copy a new command from Stim Desktop.',
-    );
-  if (values.client !== undefined)
-    throw new SetupRefusal(
-      'setup no longer takes --client: the setup ticket alone names the requesting machine. Copy a new command from Stim Desktop, or run `stim remote add <this machine>` on the requesting machine.',
-    );
   const secret = ticket ? decodeSecret(ticket) : null;
   if (!secret) throw new SetupRefusal('STIM_SETUP_TICKET takes the 43 base64url characters of the setup ticket.');
   const capabilities = (['build', 'device-host'] as const).filter((cap) => values[cap]);
@@ -361,6 +351,7 @@ export async function discardTypedAhead(stream: NodeJS.ReadableStream & { isTTY?
 }
 
 export function defaultSetupDeps(): SetupDeps {
+  const stimDist = join(dirname(bundledStim().cli), '../dist');
   const manager = serviceManagerOrNull();
   const platform = manager?.name === 'systemd' ? 'linux' : manager?.name === 'taskscheduler' ? 'win32' : 'darwin';
   return {
@@ -461,7 +452,7 @@ export function defaultSetupDeps(): SetupDeps {
     async toolchain(options) {
       const env = applyServeEnvironment(discoverToolchain(process.env).env, options.env, options.pathPrepend);
       const host = new BuildHost({
-        worker: join(dirname(bundledStim().cli), 'offload-worker.mjs'),
+        worker: join(stimDist, 'offload-worker.mjs'),
         env,
         ready: () => false,
       });
@@ -473,7 +464,7 @@ export function defaultSetupDeps(): SetupDeps {
     },
     node: stableNode(process.env.PATH),
     versions: (label) => join(serviceRoot(label), 'versions'),
-    stimBuild: stimBuildDigest(dirname(bundledStim().cli)),
+    stimBuild: stimBuildDigest(stimDist),
   };
 }
 
