@@ -15,6 +15,14 @@ tester.run('package-fence', plugin.rules['package-fence'], {
       filename: fileURLToPath(new URL('../../packages/cache/index.ts', import.meta.url)),
     },
     {
+      code: "type T = import('../state/index.js').T;",
+      filename: fileURLToPath(new URL('../../packages/core/src/example.ts', import.meta.url)),
+    },
+    {
+      code: "type T = typeof import('@stim-cli/core');",
+      filename: fileURLToPath(new URL('../../packages/cache/index.ts', import.meta.url)),
+    },
+    {
       code: "new URL('../../other/asset.bin', location.url);",
       filename: fileURLToPath(new URL('../../packages/core/src/example.ts', import.meta.url)),
     },
@@ -24,6 +32,8 @@ tester.run('package-fence', plugin.rules['package-fence'], {
     "export { value } from '../../cache/index.js';",
     "export * from '../../cache/index.js';",
     "import('../../cache/index.js');",
+    "type T = import('../../cache/index.js').T;",
+    "type T = typeof import('../../cache/index.js');",
     "require('../../cache/index.js');",
     "require.resolve('../../cache/index.js');",
     "new URL('../../cache/asset.bin', import.meta.url);",

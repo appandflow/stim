@@ -24,6 +24,7 @@ const packageFence = {
       ExportNamedDeclaration: (node) => node.source && check(node, node.source.value),
       ExportAllDeclaration: (node) => check(node, node.source.value),
       ImportExpression: (node) => check(node, lit(node.source)),
+      TSImportType: (node) => check(node, node.source.value),
       CallExpression(node) {
         const callee = node.callee;
         const isResolve = !callee.computed && callee.object?.name === 'require' && callee.property?.name === 'resolve';
