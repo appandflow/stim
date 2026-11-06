@@ -364,20 +364,15 @@ export async function runStimd({
     const why = `the engine switched to ${next.version} (${next.build})`;
     shutdown(why);
     await net.close();
-    const switchStarted = performance.now();
-    const entry = join(root, next.build, 'dist', 'cli.mjs');
-    launchStimd(process.env, startMode, process.platform, entry, ['--after-switch', ...serveArgs(serve)]);
+    launchStimd(process.env, startMode, process.platform, join(root, next.build, 'dist', 'cli.mjs'), [
+      '--after-switch',
+      ...serveArgs(serve),
+    ]);
     for (const deadline = Date.now() + SUCCESSOR_BIND_MS; Date.now() < deadline;) {
       const record = readJsonObject(stimdRecordFile());
-      if (record?.build === next.build && record.pid !== process.pid) {
-        log('info', 'engine_successor', `stimd pid ${String(record.pid)} of ${next.build} took over`, {
-          bindMs: Math.round(performance.now() - switchStarted),
-        });
-        return;
-      }
+      if (record?.build === next.build && record.pid !== process.pid) return;
       await new Promise((done) => setTimeout(done, 20));
     }
-    log('warn', 'engine_successor', `no stimd of ${next.build} bound within ${SUCCESSOR_BIND_MS / 1000} s`);
   };
   const server = createServer((socket) => {
     open.add(socket);

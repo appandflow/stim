@@ -1932,6 +1932,15 @@ not on any remote"  (worktree remove)
   store) and the command that gets past it, such as stim engine install or
   stim engine use <version>.`,
     },
+    STIM_ENGINE_SWITCHED: {
+      summary: 'the machine engine switched to a newer build while this run waited',
+      body: () => `STIM_ENGINE_SWITCHED  ("Stim updated to <version>; rerun")
+  A build waiting at its build slot, stim logs --follow and stim status
+  --watch end when the engine switches builds under them; the CLI prints the
+  quoted line and exits 75. While a newer build is staged, a cache miss waits
+  at its build slot for up to 10 minutes so running builds can finish.
+  Rerun the same command: it runs the new build.`,
+    },
     STIM_ROUTER_TOO_OLD: {
       summary: 'this copy of stim cannot read the engine pointer a newer stim wrote',
       body: () => `STIM_ROUTER_TOO_OLD  ("this stim (<version>) cannot read engine format <n>")

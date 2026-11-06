@@ -4,9 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { BUILD_DIR, engineRoot, FORMAT } from '../engine-store/store.ts';
 
 /** How long after a build is staged a cache miss waits at the build slot for the switch. */
-export const SLOT_HOLD_MS: number = 10 * 60_000;
+const SLOT_HOLD_MS: number = 10 * 60_000;
 /** The exit code of a command that outlived its build: rerunning it runs the new one. */
-export const SWITCHED_EXIT: number = 75;
+const SWITCHED_EXIT: number = 75;
 
 /** The engine store entry a process runs from. */
 export type StoreEngine = { root: string; build: string };
@@ -60,7 +60,7 @@ export function stagedHold(engine: StoreEngine | null, now: number): Pointer | n
 }
 
 /** A wait that outlived its build. The CLI prints its message and exits {@link SWITCHED_EXIT}. */
-export class EngineSwitchedError extends Error {
+class EngineSwitchedError extends Error {
   readonly code: string = 'STIM_ENGINE_SWITCHED';
   readonly exitCode: number = SWITCHED_EXIT;
 
