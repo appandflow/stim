@@ -110,7 +110,12 @@ async function open(options: Partial<InitiateOptions>) {
     socket.send(JSON.stringify({ id, method, params }));
     await vi.waitFor(() => expect(received.some((message) => message.id === id)).toBe(true), { timeout: 10_000 });
     const reply = received.find((message) => message.id === id)!;
-    expect(reply.error ? isRpcError(reply.error) : isRpcResult(method as Method, reply.result), method).toBe(true);
+    expect({ method, ok: reply.error ? isRpcError(reply.error) : isRpcResult(method as Method, reply.result) }).toEqual(
+      {
+        method,
+        ok: true,
+      },
+    );
     return reply;
   };
   return { socket, received, request, closed: () => closed };

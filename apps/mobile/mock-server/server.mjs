@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { withDerivedFacts } from '@stim-cli/core/state';
+import { statusViews } from '@stim-cli/core/phone-protocol';
 import { generateNoiseKeyPair, noiseKeyPairFromPrivateKey } from '@stim-cli/core/noise';
 import { WebSocketServer } from 'ws';
 
@@ -360,6 +361,7 @@ function serve(socket, device) {
     {
       kind: 'mock',
       fixtures,
+      statusViews,
       status,
       shiftMs,
       logsFor: () => logs,

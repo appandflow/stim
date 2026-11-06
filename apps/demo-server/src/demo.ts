@@ -278,6 +278,7 @@ export class DemoConnection {
       {
         kind: 'demo',
         fixtures: machine.fixtures,
+        statusViews,
         status: () => machine.status(),
         shiftMs: machine.shiftMs,
         logsFor: (params: Params) => machine.logs.filter((record) => record.workspace === params.workspace),

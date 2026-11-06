@@ -1,5 +1,3 @@
-import { statusViews } from '@stim-cli/core/phone-protocol';
-
 import { filterRecords, shiftTimestamps, usageHistory } from './payloads.mjs';
 
 /** @typedef {{ result: unknown } | { error: [string, string] } | { deferred: true }} Outcome */
@@ -21,7 +19,7 @@ export function createFakeHandlers(machine, connection) {
     let seq = 0;
     const tick = (subscription) => {
       const payload = machine.status();
-      send({ subscription, ...event(statusViews(payload), seq++, payload) });
+      send({ subscription, ...event(machine.statusViews(payload), seq++, payload) });
     };
     const subscription = every(method, 5000, tick);
     later(() => active(subscription) && tick(subscription));
