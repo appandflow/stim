@@ -1,7 +1,7 @@
 # Agent benchmark v3
 
 Date: 2026-09-02. Issue: #281. This protocol supersedes the single-pair v2
-protocol in [`trailhead-agent-benchmark.md`](./trailhead-agent-benchmark.md).
+protocol in git history.
 The later Settings-readiness and parked-simulator pilot is specified separately
 in [`agent-benchmark.md`](./agent-benchmark.md); its timings are not pooled
 with v3.
