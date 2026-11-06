@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reactNativeArtifactQuery } from '@stim-cli/core';
-import { BuildHost } from '../src/build.ts';
-import * as artifactQuery from '../src/artifact-query.ts';
+import { BuildHost } from '../job/offload/host.ts';
+import * as artifactQuery from '../job/offload/artifact-query.ts';
 import type { WebSocket } from 'ws';
 import { existsSync, readFileSync } from 'node:fs';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
@@ -28,9 +28,8 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-test.each(['update', 'operator'])(
-  'a completed worker archive survives cleanup and streams while %s pauses builds',
-  async (pause) => {
+test('a completed worker archive survives cleanup and streams while the operator pauses builds', async () => {
+  {
     const worker = join(root, 'worker.mjs');
     await writeFile(
       worker,
@@ -84,16 +83,14 @@ if (process.argv[2] !== 'build') {
         });
       const job = launch();
       if ('error' in job) throw new Error(job.error.message);
-      if (pause === 'operator')
-        await writeFile(
-          join(root, 'home', 'config.json'),
-          JSON.stringify({ server: { maxLoadPerCore: 100_000, buildsPaused: true } }),
-        );
+      await writeFile(
+        join(root, 'home', 'config.json'),
+        JSON.stringify({ server: { maxLoadPerCore: 100_000, buildsPaused: true } }),
+      );
       await job.done;
       host.forget(job);
       await rm(join(host.clientDir('builder'), 'repos', 'app-1', 'out'), { recursive: true, force: true });
-      if (pause === 'update') host.drain('maintenance');
-      const reason = pause === 'update' ? 'maintenance' : 'server.buildsPaused';
+      const reason = 'server.buildsPaused';
       expect(launch()).toMatchObject({ error: { code: 'build-busy', message: expect.stringContaining(reason) } });
       const artifact = descriptor('verified archive');
       expect(await host.offer('builder', { repo: 'app-1', native: 'xcode', artifact: identity })).toMatchObject({
@@ -121,7 +118,6 @@ if (process.argv[2] !== 'build') {
       ).toEqual({
         result: null,
       });
-      host.drain(null);
       await writeFile(
         join(root, 'home', 'config.json'),
         JSON.stringify({ server: { maxLoadPerCore: 100_000, buildsPaused: false, devicesPaused: true } }),
@@ -130,14 +126,12 @@ if (process.argv[2] !== 'build') {
       if ('error' in resumed) throw new Error(resumed.error.message);
       await resumed.done;
       host.forget(resumed);
-      await host.remove('builder');
-      expect(await session.cachedArtifact({ repo: 'app-1', artifact: identity })).toEqual({ result: null });
     } finally {
-      session.close(false);
+      session.close();
       await host.close();
     }
-  },
-);
+  }
+});
 
 async function gradleWorkerFixture() {
   const worker = join(root, 'gradle-worker.mjs');
@@ -194,8 +188,7 @@ if (mode === 'offer-native-gradle') {
   );
   await mkdir(join(root, 'home'), { recursive: true });
   await writeFile(join(root, 'home', 'config.json'), JSON.stringify({ server: { maxLoadPerCore: 100_000 } }));
-  let allowed = true;
-  const host = new BuildHost({ worker, env: process.env, allowed: () => allowed, limits: { killGraceMs: 50 } });
+  const host = new BuildHost({ worker, env: process.env, limits: { killGraceMs: 50 } });
   const frames: Buffer[] = [];
   const socket = {
     OPEN: 1,
@@ -239,7 +232,7 @@ if (mode === 'offer-native-gradle') {
   if ('error' in job) throw new Error(job.error.message);
   await job.done;
   if (!job.outcome?.ok) {
-    session.close(false);
+    session.close();
     await host.close();
     throw new Error(JSON.stringify(job.outcome));
   }
@@ -252,16 +245,16 @@ if (mode === 'offer-native-gradle') {
     frames,
     query,
     area,
-    revoke: () => {
-      allowed = false;
-    },
   };
 }
 
 test('a paused worker serves only an exact native APK and revalidates private inputs before fetch', async () => {
   const { host, session, query, frames, area } = await gradleWorkerFixture();
   try {
-    host.drain('maintenance');
+    await writeFile(
+      join(root, 'home', 'config.json'),
+      JSON.stringify({ server: { maxLoadPerCore: 100_000, buildsPaused: true } }),
+    );
     const response = await host.offer('builder', { repo: 'app-1', native: 'gradle', gradleArtifact: query });
     if ('error' in response || !response.result.artifact) throw new Error('Expected an exact completed APK.');
     expect(
@@ -283,7 +276,7 @@ test('a paused worker serves only an exact native APK and revalidates private in
     ).toHaveProperty('result.artifact', null);
     const artifact = response.result.artifact;
     expect(artifact).toMatchObject({ name: 'Sample.apk', androidPackage: 'dev.example.sample' });
-    expect(response.result.capacity.declined).toBe('maintenance');
+    expect(response.result.capacity.declined).toMatch(/server.buildsPaused/);
     expect(host.running()).toBe(0);
     for (const [client, repo, asked] of [
       ['other-client', 'app-1', query],
@@ -317,13 +310,13 @@ test('a paused worker serves only an exact native APK and revalidates private in
     expect(JSON.stringify(response.result)).not.toContain('receipt');
     expect(JSON.stringify(response.result)).not.toContain(root);
   } finally {
-    session.close(false);
+    session.close();
     await host.close();
   }
 });
 
-test.each(['disconnect', 'revoke', 'remove', 'close'])('a native artifact query drains on %s', async (reason) => {
-  const { host, session, query, area, revoke } = await gradleWorkerFixture();
+test.each(['disconnect', 'close'])('a native artifact query drains on %s', async (reason) => {
+  const { host, session, query, area } = await gradleWorkerFixture();
   await writeFile(join(area, 'hold-query'), '');
   const response = host
     .offer('builder', { repo: 'app-1', native: 'gradle', gradleArtifact: query }, session.signal)
@@ -337,23 +330,18 @@ test.each(['disconnect', 'revoke', 'remove', 'close'])('a native artifact query 
     const pid = Number(readFileSync(join(area, 'query-pid'), 'utf8'));
     const captured = captureProcessIdentity(pid);
     if (!captured.ok) throw new Error(captured.reason);
-    if (reason === 'disconnect') session.close(true);
-    else if (reason === 'close') await host.close();
-    else {
-      revoke();
-      if (reason === 'remove') await host.remove('builder');
-      else host.abandonDetached(() => false);
-    }
+    if (reason === 'disconnect') session.close();
+    else await host.close();
     await response;
     expect(inspectProcessIdentity({ pid, processToken: captured.token })).toBe('gone');
   } finally {
-    session.close(false);
+    session.close();
     await host.close();
   }
 });
 
-test('revocation cancels connected builds even when another repository query cannot confirm cleanup', async () => {
-  const { host, session, query, revoke } = await gradleWorkerFixture();
+test('ending the job cancels its builds even when another repository query cannot confirm cleanup', async () => {
+  const { host, session, query } = await gradleWorkerFixture();
   const area = join(host.clientDir('builder'), 'repos', 'other-repo');
   await mkdir(area, { recursive: true });
   await writeFile(join(area, 'hold-build'), '');
@@ -383,9 +371,7 @@ test('revocation cancels connected builds even when another repository query can
     await expect(host.offer('builder', { repo: 'app-1', native: 'gradle', gradleArtifact: query })).rejects.toThrow(
       'could not verify',
     );
-    revoke();
-    host.abandonDetached(() => false, true);
-    await host.remove('builder');
+    await host.close();
     expect(inspectProcessIdentity({ pid, processToken: captured.token })).toBe('gone');
     expect(job.outcome).toMatchObject({ ok: false, code: 'cancelled' });
     expect(host.running()).toBe(0);
@@ -394,7 +380,7 @@ test('revocation cancels connected builds even when another repository query can
   } finally {
     job.cancel();
     await job.done;
-    session.close(false);
+    session.close();
     await host.close();
   }
 });
@@ -531,11 +517,14 @@ else {
       host.forget(job);
       const area = join(host.clientDir('builder'), 'repos', 'rn-1');
       await rm(join(area, 'out'), { recursive: true, force: true });
-      host.drain('maintenance');
+      await writeFile(
+        join(root, 'home', 'config.json'),
+        JSON.stringify({ server: { maxLoadPerCore: 100_000, buildsPaused: true } }),
+      );
       const offered = await host.offer('builder', { repo: 'rn-1', reactNativeArtifact: query });
       if ('error' in offered || !offered.result.artifact) throw new Error('Expected completed RN bytes.');
       const artifact = offered.result.artifact;
-      expect(offered.result.capacity.declined).toBe('maintenance');
+      expect(offered.result.capacity.declined).toMatch(/server.buildsPaused/);
       expect(host.running()).toBe(0);
       for (const [client, repo, changed] of [
         ['other', 'rn-1', query],
@@ -561,7 +550,7 @@ else {
       expect(Buffer.concat(frames.map((frame) => frame.subarray(32))).toString()).toBe('verified RN archive');
       expect(host.running()).toBe(0);
     } finally {
-      session.close(false);
+      session.close();
       await host.close();
     }
   },

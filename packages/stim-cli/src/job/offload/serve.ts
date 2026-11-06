@@ -3,7 +3,6 @@ import { JobFrameReader, jobFrame } from '@stim-cli/core/noise-session';
 import { OFFLOAD_JOB_METHODS, type OffloadJobKind, type ProtocolError } from '@stim-cli/core/protocol';
 import { isJsonObject } from '@stim-cli/core/state';
 import { appendAudit, type BuildLimits } from '@stim-cli/server/build';
-import { spawnEntry } from '../../spawn-entry.ts';
 import { BuildHost } from './host.ts';
 
 /** What stimd tells an offload job in `STIM_JOB_SPEC`: the client it serves and the worker's build limits. */
@@ -20,7 +19,8 @@ type Answer = { result: unknown } | { error: ProtocolError };
 
 /**
  * Serves one client's offload methods over stdin and stdout, one Noise message per frame, until stdin ends or SIGTERM:
- * `offload-build` every method of {@link OFFLOAD_JOB_METHODS}, `offload-probe` only `build.offer`. Resolves the exit code.
+ * `offload-build` every method of {@link OFFLOAD_JOB_METHODS}, `offload-probe` only `build.offer`. `worker` is the
+ * script and arguments that start the offload worker's modes. Resolves the exit code.
  */
 export async function serveOffloadJob(
   kind: OffloadJobKind,
@@ -28,10 +28,11 @@ export async function serveOffloadJob(
   input: Readable,
   output: Writable,
   stop: AbortSignal,
+  worker: readonly string[],
 ): Promise<number> {
   const host = new BuildHost({
-    worker: spawnEntry('cli'),
-    workerArgs: ['__job', 'offload-worker'],
+    worker: worker[0]!,
+    workerArgs: worker.slice(1),
     env: process.env,
     limits: spec.limits,
     finished: ({ client, repo, ok, error, durationMs }) =>

@@ -430,17 +430,17 @@ async function inspectMachine(
         ),
       };
     case 'outdated': {
-      const outdated = outdatedServer(entry, version, outcome.command, localName);
+      const outdated = outdatedServer(entry, version, outcome.command, localName, outcome.reason);
       const diagnosis: RemoteDiagnosis = {
         layer: 'compat',
         code: 'server-outdated',
         title: 'Server is outdated',
-        message: outcome.reason ?? outdated.detail,
+        message: outdated.detail,
         remedy: outdated.fix,
       };
       return {
         report: { ...paired, state: 'outdated', diagnosis },
-        finding: note(outdated.title, outcome.reason ?? outdated.detail, outdated.fix),
+        finding: note(outdated.title, outdated.detail, outdated.fix),
       };
     }
     case 'unreachable': {

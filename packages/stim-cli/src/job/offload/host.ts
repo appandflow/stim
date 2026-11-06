@@ -6,10 +6,12 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readFileSync,
   readSync,
   renameSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { totalmem } from 'node:os';
@@ -28,11 +30,12 @@ import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/p
 import {
   buildWorkerRoot,
   isJsonObject,
-  liveOffloadedSlots,
+  liveOffloadedClients,
   loadConfig,
   machineCapacity,
   maxOffloadedBuilds,
   saturation,
+  stimBuildId,
   tryAcquireBuildSlotClaim,
 } from '@stim-cli/core/state';
 import {
@@ -83,7 +86,9 @@ import {
   writeHandoff,
   type BuildLimits,
 } from '@stim-cli/server/build';
+import { SCHEMA } from '../../engine-store/schema.ts';
 import { getExecutor } from '../../exec.ts';
+import { spawnEntry } from '../../spawn-entry.ts';
 import { BuildArtifactCache, validArtifactIdentity } from '../../offload/build-artifact-cache.ts';
 import { runArtifactQuery, type ArtifactQueryResult } from './artifact-query.ts';
 
@@ -292,7 +297,6 @@ function gradleArtifactQuery(value: unknown): BuildGradleArtifactQuery | null {
     : null;
 }
 
-
 interface Job {
   id: string;
   client: string;
@@ -362,7 +366,6 @@ export class BuildHost {
   private environment(): NodeJS.ProcessEnv {
     return this.options.currentEnv?.() ?? this.options.env;
   }
-
 
   private async drainCancelledAndroid(client: string, repo: string): Promise<boolean> {
     try {
@@ -734,7 +737,6 @@ export class BuildHost {
     return this.jobs.size;
   }
 
-
   /** Why the worker root's volume cannot take `bytes` more, or null when it can. */
   lowDisk(bytes = 0): string | null {
     const free = workerFreeBytes(this.root());
@@ -749,7 +751,7 @@ export class BuildHost {
 
   private assess(): { capacity: BuildCapacity; numbers: string | null } {
     const machine = machineCapacity();
-    const running = liveOffloadedSlots() + [...this.jobs].filter((job) => !job.slotted).length;
+    const running = liveOffloadedClients().length + [...this.jobs].filter((job) => !job.slotted).length;
     const max = maxOffloadedBuilds();
     const diskFreeBytes = workerFreeBytes(this.root());
     const builds = machine.builds + [...this.jobs].filter((job) => !job.slotted).length;
@@ -760,8 +762,7 @@ export class BuildHost {
     const stopped =
       (loadConfig()?.server?.buildsPaused === true
         ? 'Incoming builds are paused; resume with stim settings set server.buildsPaused false'
-        : null) ??
-      (limit ? null : this.lowDisk());
+        : null) ?? (limit ? null : this.lowDisk());
     const busy = stopped ? null : (limit ?? saturation({ ...machine, builds }));
     const capacity: BuildCapacity = {
       running,
@@ -786,7 +787,6 @@ export class BuildHost {
    * Deletes the blobs of `client` that no `mirror.json` of its repositories and no open connection's manifest
    * references, unless a build of that client runs.
    */
-
 
   /** Starts the build of one synced manifest; the job belongs to the caller's connection. */
   launch({
@@ -860,7 +860,7 @@ export class BuildHost {
       return refusal('build-refused', (error as Error).message);
     }
     try {
-      mkdirSync(join(area, 'home'), { recursive: true, mode: 0o700 });
+      useAreaHome(area);
     } catch (error) {
       releaseClaims();
       return refusal('build-refused', String(error));
@@ -1143,6 +1143,23 @@ export class BuildHost {
     await Promise.all([...this.jobs].map((job) => job.done));
   }
 }
+
+// compat C14 permanent
+/**
+ * Makes the area's Stim home ready for this build, which runs the client's own Stim: `area.json` records the build and
+ * home schema that last used it, and a home of another schema is replaced by an empty one.
+ */
+function useAreaHome(area: string): void {
+  const record = join(area, 'area.json');
+  let schema: unknown = SCHEMA;
+  try {
+    schema = (JSON.parse(readFileSync(record, 'utf8')) as { schema?: unknown }).schema;
+  } catch {}
+  if (schema !== SCHEMA) rmSync(join(area, 'home'), { recursive: true, force: true });
+  mkdirSync(join(area, 'home'), { recursive: true, mode: 0o700 });
+  writeFileSync(record, `${JSON.stringify({ build: stimBuildId(dirname(spawnEntry('cli'))), schema: SCHEMA })}\n`);
+}
+// compat end
 
 function workerOutcome(value: Record<string, unknown>, native?: 'xcode' | 'gradle'): BuildJobOutcome {
   const timings = isJsonObject(value.timings) ? (value.timings as Record<string, number>) : {};
@@ -1582,4 +1599,3 @@ export class BuildSession {
     this.incoming = null;
   }
 }
-

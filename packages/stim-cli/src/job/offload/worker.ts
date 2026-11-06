@@ -103,7 +103,7 @@ import {
 } from '../../workspace/settings.ts';
 
 /** One entry of the source transfer: a visible file of the checkout, or a native build's file or directory input. */
-export interface ManifestEntry {
+interface ManifestEntry {
   path: string;
   kind: 'file' | 'exec' | 'link' | 'directory';
   size: number;
@@ -111,7 +111,7 @@ export interface ManifestEntry {
 }
 
 /** What stim-server hands this process on stdin; it has already checked every path and blob. */
-export interface WorkerJob {
+interface WorkerJob {
   job: string;
   area: string;
   blobs: string;
@@ -155,7 +155,7 @@ export interface WorkerJob {
   optimizations: Optimizations['ios'] | null;
 }
 
-export interface WorkerTimings {
+interface WorkerTimings {
   syncMs: number;
   depsMs: number;
   prebuildMs: number;
@@ -165,7 +165,7 @@ export interface WorkerTimings {
   packageMs: number;
 }
 
-export type WorkerResult =
+type WorkerResult =
   | {
       ok: true;
       artifact: { path: string; name: string; size: number; sha256: string };

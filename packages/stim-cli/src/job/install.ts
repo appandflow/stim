@@ -4,6 +4,8 @@ import { installServer } from '@stim-cli/server/release-install';
 import { fetchTree, scratchName, seal, selfTest } from '../engine-store/tree.ts';
 
 /** Where an offload job's build comes from: an npm release, or a directory holding the client's packed `.tgz`. */
+const log = (line: string) => console.error(line);
+
 export type JobSource = { release: string } | { from: string };
 
 /**
@@ -12,7 +14,6 @@ export type JobSource = { release: string } | { from: string };
  */
 export async function installJobBuild(root: string, build: string, source: JobSource): Promise<string> {
   const scratch = join(root, scratchName());
-  const log = (line: string) => console.error(line);
   try {
     if ('release' in source) {
       try {
@@ -21,8 +22,7 @@ export async function installJobBuild(root: string, build: string, source: JobSo
         const unpublished = /E404|ETARGET|No matching version/.test(String((error as Error).message));
         throw Object.assign(error as Error, { mismatch: unpublished });
       }
-    }
-    else {
+    } else {
       const installs = join(root, scratchName());
       try {
         const options = ['--cache', join(root, '.npm-cache'), '--prefer-offline', '--install-strategy=shallow'];

@@ -426,7 +426,7 @@ export async function inspectDeviceHostMachines(
         continue;
       }
       if (outcome.state === 'outdated') {
-        const outdated = outdatedServer(machine, version, outcome.command, localName);
+        const outdated = outdatedServer(machine, version, outcome.command, localName, outcome.reason);
         inspected.machines.push({
           ...known,
           state: 'outdated',
@@ -434,11 +434,11 @@ export async function inspectDeviceHostMachines(
             layer: 'compat',
             code: 'server-outdated',
             title: 'Server is outdated',
-            message: outcome.reason ?? outdated.detail,
+            message: outdated.detail,
             remedy: outdated.fix,
           },
         });
-        inspected.findings.push(note(outdated.title, outcome.reason ?? outdated.detail, outdated.fix));
+        inspected.findings.push(note(outdated.title, outdated.detail, outdated.fix));
         continue;
       }
       if (outcome.state === 'unconfirmed') {

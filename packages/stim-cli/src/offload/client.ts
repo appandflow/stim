@@ -574,14 +574,16 @@ export class BuildConnection {
    * `server.acceptClientBuilds` is true. With `wait`, a machine that lacks the build installs it before answering.
    * Resolves why it could not.
    */
-  async startJob(kind: OffloadJobKind, repo: string, wait: boolean): Promise<{ failure: string; code: string } | null> {
+  async startJob(
+    kind: OffloadJobKind,
+    repo: string,
+    install: boolean,
+  ): Promise<{ failure: string; code: string } | null> {
     const own = ownBuild();
     if (!own.build) return { failure: `${own.root} holds no built Stim for the machine to run`, code: 'job-refused' };
-    const base = { kind, stim: STIM_VERSION, build: own.build, repo, wait };
-    const timeoutMs = wait ? JOB_INSTALL_TIMEOUT_MS : OFFER_TIMEOUT_MS;
-    let reply: Reply = own.published
-      ? await this.request('job.start', base, timeoutMs)
-      : { error: { code: 'job-needs-package', message: 'this Stim is not a published build' } };
+    const base = { kind, stim: STIM_VERSION, build: own.build, repo, wait: install };
+    const timeoutMs = install ? JOB_INSTALL_TIMEOUT_MS : OFFER_TIMEOUT_MS;
+    let reply = await this.request('job.start', own.published ? base : { ...base, pack: true }, timeoutMs);
     if ('error' in reply && reply.error.code === 'job-needs-package') {
       let pack;
       try {
@@ -929,8 +931,8 @@ async function probeMachine(
     connectMs = CONNECT_TIMEOUT_MS,
     offerMs = OFFER_TIMEOUT_MS,
     kind = 'offload-build',
-    wait = false,
-  }: { connectMs?: number; offerMs?: number; kind?: OffloadJobKind; wait?: boolean } = {},
+    install = false,
+  }: { connectMs?: number; offerMs?: number; kind?: OffloadJobKind; install?: boolean } = {},
 ): Promise<MachineProbe> {
   const target = await resolveEndpoint(credential, undefined, reportSignal(ambientContext()));
   if (typeof target === 'string') return { credential, failure: target };
@@ -947,7 +949,7 @@ async function probeMachine(
     connection.close();
     return { credential, failure: XCODE_UNSUPPORTED };
   }
-  const started = await connection.startJob(kind, identity.repo, wait);
+  const started = await connection.startJob(kind, identity.repo, install);
   if (started) {
     connection.close();
     return { credential, failure: started.failure, refused: TURNED_AWAY.has(started.code) };
@@ -1065,16 +1067,20 @@ export async function chooseBuildMachine({
     : null;
   const asked = await Promise.all(
     machines.map((credential) =>
-      probeMachine(credential, {
-        ...identity,
-        rubyVersion,
-        dependencies: dependencySelection(identity, target),
-        ...(target.platform !== 'macos' ? { native: target.native } : {}),
-        ...(artifact ? { artifact } : {}),
-        ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
-        ...(reactNativeQuery ? { reactNativeArtifact: reactNativeQuery } : {}),
-        ...(swiftpmQuery ? { swiftpmArtifact: swiftpmQuery } : {}),
-      }, { wait: !buildPlacementCandidates(selected).localEnabled }),
+      probeMachine(
+        credential,
+        {
+          ...identity,
+          rubyVersion,
+          dependencies: dependencySelection(identity, target),
+          ...(target.platform !== 'macos' ? { native: target.native } : {}),
+          ...(artifact ? { artifact } : {}),
+          ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
+          ...(reactNativeQuery ? { reactNativeArtifact: reactNativeQuery } : {}),
+          ...(swiftpmQuery ? { swiftpmArtifact: swiftpmQuery } : {}),
+        },
+        { install: !buildPlacementCandidates(selected).localEnabled },
+      ),
     ),
   );
   const { order, reasons, candidates } = pickOffer({
@@ -1757,7 +1763,14 @@ export async function offloadBuild(
       if (resuming || settled) return;
       resuming = true;
       note(`offload: the connection to ${choice.machine} dropped (${why}); reattaching to the build there`);
-      const resumed = await resumeJob(choice.credential, choice.connection.job, job!, () => settled, signal, native?.provider);
+      const resumed = await resumeJob(
+        choice.credential,
+        choice.connection.job,
+        job!,
+        () => settled,
+        signal,
+        native?.provider,
+      );
       resuming = false;
       if (settled) {
         if (typeof resumed !== 'string' && 'connection' in resumed) resumed.connection.close();

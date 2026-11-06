@@ -61,24 +61,23 @@ export function tryAcquireBuildSlotClaim({
   return null;
 }
 
-/** Build slots held for a remote machine's offloaded builds, which run under another Stim home. */
-/** The build slots offloaded builds hold on this machine now. */
-export function liveOffloadedSlots(): number {
+/** The client of each build slot a remote machine's offloaded build holds now; those builds run under another Stim home. */
+export function liveOffloadedClients(): string[] {
   let names: string[];
   try {
     names = readdirSync(buildSlotsDir());
   } catch {
-    return 0;
+    return [];
   }
-  let count = 0;
+  const clients: string[] = [];
   for (const name of names) {
     if (!name.startsWith(SLOT_PREFIX)) continue;
     try {
-      if (readClaimSet(join(buildSlotsDir(), name)).live.some((holder) => holder.details.offloaded === true))
-        count += 1;
+      const holder = readClaimSet(join(buildSlotsDir(), name)).live.find((each) => each.details.offloaded === true);
+      if (holder) clients.push(String(holder.details.client));
     } catch {}
   }
-  return count;
+  return clients;
 }
 
 /**
@@ -159,7 +158,7 @@ export function loadState(load: number, busyAt: number, limit: number | null): L
 export function machineCapacity(): MachineCapacity {
   return {
     ...loadPerCore(),
-    builds: liveNativeBuilds() + liveOffloadedSlots(),
+    builds: liveNativeBuilds() + liveOffloadedClients().length,
     maxBuilds: admissionLimits().maxBuilds,
     maxLoadPerCore: maxLoadPerCore(),
   };

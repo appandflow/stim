@@ -57,11 +57,6 @@ export function peerTooOld(machine: string, stim: string, peer: number, version:
   const sent = peer > 0 ? `peer ${peer}` : 'no peer';
   return `peer-too-old: ${machine} runs stim ${stim} (${sent}), this Mac needs peer ${PEER}; run stim remote update ${machine}, or on ${machine} run: npm i -g stim@${version} && stim service install`;
 }
-
-/** The refusal a worker or device host gives a client whose `peer` is missing or lower than {@link PEER}. */
-export function clientPeerTooOld(machine: string, stim: string): string {
-  return `peer-too-old: ${machine} runs stim ${stim} (peer ${PEER}); update this Mac: npm i -g stim@${stim}`;
-}
 // compat end
 
 /** Stim Mobile's wire integer, under the same rule as {@link PEER}. */
@@ -1594,8 +1589,9 @@ export type OffloadJobKind = (typeof OFFLOAD_JOB_KINDS)[number];
 /**
  * Starts the job that answers this connection's offload methods from the client's exact build: `stim` is its version
  * and `build` its 12-hex build id. The worker runs that build from its engine store, fetching `stim@<stim>` from npm
- * when it is absent: at once with `wait`, else in the background while it refuses with `job-unavailable`. A build npm
- * does not hold comes as one `package`, the client's `npm pack` tarball, which the worker takes only while its
+ * when it is absent: at once with `wait`, else in the background while it refuses with `job-unavailable`. With
+ * `pack`, a build npm does not hold, the worker never fetches and answers `job-needs-package` when it lacks the build.
+ * Such a build comes as one `package`, the client's `npm pack` tarball, which the worker takes only while its
  * `server.acceptClientBuilds` is true: it answers `{upload}`, takes the bytes as binary messages, and the client then
  * calls `job.start` again with `upload`. `attach` takes over a job whose connection dropped.
  */
@@ -1606,6 +1602,7 @@ export type JobStartParams =
       build: string;
       repo: string;
       wait?: boolean;
+      pack?: boolean;
       package?: EngineUpdatePackage;
       upload?: string;
     }

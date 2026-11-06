@@ -1,4 +1,5 @@
 import { OFFLOAD_JOB_KINDS, type OffloadJobKind } from '@stim-cli/core/protocol';
+import { spawnEntry } from '../spawn-entry.ts';
 
 /**
  * `stim __job <kind>`: the children stimd and offload jobs start from a build's own entry.
@@ -14,13 +15,14 @@ export async function runJobEntry(argv: readonly string[]): Promise<number> {
   if ((OFFLOAD_JOB_KINDS as readonly string[]).includes(kind ?? '')) {
     const { serveOffloadJob } = await import('./offload/serve.ts');
     const stop = new AbortController();
-    process.once('SIGTERM', () => stop.abort());
+    process.on('SIGTERM', () => stop.abort());
     return serveOffloadJob(
       kind as OffloadJobKind,
       JSON.parse(process.env.STIM_JOB_SPEC ?? '{}'),
       process.stdin,
       process.stdout,
       stop.signal,
+      [spawnEntry('cli'), '__job', 'offload-worker'],
     );
   }
   if (kind === 'offload-worker') {
@@ -37,7 +39,9 @@ export async function runJobEntry(argv: readonly string[]): Promise<number> {
       return 0;
     } catch (error) {
       const { message, mismatch } = error as Error & { mismatch?: boolean };
-      process.stdout.write(`${JSON.stringify({ error: message.split('\n')[0], mismatch: mismatch === true })}\n`);
+      process.stdout.write(
+        `${JSON.stringify({ error: message.replace(/\s*\n\s*/g, ' ').slice(0, 600), mismatch: mismatch === true })}\n`,
+      );
       return 1;
     }
   }

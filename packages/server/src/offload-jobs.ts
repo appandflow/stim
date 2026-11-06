@@ -25,6 +25,8 @@ const CLOSE_ABNORMAL = 1006;
 const CLOSE_BAD_REQUEST = 4400;
 const JOB_BAD_REQUEST = 64;
 const FAILED_FETCH_MS = 10 * 60_000;
+const NOT_ACCEPTED =
+  'This machine takes only published Stim builds. To take this build, run stim settings set server.acceptClientBuilds true on it.';
 
 /** Why an install failed; `mismatch` when npm holds no release of this exact build. */
 type InstallFailure = { failure: string; mismatch: boolean } | null;
@@ -47,7 +49,7 @@ interface Job {
   child: ChildProcess;
   socket: NoiseSocket | null;
   grace: NodeJS.Timeout | null;
-  exited: Promise<void>;
+  exited?: Promise<void>;
 }
 
 interface Upload {
@@ -68,25 +70,21 @@ export interface OffloadJobsOptions {
   /** The environment jobs start with, read at each start so they see tools installed since. */
   env: () => NodeJS.ProcessEnv;
   limits: BuildLimits;
-  /** Why no new job starts now, or null. */
-  refusal: (client: string) => string | null;
+  /** Called before each job starts: why it cannot start now, or null. */
+  admit: (client: string) => string | null;
   /** Called after the last job of `client` exits. */
   idle: (client: string) => void;
 }
 
-/** The lowest Node `engines` allows in its `>=X.Y.Z` form, or null for any other form. */
-function nodeFloor(engines: string): number[] | null {
-  const floor = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(engines.trim());
-  return floor ? floor.slice(1).map(Number) : null;
-}
-
-const atLeast = (version: readonly number[], floor: readonly number[]): boolean => {
-  for (let index = 0; index < 3; index += 1)
-    if (version[index] !== floor[index]) return (version[index] ?? 0) > (floor[index] ?? 0);
-  return true;
-};
-
 // compat C14 permanent
+/** Whether this Node meets `engines`' `>=X.Y.Z` floor; another form is not checked. */
+function meetsNode(engines: unknown): boolean {
+  const [, a = '0', b = '0', c = '0'] = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(String(engines).trim()) ?? [];
+  const [major = 0, minor = 0, patch = 0] = process.versions.node.split('.').map(Number);
+  return major * 1e6 + minor * 1e3 + patch >= Number(a) * 1e6 + Number(b) * 1e3 + Number(c);
+}
+// compat end
+
 /**
  * The offload jobs of this stimd: each runs a client's exact Stim build as `<node> <entry>/dist/cli.mjs __job <kind>`
  * and owns the client's connection after `job.start`. Each Noise message the client sends goes to the job's stdin as
@@ -126,6 +124,7 @@ export class OffloadJobs {
     return this.spliced.has(socket);
   }
 
+  // compat C14 permanent
   /** Passes one decrypted message of `socket` to its job unread, pausing `socket` while the job's stdin is full. */
   deliver(socket: NoiseSocket, data: Buffer, binary: boolean): void {
     const job = this.spliced.get(socket);
@@ -136,6 +135,7 @@ export class OffloadJobs {
     }
   }
 
+  // compat end
   /** Takes one binary message of an upload `job.start` asked for; false when `socket` has none. */
   receive(socket: object, frame: Buffer): boolean | string {
     const upload = this.uploads.get(socket);
@@ -177,7 +177,7 @@ export class OffloadJobs {
       return refused('bad-request', 'job.start needs kind, stim, a 12-hex build and repo, or attach.');
     const kind = params.kind as OffloadJobKind;
     const { stim, build, repo } = params;
-    const why = this.closed ? 'This machine is stopping.' : this.options.refusal(client.id);
+    const why = this.closed ? 'This machine is stopping.' : this.options.admit(client.id);
     if (why) return refused('build-busy', why);
     let entry = this.entry(build);
     if (!entry) {
@@ -194,7 +194,11 @@ export class OffloadJobs {
         );
         if (failed) return refused('job-refused', this.cannotInstall(stim, failed.failure));
       } else if (params.package !== undefined) return this.prepareUpload(socket, params.package);
-      else {
+      else if (params.pack === true) {
+        return this.acceptsClientBuilds()
+          ? refused('job-needs-package', `${this.options.machine} runs only builds it is sent for this Stim.`)
+          : refused('forbidden', NOT_ACCEPTED);
+      } else {
         const recent = this.failed.get(build);
         const fetching = recent && Date.now() - recent.at < FAILED_FETCH_MS ? null : this.fetch(stim, build);
         if (fetching && params.wait !== true)
@@ -204,7 +208,10 @@ export class OffloadJobs {
           );
         const failed = fetching ? await fetching : recent!.failure;
         if (failed?.mismatch)
-          return refused('job-needs-package', `${this.options.machine} cannot fetch this build of stim ${stim} from npm.`);
+          return refused(
+            'job-needs-package',
+            `${this.options.machine} cannot fetch this build of stim ${stim} from npm.`,
+          );
         if (failed) return refused('job-refused', this.cannotInstall(stim, failed.failure));
       }
       entry = this.entry(build);
@@ -222,10 +229,11 @@ export class OffloadJobs {
     return `worker ${machine} cannot install stim ${stim} (${failure}); building locally. On ${machine} run: stim engine install ${stim}`;
   }
 
-  /** The tree of `build` and the Node to run it with, why it cannot run, or null when it is not installed. */
-  private entry(build: string): { tree: string; node: string } | string | null {
-    const own = dirname(dirname(this.options.stimCli));
-    if (stimBuildId(dirname(this.options.stimCli)) === build) return { tree: own, node: process.execPath };
+  // compat C14 permanent
+  /** The CLI script of `build` and the Node to run it with, why it cannot run, or null when it is not installed. */
+  private entry(build: string): { cli: string; node: string } | string | null {
+    if (stimBuildId(dirname(this.options.stimCli)) === build)
+      return { cli: this.options.stimCli, node: process.execPath };
     const tree = join(this.root(), build);
     let manifest: unknown;
     try {
@@ -234,19 +242,18 @@ export class OffloadJobs {
       return null;
     }
     if (!isJsonObject(manifest) || manifest.build !== build) return null;
-    const floor = typeof manifest.engines === 'string' ? nodeFloor(manifest.engines) : null;
-    const running = process.versions.node.split('.').map(Number);
-    if (floor && !atLeast(running, floor))
+    if (!meetsNode(manifest.engines))
       return `${this.options.machine} runs Node ${process.versions.node}; stim ${String(manifest.version)} needs Node ${String(manifest.engines)}. Update Node on ${this.options.machine}.`;
-    return { tree, node: process.execPath };
+    return { cli: join(tree, 'dist', 'cli.mjs'), node: process.execPath };
+  }
+  // compat end
+
+  private acceptsClientBuilds(): boolean {
+    return loadConfig()?.server?.acceptClientBuilds === true;
   }
 
   private prepareUpload(socket: NoiseSocket, value: unknown): Answer {
-    if (loadConfig()?.server?.acceptClientBuilds !== true)
-      return refused(
-        'forbidden',
-        'This machine takes only published Stim builds. To take this build, run stim settings set server.acceptClientBuilds true on it.',
-      );
+    if (!this.acceptsClientBuilds()) return refused('forbidden', NOT_ACCEPTED);
     if (
       !isJsonObject(value) ||
       typeof value.name !== 'string' ||
@@ -258,7 +265,10 @@ export class OffloadJobs {
       typeof value.sha256 !== 'string' ||
       !/^[0-9a-f]{64}$/.test(value.sha256)
     )
-      return refused('bad-request', `A package is a .tgz name, a size up to ${MAX_PACKAGE_BYTES} bytes and its sha256.`);
+      return refused(
+        'bad-request',
+        `A package is a .tgz name, a size up to ${MAX_PACKAGE_BYTES} bytes and its sha256.`,
+      );
     const id = randomUUID();
     const dir = join(this.root(), `.tmp-${process.pid}-upload-${id}`);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -274,6 +284,7 @@ export class OffloadJobs {
     return { result: { upload: id } };
   }
 
+  // compat C14 permanent
   /** Installs `stim@<stim>` once per build however many connections ask; resolves why it failed, or null. */
   private fetch(stim: string, build: string): Promise<InstallFailure> {
     let fetching = this.fetches.get(build);
@@ -300,39 +311,29 @@ export class OffloadJobs {
       child.stdout.on('data', (chunk: string) => (out += chunk));
       child.on('error', (error) => resolve({ failure: error.message, mismatch: false }));
       child.on('close', () => {
-        let reply: unknown = null;
+        let reply: Record<string, unknown> = {};
         try {
           reply = JSON.parse(out);
         } catch {}
-        if (isJsonObject(reply) && reply.build === build) return resolve(null);
-        resolve({
-          failure: isJsonObject(reply) && typeof reply.error === 'string' ? reply.error : 'the install failed',
-          mismatch: isJsonObject(reply) && reply.mismatch === true,
-        });
+        if (reply.build === build) return resolve(null);
+        resolve({ failure: String(reply.error ?? 'the install failed'), mismatch: reply.mismatch === true });
       });
     });
   }
+  // compat end
 
-  private spawn(kind: OffloadJobKind, client: JobClient, repo: string, entry: { tree: string; node: string }): Job {
+  // compat C14 permanent
+  private spawn(kind: OffloadJobKind, client: JobClient, repo: string, entry: { cli: string; node: string }): Job {
     const spec = { client: client.id, clientName: client.name, limits: this.options.limits };
-    const child = spawn(entry.node, [join(entry.tree, 'dist', 'cli.mjs'), '__job', kind], {
+    const child = spawn(entry.node, [entry.cli, '__job', kind], {
       env: { ...this.options.env(), STIM_JOB_SPEC: JSON.stringify(spec) },
       stdio: ['pipe', 'pipe', 'inherit'],
     });
-    const job: Job = {
-      id: randomUUID(),
-      kind,
-      client: client.id,
-      repo,
-      child,
-      socket: null,
-      grace: null,
-      exited: Promise.resolve(),
-    };
+    const job: Job = { id: randomUUID(), kind, client: client.id, repo, child, socket: null, grace: null };
     this.jobs.set(job.id, job);
-    child.stdin!.on('error', () => {});
+    child.stdin.on('error', () => {});
     const reader = new JobFrameReader();
-    child.stdout!.on('data', (chunk: Buffer) => {
+    child.stdout.on('data', (chunk: Buffer) => {
       let frames;
       try {
         frames = reader.push(chunk);
@@ -343,11 +344,11 @@ export class OffloadJobs {
       if (!socket) return;
       for (const frame of frames) socket.send(frame.data, { binary: frame.binary });
       if (socket.bufferedAmount <= MAX_BUFFERED) return;
-      child.stdout!.pause();
+      child.stdout.pause();
       const wait = setInterval(() => {
         if (job.socket === socket && socket.readyState === socket.OPEN && socket.bufferedAmount > MAX_BUFFERED) return;
         clearInterval(wait);
-        child.stdout!.resume();
+        child.stdout.resume();
       }, BUFFER_POLL_MS);
     });
     job.exited = new Promise((resolve) => {
@@ -366,6 +367,7 @@ export class OffloadJobs {
     });
     return job;
   }
+  // compat end
 
   private attachSocket(job: Job, socket: NoiseSocket): void {
     if (job.grace) clearTimeout(job.grace);
@@ -376,8 +378,8 @@ export class OffloadJobs {
 
   private attach(client: JobClient, socket: NoiseSocket, id: string): Answer {
     const job = this.jobs.get(id);
-    if (!job || job.client !== client.id || job.socket)
-      return refused('bad-request', 'No such job for this device; it ended or another connection holds it.');
+    if (!job || job.client !== client.id) return refused('bad-request', 'No such job for this device; it ended.');
+    if (job.socket) this.spliced.delete(job.socket);
     this.attachSocket(job, socket);
     return { result: { job: job.id } };
   }
@@ -397,4 +399,3 @@ export class OffloadJobs {
     await this.stop(null);
   }
 }
-// compat end

@@ -156,13 +156,16 @@ export function outdatedServer(
   version: string,
   command: string | null,
   host: string = localMachineName(),
+  reason?: string,
 ): { title: string; detail: string; fix: string } {
   const update =
     `On ${entry}, run \`stim service update --release ${version}\`` +
     ' (add `--label <name>` for a custom service label; a server Stim Desktop runs updates with Stim Desktop)';
   return {
     title: `Remote machine ${entry} runs an older stim-server`,
-    detail: `The stim-server on ${entry} speaks an older protocol than the Stim on ${host}, so it cannot authenticate ${host}.`,
+    detail:
+      reason ??
+      `The stim-server on ${entry} speaks an older protocol than the Stim on ${host}, so it cannot authenticate ${host}.`,
     fix: command
       ? `${update}, then run this on ${entry} to approve ${host}: ${command}\nAfter approving, run \`stim remote list\` on ${host} to reconnect.`
       : `${update}, then run \`stim remote add ${entry}\` on ${host}.`,
@@ -590,11 +593,8 @@ function approved(
   };
   // compat C12 permanent
   const { peer, server } = reply.result;
-  if (typeof peer !== 'number' || peer < PEER) {
-    const stim = String(server?.stim ?? 'an older stim');
-    const reason = peerTooOld(input.machine, stim, Number(peer ?? 0), input.serverVersion);
-    return { state: 'outdated', credential, command: null, reason };
-  }
+  const reason = peerTooOld(input.machine, String(server?.stim), Number(peer ?? 0), input.serverVersion);
+  if (typeof peer !== 'number' || peer < PEER) return { state: 'outdated', credential, command: null, reason };
   // compat end
   return { state: 'approved', credential, result: reply.result };
 }

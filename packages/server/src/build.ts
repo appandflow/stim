@@ -16,10 +16,17 @@ import {
 } from 'node:fs';
 import { readdir, rm } from 'node:fs/promises';
 import { basename, dirname, join, posix, win32 } from 'node:path';
-import { clearFreeClaimSet, processGroupAlive, releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
+import {
+  clearFreeClaimSet,
+  processGroupAlive,
+  releaseClaim,
+  tryAcquireClaim,
+  type ClaimHandle,
+} from '@stim-cli/core/ownership-claim';
 import {
   buildWorkerRoot,
   isJsonObject,
+  liveOffloadedClients,
   windowsShortDir,
   windowsShortDirKey,
   workerAreaMaxAgeDays,
@@ -91,7 +98,6 @@ export const DEFAULT_BUILD_LIMITS: BuildLimits = {
   areaSweepMs: 15 * 60_000,
   rootMeasureMs: 6 * 60 * 60_000,
 };
-
 
 const HOUR_MS = 60 * 60_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -224,7 +230,6 @@ export function killTree(pid: number): Promise<void> {
   });
 }
 
-
 /** Runs an offload worker's `offer` mode, `<node> ...command`, and resolves the toolchain it reports, or null. */
 export function probeToolchain(command: readonly string[], env: NodeJS.ProcessEnv): Promise<BuildToolchain | null> {
   return new Promise((resolve) => {
@@ -233,15 +238,14 @@ export function probeToolchain(command: readonly string[], env: NodeJS.ProcessEn
     const timer = setTimeout(() => child.kill('SIGKILL'), 60_000);
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => (out += chunk));
-    child.on('error', () => resolve(null));
+    child.on('error', () => {});
     child.on('close', () => {
       clearTimeout(timer);
+      let report: unknown = null;
       try {
-        const report: unknown = JSON.parse(out);
-        resolve(isJsonObject(report) ? (report as unknown as BuildToolchain) : null);
-      } catch {
-        resolve(null);
-      }
+        report = JSON.parse(out);
+      } catch {}
+      resolve(isJsonObject(report) ? (report as unknown as BuildToolchain) : null);
     });
   });
 }
@@ -414,7 +418,7 @@ export class BuildWorkerRoot {
       process.platform,
       clients.flatMap((client) => this.gradleScopes(client)),
     );
-    const busy = new Set([...this.options.jobs()].map((job) => job.client));
+    const busy = new Set(liveOffloadedClients());
     for (const daemon of daemons) {
       if (busy.has(daemon.client)) continue;
       if ((!low || busy.size > 0) && !forced.has(daemon.client) && (this.options.allowed?.(daemon.client) ?? true))
@@ -424,7 +428,6 @@ export class BuildWorkerRoot {
       } catch {}
     }
   }
-
 
   private gradleScopes(client: string): GradleScope[] {
     const clientDir = this.clientDir(client);
@@ -447,7 +450,6 @@ export class BuildWorkerRoot {
         )
       : scopes;
   }
-
 
   root(): string {
     return buildWorkerRoot();
@@ -597,7 +599,8 @@ export class BuildWorkerRoot {
     return free < this.limits.minFreeBytes ? 'floor' : 'low';
   }
 
-  private maintainAreas(): void {
+  /** Starts an eviction pass when one is due, sooner while the volume is low; stimd calls it as each job starts. */
+  maintainAreas(): void {
     try {
       if (this.closed || !(this.options.ready?.() ?? true)) return;
       const interval = this.diskSpace() === 'ok' ? this.limits.areaSweepMs : this.limits.daemonSweepMs;
@@ -1007,7 +1010,6 @@ export class BuildWorkerRoot {
     }
   }
 
-
   /** Deletes the kept bundles whose time is up. */
   private dropExpiredHandoffs(): void {
     const now = Date.now();
@@ -1034,7 +1036,8 @@ export class BuildWorkerRoot {
       : undefined;
     const clientDir = client === undefined ? null : this.clientDir(client);
     const entry = clientDir === null ? null : readHandoff(clientDir, token);
-    if (!client || !clientDir || !entry || entry.expiresAt <= Date.now()) return 'This machine no longer holds that build.';
+    if (!client || !clientDir || !entry || entry.expiresAt <= Date.now())
+      return 'This machine no longer holds that build.';
     if (entry.sha256 !== sha256) return 'This machine holds a different build under that handoff.';
     if (!accept(client))
       return 'That build belongs to another machine: its build client and this device-host client have different keys.';

@@ -11,7 +11,11 @@ import {
 } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '@stim-cli/core/process-identity';
 import { isJsonObject } from '@stim-cli/core/state';
-import type { BuildArtifactIdentity, BuildGradleArtifactQuery, BuildSwiftpmArtifactQuery } from '@stim-cli/core/protocol';
+import type {
+  BuildArtifactIdentity,
+  BuildGradleArtifactQuery,
+  BuildSwiftpmArtifactQuery,
+} from '@stim-cli/core/protocol';
 import { signalChild } from '@stim-cli/server/build';
 import { getExecutor } from '../../exec.ts';
 
@@ -51,12 +55,16 @@ export function runArtifactQuery({
   markClaimChildPending(claim);
   let child: ChildProcess;
   try {
-    child = getExecutor().spawn(process.execPath, [...command, 'build' in query ? 'swiftpm-artifact' : 'native-gradle-artifact'], {
-      cwd: area,
-      env,
-      detached: true,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    child = getExecutor().spawn(
+      process.execPath,
+      [...command, 'build' in query ? 'swiftpm-artifact' : 'native-gradle-artifact'],
+      {
+        cwd: area,
+        env,
+        detached: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    );
   } catch (error) {
     clearClaimChild(claim);
     releaseClaim(claim);

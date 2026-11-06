@@ -820,8 +820,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     machine: options.name,
     env: () => options.currentEnv?.() ?? options.env,
     limits: builds.limits,
-    refusal: (client) =>
-      builds.drained ?? (builds.removing(client) ? 'This machine is removing this build client.' : null),
+    admit: (client) => {
+      builds.maintainAreas();
+      return builds.drained ?? (builds.removing(client) ? 'This machine is removing this build client.' : null);
+    },
     idle: (client) => builds.pruneBlobs(client),
   });
   const presence = new PresenceHub();
