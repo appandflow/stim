@@ -58,7 +58,7 @@ async function serveInStimd(serve: ServeOptions): Promise<void> {
   const lifetimeFd = process.env.STIM_DESKTOP_LIFETIME_FD;
   delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
   delete process.env.STIM_DESKTOP_LIFETIME_FD;
-  const [{ runStimd }, { readDesktopInput }, { serveThroughStimd }, { daemonMode }] = await Promise.all([
+  const [{ runStimd }, { readDesktopInput }, { serveThroughStimd, stimdLive }, { daemonMode }] = await Promise.all([
     import('../stimd/main.ts'),
     import('../stimd/desktop-key.ts'),
     import('../daemon/client.ts'),
@@ -89,12 +89,17 @@ async function serveInStimd(serve: ServeOptions): Promise<void> {
     onNet: answered,
   });
   if (served) return;
+  if (!stimdLive())
+    return refuse('a stim-daemon from an older Stim still holds this Stim home; it exits once nothing runs in it.');
   console.error('stim-server: a stimd already serves this Stim home; asking it to start its net thread.');
+  let heard = false;
   await serveThroughStimd({ port: serve.port, loopbackOnly: serve.loopbackOnly }, (answer) => {
+    heard = true;
     if (answer?.listening)
       console.log(`stimd's net thread listens on port ${answer.port}; this process exits with it.`);
     answered(answer);
   });
+  if (!heard) refuse('stimd closed the connection without starting its net thread.');
 }
 
 export async function legacyMain(): Promise<void> {

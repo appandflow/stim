@@ -665,7 +665,10 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
   if (relaunchWithLogFile(['__stimd', ...argv])) return;
   const label = process.env[LAUNCHD_LABEL_ENV];
   delete process.env[LAUNCHD_LABEL_ENV];
-  if (label) removeExitedJobs(label);
+  if (label) {
+    removeExitedJobs(label);
+    delete process.env.XPC_SERVICE_NAME;
+  }
   const at = argv.indexOf('--mode');
   try {
     await runStimd({
