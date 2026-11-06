@@ -201,7 +201,7 @@ jobs:
           packages/stim-cli/src/__tests__/engine-build-lock.integration.test.ts
           packages/stim-cli/src/__tests__/metro.test.ts
           packages/stim-cli/src/__tests__/daemon-cadence.test.ts
-          packages/stim-cli/src/__tests__/daemon.integration.test.ts
+          packages/stim-cli/src/__tests__/stimd.integration.test.ts
           packages/stim-cli/src/__tests__/daemon-idle.integration.test.ts
           packages/stim-cli/src/__tests__/daemon-ladder.test.ts
           packages/stim-cli/src/__tests__/daemon-pressure.test.ts

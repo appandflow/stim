@@ -32,6 +32,7 @@ const processes = table([
   [13, 1, 3, '/usr/bin/java -Xmx2g -cp gradle-launcher.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 8.14'],
   [14, 13, 1, '/Users/me/.gradle/caches/aapt2 daemon'],
   [16, 1, 0.5, 'node /Users/me/stim/packages/server/dist/stim-server.mjs --port 7787'],
+  [17, 1, 0, 'stimd'],
   [
     100,
     1,
@@ -142,7 +143,7 @@ test('each process counts once, in the owner of its nearest root', () => {
       ['shared', 'CoreSimulator services', null, null, false, 2, 24],
       ['shared', 'adb server', null, null, false, 1, 0],
       ['shared', 'Gradle daemon', null, null, false, 2, 4],
-      ['server', 'stim-server', null, null, false, 1, 1],
+      ['server', 'stim-server', null, null, false, 2, 1],
     ]),
   );
   expect(rows).toHaveLength(12);
