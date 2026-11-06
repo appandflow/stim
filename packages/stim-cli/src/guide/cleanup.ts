@@ -32,13 +32,11 @@ minutes) and the age sweep (daily). The reading plans nothing, the idle check
 plans only idle stops, and the cap trims follow the size, worktree and sweep
 checks. Pressure itself is the daemon's: each tick
 classifies the machine normal, high or critical and runs the pressure ladder
-above normal (stim guide lifecycle budget). While no daemon holds the home (on
-Windows, which has none, or when it cannot start), stim doctor runs the same
+above normal (stim guide lifecycle budget). While no daemon holds the home
+(when it cannot start), stim doctor runs the same
 maintenance pass in its own process, and start, ios and android run it, the
 idle stage for owned devices whose workspace has no running dev server, and the
-pressure ladder from rung 2 before they build; on Windows every other
-top-level command but guide, settings, help, gc and agent-device starts one in
-a background process, at most once a minute; no other command starts one, and
+pressure ladder from rung 2 before they build; no other command starts one, and
 with daemon.mode off none runs. gc without --delete prints the maintenance
 plan and the ladder's preview itself.
 Size, idle, worktree and sweep checks wait while the one-minute load is above 4
@@ -165,8 +163,7 @@ In on mode a pass runs, cheapest to rebuild first:
      run whatever maintenance.olderThanDays is; maintenance.sweepHours 0 turns
      them off with the rest of the sweep.
 The age sweep runs every maintenance.sweepHours (24) on a stim-daemon tick, or,
-while no daemon holds the home, in stim doctor, start, ios or android (on
-Windows also in the background process other top-level commands start); never
+while no daemon holds the home, in stim doctor, start, ios or android; never
 at a set hour.
 maintenance.olderThanDays (7) is its age for steps 2, 3, 5 and 6; with 0 the
 sweep removes nothing in them by age, while step 1, step 7, finished
