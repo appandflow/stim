@@ -13,6 +13,7 @@ import {
 } from '../status-watch.ts';
 import type { StatusSources } from '../status-watch.ts';
 import { watchStdoutReader } from '../stdout-reader.ts';
+import { endStreamOnSwitch } from '../daemon/engine-switch.ts';
 import { iosStatusName, liveProbes, readStatus, refreshLightFacts, type StatusSnapshot } from '../status-read.ts';
 import chalk from 'chalk';
 import { statSync } from 'fs';
@@ -543,6 +544,7 @@ async function watchStatus(json: boolean): Promise<void> {
     failed: (message) => console.error(chalk.red(message)),
   });
   const stopReader = watchStdoutReader(finish);
+  endStreamOnSwitch();
   await new Promise<never>(() => {});
 }
 

@@ -58,6 +58,7 @@ export async function runOperation(
       cwd: entry.cwd,
       recordUse: entry.caller === 'cli' || entry.operation !== 'start',
       passes: entry.caller === 'cli',
+      pin: entry.caller === 'cli',
     });
   } catch {}
   return { admitted: command };

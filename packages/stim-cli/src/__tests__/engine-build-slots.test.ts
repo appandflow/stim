@@ -1,6 +1,6 @@
 import { buildSlotPath, type BuildWaitingFor } from '@stim-cli/core/state';
 import assert from 'node:assert';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claimRemoveCommand } from '../ownership-claim.ts';
@@ -62,6 +62,59 @@ describe('tryAcquireBuildSlot', () => {
 });
 
 describe('acquireBuildSlot', () => {
+  describe('while another build is staged', () => {
+    const engine = { root: '', build: 'aaaaaaaaaaaa' };
+    const write = (name: string, record: Record<string, unknown>) =>
+      writeFileSync(join(engine.root, name), JSON.stringify({ format: 1, ...record }));
+    beforeEach(() => {
+      engine.root = join(tmpHome, 'engine');
+      mkdirSync(engine.root);
+      write('current.json', { dir: engine.build, version: '1.50.0' });
+      write('staged.json', { dir: 'bbbbbbbbbbbb', version: '1.51.0', stagedAt: new Date(0).toISOString() });
+    });
+
+    test('a miss holds before its slot and ends with the rerun line once the engine switches', async () => {
+      const held = tryAcquireBuildSlot({ max: 2 });
+      assert(held);
+      const lines: string[] = [];
+      let clock = 0;
+      const outcome = acquireBuildSlot({
+        max: 2,
+        engine,
+        now: () => clock,
+        out: (line) => lines.push(line),
+        sleep: async () => {
+          clock += 60_000;
+          if (clock < 3 * 60_000) return;
+          rmSync(join(engine.root, 'staged.json'));
+          write('current.json', { dir: 'bbbbbbbbbbbb', version: '1.51.0' });
+        },
+      });
+      await expect(outcome).rejects.toMatchObject({
+        code: 'STIM_ENGINE_SWITCHED',
+        message: 'Stim updated to 1.51.0; rerun',
+      });
+      expect(lines).toEqual(['switching Stim to 1.51.0; waiting for 1 running builds']);
+      expect(listBuildSlots().map((slot) => slot.path)).toEqual([held.path]);
+      releaseBuildSlot(held);
+    });
+
+    test('the hold ends 10 minutes after the staging and the miss takes its slot', async () => {
+      let clock = 0;
+      const handle = await acquireBuildSlot({
+        max: 1,
+        engine,
+        now: () => clock,
+        sleep: async () => {
+          clock += 60_000;
+        },
+      });
+      expect(clock).toBe(10 * 60_000);
+      expect(handle.acquired).toBe(true);
+      releaseBuildSlot(handle);
+    });
+  });
+
   test('cancelling a queued build clears its wait without acquiring or releasing another builder slot', async () => {
     const held = tryAcquireBuildSlot({ max: 1, root: '/another/build' });
     assert(held);

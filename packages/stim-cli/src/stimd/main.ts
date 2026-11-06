@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
@@ -19,6 +19,7 @@ import {
   readMacosRecord,
   readDaemonSnapshot,
   readMaintenanceState,
+  readHostedSessions,
   type DaemonMode,
   type DaemonRecentAction,
   type DaemonSnapshot,
@@ -43,6 +44,7 @@ import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { relaunchWithLogFile } from '../detached-entry.ts';
 import {
   LAUNCHD_LABEL_ENV,
+  launchStimd,
   launchdLabelPrefix,
   serveThroughStimd,
   stimdBuildId,
@@ -65,6 +67,10 @@ import { listenPipe } from './pipe-win32.ts';
 import { createPassesLane, createThreadTable } from './threads.ts';
 import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
+import { followEngine } from './engine-follow.ts';
+// compat C25 until removal-minor
+import { stopForeignSupervisors } from './foreign-supervisors.ts';
+// compat end
 
 const TICK_MS = 60_000;
 const DEPENDENCY_SCAN_MS = 10 * 60_000;
@@ -76,6 +82,7 @@ const RECENT_ACTIONS = 20;
 const WAKE_GRACE_MS = 2000;
 const RECORD_FORMAT = 1;
 const LAUNCHCTL_TIMEOUT_MS = 5000;
+const SUCCESSOR_BIND_MS = 10_000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
@@ -232,6 +239,7 @@ export async function runStimd({
   serve,
   desktopKey,
   onNet,
+  afterSwitch = false,
 }: {
   tickMs?: number;
   /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
@@ -244,6 +252,8 @@ export async function runStimd({
   desktopKey?: string;
   /** Gets the net thread's first answer to `serve`. */
   onNet?: (answer: Awaited<ReturnType<ReturnType<typeof createNetThread>['ensure']>>) => void;
+  /** Started by a stimd of the previous build after an engine switch: stops that build's supervisors when idle. */
+  afterSwitch?: boolean;
 } = {}): Promise<boolean> {
   const identity = stimBuild();
   const build = stimdBuildId();
@@ -279,6 +289,7 @@ export async function runStimd({
     writer.close();
     return false;
   }
+  const follower = followEngine(log);
   const key = writeDesktopKey(desktopKey);
   const script = realpathSync(process.argv[1] ?? '');
   const net = createNetThread(log, () => {
@@ -331,14 +342,55 @@ export async function runStimd({
     next.write(`${JSON.stringify({ op: OPS[resource].changed })}\n`);
   };
   const open = new Set<Socket>();
+  const ops = new Map<Socket, 'pinned' | 'waiting'>();
+  let engineDirs: string[] = [];
+  let switchedTo: { build: string; version: string } | null = null;
+  let foreignLeft = afterSwitch;
+  const pinned = (): boolean =>
+    [...ops.values()].includes('pinned') ||
+    listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
+    (net.running() !== null && readHostedSessions().some((session) => session.state === 'preparing'));
+  const checkEngine = async (): Promise<void> => {
+    if (!follower || switchedTo || closing) return;
+    follower.record(pinned(), engineDirs);
+    const next = await follower.check(pinned);
+    if (next && !switchedTo && !closing) await relaunch(next, follower.engine.root);
+  };
+  const relaunch = async (next: { build: string; version: string }, root: string) => {
+    switchedTo = next;
+    const changed = `${JSON.stringify({ op: 'engine-changed', ...next, pid: process.pid })}\n`;
+    for (const list of [waiters.build, waiters.boot, tickReplies]) list.length = 0;
+    for (const socket of open) socket.end(changed);
+    const why = `the engine switched to ${next.version} (${next.build})`;
+    shutdown(why);
+    await net.close();
+    const switchStarted = performance.now();
+    const entry = join(root, next.build, 'dist', 'cli.mjs');
+    launchStimd(process.env, startMode, process.platform, entry, ['--after-switch', ...serveArgs(serve)]);
+    for (const deadline = Date.now() + SUCCESSOR_BIND_MS; Date.now() < deadline;) {
+      const record = readJsonObject(stimdRecordFile());
+      if (record?.build === next.build && record.pid !== process.pid) {
+        log('info', 'engine_successor', `stimd pid ${String(record.pid)} of ${next.build} took over`, {
+          bindMs: Math.round(performance.now() - switchStarted),
+        });
+        return;
+      }
+      await new Promise((done) => setTimeout(done, 20));
+    }
+    log('warn', 'engine_successor', `no stimd of ${next.build} bound within ${SUCCESSOR_BIND_MS / 1000} s`);
+  };
   const server = createServer((socket) => {
     open.add(socket);
+    void checkEngine();
     socket.once('close', () => open.delete(socket));
     let buffer = Buffer.alloc(0);
     let framed = false;
     let kind: unknown;
     socket.on('error', () => drop(socket));
-    socket.on('close', () => drop(socket));
+    socket.on('close', () => {
+      drop(socket);
+      if (ops.delete(socket)) void checkEngine();
+    });
     const onData = (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
       for (let end = buffer.indexOf(10); end >= 0; end = buffer.indexOf(10)) {
@@ -364,8 +416,8 @@ export async function runStimd({
             socket.end();
             return;
           }
-          if (message.kind !== 'desktop' && message.build !== build) {
-            reply({ op: 'engine-changed', build, version: identity.version, pid: process.pid });
+          if (switchedTo || (message.kind !== 'desktop' && message.build !== build)) {
+            reply({ op: 'engine-changed', build, version: identity.version, pid: process.pid, ...switchedTo });
             socket.end();
             return;
           }
@@ -410,6 +462,14 @@ export async function runStimd({
           else
             socket.end(`${JSON.stringify({ op: 'error', code: 'net-off', message: 'the net thread does not run' })}\n`);
           return;
+        } else if (op === 'op.begin') {
+          ops.set(socket, 'pinned');
+          void (follower?.admit() ?? Promise.resolve(null)).then((next) =>
+            reply(next ? { op: 'engine-changed', ...next, pid: process.pid } : { op: 'op.begun' }),
+          );
+        } else if (op === 'op.wait' || op === 'op.resume') {
+          if (ops.has(socket)) ops.set(socket, op === 'op.wait' ? 'waiting' : 'pinned');
+          void checkEngine();
         } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'tick') {
           if (!tickReplies.includes(socket)) tickReplies.push(socket);
@@ -448,6 +508,7 @@ export async function runStimd({
     for (const socket of open) socket.end().unref();
     if (bound && process.platform !== 'win32') rmSync(path, { force: true });
     if (readJsonObject(stimdRecordFile())?.pid === process.pid) rmSync(stimdRecordFile(), { force: true });
+    follower?.release();
     releaseClaim(claim);
     releaseClaim(own);
     for (const signal of SIGNALS) process.off(signal, onSignal);
@@ -615,6 +676,11 @@ export async function runStimd({
       writeAtomic(daemonSnapshotFile(), lastSnapshot);
       for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);
       ticked = passes;
+      engineDirs = workspaceEngineDirs(config);
+      // compat C25 until removal-minor
+      if (foreignLeft && follower) foreignLeft = (await stopForeignSupervisors(follower.engine.build)) > 0;
+      // compat end
+      await checkEngine();
     } catch (error) {
       for (const socket of replying) socket.destroy();
       shutdown(
@@ -643,6 +709,7 @@ export async function runStimd({
     );
     loopDelay.reset();
     if (emptyTicks >= EMPTY_TICKS_BEFORE_EXIT) {
+      await checkEngine();
       shutdown('nothing runs in this Stim home');
       break;
     }
@@ -651,6 +718,28 @@ export async function runStimd({
   await Promise.all([lane.settled(), dependencyWork, net.close()]);
   await threads.close();
   return true;
+}
+
+/** The builds this home's dev server supervisors and device log collectors run, from their recorded `engineDir`. */
+function workspaceEngineDirs(config: Config | null): string[] {
+  return Object.keys(config?.projects ?? {}).flatMap((path) => {
+    const state = readWorkspaceState(path);
+    return [state?.supervisor, ...Object.values(state?.collectors ?? {})].flatMap((record) => {
+      return isJsonObject(record) && typeof record.engineDir === 'string' ? [record.engineDir] : [];
+    });
+  });
+}
+
+/** `serviceArguments`' inverse: the arguments a successor stimd takes to serve as this one did. */
+function serveArgs(serve: ServeOptions | undefined): string[] {
+  if (!serve) return [];
+  return [
+    '--service',
+    '--port',
+    String(serve.port),
+    ...serve.extraEnv.flatMap((entry) => ['--env', entry]),
+    ...serve.pathPrepend.flatMap((dir) => ['--path-prepend', dir]),
+  ];
 }
 
 /**
@@ -694,6 +783,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
       mode: parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ?? daemonMode({}),
       serve,
       onNet: reportNet,
+      afterSwitch: argv.includes('--after-switch'),
     });
     if (serve && !served && stimdLive()) await serveThroughStimd(serve, reportNet);
   } catch (error) {
