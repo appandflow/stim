@@ -110,6 +110,8 @@ jobs:
       - if: github.event_name == 'merge_group'
         run: pnpm run build
       - if: github.event_name == 'merge_group'
+        run: pnpm run dist:closure
+      - if: github.event_name == 'merge_group'
         run: pnpm run typecheck
       - if: github.event_name == 'merge_group'
         run: pnpm run knip

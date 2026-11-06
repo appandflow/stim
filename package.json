@@ -20,6 +20,7 @@
     "test:runtime": "node test/runtime-floor.mjs",
     "test:watch": "vitest",
     "build": "pnpm -r --filter \"./packages/*\" --filter @stim-cli/github-action run build",
+    "dist:closure": "node scripts/dist-closure.mjs",
     "test:e2e": "node --import ./test/e2e/daemon-off.mjs --test test/e2e/*.e2e.js",
     "knip": "knip && knip --production",
     "benchmark:agent": "node scripts/agent-benchmark/driver.mjs",
