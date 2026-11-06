@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, mkdirSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { connect, createServer, type Server } from 'node:net';
 import { join } from 'node:path';
 
@@ -40,13 +39,20 @@ export async function takeLock(root: string, name: '.lock.sock' | '.flip.sock'):
   return null;
 }
 
-/** sun_path holds 103 bytes on macOS and 107 on Linux; a longer path binds a hashed name in a private directory. */
+/**
+ * sun_path holds 103 bytes on macOS and 107 on Linux, so a longer path binds `/tmp/stim-sockets-<uid>/<sha-256 of the
+ * path>.sock`, the directory stimd's own socket falls back to; `$TMPDIR` can itself be too long (#5363).
+ */
 function lockPath(path: string): string {
-  const hash = createHash('sha256').update(path).digest('hex').slice(0, 32);
-  if (process.platform === 'win32') return `\\\\.\\pipe\\stim-engine-${hash}`;
-  if (Buffer.byteLength(path) <= 103) return path;
-  const dir = join(tmpdir(), `stim-engine-locks-${process.getuid?.() ?? 0}`);
+  const hash = createHash('sha256').update(path).digest('hex');
+  if (process.platform === 'win32') return `\\\\.\\pipe\\stim-engine-${hash.slice(0, 32)}`;
+  if (Buffer.byteLength(path) <= (process.platform === 'linux' ? 107 : 103)) return path;
+  const uid = process.getuid?.() ?? 0;
+  const dir = join('/tmp', `stim-sockets-${uid}`);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const owner = lstatSync(dir);
+  if (!owner.isDirectory() || owner.uid !== uid)
+    throw new Error(`${dir} is not a directory this user owns, so the engine lock is not bound there.`);
   return join(dir, `${hash}.sock`);
 }
 
