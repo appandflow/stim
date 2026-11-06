@@ -1917,13 +1917,42 @@ not on any remote"  (worktree remove)
   that the devices it recorded become orphans you delete by hand.`,
     },
     STIM_RELATIVE_PATH: {
-      summary: 'STIM_HOME, STIM_BUILD_CACHE or STIM_METRO_CACHE is set to a relative path',
+      summary: 'STIM_HOME, STIM_BUILD_CACHE, STIM_METRO_CACHE or STIM_ENGINE_ROOT is set to a relative path',
       body: () => `STIM_RELATIVE_PATH  ("<NAME>=<value> is not an absolute path")
   Any command refuses before it reads or writes state. A relative value would
   resolve against each process's working directory, so the CLI, Metro and the
   Expo build-cache provider would each use a different store. Set the named
   variable to an absolute path, or unset it to use the default. Metro and the
   cache provider, which cannot refuse, ignore a relative value with a warning.`,
+    },
+    STIM_ENGINE_BUSY: {
+      summary: 'another stim process is changing the machine engine',
+      body: () => `STIM_ENGINE_BUSY  ("Another process is changing <root>.")
+  A stim engine command found the engine store's promotion lock held: another
+  install, update, rollback or promotion is running. Run the command again
+  when it ends.`,
+    },
+    STIM_ENGINE_REFUSED: {
+      summary: 'a stim engine command cannot move the engine as asked',
+      body: () => `STIM_ENGINE_REFUSED  ("<reason> <remedy>")
+  The engine stays where it is. The message names why (no engine installed,
+  no previous build, a development tree, a build that predates the engine
+  store) and the command that gets past it, such as stim engine install or
+  stim engine use <version>.`,
+    },
+    STIM_ROUTER_TOO_OLD: {
+      summary: 'this copy of stim cannot read the engine pointer a newer stim wrote',
+      body: () => `STIM_ROUTER_TOO_OLD  ("this stim (<version>) cannot read engine format <n>")
+  The machine engine's current.json has a format this copy does not know, so
+  it refuses instead of guessing. Run a newer copy: npx stim@latest, npm i -D
+  stim@latest in the project, or npm i -g stim@latest.`,
+    },
+    STIM_SCHEMA_NEWER: {
+      summary: 'a newer stim migrated this Stim home to a schema this build cannot read',
+      body: () => `STIM_SCHEMA_NEWER  ("home <dir> was migrated to schema <n> by <version>")
+  A newer build moved the home's state forward and saved the files it changed
+  under backup/schema-<n>. Run stim engine rollback --restore-state to put
+  them back, or stim engine update to run a build that reads the new schema.`,
     },
     STIM_RUN_FAILED: {
       summary: 'a programmatic operation failed without a more specific Stim code',

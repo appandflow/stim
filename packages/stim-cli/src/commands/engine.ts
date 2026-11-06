@@ -18,7 +18,7 @@ function refuse(code: string, message: string, remedy: string): never {
 
 const busy = (root: string) => refuse('STIM_ENGINE_BUSY', `Another process is changing ${root}.`, 'Run it again.');
 const NPM = { timeoutMs: 60_000 };
-const missing = () => refuse('STIM_ENGINE_MISSING', 'No engine is installed.', 'Run stim engine install first.');
+const missing = () => refuse('STIM_ENGINE_REFUSED', 'No engine is installed.', 'Run stim engine install first.');
 
 async function run(setBy: string, source: Promotion['source'], more: Partial<Promotion> = {}): Promise<void> {
   const root = engineRoot(process.env);
@@ -61,7 +61,7 @@ export default function engineCommand(program: Command, version: string): void {
       const self = dirname(dirname(spawnEntry('engine-select')));
       const kind = installKind(self, engineRoot(process.env));
       if (kind === 'development')
-        refuse('STIM_ENGINE_DEVELOPMENT', `${self} runs in place.`, `Run stim engine use ${self}.`);
+        refuse('STIM_ENGINE_REFUSED', `${self} runs in place.`, `Run stim engine use ${self}.`);
       await run('install', kind === 'npx' || kind === 'project' ? { version } : { dir: self });
       for (const root of [configDir(), machineRoot()]) migrateSchema(root, version);
     });
@@ -103,7 +103,7 @@ export default function engineCommand(program: Command, version: string): void {
       const { current, previous } = readRecords(root);
       const manifest = previous ? readManifest(join(root, previous)) : null;
       if (!current || !manifest)
-        return refuse('STIM_ENGINE_NO_PREVIOUS', `${root} has no previous build.`, 'Run stim engine use <version>.');
+        return refuse('STIM_ENGINE_REFUSED', `${root} has no previous build.`, 'Run stim engine use <version>.');
       for (const home of opts.restoreState ? [configDir(), machineRoot()] : [])
         if (readSchema(home)) restoreSchema(home, manifest.schema, manifest.version);
       await run('rollback', { dir: join(root, manifest.build) }, { pinReason: `rolled back from ${current.version}` });
