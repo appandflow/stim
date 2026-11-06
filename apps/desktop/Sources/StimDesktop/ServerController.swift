@@ -200,10 +200,17 @@ final class ServerController: ObservableObject {
     }
   }
 
+  /// The login environment with the Stim home and engine root Desktop runs.
+  private func engineEnvironment() async -> [String: String] {
+    var environment = await environment?.value ?? ProcessInfo.processInfo.environment
+    environment["STIM_HOME"] = settingsEnvironment["STIM_HOME"]
+    environment["STIM_ENGINE_ROOT"] = settingsEnvironment["STIM_ENGINE_ROOT"]
+    return environment
+  }
+
   /// The engine CLI with the login environment and the Stim home Desktop runs.
   func cli() async -> StimServerCLI {
-    var environment = await environment?.value ?? ProcessInfo.processInfo.environment
-    if let home = settingsEnvironment["STIM_HOME"] { environment["STIM_HOME"] = home }
+    let environment = await engineEnvironment()
     return StimServerCLI(environment: environment, engine: EngineLaunch.resolve(environment: environment))
   }
 
@@ -306,7 +313,7 @@ final class ServerController: ObservableObject {
   }
 
   private func installEngine(version: String, generation current: Int) async -> Bool {
-    let environment = await environment?.value ?? ProcessInfo.processInfo.environment
+    let environment = await engineEnvironment()
     let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
     let root = engineRoot
     var node: NodeRuntime
@@ -325,8 +332,7 @@ final class ServerController: ObservableObject {
     guard current == generation else { return false }
     startDetail = "Installing the Stim engine \(version)"
     defer { startDetail = nil }
-    var install = EngineInstall.installRequest(version: version, node: node, environment: environment, home: home)
-    install.environment?["STIM_ENGINE_ROOT"] = settingsEnvironment["STIM_ENGINE_ROOT"]
+    let install = EngineInstall.installRequest(version: version, node: node, environment: environment, home: home)
     guard let result = try? await install.run(), result.succeeded else {
       return fail(.engineUnavailable, "Could not install the Stim engine \(version) with npx.", generation: current)
     }
@@ -336,7 +342,7 @@ final class ServerController: ObservableObject {
 
   /// `stim engine update` through the engine; a failure leaves the older engine running.
   func updateEngine(generation current: Int? = nil) async {
-    let environment = await environment?.value ?? ProcessInfo.processInfo.environment
+    let environment = await engineEnvironment()
     startDetail = "Updating the Stim engine"
     defer { startDetail = nil }
     let update = EngineInstall.updateRequest(engineRoot, environment: environment, home: NSHomeDirectory())

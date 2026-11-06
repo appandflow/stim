@@ -100,7 +100,7 @@ import Testing
       try ManagedNode.verify(archive: archive, sums: sums, architecture: "arm64", pinned: digest)
     }
     let listing = "\(digest)  \(ManagedNode.archiveName(architecture: "x64"))\n"
-    try ManagedNode.verify(archive: archive, sums: sums + listing, architecture: "x64", pinned: digest)
+    try ManagedNode.verify(archive: archive, sums: listing, architecture: "x64", pinned: digest)
     #expect(throws: ManagedNode.Failure.self) {
       try ManagedNode.verify(archive: archive + Data([0]), sums: listing, architecture: "x64", pinned: digest)
     }

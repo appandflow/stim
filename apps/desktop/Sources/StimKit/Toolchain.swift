@@ -40,6 +40,7 @@ public enum Toolchain {
     var environment = shell
     for (name, value) in parseOverrides(overrides ?? "") { environment[name] = value }
     if launch["STIM_HOME"] != nil || !(stimHome ?? "").isEmpty { environment["STIM_HOME"] = base["STIM_HOME"] }
+    if let root = base["STIM_ENGINE_ROOT"] { environment["STIM_ENGINE_ROOT"] = root }
     return environment
   }
 }
