@@ -15,10 +15,9 @@ import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { clearFreeClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { isJsonObject, stimBuildDigest, tailscaleEnv } from '@stim-cli/core/state';
+import { stimBuildDigest, tailscaleEnv } from '@stim-cli/core/state';
 import type { WorkerRootUsage } from './worker-areas.ts';
 import {
-  answersAs,
   launchdArguments,
   withProgramArguments,
   DEFAULT_LABEL,
@@ -27,10 +26,8 @@ import {
   planServe,
   normalizeEnv,
   ServiceError,
-  unusedInstalls,
   type InstalledService,
   type ServeRecord,
-  type ServerBuild,
   type ServiceSpec,
 } from './service-plist.ts';
 import {
@@ -38,7 +35,6 @@ import {
   serviceManager,
   serviceManagerOrNull,
   serviceRoot,
-  type Run,
   type ServiceJob,
   type ServiceManager,
 } from './service-manager.ts';
@@ -46,7 +42,7 @@ import { hostPermissionPanes, requestHostPermissions, type HostApp } from './sti
 import { findTailscale, readTailscaleStatus, serveCommand, serveRoute } from '@stim-cli/transport-tailscale';
 import type { StartupState } from './startup.ts';
 import type { KeepAwakeReason, KeepAwakeStatus } from './keep-awake.ts';
-import { installServer, serverBuild, stimDist, type UpdateSource } from './release-install.ts';
+import { stimDist } from './release-install.ts';
 
 const HEALTH_TIMEOUT_MS = 5_000;
 const HEALTH_WAIT_MS = 15_000;
@@ -259,7 +255,7 @@ export async function installService(options?: ServiceOptions): Promise<string[]
     for (const entry of existsSync(root) ? readdirSync(root, { withFileTypes: true }) : []) {
       if (!entry.isDirectory() || validateLabel(entry.name)) continue;
       notes.push(
-        ...(await holdingUpdateClaim(entry.name, async () => {
+        ...(await holdingServiceClaim(entry.name, async () => {
           const installed = await manager.read(entry.name);
           if (!installed?.managed || installed.port === null) return [];
           return installJob({
@@ -277,7 +273,7 @@ export async function installService(options?: ServiceOptions): Promise<string[]
     options = { label: DEFAULT_LABEL, port: DEFAULT_PORT, env: [], pathPrepend: [], serve: false };
   }
   // compat end
-  return holdingUpdateClaim(options.label, () => installJob(options));
+  return holdingServiceClaim(options.label, () => installJob(options));
 }
 
 /**
@@ -471,6 +467,14 @@ export async function installJob(
   return notes;
 }
 
+function sameFile(a: string, b: string): boolean {
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return false;
+  }
+}
+
 /** The first `node.exe` the service's PATH finds, when it is not `node`; builds run their tools with that one. */
 function nodeShim(node: string, pathPrepend: string[]): string | null {
   for (const dir of [...pathPrepend, ...(process.env.PATH ?? '').split(delimiter)]) {
@@ -481,7 +485,7 @@ function nodeShim(node: string, pathPrepend: string[]): string | null {
 }
 
 export async function recordServiceRoute(label: string, port: number, record: ServeRecord): Promise<void> {
-  await holdingUpdateClaim(label, async () => {
+  await holdingServiceClaim(label, async () => {
     const installed = await requireManaged(label);
     if (!installed) throw new ServiceError(`${label} is not installed. Run \`stim service install\` first.`);
     if (installed.port !== port)
@@ -535,7 +539,7 @@ export interface ServiceStatus {
   host: { app: string; name: string; screenRecording: boolean | null; accessibility: boolean | null } | null;
   node: string | null;
   script: string | null;
-  /** The server script `service rollback` switches back to, or null when no update recorded one. */
+  /** The server script a 1.42 `service update` or `service rollback` switched from, or null. */
   previousScript: string | null;
   /** Names only: a value may be a secret, and the plist holds it in plain text. */
   envNames: string[];
@@ -557,12 +561,28 @@ function stimOnPath(): string | null {
   return null;
 }
 
+/**
+ * The `dist` a unit runs: for the engine's `bin/stimd` shim, the build `current.json` beside it names, else the
+ * `stim` package around the unit's script.
+ */
+function unitDist(script: string): string | null {
+  if (basename(script) !== 'stimd' || basename(dirname(script)) !== 'bin') return stimDist(script);
+  try {
+    const root = dirname(dirname(script));
+    const current: unknown = JSON.parse(readFileSync(join(root, 'current.json'), 'utf8'));
+    const dir = typeof current === 'object' && current !== null ? (current as { dir?: unknown }).dir : null;
+    return typeof dir === 'string' ? join(root, dir, 'dist') : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function serviceStatus(label: string): Promise<ServiceStatus> {
   const manager = serviceManager();
   const installed = await readInstalled(label);
   const job = await loaded(label);
   const health = installed?.port ? await fetchHealth(installed.port) : null;
-  const serviceDist = installed?.script ? stimDist(installed.script) : null;
+  const serviceDist = installed?.script ? unitDist(installed.script) : null;
   const cliDist = stimOnPath();
   const service = serviceDist ? stimBuildDigest(serviceDist) : null;
   const cli = cliDist ? stimBuildDigest(cliDist) : null;
@@ -697,7 +717,6 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
     );
   }
   lines.push(`  node: ${status.node}`, `  server: ${status.script}`);
-  if (status.previousScript) lines.push(`  previous server: ${status.previousScript} (service rollback)`);
   lines.push(`  log: ${status.logPath}`);
   if (status.pathPrepend.length) lines.push(`  path-prepend: ${status.pathPrepend.join(delimiter)}`);
   if (status.envNames.length) lines.push(`  env: ${status.envNames.join(', ')}`);
@@ -714,7 +733,7 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
 
 export async function uninstallService(label: string): Promise<string[]> {
   serviceManager();
-  const notes = await holdingUpdateClaim(label, async () => {
+  const notes = await holdingServiceClaim(label, async () => {
     const result = await uninstallJob(label);
     for (const entry of readdirSync(serviceRoot(label))) {
       if (entry !== 'update.claims') rmSync(join(serviceRoot(label), entry), { recursive: true, force: true });
@@ -773,44 +792,6 @@ async function uninstallJob(label: string): Promise<string[]> {
   return notes;
 }
 
-const UPDATE_HEALTH_WAIT_MS = 90_000;
-const UPDATE_SETTLE_MS = 5000;
-const IDLE_WAIT_MS = 30 * 60_000;
-const IDLE_POLL_MS = 5000;
-
-/** How the last `service update` of a label ended, whoever ran it. */
-export interface UpdateOutcome {
-  at: string;
-  target: string;
-  ok: boolean;
-  message: string;
-}
-
-const outcomeFile = (label: string) => join(serviceRoot(label), 'last-update.json');
-
-function recordOutcome(label: string, outcome: UpdateOutcome): void {
-  const file = outcomeFile(label);
-  const partial = `${file}.${process.pid}.tmp`;
-  writeFileSync(partial, `${JSON.stringify(outcome)}\n`);
-  renameSync(partial, file);
-}
-
-export function readLastUpdate(label: string): UpdateOutcome | null {
-  try {
-    const value: unknown = JSON.parse(readFileSync(outcomeFile(label), 'utf8'));
-    if (!isJsonObject(value)) return null;
-    const { at, target, ok, message } = value;
-    return typeof at === 'string' &&
-      typeof target === 'string' &&
-      typeof ok === 'boolean' &&
-      typeof message === 'string'
-      ? { at, target, ok, message }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 /** Whether `label` names a service that `service install` wrote and that serves `port`. */
 export async function runsAsService(label: string, port: number): Promise<boolean> {
   const manager = serviceManagerOrNull();
@@ -823,150 +804,8 @@ export async function runsAsService(label: string, port: number): Promise<boolea
   }
 }
 
-export const describeSource = (source: UpdateSource): string =>
-  'release' in source ? `release ${source.release}` : `packages in ${source.from}`;
-
-const describeBuild = (build: ServerBuild) =>
-  `stim-server ${build.version}${build.stimBuild ? ` (Stim build ${build.stimBuild})` : ''}`;
-
-function sameFile(a: string, b: string): boolean {
-  try {
-    return realpathSync(a) === realpathSync(b);
-  } catch {
-    return false;
-  }
-}
-
-/** `allSessions` waits for every hosted session, which a rollback needs because the previous server may not resume them. */
-async function waitForIdle(port: number, log: (line: string) => void, allSessions = false): Promise<void> {
-  const deadline = Date.now() + IDLE_WAIT_MS;
-  let said = '';
-  for (;;) {
-    const health = await fetchHealth(port);
-    const busy = health?.busy;
-    if (health && !busy) {
-      log('This stim-server does not report its running builds, so the restart does not wait for them.');
-    }
-    const hosted = busy?.resumes && !allSessions ? (busy.hostedWork ?? 0) : (busy?.hostedSessions ?? 0);
-    if (!busy || busy.builds + hosted === 0) return;
-    const work = `${busy.builds} offloaded build(s) and ${hosted} hosted session(s)`;
-    if (Date.now() >= deadline) {
-      throw new ServiceError(
-        `stim-server still runs ${work} after ${IDLE_WAIT_MS / 60_000} minutes; not restarting it. Run this again later.`,
-      );
-    }
-    if (work !== said) log(`Waiting for ${work} to finish.`);
-    said = work;
-    await sleep(IDLE_POLL_MS);
-  }
-}
-
-async function waitForBuild(label: string, port: number, expected: ServerBuild): Promise<boolean> {
-  const deadline = Date.now() + UPDATE_HEALTH_WAIT_MS;
-  while (Date.now() < deadline) {
-    const health = await fetchHealth(port);
-    await requireRunning(label);
-    if (answersAs(health, expected)) {
-      await sleep(UPDATE_SETTLE_MS);
-      const settled = await fetchHealth(port);
-      await requireRunning(label);
-      if (answersAs(settled, expected)) return true;
-    }
-    await sleep(1000);
-  }
-  return false;
-}
-
-async function restart(label: string, port: number): Promise<Run> {
-  await unload(label, port);
-  return serviceManager().start(label);
-}
-
-const SWITCH_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
-
-function holdSignal(): void {
-  console.error(`stim-server: finishing the switch first, so the ${serviceManager().noun} stays loaded.`);
-}
-
-async function finishingOnSignals<T>(work: () => Promise<T>): Promise<T> {
-  for (const signal of SWITCH_SIGNALS) process.on(signal, holdSignal);
-  try {
-    return await work();
-  } finally {
-    for (const signal of SWITCH_SIGNALS) process.off(signal, holdSignal);
-  }
-}
-
-async function switchTo(
-  installed: InstalledService & { script: string; port: number },
-  script: string,
-  expected: ServerBuild,
-): Promise<void> {
-  const manager = serviceManager();
-  const path = plistPath(installed.label);
-  const before = readFileSync(path);
-  const staged = `${path}.${process.pid}.tmp`;
-  copyFileSync(path, staged);
-  try {
-    await manager.rewrite(installed, staged, { script, previousScript: installed.script });
-  } catch (error) {
-    rmSync(staged, { force: true });
-    throw error;
-  }
-  await finishingOnSignals(async () => {
-    let why: string;
-    try {
-      renameSync(staged, path);
-      const started = await restart(installed.label, installed.port);
-      if (started.ok && (await waitForBuild(installed.label, installed.port, expected))) return;
-      why = started.ok
-        ? `did not answer on 127.0.0.1:${installed.port} within ${UPDATE_HEALTH_WAIT_MS / 1000} s`
-        : `did not start (${startCommand()}: ${started.stderr.trim()})`;
-    } catch (error) {
-      why = `could not be started: ${(error as Error).message}`;
-    }
-    rmSync(staged, { force: true });
-    writeFileSync(path, before, { mode: 0o644 });
-    let unloaded = true;
-    try {
-      await unload(installed.label, installed.port);
-    } catch {
-      unloaded = false;
-    }
-    let loadedAgain = false;
-    if (unloaded) {
-      for (const deadline = Date.now() + UNLOAD_WAIT_MS; !loadedAgain && Date.now() < deadline;) {
-        loadedAgain =
-          (await manager.start(installed.label)).ok || (await loaded(installed.label).catch(() => null)) !== null;
-        if (!loadedAgain) await sleep(1000);
-      }
-    }
-    const back = loadedAgain ? await waitForHealth(installed.port, installed.label).catch(() => null) : null;
-    const previous = serverBuild(installed.script) ?? { version: back?.version ?? '', stimBuild: null };
-    const answered = answersAs(back, previous);
-    const answer = back
-      ? `stim-server ${back.version} answers${back.startup && back.startup.state !== 'ready' ? ` (${back.startup.state})` : ''}`
-      : 'nothing answers';
-    throw new ServiceError(
-      `${describeBuild(expected)} ${why}. ${
-        answered
-          ? `Switched back to ${describeBuild(previous)}.`
-          : loadedAgain
-            ? `Restored the previous ${fileNoun()}, but ${answer} instead of ${describeBuild(previous)}; check ${installed.logPath ?? logPath(installed.label)}.`
-            : `Restored the previous ${fileNoun()}, but ${manager.name} did not load it; ${manager.restartRemedy(installed.label)}.`
-      }`,
-    );
-  });
-}
-
-function prune(versions: string, keep: string[]): void {
-  const real = realpathSync(versions);
-  for (const entry of unusedInstalls(real, readdirSync(real), keep)) {
-    rmSync(join(versions, entry), { recursive: true, force: true });
-  }
-}
-
-export async function holdingUpdateClaim<T>(label: string, work: () => Promise<T>): Promise<T> {
+/** Runs `work` under the claim that keeps one install or uninstall of `label` at a time. */
+export async function holdingServiceClaim<T>(label: string, work: () => Promise<T>): Promise<T> {
   const root = serviceRoot(label);
   mkdirSync(root, { recursive: true });
   let attempt;
@@ -983,7 +822,7 @@ export async function holdingUpdateClaim<T>(label: string, work: () => Promise<T
   if (attempt.pending) releaseClaim(attempt.pending);
   if (!attempt.acquired) {
     throw new ServiceError(
-      `An install, update or rollback of ${label} is running (pid ${attempt.held?.owner.pid ?? 'unknown'}). Wait for it to finish.`,
+      `An install or uninstall of ${label} is running (pid ${attempt.held?.owner.pid ?? 'unknown'}). Wait for it to finish.`,
     );
   }
   try {
@@ -991,104 +830,4 @@ export async function holdingUpdateClaim<T>(label: string, work: () => Promise<T
   } finally {
     releaseClaim(attempt.acquired);
   }
-}
-
-function withUpdateClaim<T>(
-  label: string,
-  work: (installed: InstalledService & { script: string; node: string; port: number }) => Promise<T>,
-): Promise<T> {
-  serviceManager();
-  return holdingUpdateClaim(label, async () => {
-    const installed = await requireManaged(label);
-    if (installed?.script && !installed.node)
-      throw new ServiceError(
-        `${label} runs the Stim engine's stimd shim, which follows the engine; run \`stim engine update\`.`,
-      );
-    if (!installed?.script || !installed.node || installed.port === null) {
-      throw new ServiceError(`${label} is not installed. Run \`stim service install\` first.`);
-    }
-    return work({ ...installed, script: installed.script, node: installed.node, port: installed.port });
-  });
-}
-
-/**
- * Installs `source` beside the server the job runs, waits for offloaded builds and hosted native steps to finish,
- * switches the job to it and restarts it, and switches back when it does not answer as the installed build. Never
- * touches pairings, approvals, the host app, `$STIM_HOME` or the serve route. With `waitForWork` false,
- * restart interrupts active work instead of waiting for idle; shutdown and health checks still apply.
- */
-export async function updateService(
-  label: string,
-  source: UpdateSource,
-  log: (line: string) => void,
-  waitForWork = true,
-): Promise<string[]> {
-  if (!existsSync(plistPath(label))) throw new ServiceError(`${label} is not installed.`);
-  return withUpdateClaim(label, (installed) => updateInstalledService(label, installed, source, log, waitForWork));
-}
-
-export async function updateInstalledService(
-  label: string,
-  installed: InstalledService & { script: string; node: string; port: number },
-  source: UpdateSource,
-  log: (line: string) => void,
-  waitForWork = true,
-): Promise<string[]> {
-  const at = new Date().toISOString();
-  try {
-    const notes = await switchToSource(label, installed, source, log, waitForWork);
-    recordOutcome(label, { at, target: describeSource(source), ok: true, message: notes[0]! });
-    return notes;
-  } catch (error) {
-    recordOutcome(label, { at, target: describeSource(source), ok: false, message: (error as Error).message });
-    throw error;
-  }
-}
-
-async function switchToSource(
-  label: string,
-  installed: InstalledService & { script: string; node: string; port: number },
-  source: UpdateSource,
-  log: (line: string) => void,
-  waitForWork: boolean,
-): Promise<string[]> {
-  const versions = join(serviceRoot(label), 'versions');
-  const target = await installServer(versions, source, installed.node, log);
-  if (sameFile(installed.script, target.script)) {
-    return [`${label} already runs ${describeBuild(target.build)}.`];
-  }
-  if (waitForWork) await waitForIdle(installed.port, log);
-  else log('Restarting without waiting for active builds or hosted sessions; they will be interrupted.');
-  log(`Switching ${label} to ${describeBuild(target.build)}.`);
-  const script = realpathSync(target.script);
-  await switchTo(installed, script, target.build);
-  prune(versions, [script, installed.script]);
-  const flag = label === DEFAULT_LABEL ? '' : ` --label ${label}`;
-  return [
-    `${label} now runs ${describeBuild(target.build)} from ${target.dir}.`,
-    `The previous server stays installed: ${installed.script}. \`stim service rollback${flag}\` switches back to it.`,
-  ];
-}
-
-/** Switches the job back to the server it ran before the last update or rollback, under the same checks. */
-export async function rollbackService(label: string, log: (line: string) => void): Promise<string[]> {
-  if (!existsSync(plistPath(label))) throw new ServiceError(`${label} is not installed.`);
-  return withUpdateClaim(label, async (installed) => {
-    const previous = installed.previousScript;
-    if (!previous) throw new ServiceError(`${label} has no previous server; \`service update\` records one.`);
-    const build = existsSync(previous) ? serverBuild(previous) : null;
-    if (!build) throw new ServiceError(`The previous server ${previous} is no longer installed.`);
-    const at = new Date().toISOString();
-    try {
-      await waitForIdle(installed.port, log, true);
-      log(`Switching ${label} back to ${describeBuild(build)}.`);
-      await switchTo(installed, previous, build);
-    } catch (error) {
-      recordOutcome(label, { at, target: 'rollback', ok: false, message: (error as Error).message });
-      throw error;
-    }
-    const message = `${label} now runs ${describeBuild(build)} again: ${previous}.`;
-    recordOutcome(label, { at, target: 'rollback', ok: true, message });
-    return [message];
-  });
 }

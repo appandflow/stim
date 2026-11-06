@@ -1,12 +1,32 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, closeSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import {
+  appendFileSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { homedir } from 'node:os';
+import { join, relative, sep } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
-import type { ProtocolError, EngineUpdatePackage, EngineUpdateProgress, EngineUpdateStatus } from './protocol.ts';
+import type {
+  ProtocolError,
+  EngineUpdateOutcome,
+  EngineUpdatePackage,
+  EngineUpdateProgress,
+  EngineUpdateStatus,
+} from './protocol.ts';
 import { compareVersions, validateRelease, type ServerBuild } from './service-plist.ts';
 import { serviceManagerOrNull, serviceRoot } from './service-manager.ts';
-import { describeSource, readLastUpdate, runsAsService, type UpdateOutcome } from './service.ts';
+import { runsAsService } from './service.ts';
+import { engineSelectArgs, engineSelectOutcome } from './engine-select.ts';
 import type { UpdateSource } from './release-install.ts';
 
 const UPDATE_CHUNK_CHARS = 32 * 1024;
@@ -47,6 +67,60 @@ interface Upload {
   dir: string;
 }
 
+const describeSource = (source: UpdateSource): string =>
+  'release' in source ? `release ${source.release}` : `packages in ${source.from}`;
+
+const RUNNING = 'The update is running.';
+/** How long `update.log` may stay unchanged with no result before the update counts as ended without one. */
+const SELECT_LOG_QUIET_MS = 15 * 60_000;
+const outcomeFile = (root: string) => join(root, 'last-update.json');
+
+function recordOutcome(root: string, outcome: EngineUpdateOutcome): void {
+  const file = outcomeFile(root);
+  const partial = `${file}.${process.pid}.tmp`;
+  writeFileSync(partial, `${JSON.stringify(outcome)}\n`);
+  renameSync(partial, file);
+}
+
+/**
+ * How the last update of this service ended. An update that switched the engine restarted the server that started
+ * it, so its outcome is the result `engine-select` left as the last line of `update.log`.
+ */
+function readLastUpdate(root: string): EngineUpdateOutcome | null {
+  let recorded: EngineUpdateOutcome;
+  try {
+    const value: unknown = JSON.parse(readFileSync(outcomeFile(root), 'utf8'));
+    if (!isJsonObject(value)) return null;
+    const { at, target, ok, message } = value;
+    if (typeof at !== 'string' || typeof target !== 'string' || typeof ok !== 'boolean' || typeof message !== 'string')
+      return null;
+    recorded = { at, target, ok, message };
+  } catch {
+    return null;
+  }
+  if (recorded.message !== RUNNING) return recorded;
+  try {
+    const log = join(root, 'update.log');
+    const ended = engineSelectOutcome(readFileSync(log, 'utf8'));
+    const at = statSync(log).mtime;
+    if (!ended.result && Date.now() - at.getTime() < SELECT_LOG_QUIET_MS) return recorded;
+    return { ...recorded, ok: ended.ok, message: ended.message, at: at.toISOString() };
+  } catch {
+    return recorded;
+  }
+}
+
+/** Whether `script`, the entry stimd runs, is a build in the machine engine's store, which follows `current.json`. */
+function runsFromEngine(script: string, env: NodeJS.ProcessEnv): boolean {
+  try {
+    const root = realpathSync(env.STIM_ENGINE_ROOT || join(homedir(), '.stim', 'engine'));
+    const [build, dist] = relative(root, realpathSync(script)).split(sep);
+    return /^[0-9a-f]{12}$/.test(build ?? '') && dist === 'dist';
+  } catch {
+    return false;
+  }
+}
+
 const refused = (code: ProtocolError['code'], message: string): { error: ProtocolError } => ({
   error: { code, message },
 });
@@ -85,16 +159,17 @@ function parseUpdateStart(params: unknown): { version: string } | { packages: En
 }
 
 /**
- * Runs `stim service update` for a client this machine approved for builds or device hosting. The update runs
- * as a detached process with this server's own node and script, so it survives the restart it causes; its output
- * goes to a log file rather than a pipe, which would break when this server exits.
+ * Moves the machine engine for a client this machine approved for builds or device hosting: this build's
+ * `engine-select` installs the release or the uploaded packages as an unattended promotion, which the engine's pin,
+ * its builds marked bad and the not-newer rule refuse, and which is staged while work runs. It runs detached, with its
+ * output in a log file rather than a pipe, so it survives the restart of this server that the switch causes.
  */
 export class EngineUpdates {
   private readonly options: EngineUpdateOptions;
   private running: EngineUpdateProgress | null = null;
   private upload: Upload | null = null;
   private idle: NodeJS.Timeout | null = null;
-  private ended: UpdateOutcome | null = null;
+  private ended: EngineUpdateOutcome | null = null;
 
   constructor(options: EngineUpdateOptions) {
     this.options = options;
@@ -111,7 +186,7 @@ export class EngineUpdates {
     } catch {
       return;
     }
-    const finished = Date.parse(readLastUpdate(this.options.label!)?.at ?? '') || 0;
+    const finished = Date.parse(readLastUpdate(root)?.at ?? '') || 0;
     for (const entry of entries) {
       try {
         const written = statSync(join(incoming, entry)).mtimeMs;
@@ -152,11 +227,11 @@ export class EngineUpdates {
       service: service ? label : null,
       acceptsClientBuilds: this.options.acceptsClientBuilds(),
       running: this.progress(),
-      last: service && label ? this.latest(readLastUpdate(label)) : null,
+      last: service && label ? this.latest(readLastUpdate(serviceRoot(label))) : null,
     };
   }
 
-  private latest(recorded: UpdateOutcome | null): UpdateOutcome | null {
+  private latest(recorded: EngineUpdateOutcome | null): EngineUpdateOutcome | null {
     if (!this.ended) return recorded;
     if (!recorded) return this.ended;
     return Date.parse(recorded.at) >= Date.parse(this.ended.at) ? recorded : this.ended;
@@ -168,7 +243,7 @@ export class EngineUpdates {
     if ('version' in parsed && compareVersions(parsed.version, this.options.build.version) < 0) {
       return refused(
         'bad-request',
-        `This server runs ${this.options.build.version}; it does not install the older release ${parsed.version} on a client's request. To downgrade it, run \`stim service update --release ${parsed.version}\` on the machine it runs on.`,
+        `This server runs ${this.options.build.version}; it does not install the older release ${parsed.version} on a client's request. To downgrade it, run \`stim engine use ${parsed.version}\` on the machine it runs on.`,
       );
     }
     const label = this.options.label;
@@ -184,6 +259,11 @@ export class EngineUpdates {
         'This machine installs only stim releases from npm. To take this build, run `stim settings set server.acceptClientBuilds true` on it.',
       );
     }
+    if (!runsFromEngine(this.options.script, this.options.env))
+      return refused(
+        'forbidden',
+        'This service does not run the Stim engine, so it cannot update itself. On this machine run `stim engine install`, then `stim service install`.',
+      );
     if (this.running)
       return refused('action-busy', `An update of this server is already running (${this.running.target}).`);
     const id = randomUUID();
@@ -311,15 +391,12 @@ export class EngineUpdates {
       ok: true,
       message: `Started the update to ${target}.`,
     });
-    const args = [this.options.script, 'service', 'update', '--label', this.options.label!];
     const detached =
       this.options.detached ??
       serviceManagerOrNull()?.detached ??
       ((file: string, rest: string[]) => ({ file, args: rest }));
-    const command = detached(
-      this.options.node,
-      'release' in source ? [...args, '--release', source.release] : [...args, '--from', source.from],
-    );
+    const command = detached(this.options.node, engineSelectArgs(source, 'engine.update', false));
+    recordOutcome(this.root()!, { at: running.startedAt, target, ok: false, message: RUNNING });
     const child = spawn(command.file, command.args, {
       detached: true,
       stdio: ['ignore', out, out],
@@ -335,19 +412,17 @@ export class EngineUpdates {
     };
     child.once('error', (error) => settle(false, `Could not start the update: ${error.message}`));
     child.once('exit', (code) => {
-      const last = readLastUpdate(this.options.label!);
-      const fresh = last && Date.parse(last.at) >= Date.parse(running.startedAt);
-      let reason = '';
+      let output = '';
       try {
-        reason =
-          readFileSync(log, 'utf8')
-            .split('\n')
-            .findLast((line) => line.trim() !== '') ?? '';
+        output = readFileSync(log, 'utf8');
       } catch {}
-      settle(
-        code === 0,
-        fresh ? last.message : `The update exited with code ${String(code)}${reason ? `: ${reason}` : ''}; see ${log}.`,
-      );
+      const ended = engineSelectOutcome(output);
+      const message =
+        code === 0 || ended.ok
+          ? ended.message
+          : `The update exited with code ${String(code)}: ${ended.message} See ${log}.`;
+      recordOutcome(this.root()!, { at: new Date().toISOString(), target, ok: code === 0 && ended.ok, message });
+      settle(code === 0 && ended.ok, message);
     });
     return null;
   }

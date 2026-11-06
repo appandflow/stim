@@ -57,6 +57,7 @@ import { operationState } from './engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { refuseRelativeStimPaths } from './workspace/config.ts';
 import { runOperation, type Admission, type ApiOperation } from './run-operation.ts';
+import { engineRunOp } from './api/engine-route.ts';
 import { STIM_VERSION as version } from './stim-version.ts';
 import { ensureWorkspaceStorageAsync, workspaceLogsDir } from './workspace/paths.ts';
 import { ensureHomeIdentity } from './workspace/home-identity.ts';
@@ -161,10 +162,71 @@ export class StimError extends Error {
  * Creates a client without starting processes or changing the caller's cwd, environment, or signal handlers.
  * The Stim home is fixed when the client is created: `home`, else STIM_HOME from `env`, else the default home.
  * Operations run in the calling process against the client's home and project, so clients for different
- * homes can share a process.
+ * homes can share a process. While a machine engine of another build is installed, each operation runs that build's
+ * `runOp`, loaded into this process, as a CLI command runs the engine.
  * Resources remain workspace-owned until stop() is called.
  */
 export function createStim(options: StimOptions): StimClient {
+  const local = createLocalStim(options);
+  const env = { ...(options.env ?? process.env) };
+  const ctx: StimOptions = { ...options, projectRoot: local.projectRoot, env };
+  return new Proxy(local, {
+    get(target, name) {
+      const op: unknown = Reflect.get(target, name);
+      if (typeof op !== 'function' || typeof name !== 'string') return op;
+      return (...args: unknown[]) => {
+        let engine: ReturnType<typeof engineRunOp> = null;
+        try {
+          if (options.admission !== 'none') engine = engineRunOp(env);
+        } catch {}
+        if (!engine) return Reflect.apply(op, target, args);
+        return engine.then((runEngineOp) =>
+          runEngineOp
+            ? runEngineOp(name, args, ctx).catch((failure: unknown) => {
+                throw isPlainFailure(failure) ? new StimError(failure) : failure;
+              })
+            : Reflect.apply(op, target, args),
+        );
+      };
+    },
+  });
+}
+
+function isPlainFailure(value: unknown): value is StimFailure {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !(value instanceof Error) &&
+    'code' in value &&
+    typeof value.code === 'string' &&
+    'message' in value &&
+    typeof value.message === 'string'
+  );
+}
+
+/**
+ * F3's per-op entry: runs the operation `name` of a client made from `ctx` (the options of `createStim`) with `args`,
+ * in this build. Resolves the operation's result, or rejects a plain `{code, message, remedy, details}`, so a caller
+ * of another build can wrap it in its own `StimError`.
+ */
+export async function runOp(name: string, args: unknown[], ctx: StimOptions): Promise<unknown> {
+  try {
+    const client = createLocalStim(ctx);
+    const op: unknown = name === 'projectRoot' ? undefined : Reflect.get(client, name);
+    if (typeof op !== 'function')
+      throw new StimError({
+        code: 'STIM_BAD_ARG',
+        message: `${name} is not an operation of stim ${version}.`,
+        remedy: 'Run stim engine update, or call an operation this version has.',
+      });
+    return await Reflect.apply(op, client, args);
+  } catch (error) {
+    if (!(error instanceof StimError)) throw error;
+    throw { code: error.code, message: error.message, remedy: error.remedy, details: error.details };
+  }
+}
+
+function createLocalStim(options: StimOptions): StimClient {
   let projectRoot: string;
   try {
     projectRoot = realpathSync(options.projectRoot);
@@ -706,7 +768,11 @@ async function read<T>(
         env: context.env,
       });
       if ('refusal' in entered) throw new StimError(entered.refusal);
-      return operation(context);
+      try {
+        return await operation(context);
+      } finally {
+        entered.end?.();
+      }
     });
   } catch (error) {
     const cleanupUnresolved =

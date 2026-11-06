@@ -99,6 +99,8 @@ function hostedPlacement(dir: string, platform: string, slot = 'default') {
 export interface ServerOptions {
   /** The key in stimd's `run/desktop.key` that admits a local connection to the Desktop-only methods. */
   desktopBootstrap?: DesktopBootstrap;
+  /** Asks stimd to check for a newer engine, as when a phone needs a newer one. */
+  requestUpdate?: (why: string) => void;
   /** Who asked for this server, as `hello` reports it in `host.owner`; `service` with a service label, else `cli`. */
   owner?: 'desktop';
   /** What `stim setup` runs with when Stim Desktop approves a request here; `defaultSetupDeps` by default. */
@@ -201,6 +203,8 @@ export interface ServerOptions {
     node: string;
     script: string;
     runsAsService?: (label: string, port: number) => Promise<boolean>;
+    /** How an `engine.update` starts its detached `engine-select`; the service manager's way by default. */
+    detached?: (node: string, args: string[]) => { file: string; args: string[] };
   };
   /** Looks up the worktrees' pull requests; tests replace GitHub. */
   pullRequests?: PushNotifierOptions['pullRequests'];

@@ -391,10 +391,10 @@ outside it moves to its own issue and pull request.
   `server/secrets.json` and never writes them to setup journals, which are named
   by the derived `journal`. Clients of this machine's own user use the Unix
   socket, never a TCP connection. A Stim Desktop paired with another machine's
-  server is an ordinary paired device there. The Desktop-only methods work only there; on a
-  server Desktop started, only for the connection that proved the private
-  bootstrap key Desktop passed to its bundled server on a pipe; the key never appears in arguments, environment or
-  output, and is never passed to an external executable.
+  server is an ordinary paired device there. The Desktop-only methods work only
+  on a connection through stimd's CLI socket that proved the key stimd writes to
+  `run/desktop.key` (0600) when it starts; the key never crosses the socket and
+  never appears in arguments, environment or output.
 - **Build access.** stim-server's `build` capability lets another machine on the
   tailnet run its project code on this machine to build. The requesting machine
   makes a setup ticket (Stim Desktop's Add Machine flow, or `stim remote add`
@@ -487,17 +487,15 @@ outside it moves to its own issue and pull request.
   Stim's supervisor because Task Scheduler does not restart an exited process,
   and, only when asked, a tailnet-only serve
   route; it never enables Funnel, never runs sudo or elevates, and never touches pairings,
-  `$STIM_HOME/server` or settings. `stim service update` and
-  `rollback` install a server version beside the running one under
-  `~/Library/Application Support/Stim/services/<label>/versions/` on macOS or
-  `~/.local/share/stim/services/<label>/versions/` on Linux or
-  `%LOCALAPPDATA%\Stim\services\<label>\versions\` on Windows, keeping the
-  running and the previous version, and repoint only the service's server
-  script; a failed health check switches back. A Linux or Windows worker takes Android
+  `$STIM_HOME/server` or settings. With the Stim engine installed, a launchd
+  unit names the engine's `bin/stimd` shim and follows the engine: `stim engine
+update` and `rollback` move it, through the engine store's drain and switch,
+  and a crash-looping build is rolled back to `previous` by its own next boot. A Linux or Windows worker takes Android
   builds only; setup there approves `build` and refuses `device-host`, and off macOS
   stim-server refuses device-host requests and grants. A client approved for `build` or
-  `device-host` can run the same update on this machine over the tailnet, and no
-  other connection can. An exact npm release needs no setting; a client's own
+  `device-host` can update this machine's engine over the tailnet
+  (`engine.update`, which runs this build's `engine-select` as an unattended
+  promotion), and no other connection can. An exact npm release needs no setting; a client's own
   packages are taken only while `server.acceptClientBuilds` is `true`, its
   default being `false`.
 - **Shared state reads.** `@stim-cli/core/state` owns the `$STIM_HOME` path

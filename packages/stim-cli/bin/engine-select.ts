@@ -15,6 +15,9 @@ const { values } = parseArgs({
     source: { type: 'string' },
     'set-by': { type: 'string', default: 'engine-select' },
     pin: { type: 'string' },
+    hold: { type: 'string' },
+    release: { type: 'string' },
+    from: { type: 'string' },
     channel: { type: 'string' },
     explicit: { type: 'boolean', default: false },
     'restore-state': { type: 'boolean', default: false },
@@ -28,10 +31,17 @@ const { version } = JSON.parse(readFileSync(join(self, 'package.json'), 'utf8'))
 try {
   const result = await promote({
     root,
-    source: ['npx', 'project'].includes(installKind(self, root)) ? { version } : { dir: self },
+    source: values.release
+      ? { version: values.release }
+      : values.from
+        ? { packages: values.from }
+        : ['npx', 'project'].includes(installKind(self, root))
+          ? { version }
+          : { dir: self },
     setBy: values['set-by'],
     explicit: values.explicit,
-    pinReason: values.pin ?? null,
+    pinReason: values.pin ?? values.hold ?? null,
+    ...(values.hold ? { pinned: false } : {}),
     restoreState: values['restore-state'],
     locked: values.locked,
     flip: values.flip,
@@ -40,12 +50,12 @@ try {
   });
   if ('refused' in result) {
     process.stderr.write(`${result.refused}\n`);
-    if (!values.explicit && !values.flip) recordFailure(root, version, result.refused);
+    if (!values.explicit && !values.flip) recordFailure(root, values.release ?? version, result.refused);
   }
   process.stdout.write(`${JSON.stringify(result)}\n`);
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`engine-select: ${message}\n`);
-  if (!values.explicit && !values.flip) recordFailure(root, version, message);
+  if (!values.explicit && !values.flip) recordFailure(root, values.release ?? version, message);
   process.exitCode = 1;
 }

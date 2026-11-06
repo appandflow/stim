@@ -204,7 +204,7 @@ export const sameHome = (a: string, b: string): boolean => a.replace(/\/+$/, '')
 
 function updateRemedy(server: ServerReading, version: string): string {
   if (server.kind === 'service')
-    return `Run \`stim service update${labelFlag(server.label ?? '')} --release ${version}\`.`;
+    return `Run \`stim engine update\` there, or \`stim engine use ${version}\` for exactly this version.`;
   if (server.kind === 'desktop')
     return 'Update Stim Desktop; it bundles the server it runs. Or install a server separately with `stim service install` so Desktop adopts it.';
   return `Stop pid ${server.pid} and start \`stim-server\` from the installation on PATH again.`;
@@ -274,8 +274,8 @@ function serviceStateFindings(setup: ServerSetup): Finding[] {
     const { job, installed } = service;
     const server = setup.servers.find((each) => each.kind === 'service' && each.label === service.label);
     const log = installed.logPath ? ` The log is ${installed.logPath}.` : '';
-    const rollback = installed.previousScript
-      ? ` The previous server is still installed: \`stim service rollback${labelFlag(service.label)}\` switches back to it.`
+    const rollback = installed.script?.endsWith('/bin/stimd')
+      ? ' It runs the Stim engine: `stim engine rollback` switches the engine back to its previous build.'
       : '';
     const last = lastExit(job);
     const failed = last?.failed === true;
@@ -349,7 +349,7 @@ function multipleFindings(setup: ServerSetup): Finding[] {
       each.kind === 'service'
         ? `Remove the ${each.label} service with \`stim service uninstall${labelFlag(each.label ?? '')}\`.`
         : each.kind === 'desktop'
-          ? `Quit Stim Desktop, then open it with \`-stimServerPort ${keep.port}\` so it adopts the server on port ${keep.port} instead of starting its own.`
+          ? "Quit Stim Desktop and update it: a current Stim Desktop runs this Stim home's stimd instead of a server of its own, and a development copy runs the stimd of the package `-stimEngine <package dir>` names."
           : `Stop pid ${each.pid} with \`kill ${each.pid}\`.`,
     );
     return [
@@ -415,8 +415,6 @@ function desktopAuthorityFindings(setup: ServerSetup): Finding[] {
   if (!local || local.desktopApi >= DESKTOP_API) return [];
   const owner = setup.servers.find((server) => local.port !== null && server.port === local.port);
   if (!owner || owner.kind === 'desktop' || owner.kind === 'share') return [];
-  const compared = compareStimVersions(local.version, setup.version);
-  const target = compared !== null && compared < 0 ? setup.version : null;
   return [
     {
       code: 'server-desktop-authority',
@@ -424,11 +422,9 @@ function desktopAuthorityFindings(setup: ServerSetup): Finding[] {
       title: "The stim-server on this Stim home's socket is too old for Desktop actions",
       detail: `${describeServer(owner)} runs ${local.version} without Stim Desktop's API ${DESKTOP_API}, so Stim Desktop reads from it but refuses to run actions through it (start, stop, reload, setup fixes).`,
       fix:
-        owner.kind === 'service' && target
-          ? `Run \`stim service update${labelFlag(owner.label ?? '')} --release ${target}\`.`
-          : owner.kind === 'service'
-            ? `Run \`stim service update${labelFlag(owner.label ?? '')} --release <version>\` with a version newer than ${local.version}.`
-            : `Stop pid ${owner.pid} and start a newer \`stim-server\`, or install it as a service with \`stim service install\`.`,
+        owner.kind === 'service'
+          ? `Run \`stim engine update\` to move it past ${local.version}.`
+          : `Stop pid ${owner.pid} and start a newer \`stim-server\`, or install it as a service with \`stim service install\`.`,
     },
   ];
 }

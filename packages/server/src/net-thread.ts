@@ -17,7 +17,8 @@ export type FromNet =
   | { type: 'refused'; message: string }
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
-  | { type: 'idle' };
+  | { type: 'idle' }
+  | { type: 'update'; why: string };
 
 /** A connection stimd's CLI socket handed over, carried as messages. */
 class Bridged extends Duplex {
@@ -52,7 +53,11 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
   port.on('message', (message: ToNet) => handle(message));
   let thread;
   try {
-    thread = await serve(options, () => post({ type: 'idle' }));
+    thread = await serve(
+      options,
+      () => post({ type: 'idle' }),
+      (why) => post({ type: 'update', why }),
+    );
   } catch (error) {
     post({ type: 'refused', message: error instanceof NetRefusal ? error.message : String((error as Error).stack) });
     port.close();

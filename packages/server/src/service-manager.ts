@@ -459,7 +459,7 @@ const taskScheduler: ServiceManager = {
   runningLabel: (env) => labelFrom(env[LABEL_VARIABLE]),
 };
 
-/** Where `service update` keeps server versions and its outcome for `label`. */
+/** Where `label`'s service keeps installed server versions, update uploads and the last update's outcome. */
 export const serviceRoot = (label: string): string =>
   (process.platform === 'linux' ? systemd : process.platform === 'win32' ? taskScheduler : launchd).root(label);
 

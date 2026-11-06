@@ -2516,7 +2516,7 @@ describe('setup approval in Stim Desktop on this machine', () => {
     },
     build: () => ({ version: '1.2.3', stimBuild: 'digest' }),
     install: never,
-    update: never,
+    select: never,
     installHost: async () => ({
       app: '/Stim Host.app',
       executable: '/Stim Host.app/Contents/MacOS/stim-host',
@@ -3790,16 +3790,27 @@ describe('offloaded builds', () => {
 
   test.skipIf(!fakeTailscale)('declines offloaded builds while an update of this server runs', async () => {
     const home = process.env.HOME;
+    const engineRoot = process.env.STIM_ENGINE_ROOT;
     process.env.HOME = root;
     try {
       const updater = join(root, 'updater.mjs');
       const release = join(root, 'release-updater');
       writeFileSync(
         updater,
-        `const { existsSync } = await import('node:fs'); const wait = setInterval(() => { if (existsSync(${JSON.stringify(release)})) { clearInterval(wait); console.log('Another update is running.'); process.exit(1); } }, 50);`,
+        `const { existsSync } = await import('node:fs'); const wait = setInterval(() => { if (existsSync(${JSON.stringify(release)})) { clearInterval(wait); console.log(JSON.stringify({ refused: 'another update is running' })); process.exit(1); } }, 50);`,
       );
+      const script = join(root, 'engine', '0123456789ab', 'dist', 'cli.mjs');
+      mkdirSync(dirname(script), { recursive: true });
+      writeFileSync(script, '');
+      process.env.STIM_ENGINE_ROOT = join(root, 'engine');
       const port = await start({
-        service: { label: 'dev.stim.drain', node: process.execPath, script: updater, runsAsService: async () => true },
+        service: {
+          label: 'dev.stim.drain',
+          node: process.execPath,
+          script,
+          runsAsService: async () => true,
+          detached: (node, args) => ({ file: node, args: [updater, ...args] }),
+        },
       });
       const { client } = await buildClient(port, undefined, undefined, false);
       expect(await client.request('engine.update', { version: '1.15.0' })).toMatchObject({
@@ -3817,7 +3828,10 @@ describe('offloaded builds', () => {
       expect(await client.request('engine.update.status')).toMatchObject({
         result: {
           running: null,
-          last: { ok: false, message: expect.stringContaining(': Another update is running.;') },
+          last: {
+            ok: false,
+            message: expect.stringContaining('exited with code 1: The engine refused it: another update is running.'),
+          },
         },
       });
       const later = {
@@ -3829,6 +3843,7 @@ describe('offloaded builds', () => {
       writeFileSync(join(serviceRoot('dev.stim.drain'), 'last-update.json'), JSON.stringify(later));
       expect(await client.request('engine.update.status')).toMatchObject({ result: { last: later } });
     } finally {
+      process.env.STIM_ENGINE_ROOT = engineRoot;
       if (home === undefined) delete process.env.HOME;
       else process.env.HOME = home;
     }

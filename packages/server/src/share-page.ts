@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { loginTitle } from './share-title.ts';
 import { fileURLToPath } from 'node:url';
@@ -63,5 +64,11 @@ export function viewerPage(options: {
     platform: options.platform,
     buttons: options.buttons.join(' '),
     rotate: String(options.rotate),
+    // compat C19 permanent
+    build: createHash('sha256')
+      .update(import.meta.url)
+      .digest('hex')
+      .slice(0, 12),
+    // compat end
   });
 }

@@ -29,7 +29,8 @@ type FromNet =
   | { type: 'refused'; message: string }
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
-  | { type: 'idle' };
+  | { type: 'idle' }
+  | { type: 'update'; why: string };
 
 /** Whether the net thread serves, on which port, or why it does not. */
 type NetAnswer = { listening: true; port: number } | { listening: false; message: string };
@@ -37,8 +38,8 @@ type NetAnswer = { listening: true; port: number } | { listening: false; message
 export interface NetThread {
   /** Starts the net thread with `options` unless it runs; resolves once it listens or refuses. */
   ensure(options: NetOptions): Promise<NetAnswer>;
-  /** Whether the net thread runs, and with which options. */
-  running(): { shareOnly: boolean } | null;
+  /** Whether the net thread runs, with which options, and on which port once it listens. */
+  running(): { shareOnly: boolean; loopbackOnly: boolean; port: number | null } | null;
   /** Hands `socket`, whose first frames stimd has read, to a listening net thread; false when none listens. */
   connect(socket: Socket, head: Buffer): boolean;
   /** Forwards one agent action's presence to a listening net thread; false when none listens. */
@@ -54,12 +55,15 @@ export interface NetThread {
 export function createNetThread(
   log: (level: 'info' | 'warn', event: string, msg: string) => void,
   onExit: () => void,
+  onUpdate: (why: string) => void = () => {},
 ): NetThread {
   let worker: Worker | null = null;
   let started: Promise<NetAnswer> | null = null;
   let stopping: Promise<unknown> | null = null;
   let listening = false;
   let shareOnly = false;
+  let loopbackOnly = false;
+  let port: number | null = null;
   let nextId = 1;
   const sockets = new Map<number, Socket>();
   const post = (message: ToNet) => worker?.postMessage(message);
@@ -73,6 +77,7 @@ export function createNetThread(
     started = null;
     stopping = null;
     listening = false;
+    port = null;
     for (const socket of sockets.values()) socket.destroy();
     sockets.clear();
     onExit();
@@ -88,12 +93,14 @@ export function createNetThread(
         return started;
       }
       shareOnly = options.shareOnly;
+      loopbackOnly = options.loopbackOnly;
       const thread = new Worker(spawnEntry('net-thread'), { workerData: { net: options } });
       worker = thread;
       started = new Promise<NetAnswer>((answer) => {
         thread.on('message', (message: FromNet) => {
           if (message.type === 'listening') {
             listening = true;
+            port = message.port;
             log('info', 'net_started', `the net thread listens on port ${message.port}`);
             answer({ listening: true, port: message.port });
           } else if (message.type === 'refused') {
@@ -104,7 +111,8 @@ export function createNetThread(
             if (!shareOnly) return;
             log('info', 'net_idle', 'no web share is left; stopping the net thread');
             stop(thread);
-          } else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);
+          } else if (message.type === 'update') onUpdate(message.why);
+          else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);
           else sockets.get(message.id)?.end();
         });
         thread.once('error', (error: Error) => {
@@ -118,7 +126,7 @@ export function createNetThread(
       });
       return started;
     },
-    running: () => (worker ? { shareOnly } : null),
+    running: () => (worker ? { shareOnly, loopbackOnly, port } : null),
     connect(socket, head) {
       if (!listening) return false;
       const id = nextId++;
