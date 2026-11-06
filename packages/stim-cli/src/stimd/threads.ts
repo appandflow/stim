@@ -49,7 +49,7 @@ export function createThreadTable(log: Log): ThreadTable {
   const threads = new Map<ThreadName, Thread>();
   const end = (name: ThreadName, thread: Thread) => {
     if (thread.idle) clearTimeout(thread.idle);
-    threads.delete(name);
+    if (threads.get(name) === thread) threads.delete(name);
     void thread.worker.terminate();
   };
   const start = (name: ThreadName): Thread => {

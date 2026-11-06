@@ -288,7 +288,6 @@ export async function runStimd({
   const server = createServer((socket) => {
     open.add(socket);
     socket.once('close', () => open.delete(socket));
-    lastContact = Date.now();
     socket.setEncoding('utf8');
     let buffer = '';
     let framed = false;
@@ -311,7 +310,6 @@ export async function runStimd({
           socket.destroy();
           return;
         }
-        lastContact = Date.now();
         const reply = (fields: Record<string, unknown>) => socket.write(`${JSON.stringify(fields)}\n`);
         if (!framed) {
           // compat C26 permanent
@@ -327,9 +325,11 @@ export async function runStimd({
           }
           // compat end
           framed = true;
+          lastContact = Date.now();
           reply({ op: 'hello', kind: 'stimd', pid: process.pid, build, version: identity.version });
           continue;
         }
+        lastContact = Date.now();
         const { op } = message;
         if (op === 'hello') {
           hasten?.();

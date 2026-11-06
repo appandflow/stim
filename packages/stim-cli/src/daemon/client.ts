@@ -320,10 +320,10 @@ export async function ensureStimd(
 ): Promise<boolean> {
   if (!spawnsDaemon(env)) return false;
   try {
-    const [claim] = readClaimSet(daemonClaimRoot()).unresolved;
+    const [claim] = [...readClaimSet(daemonClaimRoot()).unresolved, ...readClaimSet(stimdClaimRoot()).unresolved];
     if (claim) {
       console.error(
-        `Stim: the daemon claim at ${claim.path} cannot be resolved (${claim.reason}), so no stimd decides idle in this Stim home. If no stimd or stim-daemon process runs, remove it with \`${claimRemoveCommand(claim.path)}\`.`,
+        `Stim: the claim at ${claim.path} cannot be resolved (${claim.reason}), so no stimd decides idle in this Stim home. If no stimd or stim-daemon process runs, remove it with \`${claimRemoveCommand(claim.path)}\`.`,
       );
       return true;
     }

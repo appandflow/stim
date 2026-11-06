@@ -26,7 +26,8 @@ const SHARED: { name: string; pattern: RegExp }[] = [
   { name: 'Watchman', pattern: /(^|\/)watchman(\s|$)/ },
 ];
 
-export const STIM_SERVER_COMMAND: RegExp = /(^|[\s/])(stim-server(\.mjs)?(\s|$)|stim(\.mjs)?\s+serve(\s|$)|stimd$)/;
+export const STIM_SERVER_COMMAND: RegExp =
+  /(^|[\s/])(stim-server(\.mjs)?(\s|$)|stim(\.mjs)?\s+serve(\s|$)|stimd$|__stimd(\s|$))/;
 const LAUNCHD_SIM = /^launchd_sim\s.*\/Devices\/([^/\s]+)\//;
 const MAX_DEPTH = 64;
 

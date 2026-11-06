@@ -419,15 +419,15 @@ export async function runForcedLadder({
 }
 
 /**
- * Runs the pressure ladder now: one daemon tick when a daemon runs, else the ladder in this process, which never takes
- * `protectedRoot`.
+ * Runs the pressure ladder now: one daemon tick when a daemon runs, else, while no daemon of another build holds the
+ * home and runs its own, the ladder in this process, which never takes `protectedRoot`.
  */
 export async function runLadderNow(
   env: NodeJS.ProcessEnv,
   signal?: AbortSignal,
   protectedRoot?: string,
 ): Promise<void> {
-  if (await requestDaemonTick(env, signal)) return;
+  if ((await requestDaemonTick(env, signal)) || daemonClaimHeld()) return;
   signal?.throwIfAborted();
   try {
     await runCommandLadder('command', env, protectedRoot);
