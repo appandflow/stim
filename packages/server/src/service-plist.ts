@@ -25,6 +25,8 @@ export interface ServiceSpec {
   host: string | null;
   node: string;
   script: string;
+  /** The engine store's `bin/stimd` shim, which a LaunchAgent names instead of `node` and `script` when it exists. */
+  stimd?: string;
   port: number;
   /** `KEY=VALUE` entries and directories the server applies after it reads the login shell's environment. The plist keeps the values in `EnvironmentVariables`, not in the server's arguments. */
   env: string[];
@@ -143,12 +145,32 @@ export function serverArguments(spec: Pick<ServiceSpec, 'port' | 'env' | 'pathPr
   ];
 }
 
+/** What a LaunchAgent runs after its host app: the `bin/stimd` shim with the server's options, else node and script. */
+export function launchdArguments(
+  spec: Pick<ServiceSpec, 'node' | 'script' | 'stimd' | 'port' | 'env' | 'pathPrepend'>,
+): string[] {
+  const args = serverArguments(spec);
+  return spec.stimd ? [spec.stimd, ...args.slice(1)] : [spec.node, spec.script, ...args];
+}
+
 function escapeXml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 const string = (value: string, indent: string) => `${indent}<string>${escapeXml(value)}</string>`;
 const key = (name: string, indent: string) => `${indent}<key>${name}</key>`;
+
+/**
+ * `plist`, a LaunchAgent `renderPlist` wrote, with its `ProgramArguments` replaced by `programArguments`; every other
+ * key, such as the job's environment, stays as written.
+ */
+export function withProgramArguments(plist: string, programArguments: string[]): string {
+  return plist.replace(
+    /(<key>ProgramArguments<\/key>\s*<array>)[\s\S]*?(\n\t<\/array>)/,
+    (_match, open: string, close: string) =>
+      `${open}\n${programArguments.map((argument) => string(argument, '\t\t')).join('\n')}${close}`,
+  );
+}
 
 /** The LaunchAgent plist for `spec`. `StimService` is inert to launchd: it marks the job as one `install` wrote, so `install` and `uninstall` never touch another agent, and records the serve route. */
 export function renderPlist(spec: ServiceSpec): string {
@@ -161,7 +183,7 @@ export function renderPlist(spec: ServiceSpec): string {
     string(spec.label, '\t'),
     key('ProgramArguments', '\t'),
     '\t<array>',
-    ...[...(spec.host ? [spec.host, 'run'] : []), spec.node, spec.script, ...serverArguments(spec)].map((argument) =>
+    ...[...(spec.host ? [spec.host, 'run'] : []), ...launchdArguments(spec)].map((argument) =>
       string(argument, '\t\t'),
     ),
     '\t</array>',

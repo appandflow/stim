@@ -1,7 +1,10 @@
+import { connect as connectSocket } from 'node:net';
+import { duplexPair, type Duplex } from 'node:stream';
 import { WebSocket } from 'ws';
 import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
 import { initiateNoise, newSecret, secretValues } from '@stim-cli/core/noise-session';
 import type { ServerMessage } from '../src/protocol.ts';
+import type { RunningServer } from '../src/server.ts';
 import { serverIdentity, spendSecret, storeSetupSecret, type KeyRecords } from '../src/registry.ts';
 
 export interface ClientSocket {
@@ -44,8 +47,15 @@ export function terminateClients(): void {
 }
 
 /** Opens a WebSocket without any handshake; rejects with `HTTP <status>` when the upgrade is refused. */
-export function openRaw(url: string, headers: Record<string, string> = {}): Promise<WebSocket> {
-  const socket = new WebSocket(url, { headers });
+export function openRaw(
+  url: string,
+  headers: Record<string, string> = {},
+  createConnection?: () => Duplex,
+): Promise<WebSocket> {
+  const socket = new WebSocket(url, {
+    headers,
+    ...(createConnection ? { createConnection: createConnection as never } : {}),
+  });
   open.add(socket);
   return new Promise((resolve, reject) => {
     socket.once('open', () => resolve(socket));
@@ -106,9 +116,40 @@ export async function noiseConnect(url: string, options: ConnectOptions = {}): P
   return { ...client, closedWith, closed: closedWith.then(({ code }) => code) };
 }
 
-/** A connection on stim-server's Unix socket, which runs no handshake. */
-export async function localConnect(path: string): Promise<Client> {
-  const raw = await openRaw(`ws+unix://${path}:/`);
+/** A local connection, which runs no handshake, handed to `server` as stimd hands over its CLI socket's. */
+export async function localConnect(server: Pick<RunningServer, 'acceptLocal'>): Promise<Client> {
+  const [inside, outside] = duplexPair();
+  server.acceptLocal(inside);
+  const raw = await openRaw('ws://localhost/', {}, () => outside);
+  return wrap(raw, raw);
+}
+
+/**
+ * A local connection through stimd's CLI socket at `path`, as Stim Desktop opens one: the first frame names the
+ * `desktop` kind, `net.connect` hands the rest of the stream to the net thread.
+ */
+export async function stimdConnect(path: string): Promise<Client> {
+  const socket = connectSocket(path);
+  await new Promise<void>((resolve, reject) => {
+    let buffer = '';
+    let lines = 0;
+    socket.once('error', reject);
+    const data = (chunk: Buffer) => {
+      buffer += chunk.toString();
+      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+        const line = JSON.parse(buffer.slice(0, end));
+        buffer = buffer.slice(end + 1);
+        if (++lines < 2) continue;
+        socket.off('data', data);
+        if (line.op === 'net.connected') resolve();
+        else reject(new Error(JSON.stringify(line)));
+        return;
+      }
+    };
+    socket.on('data', data);
+    socket.write(`${JSON.stringify({ kind: 'desktop' })}\n${JSON.stringify({ op: 'net.connect' })}\n`);
+  });
+  const raw = await openRaw('ws://localhost/', {}, () => socket);
   return wrap(raw, raw);
 }
 

@@ -7,3 +7,8 @@ export function releaseFloor(name: 'oneEngine', version: string): string {
   const [major, minor] = version.split(/[.-]/);
   return `${major}.${Number(minor) + (version.includes('-') ? 0 : 1)}.0`;
 }
+
+/** A floor the release prep pins at the cut; null until then. */
+export function pinnedReleaseFloor(name: 'stimd'): string | null {
+  return floors[name];
+}

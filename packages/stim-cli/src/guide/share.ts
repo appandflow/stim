@@ -171,25 +171,20 @@ when the user asks for it.
 
 WHAT IT NEEDS
 
-- macOS or Linux. stim talks to the stim-server through its local socket,
-  which Windows does not have, so on Windows every stim share action refuses
-  at once with STIM_SHARE_REFUSED and starts no server. Run stim share on the
-  macOS or Linux host that runs the device.
-- A stim-server for this Stim home. The share lives inside it, and a server
-  restart ends every share until the next one starts and restores the saved ones. When none runs, stim share starts one in the
-  background (stim serve --share: loopback only, no Desktop bootstrap) from
-  the server bundled into this stim build. It says so on stderr
-  with the server's pid and log ($STIM_HOME/server/share-server.log). That
-  server stops on its own when its last share ends (stim share stop, expiry,
+- macOS or Linux. On Windows every stim share action refuses at once with
+  STIM_SHARE_REFUSED and starts nothing. Run stim share on the macOS or Linux
+  host that runs the device.
+- A stim-server for this Stim home: the net thread inside its stimd, which
+  stim talks to through stimd's socket. The share lives inside it, and a
+  restart ends every share until the next one starts and restores the saved
+  ones. When none runs, stim share asks stimd, started when none runs, to
+  start one for shares (loopback only, no Tailscale listener). That net
+  thread stops on its own when its last share ends (stim share stop, expiry,
   stim stop, worktree remove) or when no share starts within 2 minutes, and
   removes its Funnel route on the way out (it stays up, retrying, while that
-  removal fails); stim share stop also stops it, unless a share start is still
-  in flight (another workspace's may wait for its devices), which it leaves
-  running and says so. When the Stim home does not
-  answer at its startup it exits at once with the reason in its log. A
-  server Stim Desktop, the LaunchAgent or you started is never stopped. When
-  no matching stim-server is installed, or it does not start, stim share
-  refuses with STIM_SERVER_NOT_RUNNING.
+  removal fails), unless Stim Desktop, stim pair or stim serve asked for it
+  meanwhile. When it cannot start, such as while an older stim-server holds
+  its port, stim share refuses with STIM_SERVER_NOT_RUNNING and the reason.
 - One way to reach the share from the internet (share.exposure):
   - tailscale: Tailscale running on this Mac, with Funnel allowed for this
     node by the tailnet policy, and one free Funnel port (443, 8443 or 10000,
@@ -274,8 +269,8 @@ design and status 404, the same for a link that ended and one that never
 existed (nothing about an ended share is kept). The page holds no share data
 and lists no shares; it sends Cache-Control: no-store and a strict CSP. The
 listener binds 127.0.0.1 only, adds no Tailscale route and no
-server/share-route claim, and closes when the service stops. The on-demand
-stim serve --share still exits after its last share, and tailscale exposure
+server/share-route claim, and closes when the service stops. A net thread
+stim share started still ends after its last share, and tailscale exposure
 keeps no listener. A taken port is logged once; the next stim share refuses and
 names share.port.
 

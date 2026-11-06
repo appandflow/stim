@@ -52,9 +52,9 @@ function socketFindings(setup: ServerSetup): Finding[] {
     {
       code: 'server-socket-permissions',
       level: 'cost',
-      title: "The Stim home's stim-server socket is not private to this user",
-      detail: `${problems.join('; ')}. The socket answers without pairing or a key, and Stim Desktop's write authority on a server without Desktop's key depends on only this user being able to open it.`,
-      fix: `${fixes.join('; ')}. Then restart stim serve.`,
+      title: "The Stim home's stimd socket is not private to this user",
+      detail: `${problems.join('; ')}. The socket answers without pairing or a key, so only this user may open it.`,
+      fix: `${fixes.join('; ')}. Then run any stim command, which starts stimd again once it exits.`,
     },
   ];
 }

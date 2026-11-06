@@ -1,18 +1,14 @@
 import chalk from 'chalk';
-import { bundledStim } from '@stim-cli/server/environment';
 import type { Command } from 'commander';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { RESERVED_SHARE_SLUGS, SHARE_SLUG_PATTERN, type Methods, type WebShareRow } from '@stim-cli/core/protocol';
 import { shareLinkKey, splitShareUrl, type SavedShare } from '@stim-cli/core/state';
+import { ensureNet, type NetAnswer } from '../daemon/client.ts';
 import {
   LocalServerUnavailable,
   requestLocalServer,
-  startShareServer,
-  stopIdleShareServer,
-  type ShareServerStop,
   type LocalServerAnswer,
   type ShareMethod,
-  type ShareServerStart,
 } from '../local-server.ts';
 import { forgetShareLinks, pauseShareLinks, reusableShareLinks, saveShareLink } from '../workspace/share-links.ts';
 import { findCommandWorkspaceAsync } from '../workspace/project.ts';
@@ -53,10 +49,8 @@ interface ShareOptions {
 export interface ShareDeps {
   findWorkspace: (cwd: string) => Promise<string | null>;
   request: <M extends ShareMethod>(method: M, params: Methods[M]['params']) => Promise<LocalServerAnswer<M>>;
-  /** Starts a stim-server for this Stim home when none runs; null when no version-matched server is installed. */
-  startServer: () => Promise<ShareServerStart | null>;
-  /** Stops the stim-server `stim share` started, once it holds no share; returns its pid when it stopped one. */
-  stopServer: () => Promise<ShareServerStop | null>;
+  /** Asks this Stim home's stimd, started when none runs, to start its net thread; null when no stimd answers. */
+  startServer: () => Promise<NetAnswer | null>;
   /** Writes a line to stderr. */
   note: (line: string) => void;
   /** The host platform: stim-server serves its local socket everywhere but win32. */
@@ -67,7 +61,7 @@ const MIN_PASSWORD = 8;
 const MAX_PASSWORD = 128;
 
 const serverRemedy = (version: string) =>
-  `Web shares run inside stim-server, and the server bundled with stim ${version} could not start. Reinstall stim with \`npm install --global stim@${version}\`, or open Stim Desktop, then run stim share again.`;
+  `Web shares run inside stimd, which stim ${version} could not start. Read ~/.stim/daemon/daemon.ndjson, or reinstall stim with \`npm install --global stim@${version}\`, then run stim share again.`;
 
 function failure(code: string, message: string, remedy: string | null): ShareFailure {
   return { code, message, remedy };
@@ -103,18 +97,13 @@ async function ask<M extends ShareMethod>(
       }
       const started = await deps.startServer();
       if (!started) {
-        return failure('STIM_SERVER_NOT_RUNNING', `No stim-server runs for this Stim home.`, serverRemedy(version));
+        return failure('STIM_SERVER_NOT_RUNNING', `No stimd runs for this Stim home.`, serverRemedy(version));
       }
-      if (!started.started && started.reason === 'failed') {
+      if (!started.listening) {
         return failure(
           'STIM_SERVER_NOT_RUNNING',
-          `${started.message} Its log is ${started.log}.`,
-          'Read the log, fix what it names, then run stim share again.',
-        );
-      }
-      if (started.started) {
-        deps.note(
-          `Started stim-server (pid ${started.pid}) for this share; its log is ${started.log}. It stops on its own when the last share ends; to stop it now, run \`stim share stop\`.`,
+          started.message,
+          'Fix what the message names, then run stim share again.',
         );
       }
       return ask(deps, method, params, version);
@@ -132,14 +121,14 @@ async function ask<M extends ShareMethod>(
       answer.error.code === 'unknown-method'
         ? 'The running stim-server does not serve web shares.'
         : 'The running stim-server does not take --slug.',
-      'Update stim-server to the version of this stim (`stim service update`), then run stim share again.',
+      'Update Stim to this version (`stim engine update`), then run stim share again.',
     );
   }
   if (method === 'share.start' && /does not take (token|expiresAt)/.test(answer.error.message)) {
     return failure(
       'STIM_SHARE_REFUSED',
       'The running stim-server cannot start a saved share again.',
-      'Update stim-server to the version of this stim (`stim service update`), then run stim share --reuse again.',
+      'Update Stim to this version (`stim engine update`), then run stim share --reuse again.',
     );
   }
   return failure(
@@ -331,7 +320,6 @@ async function stopShares(root: string, opts: ShareOptions, deps: ShareDeps, ver
   const { stopped } = answer.result;
   let forgot = 0;
   if (opts.forget) saving(() => (forgot = forgetShareLinks(root)), 'delete the saved links');
-  const server = await deps.stopServer();
   let saved: ReturnType<typeof reusableShareLinks> = {};
   saving(() => (saved = reusableShareLinks(root)), 'read the saved links');
   const reusable = Object.values(saved).map((link) => ({
@@ -348,11 +336,6 @@ async function stopShares(root: string, opts: ShareOptions, deps: ShareDeps, ver
     output: {
       stopped,
       ...(opts.forget ? { forgot } : { reusable }),
-      ...(server === null
-        ? {}
-        : 'starting' in server
-          ? { keptServer: server.pid, startingShares: server.starting }
-          : { stoppedServer: server.pid, ...(server.exited ? {} : { stillStopping: true }) }),
     },
     text: [
       stopped.length
@@ -369,17 +352,6 @@ async function stopShares(root: string, opts: ShareOptions, deps: ShareDeps, ver
       ...(!opts.forget && reusable.length
         ? ['To make the saved links unusable now, run: stim share stop --forget']
         : []),
-      ...(server === null
-        ? []
-        : 'starting' in server
-          ? [
-              `Left the stim-server stim share started (pid ${server.pid}) running: ${server.starting === 1 ? 'a share start is' : `${server.starting} share starts are`} still in progress. It exits by itself if ${server.starting === 1 ? 'that start leaves' : 'those starts leave'} no share.`,
-            ]
-          : [
-              server.exited
-                ? `Stopped the stim-server stim share started (pid ${server.pid}).`
-                : `Asked the stim-server stim share started (pid ${server.pid}) to stop; it has not exited yet, so wait a moment before sharing again.`,
-            ]),
     ].join('\n'),
   };
 }
@@ -624,10 +596,7 @@ export async function runShare(
 const DEFAULT_DEPS = (version: string): ShareDeps => ({
   findWorkspace: (cwd) => findCommandWorkspaceAsync(cwd, repoRootAsync, (line) => console.error(line)),
   request: (method, params) => requestLocalServer(method, params, { version }),
-  startServer: async () => {
-    return startShareServer({ file: process.execPath, args: [bundledStim().cli] }, version);
-  },
-  stopServer: () => stopIdleShareServer(version),
+  startServer: () => ensureNet(true),
   note: (line) => console.error(line),
   platform: process.platform,
 });
@@ -636,7 +605,7 @@ export function registerShare(program: Command, version: string, deps: Partial<S
   program
     .command('share <action>')
     .description(
-      "Share this workspace's running app through a public web link, with a generated password unless you set or drop it: share ios|android starts one (and a stim-server, when none runs), share stop ends this workspace's shares, share list lists this Stim home's shares. Every share's link and password are saved for share ios|android --reuse, which starts a stopped share again until it expires (a new share, with a warning, when nothing is saved); share stop --forget deletes them.",
+      "Share this workspace's running app through a public web link, with a generated password unless you set or drop it: share ios|android starts one (and the server inside stimd, when it does not run), share stop ends this workspace's shares, share list lists this Stim home's shares. Every share's link and password are saved for share ios|android --reuse, which starts a stopped share again until it expires (a new share, with a warning, when nothing is saved); share stop --forget deletes them.",
     )
     .option('--slot <name>', 'Share the device of this slot')
     .option('--device', 'Share the physical device this workspace leases instead of its simulator or emulator')

@@ -710,7 +710,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
 
     test('systemd-run carries the daemon command and its environment, and no daemon is spawned as a child', async () => {
       const runs: { file: string; args: string[] }[] = [];
-      let service: Promise<void> | undefined;
+      let service: Promise<boolean> | undefined;
       const spawned = mockExecutor((file, args) => {
         runs.push({ file, args });
         setTimeout(() => (service = runStimd({ tickMs: 60_000, mode: 'on' })), 300);

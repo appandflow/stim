@@ -388,6 +388,83 @@ export async function publishPresence(params: PresencePublishParams, timeoutMs: 
   if (stimdLive()) await askStimd('presence.publish', timeoutMs, { params });
 }
 
+/** Whether the net thread serves, on which port, or why it does not. */
+export type NetAnswer = { listening: true; port: number } | { listening: false; message: string };
+
+const NET_START_MS = 60_000;
+
+function netAnswer(reply: Record<string, unknown> | null): NetAnswer | null {
+  if (reply?.op !== 'net') return null;
+  return reply.listening === true && typeof reply.port === 'number'
+    ? { listening: true, port: reply.port }
+    : { listening: false, message: String(reply.message) };
+}
+
+/**
+ * Asks this home's stimd to start its net thread, for a web share (`share`: loopback only, ending with its last share)
+ * or a pairing. A web share starts a stimd first when none runs, whatever `daemon.mode` says; a pairing only where
+ * `daemon.mode` lets commands start one. Null when no stimd answers.
+ */
+export async function ensureNet(share: boolean, env: NodeJS.ProcessEnv = process.env): Promise<NetAnswer | null> {
+  if (!stimdLive() && (!(share || spawnsDaemon(env)) || !(await claimTaken(launchStimd(env, daemonMode(env))))))
+    return null;
+  return netAnswer(await askStimd('net.ensure', NET_START_MS, share ? { params: { share: true } } : {}));
+}
+
+/**
+ * Asks the stimd that holds this home to start its net thread on `port`, for a `stim serve` that found one running, and
+ * resolves once that stimd closes the connection. A net thread that already runs keeps its own port and options.
+ */
+export function serveThroughStimd(
+  params: { port: number; loopbackOnly: boolean; extraEnv: string[]; pathPrepend: string[] },
+  onAnswer: (answer: NetAnswer | null) => void,
+): Promise<void> {
+  return new Promise((done) => {
+    const socket = openStimd([{ op: 'net.ensure', params }], (reply) => onAnswer(netAnswer(reply)));
+    socket.once('close', () => done());
+  });
+}
+
+/**
+ * A connection to this home's net thread through stimd's CLI socket, past its `net.connected` answer, on which the
+ * caller speaks stim-server's WebSocket protocol as a local client. Null when no stimd or no net thread answers.
+ */
+export function connectNet(timeoutMs: number): Promise<Socket | null> {
+  if (!stimdLive()) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const socket = connect(stimdSocket());
+    let buffer = Buffer.alloc(0);
+    let lines = 0;
+    const finish = (connected: boolean) => {
+      clearTimeout(timer);
+      socket.off('data', data);
+      if (!connected) socket.destroy();
+      resolve(connected ? socket : null);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const data = (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      for (let end = buffer.indexOf(10); end >= 0; end = buffer.indexOf(10)) {
+        let message: unknown;
+        try {
+          message = JSON.parse(buffer.subarray(0, end).toString('utf8'));
+        } catch {}
+        buffer = buffer.subarray(end + 1);
+        if (++lines === 2) return finish(isJsonObject(message) && message.op === 'net.connected');
+      }
+    };
+    socket.on('data', data);
+    socket.once('error', () => finish(false));
+    socket.once('close', () => finish(false));
+    socket.once('connect', () => {
+      // compat C26 permanent
+      const first = { kind: 'cli', build: stimdBuildId() };
+      // compat end
+      socket.write(`${JSON.stringify(first)}\n${JSON.stringify({ op: 'net.connect' })}\n`);
+    });
+  });
+}
+
 export type DaemonResource = 'build' | 'boot';
 
 const OPS: Record<DaemonResource, { wait: string; released: string; changed: string; what: string }> = {

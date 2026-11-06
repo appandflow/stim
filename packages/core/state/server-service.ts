@@ -50,11 +50,16 @@ export function installedService(job: JobFields): InstalledService {
     programArguments[1] === 'run' && programArguments[0]?.endsWith('/Contents/MacOS/stim-host')
       ? programArguments[0]
       : null;
-  const [node = null, script = null, ...args] = host ? programArguments.slice(2) : programArguments;
+  const command = host ? programArguments.slice(2) : programArguments;
+  const shim = command[0]?.endsWith('/bin/stimd') === true;
+  const node = shim ? null : (command[0] ?? null);
+  const script = command[shim ? 0 : 1] ?? null;
+  const args = command.slice(shim ? 1 : 2);
   const env: string[] = [];
   const pathPrepend: string[] = [];
   let port: number | null = null;
-  for (let index = args[0] === 'serve' && args[1] === '--service' ? 2 : 0; index < args.length; index += 2) {
+  const first = args[0] === 'serve' && args[1] === '--service' ? 2 : args[0] === '--service' ? 1 : 0;
+  for (let index = first; index < args.length; index += 2) {
     const flag = args[index];
     const next = args[index + 1];
     if (next === undefined) break;

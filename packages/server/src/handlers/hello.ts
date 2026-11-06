@@ -19,7 +19,7 @@ export const CLOSE_BAD_REQUEST = 4400;
 
 export const LOCAL_DEVICE_ID = 'local';
 
-/** A connection on the Unix socket: this server's own user, such as Stim Desktop, with every local capability. */
+/** A connection stimd's CLI socket handed over: this server's own user, such as Stim Desktop, with every local capability. */
 const LOCAL_DEVICE: PairedDevice = {
   id: LOCAL_DEVICE_ID,
   name: 'Stim Desktop',
@@ -126,7 +126,7 @@ export async function hello(ctx: ConnectionContext, id: RequestId, params: unkno
   if (ctx.options.host) ctx.tracker.step(id, 'probe', Date.now() - probeWaited);
   const result: HelloResult = {
     host: {
-      owner: ctx.options.desktopBootstrap ? 'desktop' : ctx.options.service?.label ? 'service' : 'cli',
+      owner: ctx.options.owner ?? (ctx.options.service?.label ? 'service' : 'cli'),
       capabilities: ctx.hostsDevices ? [...HOST_CAPABILITIES] : ['physical-android'],
       app: host ?? null,
     },

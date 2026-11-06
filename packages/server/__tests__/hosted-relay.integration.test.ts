@@ -239,7 +239,6 @@ async function client(control = true, controlLimits?: Parameters<typeof startSer
     name: 'Client machine',
     hosts: ['127.0.0.1'],
     port: 0,
-    localSocket: null,
     stimCli: join(root, 'unused-stim.mjs'),
     stimVersion: '1',
     serverVersion: '1.2.3',
