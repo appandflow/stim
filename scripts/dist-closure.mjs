@@ -15,13 +15,15 @@ const shared = [
   ['cache contract', /^@stim-cli\/cache\/contract\.ts$/],
 ];
 const fingerprint = ['@expo/fingerprint', /^@expo\/fingerprint(\/|$)/];
+const ownFingerprint = ['fingerprint/', /^stim\/src\/fingerprint\//];
 const deny = {
-  cli: shared,
+  cli: [...shared, ownFingerprint],
   ios: shared,
   android: shared,
-  status: [...shared, fingerprint],
-  'agent-device': [...shared, fingerprint],
+  status: [...shared, fingerprint, ownFingerprint],
+  'agent-device': [...shared, fingerprint, ownFingerprint],
   api: shared,
+  daemon: [ownFingerprint],
 };
 
 const staticImport = /^(?:import|export)\s(?:[^'";]*?\sfrom\s*)?["']([^"']+)["']/gm;
@@ -110,6 +112,7 @@ export function entryFiles(dist) {
     entries[name] = [...base, join(dist, chunk[1])];
   }
   entries.api = [join(dist, 'api.mjs')];
+  entries.daemon = [join(dist, 'daemon-run.mjs')];
   return entries;
 }
 
