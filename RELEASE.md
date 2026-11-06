@@ -565,7 +565,8 @@ and repeat the affected gate rather than waiving it.
    row, and `pnpm run lint` fails a row over its budget.
 2. **Same build by construction beats a check.** Two Stim processes that talk
    on one machine run the same build. An older process is ended or restarted,
-   never bridged.
+   never bridged, except through a budget row whose end is a release, which
+   is deleted in that release.
 3. **Every surface between different builds carries one integer that changes
    only on a removal, a rename or a change of meaning.** A request the other
    side does not know answers `unknown-method` (or `unknown-field`), and the
@@ -587,9 +588,9 @@ and repeat the affected gate rather than waiving it.
    through App Store review. A surface joins this list only by passing rule 1.
 7. **Release order is part of the design.** Native phone code reaches the
    stores before a Stim release requires it, `next` publishes no production
-   phone JavaScript, and a bump of an integer the phone or Stim Desktop reads
-   starts the stable cut within an hour, which publishes the production phone
-   update or the matching Stim Desktop.
+   phone JavaScript, and whoever merges a bump of an integer the phone or Stim
+   Desktop reads starts the stable cut within the hour, so the production
+   phone update or the matching Stim Desktop follows.
 
 ## Prerelease channel
 
