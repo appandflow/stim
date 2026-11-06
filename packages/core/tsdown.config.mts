@@ -3,6 +3,7 @@ import { defineConfig } from 'tsdown';
 export default defineConfig({
   entry: {
     index: 'index.ts',
+    'plugin-loader': 'plugin-loader.ts',
     noise: 'noise.ts',
     'noise-session': 'noise-session.ts',
     'ownership-claim': 'ownership-claim.ts',

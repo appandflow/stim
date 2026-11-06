@@ -81,7 +81,7 @@
           {
             "patterns": [
               {
-                "regex": "^@stim-cli/(?!(?:cache)(?:/|$))|^stim(?:/|$)"
+                "regex": "^@stim-cli/(?!(?:cache|core)(?:/|$))|^stim(?:/|$)"
               }
             ]
           }

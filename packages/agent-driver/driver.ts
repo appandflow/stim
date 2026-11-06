@@ -1,3 +1,4 @@
+import { loadKind, type PluginSource } from '@stim-cli/core/plugin-loader';
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { HostedAgentIssuedGrant, NdjsonRecord } from '@stim-cli/core/state';
@@ -98,11 +99,11 @@ export interface AgentDriverActions {
   read(input: { workspaceDir: string }): NdjsonRecord[];
 }
 
-/** The module shape a driver package exports. The loader rejects any other `apiVersion`. */
+/** The module shape a driver package exports. `stimPlugin.kinds` declares its supported contract. */
 export interface AgentDriverModule {
   apiVersion: typeof AGENT_DRIVER_API_VERSION;
   id: string;
-  createAgentDriver(input: AgentDriverInput): HostedAgentDriver;
+  createAgentDriver(input: AgentDriverInput): HostedAgentDriver | Promise<HostedAgentDriver>;
   client?: AgentDriverClient;
   actions?: AgentDriverActions;
   /**
@@ -120,14 +121,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function reason(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.replace(/\n[\s\S]*$/, '').trim() || 'unknown error';
-}
-
-function moduleError(candidate: unknown, id: string): string | null {
-  if (!isRecord(candidate) || candidate.apiVersion !== AGENT_DRIVER_API_VERSION)
-    return `expected apiVersion ${AGENT_DRIVER_API_VERSION}, found ${JSON.stringify(isRecord(candidate) ? candidate.apiVersion : candidate)}`;
+function moduleError(candidate: Record<string, unknown>, id: string): string | null {
   if (candidate.id !== id) return `expected id ${JSON.stringify(id)}, found ${JSON.stringify(candidate.id)}`;
   if (typeof candidate.createAgentDriver !== 'function') return 'the module does not export createAgentDriver()';
   const client = candidate.client;
@@ -152,55 +146,48 @@ function driverError(driver: unknown, id: string): string | null {
   return null;
 }
 
-/**
- * Imports a driver module and checks its shape. Never throws: a failed or slow import, or a module that is not
- * a version 1 driver named `id`, resolves to `{ unavailable }` with a one-line reason.
- */
+/** Loads a driver module whose manifest and shape match. Failures resolve to `unavailable`. */
 export async function loadAgentDriverModule(
   id: string,
-  load: () => Promise<unknown>,
+  source: PluginSource,
   timeoutMs: number = AGENT_DRIVER_LOAD_TIMEOUT_MS,
 ): Promise<LoadAgentDriverModuleResult> {
-  let timer: NodeJS.Timeout | undefined;
-  const expired = new Promise<LoadAgentDriverModuleResult>((resolve) => {
-    timer = setTimeout(() => resolve({ unavailable: `the module did not load within ${timeoutMs}ms` }), timeoutMs);
+  const loaded = await loadKind<AgentDriverModule>({
+    reference: id,
+    kind: 'agent-driver',
+    version: AGENT_DRIVER_API_VERSION,
+    source,
+    factory: 'createAgentDriver',
+    instantiate: false,
+    accept: (module) => module as AgentDriverModule,
+    validateModule: (module) => moduleError(module, id),
+    timeoutMs,
   });
-  const loaded = Promise.resolve()
-    .then(load)
-    .then((namespace): LoadAgentDriverModuleResult => {
-      const candidate =
-        isRecord(namespace) && !('apiVersion' in namespace) && 'default' in namespace ? namespace.default : namespace;
-      const invalid = moduleError(candidate, id);
-      return invalid ? { unavailable: invalid } : { module: candidate as AgentDriverModule };
-    })
-    .catch((error: unknown): LoadAgentDriverModuleResult => ({ unavailable: reason(error) }));
-  try {
-    return await Promise.race([loaded, expired]);
-  } finally {
-    clearTimeout(timer);
-  }
+  return 'value' in loaded ? { module: loaded.value } : loaded;
 }
 
-/** Loads a driver module and creates its driver. Never throws; see `loadAgentDriverModule`. */
+/** Loads a driver and awaits its factory. Failures resolve to `unavailable`. */
 export async function loadAgentDriver(
   id: string,
-  load: () => Promise<unknown>,
+  source: PluginSource,
   input: AgentDriverInput,
-  timeoutMs?: number,
+  timeoutMs: number = AGENT_DRIVER_LOAD_TIMEOUT_MS,
 ): Promise<LoadAgentDriverResult> {
-  const loaded = await loadAgentDriverModule(id, load, timeoutMs);
-  if ('unavailable' in loaded) return loaded;
-  let driver: unknown;
-  let invalid: string | null;
-  try {
-    driver = loaded.module.createAgentDriver(input);
-    if (driver instanceof Promise) {
-      driver.catch(() => undefined);
-      return { unavailable: 'createAgentDriver() must return the driver, not a promise' };
-    }
-    invalid = driverError(driver, id);
-  } catch (error) {
-    return { unavailable: `createAgentDriver() failed: ${reason(error)}` };
-  }
-  return invalid ? { unavailable: invalid } : { driver: driver as HostedAgentDriver };
+  const loaded = await loadKind<HostedAgentDriver>({
+    reference: id,
+    kind: 'agent-driver',
+    version: AGENT_DRIVER_API_VERSION,
+    source,
+    factory: 'createAgentDriver',
+    input,
+    validateModule: (module) => moduleError(module, id),
+    accept(driver) {
+      const invalid = driverError(driver, id);
+      if (invalid) throw new Error(invalid);
+      return driver as HostedAgentDriver;
+    },
+    dispose: (driver) => driver.stop(),
+    timeoutMs,
+  });
+  return 'value' in loaded ? { driver: loaded.value } : loaded;
 }

@@ -1849,9 +1849,7 @@ with machine or project optimization settings; see \`guide settings\`:
            Expo's config override on SDK 54+. Expo SDK 53 and older use their
            normal Metro cache. Turn it off machine-wide with
            { "optimizations": { "metroSharedCache": false } } in
-           ~/.stim/config.json; see \`guide settings\`. A project that calls
-           \`sharedCacheStores()\` from @stim-cli/metro in its own metro
-           config also gets the \`cache.provider\` tier behind that store.
+           ~/.stim/config.json; see \`guide settings\`.
 
 Every Stim Android build uses a CMake staging profile, including the default
 ccache mode. The first run with this layout configures a separate build tree;

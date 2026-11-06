@@ -70,6 +70,11 @@
       "types": "./dist/ci/artifacts.d.mts",
       "module-sync": "./dist/ci/artifacts.mjs",
       "default": "./dist/ci/artifacts.mjs"
+    },
+    "./plugin": {
+      "types": "./dist/plugin.d.mts",
+      "module-sync": "./dist/plugin.mjs",
+      "default": "./dist/plugin.mjs"
     }
   },
   "scripts": {

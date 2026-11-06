@@ -1,6 +1,6 @@
 # @stim-cli/cache
 
-The cache provider contract Stim uses for Metro transforms and native build
+The cache provider contract Stim uses for files and native build
 artifacts, plus the tier coordination, timeout, and warning policy that sit in
 front of it.
 
@@ -34,21 +34,19 @@ committed settings; read them from the environment or from machine settings.
 
 Install the separate [`@stim-cli/cache-s3`](../cache-s3/README.md) provider and
 select it through `cache.provider`. The AWS SDK and archive dependencies belong
-to that opt-in package; `@stim-cli/cache` has no runtime dependencies.
+to that opt-in package.
 
 ## Writing a provider
 
-```js
-export const apiVersion = 1;
+Declare the supported kind in your package.json. Stim checks it before importing the module:
 
+```json
+{ "stimPlugin": { "kinds": { "cache-provider": 1 } } }
+```
+
+```js
 export async function createCacheProvider({ projectRoot, options }) {
   return {
-    metro: {
-      async get({ key, cacheName, signal }) {
-        return null;
-      },
-      async set({ key, value, cacheName, signal }) {},
-    },
     builds: {
       async resolve({ platform, key, destinationDir, signal }) {
         return null;
@@ -70,15 +68,13 @@ The optional `files` capability stores opaque complete files with
 `store({ key, sourcePath, overwrite, signal })` and downloads them with
 `resolve({ key, destinationDir, signal })`. A hit returns a path inside
 `destinationDir`; a miss returns `null` and leaves it empty. The CLI consumes
-the `metro` and `builds` adapters. Native Gradle APK caching consumes `files`
+the `builds` adapter. A `metro` capability is ignored, including its shape; Metro uses its local store. Native Gradle APK caching consumes `files`
 directly to share the APK together with its verification receipt; a files-only
 provider can support this flow. An optional
 `stat({ key, signal })` returns `{ size }` or `null` without downloading;
 consumers still verify downloaded bytes. `createFilesystemFileCache(directory)`
 implements the same contract in an owned local directory without dependencies.
 It publishes atomically and materializes downloads in the requested scratch directory.
-
-`metro.get` returns the stored value or `null`.
 
 `builds.resolve` returns an existing path to the artifact, or `null` for a
 miss. `destinationDir` is a scratch directory Stim creates and owns: a provider
@@ -91,7 +87,7 @@ built. `overwrite: false` must keep an entry that already exists for the key,
 and `overwrite: true` must replace it.
 
 Every call receives an `AbortSignal`. A provider must honor it: Stim abandons
-the call at the deadline and keeps building or bundling with the local tier.
+the call at the deadline and keeps building with the local tier.
 Factories and callbacks run as trusted host code in programmatic clients and the
 server. They must keep the event loop responsive and settle when cancelled.
 Deadlines are cooperative; they do not sandbox a module that blocks JavaScript
@@ -112,7 +108,7 @@ build.
 Run the shipped checks against your own module:
 
 ```js
-import { runCacheProviderContract } from '@stim-cli/cache';
+import { runCacheProviderContract } from 'stim/plugin';
 
 const results = await runCacheProviderContract({
   provider: await createCacheProvider({ projectRoot, options }),
@@ -126,7 +122,7 @@ for (const result of results) {
 ```
 
 Pass `providerModule` instead of `provider` to load the module the way Stim
-does, which also checks `apiVersion` and the factory:
+does, which also checks `stimPlugin.kinds` and the factory:
 
 ```js
 const results = await runCacheProviderContract({
@@ -138,32 +134,15 @@ const results = await runCacheProviderContract({
 
 `cacheProviderContractChecks()` returns the same checks as individual cases for
 a test runner that reports each one separately. Both helpers check advertised
-Metro and build capabilities, bound every check with a deadline, and
+build capabilities, bound every check with a deadline, and
 verify that a call settles once its `AbortSignal` aborts.
 
 ## Budgets
 
-Every provider call is bounded. The defaults are 2s for a Metro read, 10s for a
-Metro write, 30s for a build lookup, 60s for a build upload, and 10s to load the
-module. Override any of them per run with an environment variable:
-
-```bash
-STIM_CACHE_METRO_READ_TIMEOUT_MS=5000 stim start
-STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS=60000 stim ios
-```
-
-The variables are `STIM_CACHE_METRO_READ_TIMEOUT_MS`,
-`STIM_CACHE_METRO_WRITE_TIMEOUT_MS`, `STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS`,
-`STIM_CACHE_BUILD_UPLOAD_TIMEOUT_MS`, and `STIM_CACHE_LOAD_TIMEOUT_MS`. Each
-takes whole milliseconds; any other value keeps the default.
-
-The tiered Metro store also exposes `flush()`, which resolves once queued
-provider writes have drained. Metro never calls it; every in-flight write holds
-a referenced deadline, so a Metro process drains on its own within the write
-budget. It exists for tests and embedders that own the process.
-
-Metro reads are also capped: at most six can be in flight, and the tier turns
-itself off for the rest of the run after five consecutive failures, so a broken
-provider costs one round of warnings rather than a timeout per transform.
+Every provider call is bounded: 30s for a build lookup, 60s for a build upload,
+and 10s to load the module. Override these per run with
+`STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS`, `STIM_CACHE_BUILD_UPLOAD_TIMEOUT_MS`, or
+`STIM_CACHE_LOAD_TIMEOUT_MS`. Each takes positive whole milliseconds; any other
+value keeps the default.
 
 The npm scope remains `@stim-cli` until the `@stim` scope is available.

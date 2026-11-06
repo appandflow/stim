@@ -5,9 +5,11 @@ import { parseArgs } from 'node:util';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
-const cacheRules = [
+const pluginRules = [
   ['cache provider loader', /^@stim-cli\/cache\/provider\.ts$/],
   ['cache contract', /^@stim-cli\/cache\/contract\.ts$/],
+  ['agent-driver contract', /^@stim-cli\/agent-driver\/contract\.ts$/],
+  ['plugin entry', /^stim\/src\/plugin\.ts$/],
 ];
 const shared = [
   ['ws', /^ws(\/|$)/],
@@ -15,7 +17,7 @@ const shared = [
   ['Noise', /^@stim-cli\/core\/noise/],
   ['offload/', /^stim\/src\/offload\//],
   ['device-host/', /^stim\/src\/device-host\//],
-  ...cacheRules,
+  ...pluginRules,
 ];
 const fingerprint = ['@expo/fingerprint', /^@expo\/fingerprint(\/|$)/];
 const ownFingerprint = ['fingerprint/', /^stim\/src\/fingerprint\//];
@@ -26,8 +28,8 @@ const deny = {
   status: [...shared, fingerprint, ownFingerprint],
   'agent-device': [...shared, fingerprint, ownFingerprint],
   api: shared,
-  tiers: cacheRules,
-  daemon: [ownFingerprint],
+  tiers: pluginRules,
+  daemon: [ownFingerprint, ...pluginRules],
 };
 
 const staticImport = /^(?:import|export)\s(?:[^'";]*?\sfrom\s*)?["']([^"']+)["']/gm;

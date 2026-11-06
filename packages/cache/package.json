@@ -27,10 +27,18 @@
       "types": "./dist/tiers.d.mts",
       "module-sync": "./dist/tiers.mjs",
       "default": "./dist/tiers.mjs"
+    },
+    "./contract": {
+      "types": "./dist/contract.d.mts",
+      "module-sync": "./dist/contract.mjs",
+      "default": "./dist/contract.mjs"
     }
   },
   "scripts": {
     "build": "tsdown"
+  },
+  "dependencies": {
+    "@stim-cli/core": "workspace:*"
   },
   "engines": {
     "node": ">=22.12.0"

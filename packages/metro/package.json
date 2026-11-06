@@ -28,7 +28,6 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "@stim-cli/cache": "workspace:*",
     "@stim-cli/core": "workspace:*"
   },
   "peerDependencies": {

@@ -33,7 +33,7 @@ Set `cacheStores` on the final merged Metro config:
 const { sharedCacheStores } = require('@stim-cli/metro');
 const { name } = require('./package.json');
 
-config.cacheStores = sharedCacheStores(name, { cwd: __dirname });
+config.cacheStores = sharedCacheStores(name);
 ```
 
 For bare React Native under Stim, this explicitly selects one shared transform
