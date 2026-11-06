@@ -1,0 +1,9 @@
+{
+  "schema": 2,
+  "files": [
+    "packages/stim-cli/src/cache/build-cache.ts",
+    "packages/stim-cli/src/cache/podfile-lock.ts",
+    "packages/stim-cli/src/cache/static-fingerprint.ts"
+  ],
+  "digest": "fb7d7e37bc10849bc11eeca5842c0378ffe99b2d3418d80ed1fa78a2d27f7f31"
+}

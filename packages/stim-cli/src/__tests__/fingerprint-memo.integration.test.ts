@@ -294,6 +294,27 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
     expect(full).toBe(1);
   });
 
+  test('a record written by one Stim version is read by another', async () => {
+    app = fixture('npm');
+    await lookup(app);
+    vi.resetModules();
+    vi.doMock('../stim-version.ts', () => ({ STIM_VERSION: '0.0.0-other' }));
+    try {
+      const other = await import('../cache/fingerprint-memo.ts');
+      expect(
+        await other.memoizedFingerprint(
+          app,
+          { platform: 'ios' },
+          { consult: true, record: false, operation: operation(), fingerprint: computed },
+        ),
+      ).toMatchObject({ memoHit: true, fingerprint: { hash: 'h1' } });
+      expect(full).toBe(1);
+    } finally {
+      vi.doUnmock('../stim-version.ts');
+      vi.resetModules();
+    }
+  });
+
   test('an app reached through a path spelled differently from its real one hashes the same inputs', async (ctx) => {
     const root = fixture('npm');
     const respelled = join(base, 'REPO', 'APP');
