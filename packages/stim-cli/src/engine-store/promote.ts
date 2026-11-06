@@ -8,7 +8,8 @@ import { collectStore, liveEngineDirs } from './gc.ts';
 import { takeLock } from './locks.ts';
 import { machineRoot, migrateSchema, readSchema, schemaRefusal } from './schema.ts';
 import { promotionRefusal } from './select.ts';
-import { BUILD_DIR, readManifest, readRecords, removeRecord, writeRecord, writeState, type Current } from './store.ts';
+import { BUILD_DIR, FORMAT, readManifest, readRecords, removeRecord, writeRecord, writeState } from './store.ts';
+import type { Current, Manifest, Staged } from './store.ts';
 import { cloneTree, fetchTree, scratchName, seal, selfTest } from './tree.ts';
 
 export interface Promotion {
@@ -45,8 +46,7 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
       else await fetchTree(root, source.version, scratch, (line) => ctx.output('stderr', `${line}\n`));
       build = seal(root, scratch);
     }
-    const manifest = readManifest(join(root, build));
-    if (!manifest) throw new Error(`${join(root, build)} has no store manifest.`);
+    const manifest = readManifest(join(root, build)) ?? fail(`${join(root, build)} has no store manifest.`);
     if (!existsSync(join(root, build, 'dist', 'engine-select.mjs')))
       return { refused: `stim ${manifest.version} predates the engine store; choose a later version` };
     const own = stimBuildId(dirname(fileURLToPath(import.meta.url)));
@@ -59,19 +59,12 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
         schemaRefusal(machineRoot(), manifest.schema);
       if (refusal) return { refused: refusal };
       await selfTest(root, build);
-      state.installed = [
-        ...state.installed.filter((each) => each.dir !== build),
-        { dir: build, version: manifest.version, installedAt: new Date().toISOString() },
-      ];
-      writeState(root, state);
+      const entry = { dir: build, version: manifest.version, installedAt: new Date().toISOString() };
+      writeState(root, { ...state, installed: [...state.installed.filter((each) => each.dir !== build), entry] });
       const claimed = liveEngineDirs();
       if (claimed.length > 0) {
-        writeRecord(join(root, 'staged.json'), {
-          format: 1,
-          dir: build,
-          version: manifest.version,
-          stagedAt: new Date().toISOString(),
-        });
+        const staged: Staged = { format: FORMAT, dir: build, version: manifest.version, stagedAt: entry.installedAt };
+        writeRecord(join(root, 'staged.json'), staged);
         return { staged: build };
       }
       await flip(root, build, manifest, current, promotion);
@@ -82,55 +75,44 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
   } finally {
     await lock.release();
   }
-  const args = ['promote', '--source', join(root, handover), '--set-by', promotion.setBy];
+  const args = ['--source', join(root, handover), '--set-by', promotion.setBy];
   if (promotion.explicit) args.push('--explicit');
   if (promotion.pinReason) args.push('--pin', promotion.pinReason);
   if (promotion.channel) args.push('--channel', promotion.channel);
-  const output = await getExecutor().runFileAsync(
-    process.execPath,
-    [join(root, handover, 'dist', 'engine-select.mjs'), ...args],
-    {
-      timeoutMs: 10 * 60_000,
-      env: { STIM_ENGINE_ROOT: root, STIM_HOME: ctx.home },
-    },
-  );
-  return JSON.parse(output);
+  const select = join(root, handover, 'dist', 'engine-select.mjs');
+  const env = { STIM_ENGINE_ROOT: root, STIM_HOME: ctx.home };
+  return JSON.parse(await getExecutor().runFileAsync(process.execPath, [select, ...args], { timeoutMs: 600_000, env }));
 }
 
-async function flip(
-  root: string,
-  build: string,
-  manifest: { version: string; engines: string },
-  current: Current | null,
-  promotion: Promotion,
-): Promise<void> {
+async function flip(root: string, build: string, manifest: Manifest, current: Current | null, promotion: Promotion) {
   const node = { path: process.execPath, version: process.versions.node };
-  const next: Current = {
-    format: 1,
-    version: manifest.version,
-    build,
-    dir: build,
-    node: [node, ...(current?.node ?? []).filter((each) => each.path !== node.path)],
-    engines: manifest.engines,
-    channel: promotion.channel ?? current?.channel ?? (manifest.version.includes('-') ? 'next' : 'latest'),
-    pinned: Boolean(promotion.pinReason),
-    pinReason: promotion.pinReason ?? null,
-    setBy: promotion.setBy,
-    setAt: new Date().toISOString(),
-  };
-  const flipLock = await takeLock(root, '.flip.sock');
-  if (!flipLock) throw new Error(`Another process holds ${join(root, '.flip.sock')}.`);
+  const flipLock = (await takeLock(root, '.flip.sock')) ?? fail(`Another process holds ${join(root, '.flip.sock')}.`);
   try {
     if (current && current.dir !== build) writeRecord(join(root, 'previous'), current.dir);
-    writeRecord(join(root, 'current.json'), next);
+    writeRecord(join(root, 'current.json'), {
+      format: FORMAT,
+      version: manifest.version,
+      build,
+      dir: build,
+      engines: manifest.engines,
+      node: [node, ...(current?.node ?? []).filter((each) => each.path !== node.path)],
+      channel: promotion.channel ?? current?.channel ?? (manifest.version.includes('-') ? 'next' : 'latest'),
+      pinned: Boolean(promotion.pinReason),
+      pinReason: promotion.pinReason ?? null,
+      setBy: promotion.setBy,
+      setAt: new Date().toISOString(),
+    } satisfies Current);
     removeRecord(join(root, 'staged.json'));
   } finally {
     await flipLock.release();
   }
-  const bin = join(root, 'bin');
-  mkdirSync(bin, { recursive: true });
   const router = join(root, build, 'bin', 'stim.mjs');
-  writeRecord(join(bin, 'stim'), `#!/bin/sh\nexec "${node.path}" "${router}" "$@"`);
-  chmodSync(join(bin, 'stim'), 0o755);
-  writeRecord(join(bin, 'stim.cmd'), `@"${node.path}" "${router}" %*\r`);
+  mkdirSync(join(root, 'bin'), { recursive: true });
+  writeRecord(join(root, 'bin', 'stim'), `#!/bin/sh\nexec "${node.path}" "${router}" "$@"`);
+  chmodSync(join(root, 'bin', 'stim'), 0o755);
+  writeRecord(join(root, 'bin', 'stim.cmd'), `@"${node.path}" "${router}" %*\r`);
+}
+
+function fail(message: string): never {
+  throw new Error(message);
 }

@@ -1352,7 +1352,7 @@ export default function gcCommand(program: Command): void {
     .action(async (opts: RunGcOptions) => {
       if (opts.delete) {
         const { collectInstalledStore } = await import('../engine-store/gc.ts');
-        const { engineRoot } = await import('../engine-store/root.ts');
+        const { engineRoot } = await import('../engine-store/store.ts');
         await collectInstalledStore(engineRoot(process.env));
       }
       const { interrupted } = await runProcessOperation(process.cwd(), (operation) =>

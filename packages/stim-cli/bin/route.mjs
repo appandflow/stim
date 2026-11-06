@@ -21,7 +21,7 @@ export function compareVersions(left, right) {
 }
 
 /** Whether Node `version` meets an `engines.node` range of the form `>=X.Y.Z`; another form is not checked. */
-export function satisfies(version, range) {
+function satisfies(version, range) {
   const floor = /^>=\s*(\d+)\.(\d+)(?:\.(\d+))?$/.exec(range ?? '');
   return !floor || (compareVersions(version, `${floor[1]}.${floor[2]}.${floor[3] ?? 0}`) ?? 0) >= 0;
 }
@@ -38,6 +38,8 @@ export function installKind(dir, root) {
 /** What the router does with one command, given the engine's `current.json` and `staged.json`. */
 export function route({ args, copy, current, staged, node }) {
   if (current === null) return { run: 'own' };
+  if (typeof current !== 'object')
+    return { run: 'own', fallback: true, note: 'the engine pointer cannot be read; this command runs this copy' };
   // compat C1 permanent
   if (current.format !== 1) {
     const note = `STIM_ROUTER_TOO_OLD: this stim (${copy.version}, ${copy.kind}) cannot read engine format ${String(current.format)}; run npx stim@latest, npm i -D stim@latest or npm i -g stim@latest`;

@@ -36,6 +36,8 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
       ],
     },
     'packages/stim-cli': {
+      // TypeScript reads it as the declarations of bin/route.mjs, which the published router imports.
+      ignore: ['bin/route.d.mts'],
       // The own fingerprint module lands before any command calls it; its tests are its only importers.
       entry: production ? ['src/fingerprint/*.ts'] : [],
       // tsdown bundles the workspace packages; their bare unique-pid import stays external.

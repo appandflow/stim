@@ -25,25 +25,18 @@ if (current === null) {
     kind: installKind(self, realpathSync(root)),
   };
   const staged = read(join(root, 'staged.json'));
-  const decision =
-    current === undefined || typeof current !== 'object'
-      ? {
-          run: 'own',
-          fallback: true,
-          note: `${join(root, 'current.json')} cannot be read; this command runs this copy`,
-        }
-      : route({
-          args: process.argv,
-          copy,
-          current,
-          staged: staged?.format === 1 ? staged : null,
-          node: process.versions.node,
-        });
+  const decision = route({
+    args: process.argv,
+    copy,
+    current,
+    staged: staged?.format === 1 ? staged : null,
+    node: process.versions.node,
+  });
   if (decision.promote) {
     const select = [join(self, 'dist', 'engine-select.mjs'), 'promote', '--set-by', `promote:${copy.kind}`];
     if (decision.promote === 'detached') spawn(process.execPath, select, { detached: true, stdio: 'ignore' }).unref();
     else if (spawnSync(process.execPath, select, { stdio: ['ignore', 'ignore', 'inherit'] }).status === 0)
-      current = read(join(root, 'current.json'))?.format === 1 ? read(join(root, 'current.json')) : current;
+      current = read(join(root, 'current.json')) ?? current;
   }
   if (decision.note) process.stderr.write(`${decision.note}\n`);
   const engine = (name) => join(root, current.dir, 'dist', name);

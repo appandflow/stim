@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { processContext } from '../src/cli-operation.ts';
-import { engineRoot } from '../src/engine-store/root.ts';
+import { engineRoot } from '../src/engine-store/store.ts';
 import { promote } from '../src/engine-store/promote.ts';
 import { installKind } from './route.mjs';
 

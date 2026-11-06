@@ -72,12 +72,8 @@ export async function fetchTree(
   const { installServer } = await import('@stim-cli/server/release-install');
   const installs = join(root, scratchName());
   try {
-    const { dir } = await installServer(installs, { release: version }, process.execPath, log, [
-      '--cache',
-      join(root, '.npm-cache'),
-      '--prefer-offline',
-      '--install-strategy=shallow',
-    ]);
+    const options = ['--cache', join(root, '.npm-cache'), '--prefer-offline', '--install-strategy=shallow'];
+    const { dir } = await installServer(installs, { release: version }, process.execPath, log, options);
     renameSync(join(dir, 'node_modules', 'stim'), scratch);
   } finally {
     rmSync(installs, { recursive: true, force: true });

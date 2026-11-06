@@ -3,6 +3,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { writeRecord } from './store.ts';
 
+/** `~/.stim/machine`, shared by every Stim home of this user. */
+export const machineRoot = (): string => join(homedir(), '.stim', 'machine');
+
 // compat C4 permanent
 /** The layout of a Stim home and of `~/.stim/machine` this build reads and writes. Only ever goes up. */
 export const SCHEMA: number = 1;
@@ -14,12 +17,10 @@ export interface Migration {
 }
 
 /** Index `n - 1` migrates schema `n` to `n + 1`. Schema 1 is the layout before the marker existed. */
-export const MIGRATIONS: Migration[] = [];
+const MIGRATIONS: Migration[] = [];
 
 /** Ledgers of live external resources: never reshaped, snapshotted or restored, so every build reads them. */
 const LEDGERS = new Set(['created-devices.json', 'eas/sessions.json', 'homes/homes.json']);
-
-export const machineRoot = (): string => join(homedir(), '.stim', 'machine');
 
 export function readSchema(root: string): { schema: number; by: string } | null {
   try {
@@ -44,7 +45,8 @@ export function migrateSchema(
   migrations: Migration[] = MIGRATIONS,
 ): void {
   const refusal = schemaRefusal(root, schema);
-  if (refusal) throw Object.assign(new Error(refusal), { code: 'STIM_SCHEMA_NEWER', remedy: 'Run stim engine update.' });
+  if (refusal)
+    throw Object.assign(new Error(refusal), { code: 'STIM_SCHEMA_NEWER', remedy: 'Run stim engine update.' });
   mkdirSync(root, { recursive: true });
   for (let at = readSchema(root)?.schema ?? 1; at < schema; at++) {
     const step = migrations[at - 1];

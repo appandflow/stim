@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import { inspectProcessStart } from '@stim-cli/core/process-identity';
 import { daemonClaimRoot } from '@stim-cli/core/state';
 import { readRunningProcesses, runningFromReason } from '../workspace/running-from.ts';
 import { takeLock } from './locks.ts';
@@ -9,14 +10,7 @@ import { removeTree, scratchName } from './tree.ts';
 
 const SCRATCH_MAX_AGE_MS = 60 * 60_000;
 
-function ownerAlive(name: string): boolean {
-  try {
-    process.kill(Number(name.split('-')[1]), 0);
-    return true;
-  } catch (error) {
-    return error instanceof Error && 'code' in error && error.code === 'EPERM';
-  }
-}
+const ownerAlive = (name: string): boolean => inspectProcessStart(Number(name.split('-')[1])).status !== 'gone';
 
 /**
  * Removes store entries nothing can run: trees other than current, previous, staged and `keep` (the entries live
