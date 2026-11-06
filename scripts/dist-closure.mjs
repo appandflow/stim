@@ -5,14 +5,17 @@ import { parseArgs } from 'node:util';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
+const cacheRules = [
+  ['cache provider loader', /^@stim-cli\/cache\/provider\.ts$/],
+  ['cache contract', /^@stim-cli\/cache\/contract\.ts$/],
+];
 const shared = [
   ['ws', /^ws(\/|$)/],
   ['node-datachannel', /^node-datachannel(\/|$)/],
   ['Noise', /^@stim-cli\/core\/noise/],
   ['offload/', /^stim\/src\/offload\//],
   ['device-host/', /^stim\/src\/device-host\//],
-  ['cache provider loader', /^@stim-cli\/cache\/provider\.ts$/],
-  ['cache contract', /^@stim-cli\/cache\/contract\.ts$/],
+  ...cacheRules,
 ];
 const fingerprint = ['@expo/fingerprint', /^@expo\/fingerprint(\/|$)/];
 const ownFingerprint = ['fingerprint/', /^stim\/src\/fingerprint\//];
@@ -23,6 +26,7 @@ const deny = {
   status: [...shared, fingerprint, ownFingerprint],
   'agent-device': [...shared, fingerprint, ownFingerprint],
   api: shared,
+  tiers: cacheRules,
   daemon: [ownFingerprint],
 };
 
@@ -112,6 +116,7 @@ export function entryFiles(dist) {
     entries[name] = [...base, join(dist, chunk[1])];
   }
   entries.api = [join(dist, 'api.mjs')];
+  entries.tiers = [join(dist, '../../cache/dist/tiers.mjs')];
   entries.daemon = [join(dist, 'daemon-run.mjs')];
   return entries;
 }
