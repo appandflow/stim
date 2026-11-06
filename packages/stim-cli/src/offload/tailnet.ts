@@ -153,14 +153,11 @@ export const SERVER_OUTDATED = 'server-outdated';
  */
 export function outdatedServer(
   entry: string,
-  version: string,
   command: string | null,
   host: string = localMachineName(),
   reason?: string,
 ): { title: string; detail: string; fix: string } {
-  const update =
-    `On ${entry}, run \`stim service update --release ${version}\`` +
-    ' (add `--label <name>` for a custom service label; a server Stim Desktop runs updates with Stim Desktop)';
+  const update = `Run \`stim remote update ${entry}\` on ${host}, or on ${entry} run \`stim engine update\``;
   return {
     title: `Remote machine ${entry} runs an older stim-server`,
     detail:

@@ -310,9 +310,7 @@ describe('inspectBuildMachines', () => {
       expect(machines).toEqual([expect.objectContaining({ state: 'outdated' })]);
       expect(findings).toEqual([
         expect.objectContaining({
-          fix: expect.stringMatching(
-            /^On mini, run `stim service update --release 9\.9\.9` \(add `--label <name>` for a custom service label; .*\), then run `stim remote add mini` on laptop\.$/,
-          ),
+          fix: expect.stringMatching(/stim remote update mini.*stim engine update/),
         }),
       ]);
       expect(readBuildMachines()).toEqual(before);

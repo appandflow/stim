@@ -946,6 +946,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     endpoint: options.hostedRelay?.endpoint,
   });
   const updates = new EngineUpdates({
+    name: options.name,
     label: options.service?.label ?? null,
     port: options.port,
     build: { version: options.serverVersion, stimBuild: ownStimBuild },

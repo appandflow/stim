@@ -76,8 +76,13 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
       const { current, state } = readRecords(root);
       const homes = [ctx.home, machineRoot()].filter((home) => readSchema(home));
       const refusal =
-        promotionRefusal(manifest, current, state.bad, promotion.explicit === true) ??
-        (promotion.restoreState ? null : homes.map((home) => schemaRefusal(home, manifest.schema)).find(Boolean));
+        promotionRefusal(
+          manifest,
+          current,
+          state.bad,
+          promotion.explicit === true,
+          promotion.setBy === 'engine.update',
+        ) ?? (promotion.restoreState ? null : homes.map((home) => schemaRefusal(home, manifest.schema)).find(Boolean));
       if (refusal) return refuse(refusal);
       await selfTest(root, build).catch((error: unknown) => {
         collectStore(root);

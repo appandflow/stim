@@ -41,7 +41,7 @@ function pairingState(state: string, machine: string): State {
       return {
         title: t`Server is outdated`,
         tone: 'warning',
-        remedy: t`on ${machine}, run stim service update --release <version>, then run stim remote add ${machine} on the computer this phone is paired with`,
+        remedy: t`on ${machine}, run stim remote update ${machine} from the paired computer (or stim engine update on ${machine})`,
       };
     case 'not-on-tailnet':
       return { title: t`Not on the tailnet`, tone: 'warning' };

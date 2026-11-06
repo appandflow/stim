@@ -28,6 +28,7 @@ import { serviceManagerOrNull, serviceRoot } from './service-manager.ts';
 import { runsAsService } from './service.ts';
 import { engineSelectArgs, engineSelectOutcome } from './engine-select.ts';
 import type { UpdateSource } from './release-install.ts';
+import { engineRoot, newestBad, readRecords } from 'stim/engine-state';
 
 const UPDATE_CHUNK_CHARS = 32 * 1024;
 const MAX_PACKAGES = 16;
@@ -42,6 +43,7 @@ const SHA256 = /^[0-9a-f]{64}$/;
 type Answer = { result: EngineUpdateProgress } | { error: ProtocolError };
 
 export interface EngineUpdateOptions {
+  name?: string;
   label: string | null;
   port: number;
   build: ServerBuild;
@@ -240,12 +242,6 @@ export class EngineUpdates {
   async start(by: EngineUpdateProgress['by'], params: unknown): Promise<Answer> {
     const parsed = parseUpdateStart(params);
     if (typeof parsed === 'string') return refused('bad-request', parsed);
-    if ('version' in parsed && compareVersions(parsed.version, this.options.build.version) < 0) {
-      return refused(
-        'bad-request',
-        `This server runs ${this.options.build.version}; it does not install the older release ${parsed.version} on a client's request. To downgrade it, run \`stim engine use ${parsed.version}\` on the machine it runs on.`,
-      );
-    }
     const label = this.options.label;
     if (!label || !(await (this.options.runsAsService ?? runsAsService)(label, this.options.port))) {
       return refused(
@@ -264,6 +260,24 @@ export class EngineUpdates {
         'forbidden',
         'This service does not run the Stim engine, so it cannot update itself. On this machine run `stim engine install`, then `stim service install`.',
       );
+    const { current, state } = readRecords(engineRoot(this.options.env));
+    if (current?.pinned)
+      return refused(
+        'bad-request',
+        `the engine is pinned at ${current.version} (${current.pinReason ?? 'no reason recorded'}); on ${this.options.name || 'this machine'} run stim engine update to resume updates`,
+      );
+    const bad = newestBad(state.bad);
+    if ('version' in parsed && bad && compareVersions(parsed.version, bad) <= 0)
+      return refused(
+        'bad-request',
+        `${parsed.version} is marked bad (crash loop); the engine stays on ${current?.version ?? this.options.build.version}`,
+      );
+    if ('version' in parsed && compareVersions(parsed.version, this.options.build.version) < 0) {
+      return refused(
+        'bad-request',
+        `This server runs ${this.options.build.version}; it does not install the older release ${parsed.version} on a client's request. To downgrade it, run \`stim engine use ${parsed.version}\` on the machine it runs on.`,
+      );
+    }
     if (this.running)
       return refused('action-busy', `An update of this server is already running (${this.running.target}).`);
     const id = randomUUID();

@@ -1,12 +1,162 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { stimBuildId } from '@stim-cli/core/state';
+import { machineCopy } from '../../stim-cli/src/__tests__/fixtures/machine-copy.ts';
 import { packWorkspace, workspacePackages } from '../src/machine-update.ts';
-import { EngineUpdates } from '../src/server-update.ts';
+import { EngineUpdates, type EngineUpdateOptions } from '../src/server-update.ts';
 import { serviceRoot } from '../src/service-manager.ts';
+
+it.each([
+  {
+    target: '1.42.0',
+    pinned: false,
+    name: 'mini',
+    message: '1.42.0 is marked bad (crash loop); the engine stays on 1.40.0',
+  },
+  {
+    target: '1.39.0',
+    pinned: false,
+    name: 'mini',
+    message: '1.39.0 is marked bad (crash loop); the engine stays on 1.40.0',
+  },
+  {
+    target: '1.43.0',
+    pinned: true,
+    name: 'mini',
+    message: 'the engine is pinned at 1.40.0 (rolled back); on mini run stim engine update to resume updates',
+  },
+  {
+    target: '1.43.0',
+    pinned: true,
+    name: undefined,
+    message: 'the engine is pinned at 1.40.0 (rolled back); on this machine run stim engine update to resume updates',
+  },
+])(
+  'refuses $target before launching engine-select (pinned: $pinned, name: $name)',
+  async ({ target, pinned, name, message }) => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-engine-refusal-'));
+    vi.stubEnv('STIM_HOME', home);
+    vi.stubEnv('HOME', home);
+    const root = join(home, 'engine');
+    const script = join(root, '0123456789ab', 'dist', 'cli.mjs');
+    mkdirSync(dirname(script), { recursive: true });
+    writeFileSync(script, '');
+    writeFileSync(
+      join(root, 'current.json'),
+      JSON.stringify({ format: 1, version: '1.40.0', pinned, pinReason: 'rolled back' }),
+    );
+    writeFileSync(
+      join(root, 'state.json'),
+      JSON.stringify({
+        format: 1,
+        installed: [],
+        bad: [
+          { build: 'bbbbbbbbbbbb', version: '1.42.0', at: '2026-11-06T00:00:00Z' },
+          { build: 'cccccccccccc', version: '1.41.0', at: '2026-11-06T00:00:00Z' },
+        ],
+      }),
+    );
+    const select = join(home, 'select.mjs');
+    const called = join(home, 'called');
+    writeFileSync(
+      select,
+      `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(called)}, 'called');`,
+    );
+    const detached = vi.fn<(file: string) => { file: string; args: string[] }>((file) => ({ file, args: [select] }));
+    const updates = new EngineUpdates({
+      name,
+      label: 'dev.stim.test',
+      port: 7787,
+      build: { version: '1.40.0', stimBuild: null },
+      node: process.execPath,
+      script,
+      env: { ...process.env, STIM_ENGINE_ROOT: root },
+      acceptsClientBuilds: () => false,
+      runsAsService: async () => true,
+      detached,
+      drain: vi.fn<EngineUpdateOptions['drain']>(),
+      audit: vi.fn<EngineUpdateOptions['audit']>(),
+    });
+    try {
+      expect(await updates.start({ id: 'approved-client', name: 'Laptop' }, { version: target })).toEqual({
+        error: { code: 'bad-request', message },
+      });
+      expect(detached).not.toHaveBeenCalled();
+      expect(existsSync(called)).toBe(false);
+    } finally {
+      updates.close();
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
+
+it('an exact engine.update prerelease passes promotion without changing the worker channel', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-engine-prerelease-'));
+  const root = join(home, 'engine');
+  const source = fileURLToPath(new URL('../../stim-cli', import.meta.url));
+  try {
+    const copy = machineCopy(source, join(home, 'copy'));
+    const build = stimBuildId(join(copy, 'dist'));
+    assert(build);
+    const version = '99.0.0-next.1';
+    const pkg = JSON.parse(readFileSync(join(copy, 'package.json'), 'utf8'));
+    writeFileSync(join(copy, 'package.json'), JSON.stringify({ ...pkg, version }));
+    mkdirSync(root);
+    const tree = join(root, build);
+    renameSync(copy, tree);
+    writeFileSync(
+      join(tree, '.stim-manifest.json'),
+      JSON.stringify({ format: 1, build, version, engines: '>=22.12.0', schema: 1 }),
+    );
+    writeFileSync(
+      join(root, 'current.json'),
+      JSON.stringify({
+        format: 1,
+        version: '1.40.0',
+        dir: 'aaaaaaaaaaaa',
+        build: 'aaaaaaaaaaaa',
+        node: [{ path: process.execPath, version: process.versions.node }],
+        engines: '>=22.12.0',
+        channel: 'latest',
+        pinned: false,
+        pinReason: null,
+        setBy: 'install',
+        setAt: new Date().toISOString(),
+      }),
+    );
+    const select = (setBy: string) =>
+      JSON.parse(
+        execFileSync(process.execPath, [join(tree, 'dist', 'engine-select.mjs'), '--source', tree, '--set-by', setBy], {
+          env: { ...process.env, HOME: home, USERPROFILE: home, STIM_HOME: home, STIM_ENGINE_ROOT: root },
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }),
+      );
+    expect(select('engine.update')).toEqual({ flipped: build });
+    expect(JSON.parse(readFileSync(join(root, 'current.json'), 'utf8'))).toMatchObject({
+      version,
+      channel: 'latest',
+      pinned: false,
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60_000);
 
 it('authorizes a package update, verifies uploaded bytes and drains until the detached engine-select exits', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-engine-update-'));

@@ -14,6 +14,7 @@ import { send, type ConnectionContext } from './context.ts';
 import { isJsonObject, validRunId } from '@stim-cli/core/state';
 import { CLOSE_REFUSED, HOME_UNAVAILABLE_MESSAGE } from '@stim-cli/core/noise-session';
 import { homedir } from 'node:os';
+import { engineRoot, readRecords } from 'stim/engine-state';
 
 export const CLOSE_BAD_REQUEST = 4400;
 
@@ -142,6 +143,7 @@ export async function hello(ctx: ConnectionContext, id: RequestId, params: unkno
       name: ctx.options.name,
       version: ctx.options.serverVersion,
       stim: ctx.options.stimVersion,
+      channel: readRecords(engineRoot(process.env)).current?.channel ?? 'latest',
       home: homedir(),
       id: ctx.homeId,
       ...(ctx.local && ctx.addresses[0] ? { port: ctx.addresses[0].port } : {}),

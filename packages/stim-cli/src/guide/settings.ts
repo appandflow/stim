@@ -928,6 +928,7 @@ simulator sessions on, by MagicDNS name with an optional serve port (default
   stim remote add janics-mac-mini
   stim remote list
   stim remote remove janics-mac-mini
+  stim remote update janics-mac-mini [--channel next]
 
 \`stim remote add\` appends the machine to the machine-scope list, keeping the
 entries already there, asks it for build and device-host approval and prints
@@ -941,6 +942,15 @@ serverKeyFingerprint (the pinned stim-server key, or null before the first
 answer), reachability (reachable, unreachable, key-changed or unknown, from
 this run's contact) and revoke, the \`stim pairings revoke <id>\` commands
 a person on that machine runs to withdraw its approvals.
+
+\`stim remote update <machine>\` updates an approved machine to the newest
+release on its channel whose peer is at least this caller's. --channel next
+includes prereleases for this request without changing the worker's channel.
+The worker refuses a pin, a downgrade, or a target at or below its newest build
+marked bad after a crash loop. Run \`stim engine update\` on a pinned worker to
+resume updates. If the chosen channel cannot carry this peer, select next or
+build locally. The command prints the version and the worker's staged, switched
+or refused answer.
 
 The order of \`remote.machines\` is the priority order for every workload: the
 build, simulator, emulator and macOS app each go to the first listed machine that
