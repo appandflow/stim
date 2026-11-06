@@ -1,5 +1,5 @@
 import { hkdfSync } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, rmSync, watch, type FSWatcher } from 'node:fs';
+import { existsSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
 import {
   createServer,
   type IncomingHttpHeaders,
@@ -7,7 +7,7 @@ import {
   type Server,
   type ServerResponse,
 } from 'node:http';
-import { connect as connectSocket, isIP, Socket, type AddressInfo } from 'node:net';
+import { isIP, Socket, type AddressInfo } from 'node:net';
 import { type Duplex } from 'node:stream';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -57,13 +57,7 @@ import {
   type StartupCause,
   type StartupState,
 } from './startup.ts';
-import {
-  claimRemoveCommand,
-  exclusiveClaimDir,
-  releaseClaim,
-  sharedClaimDir,
-  tryAcquireClaim,
-} from '@stim-cli/core/ownership-claim';
+import { exclusiveClaimDir, sharedClaimDir } from '@stim-cli/core/ownership-claim';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { StatusFeed } from './status-feed.ts';
 import { buildFoldHelper, buildFrameHelper } from './frame-helper.ts';
@@ -129,13 +123,8 @@ import { EngineUpdates } from './server-update.ts';
 import { MachineUpdates } from './machine-update.ts';
 import { Pending, type CommandLimits } from './stim-command.ts';
 import { readHostPermissions } from './stim-host.ts';
-import type { Transport, TransportIdentity } from '@stim-cli/transport';
-import {
-  isTailscaleTransport,
-  tailscaleTransport,
-  type TailscaleState,
-  type TailscaleTransport,
-} from '@stim-cli/transport-tailscale';
+import type { TransportIdentity } from '@stim-cli/transport';
+import type { TailscaleState } from '@stim-cli/transport-tailscale';
 import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DeviceViewers } from './viewers.ts';
 import { HostedShareSource } from './share-hosted.ts';
@@ -147,6 +136,8 @@ import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
 import { createKeepAwake, type KeepAwakeStatus } from './keep-awake.ts';
 import { runsAsService } from './service.ts';
 import { ShareRoute, tailscaleFunnel } from './share-route.ts';
+import { listenLocal, type LocalListenerContext } from './local-listener.ts';
+import { serverTransports } from './server-transports.ts';
 import {
   type RequestLimits,
   type ControlLimits,
@@ -243,8 +234,6 @@ export interface RunningServer {
   close: () => Promise<void>;
 }
 
-const LOCAL_SOCKET_CLAIM_TRIES = 50;
-
 const CLOSE_AUTH_TIMEOUT = 4408;
 
 const AGENT_PATH = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/;
@@ -308,20 +297,6 @@ function peerAddress(request: IncomingMessage): string | null {
 
 function peerLabel(identity: TransportIdentity | null): string | null {
   return identity ? `${identity.name || identity.id}${identity.user ? ` (${identity.user})` : ''}` : null;
-}
-
-const NO_TAILSCALE: TailscaleState = { state: 'unavailable', reason: 'the tailscale command was not found' };
-
-function serverTransports(options: ServerOptions): { transports: Transport[]; tailscale: TailscaleTransport } {
-  const given = options.transports?.find(isTailscaleTransport);
-  const tailscale =
-    given ??
-    tailscaleTransport({
-      env: options.env,
-      snapshot: { binary: options.tailscale ?? null, state: options.tailscaleState ?? NO_TAILSCALE },
-      monitor: options.tailscaleMonitor ?? null,
-    });
-  return { transports: options.transports ?? [tailscale], tailscale };
 }
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -2118,74 +2093,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   }
   let localSocket: string | null = null;
   let localListener: { server: Server; sockets: Set<Socket> } | null = null;
-  /**
-   * The Unix socket for this machine's own user. Node cannot read a Unix socket peer's uid, so the kernel's check
-   * stands in for it: connecting needs write access to the socket, which is mode 0600 in a 0700 directory this user
-   * owns. A socket file that no server answers on is stale and replaced. Windows has no local clients and no socket.
-   */
-  async function listenLocal(path: string): Promise<void> {
-    const dir = dirname(path);
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const owner = lstatSync(dir);
-    if (!owner.isDirectory() || (process.getuid && owner.uid !== process.getuid()))
-      throw new Error(`${dir} is not a directory this user owns, so stim-server does not put its local socket there.`);
-    chmodSync(dir, 0o700);
-    const claimRoot = `${path}.claims`;
-    let attempt = tryAcquireClaim({ root: claimRoot, mode: 'exclusive', label: 'stim-server local socket' });
-    for (let tries = 0; !attempt.acquired && tries < LOCAL_SOCKET_CLAIM_TRIES; tries++) {
-      if (closing) break;
-      if (attempt.pending) releaseClaim(attempt.pending);
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      attempt = tryAcquireClaim({ root: claimRoot, mode: 'exclusive', label: 'stim-server local socket' });
-    }
-    if (attempt.pending) releaseClaim(attempt.pending);
-    if (!attempt.acquired) {
-      const held = attempt.held?.path ?? claimRoot;
-      throw new Error(
-        `another stim-server holds ${held} while it opens its local socket. If nothing is using it, remove it with ${claimRemoveCommand(held)}.`,
-      );
-    }
-    try {
-      await bindLocal(path);
-    } finally {
-      releaseClaim(attempt.acquired);
-    }
-  }
-  /** Probes, replaces and binds the socket while this server holds the socket's claim. */
-  async function bindLocal(path: string): Promise<void> {
-    if (existsSync(path)) {
-      const answered = await new Promise<boolean>((resolve) => {
-        const probe = connectSocket(path);
-        probe.once('connect', () => {
-          probe.destroy();
-          resolve(true);
-        });
-        probe.once('error', () => resolve(false));
-      });
-      if (answered) throw Object.assign(new Error(`another stim-server answers on ${path}`), { code: 'EADDRINUSE' });
-      rmSync(path, { force: true });
-    }
-    const server = createServer((request, response) => {
-      if (request.method === 'GET' && request.url === '/health') return void answerHealth(response);
-      response.writeHead(426, { 'content-type': 'text/plain' }).end('stim-server speaks WebSocket only.\n');
-    });
-    server.on('upgrade', upgradeLocal);
-    const sockets = new Set<Socket>();
-    server.on('connection', (socket) => {
-      sockets.add(socket);
-      socket.once('close', () => sockets.delete(socket));
-    });
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(path, () => {
-        server.off('error', reject);
-        resolve();
-      });
-    });
-    chmodSync(path, 0o600);
-    localListener = { server, sockets };
-    localSocket = path;
-  }
+  const listenerContext: LocalListenerContext = {
+    get closing() {
+      return closing;
+    },
+    answerHealth,
+    upgradeLocal,
+    get localListener() {
+      return localListener;
+    },
+    set localListener(value) {
+      localListener = value;
+    },
+    get localSocket() {
+      return localSocket;
+    },
+    set localSocket(value) {
+      localSocket = value;
+    },
+  };
   try {
     for (const host of options.hosts) await listenOn(host);
   } catch (error) {
@@ -2266,7 +2192,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const local = options.localSocket === undefined ? serverLocalSocket() : options.localSocket;
       if (!localListener && local !== null && process.platform !== 'win32') {
         try {
-          await listenLocal(local);
+          await listenLocal(listenerContext, local);
         } catch (error) {
           console.error(`stim-server: no local socket, so Stim Desktop cannot connect: ${(error as Error).message}`);
         }
