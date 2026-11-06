@@ -26,6 +26,7 @@
     "packages/stim-cli/src/engine/gradle.ts",
     "packages/stim-cli/src/engine/prebuild.ts",
     "packages/stim-cli/src/engine/release-metro.ts",
+    "packages/stim-cli/src/engine/toolchain.ts",
     "packages/stim-cli/src/engine/xcode.ts",
     "packages/stim-cli/src/fingerprint/",
     "packages/stim-cli/src/integrations/",
@@ -40,5 +41,5 @@
     "packages/stim-cli/src/optimizations.ts",
     "packages/stim-cli/src/supervisor/project-node.ts"
   ],
-  "digest": "975637b71c774ee6e909328ed19f2b9e2988ea25da1d1dcf7623e9a447f37037"
+  "digest": "58877980e5295c0b5b175c18b8a99d68d4ee33194cf5b99fad996d1cd7593ffa"
 }

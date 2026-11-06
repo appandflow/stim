@@ -1,8 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
 import { existsSync } from 'node:fs';
-import { iosToolchainAsync } from '../offload/toolchain.ts';
-import { nativeTransferRefusal } from '../offload/client.ts';
+import { iosToolchainAsync } from '../engine/toolchain.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
 import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
@@ -341,6 +340,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
     expoCache: null,
     offload: {
       context: async () => {
+        const { nativeTransferRefusal } = await import('../offload/client.ts');
         const runtime = context.target.sdk === 'iphonesimulator' ? context.target.offloadRuntime() : null;
         return {
           runtime,

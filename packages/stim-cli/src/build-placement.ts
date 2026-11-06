@@ -5,7 +5,7 @@ import { parseMachine, automaticMachineEnabled, placementWord, readBuildMachines
 import type { PlacementSetting, SettingSource } from './placement-log.ts';
 import { loadConfig } from './workspace/config.ts';
 import { POD_MISSING_REASON } from './engine/deps.ts';
-import { cocoapodsInstall } from './offload/toolchain.ts';
+import { cocoapodsInstall } from './engine/toolchain.ts';
 
 const FINGERPRINT_MISMATCH_REMEDY =
   "The build Mac fingerprints the synced checkout differently; the message names the sources that differ. Stim sends tracked and untracked files and the gitignored files the fingerprint reads, except under node_modules. A source still differs when the build Mac's dependency install or pod install writes it differently, or when the app config reads an environment variable or file that differs. Make that input agree on both Macs, for example by committing the lockfile pod install rewrote there, or rerun with --remote-build auto or --remote-build local.";

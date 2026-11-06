@@ -22,7 +22,7 @@ import { chooseBuildMachine, offloadBuild, pickOffer, type BuildOffer, type Buil
 import { manifestDigest } from '../offload/manifest.ts';
 import { nativeGradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
-import type { BuildTarget } from '../offload/toolchain.ts';
+import type { BuildTarget } from '../engine/toolchain.ts';
 import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
 import { getExecutor } from '../exec.ts';
 
