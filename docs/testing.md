@@ -189,12 +189,14 @@ unit stage. The selector reads the checked-out PR merge commit against its first
 parent; checkout retains both parents. Other PR checks remain enabled.
 
 The merge queue always runs the full unit and integration suite on its combined
-candidate before merging. Main pushes, scheduled validation and release validation retain their
-full suites. Focused PR selection never replaces the merge-candidate gate.
+candidate before merging, on Node 22. Main pushes run the unit suite on Node 22
+and 24 and the integration suite on Node 24 only; scheduled validation and
+release validation retain their full suites. Focused PR selection never replaces the merge-candidate gate.
 
 The Linux Node 22 and 24 jobs retain a `unit-test-timings-node-<version>` JSON
-artifact for seven days, including failing runs that produce a report. Main and
-manual runs also retain `integration-test-timings-node-<version>`. Use these
+artifact for seven days, including failing runs that produce a report. Manual
+runs also retain `integration-test-timings-node-<version>`, and main pushes
+retain it for Node 24. Use these
 reports to compare case and file costs on the same runner type. Required
 full suites still run before merge; local affected selection does not change
 that gate.
