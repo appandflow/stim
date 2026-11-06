@@ -115,6 +115,7 @@ async function stopStimd(m) {
   if (!pid) return;
   if (alive(pid)) process.kill(pid, 'SIGTERM');
   await until('stimd to exit', () => !alive(pid)).catch(() => {});
+  rmSync(join(m.stimHome, 'run', 'stimd.json'), { force: true });
 }
 
 /** One connection to stimd with the first frame of `build` and `ops`; resolves once it has `answers` lines. */
