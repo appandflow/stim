@@ -36,6 +36,7 @@ let port;
 let machine;
 const previousHome = process.env.STIM_HOME;
 const TEST = { timeout: 30_000 };
+const LOCAL_SOCKET = { ...TEST, skip: process.platform === 'win32' && 'stim-server opens no local socket on Windows' };
 
 before(async () => {
   process.env.STIM_HOME = home;
@@ -140,7 +141,7 @@ test('a 1.41 CLI offloading over Noise is turned away with peer-too-old and the 
   current.socket.close();
 });
 
-test('a 1.41 readWebShares on the 1.42 local socket reads the share list, never unreadable', TEST, async () => {
+test('a 1.41 readWebShares on the 1.42 local socket reads the share list, never unreadable', LOCAL_SOCKET, async () => {
   assert.deepEqual(await readWebShares141(), []);
 });
 
@@ -151,23 +152,22 @@ test('a phone hello without phoneApi is refused with protocol-unsupported and th
   );
 });
 
-test(
-  'a Stim Desktop hello without desktopApi is refused over Noise and answered on the local socket',
-  TEST,
-  async () => {
-    const desktop = { name: 'Stim Desktop', version: '0.9.0' };
-    await assertRefused(await pairedHello(desktop), 'Update Stim Desktop (Stim > Check for Updates).');
+const DESKTOP_1_41 = { name: 'Stim Desktop', version: '0.9.0' };
 
-    const local = await localConnect(serverLocalSocket());
-    try {
-      const reply = await local.request('hello', { client: desktop });
-      assert.equal(reply.error, undefined, JSON.stringify(reply));
-      assert.equal(reply.result.desktopApi, DESKTOP_API);
-    } finally {
-      local.socket.terminate();
-    }
-  },
-);
+test('a Stim Desktop hello without desktopApi is refused over Noise', TEST, async () => {
+  await assertRefused(await pairedHello(DESKTOP_1_41), 'Update Stim Desktop (Stim > Check for Updates).');
+});
+
+test('the same Stim Desktop hello is answered on the local socket', LOCAL_SOCKET, async () => {
+  const local = await localConnect(serverLocalSocket());
+  try {
+    const reply = await local.request('hello', { client: DESKTOP_1_41 });
+    assert.equal(reply.error, undefined, JSON.stringify(reply));
+    assert.equal(reply.result.desktopApi, DESKTOP_API);
+  } finally {
+    local.socket.terminate();
+  }
+});
 
 /** What a 1.41 stim-server answers `hello` with: `features` and no wire integers; `host` only under Stim Host. */
 function hello141(host) {
