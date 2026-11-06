@@ -2,7 +2,7 @@
 
 The machine App Review pairs the Stim iOS app with. It is a Cloudflare Worker that speaks protocol 2 of `stim-server` over `wss://` and serves fictional data: a Mac named `Demo Mac` with nine workspaces in two made-up repositories (`habitat-app`, `notes-app`), their simulators, emulators, logs, notifications and diffs. Device screens are renders of fictional apps (`frame-sources/`).
 
-It is not published and is not part of Stim. `apps/mobile/mock-server` is the development counterpart; both use the payload helpers in `apps/mobile/mock-server/payloads.mjs` and add each environment's `stage`, `appPresence` and `gitChip` with core's `withDerivedFacts`.
+It is not published and is not part of Stim. `apps/mobile/mock-server` is the development counterpart; both import the shared phone RPC handlers in `apps/mobile/mock-server/fake.mjs` and payload helpers in `payloads.mjs`, and add each environment's `stage`, `appPresence` and `gitChip` with core's `withDerivedFacts`.
 
 ## How it works
 

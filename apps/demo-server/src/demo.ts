@@ -15,7 +15,8 @@ import {
 import { statusViews, withDerivedFacts } from '@stim-cli/core/phone-protocol';
 import { MAX_CLIPBOARD_BYTES } from '@stim-cli/core/protocol';
 
-import { filterRecords, shiftTimestamps, usageHistory } from '../../mobile/mock-server/payloads.mjs';
+import { shiftTimestamps } from '../../mobile/mock-server/payloads.mjs';
+import { createFakeHandlers, type Outcome } from '../../mobile/mock-server/fake.mjs';
 
 export interface Frame {
   mime: string;
@@ -24,7 +25,6 @@ export interface Frame {
   data: string;
 }
 
-type Environment = Parameters<typeof withDerivedFacts>[0];
 type StatusPayload = Parameters<typeof statusViews>[0];
 
 interface LogRecord {
@@ -109,20 +109,11 @@ export interface DemoAuth {
 }
 
 type Params = Record<string, unknown>;
-type Outcome = { result: unknown } | { error: [string, string] } | { deferred: true };
 type Timer = ReturnType<typeof setInterval>;
 
 const PROTOCOL = 2;
-const ACTIONS = ['reload', 'stop'];
-const ACTION_MS = 800;
-const STATUS_MS = 5000;
-const LOGS_MS = 2000;
 const FRAME_MS = 1000;
-const HISTORY_INTERVAL_MS = 5000;
 const MINUTE = 60_000;
-const GB = 1e9;
-const FREE_GB = 212;
-const NOTIFICATION_LOG = 'demo';
 const CONTROL_PLATFORMS = ['ios', 'android', 'web', 'macos'];
 const TOUCH_PHASES = ['down', 'move', 'up'];
 const TAP_SLOP = 0.03;
@@ -278,12 +269,52 @@ export class DemoConnection {
   private closed = false;
   private readonly machine: DemoMachine;
   private readonly peer: Peer;
-  private readonly device: Device;
+  private readonly handlers: ReturnType<typeof createFakeHandlers>;
 
   constructor(machine: DemoMachine, peer: Peer, device: Device) {
     this.machine = machine;
     this.peer = peer;
-    this.device = device;
+    this.handlers = createFakeHandlers(
+      {
+        kind: 'demo',
+        fixtures: machine.fixtures,
+        status: () => machine.status(),
+        shiftMs: machine.shiftMs,
+        logsFor: (params: Params) => machine.logs.filter((record) => record.workspace === params.workspace),
+        notifications: machine.notifications,
+        notificationLog: 'demo',
+        readOnly: false,
+        get recordingEnabled() {
+          return machine.recordingEnabled;
+        },
+        set recordingEnabled(enabled: boolean) {
+          machine.recordingEnabled = enabled;
+        },
+        busy: machine.busy,
+        freeGb: () => 212,
+        historyFreeGb: 212,
+        changedFiles,
+        diffPatches,
+        hello: {
+          server: {
+            name: machine.name,
+            version: machine.fixtures.stimVersion,
+            stim: machine.fixtures.stimVersion,
+            home: machine.fixtures.home,
+          },
+          hostCapabilities: ['physical-ios', 'physical-android', 'macos-window'],
+          features: ['physical-ios', 'physical-android', 'notifications', 'workspace-diff', 'macos-window'],
+          device,
+        },
+      },
+      {
+        send: (message: unknown) => this.send(message),
+        every: (method: string, ms: number, tick: (subscription: string) => void) => this.every(method, ms, tick),
+        later: (fn: () => void) => setTimeout(fn, 0),
+        active: (subscription: string) => this.timers.has(subscription),
+        stop: (subscription: string) => this.stop(subscription),
+      },
+    );
     this.helloTimer = setTimeout(() => {
       if (this.closed) return;
       this.close();
@@ -347,38 +378,7 @@ export class DemoConnection {
   private hello(): Outcome {
     this.greeted = true;
     clearTimeout(this.helloTimer);
-    const { fixtures } = this.machine;
-    return {
-      result: {
-        protocol: PROTOCOL,
-        phoneApi: 2,
-        host: { owner: 'service', capabilities: ['physical-ios', 'physical-android', 'macos-window'], app: null },
-        server: {
-          name: this.machine.name,
-          version: fixtures.stimVersion,
-          stim: fixtures.stimVersion,
-          home: fixtures.home,
-        },
-        capabilities: ['read', 'control'],
-        features: ['physical-ios', 'physical-android', 'notifications', 'workspace-diff', 'macos-window'],
-        actions: ACTIONS,
-        device: this.device,
-      },
-    };
-  }
-
-  private stream(
-    method: string,
-    event: (views: ReturnType<typeof statusViews>, seq: number, payload: StatusPayload) => Record<string, unknown>,
-  ): Outcome {
-    let seq = 0;
-    const send = (subscription: string) => {
-      const payload = this.machine.status();
-      this.send({ subscription, ...event(statusViews(payload), seq++, payload) });
-    };
-    const subscription = this.every(method, STATUS_MS, send);
-    setTimeout(() => this.timers.has(subscription) && send(subscription), 0);
-    return { result: { subscription } };
+    return this.handlers.hello();
   }
 
   private every(method: string, ms: number, tick: (subscription: string) => void): string {
@@ -407,70 +407,9 @@ export class DemoConnection {
     if (limit !== undefined && [...this.kinds.values()].filter((kind) => kind === method).length >= limit) {
       return { error: ['limit-exceeded', `A connection can hold ${limit} ${method} subscriptions.`] };
     }
+    const handler = Object.hasOwn(this.handlers, method) ? this.handlers[method] : undefined;
+    if (handler) return handler(params, id);
     switch (method) {
-      case 'workspaces.subscribe':
-        return this.stream(method, (views, seq) => ({
-          event: 'workspaces',
-          seq,
-          snapshot: { workspaces: views.workspaces, worktrees: views.worktrees, archived: views.archived },
-        }));
-      case 'workspace.subscribe': {
-        const workspace = params.workspace;
-        if (!machine.fixtures.status.environments.some((env) => env.path === workspace)) {
-          return { error: ['unknown-workspace', `${String(workspace)} is not a Stim workspace on this Mac.`] };
-        }
-        return this.stream(method, (views, seq) => ({
-          event: 'workspace',
-          seq,
-          environment: views.details.get(String(workspace)) ?? null,
-        }));
-      }
-      case 'machine.subscribe':
-        return this.stream(method, (views, seq, payload) => ({
-          event: 'machine',
-          seq,
-          machine: views.machine,
-          usage: usageHistory(payload.machine?.owners ?? [], Date.now()),
-        }));
-      case 'archived.list': {
-        const archived = machine.status().archived ?? [];
-        const total = (kind: 'logs' | 'recordings' | 'agentActions' | 'record') =>
-          archived.reduce((sum, archive) => sum + archive.bytes[kind], 0);
-        const byKind = {
-          logs: total('logs'),
-          recordings: total('recordings'),
-          agentActions: total('agentActions'),
-          record: total('record'),
-        };
-        const bytes = archived.reduce((sum, archive) => sum + archive.bytes.total, 0);
-        return { result: { archived, usage: { count: archived.length, bytes, byKind }, next: null } };
-      }
-      case 'logs.query':
-        return {
-          result: {
-            records: filterRecords(
-              machine.logs.filter((record) => record.workspace === params.workspace),
-              params,
-            ),
-          },
-        };
-      case 'logs.subscribe': {
-        const logs = machine.logs.filter((record) => record.workspace === params.workspace);
-        let cursor = 0;
-        const subscription = this.every(method, LOGS_MS, (sub) => {
-          if (!logs.length) return;
-          const record = { ...logs[cursor++ % logs.length], ts: Date.now() };
-          const records = filterRecords([record], { ...params, tail: undefined });
-          if (records.length > 0) this.send({ event: 'logs', subscription: sub, records });
-        });
-        setTimeout(
-          () =>
-            this.timers.has(subscription) &&
-            this.send({ event: 'logs', subscription, records: filterRecords(logs, params) }),
-          0,
-        );
-        return { result: { subscription } };
-      }
       case 'frames.subscribe': {
         const target = deviceTarget(params);
         if (!machine.fixtures.frames[target.key]) {
@@ -482,9 +421,6 @@ export class DemoConnection {
         setTimeout(() => this.timers.has(subscription) && this.sendFrame(feed), 0);
         return { result: { subscription } };
       }
-      case 'unsubscribe':
-        this.stop(String(params.subscription));
-        return { result: {} };
       case 'control.begin':
         return this.beginControl(params);
       case 'control.end':
@@ -502,28 +438,6 @@ export class DemoConnection {
       case 'input.clipboard.set':
       case 'input.clipboard.get':
         return this.input(method, params);
-      case 'workspace.files':
-        return { result: { files: changedFiles(params.group), truncated: false } };
-      case 'workspace.diff':
-        return { result: { path: params.path, patches: diffPatches(params.path) } };
-      case 'stats.get':
-        return { error: ['not-implemented', 'The demo server does not serve stats.'] };
-      case 'build.plan': {
-        const plan = machine.fixtures.plans[String(params.platform)];
-        if (!plan) return { error: ['stim-failed', `The demo server has no ${String(params.platform)} build plan.`] };
-        return {
-          result: { ...plan, ...(params.slot && params.slot !== 'default' ? { slot: params.slot } : {}) },
-        };
-      }
-      case 'settings.get':
-        return {
-          result: {
-            project: null,
-            files: {},
-            settings: [{ key: 'recording.enabled', value: machine.recordingEnabled, origin: 'machine', layers: {} }],
-            unknown: [],
-          },
-        };
       case 'replay.range':
         return { result: { enabled: machine.recordingEnabled, recording: false, spans: [], markers: [] } };
       case 'archive.detail':
@@ -533,29 +447,6 @@ export class DemoConnection {
         return {
           error: ['unknown-subscription', `No video subscription ${String(params.subscription)}.`],
         };
-      case 'frames.keyframe':
-        return { result: {} };
-      case 'recording.set':
-        machine.recordingEnabled = params.enabled === true;
-        return { result: { enabled: machine.recordingEnabled, recordingsDeleted: [] } };
-      case 'action':
-        return this.action(params, id);
-      case 'machine.get':
-        return { result: usage(machine.fixtures.status.capacity.totalMemoryMb) };
-      case 'machine.details':
-        return { result: shiftTimestamps(machine.fixtures.machineDetails, machine.shiftMs) };
-      case 'machine.history':
-        return { result: history(typeof params.sinceMs === 'number' ? params.sinceMs : -Infinity) };
-      case 'notifications.list': {
-        const since = typeof params.since === 'number' ? params.since : 0;
-        return {
-          result: {
-            log: NOTIFICATION_LOG,
-            cursor: machine.notifications[0]?.seq,
-            notifications: machine.notifications.filter((entry) => (entry.seq as number) > since),
-          },
-        };
-      }
       default:
         return { error: ['unknown-method', `Unknown method ${method}.`] };
     }
@@ -620,37 +511,6 @@ export class DemoConnection {
         return { result: {} };
     }
   }
-
-  private action(params: Params, id: unknown): Outcome {
-    const machine = this.machine;
-    const workspace = String(params.workspace);
-    if (!ACTIONS.includes(String(params.action))) {
-      return { error: ['unknown-action', `Unknown action ${String(params.action)}.`] };
-    }
-    const platformOk =
-      params.platform === undefined ||
-      (params.action === 'reload' && ['ios', 'android', 'web'].includes(String(params.platform)));
-    if (!platformOk) return { error: ['bad-request', 'platform must be ios, android or web, and only for reload.'] };
-    const env = machine.fixtures.status.environments.find((candidate) => candidate.path === workspace);
-    if (!env) return { error: ['unknown-workspace', `${workspace} is not a Stim workspace on this Mac.`] };
-    if (params.action === 'reload' && params.platform === undefined && runsBothPlatforms(env)) {
-      return {
-        error: [
-          'action-failed',
-          'STIM_RELOAD_AMBIGUOUS: Both the iOS and Android apps are running. Choose one with `stim reload ios` or `stim reload android`.',
-        ],
-      };
-    }
-    if (machine.busy.has(workspace)) {
-      return { error: ['action-busy', `An action is already running in ${workspace}.`] };
-    }
-    machine.busy.add(workspace);
-    setTimeout(() => {
-      machine.busy.delete(workspace);
-      this.send({ id, result: { action: params.action, workspace, output: { demo: true } } });
-    }, ACTION_MS);
-    return { deferred: true };
-  }
 }
 
 function clipboard(
@@ -703,45 +563,6 @@ function deviceTarget(params: Params): { target: string; key: string; platform: 
 
 function fraction(value: unknown): value is number {
   return typeof value === 'number' && value >= 0 && value <= 1;
-}
-
-function runsBothPlatforms(env: Environment): boolean {
-  const slots = [env, ...(env.slots ?? [])];
-  return slots.some((slot) => slot.ios?.state === 'Booted') && slots.some((slot) => slot.android?.state === 'detected');
-}
-
-function usage(totalMemoryMb: number): unknown {
-  return {
-    volumes: [
-      {
-        mount: '/',
-        holds: ['Workspaces', 'Stim home', 'Simulators'],
-        freeBytes: FREE_GB * GB,
-        totalBytes: 994.66 * GB,
-      },
-    ],
-    memory: { totalBytes: totalMemoryMb * 1024 * 1024, usedBytes: 31.4 * 2 ** 30, pressure: 'normal' },
-    load: { avg1: 6.2, avg5: 5.4, avg15: 4.9, cpus: 14 },
-    cpu: { usage: 0.34, cores: 14 },
-    sampledAt: new Date().toISOString(),
-  };
-}
-
-function history(sinceMs: number): unknown {
-  const end = Math.floor(Date.now() / HISTORY_INTERVAL_MS) * HISTORY_INTERVAL_MS;
-  const samples = [];
-  for (let at = end - 719 * HISTORY_INTERVAL_MS; at <= end; at += HISTORY_INTERVAL_MS) {
-    if (at <= sinceMs) continue;
-    const phase = at / 600_000;
-    samples.push({
-      at,
-      cpu: 0.3 + 0.25 * Math.sin(phase * 2 * Math.PI) ** 2,
-      memoryUsedBytes: (29 + 3 * Math.sin(phase)) * 2 ** 30,
-      memoryPressure: 0,
-      diskFreeBytes: FREE_GB * GB,
-    });
-  }
-  return { intervalMs: HISTORY_INTERVAL_MS, samples };
 }
 
 function notificationSamples(name: string): ({ ago: number } & Record<string, unknown>)[] {

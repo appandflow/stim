@@ -1084,6 +1084,10 @@ The `a4-multi-device` workspace also carries a macOS app that
 `stim macos --remote janics-mac-mini` placed on another machine, added by hand in the
 `macos.host` shape.
 
+The mock server and `apps/demo-server` share the phone RPC handlers in
+`mock-server/fake.mjs`. Fixture loading, authentication, control and frame playback
+stay in each server.
+
 The mock server speaks protocol 2 with `@stim-cli/core/noise-session`, as stim-server does. Its server key and
 the client keys of phones it paired survive its restarts in files in the system
 temporary directory. The mock server grants every phone control and
