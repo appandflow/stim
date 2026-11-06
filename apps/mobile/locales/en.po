@@ -30,8 +30,8 @@ msgid " · running {running}"
 msgstr " · running {running}"
 
 #: src/components/read-only.tsx
-msgid " (`stim-server devices` lists this phone's id)"
-msgstr " (`stim-server devices` lists this phone's id)"
+msgid " (`stim pairings` lists this phone's id)"
+msgstr " (`stim pairings` lists this phone's id)"
 
 #: src/components/device-screen.tsx
 msgid " (asked {fps}fps/{edge}px)"
@@ -309,6 +309,22 @@ msgstr "{live} active"
 msgid "{loadPerCore} per core"
 msgstr "{loadPerCore} per core"
 
+#: src/lib/connection.ts
+msgid "{mac} runs stim {stim}. {desktop}"
+msgstr "{mac} runs stim {stim}. {desktop}"
+
+#: src/lib/connection.ts
+msgid "{mac} runs stim {stim}. {desktop} If Stim Desktop is not installed on {mac}, run npm i -g stim@latest && stim service install."
+msgstr "{mac} runs stim {stim}. {desktop} If Stim Desktop is not installed on {mac}, run npm i -g stim@latest && stim service install."
+
+#: src/lib/connection.ts
+msgid "{mac} runs stim {stim}. On {mac}, run npm i -g stim@latest && stim service install."
+msgstr "{mac} runs stim {stim}. On {mac}, run npm i -g stim@latest && stim service install."
+
+#: src/lib/connection.ts
+msgid "{mac} runs stim {stim}. On {mac}, run npm i -g stim@latest, then restart stim serve."
+msgstr "{mac} runs stim {stim}. On {mac}, run npm i -g stim@latest, then restart stim serve."
+
 #: src/intl/format.ts
 msgid "{mb} MB"
 msgstr "{mb} MB"
@@ -516,10 +532,6 @@ msgstr "{reason} Pair this machine again from Stim Desktop."
 #: src/components/connection-banner.tsx
 msgid "{reason} Retrying in {seconds}s."
 msgstr "{reason} Retrying in {seconds}s."
-
-#: src/components/connection-banner.tsx
-msgid "{reason} Update this app or the Stim server on the machine."
-msgstr "{reason} Update this app or the Stim server on the machine."
 
 #: src/lib/home-list.ts
 #: src/lib/worktree-row.ts
@@ -1472,6 +1484,10 @@ msgstr "Configuring"
 msgid "Connect"
 msgstr "Connect"
 
+#: src/screens/inbox.tsx
+msgid "Connect to a machine to see its notifications."
+msgstr "Connect to a machine to see its notifications."
+
 #: src/screens/workspace-diff.tsx
 msgid "Connect to the machine to view changes."
 msgstr "Connect to the machine to view changes."
@@ -2061,8 +2077,8 @@ msgid "if {machine} or its Stim home was replaced, run stim remote remove {machi
 msgstr "if {machine} or its Stim home was replaced, run stim remote remove {machine}, then stim remote add {machine} on the computer this phone is paired with"
 
 #: src/lib/machine-record.ts
-msgid "If the machine still lists this phone, revoke it there: run stim-server devices to find this phone's id, then stim-server devices revoke <id>."
-msgstr "If the machine still lists this phone, revoke it there: run stim-server devices to find this phone's id, then stim-server devices revoke <id>."
+msgid "If the machine still lists this phone, revoke it there: run stim pairings to find this phone's id, then stim pairings revoke <id>."
+msgstr "If the machine still lists this phone, revoke it there: run stim pairings to find this phone's id, then stim pairings revoke <id>."
 
 #: src/screens/home.tsx
 msgid "In Stim Desktop, open Pair a Phone and scan its QR code. This phone and the machine both need Tailscale."
@@ -2917,8 +2933,8 @@ msgid "on {machine}"
 msgstr "on {machine}"
 
 #: src/lib/build-machines.ts
-msgid "on {machine}, run stim-server service update --release <version>, then run stim remote add {machine} on the computer this phone is paired with"
-msgstr "on {machine}, run stim-server service update --release <version>, then run stim remote add {machine} on the computer this phone is paired with"
+msgid "on {machine}, run stim service update --release <version>, then run stim remote add {machine} on the computer this phone is paired with"
+msgstr "on {machine}, run stim service update --release <version>, then run stim remote add {machine} on the computer this phone is paired with"
 
 #: src/lib/home-list.ts
 msgid "on {macName}"
@@ -3516,8 +3532,8 @@ msgid "run Stim from a git checkout"
 msgstr "run Stim from a git checkout"
 
 #: src/lib/build-machines.ts
-msgid "run stim remote list in a terminal on the computer this phone is paired with, and answer y only if the fingerprint matches the one stim-server setup printed on {machine}"
-msgstr "run stim remote list in a terminal on the computer this phone is paired with, and answer y only if the fingerprint matches the one stim-server setup printed on {machine}"
+msgid "run stim remote list in a terminal on the computer this phone is paired with, and answer y only if the fingerprint matches the one stim setup printed on {machine}"
+msgstr "run stim remote list in a terminal on the computer this phone is paired with, and answer y only if the fingerprint matches the one stim setup printed on {machine}"
 
 #: src/lib/workspaces.ts
 #: src/screens/logs.tsx
@@ -4114,8 +4130,8 @@ msgid "The machine speaks a newer protocol. Update the app."
 msgstr "The machine speaks a newer protocol. Update the app."
 
 #: src/lib/machine-record.ts
-msgid "The machine still lists this phone until you revoke it: on {machine}, find this phone's id with stim-server devices, then run {command}."
-msgstr "The machine still lists this phone until you revoke it: on {machine}, find this phone's id with stim-server devices, then run {command}."
+msgid "The machine still lists this phone until you revoke it: on {machine}, find this phone's id with stim pairings, then run {command}."
+msgstr "The machine still lists this phone until you revoke it: on {machine}, find this phone's id with stim pairings, then run {command}."
 
 #: src/lib/machine-record.ts
 msgid "The machine still lists this phone until you revoke it: on {machine}, run {command}."
@@ -4174,6 +4190,14 @@ msgstr "This device is not running."
 #: src/screens/pair.tsx
 msgid "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
 msgstr "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
+
+#: src/lib/workspaces.ts
+msgid "This machine does not serve app windows."
+msgstr "This machine does not serve app windows."
+
+#: src/lib/workspaces.ts
+msgid "This machine does not stream this device's screen."
+msgstr "This machine does not stream this device's screen."
 
 #: src/screens/mac-status.tsx
 msgid "This machine is not paired."
@@ -4401,38 +4425,13 @@ msgstr "Update ready, tap to restart"
 msgid "Update Stim and its server to open shared workspace links."
 msgstr "Update Stim and its server to open shared workspace links."
 
+#: src/lib/connection.ts
+msgid "Update Stim Desktop (Stim > Check for Updates)."
+msgstr "Update Stim Desktop (Stim > Check for Updates)."
+
 #: src/components/viewer-keyboard.tsx
 msgid "Update Stim on the machine to use modifiers with letters and digits. The extra keys and shortcuts still work."
 msgstr "Update Stim on the machine to use modifiers with letters and digits. The extra keys and shortcuts still work."
-
-#: src/screens/workspace-diff.tsx
-msgid "Update Stim on the machine to view workspace diffs."
-msgstr "Update Stim on the machine to view workspace diffs."
-
-#: src/lib/connection.ts
-msgid "Update stim-server on the machine to load its live status."
-msgstr "Update stim-server on the machine to load its live status."
-
-#: src/screens/mac-status.tsx
-msgid "Update stim-server on the machine to see caches, runtimes and what Stim can free."
-msgstr "Update stim-server on the machine to see caches, runtimes and what Stim can free."
-
-#: src/lib/workspaces.ts
-#: src/lib/workspaces.ts
-msgid "Update stim-server on the machine to see this device's screen."
-msgstr "Update stim-server on the machine to see this device's screen."
-
-#: src/lib/workspaces.ts
-msgid "Update stim-server on the machine to view this app window."
-msgstr "Update stim-server on the machine to view this app window."
-
-#: src/lib/connection.ts
-msgid "Update stim-server on the machine. It speaks an older protocol than this app."
-msgstr "Update stim-server on the machine. It speaks an older protocol than this app."
-
-#: src/screens/inbox.tsx
-msgid "Update stim-server on your machines to keep a history of their notifications."
-msgstr "Update stim-server on your machines to keep a history of their notifications."
 
 #: src/lib/archived.ts
 msgid "Update stim-server to view archived logs"

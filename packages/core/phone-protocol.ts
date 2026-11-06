@@ -463,7 +463,6 @@ export type PhoneHelloResult = OptionalFields<
   actions?: string[];
   server: OptionalFields<Wire.HelloResult['server'], 'home'>;
   host?: { owner: string; capabilities: string[]; app: Wire.HelloHost['app'] } | PhoneStimHostGrants | null;
-  features?: string[];
   capabilities: string[];
   approval?: { state: string; expiresAt: string };
 };

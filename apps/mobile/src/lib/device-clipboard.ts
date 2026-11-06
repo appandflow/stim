@@ -3,15 +3,19 @@ import { MAX_CLIPBOARD_BYTES } from '@stim-cli/core/protocol';
 import type { DevicePlatform } from '@/protocol/types';
 
 /**
- * Whether the device viewer offers the clipboard actions: a control session is on, the server's hello lists
- * `device-clipboard`, and the device is an iOS simulator, an Android emulator or an Android phone. A web page, a
- * native macOS app and a physical iPhone refuse the methods.
+ * Whether the device viewer offers the clipboard actions: a control session is on and the device is an iOS simulator,
+ * an Android emulator or an Android phone. A web page, a native macOS app and a physical iPhone refuse the methods.
  */
-export function clipboardAvailable(
-  { platform, physical, controlling }: { platform: DevicePlatform; physical: boolean; controlling: boolean },
-  features: readonly string[] | null,
-): boolean {
-  if (!controlling || !features?.includes('device-clipboard')) return false;
+export function clipboardAvailable({
+  platform,
+  physical,
+  controlling,
+}: {
+  platform: DevicePlatform;
+  physical: boolean;
+  controlling: boolean;
+}): boolean {
+  if (!controlling) return false;
   return platform === 'android' || (platform === 'ios' && !physical);
 }
 

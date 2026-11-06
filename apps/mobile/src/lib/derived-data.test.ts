@@ -59,7 +59,7 @@ const liveMac: AttentionMachine = {
     server: { name: 'm', version: '1', stim: '1' },
     actions: null,
     capabilities: [],
-    features: [],
+    hostCapabilities: [],
     deviceId: null,
     deviceName: null,
   },

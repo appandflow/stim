@@ -9,7 +9,6 @@ import '@/design/unistyles';
 import mockCaptured from '../../mock-server/fixtures/status.json';
 import mockArchiveDetails from '../../mock-server/fixtures/archive-details.json';
 import type { ArchiveDetailResult, EnvironmentState } from '@/protocol/types';
-import { RequestError } from '@/lib/connection';
 import type { ArchivedWorkspace } from '@/lib/archived';
 
 import { WorkspaceDetail } from './workspace-detail';
@@ -42,7 +41,7 @@ jest.mock('@/hooks/machines', () => ({
   useHasCurrentStatus: () => true,
   useMacConnection: () => ({
     mac: { id: 'mac', name: 'Mac' },
-    state: { kind: 'open', features: [] },
+    state: { kind: 'open', hostCapabilities: [] },
     home: null,
     connection: mockConnection,
   }),
@@ -221,29 +220,4 @@ it('keeps expired recordings available while the server still lists spans', asyn
   const screen = await render(archivedBody());
   expect(screen.getAllByText('Expired').length).toBeGreaterThan(0);
   expect(screen.getByText('tablet')).toBeTruthy();
-});
-
-it('shows default-slot replay on older servers without archive.detail', async () => {
-  mockDetail = { data: null, error: new RequestError({ code: 'unknown-method', message: 'Unknown method' }) };
-  mockConnection.request.mockImplementation(async (method, target) => {
-    if (
-      method !== 'replay.range' ||
-      target.archive !== mockCaptured.payload.archived[0].id ||
-      target.slot !== 'default'
-    )
-      throw new Error('Unexpected replay target');
-    return { spans: [{ start: 100, end: 200 }], markers: [], enabled: true, recording: false };
-  });
-  const screen = await render(archivedBody());
-  expect(await screen.findByText('iOS')).toBeTruthy();
-  expect(screen.getByText('Android')).toBeTruthy();
-  expect(screen.getByText('Web')).toBeTruthy();
-  expect(screen.queryByText(/Update stim-server/)).toBeNull();
-});
-
-it('shows no recording when older server default-slot probes all return empty spans', async () => {
-  mockDetail = { data: null, error: new RequestError({ code: 'unknown-method', message: 'Unknown method' }) };
-  mockConnection.request.mockResolvedValue({ spans: [], markers: [], enabled: false, recording: false });
-  const screen = await render(archivedBody());
-  expect(await screen.findByText('No recording available.')).toBeTruthy();
 });

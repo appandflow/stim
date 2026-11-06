@@ -254,7 +254,7 @@ describe('physical devices', () => {
     expect(livePlatforms(env('/w', { physicalDevices: leased.physicalDevices }))).toEqual([]);
   });
 
-  it("streams a connected leased phone only when the Mac's stim-server lists its platform's feature", () => {
+  it('streams a connected leased phone only when the machine lists its platform in its host capabilities', () => {
     const phones = devicesOf(leased).filter((d) => d.physical);
     const iphone = phones.find((d) => d.platform === 'ios')!;
     const android = { ...phones.find((d) => d.platform === 'android')!, running: true };
@@ -267,7 +267,7 @@ describe('physical devices', () => {
     expect(streamsFrames(iphone, [])).toBe(false);
     expect(streamsFrames(android, null)).toBe(true);
     expect(streamsFrames({ ...android, running: false }, null)).toBe(false);
-    expect(unservedReason(android)).toMatch(/Update stim-server/);
+    expect(unservedReason(android)).toBe("This machine does not stream this device's screen.");
     expect(unservedReason({ ...android, running: false, state: 'disconnected' })).toBe('disconnected');
     const owned = devicesOf(leased).find((d) => !d.physical && d.owned)!;
     expect(streamsFrames(owned, [])).toBe(true);
@@ -430,14 +430,13 @@ it('routes each hosted iOS slot through the paired Mac without using an empty lo
   });
   expect(tablet).toMatchObject({ platform: 'ios', slot: 'tablet', model: 'iPad Pro 27.0', host: 'janics-mac-mini' });
   expect(deviceKey(phone!)).not.toBe(deviceKey(tablet!));
-  expect(streamsFrames(phone!, ['ios-hosted'])).toBe(true);
-  expect(streamsFrames(phone!, [])).toBe(false);
+  expect(streamsFrames(phone!, [])).toBe(true);
   expect(livePlatforms(workspace)).toEqual(['ios']);
   expect(isActive({ ...workspace, live: false })).toBe(true);
   const [stopped] = devicesOf(hostedFixture[1] as EnvironmentState);
   const [unverified] = devicesOf(hostedFixture[2] as EnvironmentState);
-  expect(streamsFrames(stopped!, ['ios-hosted'])).toBe(false);
-  expect(streamsFrames(unverified!, ['ios-hosted'])).toBe(true);
+  expect(streamsFrames(stopped!, [])).toBe(false);
+  expect(streamsFrames(unverified!, [])).toBe(true);
   expect(unverified?.running).toBe(false);
 });
 
@@ -456,14 +455,13 @@ it('routes hosted Android slots without exposing an empty local serial and retai
   });
   expect(tablet).toMatchObject({ platform: 'android', slot: 'tablet', host: 'janics-mac-mini' });
   expect(deviceKey(phone!)).not.toBe(deviceKey(tablet!));
-  expect(streamsFrames(phone!, ['android-hosted'])).toBe(true);
-  expect(streamsFrames(phone!, ['ios-hosted'])).toBe(false);
+  expect(streamsFrames(phone!, [])).toBe(true);
   expect(livePlatforms(workspace)).toEqual(['android']);
   expect(isActive({ ...workspace, live: false })).toBe(true);
   const [stopped] = devicesOf(hostedAndroidFixture[1] as EnvironmentState);
   const [unverified] = devicesOf(hostedAndroidFixture[2] as EnvironmentState);
   expect(stopped).toMatchObject({ state: 'stopped', running: false });
-  expect(streamsFrames(stopped!, ['android-hosted'])).toBe(false);
+  expect(streamsFrames(stopped!, [])).toBe(false);
   expect(unverified).toMatchObject({ state: 'unverified', running: false });
-  expect(streamsFrames(unverified!, ['android-hosted'])).toBe(true);
+  expect(streamsFrames(unverified!, [])).toBe(true);
 });

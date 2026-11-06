@@ -16,7 +16,7 @@ jest.mock('expo-secure-store', () => ({
 jest.mock('react-native-stim-session', () => ({ clientPublicKey: () => mockClientKey }));
 
 const current = { id: 'new', name: 'Mac', endpoint: 'ws://10.0.0.2', pairedAt: '2026-10-13', serverKey: 'k' };
-const legacy = { id: 'old', name: 'Old', endpoint: 'wss://old.ts.net', pairedAt: '2026-09-01' };
+const unpinned = { id: 'old', name: 'Old', endpoint: 'wss://old.ts.net', pairedAt: '2026-09-01' };
 
 /** A fresh copy of the module, since it checks the client key once per launch. */
 function load(): typeof Macs {
@@ -39,14 +39,9 @@ beforeEach(() => {
   mockWrites = 0;
 });
 
-test('drops a protocol 1 pairing and its device token, keeping protocol 2 pairings', async () => {
-  mockSecure.set('stim.macs', JSON.stringify([legacy, current]));
-  mockSecure.set('stim.mac.old.token', 'device-token');
-  mockSecure.set('stim.mac.new.token', 'unrelated');
-
+test('lists only pairings with a pinned server key', async () => {
+  mockSecure.set('stim.macs', JSON.stringify([unpinned, current]));
   expect(await settled(load().listMacs())).toEqual([current]);
-  expect(mockSecure.has('stim.mac.old.token')).toBe(false);
-  expect(JSON.parse(mockSecure.get('stim.macs')!)).toEqual([current]);
 });
 
 test('drops every saved Mac when the session made a new client key, and keeps them when the key is the same', async () => {
@@ -60,17 +55,20 @@ test('drops every saved Mac when the session made a new client key, and keeps th
 });
 
 test('a migration running beside a save does not write back the index the save replaced', async () => {
-  mockSecure.set('stim.macs', JSON.stringify([legacy, current]));
+  mockSecure.set('stim.macs', JSON.stringify([current]));
+  mockSecure.set('stim.client-key', 'key-a');
+  mockClientKey = 'key-b';
   const macs = load();
   const [, saved] = await settled(
     Promise.all([macs.listMacs(), macs.saveMac({ name: 'Studio', endpoint: 'ws://10.0.0.3', serverKey: 'k2' })]),
   );
-  expect((await macs.listMacs()).map((mac) => mac.id)).toEqual([current.id, saved.id]);
+  expect((await macs.listMacs()).map((mac) => mac.id)).toEqual([saved.id]);
 });
 
 test('reports a migration that cannot write instead of returning no Macs', async () => {
-  mockSecure.set('stim.macs', JSON.stringify([legacy, current]));
+  mockSecure.set('stim.macs', JSON.stringify([current]));
   mockSecure.set('stim.client-key', 'key-a');
+  mockClientKey = 'key-b';
   mockFailWrites = true;
   await expect(load().listMacs()).rejects.toThrow('Keychain write failed');
 });

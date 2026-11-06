@@ -7,7 +7,7 @@ const open = (overrides: Partial<Extract<ConnectionState, { kind: 'open' }>> = {
   protocol: 2,
   actions: [],
   capabilities: ['read'],
-  features: [],
+  hostCapabilities: [],
   deviceId: '1a2b3c4d',
   deviceName: 'Janic iPhone',
   ...overrides,
@@ -29,13 +29,13 @@ test('shows this phone record from hello, and nothing while not connected', () =
 
 test('names the machine by its own name and gives the revoke command with this phone id', () => {
   expect(removeNotice(open())).toBe(
-    'The machine still lists this phone until you revoke it: on studio, run stim-server devices revoke 1a2b3c4d.',
+    'The machine still lists this phone until you revoke it: on studio, run stim pairings revoke 1a2b3c4d.',
   );
 });
 
 test('says how to find the id from a server that does not report it, or while not connected', () => {
-  expect(removeNotice(open({ deviceId: null }))).toContain("find this phone's id with stim-server devices");
-  expect(removeNotice({ kind: 'closed' })).toContain('stim-server devices revoke <id>');
+  expect(removeNotice(open({ deviceId: null }))).toContain("find this phone's id with stim pairings");
+  expect(removeNotice({ kind: 'closed' })).toContain('stim pairings revoke <id>');
 });
 
 test('says there is nothing to revoke after the machine refused this phone as unknown', () => {

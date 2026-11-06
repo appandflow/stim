@@ -9,7 +9,7 @@ const machine = (patch: Partial<DrawerMachine> = {}): DrawerMachine => ({
     server: { home: null, stim: '1', version: '1' } as never,
     actions: null,
     capabilities: [],
-    features: [],
+    hostCapabilities: [],
     deviceId: null,
     deviceName: null,
   },

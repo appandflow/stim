@@ -10,7 +10,6 @@ import { WorkspaceDiff } from './workspace-diff';
 import { BuildDetails } from './build-details';
 
 let mockFocused = false;
-let mockFeatures: string[] = ['workspace-diff'];
 const mockRequest = jest.fn();
 const mockPush = jest.fn();
 const mockConnection = { request: mockRequest };
@@ -25,7 +24,7 @@ jest.mock('@/hooks/machines', () => ({
   useStatus: () => null,
   useMacConnection: () => ({
     connection: mockConnection,
-    state: { kind: 'open', features: mockFeatures },
+    state: { kind: 'open', hostCapabilities: [] },
     mac: { id: 'fixture' },
   }),
 }));
@@ -67,7 +66,6 @@ jest.mock('@/components/touch', () => ({
 
 beforeEach(() => {
   mockFocused = false;
-  mockFeatures = ['workspace-diff'];
   mockPlan = null;
   jest.clearAllMocks();
 });
@@ -107,14 +105,6 @@ test('asks only for a selected patch and ignores its stale reply after the works
   ]);
   expect(screen.getByText('+current')).toBeTruthy();
   expect(screen.queryByText('+stale')).toBeNull();
-});
-
-test('keeps older servers view-only without sending an unsupported request', async () => {
-  mockFocused = true;
-  mockFeatures = [];
-  const screen = await render(<WorkspaceDiff path="/fixture" group="changed" />);
-  expect(mockRequest).not.toHaveBeenCalled();
-  expect(screen.getByText('Update Stim on the machine to view workspace diffs.')).toBeTruthy();
 });
 
 test('omits trailing newline rows while preserving blank lines within new file contents', async () => {

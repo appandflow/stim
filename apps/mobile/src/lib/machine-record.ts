@@ -5,7 +5,7 @@ import type { ConnectionState } from '@/lib/connection';
 export interface MachineRecord {
   /** The machine's own name, when it differs from the label this phone gives it. */
   serverName: string | null;
-  /** This phone's record on the machine: the name and id `stim-server devices` lists. */
+  /** This phone's record on the machine: the name and id `stim pairings` lists. */
   deviceName: string | null;
   deviceId: string | null;
 }
@@ -21,7 +21,7 @@ export function machineRecord(state: ConnectionState, label: string): MachineRec
 }
 
 function revokeCommand(deviceId: string | null): string {
-  return `stim-server devices revoke ${deviceId ?? '<id>'}`;
+  return `stim pairings revoke ${deviceId ?? '<id>'}`;
 }
 
 /**
@@ -33,11 +33,11 @@ export function removeNotice(state: ConnectionState): string {
     return t`The machine no longer lists this phone, so there is nothing to revoke there.`;
   }
   if (state.kind !== 'open') {
-    return t`If the machine still lists this phone, revoke it there: run stim-server devices to find this phone's id, then stim-server devices revoke <id>.`;
+    return t`If the machine still lists this phone, revoke it there: run stim pairings to find this phone's id, then stim pairings revoke <id>.`;
   }
   const machine = state.server.name;
   const command = revokeCommand(state.deviceId);
   return state.deviceId
     ? t`The machine still lists this phone until you revoke it: on ${machine}, run ${command}.`
-    : t`The machine still lists this phone until you revoke it: on ${machine}, find this phone's id with stim-server devices, then run ${command}.`;
+    : t`The machine still lists this phone until you revoke it: on ${machine}, find this phone's id with stim pairings, then run ${command}.`;
 }
