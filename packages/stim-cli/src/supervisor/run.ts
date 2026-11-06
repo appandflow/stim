@@ -57,6 +57,7 @@ import { trackMetroWatchRoots } from '../stimd/metro/watchman-roots.ts';
 import { daemonClaimHeld } from '../daemon/client.ts';
 import { liveShareKeepReason } from '../local-server.ts';
 import { runWatchman, type WatchmanCommand } from '../watchman.ts';
+import { ownStoreEngine } from '../daemon/engine-switch.ts';
 
 export {
   MODE_BARE,
@@ -210,7 +211,8 @@ export async function runSupervisor({
     onExit(1);
     return null;
   }
-  const record = { pid: process.pid, processToken, port, mode, startedAt };
+  const engineDir = ownStoreEngine()?.build;
+  const record = { pid: process.pid, processToken, port, mode, startedAt, ...(engineDir ? { engineDir } : {}) };
   const vanished = vanishedSupervisorMessage(readWorkspaceState(root)?.supervisor);
   if (vanished) writer.write({ src: 'metro', level: 'warn', event: 'supervisor_vanished', msg: vanished });
 
