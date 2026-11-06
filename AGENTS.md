@@ -879,22 +879,17 @@ redirect. Remove every directory a test creates in `afterEach`, `afterAll` or
 `onTestFinished`.
 
 The EAS session ledger and project lock under `~/.stim/machine/eas` ignore
-`STIM_HOME` so every Stim home finds billable sessions. A test that reaches
-them passes a temporary `ledgerRoot`, `machineRoot`, or `easLedgerRoot`, or
-points `HOME` (and `USERPROFILE` on Windows) at a temporary directory.
-`vitest.setup.ts` records the real root in `STIM_TEST_GUARD_REAL_EAS_ROOT`
-before any test can redirect `HOME`, and the ledger and project-lock writers
-throw when they would write that root while the marker is set. Attribution is
-per process, so a real `stim` run elsewhere on the machine, which carries no
-marker, is unaffected.
+`STIM_HOME` so every Stim home finds billable sessions. `vitest.setup.ts`
+points `HOME` and `USERPROFILE` at a directory in the run's private `TMPDIR`,
+so no test reaches the developer's `~/.stim/machine`; a test that needs its
+own passes a temporary `ledgerRoot`, `machineRoot`, or `easLedgerRoot`, or
+points `HOME` at another temporary directory.
 
 The machine list of Stim homes, `~/.stim/machine/homes/homes.json`, follows the
 same rules. A home other than `~/.stim` lists itself there when it creates a
 workspace or a device; registration is best-effort bookkeeping and never fails
-the command. Tests pass a temporary `root` or point `HOME` at a temporary
-directory, `vitest.setup.ts` records the real root in
-`STIM_TEST_GUARD_REAL_HOMES_ROOT`, and its writers throw when they would write
-that root while the marker is set.
+the command. Tests reach it under the redirected `HOME`, or pass a temporary
+`root`.
 
 ### 6. Compare canonical paths
 

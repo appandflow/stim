@@ -1,10 +1,9 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readStimHomes, stimHomesFile, stimHomesLock } from '@stim-cli/core/state';
 import { readClaimSet } from '../ownership-claim.ts';
 import { recordCreatedDevice, forgetCreatedDevice } from '../devices/created-devices.ts';
-import { STIM_HOMES_TEST_GUARD_ROOT_ENV } from '../engine/eas-machine-root-guard-env.ts';
 import { forgetStimHomes, isTrackedStimHome, noteStimHome, recordStimHome } from '../engine/stim-home-registry.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 
@@ -32,7 +31,6 @@ describe('the machine list of Stim homes', () => {
       HOME: process.env.HOME,
       USERPROFILE: process.env.USERPROFILE,
       STIM_HOME: process.env.STIM_HOME,
-      [STIM_HOMES_TEST_GUARD_ROOT_ENV]: process.env[STIM_HOMES_TEST_GUARD_ROOT_ENV],
     };
   });
 
@@ -106,19 +104,6 @@ describe('the machine list of Stim homes', () => {
       expect(() => recordStimHome(join(dir, 'scratch'), { root })).toThrow(/unreadable/);
       expect(readFileSync(stimHomesFile(root), 'utf-8')).toBe('{ not json');
     });
-
-    test('refuses the guarded machine root', () => {
-      process.env[STIM_HOMES_TEST_GUARD_ROOT_ENV] = root;
-      expect(() => recordStimHome(join(dir, 'scratch'), { root })).toThrow(/Refusing to write the real machine list/);
-      expect(() => forgetStimHomes([join(dir, 'scratch')], () => true, root)).toThrow(
-        /Refusing to write the real machine list/,
-      );
-      expect(existsSync(stimHomesFile(root))).toBe(false);
-    });
-
-    test('refuses the real machine root by default, as the test setup records it', () => {
-      expect(() => recordStimHome(join(dir, 'scratch'))).toThrow(/Refusing to write the real machine list/);
-    });
   });
 
   describe('forgetStimHomes', () => {
@@ -176,10 +161,11 @@ describe('the machine list of Stim homes', () => {
     });
 
     test('a refused write never fails the workspace or the device record', () => {
-      process.env[STIM_HOMES_TEST_GUARD_ROOT_ENV] = machineRoot;
+      mkdirSync(machineRoot, { recursive: true });
+      writeFileSync(stimHomesFile(machineRoot), '{ not json');
       expect(() => ensureWorkspaceStorage(join(dir, 'project'))).not.toThrow();
       expect(() => recordCreatedDevice('ios', 'UDID-1')).not.toThrow();
-      expect(existsSync(stimHomesFile(machineRoot))).toBe(false);
+      expect(readFileSync(stimHomesFile(machineRoot), 'utf-8')).toBe('{ not json');
     });
   });
 });
