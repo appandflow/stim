@@ -60,7 +60,7 @@ struct AdvancedSettingsView: View {
         Text("stim-server")
       } footer: {
         Text(
-          "Stim Desktop runs stim-server while it is open, on this Mac only, for device replay, the diff viewer, archived logs and hosted views. It uses one that already serves this Stim home."
+          "Stim Desktop uses this Stim home's stimd for device replay, the diff viewer, archived logs and hosted views, and starts it from the Stim engine when none runs. Quitting Stim Desktop leaves it running."
         )
         .foregroundStyle(Palette.tertiary)
       }

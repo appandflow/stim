@@ -1290,10 +1290,14 @@ stimd writes to `$STIM_HOME/run/desktop.key` (mode 0600; Desktop refuses a file 
 owns, a link, or one others can read) with `desktop.authenticate`'s HMAC challenge, so the
 key itself never crosses the socket, a log or another process. Desktop never writes the key.
 
-stimd starts its network listener on demand. Desktop asks for it with `net.ensure` when
-**Allow connections** is on, before pairing a phone and before route setup, and then reads
-`/health` on the listener's loopback port for Tailscale and route state. Without a listener
-the Connections page shows the engine as running, with Tailscale unknown.
+Desktop's requests reach stimd's network listener, which stimd starts on demand: each
+connection asks `net.ensure`, then `net.connect` hands it to the listener, where it runs
+`hello` and `desktop.authenticate`. With **Allow connections** off the request asks for a
+loopback-only listener, and for a Stim home other than `~/.stim` on a port the system
+picks, so a test copy on a private home never meets the Mac's own server on 7787. A thread
+that already runs keeps its options. Desktop reads `/health` on the listener's port for
+Tailscale and route state. When stimd cannot start the listener, such as when an older
+Stim Desktop's server holds 7787, the sidebar footer shows stimd's reason.
 
 Native reads of `current.json` and `run/stimd.json` check `format`. A format this Desktop
 does not know shows `Partial report: update Stim Desktop (Stim > Check for Updates)` in the
