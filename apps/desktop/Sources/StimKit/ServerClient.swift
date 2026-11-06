@@ -664,14 +664,15 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     UnixSocketTransport(path: socket.path, onListening: { _ in }, onEvent: onEvent)
   }
 
-  /// `loopbackOnly` asks for a listener that serves this Mac only, while Allow connections is off.
+  /// `loopbackOnly` asks for a listener that serves this Mac only, while Allow connections is off, and `port` for a
+  /// port other than the default 7787, 0 for one the system picks.
   public init(
-    path: String, loopbackOnly: Bool = true, onListening: @escaping @MainActor (Int) -> Void,
+    path: String, loopbackOnly: Bool = true, port: Int? = nil, onListening: @escaping @MainActor (Int) -> Void,
     onEvent: @escaping @MainActor (ServerTransportEvent) -> Void
   ) {
     socket = WebSocketStream(
       to: .unix(path: path), using: .tcp, host: "localhost", path: "/", maximumMessageSize: Self.maximumMessageSize,
-      prelude: Self.stimdPrelude(loopbackOnly: loopbackOnly, onListening: onListening)
+      prelude: Self.stimdPrelude(loopbackOnly: loopbackOnly, port: port, onListening: onListening)
     ) { event in
       switch event {
       case .message(.text, let payload): onEvent(.text(String(decoding: payload, as: UTF8.self)))
@@ -688,7 +689,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   public func close() { socket.close() }
 
   /// The lines stimd's CLI socket reads before it hands the connection to its network listener.
-  static func stimdPrelude(loopbackOnly: Bool, onListening: @escaping @MainActor (Int) -> Void)
+  static func stimdPrelude(loopbackOnly: Bool, port: Int?, onListening: @escaping @MainActor (Int) -> Void)
     -> [WebSocketStream.PreludeStep]
   {
     let encoder = JSONEncoder()
@@ -702,7 +703,13 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
         reply["op"] == .string("hello") ? nil : reply["message"]?.string ?? "stimd refused Stim Desktop."
       },
       // compat end
-      .init(line: line(["op": .string("net.ensure"), "params": .object(["loopbackOnly": .bool(loopbackOnly)])])) { reply in
+      .init(
+        line: line([
+          "op": .string("net.ensure"),
+          "params": .object(
+            ["loopbackOnly": .bool(loopbackOnly)].merging(port.map { ["port": .number(Double($0))] } ?? [:]) { $1 }),
+        ])
+      ) { reply in
         guard reply["op"] == .string("net"), reply["listening"] == .bool(true),
           let port = reply["port"]?.number.flatMap(ServerProtocol.exactInteger)
         else { return reply["message"]?.string ?? "stimd did not start its network listener." }

@@ -40,6 +40,8 @@ import Testing
     let scratch = EngineRoot(environment: ["STIM_ENGINE_ROOT": "/tmp/s/engine", "STIM_HOME": "/tmp/h"], home: "/Users/me")
     #expect(scratch.stimd == "/tmp/s/engine/bin/stimd")
     #expect(scratch.runtime == "/tmp/s/runtime")
+    #expect(
+      EngineRoot(environment: ["HOME": "/tmp/app-home"], home: "/Users/me").pointer == "/tmp/app-home/.stim/engine/current.json")
   }
 
   private func pointer(_ version: String, pinned: Bool = false) throws -> EnginePointer {

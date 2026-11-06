@@ -249,7 +249,8 @@ struct WebSocketFramingTests {
     var listening: Int?
     let stream = WebSocketStream(
       to: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!), using: .tcp, host: "localhost",
-      path: "/", maximumMessageSize: 1024, prelude: UnixSocketTransport.stimdPrelude(loopbackOnly: true) { listening = $0 }
+      path: "/", maximumMessageSize: 1024,
+      prelude: UnixSocketTransport.stimdPrelude(loopbackOnly: true, port: 0) { listening = $0 }
     ) { events.append($0) }
     for _ in 0..<100 where events.isEmpty && !peer.received.contains("\r\n\r\n") {
       try await Task.sleep(for: .milliseconds(10))
@@ -267,7 +268,7 @@ struct WebSocketFramingTests {
     let lines = peer.received.split(separator: "\n", maxSplits: 3).map(String.init)
     #expect(
       lines.prefix(3) == [
-        #"{"kind":"desktop"}"#, #"{"op":"net.ensure","params":{"loopbackOnly":true}}"#, #"{"op":"net.connect"}"#,
+        #"{"kind":"desktop"}"#, #"{"op":"net.ensure","params":{"loopbackOnly":true,"port":0}}"#, #"{"op":"net.connect"}"#,
       ])
     #expect(lines.count == 4 && lines[3].hasPrefix("GET / HTTP/1.1"))
     #expect(listening == 7801)

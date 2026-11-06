@@ -6,8 +6,10 @@ import Foundation
 public struct EngineRoot: Equatable, Sendable {
   public let path: String
 
+  /// `home` is the fallback for an environment without `HOME`, which the CLI's `os.homedir()` reads first.
   public init(environment: [String: String], home: String = NSHomeDirectory()) {
     let root = environment["STIM_ENGINE_ROOT"] ?? ""
+    let home = environment["HOME"].flatMap { $0.hasPrefix("/") ? $0 : nil } ?? home
     path = root.hasPrefix("/") ? root : "\(home)/.stim/engine"
   }
 

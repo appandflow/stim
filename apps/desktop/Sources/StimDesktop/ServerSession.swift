@@ -163,8 +163,9 @@ import StimKit
       endpoint: URL(fileURLWithPath: record.socket), clientName: Self.clientName, clientVersion: version,
       bootstrap: { DesktopBootstrapKey.read(stimHome: home) },
       transport: { [weak controller] socket, onEvent in
-        UnixSocketTransport(
-          path: socket.path, loopbackOnly: !UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones),
+        let loopbackOnly = !UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones)
+        return UnixSocketTransport(
+          path: socket.path, loopbackOnly: loopbackOnly, port: loopbackOnly && !StimHome.isDefault(home) ? 0 : nil,
           onListening: { controller?.netListening($0) }, onEvent: onEvent)
       })
     client.onState = { [weak self, weak client] state in

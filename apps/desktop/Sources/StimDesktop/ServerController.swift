@@ -333,8 +333,17 @@ final class ServerController: ObservableObject {
     startDetail = "Installing the Stim engine \(version)"
     defer { startDetail = nil }
     let install = EngineInstall.installRequest(version: version, node: node, environment: environment, home: home)
-    guard let result = try? await install.run(), result.succeeded else {
-      return fail(.engineUnavailable, "Could not install the Stim engine \(version) with npx.", generation: current)
+    let result = try? await install.run()
+    guard let result, result.succeeded else {
+      let detail =
+        result.map { result in
+          stderrTail(
+            result.stderrText.split(whereSeparator: \.isNewline).filter { !$0.hasPrefix("npm notice") }
+              .joined(separator: "\n"))
+        } ?? ""
+      return fail(
+        .engineUnavailable, "Could not install the Stim engine \(version) with npx.\(detail.isEmpty ? "" : "\n\(detail)")",
+        generation: current)
     }
     UserDefaults.standard.set(true, forKey: AppPreferences.Key.engineInstalledByDesktop)
     return current == generation
