@@ -1,4 +1,4 @@
-import { existsSync, renameSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { installServer } from '@stim-cli/server/release-install';
 import { fetchTree, removeTree, scratchName, seal, selfTest } from '../engine-store/tree.ts';
@@ -10,10 +10,13 @@ export type JobSource = { release: string } | { from: string };
 
 /**
  * Installs a client's build into the engine store at `root` for offload jobs, without making it this machine's
- * engine, and returns its build id once the tree passed its self-test. Throws when the installed build is not `build`.
+ * engine, and returns its build id. The tree is sealed and self-tested in a private directory and appears in the store
+ * only once it passed, so no job runs a tree that fails. Throws when the installed build is not `build`.
  */
 export async function installJobBuild(root: string, build: string, source: JobSource): Promise<string> {
-  const scratch = join(root, scratchName());
+  const staging = join(root, scratchName());
+  const scratch = join(staging, scratchName());
+  mkdirSync(staging);
   try {
     if ('release' in source) {
       try {
@@ -32,21 +35,22 @@ export async function installJobBuild(root: string, build: string, source: JobSo
         rmSync(installs, { recursive: true, force: true });
       }
     }
-    const existed = existsSync(join(root, build));
-    const sealed = seal(root, scratch);
+    const sealed = seal(staging, scratch);
     if (sealed !== build)
       throw Object.assign(
         new Error(`${'release' in source ? `stim@${source.release}` : 'the package'} is build ${sealed}, not ${build}`),
         { mismatch: true },
       );
-    try {
-      await selfTest(root, sealed);
-    } catch (error) {
-      if (!existed) removeTree(join(root, sealed));
-      throw error;
+    await selfTest(staging, sealed);
+    const tree = join(staging, build);
+    if (!existsSync(join(root, build))) {
+      const { mode } = statSync(tree);
+      chmodSync(tree, mode | 0o200);
+      renameSync(tree, join(root, build));
+      chmodSync(join(root, build), mode);
     }
     return sealed;
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    removeTree(staging);
   }
 }
