@@ -94,17 +94,16 @@ done
 ```
 
 Use `X.Y.Z-rc.N` for a release candidate. The workflow computes the publish
-dist-tag itself from the tag and the registry: it reads `npm view
-@stim-cli/core version` -- the first package every run publishes, not
-`@stim-cli/server`, the last -- as its stable-or-not signal, and a candidate
+dist-tag itself from the tag and the registry: it reads `npm view stim version`
+-- the package installs start from -- as its stable-or-not signal, and a candidate
 publishes to `next` instead of `latest` only when that signal is already a
 stable version, so a plain `npm install` never regresses to a candidate.
 Every other publish -- a stable version, or a candidate published while no
 stable release exists yet, including a first-ever publish (`E404`) -- lands
-on `latest`, which is what installs resolve. Probing the first-published
-package instead of the last fails safe if a release dies mid-run: the worst
-case is a candidate landing on `next` a little early, never a candidate
-stomping `latest` on packages that already went stable. The gate assumes a
+on `latest`, which is what installs resolve. Since its first stable release,
+`stim`'s `latest` has been stable. A run that dies before publishing `stim`
+leaves the previous stable version as the signal, so a candidate still goes
+to `next` and never replaces a stable `latest`. The gate assumes a
 partial release is always completed or recovered (see
 [docs/release-recovery.md](./docs/release-recovery.md)) before the next tag
 lands; the workflow does not check that on its own. A tag higher than the
