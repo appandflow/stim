@@ -15,11 +15,13 @@ import {
   type NoiseSocket,
 } from '@stim-cli/core/noise-session';
 import type { AuditRecord } from './actions.ts';
-import { isExtendedDeviceKey, type SessionTarget } from './control.ts';
+import type { SessionTarget } from './control.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { presenceKey, type PresenceHub } from './presence.ts';
 import {
   FRAME_FPS,
+  PEER,
+  peerTooOld,
   TOUCH_PHASES,
   VIDEO_KEYFRAME,
   type ProtocolError,
@@ -78,7 +80,9 @@ export class Upstream {
   private holding: NodeJS.Immediate | null = null;
   private ended: Error | null = null;
   private users = 0;
-  private features: string[] = [];
+  /** The host's `peer`, 0 when its `hello` sends none, and the version of the `stim` it runs. */
+  peer = 0;
+  stim = 'an older stim';
   onClose: (() => void) | null = null;
   connectMs = 0;
   helloMs = 0;
@@ -184,7 +188,10 @@ export class Upstream {
     }
     this.socket.on('message', (data: Buffer, binary: boolean) => this.receive(data, binary));
     this.connectMs = Date.now() - started;
-    const reply = await this.request('hello', { client: { name: 'stim-server', version }, access: capability });
+    const reply = await this.request('hello', {
+      client: { name: 'stim-server', version, peer: PEER },
+      access: capability,
+    });
     this.helloMs = Date.now() - started - this.connectMs;
     if ('error' in reply) throw hostError(reply.error);
     if (
@@ -194,8 +201,9 @@ export class Upstream {
     ) {
       throw new Error(`the host did not grant ${capability} access`);
     }
-    if (Array.isArray(reply.result.features))
-      this.features = reply.result.features.filter((feature): feature is string => typeof feature === 'string');
+    if (typeof reply.result.peer === 'number') this.peer = reply.result.peer;
+    if (isJsonObject(reply.result.server) && typeof reply.result.server.stim === 'string')
+      this.stim = reply.result.server.stim;
   }
 
   request(method: string, params: unknown): Promise<Reply> {
@@ -233,10 +241,6 @@ export class Upstream {
     return () => {
       if (this.routes.get(name) === route) this.routes.delete(name);
     };
-  }
-
-  supports(feature: string): boolean {
-    return this.features.includes(feature);
   }
 
   lease(): Lease {
@@ -311,7 +315,14 @@ export class HostConnections {
       const created = !entry;
       if (!entry) {
         const connection = new Upstream(endpoint, credential.serverKey);
-        const opened = { connection, ready: connection.open(this.version) };
+        const ready = (async () => {
+          await connection.open(this.version);
+          // compat C12 permanent
+          if (connection.peer < PEER)
+            throw new FatalHostError(peerTooOld(host.machine, connection.stim, connection.peer, this.version));
+          // compat end
+        })();
+        const opened = { connection, ready };
         connection.onClose = () => {
           if (this.open.get(key) === opened) this.open.delete(key);
         };
@@ -467,7 +478,7 @@ export class HostedRelay {
         keyframeRetry = null;
         if (!this.frames.has(subscription)) return;
         if (this.buffered() > DEFAULT_VIDEO_LIMITS.congestedBytes) {
-          if (connection.supports('hosted-congestion') && Date.now() - congestedAt >= CONGESTION_NOTICE_MS) {
+          if (Date.now() - congestedAt >= CONGESTION_NOTICE_MS) {
             congestedAt = Date.now();
             void connection.request('device-host.frames.congested', { subscription: hostSubscription }).catch(() => {});
           }
@@ -710,31 +721,6 @@ export class HostedRelay {
     if (!isJsonObject(params) || typeof params.session !== 'string') return false;
     const entry = this.controls.get(params.session);
     if (!entry) return false;
-    if (method.startsWith('input.clipboard.') && !entry.lease.connection.supports('device-clipboard')) {
-      this.send({
-        id,
-        error: {
-          code: 'action-failed',
-          message: 'The Mac hosting this device cannot set or read a clipboard: update its Stim.',
-        },
-      });
-      return true;
-    }
-    if (
-      method === 'input.key' &&
-      entry.target.platform !== 'macos' &&
-      isExtendedDeviceKey(params.key, params.modifiers) &&
-      !entry.lease.connection.supports('device-keyboard')
-    ) {
-      this.send({
-        id,
-        error: {
-          code: 'action-failed',
-          message: 'The Mac hosting this device takes only the arrows and Escape as keys: update its Stim.',
-        },
-      });
-      return true;
-    }
     if (method === 'input.touch') this.show(params.session, entry, params);
     const response = this.forward(id, entry.lease.connection, `device-host.${method}`, {
       ...params,

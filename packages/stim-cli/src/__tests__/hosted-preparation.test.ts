@@ -84,7 +84,6 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     recorded = undefined;
     const connection = Object.create(BuildConnection.prototype) as BuildConnection;
     connection.close = vi.fn<() => void>();
-    connection.supports = () => true;
     connection.request = async (method, params) => {
       methods.push({ method, params, at: Date.now() });
       if (method === 'device-host.offer')

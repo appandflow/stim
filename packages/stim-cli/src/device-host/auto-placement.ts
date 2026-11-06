@@ -14,7 +14,6 @@ import {
   type HostedNativePlacement,
   type HostedIosDevice,
   type HostedAndroidDevice,
-  type HostedAppOffer,
 } from '@stim-cli/core/state';
 import { measureDisk } from '../daemon/measure.ts';
 import { diskPressure, diskThresholds } from '../daemon/pressure.ts';
@@ -25,7 +24,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
 import { hostingMachines } from './machines.ts';
-import { call, connectHost, requireHostedAppMode, type HostConnection } from './hosted-client.ts';
+import { call, connectHost, type HostConnection } from './hosted-client.ts';
 import { prepareHostedNative, type HostedNativeTarget } from './hosted-native.ts';
 import { readHostedNative, writeHostedNativeAsync } from '../workspace/placement-state.ts';
 import {
@@ -58,7 +57,6 @@ export async function probeHost(
   machine: string,
   platform: 'ios' | 'android' | 'macos',
   selectors: HostedDeviceSelectors,
-  appMode?: HostedAppOffer['mode'],
   signal?: AbortSignal,
 ): Promise<{ probe: PlacementProbe; target?: HostedNativeTarget }> {
   let host: HostConnection | undefined;
@@ -68,7 +66,6 @@ export async function probeHost(
     host = await connectHost(machine, 3000, true, signal);
     signal?.addEventListener('abort', cancel, { once: true });
     signal?.throwIfAborted();
-    if (platform !== 'macos') requireHostedAppMode(host, platform, appMode);
     const offer = await call(host, 'device-host.offer', { platform, ...selectors }, Math.max(1, deadline - Date.now()));
     signal?.throwIfAborted();
     const resources = isJsonObject(offer.resources) ? offer.resources : {};
@@ -167,7 +164,6 @@ export async function automaticDevicePlacement(
     platform,
     placement = 'auto',
     selectors,
-    appMode,
     buildMachine,
     noWait,
     waitMs = REMOTE_ONLY_WAIT_MS,
@@ -181,7 +177,6 @@ export async function automaticDevicePlacement(
     platform: 'ios' | 'android' | 'macos';
     placement?: AutomaticPlacement;
     selectors: HostedDeviceSelectors;
-    appMode?: HostedAppOffer['mode'];
     buildMachine?: string;
     noWait: boolean;
     /** How long remote-only waits for a full or loaded host before it refuses with STIM_AT_CAPACITY. */
@@ -235,7 +230,7 @@ export async function automaticDevicePlacement(
   const recorded: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice> | undefined =
     platform === 'macos' ? undefined : read(root, platform, slot)[slot];
   if (recorded && platform !== 'macos') {
-    const target = await resume(recorded.machine, selectors, recorded, platform, true, appMode);
+    const target = await resume(recorded.machine, selectors, recorded, platform, true);
     if (target)
       return {
         target,
@@ -292,7 +287,7 @@ export async function automaticDevicePlacement(
     probes =
       early.kind === 'local' && early.skipped.length === 0
         ? []
-        : await Promise.all(entries.map((machine) => probe(machine, platform, selectors, appMode, signal)));
+        : await Promise.all(entries.map((machine) => probe(machine, platform, selectors, signal)));
     offers = probes.length ? probes.map((each) => each.probe) : notProbed;
     decision = decideDevicePlacement(inputs(offers));
     if (decision.kind !== 'refused' || !decision.hostsFull) break;

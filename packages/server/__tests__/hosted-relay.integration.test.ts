@@ -5,17 +5,10 @@ import type { AddressInfo } from 'node:net';
 import { WebSocketServer } from 'ws';
 import { generateNoiseKeyPair, type NoiseKeyPair } from '@stim-cli/core/noise';
 import { acceptNoise, newSecret, type NoiseSocket } from '@stim-cli/core/noise-session';
-import {
-  clientIdentity,
-  deviceHostMachinesFile,
-  workspaceStateFile,
-  type Endpoint,
-  readMacosRecord,
-} from '@stim-cli/core/state';
-import { HostConnections, HostedRelay } from '../src/hosted-relay.ts';
+import { clientIdentity, deviceHostMachinesFile, workspaceStateFile, type Endpoint } from '@stim-cli/core/state';
 import { readAudit } from '../src/actions.ts';
-import { MAX_INPUT_TEXT, type ServerMessage } from '../src/protocol.ts';
-import { DEFAULT_VIDEO_LIMITS, videoPacket } from '../src/video.ts';
+import { DESKTOP_API, MAX_INPUT_TEXT, PEER } from '../src/protocol.ts';
+import { videoPacket } from '../src/video.ts';
 import { createPairingToken, capabilitiesFor, grantDevice } from '../src/registry.ts';
 import { startServer, type RunningServer } from '../src/server.ts';
 import { noiseConnect, terminateClients } from './noise-client.ts';
@@ -23,7 +16,7 @@ import { noiseConnect, terminateClients } from './noise-client.ts';
 const HOST_SESSION = '12345678-1234-1234-1234-123456789abc';
 const CONTROL = 'c1';
 const UPSTREAM = 'host-video-subscription';
-const CLIENT = { name: 'test desktop', version: '1' };
+const CLIENT = { name: 'test desktop', version: '1', desktopApi: DESKTOP_API };
 type Json = Record<string, unknown>;
 type Reply = { result: { subscription: string; session?: string }; error: { code: string; message: string } };
 type HostRequest = {
@@ -52,7 +45,7 @@ let endpointCalls: Endpoint[];
 let credentialState: 'pending' | 'approved';
 let helloError: string | undefined;
 let helloCapabilities: string[];
-let helloFeatures: string[];
+let helloPeer: number | undefined;
 let heldMethods: Set<string>;
 let heldReplies: (() => void)[];
 let endControlOnBegin: boolean;
@@ -99,7 +92,7 @@ beforeEach(async () => {
   credentialState = 'approved';
   helloError = undefined;
   helloCapabilities = ['device-host'];
-  helloFeatures = [];
+  helloPeer = PEER;
   heldMethods = new Set();
   heldReplies = [];
   endControlOnBegin = false;
@@ -142,7 +135,7 @@ function serveHost(socket: NoiseSocket) {
     if (method === 'hello') {
       if (params.access !== 'device-host' || params.client?.name !== 'stim-server') return refuse('bad hello');
       if (helloError) return refuse(helloError);
-      return answer({ capabilities: helloCapabilities, features: helloFeatures });
+      return answer({ capabilities: helloCapabilities, peer: helloPeer, server: { name: 'mini', stim: '1.41.0' } });
     }
     if (stopped && (method === 'device-host.frames.subscribe' || method === 'device-host.control.begin'))
       return refuse('The hosted session stopped.');
@@ -629,6 +622,17 @@ it('returns the host refusal of hello as frames-failed and closes the host conne
   await vi.waitFor(() => expect(host.clients.size).toBe(0));
 });
 
+it('refuses a host on a Stim before peer with the peer-too-old remedy and closes its connection', async () => {
+  helloPeer = undefined;
+  const local = await client();
+  const reply = await local.request('frames.subscribe', target());
+  expect(reply.error).toMatchObject({ code: 'frames-failed' });
+  expect(reply.error.message).toContain('peer-too-old: mini runs stim 1.41.0 (no peer), this Mac needs peer 1');
+  expect(reply.error.message).toMatch(/on mini run: npm i -g stim@\S+ && stim service install/);
+  expect(requests.map((request) => request.method)).toEqual(['hello']);
+  await vi.waitFor(() => expect(host.clients.size).toBe(0));
+});
+
 it('refuses a host that grants no device-host capability before subscribing', async () => {
   helloCapabilities = ['read', 'control'];
   const local = await client();
@@ -766,52 +770,6 @@ it('ends relayed controls on local revocation and records their local target', a
       durationMs: expect.any(Number),
     }),
   ]);
-});
-
-async function congestionNotices(features: string[]) {
-  saveCredential();
-  helloFeatures = features;
-  let buffered = 0;
-  const sent: (ServerMessage | Buffer)[] = [];
-  const relay = new HostedRelay(
-    new HostConnections(
-      {
-        status: () => ({
-          Peer: { peer: { ID: 'mini-node', DNSName: 'mini.tail.ts.net.', TailscaleIPs: ['100.64.0.8'] } },
-        }),
-        endpoint: (pinned) => ({ ...pinned, url: `ws://127.0.0.1:${(host.address() as AddressInfo).port}` }),
-      },
-      '1',
-    ),
-    (message) => sent.push(message),
-    () => buffered,
-    () => 'local-video',
-    () => {},
-    () => {},
-  );
-  const notices = () => requests.filter((request) => request.method === 'device-host.frames.congested');
-  try {
-    await relay.subscribe(1, readMacosRecord(workspace)!.host!, { video: ['h264'] }, () => {});
-    await vi.waitFor(() => expect(sent.filter(Buffer.isBuffer)).toHaveLength(1));
-    const upstream = requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket;
-    buffered = DEFAULT_VIDEO_LIMITS.congestedBytes + 1;
-    upstream.send(
-      videoPacket(UPSTREAM, 8, { keyframe: false, capturedAt: 1000, width: 800, height: 600, data: Buffer.from([0]) }),
-    );
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    const whileBehind = notices().map((request) => request.params.subscription);
-    buffered = 0;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const drained = notices().length;
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    return { whileBehind, afterDrain: notices().length - drained };
-  } finally {
-    relay.close();
-  }
-}
-
-it('sends no congestion notices to a host without hosted-congestion', async () => {
-  expect(await congestionNotices([])).toEqual({ whileBehind: [], afterDrain: 0 });
 });
 
 function placeIos(slot: string, platform: 'ios' | 'android' = 'ios') {

@@ -1490,8 +1490,8 @@ list, a \`note\` finding only the doctor report:
                          \`stim-server service rollback\` when a previous server
                          exists); note: it restarted but runs now
   server-desktop-authority  cost: the server on the local socket (not Desktop's own)
-                         does not advertise desktop-local-authority, so Desktop
-                         cannot run actions through it; update it
+                         sends no desktopApi or a lower one than this stim's, so
+                         Desktop cannot run actions through it; update it
   server-version         note: a server's stim version differs from this stim; the
                          service updates with \`stim-server service update --release
                          <version>\`, Desktop's bundled server with the app

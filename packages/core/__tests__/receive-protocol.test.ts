@@ -136,6 +136,16 @@ test('names the failing field of a rejected event, not the first event type the 
   expect(issue?.schemaPath).toMatch(/\/plan\/type$/);
 });
 
+test('accepts hello.host as owner, capabilities and app, and the grants a server before phoneApi sent', () => {
+  const host = { owner: 'service', capabilities: ['physical-ios'], app: null };
+  expect(isRpcResult('hello', { ...hello, peer: 1, phoneApi: 2, desktopApi: 1, host })).toBe(true);
+  expect(
+    isRpcResult('hello', { ...hello, host: { name: 'Stim Host', screenRecording: true, accessibility: false } }),
+  ).toBe(true);
+  expect(isRpcResult('hello', { ...hello, host: { ...host, capabilities: 'all' } })).toBe(false);
+  expect(isRpcResult('hello', { ...hello, host: { owner: 'service' } })).toBe(false);
+});
+
 test('accepts the original hello and unknown compatible fields but refuses malformed nested server data', () => {
   expect(isRpcResult('hello', hello)).toBe(true);
   expect(isRpcResult('hello', { ...hello, features: ['future-feature'], future: 1 })).toBe(true);

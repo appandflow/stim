@@ -1,3 +1,4 @@
+import { DESKTOP_API } from '@stim-cli/core/protocol';
 import type { InstalledService, LaunchdJob, UnitJob } from '@stim-cli/core/state';
 import type { Finding } from './doctor.ts';
 import { compareStimVersions } from './stim-installations.ts';
@@ -73,7 +74,7 @@ export interface ServerReading extends ServerProcess {
 interface LocalServerReading {
   port: number | null;
   version: string;
-  features: string[];
+  desktopApi: number;
 }
 
 export interface ServerSetup {
@@ -409,11 +410,9 @@ function keepAwakeFindings(setup: ServerSetup): Finding[] {
   ];
 }
 
-const DESKTOP_AUTHORITY_FEATURE = 'desktop-local-authority';
-
 function desktopAuthorityFindings(setup: ServerSetup): Finding[] {
   const local = setup.local;
-  if (!local || local.features.includes(DESKTOP_AUTHORITY_FEATURE)) return [];
+  if (!local || local.desktopApi >= DESKTOP_API) return [];
   const owner = setup.servers.find((server) => local.port !== null && server.port === local.port);
   if (!owner || owner.kind === 'desktop' || owner.kind === 'share') return [];
   const compared = compareStimVersions(local.version, setup.version);
@@ -423,7 +422,7 @@ function desktopAuthorityFindings(setup: ServerSetup): Finding[] {
       code: 'server-desktop-authority',
       level: 'cost',
       title: "The stim-server on this Stim home's socket is too old for Desktop actions",
-      detail: `${describeServer(owner)} runs ${local.version} and does not advertise ${DESKTOP_AUTHORITY_FEATURE}, so Stim Desktop reads from it but refuses to run actions through it (start, stop, reload, setup fixes).`,
+      detail: `${describeServer(owner)} runs ${local.version} without Stim Desktop's API ${DESKTOP_API}, so Stim Desktop reads from it but refuses to run actions through it (start, stop, reload, setup fixes).`,
       fix:
         owner.kind === 'service' && target
           ? `Run \`stim-server service update${labelFlag(owner.label ?? '')} --release ${target}\`.`

@@ -72,7 +72,7 @@ export class HostedPresenceBridge {
     try {
       lease = await this.hosts.acquire(host);
       const { connection } = lease;
-      if (stopped() || !connection.supports('hosted-presence')) {
+      if (stopped()) {
         lease.release();
         return () => {};
       }

@@ -351,6 +351,7 @@ export class DemoConnection {
       result: {
         protocol: PROTOCOL,
         phoneApi: 2,
+        host: { owner: 'service', capabilities: ['physical-ios', 'physical-android', 'macos-window'], app: null },
         server: {
           name: this.machine.name,
           version: fixtures.stimVersion,

@@ -174,7 +174,7 @@ describe('route edge cases', () => {
     const manual = reading({ pid: 300, port: 7790, kind: 'manual', label: undefined });
     const value = serveSetup({}, { services: [], clients: { build: 1, deviceHost: 0 }, servers: [manual] });
     expect(serverNetworkFindings(value)).toEqual([]);
-    const [finding] = serverNetworkFindings({ ...value, local: { port: 7790, version: '1.41.0', features: [] } });
+    const [finding] = serverNetworkFindings({ ...value, local: { port: 7790, version: '1.41.0', desktopApi: 0 } });
     expect(finding?.code).toBe('server-tailscale-route');
   });
 

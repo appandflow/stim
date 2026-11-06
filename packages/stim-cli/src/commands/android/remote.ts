@@ -79,7 +79,7 @@ export async function connectAndroidHosting({
       };
   }
   try {
-    return { target: await prepare(machine, selectors, recorded, appMode === 'process' ? appMode : undefined) };
+    return { target: await prepare(machine, selectors, recorded) };
   } catch (error) {
     return {
       failure: {
@@ -189,7 +189,6 @@ export async function selectAndroidPlacement({
       slot: args.slot,
       platform: 'android',
       ...(selected.placement ? { placement: selected.placement } : {}),
-      ...(appMode === 'process' ? { appMode } : {}),
       selectors,
       buildMachine,
       noWait,

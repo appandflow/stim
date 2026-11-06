@@ -70,7 +70,7 @@ export async function planHostedDevice({
     machines = () => hostingMachines(undefined, operation?.signal),
   } = deps;
   const named = async (name: string): Promise<PlannedDevice> => {
-    const result = await probe(name, platform, selectors, undefined, operation?.signal);
+    const result = await probe(name, platform, selectors, operation?.signal);
     if ('failure' in result.probe)
       return { kind: 'unknown', reason: `${name} did not give a ${platform} device (${result.probe.failure})` };
     const { declined } = result.probe.offer;
@@ -120,9 +120,7 @@ export async function planHostedDevice({
       };
     const names = ((await machines()) ?? []).filter((name) => automaticMachineEnabled('device', name));
     operation?.signal.throwIfAborted();
-    const offers = await Promise.all(
-      names.map((name) => probe(name, platform, selectors, undefined, operation?.signal)),
-    );
+    const offers = await Promise.all(names.map((name) => probe(name, platform, selectors, operation?.signal)));
     const compared = await Promise.all(
       offers.map(async ({ probe: each }) => {
         const choice = 'offer' in each ? planChoice(each.offer.choice) : null;

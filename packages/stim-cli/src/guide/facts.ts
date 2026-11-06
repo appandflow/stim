@@ -82,8 +82,7 @@ not staged can take up to a minute to show. One-shot status reads git only
 for live environments; \`status --watch\` reads every worktree. Plain status prints "git: 2 changed, 1 untracked, ahead 3" under
 each environment it read, and the same after each worktree with no environment under \`--watch\`.
 
-The paired phone's Work sheet can open changed and untracked files when the
-server advertises workspace-diff. File lists and selected patches load on
+The paired phone's Work sheet can open changed and untracked files. File lists and selected patches load on
 demand, not through status. The read-only preview is capped at 200 files per
 list and 256 KiB per patch response; binary and unavailable files are labeled. Active Git clean/process filters
 (including Git LFS) refuse without running those commands.
@@ -658,8 +657,7 @@ leased until <time>" for each one.`,
                   also a build-machine-<code> finding at level note. capacity
                   is the machine's offer: { running, max, diskFreeBytes,
                   minDiskFreeBytes, cpus?, loadPerCore?, builds?, maxBuilds?,
-                  maxLoadPerCore?, memoryUsedBytes?, memoryTotalBytes?, declined? }; an older stim-server omits the
-                  optional fields
+                  maxLoadPerCore?, memoryUsedBytes?, memoryTotalBytes?, declined? }
   findings        the diagnostic findings; a lower resolved Stim is a
                   costs-time finding with a PATH or installation remedy
                   memory-culprit is a costs-time finding naming a process

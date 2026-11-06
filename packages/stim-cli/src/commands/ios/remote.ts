@@ -205,7 +205,6 @@ export async function selectIosPlacement(
       placement: selection.placement,
       ...(localSims ? { localSims } : {}),
       selectors: hostedIosSelectors(deviceType, runtime),
-      appMode,
       buildMachine: opts.remoteBuild,
       noWait,
       ...(waitMs === undefined ? {} : { waitMs }),
@@ -301,12 +300,11 @@ export async function connectIosTarget(
   },
   selectors: ReturnType<typeof hostedIosSelectors>,
   d: IosDeps,
-  appMode?: HostedAppOffer['mode'],
 ): Promise<{ target: HostedIosTarget | null } | { failure: FailArgs }> {
   if (selection.auto) return { target: selection.auto.target };
   if (!selection.machine) return { target: null };
   try {
-    return { target: await d.prepareHostedIos(selection.machine, selectors, selection.recorded, appMode) };
+    return { target: await d.prepareHostedIos(selection.machine, selectors, selection.recorded) };
   } catch (error) {
     return {
       failure: {

@@ -394,8 +394,7 @@ paths or compiler overrides. The miss reason explains the exclusion. --plan
 refuses such a prediction; omit --plan to prepare and build the app.
 
 A compatible approved remote Mac can compile a native Xcode app with
---remote-build auto or --remote-build <name>. Both peers must support
-native-xcode-build. This first worker path requires a verified artifact identity
+--remote-build auto or --remote-build <name>. This first worker path requires a verified artifact identity
 and all inputs contained in the repository and visible to git. Ignored or
 external inputs keep the build here, and placement names the first one; their
 bytes are never silently omitted. The common case is a Finder .DS_Store that a
@@ -409,16 +408,14 @@ Native Xcode apps can install on an already approved hosting Mac with
 process-mode support:
   stim ios --scheme MyApp --configuration Debug --remote janics-mac-mini --json
 
-The host must advertise hosted-ios-process; older hosts refuse with an update
-remedy before reservation or upload. --remote auto skips incompatible hosts,
-but an existing session stays on its recorded host until stim stop. Debug,
-Release and custom configurations use the offered simulator architecture,
+--remote auto skips incompatible hosts, but an existing session stays on its
+recorded host until stim stop. Debug, Release and custom configurations use the
+offered simulator architecture,
 report metroPort: null, and close any previous session Metro bridge. Logs,
 view/control, agent access and scoped stop use the existing hosted-ios services.
-A host advertising hosted-app-state checks the current installed app attempt's
-process when Debug verifies its bundle. Release and native process launches
-wait three seconds before requiring a live process. Older hosts print an update
-hint and their release/process result stays unverified. A failed process query
+The host checks the current installed app attempt's process when Debug verifies
+its bundle. Release and native process launches wait three seconds before
+requiring a live process. A failed process query
 is unknown; it does not establish a crash. Verify UI and interaction separately
 from the host's live process evidence.
 
@@ -623,9 +620,7 @@ adb against the host serial on this machine. Release variants skip Metro. Launch
 is true only with client bundle evidence or a live host release process;
 bundling requires a bundle request and unverified has no launch evidence.
 
-Native Gradle apps use process mode for every variant. The host must advertise
-hosted-android-process; older hosts refuse before admission or APK upload.
-Native runs close any previous Metro bridge, launch the signed APK and require
+Native Gradle apps use process mode for every variant. Native runs close any previous Metro bridge, launch the signed APK and require
 a live app process for launched=true. --no-metro-check is allowed, and reload
 refuses because there is no Metro runtime. Re-run stim android after an edit.
 Hosted Android uses the same hosted-app-state liveness check and three-second
@@ -654,17 +649,16 @@ arrive through local Metro.
 AGENT CONTROL
 
 Set hosting.agentDriver to agent-device on the hosting Mac. Both machines need
-agent-device 0.21.30 or later. The host advertises hosted-android-agent and
-starts one loopback daemon per installed Android session. Its policy allows
+agent-device 0.21.30 or later. The host starts one loopback daemon per installed Android session. Its policy allows
 only the exact ledger-owned emulator serial and denies device shutdown.
 The host verifies the policy digest and android-instance backend before granting
-control. An older host, missing binary or unsupported policy reports driver: none;
+control. A missing binary or unsupported policy reports driver: none;
 the host's notice explains unavailable control.
 
 On a local: machine, daemonBaseUrl is http://127.0.0.1:<port> of this
 workspace's Metro supervisor, which carries each request to the host over its
-own authenticated device-host connection (host feature hosted-agent-link). It
-works for Debug runs while stim start runs; Release runs report driver: none.
+own authenticated device-host connection (device-host.agent.link). It works
+for Debug runs while stim start runs; Release runs report driver: none.
 
 android.host.agent in stim status --json provides driver, remoteConfig and
 command, never its token. Each slot has a separate 0600 file under the workspace
@@ -735,9 +729,7 @@ a device warning naming any dropped interval. Followers share a child-aware log
 claim; install and stop cancel and settle the worker before native operations.
 Stop copies logs once, after the host's final collection and teardown, bounded to
 30 seconds with progress on stderr; Ctrl-C cancels the copy and keeps the placement. Collected logs
-remain readable after stop. The host advertises hosted-android-data for Android
-handoff and native logs. Older hosts get a newer stim-server note, use upload
-and show records already copied here.`,
+remain readable after stop.`,
     },
     'hosted-ios': {
       summary: 'iOS on a named approved Mac: strict placement, private Metro, status and stop',
@@ -976,8 +968,6 @@ client to copy, until the host removes the home an hour after the session stoppe
 materialized bundles are removed at stop. Native queries read persisted
 entries, overlap by five seconds and de-duplicate; info-level or later-persisted
 entries may be unavailable. JavaScript logs arrive through Metro.
-The host advertises hosted-ios-data for iOS handoff and native logs. An older
-host gets an update note, uses uploads and shows logs already copied here.
 
 AGENT CONTROL
 
@@ -994,8 +984,8 @@ teardown; clear a named claim only after proving its owner and child are gone.
 
 On a local: machine, daemonBaseUrl is http://127.0.0.1:<port> of this
 workspace's Metro supervisor, which carries each request to the host over its
-own authenticated device-host connection (host feature hosted-agent-link). It
-works for Debug runs while stim start runs; Release runs report driver: none.
+own authenticated device-host connection (device-host.agent.link). It works
+for Debug runs while stim start runs; Release runs report driver: none.
 
 The client writes a separate 0600 remote-config file for each workspace slot.
 Status prints agent: <command>; ios.host.agent in --json carries driver,
@@ -1033,15 +1023,11 @@ hints are refused and only reporting/artifact metadata passes through.
 
 ${HOSTED_RECORDING('simulator')}
 
-If hosting.agentDriver is none, the driver cannot enforce its policy, or the
-host does not advertise hosted-ios-agent, agent reports
+If hosting.agentDriver is none or the driver cannot enforce its policy, agent reports
 { driver: 'none', setting: 'hosting.agentDriver' }. A run whose host disables
 the driver prints a notice; plain status also names the host setting when
 agent control is unavailable. Update the host and check its setting and
 agent-device installation. No other simulator becomes reachable.
-Client hello carries only name and version, not features, so the host cannot gate
-daemon startup or grant issuance on client support. The client checks the host's
-hosted-ios-agent feature before using a grant.
 
 Stim Desktop and the phone app view and control the simulator through this
 machine's stim-server relay, with an "on <machine>" label. Turn on Allow connections

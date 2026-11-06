@@ -2,7 +2,7 @@ import { withDirLockAsync, type StimContext } from '@stim-cli/core';
 import { reportSignal } from '../report-runtime.ts';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import type { HelloResult, RemoteDiagnosis } from '@stim-cli/core/protocol';
+import type { HelloHost, RemoteDiagnosis } from '@stim-cli/core/protocol';
 import {
   buildMachinesFile,
   buildMachinesLock,
@@ -118,7 +118,7 @@ interface BuildMachineReport {
   /** The tailnet this machine was signed in to when it first reached the machine; absent for a pairing from before it was kept. */
   tailnet?: TailnetIdentity;
   expiresAt?: string;
-  host?: NonNullable<HelloResult['host']>;
+  host?: NonNullable<HelloHost['app']>;
   /** For an approved machine: whether it would take this project's build now, and every reason it would not. */
   offloadable?: boolean;
   reasons?: string[];
@@ -468,7 +468,7 @@ async function inspectMachine(
       };
     }
   }
-  const permissions = readHostPermissions(outcome.result.host);
+  const permissions = readHostPermissions(outcome.result.host?.app);
   const host = permissions ? { host: permissions } : {};
   if (!check) return { report: { ...paired, state: 'approved', ...host }, finding: null };
   const { capacity, problems, notes = [] } = await check(outcome.credential);

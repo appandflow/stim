@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { generateNoiseKeyPair } from '@stim-cli/core/noise';
 import { initiateNoise } from '@stim-cli/core/noise-session';
+import { isRpcResult } from '@stim-cli/core/receive-protocol';
 import { WebSocket } from 'ws';
 
 test('advertises the phone API in hello', { timeout: 10_000 }, async (t) => {
@@ -62,6 +63,7 @@ test('advertises the phone API in hello', { timeout: 10_000 }, async (t) => {
   const [data] = await reply;
   const { result } = JSON.parse(data.toString());
   assert.equal(result.phoneApi, 2);
+  assert.ok(isRpcResult('hello', result));
   assert.deepEqual(result.features, [
     'ios-hosted',
     'android-hosted',
