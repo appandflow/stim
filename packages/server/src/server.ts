@@ -193,7 +193,7 @@ import { worktreePullRequests } from 'stim/pull-requests';
 import { pauseShareLinkAsync, pauseShareLinksAsync, saveShareLinkAsync } from 'stim/share-links';
 import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
 import { restoreSavedShares } from './share-restore.ts';
-import { savedShareFor } from './share-save.ts';
+import { savedLinkIs, savedShareFor } from './share-save.ts';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
 import { EXPO_PUSH_API, PushNotifier, type PushLimits, type PushNotifierOptions } from './push.ts';
@@ -1905,6 +1905,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     lookup: { adbEmulators },
     limits: leaseGrace(controlLimits.leaseFor),
     recordingChanged: () => recorder?.refresh(),
+    gaveUp: async (request, link) => {
+      const unsaved = await markSavedStopped(() =>
+        pauseShareLinkAsync(request.workspace, shareLinkKey(request), (saved) => savedLinkIs(saved, link)),
+      );
+      if (unsaved !== null) {
+        console.error(
+          `stim-server: the web share of ${request.workspace} ended, but its saved link could not be marked stopped (${unsaved}), so a restart can start it again`,
+        );
+      }
+    },
     holdWorkspace: (workspace, stop) => holdNativeRun(workspace, { waitMs: SHARE_CLAIM_WAIT_MS, stop }),
     ...(options.shareServer ? { idle: options.shareServer.idle } : {}),
   });

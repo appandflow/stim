@@ -1,5 +1,6 @@
 import assert from 'node:assert';
-import { savedShareFor } from '../src/share-save.ts';
+import { digest } from '../src/share-identity.ts';
+import { savedLinkIs, savedShareFor } from '../src/share-save.ts';
 import type { ShareRequest, StartedShare } from '../src/share.ts';
 
 const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ';
@@ -23,7 +24,6 @@ const started = (over: Partial<StartedShare> = {}): StartedShare => ({
   control: false,
   expiresAt: EXPIRES,
   viewers: 0,
-  state: 'live',
   auth: 'generated',
   viewAuth: null,
   url: `https://mac.test/s/${TOKEN}/`,
@@ -124,5 +124,21 @@ describe('savedShareFor', () => {
         NOW,
       ),
     ).toBeNull();
+  });
+});
+
+describe('savedLinkIs', () => {
+  it('tells the saved entry of a running share from one a later share of the same target replaced it with', () => {
+    const running = savedShareFor(request(), started(), undefined, NOW);
+    const replacement = savedShareFor(
+      request(),
+      started({ url: `https://mac.test/s/${'B'.repeat(43)}/` }),
+      undefined,
+      NOW,
+    );
+    assert(running && replacement);
+    const link = digest(TOKEN).toString('hex');
+    expect(savedLinkIs(running, link)).toBe(true);
+    expect(savedLinkIs(replacement, link)).toBe(false);
   });
 });

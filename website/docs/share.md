@@ -46,11 +46,11 @@ stim share android --reuse --expires 60
 stim share stop --forget`}
 />
 
-`--reuse` restores the same link, access codes and permissions before the original expiry. Set `--expires` to change how long it lasts. `stim share stop` saves the link for later. Add `--forget` to delete it. A full stim-server restarts saved, unexpired shares that were running before it stopped.
+`--reuse` restores the same link, access codes and permissions before the original expiry. Set `--expires` to change how long it lasts. `stim share stop` saves the link for later. Add `--forget` to delete it. With no saved link for the target (never started, expired or about to expire, or forgotten), `--reuse` warns on stderr and starts a new share instead; the flags you gave apply to it and its new link is saved. With a saved link, `--control`, `--password`, `--no-password`, `--view-password` and `--slug` fail with `STIM_BAD_ARG`, since the saved share brings its own setup. A full stim-server restarts saved, unexpired shares that were running before it stopped.
 
 ## When the device goes away
 
-A share waits during a rebuild or a temporary disconnect. The viewer resumes when the same slot has a running device again. The original expiry still applies. To end it early, use `stim share stop` or stop the workspace or slot.
+A share whose device goes away during a rebuild or a temporary disconnect shows as stopped ("This share is stopped.") and comes back on the same page when the same slot has a running device again. The original expiry still applies. A device that is present and ready but fails to stream for 5 minutes in a row ends the share, and viewers see why. The 5 minutes count only while someone is watching, and a replacement device starts over. An ended share is not restarted when stim-server restarts. To end it early, use `stim share stop` or stop the workspace or slot.
 
 ## Requirements
 
@@ -58,7 +58,7 @@ A share waits during a rebuild or a temporary disconnect. The viewer resumes whe
 - **A running device.** Start an owned or hosted simulator or emulator first. Use `--device` to share a leased physical device.
 - **A public route.** With Tailscale, your tailnet policy must allow Funnel on the host and one of its HTTPS ports must be free. You can also set up a [reverse proxy](#custom-domain).
 
-## A live or waiting share keeps its workspace up
+## A share keeps its workspace up, also while its device is away
 
 Stim keeps the workspace and device available until the share ends, even when nobody is watching. Stop the share to let idle shutdown and cleanup resume.
 
@@ -80,7 +80,7 @@ Stim keeps the workspace and device available until the share ends, even when no
 | `--json`              | Print one payload: `url`, `auth`, `viewAuth`, `slug`, `expiresAt`, `control`, target; `password` and `viewPassword` only when generated. |
 
 `stim share list` lists the shares of this Stim home with their target,
-control, whether one waits for its device, viewer count and expiry, never their
+control, viewer count and expiry, never their
 link or password.
 `stim share stop` ends every share of the current workspace. To end one share,
 use **Stop** on its row in Stim Desktop's Settings > Connections > Using this machine > Share links.

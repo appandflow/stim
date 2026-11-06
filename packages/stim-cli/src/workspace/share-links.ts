@@ -93,7 +93,7 @@ const inSlot =
   (_key, link) =>
     slot === undefined || link.slot === slot;
 
-/** Marks the workspace's saved shares, or those of one `slot`, as stopped on purpose so nothing restarts them on its own. */
+/** Marks the workspace's saved shares, or those of one `slot`, as stopped so nothing restarts them on its own. */
 export function pauseShareLinks(root: string, slot?: string): void {
   pauseWhere(root, inSlot(slot));
 }
@@ -103,7 +103,10 @@ export function pauseShareLinksAsync(root: string, slot?: string): Promise<void>
   return pauseWhereAsync(root, inSlot(slot));
 }
 
-/** Marks the saved share filed under `key` (see {@link shareLinkKey}) as stopped on purpose, without blocking. */
-export function pauseShareLinkAsync(root: string, key: string): Promise<void> {
-  return pauseWhereAsync(root, (entry) => entry === key);
+/**
+ * Marks the saved share filed under `key` (see {@link shareLinkKey}) as stopped, without blocking. With `only`, a
+ * different link filed under the same key (another share of that target was started since) is left running.
+ */
+export function pauseShareLinkAsync(root: string, key: string, only?: (link: SavedShare) => boolean): Promise<void> {
+  return pauseWhereAsync(root, (entry, link) => entry === key && (only === undefined || only(link)));
 }

@@ -2340,7 +2340,7 @@ workspace device with three methods that only the local Unix socket may call
   returns
   `auth` (`generated`, `set` or `none`), `viewAuth` (`generated`, `set` or
   `null`), and `password` and `viewPassword` only when it generated them, in
-  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, state, auth, viewAuth, slug, url, password, viewPassword }`.
+  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, auth, viewAuth, slug, url, password, viewPassword }`.
   `token` and `expiresAt` (the `share-reuse` feature) start the share under
   that 43-character URL token and expire it at that time (an ISO time within the
   next 480 minutes, instead of `expiresMinutes`), as `stim share --reuse`
@@ -2348,21 +2348,18 @@ workspace device with three methods that only the local Unix socket may call
   exclusive; a slug share is restarted with `slug`, which needs no `token`);
   the server registers the
   token's digest like a generated one and keeps no more than before. It refuses
-  a malformed token, a token a live or waiting share already uses (`That link is
+  a malformed token, a token a live or stopped-for-now share already uses (`That link is
 live now.`) and a time already past.
   When a stim-server that is not the CLI's `--share` server becomes ready, it
   reads the saved links of its Stim home (`readLiveShareLinks`) and starts each
   live, unexpired one through this same method with the saved token or slug,
   passwords and `expiresAt`, so a share outlives a restart. Its device may not be
   there yet (a hosted session resumes, Tailscale is not up): such a share starts
-  `waiting`, and a start the server cannot finish is tried again after 5, 10, 20,
+  stopped for now, as when its device goes away, and a start the server cannot finish is tried again after 5, 10, 20,
   40 and 60 seconds. `share.stop` marks the saved links it stops as stopped (all
   of the workspace's, those of one `slot`, or the one of a stopped `id`) so they
   do not come back. A share started by a client that saved nothing, such as
   Stim Desktop's, does not come back.
-  `state` (the `share-waiting` feature) is `live` while the device streams and
-  `waiting` while it is away; a server without the feature sends none, which
-  means `live`.
   It refuses a device the workspace does not own or lease, a hosted device,
   `control` on a physical iPhone, `password` with `passwordless`, `view`
   without `control`, with `passwordless`, or with the same password as
@@ -2375,7 +2372,8 @@ live now.`) and a time already past.
   `slot` (the `share-waiting` feature) it ends only that slot's shares
   (`default` for the default slot), and `id` and `slot` together are refused.
   `stim stop` and `stim worktree remove` end shares this way, because a device
-  that goes away only makes a share wait.
+  that goes away only stops a share for now: its row stays in `share.list`
+  unchanged, and the share is live again when the device is back.
 - `share.list` returns `shares`, the same rows without `url`, `password` or
   `viewPassword`, and `starting` (the `share-starting` feature): how many
   `share.start` requests the server has not answered yet, which have no row.
@@ -2400,16 +2398,23 @@ go to the server log.
 Shares live in memory only and end at their expiry, on `share.stop` and when the
 server stops. When a share's device goes away on its own (the frame stream
 fails, the status shows the device or hosted session gone, or not ready) the
-share waits instead: it releases control, closes its source and stops capture,
-and keeps its token, password digests, signed-in sessions, viewer sockets and
-expiry. Each viewer gets `{ "type": "waiting" }` and the page says so. The share
+share is stopped for now instead of ended: it releases control, closes its source
+and stops capture, and keeps its token, password digests, signed-in sessions,
+viewer sockets and expiry. Each viewer gets `{ "type": "stopped" }` and the page
+says "This share is stopped."; `share.list` shows no difference. The share
 re-resolves its slot's device on every status item, and by a timer (every 2
 seconds, backing off to 30 after a failed stream, which leaves status as it was),
 and once a local device resolves or a hosted session of the slot is ready it
 builds a new source, feeds every connected viewer again and sends
 `{ "type": "resumed" }`. A slot that now runs another device is followed to it.
-A waiting share still counts as a share for the listener, the Funnel route and
-idleness. When the hub itself closes (stim-server stopping) it closes viewer sockets with code 1001 and sends no `ended`. A viewer page that loses its socket without an `ended` message keeps its last frame dimmed
+A stopped-for-now share still counts as a share for the listener, the Funnel route
+and idleness. A share whose device is present and ready but whose stream fails
+again and again with no frame in between ends after 5 minutes instead of retrying
+until its expiry: each viewer gets `{ "type": "ended" }` with a fixed reason
+("This share has ended: its device could not stream.", or, when the cause is a
+`stim-frames` helper this Mac has not built, a sentence saying so); the raw error,
+which can name workspaces, goes to the server log only. A device that is away for
+any length of time never ends the share this way. When the hub itself closes (stim-server stopping) it closes viewer sockets with code 1001 and sends no `ended`. A viewer page that loses its socket without an `ended` message keeps its last frame dimmed
 and reconnects on its own: it asks the link with a GET (the viewer page: join again; the login page, because the
 server no longer knows the session: reload to it; 404: try every 30 seconds for 10 minutes, so a link that comes
 back under `--reuse` is joined again; any other status: back off) and connects again with the same random

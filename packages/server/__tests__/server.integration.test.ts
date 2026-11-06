@@ -1179,7 +1179,6 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
       physical: false,
       control: false,
       viewers: 0,
-      state: 'live',
       auth: 'generated',
       viewAuth: null,
       url: `https://x.test/s/${TOKEN}/`,

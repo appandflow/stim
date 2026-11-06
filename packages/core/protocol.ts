@@ -114,7 +114,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `share-starting` is `share.list`'s `starting`: the `share.start` requests the server has not yet answered.
  * `shared-control` is several clients controlling one device at once: `control.begin` and
  * `device-host.control.begin` refuse no other client or driver, and no session ends with `taken-over`.
- * `share-waiting` is the rows' `state` (a share waits for its device instead of ending) and `share.stop`'s `slot`.
+ * `share-waiting` is `share.stop`'s `slot`, which ends only that slot's shares: a share whose device goes away is
+ * stopped for now instead of ending, so stopping a slot has to end its shares explicitly.
  * `share-slug` is `share.start`'s `slug` parameter and the rows' `slug`.
  * `hosted-presence` is `device-host.presence.subscribe`: the `presence` events of a hosted session, which carry what the
  * agent drives on it. A host lists it only with `presence`.
@@ -1751,10 +1752,7 @@ export interface HostedSessionRow {
   workspace: string;
 }
 
-/**
- * A web share, as `share.list` lists it; never its URL token or password. It is `live` while its device streams and
- * `waiting` while the device is away; a server before `share-waiting` sends no `state`, which means `live`.
- */
+/** A web share, as `share.list` lists it; never its URL token or password. */
 export interface WebShareRow {
   id: string;
   workspace: string;
@@ -1764,7 +1762,6 @@ export interface WebShareRow {
   control: boolean;
   expiresAt: string;
   viewers: number;
-  state?: 'live' | 'waiting';
   /** How viewers get in: a generated password, one the person set, or the URL alone. */
   auth: 'generated' | 'set' | 'none';
   /** How a separate view-only password was made; null when the share has none. */

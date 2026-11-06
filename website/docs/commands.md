@@ -1154,11 +1154,11 @@ only watches. `--slug <name>` makes the link `/s/<name>/` instead of a random
 token and needs a password. Viewers see each other's touches live. Every share expires (60 minutes by default, at most 480) and ends with
 `stim share stop`, `stim stop` (the workspace, or one slot with `--slot`),
 `stim worktree remove`, or stim-server. A device that goes away, as it does when
-you rebuild or relaunch the app, only makes it wait and resume. It refuses with
+you rebuild or relaunch the app, only stops it for now: it shows as stopped and comes back by itself. It refuses with
 `STIM_SERVER_NOT_RUNNING` when it cannot start a stim-server and
 `STIM_SHARE_REFUSED` with the reason otherwise, including at once on Windows. `--reuse` starts the saved link and passwords of the workspace's last share of
-that target again, until it expires, and `stop --forget` also deletes the saved
-links. See
+that target again, until it expires, or a new share with a warning when nothing
+is saved, and `stop --forget` also deletes the saved links. See
 [Share a running app](./share.md) for the requirements and the security model.
 
 ## `logs`

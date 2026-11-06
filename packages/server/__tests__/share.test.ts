@@ -6,6 +6,7 @@ import type { Controller } from '../src/control.ts';
 import type { FrameHint } from '../src/frame-helper.ts';
 import type { Device, Frame, FrameListener } from '../src/frames.ts';
 import { PresenceHub, presenceKey } from '../src/presence.ts';
+import { digest } from '../src/share-identity.ts';
 import type { ShareSource } from '../src/share-hosted.ts';
 import { viewerPage } from '../src/share-page.ts';
 import {
@@ -14,6 +15,7 @@ import {
   type ShareDeps,
   type ShareLimits,
   type ShareRequest,
+  type ShareTarget,
   type StartedShare,
   type StatusListener,
 } from '../src/share.ts';
@@ -37,6 +39,7 @@ function payload(
 
 interface Fixture {
   hub: ShareHub;
+  /** What the hub logged about its device going away (`waiting`) and coming back (`live`), in order. */
   subscribed: { device: Device; listener: FrameListener; hint: FrameHint | undefined; unsubscribed: boolean }[];
   keyframes: number;
   congestions: number;
@@ -69,6 +72,12 @@ interface Fixture {
   presence: PresenceHub;
   /** The display names the fake simulator reports, by bundle id. */
   appNames: Record<string, string | null>;
+  /** The shares that ended because their device could not stream. */
+  gaveUp: ShareTarget[];
+  /** Holds the fake `gaveUp` until it resolves, as a write waiting for a lock does; `gaveUpFails` makes it reject. */
+  gaveUpLinks: string[];
+  gaveUpGate: Promise<void> | null;
+  gaveUpFails: boolean;
   routeOpens: number[];
   routeCloses: number;
   idle: number;
@@ -111,6 +120,10 @@ function fixture(limits: Partial<ShareLimits> = {}, deps: Partial<ShareDeps> = {
     replay: null,
     presence: new PresenceHub(),
     appNames: {},
+    gaveUp: [],
+    gaveUpLinks: [],
+    gaveUpGate: null,
+    gaveUpFails: false,
     routeOpens: [],
     routeCloses: 0,
     idle: 0,
@@ -126,6 +139,7 @@ function fixture(limits: Partial<ShareLimits> = {}, deps: Partial<ShareDeps> = {
     hostedSources: [],
     hub: null as unknown as ShareHub,
   };
+  viewerPhases.length = 0;
   f.hub = new ShareHub({
     presence: f.presence,
     appName: async (_udid, bundleId) => f.appNames[bundleId] ?? null,
@@ -247,12 +261,20 @@ function fixture(limits: Partial<ShareLimits> = {}, deps: Partial<ShareDeps> = {
     },
     limits: { maxFailures: 3, ...limits },
     idle: () => f.idle++,
+    gaveUp: async (target, link) => {
+      f.gaveUp.push(target);
+      f.gaveUpLinks.push(link);
+      await f.gaveUpGate;
+      if (f.gaveUpFails) throw new Error('lock timeout');
+    },
     ...deps,
   });
   return f;
 }
 
-const stateOf = (f: Fixture) => f.hub.list()[0]?.state;
+/** What the viewers connected in this test were last told: `stopped` is `waiting`, `resumed` is `live`. */
+const viewerPhases: ('waiting' | 'live')[] = [];
+const stateOf = (_f: Fixture) => viewerPhases.at(-1);
 
 const shareRequest = (overrides: Partial<ShareRequest> = {}): ShareRequest => ({
   workspace: WORKSPACE,
@@ -323,7 +345,11 @@ function connect(
     const socket = new WebSocket(`${url.replace(/^http/, 'ws')}ws${query}`, { headers });
     const messages: Record<string, unknown>[] = [];
     socket.on('message', (data, binary) => {
-      if (!binary) messages.push(JSON.parse(String(data)));
+      if (binary) return;
+      const message = JSON.parse(String(data));
+      messages.push(message);
+      if (message.type === 'stopped') viewerPhases.push('waiting');
+      if (message.type === 'resumed') viewerPhases.push('live');
     });
     socket.once('open', () => resolve({ socket, status: null, messages }));
     socket.once('unexpected-response', (_request, response) =>
@@ -362,6 +388,7 @@ describe('a web share', () => {
   afterEach(async () => {
     await f.hub.close();
     f.presence.close();
+    vi.restoreAllMocks();
   });
 
   it('opens one Funnel route for its loopback listener and hands out a high-entropy link and password', async () => {
@@ -1633,10 +1660,9 @@ describe('a web share', () => {
 
       f.status(payload('Shutdown'));
 
-      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('waiting'));
-      expect(f.hub.list()).toEqual([
-        expect.objectContaining({ id: share.id, state: 'waiting', expiresAt, viewers: 1 }),
-      ]);
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('stopped'));
+      expect(stateOf(f)).toBe('waiting');
+      expect(f.hub.list()).toEqual([expect.objectContaining({ id: share.id, expiresAt, viewers: 1 })]);
       expect(socket.readyState).toBe(socket.OPEN);
       expect(f.subscribed[0]!.unsubscribed).toBe(true);
       expect(f.endFors).toHaveLength(1);
@@ -1757,10 +1783,9 @@ describe('a web share', () => {
       const url = local(share, f.hub.port ?? 0);
       const cookie = await login(url, share.password!);
       f.status(payload('Shutdown'));
-      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
 
       const { socket, messages } = await connect(url, { origin: origin(url), cookie });
-      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('waiting'));
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('stopped'));
       expect(f.subscribed).toEqual([]);
       const received = frames(socket);
       f.status(payload('Booted'));
@@ -1774,7 +1799,7 @@ describe('a web share', () => {
       const { socket, messages } = await signedIn();
       f.subscribed[0]!.listener.failed?.('the frame helper stopped');
       await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
-      expect(messages.map((message) => message.type)).toContain('waiting');
+      expect(messages.map((message) => message.type)).toContain('stopped');
 
       vi.advanceTimersByTime(2000);
       await vi.waitFor(() => expect(stateOf(f)).toBe('live'));
@@ -1795,10 +1820,184 @@ describe('a web share', () => {
       await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
       f.status(payload('Booted'));
       await vi.waitFor(() => expect(f.subscribed).toHaveLength(2));
+      await vi.waitFor(() => expect(stateOf(f)).toBe('live'));
       f.subscribed[0]!.listener.failed?.('late');
       await vi.advanceTimersByTimeAsync(20);
-      expect(stateOf(f)).toBe('live');
+      for (let turn = 0; turn < 10; turn++) await new Promise((resolve) => setImmediate(resolve));
+      expect(viewerPhases).toEqual(['waiting', 'live']);
       socket.close();
+    });
+
+    /**
+     * Moves the clock in 31 s steps. Each step passes one 30 s ping of the share's socket, and the client's pong
+     * crosses a real connection, so the pong is awaited before the next step; otherwise the next ping would find
+     * the socket unanswered and terminate it.
+     */
+    const stepLive = async (socket: WebSocket, ms: number) => {
+      const ping = { heard: false };
+      const heard = () => (ping.heard = true);
+      socket.on('ping', heard);
+      await vi.advanceTimersByTimeAsync(ms);
+      for (let turn = 0; turn < 200 && !ping.heard && socket.readyState === socket.OPEN; turn++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      socket.off('ping', heard);
+      for (let turn = 0; turn < 5; turn++) await new Promise((resolve) => setImmediate(resolve));
+    };
+
+    const failUntilEnded = async (socket: WebSocket, message: string) => {
+      f.subscribed[0]?.listener.failed?.(message);
+      for (let round = 0; round < 20 && f.hub.list().length; round++) {
+        await stepLive(socket, 31_000);
+        f.subscribed.at(-1)?.listener.failed?.(message);
+        await vi.advanceTimersByTimeAsync(1);
+      }
+    };
+
+    it('ends a share whose device is there but cannot stream, and tells viewers a reason that names nothing private', async () => {
+      const { socket, messages } = await signedIn();
+      await failUntilEnded(socket, 'xcrun simctl io /Users/someone/secret-project/ios failed (code 1)');
+      expect(f.hub.list()).toEqual([]);
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('ended'));
+      const ended = messages.find((message) => message.type === 'ended');
+      expect(ended).toEqual({ type: 'ended', message: 'This share has ended: its device could not stream.' });
+      expect(messages.map((message) => message.type).filter((type) => type === 'stopped').length).toBeGreaterThan(2);
+      expect(f.gaveUp).toEqual([expect.objectContaining({ workspace: WORKSPACE, platform: 'ios' })]);
+      expect(f.routeCloses).toBe(1);
+      socket.close();
+    });
+
+    it("holds the share's link until its saved link is marked stopped, and tells viewers at once", async () => {
+      const LINK = 'L'.repeat(43);
+      let release = () => {};
+      f.gaveUpGate = new Promise<void>((resolve) => (release = resolve));
+      const { socket, messages } = await signedIn({ token: LINK });
+      await failUntilEnded(socket, 'xcrun simctl io failed (code 1)');
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('ended'));
+      expect(f.gaveUp).toHaveLength(1);
+      expect(f.gaveUpLinks).toEqual([digest(LINK).toString('hex')]);
+
+      expect(f.hub.list()).toEqual([]);
+      expect(f.hub.isIdle()).toBe(false);
+      expect(f.routeCloses).toBe(0);
+      expect(f.idle).toBe(0);
+      expect(await f.hub.start(shareRequest({ token: LINK }))).toMatchObject({
+        code: 'bad-request',
+        message: 'That link is live now.',
+      });
+
+      release();
+      await vi.waitFor(() => expect(f.routeCloses).toBe(1));
+      await vi.waitFor(() => expect(f.idle).toBe(1));
+      expect(f.gaveUp).toHaveLength(1);
+      socket.close();
+    });
+
+    it('reports idle after the last mark settles, also when another share ended and closed the listener during the wait', async () => {
+      let release = () => {};
+      f.gaveUpGate = new Promise<void>((resolve) => (release = resolve));
+      const { socket } = await signedIn();
+      const other = await started(f);
+      f.subscribed[0]?.listener.failed?.('xcrun simctl io failed (code 1)');
+      for (let round = 0; round < 20 && f.gaveUp.length === 0; round++) {
+        await stepLive(socket, 31_000);
+        f.subscribed.at(-1)?.listener.failed?.('xcrun simctl io failed (code 1)');
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      expect(f.gaveUp).toHaveLength(1);
+
+      await f.hub.stopOne(WORKSPACE, other.id);
+      await vi.waitFor(() => expect(f.routeCloses).toBe(1));
+      await vi.advanceTimersByTimeAsync(10);
+      expect(f.idle).toBe(0);
+
+      release();
+      await vi.waitFor(() => expect(f.idle).toBe(1));
+      socket.close();
+    });
+
+    it('still ends the share, once, when marking its saved link fails or the share is stopped meanwhile', async () => {
+      let release = () => {};
+      f.gaveUpGate = new Promise<void>((resolve) => (release = resolve));
+      f.gaveUpFails = true;
+      const { socket, messages } = await signedIn();
+      await failUntilEnded(socket, 'xcrun simctl io failed (code 1)');
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('ended'));
+      await f.hub.stop(WORKSPACE);
+      release();
+      await vi.waitFor(() => expect(f.routeCloses).toBe(1));
+      await vi.advanceTimersByTimeAsync(10);
+      expect(f.routeCloses).toBe(1);
+      expect(f.hub.list()).toEqual([]);
+      expect(messages.filter((message) => message.type === 'ended')).toHaveLength(1);
+      socket.close();
+    });
+
+    it('names the missing frame helper to viewers when that is why the device cannot stream', async () => {
+      const { socket, messages } = await signedIn();
+      await failUntilEnded(
+        socket,
+        'This app or physical device streams through the stim-frames helper, which this Mac has not built.',
+      );
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('ended'));
+      expect(messages.find((message) => message.type === 'ended')).toMatchObject({
+        message: expect.stringContaining('a helper that this Mac has not built'),
+      });
+      socket.close();
+    });
+
+    it('does not end a share whose device is away for longer than that: it is only stopped until the device is back', async () => {
+      const { socket } = await signedIn();
+      f.subscribed[0]?.listener.failed?.('the frame helper stopped');
+      await vi.advanceTimersByTimeAsync(10);
+      f.status(payload('Shutdown'));
+      for (let minute = 0; minute < 40; minute++) await stepLive(socket, 30_000);
+      expect(f.hub.list()).toEqual([expect.objectContaining({ viewers: 1 })]);
+      f.status(payload('Booted'));
+      await vi.waitFor(() => expect(f.subscribed).toHaveLength(2));
+      f.subscribed[1]?.listener.failed?.('the frame helper stopped');
+      await vi.advanceTimersByTimeAsync(10);
+      expect(f.hub.list()).toHaveLength(1);
+      socket.close();
+    });
+
+    it('counts the failing stretch per device: a device that replaces a failing one during the wait starts with a clean clock', async () => {
+      const { socket } = await signedIn();
+      f.subscribed[0]?.listener.failed?.('the frame helper stopped');
+      for (let round = 0; round < 9; round++) {
+        await stepLive(socket, 31_000);
+        f.subscribed.at(-1)?.listener.failed?.('the frame helper stopped');
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      expect(f.hub.list()).toHaveLength(1);
+
+      const other = payload('Booted');
+      const environment = other.environments[0];
+      if (environment) environment.ios.udid = 'SIM-2';
+      f.status(other);
+      await stepLive(socket, 31_000);
+      expect(f.subscribed.at(-1)?.device).toMatchObject({ udid: 'SIM-2' });
+      f.subscribed.at(-1)?.listener.failed?.('the frame helper stopped');
+      await vi.advanceTimersByTimeAsync(10);
+      expect(f.hub.list()).toHaveLength(1);
+      expect(f.gaveUp).toEqual([]);
+      socket.close();
+    });
+
+    it('does not count a failing stretch nobody watched: a viewer that joins hours later and sees one short failure keeps the share', async () => {
+      const { url, cookie, socket } = await signedIn();
+      f.subscribed[0]?.listener.failed?.('the frame helper stopped');
+      socket.close();
+      await vi.waitFor(() => expect(f.hub.list()[0]?.viewers).toBe(0));
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(f.hub.list()).toHaveLength(1);
+
+      const joined = await connect(url, { origin: origin(url), cookie });
+      await vi.waitFor(() => expect(f.subscribed.length).toBeGreaterThan(1));
+      f.subscribed.at(-1)?.listener.failed?.('the capture closed for an install');
+      await vi.advanceTimersByTimeAsync(10);
+      expect(f.hub.list()).toHaveLength(1);
+      joined.socket.close();
     });
 
     it('follows its slot to another simulator, without a new login', async () => {
@@ -1808,27 +2007,30 @@ describe('a web share', () => {
       f.status(other);
       await vi.waitFor(() => expect(f.subscribed).toHaveLength(2));
       expect(f.subscribed[1]!.device).toMatchObject({ udid: 'SIM-2' });
-      expect(stateOf(f)).toBe('live');
       await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('resumed'));
-      expect(messages.map((message) => message.type)).toContain('waiting');
+      expect(messages.map((message) => message.type)).toContain('stopped');
       socket.close();
     });
 
     it('keeps its expiry while it waits, and ends when that comes', async () => {
-      await started(f, { expiresMinutes: 1 });
+      const { socket, messages } = await signedIn({ expiresMinutes: 1 });
       f.status(payload('Shutdown'));
-      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('stopped'));
+      expect(f.hub.list()).toHaveLength(1);
       vi.advanceTimersByTime(60_000);
       await vi.waitFor(() => expect(f.hub.list()).toEqual([]));
       expect(f.routeCloses).toBe(1);
+      socket.close();
     });
 
     it('is ended by an explicit stop, and is not idle while it waits', async () => {
-      const share = await started(f);
+      const { share, socket, messages } = await signedIn();
       f.status(payload('Shutdown'));
-      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('stopped'));
       expect(f.hub.isIdle()).toBe(false);
-      expect(await f.hub.stopOne(WORKSPACE, share.id)).toMatchObject({ state: 'waiting' });
+      expect(await f.hub.stopOne(WORKSPACE, share.id)).toMatchObject({ id: share.id });
+      socket.close();
+      expect(f.gaveUp).toEqual([]);
       expect(f.hub.list()).toEqual([]);
       expect(f.routeCloses).toBe(1);
       f.status(payload('Booted'));
@@ -1836,12 +2038,12 @@ describe('a web share', () => {
     });
 
     it('releases the recording exemption it held for control when it starts waiting', async () => {
-      const { socket } = await signedIn({ control: true });
+      const { socket, messages } = await signedIn({ control: true });
       socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
       await vi.waitFor(() => expect(f.begins).toHaveLength(1));
       expect(f.hub.unrecordedTargets().size).toBe(1);
       f.status(payload('Shutdown'));
-      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('stopped'));
       vi.advanceTimersByTime(2 * 60_000);
       expect(f.hub.unrecordedTargets().size).toBe(0);
       socket.close();
@@ -1877,7 +2079,6 @@ describe('a web share', () => {
       const again = shareRequest({ token: TOKEN, expiresAt: Date.now() + 60_000, expiresMinutes: 1 });
       await started(f, again);
       f.status(payload('Shutdown'));
-      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
       expect(await f.hub.start(again)).toMatchObject({ code: 'bad-request', message: 'That link is live now.' });
       await f.hub.stop(WORKSPACE);
       expect(f.routeCloses).toBe(1);
@@ -1895,10 +2096,17 @@ describe('a web share', () => {
       const restored = await f.hub.start(shareRequest({ token: TOKEN }), { restore: true });
       if ('code' in restored) throw new Error(restored.message);
       expect(restored.url).toContain(TOKEN);
-      expect(stateOf(f)).toBe('waiting');
-      f.status(payload('Booted'));
-      await vi.waitFor(() => expect(stateOf(f)).toBe('live'));
       expect(f.hub.list()).toHaveLength(1);
+      const url = local(restored, f.hub.port ?? 0);
+      const cookie = await login(url, restored.password ?? '');
+      const { socket, messages } = await connect(url, { origin: origin(url), cookie });
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('stopped'));
+      expect(f.subscribed).toEqual([]);
+      f.status(payload('Booted'));
+      await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('resumed'));
+      expect(f.subscribed).toHaveLength(1);
+      expect(f.hub.list()).toHaveLength(1);
+      socket.close();
     });
 
     it('does not keep the token it was given: it appears in no row', async () => {
@@ -2022,14 +2230,11 @@ describe('a web share', () => {
       f.status(hostedPayload() as never);
       await started(f);
       f.status(hostedPayload('sess-2', false) as never);
-      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
       expect(f.hostedSources[0]!.closed).toBe(1);
       f.status(hostedPayload('sess-2') as never);
       await vi.waitFor(() => expect(f.hostedSources).toHaveLength(2));
-      expect(stateOf(f)).toBe('live');
 
       f.status(payload('Shutdown'));
-      await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
       expect(f.hostedSources[1]!.closed).toBe(1);
     });
 
@@ -2042,13 +2247,12 @@ describe('a web share', () => {
       await vi.waitFor(() => expect(f.hostedSources[0]!.subscribed).toHaveLength(1));
       f.hostedSources[0]!.subscribed[0]!.failed?.('mini: The hosted capture session ended.');
       await vi.waitFor(() => expect(stateOf(f)).toBe('waiting'));
-      expect(messages.map((message) => message.type)).toContain('waiting');
+      expect(messages.map((message) => message.type)).toContain('stopped');
       expect(f.hostedSources[0]!.closed).toBe(1);
 
       vi.advanceTimersByTime(2000);
       await vi.waitFor(() => expect(f.hostedSources).toHaveLength(2));
       await vi.waitFor(() => expect(f.hostedSources[1]!.subscribed).toHaveLength(1));
-      expect(stateOf(f)).toBe('live');
       await vi.waitFor(() => expect(messages.map((message) => message.type)).toContain('resumed'));
       expect((await http(url, { cookie })).status).toBe(200);
       socket.close();

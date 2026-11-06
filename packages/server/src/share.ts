@@ -67,7 +67,6 @@ export interface ShareRow {
   control: boolean;
   expiresAt: string;
   viewers: number;
-  state: ShareState;
   auth: ShareAuth;
   viewAuth: ViewAuth;
   slug?: string;
@@ -133,6 +132,12 @@ export interface ShareDeps {
   appName?: (udid: string, bundleId: string) => Promise<string | null>;
   lookup?: LeaseLookup;
   limits?: Partial<ShareLimits>;
+  /**
+   * Called when a share ends because its device could not stream, with the digest of its link. The share is not
+   * released (its link cannot be started again, and the hub is not idle) until the returned promise settles, so a
+   * saved link is marked stopped before an idle stim-server exits.
+   */
+  gaveUp?: (request: ShareTarget, link: string) => Promise<void>;
   /** Called when {@link ShareHub.unrecordedTargets} changed. */
   recordingChanged?: () => void;
   /** Called when the last share has ended and its route is gone. */
@@ -178,10 +183,17 @@ const STRANDED_RETRY_MS = 30_000;
 /** How soon a waiting share looks for its device again, and the most it waits between tries after a failed stream. */
 const RESUME_MIN_MS = 2000;
 const RESUME_MAX_MS = 30_000;
-/** What public viewers are told; the reasons, which can name workspaces and clients, go to the server log only. */
+/** How long a share whose device is present keeps failing to stream, with no frame in between, before it ends. */
+const STREAM_GIVE_UP_MS = 5 * 60_000;
+/**
+ * What public viewers are told. A raw reason can name workspaces and clients, so it goes to the server log only; a
+ * viewer gets one of the fixed reasons here.
+ */
 const VIEWER_TEXT = {
   ended: 'This share has ended.',
-  waiting: 'Waiting for the device...',
+  stopped: 'This share is stopped.',
+  noHelper: 'This share has ended: its device streams through a helper that this Mac has not built.',
+  noStream: 'This share has ended: its device could not stream.',
   controlRefused: 'Control is not available right now. Try again in a moment.',
   inputRefused: 'That input was not accepted.',
   clipboardRefused: 'The device did not take or return its clipboard.',
@@ -330,6 +342,10 @@ interface Share {
   /** Not before this time (epoch ms) does a share that lost its stream look for its device again. */
   resumeAt: number;
   backoff: number;
+  /** When its stream first failed with no frame since, while its device is present; null when it streams. */
+  failingSince: number | null;
+  /** The device or session the failing stretch in `failingSince` belongs to. */
+  failingOn: string | null;
   retry: NodeJS.Timeout | null;
   sessions: Map<string, Login>;
   failures: number[];
@@ -361,6 +377,10 @@ export class ShareHub {
   private readonly deps: ShareDeps;
   private readonly limits: ShareLimits;
   private readonly shares = new Map<string, Share>();
+  /** Keys of shares that gave up and whose saved link is being marked stopped: their link is not yet free to start. */
+  private readonly marking = new Set<string>();
+  /** Whether `idle` was called since the last start began, so a recheck after a mark cannot call it twice. */
+  private idleReported = false;
   private readonly controlled = new Map<string, number>();
   private readonly wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
   private listener: Server | null = null;
@@ -429,13 +449,22 @@ export class ShareHub {
    */
   isIdle(): boolean {
     return (
-      !this.shares.size && !this.listener && !this.starting && !this.opening && this.deps.route.stranded() === null
+      !this.shares.size &&
+      !this.marking.size &&
+      !this.listener &&
+      !this.starting &&
+      !this.opening &&
+      this.deps.route.stranded() === null
     );
   }
 
   private checkIdle(): void {
     if (this.closed) return;
-    if (this.isIdle()) return this.deps.idle?.();
+    if (this.isIdle()) {
+      if (this.idleReported) return;
+      this.idleReported = true;
+      return this.deps.idle?.();
+    }
     if (
       this.shares.size ||
       this.listener ||
@@ -459,10 +488,13 @@ export class ShareHub {
   }
 
   private reusedLive(request: ShareRequest): boolean {
-    return request.token !== undefined && this.shares.has(digest(request.token).toString('hex'));
+    if (request.token === undefined) return false;
+    const key = digest(request.token).toString('hex');
+    return this.shares.has(key) || this.marking.has(key);
   }
 
   private async begin(request: ShareRequest, restore: boolean): Promise<StartedShare | Refusal> {
+    this.idleReported = false;
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
     if (request.control && request.physical && request.platform === 'ios') {
       return { code: 'bad-request', message: 'A physical iPhone is view only: share it without --control.' };
@@ -553,6 +585,8 @@ export class ShareHub {
       source,
       resumeAt: 0,
       backoff: RESUME_MIN_MS,
+      failingSince: null,
+      failingOn: null,
       retry: null,
       sessions: new Map(),
       failures: [],
@@ -582,7 +616,9 @@ export class ShareHub {
       item: (payload) => this.reconcile(share, payload),
       failed: () => {},
     });
-    if (!bound) this.arm(share);
+    if (!bound) {
+      this.arm(share);
+    }
     return {
       ...this.row(share),
       url: `${base}/s/${secret}/`,
@@ -595,7 +631,10 @@ export class ShareHub {
   /** The refusal for a slug a live share already uses: a share never takes over another's link. */
   private slugTaken(slug: string | undefined): Refusal | null {
     if (slug === undefined) return null;
-    const holder = this.shares.get(digest(slug).toString('hex'));
+    const key = digest(slug).toString('hex');
+    if (this.marking.has(key))
+      return { code: 'action-failed', message: `The slug ${slug} is still being released. Try again.` };
+    const holder = this.shares.get(key);
     if (!holder) return null;
     return {
       code: 'action-failed',
@@ -743,7 +782,6 @@ export class ShareHub {
       control: share.request.control,
       expiresAt: new Date(share.expiresAt).toISOString(),
       viewers: share.viewers.size,
-      state: share.state,
       auth: share.auth,
       viewAuth: share.viewAuth,
       ...(share.request.slug !== undefined ? { slug: share.request.slug } : {}),
@@ -857,7 +895,7 @@ export class ShareHub {
     }
   }
 
-  private async end(share: Share, message: string): Promise<void> {
+  private async end(share: Share, message: string, viewerMessage = VIEWER_TEXT.ended, gaveUp = false): Promise<void> {
     if (share.ended) return;
     share.ended = true;
     clearTimeout(share.timer);
@@ -875,7 +913,7 @@ export class ShareHub {
       }
       if (this.closed) socket.close(1001, 'stim-server stopped');
       else {
-        socket.send(JSON.stringify({ type: 'ended', message: VIEWER_TEXT.ended }));
+        socket.send(JSON.stringify({ type: 'ended', message: viewerMessage }));
         socket.close(1000, 'share ended');
       }
       setTimeout(() => socket.terminate(), CLOSE_GRACE_MS).unref?.();
@@ -884,6 +922,18 @@ export class ShareHub {
     share.source?.endFor(share.owner, message);
     share.source?.close();
     this.releaseRecording(share);
+    if (gaveUp && this.deps.gaveUp) {
+      this.marking.add(share.key);
+      try {
+        await this.deps.gaveUp(share.request, share.key);
+      } catch (cause) {
+        console.error(`stim-server: could not mark the saved link of web share ${share.id} stopped: ${String(cause)}`);
+      } finally {
+        this.marking.delete(share.key);
+      }
+      await this.teardown();
+      return this.checkIdle();
+    }
     await this.teardown();
   }
 
@@ -896,12 +946,16 @@ export class ShareHub {
     if (share.ended) return;
     this.followTitle(share, payload);
     const bound = this.resolve(payload, share.request, share.state === 'live' ? share.bound : null);
-    if (typeof bound === 'string') return this.suspend(share, bound);
+    if (typeof bound === 'string') {
+      share.failingSince = null;
+      return this.suspend(share, bound);
+    }
     if (share.state === 'waiting') {
       if (Date.now() >= share.resumeAt) this.resume(share, bound);
       return;
     }
     if (bound.key === share.bound) return;
+    share.failingSince = null;
     this.suspend(share, 'The device changed.');
     this.resume(share, bound);
   }
@@ -919,7 +973,7 @@ export class ShareHub {
       viewer.detach?.();
       source?.presence?.leave(viewer.who.id);
       if (viewer.socket.readyState === viewer.socket.OPEN) {
-        viewer.socket.send(JSON.stringify({ type: 'waiting', message: VIEWER_TEXT.waiting }));
+        viewer.socket.send(JSON.stringify({ type: 'stopped', message: VIEWER_TEXT.stopped }));
       }
     }
     share.source = null;
@@ -1263,7 +1317,7 @@ export class ShareHub {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
     };
     json({ type: 'hello', expiresAt: new Date(share.expiresAt).toISOString(), title: this.titleOf(share) });
-    if (share.state === 'waiting') json({ type: 'waiting', message: VIEWER_TEXT.waiting });
+    if (share.state === 'waiting') json({ type: 'stopped', message: VIEWER_TEXT.stopped });
     this.identify(share, viewer);
     share.viewers.add(viewer);
     this.introduce(share, viewer);
@@ -1295,6 +1349,7 @@ export class ShareHub {
       clearInterval(ping);
       viewer.detach?.();
       share.viewers.delete(viewer);
+      if (share.viewers.size === 0) share.failingSince = null;
       if (share.controlSession) share.source?.release?.(share.owner, share.controlSession, viewer.who);
       share.source?.presence?.leave(viewer.who.id);
       if (share.viewers.size === 0 && share.controlSession) {
@@ -1340,6 +1395,7 @@ export class ShareHub {
         {
           frame: (frame) => {
             share.backoff = RESUME_MIN_MS;
+            share.failingSince = null;
             delivery.push(frame);
           },
           ...(viewer.video
@@ -1347,6 +1403,7 @@ export class ShareHub {
                 video: (unit: AccessUnit) => {
                   if (socket.readyState !== socket.OPEN) return;
                   share.backoff = RESUME_MIN_MS;
+                  share.failingSince = null;
                   const verdict = gate.admit(unit, socket.bufferedAmount);
                   if (verdict === 'send')
                     socket.send(videoPacket(VIDEO_SUBSCRIPTION, sequence++, unit), { binary: true });
@@ -1359,6 +1416,16 @@ export class ShareHub {
           failed: (message) =>
             queueMicrotask(() => {
               if (share.source !== source) return;
+              const now = Date.now();
+              if (share.failingOn !== share.bound) {
+                share.failingOn = share.bound;
+                share.failingSince = null;
+              }
+              share.failingSince ??= now;
+              if (now - share.failingSince >= STREAM_GIVE_UP_MS) {
+                const helper = message.includes('stim-frames helper, which this Mac has not built');
+                return void this.end(share, message, helper ? VIEWER_TEXT.noHelper : VIEWER_TEXT.noStream, true);
+              }
               share.resumeAt = Date.now() + share.backoff;
               share.backoff = Math.min(share.backoff * 2, RESUME_MAX_MS);
               this.suspend(share, message);

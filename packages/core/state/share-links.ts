@@ -7,8 +7,9 @@ import { isJsonObject, readJsonFile } from './json-file.ts';
 
 /**
  * Whether a saved share should run again on its own: `live` from when it starts until a deliberate stop (`stim share
- * stop`, `stim stop`, `share.stop` from any client, a reclaimed workspace), `stopped` after. A stim-server restart or
- * crash leaves it `live`, because only a start and a deliberate stop write it.
+ * stop`, `stim stop`, `share.stop` from any client, a reclaimed workspace) or until stim-server ends it because its
+ * device cannot stream, `stopped` after. A stim-server restart or crash leaves it `live`, because only a start, a
+ * deliberate stop and that give-up write it.
  */
 export type SavedShareState = 'live' | 'stopped';
 

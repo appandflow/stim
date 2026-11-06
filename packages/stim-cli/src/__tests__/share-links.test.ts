@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readLiveShareLinks, type SavedShare } from '@stim-cli/core/state';
-import { pauseShareLinks, saveShareLink } from '../workspace/share-links.ts';
+import { pauseShareLinkAsync, pauseShareLinks, saveShareLink } from '../workspace/share-links.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 
 const entry = (slot: string, state: SavedShare['state'], expiresAt: string): SavedShare => ({
@@ -54,5 +54,18 @@ describe('saved share state', () => {
     expect(keys()).toEqual([`${a}:ios`]);
     pauseShareLinks(a);
     expect(keys()).toEqual([]);
+  });
+
+  it('pauses a link only when the entry filed under the key is the one asked for', async () => {
+    const later = new Date(Date.now() + 3_600_000).toISOString();
+    const a = join(home, 'project-a');
+    ensureWorkspaceStorage(a);
+    saveShareLink(a, 'ios', { ...entry('default', 'live', later), token: 'B'.repeat(43) });
+    const ours = (link: SavedShare) => link.token === 'A'.repeat(43);
+
+    await pauseShareLinkAsync(a, 'ios', ours);
+    expect(readLiveShareLinks()).toHaveLength(1);
+    await pauseShareLinkAsync(a, 'ios', (link) => link.token === 'B'.repeat(43));
+    expect(readLiveShareLinks()).toEqual([]);
   });
 });
