@@ -12,6 +12,8 @@ export default defineConfig({
   entry: {
     'stim-server': 'bin/stim-server.ts',
     cli: 'src/cli.ts',
+    environment: 'src/environment.ts',
+    'service-plist': 'src/service-plist.ts',
     'stim-service-runner': 'src/service-runner.ts',
     protocol: 'src/protocol.ts',
   },
