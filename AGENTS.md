@@ -432,12 +432,21 @@ outside it moves to its own issue and pull request.
   `*.p8`, `*.p12`, `*.mobileprovision` and `*.provisionprofile` that no Xcode build file names. A release variant's worker
   builds any other signing config unsigned
   (`packages/stim-cli/shim/android-worker-release.gradle`) and the client signs it
-  with its `zipalign` then `apksigner` path, or refuses. Two machines build for each other, and reuse each other's
-  completed React Native and SwiftPM artifacts, when their bundled Stim
-  reports the same `STIM_BUILD_COMPAT`
-  (`packages/stim-cli/src/engine/toolchain.ts`, in the `stim` package because
-  `@stim-cli/core` is a ranged dependency); a machine that reports none is
-  refused and must be updated. Bump it when a machine with the same value but
+  with its `zipalign` then `apksigner` path, or refuses. An offloaded build runs
+  the client's exact Stim build on the worker: the worker's stimd answers
+  `job.start` by running that build's `dist/cli.mjs __job offload-build` (or
+  `offload-probe` for an offer) from its engine store with a Node that meets the
+  build's `engines`, fetching a published release from npm, or taking a build
+  from a checkout or `stim engine use <path>`, which the client packs, only while
+  `server.acceptClientBuilds` is `true`. stimd passes each Noise message of the
+  connection to the job as one frame (a 4-byte big-endian length, then the
+  message's type byte and body) and each frame the job writes back as one
+  message, and parses neither; a closed connection ends the job's stdin, a
+  dropped one keeps the job for `job.start {attach}`, and SIGTERM cancels it.
+  This spawn and framing are frozen. Two machines reuse each other's completed
+  React Native and SwiftPM artifacts when their builds report the same
+  `STIM_BUILD_COMPAT` (`packages/stim-cli/src/engine/toolchain.ts`, in the
+  `stim` package because `@stim-cli/core` is a ranged dependency). Bump it when a machine with the same value but
   the other version of a file listed in `scripts/build-compat.json` would
   build a different artifact or read a build or artifact message
   differently; a fix that makes a failing worker build succeed, or a field

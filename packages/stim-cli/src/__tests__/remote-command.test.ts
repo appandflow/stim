@@ -1,3 +1,4 @@
+import { PEER } from '@stim-cli/core/protocol';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -43,7 +44,7 @@ const status = {
 };
 const notYet: HelloReply = { error: { code: 'unknown-secret', message: 'not yet' } };
 const granted = (capability: string): HelloReply => ({
-  result: { capabilities: [capability], device: { id: 'dev-mini', name: 'laptop' } },
+  result: { capabilities: [capability], peer: PEER, device: { id: 'dev-mini', name: 'laptop' } },
   serverKey: SERVER_KEY,
 });
 

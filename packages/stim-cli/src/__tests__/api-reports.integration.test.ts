@@ -1,3 +1,4 @@
+import { PEER } from '@stim-cli/core/protocol';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import * as identities from '../process-identity.ts';
 import * as git from '../workspace/git.ts';
@@ -1143,7 +1144,7 @@ test.each([
         controller.abort();
       }, 50);
       return {
-        result: { capabilities: [access], device: { id: 'worker', name: 'worker' } },
+        result: { capabilities: [access], peer: PEER, device: { id: 'worker', name: 'worker' } },
         serverKey: 's'.repeat(42) + 'A',
       };
     },
@@ -1362,7 +1363,7 @@ test.each([false, true])('cancellation does not persist a late remote approval (
     hello: async () => {
       controller.abort();
       return {
-        result: { capabilities: ['build'], device: { id: 'worker', name: 'worker' } },
+        result: { capabilities: ['build'], peer: PEER, device: { id: 'worker', name: 'worker' } },
         serverKey: 's'.repeat(42) + 'A',
       };
     },

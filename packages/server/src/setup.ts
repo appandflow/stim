@@ -11,7 +11,7 @@ import {
   type SetupJournal,
 } from '@stim-cli/core/state';
 import type { BuildToolchain, ServeRoute } from '@stim-cli/core/protocol';
-import { BuildHost } from './build.ts';
+import { probeToolchain } from './build.ts';
 import { discoverToolchain } from '@stim-cli/core/toolchain';
 import { bundledStim } from './environment.ts';
 import { decodeSecret, keyFingerprint, secretValues } from '@stim-cli/core/noise-session';
@@ -450,16 +450,7 @@ export function defaultSetupDeps(): SetupDeps {
     },
     async toolchain(options) {
       const env = applyServeEnvironment(discoverToolchain(process.env).env, options.env, options.pathPrepend);
-      const host = new BuildHost({
-        worker: join(stimDist, 'offload-worker.mjs'),
-        env,
-        ready: () => false,
-      });
-      try {
-        return await host.toolchain();
-      } finally {
-        await host.close();
-      }
+      return probeToolchain([join(stimDist, 'cli.mjs'), '__job', 'offload-worker', 'offer'], env);
     },
     node: stableNode(process.env.PATH),
     versions: (label) => join(serviceRoot(label), 'versions'),

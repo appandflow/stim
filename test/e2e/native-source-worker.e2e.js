@@ -106,7 +106,7 @@ for (const provider of ['xcode', 'gradle'])
                 },
         };
         const runWorker = () =>
-          spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
+          spawnSync(process.execPath, [resolve('packages/stim-cli/dist/cli.mjs'), '__job', 'offload-worker', 'build'], {
             input: JSON.stringify(job),
             encoding: 'utf8',
             timeout: 15000,
@@ -237,12 +237,16 @@ async function runNativeIdentityJob(area, prepareClient, workerEnv) {
         parameters: request.native.snapshot.parameters,
       },
     };
-    const result = spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
-      input: JSON.stringify(job),
-      encoding: 'utf8',
-      timeout: 30000,
-      env: { ...process.env, STIM_HOME: join(area, 'home'), ...workerEnv },
-    });
+    const result = spawnSync(
+      process.execPath,
+      [resolve('packages/stim-cli/dist/cli.mjs'), '__job', 'offload-worker', 'build'],
+      {
+        input: JSON.stringify(job),
+        encoding: 'utf8',
+        timeout: 30000,
+        env: { ...process.env, STIM_HOME: join(area, 'home'), ...workerEnv },
+      },
+    );
     assert.equal(result.error, undefined);
     return {
       result,
@@ -452,17 +456,21 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
     write(join(workerJdk, 'release'), 'JAVA_VERSION="21"\n');
     let lastCompleted;
     const run = (id, { succeeds = true, policy = { read: true, write: true, remote: false }, jdk } = {}) => {
-      const result = spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
-        input: JSON.stringify({
-          ...job,
-          job: id,
-          ...(jdk ? { jdk } : {}),
-          native: { ...job.native, ...(policy === null ? {} : { cache: { remote: false, ...policy } }) },
-        }),
-        env: { ...process.env, JAVA_HOME: workerJdk },
-        encoding: 'utf8',
-        timeout: 30000,
-      });
+      const result = spawnSync(
+        process.execPath,
+        [resolve('packages/stim-cli/dist/cli.mjs'), '__job', 'offload-worker', 'build'],
+        {
+          input: JSON.stringify({
+            ...job,
+            job: id,
+            ...(jdk ? { jdk } : {}),
+            native: { ...job.native, ...(policy === null ? {} : { cache: { remote: false, ...policy } }) },
+          }),
+          env: { ...process.env, JAVA_HOME: workerJdk },
+          encoding: 'utf8',
+          timeout: 30000,
+        },
+      );
       assert.equal(result.error, undefined);
       assert.equal(result.status, 0, result.stdout + result.stderr);
       const completed = result.stdout
@@ -489,7 +497,7 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
     const query = (declaration = inputs, android = job.android, jdk) => {
       const result = spawnSync(
         process.execPath,
-        [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'native-gradle-artifact'],
+        [resolve('packages/stim-cli/dist/cli.mjs'), '__job', 'offload-worker', 'native-gradle-artifact'],
         {
           input: JSON.stringify({
             root: join(worker, 'src'),
@@ -620,28 +628,32 @@ test('Android worker clears only its selected Node home before dependency work',
       JSON.stringify({ iosSimulatorApp: 'stim-desktop', androidEmulatorApp: 'stim-desktop' }),
     );
     const run = () => {
-      const result = spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
-        input: JSON.stringify({
-          job: 'owned-idle',
-          area,
-          blobs: join(root, 'blobs'),
-          manifest,
-          platform: 'android',
-          project: '',
-          isExpo: false,
-        }),
-        env: {
-          ...process.env,
-          STIM_HOME: join(root, 'home'),
-          HOME: root,
-          USERPROFILE: root,
-          GRADLE_USER_HOME: gradle,
-          PATH: `${bin}${delimiter}${process.env.PATH}`,
-          COREPACK_ENABLE_NETWORK: '0',
+      const result = spawnSync(
+        process.execPath,
+        [resolve('packages/stim-cli/dist/cli.mjs'), '__job', 'offload-worker', 'build'],
+        {
+          input: JSON.stringify({
+            job: 'owned-idle',
+            area,
+            blobs: join(root, 'blobs'),
+            manifest,
+            platform: 'android',
+            project: '',
+            isExpo: false,
+          }),
+          env: {
+            ...process.env,
+            STIM_HOME: join(root, 'home'),
+            HOME: root,
+            USERPROFILE: root,
+            GRADLE_USER_HOME: gradle,
+            PATH: `${bin}${delimiter}${process.env.PATH}`,
+            COREPACK_ENABLE_NETWORK: '0',
+          },
+          encoding: 'utf8',
+          timeout: 15000,
         },
-        encoding: 'utf8',
-        timeout: 15000,
-      });
+      );
       assert.equal(result.error, undefined);
       assert.equal(result.status, 0, result.stdout + result.stderr);
       return result.stdout

@@ -10,6 +10,12 @@ if (process.argv[2] === '__stimd') {
   process.exit();
 }
 
+if (process.argv[2] === '__job') {
+  const code = await (await import('../src/job/main.ts')).runJobEntry(process.argv.slice(3));
+  await new Promise((resolve) => process.stdout.write('', resolve));
+  process.exit(code);
+}
+
 type CommandModule = { default: (program: Command, version: string) => void };
 
 const commands = new Map<string, () => Promise<CommandModule>>([

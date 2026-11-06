@@ -1144,10 +1144,11 @@ regenerating on a Mac and committing.
 Any other difference, such as the app config, fails with fingerprint-mismatch.
 A client with an Xcode still needs the same one, and there a worker pod install
 that changes the fingerprint fails with fingerprint-mismatch.
-Two machines build for each other when their Stim releases share a build
-compatibility version, which changes only when what a worker builds, how it
-builds, or the build messages change; their Stim builds can differ. A
-stim-server too old to report one needs the same Stim build as this machine.
+The worker runs this machine's exact Stim build for the job, so the two can run
+different releases: it installs a published release from npm the first time,
+and takes a build from a checkout or stim engine use <path> only while its
+server.acceptClientBuilds is true. A worker on an older peer is refused with
+peer-too-old and stim remote update <mac>.
 
 \`remote.build\` (machine scope, default auto) selects placement for
 \`ios\`, \`android\` and \`macos\`. \`--remote-build <local|auto|remote|remote-only|name>\`

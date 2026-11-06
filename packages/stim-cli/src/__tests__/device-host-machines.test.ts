@@ -1,3 +1,4 @@
+import { PEER } from '@stim-cli/core/protocol';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,6 +35,7 @@ const notYet: HelloReply = { error: { code: 'unknown-secret', message: 'not yet'
 const hosting = (host?: { name: string; screenRecording: boolean; accessibility: boolean }): HelloReply => ({
   result: {
     capabilities: ['device-host'],
+    peer: PEER,
     device: { id: 'host12', name: 'laptop' },
     ...(host ? { host: { app: host } } : {}),
   },

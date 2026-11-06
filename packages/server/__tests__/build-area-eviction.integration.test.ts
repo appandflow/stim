@@ -19,10 +19,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join, win32 } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
-import { BuildArtifactCache } from 'stim/build-artifact-cache';
+import { BuildArtifactCache } from '../../stim-cli/src/offload/build-artifact-cache.ts';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { tryAcquireBuildSlotClaim, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
-import { BuildHost, type BuildHostOptions, type BuildLimits } from '../src/build.ts';
+import { BuildWorkerRoot, type BuildLimits } from '../src/build.ts';
+import { BuildHost, type BuildHostOptions } from '../../stim-cli/src/job/offload/host.ts';
 import { areaLastUsed, recordAreaUse, recordRootUsage } from '../src/worker-areas.ts';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
@@ -47,16 +48,95 @@ const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 
 let home: string;
 let root: string;
-let running: BuildHost | null = null;
+let running: Worker | null = null;
 let logs: string[];
 
-const start = (limits: Partial<BuildLimits> = {}, options: Partial<BuildHostOptions> = {}) => {
-  running = new BuildHost({
-    worker: join(home, 'worker.mjs'),
-    env: process.env,
-    limits: { daemonSweepMs: 60 * 60_000, ...limits },
-    ...options,
-  });
+/** stimd's worker root with one offload job's host, whose launched builds and connections count as live jobs. */
+class Worker {
+  readonly root: BuildWorkerRoot;
+  readonly host: BuildHost;
+  private readonly live = new Map<object, { client: string; repo: string }>();
+
+  constructor(
+    limits: Partial<BuildLimits>,
+    options: Partial<BuildHostOptions> & { allowed?: (client: string) => boolean; ready?: () => boolean },
+  ) {
+    this.host = new BuildHost({ worker: join(home, 'worker.mjs'), env: process.env, limits, ...options });
+    this.root = new BuildWorkerRoot({
+      limits,
+      allowed: options.allowed,
+      ready: options.ready,
+      jobs: () => this.live.values(),
+      stopJobs: async (client) => {
+        for (const [entry, owner] of this.live) {
+          if (owner.client !== client) continue;
+          this.live.delete(entry);
+          const job = entry as Partial<{ cancel: () => void; done: Promise<void> }>;
+          job.cancel?.();
+          await job.done;
+        }
+      },
+    });
+  }
+
+  launch(args: Parameters<BuildHost['launch']>[0]) {
+    this.root.maintainAreas();
+    const job = this.host.launch(args);
+    if (!('error' in job)) this.live.set(job, { client: args.client, repo: args.repo });
+    return job;
+  }
+
+  /** An offload job of `client` for `repo`, live until the returned function ends it. */
+  connect(client: string, repo: string): () => void {
+    const entry = {};
+    this.live.set(entry, { client, repo });
+    return () => this.live.delete(entry);
+  }
+
+  forget(job: object & { id: string }) {
+    this.host.forget(job as never);
+    this.live.delete(job);
+  }
+
+  session(...args: Parameters<BuildHost['session']>) {
+    return this.host.session(...args);
+  }
+
+  offer(...args: Parameters<BuildHost['offer']>) {
+    return this.host.offer(...args);
+  }
+
+  retain(...args: Parameters<BuildHost['retain']>) {
+    return this.host.retain(...args);
+  }
+
+  takeBundle(...args: Parameters<BuildWorkerRoot['takeBundle']>) {
+    return this.root.takeBundle(...args);
+  }
+
+  evictAreas() {
+    return this.root.evictAreas();
+  }
+
+  remove(client: string) {
+    return this.root.remove(client);
+  }
+
+  workerRootUsage() {
+    return this.root.workerRootUsage();
+  }
+
+  async close() {
+    await this.host.close();
+    await this.root.close();
+  }
+}
+
+const start = (
+  limits: Partial<BuildLimits> = {},
+  options: Partial<BuildHostOptions> & { allowed?: (client: string) => boolean; ready?: () => boolean } = {},
+) => {
+  running = new Worker({ daemonSweepMs: 60 * 60_000, ...limits }, options);
   return running;
 };
 const areaPath = (client: string, repo: string) => join(root, client, 'repos', repo);
@@ -99,7 +179,7 @@ function gateRemovalOf(matches: (path: string) => boolean) {
   return { reached, release };
 }
 
-function launch(host: BuildHost, client: string, repo: string, gate?: string) {
+function launch(host: Worker, client: string, repo: string, gate?: string) {
   writeFileSync(
     join(home, 'worker.mjs'),
     `import { existsSync } from 'node:fs';
@@ -417,7 +497,7 @@ test('a cached artifact miss creates no area', async () => {
   const host = start();
   const session = host.session('a', socket, () => {});
   expect(await session.cachedArtifact({ repo: 'gone', artifact: IDENTITY })).toEqual({ result: null });
-  session.close(false);
+  session.close();
   expect(existsSync(areaPath('a', 'gone'))).toBe(false);
   await host.evictAreas();
   expect(existsSync(real)).toBe(true);
@@ -514,9 +594,9 @@ function externalDir(name: string, owner: string | null = 'key'): { dir: string;
 }
 
 function reportExternalDirs(dirs: Array<{ dir: string; key: string }>): void {
-  const original: unknown = Reflect.get(BuildHost.prototype, 'externalDirs');
-  Reflect.set(BuildHost.prototype, 'externalDirs', () => dirs);
-  onTestFinished(() => void Reflect.set(BuildHost.prototype, 'externalDirs', original));
+  const original: unknown = Reflect.get(BuildWorkerRoot.prototype, 'externalDirs');
+  Reflect.set(BuildWorkerRoot.prototype, 'externalDirs', () => dirs);
+  onTestFinished(() => void Reflect.set(BuildWorkerRoot.prototype, 'externalDirs', original));
 }
 
 test('a failed delete is reported as what happened, once, and a later pass finishes it', async () => {
@@ -854,9 +934,9 @@ test("one client's evicted file stops neither the pass nor another client's evic
 
 test('a removal that fails is logged and does not reject', async () => {
   const host = start();
-  const original: unknown = Reflect.get(BuildHost.prototype, 'removeClient');
-  Reflect.set(BuildHost.prototype, 'removeClient', () => Promise.reject(new Error('fixture: refused')));
-  onTestFinished(() => void Reflect.set(BuildHost.prototype, 'removeClient', original));
+  const original: unknown = Reflect.get(BuildWorkerRoot.prototype, 'removeClient');
+  Reflect.set(BuildWorkerRoot.prototype, 'removeClient', () => Promise.reject(new Error('fixture: refused')));
+  onTestFinished(() => void Reflect.set(BuildWorkerRoot.prototype, 'removeClient', original));
   await expect(host.remove('a')).resolves.toBeUndefined();
   expect(logs.join('\n')).toMatch(/retaining the build area of a: Error: fixture: refused/);
 });
@@ -1056,7 +1136,7 @@ test('keeps an area through an unfetched build and a hosted handoff, removing it
   age();
   await host.evictAreas();
   expect(existsSync(path)).toBe(true);
-  expect(logs.join('\n')).toMatch(/a finished build in it waits to be fetched/);
+  expect(logs.join('\n')).toMatch(/an offload job is using it/);
 
   const token = host.retain(job, { name: 'App.app', size: 1, sha256: sha('x') });
   assert(token);
@@ -1075,56 +1155,18 @@ test('keeps an area through an unfetched build and a hosted handoff, removing it
   expect(existsSync(path)).toBe(false);
 });
 
-test('keeps an area an open connection is sending a manifest for until the connection closes', async () => {
+test('keeps an area a running offload job uses until the job ends', async () => {
   area('a', 'newest', 0);
   const synced = area('a', 'synced', 30);
   const host = start();
-  const session = host.session('a', socket, () => {});
-  session.sync({ repo: 'synced', files: [], done: false });
+  const end = host.connect('a', 'synced');
   await host.evictAreas();
   expect(existsSync(synced)).toBe(true);
+  expect(logs.join('\n')).toMatch(/an offload job is using it/);
 
-  session.close(false);
+  end();
   await host.evictAreas();
   expect(existsSync(synced)).toBe(false);
-});
-
-test.each([
-  {
-    name: 'an offer',
-    read: (host: BuildHost) => host.offer('a', { repo: 'subject', native: 'xcode', artifact: IDENTITY }),
-  },
-  {
-    name: 'a cached artifact fetch',
-    read: (host: BuildHost) =>
-      host.session('a', socket, () => {}).cachedArtifact({ repo: 'subject', artifact: IDENTITY }),
-  },
-])('keeps an area while $name reads its artifact cache', async ({ read }) => {
-  area('a', 'newest', 0);
-  const path = area('a', 'subject', 30);
-  let finish: (value: null) => void = () => {};
-  let entered: () => void = () => {};
-  const reached = new Promise<void>((resolve) => (entered = resolve));
-  vi.spyOn(BuildArtifactCache.prototype, 'lookup')
-    .mockResolvedValue(null)
-    .mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finish = resolve;
-          entered();
-        }),
-    );
-  const host = start();
-  const reading = read(host);
-  await reached;
-  await host.evictAreas();
-  expect(existsSync(path)).toBe(true);
-  expect(logs.join('\n')).toMatch(/its artifacts are being read/);
-
-  finish(null);
-  await reading;
-  await host.evictAreas();
-  expect(existsSync(path)).toBe(false);
 });
 
 test('serving a cached artifact counts as use', async () => {
@@ -1212,7 +1254,7 @@ test(
   },
 );
 
-test('a build near the floor starts a pass and is admitted without waiting for its deletion', async () => {
+test('a job starting near the floor starts a pass and its build is admitted without waiting for the deletion', async () => {
   area('a', 'stale', 30);
   area('a', 'newest', 1);
   config({ workerAreaMaxAgeDays: 0 });

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BuildHost } from '../src/build.ts';
+import { BuildWorkerRoot } from '../src/build.ts';
 import { startServer } from '../src/server.ts';
 
 const fixture = vi.hoisted(() => ({
@@ -26,7 +26,7 @@ vi.mock('node:http', async (original) => {
 test('a cleanup failure does not replace the original listen error', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-server-listen-'));
   process.env.STIM_HOME = home;
-  const close = vi.spyOn(BuildHost.prototype, 'close').mockRejectedValue(new Error('claim was kept'));
+  const close = vi.spyOn(BuildWorkerRoot.prototype, 'close').mockRejectedValue(new Error('claim was kept'));
   try {
     await expect(
       startServer({

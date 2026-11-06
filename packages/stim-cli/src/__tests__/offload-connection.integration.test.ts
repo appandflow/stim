@@ -92,6 +92,7 @@ async function fakeMachine(
     cachedFetch = 'hit',
     failure = FAILED,
     lostJob = null,
+    jobStart = (params: Record<string, unknown>) => ({ result: { job: String(params.attach ?? 'job-1') } }),
   }: {
     drop?: boolean;
     closeAfterStart?: number | null;
@@ -109,6 +110,7 @@ async function fakeMachine(
     cachedFetch?: 'hit' | 'miss' | 'corrupt';
     failure?: typeof FAILED;
     lostJob?: 'once' | 'always' | null;
+    jobStart?: (params: Record<string, unknown>) => object;
   } = {},
 ): Promise<FakeMachine> {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
@@ -141,6 +143,7 @@ async function fakeMachine(
       methods.push(method);
       const reply = (body: object) => deliver(method, () => socket.send(JSON.stringify({ id, ...body })));
       if (method === 'hello') return reply(hello());
+      if (method === 'job.start') return reply(jobStart(params));
       if (method === 'build.cancel') return;
       if (method === 'build.offer') return reply({ result: offer });
       if (method === 'build.sync') return dropOnSync ? socket.terminate() : reply({ result: { missing: [] } });
@@ -325,27 +328,6 @@ test('linked checkouts offer separate areas while projects in one checkout reuse
   expect(areas.slice(1)).toEqual([areas[1], areas[1], areas[1]]);
 });
 
-test('a worker without build compatibility is refused even with the same Stim build', async () => {
-  const machine = await fakeMachine(
-    'old',
-    { ...offer(0.1), toolchain: { ...TOOLCHAIN, compat: undefined } },
-    { result: { job: 'unused' } },
-  );
-  machines.push(machine);
-  const result = await chooseBuildMachine({
-    projectRoot: repo,
-    target: TARGET,
-    selected: 'old',
-    here: HERE,
-    note: () => {},
-    machines: [credential('old')],
-  });
-  expect(result).toContain(
-    'update the worker: stim service update --release <version>; update an old client: npm i -g stim@latest; Stim Desktop 0.2.5 or older: Stim > Check for Updates',
-  );
-  expect(machine.methods).toEqual(['hello', 'build.offer']);
-});
-
 describe('offloadBuild', () => {
   it.each(['build.sync', 'build.start', 'build.progress', 'build.attach', 'build.artifact'])(
     'cancels a stopped workspace while waiting for %s without fallback or further requests',
@@ -397,7 +379,7 @@ describe('offloadBuild', () => {
               await vi.waitFor(() => expect(machine.closeCodes).toContain(1000));
               await backup.closed;
               expect(machine.methods).toEqual(before);
-              expect(backup.methods).toEqual(['hello', 'build.offer']);
+              expect(backup.methods).toEqual(['hello', 'job.start', 'build.offer']);
             } finally {
               machine.release();
               await operation;
@@ -721,7 +703,7 @@ describe('native Xcode worker selection', () => {
       'old',
       offer(0.1),
       { result: { job: 'unused' } },
-      { hello: () => ({ result: { capabilities: ['build'], server: { name: 'old', stim: '1.41.0' } } }) },
+      { hello: () => ({ result: { capabilities: ['build'], peer: 1, server: { name: 'old', stim: '1.42.0' } } }) },
     );
     machines.push(machine);
     const result = await chooseBuildMachine({
@@ -732,9 +714,34 @@ describe('native Xcode worker selection', () => {
       machines: [credential('old')],
     });
     expect(result).toBe(
-      `old: peer-too-old: old runs stim 1.41.0 (no peer), this Mac needs peer ${PEER}; on old run: npm i -g stim@${STIM_VERSION} && stim service install`,
+      `old: peer-too-old: old runs stim 1.42.0 (peer 1), this Mac needs peer ${PEER}; run stim remote update old, or on old run: npm i -g stim@${STIM_VERSION} && stim service install`,
     );
     expect(machine.methods).toEqual(['hello']);
+  });
+
+  test('a worker that takes only published builds turns this checkout build away before any offer', async () => {
+    const refusal =
+      'This machine takes only published Stim builds. To take this build, run stim settings set server.acceptClientBuilds true on it.';
+    const machine = await fakeMachine(
+      'mini',
+      offer(0.1),
+      { result: { job: 'unused' } },
+      {
+        jobStart: (params) =>
+          params.pack === true ? { error: { code: 'forbidden', message: refusal } } : { result: { job: 'job-1' } },
+      },
+    );
+    machines.push(machine);
+    const result = await chooseBuildMachine({
+      projectRoot: repo,
+      target: TARGET,
+      here: HERE,
+      note: () => {},
+      machines: [credential('mini')],
+    });
+    expect(result).toBe(`mini: forbidden: ${refusal}`);
+    expect(machine.methods).toEqual(['hello', 'job.start']);
+    expect(machine.requests[1]?.params).toMatchObject({ kind: 'offload-build', pack: true, repo: expect.any(String) });
   });
 
   test('a worker that cannot build Xcode is refused before offer or source upload', async () => {
@@ -797,7 +804,7 @@ describe('native Xcode worker selection', () => {
       note: () => {},
     });
     expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('private.key is ignored or absent') });
-    expect(machine.methods).toEqual(['hello', 'build.offer']);
+    expect(machine.methods).toEqual(['hello', 'job.start', 'build.offer']);
   });
 });
 
@@ -853,7 +860,7 @@ test('native results with a different transfer digest are refused before artifac
     ok: false,
     reason: 'The worker returned a different native source or artifact identity.',
   });
-  expect(machine.methods).toEqual(['hello', 'build.offer', 'build.sync', 'build.start']);
+  expect(machine.methods).toEqual(['hello', 'job.start', 'build.offer', 'build.sync', 'build.start']);
 });
 
 test.each([
@@ -1022,6 +1029,7 @@ describe('exact peer artifacts', () => {
       );
       expect(machine.methods).toEqual([
         'hello',
+        'job.start',
         'build.offer',
         ...(scenario === 'changed-source' ? [] : ['build.cached-artifact']),
       ]);
@@ -1133,7 +1141,7 @@ describe('exact peer artifacts', () => {
         ? { cacheHit: true, timings: { syncMs: 0, uploadedBytes: 0, workerMs: 0 }, contents: 'RN bytes' }
         : null,
     );
-    expect(machine.methods).toEqual(['hello', 'build.offer', 'build.cached-artifact']);
+    expect(machine.methods).toEqual(['hello', 'job.start', 'build.offer', 'build.cached-artifact']);
     const offered = machine.requests.find((e) => e.method === 'build.offer')?.params.reactNativeArtifact;
     expect(offered).toMatchObject({
       fingerprint: 'native-fingerprint',
@@ -1225,7 +1233,7 @@ describe('exact peer artifacts', () => {
       });
       const offerRequest = machine.requests.find((entry) => entry.method === 'build.offer')!;
       expect(offerRequest.params.gradleArtifact).toEqual({ ...query, project: '' });
-      expect(machine.methods).toEqual(['hello', 'build.offer']);
+      expect(machine.methods).toEqual(['hello', 'job.start', 'build.offer']);
       if (typeof choice === 'string') throw new Error(choice);
       const stagingDir = join(repo, 'staging');
       const result = await offloadBuild({
@@ -1268,6 +1276,7 @@ describe('exact peer artifacts', () => {
       );
       expect(machine.methods).toEqual([
         'hello',
+        'job.start',
         'build.offer',
         ...(scenario === 'changed-request' ? [] : ['build.cached-artifact']),
       ]);
@@ -1434,7 +1443,7 @@ describe('exact peer artifacts', () => {
           ? { cacheHit: true, timings: { syncMs: 0, uploadedBytes: 0, workerMs: 0 }, plist: 'verified plist' }
           : { stagingRemoved: true },
       );
-      expect(machine.methods).toEqual(['hello', 'build.offer', 'build.cached-artifact']);
+      expect(machine.methods).toEqual(['hello', 'job.start', 'build.offer', 'build.cached-artifact']);
       const lookup = machine.requests.find((entry) => entry.method === 'build.offer');
       expect(lookup?.params.artifact).toEqual(identity);
     },

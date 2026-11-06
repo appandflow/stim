@@ -52,7 +52,7 @@ import {
   type PeerStartup,
   type Transport,
 } from './diagnosis.ts';
-import { PEER, type RemoteDiagnosis } from '@stim-cli/core/protocol';
+import { PEER, peerTooOld, type RemoteDiagnosis } from '@stim-cli/core/protocol';
 
 const HELLO_TIMEOUT_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 3000;
@@ -78,6 +78,8 @@ export type HelloReply =
   | {
       result: {
         host?: { app?: unknown };
+        peer?: unknown;
+        server?: { name?: unknown; stim?: unknown };
         capabilities: string[];
         device: { id: string; name: string };
       };
@@ -154,13 +156,16 @@ export function outdatedServer(
   version: string,
   command: string | null,
   host: string = localMachineName(),
+  reason?: string,
 ): { title: string; detail: string; fix: string } {
   const update =
     `On ${entry}, run \`stim service update --release ${version}\`` +
     ' (add `--label <name>` for a custom service label; a server Stim Desktop runs updates with Stim Desktop)';
   return {
     title: `Remote machine ${entry} runs an older stim-server`,
-    detail: `The stim-server on ${entry} speaks an older protocol than the Stim on ${host}, so it cannot authenticate ${host}.`,
+    detail:
+      reason ??
+      `The stim-server on ${entry} speaks an older protocol than the Stim on ${host}, so it cannot authenticate ${host}.`,
     fix: command
       ? `${update}, then run this on ${entry} to approve ${host}: ${command}\nAfter approving, run \`stim remote list\` on ${host} to reconnect.`
       : `${update}, then run \`stim remote add ${entry}\` on ${host}.`,
@@ -474,7 +479,7 @@ export type AccessOutcome =
   | { state: 'key-changed'; credential: MachineCredential }
   | { state: 'unconfirmed'; credential: MachineCredential; fingerprint: string }
   | { state: 'not-asked' }
-  | { state: 'outdated'; credential: MachineCredential; command: string | null }
+  | { state: 'outdated'; credential: MachineCredential; command: string | null; reason?: string }
   | { state: 'unreachable'; credential?: MachineCredential; reason: string; transport?: Transport; code?: string };
 
 export interface AccessInput {
@@ -576,20 +581,23 @@ function approved(
   requestedAt: string,
 ): AccessOutcome {
   const tailnet = input.credential?.tailnet ?? input.tailnet;
-  return {
+  const credential: MachineCredential = {
+    machine: input.machine,
+    transport: transportOf(input.machine),
+    address: input.address,
     state: 'approved',
-    credential: {
-      machine: input.machine,
-      transport: transportOf(input.machine),
-      address: input.address,
-      state: 'approved',
-      requestedAt,
-      serverKey: reply.serverKey,
-      deviceId: reply.result.device.id,
-      ...(tailnet ? { tailnet } : {}),
-    },
-    result: reply.result,
+    requestedAt,
+    serverKey: reply.serverKey,
+    deviceId: reply.result.device.id,
+    ...(tailnet ? { tailnet } : {}),
   };
+  // compat C12 permanent
+  const { peer, server } = reply.result;
+  const stim = String(server?.stim ?? 'an older stim');
+  const reason = peerTooOld(input.machine, stim, Number(peer ?? 0), input.serverVersion);
+  if (typeof peer !== 'number' || peer < PEER) return { state: 'outdated', credential, command: null, reason };
+  // compat end
+  return { state: 'approved', credential, result: reply.result };
 }
 
 /**
