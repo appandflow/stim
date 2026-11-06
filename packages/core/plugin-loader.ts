@@ -15,13 +15,14 @@ export function projectPlugin(reference: string, baseDir: string): PluginSource 
       let dir = dirname(resolve());
       for (;;) {
         try {
-          return JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+          const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
+          if (isRecord(manifest) && ('name' in manifest || 'stimPlugin' in manifest)) return manifest;
         } catch (error) {
           if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
-          const parent = dirname(dir);
-          if (parent === dir) throw new Error(`${reference} has no package.json`, { cause: error });
-          dir = parent;
         }
+        const parent = dirname(dir);
+        if (parent === dir) throw new Error(`${reference} has no package.json`);
+        dir = parent;
       }
     },
     load: () => import(pathToFileURL(resolve()).href),
