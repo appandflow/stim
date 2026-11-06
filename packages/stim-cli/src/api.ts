@@ -2,10 +2,16 @@ import { claimFailure } from './ownership-claim.ts';
 import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { stripVTControlCharacters } from 'node:util';
-import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { type StimContext, withAmbientContext } from '@stim-cli/core';
-import { findProjectRoot, openLogDir, RUN_ID_ENV, validRunId } from '@stim-cli/core/state';
+import {
+  findProjectRoot,
+  openLogDir,
+  RUN_ID_ENV,
+  validRunId,
+  userHome,
+  easMachineStateRoot,
+} from '@stim-cli/core/state';
 import { stopWorkspaceNow } from './commands/stop.ts';
 import { runReload } from './commands/reload.ts';
 import { startDevServer } from './commands/start.ts';
@@ -178,7 +184,7 @@ export function createStim(options: StimOptions): StimClient {
     }
   }
   const base = options.env ?? process.env;
-  const home = options.home ?? (base.STIM_HOME || join(base.HOME || base.USERPROFILE || homedir(), '.stim'));
+  const home = options.home ?? (base.STIM_HOME || join(userHome(base), '.stim'));
   const clientContext = {
     ...options,
     projectRoot,
@@ -394,7 +400,7 @@ export function createStim(options: StimOptions): StimClient {
           { olderThan, cache, worktrees, measureBuildState },
           {
             operation: context,
-            easLedgerRoot: join(context.env.HOME || context.env.USERPROFILE || homedir(), '.stim', 'machine', 'eas'),
+            easLedgerRoot: easMachineStateRoot(context.env),
           },
         );
         if ('code' in result) throw new StimError(result);
@@ -423,12 +429,7 @@ export function createStim(options: StimOptions): StimClient {
                 request,
                 {
                   operation: bounded,
-                  easLedgerRoot: join(
-                    bounded.env.HOME || bounded.env.USERPROFILE || homedir(),
-                    '.stim',
-                    'machine',
-                    'eas',
-                  ),
+                  easLedgerRoot: easMachineStateRoot(bounded.env),
                 },
                 (_stream, line) => bounded.output('stderr', `${line}\n`),
                 claim,

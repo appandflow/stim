@@ -2,12 +2,12 @@ import { runOperationFile } from '../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { ambientEnv, ambientWrite, type StimContext } from '@stim-cli/core';
 import { realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { isAbsolute, relative, sep } from 'node:path';
 import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
 import { phaseLine, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
 import { agentDeviceDaemon, readAgentDeviceRecords } from './activity.ts';
+import { userHome } from '@stim-cli/core/state';
 
 type Device = { platform: 'ios'; id: string } | { platform: 'android'; id: string | null; avdName: string };
 interface Session {
@@ -91,7 +91,7 @@ function canonical(path: string): string | null {
 }
 
 function deviceClaims(device: Device): SessionClaim[] {
-  return readAgentDeviceRecords(ambientEnv().HOME || ambientEnv().USERPROFILE || homedir(), ambientEnv())
+  return readAgentDeviceRecords(userHome(ambientEnv()), ambientEnv())
     .filter((record) => record.kind === 'claim' && (device.id === null || record.deviceId === device.id))
     .map((record) => ({
       deviceId: record.deviceId,
