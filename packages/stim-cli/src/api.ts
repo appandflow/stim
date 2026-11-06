@@ -50,6 +50,7 @@ import type { FailArgs } from './commands/ios/types.ts';
 import { operationState } from './engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { refuseRelativeStimPaths } from './workspace/config.ts';
+import { runOperation, type Admission, type ApiOperation } from './run-operation.ts';
 import { ensureWorkspaceStorageAsync, workspaceLogsDir } from './workspace/paths.ts';
 import { ensureHomeIdentity } from './workspace/home-identity.ts';
 import { decodeSecret } from '@stim-cli/core/noise-session';
@@ -189,7 +190,12 @@ export function createStim(options: StimOptions): StimClient {
       FORCE_COLOR: '0',
     },
   };
-  const begin = (signal: AbortSignal | undefined, cancelOnProgress = false): Operation => {
+  const begin = (
+    name: ApiOperation | null,
+    signal: AbortSignal | undefined,
+    cancelOnProgress = false,
+    platform?: string,
+  ): Operation => {
     const controller = cancelOnProgress ? new AbortController() : undefined;
     const abort = () => controller?.abort();
     if (controller) {
@@ -209,13 +215,16 @@ export function createStim(options: StimOptions): StimClient {
     const operation = operationContext(clientContext, home, output, controller?.signal ?? signal);
     if (controller) operationState(operation).abortOperation = abort;
     return {
+      name,
+      platform,
+      admission: options.admission ?? 'command',
       context: operation,
       callback,
       dispose: () => signal?.removeEventListener('abort', abort),
     };
   };
-  const beginReport = (signal: AbortSignal | undefined): Operation => {
-    const operation = begin(signal, true);
+  const beginReport = (op: ApiOperation, signal: AbortSignal | undefined): Operation => {
+    const operation = begin(op, signal, true);
     operation.context.env.STIM_HOME = clientContext.env.STIM_HOME;
     for (const name of ['AGENT_DEVICE_STATE_DIR', 'AGENT_DEVICE_CLAIMS_DIR', 'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR']) {
       const directory = operation.context.env[name]?.trim();
@@ -224,11 +233,12 @@ export function createStim(options: StimOptions): StimClient {
     return operation;
   };
   const report = async <T>(
+    name: ApiOperation,
     signal: AbortSignal | undefined,
     work: (context: StimContext) => Promise<T>,
     timeoutMs?: number,
   ): Promise<T> => {
-    const operation = beginReport(signal);
+    const operation = beginReport(name, signal);
     try {
       return await read(operation, (context) =>
         runReport(context, (request) => withAmbientContext(request, () => work(request)), timeoutMs),
@@ -240,39 +250,40 @@ export function createStim(options: StimOptions): StimClient {
   return {
     projectRoot,
     start: ({ signal, ...request }: StimStartOptions = {}) => {
-      const operation = begin(signal, true);
+      const operation = begin('start', signal, true);
       operation.context.env.STIM_HOME = clientContext.env.STIM_HOME;
       return lifecycle(operation, (context) => start(context, request));
     },
     identity: ({ signal }: StimReadOptions = {}) =>
-      read(begin(signal), (operation) => ensureHomeIdentity(operation.signal)),
+      read(begin('identity', signal), (operation) => ensureHomeIdentity(operation.signal)),
     doctor: async ({ signal, platform, record }: StimDoctorOptions = {}) => {
       if (platform !== undefined && platform !== 'ios' && platform !== 'android')
         return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios or android.' }));
-      const result = await report(signal, (context) => readDoctorReport(context, platform, version));
+      const result = await report('doctor', signal, (context) => readDoctorReport(context, platform, version));
       if (record !== true) return result;
-      return read(begin(signal), async (context) => {
+      return read(begin(null, signal), async (context) => {
         await recordDoctorCheck(result.project, platform, version, context.signal);
         return result;
       });
     },
     remoteMachines: ({ signal }: StimReadOptions = {}) =>
-      report(signal, (context) => readRemoteList(version, doctorIo(context), undefined, context)),
+      report('remoteMachines', signal, (context) => readRemoteList(version, doctorIo(context), undefined, context)),
     repairDoctor: async ({ signal, platform, beforeRepair }: StimDoctorRepairOptions = {}) => {
       if (platform !== undefined && platform !== 'ios' && platform !== 'android')
         throw new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios or android.' });
       const result = await report(
+        'repairDoctor',
         signal,
         (context) => repairDoctorReport(context, platform, version, beforeRepair),
         120_000,
       );
-      await read(begin(signal), (context) =>
+      await read(begin(null, signal), (context) =>
         recordDoctorCheck(result.report.project, platform, version, context.signal),
       );
       return result;
     },
     unlockDevice: ({ signal, platform, slot, beforeUnlock }: StimDeviceUnlockOptions = {}) =>
-      read(begin(signal), async (context) => {
+      read(begin('unlockDevice', signal), async (context) => {
         if (platform !== undefined && platform !== 'ios' && platform !== 'android')
           throw new StimError({ code: 'STIM_BAD_ARG', message: 'platform must be ios or android.' });
         if (slot !== undefined) validateDeviceSlot(slot);
@@ -293,7 +304,7 @@ export function createStim(options: StimOptions): StimClient {
             : request.tool === 'push'
               ? parsePushRequest(request.platform, { payload: request.payload })
               : parseNetworkRequest(request.platform, request.state);
-      return report(undefined, async (context) => {
+      return report('deviceTool', undefined, async (context) => {
         const result = await runDeviceTool(
           parsed,
           {
@@ -314,6 +325,7 @@ export function createStim(options: StimOptions): StimClient {
       if (ticket !== undefined && (typeof ticket !== 'string' || !decodeSecret(ticket.trim())))
         throw new StimError({ code: 'STIM_BAD_ARG', message: 'The setup ticket must encode 32 random bytes.' });
       const result = await report(
+        'requestMachineAccess',
         signal,
         (context) => {
           context.env.STIM_ACCESS_TICKET = ticket?.trim();
@@ -321,13 +333,13 @@ export function createStim(options: StimOptions): StimClient {
         },
         120_000,
       );
-      return read(begin(signal), async (context) => {
+      return read(begin('requestMachineAccess', signal), async (context) => {
         await recordDoctorCheck(result.project, 'ios', version, context.signal);
         return result;
       });
     },
     plan: ({ signal, ...request }: StimPlanOptions) =>
-      report(signal, (context) => {
+      report('plan', signal, (context) => {
         const task = Promise.resolve().then(async () => {
           if (request.platform === 'macos') {
             try {
@@ -378,7 +390,7 @@ export function createStim(options: StimOptions): StimClient {
         return Promise.reject(
           new StimError({ code: 'STIM_BAD_ARG', message: 'olderThan must be a whole number of days.' }),
         );
-      return report(signal, async (context) => {
+      return report('gc', signal, async (context) => {
         const result = await readGcReport(
           { olderThan, cache, worktrees, measureBuildState },
           {
@@ -402,7 +414,7 @@ export function createStim(options: StimOptions): StimClient {
                 ? 'delete must be a boolean.'
                 : null;
       if (invalid) return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: invalid }));
-      const operation = beginReport(signal);
+      const operation = beginReport('collectGarbage', signal);
       const request = { olderThan, cache, worktrees, delete: deleting, json: true };
       return lifecycle(operation, (context) =>
         withGcMaintenanceClaim(request, (claim) =>
@@ -451,7 +463,7 @@ export function createStim(options: StimOptions): StimClient {
       );
     },
     warmWorktree: ({ signal, beforeWarm }: StimWorktreeWarmOptions = {}) =>
-      lifecycle(beginReport(signal), (context) =>
+      lifecycle(beginReport('warmWorktree', signal), (context) =>
         runReport(
           context,
           (bounded) =>
@@ -484,7 +496,7 @@ export function createStim(options: StimOptions): StimClient {
             ? 'force must be a boolean.'
             : null;
       if (invalid) return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: invalid }));
-      return lifecycle(beginReport(signal), (context) =>
+      return lifecycle(beginReport('removeWorktree', signal), (context) =>
         runReport(context, (bounded) =>
           withAmbientContext(bounded, () => {
             let exitCode: 0 | 1 = 0;
@@ -519,7 +531,7 @@ export function createStim(options: StimOptions): StimClient {
       );
     },
     settings: ({ signal }: StimReadOptions = {}) =>
-      read(begin(signal), async (operation) =>
+      read(begin('settings', signal), async (operation) =>
         readSettingsPayload(
           await readSettingsContext(
             operation.projectRoot,
@@ -531,7 +543,7 @@ export function createStim(options: StimOptions): StimClient {
         ),
       ),
     setSetting: (key, value, { signal, scope, beforeWrite }: StimSettingWriteOptions = {}) =>
-      read(begin(signal), (operation) =>
+      read(begin('setSetting', signal), (operation) =>
         mutateSetting(
           { action: 'set', key, value, scope },
           {
@@ -544,7 +556,7 @@ export function createStim(options: StimOptions): StimClient {
         ),
       ),
     unsetSetting: (key, { signal, scope, beforeWrite }: StimSettingWriteOptions = {}) =>
-      read(begin(signal), (operation) =>
+      read(begin('unsetSetting', signal), (operation) =>
         mutateSetting(
           { action: 'unset', key, scope },
           {
@@ -558,14 +570,14 @@ export function createStim(options: StimOptions): StimClient {
       ),
     stats: ({ signal }: StimReadOptions = {}) =>
       read(
-        begin(signal),
+        begin('stats', signal),
         async (operation) =>
           (await readProjectStats(findProjectRoot(operation.projectRoot), operation.env, operation.signal)).report,
       ),
     logs: ({ signal, ...request }: StimLogsOptions = {}) =>
-      read(begin(signal), (operation) => readWorkspaceLogs(operation, request)),
+      read(begin('logs', signal), (operation) => readWorkspaceLogs(operation, request)),
     followLogs: ({ signal, ...request }, onRecord, onBackfill) => {
-      const operation = begin(signal);
+      const operation = begin('followLogs', signal);
       return read(operation, async (readContext) => {
         const stop = await followWorkspaceLogs(readContext, request, onRecord, onBackfill);
         if ('error' in operation.callback) stop();
@@ -573,11 +585,15 @@ export function createStim(options: StimOptions): StimClient {
       });
     },
     build: (({ signal, ...request }: StimBuildOptions) =>
-      lifecycle(begin(signal, true), (operation) => build(operation, request))) as StimClient['build'],
+      lifecycle(begin('build', signal, true, request.platform), (operation) =>
+        build(operation, request),
+      )) as StimClient['build'],
     run: (({ signal, ...request }: StimRunOptions) =>
-      lifecycle(begin(signal, true), (operation) => run(operation, request))) as StimClient['run'],
+      lifecycle(begin('run', signal, true, request.platform), (operation) =>
+        run(operation, request),
+      )) as StimClient['run'],
     stop: ({ signal, ...request } = {}) =>
-      read(begin(signal), async (operation) => {
+      read(begin('stop', signal), async (operation) => {
         const root = findStartRoot(operation.projectRoot) ?? operation.projectRoot;
         request.beforeStop?.(root);
         const logs = workspaceLogsDir(root);
@@ -598,7 +614,7 @@ export function createStim(options: StimOptions): StimClient {
         return result;
       }),
     reload: async ({ signal, ...request }: StimReloadOptions = {}) => {
-      const requestOperation = begin(signal, true);
+      const requestOperation = begin('reload', signal, true);
       try {
         return await read(requestOperation, (context) =>
           runReport(context, (operation) =>
@@ -624,7 +640,7 @@ export function createStim(options: StimOptions): StimClient {
       if (request.tail !== undefined && (!Number.isSafeInteger(request.tail) || request.tail < 0)) {
         return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: 'tail must be a non-negative integer.' }));
       }
-      return read(begin(signal), async (operation) => {
+      return read(begin('diagnostics', signal), async (operation) => {
         const directory = workspaceLogsDir(operation.projectRoot);
         if (request.tail === 0) return { directory, records: [] };
         const view = await openLogDir(directory, { signal: operation.signal });
@@ -661,19 +677,37 @@ function operationContext(
 }
 
 interface Operation {
+  /** The client method this operation runs; null for a later step of one that already passed `runOperation`. */
+  name: ApiOperation | null;
+  platform: string | undefined;
+  admission: Admission;
   context: StimContext;
   /** The first exception the client's onProgress threw; output stops at it and the operation rejects with it. */
   callback: { error?: unknown };
   dispose(): void;
 }
 
-async function read<T>({ context, callback }: Operation, operation: (context: StimContext) => Promise<T>): Promise<T> {
+async function read<T>(
+  { name, platform, admission, context, callback }: Operation,
+  operation: (context: StimContext) => Promise<T>,
+): Promise<T> {
   const { signal } = context;
   if (signal.aborted) throw cancelled();
   let result: T;
   try {
     refuseRelativeStimPaths(context.env);
-    result = await withAmbientContext(context, () => operation(context));
+    result = await withAmbientContext(context, async () => {
+      const entered = await runOperation({
+        caller: 'api',
+        operation: name,
+        platform,
+        admission,
+        cwd: context.projectRoot,
+        env: context.env,
+      });
+      if ('refusal' in entered) throw new StimError(entered.refusal);
+      return operation(context);
+    });
   } catch (error) {
     const cleanupUnresolved =
       error instanceof Error &&

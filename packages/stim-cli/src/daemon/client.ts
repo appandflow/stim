@@ -278,16 +278,21 @@ export function passPlacement(name: string, platform: NodeJS.Platform = process.
 }
 
 /**
- * Before a top-level command runs: commands that create running state record the use of their workspace and make sure
- * the home's daemon runs; the commands `passPlacement` names run the in-process passes (maintenance, the activity pass
- * over workspaces with no dev server, the pressure ladder), never taking the command's own workspace.
+ * Before a top-level command runs: commands that create running state record the use of their workspace (unless
+ * `recordUse` is false, for an operation that records it itself) and make sure the home's daemon runs; the commands
+ * `passPlacement` names run the in-process passes (maintenance, the activity pass over workspaces with no dev server,
+ * the pressure ladder), never taking the command's own workspace, the registered workspace containing `cwd`.
  */
-export async function beforeCommand(name: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+export async function beforeCommand(
+  name: string,
+  env: NodeJS.ProcessEnv = process.env,
+  { cwd, recordUse }: { cwd: string; recordUse: boolean } = { cwd: process.cwd(), recordUse: true },
+): Promise<void> {
   const creates = DAEMON_COMMANDS.includes(name);
   const placement = passPlacement(name);
   if (!creates && placement === 'none') return;
   const { commandWorkspace } = await import('./command-workspace.ts');
-  const root = commandWorkspace(creates, env);
+  const root = commandWorkspace(creates && recordUse, env, cwd);
   const held = creates && (await ensureDaemon(env));
   if (held || placement === 'none') return;
   if (placement === 'background') {

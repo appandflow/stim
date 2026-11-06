@@ -44,6 +44,11 @@ that environment, captured when the client is created, and normal Stim
 configuration. The client's home is fixed at creation.
 Progress events contain `stream` (`stdout` or `stderr`) and `message`, an output
 chunk which can contain partial lines. Without a callback the API stays silent.
+`start`, `build`, `run`, `doctor`, `repairDoctor`, `gc` and `collectGarbage`
+apply the same command policy as `stim start`, `stim ios`, `stim doctor` and
+`stim gc`: the same refusals, and the home's stim-daemon and its passes. Pass
+`admission: 'none'` to skip that policy when the caller already runs inside a
+Stim resident process, as stim-server does.
 
 All operations run in the importing process against the client's home and
 project and invoke the same lifecycle operations as the CLI, so clients for

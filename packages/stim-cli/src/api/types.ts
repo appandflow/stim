@@ -42,6 +42,12 @@ export interface StimOptions {
    * An exception cancels the operation and rejects it with that exception.
    */
   onProgress?: (event: StimProgress) => void;
+  /**
+   * `command` (the default) applies the CLI's command policy to `start`, `build`, `run`, `doctor`, `repairDoctor`, `gc`
+   * and `collectGarbage`: the refusals, the home's daemon and its passes. `none` skips it, for a caller that already runs
+   * inside a Stim resident process such as stim-server.
+   */
+  admission?: 'command' | 'none';
 }
 
 export type StimRunOptions = PlatformRunOptions & {
