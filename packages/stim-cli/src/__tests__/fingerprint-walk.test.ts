@@ -58,6 +58,8 @@ describe('.fingerprintignore matcher', () => {
     'deep/top.txt': '',
     'other/sub/d.txt': '',
     'd.txt': '',
+    ayb: '',
+    'a/b': '',
     '1.txt': '',
     'sub/c.txt': '',
     'deep/x/gen/out.c': '',
@@ -79,6 +81,7 @@ describe('.fingerprintignore matcher', () => {
       '[z-a].txt\n\\d.txt',
       ['d.txt', 'other/sub/d.txt'],
     ],
+    ['a negated class never matches a slash', 'a[!x]b', ['ayb']],
     ['** crosses directories', '**/gen/**', ['deep/x/gen/out.c']],
     ['a trailing slash matches directories only', 'out/', ['out/file']],
     ['! cannot re-include a file under an excluded directory', 'dir/\n!dir/keep.txt', ['dir/keep.txt']],
@@ -299,6 +302,33 @@ describe('native subsets and static inputs', () => {
       'android/shared/build.gradle',
       'android/shared/src/main/java/Shared.kt',
       'package.json#native',
+    ]);
+  });
+
+  test('with the Gradle root at the app root, files the config names still count', () => {
+    const root = project({
+      'package.json': '{}',
+      'settings.gradle': '',
+      'app/build.gradle': '',
+      'google-services.json': '{}',
+    });
+    const layout = {
+      gradleRoot: root,
+      gradleRootRelative: '.',
+      module: ':app',
+      moduleDir: join(root, 'app'),
+      custom: true,
+    };
+    const context = {
+      expoResolves: true,
+      tracked: new Set([join(root, 'settings.gradle'), join(root, 'app/build.gradle')]),
+      config: { android: { googleServicesFile: './google-services.json' } },
+    };
+    expect(names(inputsOf(root, context, { platform: 'android', androidLayout: layout }).inputs)).toEqual([
+      'app/build.gradle',
+      'google-services.json',
+      'package.json#native',
+      'settings.gradle',
     ]);
   });
 

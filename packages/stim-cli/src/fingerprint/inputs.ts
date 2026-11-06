@@ -301,11 +301,13 @@ export function staticInputs(context: StaticContext, target: StaticTarget): Stat
     ...moduleRoots.flatMap(moduleDirs),
     ...(context.contentPackages ?? []).flatMap((dir) => nativeSubset(dir)),
     ...(typeof codegen === 'string' ? [resolve(project, codegen)] : []),
-    ...configNamedPaths(context.config, roots, [
-      join(project, DEFAULT_IOS_PROJECT_PATH),
-      join(project, DEFAULT_ANDROID_GRADLE_ROOT),
-      nativeDir,
-    ]),
+    ...configNamedPaths(
+      context.config,
+      roots,
+      [join(project, DEFAULT_IOS_PROJECT_PATH), join(project, DEFAULT_ANDROID_GRADLE_ROOT), nativeDir].filter(
+        (dir) => !within(project, dir),
+      ),
+    ),
     ...extra.trees,
   ];
   const podfileLock = join(nativeDir, 'Podfile.lock');

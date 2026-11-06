@@ -95,9 +95,9 @@ function globSource(glob: string): string {
       else {
         const body = glob
           .slice(i + 1, close)
-          .replace(/^!/, '^')
-          .replace(/\\/g, '\\\\');
-        out += `[${body}]`;
+          .replace(/\\/g, '\\\\')
+          .replace(/]/g, '\\]');
+        out += /^[!^]/.test(body) ? `[^/${body.slice(1)}]` : `[${body}]`;
         i = close;
       }
     } else out += /[.+^${}()|\]\\/]/.test(char) ? `\\${char}` : char;

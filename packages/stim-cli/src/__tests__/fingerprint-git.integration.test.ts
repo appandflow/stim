@@ -9,11 +9,19 @@ import { isUncertain, preimage, preimageHash } from '../fingerprint/key.ts';
 
 const temps: string[] = [];
 afterEach(() => {
-  for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
+const GIT_CONFIG = [
+  'user.name=t',
+  'user.email=t@example.com',
+  'maintenance.auto=false',
+  'gc.auto=0',
+  'commit.gpgsign=false',
+].flatMap((setting) => ['-c', setting]);
+
 const git = (dir: string, ...args: string[]) =>
-  execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], {
+  execFileSync('git', ['-C', dir, ...GIT_CONFIG, ...args], {
     encoding: 'utf8',
     timeout: 20_000,
   });
