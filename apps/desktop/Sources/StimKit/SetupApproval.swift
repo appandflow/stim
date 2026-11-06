@@ -35,7 +35,8 @@ public struct SetupRequest: Equatable, Sendable {
     guard
       let setup = tokens.indices.first(where: {
         $0 > 0 && tokens[$0] == "setup"
-          && (tokens[$0 - 1] == "stim" || tokens[$0 - 1].hasSuffix("/stim") || tokens[$0 - 1].hasPrefix("stim@"))
+          && (tokens[$0 - 1] == "stim" || tokens[$0 - 1].hasSuffix("/stim") || tokens[$0 - 1].hasPrefix("stim@")
+            || tokens[$0 - 1] == "stim-server")  // compat: C7
       })
     else { throw .notASetupCommand }
     let prefix = "STIM_SETUP_TICKET="

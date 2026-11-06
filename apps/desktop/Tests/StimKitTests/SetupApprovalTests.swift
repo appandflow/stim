@@ -25,6 +25,15 @@ struct SetupApprovalTests {
     #expect(request.capabilities == [.deviceHost])
   }
 
+  @Test func readsTheLegacyCommandStimRemoteAddPrints() throws {
+    let request = try SetupRequest.parse(
+      "STIM_SETUP_TICKET=\(ticket.value) STIM_SETUP_ORIGIN=doctor npx --yes --package @stim-cli/server@1.21.0 stim-server setup --expires \(ticket.isoExpires) --build --device-host"
+    )
+    #expect(request.ticket == ticket)
+    #expect(request.expires == ticket.isoExpires)
+    #expect(request.capabilities == [.build, .deviceHost])
+  }
+
   @Test(arguments: [
     ("--yes", SetupRequest.Problem.unsupported("--yes")),
     ("--port 7788", .unsupported("--port")),

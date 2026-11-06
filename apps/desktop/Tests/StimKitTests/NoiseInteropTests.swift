@@ -166,7 +166,7 @@ struct NoiseInteropTests {
     }
 
     func grant(_ deviceID: String, _ scope: String) async throws {
-      let grant = try Child([script, "devices", "grant", deviceID, scope], environment: environment)
+      let grant = try Child([script, "pairings", "grant", deviceID, scope], environment: environment)
       grant.process.waitUntilExit()
       #expect(grant.process.terminationStatus == 0)
     }
