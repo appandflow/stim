@@ -22,7 +22,11 @@ export type Current = { format: number; version: string; build: string; dir: str
   setBy: string;
   setAt: string;
 };
-export type Staged = { format: number; dir: string; version: string; stagedAt: string };
+export type Staged = { format: number; dir: string; version: string; stagedAt: string } & {
+  setBy?: string;
+  pinReason?: string | null;
+  channel?: Channel;
+};
 export type Manifest = { format: number; build: string; version: string; engines: string; schema: number };
 type Installed = { dir: string; version: string; installedAt: string };
 export type StoreState = {
