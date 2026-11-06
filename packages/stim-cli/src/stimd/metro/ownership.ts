@@ -1,5 +1,5 @@
-import { pidExists } from '../metro.ts';
-import { inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
+import { pidExists } from '../../metro.ts';
+import { inspectProcessIdentity, type ProcessRecord } from '../../process-identity.ts';
 
 export interface SupervisorStateRecord extends ProcessRecord {
   pid?: number;

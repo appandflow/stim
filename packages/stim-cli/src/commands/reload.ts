@@ -32,7 +32,7 @@ import {
   type RemoteSessionRecord,
   type WorkspaceLaunchPlatform,
   type WorkspaceLaunchRecord,
-} from '../supervisor/state.ts';
+} from '../stimd/metro/state.ts';
 
 export type ReloadPlatform = WorkspaceLaunchPlatform | 'web';
 

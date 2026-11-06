@@ -15,7 +15,7 @@ import {
   type ClaimHandle,
 } from '../ownership-claim.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { readMetroTunnel } from '../supervisor/state.ts';
+import { readMetroTunnel } from '../stimd/metro/state.ts';
 import assert from 'node:assert';
 import type { ChildProcess } from 'node:child_process';
 import { resolve4 } from 'node:dns/promises';

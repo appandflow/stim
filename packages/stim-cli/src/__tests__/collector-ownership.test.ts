@@ -5,8 +5,8 @@ import { once } from 'node:events';
 import { decode } from 'unique-pid';
 import { getExecutor } from '../exec.ts';
 import { captureProcessToken } from '../process-identity.ts';
-import { verifyCollectorOwnership } from '../collector/ownership.ts';
-import { registerCollector, unregisterCollector, readCollectors } from '../collector/state.ts';
+import { verifyCollectorOwnership } from '../stimd/logs/ownership.ts';
+import { registerCollector, unregisterCollector, readCollectors } from '../stimd/logs/state.ts';
 
 let home: string;
 beforeEach(() => {

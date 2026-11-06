@@ -1,6 +1,6 @@
 import { createServer, type AddressInfo, type Socket } from 'node:net';
-import type { BuildConnection } from '../offload/client.ts';
-import { hostConnector } from '../device-host/hosted-client.ts';
+import type { BuildConnection } from '../../offload/client.ts';
+import { hostConnector } from '../../device-host/hosted-client.ts';
 import { pipeLink } from './metro-links.ts';
 
 export interface AgentRelay {

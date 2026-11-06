@@ -3,7 +3,7 @@ import type { EasFallbackCheck } from '../device-host/placement.ts';
 import { childEnvironment } from '../workspace/git-read.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { getExecutor } from '../exec.ts';
-import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
+import { readMetroTunnel, readRemoteSession } from '../stimd/metro/state.ts';
 import { getProject } from '../workspace/config.ts';
 import { isEasAuthFailureText, resolveEasCliBin } from './remote-cache.ts';
 import { readInstalledEasCliVersionAsync } from './device-remote.ts';

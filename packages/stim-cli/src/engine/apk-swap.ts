@@ -15,7 +15,7 @@ import { killOnAbort } from '../workspace/git-read.ts';
 import { operationState } from './operation-state.ts';
 import type { SettingsObject } from '@stim-cli/core/state';
 import { androidBuildToolName, findBuildTool, type BuildToolsEntry } from '../devices/android.ts';
-import { cleanLine } from '../supervisor/server-expo.ts';
+import { cleanLine } from '../stimd/metro/server-expo.ts';
 import {
   assetDiffReason,
   compareAssetManifests,

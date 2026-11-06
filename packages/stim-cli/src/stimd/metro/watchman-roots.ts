@@ -1,6 +1,6 @@
 import { realpathSync } from 'node:fs';
 import { sep } from 'node:path';
-import type { NdjsonWriter } from '../ndjson.ts';
+import type { NdjsonWriter } from '../../ndjson.ts';
 import { describeError } from './errors.ts';
 import {
   parseSubscriberNames,
@@ -8,7 +8,7 @@ import {
   parseWatchRoots,
   runWatchman,
   type WatchmanCommand,
-} from '../watchman.ts';
+} from '../../watchman.ts';
 
 const WATCHMAN_TIMEOUT_MS = 2000;
 const SHUTDOWN_BUDGET_MS = 3000;

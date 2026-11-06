@@ -6,7 +6,7 @@ import chalk from 'chalk';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { PLATFORM } from './support.ts';
 import { spawnEntry } from '../../spawn-entry.ts';
-import { verifyCollectorOwnership } from '../../collector/ownership.ts';
+import { verifyCollectorOwnership } from '../../stimd/logs/ownership.ts';
 import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import { pidExists, signalProcessTree } from '../../metro.ts';
 import { cancellableSleep } from '../../cancellation.ts';

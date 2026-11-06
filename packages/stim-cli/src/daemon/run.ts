@@ -36,7 +36,7 @@ import { listBuildSlots } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { waitForProcessExit, type ProcessRecord } from '../process-identity.ts';
 import { stimBuild } from '../spawn-entry.ts';
-import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
 import type { Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';

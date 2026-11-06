@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { getProjectSettings, writeConfigSetting, type ProjectRecord } from '../workspace/config.ts';
 import { registerReload, runReload, type ReloadDeps } from '../commands/reload.ts';
-import type { WorkspaceLaunchRecord } from '../supervisor/state.ts';
+import type { WorkspaceLaunchRecord } from '../stimd/metro/state.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUseAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';

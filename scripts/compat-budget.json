@@ -116,14 +116,14 @@
       "packages/stim-cli/src/offload/worker.ts compat"
     ],
     "wording": [
-      "packages/stim-cli/src/collector/ios.ts deprecat",
+      "packages/stim-cli/src/stimd/logs/ios.ts deprecat",
       "packages/stim-cli/src/engine/app-install.ts legacy",
       "packages/stim-cli/src/engine/errors-gradle.ts deprecat",
       "packages/stim-cli/src/guide/metro.ts legacy",
       "packages/stim-cli/src/guide/errors.ts peer-too-old",
       "packages/stim-cli/src/integrations/native-xcode-inputs.ts legacy",
-      "packages/stim-cli/src/supervisor/server-expo.ts deprecat",
-      "packages/stim-cli/src/supervisor/server-expo.ts legacy"
+      "packages/stim-cli/src/stimd/metro/server-expo.ts deprecat",
+      "packages/stim-cli/src/stimd/metro/server-expo.ts legacy"
     ],
     "bridge": [
       "packages/core/index.ts legacy",

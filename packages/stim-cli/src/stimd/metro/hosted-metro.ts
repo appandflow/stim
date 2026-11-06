@@ -1,5 +1,5 @@
 import { statSync } from 'node:fs';
-import { workspaceStateFile } from '../workspace/paths.ts';
+import { workspaceStateFile } from '../../workspace/paths.ts';
 import {
   HOSTED_METRO_LINKS_KEY,
   hostedMetroRequests,
@@ -12,12 +12,12 @@ import {
   reversePorts,
   parseMachine,
 } from '@stim-cli/core/state';
-import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
-import { probeHostedSession } from '../device-host/hosted-client.ts';
-import { clearHostedMetro } from '../device-host/metro-request.ts';
+import { readWorkspaceState, updateWorkspaceState } from '../../workspace/workspace-state.ts';
+import { probeHostedSession } from '../../device-host/hosted-client.ts';
+import { clearHostedMetro } from '../../device-host/metro-request.ts';
 import { openAgentRelay } from './agent-relay.ts';
 import { openMetroLinks, type MetroLinkPool } from './metro-links.ts';
-import { watchWorkspaceState } from '../workspace/workspace-state-watch.ts';
+import { watchWorkspaceState } from '../../workspace/workspace-state-watch.ts';
 
 const REVERSE_RETRY_MS = 60_000;
 

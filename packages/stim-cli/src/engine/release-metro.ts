@@ -1,8 +1,8 @@
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expoSdkMajor } from '../supervisor/server-expo.ts';
-import { expoMetroConfigPath } from '../supervisor/metro-store.ts';
+import { expoSdkMajor } from '../stimd/metro/server-expo.ts';
+import { expoMetroConfigPath } from '../stimd/metro/metro-store.ts';
 
 export async function withReleaseMetroCache<T>(
   root: string,

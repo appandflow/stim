@@ -6,7 +6,7 @@ import { Command } from 'commander';
 import type { WorkspaceState } from '@stim-cli/core/state';
 import { resolveBuild } from '../cache/build-cache.ts';
 import { registerRevive, reviveLines, runRevive, type ReviveDeps } from '../commands/revive.ts';
-import type { WorkspaceLaunchRecord } from '../supervisor/state.ts';
+import type { WorkspaceLaunchRecord } from '../stimd/metro/state.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
 
 const CACHED = '/stim/build-cache/ios/f1-debug-sim-arm64/App.app';

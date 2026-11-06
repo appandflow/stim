@@ -1,14 +1,14 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { resolveMetroSharedCache } from '../optimizations.ts';
-import { resolveProjectSettings, type SettingsObject } from '../workspace/settings.ts';
-import { getExecutor } from '../exec.ts';
+import { resolveMetroSharedCache } from '../../optimizations.ts';
+import { resolveProjectSettings, type SettingsObject } from '../../workspace/settings.ts';
+import { getExecutor } from '../../exec.ts';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
-import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
-import { stripAnsi } from '../process-output.ts';
+import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../../ndjson.ts';
+import { stripAnsi } from '../../process-output.ts';
 import { type ChildServerHandle, superviseChildServer } from './child-server.ts';
-import { resolvePackageJson } from '../workspace/project.ts';
+import { resolvePackageJson } from '../../workspace/project.ts';
 import {
   expoMetroConfigPath,
   expoMetroStoreEnv,

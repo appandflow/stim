@@ -327,7 +327,7 @@ for hosted control), so the proxy needs no agent-device change.
 
 For local devices, use the same shape as a hosted session on a `local:` machine, where the client's supervisor
 listens on a loopback port and carries each connection over an authenticated `device-host.agent.link`
-(`packages/stim-cli/src/supervisor/agent-relay.ts`):
+(`packages/stim-cli/src/stimd/metro/agent-relay.ts`):
 
 - **Route.** A per-workspace loopback relay port carries each connection over stim-server's Unix socket on a new
   local-only `agent.link` method. stim-server applies the device policy and forwards to the agent-device daemon it

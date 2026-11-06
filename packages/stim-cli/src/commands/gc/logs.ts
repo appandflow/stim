@@ -3,7 +3,7 @@ import { join } from 'path';
 import chalk from 'chalk';
 import { LOG_ROTATE_BYTES, rotatedLogPath, withDirLockTransaction, type StimContext } from '@stim-cli/core';
 import { formatBytes, isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
-import { readCollectors } from '../../collector/state.ts';
+import { readCollectors } from '../../stimd/logs/state.ts';
 import { workspaceInUseAsync, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';

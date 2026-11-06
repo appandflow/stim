@@ -59,7 +59,7 @@ import { warmClaimAcquiredLine, withWarmClaim, type WarmClaimWait } from '../eng
 import { trace } from '@stim-cli/core/state';
 import { startWarmProgress, type WarmProgress } from '../engine/warm-progress.ts';
 import { incompleteInstallRefusal, refreshMainCheckout, type RefreshFailure } from '../workspace/worktree-refresh.ts';
-import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
+import { readMetroTunnel, readRemoteSession } from '../stimd/metro/state.ts';
 import {
   branchExistsAsync,
   depsOutOfSync,

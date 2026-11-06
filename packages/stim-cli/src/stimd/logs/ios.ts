@@ -1,6 +1,6 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import { getExecutor } from '../exec.ts';
-import type { NdjsonRecord } from '../ndjson.ts';
+import { getExecutor } from '../../exec.ts';
+import type { NdjsonRecord } from '../../ndjson.ts';
 
 const MESSAGE_TYPE_LEVEL: Record<string, string> = {
   Debug: 'debug',

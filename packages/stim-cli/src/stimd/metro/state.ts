@@ -4,13 +4,13 @@ import {
   withWorkspaceStateLockAsync,
   updateWorkspaceState,
   clearWorkspaceStateKey,
-} from '../workspace/workspace-state.ts';
-import { deviceSlotKey, parseDeviceSlotKey } from '../devices/device-slots.ts';
+} from '../../workspace/workspace-state.ts';
+import { deviceSlotKey, parseDeviceSlotKey } from '../../devices/device-slots.ts';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { supervisorPidFile, workspaceStateFile } from '../workspace/paths.ts';
-import type { ManagedProvider } from '../engine/metro-reach.ts';
-import { sameProcessRecord } from '../process-identity.ts';
+import { supervisorPidFile, workspaceStateFile } from '../../workspace/paths.ts';
+import type { ManagedProvider } from '../../engine/metro-reach.ts';
+import { sameProcessRecord } from '../../process-identity.ts';
 import type { ProcessRecord } from '@stim-cli/core/process-identity';
 
 export const MODE_BARE = 'bare-inproc';

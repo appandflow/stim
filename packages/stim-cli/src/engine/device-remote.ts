@@ -12,7 +12,7 @@ import { readJsonObject, settingDefinition, settingValueError, type RemoteDevice
 import { pidExists } from '../metro.ts';
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from './metro-gate.ts';
 import { workspaceDir, workspaceId, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
-import { clearRemoteSession, readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
+import { clearRemoteSession, readMetroTunnel, readRemoteSession } from '../stimd/metro/state.ts';
 import { ownedDeviceLabel } from '../workspace/project.ts';
 import { remoteCommand } from './node-cli.ts';
 import {

@@ -1,5 +1,5 @@
-import type { NdjsonWriter } from '../ndjson.ts';
-import type { SettingsObject } from '../workspace/settings.ts';
+import type { NdjsonWriter } from '../../ndjson.ts';
+import type { SettingsObject } from '../../workspace/settings.ts';
 
 export interface ServerExitInfo {
   code?: number | null;
