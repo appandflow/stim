@@ -1,12 +1,11 @@
 import { ambientContext, ambientEnv } from '@stim-cli/core';
-import { operationState } from '../engine/operation-state.ts';
+import { operationState } from './engine/operation-state.ts';
 import { InvalidArgumentError } from 'commander';
-import { parseMachine, automaticMachineEnabled, placementWord } from '@stim-cli/core/state';
-import type { PlacementSetting, SettingSource } from '../placement-log.ts';
-import { loadConfig } from '../workspace/config.ts';
-import { pairedMachines } from './build-machines.ts';
-import { POD_MISSING_REASON } from '../engine/deps.ts';
-import { cocoapodsInstall } from './toolchain.ts';
+import { parseMachine, automaticMachineEnabled, placementWord, readBuildMachines } from '@stim-cli/core/state';
+import type { PlacementSetting, SettingSource } from './placement-log.ts';
+import { loadConfig } from './workspace/config.ts';
+import { POD_MISSING_REASON } from './engine/deps.ts';
+import { cocoapodsInstall } from './offload/toolchain.ts';
 
 const FINGERPRINT_MISMATCH_REMEDY =
   "The build Mac fingerprints the synced checkout differently; the message names the sources that differ. Stim sends tracked and untracked files and the gitignored files the fingerprint reads, except under node_modules. A source still differs when the build Mac's dependency install or pod install writes it differently, or when the app config reads an environment variable or file that differs. Make that input agree on both Macs, for example by committing the lockfile pod install rewrote there, or rerun with --remote-build auto or --remote-build local.";
@@ -157,7 +156,10 @@ export function resolveBuildPlacement(flag?: string): {
   try {
     selected = resolveBuildMachine(flag, ambientEnv().STIM_REMOTE_BUILD, remote?.build);
     selected = requireConfiguredMachine(selected, remote?.machines);
-    if (namedBuildMachine(selected) && pairedMachines([selected]).length === 0)
+    if (
+      namedBuildMachine(selected) &&
+      !readBuildMachines().some((each) => each.state === 'approved' && each.machine === selected)
+    )
       throw new OffloadRefusal(selected, 'no remote machine is paired');
     return { selected };
   } catch (error) {
