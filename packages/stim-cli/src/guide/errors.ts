@@ -1568,31 +1568,23 @@ Inspect what remains with gc() before retrying a mutation.
   and the lock directory under ~/.stim/warm-locks.
   A lock whose owner died is taken over automatically (its recorded
   process identity is checked every poll), so this means another Stim command really
-  is working on this workspace: wait for it and retry. If nothing is running,
-  the message names the lock directory and removing it is safe. The same error
-  code also covers the short directory-lock timeout below.
+  is working on this workspace: wait for it and retry. Inspect the named
+  holder before taking any recovery action. The same error code also covers
+  the short-lock timeout below.
 
 "Timed out waiting for the lock at <path>."
-  Short directory locks serialize writes to config, workspace state, device
+  Short locks serialize writes to config, workspace state, device
   leases, ownership records, metadata, and cache manifests. The path identifies
   the lock. These locks wait up to 12s and never expire based on age. When
   another Stim command holds the lock, the message says so: wait for it and
-  retry. A failed marker write, such as ENOSPC on a full disk, removes the
-  directory it just created before Stim reports the write error.
-  Short locks use the same process-identity claims as long operations, stored
-  beside the visible directory at <path>.claims. An opaque marker in the visible
-  directory also excludes older Stim versions. Only the exclusive claim holder
-  can recover a recognized marker. A
-  complete claim left by a proven-dead owner is recovered automatically on
-  the next attempt. An unreadable or undecodable record instead reports
-  STIM_CLAIM_REFUSED and names the claim to inspect; an unavailable native
-  identity reports STIM_CLAIM_UNAVAILABLE without running the protected work.
-  Older lock directories have no process identity. A visible directory left
-  empty before marker publication (a process killed between creating it and
-  writing its marker) or during final removal also cannot prove it is free.
-  These paths still time out, and the message says no current Stim holds the
-  lock and ends with \`rm -rf '<path>'\`. An older Stim version may still be
-  using it: if none is running, remove the named directory with that command.
+  retry.
+  Short locks use the same process-identity claims as long operations. The
+  exclusive claim at <path>.claims is the only lock state; Stim does not create,
+  inspect or remove <path> itself. A complete claim left by a proven-dead owner
+  is recovered automatically on the next attempt. An unreadable or undecodable
+  record instead reports STIM_CLAIM_REFUSED and names the claim to inspect;
+  an unavailable native identity reports STIM_CLAIM_UNAVAILABLE without running
+  the protected work.
   Standalone Metro and Expo cache packages use the
   same core protocol and do not require the Stim CLI.`,
     },

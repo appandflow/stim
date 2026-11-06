@@ -16,6 +16,7 @@ import {
 } from '../engine/device-remote.ts';
 import { PUBLIC_METRO_ENV } from '../engine/metro-reach.ts';
 import { withDirLockTransaction } from '@stim-cli/core';
+import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { easSessionLedgerLock } from '@stim-cli/core/state';
 import { readEasSessionLedger, recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 import { saveConfig } from '../workspace/config.ts';
@@ -588,9 +589,9 @@ describe('fixed ownership claim teardown', () => {
       },
     });
 
-    const lock = easSessionLedgerLock(ledgerRoot);
-    mkdirSync(lock);
-    const release = setTimeout(() => rmSync(lock, { recursive: true }), 50);
+    const lock = tryAcquireClaim({ root: `${easSessionLedgerLock(ledgerRoot)}.claims`, mode: 'exclusive' }).acquired;
+    assert(lock);
+    const release = setTimeout(() => releaseClaim(lock), 50);
     try {
       expect((await teardownRemote(ctx({ easLedgerRoot: ledgerRoot }), { sessionId: 'drs_42' })).status).toBe(
         'torn-down',
@@ -598,7 +599,7 @@ describe('fixed ownership claim teardown', () => {
       expect(readEasSessionLedger(ledgerRoot).claims.has('drs_42')).toBe(false);
     } finally {
       clearTimeout(release);
-      rmSync(lock, { recursive: true, force: true });
+      releaseClaim(lock);
     }
   });
 

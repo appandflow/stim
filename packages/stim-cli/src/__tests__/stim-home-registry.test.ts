@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readStimHomes, stimHomesFile, stimHomesLock } from '@stim-cli/core/state';
+import { readClaimSet } from '../ownership-claim.ts';
 import { recordCreatedDevice, forgetCreatedDevice } from '../devices/created-devices.ts';
 import { STIM_HOMES_TEST_GUARD_ROOT_ENV } from '../engine/eas-machine-root-guard-env.ts';
 import { forgetStimHomes, isTrackedStimHome, noteStimHome, recordStimHome } from '../engine/stim-home-registry.ts';
@@ -91,11 +92,12 @@ describe('the machine list of Stim homes', () => {
     test('writes the list while it holds the list lock', () => {
       let lockedDuringWrite: boolean | undefined;
       renameHook.beforeRename = (target) => {
-        if (String(target) === stimHomesFile(root)) lockedDuringWrite = existsSync(stimHomesLock(root));
+        if (String(target) === stimHomesFile(root))
+          lockedDuringWrite = readClaimSet(`${stimHomesLock(root)}.claims`).live.length === 1;
       };
       recordStimHome(join(dir, 'scratch'), { root });
       expect(lockedDuringWrite).toBe(true);
-      expect(existsSync(stimHomesLock(root))).toBe(false);
+      expect(readClaimSet(`${stimHomesLock(root)}.claims`).live).toEqual([]);
     });
 
     test('refuses an unreadable list and leaves it as it was', () => {
