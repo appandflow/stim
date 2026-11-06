@@ -43,26 +43,25 @@ if (current === null) {
   }
   if (decision.note) process.stderr.write(`${decision.note}\n`);
   const engine = (name) => join(root, current.dir, 'dist', name);
-  let cli = null;
+  const runOwn = (error) => {
+    process.stderr.write(
+      `the engine ${current.version} cannot load (${error?.message}); this command runs this copy (${copy.version}). Run stim engine rollback or stim engine use <version> to repair it.\n`,
+    );
+    Reflect.set(globalThis, Symbol.for('stim.main'), false);
+    process.env.STIM_ROUTER_FALLBACK = '1';
+    return import('../dist/cli.mjs');
+  };
   if (decision.run === 'refuse') process.exitCode = 1;
   else if (decision.run === 'node') {
     process.exitCode =
       spawnSync(decision.node, [engine('cli.mjs'), ...process.argv.slice(2)], { stdio: 'inherit' }).status ?? 1;
   } else if (decision.run === 'engine') {
     Reflect.set(globalThis, Symbol.for('stim.main'), true);
-    try {
-      cli = await import(pathToFileURL(engine('cli.mjs')).href);
-    } catch (error) {
-      Reflect.set(globalThis, Symbol.for('stim.main'), false);
-      decision.fallback = true;
-      process.stderr.write(
-        `the engine ${current.version} cannot load (${error?.message}); this command runs this copy (${copy.version}). Run stim engine rollback or stim engine use <version> to repair it.\n`,
-      );
-    }
-  }
-  if (cli) {
-    if (typeof cli.main === 'function') cli.main(process.argv, { invokedVersion: copy.version });
-  } else if (decision.run === 'own' || decision.fallback) {
+    import(pathToFileURL(engine('cli.mjs')).href).then(
+      (cli) => cli.main?.(process.argv, { invokedVersion: copy.version, onLoadError: runOwn }),
+      runOwn,
+    );
+  } else {
     if (decision.fallback) process.env.STIM_ROUTER_FALLBACK = '1';
     import('../dist/cli.mjs');
   }

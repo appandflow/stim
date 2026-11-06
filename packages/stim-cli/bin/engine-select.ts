@@ -18,6 +18,7 @@ const { values } = parseArgs({
     channel: { type: 'string' },
     explicit: { type: 'boolean', default: false },
     'restore-state': { type: 'boolean', default: false },
+    locked: { type: 'boolean', default: false },
   },
 });
 const root = engineRoot(process.env);
@@ -31,6 +32,7 @@ try {
     explicit: values.explicit,
     pinReason: values.pin ?? null,
     restoreState: values['restore-state'],
+    locked: values.locked,
     channel: values.channel === 'next' || values.channel === 'latest' ? values.channel : undefined,
     ctx: processContext(process.cwd()),
   });

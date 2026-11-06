@@ -1,4 +1,4 @@
-import { chmodSync, cpSync, lstatSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { chmodSync, cpSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { stimBuildId } from '@stim-cli/core/state';
@@ -60,20 +60,29 @@ export async function cloneTree(source: string, scratch: string, ctx: StimContex
 }
 
 /**
- * Installs `stim@<version>` from npm into `scratch`, with npm's cache inside the store. `--install-strategy=shallow`
+ * Installs `stim@<version>` from npm, or a development checkout through `npm pack`, into `scratch`, with npm's cache inside the store. `--install-strategy=shallow`
  * nests the package's dependencies under it, so the package directory is a whole tree.
  */
 export async function fetchTree(
   root: string,
-  version: string,
+  source: { release: string } | { pack: string },
   scratch: string,
   log: (line: string) => void,
 ): Promise<void> {
   const { installServer } = await import('@stim-cli/server/release-install');
   const installs = join(root, scratchName());
   try {
+    const packs = join(installs, 'packs');
+    if ('pack' in source) {
+      mkdirSync(packs, { recursive: true });
+      await getExecutor().runFileAsync('npm', ['pack', '--pack-destination', packs], {
+        timeoutMs: 120_000,
+        cwd: source.pack,
+      });
+    }
+    const from = 'pack' in source ? { from: packs } : source;
     const options = ['--cache', join(root, '.npm-cache'), '--prefer-offline', '--install-strategy=shallow'];
-    const { dir } = await installServer(installs, { release: version }, process.execPath, log, options);
+    const { dir } = await installServer(join(installs, 'versions'), from, process.execPath, log, options);
     renameSync(join(dir, 'node_modules', 'stim'), scratch);
   } finally {
     rmSync(installs, { recursive: true, force: true });

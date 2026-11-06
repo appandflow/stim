@@ -43,6 +43,8 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 export interface MainContext {
   /** The version of the copy the person ran, when a router runs this build in its place. */
   invokedVersion?: string;
+  /** Called instead of throwing when this build's CLI code cannot load, so a router can run another copy. */
+  onLoadError?: (error: unknown) => unknown;
 }
 
 /** Runs the CLI for `argv`, in `process.argv`'s shape. */

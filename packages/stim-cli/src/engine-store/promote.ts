@@ -3,6 +3,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
 import { stimBuildId } from '@stim-cli/core/state';
+import { installKind } from '../../bin/route.mjs';
 import { getExecutor } from '../exec.ts';
 import { collectStore, liveEngineDirs } from './gc.ts';
 import { takeLock } from './locks.ts';
@@ -24,6 +25,8 @@ export interface Promotion {
   channel?: Current['channel'];
   /** `--restore-state`: puts back the claimed homes' snapshots for the target's schema just before the flip. */
   restoreState?: boolean;
+  /** Set by a parent `engine-select` that holds the promotion lock for this process. */
+  locked?: boolean;
   ctx: StimContext;
 }
 
@@ -37,15 +40,17 @@ export type PromotionResult = { flipped: string } | { staged: string } | { refus
  */
 export async function promote(promotion: Promotion): Promise<PromotionResult> {
   const { root, source, ctx } = promotion;
-  const lock = await takeLock(root, '.lock.sock');
+  const lock = promotion.locked ? { release: async () => {} } : await takeLock(root, '.lock.sock');
   if (!lock) return { busy: true };
-  let handover: string | null = null;
   try {
     let build = 'dir' in source && relative(realpathSync(root), realpathSync(source.dir)).match(BUILD_DIR)?.[0];
     if (!build) {
       const scratch = join(root, scratchName());
-      if ('dir' in source) await cloneTree(source.dir, scratch, ctx);
-      else await fetchTree(root, source.version, scratch, (line) => ctx.output('stderr', `${line}\n`));
+      const log = (line: string) => ctx.output('stderr', `${line}\n`);
+      if ('version' in source) await fetchTree(root, { release: source.version }, scratch, log);
+      else if (installKind(realpathSync(source.dir), realpathSync(root)) === 'development')
+        await fetchTree(root, { pack: source.dir }, scratch, log);
+      else await cloneTree(source.dir, scratch, ctx);
       build = seal(root, scratch);
     }
     const manifest = readManifest(join(root, build)) ?? fail(`${join(root, build)} has no store manifest.`);
@@ -53,7 +58,7 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
     if (!existsSync(join(root, build, 'dist', 'engine-select.mjs')))
       return refuse(`stim ${manifest.version} predates the engine store; choose a later version`);
     const own = stimBuildId(dirname(fileURLToPath(import.meta.url)));
-    if (own !== build) handover = build;
+    if (own !== build) return await handOver(promotion, build);
     else {
       const { current, state } = readRecords(root);
       const homes = [ctx.home, machineRoot()].filter((home) => readSchema(home));
@@ -82,12 +87,17 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
   } finally {
     await lock.release();
   }
-  const args = ['--source', join(root, handover), '--set-by', promotion.setBy];
+}
+
+/** Runs `build`'s own `engine-select` on its tree while this process keeps holding the promotion lock for it. */
+async function handOver(promotion: Promotion, build: string): Promise<PromotionResult> {
+  const { root, ctx } = promotion;
+  const args = ['--source', join(root, build), '--set-by', promotion.setBy, '--locked'];
   if (promotion.explicit) args.push('--explicit');
   if (promotion.pinReason) args.push('--pin', promotion.pinReason);
   if (promotion.channel) args.push('--channel', promotion.channel);
   if (promotion.restoreState) args.push('--restore-state');
-  const select = join(root, handover, 'dist', 'engine-select.mjs');
+  const select = join(root, build, 'dist', 'engine-select.mjs');
   const env = { STIM_ENGINE_ROOT: root, STIM_HOME: ctx.home };
   return JSON.parse(await getExecutor().runFileAsync(process.execPath, [select, ...args], { timeoutMs: 600_000, env }));
 }

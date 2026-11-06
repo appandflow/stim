@@ -19,7 +19,15 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
     return;
   }
   Reflect.set(globalThis, Symbol.for('stim.main'), true);
-  await (await import('./cli.ts')).main(argv, ctx);
+  let cli: typeof import('./cli.ts');
+  try {
+    cli = await import('./cli.ts');
+  } catch (error) {
+    if (!ctx.onLoadError) throw error;
+    await ctx.onLoadError(error);
+    return;
+  }
+  await cli.main(argv, ctx);
 }
 
 if (!Reflect.get(globalThis, Symbol.for('stim.main'))) void main(process.argv);
