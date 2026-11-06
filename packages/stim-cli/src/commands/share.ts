@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { bundledStim } from '../../../server/src/environment.ts';
 import type { Command } from 'commander';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { RESERVED_SHARE_SLUGS, SHARE_SLUG_PATTERN, type Methods, type WebShareRow } from '@stim-cli/core/protocol';
@@ -6,7 +7,6 @@ import { shareLinkKey, splitShareUrl, type SavedShare } from '@stim-cli/core/sta
 import {
   LocalServerUnavailable,
   requestLocalServer,
-  resolveShareServer,
   startShareServer,
   stopIdleShareServer,
   type ShareServerStop,
@@ -625,8 +625,7 @@ const DEFAULT_DEPS = (version: string): ShareDeps => ({
   findWorkspace: (cwd) => findCommandWorkspaceAsync(cwd, repoRootAsync, (line) => console.error(line)),
   request: (method, params) => requestLocalServer(method, params, { version }),
   startServer: async () => {
-    const server = await resolveShareServer(version);
-    return server ? startShareServer(server, version) : null;
+    return startShareServer({ file: process.execPath, args: [bundledStim().cli] }, version);
   },
   stopServer: () => stopIdleShareServer(version),
   note: (line) => console.error(line),
