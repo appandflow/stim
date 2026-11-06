@@ -10,13 +10,13 @@ const read = (file) => {
   try {
     return JSON.parse(readFileSync(file, 'utf8'));
   } catch (error) {
-    return error?.code === 'ENOENT' ? null : undefined;
+    return error instanceof SyntaxError ? undefined : null;
   }
 };
 let current = isAbsolute(root) ? read(join(root, 'current.json')) : null;
 
 if (current === null) {
-  await import('../dist/cli.mjs');
+  import('../dist/cli.mjs');
 } else {
   const { installKind, route } = await import('./route.mjs');
   const self = dirname(dirname(realpathSync(fileURLToPath(import.meta.url))));
@@ -25,12 +25,15 @@ if (current === null) {
     kind: installKind(self, realpathSync(root)),
   };
   const staged = read(join(root, 'staged.json'));
+  const failed = read(join(root, 'failed.json'));
   const decision = route({
     args: process.argv,
     copy,
     current,
     staged: staged?.format === 1 ? staged : null,
     node: process.versions.node,
+    failed: failed?.format === 1 ? failed : null,
+    now: Date.now(),
   });
   if (decision.promote) {
     const select = [join(self, 'dist', 'engine-select.mjs'), 'promote', '--set-by', `promote:${copy.kind}`];
@@ -58,9 +61,9 @@ if (current === null) {
     }
   }
   if (cli) {
-    if (typeof cli.main === 'function') await cli.main(process.argv, { invokedVersion: copy.version });
+    if (typeof cli.main === 'function') cli.main(process.argv, { invokedVersion: copy.version });
   } else if (decision.run === 'own' || decision.fallback) {
     if (decision.fallback) process.env.STIM_ROUTER_FALLBACK = '1';
-    await import('../dist/cli.mjs');
+    import('../dist/cli.mjs');
   }
 }

@@ -42,9 +42,9 @@ function readJson<T extends { format: unknown }>(file: string): T | null {
   }
 }
 
-export function writeRecord(file: string, value: unknown): void {
+export function writeRecord(file: string, value: unknown, mode: number = 0o644): void {
   const partial = `${file}.${process.pid}.tmp`;
-  writeFileSync(partial, typeof value === 'string' ? `${value}\n` : `${JSON.stringify(value, null, 2)}\n`);
+  writeFileSync(partial, typeof value === 'string' ? `${value}\n` : `${JSON.stringify(value, null, 2)}\n`, { mode });
   renameSync(partial, file);
 }
 
@@ -95,6 +95,12 @@ export function readRecords(root: string): Records {
     previous = readFileSync(join(root, 'previous'), 'utf8').trim() || null;
   } catch {}
   return { current: readCurrent(root), staged: readStaged(root), previous, state: readState(root) };
+}
+
+/** An unattended promotion of `version` that failed: routers skip it for an hour instead of retrying per command. */
+export function recordFailure(root: string, version: string, reason: string): void {
+  if (existsSync(root))
+    writeRecord(join(root, 'failed.json'), { format: FORMAT, version, at: new Date().toISOString(), reason });
 }
 
 export function writeState(root: string, state: StoreState): void {

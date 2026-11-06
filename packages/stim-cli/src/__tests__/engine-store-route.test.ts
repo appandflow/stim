@@ -68,6 +68,19 @@ describe('route', () => {
     expect(route(input({ version: '1.51.0', kind }))).toEqual({ run: 'engine', promote });
   });
 
+  it('waits an hour before retrying a promotion of the same version that failed', () => {
+    const failed = { version: '1.51.0', at: '2026-11-06T00:00:00.000Z' };
+    const at = Date.parse(failed.at);
+    expect(route(input({ version: '1.51.0' }, {}, { failed, now: at + 59 * 60_000 }))).toEqual({ run: 'engine' });
+    expect(route(input({ version: '1.51.0' }, {}, { failed, now: at + 61 * 60_000 })).promote).toBe('inline');
+  });
+
+  it('runs stim serve in place, so a service runs the version it installed', () => {
+    expect(route(input({ version: '1.49.0', kind: 'project' }, {}, { args: ['node', 'stim', 'serve'] })).run).toBe(
+      'own',
+    );
+  });
+
   it('lets a pin beat a newer copy and names both remedies', () => {
     const decision = route(input({ version: '1.51.0' }, { pinned: true, pinReason: 'rolled back from 1.51.0' }));
     expect(decision.promote).toBeUndefined();

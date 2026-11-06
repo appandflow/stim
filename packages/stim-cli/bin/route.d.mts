@@ -20,6 +20,8 @@ export interface RouteInput {
     | undefined;
   staged: { version: string } | null;
   node: string;
+  failed?: { version: string; at: string } | null;
+  now?: number;
 }
 
 export interface Route {

@@ -12,7 +12,8 @@ export function promotionRefusal(
   bad: StoreState['bad'],
   explicit: boolean,
 ): string | null {
-  if (explicit || !current) return null;
+  if (explicit) return null;
+  if (!current) return 'no engine is installed; run stim engine install';
   if (current.pinned)
     return `the engine is pinned at ${current.version} (${current.pinReason}); run stim engine update to resume updates`;
   const newestBad = bad

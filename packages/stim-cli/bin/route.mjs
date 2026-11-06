@@ -36,7 +36,7 @@ export function installKind(dir, root) {
 }
 
 /** What the router does with one command, given the engine's `current.json` and `staged.json`. */
-export function route({ args, copy, current, staged, node }) {
+export function route({ args, copy, current, staged, node, failed = null, now = 0 }) {
   if (current === null) return { run: 'own' };
   if (typeof current !== 'object')
     return { run: 'own', fallback: true, note: 'the engine pointer cannot be read; this command runs this copy' };
@@ -46,8 +46,11 @@ export function route({ args, copy, current, staged, node }) {
     return { run: 'refuse', note };
   }
   // compat end
-  if (copy.kind === 'development')
-    return { run: 'own', note: `this development tree runs in place, not the engine (${current.version})` };
+  if (copy.kind === 'development' || args[2] === 'serve')
+    return {
+      run: 'own',
+      note: args[2] === 'serve' ? null : `this development tree runs in place, not the engine (${current.version})`,
+    };
   if (args[2] === '--version' || args[2] === '-V')
     return {
       run: 'own',
@@ -78,5 +81,6 @@ export function route({ args, copy, current, staged, node }) {
   }
   if (staged && (compareVersions(staged.version, copy.version) ?? -1) >= 0)
     return { ...target, note: `stim ${staged.version} is staged; this command runs ${current.version}` };
+  if (failed?.version === copy.version && now - Date.parse(failed.at) < 60 * 60_000) return target;
   return { ...target, promote: copy.kind === 'machine' ? 'inline' : 'detached' };
 }

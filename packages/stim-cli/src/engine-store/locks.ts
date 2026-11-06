@@ -30,7 +30,9 @@ export async function takeLock(root: string, name: '.lock.sock' | '.flip.sock'):
     const stale = await new Promise<boolean>((resolve) => {
       const socket = connect(path);
       socket.once('connect', () => (socket.destroy(), resolve(false)));
-      socket.once('error', (error: NodeJS.ErrnoException) => resolve(error.code === 'ECONNREFUSED'));
+      socket.once('error', (error: NodeJS.ErrnoException) =>
+        resolve(error.code === 'ECONNREFUSED' || error.code === 'ENOENT'),
+      );
     });
     if (!stale) return null;
     if (lstatSync(path, { throwIfNoEntry: false })?.ino === leftover) rmSync(path, { force: true });

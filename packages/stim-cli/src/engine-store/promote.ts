@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { StimContext } from '@stim-cli/core';
@@ -6,7 +6,7 @@ import { stimBuildId } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { collectStore, liveEngineDirs } from './gc.ts';
 import { takeLock } from './locks.ts';
-import { machineRoot, migrateSchema, readSchema, schemaRefusal } from './schema.ts';
+import { machineRoot, migrateSchema, readSchema, restoreSchema, schemaRefusal } from './schema.ts';
 import { promotionRefusal } from './select.ts';
 import { BUILD_DIR, FORMAT, readManifest, readRecords, removeRecord, writeRecord, writeState } from './store.ts';
 import type { Current, Manifest, Staged } from './store.ts';
@@ -22,6 +22,8 @@ export interface Promotion {
   /** Pins the engine with this reason; omitted, the engine is unpinned. */
   pinReason?: string | null;
   channel?: Current['channel'];
+  /** `--restore-state`: puts back the claimed homes' snapshots for the target's schema just before the flip. */
+  restoreState?: boolean;
   ctx: StimContext;
 }
 
@@ -47,18 +49,22 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
       build = seal(root, scratch);
     }
     const manifest = readManifest(join(root, build)) ?? fail(`${join(root, build)} has no store manifest.`);
+    const refuse = (refused: string) => (collectStore(root, liveEngineDirs()), { refused });
     if (!existsSync(join(root, build, 'dist', 'engine-select.mjs')))
-      return { refused: `stim ${manifest.version} predates the engine store; choose a later version` };
+      return refuse(`stim ${manifest.version} predates the engine store; choose a later version`);
     const own = stimBuildId(dirname(fileURLToPath(import.meta.url)));
     if (own !== build) handover = build;
     else {
       const { current, state } = readRecords(root);
+      const homes = [ctx.home, machineRoot()].filter((home) => readSchema(home));
       const refusal =
         promotionRefusal(manifest, current, state.bad, promotion.explicit === true) ??
-        schemaRefusal(ctx.home, manifest.schema) ??
-        schemaRefusal(machineRoot(), manifest.schema);
-      if (refusal) return { refused: refusal };
-      await selfTest(root, build);
+        (promotion.restoreState ? null : homes.map((home) => schemaRefusal(home, manifest.schema)).find(Boolean));
+      if (refusal) return refuse(refusal);
+      await selfTest(root, build).catch((error: unknown) => {
+        collectStore(root, liveEngineDirs());
+        throw error;
+      });
       const entry = { dir: build, version: manifest.version, installedAt: new Date().toISOString() };
       writeState(root, { ...state, installed: [...state.installed.filter((each) => each.dir !== build), entry] });
       const claimed = liveEngineDirs();
@@ -67,8 +73,9 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
         writeRecord(join(root, 'staged.json'), staged);
         return { staged: build };
       }
+      for (const home of promotion.restoreState ? homes : []) restoreSchema(home, manifest.schema, manifest.version);
       await flip(root, build, manifest, current, promotion);
-      for (const home of [ctx.home, machineRoot()]) if (readSchema(home)) migrateSchema(home, manifest.version);
+      for (const home of homes) migrateSchema(home, manifest.version);
       collectStore(root, claimed);
       return { flipped: build };
     }
@@ -79,6 +86,7 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
   if (promotion.explicit) args.push('--explicit');
   if (promotion.pinReason) args.push('--pin', promotion.pinReason);
   if (promotion.channel) args.push('--channel', promotion.channel);
+  if (promotion.restoreState) args.push('--restore-state');
   const select = join(root, handover, 'dist', 'engine-select.mjs');
   const env = { STIM_ENGINE_ROOT: root, STIM_HOME: ctx.home };
   return JSON.parse(await getExecutor().runFileAsync(process.execPath, [select, ...args], { timeoutMs: 600_000, env }));
@@ -103,13 +111,13 @@ async function flip(root: string, build: string, manifest: Manifest, current: Cu
       setAt: new Date().toISOString(),
     } satisfies Current);
     removeRecord(join(root, 'staged.json'));
+    removeRecord(join(root, 'failed.json'));
   } finally {
     await flipLock.release();
   }
   const router = join(root, build, 'bin', 'stim.mjs');
   mkdirSync(join(root, 'bin'), { recursive: true });
-  writeRecord(join(root, 'bin', 'stim'), `#!/bin/sh\nexec "${node.path}" "${router}" "$@"`);
-  chmodSync(join(root, 'bin', 'stim'), 0o755);
+  writeRecord(join(root, 'bin', 'stim'), `#!/bin/sh\nexec "${node.path}" "${router}" "$@"`, 0o755);
   writeRecord(join(root, 'bin', 'stim.cmd'), `@"${node.path}" "${router}" %*\r`);
 }
 

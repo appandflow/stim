@@ -22,4 +22,4 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
   await (await import('./cli.ts')).main(argv, ctx);
 }
 
-if (!Reflect.get(globalThis, Symbol.for('stim.main'))) await main(process.argv);
+if (!Reflect.get(globalThis, Symbol.for('stim.main'))) void main(process.argv);

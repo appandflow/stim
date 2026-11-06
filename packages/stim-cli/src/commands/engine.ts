@@ -1,4 +1,4 @@
-import { readdirSync, rmSync } from 'node:fs';
+import { readdirSync, rmdirSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import { configDir } from '@stim-cli/core';
@@ -8,8 +8,8 @@ import { getExecutor } from '../exec.ts';
 import { collectStore } from '../engine-store/gc.ts';
 import { takeLock } from '../engine-store/locks.ts';
 import { promote, type Promotion } from '../engine-store/promote.ts';
-import { machineRoot, migrateSchema, readSchema, restoreSchema, SCHEMA } from '../engine-store/schema.ts';
-import { BUILD_DIR, engineRoot, readManifest, readRecords } from '../engine-store/store.ts';
+import { machineRoot, migrateSchema, readSchema, SCHEMA } from '../engine-store/schema.ts';
+import { engineRoot, readManifest, readRecords } from '../engine-store/store.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 
 function refuse(code: string, message: string, remedy: string): never {
@@ -61,7 +61,7 @@ export default function engineCommand(program: Command, version: string): void {
       const self = dirname(dirname(spawnEntry('engine-select')));
       const kind = installKind(self, engineRoot(process.env));
       if (kind === 'development')
-        refuse('STIM_ENGINE_REFUSED', `${self} runs in place.`, `Run stim engine use ${self}.`);
+        refuse('STIM_ENGINE_REFUSED', `${self} runs in place.`, 'Run stim engine install from an installed stim.');
       await run('install', kind === 'npx' || kind === 'project' ? { version } : { dir: self });
       for (const root of [configDir(), machineRoot()]) migrateSchema(root, version);
     });
@@ -104,27 +104,42 @@ export default function engineCommand(program: Command, version: string): void {
       const manifest = previous ? readManifest(join(root, previous)) : null;
       if (!current || !manifest)
         return refuse('STIM_ENGINE_REFUSED', `${root} has no previous build.`, 'Run stim engine use <version>.');
-      for (const home of opts.restoreState ? [configDir(), machineRoot()] : [])
-        if (readSchema(home)) restoreSchema(home, manifest.schema, manifest.version);
-      await run('rollback', { dir: join(root, manifest.build) }, { pinReason: `rolled back from ${current.version}` });
+      await run(
+        'rollback',
+        { dir: join(root, manifest.build) },
+        {
+          pinReason: `rolled back from ${current.version}`,
+          restoreState: opts.restoreState === true,
+        },
+      );
     });
   engine
     .command('uninstall')
     .description('Remove the engine; each copy of stim runs itself again')
     .action(async () => {
       const root = engineRoot(process.env);
+      if (!readRecords(root).current) return missing();
       const lock = (await takeLock(root, '.lock.sock')) ?? busy(root);
       try {
-        for (const name of ['current.json', 'previous', 'staged.json', 'bin', '.npm-cache'])
+        for (const name of [
+          'current.json',
+          'previous',
+          'staged.json',
+          'failed.json',
+          'state.json',
+          'bin',
+          '.npm-cache',
+        ])
           rmSync(join(root, name), { recursive: true, force: true });
         collectStore(root);
+        for (const name of ['state.json', '.trash']) rmSync(join(root, name), { recursive: true, force: true });
       } finally {
         await lock.release();
       }
-      const kept = readdirSync(root).filter((name) => BUILD_DIR.test(name));
-      if (kept.length === 0) rmSync(root, { recursive: true, force: true });
-      console.log(
-        kept.length ? `Removed the engine; ${kept.join(', ')} stay while processes run from them.` : `Removed ${root}.`,
-      );
+      const kept = readdirSync(root);
+      try {
+        rmdirSync(root);
+      } catch {}
+      console.log(kept.length ? `Removed the engine pointer; ${root} keeps ${kept.join(', ')}.` : `Removed ${root}.`);
     });
 }
