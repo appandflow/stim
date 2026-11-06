@@ -393,7 +393,7 @@ jobs:
             echo "::error::refusing to publish $version: not an X.Y.0-next.<stamp>.g<sha> version"
             exit 1
           fi
-          if ! npm view "stim@$version" version >/dev/null 2>&1; then
+          if ! npm view "stim@$version" version >/dev/null 2>&1 || ! npm view "@stim-cli/cache-s3@$version" version >/dev/null 2>&1; then
             echo "version=$version" >> "$GITHUB_OUTPUT"
             echo "publishing $version"
             exit 0

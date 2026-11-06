@@ -285,7 +285,7 @@ design, stylesheet inlined, no script). Copy it next to the proxy config, for
 example:
 
   cd "$(mktemp -d)" && npm pack stim
-  tar -xzf stim-cli-server-*.tgz package/dist/share-viewer/not-running.html
+  tar -xzf stim-*.tgz package/dist/share-viewer/not-running.html
   sudo install -D -m 644 package/dist/share-viewer/not-running.html /var/www/stim-share/not-running.html
 
 and answer 503 (temporary: the same link works once Stim runs) for the proxy's

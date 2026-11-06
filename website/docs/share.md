@@ -169,7 +169,7 @@ a machine that has npm:
 
 ```bash
 cd "$(mktemp -d)" && npm pack stim
-tar -xzf stim-cli-server-*.tgz package/dist/share-viewer/not-running.html
+tar -xzf stim-*.tgz package/dist/share-viewer/not-running.html
 sudo install -D -m 644 package/dist/share-viewer/not-running.html /var/www/stim-share/not-running.html
 ```
 
