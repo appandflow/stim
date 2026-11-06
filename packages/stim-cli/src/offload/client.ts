@@ -5,6 +5,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   readdirSync,
@@ -12,6 +13,7 @@ import {
   rmSync,
   writeSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { setTimeout as wait } from 'node:timers/promises';
 import { isDeepStrictEqual } from 'node:util';
@@ -24,6 +26,7 @@ import {
   mayRunHere,
   placementWord,
   saturation,
+  stimBuildId,
   type BuildMachineCredential,
   type MachineCapacity,
 } from '@stim-cli/core/state';
@@ -56,6 +59,7 @@ import { nativeGradleTransfer, type GradleTransfer } from '../integrations/nativ
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
 import { STIM_VERSION } from '../stim-version.ts';
+import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { isReleaseConfiguration } from '../commands/ios/support.ts';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
 import type { SyncPlan } from './signing-files.ts';
@@ -67,6 +71,7 @@ import { ambientContext, dependencyLockfile, swiftpmArtifactQuery, type StimCont
 import {
   PEER,
   peerTooOld,
+  type OffloadJobKind,
   type BuildArtifactIdentity,
   type BuildOfferParams,
   type BuildGradleArtifactQuery,
@@ -80,6 +85,8 @@ const CONNECT_TIMEOUT_MS = 10_000;
 const OFFER_TIMEOUT_MS = 20_000;
 const REQUEST_TIMEOUT_MS = 120_000;
 const JOB_TIMEOUT_MS = 65 * 60_000;
+const JOB_INSTALL_TIMEOUT_MS = 10 * 60_000;
+const PACK_TIMEOUT_MS = 120_000;
 const PING_MS = 15_000;
 const SILENT_MS = 60_000;
 const CLOSE_TIMEOUT_MS = 2000;
@@ -386,6 +393,34 @@ function closeOnExit(socket: NoiseSocket, context: StimContext | undefined): (()
   return unregister;
 }
 
+/** This Stim's package directory, its build id, and whether a worker can fetch it from npm by version. */
+function ownBuild(): { root: string; build: string | null; published: boolean } {
+  const root = dirname(dirname(spawnEntry('cli')));
+  return { root, build: stimBuildId(join(root, 'dist')), published: stimBuild().installed };
+}
+
+let packed: Promise<{ bytes: Buffer; package: { name: string; size: number; sha256: string } }> | null = null;
+
+/** Packs this Stim's package with `npm pack` once per process, for a worker that runs only builds it is sent. */
+function packOwnBuild(root: string): NonNullable<typeof packed> {
+  packed ??= (async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stim-pack-'));
+    try {
+      const out = await getExecutor().runFileAsync('npm', ['pack', '--ignore-scripts', '--pack-destination', dir], {
+        cwd: root,
+        timeoutMs: PACK_TIMEOUT_MS,
+      });
+      const name = out.trim().split('\n').at(-1)!.trim();
+      const bytes = await readFile(join(dir, name));
+      return { bytes, package: { name, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  })();
+  packed.catch(() => (packed = null));
+  return packed;
+}
+
 /**
  * One authenticated connection to another machine's stim-server, for build offload or device hosting. Closing it cancels
  * its build jobs there; a connection that drops, or that stays silent for `SILENT_MS` after `watch()`, leaves them
@@ -409,6 +444,8 @@ export class BuildConnection {
   private readonly host: readonly string[];
   private readonly context: StimContext | undefined;
   private readonly unregisterExitCleanup: (() => void) | undefined;
+  /** The machine's id for the job this connection talks to, which a new connection takes over after a drop. */
+  job: string | null = null;
 
   private constructor(socket: NoiseSocket, host: readonly string[], context: StimContext | undefined) {
     this.socket = socket;
@@ -529,6 +566,52 @@ export class BuildConnection {
       listed.filter((each): each is string => typeof each === 'string'),
       context,
     );
+  }
+
+  /**
+   * Starts the job that answers this connection's offload methods from this exact Stim build on the machine. A
+   * build npm does not hold goes as this Stim's packed package, which the machine takes only while its
+   * `server.acceptClientBuilds` is true. With `wait`, a machine that lacks the build installs it before answering.
+   * Resolves why it could not.
+   */
+  async startJob(kind: OffloadJobKind, repo: string, wait: boolean): Promise<{ failure: string; code: string } | null> {
+    const own = ownBuild();
+    if (!own.build) return { failure: `${own.root} holds no built Stim for the machine to run`, code: 'job-refused' };
+    const base = { kind, stim: STIM_VERSION, build: own.build, repo, wait };
+    const timeoutMs = wait ? JOB_INSTALL_TIMEOUT_MS : OFFER_TIMEOUT_MS;
+    let reply: Reply = own.published
+      ? await this.request('job.start', base, timeoutMs)
+      : { error: { code: 'job-needs-package', message: 'this Stim is not a published build' } };
+    if ('error' in reply && reply.error.code === 'job-needs-package') {
+      let pack;
+      try {
+        pack = await packOwnBuild(own.root);
+      } catch (error) {
+        return { failure: `this Stim build could not be packed (${(error as Error).message})`, code: 'job-refused' };
+      }
+      const asked = await this.request('job.start', { ...base, package: pack.package });
+      const upload = 'result' in asked && isJsonObject(asked.result) ? asked.result.upload : undefined;
+      if (typeof upload !== 'string')
+        return 'error' in asked
+          ? { failure: `${asked.error.code}: ${asked.error.message}`, code: asked.error.code }
+          : { failure: 'the machine asked for no upload', code: 'job-refused' };
+      for (let offset = 0; offset < pack.bytes.length; offset += CHUNK_BYTES)
+        await this.sendBinary(pack.bytes.subarray(offset, offset + CHUNK_BYTES));
+      await this.flushed();
+      reply = await this.request('job.start', { ...base, upload }, JOB_INSTALL_TIMEOUT_MS);
+    }
+    if ('error' in reply) return { failure: `${reply.error.code}: ${reply.error.message}`, code: reply.error.code };
+    const job = isJsonObject(reply.result) ? reply.result.job : undefined;
+    if (typeof job !== 'string') return { failure: 'the machine started no job', code: 'job-refused' };
+    this.job = job;
+    return null;
+  }
+
+  /** Takes over the job `job` a dropped connection left on the machine; resolves why it could not. */
+  async attachJob(job: string): Promise<Reply> {
+    const reply = await this.request('job.start', { attach: job }, OFFER_TIMEOUT_MS);
+    if ('result' in reply) this.job = job;
+    return reply;
   }
 
   /** Whether the machine lists `capability` in `hello.host`: what it can do because of what it is. */
@@ -842,7 +925,12 @@ async function probeMachine(
     reactNativeArtifact?: BuildReactNativeArtifactQuery;
     swiftpmArtifact?: BuildSwiftpmArtifactQuery;
   },
-  { connectMs = CONNECT_TIMEOUT_MS, offerMs = OFFER_TIMEOUT_MS }: { connectMs?: number; offerMs?: number } = {},
+  {
+    connectMs = CONNECT_TIMEOUT_MS,
+    offerMs = OFFER_TIMEOUT_MS,
+    kind = 'offload-build',
+    wait = false,
+  }: { connectMs?: number; offerMs?: number; kind?: OffloadJobKind; wait?: boolean } = {},
 ): Promise<MachineProbe> {
   const target = await resolveEndpoint(credential, undefined, reportSignal(ambientContext()));
   if (typeof target === 'string') return { credential, failure: target };
@@ -858,6 +946,11 @@ async function probeMachine(
   if (identity.native === 'xcode' && !connection.can('native-xcode-build')) {
     connection.close();
     return { credential, failure: XCODE_UNSUPPORTED };
+  }
+  const started = await connection.startJob(kind, identity.repo, wait);
+  if (started) {
+    connection.close();
+    return { credential, failure: started.failure, refused: TURNED_AWAY.has(started.code) };
   }
   const native = identity.native;
   const reply = await connection.request(
@@ -981,7 +1074,7 @@ export async function chooseBuildMachine({
         ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
         ...(reactNativeQuery ? { reactNativeArtifact: reactNativeQuery } : {}),
         ...(swiftpmQuery ? { swiftpmArtifact: swiftpmQuery } : {}),
-      }),
+      }, { wait: !buildPlacementCandidates(selected).localEnabled }),
     ),
   );
   const { order, reasons, candidates } = pickOffer({
@@ -1208,12 +1301,14 @@ async function peerArtifact(
 }
 
 /**
- * Reconnects to the machine that runs `job` and takes the job over with `build.attach`, retrying until
+ * Reconnects to the machine whose offload job `spliced` runs `job`, takes the offload job over with `job.start
+ * {attach}` and the build with `build.attach`, retrying until
  * `RESUME_WINDOW_MS`, shorter than the machine's grace for a dropped connection, has passed. Returns why it
  * could not.
  */
 async function resumeJob(
   credential: BuildMachineCredential,
+  spliced: string | null,
   job: string,
   abandoned: () => boolean,
   signal: AbortSignal | undefined,
@@ -1248,7 +1343,11 @@ async function resumeJob(
       connection.onProgress((event) => early.push(event));
       const cancel = () => connection.close();
       signal?.addEventListener('abort', cancel, { once: true });
-      const reply = await connection.request('build.attach', { job }, OFFER_TIMEOUT_MS);
+      const taken = spliced ? await connection.attachJob(spliced) : null;
+      const reply =
+        taken && 'error' in taken
+          ? { error: { ...taken.error, message: `No such build job: ${taken.error.message}` } }
+          : await connection.request('build.attach', { job }, OFFER_TIMEOUT_MS);
       signal?.removeEventListener('abort', cancel);
       if (abandoned()) {
         connection.close();
@@ -1658,7 +1757,7 @@ export async function offloadBuild(
       if (resuming || settled) return;
       resuming = true;
       note(`offload: the connection to ${choice.machine} dropped (${why}); reattaching to the build there`);
-      const resumed = await resumeJob(choice.credential, job!, () => settled, signal, native?.provider);
+      const resumed = await resumeJob(choice.credential, choice.connection.job, job!, () => settled, signal, native?.provider);
       resuming = false;
       if (settled) {
         if (typeof resumed !== 'string' && 'connection' in resumed) resumed.connection.close();
@@ -1978,7 +2077,7 @@ export function machineNotes(offer: BuildOffer, targets: BuildTarget[]): Offload
 const DOCTOR_CONNECT_MS = 5000;
 const DOCTOR_OFFER_MS = 8000;
 const PLATFORM_LABEL = { ios: 'iOS', android: 'Android', macos: 'macOS' } as const;
-const SHARED_PROBLEMS: ReadonlySet<OffloadProblem['code']> = new Set(['stim-build', 'disk', 'busy']);
+const SHARED_PROBLEMS: ReadonlySet<OffloadProblem['code']> = new Set(['disk', 'busy']);
 
 /**
  * Doctor's offload check for `projectRoot`: one bounded offer per machine, judged by `machineProblems` for the builds
@@ -2015,7 +2114,7 @@ export function offloadCheck(
     const probe = await probeMachine(
       credential,
       { ...repository, rubyVersion: readRubyVersion(projectRoot) ?? undefined },
-      { connectMs: DOCTOR_CONNECT_MS, offerMs: DOCTOR_OFFER_MS },
+      { connectMs: DOCTOR_CONNECT_MS, offerMs: DOCTOR_OFFER_MS, kind: 'offload-probe' },
     );
     if ('failure' in probe) return { capacity: null, problems: [{ code: 'unreachable', reason: probe.failure }] };
     probe.connection.close();

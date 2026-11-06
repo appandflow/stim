@@ -62,7 +62,8 @@ export function tryAcquireBuildSlotClaim({
 }
 
 /** Build slots held for a remote machine's offloaded builds, which run under another Stim home. */
-function liveOffloadedSlots(): number {
+/** The build slots offloaded builds hold on this machine now. */
+export function liveOffloadedSlots(): number {
   let names: string[];
   try {
     names = readdirSync(buildSlotsDir());

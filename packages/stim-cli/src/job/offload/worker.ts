@@ -1,5 +1,5 @@
 import { dependencyInstall, reusableDependencies, type StimContext, withAmbientContext } from '@stim-cli/core';
-import { processContext } from '../cli-operation.ts';
+import { processContext } from '../../cli-operation.ts';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -7,8 +7,8 @@ import {
   reactNativeArtifactToolchain,
   reactNativeBuildQuery,
   reusedReactNativeArtifact,
-} from './react-native-artifact.ts';
-import { apkPackage, dumpApkManifest, isReleaseVariant } from '../commands/android/support.ts';
+} from '../../offload/react-native-artifact.ts';
+import { apkPackage, dumpApkManifest, isReleaseVariant } from '../../commands/android/support.ts';
 import {
   chmodSync,
   constants,
@@ -37,31 +37,31 @@ import {
   compareSourceLists,
   fingerprintProject,
   refingerprintAfterMutation,
-} from '../cache/build-cache.ts';
-import { buildIos, buildAndroid, gradlewPath } from '../integrations/react-native-build.ts';
-import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../cache/compilation-cache-corruption.ts';
-import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
-import { planPrebuild, recordPrebuild, runPrebuild } from '../engine/prebuild.ts';
-import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-facts.ts';
-import { CCACHE_UNAVAILABLE, resolveCcache } from '../engine/ccache.ts';
-import { assembleTaskFor } from '../engine/gradle.ts';
+} from '../../cache/build-cache.ts';
+import { buildIos, buildAndroid, gradlewPath } from '../../integrations/react-native-build.ts';
+import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../../cache/compilation-cache-corruption.ts';
+import { readPodState, podsAreStale, runPodInstall } from '../../engine/deps.ts';
+import { planPrebuild, recordPrebuild, runPrebuild } from '../../engine/prebuild.ts';
+import type { CcacheActivity, CompilationCacheActivity } from '../../engine/build-facts.ts';
+import { CCACHE_UNAVAILABLE, resolveCcache } from '../../engine/ccache.ts';
+import { assembleTaskFor } from '../../engine/gradle.ts';
 
-import { getExecutor } from '../exec.ts';
-import { git, gitQuiet } from '../workspace/git.ts';
-import { logLines } from '../macos/run.ts';
-import { stripAnsi } from '../process-output.ts';
-import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
-import { manifestDigest } from './manifest.ts';
-import { pathNodeVersion, projectNodeLine, unmetNodePin, withProjectNode } from '../stimd/metro/project-node.ts';
-import { parseNdjsonText, type NdjsonWriter } from '../ndjson.ts';
-import type { Optimizations } from '../optimizations.ts';
-import { podAction } from '../commands/ios/support.ts';
-import type { AndroidBuildOptions } from './client.ts';
-import { workerToolchain } from './toolchain.ts';
-import { availableIphone, useJdkMajor } from '../engine/toolchain.ts';
-import { verifyNativeTransfer } from './native-source.ts';
-import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
-import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
+import { getExecutor } from '../../exec.ts';
+import { git, gitQuiet } from '../../workspace/git.ts';
+import { logLines } from '../../macos/run.ts';
+import { stripAnsi } from '../../process-output.ts';
+import { resolveBundleExtras, stageBundle } from '../../macos/stage.ts';
+import { manifestDigest } from '../../offload/manifest.ts';
+import { pathNodeVersion, projectNodeLine, unmetNodePin, withProjectNode } from '../../stimd/metro/project-node.ts';
+import { parseNdjsonText, type NdjsonWriter } from '../../ndjson.ts';
+import type { Optimizations } from '../../optimizations.ts';
+import { podAction } from '../../commands/ios/support.ts';
+import type { AndroidBuildOptions } from '../../offload/client.ts';
+import { workerToolchain } from '../../offload/toolchain.ts';
+import { availableIphone, useJdkMajor } from '../../engine/toolchain.ts';
+import { verifyNativeTransfer } from '../../offload/native-source.ts';
+import { selectNativeXcodeProject } from '../../integrations/native-xcode-project.ts';
+import { nativeXcodeMetadataDirectories } from '../../integrations/native-xcode-inputs.ts';
 import type {
   BuildAndroidOptions,
   BuildFingerprintSource,
@@ -73,34 +73,34 @@ import {
   swiftpmWorkerArtifactSnapshot,
   swiftpmArtifactFromReceipt,
   readSwiftpmWorkerToolchain,
-} from './swiftpm-artifact.ts';
-import type { SwiftpmArtifactReceipt } from './swiftpm-artifact.ts';
+} from '../../offload/swiftpm-artifact.ts';
+import type { SwiftpmArtifactReceipt } from '../../offload/swiftpm-artifact.ts';
 import { isJsonObject, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
-import { projectRegistry } from '../integrations/projects.ts';
-import type { IosProject } from '../integrations/ios-project.ts';
-import { buildIosOperation } from '../commands/ios/build.ts';
-import { buildAndroidOperation } from '../commands/android/build.ts';
+import { projectRegistry } from '../../integrations/projects.ts';
+import type { IosProject } from '../../integrations/ios-project.ts';
+import { buildIosOperation } from '../../commands/ios/build.ts';
+import { buildAndroidOperation } from '../../commands/android/build.ts';
 import {
   gradleOffloadInputs,
   gradleStateDirectories,
   nativeGradleOutputs,
   validateGradleManifest,
   verifyGradleTransfer,
-} from '../integrations/native-gradle-inputs.ts';
-import { writeConfigSetting } from '../workspace/config.ts';
+} from '../../integrations/native-gradle-inputs.ts';
+import { writeConfigSetting } from '../../workspace/config.ts';
 import {
   nativeGradleArtifactSnapshotFromReceipt,
   nativeGradleWorkerArtifactIdentity,
   nativeGradleWorkerScope,
   type NativeGradleArtifactReceipt,
-} from '../integrations/native-gradle-artifact-inputs.ts';
-import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+} from '../../integrations/native-gradle-artifact-inputs.ts';
+import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
 import {
   androidLayoutSetting,
   iosProjectDirSetting,
   type AndroidLayout,
   type IosProjectDir,
-} from '../workspace/settings.ts';
+} from '../../workspace/settings.ts';
 
 /** One entry of the source transfer: a visible file of the checkout, or a native build's file or directory input. */
 export interface ManifestEntry {
@@ -1377,9 +1377,21 @@ async function compileAndroid(
   }
 }
 
-async function main(): Promise<void> {
-  const mode = process.argv[2];
-  if (mode === 'offer') return emit(workerToolchain(process.argv[3] ?? null));
+/**
+ * Runs one mode of the offload worker, the child an offload job starts for each build, offer probe and artifact
+ * query: `offer [ruby]`, `offer-native-xcode`, `offer-native-gradle`, `native-gradle-artifact`, `swiftpm-artifact` or
+ * `build`, each reading its input from stdin and writing JSON lines to stdout.
+ */
+export async function runOffloadWorker(mode: string | undefined, arg?: string): Promise<void> {
+  try {
+    await workerMode(mode, arg);
+  } catch (error) {
+    emit({ type: 'result', ok: false, code: 'worker-crashed', message: String((error as Error)?.message ?? error) });
+  }
+}
+
+async function workerMode(mode: string | undefined, arg?: string): Promise<void> {
+  if (mode === 'offer') return emit(workerToolchain(arg ?? null));
   if (mode === 'offer-native-xcode') return emit(workerToolchain(null, 'xcode'));
   if (mode === 'offer-native-gradle') return emit(workerToolchain(null, 'gradle'));
   if (mode === 'native-gradle-artifact') {
@@ -1450,11 +1462,7 @@ async function main(): Promise<void> {
     return emit({ type: 'result', ...(await build(job)) });
   }
   process.stderr.write(
-    'usage: offload-worker offer | offer-native-xcode | offer-native-gradle | native-gradle-artifact | build < job.json\n',
+    'usage: stim __job offload-worker offer | offer-native-xcode | offer-native-gradle | native-gradle-artifact | swiftpm-artifact | build < job.json\n',
   );
   process.exitCode = 2;
 }
-
-main().catch((error: unknown) => {
-  emit({ type: 'result', ok: false, code: 'worker-crashed', message: String((error as Error)?.message ?? error) });
-});

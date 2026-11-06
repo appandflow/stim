@@ -2,6 +2,7 @@ import { type PairedDevice, DESKTOP_CLIENT_APPS, recordsForKey, touchDevice } fr
 import type { JsonObject } from '../feed.ts';
 import {
   PEER,
+  clientPeerTooOld,
   DESKTOP_API,
   PHONE_API,
   type RequestId,
@@ -40,9 +41,7 @@ function helloRefusal(client: JsonObject, access: unknown, machine: string, stim
   // compat C12 permanent
   if (access !== undefined || client.peer !== undefined) {
     const peer = wireInteger(client.peer);
-    if (peer >= PEER) return null;
-    const sent = peer ? `speaks peer ${peer}` : 'sends no peer';
-    return `peer-too-old: ${machine} runs stim ${stim} (peer ${PEER}); this stim ${sent}; update this Mac: npm i -g stim@${stim}, then stim service install if it runs Stim as a service`;
+    return peer >= PEER ? null : clientPeerTooOld(machine, stim);
   }
   // compat end
   // compat C7 permanent

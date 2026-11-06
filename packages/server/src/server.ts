@@ -43,7 +43,8 @@ import { HostedPresence } from './hosted-presence.ts';
 import { HostedPresenceBridge } from './hosted-presence-bridge.ts';
 import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay } from './hosted-relay.ts';
-import { BuildHost, type BuildSession } from './build.ts';
+import { BuildWorkerRoot } from './build.ts';
+import { OffloadJobs } from './offload-jobs.ts';
 import type { WorkerRootUsage } from './worker-areas.ts';
 import { ControlHub, type Controller } from './control.ts';
 import { Recorder } from './recorder.ts';
@@ -95,7 +96,6 @@ import { EXPO_PUSH_API, PushNotifier } from './push.ts';
 import {
   buildClientsReadable,
   dropPushToken,
-  readBuildClients,
   readRegistries,
   recordsForKey,
   RegistryUnavailable,
@@ -242,7 +242,6 @@ const CLOSE_AUTH_TIMEOUT = 4408;
 const AGENT_PATH = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/;
 
 const METRO_END_MS = 30_000;
-const CLOSE_ABNORMAL = 1006;
 const MAX_PAYLOAD = 64 * 1024;
 
 const MAX_SUBSCRIPTIONS = 32;
@@ -809,23 +808,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       .writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       .end(JSON.stringify(setupJournalForClient(journal)));
   }
-  const builds = new BuildHost({
-    worker: join(dirname(options.stimCli), 'offload-worker.mjs'),
-    env: options.env,
-    currentEnv: options.currentEnv,
+  const builds: BuildWorkerRoot = new BuildWorkerRoot({
     limits: options.buildLimits,
     ready: () => startup.state === 'ready',
-    finished: ({ client, repo, ok, error, durationMs }) =>
-      auditSafely({
-        at: new Date().toISOString(),
-        device: { id: client, name: readBuildClients().find((each) => each.id === client)?.name ?? client },
-        action: 'build',
-        workspace: repo,
-        ok,
-        ...(error ? { error } : {}),
-        durationMs,
-      }),
     allowed: (client) => buildAllowed({ id: client }),
+    jobs: () => jobs.live(),
+    stopJobs: (client) => jobs.stop(client),
+  });
+  const jobs: OffloadJobs = new OffloadJobs({
+    stimCli: options.stimCli,
+    machine: options.name,
+    env: () => options.currentEnv?.() ?? options.env,
+    limits: builds.limits,
+    refusal: (client) =>
+      builds.drained ?? (builds.removing(client) ? 'This machine is removing this build client.' : null),
+    idle: (client) => builds.pruneBlobs(client),
   });
   const presence = new PresenceHub();
   const localAgents = new LocalAgentPresence({
@@ -1037,6 +1034,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (device.id !== LOCAL_DEVICE_ID && !paired.has(device.id)) socket.close(CLOSE_REFUSED, 'unauthorized');
     }
     hostedDevices.revoke();
+    for (const { client } of jobs.live())
+      if (!paired.get(client)?.capabilities.includes('build')) void jobs.stop(client);
     builds.abandonDetached(
       (client) => paired.get(client)?.capabilities.includes('build') ?? false,
       buildClientsReadable(),
@@ -1152,7 +1151,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const tracker = requestLog.track();
     trackers.set(socket, tracker);
     let runId: string | null = null;
-    let buildSession: BuildSession | null = null;
     let metroLink: MetroLink | null = null;
     let metroStream: Duplex | null = null;
     let metroPing: NodeJS.Timeout | undefined;
@@ -1267,6 +1265,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       agentStreams,
       agentHttp,
       builds,
+      jobs,
       presence,
       localAgents,
       control,
@@ -1322,12 +1321,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       },
       set runId(value) {
         runId = value;
-      },
-      get buildSession() {
-        return buildSession;
-      },
-      set buildSession(value) {
-        buildSession = value;
       },
       get metroLink() {
         return metroLink;
@@ -1528,11 +1521,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         });
       }
       if (socket.readyState !== socket.OPEN) return;
-      if (!device || !buildSession) {
-        return void socket.close(CLOSE_BAD_REQUEST, 'unexpected binary frame');
-      }
-      const refused = buildSession.blob(frame);
-      if (refused) socket.close(CLOSE_BAD_REQUEST, refused.slice(0, 120));
+      const received = device ? jobs.receive(socket, frame) : false;
+      if (received === false) return void socket.close(CLOSE_BAD_REQUEST, 'unexpected binary frame');
+      if (typeof received === 'string') socket.close(CLOSE_BAD_REQUEST, received.slice(0, 120));
     }
 
     async function unsubscribeRequest(id: RequestId, name: unknown): Promise<void> {
@@ -1703,6 +1694,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     socket.on('message', (data, isBinary) => {
+      if (jobs.owns(socket)) {
+        const frame = Buffer.isBuffer(data) ? data : Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)]);
+        return jobs.deliver(socket, frame, isBinary);
+      }
       if (isBinary) {
         const frame = Buffer.isBuffer(data) ? data : Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)]);
         queue = queue.then(() => handleBinary(frame)).catch(() => socket.close(1011, 'internal error'));
@@ -1737,7 +1732,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       relay.close();
       relays.delete(socket);
       clearTimeout(timer);
-      buildSession?.close(code === CLOSE_ABNORMAL && device !== null && buildAllowed(device));
+      jobs.disconnected(socket, code);
       sessions.delete(socket);
       desktopSessions.delete(socket);
       listeners.delete(socket);
@@ -1926,7 +1921,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       startup,
       ...(options.host ? { host: await hostHealth() } : {}),
       busy: {
-        builds: builds.running(),
+        builds: jobs.running(),
         hostedSessions: hostedDevices.active(),
         hostedWork: hostedDevices.working(),
         resumes: true,
@@ -1971,6 +1966,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (revocationPoll) clearInterval(revocationPoll);
     if (hostedIdleSweep) clearInterval(hostedIdleSweep);
     if (revocationCheck) clearTimeout(revocationCheck);
+    await settle(jobs.close());
     await settle(builds.close());
     for (const client of [...wss.clients, ...localWss.clients]) client.terminate();
     hostConnections.close();

@@ -32,6 +32,11 @@
       "module-sync": "./dist/cli.mjs",
       "default": "./dist/cli.mjs"
     },
+    "./build": {
+      "types": "./dist/build.d.mts",
+      "module-sync": "./dist/build.mjs",
+      "default": "./dist/build.mjs"
+    },
     "./environment": {
       "types": "./dist/environment.d.mts",
       "module-sync": "./dist/environment.mjs",

@@ -52,7 +52,7 @@ import {
   type PeerStartup,
   type Transport,
 } from './diagnosis.ts';
-import { PEER, type RemoteDiagnosis } from '@stim-cli/core/protocol';
+import { PEER, peerTooOld, type RemoteDiagnosis } from '@stim-cli/core/protocol';
 
 const HELLO_TIMEOUT_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 3000;
@@ -78,6 +78,8 @@ export type HelloReply =
   | {
       result: {
         host?: { app?: unknown };
+        peer?: unknown;
+        server?: { name?: unknown; stim?: unknown };
         capabilities: string[];
         device: { id: string; name: string };
       };
@@ -474,7 +476,7 @@ export type AccessOutcome =
   | { state: 'key-changed'; credential: MachineCredential }
   | { state: 'unconfirmed'; credential: MachineCredential; fingerprint: string }
   | { state: 'not-asked' }
-  | { state: 'outdated'; credential: MachineCredential; command: string | null }
+  | { state: 'outdated'; credential: MachineCredential; command: string | null; reason?: string }
   | { state: 'unreachable'; credential?: MachineCredential; reason: string; transport?: Transport; code?: string };
 
 export interface AccessInput {
@@ -576,20 +578,25 @@ function approved(
   requestedAt: string,
 ): AccessOutcome {
   const tailnet = input.credential?.tailnet ?? input.tailnet;
-  return {
+  const credential: MachineCredential = {
+    machine: input.machine,
+    transport: transportOf(input.machine),
+    address: input.address,
     state: 'approved',
-    credential: {
-      machine: input.machine,
-      transport: transportOf(input.machine),
-      address: input.address,
-      state: 'approved',
-      requestedAt,
-      serverKey: reply.serverKey,
-      deviceId: reply.result.device.id,
-      ...(tailnet ? { tailnet } : {}),
-    },
-    result: reply.result,
+    requestedAt,
+    serverKey: reply.serverKey,
+    deviceId: reply.result.device.id,
+    ...(tailnet ? { tailnet } : {}),
   };
+  // compat C12 permanent
+  const { peer, server } = reply.result;
+  if (typeof peer !== 'number' || peer < PEER) {
+    const stim = String(server?.stim ?? 'an older stim');
+    const reason = peerTooOld(input.machine, stim, Number(peer ?? 0), input.serverVersion);
+    return { state: 'outdated', credential, command: null, reason };
+  }
+  // compat end
+  return { state: 'approved', credential, result: reply.result };
 }
 
 /**

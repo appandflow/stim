@@ -22,7 +22,8 @@ import { type CommandLimits, Pending } from '../stim-command.ts';
 import { type FrameLimits, FramePool } from '../frames.ts';
 import { type RecordLimits, Recorder } from '../recorder.ts';
 import { type PushLimits, type PushNotifierOptions, PushNotifier } from '../push.ts';
-import { type BuildLimits, BuildHost, type BuildSession } from '../build.ts';
+import type { BuildLimits, BuildWorkerRoot } from '../build.ts';
+import type { OffloadJobs } from '../offload-jobs.ts';
 import { type HostedRelayOptions, HostedRelay } from '../hosted-relay.ts';
 import type { WebSocket } from 'ws';
 import { NoiseSocket } from '@stim-cli/core/noise-session';
@@ -320,7 +321,8 @@ export interface ConnectionContext {
   readonly agentLinks: WeakMap<object, AgentLink>;
   readonly agentStreams: Map<string, Set<Duplex>>;
   readonly agentHttp: Server<typeof IncomingMessage, typeof ServerResponse>;
-  readonly builds: BuildHost;
+  readonly builds: BuildWorkerRoot;
+  readonly jobs: OffloadJobs;
   readonly presence: PresenceHub;
   readonly localAgents: LocalAgentPresence;
   readonly control: ControlHub;
@@ -352,7 +354,6 @@ export interface ConnectionContext {
   desktopChallenge: { nonce: string; proof: string } | null;
   readonly tracker: RequestTracker;
   runId: string | null;
-  buildSession: BuildSession | null;
   metroLink: MetroLink | null;
   metroStream: Duplex | null;
   metroPing: NodeJS.Timeout | undefined;

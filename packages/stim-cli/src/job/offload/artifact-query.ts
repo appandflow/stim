@@ -1,4 +1,4 @@
-import { execFile, spawn } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
 import {
   claimRemoveCommand,
@@ -11,8 +11,9 @@ import {
 } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '@stim-cli/core/process-identity';
 import { isJsonObject } from '@stim-cli/core/state';
-import type { BuildArtifactIdentity, BuildGradleArtifactQuery, BuildSwiftpmArtifactQuery } from './protocol.ts';
-import { signalChild } from './stim-command.ts';
+import type { BuildArtifactIdentity, BuildGradleArtifactQuery, BuildSwiftpmArtifactQuery } from '@stim-cli/core/protocol';
+import { signalChild } from '@stim-cli/server/build';
+import { getExecutor } from '../../exec.ts';
 
 export interface ArtifactQueryResult {
   identity: BuildArtifactIdentity | null;
@@ -21,7 +22,7 @@ export interface ArtifactQueryResult {
 
 /** Revalidates only a completed build's private inputs, holding its area until the owned query has stopped. */
 export function runArtifactQuery({
-  worker,
+  command,
   area,
   env,
   query,
@@ -30,7 +31,8 @@ export function runArtifactQuery({
   timeoutMs = 10_000,
   killGraceMs = 1000,
 }: {
-  worker: string;
+  /** The offload worker's script and arguments before its mode. */
+  command: readonly string[];
   area: string;
   env: NodeJS.ProcessEnv;
   query: BuildGradleArtifactQuery | BuildSwiftpmArtifactQuery;
@@ -47,9 +49,9 @@ export function runArtifactQuery({
   }
   const claim = attempt.acquired;
   markClaimChildPending(claim);
-  let child: ReturnType<typeof spawn>;
+  let child: ChildProcess;
   try {
-    child = spawn(process.execPath, [worker, 'build' in query ? 'swiftpm-artifact' : 'native-gradle-artifact'], {
+    child = getExecutor().spawn(process.execPath, [...command, 'build' in query ? 'swiftpm-artifact' : 'native-gradle-artifact'], {
       cwd: area,
       env,
       detached: true,
@@ -122,14 +124,16 @@ export function runArtifactQuery({
     const status = inspectProcessIdentity(identity);
     if (status !== 'same' && status !== 'gone') return;
     if (process.platform === 'win32') {
-      treeStopped ??= new Promise<boolean>((resolve) => {
-        execFile(
+      treeStopped ??= getExecutor()
+        .runFileAsync(
           join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'),
           ['/PID', String(child.pid), '/T', '/F'],
-          { timeout: 4000 },
-          (error) => resolve(!error),
+          { timeoutMs: 4000 },
+        )
+        .then(
+          () => true,
+          () => false,
         );
-      });
     } else {
       try {
         process.kill(-child.pid, name);

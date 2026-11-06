@@ -434,11 +434,11 @@ export async function inspectDeviceHostMachines(
             layer: 'compat',
             code: 'server-outdated',
             title: 'Server is outdated',
-            message: outdated.detail,
+            message: outcome.reason ?? outdated.detail,
             remedy: outdated.fix,
           },
         });
-        inspected.findings.push(note(outdated.title, outdated.detail, outdated.fix));
+        inspected.findings.push(note(outdated.title, outcome.reason ?? outdated.detail, outdated.fix));
         continue;
       }
       if (outcome.state === 'unconfirmed') {

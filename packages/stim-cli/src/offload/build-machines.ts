@@ -152,7 +152,6 @@ type TailnetView = { status: Record<string, unknown> } | { off: RemoteDiagnosis 
 const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
   unreachable: 'does not answer a build offer',
   checkout: 'cannot build an app outside a git checkout',
-  'stim-build': 'runs an incompatible Stim build',
   arch: 'has another CPU architecture',
   xcode: 'has another Xcode',
   'macos-sdk': 'has another macOS SDK',
@@ -191,8 +190,6 @@ function problemFix(problem: OffloadProblem, entry: string): string {
       return `Check that stim-server runs on ${entry} and that its tailscale serve route answers, then run \`stim doctor\` again. To keep it running there, run \`stim service install --serve\` on ${entry}.`;
     case 'checkout':
       return 'Offload syncs the files git lists; run Stim from a git checkout of the app.';
-    case 'stim-build':
-      return 'update the worker: stim service update --release <version>; update an old client: npm i -g stim@latest; Stim Desktop 0.2.5 or older: Stim > Check for Updates';
     case 'arch':
       return 'Use a remote machine with the same CPU architecture as this machine.';
     case 'xcode':
@@ -438,12 +435,12 @@ async function inspectMachine(
         layer: 'compat',
         code: 'server-outdated',
         title: 'Server is outdated',
-        message: outdated.detail,
+        message: outcome.reason ?? outdated.detail,
         remedy: outdated.fix,
       };
       return {
         report: { ...paired, state: 'outdated', diagnosis },
-        finding: note(outdated.title, outdated.detail, outdated.fix),
+        finding: note(outdated.title, outcome.reason ?? outdated.detail, outdated.fix),
       };
     }
     case 'unreachable': {

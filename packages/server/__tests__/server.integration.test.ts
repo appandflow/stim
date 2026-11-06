@@ -1480,13 +1480,12 @@ describe('pairing', () => {
     const worker = setupClient(['build']);
     const cli = await connect(port, undefined, { keyPair: worker.keyPair });
     expect(
-      await cli.request('hello', { client: { name: 'stim', version: '1', runId: 'old' }, access: 'build' }),
+      await cli.request('hello', { client: { name: 'stim', version: '1', runId: 'old', peer: 1 }, access: 'build' }),
     ).toEqual({
       id: expect.any(Number),
       error: {
         code: 'protocol-unsupported',
-        message:
-          'peer-too-old: Test Mac runs stim 9.9.9 (peer 1); this stim sends no peer; update this Mac: npm i -g stim@9.9.9, then stim service install if it runs Stim as a service',
+        message: 'peer-too-old: Test Mac runs stim 9.9.9 (peer 2); update this Mac: npm i -g stim@9.9.9',
       },
     });
     expect(await cli.closedWith).toEqual({ code: 4401, reason: 'protocol-unsupported' });

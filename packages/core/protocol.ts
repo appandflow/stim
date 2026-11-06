@@ -47,14 +47,20 @@ export type Capability = (typeof CAPABILITIES)[number];
  * The wire integer between Stim CLIs, daemons, servers and workers, sent in `hello.client` and in the `hello` result.
  * It changes only on a removal, rename or change of meaning; an addition answers `unknown-method` on an older side.
  * A server refuses a missing or lower one on its network listener; a client refuses a server that sends a lower one.
+ * Peer 2 offloads through `job.start`, which runs the client's exact build on the worker.
  */
-export const PEER = 1;
+export const PEER = 2;
 
-/** The refusal a CLI or server gives a worker or device host whose `peer` is missing or lower than {@link PEER}. */
+/** The refusal a CLI gives a worker or device host whose `peer` is missing or lower than {@link PEER}. */
 // compat C12 permanent
 export function peerTooOld(machine: string, stim: string, peer: number, version: string): string {
   const sent = peer > 0 ? `peer ${peer}` : 'no peer';
-  return `peer-too-old: ${machine} runs stim ${stim} (${sent}), this Mac needs peer ${PEER}; on ${machine} run: npm i -g stim@${version} && stim service install`;
+  return `peer-too-old: ${machine} runs stim ${stim} (${sent}), this Mac needs peer ${PEER}; run stim remote update ${machine}, or on ${machine} run: npm i -g stim@${version} && stim service install`;
+}
+
+/** The refusal a worker or device host gives a client whose `peer` is missing or lower than {@link PEER}. */
+export function clientPeerTooOld(machine: string, stim: string): string {
+  return `peer-too-old: ${machine} runs stim ${stim} (peer ${PEER}); update this Mac: npm i -g stim@${stim}`;
 }
 // compat end
 
@@ -161,6 +167,7 @@ export const METHODS = [
   'build.artifact',
   'build.cached-artifact',
   'build.attach',
+  'job.start',
   'device-host.runtime.install',
   'device-host.offer',
   'device-host.reserve',
@@ -216,7 +223,13 @@ export const METHODS = [
 export const ENGINE_UPDATE_METHODS = ['engine.update.status', 'engine.update', 'engine.update.chunk'] as const;
 
 /** The methods a connection with the `build` capability may call; they need `build`, not `read`. */
-export const BUILD_METHODS = [
+export const BUILD_METHODS = ['job.start'] as const;
+
+/**
+ * The methods a build connection sends after `job.start`: stimd passes them to the job unread, and the job, which runs
+ * the client's own build, answers them.
+ */
+export const OFFLOAD_JOB_METHODS = [
   'build.offer',
   'build.sync',
   'build.start',
@@ -225,6 +238,12 @@ export const BUILD_METHODS = [
   'build.cached-artifact',
   'build.attach',
 ] as const;
+
+/** What `job.start` spawns: `offload-build` serves every offload method, `offload-probe` only `build.offer`. */
+export const OFFLOAD_JOB_KINDS = ['offload-build', 'offload-probe'] as const;
+
+/** The 12-hex id of a Stim build: the first 12 hex characters of its `stimBuildDigest`. */
+export const STIM_BUILD_ID_PATTERN = '^[0-9a-f]{12}$';
 
 /** Methods restricted to explicitly approved device-host clients. */
 export const DEVICE_HOST_METHODS = [
@@ -310,6 +329,9 @@ export const ERROR_CODES = [
   'no-recording',
   'build-refused',
   'build-busy',
+  'job-unavailable',
+  'job-refused',
+  'job-needs-package',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -1567,6 +1589,31 @@ export interface WorkspaceDiff {
   patches: WorkspacePatch[];
 }
 
+export type OffloadJobKind = (typeof OFFLOAD_JOB_KINDS)[number];
+
+/**
+ * Starts the job that answers this connection's offload methods from the client's exact build: `stim` is its version
+ * and `build` its 12-hex build id. The worker runs that build from its engine store, fetching `stim@<stim>` from npm
+ * when it is absent: at once with `wait`, else in the background while it refuses with `job-unavailable`. A build npm
+ * does not hold comes as one `package`, the client's `npm pack` tarball, which the worker takes only while its
+ * `server.acceptClientBuilds` is true: it answers `{upload}`, takes the bytes as binary messages, and the client then
+ * calls `job.start` again with `upload`. `attach` takes over a job whose connection dropped.
+ */
+export type JobStartParams =
+  | {
+      kind: OffloadJobKind;
+      stim: string;
+      build: string;
+      repo: string;
+      wait?: boolean;
+      package?: EngineUpdatePackage;
+      upload?: string;
+    }
+  | { attach: string };
+
+/** `job` once every later message goes to the job; `upload` when the worker waits for the client's package. */
+export type JobStartResult = { job: string } | { upload: string };
+
 /** A `.tgz` package of a client-supplied Stim build: its file name, size in bytes and sha256. */
 export interface EngineUpdatePackage {
   name: string;
@@ -1889,6 +1936,7 @@ export interface Methods {
     result: CachedBuildArtifact | null;
   };
   'build.attach': { params: BuildJobParams; result: BuildAttachResult };
+  'job.start': { params: JobStartParams; result: JobStartResult };
 }
 
 export type ClientRequest = {
