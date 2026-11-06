@@ -3,21 +3,25 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { packWorkspace, workspacePackages } from '../src/machine-update.ts';
 import { EngineUpdates } from '../src/server-update.ts';
 import { serviceRoot } from '../src/service-manager.ts';
 
-it('authorizes a package update, verifies uploaded bytes and drains until the detached updater exits', async () => {
+it('authorizes a package update, verifies uploaded bytes and drains until the detached engine-select exits', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-engine-update-'));
   vi.stubEnv('HOME', home);
   vi.stubEnv('USERPROFILE', home);
   vi.stubEnv('LOCALAPPDATA', home);
   vi.stubEnv('STIM_HOME', home);
-  const script = join(home, 'updater.mjs');
+  const root = join(home, 'engine');
+  const script = join(root, '0123456789ab', 'dist', 'cli.mjs');
+  mkdirSync(dirname(script), { recursive: true });
+  writeFileSync(script, '');
+  const select = join(home, 'select.mjs');
   const output = join(home, 'received.json');
   writeFileSync(
-    script,
+    select,
     `
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -26,6 +30,7 @@ const from = args[args.indexOf('--from') + 1];
 writeFileSync(process.env.UPDATE_OUTPUT, JSON.stringify({
   args, files: Object.fromEntries(readdirSync(from).map(name => [name, readFileSync(join(from, name)).toString('base64')]))
 }));
+console.log(JSON.stringify({ staged: 'ba9876543210' }));
 `,
   );
   const drains: (string | null)[] = [];
@@ -34,22 +39,28 @@ writeFileSync(process.env.UPDATE_OUTPUT, JSON.stringify({
     finish = resolve;
   });
   let accepts = false;
-  const updates = new EngineUpdates({
-    label: 'dev.stim.test',
-    port: 7787,
-    build: { version: '1.40.0', stimBuild: 'aaaaaaaaaaaaaaaa' },
-    node: process.execPath,
-    script,
-    env: { ...process.env, UPDATE_OUTPUT: output },
-    acceptsClientBuilds: () => accepts,
-    runsAsService: async () => true,
-    detached: (file, args) => ({ file, args }),
-    drain: (reason) => drains.push(reason),
-    audit: ({ phase, ok }) => {
-      if (phase === 'ended' && drains.length) finish(ok);
-    },
-  });
+  const updater = (fields: { script: string }) =>
+    new EngineUpdates({
+      label: 'dev.stim.test',
+      port: 7787,
+      build: { version: '1.40.0', stimBuild: 'aaaaaaaaaaaaaaaa' },
+      node: process.execPath,
+      env: { ...process.env, UPDATE_OUTPUT: output, STIM_ENGINE_ROOT: root },
+      acceptsClientBuilds: () => accepts,
+      runsAsService: async () => true,
+      detached: (file, args) => ({ file, args: [select, ...args] }),
+      drain: (reason) => drains.push(reason),
+      audit: ({ phase, ok }) => {
+        if (phase === 'ended' && drains.length) finish(ok);
+      },
+      ...fields,
+    });
+  const updates = updater({ script });
   try {
+    const outside = updater({ script: join(home, 'stim.mjs') });
+    expect(await outside.start({ id: 'a', name: 'A' }, { version: '9.0.0' })).toMatchObject({
+      error: { code: 'forbidden', message: expect.stringContaining('does not run the Stim engine') },
+    });
     const by = { id: 'approved-build-client', name: 'Laptop' };
     const source = join(home, 'source');
     mkdirSync(join(source, 'bin'), { recursive: true });
@@ -80,19 +91,27 @@ writeFileSync(process.env.UPDATE_OUTPUT, JSON.stringify({
     expect(updates.chunk(by.id, { ...chunk, offset: 1 })).toMatchObject({ error: { code: 'bad-request' } });
     expect(updates.chunk(by.id, chunk)).toMatchObject({ result: { state: 'installing', missing: [] } });
     expect(await ended).toBe(true);
-    expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual({
+    const received = JSON.parse(readFileSync(output, 'utf8'));
+    expect(received.args[0]).toMatch(/[\\/]dist[\\/]engine-select\.mjs$/);
+    expect(received).toEqual({
       args: [
-        'service',
-        'update',
-        '--label',
-        'dev.stim.test',
+        received.args[0],
         '--from',
         join(serviceRoot('dev.stim.test'), 'incoming', started.result.id),
+        '--set-by',
+        'engine.update',
+        '--explicit',
       ],
       files: { [name]: bytes.toString('base64') },
     });
     expect(drains).toEqual(['stim-server is updating to packages from Laptop', null]);
-    expect((await updates.status()).running).toBeNull();
+    const status = await updates.status();
+    expect(status.running).toBeNull();
+    expect(status.last).toMatchObject({
+      ok: true,
+      message: 'Build ba9876543210 is staged; the engine switches once running work drains.',
+    });
+    expect((await updater({ script }).status()).last?.message).toBe(status.last?.message);
   } finally {
     updates.close();
     vi.unstubAllEnvs();

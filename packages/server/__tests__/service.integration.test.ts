@@ -4,9 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import {
-  answersAs,
   planServe,
-  unusedInstalls,
   applyServeEnvironment,
   parseEnvAssignment,
   parseInstalledPlist,
@@ -16,7 +14,7 @@ import {
   validateServeEnvironment,
   type ServiceSpec,
 } from '../src/service-plist.ts';
-import { installService, statusLines, updateService, type ServiceStatus } from '../src/service.ts';
+import { installService, statusLines, uninstallService, type ServiceStatus } from '../src/service.ts';
 import type { WorkerRootUsage } from '../src/worker-areas.ts';
 import type { KeepAwakeStatus } from '../src/keep-awake.ts';
 import { serviceManager } from '../src/service-manager.ts';
@@ -138,21 +136,9 @@ describe('serve environment', () => {
   });
 });
 
-describe('service update checks', () => {
-  it('tells two builds of one version apart by their Stim build, and matches an older server on its version', () => {
-    const expected = { version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa' };
-    expect(answersAs({ version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa' }, expected)).toBe(true);
-    expect(answersAs({ version: '1.14.0', stimBuild: 'bbbbbbbbbbbbbbbb' }, expected)).toBe(false);
-    expect(answersAs({ version: '1.13.0', stimBuild: 'aaaaaaaaaaaaaaaa' }, expected)).toBe(false);
-    expect(answersAs({ version: '1.14.0' }, expected)).toBe(true);
-    expect(
-      answersAs({ version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa', startup: { state: 'degraded' } }, expected),
-    ).toBe(false);
-    expect(answersAs(null, expected)).toBe(false);
-  });
-
+describe('service install checks', () => {
   describe.skipIf(process.platform !== 'darwin')('on macOS', () => {
-    it('refuses a second update of a label while one holds its claim', async () => {
+    it('refuses to uninstall a label while another install or uninstall holds its claim', async () => {
       const home = mkdtempSync(join(tmpdir(), 'stim-service-claim-'));
       const previous = process.env.HOME;
       process.env.HOME = home;
@@ -164,8 +150,8 @@ describe('service update checks', () => {
           mode: 'exclusive',
         });
         expect(held.acquired).toBeDefined();
-        await expect(updateService('dev.stim.claimed', { release: '1.14.0' }, () => {})).rejects.toThrow(
-          'An install, update or rollback of dev.stim.claimed is running',
+        await expect(uninstallService('dev.stim.claimed')).rejects.toThrow(
+          'An install or uninstall of dev.stim.claimed is running',
         );
         releaseClaim(held.acquired);
       } finally {
@@ -389,19 +375,6 @@ it('refuses a Funnel route and an unreadable config, and never plans to create o
   expect(planServe({ state: 'unknown', reason: 'it timed out', port: 7443 }, 7787, null)).toMatchObject({
     refusal: expect.stringContaining('not changing the route'),
   });
-});
-
-it('prunes only installs that hold neither the current nor the previous server', () => {
-  const versions = '/Users/me/Library/Application Support/Stim/services/dev.stim.server/versions';
-  const script = (dir: string) => `${versions}/${dir}/node_modules/stim/bin/stim.mjs`;
-  expect(
-    unusedInstalls(
-      versions,
-      ['1.14.0-a-1', '1.14.0-a-10', '1.15.0-b-2', '.install-123'],
-      [script('1.14.0-a-1'), '/Users/me/stim/packages/server/dist/stim-server.mjs'],
-    ),
-  ).toEqual(['1.14.0-a-10', '1.15.0-b-2', '.install-123']);
-  expect(unusedInstalls(versions, ['1.15.0-b-2'], [script('1.15.0-b-2'), script('1.14.0-a-1')])).toEqual([]);
 });
 
 describe.skipIf(process.platform !== 'darwin')('managed unit conversion', () => {

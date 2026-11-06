@@ -46,7 +46,7 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-describe('stim service update --from against real npm', () => {
+describe('installing uploaded packages (engine.update packages) against real npm', () => {
   it('installs packed Stim packages at an unpublished version and still audits registry packages', async () => {
     const from = join(root, 'incoming');
     const versions = join(root, 'versions');

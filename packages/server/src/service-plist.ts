@@ -1,4 +1,4 @@
-import { delimiter, isAbsolute, join, relative } from 'node:path';
+import { delimiter, isAbsolute } from 'node:path';
 import { isJsonObject, type InstalledService } from '@stim-cli/core/state';
 import type { ServeRecord } from '@stim-cli/transport-tailscale';
 
@@ -273,20 +273,6 @@ export interface ServerBuild {
   stimBuild: string | null;
 }
 
-/**
- * Whether a `/health` answer comes from a ready server running `expected`: the same version and, when both sides know
- * it, the same Stim build digest. Two builds of one checkout share a version, so the digest tells them apart; a server
- * older than the digest in `/health` is matched on its version alone.
- */
-export function answersAs(
-  health: { version: string; stimBuild?: string | null; startup?: { state: string } } | null,
-  expected: ServerBuild,
-): boolean {
-  if (!health || health.version !== expected.version) return false;
-  if (health.startup && health.startup.state !== 'ready') return false;
-  return !health.stimBuild || !expected.stimBuild || health.stimBuild === expected.stimBuild;
-}
-
 const packageNames = (entries: unknown[]) =>
   entries.map((entry) => (isJsonObject(entry) ? `${String(entry.name)}@${String(entry.version)}` : '?')).join(', ');
 
@@ -316,13 +302,4 @@ export function signatureProblem(output: string, stderr = ''): string | null {
     return `npm found invalid registry signatures or attestations: ${packageNames(report.invalid)}`;
   if (report.missing.length) return `npm found packages without registry signatures: ${packageNames(report.missing)}`;
   return null;
-}
-
-export function unusedInstalls(versions: string, entries: string[], keep: string[]): string[] {
-  return entries.filter((entry) =>
-    keep.every((script) => {
-      const inside = relative(join(versions, entry), script);
-      return inside.startsWith('..') || isAbsolute(inside);
-    }),
-  );
 }

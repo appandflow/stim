@@ -912,7 +912,8 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         );
       if (decision === 'update') {
         chatter(await wait(deps.select(version)));
-        output.server = { version, stimBuild: null };
+        const updated = await wait(deps.health(opts.port));
+        output.server = { version, stimBuild: updated?.version === version ? (updated.stimBuild ?? null) : null };
         script = installed?.script ?? '';
       } else if (decision === 'install') {
         const target = await wait(deps.install(deps.versions(opts.label), { release: version }, deps.node, chatter));

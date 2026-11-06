@@ -368,7 +368,8 @@ export async function runStimd({
     log,
     () => {
       lastContact = Date.now();
-      if (serve && !closing && !restartingNet) shutdown('the net thread `stim serve` started exited', 'warn');
+      if (restartingNet) return;
+      if (serve && !closing) shutdown('the net thread `stim serve` started exited', 'warn');
       else requestTick();
     },
     (why) => maybeUpdate(why, ASKED_MS),
@@ -716,7 +717,7 @@ export async function runStimd({
     const configured = configuredDaemonMode();
     const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
     if (mode === 'off') {
-      if (net.running()) {
+      if (net.running() || restartingNet) {
         for (const socket of tickReplies.splice(0)) socket.destroy();
         continue;
       }

@@ -2506,7 +2506,7 @@ describe('setup approval in Stim Desktop on this machine', () => {
     },
     build: () => ({ version: '1.2.3', stimBuild: 'digest' }),
     install: never,
-    update: never,
+    select: never,
     installHost: async () => ({
       app: '/Stim Host.app',
       executable: '/Stim Host.app/Contents/MacOS/stim-host',
