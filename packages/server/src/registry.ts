@@ -219,7 +219,7 @@ function cleanClientText(text: string): string {
 }
 
 /** What Stim Desktop names itself in `hello`: `Stim Desktop` for the release app and `Stim Dev` for a development build. */
-const DESKTOP_CLIENT_APPS: readonly string[] = ['Stim Desktop', 'Stim Dev'];
+export const DESKTOP_CLIENT_APPS: readonly string[] = ['Stim Desktop', 'Stim Dev'];
 
 /** Whether a record's recorded client app is Stim Desktop. A client names itself, so this is for display only. */
 export function isDesktopClient(device: PairedDevice): boolean {

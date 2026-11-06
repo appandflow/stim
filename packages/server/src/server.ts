@@ -201,6 +201,7 @@ import { NotificationLog, notificationLogFile, publicEntry } from './notificatio
 import { EXPO_PUSH_API, PushNotifier, type PushLimits, type PushNotifierOptions } from './push.ts';
 import {
   buildClientsReadable,
+  DESKTOP_CLIENT_APPS,
   dropPushToken,
   parseLevels,
   parseQuietHours,
@@ -528,11 +529,11 @@ function helloRefusal(client: JsonObject, access: unknown, machine: string, stim
     const peer = wireInteger(client.peer);
     if (peer >= PEER) return null;
     const sent = peer ? `speaks peer ${peer}` : 'sends no peer';
-    return `peer-too-old: ${machine} runs stim ${stim} (peer ${PEER}); this stim ${sent}; update this Mac: npm i -g stim@${stim}`;
+    return `peer-too-old: ${machine} runs stim ${stim} (peer ${PEER}); this stim ${sent}; update this Mac: npm i -g stim@${stim}, then stim service install if it runs Stim as a service`;
   }
   // compat end
   // compat C7 permanent
-  if (client.desktopApi !== undefined)
+  if (client.desktopApi !== undefined || DESKTOP_CLIENT_APPS.includes(String(client.name)))
     return wireInteger(client.desktopApi) >= DESKTOP_API
       ? null
       : `${machine} runs stim ${stim}, which needs a newer Stim Desktop. Update Stim Desktop (Stim > Check for Updates).`;

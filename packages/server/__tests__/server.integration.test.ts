@@ -1486,7 +1486,7 @@ describe('pairing', () => {
       error: {
         code: 'protocol-unsupported',
         message:
-          'peer-too-old: Test Mac runs stim 9.9.9 (peer 1); this stim sends no peer; update this Mac: npm i -g stim@9.9.9',
+          'peer-too-old: Test Mac runs stim 9.9.9 (peer 1); this stim sends no peer; update this Mac: npm i -g stim@9.9.9, then stim service install if it runs Stim as a service',
       },
     });
     expect(await cli.closedWith).toEqual({ code: 4401, reason: 'protocol-unsupported' });
@@ -1502,6 +1502,7 @@ describe('pairing', () => {
         { name: 'Stim Desktop', version: '0.9.0', desktopApi: DESKTOP_API - 1 },
         'Update Stim Desktop (Stim > Check for Updates).',
       ],
+      [{ name: 'Stim Desktop', version: '0.9.0' }, 'Update Stim Desktop (Stim > Check for Updates).'],
     ] as const) {
       const older = await connect(port, undefined, { keyPair });
       expect(await older.request('hello', { client })).toMatchObject({
