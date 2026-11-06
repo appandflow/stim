@@ -286,8 +286,8 @@ its reported load:
   "machine": "janics-mac-mini",
   "state": "approved",
   "offloadable": false,
-  "reasons": ["Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"],
-  "problems": [{ "code": "stim-build", "reason": "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here" }],
+  "reasons": ["x86_64 there, arm64 here"],
+  "problems": [{ "code": "arch", "reason": "x86_64 there, arm64 here" }],
   "capacity": {
     "running": 0,
     "max": 1,

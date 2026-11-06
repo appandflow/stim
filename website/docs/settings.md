@@ -589,8 +589,7 @@ builds can use a separate `--remote-build`, targeting the hosting Mac's
 architecture and runtime.
 
 In `auto`, an offloaded iOS/Android build runs prebuild (and `pod install` for iOS) here, then asks
-every paired machine what it can build. Stim picks one whose Stim build
-compatibility version matches and, for iOS and macOS, whose CPU architecture matches the target simulator, with at least 10 GB free, that does
+every paired machine what it can build. Stim picks one that, for iOS and macOS, has a CPU architecture matching the target simulator, with at least 10 GB free, that does
 not decline, taking the first in `remote.machines` order. When a machine that offered fails the sync or refuses to start
 the build, for example because it got busy meanwhile, Stim tries the next one
 in that order:
@@ -606,7 +605,7 @@ in that order:
   and installs the pinned gems itself on the first build. This machine's side of
   the comparison runs `pod --version` in the directory `pod install` runs in. The comparison uses
   `.ruby-version` when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the login shell's `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries (unless the caller already sets `GEM_HOME`), and the same UTF-8 locale defaults as `pod install`, which runs in the same environment, including the Bundler run.
-- For macOS, its Xcode and macOS SDK must match, unless `--remote-build` and `--remote` name the same Mac, which builds and runs the app and then needs only the same Stim build compatibility version (see [macOS development](./macos.md#run-it-on-another-mac)). The worker needs network
+- For macOS, its Xcode and macOS SDK must match, unless `--remote-build` and `--remote` name the same Mac, which builds and runs the app and then needs only its own Xcode and macOS SDK (see [macOS development](./macos.md#run-it-on-another-mac)). The worker needs network
   access to fetch SwiftPM dependencies the first time and keeps a dependency
   cache per client. The returned app is verified and launched locally. Completed
   caching requires `macos.artifactInputs` and a locally verified compile; remote
@@ -710,10 +709,8 @@ reports the process, its health, the route, Stim Host's permissions and
 whether its Stim build matches the `stim` on PATH. Doctor points to this
 command when a named machine does not answer.
 
-Offload needs Stim releases with the same build compatibility version on both
-machines. It changes only in a release that changes what a worker builds, how it
-builds, or the build messages, so two machines on different Stim builds usually
-offload to each other. To move the remote machine's
+Offload runs this machine's exact Stim build on the worker, so the two machines
+can run different Stim releases. To move the remote machine's
 service to another build, run one of these there:
 
 ```bash
