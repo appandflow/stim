@@ -268,6 +268,7 @@ export interface ConnectionContext {
   readonly timer: NodeJS.Timeout;
   readonly error: (id: RequestId, code: ErrorCode, message: string) => void;
   readonly canControl: (session: Pick<PairedDevice, 'id'>) => boolean;
+  readonly workspaceDir: (id: RequestId, workspace: unknown, required: boolean) => string | null;
   readonly readDir: (id: RequestId, target: { workspace?: string; archive?: string }) => string | null;
   readonly openSubscription: (id: RequestId, result?: { video?: VideoCodec }) => string | null;
   readonly inProcessRead: <

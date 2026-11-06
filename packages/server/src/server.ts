@@ -175,7 +175,6 @@ import {
   MODE_FIRST_CONTACT,
   TRANSPORT_OVERHEAD_BYTES,
 } from '@stim-cli/core/noise-session';
-import { readWorkspaceDiff } from './workspace-diff.ts';
 import { EngineUpdates } from './server-update.ts';
 import { MachineUpdates } from './machine-update.ts';
 import { Pending, STDERR_TAIL, type CommandLimits, type CommandOutcome } from './stim-command.ts';
@@ -222,6 +221,7 @@ import {
 } from './handlers/status.ts';
 import { subscribeLogs, queryLogs } from './handlers/logs.ts';
 import { replayRange, archiveDetail, replayKeyframe, setRecording } from './handlers/replay.ts';
+import { workspaceChanges, workspaceCommand } from './handlers/workspace.ts';
 export type { ServerOptions } from './handlers/context.ts';
 
 const SHARE_SERVER_GRACE_MS = 2 * 60_000;
@@ -2053,6 +2053,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       timer,
       error,
       canControl,
+      workspaceDir,
       readDir,
       openSubscription,
       inProcessRead,
@@ -2239,61 +2240,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       archiveReads = task.catch(() => socket.close(1011, 'internal error'));
     }
 
-    function workspaceChanges(id: RequestId, method: 'workspace.files' | 'workspace.diff', params: unknown): void {
-      const needsPath = method === 'workspace.diff';
-      if (
-        !isJsonObject(params) ||
-        typeof params.workspace !== 'string' ||
-        !params.workspace.length ||
-        params.workspace.length > 4096 ||
-        params.workspace.includes('\0') ||
-        (!needsPath && params.group !== 'changed' && params.group !== 'untracked') ||
-        (needsPath &&
-          (typeof params.path !== 'string' ||
-            !params.path.length ||
-            params.path.length > 4096 ||
-            params.path.includes('\0'))) ||
-        Object.keys(params).some((key) => key !== 'workspace' && !(needsPath ? key === 'path' : key === 'group'))
-      ) {
-        return error(id, 'bad-request', 'Workspace diff requires workspace and, for a patch, a file path.');
-      }
-      const cwd = workspaceDir(id, params.workspace, true);
-      if (!cwd) return;
-      if (slotsFull()) {
-        return error(id, 'limit-exceeded', slotsMessage());
-      }
-      const abort = new AbortController();
-      let task: Promise<void>;
-      const cancel = async () => {
-        abort.abort();
-        await task;
-      };
-      holdSlot(cancel);
-      running.add(cancel);
-      task = readWorkspaceDiff(
-        cwd,
-        needsPath ? (params.path as string) : undefined,
-        options.env,
-        abort.signal,
-        !needsPath ? (params.group as 'changed' | 'untracked') : undefined,
-      )
-        .then(
-          (result) => {
-            if (!abort.signal.aborted) send(socket, { id, result });
-            return undefined;
-          },
-          (cause: Error) => {
-            if (!abort.signal.aborted) error(id, 'stim-failed', cause.message);
-            return undefined;
-          },
-        )
-        .finally(() => {
-          releaseSlot(cancel);
-          running.delete(cancel);
-        });
-      return;
-    }
-
     function inProcessRead<
       M extends
         | 'settings.get'
@@ -2359,20 +2305,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       else holdSlot(cancel);
       running.add(cancel);
       return { done: task, cancel };
-    }
-
-    function workspaceCommand(id: RequestId, method: 'stats.get' | 'settings.get', params: unknown): void {
-      if (params !== undefined && !isJsonObject(params)) return error(id, 'bad-request', 'params must be an object.');
-      const cwd = workspaceDir(id, params?.workspace, false);
-      if (!cwd) return;
-      if (method === 'settings.get') {
-        return void inProcessRead<'settings.get'>(id, 'stim settings', (signal) =>
-          createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).settings({ signal }),
-        );
-      }
-      return void inProcessRead<'stats.get'>(id, 'stim stats', (signal) =>
-        createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).stats({ signal }),
-      );
     }
 
     function runAction(id: RequestId, params: unknown, session: PairedDevice): void {
@@ -4169,10 +4101,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return send(socket, { id, result: sampler.history(sinceMs) });
       }
       if (isWorkspaceChangeMethod(message.method)) {
-        return workspaceChanges(id, message.method, message.params);
+        return workspaceChanges(ctx, id, message.method, message.params);
       }
       if (message.method === 'stats.get' || message.method === 'settings.get') {
-        return workspaceCommand(id, message.method, message.params);
+        return workspaceCommand(ctx, id, message.method, message.params);
       }
       if (message.method === 'action') return runAction(id, message.params, device);
       if (message.method === 'control.begin') {
