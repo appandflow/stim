@@ -42,11 +42,9 @@ import {
   hostedAndroidPlacements,
   RECORDING_PLATFORMS,
   stimBuildDigest,
-  validRunId,
   type RecordingPlatform,
   type NdjsonRecord,
   type StatusPayload,
-  type DeviceHostLimits,
   archivedUsage,
   KeyedEntities,
   statusViews,
@@ -59,8 +57,7 @@ import {
   readShareLinks,
   shareLinkKey,
 } from '@stim-cli/core/state';
-import { createRequestLog, type RequestLog, type RequestTracker } from './request-log.ts';
-import type { DesktopBootstrap } from './desktop-bootstrap.ts';
+import { createRequestLog } from './request-log.ts';
 import { actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
 import { cachedPeerNode } from './peer-node.ts';
 import { parsePlatformRun } from './platform-run.ts';
@@ -77,9 +74,9 @@ import { HOSTED_IDLE_SWEEP_MS } from './hosted-idle.ts';
 import { HostedPresence } from './hosted-presence.ts';
 import { HostedPresenceBridge } from './hosted-presence-bridge.ts';
 import { HostedViews } from './hosted-view.ts';
-import { HostConnections, HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
+import { HostConnections, HostedRelay } from './hosted-relay.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
-import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
+import { BuildHost, type BuildSession } from './build.ts';
 import type { WorkerRootUsage } from './worker-areas.ts';
 import {
   CLIPBOARD_INPUT_COST,
@@ -90,9 +87,9 @@ import {
   SLOT_NAME,
   type Controller,
 } from './control.ts';
-import { Recorder, type RecordLimits } from './recorder.ts';
+import { Recorder } from './recorder.ts';
 import { pruneSetupJournals, setupJournalForClient } from './setup-journal.ts';
-import { defaultSetupDeps, type SetupDeps } from './setup.ts';
+import { defaultSetupDeps } from './setup.ts';
 import { startDesktopSetup, type DesktopSetup, type DesktopSetupAnswer } from './desktop-setup.ts';
 import {
   probeDirectories,
@@ -136,17 +133,12 @@ import {
 import { UsageRecorder } from './usage-history.ts';
 import { DesktopReports } from './desktop-reports.ts';
 import {
-  ACTIONS,
   BUILD_METHODS,
-  DESKTOP_API,
   DEVICE_HOST_METHODS,
-  HOST_CAPABILITIES,
   MAX_INPUT_TEXT,
   FRAME_EDGE,
   FRAME_FPS,
   NOTIFICATION_LEVELS,
-  PEER,
-  PHONE_API,
   PLATFORMS,
   PROTOCOL_VERSION,
   PUSH_EVENTS,
@@ -167,14 +159,12 @@ import {
   type ProtocolError,
   type FrameTarget,
   type HelloHost,
-  type HelloResult,
   type Platform,
   type PlatformRunOptions,
   type PlatformBuildOptions,
   type Methods,
   type RequestId,
   type MetroLinkOpenEvent,
-  type ServerMessage,
   type VideoCodec,
 } from './protocol.ts';
 import {
@@ -198,10 +188,9 @@ import { restoreSavedShares } from './share-restore.ts';
 import { savedLinkIs, savedShareFor } from './share-save.ts';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
-import { EXPO_PUSH_API, PushNotifier, type PushLimits, type PushNotifierOptions } from './push.ts';
+import { EXPO_PUSH_API, PushNotifier } from './push.ts';
 import {
   buildClientsReadable,
-  DESKTOP_CLIENT_APPS,
   dropPushToken,
   parseLevels,
   parseQuietHours,
@@ -215,7 +204,6 @@ import {
   setDevicePush,
   serverDir,
   spendSecret,
-  touchDevice,
   type KeyRecords,
   type PairedDevice,
   type Registries,
@@ -231,7 +219,6 @@ import {
   MAX_CLIENT_MESSAGE_BYTES,
   MAX_FIRST_MESSAGE_BYTES,
   MODE_FIRST_CONTACT,
-  NoiseSocket,
   TRANSPORT_OVERHEAD_BYTES,
 } from '@stim-cli/core/noise-session';
 import { readWorkspaceDiff } from './workspace-diff.ts';
@@ -243,7 +230,6 @@ import type { Transport, TransportIdentity } from '@stim-cli/transport';
 import {
   isTailscaleTransport,
   tailscaleTransport,
-  type TailscaleMonitor,
   type TailscaleState,
   type TailscaleTransport,
 } from '@stim-cli/transport-tailscale';
@@ -256,9 +242,20 @@ import { androidScreen, simulatorScreen, type ScreenSize } from './device-screen
 import { LocalAgentPresence } from './local-agent-presence.ts';
 import { parsePresencePublish, PresenceHub, presenceKey } from './presence.ts';
 import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
-import { createKeepAwake, type KeepAwakeOptions, type KeepAwakeStatus } from './keep-awake.ts';
+import { createKeepAwake, type KeepAwakeStatus } from './keep-awake.ts';
 import { runsAsService } from './service.ts';
 import { ShareRoute, tailscaleFunnel } from './share-route.ts';
+import {
+  type RequestLimits,
+  type ControlLimits,
+  type ServerOptions,
+  type ServerSocket,
+  send,
+  trackers,
+  type ConnectionContext,
+} from './handlers/context.ts';
+import { LOCAL_DEVICE_ID, CLOSE_BAD_REQUEST, hello } from './handlers/hello.ts';
+export type { ServerOptions } from './handlers/context.ts';
 
 const SHARE_SERVER_GRACE_MS = 2 * 60_000;
 
@@ -287,127 +284,6 @@ function hostedPlacement(dir: string, platform: string, slot = 'default') {
   if (platform === 'ios') return hostedIosPlacements(readWorkspaceState(dir))[slot];
   if (platform === 'android') return hostedAndroidPlacements(readWorkspaceState(dir))[slot];
   return undefined;
-}
-
-export interface ServerOptions {
-  /** Private bootstrap received from the Desktop parent; never a persisted pairing capability. */
-  desktopBootstrap?: DesktopBootstrap;
-  /** What `stim setup` runs with when Stim Desktop approves a request here; `defaultSetupDeps` by default. */
-  setupDeps?: () => SetupDeps;
-  host?: { executable: string; name: string };
-  name: string;
-  hosts: string[];
-  /**
-   * Listens on `hosts` alone, never on a Tailscale address, and refuses every request that names a remote peer,
-   * such as one forwarded by `tailscale serve` to a loopback port, so only this machine's own connections are served.
-   */
-  loopbackOnly?: boolean;
-  /**
-   * Holds a macOS power assertion that prevents idle system sleep on AC power while `setting` is true and the server
-   * listens on an address its transports added to `hosts`. Without it the server holds none.
-   */
-  keepAwake?: KeepAwakeOptions;
-  /** Whether this machine can host simulators and apps for other machines; only a Mac can. Defaults to running on macOS. */
-  hostsDevices?: boolean;
-  port: number;
-  /**
-   * Set for a server `stim share` started: `idle` runs once its last share has ended, or when no share starts within
-   * `graceMs` (two minutes by default) of the server being ready.
-   */
-  shareServer?: { idle: () => void; graceMs?: number };
-  /** The Unix socket for this machine's own user; defaults to core's serverLocalSocket(), null for none. */
-  localSocket?: string | null;
-  stimCli: string;
-  stimVersion: string;
-  serverVersion: string;
-  env: NodeJS.ProcessEnv;
-  /** The environment now, for builds run for other machines to see tools installed since `env` was built. */
-  currentEnv?: () => NodeJS.ProcessEnv;
-  /**
-   * The transports that carry phones and other machines to this server. Without them, the server uses a Tailscale
-   * transport built from `tailscale`, `tailscaleState` and `tailscaleMonitor`. The server listens on each
-   * transport's bind addresses while it reports them.
-   */
-  transports?: Transport[];
-  tailscale?: string | null;
-  tailscaleState?: TailscaleState;
-  /**
-   * Keeps the Tailscale state current after start. Without it, `tailscale` and `tailscaleState` stay as
-   * given. While Tailscale runs the server listens on its addresses, and it closes them when Tailscale stops.
-   */
-  tailscaleMonitor?: TailscaleMonitor;
-  /** How long to wait before listening again on a Tailscale address that failed; tests shorten it. */
-  listenRetryMs?: number;
-  /**
-   * How long the startup read of the Stim home directories may take, and how long to wait before reading them
-   * again after it failed; tests shorten them.
-   */
-  startupProbeMs?: number;
-  startupRetryMs?: number;
-  authTimeoutMs?: number;
-  maxAuthFailures?: number;
-  failureWindowMs?: number;
-  /** Unauthenticated connections each network listener holds at once, overall and per source address. */
-  pendingConnections?: { max: number; perPeer: number };
-  /** First contacts naming an unknown secret that one address may make per failure window. */
-  maxUnknownSecrets?: number;
-  /** How long a connection to a network address has to send its request headers. */
-  headersTimeoutMs?: number;
-  requestLog?: RequestLog;
-  logLimits?: Partial<LogLimits>;
-  commandLimits?: Partial<CommandLimits>;
-  actionLimits?: Partial<CommandLimits>;
-  /** How many requests one connection, and one tailnet device across its connections, run at a time. */
-  requestLimits?: Partial<RequestLimits>;
-  frameLimits?: Partial<FrameLimits>;
-  /** False runs no recorder; true by default. The limits say how much footage it keeps. */
-  record?: boolean;
-  recordLimits?: Partial<RecordLimits>;
-  /**
-   * The `stim-frames` helper to stream frames with, or null for screenshots only. Without it, the server builds
-   * one at startup, and devices subscribed before the build finishes get screenshots.
-   */
-  frameHelper?: string | null;
-  /** The Duo fold/angle helper. Without it, the server builds one on the first fold or composed viewer. */
-  foldHelper?: string;
-  controlLimits?: Partial<ControlLimits>;
-  /** False runs the notification rules only while a phone is registered for pushes; true by default. */
-  history?: boolean;
-  /**
-   * False reads status only while something listens to it; true by default, which starts the status watch when the
-   * server becomes ready so the first client gets a payload at once.
-   */
-  statusAtBoot?: boolean;
-  /** The Expo push API base URL; tests point it at a local server. */
-  pushEndpoint?: string;
-  pushLimits?: Partial<PushLimits>;
-  /** How many offloaded builds run, and for how long; tests shorten them. */
-  buildLimits?: Partial<BuildLimits>;
-  deviceHostLimits?: Partial<DeviceHostLimits>;
-  /** How often a device-host client connection is pinged, and how long it may stay silent before it is dropped. */
-  clientHeartbeat?: { pingMs: number; silentMs: number };
-  /** How often hosted sessions are checked for a client that is gone. */
-  hostedIdleSweepMs?: number;
-  hostedRelay?: HostedRelayOptions;
-  service?: {
-    label: string | null;
-    node: string;
-    script: string;
-    runsAsService?: (label: string, port: number) => Promise<boolean>;
-  };
-  /** Looks up the worktrees' pull requests; tests replace GitHub. */
-  pullRequests?: PushNotifierOptions['pullRequests'];
-}
-
-interface ControlLimits {
-  idleMs: number;
-  renewMs: number;
-  leaseFor: string;
-  inputPerSecond: number;
-  textCharsPerSecond: number;
-  shapeChangesPerSecond: number;
-  /** `sim-fold` waits up to 20 seconds for SpringBoard to finish the fold; Stim Desktop stops it after 40. */
-  foldTimeoutMs: number;
 }
 
 interface ServerHealth {
@@ -465,20 +341,8 @@ export interface RunningServer {
   close: () => Promise<void>;
 }
 
-const CLOSE_BAD_REQUEST = 4400;
-const LOCAL_DEVICE_ID = 'local';
 const LOCAL_SOCKET_CLAIM_TRIES = 50;
-/** A connection on the Unix socket: this server's own user, such as Stim Desktop, with every local capability. */
-const LOCAL_DEVICE: PairedDevice = {
-  id: LOCAL_DEVICE_ID,
-  name: 'Stim Desktop',
-  publicKey: '',
-  pairedAt: new Date(0).toISOString(),
-  lastSeenAt: null,
-  capabilities: ['read', 'control'],
-};
 
-type ServerSocket = WebSocket | NoiseSocket;
 const CLOSE_AUTH_TIMEOUT = 4408;
 const CLOSE_METRO_RESET = 4410;
 interface AgentLink {
@@ -488,8 +352,7 @@ interface AgentLink {
 }
 const AGENT_PATH = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/;
 const METRO_LINK_PING_MS = 15_000;
-const CLIENT_PING_MS = 60_000;
-const CLIENT_SILENT_MS = 180_000;
+
 const MAX_AGENT_LINKS = 16;
 const AGENT_LINK_IDLE_MS = 5 * 60_000;
 const METRO_END_MS = 30_000;
@@ -505,10 +368,7 @@ function lastCursor(page: readonly ArchivedWorkspace[]): string | null {
   return last ? archiveCursor(last) : null;
 }
 const STATUS_READ_WAIT_MS = 30_000;
-interface RequestLimits {
-  connection: number;
-  device: number;
-}
+
 const REQUEST_LIMITS: RequestLimits = { connection: 32, device: 16 };
 const MAX_REPORT_WAITS = 16;
 const MAX_RETAINED_PLANS = 4;
@@ -519,30 +379,6 @@ function isWorkspaceChangeMethod(method: string): method is 'workspace.files' | 
 const MAX_KEYFRAME_READS = 8;
 const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRecords: 20_000 };
 const HELPER_RETRY_MS = 5 * 60_000;
-
-const wireInteger = (value: unknown) => (typeof value === 'number' && Number.isInteger(value) ? value : 0);
-
-/** Why the network listener turns a client away: a missing or lower integer for the surface it speaks. */
-function helloRefusal(client: JsonObject, access: unknown, machine: string, stim: string): string | null {
-  // compat C12 permanent
-  if (access !== undefined || client.peer !== undefined) {
-    const peer = wireInteger(client.peer);
-    if (peer >= PEER) return null;
-    const sent = peer ? `speaks peer ${peer}` : 'sends no peer';
-    return `peer-too-old: ${machine} runs stim ${stim} (peer ${PEER}); this stim ${sent}; update this Mac: npm i -g stim@${stim}, then stim service install if it runs Stim as a service`;
-  }
-  // compat end
-  // compat C7 permanent
-  if (client.desktopApi !== undefined || DESKTOP_CLIENT_APPS.includes(String(client.name)))
-    return wireInteger(client.desktopApi) >= DESKTOP_API
-      ? null
-      : `${machine} runs stim ${stim}, which needs a newer Stim Desktop. Update Stim Desktop (Stim > Check for Updates).`;
-  // compat end
-  // compat C9 permanent
-  if (wireInteger(client.phoneApi) >= PHONE_API) return null;
-  return `${machine} runs stim ${stim}, which needs a newer Stim Mobile. Update Stim Mobile from the App Store or TestFlight.`;
-  // compat end
-}
 
 /**
  * Test switch: set to 1, a `physical` target may resolve to an emulator its workspace leases with `stim device
@@ -1245,13 +1081,6 @@ function auditSafely(record: AuditRecord): void {
   } catch (cause) {
     console.error(`stim-server: could not append to the action log: ${(cause as Error).message}`);
   }
-}
-
-const trackers = new WeakMap<ServerSocket, RequestTracker>();
-
-function send(socket: ServerSocket, message: ServerMessage | string): void {
-  if (typeof message !== 'string') trackers.get(socket)?.reply(message);
-  if (socket.readyState === socket.OPEN) socket.send(typeof message === 'string' ? message : JSON.stringify(message));
 }
 
 function requestId(value: unknown): RequestId | null {
@@ -2214,98 +2043,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       socket.close(CLOSE_AUTH_TIMEOUT, 'authentication timeout');
     }, authTimeoutMs);
 
-    async function hello(id: RequestId, params: unknown): Promise<void> {
-      if (device)
-        return send(socket, { id, error: { code: 'already-authenticated', message: 'hello was already accepted.' } });
-      if (!isJsonObject(params) || !isJsonObject(params.client)) {
-        return refuse(id, 'bad-request', 'hello needs params.client.', CLOSE_BAD_REQUEST);
-      }
-      const access = params.access;
-      if (access !== undefined && access !== 'build' && access !== 'device-host') {
-        return refuse(id, 'bad-request', 'params.access is build or device-host.', CLOSE_BAD_REQUEST);
-      }
-      if (access === 'device-host' && !hostsDevices) {
-        return refuse(
-          id,
-          'forbidden',
-          'Hosting simulators needs a Mac. This machine takes build requests only.',
-          CLOSE_REFUSED,
-        );
-      }
-      clearTimeout(timer);
-      runId = validRunId(params.client.runId);
-      tracker.identify({ id: null, runId });
-      const probing = hostHealth();
-      const name = typeof params.client.name === 'string' ? params.client.name.slice(0, 64) : 'Stim Desktop';
-      const registries = local ? null : readApprovals();
-      if (!local && (!registries || startup.state !== 'ready'))
-        return refuse(id, 'home-unavailable', HOME_UNAVAILABLE_MESSAGE, CLOSE_REFUSED);
-      const keyRecords = clientKey === null || !registries ? {} : recordsForKey(clientKey, registries);
-      const chosen = local ? { ...LOCAL_DEVICE, name } : access === undefined ? keyRecords.device : keyRecords[access];
-      if (!chosen) {
-        return refuse(
-          id,
-          access === undefined ? 'unauthorized' : 'forbidden',
-          access === undefined
-            ? 'This machine has no pairing for this client. Pair again.'
-            : `This machine has not approved this client for ${access}. Approve it with \`stim setup\` there.`,
-          CLOSE_REFUSED,
-        );
-      }
-      const tooOld = local ? null : helloRefusal(params.client, access, options.name, options.stimVersion);
-      if (tooOld) return refuse(id, 'protocol-unsupported', tooOld, CLOSE_REFUSED);
-      device = chosen;
-      if (!local) touchDevice(device.id, params.client);
-      if (access === 'device-host' && !local) {
-        hostedDevices.clientSeen(device.id);
-        let heardAt = Date.now();
-        let late = false;
-        const hear = () => (heardAt = Date.now());
-        socket.on('pong', hear);
-        socket.on('message', hear);
-        const { pingMs, silentMs } = options.clientHeartbeat ?? { pingMs: CLIENT_PING_MS, silentMs: CLIENT_SILENT_MS };
-        clientPing = setInterval(() => {
-          if (Date.now() - heardAt > silentMs) {
-            if (late) return void socket.terminate();
-            late = true;
-          } else late = false;
-          socket.ping();
-        }, pingMs);
-        clientPing.unref();
-      }
-      if (local && params.desktopBootstrap === true) desktopChallenge = options.desktopBootstrap?.challenge() ?? null;
-      tracker.identify({ id: device.id, runId });
-      sessions.set(socket, device);
-      sampler.start();
-      const probeWaited = Date.now();
-      const host = options.host ? await probing : undefined;
-      if (options.host) tracker.step(id, 'probe', Date.now() - probeWaited);
-      const result: HelloResult = {
-        host: {
-          owner: options.desktopBootstrap ? 'desktop' : options.service?.label ? 'service' : 'cli',
-          capabilities: hostsDevices ? [...HOST_CAPABILITIES] : ['physical-android'],
-          app: host ?? null,
-        },
-        protocol: PROTOCOL_VERSION,
-        peer: PEER,
-        phoneApi: PHONE_API,
-        desktopApi: DESKTOP_API,
-        server: {
-          name: options.name,
-          version: options.serverVersion,
-          stim: options.stimVersion,
-          home: homedir(),
-          id: homeId,
-          ...(local && addresses[0] ? { port: addresses[0].port } : {}),
-        },
-        capabilities: device.capabilities,
-        actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
-        device: { id: device.id, name: device.name },
-        ...(desktopChallenge ? { desktopBootstrap: desktopChallenge } : {}),
-      };
-      send(socket, { id, result });
-    }
-
     function error(id: RequestId, code: ErrorCode, message: string): void {
       send(socket, { id, error: { code, message } });
     }
@@ -2317,6 +2054,58 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const inputs = { tokens: controlLimits.inputPerSecond, at: Date.now() };
     const characters = { tokens: MAX_INPUT_TEXT, at: Date.now() };
     const shapeChanges = { tokens: controlLimits.shapeChangesPerSecond, at: Date.now() };
+    const ctx: ConnectionContext = {
+      options,
+      get homeId() {
+        return homeId;
+      },
+      set homeId(value) {
+        homeId = value;
+      },
+      hostHealth,
+      hostsDevices,
+      get startup() {
+        return startup;
+      },
+      set startup(value) {
+        startup = value;
+      },
+      readApprovals,
+      sessions,
+      sampler,
+      hostedDevices,
+      socket,
+      local,
+      clientKey,
+      get device() {
+        return device;
+      },
+      set device(value) {
+        device = value;
+      },
+      get desktopChallenge() {
+        return desktopChallenge;
+      },
+      set desktopChallenge(value) {
+        desktopChallenge = value;
+      },
+      tracker,
+      get runId() {
+        return runId;
+      },
+      set runId(value) {
+        runId = value;
+      },
+      get clientPing() {
+        return clientPing;
+      },
+      set clientPing(value) {
+        clientPing = value;
+      },
+      refuse,
+      timer,
+      addresses,
+    };
 
     function controller(session: Pick<PairedDevice, 'id' | 'name'>): Controller {
       let found = controllers.get(socket);
@@ -5161,7 +4950,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return refuse(id, 'bad-request', 'Expected {id, method, params}.', CLOSE_BAD_REQUEST);
       }
       tracker.begin(id, message.method);
-      if (message.method === 'hello') return hello(id, message.params);
+      if (message.method === 'hello') return hello(ctx, id, message.params);
       if (!device) return refuse(id, 'unauthorized', 'Send hello first.', CLOSE_REFUSED);
       if (message.method === 'desktop.authenticate') return authenticateDesktop(id, message.params);
       for (const reconcile of retainedLifecycles) reconcile();
