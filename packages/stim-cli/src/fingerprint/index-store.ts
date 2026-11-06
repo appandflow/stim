@@ -81,11 +81,17 @@ export interface EvalRecord {
 /** Wall-clock nanoseconds, comparable with file times. */
 export const nowNs = (): bigint => BigInt(Date.now()) * 1_000_000n;
 
+/** The start of a computation, a millisecond early, so a file written during it has a time at or after it. */
+export const startedAt = (): bigint => nowNs() - 1_000_000n;
+
 /**
- * The time a computation's reads are trusted from: a second before the start, rounded down to a second, so a
- * filesystem with coarse timestamps cannot date an edit made during the computation before it.
+ * Whether a file time is too close to a computation's start to trust. Kernels stamp files from a coarse clock that
+ * can trail the wall clock by a few milliseconds, and some filesystems keep whole seconds, so a time within 50 ms of
+ * the start, or within 2 s for a whole-second time, counts as during the computation.
  */
-export const startedAt = (): bigint => (nowNs() / 1_000_000_000n - 1n) * 1_000_000_000n;
+export function racy(time: bigint, start: bigint): boolean {
+  return time >= start - (time % 1_000_000_000n === 0n ? 2_000_000_000n : 50_000_000n);
+}
 
 const statKey = (path: string): { key: string; mtime: bigint; ctime: bigint } | null => {
   const info = statSync(path, { bigint: true, throwIfNoEntry: false });
@@ -150,7 +156,7 @@ export function takeRead(path: string, kind: ReadKind, roots: Roots, since: bigi
   if (kind === 'present' || kind === 'absent') return { path: relocate(path, roots), kind };
   const target = kind === 'package' ? join(path, 'package.json') : path;
   const stat = statKey(target);
-  if (stat && (stat.mtime >= since || stat.ctime >= since)) return null;
+  if (stat && (racy(stat.mtime, since) || racy(stat.ctime, since))) return null;
   const read: Read = { path: relocate(path, roots), kind, stat: stat?.key ?? null };
   if (kind === 'dir') read.hash = hash ?? null;
   else if (stat) {
@@ -361,7 +367,7 @@ export class FileHashes {
     const known = this.entries[form];
     if (known?.[0] === key) return known[1];
     const hash = compute();
-    if (info.mtimeNs < this.since && info.ctimeNs < this.since) {
+    if (!racy(info.mtimeNs, this.since) && !racy(info.ctimeNs, this.since)) {
       this.entries[form] = [key, hash];
       this.dirty = true;
     }
