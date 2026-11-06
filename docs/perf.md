@@ -28,7 +28,9 @@ node scripts/perf/bench.mjs --version 1.25.0 --reps 3 --publish
 node scripts/perf/bench.mjs --cli packages/stim-cli/dist/cli.mjs --reps 3 --publish
 ```
 
-The version is installed into a scratch prefix and `bench.mjs` runs that install's `cli.mjs` by path. Do not
+The version is installed into a scratch prefix and `bench.mjs` runs that install's `cli.mjs` by path, with
+`STIM_ENGINE_ROOT`, `STIM_BUILD_CACHE` and `STIM_METRO_CACHE` under its scratch directory, so the benchmarked copy
+never promotes itself onto this machine's engine and its builds start from empty caches. Do not
 replace this with `npx stim@<version>` from this repository: the root `package.json` lists `packages/*` as
 workspaces, so when the requested version equals the workspace's own `stim` version, npx treats it as installed,
 skips the download and runs whichever `stim` is first on `PATH`, which can be a different build. Run a pinned
