@@ -28,15 +28,14 @@ import {
   type BuildOffer,
 } from '../offload/client.ts';
 import {
-  toolchainMismatches,
   androidRequirements,
   sdkDownloadDisabled,
-  toolchainNotes,
   type BuildTarget,
   type IosToolchain,
   type WorkerToolchain,
   type XcodeApp,
-} from '../offload/toolchain.ts';
+} from '../engine/toolchain.ts';
+import { toolchainMismatches, toolchainNotes } from '../offload/toolchain.ts';
 
 const RUNTIME = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0';
 

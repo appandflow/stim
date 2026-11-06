@@ -39,8 +39,7 @@ import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import { resolveCcache } from '../engine/ccache.ts';
 import { planPrebuild, runPrebuild, staleNativeDirRefusal, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { loadProjectProvider } from '../engine/remote-cache.ts';
-import { androidSyncPlan } from '../offload/signing-files.ts';
-import { androidRequirements, androidToolchainAsync } from '../offload/toolchain.ts';
+import { androidRequirements, androidToolchainAsync } from '../engine/toolchain.ts';
 import { detectAndroidPackage, detectAppIds } from '../workspace/app-id.ts';
 import { detectIsExpo } from '../workspace/project-files.ts';
 import {
@@ -473,6 +472,7 @@ function reactNativeAndroidArtifact(
       }),
       syncPlan: async (repoRoot: string, paths: readonly string[]) => {
         const keystore = resolveKeystore(root, settings, layout);
+        const { androidSyncPlan } = await import('../offload/signing-files.ts');
         return androidSyncPlan(repoRoot, paths, {
           release,
           configured: [

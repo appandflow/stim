@@ -111,7 +111,7 @@ const swiftPackage: ProjectIntegration = {
       validate: (operation) => (operation === 'macos' ? null : undefined),
       macos: async () => (await import('./swiftpm-macos.ts')).swiftpmMacosProject(root),
       doctor: async () => {
-        const { macosToolchain, macosToolchainAsync } = await import('../offload/toolchain.ts');
+        const { macosToolchain, macosToolchainAsync } = await import('../engine/toolchain.ts');
         return {
           inspect: () => [],
           offloadTargets: ({ options: { host = process.platform, platform, operation } }) =>

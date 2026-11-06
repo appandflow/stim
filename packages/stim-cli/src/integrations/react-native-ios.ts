@@ -28,7 +28,7 @@ import { easDeviceBuildRemedy } from '../engine/eas-build.ts';
 import { copyAppAside, writeIpTxt } from '../engine/ios-lan.ts';
 import { staleNativeDirRefusal, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { bundlerPin } from '../engine/bundler.ts';
-import { buildsOnlyOnWorker, iosToolchainAsync } from '../offload/toolchain.ts';
+import { buildsOnlyOnWorker, iosToolchainAsync } from '../engine/toolchain.ts';
 import { iosSyncPlan } from '../offload/signing-files.ts';
 import { resolveIosProjectDir, type IosProjectDir, type SettingsObject } from '../workspace/settings.ts';
 import { IosRecipeRefusal, type IosProject, type IosArtifactContext, type IosArtifactRecipe } from './ios-project.ts';

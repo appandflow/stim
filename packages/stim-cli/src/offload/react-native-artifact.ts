@@ -5,7 +5,8 @@ import { reactNativeArtifactQuery, reactNativeArtifactIdentity } from '@stim-cli
 import type { BuildReactNativeArtifactQuery } from '@stim-cli/core/protocol';
 import { getExecutor } from '../exec.ts';
 import { BuildArtifactCache } from './build-artifact-cache.ts';
-import { iosToolchainAsync, workerToolchain, type IosToolchain, type WorkerToolchain } from './toolchain.ts';
+import { workerToolchain } from './toolchain.ts';
+import { iosToolchainAsync, type IosToolchain, type WorkerToolchain } from '../engine/toolchain.ts';
 
 export function reactNativeBuildQuery(
   build: {

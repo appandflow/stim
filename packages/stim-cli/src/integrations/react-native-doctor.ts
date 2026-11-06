@@ -17,14 +17,14 @@ import { repoRootAsync } from '../workspace/worktree.ts';
 import { iosConfigurationSetting } from '../commands/ios/support.ts';
 import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 import { bundlerPin } from '../engine/bundler.ts';
-import type { BuildTarget } from '../offload/toolchain.ts';
+import type { BuildTarget } from '../engine/toolchain.ts';
 import {
   androidRequirements,
   androidToolchain,
   androidToolchainAsync,
   buildsOnlyOnWorker,
   iosToolchainAsync,
-} from '../offload/toolchain.ts';
+} from '../engine/toolchain.ts';
 import { detectIsExpo } from '../workspace/project-files.ts';
 import { resolveAndroidLayout, resolveIosProjectDir } from '../workspace/settings.ts';
 import type { ProjectDoctor } from './project-doctor.ts';

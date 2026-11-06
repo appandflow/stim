@@ -34,7 +34,7 @@ import { verifyLaunch, verifyReleaseLaunch } from '../../engine/launch-verify.ts
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../../engine/deps.ts';
-import { iosToolchainAsync } from '../../offload/toolchain.ts';
+import { memoizedIosToolchainAsync } from '../../engine/toolchain.ts';
 import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
 import { diskFloorGate } from '../../daemon/floor.ts';
 import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
@@ -171,7 +171,7 @@ export interface IosDeps {
   readPodState: typeof readPodState;
   podsAreStale: typeof podsAreStale;
   runPodInstall: typeof runPodInstall;
-  iosToolchain: typeof iosToolchainAsync;
+  iosToolchain: typeof memoizedIosToolchainAsync;
   buildIos: typeof buildIos;
   discoverXcodeProject: typeof discoverXcodeProject;
   resolveScheme: typeof resolveScheme;
@@ -284,7 +284,7 @@ export const DEFAULT_DEPS: IosDeps = {
   readPodState,
   podsAreStale,
   runPodInstall,
-  iosToolchain: iosToolchainAsync,
+  iosToolchain: memoizedIosToolchainAsync,
   buildIos,
   discoverXcodeProject,
   resolveScheme,
