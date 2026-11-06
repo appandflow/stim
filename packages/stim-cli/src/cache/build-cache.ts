@@ -6,7 +6,7 @@ import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } fr
 import { loadConfigAsync as loadFingerprintConfig } from '@expo/fingerprint/build/Config.js';
 import { normalizeOptionsAsync } from '@expo/fingerprint/build/Options.js';
 import { isIgnoredPathWithMatchObjects } from '@expo/fingerprint/build/utils/Path.js';
-import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
+import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache/tiers';
 import { resolveArtifact, storeArtifactAsync, type StimContext } from '@stim-cli/core';
 import { trace } from '@stim-cli/core/state';
 import { readdir, rename, rm, writeFile } from 'node:fs/promises';

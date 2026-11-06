@@ -39,7 +39,7 @@ import {
   updateWorkspaceStateAsync,
   withWorkspaceStateLockAsync,
 } from '../workspace/workspace-state.ts';
-import { CACHE_PROVIDER_ENV, cacheProviderEnv } from '@stim-cli/cache';
+import { CACHE_PROVIDER_ENV, cacheProviderEnv } from '@stim-cli/cache/tiers';
 import {
   WorkspaceProcessCleanupError,
   workspaceProcessLockError,

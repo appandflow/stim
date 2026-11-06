@@ -38,7 +38,7 @@ import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
-import { loadCacheProvider } from '@stim-cli/cache';
+import type { loadCacheProvider } from '@stim-cli/cache';
 import { storedAppId as cacheEntryAppId } from '../cache/build-cache.ts';
 import { formatDuration, phaseLine, refuseNoProject, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
 import type { CcacheActivity, DevServerStart } from '../engine/build-facts.ts';
@@ -507,7 +507,7 @@ function resolveRunAndroidOptions(
     resolveRemoteBuild = resolveRemote,
     uploadRemoteBuild = uploadRemote,
     resolveCacheProvider = resolveCacheProviderConfig,
-    loadCacheProviderModule = loadCacheProvider,
+    loadCacheProviderModule = async (input) => (await import('@stim-cli/cache')).loadCacheProvider(input),
     storedAppId = cacheEntryAppId,
     install = installAndroidApp,
     launch = launchAndroidApp,

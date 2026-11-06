@@ -7,7 +7,7 @@ import {
   type LoadCacheProviderResult,
   type ProviderCallResult,
   type WarnOnce,
-} from './provider.ts';
+} from './provider-core.ts';
 
 export const BUILD_RESOLVE_TIMEOUT_MS = 30_000;
 export const BUILD_UPLOAD_TIMEOUT_MS = 60_000;
