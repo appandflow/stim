@@ -2933,8 +2933,8 @@ msgid "on {machine}"
 msgstr "on {machine}"
 
 #: src/lib/build-machines.ts
-msgid "on {machine}, run stim service update --release <version>, then run stim remote add {machine} on the computer this phone is paired with"
-msgstr "on {machine}, run stim service update --release <version>, then run stim remote add {machine} on the computer this phone is paired with"
+msgid "on {machine}, run stim remote update {machine} from the paired computer (or stim engine update on {machine})"
+msgstr "on {machine}, run stim remote update {machine} from the paired computer (or stim engine update on {machine})"
 
 #: src/lib/home-list.ts
 msgid "on {macName}"

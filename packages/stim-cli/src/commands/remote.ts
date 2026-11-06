@@ -9,6 +9,7 @@ import {
   type MachineCredential,
 } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
+import { processContext } from '../cli-operation.ts';
 import { phaseLine } from '../command-output.ts';
 import { configuredMachines, forgetDeviceHostMachine, inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { forgetBuildMachine, inspectBuildMachines } from '../offload/build-machines.ts';
@@ -209,6 +210,25 @@ export default function remoteCommand(program: Command, version: string, io: Tai
         );
         console.log(`${machine}: ${stateLine(buildReport, hostReport)}`);
         printFindings(findings);
+      }),
+    );
+
+  remote
+    .command('update <machine>')
+    .description('Update an approved remote machine to the newest compatible Stim release on its channel.')
+    .option('--channel <channel>', 'select versions from latest or next for this update')
+    .action((machine: string, opts: { channel?: string }) =>
+      run(false, async () => {
+        requireMachine(machine);
+        const channel = opts.channel === 'latest' || opts.channel === 'next' ? opts.channel : undefined;
+        if (opts.channel && !channel)
+          throw refusal('STIM_BAD_ARG', `--channel ${opts.channel} is unknown.`, 'Use latest or next.');
+        const { updateRemoteMachine } = await import('./remote-update.ts');
+        try {
+          console.log(await updateRemoteMachine(processContext(process.cwd()), machine, version, channel, io));
+        } catch (error) {
+          throw refusal('STIM_ENGINE_REFUSED', error instanceof Error ? error.message : String(error), null);
+        }
       }),
     );
 

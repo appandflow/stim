@@ -873,6 +873,7 @@ export function protocolJsonSchema(): JsonSchema {
               name: { type: 'string' },
               version: { type: 'string' },
               stim: { type: 'string' },
+              channel: { enum: ['latest', 'next'] },
               home: { type: 'string' },
               id: { type: 'string' },
               port: { type: 'integer' },

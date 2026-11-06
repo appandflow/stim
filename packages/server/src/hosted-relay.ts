@@ -83,6 +83,7 @@ export class Upstream {
   /** The host's `peer`, 0 when its `hello` sends none, and the version of the `stim` it runs. */
   peer = 0;
   stim = 'an older stim';
+  channel: 'latest' | 'next' = 'latest';
   onClose: (() => void) | null = null;
   connectMs = 0;
   helloMs = 0;
@@ -204,6 +205,7 @@ export class Upstream {
     if (typeof reply.result.peer === 'number') this.peer = reply.result.peer;
     if (isJsonObject(reply.result.server) && typeof reply.result.server.stim === 'string')
       this.stim = reply.result.server.stim;
+    if (isJsonObject(reply.result.server) && reply.result.server.channel === 'next') this.channel = 'next';
   }
 
   request(method: string, params: unknown): Promise<Reply> {

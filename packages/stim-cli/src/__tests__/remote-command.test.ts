@@ -8,8 +8,28 @@ import { readBuildMachines, readDeviceHostMachines } from '@stim-cli/core/state'
 import remoteCommand from '../commands/remote.ts';
 import { inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectBuildMachines } from '../offload/build-machines.ts';
-import type { HelloReply, TailnetMachineIo } from '../offload/tailnet.ts';
+import type { Endpoint, HelloReply, TailnetMachineIo } from '../offload/tailnet.ts';
 import { loadConfig, writeConfigSetting } from '../workspace/config.ts';
+import { getExecutor } from '../exec.ts';
+import type { Upstream } from '@stim-cli/server/hosted-relay';
+
+const updating = vi.hoisted(() => ({
+  construct: vi.fn<(target: Endpoint, serverKey: string) => void>(),
+  open: vi.fn<Upstream['open']>(),
+  request: vi.fn<Upstream['request']>(),
+  close: vi.fn<Upstream['close']>(),
+}));
+vi.mock('@stim-cli/server/hosted-relay', () => ({
+  Upstream: class {
+    channel = 'next';
+    open = updating.open;
+    request = updating.request;
+    close = updating.close;
+    constructor(target: Endpoint, serverKey: string) {
+      updating.construct(target, serverKey);
+    }
+  },
+}));
 
 let home: string;
 let cwd: string;
@@ -94,6 +114,37 @@ test('add refuses a name that is not a machine entry and writes nothing', async 
   expect(process.exitCode).toBe(1);
   expect(loadConfig()?.remote?.machines).toEqual(['mini']);
   expect(readBuildMachines()).toEqual([]);
+});
+
+test('update resolves an approved worker, selects its channel and prints its staged version', async () => {
+  await approveMini();
+  const { request, close } = updating;
+  updating.open.mockResolvedValue(undefined);
+  request.mockResolvedValueOnce({ result: { state: 'installing' } }).mockResolvedValueOnce({
+    result: {
+      running: null,
+      last: { ok: true, message: 'Build bbbbbbbbbbbb is staged; the engine switches once running work drains.' },
+    },
+  });
+  vi.spyOn(getExecutor(), 'runFileAsync').mockResolvedValue(
+    JSON.stringify([
+      { version: '9.10.0', peer: PEER - 1, 'dist-tags': { latest: '9.10.0', next: '9.11.0-next.1' } },
+      { version: '9.11.0-next.1', peer: PEER, 'dist-tags': { latest: '9.10.0', next: '9.11.0-next.1' } },
+    ]),
+  );
+  const out = await remote(fakeIo([]), 'update', 'mini');
+  expect(updating.construct).toHaveBeenCalledWith(
+    {
+      url: 'wss://100.64.0.7:7443',
+      servername: 'mini.tail1.ts.net',
+      host: 'mini.tail1.ts.net:7443',
+    },
+    SERVER_KEY,
+  );
+  expect(request).toHaveBeenCalledWith('engine.update', { version: '9.11.0-next.1' });
+  expect(out).toContain('mini: stim 9.11.0-next.1. Build bbbbbbbbbbbb is staged');
+  expect(close).toHaveBeenCalled();
+  expect(process.exitCode).toBeUndefined();
 });
 
 test('list --json gives each machine its server key fingerprint, reachability and the revoke command for there', async () => {

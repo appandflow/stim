@@ -14,6 +14,7 @@ export default defineConfig({
     cli: 'src/cli.ts',
     build: 'src/build.ts',
     environment: 'src/environment.ts',
+    'hosted-relay': 'src/hosted-relay.ts',
     'release-install': 'src/release-install.ts',
     'service-plist': 'src/service-plist.ts',
     'stim-service-runner': 'src/service-runner.ts',

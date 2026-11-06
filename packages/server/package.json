@@ -27,6 +27,11 @@
       "default": "./dist/protocol.mjs"
     },
     "./protocol.schema.json": "./dist/protocol.schema.json",
+    "./hosted-relay": {
+      "types": "./dist/hosted-relay.d.mts",
+      "module-sync": "./dist/hosted-relay.mjs",
+      "default": "./dist/hosted-relay.mjs"
+    },
     "./cli": {
       "types": "./dist/cli.d.mts",
       "module-sync": "./dist/cli.mjs",

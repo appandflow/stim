@@ -373,7 +373,15 @@ export interface HelloResult {
    * user it runs as, so clients can show paths under it as `~/...`.
    */
   /** `port`, on the local socket only, is the server's TCP port, so a client can tell which server answered. */
-  server: { name: string; version: string; stim: string; home?: string; id?: string; port?: number };
+  server: {
+    name: string;
+    version: string;
+    stim: string;
+    home?: string;
+    id?: string;
+    port?: number;
+    channel?: 'latest' | 'next';
+  };
   capabilities: Capability[];
   /** The actions this device may run: every one of {@link ACTIONS} with `control`, none without. */
   actions: ActionName[];

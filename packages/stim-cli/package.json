@@ -42,6 +42,11 @@
       "default": "./dist/api.mjs"
     },
     "./package.json": "./package.json",
+    "./engine-state": {
+      "types": "./dist/engine-state.d.mts",
+      "module-sync": "./dist/engine-state.mjs",
+      "default": "./dist/engine-state.mjs"
+    },
     "./cache-manifest": {
       "types": "./dist/cache-manifest.d.mts",
       "module-sync": "./dist/cache-manifest.mjs",

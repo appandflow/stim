@@ -430,7 +430,7 @@ async function inspectMachine(
         ),
       };
     case 'outdated': {
-      const outdated = outdatedServer(entry, version, outcome.command, localName, outcome.reason);
+      const outdated = outdatedServer(entry, outcome.command, localName, outcome.reason);
       const diagnosis: RemoteDiagnosis = {
         layer: 'compat',
         code: 'server-outdated',
