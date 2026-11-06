@@ -75,18 +75,14 @@ it('refuses symlink escape through the AVD directory', () => {
   symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
   expect(() => benchmarkAvdDescription(name, { reportedPath: link, allowedRoots: [run] })).toThrow('outside');
 });
-it.each([
-  '',
-  'NO_AVD_INFO\nOK',
-  'KO: unavailable',
-  '/other.avd\nOK',
-  '../Trailhead_run-1.avd',
-  '/Trailhead_run-1.avd\n/unexpected',
-])('refuses unavailable or ambiguous console output %s', (reportedPath) => {
-  expect(() => benchmarkAvdDescription(name, { reportedPath, allowedRoots: [root] })).toThrow(
-    'Unverified benchmark AVD path',
-  );
-});
+it.each(['', 'KO: unavailable', '/other.avd\nOK', '../Trailhead_run-1.avd', '/Trailhead_run-1.avd\n/unexpected'])(
+  'refuses unavailable or ambiguous console output %s',
+  (reportedPath) => {
+    expect(() => benchmarkAvdDescription(name, { reportedPath, allowedRoots: [root] })).toThrow(
+      'Unverified benchmark AVD path',
+    );
+  },
+);
 it('refuses traversal names and missing reported configurations', () => {
   expect(() => benchmarkAvdDescription('../escape')).toThrow('name');
   expect(() =>

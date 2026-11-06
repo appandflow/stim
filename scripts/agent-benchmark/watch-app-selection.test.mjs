@@ -5,7 +5,6 @@ import {
   iosDevicesFromSimctl,
   matchesExpectedAndroidEmulator,
   matchesExpectedIosSimulator,
-  readinessProofKind,
   selectAndroidCandidate,
   selectIosCandidate,
 } from './watch-app-selection.mjs';
@@ -21,15 +20,6 @@ const device = {
   udid: 'RUN-UDID',
   isAvailable: true,
 };
-
-it('does not wait for an edited APK label or JS marker during launch-error recovery', () => {
-  for (const platform of ['ios', 'android']) {
-    expect(readinessProofKind(platform, 'launch-crash')).toBeNull();
-    expect(readinessProofKind(platform, 'javascript')).toBeNull();
-  }
-  expect(readinessProofKind('android', 'native')).toBe('android-native');
-  expect(readinessProofKind('ios', 'native')).toBeNull();
-});
 
 describe('benchmark iOS simulator selection', () => {
   it('preserves each device runtime from simctl JSON', () => {

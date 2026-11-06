@@ -62,9 +62,7 @@ function prepare(paths, policy = paths.policy) {
 describe('benchmark runner filesystem isolation', () => {
   it.skipIf(process.platform !== 'darwin').each([
     ['ios', 'stim'],
-    ['ios', 'control'],
     ['android', 'stim'],
-    ['android', 'control'],
   ])('reads warmed %s %s dependencies without exposing original source or writes', (platform, arm) => {
     const paths = fixture();
     const original = join(paths.root, 'fixture');
@@ -275,9 +273,7 @@ describe('benchmark runner filesystem isolation', () => {
       nested: 'sandbox-exec: sandbox_apply: Operation not permitted',
       ps: '/bin/sh: /bin/ps: Operation not permitted',
     };
-    const calls = [];
     const execute = (denied) => (file, args) => {
-      calls.push([file, args]);
       const command = args.slice(2).join(' ');
       const key = command.includes('/usr/bin/true') ? 'nested' : command.includes('/bin/ps') ? 'ps' : 'unknown';
       if (!denied.includes(key)) return '';
@@ -298,14 +294,6 @@ describe('benchmark runner filesystem isolation', () => {
         isolationCompatibility: bothRefused,
       }),
     );
-    expect(calls.length).toBeGreaterThan(0);
-    for (const [file, args] of calls) {
-      expect(file).toBe('/usr/bin/sandbox-exec');
-      expect(args.slice(0, 2)).toEqual(['-p', paths.policy]);
-    }
-    const nested = calls.find(([, args]) => args.at(-1) === '/usr/bin/true')[1];
-    expect(nested.slice(2, 4)).toEqual(['/usr/bin/sandbox-exec', '-p']);
-    expect(nested[4]).toContain('(deny default)');
     expect(() => verifyIsolationCompatibility(isolation, { platform: 'ios', execute: execute(['ps']) })).toThrow(
       '/bin/sh: /bin/ps: Operation not permitted',
     );

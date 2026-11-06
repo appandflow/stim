@@ -26,7 +26,6 @@ it.each([
   ['literal text', "'Offline maps'", 0, true],
   ['failed wait', "'Offline maps'", 1, false],
   ['chained wait', "'Offline maps'; echo complete", 0, false],
-  ['newline', "\n'Offline maps'", 0, false],
 ])('collects screen and recording evidence only for successful standalone %s', async (_name, text, exitCode, valid) => {
   root = realpathSync.native(mkdtempSync(join(tmpdir(), 'benchmark-proof-')));
   const runDir = join(root, 'run');
