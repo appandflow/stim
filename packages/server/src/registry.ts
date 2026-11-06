@@ -52,7 +52,7 @@ export interface PairedDevice {
   capabilities: Capability[];
   /** Where and what to push, from the device's last `push.register`. */
   push?: PushRegistration;
-  /** The setup journal of the `stim-server setup` run that approved this client. */
+  /** The setup journal of the `stim setup` run that approved this client. */
   setupJournal?: string;
   /** The app and version this client named in its last `hello`, cleaned like a name. For display only. */
   clientApp?: string;
@@ -591,7 +591,7 @@ function storeSecret(
 }
 
 /**
- * Lets the holder of a setup ticket record its key with `capabilities` until `expiresAt`. `stim-server setup` stores
+ * Lets the holder of a setup ticket record its key with `capabilities` until `expiresAt`. `stim setup` stores
  * it once the person approved; the ticket itself is never written.
  */
 export function storeSetupSecret(
@@ -735,7 +735,7 @@ export function touchDevice(id: string, client: HelloClient = {}, now: number = 
   });
 }
 
-/** Sets a pairing's read/control permissions. Build and device-host clients are approved only by `stim-server setup`. */
+/** Sets a pairing's read/control permissions. Build and device-host clients are approved only by `stim setup`. */
 export function grantDevice(id: string, capabilities: Capability[]): GrantOutcome {
   return transaction<GrantOutcome>(() => {
     const devices = readRecords(devicesFile());

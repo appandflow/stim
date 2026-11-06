@@ -111,7 +111,7 @@ function tailscaleFindings(setup: ServerSetup): Finding[] {
         code: 'server-tailscale',
         level: lan ? 'note' : 'cost',
         title: 'Tailscale is not running, so no other machine or phone can reach this stim-server over the tailnet',
-        detail: `${diagnosis.message} This machine has a stim-server service with a tailnet route or approved build or device-host clients.${lan ? ' The server also listens on the local network, which clients there can still use.' : ''}`,
+        detail: `${diagnosis.message} This machine has a stim service with a tailnet route or approved build or device-host clients.${lan ? ' The server also listens on the local network, which clients there can still use.' : ''}`,
         fix: diagnosis.remedy,
       },
     ];
@@ -132,7 +132,7 @@ function tailscaleFindings(setup: ServerSetup): Finding[] {
           code: 'server-tailscale-route',
           level: 'cost',
           title: `The tailscale serve route on https port ${recorded} points at port ${elsewhere.target}, not at stim-server`,
-          detail: `${describeServer(server)} listens on port ${server.port}, but the route that \`stim-server service install --serve\` recorded for it proxies to 127.0.0.1:${elsewhere.target}, so phones and other machines reach nothing or another program.`,
+          detail: `${describeServer(server)} listens on port ${server.port}, but the route that \`stim service install --serve\` recorded for it proxies to 127.0.0.1:${elsewhere.target}, so phones and other machines reach nothing or another program.`,
           fix: `Run \`${serveCommand(recorded, server.port)}\` to point the route at the server.`,
         },
       ];
@@ -164,7 +164,7 @@ function funnelFindings(setup: ServerSetup): Finding[] {
             code: 'server-funnel',
             level: 'cost',
             title: 'PUBLIC: a Tailscale Funnel route exposes stim-server to the internet',
-            detail: `https port ${funnel.port} is a Funnel port and proxies to stim-server on port ${funnel.target}, so anyone on the internet can reach it. stim-server serves only tailnet routes; stim-server service install refuses this.`,
+            detail: `https port ${funnel.port} is a Funnel port and proxies to stim-server on port ${funnel.target}, so anyone on the internet can reach it. stim-server serves only tailnet routes; stim service install refuses this.`,
             fix: `Run \`tailscale funnel --https=${funnel.port} off\`, then check \`tailscale serve status\`.`,
           },
         ]

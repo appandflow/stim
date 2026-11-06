@@ -140,7 +140,7 @@ setting applies when the next share starts or the service restarts.
 
 ### Links that ended or never existed
 
-When stim-server runs as the background service (`stim-server service install`)
+When stim-server runs as the background service (`stim service install`)
 and `share.publicUrl` is set in proxy mode, the share listener binds
 `share.port` when the service starts and stays bound with no share live.
 Without that, a visitor to an expired link would reach a closed port and see
@@ -154,7 +154,7 @@ and a strict Content-Security-Policy.
 
 Nothing else changes. The listener still binds `127.0.0.1` only, takes no
 Tailscale route and no `server/share-route` claim, and closes when the service
-stops. The on-demand `stim-server --share` that `stim share` starts still exits
+stops. The on-demand `stim serve --share` that `stim share` starts still exits
 after its last share, and Tailscale exposure is unchanged, so neither keeps a
 listener. A port that is already taken is logged once in the server log, and
 the next `stim share` refuses with the usual message that names `share.port`.
@@ -162,13 +162,13 @@ the next `stim share` refuses with the usual message that names `share.port`.
 ### When stim-server is not running
 
 With nothing running, the proxy has no upstream to ask, so give it a page of its
-own. `@stim-cli/server` ships `dist/share-viewer/not-running.html`: one file in
+own. `stim` ships `dist/share-viewer/not-running.html`: one file in
 the same design, with its stylesheet inlined, no script and no link to the
 listener. Copy it next to your proxy config. This takes it from the package on
 a machine that has npm:
 
 ```bash
-cd "$(mktemp -d)" && npm pack @stim-cli/server
+cd "$(mktemp -d)" && npm pack stim
 tar -xzf stim-cli-server-*.tgz package/dist/share-viewer/not-running.html
 sudo install -D -m 644 package/dist/share-viewer/not-running.html /var/www/stim-share/not-running.html
 ```

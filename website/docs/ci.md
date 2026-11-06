@@ -5,7 +5,7 @@ title: Continuous integration
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-`@stim-cli/ci` builds an app once, then installs and launches it through Stim,
+`stim ci` builds an app once, then installs and launches it through Stim,
 runs your test command if you give one, and stops the workspace. It supports iOS, Android, macOS,
 and web through the same public API that can be imported from `stim`.
 
@@ -17,17 +17,17 @@ developer checkout out of CI jobs.
 <TabItem value="global" label="Global">
 
 ```sh
-npm install --global @stim-cli/ci
-stim-ci build --platform ios --project ./app
-stim-ci run --platform ios --project ./app --artifacts ./test-results --timeout 1800 -- pnpm test:e2e
+npm install --global stim
+stim ci build --platform ios --project ./app
+stim ci run --platform ios --project ./app --artifacts ./test-results --timeout 1800 -- pnpm test:e2e
 ```
 
 </TabItem>
 <TabItem value="npx" label="npx">
 
 ```sh
-npx --yes --package @stim-cli/ci stim-ci build --platform ios --project ./app
-npx --yes --package @stim-cli/ci stim-ci run --platform ios --project ./app --artifacts ./test-results --timeout 1800 -- pnpm test:e2e
+npx --yes stim ci build --platform ios --project ./app
+npx --yes stim ci run --platform ios --project ./app --artifacts ./test-results --timeout 1800 -- pnpm test:e2e
 ```
 
 </TabItem>
@@ -35,7 +35,7 @@ npx --yes --package @stim-cli/ci stim-ci run --platform ios --project ./app --ar
 
 ## Build
 
-`stim-ci build` is the only step that compiles. It needs no test command or
+`stim ci build` is the only step that compiles. It needs no test command or
 device and preserves existing workspace sessions. It compiles the app, or
 restores it from the native artifact cache, and records it for this checkout,
 platform and selectors (iOS scheme and configuration, Android variant) in
@@ -43,8 +43,8 @@ Stim's workspace state. Nothing else is written: `build` exports no file and
 collects no logs unless you ask.
 
 ```sh
-stim-ci build --platform android --project ./app
-stim-ci build --platform ios --project ./app --export ./app.tar.gz
+stim ci build --platform android --project ./app
+stim ci build --platform ios --project ./app --export ./app.tar.gz
 ```
 
 `--export <path>` also writes the app: an APK for Android, a `tar.gz` that
@@ -65,18 +65,18 @@ iOS outputs target the simulator; distribution archives and web compilation
 are outside this command.
 
 ```ts
-import { buildCI } from '@stim-cli/ci';
+import { buildCI } from 'stim/ci';
 const result = await buildCI({ projectRoot: '/checkout/app', build: { platform: 'ios' } });
 process.exitCode = result.exitCode;
 ```
 
 ## Run and test
 
-`stim-ci run` never builds or replaces the app's JavaScript. It installs and
+`stim ci run` never builds or replaces the app's JavaScript. It installs and
 launches the app the last matching `build` recorded and trusts it, so rebuild
 after changing the project. A Debug app still gets Metro from `run`. With no
 recorded build, `run` refuses with `STIM_NO_RECORDED_BUILD` before touching a
-device, and the failure's `remedy` names the `stim-ci build ...` command to run
+device, and the failure's `remedy` names the `stim ci build ...` command to run
 first. macOS and web are unchanged: macOS `run` builds its app itself.
 
 Every iOS and Android `run` on this machine starts the app from clean state on
@@ -124,7 +124,7 @@ The [package reference](https://github.com/appandflow/stim/tree/main/packages/ci
 documents the library, result schema, artifacts, cancellation, and cache rules.
 
 ```ts
-import { runCI } from '@stim-cli/ci';
+import { runCI } from 'stim/ci';
 
 const result = await runCI({
   projectRoot: '/checkout/app',
@@ -156,9 +156,9 @@ reason yet to bypass the remaining coordination.
 ## GitHub Actions
 
 The repository includes a thin [Stim CI action](https://github.com/appandflow/stim/tree/main/.github/actions/stim-ci).
-It maps workflow inputs to `stim-ci`, runs `build` and then `run` in one step
+It maps workflow inputs to `stim ci`, runs `build` and then `run` in one step
 (iOS and Android always build; macOS only with `export`; web never), forwards
-cancellation, and writes the job summary. It installs the pinned `@stim-cli/ci`
+cancellation, and writes the job summary. It installs the pinned `stim`
 once per runner and version and reuses it for both commands. Native tools and app dependencies must be installed first.
 The bundled TypeScript action uses GitHub's Node.js 24 runtime and supports
 macOS and Linux runners with Bash. Windows is refused; self-hosted runners
@@ -169,7 +169,7 @@ For dogfood against a built Stim checkout:
 ```yaml
 - uses: ./.github/actions/stim-ci
   with:
-    cli-path: packages/ci/dist/stim-ci.mjs
+    cli-path: packages/stim-cli/bin/stim.mjs
     platform: ios
     project: apps/mobile
     command: node ../../scripts/ci/app-smoke.mjs
@@ -181,7 +181,7 @@ For dogfood against a built Stim checkout:
 ```
 
 Once released, consumers can pin the action to a commit and supply `version`
-with an exact published `@stim-cli/ci` version instead of `cli-path`. The
+with an exact published `stim` version instead of `cli-path`. The
 command input is Bash source, like a workflow `run:` step. Pass untrusted
 event values through environment variables, not interpolation into `command`.
 
@@ -192,7 +192,7 @@ launching, starting Metro or running a test command. macOS builds even without
 ```yaml
 - uses: ./.github/actions/stim-ci
   with:
-    cli-path: packages/ci/dist/stim-ci.mjs
+    cli-path: packages/stim-cli/bin/stim.mjs
     platform: android
     project: apps/mobile
     build-only: 'true'
@@ -204,12 +204,8 @@ Build-only records the app for the same workspace/home, sets app/export/cache/ex
 outputs without device outputs, and uses the same diagnostic upload and summary
 path. `build.json` stays local because uploaded `result.json` includes the build facts.
 Exported bytes alone are not a supported cross-job import into a fresh home.
-Use a package version supporting `stim-ci build --artifacts`, or a matching built
-checkout; older releases may not support build diagnostics.
-
 Leave `command` out to only build, install and launch the app from clean state,
-then stop it; a later step can drive it with the outputs below. That needs a
-`@stim-cli/ci` version newer than 1.37.0, which refuses a run without a command.
+then stop it; a later step can drive it with the outputs below.
 
 The `scheme`, `configuration` and `variant` inputs select the build and go to both
 commands; `arch`, `abi` and `eas-profile` go to `build` only. For example,
@@ -242,7 +238,7 @@ virtualization and `eas/upload_artifact` for diagnostics. It is manually
 triggered. EAS Workflows usage counts toward the Expo plan's compute allowance.
 
 Provider configuration contains only environment preparation, invocation and
-artifact upload; lifecycle and test execution remain in `@stim-cli/ci`.
+artifact upload; lifecycle and test execution remain in `stim/ci`.
 
 ## Stim app coverage
 
@@ -258,6 +254,6 @@ tests remain separate.
 
 To try it with an agent:
 
-> Use @stim-cli/ci to run this app's existing test command on a dedicated
+> Use stim ci to run this app's existing test command on a dedicated
 > checkout. Use the exact target in STIM_CI_RUN_RESULT, save result.json and
 > diagnostics, and verify cleanup on both success and a deliberate test failure.

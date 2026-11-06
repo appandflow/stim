@@ -1407,13 +1407,13 @@ async function removeOrRefuse(
     output.error(
       chalk.red(
         service.argument
-          ? `Refusing to remove ${path}: it runs the stim-server service ${service.label} (${service.argument}). ${SERVICE_IN_USE.code}`
-          : `Refusing to remove ${path}: could not read ${service.plist} to check whether the stim-server service ${service.label} runs from it. ${SERVICE_IN_USE.code}`,
+          ? `Refusing to remove ${path}: it runs the stim service ${service.label} (${service.argument}). ${SERVICE_IN_USE.code}`
+          : `Refusing to remove ${path}: could not read ${service.plist} to check whether the stim service ${service.label} runs from it. ${SERVICE_IN_USE.code}`,
       ),
     );
     output.error(
       chalk.dim(
-        `Reinstall the service from another build with \`stim-server service install --label ${service.label}\`, or remove it with \`stim-server service uninstall --label ${service.label}\`, then retry.`,
+        `Reinstall the service from another build with \`stim service install --label ${service.label}\`, or remove it with \`stim service uninstall --label ${service.label}\`, then retry.`,
       ),
     );
     output.fail();

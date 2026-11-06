@@ -463,7 +463,7 @@ const taskScheduler: ServiceManager = {
 export const serviceRoot = (label: string): string =>
   (process.platform === 'linux' ? systemd : process.platform === 'win32' ? taskScheduler : launchd).root(label);
 
-/** The service manager of this platform, or null where `stim-server service` does not run. */
+/** The service manager of this platform, or null where `stim service` does not run. */
 export function serviceManagerOrNull(platform: NodeJS.Platform = process.platform): ServiceManager | null {
   return platform === 'darwin' ? launchd : platform === 'linux' ? systemd : platform === 'win32' ? taskScheduler : null;
 }
@@ -472,7 +472,7 @@ export function serviceManager(): ServiceManager {
   const manager = serviceManagerOrNull();
   if (!manager) {
     throw new ServiceError(
-      `stim-server service manages a launchd LaunchAgent on macOS, a systemd user service on Linux or a scheduled task on Windows, and does not run on ${process.platform}. On this system, start stim-server from your own service manager.`,
+      `stim service manages a launchd LaunchAgent on macOS, a systemd user service on Linux or a scheduled task on Windows, and does not run on ${process.platform}. On this system, start stim serve from your own service manager.`,
     );
   }
   return manager;

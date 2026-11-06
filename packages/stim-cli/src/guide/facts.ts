@@ -583,11 +583,11 @@ leased until <time>" for each one.`,
                   stim-server key pinned at approval. "key-unconfirmed" is a
                   local: machine that approved this one but whose key no
                   person confirmed, so nothing pinned it; fingerprint is the
-                  key's fingerprint to compare with the one stim-server setup
+                  key's fingerprint to compare with the one stim setup
                   printed there, and only stim remote add or doctor --fix in a terminal asks.
                   A local: entry has no dnsName. "outdated" means its
                   stim-server speaks protocol 1; the finding names the
-                  stim-server service update command to run there.
+                  stim service update command to run there.
   toolchain       { entries, projectNode } on macOS, else null. entries is one { name, value,
                   source, from? } for node, ANDROID_HOME, JAVA_HOME, stim,
                   brew and adb: source "environment" when this process's
