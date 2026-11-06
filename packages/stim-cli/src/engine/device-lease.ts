@@ -12,7 +12,7 @@ import {
   withWorkspaceStateLockAsync,
   writeWorkspaceState,
 } from '../workspace/workspace-state.ts';
-import { segment } from './build-lock.ts';
+import { segment } from './path-segment.ts';
 
 export const LEASE_VERSION = 1;
 export const DEFAULT_LEASE_MS: number = 5 * 60 * 1000;
