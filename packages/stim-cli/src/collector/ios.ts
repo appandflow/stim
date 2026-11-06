@@ -79,7 +79,7 @@ interface NoiseRule {
   level?: 'warn';
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- `log stream --style ndjson` events are untyped JSON whose fields vary by event type
 type LogStreamEvent = any;
 
 function ruleMatches(

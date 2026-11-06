@@ -8,7 +8,7 @@ import { supervisorError } from './errors.ts';
 import { bundleResponseMiddleware } from '../../shim/bundle-response.cjs';
 import { getExecutor } from '../exec.ts';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Metro and the dev middleware load from the project at runtime, and Stim has no types for them
 type BareModule = any;
 
 export const BARE_PACKAGES: string[] = [
