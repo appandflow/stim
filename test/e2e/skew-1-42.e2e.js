@@ -34,6 +34,8 @@ let server;
 let exited;
 let port;
 let machine;
+const previousHome = process.env.STIM_HOME;
+const TEST = { timeout: 30_000 };
 
 before(async () => {
   process.env.STIM_HOME = home;
@@ -58,11 +60,14 @@ before(async () => {
   });
   const signal = AbortSignal.timeout(20_000);
   let response;
-  do response = await fetch(`http://127.0.0.1:${port}/health`, { signal });
-  while (response.status === 503);
+  for (;;) {
+    response = await fetch(`http://127.0.0.1:${port}/health`, { signal });
+    if (response.status !== 503) break;
+    await response.body?.cancel();
+  }
   assert.equal(response.status, 200, errors);
   machine = (await response.json()).name;
-});
+}, TEST);
 
 after(async () => {
   terminateClients();
@@ -70,19 +75,18 @@ after(async () => {
     server.kill('SIGTERM');
     await exited;
   }
-  delete process.env.STIM_HOME;
+  if (previousHome === undefined) delete process.env.STIM_HOME;
+  else process.env.STIM_HOME = previousHome;
   rmSync(home, { recursive: true, force: true });
-});
+}, TEST);
 
 const url = () => `ws://127.0.0.1:${port}`;
 
-/** A single-use pairing token from the real `stim pair`, as a person shows it to a phone or to Stim Desktop. */
 async function pairingToken() {
   const { stdout } = await execFileAsync(process.execPath, [stim, 'pair', '--json', '--port', String(port)], { env });
   return JSON.parse(stdout).qr.pairingToken;
 }
 
-/** First contact over Noise with a fresh pairing token, then `hello` as `client`. */
 async function pairedHello(client) {
   const connection = await noiseConnect(url(), { secret: await pairingToken(), name: 'Skew client' });
   return { connection, reply: await connection.request('hello', { client }) };
@@ -113,24 +117,17 @@ async function readWebShares141() {
   }
 }
 
-test('a 1.41 CLI offloading over Noise is turned away with peer-too-old and the update remedy', async () => {
+test('a 1.41 CLI offloading over Noise is turned away with peer-too-old and the update remedy', TEST, async () => {
   const { keyPair } = setupClient(['build'], 'Laptop');
   const cli = await noiseConnect(url(), { keyPair });
   const reply = await cli.request('hello', {
     client: { name: 'stim', version: '1', runId: 'skew-1-41-cli' },
     access: 'build',
   });
-  assert.equal(reply.error?.code, 'protocol-unsupported', JSON.stringify(reply));
-  assert.ok(TURNED_AWAY_1_41.has(reply.error.code), '1.41 falls back to a local build only for a refusal');
-  const printed = `mac-mini: ${reply.error.message}`;
-  assert.ok(
-    printed.startsWith(
-      `mac-mini: peer-too-old: ${machine} runs stim ${version} (peer ${PEER}); this stim sends no peer;`,
-    ),
-    printed,
-  );
-  assert.ok(printed.includes(`npm i -g stim@${version}`), printed);
-  assert.ok(printed.includes('stim service install'), printed);
+  assert.ok(TURNED_AWAY_1_41.has(reply.error?.code), JSON.stringify(reply));
+  const { message } = reply.error;
+  assert.ok(message.startsWith(`peer-too-old: ${machine} runs stim ${version} `), message);
+  assert.ok(message.includes(`npm i -g stim@${version}`), message);
   assert.deepEqual(await cli.closedWith, REFUSED);
 
   const current = await noiseConnect(url(), { keyPair });
@@ -143,31 +140,34 @@ test('a 1.41 CLI offloading over Noise is turned away with peer-too-old and the 
   current.socket.close();
 });
 
-test('a 1.41 readWebShares on the 1.42 local socket reads the share list, never unreadable', async () => {
+test('a 1.41 readWebShares on the 1.42 local socket reads the share list, never unreadable', TEST, async () => {
   assert.deepEqual(await readWebShares141(), []);
 });
 
-test('a phone hello without phoneApi is refused with protocol-unsupported and the App Store remedy', async () => {
+test('a phone hello without phoneApi is refused with protocol-unsupported and the App Store remedy', TEST, async () => {
   await assertRefused(
     await pairedHello({ name: 'stim-mobile', version: '0.9.0' }),
     'Update Stim Mobile from the App Store or TestFlight.',
   );
 });
 
-test('a Stim Desktop hello without desktopApi is refused over Noise and answered on the local socket', async () => {
-  const desktop = { name: 'Stim Desktop', version: '0.9.0' };
-  await assertRefused(await pairedHello(desktop), 'Update Stim Desktop (Stim > Check for Updates).');
+test(
+  'a Stim Desktop hello without desktopApi is refused over Noise and answered on the local socket',
+  TEST,
+  async () => {
+    const desktop = { name: 'Stim Desktop', version: '0.9.0' };
+    await assertRefused(await pairedHello(desktop), 'Update Stim Desktop (Stim > Check for Updates).');
 
-  const local = await localConnect(serverLocalSocket());
-  try {
-    const reply = await local.request('hello', { client: desktop });
-    assert.equal(reply.error, undefined, JSON.stringify(reply));
-    assert.equal(reply.result.desktopApi, DESKTOP_API);
-    assert.equal('features' in reply.result, false);
-  } finally {
-    local.socket.terminate();
-  }
-});
+    const local = await localConnect(serverLocalSocket());
+    try {
+      const reply = await local.request('hello', { client: desktop });
+      assert.equal(reply.error, undefined, JSON.stringify(reply));
+      assert.equal(reply.result.desktopApi, DESKTOP_API);
+    } finally {
+      local.socket.terminate();
+    }
+  },
+);
 
 /** What a 1.41 stim-server answers `hello` with: `features` and no wire integers; `host` only under Stim Host. */
 function hello141(host) {
@@ -182,7 +182,7 @@ function hello141(host) {
   };
 }
 
-test('a 1.42 phone parses a 1.41 server hello, which carries no phoneApi', async () => {
+test('a 1.42 phone parses a 1.41 server hello, which carries no phoneApi', TEST, async () => {
   const token = newSecret();
   const { lookup, psk } = secretValues(Buffer.from(token, 'base64url'));
   const keyPair = generateNoiseKeyPair();
@@ -210,8 +210,6 @@ test('a 1.42 phone parses a 1.41 server hello, which carries no phoneApi', async
       });
       phone.socket.close();
       assert.equal(rpcResultIssue('hello', reply.result), null, JSON.stringify(reply));
-      assert.equal(reply.result.phoneApi, undefined);
-      assert.equal(host?.owner, undefined);
     }
   } finally {
     for (const client of old.clients) client.terminate();

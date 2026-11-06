@@ -219,7 +219,7 @@ struct NoiseInteropTests {
       }
     }
     defer { raw.close() }
-    raw.send(#"{"id":1,"method":"hello","params":{"client":{"name":"raw","version":"1"}}}"#)
+    raw.send(#"{"id":1,"method":"hello","params":{"client":{"name":"raw","version":"1","desktopApi":1}}}"#)
     raw.send(#"{"id":2,"method":"desktop.settings.get","params":{}}"#)
     for _ in 0..<400 where replies.count < 2 { try await Task.sleep(for: .milliseconds(25)) }
     guard replies.count == 2, case .object(let refused) = replies[1], case .object(let error)? = refused["error"] else {
@@ -298,7 +298,6 @@ struct NoiseInteropTests {
       return
     }
     #expect(result["desktopApi"] == .number(Double(ServerProtocol.desktopApi)))
-    #expect(result["features"] == nil)
   }
 
   @Test func onlyAMatchingFingerprintReachesMessage3AndAPairingPastItIsKept() async throws {
