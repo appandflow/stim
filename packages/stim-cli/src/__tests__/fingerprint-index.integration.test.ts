@@ -208,7 +208,7 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))(
     });
 
     test(
-      'a module that appears where the config tried to require one, or a file deep in a listed tree, moves the key',
+      'a module that appears where the config tried to require or resolve one, or a file deep in a listed tree, moves the key',
       SLOW,
       async () => {
         const root = expoApp('app', {
@@ -217,11 +217,14 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))(
             'let local = {};',
             "try { local = require('./overrides/local.js'); } catch {}",
             "const fonts = fs.readdirSync('./fonts', { recursive: true }).map(String).sort();",
-            'module.exports = ({ config }) => ({ ...config, extra: { local, fonts } });',
+            'let has = false;',
+            "try { require.resolve('./cfg/local.json'); has = true; } catch {}",
+            'module.exports = ({ config }) => ({ ...config, extra: { local, fonts, has } });',
             '',
           ].join('\n'),
           'fonts/a.ttf': 'a',
           'overrides/keep.txt': 'keep',
+          'cfg/keep.txt': 'keep',
         });
         await settled();
         await key(root);
@@ -236,6 +239,12 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))(
         const listed = await key(root);
         expect(listed.hash).not.toBe(required.hash);
         expect(listed.hash).toBe((await key(root, 'skip')).hash);
+        await settled();
+        await key(root);
+        write(join(root, 'cfg', 'local.json'), '{}');
+        const resolved = await key(root);
+        expect(resolved.hash).not.toBe(listed.hash);
+        expect(resolved.hash).toBe((await key(root, 'skip')).hash);
       },
     );
 

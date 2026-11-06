@@ -195,9 +195,9 @@ export function templateScripts(tgz: string): string[] {
 }
 
 /**
- * Row 24: every env name the native build scripts read (`scriptEnvNames` of each script), valued from the env the native build runs under, plus every
- * `ORG_GRADLE_PROJECT_*` on Android, which Gradle reads as project properties. An absolute path value is keyed in
- * its `pathForm`, and returned so its file or tree can be hashed too.
+ * Row 24: every env name the native build scripts read (`scriptEnvNames` of each script), valued from the env the
+ * native build runs under, plus every `ORG_GRADLE_PROJECT_*` on Android, which Gradle reads as project properties. An
+ * absolute path value is keyed in its `pathForm`, and returned so its file or tree can be hashed too.
  */
 export function buildEnvRows(
   scanned: Iterable<string>,

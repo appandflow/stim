@@ -212,42 +212,55 @@ Module.prototype['_compile'] = function (content, filename, ...rest) {
   return compile.call(this, content, filename, ...rest);
 };
 const hooks = typeof Module.registerHooks === 'function';
+// Node resolves require(), require.resolve() and import, and reads package.json main and exports, through internal
+// bindings the fs wrappers never see. The listings of the directories a relative or absolute specifier names, the
+// node_modules directories a failed bare specifier searched, and the package.json of the package a module resolved
+// into cover a candidate that appears or shadows another and a changed entry.
+function resolving(specifier, parent, resolve) {
+  const target = path.isAbsolute(specifier)
+    ? specifier
+    : parent && /^\.{1,2}(?:\/|$)/.test(specifier)
+      ? path.resolve(path.dirname(parent), specifier)
+      : null;
+  if (target) {
+    record('resolve', path.dirname(target));
+    if (exists(target, true)) record('resolve', target);
+  }
+  let resolved;
+  try {
+    resolved = resolve();
+  } catch (error) {
+    if (!target && parent && !specifier.startsWith('node:'))
+      for (let dir = path.dirname(parent); ; dir = path.dirname(dir)) {
+        if (exists(path.join(dir, 'node_modules'), true)) record('resolve', path.join(dir, 'node_modules'));
+        if (path.dirname(dir) === dir) break;
+      }
+    throw error;
+  }
+  const file = typeof resolved === 'string' ? resolved : resolved?.url;
+  const real = file?.startsWith('file:') ? fileURLToPath(file) : path.isAbsolute(file ?? '') ? file : null;
+  if (active && real)
+    for (let dir = path.dirname(real); ; dir = path.dirname(dir)) {
+      if (exists(path.join(dir, 'package.json'), false)) {
+        record('file', path.join(dir, 'package.json'));
+        break;
+      }
+      if (path.dirname(dir) === dir) break;
+    }
+  return resolved;
+}
+
+const resolveFilename = Module._resolveFilename;
+Module._resolveFilename = function (request, parent, ...rest) {
+  const from = typeof parent?.filename === 'string' ? parent.filename : null;
+  return resolving(request, from, () => resolveFilename.call(this, request, parent, ...rest));
+};
+
 if (hooks)
   Module.registerHooks({
-    // Node resolves require() and import, and reads package.json main and exports, through internal bindings the fs
-    // wrappers never see. The listings of the directories a relative or absolute specifier names, and the package.json
-    // of the package the module resolved into, cover a candidate that appears or shadows another and a changed entry.
     resolve(specifier, context, nextResolve) {
       const parent = context.parentURL?.startsWith('file:') ? fileURLToPath(context.parentURL) : null;
-      const target = path.isAbsolute(specifier)
-        ? specifier
-        : parent && /^\.{1,2}(?:\/|$)/.test(specifier)
-          ? path.resolve(path.dirname(parent), specifier)
-          : null;
-      if (target) {
-        record('resolve', path.dirname(target));
-        if (exists(target, true)) record('resolve', target);
-      }
-      let resolved;
-      try {
-        resolved = nextResolve(specifier, context);
-      } catch (error) {
-        if (!target && parent && !specifier.startsWith('node:'))
-          for (let dir = path.dirname(parent); ; dir = path.dirname(dir)) {
-            if (exists(path.join(dir, 'node_modules'), true)) record('resolve', path.join(dir, 'node_modules'));
-            if (path.dirname(dir) === dir) break;
-          }
-        throw error;
-      }
-      if (active && resolved.url?.startsWith('file:'))
-        for (let dir = path.dirname(fileURLToPath(resolved.url)); ; dir = path.dirname(dir)) {
-          if (exists(path.join(dir, 'package.json'), false)) {
-            record('file', path.join(dir, 'package.json'));
-            break;
-          }
-          if (path.dirname(dir) === dir) break;
-        }
-      return resolved;
+      return resolving(specifier, parent, () => nextResolve(specifier, context));
     },
     load(url, context, nextLoad) {
       const result = nextLoad(url, context);

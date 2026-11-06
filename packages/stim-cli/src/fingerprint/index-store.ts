@@ -618,7 +618,7 @@ export class IndexSession {
     for (const [index, read] of reads.entries()) {
       const validity = checkRead(read, this.roots, metadata);
       if (!validity) return false;
-      if (validity === 'content') {
+      if (validity === 'content' && read.kind !== 'tree') {
         const kind = read.kind;
         const refreshed = takeRead(locate(read.path, this.roots), kind, this.roots, this.since, read.hash);
         if (refreshed) reads[index] = { ...refreshed, hash: read.hash };
