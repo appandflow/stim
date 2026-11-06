@@ -1,7 +1,7 @@
 'use strict';
 
 // Preloaded with --require into every fingerprint evaluator child. Records what the evaluation read and writes it
-// as one JSON object on fd 4 at exit: env names, files, directory listings, existence probes, compiled modules, the
+// as one JSON object on fd 4 at exit: env names, files, listed directories, existence probes, compiled modules, the
 // files of code that enumerated process.env, and the calls that make a result unrepeatable.
 
 const fs = require('node:fs');
