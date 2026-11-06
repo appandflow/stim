@@ -1,9 +1,10 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
 import { dirname } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
+  DEFAULT_SERVER_PORT,
   daemonClaimRoot,
   daemonDir,
   daemonNdjsonFile,
@@ -55,6 +56,8 @@ import { takeOverLegacyDaemon } from './legacy-daemon-takeover.ts';
 // compat end
 import { listenPipe } from './pipe-win32.ts';
 import { createPassesLane, createThreadTable } from './threads.ts';
+import { writeDesktopKey } from './desktop-key.ts';
+import { createNetThread, type NetOptions } from './net.ts';
 
 const TICK_MS = 60_000;
 const DEPENDENCY_SCAN_MS = 10 * 60_000;
@@ -72,6 +75,9 @@ type Level = 'debug' | 'info' | 'warn' | 'error';
 type Resource = 'build' | 'boot';
 
 const RESOURCES: readonly Resource[] = ['build', 'boot'];
+/** What `stim serve` and a service unit ask the net thread to serve from stimd's boot. */
+export type ServeOptions = Omit<NetOptions, 'desktopKey' | 'script' | 'owner'>;
+
 const OPS: Record<Resource, { wait: string; waiting: string; released: string; changed: string }> = {
   build: { wait: 'slot.wait', waiting: 'slot.waiting', released: 'slot.released', changed: 'slot.changed' },
   boot: { wait: 'boot.wait', waiting: 'boot.waiting', released: 'boot.released', changed: 'boot.changed' },
@@ -196,7 +202,7 @@ async function pendingWork(
 }
 
 /**
- * One resident stimd per Stim home: holds the claim at `run/stimd` exclusively and the daemon claim at `daemon/claim`
+ * One resident stimd per Stim home, which returns false when another holds the home: holds the claim at `run/stimd` exclusively and the daemon claim at `daemon/claim`
  * shared, after stopping a stim-daemon from Stim 1.40 to 1.42 that holds that one exclusively; serves the CLI socket,
  * whose address it writes to `run/stimd.json`; and ticks every minute while something runs in the home or the pressure
  * level is above normal, every 5 minutes otherwise, and on demand, each tick measuring once, running the activity,
@@ -210,13 +216,22 @@ export async function runStimd({
   tickMs = TICK_MS,
   slowTickMs = tickMs * SLOW_TICKS,
   mode: startMode = daemonMode({}),
+  serve,
+  desktopKey,
+  onNet,
 }: {
   tickMs?: number;
   /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
   slowTickMs?: number;
   /** The mode the starting command resolved; a later `daemon.mode` change in config can only make it stricter. */
   mode?: DaemonMode;
-} = {}): Promise<void> {
+  /** Starts the net thread at boot with these options, for `stim serve` and a service unit. */
+  serve?: ServeOptions;
+  /** The Desktop key to write to `run/desktop.key` instead of a new one: the key a Stim Desktop gave on stdin. */
+  desktopKey?: string;
+  /** Gets the net thread's first answer to `serve`. */
+  onNet?: (answer: Awaited<ReturnType<ReturnType<typeof createNetThread>['ensure']>>) => void;
+} = {}): Promise<boolean> {
   const identity = stimBuild();
   const build = stimdBuildId();
   const configAtStart = configuredDaemonMode();
@@ -233,8 +248,9 @@ export async function runStimd({
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
     writer.close();
-    return;
+    return false;
   }
+  process.title = 'stimd';
   // compat C22 until removal-minor
   let stopped: number | null = null;
   const takeOver = async () => {
@@ -248,8 +264,24 @@ export async function runStimd({
     releaseClaim(own);
     log('warn', 'stimd_claim_held', 'a stim-daemon from an older Stim still holds the daemon claim; exiting');
     writer.close();
-    return;
+    return false;
   }
+  const key = writeDesktopKey(desktopKey);
+  const script = realpathSync(process.argv[1] ?? '');
+  const net = createNetThread(log, () => {
+    lastContact = Date.now();
+    requestTick();
+  });
+  const netOptions = (fields: Partial<NetOptions>): NetOptions => ({
+    port: DEFAULT_SERVER_PORT,
+    extraEnv: [],
+    pathPrepend: [],
+    loopbackOnly: false,
+    shareOnly: false,
+    ...fields,
+    desktopKey: key,
+    script,
+  });
   const threads = createThreadTable(log);
   const lane = createPassesLane(threads, log);
   let dependencyScanAt = -Infinity;
@@ -288,16 +320,16 @@ export async function runStimd({
   const server = createServer((socket) => {
     open.add(socket);
     socket.once('close', () => open.delete(socket));
-    socket.setEncoding('utf8');
-    let buffer = '';
+    let buffer = Buffer.alloc(0);
     let framed = false;
+    let kind: unknown;
     socket.on('error', () => drop(socket));
     socket.on('close', () => drop(socket));
-    socket.on('data', (chunk: string) => {
-      buffer += chunk;
-      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
-        const line = buffer.slice(0, end);
-        buffer = buffer.slice(end + 1);
+    const onData = (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      for (let end = buffer.indexOf(10); end >= 0; end = buffer.indexOf(10)) {
+        const line = buffer.subarray(0, end).toString('utf8');
+        buffer = buffer.subarray(end + 1);
         let message: Record<string, unknown>;
         try {
           const parsed: unknown = JSON.parse(line);
@@ -313,18 +345,19 @@ export async function runStimd({
         const reply = (fields: Record<string, unknown>) => socket.write(`${JSON.stringify(fields)}\n`);
         if (!framed) {
           // compat C26 permanent
-          if (message.kind !== 'cli' && message.kind !== 'api') {
+          if (message.kind !== 'cli' && message.kind !== 'api' && message.kind !== 'desktop') {
             reply({ op: 'error', code: 'unknown-kind', message: 'the first frame names no client kind' });
             socket.end();
             return;
           }
-          if (message.build !== build) {
+          if (message.kind !== 'desktop' && message.build !== build) {
             reply({ op: 'engine-changed', build, version: identity.version, pid: process.pid });
             socket.end();
             return;
           }
           // compat end
           framed = true;
+          kind = message.kind;
           lastContact = Date.now();
           reply({ op: 'hello', kind: 'stimd', pid: process.pid, build, version: identity.version });
           continue;
@@ -335,7 +368,22 @@ export async function runStimd({
           hasten?.();
           socket.end(`${JSON.stringify({ op: 'hello', pid: process.pid, build, version: identity.version })}\n`);
         } else if (op === 'presence.publish') {
-          socket.end(`${JSON.stringify({ op: 'presence', forwarded: false })}\n`);
+          socket.end(`${JSON.stringify({ op: 'presence', forwarded: net.presence(message.params) })}\n`);
+        } else if (op === 'net.ensure') {
+          const share = isJsonObject(message.params) && message.params.share === true;
+          void net
+            .ensure(netOptions({ loopbackOnly: share, shareOnly: share, ...(kind === 'desktop' ? { owner: 'desktop' } : {}) }))
+            .then((answer) => {
+              lastContact = Date.now();
+              return reply({ op: 'net', ...answer });
+            });
+        } else if (op === 'net.connect') {
+          socket.off('data', onData);
+          const head = buffer;
+          buffer = Buffer.alloc(0);
+          if (net.connect(socket, head)) reply({ op: 'net.connected' });
+          else socket.end(`${JSON.stringify({ op: 'error', code: 'net-off', message: 'the net thread does not run' })}\n`);
+          return;
         } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'tick') {
           if (!tickReplies.includes(socket)) tickReplies.push(socket);
@@ -357,7 +405,8 @@ export async function runStimd({
           requestTick();
         }
       }
-    });
+    };
+    socket.on('data', onData);
   });
   let bound = false;
   const onSignal = (signal: NodeJS.Signals) => shutdown(signal);
@@ -377,7 +426,7 @@ export async function runStimd({
     releaseClaim(own);
     for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
-    void Promise.all([lane.settled(), dependencyWork])
+    void Promise.all([lane.settled(), dependencyWork, net.close()])
       .then(() => threads.close())
       .then(() => writer.close());
   };
@@ -396,6 +445,7 @@ export async function runStimd({
     shutdown(`cannot listen on ${path}: ${error instanceof Error ? error.message : String(error)}`, 'error');
     throw error;
   }
+  if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
   log(
     'info',
     'daemon_started',
@@ -428,6 +478,7 @@ export async function runStimd({
     const configured = configuredDaemonMode();
     const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
     if (mode === 'off') {
+      if (net.running()) continue;
       shutdown('daemon.mode is off');
       break;
     }
@@ -479,7 +530,9 @@ export async function runStimd({
       alive =
         waiters.build.length || waiters.boot.length || waiting.length
           ? 'a run waits for a build slot or a device boot'
-          : homeAlive(config, measured);
+          : net.running()
+            ? 'the net thread serves'
+            : homeAlive(config, measured);
       pending = alive
         ? null
         : maintaining
@@ -566,20 +619,50 @@ export async function runStimd({
     }
     if (ticked && !closing) lane.start(ticked, mode === 'on');
   }
-  await Promise.all([lane.settled(), dependencyWork]);
+  await Promise.all([lane.settled(), dependencyWork, net.close()]);
   await threads.close();
+  return true;
+}
+
+/**
+ * The net thread options in a unit's arguments, `--service --port <n> [--env <key>]... [--path-prepend <dir>]...`, as
+ * `stim service install` writes them after the `bin/stimd` shim; undefined without `--service`.
+ */
+export function serviceArguments(argv: readonly string[]): ServeOptions | undefined {
+  if (!argv.includes('--service')) return undefined;
+  const serve: ServeOptions = {
+    port: DEFAULT_SERVER_PORT,
+    extraEnv: [],
+    pathPrepend: [],
+    loopbackOnly: false,
+    shareOnly: false,
+  };
+  for (let index = 0; index < argv.length; index++) {
+    const value = argv[index + 1];
+    if (value === undefined) break;
+    if (argv[index] === '--port') serve.port = Number(value);
+    else if (argv[index] === '--env') serve.extraEnv.push(value);
+    else if (argv[index] === '--path-prepend') serve.pathPrepend.push(value);
+    else continue;
+    index++;
+  }
+  return serve;
 }
 
 /** The `__stimd` entry: `argv` is what follows it. */
 export async function runStimdEntry(argv: readonly string[]): Promise<void> {
+  const serve = serviceArguments(argv);
   if (relaunchWithLogFile(['__stimd', ...argv])) return;
-  process.title = 'stimd';
   const label = process.env[LAUNCHD_LABEL_ENV];
   delete process.env[LAUNCHD_LABEL_ENV];
   if (label) removeExitedJobs(label);
   const at = argv.indexOf('--mode');
   try {
-    await runStimd({ mode: parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ?? daemonMode({}) });
+    await runStimd({
+      mode: parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ?? daemonMode({}),
+      serve,
+      onNet: (answer) => (answer.listening ? undefined : console.error(`stimd: ${answer.message}`)),
+    });
   } catch (error) {
     const message =
       isClaimRefusal(error) || isClaimUnavailable(error)

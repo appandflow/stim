@@ -1503,9 +1503,9 @@ list, a \`note\` finding only the doctor report:
                          advice to set 16384, never changed by doctor
   server-service-paths   cost/note: the service file names a launcher, node, server script or
                          directory that no longer exists
-  server-socket-permissions  cost: the Stim home's local.sock is not mode 600 or its directory
-                         is not mode 700 and owned by this user (Desktop's write authority
-                         on a server without Desktop's key depends on it)
+  server-socket-permissions  cost: stimd's socket (run/stimd.sock) is not mode 600 or its
+                         directory is not mode 700 and owned by this user (it answers
+                         without pairing or a key)
   server-macos-permission  cost/note: the server's host app lacks Screen Recording or device
                          control, or macOS blocks the Android SDK or AVDs on an external
                          volume (Files & Folders > Removable Volumes); read from /health,

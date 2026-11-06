@@ -14,5 +14,11 @@ export default function pairCommand(program: Command): void {
         command.error(`--port must be a port number, got ${opts.port}.`);
       const { pair } = await loadServerCli();
       await pair(port, opts.json === true, opts.control === true);
+      const { ensureNet } = await import('../daemon/client.ts');
+      const answer = await ensureNet(false);
+      if (!answer) console.error('stimd did not start, so nothing takes this pairing yet; run stim serve.');
+      else if (!answer.listening) console.error(answer.message);
+      else if (answer.port !== port)
+        console.error(`stimd's server listens on port ${answer.port}, not ${port}; pair again with --port ${answer.port}.`);
     });
 }

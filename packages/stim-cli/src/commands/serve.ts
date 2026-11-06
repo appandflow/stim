@@ -1,6 +1,7 @@
 import { Command, Option } from 'commander';
+import type { NetAnswer } from '../daemon/client.ts';
+import type { ServeOptions } from '../stimd/main.ts';
 import { bundledStim } from '@stim-cli/server/environment';
-import { loadServerCli } from '../server-cli.ts';
 import { DEFAULT_PORT, validateServeEnvironment } from '@stim-cli/server/service-plist';
 import pairCommand from './pair.ts';
 import pairingsCommand from './pairings.ts';
@@ -32,15 +33,65 @@ export default function serveCommand(program: Command, version: string, legacy =
         command.error(`--port must be a port number, got ${opts.port}.`);
       const problem = validateServeEnvironment(opts.env, opts.pathPrepend, true);
       if (problem) command.error(problem);
-      const { serve } = await loadServerCli();
-      await serve(
+      await serveInStimd({
         port,
-        opts.env,
-        opts.pathPrepend,
-        opts.loopbackOnly === true || opts.share === true,
-        opts.share === true,
-      );
+        extraEnv: opts.env,
+        pathPrepend: opts.pathPrepend,
+        loopbackOnly: opts.loopbackOnly === true || opts.share === true,
+        shareOnly: opts.share === true,
+      });
     });
+}
+
+/**
+ * Runs this home's stimd in this process with its net thread serving `serve`. When a stimd already holds the home, asks
+ * it to start its net thread and stays attached until it exits, so a service unit restarts into the stimd it replaces.
+ * Stim Desktop 0.x launches this with its private key on stdin and keeps the pipe open for its own lifetime.
+ */
+function refuse(message: string): void {
+  console.error(`stim-server: ${message}`);
+  process.exitCode = 1;
+}
+
+async function serveInStimd(serve: ServeOptions): Promise<void> {
+  const bootstrapFd = process.env.STIM_DESKTOP_BOOTSTRAP_FD;
+  const lifetimeFd = process.env.STIM_DESKTOP_LIFETIME_FD;
+  delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
+  delete process.env.STIM_DESKTOP_LIFETIME_FD;
+  const [{ runStimd }, { readDesktopInput }, { serveThroughStimd }, { daemonMode }] = await Promise.all([
+    import('../stimd/main.ts'),
+    import('../stimd/desktop-key.ts'),
+    import('../daemon/client.ts'),
+    import('../daemon/mode.ts'),
+  ]);
+  let desktop: Awaited<ReturnType<typeof readDesktopInput>> | undefined;
+  if (bootstrapFd === '0') {
+    try {
+      desktop = await readDesktopInput(process.stdin);
+    } catch (error) {
+      return refuse(error instanceof Error ? error.message : String(error));
+    }
+  }
+  if (lifetimeFd === '0' && !desktop)
+    desktop = { key: '', closed: new Promise((done) => process.stdin.on('data', () => {}).once('close', done)) };
+  void desktop?.closed.then(() => process.kill(process.pid, 'SIGTERM'));
+  const answered = (answer: NetAnswer | null) => {
+    if (!answer) refuse('stimd did not answer.');
+    else if (!answer.listening) refuse(answer.message);
+    if (!answer?.listening) process.kill(process.pid, 'SIGTERM');
+  };
+  const served = await runStimd({
+    mode: daemonMode(process.env),
+    serve,
+    ...(desktop?.key ? { desktopKey: desktop.key } : {}),
+    onNet: answered,
+  });
+  if (served) return;
+  console.error('stim-server: a stimd already serves this Stim home; asking it to start its net thread.');
+  await serveThroughStimd((answer) => {
+    if (answer?.listening) console.log(`stimd's net thread listens on port ${answer.port}; this process exits with it.`);
+    answered(answer);
+  });
 }
 
 export async function legacyMain(): Promise<void> {

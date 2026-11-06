@@ -23,7 +23,9 @@ import {
   readServerClientCounts,
   tailscaleEnv,
   SHOW_PROPERTIES,
-  serverLocalSocket,
+  stimdRecordFile,
+  stimdSocket,
+  readJsonObject,
   stimBuildDigest,
   type InstalledService,
 } from '@stim-cli/core/state';
@@ -231,8 +233,14 @@ function lstatOrNull(target: string): Stats | null {
   }
 }
 
+/** stimd's CLI socket, as `run/stimd.json` names it, or where stimd binds it. */
+function cliSocket(): string {
+  const socket = readJsonObject(stimdRecordFile())?.socket;
+  return typeof socket === 'string' ? socket : stimdSocket();
+}
+
 function readSocket(): SocketReading | null {
-  const path = serverLocalSocket();
+  const path = cliSocket();
   const dir = lstatOrNull(dirname(path));
   const socket = lstatOrNull(path);
   return {
@@ -315,7 +323,7 @@ export async function readServerSetup(
   const rows = parseProcessRows(ps ?? '');
   const processes = parseServerProcesses(ps ?? '');
   const services = platform === 'darwin' ? await readLaunchdServices() : await readSystemdServices();
-  const socket = existsSync(serverLocalSocket());
+  const socket = existsSync(cliSocket());
   if (processes.length === 0 && services.length === 0 && !socket) return null;
   const classified = classifyServers(processes, rows, services);
   const [servers, local, network, permissions, linger] = await Promise.all([
