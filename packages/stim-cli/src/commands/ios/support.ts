@@ -17,7 +17,7 @@ import {
   unknownSettingKeys,
   type SettingsObject,
 } from '../../workspace/settings.ts';
-import { resolveBuildPlacement } from '../../offload/selection.ts';
+import { resolveBuildPlacement } from '../../build-placement.ts';
 import { resolveOptimizations, type Optimizations } from '../../optimizations.ts';
 import type { SettingScope } from '@stim-cli/core/state';
 import {

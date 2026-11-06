@@ -14,7 +14,7 @@ import { projectRegistry } from '../integrations/projects.ts';
 import { buildMacosBundle } from '../macos/build.ts';
 import { macosDir } from '../macos/state.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { resolveBuildPlacement } from '../offload/selection.ts';
+import { resolveBuildPlacement } from '../build-placement.ts';
 import { ensureWorkspaceStorageAsync, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { resolveProjectSettingsAsync, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { getProject, upsertProject, withConfigLockAsync } from '../workspace/config.ts';

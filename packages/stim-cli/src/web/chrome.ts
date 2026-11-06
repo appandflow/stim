@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { WebViewport } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
+import { userHome } from '@stim-cli/core/state';
 
 export const CHROME_INSTALL_REMEDY =
   'Install Google Chrome from https://www.google.com/chrome/ (or Chromium), then run `stim doctor`.';
@@ -35,7 +36,7 @@ function chromeCandidates(
 export function findChrome({
   host = process.platform,
   env = process.env,
-  home = env.HOME || env.USERPROFILE || homedir(),
+  home = userHome(env),
   exists = existsSync,
   findExecutable = (name: string) => getExecutor().findExecutable(name),
 }: {

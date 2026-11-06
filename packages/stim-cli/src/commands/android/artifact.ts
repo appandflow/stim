@@ -65,7 +65,7 @@ import {
   namedBuildMachine,
   OffloadRefusal,
   requireLocalBuild,
-} from '../../offload/selection.ts';
+} from '../../build-placement.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';
 import type { AndroidBuildPlan } from './plan.ts';

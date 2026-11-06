@@ -165,9 +165,14 @@ export function createdDevicesLock(): string {
   return join(configDir(), 'created-devices.lock');
 }
 
+/** The user's home directory: `HOME`, then `USERPROFILE` from `env`, else the OS account's. */
+export function userHome(env?: NodeJS.ProcessEnv): string {
+  return env?.HOME || env?.USERPROFILE || homedir();
+}
+
 /** The EAS session ledger lives under the real home directory, never under STIM_HOME. */
-export function easMachineStateRoot(): string {
-  return join(homedir(), '.stim', 'machine', 'eas');
+export function easMachineStateRoot(env?: NodeJS.ProcessEnv): string {
+  return join(userHome(env), '.stim', 'machine', 'eas');
 }
 
 export function easSessionLedgerFile(root: string = easMachineStateRoot()): string {

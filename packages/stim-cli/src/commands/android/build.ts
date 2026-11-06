@@ -19,7 +19,7 @@ import { checkEasAuth, resolveRemote, uploadRemote } from '../../engine/remote-c
 import { createRunRecorder, readRunEstimates, recordRunStats, statsProjectKey } from '../../engine/stats.ts';
 import { projectRegistry } from '../../integrations/projects.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
-import { resolveBuildPlacement } from '../../offload/selection.ts';
+import { resolveBuildPlacement } from '../../build-placement.ts';
 import { setRemoteLogSink } from '../../remote-log.ts';
 import { admissionLimits, getProject, upsertProject, withConfigLockAsync } from '../../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';

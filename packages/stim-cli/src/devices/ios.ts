@@ -1018,3 +1018,15 @@ function parseIosRuntimes(out: string): IosRuntime[] {
       : [],
   );
 }
+
+export function simulatorRuntime(udid: string): string | null {
+  try {
+    const listed = JSON.parse(
+      getExecutor().runFileQuiet('xcrun', ['simctl', 'list', 'devices', '-j'], { timeoutMs: 20_000 }) ?? '{}',
+    ) as { devices?: Record<string, Array<{ udid: string }>> };
+    for (const [runtime, devices] of Object.entries(listed.devices ?? {})) {
+      if (devices.some((device) => device.udid === udid)) return runtime;
+    }
+  } catch {}
+  return null;
+}

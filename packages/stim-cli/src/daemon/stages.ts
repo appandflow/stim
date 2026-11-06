@@ -9,6 +9,7 @@ import {
   workspaceStateFile,
   type DaemonLadderAction,
   type DormantStageRecord,
+  type MaintenanceAction,
 } from '@stim-cli/core/state';
 import { archiveWorkspace } from '../archive.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -29,8 +30,9 @@ import {
   unseenEmulatorError,
 } from '../maintenance/idle-stop.ts';
 import { metroStoreRoot } from '../supervisor/metro-store.ts';
+import { dormantAction, dormantThresholdMs, longestIdleFirst } from '../policy/pressure.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
-import type { Config, ProjectRecord } from '../workspace/config.ts';
+import { loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { existingBuildDirsAsync } from '../workspace/regenerable-dirs.ts';
@@ -144,18 +146,19 @@ async function idleWorkspaces(
   setting: string,
   worthIt: (path: string, project: ProjectRecord) => boolean | Promise<boolean>,
 ): Promise<StageCandidate[]> {
-  const found: StageCandidate[] = [];
+  const readings: (Omit<StageCandidate, 'idleMs'> & { idleMs: number | null })[] = [];
   for (const [path, project] of Object.entries(config.projects)) {
     if (sameRoot(path, reading.protectedRoot) || !(await worthIt(path, project))) continue;
     const used = Date.parse(String(readWorkspaceState(path)?.lastUsedAt ?? ''));
     if (Number.isFinite(used) && Date.now() - used < thresholdMs) continue;
     try {
-      if (await runsSomething(path, project, reading)) continue;
-      const idleMs = await idleFor(path, thresholdMs, setting, { operation: reading.operation });
-      if (idleMs !== null) found.push({ path, project, idleMs });
+      const idleMs = (await runsSomething(path, project, reading))
+        ? null
+        : await idleFor(path, thresholdMs, setting, { operation: reading.operation });
+      readings.push({ path, project, idleMs });
     } catch {}
   }
-  return found.toSorted((a, b) => b.idleMs - a.idleMs);
+  return longestIdleFirst(readings);
 }
 
 async function hasOutputs(path: string): Promise<boolean> {
@@ -330,24 +333,30 @@ function dormantRestore(path: string, deleted: readonly string[]): string {
   return revivable(path) && !deleted.length ? 'stim revive' : 'stim ios or stim android';
 }
 
+type DormantOutcome = {
+  status: Exclude<DaemonLadderAction['outcome'], 'would'>;
+  bytes: number;
+  detail: string;
+  restore?: string;
+};
+
 /**
- * The dormant stage, under the workspace's native-run lock after deciding again: its owned simulators and emulators
- * deleted through ledger teardown (the parked pool is untouched), then its logs archived. node_modules and Pods stay;
- * `runDormantDependencies` takes those holding their own bytes.
+ * Carries out a `would-dormant-stage` action under the workspace's native-run lock after deciding again: its owned
+ * simulators and emulators deleted through ledger teardown (the parked pool is untouched), then its logs archived.
+ * node_modules and Pods stay; `runDormantDependencies` takes those holding their own bytes.
  */
-export async function enterDormantStage(
-  candidate: StageCandidate,
-  config: Config,
-  thresholdMs: number,
-  why: string,
-  operation?: StimContext,
-): Promise<StageResult & { deleted: string[]; restore: string }> {
-  const { path, project } = candidate;
+export async function enterDormantStage(action: MaintenanceAction, operation?: StimContext): Promise<DormantOutcome> {
+  const path = action.target;
+  const thresholdMs = dormantThresholdMs(action);
+  if (thresholdMs === null) return { status: 'kept', bytes: 0, detail: 'the action names no idle threshold' };
+  const config = loadConfig();
+  const project = config?.projects[path];
+  if (!config || !project) return { status: 'kept', bytes: 0, detail: 'it is no longer a registered workspace' };
   const run = await withIdleWorkspace(
     path,
-    async (): Promise<StageResult & { deleted: string[]; restore: string }> => {
-      if ((await idleFor(path, thresholdMs, 'idle.dormantDays', { locked: true, operation })) === null)
-        return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle', deleted: [], restore: '' };
+    async (): Promise<DormantOutcome> => {
+      const idleMs = await idleFor(path, thresholdMs, 'idle.dormantDays', { locked: true, operation });
+      if (idleMs === null) return { status: 'kept', bytes: 0, detail: 'it is no longer idle' };
       const owns = (kind: 'ios' | 'android') =>
         projectDeviceSlots(project).some(({ platforms }) => platforms[kind]?.owned === true);
       let sims: IosSimRecord[] = [];
@@ -358,11 +367,9 @@ export async function enterDormantStage(
         if (owns('android')) avds = await listAvdsAsync({ signal: operation?.signal, operation });
       } catch (error) {
         return {
-          outcome: 'failed',
+          status: 'failed',
           bytes: 0,
           detail: `its owned devices cannot be listed: ${error instanceof Error ? error.message : String(error)}`,
-          deleted: [],
-          restore: '',
         };
       }
       const devices = await withAndroidAvdSizes(
@@ -405,20 +412,18 @@ export async function enterDormantStage(
       };
       await updateWorkspaceStateAsync(path, (state) => ({ ...state, [DORMANT_STAGE_KEY]: record }));
       const restore = dormantRestore(path, deleted);
-      const detail = `no activity for ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes (${why}): ${deleted.length ? `deleted ${deleted.join(', ')}` : 'no owned device to delete'}${unmeasured.length ? ` (freed size not counted for ${unmeasured.join(', ')}: its data directory could not be measured)` : ''}${failures ? `; ${failures} could not be deleted and stay recorded` : ''}; ${archived ? 'archived its logs' : 'kept its logs (archive.enabled is off or nothing to archive)'}; node_modules and Pods that are copy-on-write clones stay. ${deleted.length ? 'The next stim ios or stim android creates a device.' : `${restore} resumes it.`}`;
+      const detail = `no activity for ${Math.floor(idleMs / MINUTE_MS)} minutes (${action.reason}): ${deleted.length ? `deleted ${deleted.join(', ')}` : 'no owned device to delete'}${unmeasured.length ? ` (freed size not counted for ${unmeasured.join(', ')}: its data directory could not be measured)` : ''}${failures ? `; ${failures} could not be deleted and stay recorded` : ''}; ${archived ? 'archived its logs' : 'kept its logs (archive.enabled is off or nothing to archive)'}; node_modules and Pods that are copy-on-write clones stay. ${deleted.length ? 'The next stim ios or stim android creates a device.' : `${restore} resumes it.`}`;
       writeWorkspaceEvent(path, failures ? 'warn' : 'info', 'workspace_dormant', detail, {
         bytes,
         deletedDevices: deleted,
         archived,
         restore,
       });
-      return { outcome: failures ? 'failed' : 'done', bytes, detail, deleted, restore };
+      return { status: failures ? 'failed' : 'done', bytes, detail, restore };
     },
     { purpose: 'dormant stage', devServer: false, hosted: false, hostedMacos: false, operation },
   );
-  return run.ran
-    ? run.value
-    : { outcome: 'kept', bytes: 0, detail: `in use: ${run.reasons.join('; ')}`, deleted: [], restore: '' };
+  return run.ran ? run.value : { status: 'kept', bytes: 0, detail: `in use: ${run.reasons.join('; ')}` };
 }
 
 /**
@@ -435,9 +440,9 @@ export async function runDormantPass(
   for (const candidate of await dormantCandidates(config, input, afterMs)) {
     const why = `idle.dormantDays is ${afterMs / DAY_MS}`;
     const result = input.act
-      ? await enterDormantStage(candidate, config, afterMs, why, input.operation)
+      ? await enterDormantStage(dormantAction(candidate.path, afterMs, why), input.operation)
       : {
-          outcome: 'would' as const,
+          status: 'would' as const,
           bytes: 0,
           detail: 'daemon.mode report acts on nothing',
           restore: dormantRestore(candidate.path, []),
@@ -447,15 +452,15 @@ export async function runDormantPass(
       kind: 'dormant-stage',
       target: candidate.path,
       workspace: candidate.path,
-      outcome: result.outcome,
+      outcome: result.status,
       bytes: result.bytes,
       detail: result.detail,
-      ...(result.outcome === 'done' ? { restore: result.restore } : {}),
+      ...(result.status === 'done' && result.restore ? { restore: result.restore } : {}),
     };
     actions.push(action);
     input.log(
-      result.outcome === 'failed' ? 'warn' : 'info',
-      `workspace_${result.outcome === 'would' ? 'would_dormant' : result.outcome === 'done' ? 'dormant' : `dormant_${result.outcome}`}`,
+      result.status === 'failed' ? 'warn' : 'info',
+      `workspace_${result.status === 'would' ? 'would_dormant' : result.status === 'done' ? 'dormant' : `dormant_${result.status}`}`,
       `${candidate.path}: ${result.detail}`,
       { workspace: candidate.path, bytes: result.bytes, ...(result.restore ? { restore: result.restore } : {}) },
     );

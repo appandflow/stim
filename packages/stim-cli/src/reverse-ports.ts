@@ -5,7 +5,7 @@ import { projectDeviceSlots } from './devices/device-slots.ts';
 import { forgetPhoneReverse, readPhoneReverseSerials, recordPhoneReverse } from './devices/phone-reverses.ts';
 import { reverseMetroPorts } from './engine/app-install.ts';
 import { leaseIsExpired, listLeaseFiles } from './engine/device-lease.ts';
-import { readHostedNative } from './device-host/ios-state.ts';
+import { readHostedNative } from './workspace/placement-state.ts';
 import { requireReverseLinks, syncHostedReversesTo } from './device-host/reverse.ts';
 import { getProject } from './workspace/config.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from './workspace/workspace-state.ts';

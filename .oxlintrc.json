@@ -57,6 +57,13 @@
   },
   "overrides": [
     {
+      "files": ["packages/**/*.{ts,tsx,mts,mjs,js,cjs,cts}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*"],
+      "rules": {
+        "stim/package-fence": "error"
+      }
+    },
+    {
       "files": ["packages/stim-cli/src/**/*.ts"],
       "excludeFiles": ["packages/stim-cli/src/exec.ts", "packages/stim-cli/src/__tests__/**", "**/*.test.ts"],
       "rules": {
@@ -291,7 +298,7 @@
         "packages/stim-cli/src/integrations/swiftpm-macos.ts",
         "packages/stim-cli/src/offload/access-ticket.ts",
         "packages/stim-cli/src/offload/client.ts",
-        "packages/stim-cli/src/offload/selection.ts",
+        "packages/stim-cli/src/build-placement.ts",
         "packages/stim-cli/src/offload/worker.ts",
         "packages/stim-cli/src/temporary.ts",
         "packages/stim-cli/src/web/runtime.ts"

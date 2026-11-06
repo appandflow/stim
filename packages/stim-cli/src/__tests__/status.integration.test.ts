@@ -1,5 +1,5 @@
 import { isRpcEvent } from '@stim-cli/core/receive-protocol';
-import { writeHostedNative } from '../device-host/ios-state.ts';
+import { writeHostedNative } from '../workspace/placement-state.ts';
 import type { HostedIosPlacement, HostedAndroidPlacement } from '@stim-cli/core/state';
 import * as hostedClient from '../device-host/hosted-client.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';

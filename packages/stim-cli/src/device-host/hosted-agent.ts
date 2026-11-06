@@ -2,13 +2,8 @@ import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parseHostedAgentGrant, type DeviceHostMachineCredential, type HostedAgentAccess } from '@stim-cli/core/state';
 import { parseMachine } from '../offload/tailnet.ts';
+import { hostedAgentLine } from '../hosted-names.ts';
 import { agentClientFiles, agentDriverClient } from './agent-drivers.ts';
-
-export function hostedAgentLine(agent: HostedAgentAccess, machine: string): string {
-  return 'command' in agent
-    ? agent.command
-    : `Agent control is unavailable on ${machine}. On that machine, check \`hosting.agentDriver\` (\`agent-device\` enables it) and the installed agent-device version.`;
-}
 
 /** Removes every driver's client file beside `file`, the placement's agent-device config path. */
 export async function removeAgentAccess(file: string, keep?: string): Promise<void> {
