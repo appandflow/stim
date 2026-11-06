@@ -156,7 +156,7 @@ import { HostedShareSource } from './share-hosted.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest, type StartedShare } from './share.ts';
 import { androidScreen, simulatorScreen, type ScreenSize } from './device-screen.ts';
 import { LocalAgentPresence } from './local-agent-presence.ts';
-import { parsePresencePublish, PresenceHub, presenceKey } from './presence.ts';
+import { PresenceHub, presenceKey } from './presence.ts';
 import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
 import { createKeepAwake, type KeepAwakeStatus } from './keep-awake.ts';
 import { runsAsService } from './service.ts';
@@ -201,6 +201,7 @@ import {
 } from './handlers/lifecycle.ts';
 import { subscribeLogs, queryLogs } from './handlers/logs.ts';
 import { input, beginControl } from './handlers/control.ts';
+import { publishPresence } from './handlers/presence.ts';
 import { replayRange, archiveDetail, replayKeyframe, setRecording } from './handlers/replay.ts';
 import { workspaceChanges, workspaceCommand } from './handlers/workspace.ts';
 import { registerPush } from './handlers/push.ts';
@@ -2563,21 +2564,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return send(socket, { id, result: saved ? { ...started, saved: true } : started });
     }
 
-    function publishPresence(id: RequestId, params: unknown): void {
-      if (!local) return error(id, 'forbidden', "presence.publish works only on this machine's local Unix socket.");
-      const parsed = parsePresencePublish(params);
-      if (typeof parsed === 'string') return error(id, 'bad-request', parsed);
-      const resolved = registeredWorkspace(parsed.workspace);
-      if ('code' in resolved) return error(id, resolved.code, resolved.message);
-      localAgents.published(
-        presenceKey(resolved.dir, parsed.platform, parsed.slot ?? 'default', parsed.physical === true),
-        parsed.command,
-        parsed.phase,
-        parsed.gesture,
-      );
-      send(socket, { id, result: {} });
-    }
-
     /**
      * Admits this local-socket connection to the Desktop-only methods when it proves the bundled Desktop's private key
      * against this connection's challenge. The challenge answers one attempt, so a replayed or late proof cannot win.
@@ -2611,7 +2597,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       'share.start': (id, params) => shareMethod(id, 'share.start', params),
       'share.stop': (id, params) => shareMethod(id, 'share.stop', params),
       'share.list': (id, params) => shareMethod(id, 'share.list', params),
-      'presence.publish': publishPresence,
+      'presence.publish': (id, params) => publishPresence(ctx, id, params),
     };
 
     async function handle(raw: string): Promise<void> {
