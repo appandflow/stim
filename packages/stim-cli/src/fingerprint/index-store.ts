@@ -502,6 +502,8 @@ function installStamped(roots: Roots): boolean {
   );
 }
 
+const modulesSegment = (path: string) => `${sep}${path}${sep}`.includes(`${sep}node_modules${sep}`);
+
 /**
  * The reads of one evaluator part from its trace. A read inside an install tree (a path through `node_modules` in the
  * app or install root whose nearest existing real path stays under `node_modules`) is left to the install stamps
@@ -528,18 +530,18 @@ export function traceReads(
     }
     return reals.get(path) ?? null;
   };
+  const realInModules = new Map<string, boolean>();
+  const linkables = new Map<string, boolean>();
   for (const { path, kind, hash } of entries) {
     const inside = within(path, roots.project) || within(path, roots.install);
     const root = packageRoot(path);
+    const owner = root ?? path;
+    const throughModules = inside && modulesSegment(path);
+    if (throughModules && !realInModules.has(owner)) realInModules.set(owner, modulesSegment(real(owner) ?? ''));
     const installed =
-      inside &&
-      path.split(sep).includes('node_modules') &&
-      (real(root ?? path)
-        ?.split(sep)
-        .includes('node_modules') ??
-        false) &&
-      !(kind === 'module' && root !== null && !named(root));
-    const linkable = root !== null && topLevel(root, roots);
+      throughModules && realInModules.get(owner) === true && !(kind === 'module' && root !== null && !named(root));
+    if (root !== null && !linkables.has(root)) linkables.set(root, topLevel(root, roots));
+    const linkable = root !== null && linkables.get(root) === true;
     if (installed && stamped && !linkable) continue;
     const [target, as]: [string, ReadKind] =
       installed && root ? [root, realOf(root) ? 'package' : 'absent'] : [path, kind];
