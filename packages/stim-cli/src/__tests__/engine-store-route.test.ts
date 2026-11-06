@@ -47,6 +47,11 @@ describe('route', () => {
     expect(decision.note).toMatch(/^STIM_ROUTER_TOO_OLD: .*engine format 2; run npx stim@latest/);
   });
 
+  it('runs this copy when the pointer is not an object or lacks its tree', () => {
+    expect(route({ ...input({}), current: undefined })).toMatchObject({ run: 'own', fallback: true });
+    expect(route(input({}, { dir: undefined }))).toMatchObject({ run: 'own', fallback: true });
+  });
+
   it('prints the copy version for --version and never promotes', () => {
     const decision = route(input({ version: '1.51.0' }, {}, { args: ['node', 'stim', '--version'] }));
     expect(decision).toEqual({ run: 'own', note: 'engine 1.50.0 (this copy 1.51.0, machine)' });

@@ -1,4 +1,4 @@
-import { readdirSync, rmdirSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync, rmdirSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import { configDir } from '@stim-cli/core';
@@ -58,12 +58,19 @@ export default function engineCommand(program: Command, version: string): void {
     .command('install')
     .description('Make this copy of stim the machine engine')
     .action(async () => {
+      const root = engineRoot(process.env);
+      if (readRecords(root).current)
+        refuse(
+          'STIM_ENGINE_REFUSED',
+          `An engine is installed at ${root}.`,
+          'Run stim engine use <version> or stim engine update.',
+        );
       const self = dirname(dirname(spawnEntry('engine-select')));
-      const kind = installKind(self, engineRoot(process.env));
+      const kind = installKind(realpathSync(self), existsSync(root) ? realpathSync(root) : root);
       if (kind === 'development')
         refuse('STIM_ENGINE_REFUSED', `${self} runs in place.`, 'Run stim engine install from an installed stim.');
       await run('install', kind === 'npx' || kind === 'project' ? { version } : { dir: self });
-      for (const root of [configDir(), machineRoot()]) migrateSchema(root, version);
+      for (const home of [configDir(), machineRoot()]) migrateSchema(home, version);
     });
   engine
     .command('use')
@@ -75,7 +82,7 @@ export default function engineCommand(program: Command, version: string): void {
       if (opts.channel && !channel)
         refuse('STIM_BAD_ARG', `--channel ${opts.channel} is unknown.`, 'Use latest or next.');
       const { current } = readRecords(engineRoot(process.env));
-      if (!target && !current) missing();
+      if (!current) missing();
       const source = target && /^\d+\.\d+\.\d+/.test(target) ? { version: target } : { dir: resolve(target ?? '') };
       const pinReason = target ? `set by stim engine use ${target}` : (current?.pinReason ?? null);
       await run('use', target ? source : { dir: join(engineRoot(process.env), current?.dir ?? '') }, {

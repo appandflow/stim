@@ -26,20 +26,24 @@ if (current === null) {
   };
   const staged = read(join(root, 'staged.json'));
   const failed = read(join(root, 'failed.json'));
-  const decision = route({
-    args: process.argv,
-    copy,
-    current,
-    staged: staged?.format === 1 ? staged : null,
-    node: process.versions.node,
-    failed: failed?.format === 1 ? failed : null,
-    now: Date.now(),
-  });
+  const decide = () =>
+    route({
+      args: process.argv,
+      copy,
+      current,
+      staged: staged?.format === 1 ? staged : null,
+      node: process.versions.node,
+      failed: failed?.format === 1 ? failed : null,
+      now: Date.now(),
+    });
+  let decision = decide();
   if (decision.promote) {
     const select = [join(self, 'dist', 'engine-select.mjs'), 'promote', '--set-by', `promote:${copy.kind}`];
     if (decision.promote === 'detached') spawn(process.execPath, select, { detached: true, stdio: 'ignore' }).unref();
-    else if (spawnSync(process.execPath, select, { stdio: ['ignore', 'ignore', 'inherit'] }).status === 0)
+    else if (spawnSync(process.execPath, select, { stdio: ['ignore', 'ignore', 'inherit'] }).status === 0) {
       current = read(join(root, 'current.json')) ?? current;
+      decision = { ...decide(), promote: undefined };
+    }
   }
   if (decision.note) process.stderr.write(`${decision.note}\n`);
   const engine = (name) => join(root, current.dir, 'dist', name);
@@ -53,8 +57,9 @@ if (current === null) {
   };
   if (decision.run === 'refuse') process.exitCode = 1;
   else if (decision.run === 'node') {
-    process.exitCode =
-      spawnSync(decision.node, [engine('cli.mjs'), ...process.argv.slice(2)], { stdio: 'inherit' }).status ?? 1;
+    const run = spawnSync(decision.node, [engine('cli.mjs'), ...process.argv.slice(2)], { stdio: 'inherit' });
+    if (run.error) runOwn(run.error);
+    else process.exitCode = run.status ?? 1;
   } else if (decision.run === 'engine') {
     Reflect.set(globalThis, Symbol.for('stim.main'), true);
     import(pathToFileURL(engine('cli.mjs')).href).then(

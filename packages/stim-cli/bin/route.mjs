@@ -38,14 +38,19 @@ export function installKind(dir, root) {
 /** What the router does with one command, given the engine's `current.json` and `staged.json`. */
 export function route({ args, copy, current, staged, node, failed = null, now = 0 }) {
   if (current === null) return { run: 'own' };
-  if (typeof current !== 'object')
-    return { run: 'own', fallback: true, note: 'the engine pointer cannot be read; this command runs this copy' };
+  const unreadable = {
+    run: 'own',
+    fallback: true,
+    note: 'the engine pointer cannot be read; this command runs this copy',
+  };
+  if (typeof current !== 'object') return unreadable;
   // compat C1 permanent
   if (current.format !== 1) {
     const note = `STIM_ROUTER_TOO_OLD: this stim (${copy.version}, ${copy.kind}) cannot read engine format ${String(current.format)}; run npx stim@latest, npm i -D stim@latest or npm i -g stim@latest`;
     return { run: 'refuse', note };
   }
   // compat end
+  if (typeof current.dir !== 'string' || !Array.isArray(current.node)) return unreadable;
   if (copy.kind === 'development' || args[2] === 'serve')
     return {
       run: 'own',
