@@ -1,10 +1,11 @@
+import { existsSync } from 'node:fs';
 import type { KnipConfig } from 'knip';
 
 export default ({ production }: { production?: boolean }): KnipConfig => ({
   ignoreExportsUsedInFile: production,
   ignore: [
     'website/**',
-    'apps/desktop/.build/**',
+    ...(existsSync(new URL('apps/desktop/.build', import.meta.url)) ? ['apps/desktop/.build/**'] : []),
     'packages/core/receive-validators.mjs',
     'packages/core/receive-validators.d.mts',
     'packages/stim-cli/shim/**',
@@ -37,6 +38,10 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
     'packages/stim-cli': {
       // supervisor/server-bare.ts loads @stim-cli/metro with createRequire at runtime.
       ignoreDependencies: production ? ['@stim-cli/metro'] : [],
+    },
+    'packages/metro': {
+      // index.ts loads the metro-cache peer dependency with createRequire at runtime.
+      ignoreDependencies: production ? ['metro-cache'] : [],
     },
     'packages/server': {
       ignore: ['share-viewer/**'],

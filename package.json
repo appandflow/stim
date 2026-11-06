@@ -22,7 +22,7 @@
     "build": "pnpm -r --filter \"./packages/*\" --filter @stim-cli/github-action run build",
     "dist:closure": "node scripts/dist-closure.mjs",
     "test:e2e": "node --import ./test/e2e/daemon-off.mjs --test test/e2e/*.e2e.js",
-    "knip": "knip && knip --production",
+    "knip": "knip && knip --production --strict --treat-config-hints-as-errors",
     "benchmark:agent": "node scripts/agent-benchmark/driver.mjs",
     "release:prep": "node scripts/release-prep.mjs",
     "preinstall": "npx only-allow pnpm",
