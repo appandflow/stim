@@ -19,27 +19,17 @@ import {
   deviceHostArea,
   deviceHostAreas,
   readArchive,
-  readArchiveState,
-  readBuildHistory,
   readBuildLedger,
   readGcLog,
   queryLogs as queryMachineLogs,
   readSetupJournal,
   isJournalExpired,
-  queryJsonLogs,
   isJsonObject,
   SETTING_SCOPES,
   settingsJsonSchema,
   settingDefinition,
-  listSegments,
-  listRecordedDevices,
   loadConfig,
-  readAgentSnapshot,
-  type AgentSnapshotTree,
-  RECORDING_PLATFORMS,
   stimBuildDigest,
-  type RecordingPlatform,
-  type NdjsonRecord,
   type StatusPayload,
   statusViews,
   type StatusViews,
@@ -53,12 +43,7 @@ import { actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } 
 import { cachedPeerNode } from './peer-node.ts';
 import { parsePlatformRun } from './platform-run.ts';
 import { parsePlatformBuild } from './platform-build.ts';
-import {
-  agentActionReaders,
-  configuredAgentDriver,
-  recoverAgentDrivers,
-  stoppingAgentDriver,
-} from './agent-drivers.ts';
+import { configuredAgentDriver, recoverAgentDrivers, stoppingAgentDriver } from './agent-drivers.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost } from './device-host.ts';
 import { HOSTED_IDLE_SWEEP_MS } from './hosted-idle.ts';
@@ -97,12 +82,11 @@ import {
   sharedClaimDir,
   tryAcquireClaim,
 } from '@stim-cli/core/ownership-claim';
-import { recordedSpans, recordingDir, segmentKeyframe, timelineMarkers } from './replay.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { StatusFeed } from './status-feed.ts';
 import { buildFoldHelper, buildFrameHelper } from './frame-helper.ts';
 import { DEFAULT_FRAME_LIMITS, FramePool, type FrameLimits } from './frames.ts';
-import { archivedTimeline, readTargetError, type LogLimits } from './logs.ts';
+import { type LogLimits } from './logs.ts';
 import { readDiskVolumes, readMachineUsage, readMemoryPressure, UsageSampler } from './machine.ts';
 import {
   BuildMachinesCache,
@@ -128,7 +112,6 @@ import {
   ENGINE_UPDATE_METHODS,
   type DesktopReportTarget,
   type DeviceToolRequest,
-  type ArchiveDetailResult,
   type ErrorCode,
   type ProtocolError,
   type HelloHost,
@@ -142,7 +125,6 @@ import {
 import {
   createStim,
   StimError,
-  type StimLogsOptions,
   type StimProgress,
   type StimPlanOptions,
   type StimReloadOptions,
@@ -239,6 +221,7 @@ import {
   statusRead,
 } from './handlers/status.ts';
 import { subscribeLogs, queryLogs } from './handlers/logs.ts';
+import { replayRange, archiveDetail, replayKeyframe, setRecording } from './handlers/replay.ts';
 export type { ServerOptions } from './handlers/context.ts';
 
 const SHARE_SERVER_GRACE_MS = 2 * 60_000;
@@ -341,7 +324,7 @@ const MAX_RETAINED_PLANS = 4;
 function isWorkspaceChangeMethod(method: string): method is 'workspace.files' | 'workspace.diff' {
   return method === 'workspace.files' || method === 'workspace.diff';
 }
-const MAX_KEYFRAME_READS = 8;
+
 const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRecords: 20_000 };
 const HELPER_RETRY_MS = 5 * 60_000;
 
@@ -1211,14 +1194,6 @@ function pruneSetup(): void {
   }
 }
 
-function isLink(path: string): boolean {
-  try {
-    return lstatSync(path).isSymbolicLink();
-  } catch {
-    return true;
-  }
-}
-
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   const { transports, tailscale } = serverTransports(options);
   /** The tailnet node a transport reports for a peer, or null when none identifies it. */
@@ -2004,8 +1979,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       },
       readApprovals,
       running,
+      cancelling,
       logLimits,
       commandLimits,
+      actionLimits,
+      get recordingTurn() {
+        return recordingTurn;
+      },
+      set recordingTurn(value) {
+        recordingTurn = value;
+      },
+      get closing() {
+        return closing;
+      },
+      set closing(value) {
+        closing = value;
+      },
       sessions,
       sampler,
       usage,
@@ -2024,6 +2013,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       keyframes,
       congestion,
       replays,
+      get keyframeReads() {
+        return keyframeReads;
+      },
+      set keyframeReads(value) {
+        keyframeReads = value;
+      },
+      holdSlot,
+      releaseSlot,
+      slotsFull,
+      slotsMessage,
       get device() {
         return device;
       },
@@ -2053,6 +2052,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       refuse,
       timer,
       error,
+      canControl,
       readDir,
       openSubscription,
       inProcessRead,
@@ -3167,254 +3167,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       busyWorkspaces.add(cwd);
     }
 
-    function collect(query: StimLogsOptions, cwd: string): Promise<NdjsonRecord[] | string> {
-      const abort = new AbortController();
-      const deadline = setTimeout(() => abort.abort(), commandLimits.timeoutMs);
-      let task: Promise<NdjsonRecord[] | string>;
-      const cancel = async () => {
-        abort.abort();
-        await task;
-      };
-      holdSlot(cancel);
-      running.add(cancel);
-      task = Promise.resolve()
-        .then(() =>
-          createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).logs({
-            ...query,
-            signal: abort.signal,
-          }),
-        )
-        .then(
-          (records) =>
-            Buffer.byteLength(records.map((record) => JSON.stringify(record)).join('\n')) > commandLimits.maxOutputBytes
-              ? `stim logs printed more than ${commandLimits.maxOutputBytes} bytes.`
-              : records,
-          (cause: unknown) => readFailure(cause),
-        )
-        .finally(() => {
-          clearTimeout(deadline);
-          releaseSlot(cancel);
-          running.delete(cancel);
-        });
-      return task;
-    }
-
-    function archiveDetail(id: RequestId, params: unknown): void {
-      const target = isJsonObject(params) ? params : {};
-      if (target.archive === undefined) return error(id, 'bad-request', 'archive.detail needs params.archive.');
-      const targetError = readTargetError(target);
-      if (targetError) return error(id, 'bad-request', targetError);
-      const archive = target.archive as string;
-      const dir = readDir(id, { archive });
-      if (!dir) return;
-      const result: ArchiveDetailResult = {
-        builds: readBuildHistory(readArchiveState(archive)),
-        recordings: listRecordedDevices(join(dir, 'recordings'), true)
-          .filter((recorded) => !isLink(recorded.dir))
-          .flatMap((recorded) => {
-            const spans = recordedSpans(recorded.segments.filter((segment) => !isLink(segment.file)));
-            return spans.length ? [{ platform: recorded.platform, slot: recorded.slot, spans }] : [];
-          })
-          .toSorted((a, b) => a.platform.localeCompare(b.platform) || a.slot.localeCompare(b.slot)),
-      };
-      send(socket, { id, result });
-    }
-
-    function replayRange(id: RequestId, params: unknown): void | Promise<void> {
-      const target = isJsonObject(params) ? params : {};
-      const { platform, slot } = target;
-      const targetError = readTargetError(target);
-      if (targetError) return error(id, 'bad-request', targetError);
-      const workspace = target.workspace as string | undefined;
-      const archive = target.archive as string | undefined;
-      if (!RECORDING_PLATFORMS.includes(platform as RecordingPlatform)) {
-        return error(
-          id,
-          'bad-request',
-          'replay.range needs params.workspace or params.archive and params.platform (ios, android or web).',
-        );
-      }
-      if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
-        return error(id, 'bad-request', 'params.slot must be 1-64 letters, digits, underscores or hyphens.');
-      }
-      const cwd = readDir(id, { workspace, archive });
-      if (!cwd) return;
-      if (archive === undefined && slotsFull(2)) {
-        return error(id, 'limit-exceeded', slotsMessage(2));
-      }
-      const slotName = slot ?? 'default';
-      const spans = recordedSpans(
-        listSegments(recordingDir(workspace, platform as RecordingPlatform, slotName, archive), archive !== undefined),
-      );
-      const replayTarget = { workspace, platform: platform as RecordingPlatform, slot: slotName };
-      const state = {
-        enabled: archive === undefined ? (recorder?.enabled(workspace!) ?? false) : false,
-        recording: archive === undefined ? (recorder?.recording(replayTarget) ?? false) : false,
-        spans,
-      };
-      if (!spans.length) return send(socket, { id, result: { ...state, markers: [] } });
-      if (archive !== undefined) {
-        return agentActionReaders().then((actions) => {
-          const timeline = archivedTimeline(cwd, actions);
-          const records = [
-            ...queryJsonLogs({ records: timeline, sources: ['agent'], tail: 5000 }),
-            ...queryJsonLogs({
-              records: timeline,
-              sources: ['metro', 'client', 'build', 'device'],
-              minLevel: 'error',
-              tail: 5000,
-            }),
-          ];
-          const markers = timelineMarkers(records, platform as RecordingPlatform, slotName, spans[0]!.start);
-          return send(socket, { id, result: { ...state, markers } });
-        });
-      }
-      const since = `${Math.ceil((Date.now() - spans[0]!.start) / 60_000) + 1}m`;
-      void Promise.all([
-        collect({ sources: ['agent'], since, tail: 5000 }, cwd),
-        collect({ sources: ['metro', 'client', 'build', 'device'], minLevel: 'error', since, tail: 5000 }, cwd),
-      ]).then(([actions, errors]) => {
-        const failed = [actions, errors].find((result) => typeof result === 'string');
-        if (typeof failed === 'string') return error(id, 'stim-failed', failed);
-        const records = [...(actions as NdjsonRecord[]), ...(errors as NdjsonRecord[])];
-        const viewports = new Map<string, AgentSnapshotTree['viewport']>();
-        const markers = timelineMarkers(
-          records,
-          platform as RecordingPlatform,
-          slotName,
-          spans[0]!.start,
-          (session) => {
-            const known = viewports.get(session);
-            if (known !== undefined) return known;
-            const read = readAgentSnapshot(cwd, session)?.viewport ?? null;
-            viewports.set(session, read);
-            return read;
-          },
-        );
-        return send(socket, { id, result: { ...state, markers } });
-      });
-    }
-
-    function replayKeyframe(id: RequestId, params: unknown): void | Promise<void> {
-      const target = isJsonObject(params) ? params : {};
-      const { platform, slot, at } = target;
-      const targetError = readTargetError(target);
-      if (targetError) return error(id, 'bad-request', targetError);
-      const workspace = target.workspace as string | undefined;
-      const archive = target.archive as string | undefined;
-      if (!RECORDING_PLATFORMS.includes(platform as RecordingPlatform)) {
-        return error(
-          id,
-          'bad-request',
-          'replay.keyframe needs params.workspace or params.archive and params.platform (ios, android or web).',
-        );
-      }
-      if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
-        return error(id, 'bad-request', 'params.slot must be 1-64 letters, digits, underscores or hyphens.');
-      }
-      if (typeof at !== 'number' || !Number.isFinite(at))
-        return error(id, 'bad-request', 'at must be epoch milliseconds.');
-      if (!readDir(id, { workspace, archive })) return;
-      if (keyframeReads >= MAX_KEYFRAME_READS) {
-        return error(id, 'limit-exceeded', `A connection can read ${MAX_KEYFRAME_READS} keyframes at a time.`);
-      }
-      keyframeReads++;
-      return segmentKeyframe(
-        recordingDir(workspace, platform as RecordingPlatform, slot ?? 'default', archive),
-        at,
-        archive !== undefined,
-      ).then((found) => {
-        keyframeReads--;
-        if (!found) return error(id, 'no-recording', 'Nothing was recorded for this device.');
-        const { segment, unit } = found;
-        return send(socket, {
-          id,
-          result: {
-            start: segment.start,
-            end: segment.end,
-            at: unit.capturedAt,
-            width: unit.width,
-            height: unit.height,
-            ...(unit.posture ? { posture: unit.posture } : {}),
-            data: unit.data.toString('base64'),
-          },
-        });
-      });
-    }
-
-    function setRecording(id: RequestId, params: unknown, session: PairedDevice): void {
-      const enabled = isJsonObject(params) ? params.enabled : undefined;
-      const record: AuditRecord = {
-        at: new Date().toISOString(),
-        device: { id: session.id, name: session.name },
-        action: 'recording.set',
-        workspace: null,
-        ok: false,
-      };
-      const audit = (outcome: Pick<AuditRecord, 'ok' | 'error'>) => {
-        try {
-          appendAudit({ ...record, ...outcome });
-        } catch (cause) {
-          console.error(`stim-server: could not append to the action log: ${(cause as Error).message}`);
-        }
-      };
-      const refuseSetting = (code: ErrorCode, message: string) => {
-        audit({ ok: false, error: { code, message } });
-        error(id, code, message);
-      };
-      if (!canControl(session)) {
-        return refuseSetting(
-          'forbidden',
-          `This device can only read. On the machine, run \`stim pairings grant ${session.id} --control\` to let it change settings.`,
-        );
-      }
-      if (typeof enabled !== 'boolean') return refuseSetting('bad-request', 'params.enabled must be true or false.');
-      recordingTurn = cancelling.track(
-        recordingTurn
-          .catch(() => {})
-          .then(async () => {
-            if (closing) return;
-            const abort = new AbortController();
-            let finished = false;
-            const fail = (message: string) => {
-              if (finished || closing) return;
-              finished = true;
-              refuseSetting('action-failed', message);
-            };
-            const deadline = setTimeout(() => {
-              fail(`stim settings did not finish within ${actionLimits.timeoutMs / 1000} s.`);
-              abort.abort();
-            }, actionLimits.timeoutMs);
-            const task = Promise.resolve()
-              .then(() =>
-                createStim({ projectRoot: homedir(), env: options.env, admission: 'none' }).setSetting(
-                  'recording.enabled',
-                  String(enabled),
-                  { scope: 'machine', signal: abort.signal },
-                ),
-              )
-              .then((result) => {
-                if (finished || closing) return;
-                if (Buffer.byteLength(JSON.stringify(result)) + 1 > actionLimits.maxOutputBytes)
-                  return fail(`stim settings printed more than ${actionLimits.maxOutputBytes} bytes.`);
-                finished = true;
-                audit({ ok: true });
-                send(socket, { id, result: { enabled, recordingsDeleted: result.recordingsDeleted ?? [] } });
-                return undefined;
-              })
-              .catch((cause: unknown) => fail(readFailure(cause)))
-              .finally(() => clearTimeout(deadline));
-            const cancel = async () => {
-              abort.abort();
-              await task;
-            };
-            running.add(cancel);
-            await task.finally(() => running.delete(cancel));
-            return undefined;
-          }),
-      );
-    }
-
     function planBuild(id: RequestId, params: unknown): void {
       if (!isJsonObject(params)) return error(id, 'bad-request', 'params must be an object.');
       const { platform, slot } = params;
@@ -4351,9 +4103,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'logs.subscribe': (...args) => subscribeLogs(ctx, ...args),
           'logs.query': (...args) => queryLogs(ctx, ...args),
           'frames.subscribe': (...args) => subscribeFrames(ctx, ...args),
-          'replay.range': replayRange,
-          'archive.detail': archiveDetail,
-          'replay.keyframe': replayKeyframe,
+          'replay.range': (...args) => replayRange(ctx, ...args),
+          'archive.detail': (...args) => archiveDetail(ctx, ...args),
+          'replay.keyframe': (...args) => replayKeyframe(ctx, ...args),
         };
         const read = reads[message.method];
         if (read) return archiveRead(id, () => read(id, params));
@@ -4394,13 +4146,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         if (shown === null) return error(id, 'no-recording', 'Nothing was recorded for this device.');
         return send(socket, { id, result: { at: shown } });
       }
-      if (message.method === 'replay.range') return replayRange(id, message.params);
-      if (message.method === 'archive.detail') return archiveDetail(id, message.params);
+      if (message.method === 'replay.range') return replayRange(ctx, id, message.params);
+      if (message.method === 'archive.detail') return archiveDetail(ctx, id, message.params);
       if (message.method === 'replay.keyframe') {
-        void replayKeyframe(id, message.params);
+        void replayKeyframe(ctx, id, message.params);
         return;
       }
-      if (message.method === 'recording.set') return setRecording(id, message.params, device);
+      if (message.method === 'recording.set') return setRecording(ctx, id, message.params, device);
       if (message.method === 'build.plan') return planBuild(id, message.params);
       if (message.method === 'machine.get') return send(socket, { id, result: await readMachineUsage() });
       if (message.method === 'machine.details') {

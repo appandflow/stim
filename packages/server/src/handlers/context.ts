@@ -17,7 +17,7 @@ import type { Transport } from '@stim-cli/transport';
 import type { TailscaleState, TailscaleMonitor } from '@stim-cli/transport-tailscale';
 import type { RequestLog, RequestTracker } from '../request-log.ts';
 import type { LogLimits } from '../logs.ts';
-import type { CommandLimits } from '../stim-command.ts';
+import { type CommandLimits, Pending } from '../stim-command.ts';
 import { type FrameLimits, FramePool } from '../frames.ts';
 import { type RecordLimits, Recorder } from '../recorder.ts';
 import type { PushLimits, PushNotifierOptions } from '../push.ts';
@@ -229,8 +229,12 @@ export interface ConnectionContext {
   startup: StartupState;
   readonly readApprovals: () => Registries | null;
   readonly running: Set<() => Promise<void>>;
+  readonly cancelling: Pending;
   readonly logLimits: LogLimits;
   readonly commandLimits: CommandLimits;
+  readonly actionLimits: CommandLimits;
+  recordingTurn: Promise<void>;
+  closing: boolean;
   readonly sessions: Map<ServerSocket, PairedDevice>;
   readonly sampler: UsageSampler;
   readonly usage: UsageRecorder;
@@ -249,6 +253,11 @@ export interface ConnectionContext {
   readonly keyframes: Map<string, () => void>;
   readonly congestion: Map<string, () => void>;
   readonly replays: Map<string, Replayable>;
+  keyframeReads: number;
+  readonly holdSlot: (cancel: () => Promise<void>) => void;
+  readonly releaseSlot: (cancel: () => Promise<void>) => void;
+  readonly slotsFull: (needed?: number) => boolean;
+  readonly slotsMessage: (needed?: number) => string;
   device: PairedDevice | null;
   desktopChallenge: { nonce: string; proof: string } | null;
   readonly tracker: RequestTracker;
@@ -258,6 +267,7 @@ export interface ConnectionContext {
   readonly refuse: (id: RequestId | null, code: ErrorCode, message: string, closeCode: number) => void;
   readonly timer: NodeJS.Timeout;
   readonly error: (id: RequestId, code: ErrorCode, message: string) => void;
+  readonly canControl: (session: Pick<PairedDevice, 'id'>) => boolean;
   readonly readDir: (id: RequestId, target: { workspace?: string; archive?: string }) => string | null;
   readonly openSubscription: (id: RequestId, result?: { video?: VideoCodec }) => string | null;
   readonly inProcessRead: <
