@@ -350,6 +350,7 @@ export class DemoConnection {
     return {
       result: {
         protocol: PROTOCOL,
+        phoneApi: 2,
         server: {
           name: this.machine.name,
           version: fixtures.stimVersion,
