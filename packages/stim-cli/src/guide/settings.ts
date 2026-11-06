@@ -659,6 +659,20 @@ generation, and nothing is sent anywhere. Keys named like a secret are redacted.
   stim settings set debug.logs true --scope machine
 See \`guide logs\` for reading the files.
 
+ENGINE UPDATES ARE MACHINE-LEVEL
+engine.autoUpdate  default auto. Whether stimd moves the machine engine (stim
+engine install) to the newest version on its channel by itself: once a day,
+when Stim Desktop connects, when a phone needs a newer engine, and at most
+once an hour while a crash-looping build is held. auto turns it on for an
+engine Stim Desktop installed or a service runs and off for any other, such as
+a global npm install; on and off decide for every engine. A person's
+stim engine use or rollback pins the engine and stops it until stim engine
+update, and it never moves to a build at or below one that crash-looped.
+Three abnormal stimd exits of a build within 10 minutes mark the build bad
+and point the engine back at its previous build (stim engine status shows
+"crash loop in <version>"); the next newer build resumes updates.
+  stim settings set engine.autoUpdate off --scope machine
+
 THE STIM DAEMON IS MACHINE-LEVEL AND ON BY DEFAULT
 daemon.mode STIM_DAEMON  default on. One setting governs every pass Stim runs
 on its own: the idle and dormant stages, the pressure ladder, the reclaim for a
@@ -1437,18 +1451,17 @@ running as a login LaunchAgent on macOS, a systemd user service on Linux
 prints that command and never runs it), or a logon scheduled task on Windows; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
 pin a PATH entry or variable, such as a private CocoaPods, that stim-server's
 toolchain discovery does not find.
-\`stim service update --release <version>\` there moves the service to
-that exact stim release from the public npm registry once npm verifies
-its integrity and registry signatures; \`--from <dir>\` installs the packed
-packages of a checkout instead, with the same signature check on each npm
-dependency but none for Stim's own packages. It waits for offloaded builds and for hosted
-sessions with a native step in flight (an install, for example) to finish, restarts the job, which
-(on a server that reports it resumes sessions) leaves every other ready hosted iOS or Android session running for the new server to resume, and switches back when the new server
-exits or does not answer within 90 seconds; \`stim service rollback\` returns
-to the previous server. A client machine approved for builds or device hosting
-there can ask for the same update over its tailnet connection: an npm release
-always, and its own packed build only while \`server.acceptClientBuilds\` is
-true on that machine (default false).
+A service installed while the Stim engine is installed runs the engine's
+\`bin/stimd\`, so it follows the engine: \`stim engine update\` there moves it
+to the newest release on the engine's channel and \`stim engine rollback\`
+back to the previous build, each switching once running builds and hosted
+native steps have drained. A client machine approved for builds or device
+hosting there can ask for an update over its tailnet connection
+(\`stim remote update <mac>\`): an npm release always, and its own packed
+build only while \`server.acceptClientBuilds\` is true on that machine
+(default false). That update is refused while a person's \`stim engine
+rollback\` or \`use\` pins the engine, for a version at or below a build that
+crash-looped, and for a service that does not run the engine.
 Replacing a loaded service waits up to 45 seconds for its existing listeners to
 release the port. Uninstall does not wait for the port. If stopping the old job
 or starting the new one fails, install restores the previous plist or unit and attempts
@@ -1480,14 +1493,14 @@ list, a \`note\` finding only the doctor report:
                          stimd) and how to stop each other
   server-service-crash   cost: the service is installed but not running, or keeps
                          exiting (run count and last exit code, the log path and
-                         \`stim service rollback\` when a previous server
-                         exists); note: it restarted but runs now
+                         \`stim engine rollback\` when the engine has a
+                         previous build); note: it restarted but runs now
   server-desktop-authority  cost: the server stimd's socket reaches (not Desktop's own)
                          sends no desktopApi or a lower one than this stim's, so
                          Desktop cannot run actions through it; update it
   server-version         note: a server's stim version differs from this stim; the
-                         service updates with \`stim service update --release
-                         <version>\`, Desktop's bundled server with the app
+                         service updates with \`stim engine update\`, or from a
+                         client with \`stim remote update <mac>\`
   server-home            note: a server serves another Stim home than this stim's
   server-leftover        note: servers started by hand, with pid, home and port
   server-keep-awake      note: this Mac serves approved build or device-host clients

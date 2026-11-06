@@ -686,6 +686,7 @@ async function probe() {
   if (probing || finished) return;
   probing = true;
   let verdict = 'retry';
+  let html = '';
   const abort = new AbortController();
   const giveUp = setTimeout(() => abort.abort(), PROBE_TIMEOUT_MS);
   try {
@@ -694,7 +695,8 @@ async function probe() {
       credentials: 'same-origin',
       signal: abort.signal,
     });
-    verdict = globalThis.stimReconnect.probeVerdict(response.status, await response.text());
+    html = await response.text();
+    verdict = globalThis.stimReconnect.probeVerdict(response.status, html);
   } catch {
     verdict = 'retry';
   }
@@ -703,6 +705,9 @@ async function probe() {
   if (finished) return;
   if (verdict === 'viewer') {
     missingSince = null;
+    // compat C19 permanent
+    if (!html.includes(`data-build="${body.dataset.build}"`)) return location.reload();
+    // compat end
     return connect(body.dataset.codec);
   }
   if (verdict === 'login') return location.reload();

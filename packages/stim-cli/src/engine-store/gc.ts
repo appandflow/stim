@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { inspectProcessStart } from '@stim-cli/core/process-identity';
 import { readRunningProcesses, runningFromReason } from '../workspace/running-from.ts';
 import { keptEntries, readBuildClaims } from './claims.ts';
+import { keptJobUses, readJobUses, tarballFiles } from './jobs.ts';
 import { takeLock } from './locks.ts';
 import { BUILD_DIR, readRecords, writeState } from './store.ts';
 import { removeTree, scratchName } from './tree.ts';
@@ -13,7 +14,8 @@ const NPM_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 const ownerAlive = (name: string): boolean => inspectProcessStart(Number(name.split('-')[1])).status !== 'gone';
 
 /**
- * Removes store entries nothing can run: trees `keptEntries` does not keep that no process runs from, scratch
+ * Removes store entries nothing can run: trees `keptEntries` does not keep, nor the three client builds offload jobs
+ * used most recently within 24 hours (`keptJobUses`, whose npm tarballs stay too), that no process runs from, scratch
  * directories whose owner is gone or that are an hour old, `.trash` leftovers, and `.npm-cache` files untouched for a
  * week. Each entry goes by rename into `.trash` first, so a half-removed read-only tree never stays in place. Runs
  * under the promotion lock, so no fetch writes `.npm-cache` meanwhile. Where processes cannot be listed (Windows),
@@ -24,6 +26,8 @@ export function collectStore(root: string, now: number = Date.now()): string[] {
   const records = readRecords(root);
   const { state } = records;
   const kept = keptEntries(records, readBuildClaims(root));
+  const jobs = keptJobUses(readJobUses(root), now);
+  for (const { build } of jobs) kept.add(build);
   const running = readRunningProcesses();
   const trash = join(root, '.trash');
   mkdirSync(trash, { recursive: true });
@@ -39,17 +43,20 @@ export function collectStore(root: string, now: number = Date.now()): string[] {
     removed.push(name);
   }
   for (const name of readdirSync(trash)) removeTree(join(trash, name));
-  trimNpmCache(join(root, '.npm-cache'), now);
+  const cache = join(root, '.npm-cache');
+  const versions = new Set(jobs.flatMap(({ version }) => (version ? [version] : [])));
+  trimNpmCache(cache, now, tarballFiles(cache, versions));
   const installed = state.installed.filter((each) => existsSync(join(root, each.dir)));
   if (installed.length !== state.installed.length || removed.length > 0) writeState(root, { ...state, installed });
   return removed;
 }
 
-function trimNpmCache(cache: string, now: number): void {
+function trimNpmCache(cache: string, now: number, keep: ReadonlySet<string>): void {
   if (!existsSync(cache)) return;
   for (const entry of readdirSync(cache, { recursive: true, withFileTypes: true })) {
     const path = join(entry.parentPath, entry.name);
-    if (entry.isFile() && now - statSync(path).mtimeMs > NPM_CACHE_MAX_AGE_MS) rmSync(path, { force: true });
+    if (entry.isFile() && !keep.has(path) && now - statSync(path).mtimeMs > NPM_CACHE_MAX_AGE_MS)
+      rmSync(path, { force: true });
   }
 }
 

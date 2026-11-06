@@ -96,6 +96,10 @@ export async function hello(ctx: ConnectionContext, id: RequestId, params: unkno
     );
   }
   const tooOld = ctx.local ? null : helloRefusal(params.client, access, ctx.options.name, ctx.options.stimVersion);
+  // compat C9 permanent
+  if (!ctx.local && wireInteger(params.client.phoneApi) > PHONE_API)
+    ctx.options.requestUpdate?.(`a phone speaks phoneApi ${wireInteger(params.client.phoneApi)}`);
+  // compat end
   if (tooOld) return ctx.refuse(id, 'protocol-unsupported', tooOld, CLOSE_REFUSED);
   ctx.device = chosen;
   if (!ctx.local) touchDevice(ctx.device.id, params.client);

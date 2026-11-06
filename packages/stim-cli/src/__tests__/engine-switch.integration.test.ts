@@ -22,9 +22,9 @@ import { acquireBuildSlot } from '../engine/build-slots.ts';
 import { writeAgentDeviceBootHook } from '../engine/agent-device.ts';
 import { buildClaimRoot } from '../engine-store/claims.ts';
 import { takeLock } from '../engine-store/locks.ts';
+import { machineCopy } from './fixtures/machine-copy.ts';
 
 const PACKAGE = fileURLToPath(new URL('../..', import.meta.url));
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 let tmp: string;
 let home: string;
 let root: string;
@@ -99,18 +99,11 @@ beforeAll(() => {
   root = join(tmp, 'engine');
   work = join(tmp, 'work');
   mkdirSync(work);
-  env = { ...process.env, STIM_HOME: home, STIM_ENGINE_ROOT: root, STIM_DAEMON: 'on' };
+  env = { ...process.env, HOME: tmp, STIM_HOME: home, STIM_ENGINE_ROOT: root, STIM_DAEMON: 'on' };
   process.env.STIM_HOME = home;
   process.env.STIM_ENGINE_ROOT = root;
-  const packed = execFileSync(npm, ['pack', '--pack-destination', tmp], { cwd: PACKAGE, encoding: 'utf8' })
-    .trim()
-    .split('\n')
-    .at(-1);
-  assert(packed);
   const installed = (name: string) => join(tmp, name, 'lib', 'node_modules', 'stim');
-  execFileSync(npm, ['install', '-g', '--prefix', join(tmp, 'a'), join(tmp, packed), '--ignore-scripts'], {
-    env: { ...process.env, npm_config_loglevel: 'error' },
-  });
+  machineCopy(PACKAGE, join(tmp, 'a'));
   cpSync(installed('a'), installed('b'), { recursive: true, verbatimSymlinks: true });
   const manifest = readJson(join(installed('b'), 'package.json'));
   manifest.version = `${manifest.version}-switch.1`;

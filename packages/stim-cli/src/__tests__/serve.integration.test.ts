@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { connect } from 'node:net';
 import { createHmac } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -163,6 +164,63 @@ test('stimd starts its net thread only when asked, and serves pairings, local cl
     terminateClients();
     for (const child of [stimd, attached])
       if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60_000);
+
+/** Asks stimd at `socket` for its net thread as Stim Desktop does, and resolves with the `net` answer. */
+function desktopEnsure(socket: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const client = connect(socket);
+    let buffer = '';
+    client.setEncoding('utf8');
+    client.on('error', reject);
+    client.on('data', (chunk: string) => {
+      buffer += chunk;
+      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+        const reply = JSON.parse(buffer.slice(0, end));
+        buffer = buffer.slice(end + 1);
+        if (reply.op === 'net') {
+          client.destroy();
+          resolve(reply);
+        }
+      }
+    });
+    client.write(`${JSON.stringify({ kind: 'desktop' })}\n${JSON.stringify({ op: 'net.ensure', params })}\n`);
+  });
+}
+
+test('a Desktop net.ensure with other listener options restarts the net thread with them', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-net-restart-'));
+  const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
+  const previousHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
+  const stimd = spawn(process.execPath, [join(root, 'packages/stim-cli/dist/cli.mjs'), '__stimd', '--mode', 'off'], {
+    env,
+    stdio: 'ignore',
+  });
+  const stimdExited = once(stimd, 'exit');
+  try {
+    const deadline = Date.now() + 15_000;
+    while (!existsSync(stimdRecordFile())) {
+      if (Date.now() > deadline || stimd.exitCode !== null) throw new Error('stimd wrote no run/stimd.json');
+      await new Promise((done) => setTimeout(done, 50));
+    }
+    const { socket } = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
+    const loopback = await desktopEnsure(socket, { port: 0, loopbackOnly: true });
+    expect(loopback).toMatchObject({ listening: true });
+    expect(await desktopEnsure(socket, { port: 0, loopbackOnly: true })).toEqual(loopback);
+    const wider = await desktopEnsure(socket, { port: 0, loopbackOnly: false });
+    expect(wider).toMatchObject({ listening: true });
+    expect(wider.port).not.toBe(loopback.port);
+    await expect(fetch(`http://127.0.0.1:${loopback.port}/health`)).rejects.toThrow('fetch failed');
+    expect((await fetch(`http://127.0.0.1:${wider.port}/health`)).status).toBeLessThan(600);
+    stimd.kill('SIGTERM');
+    expect(await stimdExited).toEqual([0, null]);
+  } finally {
+    if (stimd.exitCode === null && stimd.signalCode === null) stimd.kill('SIGKILL');
     if (previousHome === undefined) delete process.env.STIM_HOME;
     else process.env.STIM_HOME = previousHome;
     rmSync(home, { recursive: true, force: true });

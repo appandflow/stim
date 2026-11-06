@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID, type Hash } from 'node:crypto';
-import { appendFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { JobFrameReader, jobFrame } from '@stim-cli/core/noise-session';
@@ -181,6 +181,7 @@ export class OffloadJobs {
     const why = this.refusal(client);
     if (why) return refused('build-busy', why);
     let entry = this.entry(build);
+    if (entry && typeof entry !== 'string') this.recordUse(build, stim);
     if (!entry) {
       const upload = this.uploads.get(socket);
       if (typeof params.upload === 'string') {
@@ -224,6 +225,23 @@ export class OffloadJobs {
     const job = this.spawn(kind, client, repo, entry);
     this.attachSocket(job, socket);
     return { result: { job: job.id } };
+  }
+
+  /**
+   * Refreshes `<root>/jobs/<build>.json`, which the engine store's GC reads to keep the client builds jobs used in the
+   * last day (stim-cli's `engine-store/jobs.ts` owns the format). A write that fails only shortens that keep.
+   */
+  private recordUse(build: string, version: string | null): void {
+    try {
+      const dir = join(this.root(), 'jobs');
+      mkdirSync(dir, { recursive: true });
+      const file = join(dir, `${build}.json`);
+      writeFileSync(
+        `${file}.${process.pid}.tmp`,
+        `${JSON.stringify({ format: 1, version, usedAt: new Date().toISOString() })}\n`,
+      );
+      renameSync(`${file}.${process.pid}.tmp`, file);
+    } catch {}
   }
 
   private refusal(client: JobClient): string | null {
@@ -309,6 +327,7 @@ export class OffloadJobs {
   }
 
   private install(build: string, source: [string, string]): Promise<InstallFailure> {
+    this.recordUse(build, source[0] === 'release' ? source[1] : null);
     return new Promise((resolve) => {
       const child = spawn(process.execPath, [this.options.stimCli, '__job', 'install', this.root(), build, ...source], {
         env: this.options.env(),

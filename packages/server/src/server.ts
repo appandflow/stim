@@ -953,6 +953,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     script: options.service?.script ?? '',
     env: process.env,
     runsAsService: options.service?.runsAsService,
+    ...(options.service?.detached ? { detached: options.service.detached } : {}),
     acceptsClientBuilds: () => loadConfig()?.server?.acceptClientBuilds === true,
     drain: (reason) => {
       builds.drain(reason);

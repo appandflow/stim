@@ -101,7 +101,7 @@ describe('serverSetupFindings', () => {
     );
     expect(finding).toMatchObject({ code: 'server-multiple', level: 'cost' });
     expect(finding?.fix).toContain('Keep pid 100, the dev.stim.server service');
-    expect(finding?.fix).toContain('-stimServerPort 7788');
+    expect(finding?.fix).toContain('-stimEngine <package dir>');
     expect(finding?.fix).toContain('`kill 300`');
   });
 
@@ -155,7 +155,9 @@ describe('serverSetupFindings', () => {
       }),
     );
     const versions = findings.filter((each) => each.code === 'server-version');
-    expect(versions[0]?.fix).toBe('Run `stim service update --release 1.41.0`.');
+    expect(versions[0]?.fix).toBe(
+      'Run `stim engine update` there, or `stim engine use 1.41.0` for exactly this version.',
+    );
     expect(versions[1]?.fix).toContain('Update Stim Desktop');
   });
 
@@ -174,23 +176,23 @@ describe('serverSetupFindings', () => {
   });
 
   describe('service state', () => {
-    const down = (job: InstalledServerService['job'], previousScript: string | null = null) =>
+    const down = (job: InstalledServerService['job'], script: string | null = service().installed.script) =>
       serverSetupFindings(
         setup({
-          services: [service({ job, installed: { ...service().installed, previousScript } })],
+          services: [service({ job, installed: { ...service().installed, script } })],
           servers: [],
         }),
       );
 
-    it('reports a loaded job that keeps exiting, with the log and rollback when a previous server exists', () => {
+    it('reports a loaded job that keeps exiting, with the log and the engine rollback when it runs the engine', () => {
       const [finding] = down(
         { state: 'spawn scheduled', pid: null, runs: 14, lastExitCode: '1' },
-        '/old/stim-server.mjs',
+        '/Users/me/.stim/engine/bin/stimd',
       );
       expect(finding).toMatchObject({ code: 'server-service-crash', level: 'cost' });
       expect(finding?.detail).toContain('14 times');
       expect(finding?.fix).toContain('dev.stim.server.log');
-      expect(finding?.fix).toContain('stim service rollback');
+      expect(finding?.fix).toContain('stim engine rollback');
     });
 
     it('does not call a service that has never exited a crash while its health is slow to answer', () => {
@@ -330,7 +332,7 @@ describe('serverSetupFindings', () => {
         }),
       );
       expect(finding).toMatchObject({ code: 'server-desktop-authority', level: 'cost' });
-      expect(finding?.fix).toBe('Run `stim service update --release 1.42.0`.');
+      expect(finding?.fix).toBe('Run `stim engine update` to move it past 1.40.0.');
     });
 
     it('does not flag Desktop-keyed servers or servers that send desktopApi', () => {

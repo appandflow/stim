@@ -4,7 +4,7 @@ import { DEFAULT_LABEL, validateServeEnvironment } from '@stim-cli/server/servic
 
 export default function serviceCommand(program: Command): void {
   const service = program.command('service').description('Manage the per-user server service');
-  for (const name of ['install', 'status', 'update', 'rollback', 'uninstall']) {
+  for (const name of ['install', 'status', 'uninstall']) {
     const command = service
       .command(name)
       .option('--label <name>', 'service label', name === 'install' ? undefined : DEFAULT_LABEL);
@@ -25,18 +25,13 @@ export default function serviceCommand(program: Command): void {
           [],
         );
     if (name === 'status') command.option('--json', 'print status as JSON');
-    if (name === 'update')
-      command
-        .option('--release <version>', 'install an npm release')
-        .option('--from <dir>', 'install packaged releases from a directory')
-        .option('--no-wait', 'interrupt active builds and hosted installs');
     command.action(async (opts) => {
       const env = opts.env ?? [];
       const pathPrepend = opts.pathPrepend ?? [];
       const problem = validateServeEnvironment(env, pathPrepend, false);
       if (problem) command.error(problem);
       const { runService } = await loadServerCli();
-      await runService(name, { ...opts, 'no-wait': opts.wait === false }, env, pathPrepend);
+      await runService(name, opts, env, pathPrepend);
     });
   }
 }
