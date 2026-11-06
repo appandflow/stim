@@ -106,6 +106,7 @@ export interface StimConfig {
   hosting?: { agentDriver?: unknown };
   debug?: { logs?: unknown };
   daemon?: { mode?: unknown };
+  engine?: { autoUpdate?: unknown };
   server?: {
     buildsPaused?: unknown;
     devicesPaused?: unknown;

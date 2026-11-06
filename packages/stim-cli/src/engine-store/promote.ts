@@ -16,13 +16,18 @@ import { cloneTree, fetchTree, scratchName, seal, selfTest } from './tree.ts';
 
 export interface Promotion {
   root: string;
-  /** A package directory to clone, or a version to fetch from npm. */
-  source: { dir: string } | { version: string };
+  /** A package directory to clone, a version to fetch from npm, or a directory of uploaded `.tgz` packages. */
+  source: { dir: string } | { version: string } | { packages: string };
   setBy: string;
   /** A person's `stim engine` command: passes the pin, bad-build and newer-version checks. */
   explicit?: boolean;
-  /** Pins the engine with this reason; omitted, the engine is unpinned. */
+  /** The reason the engine stays where this promotion puts it; omitted, none. */
   pinReason?: string | null;
+  /**
+   * Whether `pinReason` stops automatic sources until a person resumes them (a person's `use` or `rollback`), or only
+   * holds the engine off the builds marked bad (a crash-loop rollback, false). Defaults to whether a reason is given.
+   */
+  pinned?: boolean;
   channel?: Current['channel'];
   /** `--restore-state`: puts back the claimed homes' snapshots for the target's schema just before the flip. */
   restoreState?: boolean;
@@ -55,6 +60,7 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
       const scratch = join(root, scratchName());
       const log = (line: string) => ctx.output('stderr', `${line}\n`);
       if ('version' in source) await fetchTree(root, { release: source.version }, scratch, log);
+      else if ('packages' in source) await fetchTree(root, { from: source.packages }, scratch, log);
       else if (installKind(realpathSync(source.dir), realpathSync(root)) === 'development')
         await fetchTree(root, { pack: source.dir }, scratch, log);
       else await cloneTree(source.dir, scratch, ctx);
@@ -87,6 +93,7 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
           stagedAt: entry.installedAt,
           setBy: promotion.setBy,
           pinReason: promotion.pinReason ?? null,
+          ...(promotion.pinned === false ? { pinned: false } : {}),
           ...(promotion.channel ? { channel: promotion.channel } : {}),
           ...(promotion.restoreState ? { restoreState: true } : {}),
         };
@@ -121,7 +128,12 @@ async function flipStaged(promotion: Promotion): Promise<PromotionResult> {
       return { refused: refusal };
     }
   }
-  const from = { ...promotion, setBy: staged.setBy ?? promotion.setBy, pinReason: staged.pinReason ?? null };
+  const from = {
+    ...promotion,
+    setBy: staged.setBy ?? promotion.setBy,
+    pinReason: staged.pinReason ?? null,
+    pinned: staged.pinned,
+  };
   await flip(root, own, manifest, current, { ...from, channel: staged.channel ?? promotion.channel }, true);
   for (const home of homes) migrateSchema(home, manifest.version);
   collectStore(root);
@@ -133,7 +145,7 @@ async function handOver(promotion: Promotion, build: string): Promise<PromotionR
   const { root, ctx } = promotion;
   const args = ['--source', join(root, build), '--set-by', promotion.setBy, '--locked'];
   if (promotion.explicit) args.push('--explicit');
-  if (promotion.pinReason) args.push('--pin', promotion.pinReason);
+  if (promotion.pinReason) args.push(promotion.pinned === false ? '--hold' : '--pin', promotion.pinReason);
   if (promotion.channel) args.push('--channel', promotion.channel);
   if (promotion.restoreState) args.push('--restore-state');
   const select = join(root, build, 'dist', 'engine-select.mjs');
@@ -155,6 +167,10 @@ async function flip(
     : ((await takeLock(root, '.flip.sock')) ?? fail(`Another process holds ${join(root, '.flip.sock')}.`));
   try {
     if (current && current.dir !== build) writeRecord(join(root, 'previous'), current.dir);
+    else if (!current) {
+      const state = readRecords(root).state;
+      writeState(root, { ...state, installedBy: promotion.setBy });
+    }
     writeRecord(join(root, 'current.json'), {
       format: FORMAT,
       version: manifest.version,
@@ -163,7 +179,7 @@ async function flip(
       engines: manifest.engines,
       node: [node, ...(current?.node ?? []).filter((each) => each.path !== node.path)],
       channel: promotion.channel ?? current?.channel ?? (manifest.version.includes('-') ? 'next' : 'latest'),
-      pinned: Boolean(promotion.pinReason),
+      pinned: promotion.pinned ?? Boolean(promotion.pinReason),
       pinReason: promotion.pinReason ?? null,
       setBy: promotion.setBy,
       setAt: new Date().toISOString(),

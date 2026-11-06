@@ -1,21 +1,12 @@
 import tailscaleManifest from '@stim-cli/transport-tailscale/package.json' with { type: 'json' };
-import { statSync } from 'node:fs';
 import { hostname, networkInterfaces } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pinnedReleaseFloor, readHostedSessions } from '@stim-cli/core/state';
 import { discoverToolchain } from '@stim-cli/core/toolchain';
 import { bundledStim } from './environment.ts';
 import { formatHostedSessions, readHostedSessionRows } from './hosted-sessions.ts';
 import { readAudit } from './actions.ts';
-import {
-  installService,
-  rewriteUnitToShim,
-  rollbackService,
-  serviceStatus,
-  statusLines,
-  uninstallService,
-  updateService,
-} from './service.ts';
+import { installService, rewriteUnitToShim, serviceStatus, statusLines, uninstallService } from './service.ts';
 import {
   applyServeEnvironment,
   DEFAULT_LABEL,
@@ -23,7 +14,6 @@ import {
   ServiceError,
   validateLabel,
   validatePort,
-  validateRelease,
 } from './service-plist.ts';
 import { PROTOCOL_VERSION, type Capability } from './protocol.ts';
 import { serviceManagerOrNull } from './service-manager.ts';
@@ -128,8 +118,15 @@ export interface NetThread {
 /** Thrown when the net thread cannot serve; its message is the whole refusal. */
 export class NetRefusal extends Error {}
 
-/** stim-server's listeners and handlers as stimd's net thread runs them. `idle` runs when a share-only server ends. */
-export async function serve(options: NetOptions, idle: () => void): Promise<NetThread> {
+/**
+ * stim-server's listeners and handlers as stimd's net thread runs them. `idle` runs when a share-only server ends;
+ * `requestUpdate` asks stimd to check for a newer engine.
+ */
+export async function serve(
+  options: NetOptions,
+  idle: () => void,
+  requestUpdate: (why: string) => void = () => {},
+): Promise<NetThread> {
   const { port, extraEnv, pathPrepend, loopbackOnly, shareOnly } = options;
   delete process.env.NODE_COMPILE_CACHE;
   const captureHost = hostFromExecutable(process.env.STIM_HOST_EXECUTABLE);
@@ -170,6 +167,7 @@ export async function serve(options: NetOptions, idle: () => void): Promise<NetT
   try {
     server = await startServer({
       desktopBootstrap: new DesktopBootstrap(options.desktopKey),
+      requestUpdate,
       ...(options.owner ? { owner: options.owner } : {}),
       name: macName(tailscale),
       host: captureHost,
@@ -393,9 +391,6 @@ export async function runService(
     port?: string;
     env?: string[];
     'path-prepend'?: string[];
-    release?: string;
-    from?: string;
-    'no-wait'?: boolean;
   },
   env: string[],
   pathPrepend: string[],
@@ -426,21 +421,6 @@ export async function runService(
       const status = await serviceStatus(label);
       const panes = status.manager === 'launchd' ? await hostPermissionPanes() : { screen: '', control: '' };
       console.log(values.json ? JSON.stringify(status) : statusLines(status, panes).join('\n'));
-    } else if (sub === 'update') {
-      if ((values.release === undefined) === (values.from === undefined)) {
-        fail(`service update takes exactly one of --release <version> or --from <dir>.`);
-      }
-      const releaseProblem = values.release === undefined ? null : validateRelease(values.release);
-      if (releaseProblem) fail(releaseProblem);
-      const from = values.from === undefined ? null : resolve(values.from);
-      if (from !== null && !statSync(from, { throwIfNoEntry: false })?.isDirectory()) {
-        fail(`--from takes a directory of .tgz packages, got ${values.from}.`);
-      }
-      const source = from === null ? { release: values.release! } : { from };
-      for (const line of await updateService(label, source, (progress) => console.log(progress), !values['no-wait']))
-        console.log(line);
-    } else if (sub === 'rollback') {
-      for (const line of await rollbackService(label, (progress) => console.log(progress))) console.log(line);
     } else {
       for (const line of await uninstallService(label)) console.log(line);
     }

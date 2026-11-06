@@ -915,6 +915,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'The per-home stimd and the passes it runs: the idle and dormant stages, the pressure ladder and automatic maintenance. on: start, ios, android, web, macos and revive start stimd, which exits once nothing runs in the home and every workspace is dormant or removed, and the passes act. report: the passes log what they would do and act on nothing. off: no stimd, and no pass runs; each dev server supervisor times its own idle stop. Without a running stimd, start, ios, android, doctor and gc run the passes in their own process in this mode. stimd keeps the mode it started with, STIM_DAEMON included, unless the machine setting later turns stricter, and the CI and non-sensitive setting environment overrides of the command that started it for its whole life. Off in CI unless STIM_DAEMON is set',
   },
   {
+    key: 'engine.autoUpdate',
+    type: { kind: 'choice', choices: ['auto', 'on', 'off'] },
+    scopes: MACHINE,
+    default: 'auto',
+    description:
+      "Whether stimd moves the machine engine to the newest version on its channel by itself: once a day, when Stim Desktop connects, when a phone needs a newer engine, and at most once an hour while a crash-looping build is held. auto: on for an engine Stim Desktop installed or a service runs, off for any other, such as a global npm install. A person's stim engine use or rollback pin stops it until stim engine update, and it never moves to a build at or below one that crash-looped. Needs an engine installed with stim engine install",
+  },
+  {
     key: 'debug.logs',
     type: { kind: 'boolean' },
     scopes: MACHINE,

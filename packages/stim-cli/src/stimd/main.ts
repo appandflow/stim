@@ -29,8 +29,10 @@ import {
 import {
   isClaimRefusal,
   isClaimUnavailable,
+  readClaimSet,
   releaseClaim,
   tryAcquireClaim,
+  updateClaimDetails,
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
 import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
@@ -70,6 +72,11 @@ import { createPassesLane, createThreadTable } from './threads.ts';
 import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
 import { followEngine } from './engine-follow.ts';
+import { crashLooping, holdCrashLoop, keptBoots, parseBoots, type Boot } from './crash-hold.ts';
+import { ASKED_MS, autoUpdateOn, checkForUpdate, DAILY_MS, lastUpdateCheck, updateDue } from './auto-update.ts';
+import { ownStoreEngine } from '../daemon/engine-switch.ts';
+import { readRecords } from '../engine-store/store.ts';
+import { getConfigDir } from '../workspace/config.ts';
 // compat C25 until removal-minor
 import { stopForeignSupervisors } from './foreign-supervisors.ts';
 // compat end
@@ -98,6 +105,9 @@ const OPS: Record<Resource, { wait: string; waiting: string; released: string; c
   build: { wait: 'slot.wait', waiting: 'slot.waiting', released: 'slot.released', changed: 'slot.changed' },
   boot: { wait: 'boot.wait', waiting: 'boot.waiting', released: 'boot.released', changed: 'boot.changed' },
 };
+
+/** Marks this stimd's boot abnormal in its home claim, which then outlives it; set while `runStimd` holds that claim. */
+let markAbnormal: (() => void) | null = null;
 
 const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
@@ -268,14 +278,74 @@ export async function runStimd({
   const log = (level: Level, event: string, msg: string, fields: Record<string, unknown> = {}) =>
     writer.write({ src: 'stimd', level, event, msg, ...fields });
   const path = stimdSocket();
-  const details = { socket: path, mode: startMode, build, version: identity.version };
-  const own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details);
+  const bootAt = Date.now();
+  const leftover = readClaimSet(stimdClaimRoot()).dead;
+  const boots: Boot[] = keptBoots(
+    [...leftover.flatMap((holder) => parseBoots(holder.details.boots)), { at: bootAt, build }],
+    bootAt,
+  );
+  const updateCheckedAt = Math.max(0, ...leftover.map((holder) => Number(holder.details.updateCheckedAt) || 0));
+  const details = { socket: path, mode: startMode, build, version: identity.version, boots, updateCheckedAt };
+  let own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details);
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
     writer.close();
     return false;
   }
+  let keepOwn = false;
+  markAbnormal = () => {
+    if (!own || keepOwn) return;
+    keepOwn = true;
+    const marked = boots.map((boot) =>
+      boot.at === bootAt && boot.build === build ? { ...boot, abnormal: true } : boot,
+    );
+    own = updateClaimDetails(own, { ...details, boots: marked }) ?? own;
+  };
   process.title = 'stimd';
+  const store = ownStoreEngine();
+  if (store && crashLooping(boots, build)) {
+    const held = await holdCrashLoop(store, identity.version, getConfigDir());
+    if ('rolledBack' in held || 'moved' in held) {
+      const current = readRecords(store.root).current;
+      log(
+        'error',
+        'engine_rolled_back',
+        `${identity.version} crashed 3 times in 10 minutes; the engine runs ${current?.version}`,
+      );
+      releaseClaim(own);
+      markAbnormal = null;
+      if (current)
+        launchStimd(
+          process.env,
+          startMode,
+          process.platform,
+          join(store.root, current.dir, 'dist', 'cli.mjs'),
+          serveArgs(serve ?? null),
+        );
+      writer.close();
+      return false;
+    }
+    const message =
+      'staged' in held
+        ? `engine ${identity.version} crashes; going back to the previous build waits for other homes' stimds to drain`
+        : held.stop;
+    console.error(`stimd: ${message}`);
+    log('error', 'engine_crash_hold', message);
+    let checked = updateCheckedAt;
+    if (
+      autoUpdateOn(loadConfig()?.engine?.autoUpdate, readRecords(store.root).state.installedBy, serve !== undefined) &&
+      updateDue(checked, Date.now(), ASKED_MS)
+    ) {
+      const line = await checkForUpdate(store, 'crash hold').catch((error: unknown) => String(error));
+      log('info', 'engine_update_check', `crash hold: ${line}`);
+      checked = Date.now();
+    }
+    own = updateClaimDetails(own, { ...details, updateCheckedAt: checked }) ?? own;
+    markAbnormal = null;
+    process.exitCode = 1;
+    writer.close();
+    return true;
+  }
   // compat C22 until removal-minor
   let stopped: number | null = null;
   const takeOver = async () => {
@@ -294,11 +364,42 @@ export async function runStimd({
   const follower = followEngine(log);
   const key = writeDesktopKey(desktopKey);
   const script = realpathSync(process.argv[1] ?? '');
-  const net = createNetThread(log, () => {
-    lastContact = Date.now();
-    if (serve && !closing) shutdown('the net thread `stim serve` started exited', 'warn');
-    else requestTick();
-  });
+  const net = createNetThread(
+    log,
+    () => {
+      lastContact = Date.now();
+      if (serve && !closing && !restartingNet) shutdown('the net thread `stim serve` started exited', 'warn');
+      else requestTick();
+    },
+    (why) => maybeUpdate(why, ASKED_MS),
+  );
+  let restartingNet = false;
+  let updating: Promise<void> | null = null;
+  const maybeUpdate = (why: string, everyMs: number) => {
+    if (!follower || updating || closing) return;
+    try {
+      const on = autoUpdateOn(
+        loadConfig()?.engine?.autoUpdate,
+        readRecords(follower.engine.root).state.installedBy,
+        serve !== undefined,
+      );
+      if (!on || !updateDue(lastUpdateCheck(follower.engine.root), Date.now(), everyMs)) return;
+    } catch {
+      return;
+    }
+    const engine = follower.engine;
+    updating = checkForUpdate(engine, why)
+      .then(
+        (line) => log('info', 'engine_update_check', `${why}: ${line}`),
+        (error: unknown) =>
+          log('warn', 'engine_update_failed', `${why}: ${error instanceof Error ? error.message : String(error)}`),
+      )
+      .finally(() => {
+        updating = null;
+        void checkEngine();
+      })
+      .then(() => undefined);
+  };
   const netOptions = (fields: Partial<NetOptions>): NetOptions => ({
     port: DEFAULT_SERVER_PORT,
     extraEnv: [],
@@ -443,6 +544,7 @@ export async function runStimd({
           // compat end
           framed = true;
           kind = message.kind;
+          if (kind === 'desktop') maybeUpdate('Stim Desktop connected', ASKED_MS);
           lastContact = Date.now();
           reply({ op: 'hello', kind: 'stimd', pid: process.pid, build, version: identity.version });
           continue;
@@ -466,8 +568,24 @@ export async function runStimd({
             shareOnly: share,
             ...(kind === 'desktop' ? { owner: 'desktop' } : {}),
           });
-          if (!net.running()) netServes = options;
-          void net.ensure(options).then((answer) => {
+          const running = net.running();
+          const restart =
+            kind === 'desktop' &&
+            running !== null &&
+            (running.loopbackOnly !== options.loopbackOnly ||
+              (port !== undefined && port !== 0 && running.port !== null && port !== running.port));
+          if (!running || restart) netServes = options;
+          const started = restart
+            ? (() => {
+                log('info', 'net_restart', 'Stim Desktop asked for other net thread options; restarting it');
+                restartingNet = true;
+                return net.close().then(() => {
+                  restartingNet = false;
+                  return net.ensure(options);
+                });
+              })()
+            : net.ensure(options);
+          void started.then((answer) => {
             lastContact = Date.now();
             return reply({ op: 'net', ...answer });
           });
@@ -530,6 +648,7 @@ export async function runStimd({
   const shutdown = (why: string, level: Level = 'info') => {
     if (closing) return;
     closing = true;
+    if (level === 'error') markAbnormal?.();
     if (dependencyWork) log('debug', 'daemon_dependency_scan_cancelled', 'stopping the dependency size scan');
     threads.abort('measure');
     loopDelay.disable();
@@ -541,7 +660,8 @@ export async function runStimd({
     if (readJsonObject(stimdRecordFile())?.pid === process.pid) rmSync(stimdRecordFile(), { force: true });
     follower?.release();
     releaseClaim(claim);
-    releaseClaim(own);
+    if (!keepOwn) releaseClaim(own);
+    markAbnormal = null;
     for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
     void Promise.all([lane.settled(), dependencyWork, net.close()])
@@ -658,7 +778,9 @@ export async function runStimd({
         ? null
         : maintaining
           ? 'automatic maintenance runs'
-          : await pendingWork(config, measured, slowTickMs, mode === 'on');
+          : updating
+            ? 'an engine update check runs'
+            : await pendingWork(config, measured, slowTickMs, mode === 'on');
       wentDormant = actions.some((action) => action.kind === 'dormant-stage' && action.outcome === 'done');
       interval = alive || pressure.level !== 'normal' ? tickMs : slowTickMs;
       for (const { path: workspace, outcome, detail } of workspaces) {
@@ -712,6 +834,7 @@ export async function runStimd({
       if (foreignLeft && follower) foreignLeft = (await stopForeignSupervisors(follower.engine.build)) > 0;
       // compat end
       await checkEngine();
+      maybeUpdate('daily check', DAILY_MS);
     } catch (error) {
       for (const socket of replying) socket.destroy();
       shutdown(
@@ -828,6 +951,14 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
     delete process.env.XPC_SERVICE_NAME;
   }
   const at = argv.indexOf('--mode');
+  process.once('uncaughtException', (error) => {
+    markAbnormal?.();
+    console.error(error);
+    process.exit(1);
+  });
+  process.once('exit', (code) => {
+    if (code !== 0) markAbnormal?.();
+  });
   try {
     const served = await runStimd({
       mode: parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ?? daemonMode({}),
@@ -843,6 +974,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
         : error instanceof Error
           ? (error.stack ?? error.message)
           : String(error);
+    markAbnormal?.();
     try {
       const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
       writer.write({ src: 'stimd', level: 'error', event: 'daemon_failed', msg: message });

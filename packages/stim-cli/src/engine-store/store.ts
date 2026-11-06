@@ -25,6 +25,7 @@ export type Current = { format: number; version: string; build: string; dir: str
 export type Staged = { format: number; dir: string; version: string; stagedAt: string } & {
   setBy?: string;
   pinReason?: string | null;
+  pinned?: boolean;
   channel?: Channel;
   restoreState?: boolean;
 };
@@ -34,6 +35,8 @@ export type StoreState = {
   format: number;
   installed: Installed[];
   bad: { build: string; version: string; at: string }[];
+  /** The `setBy` of the promotion that installed the engine, such as `install:desktop`; `engine.autoUpdate` reads it. */
+  installedBy?: string;
 };
 export type Records = { current: Current | null; staged: Staged | null; previous: string | null; state: StoreState };
 
