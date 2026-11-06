@@ -10,6 +10,7 @@ import { daemonWaiter, notifyReleased } from '../daemon/client.ts';
 import { liveWaiters, queuePosition, takeWaitTicket, waitCeiling } from './wait-queue.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { admissionLimits } from '../workspace/config.ts';
+import { busySlots, slotTurn } from '../policy/admission.ts';
 
 const SLOT_PREFIX = 'slot-';
 
@@ -137,14 +138,8 @@ export function slotWaitingLine({
   return `${'build'.padEnd(11)} waiting for a build slot: queue position ${position} of ${waiting}, all ${max} in use, ${formatElapsed(elapsedMs)} elapsed -- stim guide lifecycle concurrency`;
 }
 
-function busySlots(max: number): BuildSlotInfo[] {
-  return listBuildSlots().filter(
-    ({ index, alive, unresolved }) => index !== null && index < max && (alive || unresolved),
-  );
-}
-
 function queueState(max: number, waiters: readonly ClaimHolder[]): string {
-  const holders = busySlots(max).map((slot) =>
+  const holders = busySlots(listBuildSlots(), max).map((slot) =>
     slot.unresolved
       ? `slot ${slot.index} (holder cannot be verified, ${slot.path})`
       : `slot ${slot.index} (${slot.client ? `client ${slot.client}` : (slot.projectRoot ?? `pid ${slot.pid}`)}${slot.startedAt ? ` since ${slot.startedAt}` : ''})`,
@@ -194,8 +189,8 @@ export async function acquireBuildSlot({
       const max = readMax();
       const waiters = liveWaiters('build');
       const position = queuePosition(waiters, ticket);
-      const busy = busySlots(max);
-      if (position <= max - busy.filter((slot) => slot.alive).length) {
+      const turn = slotTurn(position, max, busySlots(listBuildSlots(), max));
+      if (turn.claim) {
         const got = tryAcquireBuildSlot({ max, root, logFile });
         if (got) return { ...got, slotWaitMs: ticket ? Math.max(0, Math.round(now() - started)) : 0 };
       }
@@ -203,10 +198,11 @@ export async function acquireBuildSlot({
         ticket = takeWaitTicket('build', { root, displayName: root ? basename(root) : 'build', logFile }, waiters);
         continue;
       }
-      const unverified = busy.filter((slot) => slot.unresolved);
       ceiling.update(
         position,
-        unverified.length ? `the holder of ${unverified.map((slot) => slot.path).join(', ')} cannot be verified` : null,
+        turn.unverified.length
+          ? `the holder of ${turn.unverified.map((slot) => slot.path).join(', ')} cannot be verified`
+          : null,
       );
       waitingFor({
         kind: 'build-slot',

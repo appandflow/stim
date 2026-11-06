@@ -88,7 +88,7 @@ function readText(path: string): string | null {
 }
 
 /** The nearest directory at or above `root` holding a lockfile, not past a git work tree top; else `root`. */
-function installRoot(root: string): string {
+export function installRoot(root: string): string {
   for (let dir = root; ; dir = dirname(dir)) {
     if (LOCKFILES.some((name) => existsSync(join(dir, name)))) return dir;
     if (dirname(dir) === dir || existsSync(join(dir, '.git'))) return root;
@@ -99,7 +99,7 @@ function installRoot(root: string): string {
  * Whether the platform's native directory is the project's own (`tracked`) or produced by `expo prebuild`
  * (`generated`). Git tracking decides, so running prebuild never changes the answer.
  */
-function nativeMode(
+export function nativeMode(
   { expoResolves, tracked }: Pick<StaticContext, 'expoResolves' | 'tracked'>,
   nativeDir: string,
 ): NativeMode | Uncertain {
@@ -256,6 +256,15 @@ function nativeTrees(project: string, nativeDir: string, target: StaticTarget): 
   return [...ANDROID_ROOT_SOURCES.map((name) => join(nativeDir, name)), layout.moduleDir];
 }
 
+/** The real path of the platform's native directory, or its declared path while it does not exist. */
+export function nativeDirectory(project: string, target: StaticTarget): string {
+  const declared =
+    target.platform === 'ios'
+      ? resolve(project, target.iosProjectPath ?? DEFAULT_IOS_PROJECT_PATH)
+      : (target.androidLayout?.gradleRoot ?? join(project, 'android'));
+  return existsSync(declared) ? realpathSync.native(declared) : declared;
+}
+
 /**
  * The inputs stim reads without running project code: files under the tracked native directory, local native
  * packages, patches, config-named files and `fingerprint.config.js` sources, the projected `package.json` and the
@@ -276,8 +285,7 @@ export function staticInputs(context: StaticContext, target: StaticTarget): Stat
     gradleRoot: ios ? null : (target.androidLayout?.gradleRootRelative ?? DEFAULT_ANDROID_GRADLE_ROOT),
     module: ios ? null : (target.androidLayout?.module ?? DEFAULT_ANDROID_MODULE),
   };
-  const declared = ios ? resolve(project, projectPath) : (target.androidLayout?.gradleRoot ?? join(project, 'android'));
-  const nativeDir = existsSync(declared) ? realpathSync.native(declared) : declared;
+  const nativeDir = nativeDirectory(project, target);
   const native = nativeMode(context, nativeDir);
   if (isUncertain(native)) return native;
   const extra = projectFingerprintConfig(context.fingerprintConfig, project);

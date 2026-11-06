@@ -1,14 +1,14 @@
 import { ensureIosRuntime } from '../../devices/ios-runtime.ts';
-import { installHostedIosRuntime } from '../../device-host/ios-runtime.ts';
+import type { installHostedIosRuntime } from '../../device-host/ios-runtime.ts';
 import { projectRegistry } from '../../integrations/projects.ts';
 import type { ProjectRegistry } from '../../integrations/project-registry.ts';
 import type { IosRuntimePlan } from './launch.ts';
-import { automaticDevicePlacement } from '../../device-host/auto-placement.ts';
+import type { automaticDevicePlacement } from '../../device-host/auto-placement.ts';
 import { checkEasFallback } from '../../engine/eas-fallback.ts';
-import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
-import { hostedMetroPortProbe } from '../../device-host/hosted-native.ts';
+import type { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
+import type { hostedMetroPortProbe } from '../../device-host/hosted-native.ts';
 import { readHostedIos, writeHostedIosAsync } from '../../workspace/placement-state.ts';
-import { followHostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
+import type { followHostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
 import type { loadCacheProvider } from '@stim-cli/cache';
 import { buildIos, discoverXcodeProject } from '../../integrations/react-native-build.ts';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
@@ -34,7 +34,7 @@ import { verifyLaunch, verifyReleaseLaunch } from '../../engine/launch-verify.ts
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../../engine/deps.ts';
-import { iosToolchainAsync } from '../../offload/toolchain.ts';
+import { memoizedIosToolchainAsync } from '../../engine/toolchain.ts';
 import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
 import { diskFloorGate } from '../../daemon/floor.ts';
 import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
@@ -108,7 +108,9 @@ export interface IosDeps {
   checkEasFallback: typeof checkEasFallback;
   prepareHostedIos: typeof prepareHostedIos;
   placeHostedIos: typeof placeHostedIos;
-  hostedMetroPortProbe: typeof hostedMetroPortProbe;
+  hostedMetroPortProbe: (
+    ...args: Parameters<typeof hostedMetroPortProbe>
+  ) => ReturnType<typeof hostedMetroPortProbe> | Promise<ReturnType<typeof hostedMetroPortProbe>>;
   readHostedIos: typeof readHostedIos;
   writeHostedIos: typeof writeHostedIosAsync;
   resolveEasDevelopmentBuild: typeof resolveEasDevelopmentBuild;
@@ -171,7 +173,7 @@ export interface IosDeps {
   readPodState: typeof readPodState;
   podsAreStale: typeof podsAreStale;
   runPodInstall: typeof runPodInstall;
-  iosToolchain: typeof iosToolchainAsync;
+  iosToolchain: typeof memoizedIosToolchainAsync;
   buildIos: typeof buildIos;
   discoverXcodeProject: typeof discoverXcodeProject;
   resolveScheme: typeof resolveScheme;
@@ -203,7 +205,9 @@ export interface IosDeps {
   launchIosApp: typeof launchIosApp;
   verifyLaunch: typeof verifyLaunch;
   verifyReleaseLaunch: typeof verifyReleaseLaunch;
-  followHostedLaunchLogs: typeof followHostedLaunchLogs;
+  followHostedLaunchLogs: (
+    ...args: Parameters<typeof followHostedLaunchLogs>
+  ) => ReturnType<typeof followHostedLaunchLogs> | Promise<ReturnType<typeof followHostedLaunchLogs>>;
   ensureWorkspaceStorage: typeof ensureWorkspaceStorageSafely;
   replaceCollector: typeof replaceCollector;
   stopPreviousCollector: typeof stopPreviousCollector;
@@ -218,13 +222,16 @@ export interface IosDeps {
 
 export const DEFAULT_DEPS: IosDeps = {
   ensureIosRuntime,
-  installHostedIosRuntime,
+  installHostedIosRuntime: async (...args) =>
+    (await import('../../device-host/ios-runtime.ts')).installHostedIosRuntime(...args),
   projectRegistry,
-  automaticDevicePlacement,
+  automaticDevicePlacement: async (...args) =>
+    (await import('../../device-host/auto-placement.ts')).automaticDevicePlacement(...args),
   checkEasFallback,
-  prepareHostedIos,
-  placeHostedIos,
-  hostedMetroPortProbe,
+  prepareHostedIos: async (...args) => (await import('../../device-host/hosted-ios.ts')).prepareHostedIos(...args),
+  placeHostedIos: async (...args) => (await import('../../device-host/hosted-ios.ts')).placeHostedIos(...args),
+  hostedMetroPortProbe: async (...args) =>
+    (await import('../../device-host/hosted-native.ts')).hostedMetroPortProbe(...args),
   readHostedIos,
   writeHostedIos: writeHostedIosAsync,
   resolveEasDevelopmentBuild,
@@ -284,7 +291,7 @@ export const DEFAULT_DEPS: IosDeps = {
   readPodState,
   podsAreStale,
   runPodInstall,
-  iosToolchain: iosToolchainAsync,
+  iosToolchain: memoizedIosToolchainAsync,
   buildIos,
   discoverXcodeProject,
   resolveScheme,
@@ -312,7 +319,8 @@ export const DEFAULT_DEPS: IosDeps = {
   launchIosApp,
   verifyLaunch,
   verifyReleaseLaunch,
-  followHostedLaunchLogs,
+  followHostedLaunchLogs: async (...args) =>
+    (await import('../../device-host/hosted-logs-sync.ts')).followHostedLaunchLogs(...args),
   ensureWorkspaceStorage: ensureWorkspaceStorageSafely,
   replaceCollector,
   stopPreviousCollector,

@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const recordFile = 'scripts/build-compat.json';
-const constantFile = 'packages/stim-cli/src/offload/toolchain.ts';
+const constantFile = 'packages/stim-cli/src/engine/toolchain.ts';
 
 /**
  * The files a record covers: each listed file, and every TypeScript source git tracks in a listed directory (an entry

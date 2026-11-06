@@ -2,7 +2,7 @@ import { workspaceLinks } from '../../devices/stim-desktop.ts';
 import chalk from 'chalk';
 import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { hostedAndroidStatus, type HostedDeviceSelectors, type HostedAppOffer } from '@stim-cli/core/state';
-import { placeHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
+import type { placeHostedAndroid, HostedAndroidTarget } from '../../device-host/hosted-android.ts';
 import { writeHostedAndroidAsync } from '../../workspace/placement-state.ts';
 import type { writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
 import { LAUNCH_BUNDLING, LAUNCH_FATAL, type verifyLaunch } from '../../engine/launch-verify.ts';
