@@ -432,7 +432,7 @@ describe('inspectBuildMachines', () => {
       { code: 'build-machine-stim-build', level: 'cost' },
       { code: 'build-machine-busy', level: 'note' },
     ]);
-    expect(findings[0]!.fix).toContain('run `stim-server service update --release <version>`');
+    expect(findings[0]!.fix).toContain('stim-server service update --release <version>');
   });
 
   it('reports a package Gradle downloads as a note that does not stop the build, and a blocker with commands otherwise', async () => {

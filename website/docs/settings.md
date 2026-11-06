@@ -715,8 +715,7 @@ command when a named machine does not answer.
 Offload needs Stim releases with the same build compatibility version on both
 machines. It changes only in a release that changes what a worker builds, how it
 builds, or the build messages, so two machines on different Stim builds usually
-offload to each other. A stim-server too old to report its compatibility version
-needs the same Stim build as this machine. To move the remote machine's
+offload to each other. To move the remote machine's
 service to another build, run one of these there:
 
 ```bash
