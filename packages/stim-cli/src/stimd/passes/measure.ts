@@ -10,15 +10,15 @@ import {
   type MaintenancePressure,
   type MaintenanceSize,
 } from '@stim-cli/core/state';
-import { readVolumeSpace, readVolumeSpaceAsync } from '../budget.ts';
-import { memoryPressure } from '../daemon/pressure.ts';
-import { measuredDirectorySizeAsync } from '../fs-util.ts';
-import { readHostMemoryPressure, readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
-import { discoverCachesAsync, type CacheDescriptor } from '../cache/caches.ts';
-import { planCacheEmptying } from '../commands/gc/caches.ts';
-import { canonicalPath } from '../commands/gc/paths.ts';
-import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
-import { cacheUser } from '../cache/cache-claim.ts';
+import { readVolumeSpace, readVolumeSpaceAsync } from './budget.ts';
+import { memoryPressure } from '../../daemon/pressure.ts';
+import { measuredDirectorySizeAsync } from '../../fs-util.ts';
+import { readHostMemoryPressure, readHostMemoryPressureAsync, type HostMemoryPressure } from '../../host-memory.ts';
+import { discoverCachesAsync, type CacheDescriptor } from '../../cache/caches.ts';
+import { planCacheEmptying } from '../../commands/gc/caches.ts';
+import { canonicalPath } from '../../commands/gc/paths.ts';
+import { collectWorkspaceOutputs } from '../../commands/gc/workspaces.ts';
+import { cacheUser } from '../../cache/cache-claim.ts';
 
 export function measureDisk(): MaintenancePressure['disk'] {
   return readVolumeSpace([configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())]);

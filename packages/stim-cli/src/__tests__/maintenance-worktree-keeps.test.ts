@@ -1,4 +1,4 @@
-import { planWorktrees } from '../maintenance/sweep.ts';
+import { planWorktrees } from '../stimd/passes/sweep.ts';
 import { collectWorktreeSweep, type WorktreeSkipCode, type WorktreeSweep } from '../commands/gc/worktrees.ts';
 
 vi.mock('../commands/gc/worktrees.ts', async (importOriginal) => ({

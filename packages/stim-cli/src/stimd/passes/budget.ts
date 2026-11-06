@@ -1,9 +1,9 @@
 import { existsSync, statfsSync, statSync } from 'node:fs';
 import { stat, statfs } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { volumeRootFor } from './fs-util.ts';
-import { discoverCachesAsync } from './cache/caches.ts';
-import { planCacheEmptying, type GcCache } from './commands/gc/caches.ts';
+import { volumeRootFor } from '../../fs-util.ts';
+import { discoverCachesAsync } from '../../cache/caches.ts';
+import { planCacheEmptying, type GcCache } from '../../commands/gc/caches.ts';
 
 const MB = 1024 * 1024;
 

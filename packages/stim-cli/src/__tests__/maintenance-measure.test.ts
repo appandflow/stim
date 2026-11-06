@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import * as os from 'node:os';
 import { join } from 'node:path';
 import { sharedCompilationCache } from '@stim-cli/core/state';
-import { cacheBlocked, measureSizes, sizeScanDeferred } from '../maintenance/measure.ts';
+import { cacheBlocked, measureSizes, sizeScanDeferred } from '../stimd/passes/measure.ts';
 import { buildLockPath } from '../engine/build-lock.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { captureProcessToken } from '../process-identity.ts';

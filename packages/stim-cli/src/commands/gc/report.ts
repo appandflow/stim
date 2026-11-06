@@ -1,6 +1,6 @@
 import type { HostedAppStorage } from './hosted-apps.ts';
 import type { ParkedHostedDeviceReport } from './hosted-devices.ts';
-import type { MaintenancePreview } from '../../maintenance/preview.ts';
+import type { MaintenancePreview } from '../../stimd/passes/preview.ts';
 import { archiveLines, type ArchiveSelection } from './archives.ts';
 import type { AgentDeviceUsage, SwiftpmCacheUsage } from '@stim-cli/core/state';
 import { swiftpmCacheLines } from '../../devices/swiftpm-cache-usage-output.ts';

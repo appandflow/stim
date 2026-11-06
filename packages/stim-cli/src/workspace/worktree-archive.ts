@@ -6,7 +6,7 @@ import { worktreeArchiveRoot } from '@stim-cli/core/state';
 import { chmod, lstat, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { enforceArchiveRetention, worktreeArchiveBytes, worktreeArchiveLimits } from '../archive.ts';
-import { readVolumeSpaceAsync } from '../budget.ts';
+import { readVolumeSpaceAsync } from '../stimd/passes/budget.ts';
 import { diskThresholds } from '../daemon/pressure.ts';
 import { loadConfig } from './config.ts';
 import { getExecutor, type ExecOptions } from '../exec.ts';

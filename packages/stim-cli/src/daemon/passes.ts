@@ -8,7 +8,7 @@ import {
   type DaemonWorkspaceDecision,
 } from '@stim-cli/core/state';
 import { processContext } from '../cli-operation.ts';
-import { runMaintenance } from '../maintenance/run.ts';
+import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { daemonClaimHeld, requestDaemonTick } from './client.ts';

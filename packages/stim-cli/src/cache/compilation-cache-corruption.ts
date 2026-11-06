@@ -5,8 +5,8 @@ import { canonicalPath } from '../commands/gc/paths.ts';
 import type { GcResult } from '../commands/gc/results.ts';
 import { discoverCaches } from './caches.ts';
 import type { CompilationCacheCorruption } from '../engine/xcode.ts';
-import { maintenanceLogger } from '../maintenance/log.ts';
-import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
+import { maintenanceLogger } from '../stimd/passes/log.ts';
+import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 
 export const COMPILATION_CACHE_CORRUPT = 'STIM_COMPILATION_CACHE_CORRUPT';
 

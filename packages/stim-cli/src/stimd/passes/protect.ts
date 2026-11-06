@@ -1,16 +1,20 @@
 import { basename, sep } from 'node:path';
 import { LAST_BUILD_KEYS, readBuildHistory } from '@stim-cli/core/state';
-import { listBuildLocks } from '../engine/build-lock.ts';
-import { readParked } from '../devices/sim-pool.ts';
-import { metroStoreRoot } from '../supervisor/metro-store.ts';
-import { readWorkspaceLaunches } from '../supervisor/state.ts';
-import { canonicalPath } from '../commands/gc/paths.ts';
-import { loadConfig, type Config } from '../workspace/config.ts';
-import { workspaceInUse, workspaceInUseAsync } from '../workspace/in-use.ts';
-import { readWorkspaceState, workspaceLastUsed } from '../workspace/workspace-state.ts';
-import { maintenanceKeepSetting, resolveProjectSettings, resolveProjectSettingsAsync } from '../workspace/settings.ts';
+import { listBuildLocks } from '../../engine/build-lock.ts';
+import { readParked } from '../../devices/sim-pool.ts';
+import { metroStoreRoot } from '../../supervisor/metro-store.ts';
+import { readWorkspaceLaunches } from '../../supervisor/state.ts';
+import { canonicalPath } from '../../commands/gc/paths.ts';
+import { loadConfig, type Config } from '../../workspace/config.ts';
+import { workspaceInUse, workspaceInUseAsync } from '../../workspace/in-use.ts';
+import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
+import {
+  maintenanceKeepSetting,
+  resolveProjectSettings,
+  resolveProjectSettingsAsync,
+} from '../../workspace/settings.ts';
 import type { StimContext } from '@stim-cli/core';
-import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
 const BUILD_RECORDS = ['lastBuild', ...Object.values(LAST_BUILD_KEYS)];

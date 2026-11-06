@@ -22,7 +22,7 @@ import { runBootedParkedPass, shutDownDeferredIosSim } from '../daemon/booted-pa
 import { runIdlePass } from '../daemon/idle.ts';
 import * as measure from '../daemon/measure.ts';
 import { runPassesInProcess } from '../daemon/passes.ts';
-import * as maintenanceRun from '../maintenance/run.ts';
+import * as maintenanceRun from '../stimd/passes/run.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';

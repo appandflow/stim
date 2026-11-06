@@ -19,11 +19,11 @@ import {
   type DaemonPressure,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import * as measurements from '../maintenance/measure.ts';
-import { runMaintenance } from '../maintenance/run.ts';
+import * as measurements from '../stimd/passes/measure.ts';
+import { runMaintenance } from '../stimd/passes/run.ts';
 import { runLadder } from '../daemon/ladder.ts';
-import { planRung6 } from '../maintenance/sweep.ts';
-import { warnCriticalDisk } from '../maintenance/trigger.ts';
+import { planRung6 } from '../stimd/passes/sweep.ts';
+import { warnCriticalDisk } from '../stimd/passes/trigger.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
 import * as memory from '../commands/gc/memory.ts';
 import { recordGcResult } from '../commands/gc/results.ts';

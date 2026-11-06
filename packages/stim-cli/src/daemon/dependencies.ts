@@ -9,8 +9,8 @@ import {
   collectArtifactsAsync,
   type ArtifactCandidate,
   type ArtifactWorktree,
-} from '../maintenance/artifacts.ts';
-import { maintenancePinnedReader } from '../maintenance/protect.ts';
+} from '../stimd/passes/artifacts.ts';
+import { maintenancePinnedReader } from '../stimd/passes/protect.ts';
 import { knownPrivateBytes, refreshMeasure, trustedMeasure } from '../disk-usage.ts';
 import { workspaceKeys } from '../workspace/lightened.ts';
 import { ARTIFACT_DIRS, existingDirsOf } from '../workspace/regenerable-dirs.ts';

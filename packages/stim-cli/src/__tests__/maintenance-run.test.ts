@@ -13,16 +13,16 @@ import {
   workspaceLogsDir,
   sharedCompilationCache,
 } from '@stim-cli/core/state';
-import { runMaintenance } from '../maintenance/run.ts';
-import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
-import * as measurements from '../maintenance/measure.ts';
-import * as preview from '../maintenance/preview.ts';
+import { runMaintenance } from '../stimd/passes/run.ts';
+import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
+import * as measurements from '../stimd/passes/measure.ts';
+import * as preview from '../stimd/passes/preview.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
-import { maintenanceStatus } from '../maintenance/status.ts';
+import { maintenanceStatus } from '../stimd/passes/status.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { runGc } from '../commands/gc.ts';
 import statusCommand from '../commands/status.ts';
-import { warnCriticalDisk } from '../maintenance/trigger.ts';
+import { warnCriticalDisk } from '../stimd/passes/trigger.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
 

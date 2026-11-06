@@ -10,28 +10,32 @@ import {
   candidateRootsAsync,
   worktreeActivityOf,
   worktreeActivityOfAsync,
-} from '../commands/gc/worktrees.ts';
-import { canonicalPath } from '../commands/gc/paths.ts';
-import { recentNativeUseReason, workspaceBuildReasons, workspaceBuildReasonsAsync } from '../commands/gc/workspaces.ts';
-import { reclaimKeys } from '../commands/worktree.ts';
-import { gitQuiet, gitQuietAsync } from '../workspace/git.ts';
-import { childEnvironment } from '../workspace/git-read.ts';
-import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../workspace/in-use.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+} from '../../commands/gc/worktrees.ts';
+import { canonicalPath } from '../../commands/gc/paths.ts';
+import {
+  recentNativeUseReason,
+  workspaceBuildReasons,
+  workspaceBuildReasonsAsync,
+} from '../../commands/gc/workspaces.ts';
+import { reclaimKeys } from '../../commands/worktree.ts';
+import { gitQuiet, gitQuietAsync } from '../../workspace/git.ts';
+import { childEnvironment } from '../../workspace/git-read.ts';
+import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../../workspace/in-use.ts';
+import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import {
   ARTIFACT_DIRS,
   discoveredBuildDirs,
   discoveredBuildDirsAsync,
   isBuildDirPath,
   type ArtifactKind,
-} from '../workspace/regenerable-dirs.ts';
+} from '../../workspace/regenerable-dirs.ts';
 import {
   readRunningProcesses,
   readRunningProcessesAsync,
   runningFromReason,
   type RunningProcesses,
-} from '../workspace/running-from.ts';
-import { finishLightened, recordLightened, restoreProblem } from '../workspace/lightened.ts';
+} from '../../workspace/running-from.ts';
+import { finishLightened, recordLightened, restoreProblem } from '../../workspace/lightened.ts';
 import {
   listWorktrees,
   LOCKED_REASON,
@@ -42,7 +46,7 @@ import {
   worktreeLockAsync,
   type SourceCheckout,
   type WorktreeEntry,
-} from '../workspace/worktree.ts';
+} from '../../workspace/worktree.ts';
 import { lowestFree, measureDisk } from './measure.ts';
 
 const PACKAGE_PARENTS = ['apps', 'packages'];

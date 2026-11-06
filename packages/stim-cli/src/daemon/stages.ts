@@ -28,7 +28,7 @@ import {
   idleStopEvidence,
   survivingServer,
   unseenEmulatorError,
-} from '../maintenance/idle-stop.ts';
+} from '../stimd/passes/idle-stop.ts';
 import { metroStoreRoot } from '../supervisor/metro-store.ts';
 import { dormantAction, dormantThresholdMs, longestIdleFirst } from '../policy/pressure.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';

@@ -28,7 +28,7 @@ import {
   survivingServer,
   unseenEmulatorError,
   type IdleStopDecision,
-} from '../maintenance/idle-stop.ts';
+} from '../stimd/passes/idle-stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { IDLE_SETTING, idleKeep, idleScope, PRESSURE_IDLE_MS, type IdleKeepFacts } from '../policy/idle.ts';
 import { metroStoreRoot } from '../supervisor/metro-store.ts';

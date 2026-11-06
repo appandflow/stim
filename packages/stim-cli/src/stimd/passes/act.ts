@@ -2,29 +2,29 @@ import { existsSync } from 'node:fs';
 import { dirname, sep } from 'node:path';
 import { buildCacheRoot, metroCacheRoot, type StimContext } from '@stim-cli/core';
 import { sharedCompilationCache, type MaintenanceAction } from '@stim-cli/core/state';
-import { cacheLabel } from '../budget.ts';
-import { unregister, readManifest } from '../cache/cache-manifest.ts';
-import { discoverCachesAsync, pruneCache, type CacheDescriptor } from '../cache/caches.ts';
-import { emptyCaches, planCacheEmptying } from '../commands/gc/caches.ts';
-import { canonicalPath } from '../commands/gc/paths.ts';
-import { deleteGradleVersion, waitForGradleExit } from '../commands/gc/gradle-versions.ts';
-import { stopIdleGradleDaemons, stopUnusedWatchman } from '../commands/gc/memory.ts';
-import { deleteTempLeftovers } from '../commands/gc/temp-leftovers.ts';
-import { deleteTrash } from '../commands/gc/trash.ts';
-import { collectStaleStatusCachesAsync, deleteStaleStatusCaches } from '../commands/gc/status-caches.ts';
-import { archivesPastRetention, enforceArchiveRetention } from '../archive.ts';
-import { enterDormantStage } from '../daemon/stages.ts';
-import { removeExpiredLeaseAsync } from '../engine/device-lease.ts';
-import { pruneEmptyProcessLockDirs } from '../engine/tunnel.ts';
-import { plural } from '../command-output.ts';
-import { takeGcResults, GC_OUTPUT, type GcResult, type GcOutput } from '../commands/gc/results.ts';
+import { cacheLabel } from './budget.ts';
+import { unregister, readManifest } from '../../cache/cache-manifest.ts';
+import { discoverCachesAsync, pruneCache, type CacheDescriptor } from '../../cache/caches.ts';
+import { emptyCaches, planCacheEmptying } from '../../commands/gc/caches.ts';
+import { canonicalPath } from '../../commands/gc/paths.ts';
+import { deleteGradleVersion, waitForGradleExit } from '../../commands/gc/gradle-versions.ts';
+import { stopIdleGradleDaemons, stopUnusedWatchman } from '../../commands/gc/memory.ts';
+import { deleteTempLeftovers } from '../../commands/gc/temp-leftovers.ts';
+import { deleteTrash } from '../../commands/gc/trash.ts';
+import { collectStaleStatusCachesAsync, deleteStaleStatusCaches } from '../../commands/gc/status-caches.ts';
+import { archivesPastRetention, enforceArchiveRetention } from '../../archive.ts';
+import { enterDormantStage } from '../../daemon/stages.ts';
+import { removeExpiredLeaseAsync } from '../../engine/device-lease.ts';
+import { pruneEmptyProcessLockDirs } from '../../engine/tunnel.ts';
+import { plural } from '../../command-output.ts';
+import { takeGcResults, GC_OUTPUT, type GcResult, type GcOutput } from '../../commands/gc/results.ts';
 import {
   clearWorkspaceOutputs,
   collectOrphanedWorkspaces,
   collectWorkspaceOutputs,
   deleteOrphanedWorkspaces,
-} from '../commands/gc/workspaces.ts';
-import { removeWorktrees, type WorktreeSweep } from '../commands/gc/worktrees.ts';
+} from '../../commands/gc/workspaces.ts';
+import { removeWorktrees, type WorktreeSweep } from '../../commands/gc/worktrees.ts';
 import {
   DEVICE_LIST_TIMEOUT_MS,
   collectDeviceLeases,
@@ -35,15 +35,15 @@ import {
   deleteProjectDevices,
   deviceSweepIsScoped,
   findStaleProjectDevices,
-} from '../commands/gc/devices.ts';
-import { listAvdsAsync } from '../devices/android.ts';
-import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import { projectDeviceSlots } from '../devices/device-slots.ts';
-import { listAllIosSimsAsync } from '../devices/ios.ts';
-import { liveShareKeepReason } from '../local-server.ts';
-import { withIdleWorkspace } from '../workspace/in-use.ts';
-import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
-import { loadConfig } from '../workspace/config.ts';
+} from '../../commands/gc/devices.ts';
+import { listAvdsAsync } from '../../devices/android.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
+import { projectDeviceSlots } from '../../devices/device-slots.ts';
+import { listAllIosSimsAsync } from '../../devices/ios.ts';
+import { liveShareKeepReason } from '../../local-server.ts';
+import { withIdleWorkspace } from '../../workspace/in-use.ts';
+import { isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
+import { loadConfig } from '../../workspace/config.ts';
 import { cacheBlocked, lowestFree, measureDisk, measureDiskAsync } from './measure.ts';
 import {
   cacheEntryProtectionFor,
