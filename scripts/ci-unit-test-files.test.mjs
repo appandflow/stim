@@ -72,3 +72,12 @@ test('adding or removing a test falls back to the full suite', () => {
   commit();
   expect(selected()).toEqual([]);
 });
+
+test('benchmark tests do not select the focused unit suite', () => {
+  const benchmark = 'scripts/agent-benchmark/example.test.mjs';
+  write(benchmark, 'before');
+  commit();
+  write(benchmark, 'after');
+  commit();
+  expect(selected()).toEqual([]);
+});

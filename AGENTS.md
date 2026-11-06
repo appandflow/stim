@@ -39,6 +39,7 @@ pnpm run build
 pnpm run typecheck
 pnpm run knip
 pnpm test
+pnpm run test:bench
 pnpm run test:runtime
 ```
 
@@ -71,6 +72,9 @@ to a pull request that changes native tool calls (invariant 9), Desktop Swift,
 the frames helper or other macOS or Windows code paths, and wait for `Full
 suite` before the fresh review; for a branch without a pull request run
 `gh workflow run full-suite.yml --ref <branch>`.
+
+Benchmark harness tests run separately with `pnpm run test:bench`; CI runs them
+when the harness or its inputs change, and on full-suite runs.
 
 Filter unit tests with `pnpm test <file> -t "case name"`. Do not insert `--`
 before the file: pnpm forwards it to Vitest, which then ignores the filter and

@@ -12,11 +12,8 @@ const expected = {
 };
 
 describe('golden preparation provenance', () => {
-  it('accepts an exact preparation identity', () => {
-    expect(matchesGoldenPreparation(expected, expected)).toBe(true);
-  });
-
   it('rejects missing or mismatched preparation identity', () => {
+    expect(matchesGoldenPreparation({ ...expected }, expected)).toBe(true);
     expect(matchesGoldenPreparation(null, expected)).toBe(false);
     expect(matchesGoldenPreparation({ ...expected, stimVersion: '1.0.0-rc.14' }, expected)).toBe(false);
     expect(matchesGoldenPreparation({ ...expected, stimIntegrity: 'sha512-old' }, expected)).toBe(false);

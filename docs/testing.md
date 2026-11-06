@@ -12,7 +12,11 @@ performance budgets.
 Keep each exception tied to the real interaction it verifies. These tests may
 use fake clocks for policy inside the fixture, such as a child process clock.
 
-`pnpm test` remains the complete unit and integration run. It needs Node and
+`pnpm run test:bench` runs the agent-benchmark harness tests separately, with the
+same setup and fake-clock rules. CI runs them when the harness or its inputs
+change, and always on manual and full-suite runs.
+
+`pnpm test` remains the complete unit and integration run, excluding benchmarks. It needs Node and
 Git, but no Xcode, Android SDK, signing identity, or connected phone. Vitest's
 worker count and test deadlines are unchanged. The native compatibility stage
 keeps its real clocks.
@@ -182,11 +186,13 @@ the frames helper, or code that branches on `process.platform`, and wait for
 the `Full suite` run before the fresh review. For a branch without a pull
 request, run `gh workflow run full-suite.yml --ref <branch>`.
 
-A PR that only modifies existing root test files runs those changed files,
+A PR that only modifies existing root unit or integration test files runs those changed files,
 including affected integrations, on Node 22 and 24. Other changes run the fast
 unit stage. Missing base history or an empty/uncertain selection also uses the
 unit stage. The selector reads the checked-out PR merge commit against its first
-parent; checkout retains both parents. Other PR checks remain enabled.
+parent; checkout retains both parents. Agent-benchmark files are excluded from
+both unit selectors and run through the separate `test:bench` step. Other PR
+checks remain enabled.
 
 The merge queue always runs the full unit and integration suite on its combined
 candidate before merging, on Node 22. Main pushes run the unit suite on Node 22

@@ -5,6 +5,6 @@ export default defineConfig({
   ...config,
   test: {
     ...config.test,
-    exclude: ['**/*.compat.test.ts', '**/*.integration.test.ts', '**/*.integration.test.mjs'],
+    exclude: [...(config.test?.exclude ?? []), '**/*.integration.test.ts', '**/*.integration.test.mjs'],
   },
 });

@@ -57,5 +57,5 @@ test('only unit test files the suite includes are selected', () => {
   write('packages/server/__tests__/gated.browser.test.ts', gate);
   write('packages/stim-cli/src/__tests__/_helper.ts', gate);
   write('apps/mobile/src/gated.test.ts', gate);
-  expect(selected().toSorted()).toEqual([spaced, benchmark].toSorted());
+  expect(selected()).toEqual([spaced]);
 });
