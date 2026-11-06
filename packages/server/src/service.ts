@@ -477,8 +477,7 @@ export interface ServiceStatus {
 function stimDist(from: string): string | null {
   try {
     const manifest = createRequire(from).resolve('stim/package.json');
-    const pkg = JSON.parse(readFileSync(manifest, 'utf8')) as { bin: { stim: string } };
-    return dirname(join(dirname(manifest), pkg.bin.stim));
+    return join(dirname(manifest), 'dist');
   } catch {
     return null;
   }
@@ -488,7 +487,7 @@ function stimOnPath(): string | null {
   for (const dir of (process.env.PATH ?? '').split(delimiter)) {
     if (!dir) continue;
     try {
-      return dirname(realpathSync(join(dir, 'stim')));
+      return stimDist(realpathSync(join(dir, 'stim')));
     } catch {
       continue;
     }
