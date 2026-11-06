@@ -4,7 +4,6 @@ import { lstat, readdir, rm } from 'node:fs/promises';
 import { childEnvironment } from '../../workspace/git-read.ts';
 import { randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
-import { homedir } from 'node:os';
 import chalk from 'chalk';
 import { envDir } from '../../devices/activity.ts';
 import { getExecutor } from '../../exec.ts';
@@ -18,6 +17,7 @@ import { describeError } from './eas-sessions.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { runOperationFile } from '../../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
+import { userHome } from '@stim-cli/core/state';
 
 const GRADLE_VERSIONS_KIND = 'gradle-versions';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -162,7 +162,7 @@ async function walkAsync(dir: string, into: Walk, maxEntries: number, signal: Ab
 }
 
 function gradleUserHomeSetting(env: NodeJS.ProcessEnv, cwd: string): string {
-  return envDir('GRADLE_USER_HOME', env, cwd) ?? join(env.HOME || env.USERPROFILE || homedir(), '.gradle');
+  return envDir('GRADLE_USER_HOME', env, cwd) ?? join(userHome(env), '.gradle');
 }
 
 function looksLikeGradleHome(arg: string): string | null {

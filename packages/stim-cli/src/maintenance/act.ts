@@ -13,6 +13,7 @@ import { deleteTempLeftovers } from '../commands/gc/temp-leftovers.ts';
 import { deleteTrash } from '../commands/gc/trash.ts';
 import { collectStaleStatusCachesAsync, deleteStaleStatusCaches } from '../commands/gc/status-caches.ts';
 import { archivesPastRetention, enforceArchiveRetention } from '../archive.ts';
+import { enterDormantStage } from '../daemon/stages.ts';
 import { removeExpiredLeaseAsync } from '../engine/device-lease.ts';
 import { pruneEmptyProcessLockDirs } from '../engine/tunnel.ts';
 import { plural } from '../command-output.ts';
@@ -67,6 +68,8 @@ export interface ActionOutcome {
   bytes: number;
   detail: string;
   shortfall?: string;
+  /** The command that brings back what the action removed, when one does. */
+  restore?: string;
 }
 
 export interface ActContext {
@@ -541,6 +544,8 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
       return deleteDeviceLeaseAction(action, context);
     case 'would-delete-expired-archives':
       return deleteExpiredArchivesAction(context);
+    case 'would-dormant-stage':
+      return enterDormantStage(action, context.operation);
     default:
       return kept('automatic maintenance does not stop devices or dev servers yet');
   }

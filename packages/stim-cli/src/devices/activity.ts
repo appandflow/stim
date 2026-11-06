@@ -18,6 +18,7 @@ import {
   type ActivityRecencyBasis,
   type DeviceActivity,
   type ViewedDevice,
+  userHome,
 } from '@stim-cli/core/state';
 
 export type { DeviceActivity } from '@stim-cli/core/state';
@@ -512,7 +513,7 @@ export function workspaceDeviceLastUseAt(root: string): number {
 export function createActivityReader({
   now = Date.now(),
   env = process.env,
-  home = env.HOME || env.USERPROFILE || homedir(),
+  home = userHome(env),
   startOf = inspectProcessStart,
   leaseFiles = listLeaseFiles,
   tables = createDeviceProcessTables(),

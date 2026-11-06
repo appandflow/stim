@@ -573,6 +573,7 @@ function stopAction(
   if (!lstatSync(root).isDirectory()) throw new Error('The workspace is not a directory.');
   let stderr = '';
   const client = createStim({
+    admission: 'none',
     projectRoot: root,
     env,
     onProgress: ({ stream, message }) => {
@@ -651,6 +652,7 @@ function reloadAction(
   const drained: Promise<ReloadOutcome> = Promise.resolve()
     .then(() =>
       createStim({
+        admission: 'none',
         projectRoot: cwd,
         env,
         onProgress: (progress) => {
@@ -739,6 +741,7 @@ function lifecycleAction(
     .then(() =>
       execute(
         createStim({
+          admission: 'none',
           projectRoot: cwd,
           env,
           onProgress: (progress) => {
@@ -1631,7 +1634,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const deadline = setTimeout(() => abort.abort(), timeoutMs);
     task = Promise.resolve()
       .then(async () => {
-        const stim = createStim({ projectRoot: cwd, env: options.env });
+        const stim = createStim({ projectRoot: cwd, env: options.env, admission: 'none' });
         if (method === 'gc-history' || method === 'builds')
           return {
             records: queryMachineLogs({
@@ -1842,7 +1845,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const localAgents = new LocalAgentPresence({
     hub: presence,
     follow: (workspace, onRecord, signal) =>
-      createStim({ projectRoot: workspace, env: options.env }).followLogs(
+      createStim({ projectRoot: workspace, env: options.env, admission: 'none' }).followLogs(
         { sources: ['agent'], tail: 0, signal },
         onRecord,
       ),
@@ -2697,7 +2700,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       const task = Promise.resolve()
         .then(() =>
-          createStim({ projectRoot: cwd, env: options.env }).followLogs(
+          createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).followLogs(
             {
               sources: parsed.filter.sources,
               minLevel: parsed.filter.level,
@@ -3083,7 +3086,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         );
       }
       inProcessRead<'logs.query'>(id, 'stim logs', async (signal) => ({
-        records: await createStim({ projectRoot: cwd, env: options.env }).logs({
+        records: await createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).logs({
           sources: parsed.filter.sources,
           minLevel: parsed.filter.level,
           slot: parsed.filter.slot,
@@ -3223,11 +3226,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!cwd) return;
       if (method === 'settings.get') {
         return void inProcessRead<'settings.get'>(id, 'stim settings', (signal) =>
-          createStim({ projectRoot: cwd, env: options.env }).settings({ signal }),
+          createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).settings({ signal }),
         );
       }
       return void inProcessRead<'stats.get'>(id, 'stim stats', (signal) =>
-        createStim({ projectRoot: cwd, env: options.env }).stats({ signal }),
+        createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).stats({ signal }),
       );
     }
 
@@ -3962,6 +3965,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const task = Promise.resolve()
         .then(async () => {
           const client = createStim({
+            admission: 'none',
             projectRoot: cwd,
             env: options.env,
             onProgress: ({ message }) => {
@@ -4033,7 +4037,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       holdSlot(cancel);
       running.add(cancel);
       task = Promise.resolve()
-        .then(() => createStim({ projectRoot: cwd, env: options.env }).logs({ ...query, signal: abort.signal }))
+        .then(() =>
+          createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).logs({
+            ...query,
+            signal: abort.signal,
+          }),
+        )
         .then(
           (records) =>
             Buffer.byteLength(records.map((record) => JSON.stringify(record)).join('\n')) > commandLimits.maxOutputBytes
@@ -4237,7 +4246,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             }, actionLimits.timeoutMs);
             const task = Promise.resolve()
               .then(() =>
-                createStim({ projectRoot: homedir(), env: options.env }).setSetting(
+                createStim({ projectRoot: homedir(), env: options.env, admission: 'none' }).setSetting(
                   'recording.enabled',
                   String(enabled),
                   { scope: 'machine', signal: abort.signal },
@@ -4296,7 +4305,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         `stim ${plan.platform}`,
         async (signal) => {
           try {
-            return await createStim({ projectRoot: cwd, env: options.env }).plan({ ...plan, signal });
+            return await createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).plan({
+              ...plan,
+              signal,
+            });
           } catch (cause) {
             if (method !== 'desktop.plan.get' || !(cause instanceof StimError)) throw cause;
             const refusal = { code: cause.code, message: cause.message, remedy: cause.remedy };
@@ -4549,7 +4561,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           id,
           'stim doctor',
           async (signal) => ({
-            ...(await createStim({ projectRoot: cwd, env: options.env }).doctor({ signal, platform, record: true })),
+            ...(await createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).doctor({
+              signal,
+              platform,
+              record: true,
+            })),
           }),
           options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
         );
@@ -4670,7 +4686,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const cwd = resolvePath(params.cwd);
       inProcessRead<'desktop.settings.get'>(id, 'stim settings', (signal) =>
-        createStim({ projectRoot: cwd, env: options.env }).settings({ signal }),
+        createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).settings({ signal }),
       );
     }
 
@@ -5834,7 +5850,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (closing) return settle(startup);
     if (reason === null) {
       try {
-        homeId = await createStim({ projectRoot: homedir(), env: options.env }).identity();
+        homeId = await createStim({ projectRoot: homedir(), env: options.env, admission: 'none' }).identity();
         if (closing) return settle(startup);
         becomeReady();
       } catch (error) {

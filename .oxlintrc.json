@@ -57,6 +57,13 @@
   },
   "overrides": [
     {
+      "files": ["packages/**/*.{ts,tsx,mts,mjs,js,cjs,cts}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*"],
+      "rules": {
+        "stim/package-fence": "error"
+      }
+    },
+    {
       "files": ["packages/stim-cli/src/**/*.ts"],
       "excludeFiles": ["packages/stim-cli/src/exec.ts", "packages/stim-cli/src/__tests__/**", "**/*.test.ts"],
       "rules": {

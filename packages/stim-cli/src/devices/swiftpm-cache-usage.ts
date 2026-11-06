@@ -1,8 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { readSwiftpmCacheUsage, swiftpmCacheUsageFile, type SwiftpmCacheUsage } from '@stim-cli/core/state';
+import { readSwiftpmCacheUsage, swiftpmCacheUsageFile, type SwiftpmCacheUsage, userHome } from '@stim-cli/core/state';
 import { canonical, measureDu, writeUsageCache } from './report-only-usage.ts';
 
 export async function getSwiftpmCacheUsage({
@@ -12,8 +11,8 @@ export async function getSwiftpmCacheUsage({
   const env = operation?.env ?? process.env;
   const dir = canonical(
     process.platform === 'darwin'
-      ? join(env.HOME || env.USERPROFILE || homedir(), 'Library', 'Caches', 'org.swift.swiftpm')
-      : join(env.XDG_CACHE_HOME || join(env.HOME || env.USERPROFILE || homedir(), '.cache'), 'org.swift.swiftpm'),
+      ? join(userHome(env), 'Library', 'Caches', 'org.swift.swiftpm')
+      : join(env.XDG_CACHE_HOME || join(userHome(env), '.cache'), 'org.swift.swiftpm'),
   );
   const cached = readSwiftpmCacheUsage();
   const age = cached ? Date.now() - Date.parse(cached.measuredAt) : Infinity;
