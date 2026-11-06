@@ -16,9 +16,10 @@ import type { HostedNativeTarget } from '../device-host/hosted-native.ts';
 import { DeviceAdmissionRefusal, withDeviceBootAdmission } from '../engine/device-capacity.ts';
 import { workspaceId } from '@stim-cli/core';
 import { approvableSchemes } from '../engine/app-schemes.ts';
-import { workerFailureReason } from '../offload/selection.ts';
+import { workerFailureReason } from '../build-placement.ts';
 import { POD_MISSING_REASON } from '../engine/deps.ts';
 import * as offloadClient from '../offload/client.ts';
+import * as iosDevices from '../devices/ios.ts';
 import * as buildCache from '../cache/build-cache.ts';
 import * as tailnet from '../offload/tailnet.ts';
 import * as sharedState from '@stim-cli/core/state';
@@ -51,7 +52,7 @@ import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
 import { getProject, setDevice, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { prepareHostedIos } from '../device-host/hosted-ios.ts';
-import { writeHostedNative } from '../device-host/ios-state.ts';
+import { writeHostedNative } from '../workspace/placement-state.ts';
 import type { HostedIosPlacement } from '@stim-cli/core/state';
 import {
   buildMachinesFile,
@@ -9675,7 +9676,7 @@ describe('iOS placement on a hosting Mac', () => {
 describe('strict remote machine selection', () => {
   beforeEach(() => {
     setExecutor({ runFile: () => '', runFileQuiet: () => null });
-    vi.spyOn(offloadClient, 'simulatorRuntime').mockReturnValue('iOS-27-0');
+    vi.spyOn(iosDevices, 'simulatorRuntime').mockReturnValue('iOS-27-0');
     vi.spyOn(offloadClient, 'closeOffload').mockImplementation(() => {});
   });
   afterEach(() => {

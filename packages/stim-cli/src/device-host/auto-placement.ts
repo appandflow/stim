@@ -18,7 +18,7 @@ import {
 } from '@stim-cli/core/state';
 import { measureDisk } from '../daemon/measure.ts';
 import { diskPressure, diskThresholds } from '../daemon/pressure.ts';
-import { namedBuildMachine, resolveBuildMachine } from '../offload/selection.ts';
+import { namedBuildMachine, resolveBuildMachine } from '../build-placement.ts';
 import { readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
 import { peekDeviceSlots } from '../engine/device-capacity.ts';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -27,7 +27,7 @@ import { getProject, loadConfig } from '../workspace/config.ts';
 import { hostingMachines } from './machines.ts';
 import { call, connectHost, requireHostedAppMode, type HostConnection } from './hosted-client.ts';
 import { prepareHostedNative, type HostedNativeTarget } from './hosted-native.ts';
-import { readHostedNative, writeHostedNativeAsync } from './ios-state.ts';
+import { readHostedNative, writeHostedNativeAsync } from '../workspace/placement-state.ts';
 import {
   decideDevicePlacement,
   type EasFallbackCheck,

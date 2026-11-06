@@ -1,12 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import {
-  isJsonObject,
   HOSTED_METRO_REQUESTS_KEY,
   hostedMetroRequests,
   hostedMetroLinks,
   type DeviceHostMachineCredential,
   type HostedMetroRequest,
-  type SettingsObject,
 } from '@stim-cli/core/state';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import {
@@ -154,20 +152,4 @@ export async function closeHostedMetro(root: string, session: string, signal?: A
   );
   if (!closed)
     throw new Error('The Metro supervisor did not close its Metro links. Restart Metro, then retry stim stop.');
-}
-
-export function hostedMetroSettings(settings: SettingsObject, hosted: boolean): SettingsObject {
-  return hosted
-    ? {
-        ...settings,
-        ios: { ...(isJsonObject(settings.ios) ? settings.ios : {}), remote: undefined },
-        android: { ...(isJsonObject(settings.android) ? settings.android : {}), remote: undefined },
-        metro: {
-          ...(isJsonObject(settings.metro) ? settings.metro : {}),
-          tunnel: undefined,
-          publicUrl: undefined,
-          ngrokUrl: undefined,
-        },
-      }
-    : settings;
 }

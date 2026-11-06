@@ -64,7 +64,7 @@ import { createStatusMeasurer, type StatusMeasurer } from '../status-measures.ts
 import { isBootedParked, parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
 import type { EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
 import { physicalDeviceLine } from '../physical-devices.ts';
-import { hostedAgentLine } from '../device-host/hosted-agent.ts';
+import { hostedAgentLine } from '../hosted-names.ts';
 
 interface StatusOptions {
   json?: boolean;

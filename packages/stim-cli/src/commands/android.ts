@@ -2,8 +2,12 @@ import type { RuntimePreparationResult } from '../engine/runtime-plan.ts';
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { selectAndroidPlacement } from './android/remote.ts';
 import { prepareHostedAndroid, placeHostedAndroid } from '../device-host/hosted-android.ts';
-import { readHostedAndroid, writeDevicePlacementAsync, writeHostedAndroidAsync } from '../device-host/ios-state.ts';
-import { hostedMetroSettings } from '../device-host/metro-request.ts';
+import {
+  readHostedAndroid,
+  writeDevicePlacementAsync,
+  writeHostedAndroidAsync,
+  hostedMetroSettings,
+} from '../workspace/placement-state.ts';
 import { finishHostedAndroidRun } from './android/hosted.ts';
 import { followHostedLaunchLogs } from '../device-host/hosted-logs-sync.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
@@ -72,7 +76,7 @@ import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { setRemoteLogSink } from '../remote-log.ts';
-import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
+import { resolveBuildPlacement, parseBuildMachineOption } from '../build-placement.ts';
 import { pidExists, resolveProjectMetro } from '../metro.ts';
 import { warmMetro } from '../engine/metro-warmup.ts';
 import { ensureDevServer, type MobileRuntimePreparation, ensureWorkspaceStorageSafely } from './native-runtime.ts';

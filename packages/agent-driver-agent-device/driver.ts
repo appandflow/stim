@@ -1,16 +1,13 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  accessSync,
   chmodSync,
-  constants,
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   readlinkSync,
-  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -19,6 +16,7 @@ import {
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, extname, join } from 'node:path';
+import { resolveAgentDevice as resolveAgentDeviceBin, type AgentDeviceInvocation } from '@stim-cli/core';
 import {
   claimRemoveCommand,
   clearClaimChild,
@@ -63,15 +61,6 @@ function adbPath(env: NodeJS.ProcessEnv): string {
 
 const UNSCOPED =
   'Agent control is unavailable: the agent-device on the hosting Mac has no macos-app lease to limit a client to one app, and Stim never hands a client the hosting Mac desktop.';
-
-/** Names an agent-device binary to use instead of the fixed install locations. */
-const AGENT_DEVICE_BIN_ENV = 'STIM_AGENT_DEVICE_BIN';
-
-const CANDIDATES = (home: string): string[] => [
-  join(home, '.local', 'bin', 'agent-device'),
-  '/opt/homebrew/bin/agent-device',
-  '/usr/local/bin/agent-device',
-];
 
 /**
  * The daemon policy Stim starts agent-device with (agent-device ADR 0029): every request must run under a
@@ -158,31 +147,14 @@ const LEASE_METHODS = new Set([
   'agent-device.lease.release',
 ]);
 
-export interface AgentDeviceInvocation {
-  command: string;
-  args: string[];
-}
+export type { AgentDeviceInvocation } from '@stim-cli/core';
 
-/**
- * Finds agent-device at a fixed path: the stim-server LaunchAgent's PATH holds only system directories, and
- * agent-device's `#!/usr/bin/env node` script cannot find Node there, so a JavaScript entry runs under the
- * server's own Node.
- */
 export function resolveAgentDevice(env: NodeJS.ProcessEnv): AgentDeviceInvocation {
-  const explicit = env[AGENT_DEVICE_BIN_ENV]?.trim();
-  const candidates = explicit ? [explicit] : CANDIDATES(env.HOME || homedir());
-  for (const candidate of candidates) {
-    try {
-      const real = realpathSync(candidate);
-      accessSync(real, constants.R_OK);
-      return /\.(mjs|cjs|js)$/.test(real) ? { command: process.execPath, args: [real] } : { command: real, args: [] };
-    } catch {}
+  try {
+    return resolveAgentDeviceBin(env);
+  } catch (error) {
+    throw new AgentDriverUnavailable(error instanceof Error ? error.message : String(error));
   }
-  throw new AgentDriverUnavailable(
-    explicit
-      ? `${AGENT_DEVICE_BIN_ENV} names ${explicit}, which is not a readable agent-device on the hosting Mac.`
-      : `agent-device is not installed on the hosting Mac (looked in ${candidates.join(', ')}). Install it with: npm install --global --prefix "$HOME/.local" agent-device`,
-  );
 }
 
 export interface AgentDeviceDriverOptions {

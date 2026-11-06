@@ -12,7 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { readBuildHistory } from '@stim-cli/core/state';
 import { dirname, join } from 'node:path';
-import * as selection from '../offload/selection.ts';
+import * as selection from '../build-placement.ts';
 import * as offload from '../offload/client.ts';
 import * as gradleEngine from '../engine/gradle.ts';
 import { buildAndroidOperation } from '../commands/android/build.ts';

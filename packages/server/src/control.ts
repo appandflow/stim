@@ -1520,7 +1520,7 @@ export class ControlHub {
     const abort = new AbortController();
     const deadline = setTimeout(() => abort.abort(), this.options.lockLimits.timeoutMs);
     try {
-      await createStim({ projectRoot: cwd, env: this.options.env }).unlockDevice({
+      await createStim({ projectRoot: cwd, env: this.options.env, admission: 'none' }).unlockDevice({
         platform: target.platform,
         ...(target.slot && target.slot !== 'default' ? { slot: target.slot } : {}),
         signal: abort.signal,
