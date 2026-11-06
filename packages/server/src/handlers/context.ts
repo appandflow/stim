@@ -15,7 +15,7 @@ import type { DesktopBootstrap } from '../desktop-bootstrap.ts';
 import type { SetupDeps } from '../setup.ts';
 import type { KeepAwakeOptions } from '../keep-awake.ts';
 import type { Transport } from '@stim-cli/transport';
-import type { TailscaleState, TailscaleMonitor } from '@stim-cli/transport-tailscale';
+import type { TailscaleState, TailscaleMonitor, TailscaleTransport } from '@stim-cli/transport-tailscale';
 import type { RequestLog, RequestTracker } from '../request-log.ts';
 import type { LogLimits } from '../logs.ts';
 import { type CommandLimits, Pending } from '../stim-command.ts';
@@ -56,9 +56,11 @@ import { PresenceHub } from '../presence.ts';
 import { LocalAgentPresence } from '../local-agent-presence.ts';
 import { HostedViews } from '../hosted-view.ts';
 import { ShareHub } from '../share.ts';
+import { MachineUpdates } from '../machine-update.ts';
 import { EngineUpdates } from '../server-update.ts';
 import { HostedPresenceBridge } from '../hosted-presence-bridge.ts';
-import type { DesktopPlanRefusal } from '@stim-cli/core/protocol';
+import type { ServeRoute, DesktopPlanRefusal } from '@stim-cli/core/protocol';
+import type { DesktopSetup } from '../desktop-setup.ts';
 import type { MetroLink } from '@stim-cli/core';
 
 export const INPUT_METHODS = [
@@ -279,6 +281,7 @@ export interface Replayable {
 /** The state the handlers of one connection share: the closure variables of `startServer` and `connection`. */
 export interface ConnectionContext {
   readonly options: ServerOptions;
+  readonly tailscale: TailscaleTransport;
   homeId: string | undefined;
   readonly hostHealth: () => Promise<HelloHost['app'] | undefined>;
   readonly statusFeed: StatusFeed;
@@ -323,13 +326,18 @@ export interface ConnectionContext {
   readonly control: ControlHub;
   readonly hostedViews: HostedViews;
   readonly shares: ShareHub;
+  readonly machineUpdates: MachineUpdates;
   readonly updates: EngineUpdates;
   readonly push: PushNotifier;
+  readonly desktopSessions: Set<ServerSocket>;
   readonly hostedBridge: HostedPresenceBridge;
+  settingUpRoute: Promise<ServeRoute> | null;
   readonly socket: ServerSocket;
   readonly local: boolean;
   readonly clientKey: string | null;
+  readonly keyless: boolean;
   readonly subscriptions: Map<string, () => void | Promise<void | ProtocolError>>;
+  readonly setupRuns: Map<string, DesktopSetup>;
   readonly keyframes: Map<string, () => void>;
   readonly congestion: Map<string, () => void>;
   readonly replays: Map<string, Replayable>;

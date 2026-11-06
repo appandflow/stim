@@ -1,5 +1,5 @@
 import { hkdfSync } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, rmSync, watch, type FSWatcher } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, rmSync, watch, type FSWatcher } from 'node:fs';
 import {
   createServer,
   type IncomingHttpHeaders,
@@ -9,7 +9,7 @@ import {
 } from 'node:http';
 import { connect as connectSocket, isIP, Socket, type AddressInfo } from 'node:net';
 import { type Duplex } from 'node:stream';
-import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
+import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir, type MetroLink } from '@stim-cli/core';
@@ -25,15 +25,11 @@ import {
   readSetupJournal,
   isJournalExpired,
   isJsonObject,
-  SETTING_SCOPES,
-  settingsJsonSchema,
-  settingDefinition,
   loadConfig,
   stimBuildDigest,
   type StatusPayload,
   statusViews,
   type StatusViews,
-  type SetupCapability,
   readShareLinks,
   shareLinkKey,
 } from '@stim-cli/core/state';
@@ -50,11 +46,10 @@ import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay } from './hosted-relay.ts';
 import { BuildHost, type BuildSession } from './build.ts';
 import type { WorkerRootUsage } from './worker-areas.ts';
-import { ControlHub, SLOT_NAME, type Controller } from './control.ts';
+import { ControlHub, type Controller } from './control.ts';
 import { Recorder } from './recorder.ts';
 import { pruneSetupJournals, setupJournalForClient } from './setup-journal.ts';
-import { defaultSetupDeps } from './setup.ts';
-import { startDesktopSetup, type DesktopSetup, type DesktopSetupAnswer } from './desktop-setup.ts';
+import { type DesktopSetup } from './desktop-setup.ts';
 import {
   probeDirectories,
   STARTUP_PROBE_MS,
@@ -89,7 +84,6 @@ import {
   DEVICE_HOST_METHODS,
   MAX_INPUT_TEXT,
   PROTOCOL_VERSION,
-  type DesktopReportTarget,
   type ErrorCode,
   type ProtocolError,
   type HelloHost,
@@ -97,7 +91,7 @@ import {
   type RequestId,
   type VideoCodec,
 } from './protocol.ts';
-import { createStim, StimError, type StimPlanOptions } from 'stim';
+import { createStim, StimError } from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
 import { pauseShareLinkAsync } from 'stim/share-links';
 import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
@@ -123,8 +117,6 @@ import {
 } from './registry.ts';
 import {
   acceptNoise,
-  decodeSecret,
-  secretValues,
   HandshakeRefusal,
   HOME_UNAVAILABLE_MESSAGE,
   CLOSE_REFUSED,
@@ -171,6 +163,7 @@ import {
   INPUT_METHODS,
   type ConnectionContext,
 } from './handlers/context.ts';
+import { DETAILS_TIMEOUT_MS, authenticateDesktop, desktopMethod } from './handlers/desktop.ts';
 import { markSavedStopped, parseShareStart, shareMethod } from './handlers/share.ts';
 import { LOCAL_DEVICE_ID, CLOSE_BAD_REQUEST, hello } from './handlers/hello.ts';
 import { parseReplay, subscribeFrames } from './handlers/frames.ts';
@@ -182,25 +175,13 @@ import {
   listArchived,
   statusRead,
 } from './handlers/status.ts';
-import {
-  subscribeReload,
-  subscribeGc,
-  subscribeMachineAccess,
-  subscribeRemedy,
-  subscribeWorktreeRemove,
-  subscribeWorktreeWarm,
-  subscribeBuild,
-  subscribeRun,
-  subscribeStart,
-  subscribeStop,
-  runAction,
-} from './handlers/lifecycle.ts';
-import { queuePlan, machineMethod, planBuild } from './handlers/build.ts';
-import { subscribeLogs, queryLogs } from './handlers/logs.ts';
 import { publishPresence } from './handlers/presence.ts';
 import { hostedMethod } from './handlers/device-host.ts';
+import { machineMethod, planBuild } from './handlers/build.ts';
+import { subscribeLogs, queryLogs } from './handlers/logs.ts';
 import { replayRange, archiveDetail, replayKeyframe, setRecording } from './handlers/replay.ts';
 import { workspaceChanges, workspaceCommand } from './handlers/workspace.ts';
+import { runAction } from './handlers/lifecycle.ts';
 import { beginControl, input } from './handlers/control.ts';
 import { registerPush } from './handlers/push.ts';
 export type { ServerOptions } from './handlers/context.ts';
@@ -306,8 +287,6 @@ const LOCK_LIMITS: CommandLimits = { timeoutMs: 30_000, maxOutputBytes: 64 * 102
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const LISTEN_RETRY_MS = 5000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
-
-const DETAILS_TIMEOUT_MS = 150_000;
 
 const ACTION_LIMITS: CommandLimits = { timeoutMs: 120_000, maxOutputBytes: 1024 * 1024 };
 
@@ -457,10 +436,6 @@ class PendingConnections {
 
 function requestId(value: unknown): RequestId | null {
   return typeof value === 'number' || typeof value === 'string' ? value : null;
-}
-
-function validPlanRequest(value: unknown): value is string {
-  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }
 
 /** The share hub's recording grace from the control lease's `stim device lock --for` duration, such as `2m`. */
@@ -1244,6 +1219,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const shapeChanges = { tokens: controlLimits.shapeChangesPerSecond, at: Date.now() };
     const ctx: ConnectionContext = {
       options,
+      tailscale,
       get homeId() {
         return homeId;
       },
@@ -1318,13 +1294,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       control,
       hostedViews,
       shares,
+      machineUpdates,
       updates,
       push,
+      desktopSessions,
       hostedBridge,
+      get settingUpRoute() {
+        return settingUpRoute;
+      },
+      set settingUpRoute(value) {
+        settingUpRoute = value;
+      },
       socket,
       local,
       clientKey,
+      keyless,
       subscriptions,
+      setupRuns,
       keyframes,
       congestion,
       replays,
@@ -1547,546 +1533,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return { done: task, cancel };
     }
 
-    function writeDesktopSetting(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (
-        !isJsonObject(params) ||
-        typeof params.cwd !== 'string' ||
-        !isAbsolute(params.cwd) ||
-        params.cwd.length > 4096 ||
-        params.cwd.includes('\0') ||
-        typeof params.key !== 'string' ||
-        params.key.length === 0 ||
-        params.key.length > 256 ||
-        (params.action !== 'set' && params.action !== 'unset') ||
-        (params.action === 'set' ? typeof params.value !== 'string' : 'value' in params) ||
-        Object.keys(params).some((key) => !['cwd', 'key', 'scope', 'action', 'value'].includes(key))
-      )
-        return error(
-          id,
-          'bad-request',
-          'Choose an absolute cwd, setting key, set/unset action and optional scope; set requires text value.',
-        );
-      const scope = SETTING_SCOPES.find((candidate) => candidate === params.scope);
-      if (params.scope !== undefined && scope === undefined)
-        return error(id, 'bad-request', 'Choose a settings scope.');
-      let cwd: string;
-      try {
-        cwd = realpathSync(params.cwd);
-        if (!lstatSync(cwd).isDirectory()) throw new Error('The settings folder is not a directory.');
-      } catch (cause) {
-        return error(id, 'bad-request', `Cannot change settings here: ${readFailure(cause)}`);
-      }
-      if (slotsFull()) return error(id, 'limit-exceeded', slotsMessage());
-      if (busyWorkspaces.has(cwd)) return error(id, 'action-busy', `An action is already running in ${cwd}.`);
-      const { key, action } = params;
-      const value = typeof params.value === 'string' ? params.value : undefined;
-      const startedAt = Date.now();
-      const abort = new AbortController();
-      let finished = false;
-      let ok = false;
-      let failureCode = 'STIM_CANCELLED';
-      let writtenScope = scope;
-      let admittedCwd = cwd;
-      let outputBytes = 0;
-      const finish = (
-        reply:
-          | { result: Methods['desktop.settings.write']['result'] }
-          | { error: { code: ErrorCode; message: string } },
-      ) => {
-        if (finished) return;
-        if ('result' in reply && Buffer.byteLength(JSON.stringify(reply.result)) > actionLimits.maxOutputBytes)
-          reply = { error: { code: 'action-failed', message: 'Settings write exceeded its output limit.' } };
-        finished = true;
-        if ('error' in reply) failureCode = reply.error.code;
-        else if ('code' in reply.result) failureCode = reply.result.code;
-        else {
-          ok = true;
-          writtenScope = reply.result.scope;
-        }
-        send(socket, { id, ...reply });
-      };
-      const deadline = setTimeout(() => {
-        finish({
-          error: {
-            code: 'action-failed',
-            message: `Settings write did not finish within ${actionLimits.timeoutMs / 1000} s.`,
-          },
-        });
-        abort.abort();
-      }, actionLimits.timeoutMs);
-      const task = Promise.resolve()
-        .then(async () => {
-          const client = createStim({
-            admission: 'none',
-            projectRoot: cwd,
-            env: options.env,
-            onProgress: ({ message }) => {
-              outputBytes += Buffer.byteLength(message);
-              if (outputBytes > actionLimits.maxOutputBytes) {
-                finish({ error: { code: 'action-failed', message: 'Settings write exceeded its output limit.' } });
-                abort.abort();
-              }
-            },
-          });
-          const beforeWrite = (project: string | null) => {
-            if (project && project !== cwd) {
-              if (busyWorkspaces.has(project)) {
-                finish({ error: { code: 'action-busy', message: `An action is already running in ${project}.` } });
-                abort.abort();
-                abort.signal.throwIfAborted();
-              }
-              busyWorkspaces.add(project);
-              admittedCwd = project;
-            }
-          };
-          const result =
-            value === undefined
-              ? await client.unsetSetting(key, { scope, signal: abort.signal, beforeWrite })
-              : await client.setSetting(key, value, { scope, signal: abort.signal, beforeWrite });
-          finish({ result });
-          return undefined;
-        })
-        .catch((cause: unknown) => {
-          if (cause instanceof StimError)
-            finish({ result: { code: cause.code, message: cause.message, remedy: cause.remedy } });
-          else finish({ error: { code: 'action-failed', message: readFailure(cause) } });
-        })
-        .finally(() => {
-          clearTimeout(deadline);
-          releaseSlot(cancel);
-          running.delete(cancel);
-          busyWorkspaces.delete(cwd);
-          busyWorkspaces.delete(admittedCwd);
-          auditSafely({
-            at: new Date(startedAt).toISOString(),
-            device: { id: owner.id, name: owner.name },
-            action: `settings.${action}`,
-            workspace: admittedCwd,
-            setting: settingDefinition(key)?.key,
-            ...(writtenScope ? { scope: writtenScope } : {}),
-            ok,
-            durationMs: Date.now() - startedAt,
-            ...(ok ? {} : { error: { code: 'action-failed', message: failureCode } }),
-          });
-        });
-      const cancel = async () => {
-        abort.abort();
-        await task;
-      };
-      holdSlot(cancel);
-      running.add(cancel);
-      busyWorkspaces.add(cwd);
-    }
-
-    function desktopMethod(id: RequestId, method: string, params: unknown, owner: PairedDevice): Promise<void> | null {
-      if (
-        ![
-          'route.setup',
-          'machines.update.start',
-          'machines.update.status',
-          'device-host.sessions',
-          'device-host.sessions.stop',
-          'desktop.reports.get',
-          'desktop.reports.subscribe',
-          'desktop.reports.invalidate',
-          'desktop.settings.get',
-          'desktop.settings.schema',
-          'desktop.settings.write',
-          'desktop.logs.subscribe',
-          'desktop.doctor.run',
-          'desktop.machine-access.subscribe',
-          'desktop.remedy.subscribe',
-          'desktop.stop.subscribe',
-          'desktop.reload.subscribe',
-          'desktop.start.subscribe',
-          'desktop.run.subscribe',
-          'desktop.build.subscribe',
-          'desktop.gc.subscribe',
-          'desktop.worktree.remove.subscribe',
-          'desktop.worktree.warm.subscribe',
-          'desktop.plan.get',
-          'desktop.plan.cancel',
-          'desktop.setup.subscribe',
-          'desktop.setup.answer',
-        ].includes(method)
-      )
-        return null;
-      if (!keyless && !desktopSessions.has(socket)) {
-        return Promise.resolve(
-          error(
-            id,
-            'forbidden',
-            local
-              ? 'This stim-server holds the private key of the Stim Desktop that started it, which this connection did not prove.'
-              : `${method} works only on this machine's local Unix socket.`,
-          ),
-        );
-      }
-      if (method === 'desktop.setup.subscribe' || method === 'desktop.setup.answer') {
-        if (!desktopSessions.has(socket)) {
-          error(
-            id,
-            'forbidden',
-            'Approving another machine requires the connection of the Stim Desktop that started this server.',
-          );
-          return Promise.resolve();
-        }
-        if (method === 'desktop.setup.subscribe') subscribeDesktopSetup(id, params);
-        else answerDesktopSetup(id, params);
-        return Promise.resolve();
-      }
-      if (method === 'desktop.settings.write') {
-        writeDesktopSetting(id, params, owner);
-        return Promise.resolve();
-      }
-      if (method === 'desktop.reload.subscribe') {
-        subscribeReload(ctx, id, params, owner);
-        return Promise.resolve();
-      }
-      if (method === 'desktop.plan.cancel') {
-        if (!isJsonObject(params) || Object.keys(params).length !== 1 || !validPlanRequest(params.request)) {
-          error(id, 'bad-request', 'Choose the request of this connection to cancel.');
-          return Promise.resolve();
-        }
-        const request = params.request;
-        const pending = planRequests.get(request);
-        void (async () => {
-          await pending?.cancel();
-          const refusal = pending?.refusal();
-          if (planRequests.get(request) === pending) planRequests.delete(request);
-          send(socket, { id, result: { cancelled: pending !== undefined, ...(refusal ? { refusal } : {}) } });
-        })();
-        return Promise.resolve();
-      }
-      if (method === 'desktop.plan.get') {
-        if (
-          !isJsonObject(params) ||
-          Object.keys(params).some(
-            (key) => key !== 'cwd' && key !== 'platform' && key !== 'slot' && key !== 'request',
-          ) ||
-          typeof params.cwd !== 'string' ||
-          params.cwd.length > 4096 ||
-          !isAbsolute(params.cwd) ||
-          (params.request !== undefined && !validPlanRequest(params.request)) ||
-          (params.platform !== 'ios' && params.platform !== 'android' && params.platform !== 'macos') ||
-          (params.slot !== undefined &&
-            (params.platform === 'macos' || typeof params.slot !== 'string' || !SLOT_NAME.test(params.slot)))
-        ) {
-          error(
-            id,
-            'bad-request',
-            'Choose an absolute cwd and ios/android/macos platform; slot applies only to ios/android.',
-          );
-          return Promise.resolve();
-        }
-        if (typeof params.request === 'string' && planRequests.has(params.request)) {
-          error(id, 'bad-request', 'This connection already has a plan with that request.');
-          return Promise.resolve();
-        }
-        let cwd: string;
-        try {
-          cwd = realpathSync(params.cwd);
-          if (!lstatSync(cwd).isDirectory()) throw new Error('not a directory');
-        } catch {
-          error(id, 'bad-request', 'Choose an existing project directory.');
-          return Promise.resolve();
-        }
-        const plan: StimPlanOptions =
-          params.platform === 'macos'
-            ? { platform: 'macos' }
-            : { platform: params.platform, ...(params.slot === undefined ? {} : { slot: params.slot }) };
-        queuePlan(
-          ctx,
-          id,
-          cwd,
-          plan,
-          'desktop.plan.get',
-          typeof params.request === 'string' ? params.request : undefined,
-        );
-        return Promise.resolve();
-      }
-      const cleanupSubscriptions: Record<string, typeof subscribeGc> = {
-        'desktop.machine-access.subscribe': subscribeMachineAccess,
-        'desktop.remedy.subscribe': subscribeRemedy,
-        'desktop.gc.subscribe': subscribeGc,
-        'desktop.worktree.remove.subscribe': subscribeWorktreeRemove,
-        'desktop.worktree.warm.subscribe': subscribeWorktreeWarm,
-      };
-      const subscribeCleanup = cleanupSubscriptions[method];
-      if (subscribeCleanup) {
-        subscribeCleanup(ctx, id, params, owner);
-        return Promise.resolve();
-      }
-      if (method === 'desktop.build.subscribe') {
-        subscribeBuild(ctx, id, params, owner);
-        return Promise.resolve();
-      }
-      if (method === 'desktop.run.subscribe') {
-        subscribeRun(ctx, id, params, owner);
-        return Promise.resolve();
-      }
-      if (method === 'desktop.start.subscribe') {
-        subscribeStart(ctx, id, params, owner);
-        return Promise.resolve();
-      }
-      if (method === 'desktop.stop.subscribe') {
-        subscribeStop(ctx, id, params, owner);
-        return Promise.resolve();
-      }
-      if (method === 'desktop.doctor.run') {
-        if (
-          !isJsonObject(params) ||
-          Object.keys(params).some((key) => key !== 'cwd' && key !== 'platform') ||
-          typeof params.cwd !== 'string' ||
-          params.cwd.length > 4096 ||
-          !isAbsolute(params.cwd) ||
-          (params.platform !== undefined && params.platform !== 'ios' && params.platform !== 'android')
-        ) {
-          error(id, 'bad-request', 'Run project doctor with an absolute cwd and optional ios/android platform.');
-          return Promise.resolve();
-        }
-        const cwd = resolvePath(params.cwd);
-        const platform = params.platform === 'ios' || params.platform === 'android' ? params.platform : undefined;
-        inProcessRead<'desktop.doctor.run'>(
-          id,
-          'stim doctor',
-          async (signal) => ({
-            ...(await createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).doctor({
-              signal,
-              platform,
-              record: true,
-            })),
-          }),
-          options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
-        );
-        return Promise.resolve();
-      }
-      if (method === 'desktop.settings.schema' || method === 'desktop.settings.get') {
-        readDesktopSettings(id, method, params);
-        return Promise.resolve();
-      }
-      if (method === 'desktop.logs.subscribe') {
-        if (
-          !isJsonObject(params) ||
-          Object.keys(params).some((key) => !['workspace', 'sources', 'level', 'grep', 'errors'].includes(key))
-        ) {
-          error(id, 'bad-request', 'Choose a workspace and optional sources, level, grep or errors filter.');
-          return Promise.resolve();
-        }
-        return Promise.resolve(subscribeLogs(ctx, id, params, true));
-      }
-      if (method.startsWith('desktop.reports.')) {
-        desktopReport(id, method, params);
-        return Promise.resolve();
-      }
-      if (method.startsWith('device-host.sessions')) return hostedSessions(id, method, params);
-      return method === 'route.setup' ? setupRoute(id, params) : updateMachine(id, method, params);
-    }
-
-    function subscribeDesktopSetup(id: RequestId, params: unknown): void {
-      if (
-        !isJsonObject(params) ||
-        Object.keys(params).some((key) => key !== 'ticket' && key !== 'expires' && key !== 'capabilities') ||
-        typeof params.ticket !== 'string' ||
-        typeof params.expires !== 'string' ||
-        !Array.isArray(params.capabilities) ||
-        !params.capabilities.length ||
-        new Set(params.capabilities).size !== params.capabilities.length
-      )
-        return error(id, 'bad-request', 'Choose a setup ticket, its expiry and build or device-host.');
-      const capabilities = params.capabilities.filter(
-        (capability): capability is SetupCapability => capability === 'build' || capability === 'device-host',
-      );
-      if (capabilities.length !== params.capabilities.length)
-        return error(id, 'bad-request', 'Choose a setup ticket, its expiry and build or device-host.');
-      const port = addresses[0]?.port;
-      if (port === undefined) return error(id, 'bad-request', 'This server has no port for setup to use.');
-      const ticket = decodeSecret(params.ticket);
-      if (ticket && setupRuns.has(secretValues(ticket).journal))
-        return error(id, 'bad-request', 'This connection already has that setup request open.');
-      let subscription: string | null = null;
-      let run: DesktopSetup;
-      try {
-        run = startDesktopSetup(
-          { ticket: params.ticket, expires: params.expires, capabilities },
-          port,
-          options.serverVersion,
-          (options.setupDeps ?? defaultSetupDeps)(),
-          {
-            progress: (journal, asking) => {
-              if (subscription) send(socket, { event: 'desktop-setup-progress', subscription, journal, asking });
-            },
-            ended: (exitCode, output) => {
-              setupRuns.delete(run.journal);
-              if (subscription) send(socket, { event: 'desktop-setup-ended', subscription, exitCode, output });
-            },
-          },
-        );
-      } catch (cause) {
-        return error(id, 'bad-request', cause instanceof Error ? cause.message : String(cause));
-      }
-      void cancelling.track(run.done);
-      subscription = openSubscription(id);
-      if (!subscription) return run.stop();
-      setupRuns.set(run.journal, run);
-      subscriptions.set(subscription, () => {
-        run.stop();
-        return run.done;
-      });
-    }
-
-    function answerDesktopSetup(id: RequestId, params: unknown): void {
-      const given: DesktopSetupAnswer | null = !isJsonObject(params)
-        ? null
-        : (params.answer === 'approve' || params.answer === 'refuse') &&
-            (params.capability === 'build' || params.capability === 'device-host') &&
-            Object.keys(params).every((key) => key === 'journal' || key === 'answer' || key === 'capability')
-          ? { answer: params.answer, capability: params.capability }
-          : params.answer === 'skip' &&
-              (params.permission === 'screenRecording' || params.permission === 'deviceControl') &&
-              Object.keys(params).every((key) => key === 'journal' || key === 'answer' || key === 'permission')
-            ? { answer: 'skip', permission: params.permission }
-            : null;
-      if (!given || !isJsonObject(params) || typeof params.journal !== 'string')
-        return error(
-          id,
-          'bad-request',
-          'Answer a setup request of this connection: approve or refuse with its capability, or skip with its permission.',
-        );
-      if (!setupRuns.get(params.journal)?.answer(given))
-        return error(id, 'bad-request', 'No setup request of this connection is waiting for that answer.');
-      send(socket, { id, result: {} });
-    }
-
-    function readDesktopSettings(id: RequestId, method: string, params: unknown): void {
-      if (method === 'desktop.settings.schema') {
-        if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length)) {
-          return error(id, 'bad-request', 'desktop.settings.schema takes no parameters.');
-        }
-        return send(socket, { id, result: settingsJsonSchema() });
-      }
-      if (
-        !isJsonObject(params) ||
-        Object.keys(params).some((key) => key !== 'cwd') ||
-        typeof params.cwd !== 'string' ||
-        params.cwd.length > 4096 ||
-        !isAbsolute(params.cwd)
-      ) {
-        return error(id, 'bad-request', 'Choose settings with an absolute cwd.');
-      }
-      const cwd = resolvePath(params.cwd);
-      inProcessRead<'desktop.settings.get'>(id, 'stim settings', (signal) =>
-        createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).settings({ signal }),
-      );
-    }
-
-    function desktopReport(id: RequestId, method: string, params: unknown): void {
-      if (
-        method === 'desktop.reports.invalidate' &&
-        (params === undefined || (isJsonObject(params) && !Object.keys(params).length))
-      ) {
-        desktopReports.invalidate();
-        return send(socket, { id, result: {} });
-      }
-      if (
-        !isJsonObject(params) ||
-        !['doctor', 'gc', 'gc-history', 'builds', 'remote'].includes(String(params.report)) ||
-        Object.keys(params).some(
-          (key) => key !== 'report' && (params.report !== 'doctor' || (key !== 'cwd' && key !== 'platform')),
-        ) ||
-        (params.report === 'doctor' &&
-          (typeof params.cwd !== 'string' ||
-            params.cwd.length > 4096 ||
-            !isAbsolute(params.cwd) ||
-            (params.platform !== undefined && params.platform !== 'ios' && params.platform !== 'android')))
-      )
-        return error(
-          id,
-          'bad-request',
-          'Choose report gc, gc-history, builds or remote, or report doctor with an absolute cwd and optional ios/android platform.',
-        );
-      const target: DesktopReportTarget =
-        params.report === 'gc' ||
-        params.report === 'gc-history' ||
-        params.report === 'builds' ||
-        params.report === 'remote'
-          ? { report: params.report }
-          : {
-              report: 'doctor',
-              cwd: resolvePath(String(params.cwd)),
-              ...(params.platform === 'ios' || params.platform === 'android' ? { platform: params.platform } : {}),
-            };
-      if (method === 'desktop.reports.invalidate') {
-        desktopReports.invalidate(target);
-        return send(socket, { id, result: {} });
-      }
-      if (method === 'desktop.reports.get') {
-        return void inProcessRead<'desktop.reports.get'>(
-          id,
-          `stim ${target.report}`,
-          async (signal) => {
-            const snapshot = await desktopReports.get(target, signal);
-            if (snapshot.error) throw new Error(snapshot.error);
-            return snapshot;
-          },
-          options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
-          null,
-          true,
-        );
-      }
-      const subscription = openSubscription(id);
-      if (!subscription) return;
-      subscriptions.set(
-        subscription,
-        desktopReports.subscribe(target, (snapshot) =>
-          send(socket, { event: 'desktop-report', subscription, target, snapshot }),
-        ),
-      );
-    }
-
-    async function hostedSessions(id: RequestId, method: string, params: unknown): Promise<void> {
-      if (
-        method === 'device-host.sessions' &&
-        params !== undefined &&
-        (!isJsonObject(params) || Object.keys(params).length)
-      )
-        return error(id, 'bad-request', 'device-host.sessions takes no parameters.');
-      if (
-        method === 'device-host.sessions.stop' &&
-        (!isJsonObject(params) ||
-          typeof params.session !== 'string' ||
-          Object.keys(params).some((key) => key !== 'session'))
-      )
-        return error(id, 'bad-request', 'device-host.sessions.stop needs params.session.');
-      const answer =
-        method === 'device-host.sessions'
-          ? hostedDevices.sessions()
-          : hostedDevices.stopForPerson((params as { session: string }).session);
-      return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
-    }
-
-    async function setupRoute(id: RequestId, params: unknown): Promise<void> {
-      if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length)) {
-        return error(id, 'bad-request', 'route.setup takes no parameters.');
-      }
-      settingUpRoute ??= tailscale.setupRoute(addresses[0]!.port).finally(() => {
-        settingUpRoute = null;
-      });
-      try {
-        return send(socket, { id, result: await settingUpRoute });
-      } catch (cause) {
-        return error(id, 'action-failed', (cause as Error).message);
-      }
-    }
-
-    async function updateMachine(id: RequestId, method: string, params: unknown): Promise<void> {
-      const machine = isJsonObject(params) ? params.machine : undefined;
-      if (typeof machine !== 'string' || !machine) return error(id, 'bad-request', 'params.machine names the machine.');
-      const answer =
-        method === 'machines.update.start' ? await machineUpdates.start(machine) : await machineUpdates.status(machine);
-      return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
-    }
-
     function handleBinary(frame: Buffer): Promise<void> | void {
       if (metroStream) {
         const stream = metroStream;
@@ -2109,26 +1555,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const refused = buildSession.blob(frame);
       if (refused) socket.close(CLOSE_BAD_REQUEST, refused.slice(0, 120));
-    }
-
-    /**
-     * Admits this local-socket connection to the Desktop-only methods when it proves the bundled Desktop's private key
-     * against this connection's challenge. The challenge answers one attempt, so a replayed or late proof cannot win.
-     */
-    function authenticateDesktop(id: RequestId, params: unknown): void {
-      const challenge = desktopChallenge;
-      desktopChallenge = null;
-      if (
-        !local ||
-        !challenge ||
-        !isJsonObject(params) ||
-        Object.keys(params).some((key) => key !== 'proof') ||
-        !options.desktopBootstrap?.verify(challenge.nonce, params.proof)
-      ) {
-        return error(id, 'forbidden', 'The private Desktop bootstrap proof of this connection is required.');
-      }
-      desktopSessions.add(socket);
-      send(socket, { id, result: { authorized: true } });
     }
 
     async function unsubscribeRequest(id: RequestId, name: unknown): Promise<void> {
@@ -2164,7 +1590,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       tracker.begin(id, message.method);
       if (message.method === 'hello') return hello(ctx, id, message.params);
       if (!device) return refuse(id, 'unauthorized', 'Send hello first.', CLOSE_REFUSED);
-      if (message.method === 'desktop.authenticate') return authenticateDesktop(id, message.params);
+      if (message.method === 'desktop.authenticate') return authenticateDesktop(ctx, id, message.params);
       for (const reconcile of retainedLifecycles) reconcile();
       if ((DEVICE_HOST_METHODS as readonly string[]).includes(message.method)) {
         if (!device.capabilities.includes('device-host'))
@@ -2175,7 +1601,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (approvedMachine) return approvedMachine;
       const localMethod = Object.hasOwn(localMethods, message.method) ? localMethods[message.method] : undefined;
       if (localMethod) return localMethod(id, message.params);
-      const desktop = desktopMethod(id, message.method, message.params, device);
+      const desktop = desktopMethod(ctx, id, message.method, message.params, device);
       if (desktop) return desktop;
       if (!device.capabilities.includes('read')) {
         return error(id, 'forbidden', `${message.method} needs read access, which this connection does not have.`);
