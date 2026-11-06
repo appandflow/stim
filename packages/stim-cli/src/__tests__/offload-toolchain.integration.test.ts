@@ -20,9 +20,10 @@ import {
   parseXcodeVersionPlist,
   useJdkMajor,
   iosToolchainAsync,
+  memoizedIosToolchainAsync,
   macosToolchainAsync,
-  workerToolchain,
-} from '../offload/toolchain.ts';
+} from '../engine/toolchain.ts';
+import { workerToolchain } from '../offload/toolchain.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
 
@@ -75,6 +76,15 @@ afterEach(() => {
   resetExecutor();
   vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
+});
+
+test('the null-pods probe shares its in-flight result and retains it for this process', async () => {
+  const first = memoizedIosToolchainAsync(root, null);
+  expect(memoizedIosToolchainAsync(root, null)).toBe(first);
+  expect(await first).toMatchObject({ xcode: 'Xcode 27.0', cocoapods: null });
+  executable(join(root, 'bin'), 'xcodebuild', "console.log('Xcode 28.0');");
+  expect(await memoizedIosToolchainAsync(root, null)).toMatchObject({ xcode: 'Xcode 27.0' });
+  expect(await memoizedIosToolchainAsync(root, root)).toMatchObject({ xcode: 'Xcode 28.0' });
 });
 
 test.skipIf(process.platform !== 'darwin')(

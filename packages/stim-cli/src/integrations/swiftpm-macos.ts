@@ -6,7 +6,7 @@ import { logLines } from '../macos/run.ts';
 import { swiftpmArtifactCache } from '../macos/artifact-cache.ts';
 import { resolveBundleExtras, setBundleName, stageBundle, validateInfoPlist } from '../macos/stage.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { macosToolchainAsync } from '../offload/toolchain.ts';
+import { macosToolchainAsync } from '../engine/toolchain.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
 import type { MacosArtifactRecipe, MacosProject } from './macos-project.ts';
 import { type StimContext } from '@stim-cli/core';

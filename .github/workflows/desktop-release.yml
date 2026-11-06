@@ -18,7 +18,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  order:
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      actions: write
+      checks: read
+      pull-requests: read
+      id-token: write
+    uses: ./.github/workflows/release.yml
+    with:
+      stage: desktop
+
   release:
+    needs: order
+    if: ${{ !cancelled() && (needs.order.result == 'success' || needs.order.result == 'skipped') }}
     runs-on: macos-15
     environment: release
     timeout-minutes: 120

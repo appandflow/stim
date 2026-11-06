@@ -51,7 +51,6 @@ import {
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
 import type { AndroidRuntimeKind } from './launch.ts';
 import type { AndroidProject } from '../../integrations/android-project.ts';
-import { buildPlacementCandidates } from '../../offload/client.ts';
 import {
   deviceProfileRefusal,
   foldableImageRefusal,
@@ -167,7 +166,7 @@ export interface AndroidPlanDependencies extends Omit<AndroidBuildPlanDependenci
   supportsFold?: (pkg: string) => boolean;
   ownedAvd?: typeof slotOwnedAvd;
   preflight?: AndroidProject['preflight'];
-  buildMachines?: (selected: string) => readonly unknown[];
+  buildMachines?: (selected: string) => readonly unknown[] | Promise<readonly unknown[]>;
 }
 
 interface SlotAvd {
@@ -358,7 +357,8 @@ export async function resolveAndroidRunPlan(
     supportsFold = systemImageSupportsFold,
     ownedAvd = slotOwnedAvd,
     preflight,
-    buildMachines = (selected) => buildPlacementCandidates(selected).machines,
+    buildMachines = async (selected) =>
+      (await import('../../offload/client.ts')).buildPlacementCandidates(selected).machines,
   }: AndroidPlanDependencies,
 ): Promise<AndroidPlanResult> {
   const root = settingsContext.projectPath;
@@ -471,7 +471,7 @@ export async function resolveAndroidRunPlan(
         ? { kind: 'remote', backend: remoteBackend, systemImage, deviceProfile }
         : { kind: 'emulator', systemImage, deviceProfile };
   const preflightRefusal =
-    preflight && easProfile === undefined && buildMachines(buildMachine ?? 'local').length === 0
+    preflight && easProfile === undefined && (await buildMachines(buildMachine ?? 'local')).length === 0
       ? localBuildPreflight(preflight, target, plannedBuild.plan.build)
       : null;
   if (preflightRefusal) return fail(preflightRefusal.code, preflightRefusal.reason, preflightRefusal.remedy);

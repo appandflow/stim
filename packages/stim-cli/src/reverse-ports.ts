@@ -6,7 +6,7 @@ import { forgetPhoneReverse, readPhoneReverseSerials, recordPhoneReverse } from 
 import { reverseMetroPorts } from './engine/app-install.ts';
 import { leaseIsExpired, listLeaseFiles } from './engine/device-lease.ts';
 import { readHostedNative } from './workspace/placement-state.ts';
-import { requireReverseLinks, syncHostedReversesTo } from './device-host/reverse.ts';
+import type { syncHostedReversesTo } from './device-host/reverse.ts';
 import { getProject } from './workspace/config.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from './workspace/workspace-state.ts';
 
@@ -58,7 +58,7 @@ export interface ReverseDeps {
   removeReverse: (serial: string, port: number, operation?: StimContext) => Promise<void>;
   leases: typeof listLeaseFiles;
   syncHosted: typeof syncHostedReversesTo;
-  requireLinks: typeof requireReverseLinks;
+  requireLinks: (root: string) => void | Promise<void>;
 }
 
 const DEFAULT_DEPS: ReverseDeps = {
@@ -66,8 +66,8 @@ const DEFAULT_DEPS: ReverseDeps = {
   applyReverse: (serial, port) => reverseMetroPorts({ serial, metroPort: port }),
   removeReverse: (serial, port, operation) => removeMetroReverses(serial, [port], operation),
   leases: listLeaseFiles,
-  syncHosted: syncHostedReversesTo,
-  requireLinks: requireReverseLinks,
+  syncHosted: async (...args) => (await import('./device-host/reverse.ts')).syncHostedReversesTo(...args),
+  requireLinks: async (...args) => (await import('./device-host/reverse.ts')).requireReverseLinks(...args),
 };
 
 const PHYSICAL_IOS_REASON =
@@ -118,7 +118,7 @@ export async function reverseOnDevices(
     for (const [slot, placement] of Object.entries(readHostedNative(root, platform))) {
       const device = `hosted ${platform} session${slot === 'default' ? '' : ` [${slot}]`} on ${placement.machine}`;
       try {
-        if (action === 'add') d.requireLinks(root);
+        if (action === 'add') await d.requireLinks(root);
         const bound = await d.syncHosted(root, placement.machine, placement.session);
         const worker = bound.find((each) => each.port === port);
         if (action === 'remove' || !worker) {
