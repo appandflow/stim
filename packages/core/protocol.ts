@@ -210,7 +210,7 @@ export const METHODS = [
 ] as const;
 
 /**
- * The methods that update this server's `stim-server service`. A machine this one approved for `build` or
+ * The methods that update the Stim engine this server's `stim service` runs. A machine this one approved for `build` or
  * `device-host` may call them; they need neither `read` nor `control`.
  */
 export const ENGINE_UPDATE_METHODS = ['engine.update.status', 'engine.update', 'engine.update.chunk'] as const;
@@ -1582,7 +1582,7 @@ export type EngineUpdateParams = { version: string } | { packages: EngineUpdateP
 
 /**
  * An update this server runs. `uploading` waits for the rest of the packages; `installing` runs
- * `stim service update`, whose last `log` lines say how far it got. The connection closes when the job
+ * the machine engine's `engine-select`, whose last `log` lines say how far it got. The connection closes when the job
  * restarts; the new server's `hello` and `engine.update.status` then tell how it ended.
  */
 export interface EngineUpdateProgress {
@@ -1604,8 +1604,8 @@ export interface EngineUpdateOutcome {
 
 /**
  * Whether this server can update itself, and how. `service` is the `stim service` label it runs under, or
- * null when it does not run as a service and so cannot update itself. `last` is how the last `service update`
- * of that label ended, whoever ran it.
+ * null when it does not run as a service and so cannot update itself. `last` is how the last update
+ * of that label ended.
  */
 export interface EngineUpdateStatus {
   server: { version: string; stimBuild: string | null };

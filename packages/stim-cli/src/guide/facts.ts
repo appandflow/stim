@@ -587,7 +587,7 @@ leased until <time>" for each one.`,
                   printed there, and only stim remote add or doctor --fix in a terminal asks.
                   A local: entry has no dnsName. "outdated" means its
                   stim-server speaks protocol 1; the finding names the
-                  stim service update command to run there.
+                  stim engine update command to run there.
   toolchain       { entries, projectNode } on macOS, else null. entries is one { name, value,
                   source, from? } for node, ANDROID_HOME, JAVA_HOME, stim,
                   brew and adb: source "environment" when this process's
