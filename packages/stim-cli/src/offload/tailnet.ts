@@ -593,7 +593,8 @@ function approved(
   };
   // compat C12 permanent
   const { peer, server } = reply.result;
-  const reason = peerTooOld(input.machine, String(server?.stim), Number(peer ?? 0), input.serverVersion);
+  const stim = String(server?.stim ?? 'an older stim');
+  const reason = peerTooOld(input.machine, stim, Number(peer ?? 0), input.serverVersion);
   if (typeof peer !== 'number' || peer < PEER) return { state: 'outdated', credential, command: null, reason };
   // compat end
   return { state: 'approved', credential, result: reply.result };

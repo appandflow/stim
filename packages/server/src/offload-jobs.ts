@@ -100,6 +100,7 @@ export class OffloadJobs {
   private readonly failed = new Map<string, { failure: InstallFailure; at: number }>();
   private readonly options: OffloadJobsOptions;
   private closed = false;
+  private own: string | null = null;
 
   constructor(options: OffloadJobsOptions) {
     this.options = options;
@@ -177,7 +178,7 @@ export class OffloadJobs {
       return refused('bad-request', 'job.start needs kind, stim, a 12-hex build and repo, or attach.');
     const kind = params.kind as OffloadJobKind;
     const { stim, build, repo } = params;
-    const why = this.closed ? 'This machine is stopping.' : this.options.admit(client.id);
+    const why = this.refusal(client);
     if (why) return refused('build-busy', why);
     let entry = this.entry(build);
     if (!entry) {
@@ -208,20 +209,25 @@ export class OffloadJobs {
           );
         const failed = fetching ? await fetching : recent!.failure;
         if (failed?.mismatch)
-          return refused(
-            'job-needs-package',
-            `${this.options.machine} cannot fetch this build of stim ${stim} from npm.`,
-          );
+          return this.acceptsClientBuilds()
+            ? refused('job-needs-package', `${this.options.machine} cannot fetch this build of stim ${stim} from npm.`)
+            : refused('forbidden', NOT_ACCEPTED);
         if (failed) return refused('job-refused', this.cannotInstall(stim, failed.failure));
       }
       entry = this.entry(build);
       if (!entry) return refused('job-refused', this.cannotInstall(stim, 'the installed build is gone'));
     }
     if (typeof entry === 'string') return refused('job-refused', entry);
+    const late = this.refusal(client);
+    if (late) return refused('build-busy', late);
     if (socket.readyState !== socket.OPEN) return refused('build-refused', 'The connection closed.');
     const job = this.spawn(kind, client, repo, entry);
     this.attachSocket(job, socket);
     return { result: { job: job.id } };
+  }
+
+  private refusal(client: JobClient): string | null {
+    return this.closed ? 'This machine is stopping.' : this.options.admit(client.id);
   }
 
   private cannotInstall(stim: string, failure: string): string {
@@ -232,8 +238,8 @@ export class OffloadJobs {
   // compat C14 permanent
   /** The CLI script of `build` and the Node to run it with, why it cannot run, or null when it is not installed. */
   private entry(build: string): { cli: string; node: string } | string | null {
-    if (stimBuildId(dirname(this.options.stimCli)) === build)
-      return { cli: this.options.stimCli, node: process.execPath };
+    this.own ??= stimBuildId(dirname(this.options.stimCli));
+    if (this.own === build) return { cli: this.options.stimCli, node: process.execPath };
     const tree = join(this.root(), build);
     let manifest: unknown;
     try {
@@ -269,6 +275,8 @@ export class OffloadJobs {
         'bad-request',
         `A package is a .tgz name, a size up to ${MAX_PACKAGE_BYTES} bytes and its sha256.`,
       );
+    const previous = this.uploads.get(socket);
+    if (previous) rmSync(previous.dir, { recursive: true, force: true });
     const id = randomUUID();
     const dir = join(this.root(), `.tmp-${process.pid}-upload-${id}`);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -378,7 +386,8 @@ export class OffloadJobs {
 
   private attach(client: JobClient, socket: NoiseSocket, id: string): Answer {
     const job = this.jobs.get(id);
-    if (!job || job.client !== client.id) return refused('bad-request', 'No such job for this device; it ended.');
+    if (!job || job.client !== client.id || !job.child.stdin?.writable)
+      return refused('bad-request', 'No such job for this device; it ended.');
     if (job.socket) this.spliced.delete(job.socket);
     this.attachSocket(job, socket);
     return { result: { job: job.id } };

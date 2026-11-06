@@ -1,7 +1,7 @@
-import { renameSync, rmSync } from 'node:fs';
+import { existsSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { installServer } from '@stim-cli/server/release-install';
-import { fetchTree, scratchName, seal, selfTest } from '../engine-store/tree.ts';
+import { fetchTree, removeTree, scratchName, seal, selfTest } from '../engine-store/tree.ts';
 
 /** Where an offload job's build comes from: an npm release, or a directory holding the client's packed `.tgz`. */
 const log = (line: string) => console.error(line);
@@ -32,13 +32,19 @@ export async function installJobBuild(root: string, build: string, source: JobSo
         rmSync(installs, { recursive: true, force: true });
       }
     }
+    const existed = existsSync(join(root, build));
     const sealed = seal(root, scratch);
     if (sealed !== build)
       throw Object.assign(
         new Error(`${'release' in source ? `stim@${source.release}` : 'the package'} is build ${sealed}, not ${build}`),
         { mismatch: true },
       );
-    await selfTest(root, sealed);
+    try {
+      await selfTest(root, sealed);
+    } catch (error) {
+      if (!existed) removeTree(join(root, sealed));
+      throw error;
+    }
     return sealed;
   } finally {
     rmSync(scratch, { recursive: true, force: true });

@@ -822,6 +822,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     limits: builds.limits,
     admit: (client) => {
       builds.maintainAreas();
+      if (!buildAllowed({ id: client })) return 'This machine no longer grants this device build access.';
       return builds.drained ?? (builds.removing(client) ? 'This machine is removing this build client.' : null);
     },
     idle: (client) => builds.pruneBlobs(client),
