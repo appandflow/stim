@@ -11,7 +11,7 @@ import { processContext } from '../cli-operation.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
-import { daemonClaimHeld, requestDaemonTick } from './client.ts';
+import { daemonClaimHeld, requestDaemonTick, stimdRefused } from './client.ts';
 import { commandWorkspace } from './command-workspace.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { runDormantDependencies } from './dependencies.ts';
@@ -160,7 +160,7 @@ export async function runHomePasses({
 
 export interface MaintenanceLane {
   /** Starts the slow passes from this tick's passes, unless the last ones still run. */
-  start(passes: HomePasses, act: boolean): void;
+  start(passes: Pick<HomePasses, 'config' | 'measured' | 'operation' | 'workspaces' | 'pressure'>, act: boolean): void;
   running(): boolean;
   /** The actions the slow passes took since the last call. */
   take(): DaemonLadderAction[];
@@ -419,15 +419,15 @@ export async function runForcedLadder({
 }
 
 /**
- * Runs the pressure ladder now: one daemon tick when a daemon runs, else the ladder in this process, which never takes
- * `protectedRoot`.
+ * Runs the pressure ladder now: one daemon tick when a daemon runs, else, unless a stimd of another build refused this
+ * process and runs its own, the ladder in this process, which never takes `protectedRoot`.
  */
 export async function runLadderNow(
   env: NodeJS.ProcessEnv,
   signal?: AbortSignal,
   protectedRoot?: string,
 ): Promise<void> {
-  if (await requestDaemonTick(env, signal)) return;
+  if ((await requestDaemonTick(env, signal)) || stimdRefused()) return;
   signal?.throwIfAborted();
   try {
     await runCommandLadder('command', env, protectedRoot);
@@ -436,7 +436,7 @@ export async function runLadderNow(
 
 /**
  * Automatic maintenance, the activity pass over workspaces with no running dev server, and the pressure ladder at
- * command time, for a command that found no daemon holding the home: Windows, which has none, or a daemon that could
+ * command time, for a command that found no daemon holding the home: a stimd that could
  * not start. Nothing runs while `daemon.mode` is off, and report acts on nothing. Each dev server supervisor times
  * its own idle stop. No pass takes `protectedRoot`, the command's own workspace.
  */

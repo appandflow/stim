@@ -1024,8 +1024,8 @@ override `STIM_DAEMON`. It governs every pass Stim runs on its own: the idle
 and dormant stages, the [pressure ladder](./build-caches.md#disk-pressure), the
 reclaim for a run waiting to boot, and
 [automatic maintenance](#automatic-maintenance). `start`, `ios`, `android`,
-`web`, `macos` and `revive` start one `stim-daemon` process per Stim home,
-scoped homes included. It ticks each minute while anything runs there or the
+`web`, `macos` and `revive` start one `stimd` process per Stim home, scoped
+homes included, on Windows too. It ticks each minute while anything runs there or the
 pressure level is above normal, and every 5 minutes otherwise. It exits two
 ticks after nothing runs, no maintenance pass runs and no workspace waits for
 its dormant stage, so the stage fires in a quiet home. A workspace waits until its `idle.dormantDays`
@@ -1046,31 +1046,21 @@ one pass at a time, so a slow `git fetch`, pull request lookup or size scan
 never delays a tick or a waiting run. The same lane records the
 [fingerprint](./build-caches.md) of a running workspace whose git HEAD,
 lockfile or install stamp changed. It also wakes the oldest
-run waiting for a build slot as soon as one is released. When one of those
-commands runs from an installed Stim (a global install or a `node_modules`
-dependency) with a newer version than the running daemon, for example after
-an upgrade, or the daemon runs a development build, that daemon keeps serving
-the command and one new daemon from the installed build takes over once the
-current tick finishes. A maintenance pass the old daemon has running finishes
-in its process, which starts no other. The same or an older version never
-replaces it, so
-alternating a global `stim` with `npx stim` or a project's copy does not
-restart the daemon. A development build (a checkout's `dist`, `npm link` or
-`pnpm link --global`) never replaces a daemon. Runs waiting for a build slot or
-a boot keep their queue positions across the handover. `report` logs what
+run waiting for a build slot as soon as one is released. A command from another
+Stim build than the running `stimd` does not use it and says so; `stimd` keeps
+serving until nothing runs in the home, and the next command starts its own
+build's `stimd`. `stimd` stops a `stim-daemon` from Stim 1.40 to 1.42 when it
+starts. `report` logs what
 each pass would do and acts on nothing. `off` runs no daemon and no pass: each
 dev server supervisor stops its own dev server and devices after
 `idle.minutes`, and nothing times a device with no dev server. It is `off` in
 CI unless `STIM_DAEMON` is set.
 
-While no daemon runs (on Windows, which has none, or when one could not start),
-`stim doctor`, `stim start`, `stim ios` and `stim android` run automatic
-maintenance, the idle stage for owned devices whose workspace has no running dev
-server, and the pressure ladder in their own process, never for the command's own
-workspace, acting in `on` and only logging in `report`. On Windows every other
-top-level command except `stim guide`, `stim settings`, `stim help`, `stim gc` and
-`stim agent-device` starts the same passes in a detached background process, which
-the command does not wait for and which prints nothing, at most once a minute. `stim gc --delete` runs the ladder in its own process
+While no `stimd` runs (when one could not start), `stim doctor`, `stim start`,
+`stim ios` and `stim android` run automatic maintenance, the idle stage for owned
+devices whose workspace has no running dev server, and the pressure ladder in
+their own process, never for the command's own workspace, acting in `on` and only
+logging in `report`. `stim gc --delete` runs the ladder in its own process
 whether or not a daemon runs. A command starts the daemon in the mode it resolves, `STIM_DAEMON` included; a
 later change to the machine setting can make a running daemon stricter, never
 laxer. The daemon also keeps the starting command's `CI` and the environment
@@ -1081,8 +1071,9 @@ once it exits and a command starts a new one. Its log is
 tick's measurement and decisions, with its last 20 actions, are in
 `$STIM_HOME/daemon/snapshot.json`.
 
-On Linux the daemon starts as a transient user service,
-`stim-daemon-<home hash>-<id>.service`, when `systemd-run` is on `PATH`,
+`stimd` starts as a transient launchd job on macOS, under Stim Host where it is
+installed. On Linux it starts as a transient user service,
+`stimd-<home hash>-<id>.service`, when `systemd-run` is on `PATH`,
 `XDG_RUNTIME_DIR` is set and a user systemd manager answers. A command runner
 that adopts and kills everything a call started, such as an agent harness that
 sets `PR_SET_CHILD_SUBREAPER`, cannot reach a service, so the daemon keeps
@@ -1098,9 +1089,7 @@ a slot, and a stage line for every workspace: running with its last activity,
 idle or dormant with the time in it, or stopped. `stim status --json` carries
 the last 20 actions as `daemon.recent`. `stim doctor` prints the daemon line, its
 last action or snapshot file and its log, and reports a daemon that stopped
-ticking or a claim it cannot resolve. On Windows, which has no daemon yet, the
-line says that `start`, `ios`, `android` and `doctor` run the passes in their own
-process and other top-level commands start them in the background.
+ticking or a claim it cannot resolve.
 
 `idle.minutes` takes machine and project layers; `0` turns the idle and dormant
 stages off. `idle.dormantDays` is a machine setting.

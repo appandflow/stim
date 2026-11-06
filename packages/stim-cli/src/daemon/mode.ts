@@ -30,17 +30,9 @@ export function daemonMode(env: NodeJS.ProcessEnv = process.env, config?: Config
   return (config === undefined ? configuredDaemonMode() : parseDaemonMode(config?.daemon?.mode)) ?? 'on';
 }
 
-/** Whether the platform runs a stim-daemon: Windows has none. */
-export function platformHasDaemon(platform: NodeJS.Platform = process.platform): boolean {
-  return platform !== 'win32';
-}
-
-/** Whether this command may start a daemon process: `daemon.mode` is not off and the platform has one. */
-export function spawnsDaemon(
-  env: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
-): boolean {
-  return platformHasDaemon(platform) && daemonMode(env) !== 'off';
+/** Whether this command may start stimd: `daemon.mode` is not off. */
+export function spawnsDaemon(env: NodeJS.ProcessEnv = process.env): boolean {
+  return daemonMode(env) !== 'off';
 }
 
 export const GOVERNED_COMMANDS: ReadonlySet<string> = new Set([

@@ -1,17 +1,19 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
-import { dirname, resolve } from 'node:path';
+import { dirname } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
-import { fileURLToPath } from 'node:url';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
   daemonClaimRoot,
   daemonDir,
-  daemonHandoverClaimRoot,
   daemonNdjsonFile,
   daemonSnapshotFile,
-  daemonSocket,
   isJsonObject,
+  readJsonObject,
+  stimdClaimRoot,
+  stimdRecordFile,
+  stimdRunDir,
+  stimdSocket,
   macosAppState,
   readMacosRecord,
   readDaemonSnapshot,
@@ -23,34 +25,36 @@ import {
 import {
   isClaimRefusal,
   isClaimUnavailable,
-  readClaimSet,
   releaseClaim,
   tryAcquireClaim,
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
-import { processContext } from '../cli-operation.ts';
 import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
 import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { waitForProcessExit, type ProcessRecord } from '../process-identity.ts';
 import { stimBuild } from '../spawn-entry.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
 import type { Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { askDaemon } from './client.ts';
-import { measureDependencyTrees } from './dependencies.ts';
-import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from './mode.ts';
-import { ownedHere } from './idle.ts';
-import type { TickMeasurement } from './measure.ts';
+import { relaunchWithLogFile } from '../detached-entry.ts';
+import { LAUNCHD_LABEL_ENV, launchdLabelPrefix, stimdBuildId } from '../daemon/client.ts';
+import { getExecutor } from '../exec.ts';
+import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from '../daemon/mode.ts';
+import { ownedHere } from '../daemon/idle.ts';
+import type { TickMeasurement } from '../daemon/measure.ts';
 import { listWaiting } from '../engine/wait-queue.ts';
-import { createMaintenanceLane, runHomePasses, type HomePasses } from './passes.ts';
-import { reclaimForBootWaiters } from './reclaim.ts';
-import { bootedParkedPending } from './booted-parked.ts';
-import { pendingDormant } from './stages.ts';
-import { decideTakeover } from '../policy/takeover.ts';
+import { runHomePasses, type HomePasses } from '../daemon/passes.ts';
+import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
+import { bootedParkedPending } from '../daemon/booted-parked.ts';
+import { pendingDormant } from '../daemon/stages.ts';
+// compat C22 until removal-minor
+import { takeOverLegacyDaemon } from './legacy-daemon-takeover.ts';
+// compat end
+import { listenPipe } from './pipe-win32.ts';
+import { createPassesLane, createThreadTable } from './threads.ts';
 
 const TICK_MS = 60_000;
 const DEPENDENCY_SCAN_MS = 10 * 60_000;
@@ -60,9 +64,8 @@ const CLAIM_RETRY_MS = 100;
 const EMPTY_TICKS_BEFORE_EXIT = 2;
 const RECENT_ACTIONS = 20;
 const WAKE_GRACE_MS = 2000;
-const HANDOVER_REPLY_MS = 5000;
-const HANDOVER_WAIT_MS = 10 * 60_000;
-const HANDOVER_POLL_MS = 250;
+const RECORD_FORMAT = 1;
+const LAUNCHCTL_TIMEOUT_MS = 5000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
@@ -75,70 +78,20 @@ const OPS: Record<Resource, { wait: string; waiting: string; released: string; c
 };
 
 async function takeClaim(
-  mode: DaemonMode,
-  identity: Record<string, unknown>,
-  retries: number,
+  root: string,
+  mode: 'exclusive' | 'shared',
+  label: string,
+  details: Record<string, unknown>,
+  beforeRetry: () => Promise<unknown> = async () => {},
 ): Promise<ClaimHandle | null> {
   for (let tries = 0; ; tries++) {
-    const attempt = tryAcquireClaim({
-      root: daemonClaimRoot(),
-      mode: 'exclusive',
-      label: 'stim-daemon',
-      details: { socket: daemonSocket(), mode, ...identity },
-    });
+    const attempt = tryAcquireClaim({ root, mode, label, details });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (attempt.acquired) return attempt.acquired;
-    if (tries >= retries) return null;
+    if (tries >= CLAIM_TRIES) return null;
+    await beforeRetry();
     await new Promise((done) => setTimeout(done, CLAIM_RETRY_MS));
   }
-}
-
-function daemonHolder(pid: number): ProcessRecord | null {
-  try {
-    return readClaimSet(daemonClaimRoot()).live.find((holder) => holder.owner.pid === pid)?.owner ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Asks the running daemon `pid` to exit after its current tick and waits, up to ten minutes, for it to release its
- * claim. A daemon whose `hello` carries no `build` predates handovers and gets SIGTERM instead. It then releases its
- * claim at once, even in the middle of a pass that runs on until the process exits, so its process is returned for
- * the caller to outwait before its first tick. Signalled between a pass and its wait, it would sleep through that
- * wait, up to five minutes; the tick request sent just before the signal wakes it.
- */
-async function takeOverFrom(
-  pid: number,
-  log: (level: Level, event: string, msg: string) => void,
-): Promise<ProcessRecord | null> {
-  const holder = daemonHolder(pid);
-  const hello = holder ? await askDaemon('hello', HANDOVER_REPLY_MS) : null;
-  const decision = decideTakeover(pid, holder, hello);
-  if (decision.action === 'none') return null;
-  let stopped: ProcessRecord | null = null;
-  if (decision.action === 'ask-handover') {
-    const reply = await askDaemon('handover', HANDOVER_REPLY_MS, { pid, build: decision.build });
-    if (reply?.accepted === false) return null;
-    log('info', 'daemon_handover', `asked stim-daemon pid ${pid} to exit after its tick`);
-  } else {
-    await new Promise<void>((done) => {
-      const socket = connect(daemonSocket());
-      socket.once('error', () => done());
-      socket.once('connect', () => socket.end(`${JSON.stringify({ op: 'tick' })}\n`, () => done()));
-    });
-    if (!daemonHolder(pid)) return null;
-    try {
-      process.kill(pid, 'SIGTERM');
-    } catch {
-      return null;
-    }
-    stopped = holder;
-    log('info', 'daemon_handover', `stopped stim-daemon pid ${pid}, which predates handovers`);
-  }
-  const deadline = Date.now() + HANDOVER_WAIT_MS;
-  while (daemonHolder(pid) && Date.now() < deadline) await new Promise((done) => setTimeout(done, HANDOVER_POLL_MS));
-  return stopped;
 }
 
 function answers(path: string): Promise<boolean> {
@@ -153,15 +106,16 @@ function answers(path: string): Promise<boolean> {
 }
 
 /**
- * Binds the daemon's socket while it holds the daemon claim. Node cannot read a Unix socket peer's uid, so the
- * kernel's check stands in for it: connecting needs write access to a 0600 socket in a 0700 directory this user owns.
+ * Binds stimd's CLI socket while it holds the stimd claim. Node cannot read a Unix socket peer's uid, so the kernel's
+ * check stands in for it: connecting needs write access to a 0600 socket in a 0700 directory this user owns.
  */
 async function listen(path: string, server: Server): Promise<void> {
+  if (process.platform === 'win32') return listenPipe(path, server);
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const owner = lstatSync(dir);
   if (!owner.isDirectory() || (process.getuid && owner.uid !== process.getuid()))
-    throw new Error(`${dir} is not a directory this user owns, so the daemon does not put its socket there.`);
+    throw new Error(`${dir} is not a directory this user owns, so stimd does not put its socket there.`);
   chmodSync(dir, 0o700);
   if (existsSync(path)) {
     if (await answers(path)) throw new Error(`another process answers on ${path}`);
@@ -177,10 +131,9 @@ async function listen(path: string, server: Server): Promise<void> {
   chmodSync(path, 0o600);
 }
 
-function writeSnapshot(snapshot: DaemonSnapshot): void {
-  const file = daemonSnapshotFile();
+function writeAtomic(file: string, value: unknown): void {
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(snapshot)}\n`, { mode: 0o600 });
+  writeFileSync(tmp, `${JSON.stringify(value)}\n`, { mode: 0o600 });
   try {
     renameSync(tmp, file);
   } catch (error) {
@@ -243,76 +196,66 @@ async function pendingWork(
 }
 
 /**
- * The per-home daemon: holds `$STIM_HOME/daemon/claim`, serves its socket, and ticks every minute while something
- * runs in the home or the pressure level is above normal, every 5 minutes otherwise, and on demand, each tick measuring
- * once, running the activity, dormant and pressure passes and writing `snapshot.json`, then, unless it exits, starting
- * the slow passes (`createMaintenanceLane`) unless the last ones still run. A command's contact brings it back to the minute. It exits
- * after two ticks in a row with nothing running, no work pending (`pendingWork`), no slow pass running and no contact,
- * when `daemon.mode` turns off, or when a tick throws, releasing its claim so each supervisor's own idle timer takes
- * over. Asked to hand over, by a daemon a command from a newer installed Stim build started, it exits at once between
- * ticks, or after the tick in progress. During shutdown it cancels dependency measurements and waits for their cleanup
- * and for any maintenance pass already running.
+ * One resident stimd per Stim home: holds the claim at `run/stimd` exclusively and the daemon claim at `daemon/claim`
+ * shared, after stopping a stim-daemon from Stim 1.40 to 1.42 that holds that one exclusively; serves the CLI socket,
+ * whose address it writes to `run/stimd.json`; and ticks every minute while something runs in the home or the pressure
+ * level is above normal, every 5 minutes otherwise, and on demand, each tick measuring once, running the activity,
+ * dormant and pressure passes and writing `snapshot.json`, then, unless it exits, starting the slow passes on the passes
+ * thread unless the last ones still run. A command's contact brings it back to the minute. It exits after two ticks in a
+ * row with nothing running, no work pending (`pendingWork`), no slow pass running and no contact, when `daemon.mode`
+ * turns off, or when a tick throws, releasing its claims so each supervisor's own idle timer takes over. During
+ * shutdown it cancels the dependency size scan and waits for its cleanup and for any slow pass already running.
  */
-export async function runDaemon({
+export async function runStimd({
   tickMs = TICK_MS,
   slowTickMs = tickMs * SLOW_TICKS,
   mode: startMode = daemonMode({}),
-  replace,
 }: {
   tickMs?: number;
   /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
   slowTickMs?: number;
   /** The mode the starting command resolved; a later `daemon.mode` change in config can only make it stricter. */
   mode?: DaemonMode;
-  /** The pid of the running daemon this one asks to hand over before it takes the claim. */
-  replace?: number;
 } = {}): Promise<void> {
   const identity = stimBuild();
-  const build = identity.digest;
+  const build = stimdBuildId();
   const configAtStart = configuredDaemonMode();
   const started = performance.now();
   const startedAt = new Date().toISOString();
   mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
+  mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
   const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
   const log = (level: Level, event: string, msg: string, fields: Record<string, unknown> = {}) =>
-    writer.write({ src: 'daemon', level, event, msg, ...fields });
-  let predecessor: ProcessRecord | null = null;
-  let handoverClaim: ClaimHandle | undefined;
-  if (replace !== undefined) {
-    const attempt = tryAcquireClaim({
-      root: daemonHandoverClaimRoot(),
-      mode: 'exclusive',
-      label: 'stim-daemon handover',
-      details: { replace },
-    });
-    if (attempt.pending) releaseClaim(attempt.pending);
-    if (!attempt.acquired) {
-      log('debug', 'daemon_handover_held', 'another stim-daemon is taking over; exiting');
-      writer.close();
-      return;
-    }
-    handoverClaim = attempt.acquired;
-    predecessor = await takeOverFrom(replace, log);
-  }
-  const claim = await takeClaim(
-    startMode,
-    { build, installed: identity.installed, version: identity.version },
-    replace === undefined ? CLAIM_TRIES : 0,
-  );
-  releaseClaim(handoverClaim);
-  if (!claim) {
-    log('debug', 'daemon_claim_held', 'another stim-daemon holds the claim; exiting');
+    writer.write({ src: 'stimd', level, event, msg, ...fields });
+  const path = stimdSocket();
+  const details = { socket: path, mode: startMode, build, version: identity.version };
+  const own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details);
+  if (!own) {
+    log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
     writer.close();
     return;
   }
-  const lane = createMaintenanceLane(log);
-  const dependencyScan = new AbortController();
-  const dependencyOperation = processContext(process.cwd(), dependencyScan.signal);
+  // compat C22 until removal-minor
+  let stopped: number | null = null;
+  const takeOver = async () => {
+    stopped = (await takeOverLegacyDaemon()) ?? stopped;
+  };
+  await takeOver();
+  // compat end
+  const claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details, takeOver);
+  if (stopped !== null) log('info', 'stimd_takeover', `stopped stim-daemon pid ${stopped}, from an older Stim`);
+  if (!claim) {
+    releaseClaim(own);
+    log('warn', 'stimd_claim_held', 'a stim-daemon from an older Stim still holds the daemon claim; exiting');
+    writer.close();
+    return;
+  }
+  const threads = createThreadTable(log);
+  const lane = createPassesLane(threads, log);
   let dependencyScanAt = -Infinity;
   let dependencyWork: Promise<void> | undefined;
   const loopDelay = monitorEventLoopDelay();
   loopDelay.enable();
-  const path = daemonSocket();
   const waiters: Record<Resource, Socket[]> = { build: [], boot: [] };
   const wokenAt = new WeakMap<Socket, number>();
   let tickReplies: Socket[] = [];
@@ -321,7 +264,6 @@ export async function runDaemon({
   let lastContact = Date.now();
   let closing = false;
   let tickRequested = false;
-  let handover = false;
   let interrupt: (() => void) | null = null;
   let hasten: (() => void) | null = null;
   const requestTick = () => {
@@ -346,9 +288,9 @@ export async function runDaemon({
   const server = createServer((socket) => {
     open.add(socket);
     socket.once('close', () => open.delete(socket));
-    lastContact = Date.now();
     socket.setEncoding('utf8');
     let buffer = '';
+    let framed = false;
     socket.on('error', () => drop(socket));
     socket.on('close', () => drop(socket));
     socket.on('data', (chunk: string) => {
@@ -368,18 +310,32 @@ export async function runDaemon({
           socket.destroy();
           return;
         }
-        const { op } = message;
+        const reply = (fields: Record<string, unknown>) => socket.write(`${JSON.stringify(fields)}\n`);
+        if (!framed) {
+          // compat C26 permanent
+          if (message.kind !== 'cli' && message.kind !== 'api') {
+            reply({ op: 'error', code: 'unknown-kind', message: 'the first frame names no client kind' });
+            socket.end();
+            return;
+          }
+          if (message.build !== build) {
+            reply({ op: 'engine-changed', build, version: identity.version, pid: process.pid });
+            socket.end();
+            return;
+          }
+          // compat end
+          framed = true;
+          lastContact = Date.now();
+          reply({ op: 'hello', kind: 'stimd', pid: process.pid, build, version: identity.version });
+          continue;
+        }
         lastContact = Date.now();
+        const { op } = message;
         if (op === 'hello') {
           hasten?.();
           socket.end(`${JSON.stringify({ op: 'hello', pid: process.pid, build, version: identity.version })}\n`);
-        } else if (op === 'handover') {
-          const accepted = message.pid === process.pid && message.build === build;
-          socket.end(`${JSON.stringify({ op: 'handover', accepted })}\n`);
-          if (accepted) {
-            handover = true;
-            interrupt?.();
-          }
+        } else if (op === 'presence.publish') {
+          socket.end(`${JSON.stringify({ op: 'presence', forwarded: false })}\n`);
         } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'tick') {
           if (!tickReplies.includes(socket)) tickReplies.push(socket);
@@ -393,7 +349,7 @@ export async function runDaemon({
           if (op === OPS[resource].wait) {
             const list = waiters[resource];
             if (!list.includes(socket)) list.push(socket);
-            socket.write(`${JSON.stringify({ op: OPS[resource].waiting, position: list.indexOf(socket) + 1 })}\n`);
+            reply({ op: OPS[resource].waiting, position: list.indexOf(socket) + 1 });
           } else {
             socket.end();
             wakeOldest(resource);
@@ -409,22 +365,33 @@ export async function runDaemon({
     if (closing) return;
     closing = true;
     if (dependencyWork) log('debug', 'daemon_dependency_scan_cancelled', 'stopping the dependency size scan');
-    dependencyScan.abort();
+    threads.abort('measure');
     loopDelay.disable();
     interrupt?.();
     server.close();
     for (const waiter of [...waiters.build, ...waiters.boot, ...tickReplies]) waiter.destroy();
     for (const socket of open) socket.end().unref();
-    if (bound) rmSync(path, { force: true });
+    if (bound && process.platform !== 'win32') rmSync(path, { force: true });
+    if (readJsonObject(stimdRecordFile())?.pid === process.pid) rmSync(stimdRecordFile(), { force: true });
     releaseClaim(claim);
+    releaseClaim(own);
     for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
-    void Promise.all([lane.settled(), dependencyWork]).then(() => writer.close());
+    void Promise.all([lane.settled(), dependencyWork])
+      .then(() => threads.close())
+      .then(() => writer.close());
   };
   for (const signal of SIGNALS) process.once(signal, onSignal);
   try {
     await listen(path, server);
     bound = true;
+    writeAtomic(stimdRecordFile(), {
+      format: RECORD_FORMAT,
+      pid: process.pid,
+      socket: path,
+      build,
+      version: identity.version,
+    });
   } catch (error) {
     shutdown(`cannot listen on ${path}: ${error instanceof Error ? error.message : String(error)}`, 'error');
     throw error;
@@ -435,13 +402,11 @@ export async function runDaemon({
     `pid ${process.pid} listening on ${path} after ${Math.round(performance.now() - started)}ms`,
     { build, version: identity.version },
   );
-  if (predecessor && !(await waitForProcessExit(predecessor, HANDOVER_WAIT_MS)))
-    log('warn', 'daemon_handover', `stim-daemon pid ${predecessor.pid} still runs; ticking anyway`);
   let emptyTicks = 0;
   let interval = tickMs;
   const kept = new Map<string, string>();
   for (;;) {
-    if (!tickRequested && !handover && !closing) {
+    if (!tickRequested && !closing) {
       await new Promise<void>((done) => {
         let timer = setTimeout(done, interval);
         interrupt = () => {
@@ -459,10 +424,6 @@ export async function runDaemon({
     interrupt = null;
     hasten = null;
     if (closing) break;
-    if (handover) {
-      shutdown('a stim-daemon from a newer installed Stim build takes over');
-      break;
-    }
     tickRequested = false;
     const configured = configuredDaemonMode();
     const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
@@ -488,12 +449,14 @@ export async function runDaemon({
       });
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
       actions.push(...lane.take());
-      if (!closing && !handover && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
+      if (!closing && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
         dependencyScanAt = Date.now();
-        dependencyWork = measureDependencyTrees(dependencyOperation)
+        dependencyWork = threads
+          .run('measure', { cwd: process.cwd() })
+          .then(() => undefined)
           .catch((error: unknown) => {
-            if (!dependencyScan.signal.aborted || (error instanceof Error && 'reportCleanup' in error))
-              log('warn', 'daemon_dependency_scan_failed', error instanceof Error ? error.message : String(error));
+            const message = error instanceof Error ? error.message : String(error);
+            if (message !== 'aborted') log('warn', 'daemon_dependency_scan_failed', message);
           })
           .finally(() => {
             dependencyWork = undefined;
@@ -567,7 +530,7 @@ export async function runDaemon({
         recent,
         waiting,
       };
-      writeSnapshot(lastSnapshot);
+      writeAtomic(daemonSnapshotFile(), lastSnapshot);
       for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);
       ticked = passes;
     } catch (error) {
@@ -601,20 +564,23 @@ export async function runDaemon({
       shutdown('nothing runs in this Stim home');
       break;
     }
-    if (ticked && !handover && !closing) lane.start(ticked, mode === 'on');
+    if (ticked && !closing) lane.start(ticked, mode === 'on');
   }
   await Promise.all([lane.settled(), dependencyWork]);
+  await threads.close();
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  process.title = 'stim-daemon';
-  const at = process.argv.indexOf('--mode');
-  const replaceAt = process.argv.indexOf('--replace');
-  const replace = replaceAt > 0 ? Number(process.argv[replaceAt + 1]) : Number.NaN;
-  runDaemon({
-    mode: parseDaemonMode(at > 0 ? process.argv[at + 1] : undefined) ?? daemonMode({}),
-    ...(Number.isInteger(replace) && replace > 0 ? { replace } : {}),
-  }).catch((error: unknown) => {
+/** The `__stimd` entry: `argv` is what follows it. */
+export async function runStimdEntry(argv: readonly string[]): Promise<void> {
+  if (relaunchWithLogFile(['__stimd', ...argv])) return;
+  process.title = 'stimd';
+  const label = process.env[LAUNCHD_LABEL_ENV];
+  delete process.env[LAUNCHD_LABEL_ENV];
+  if (label) removeExitedJobs(label);
+  const at = argv.indexOf('--mode');
+  try {
+    await runStimd({ mode: parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ?? daemonMode({}) });
+  } catch (error) {
     const message =
       isClaimRefusal(error) || isClaimUnavailable(error)
         ? error.message
@@ -623,9 +589,25 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
           : String(error);
     try {
       const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
-      writer.write({ src: 'daemon', level: 'error', event: 'daemon_failed', msg: message });
+      writer.write({ src: 'stimd', level: 'error', event: 'daemon_failed', msg: message });
       writer.close();
     } catch {}
     process.exitCode = 1;
-  });
+  }
+  if (label)
+    try {
+      getExecutor().runFile('launchctl', ['remove', label], { timeoutMs: LAUNCHCTL_TIMEOUT_MS });
+    } catch {}
+}
+
+/** Removes the jobs of this home's earlier stimds that exited without removing their own, such as after a crash. */
+function removeExitedJobs(own: string): void {
+  try {
+    const executor = getExecutor();
+    for (const line of executor.runFile('launchctl', ['list'], { timeoutMs: LAUNCHCTL_TIMEOUT_MS }).split('\n')) {
+      const [pid, , label] = line.split('\t');
+      if (pid === '-' && label?.startsWith(launchdLabelPrefix()) && label !== own)
+        executor.runFile('launchctl', ['remove', label], { timeoutMs: LAUNCHCTL_TIMEOUT_MS });
+    }
+  } catch {}
 }

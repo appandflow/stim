@@ -1,7 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { getBootedGraceMinutes, type HostedLocalPlatformCounts } from '@stim-cli/core/state';
 import { countLiveOwnedDevicesByPlatformAsync } from '../engine/device-capacity.ts';
-import { daemonMode, platformHasDaemon } from '../daemon/mode.ts';
+import { daemonMode } from '../daemon/mode.ts';
 import { readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
 import { admissionLimits, getPlatformDeviceLimits } from '../workspace/config.ts';
 
@@ -9,7 +9,7 @@ const MINUTE_MS = 60_000;
 
 export interface BootedParkFacts {
   graceMinutes: number;
-  /** Whether a stim-daemon acts in this home (`daemon.mode` on, a platform with a daemon), since only it ends the grace period. */
+  /** Whether a stim-daemon acts in this home (`daemon.mode` on), since only it ends the grace period. */
   daemonActs: boolean;
   memory: HostMemoryPressure | null;
   /** Booted owned devices counted as admission counts them, this one included. */
@@ -46,7 +46,7 @@ export async function readBootedParkDeadline(
   if (memory !== 'normal') return null;
   return bootedParkDeadline(platform, {
     graceMinutes,
-    daemonActs: platformHasDaemon() && daemonMode(operation?.env) === 'on',
+    daemonActs: daemonMode(operation?.env) === 'on',
     memory,
     counts: await countLiveOwnedDevicesByPlatformAsync({}),
     maxDevices: admissionLimits().maxDevices,

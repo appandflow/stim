@@ -4,14 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { stimBuildDigest } from '@stim-cli/core/state';
 import { STIM_VERSION } from './stim-version.ts';
 
-export type SpawnEntryName =
-  | 'cli'
-  | 'supervisor-run'
-  | 'collector-run'
-  | 'web-run'
-  | 'macos-run'
-  | 'daemon-run'
-  | 'passes-run';
+export type SpawnEntryName = 'cli' | 'supervisor-run' | 'collector-run' | 'web-run' | 'macos-run' | 'stimd-thread';
 
 const DEV_ENTRIES: Record<SpawnEntryName, string> = {
   cli: '../bin/cli.ts',
@@ -19,8 +12,7 @@ const DEV_ENTRIES: Record<SpawnEntryName, string> = {
   'collector-run': './collector/run.ts',
   'web-run': './web/run.ts',
   'macos-run': './macos/run.ts',
-  'daemon-run': './daemon/run.ts',
-  'passes-run': './daemon/passes-run.ts',
+  'stimd-thread': './stimd/threads.ts',
 };
 
 export function spawnEntry(name: SpawnEntryName): string {

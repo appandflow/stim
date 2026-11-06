@@ -1,10 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { connect } from 'node:net';
 import {
   daemonNdjsonFile,
-  daemonSocket,
   maintenanceStateFile,
   workspaceStateFile,
   readDaemonSnapshot,
@@ -17,7 +15,8 @@ import * as idlePass from '../daemon/idle.ts';
 import * as ladder from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
 import * as reclaim from '../daemon/reclaim.ts';
-import { runDaemon } from '../daemon/run.ts';
+import { ensureStimd } from '../daemon/client.ts';
+import { runStimd } from '../stimd/main.ts';
 import * as stages from '../daemon/stages.ts';
 import { pendingDormant } from '../daemon/stages.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -26,6 +25,8 @@ import * as maintenanceRun from '../stimd/passes/run.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
+
+vi.mock('../stimd/threads.ts', () => import('./fixtures/inline-stimd-threads.ts'));
 
 const MINUTE_MS = 60_000;
 let home: string;
@@ -111,7 +112,7 @@ describe.skipIf(process.platform === 'win32')(
 
       let exited = false;
       const daemon = (async () => {
-        await runDaemon({ mode: 'on' });
+        await runStimd({ mode: 'on' });
         exited = true;
       })();
       await vi.advanceTimersByTimeAsync(MINUTE_MS);
@@ -150,7 +151,7 @@ describe.skipIf(process.platform === 'win32')(
 
       let exited = false;
       const daemon = (async () => {
-        await runDaemon({ mode: 'on' });
+        await runStimd({ mode: 'on' });
         exited = true;
       })();
       await vi.advanceTimersByTimeAsync(MINUTE_MS);
@@ -211,7 +212,7 @@ describe.skipIf(process.platform === 'win32')(
       const before = existsSync(daemonNdjsonFile()) ? ticks().length : 0;
       let exited = false;
       const daemon = (async () => {
-        await runDaemon({ mode });
+        await runStimd({ mode });
         exited = true;
       })();
       await vi.advanceTimersByTimeAsync(MINUTE_MS);
@@ -309,7 +310,7 @@ describe.skipIf(process.platform === 'win32')(
         const started = Date.now();
         let exited = false;
         const daemon = (async () => {
-          await runDaemon({ mode: 'on' });
+          await runStimd({ mode: 'on' });
           exited = true;
         })();
         await vi.advanceTimersByTimeAsync(MINUTE_MS);
@@ -347,21 +348,13 @@ describe.skipIf(process.platform === 'win32')(
       quietWorkspace();
       let exited = false;
       const daemon = (async () => {
-        await runDaemon({ mode: 'on' });
+        await runStimd({ mode: 'on' });
         exited = true;
       })();
       await vi.advanceTimersByTimeAsync(MINUTE_MS);
       await vi.waitFor(() => expect(ticks()).toHaveLength(1));
       expect(readDaemonSnapshot()).toMatchObject({ intervalMs: 5 * MINUTE_MS });
-      await new Promise<void>((resolve, reject) => {
-        const socket = connect(daemonSocket());
-        socket.once('error', reject);
-        socket.once('connect', () => socket.write(`${JSON.stringify({ op: 'hello' })}\n`));
-        socket.once('data', () => {
-          socket.destroy();
-          resolve();
-        });
-      });
+      expect(await ensureStimd({ ...process.env, STIM_DAEMON: 'on' })).toBe(true);
       await vi.advanceTimersByTimeAsync(MINUTE_MS);
       await vi.waitFor(() => expect(ticks()).toHaveLength(2));
       saveConfig({ version: 2, projects: {}, repos: {} });
@@ -390,7 +383,7 @@ describe.skipIf(process.platform === 'win32')(
       vi.spyOn(ladder, 'runLadder').mockImplementation((_input, pressure) => after(4000, { actions: [], pressure }));
       vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(() => after(5000, undefined));
       vi.spyOn(reclaim, 'reclaimForBootWaiters').mockImplementation(() => after(6000, null));
-      const daemon = runDaemon({ mode: 'on' });
+      const daemon = runStimd({ mode: 'on' });
       await vi.advanceTimersByTimeAsync(MINUTE_MS + 29_000);
       await vi.waitFor(() => expect(records('daemon_maintenance')).toHaveLength(1));
       expect(records('daemon_tick')[0]).toMatchObject({
@@ -416,7 +409,7 @@ describe.skipIf(process.platform === 'win32')(
       const started = Date.now();
       let exited = false;
       const daemon = (async () => {
-        await runDaemon({ mode: 'on' });
+        await runStimd({ mode: 'on' });
         exited = true;
       })();
 

@@ -664,8 +664,8 @@ daemon.mode STIM_DAEMON  default on. One setting governs every pass Stim runs
 on its own: the idle and dormant stages, the pressure ladder, the reclaim for a
 run waiting to boot, and automatic maintenance.
 
-  on      start, ios, android, web, macos and revive start one stim-daemon per
-          Stim home, scoped homes included. It ticks each minute while
+  on      start, ios, android, web, macos and revive start one stimd per Stim
+          home, scoped homes included, on Windows too. It ticks each minute while
           anything runs there or the pressure level is above normal, and
           every 5 minutes otherwise. It exits two ticks after nothing runs,
           no maintenance pass runs and no workspace waits for its dormant
@@ -686,23 +686,18 @@ run waiting to boot, and automatic maintenance.
           the ticks, one pass at a time, so a slow git fetch, pull request
           lookup or size scan never delays a tick or a waiting run. The same
           lane records the fingerprint of a running workspace whose git HEAD,
-          lockfile or install stamp changed (stim guide lifecycle). When one
-          of those commands runs from an installed
-          Stim (a global install or a node_modules dependency) with a newer
-          version than the running daemon, or the daemon runs a development
-          build, the daemon keeps serving the command and one new daemon
-          from the installed build takes over once its current tick
-          finishes, so an upgrade reaches the daemon with the next such
-          command. A maintenance pass the old daemon has running finishes
-          in its process, which starts no other. The same or an older
-          version never replaces it. A development build (a checkout's
-          dist, npm link or pnpm link --global) never replaces a daemon.
+          lockfile or install stamp changed (stim guide lifecycle). A command
+          from another Stim build than the running stimd does not use it and
+          says so; stimd keeps serving until nothing runs in the home, and
+          the next command starts its own build's stimd. stimd stops a
+          stim-daemon from Stim 1.40 to 1.42 when it starts.
   report  the same passes log what they would do and act on nothing.
   off     no daemon and no pass: each dev server supervisor stops its own dev
           server and devices after idle.minutes, and nothing times a device
           with no dev server.
 
-On Linux the daemon starts as a transient user service, stim-daemon-<home
+stimd starts as a transient launchd job on macOS, under Stim Host where it is
+installed. On Linux it starts as a transient user service, stimd-<home
 hash>-<id>.service, when systemd-run is on PATH, XDG_RUNTIME_DIR is set and a
 user systemd manager answers. A command runner that adopts and kills everything
 a call started (a subreaper) cannot reach a service, so the daemon keeps ticking
@@ -715,14 +710,11 @@ runner; the passes then run in each command's own process. The dev server
 supervisor is not a service; see guide metro, LINUX RUNNERS THAT REAP
 BACKGROUND PROCESSES.
 
-Without a running daemon -- on Windows, which has none, or when one could not
-start -- stim doctor, start, ios and android run automatic maintenance, the idle
-stage for owned devices whose workspace has no running dev server, and the
-pressure ladder in their own process, acting in on and only logging in report,
-never taking the command's own workspace. On Windows every other top-level
-command except guide, settings, help, gc and agent-device starts the same passes
-in a detached background process, at most once a minute; the command does not
-wait for it and it prints nothing. stim gc runs the same passes in its
+Without a running stimd -- when one could not start -- stim doctor, start, ios
+and android run automatic maintenance, the idle stage for owned devices whose
+workspace has no running dev server, and the pressure ladder in their own
+process, acting in on and only logging in report, never taking the command's
+own workspace. stim gc runs the same passes in its
 own process. It is off in CI unless STIM_DAEMON is set.
 A command starts the daemon in the mode it resolves, STIM_DAEMON included; a
 later change to the machine setting can make a running daemon stricter, never

@@ -5,6 +5,11 @@ import { runId, trace } from '@stim-cli/core/state';
 import { debugLog } from '../src/debug-log.ts';
 import { refuseRelativeStimPaths } from '../src/workspace/config.ts';
 
+if (process.argv[2] === '__stimd') {
+  await (await import('../src/stimd/main.ts')).runStimdEntry(process.argv.slice(3));
+  process.exit();
+}
+
 type CommandModule = { default: (program: Command, version: string) => void };
 
 const commands = new Map<string, () => Promise<CommandModule>>([
