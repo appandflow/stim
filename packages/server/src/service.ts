@@ -300,6 +300,7 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
   if (!stimd || !installed?.managed || installed.node === null || installed.script === null || installed.port === null)
     return false;
   const path = plistPath(label);
+  const text = readFileSync(path, 'utf8');
   const args = launchdArguments({
     ...installed,
     node: installed.node,
@@ -307,12 +308,10 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
     port: installed.port,
     stimd,
   });
+  const rewritten = withProgramArguments(text, [...(installed.host ? [installed.host, 'run'] : []), ...args]);
+  if (rewritten === text) return false;
   const partial = `${path}.${process.pid}.tmp`;
-  writeFileSync(
-    partial,
-    withProgramArguments(readFileSync(path, 'utf8'), [...(installed.host ? [installed.host, 'run'] : []), ...args]),
-    { mode: 0o644 },
-  );
+  writeFileSync(partial, rewritten, { mode: 0o644 });
   renameSync(partial, path);
   return true;
 }

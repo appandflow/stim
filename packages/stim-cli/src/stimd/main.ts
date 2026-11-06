@@ -270,7 +270,8 @@ export async function runStimd({
   const script = realpathSync(process.argv[1] ?? '');
   const net = createNetThread(log, () => {
     lastContact = Date.now();
-    requestTick();
+    if (serve && !closing) shutdown('the net thread `stim serve` started exited', 'warn');
+    else requestTick();
   });
   const netOptions = (fields: Partial<NetOptions>): NetOptions => ({
     port: DEFAULT_SERVER_PORT,
@@ -376,7 +377,7 @@ export async function runStimd({
           void net
             .ensure(
               netOptions({
-                ...(port !== undefined && port >= 0 && port <= 65535 ? { port } : {}),
+                ...(port !== undefined && port >= 0 && port <= 65535 ? { port } : share ? { port: 0 } : {}),
                 loopbackOnly: share || params.loopbackOnly === true,
                 shareOnly: share,
                 ...(kind === 'desktop' ? { owner: 'desktop' } : {}),
@@ -488,7 +489,10 @@ export async function runStimd({
     const configured = configuredDaemonMode();
     const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
     if (mode === 'off') {
-      if (net.running()) continue;
+      if (net.running()) {
+        for (const socket of tickReplies.splice(0)) socket.destroy();
+        continue;
+      }
       shutdown('daemon.mode is off');
       break;
     }
@@ -650,7 +654,7 @@ export function serviceArguments(argv: readonly string[]): ServeOptions | undefi
   for (let index = 0; index < argv.length; index++) {
     const value = argv[index + 1];
     if (value === undefined) break;
-    if (argv[index] === '--port') serve.port = Number(value);
+    if (argv[index] === '--port') serve.port = /^\d+$/.test(value) ? Number(value) : serve.port;
     else if (argv[index] === '--env') serve.extraEnv.push(value);
     else if (argv[index] === '--path-prepend') serve.pathPrepend.push(value);
     else continue;

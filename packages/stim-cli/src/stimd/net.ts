@@ -57,21 +57,29 @@ export function createNetThread(
 ): NetThread {
   let worker: Worker | null = null;
   let started: Promise<NetAnswer> | null = null;
+  let stopping: Promise<unknown> | null = null;
   let listening = false;
   let shareOnly = false;
   let nextId = 1;
   const sockets = new Map<number, Socket>();
   const post = (message: ToNet) => worker?.postMessage(message);
+  const stop = (thread: Worker) => {
+    listening = false;
+    stopping ??= new Promise((done) => thread.once('exit', done));
+    thread.postMessage({ type: 'stop' });
+  };
   const ended = () => {
     worker = null;
     started = null;
+    stopping = null;
     listening = false;
     for (const socket of sockets.values()) socket.destroy();
     sockets.clear();
     onExit();
   };
   return {
-    ensure(options) {
+    ensure(options): Promise<NetAnswer> {
+      if (stopping) return stopping.then(() => this.ensure(options));
       if (started) {
         if (!options.shareOnly && shareOnly) {
           shareOnly = false;
@@ -91,9 +99,11 @@ export function createNetThread(
           } else if (message.type === 'refused') {
             log('warn', 'net_refused', message.message);
             answer({ listening: false, message: message.message });
+            void thread.terminate();
           } else if (message.type === 'idle') {
+            if (!shareOnly) return;
             log('info', 'net_idle', 'no web share is left; stopping the net thread');
-            post({ type: 'stop' });
+            stop(thread);
           } else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);
           else sockets.get(message.id)?.end();
         });
@@ -129,7 +139,7 @@ export function createNetThread(
     async close() {
       const thread = worker;
       if (!thread) return;
-      post({ type: 'stop' });
+      stop(thread);
       const timer = setTimeout(() => void thread.terminate(), STOP_WAIT_MS);
       await new Promise((done) => thread.once('exit', done));
       clearTimeout(timer);
