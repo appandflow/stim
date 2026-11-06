@@ -119,13 +119,20 @@ public enum ManagedNode {
     return node
   }
 
-  /// Removes the managed releases other than this one whose directory `keep` (paths of Nodes in use) does not name.
+  /// Removes the managed releases other than this one whose directory `keep` (paths of Nodes in use) does not name,
+  /// and staging directories an install left more than an hour ago.
   public static func prune(_ root: EngineRoot, keep: [String]) {
     let current = directory(root)
     for name in (try? FileManager.default.contentsOfDirectory(atPath: root.runtime)) ?? []
     where name.hasPrefix("node-v") || name.hasPrefix(".staging-") {
       let path = "\(root.runtime)/\(name)"
       guard path != current, !keep.contains(where: { $0.hasPrefix(path + "/") }) else { continue }
+      if name.hasPrefix(".staging-"),
+        let changed = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date,
+        Date().timeIntervalSince(changed) < 3600
+      {
+        continue
+      }
       try? FileManager.default.removeItem(atPath: path)
     }
   }
@@ -224,10 +231,16 @@ public enum EngineInstall {
     return request
   }
 
-  /// `stim engine update` through the installed engine, which also clears a pin.
-  public static func updateRequest(_ root: EngineRoot, environment: [String: String], home: String) -> ProcessRequest {
-    var request = ProcessRequest(root.stim, ["engine", "update"], cwd: home, environment: environment, timeout: 600)
-    request.captureStderr = true
-    return request
+  /// `stim engine update` through the installed engine, which also clears a pin, after `stim engine use --channel
+  /// next` when the engine follows `latest` and this Desktop needs a prerelease.
+  public static func updateRequests(
+    _ root: EngineRoot, engine: EnginePointer?, wanted: SemanticVersion?, environment: [String: String], home: String
+  ) -> [ProcessRequest] {
+    let switches = engine?.channel == "latest" && wanted?.prerelease.isEmpty == false
+    return ((switches ? [["engine", "use", "--channel", "next"]] : []) + [["engine", "update"]]).map {
+      var request = ProcessRequest(root.stim, $0, cwd: home, environment: environment, timeout: 600)
+      request.captureStderr = true
+      return request
+    }
   }
 }

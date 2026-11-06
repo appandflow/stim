@@ -150,7 +150,7 @@ final class ServerController: ObservableObject {
     case .moveForward(let engine, automatic: _)
     where engine.channel == "latest" && EngineInstall.wanted?.prerelease.isEmpty == false:
       return
-        "The Stim engine \(engine.version) follows latest, and this Stim Desktop needs \(EngineInstall.wanted?.description ?? "") from next: run stim engine use --channel next."
+        "The Stim engine \(engine.version) follows latest, and this Stim Desktop needs \(EngineInstall.wanted?.description ?? "") from next: run stim engine use --channel next and stim engine update, or Update Engine."
     case .moveForward(let engine, automatic: false):
       return
         "The Stim engine \(engine.version) is older than this Stim Desktop needs (\(EngineInstall.wanted?.description ?? "")): run stim engine update, or Update Engine."
@@ -369,9 +369,16 @@ final class ServerController: ObservableObject {
     let environment = await engineEnvironment()
     startDetail = "Updating the Stim engine"
     defer { startDetail = nil }
-    let update = EngineInstall.updateRequest(engineRoot, environment: environment, home: NSHomeDirectory())
-    let result = try? await update.run()
-    if result?.succeeded != true { DebugLog.warning(.server, "stim engine update failed: \(result?.stderrText ?? "")") }
+    for step in EngineInstall.updateRequests(
+      engineRoot, engine: EngineFiles.pointer(engineRoot).value, wanted: EngineInstall.wanted, environment: environment,
+      home: NSHomeDirectory())
+    {
+      let result = try? await step.run()
+      guard result?.succeeded == true else {
+        DebugLog.warning(.server, "stim \(step.arguments.joined(separator: " ")) failed: \(result?.stderrText ?? "")")
+        break
+      }
+    }
     guard current == nil || current == generation else { return }
     engine = EngineNeed.decide(
       pointer: EngineFiles.pointer(engineRoot), wanted: EngineInstall.wanted,
