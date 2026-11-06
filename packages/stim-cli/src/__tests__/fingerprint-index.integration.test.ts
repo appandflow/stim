@@ -239,6 +239,22 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))(
       },
     );
 
+    test('a local plugin directory switching its package.json main moves the key', SLOW, async () => {
+      const root = expoApp('app', {
+        'app.config.js': "module.exports = ({ config }) => ({ ...config, extra: { v: require('./plug') } });\n",
+        'plug/package.json': JSON.stringify({ name: 'plug', main: 'a.js' }),
+        'plug/a.js': "module.exports = 'A';\n",
+        'plug/b.js': "module.exports = 'B';\n",
+      });
+      await settled();
+      const before = await key(root);
+      await key(root);
+      write(join(root, 'plug', 'package.json'), JSON.stringify({ name: 'plug', main: 'b.js' }));
+      const after = await key(root);
+      expect(after.hash).not.toBe(before.hash);
+      expect(after.hash).toBe((await key(root, 'skip')).hash);
+    });
+
     test('a config that spawns a child is evaluated on every run', SLOW, async () => {
       const root = expoApp('app', {
         'app.config.js':

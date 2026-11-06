@@ -206,17 +206,18 @@ export type Validity = 'stat' | 'content' | false;
 
 /**
  * Whether a recorded read still holds: by its stat (size, mtime, ctime, inode), else by content, listing or
- * resolved path. A read that cannot be checked is invalid.
+ * resolved path. A probe of a file holds only by its stat while `metadata` counts, since code may have read its size
+ * or times. A recursive listing is always listed again. A read that cannot be checked is invalid.
  */
-export function checkRead(read: Read, roots: Roots): Validity {
+export function checkRead(read: Read, roots: Roots, metadata = true): Validity {
   const path = locate(read.path, roots);
   if (read.kind === 'absent') return statSync(path, { throwIfNoEntry: false }) ? false : 'stat';
   const target = read.kind === 'package' ? join(path, 'package.json') : path;
   const resolved = read.real === undefined || relocate(realOf(target) ?? '', roots) === read.real;
   if (read.kind === 'present' && read.stat === undefined) return resolved && entryType(path) === read.hash && 'stat';
   const stat = statKey(target);
-  if ((stat?.key ?? null) === read.stat) return 'stat';
-  if (!stat || read.stat === null || !read.hash || !resolved) return false;
+  if ((stat?.key ?? null) === read.stat && read.kind !== 'tree') return 'stat';
+  if (!stat || read.stat === null || !read.hash || !resolved || (metadata && read.kind === 'present')) return false;
   if (read.kind === 'dir' || read.kind === 'tree')
     return listing(path, read.kind === 'tree') === read.hash ? 'content' : false;
   return readHash(target) === read.hash ? 'content' : false;
@@ -594,9 +595,9 @@ export class IndexSession {
     return null;
   }
 
-  private holds(reads: Read[]): boolean {
+  private holds(reads: Read[], metadata = true): boolean {
     for (const [index, read] of reads.entries()) {
-      const validity = checkRead(read, this.roots);
+      const validity = checkRead(read, this.roots, metadata);
       if (!validity) return false;
       if (validity === 'content') {
         const kind = read.kind;
@@ -617,7 +618,7 @@ export class IndexSession {
       const own = loaded?.record.checkout === this.roots.project;
       if (!own && !shareable(slot, recorded)) continue;
       if (!recorded.env.every(([name, hash]) => envDigest(name) === hash)) continue;
-      if (!this.holds(recorded.reads)) continue;
+      if (!this.holds(recorded.reads, own)) continue;
       if (!own) this.sibling = true;
       this.parts[slot] = recorded;
       this.used.add(loaded?.file ?? '');
@@ -660,10 +661,13 @@ export class IndexSession {
     return entry;
   }
 
-  /** The entry points and their dependencies, kept while every one of their `package.json` files holds. */
+  /**
+   * The entry points and their dependencies, kept while every one of their `package.json` files holds; recomputed
+   * whenever one did not resolve, since its arrival would leave every recorded manifest unchanged.
+   */
   closure(compute: () => { dirs: string[]; missing: string[] }): { dirs: string[]; missing: string[] } {
     const known = this.closureEntry ?? this.base()?.closure;
-    if (known && known.dirs.every((form) => this.known(form))) {
+    if (known && known.missing.length === 0 && known.dirs.every((form) => this.known(form))) {
       this.closureEntry = known;
       return { dirs: known.dirs.map((dir) => locate(dir, this.roots)), missing: known.missing };
     }

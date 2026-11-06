@@ -100,8 +100,8 @@ interface Part {
   fromIndex: boolean;
 }
 
-/** Env names Node reads at startup, before the trace exists; a part is reused only while they hold. */
-const STARTUP_ENV = ['NODE_OPTIONS', 'NODE_PATH', 'NODE_PRESERVE_SYMLINKS', 'NODE_ICU_DATA'];
+/** Env names Node reads below `process.env` (at startup, or in `os.homedir()` and `os.tmpdir()`); a part is reused only while they hold. */
+const STARTUP_ENV = ['NODE_OPTIONS', 'NODE_PATH', 'NODE_PRESERVE_SYMLINKS', 'NODE_ICU_DATA', 'HOME', 'TMPDIR'];
 
 const TIMEOUT_MS = 60_000;
 const ABSENT = sha256(canonicalJson(['absent']));
@@ -428,7 +428,9 @@ function buildEnvNames(
   if (native === 'tracked') names.push(...scriptNames(buildScripts(nativeDir)));
   if (native === 'generated' && expo && existsSync(join(expo, 'template.tgz'))) {
     const entry = session?.pkg(expo);
-    const template = entry?.template ?? templateScripts(join(expo, 'template.tgz')).flatMap(scriptEnvNames);
+    const template =
+      (entry?.provenance?.mode === 'identity' ? entry.template : undefined) ??
+      templateScripts(join(expo, 'template.tgz')).flatMap(scriptEnvNames);
     if (entry) entry.template = template;
     names.push(...template);
   }

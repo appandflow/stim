@@ -21,6 +21,11 @@ let active = true;
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const originalReaddirSync = fs.readdirSync;
+const originalStatSync = fs.statSync;
+const exists = (file, directory) => {
+  const info = originalStatSync(file, { throwIfNoEntry: false });
+  return Boolean(info && (directory ? info.isDirectory() : info.isFile()));
+};
 
 function toPath(target) {
   if (typeof target === 'string') return path.resolve(target);
@@ -209,14 +214,30 @@ Module.prototype['_compile'] = function (content, filename, ...rest) {
 const hooks = typeof Module.registerHooks === 'function';
 if (hooks)
   Module.registerHooks({
-    // Node resolves require() and import through internal bindings the fs wrappers never see. The listing of the
-    // directory a relative or absolute specifier names covers a candidate that appears, or one that shadows another.
+    // Node resolves require() and import, and reads package.json main and exports, through internal bindings the fs
+    // wrappers never see. The listings of the directories a relative or absolute specifier names, and the package.json
+    // of the package the module resolved into, cover a candidate that appears or shadows another and a changed entry.
     resolve(specifier, context, nextResolve) {
       const parent = context.parentURL?.startsWith('file:') ? fileURLToPath(context.parentURL) : null;
-      if (path.isAbsolute(specifier)) record('resolve', path.dirname(specifier));
-      else if (parent && /^\.{1,2}(?:\/|$)/.test(specifier))
-        record('resolve', path.dirname(path.resolve(path.dirname(parent), specifier)));
-      return nextResolve(specifier, context);
+      const target = path.isAbsolute(specifier)
+        ? specifier
+        : parent && /^\.{1,2}(?:\/|$)/.test(specifier)
+          ? path.resolve(path.dirname(parent), specifier)
+          : null;
+      if (target) {
+        record('resolve', path.dirname(target));
+        if (exists(target, true)) record('resolve', target);
+      }
+      const resolved = nextResolve(specifier, context);
+      if (active && resolved.url?.startsWith('file:'))
+        for (let dir = path.dirname(fileURLToPath(resolved.url)); ; dir = path.dirname(dir)) {
+          if (exists(path.join(dir, 'package.json'), false)) {
+            record('file', path.join(dir, 'package.json'));
+            break;
+          }
+          if (path.dirname(dir) === dir) break;
+        }
+      return resolved;
     },
     load(url, context, nextLoad) {
       const result = nextLoad(url, context);
