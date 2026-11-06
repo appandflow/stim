@@ -2444,8 +2444,8 @@ unreleased engine and private Desktop actions, run `pnpm run build` at the repos
 root, then in your worktree's `.stim.json` add `"-stimHome", "<private-home>"` and
 `"-stimEngine", "<absolute path of the worktree>/packages/stim-cli"` to `macos.arguments`,
 using a fresh private directory. With `stimEngine` set to a built `stim` package
-directory, Desktop runs `node <dir>/bin/stim.mjs serve` as the home's stimd and
-`node <dir>/bin/stim.mjs` for its other commands, with the first `node` on `PATH`, and
+directory, Desktop starts the home's stimd as `node <dir>/dist/cli.mjs __stimd`, as the
+engine's `bin/stimd` does, and runs `node <dir>/bin/stim.mjs` for its other commands, with the first `node` on `PATH`, and
 installs no engine. Stim homes are separate, so the copy starts its own stimd and socket
 next to the Mac's own Desktop and needs no port of its own. Run
 `stim settings set iosSimulatorApp stim-desktop` and

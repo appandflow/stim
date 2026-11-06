@@ -101,15 +101,18 @@ public enum EngineFiles {
 public struct EngineLaunch: Equatable, Sendable {
   public var program: String
   public var prefix: [String]
-  public var isDevelopment: Bool
+  /// The development package directory, nil for the engine.
+  public var package: String?
+
+  public var isDevelopment: Bool { package != nil }
 
   public static func installed(_ root: EngineRoot) -> EngineLaunch {
-    EngineLaunch(program: root.stim, prefix: [], isDevelopment: false)
+    EngineLaunch(program: root.stim, prefix: [], package: nil)
   }
 
-  /// `package/bin/stim.mjs` under `node`; `stim serve` runs stimd in its own process.
+  /// `package/bin/stim.mjs` under `node`, with stimd started from `package/dist/cli.mjs` as the engine's shim does.
   public static func development(package: String, node: String) -> EngineLaunch {
-    EngineLaunch(program: node, prefix: ["\(package)/bin/stim.mjs"], isDevelopment: true)
+    EngineLaunch(program: node, prefix: ["\(package)/bin/stim.mjs"], package: package)
   }
 
   public static func resolve(
@@ -130,8 +133,9 @@ public struct EngineLaunch: Equatable, Sendable {
     (program, prefix + arguments)
   }
 
-  /// stimd: the engine's `bin/stimd`, or `stim serve` of a development package.
+  /// stimd in the foreground: the engine's `bin/stimd`, or a development package's `dist/cli.mjs __stimd`.
   public func stimd(_ root: EngineRoot) -> (program: String, arguments: [String]) {
-    isDevelopment ? (program, prefix + ["serve"]) : (root.stimd, [])
+    guard let package else { return (root.stimd, []) }
+    return (program, ["\(package)/dist/cli.mjs", "__stimd"])
   }
 }
