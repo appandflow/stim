@@ -5,7 +5,7 @@ import { createStim } from '../api.ts';
 import * as androidOperation from '../commands/android.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { nativeAndroidFixture } from './_native-android-project.ts';
-import { readWorkspaceLaunches } from '../supervisor/state.ts';
+import { readWorkspaceLaunches } from '../stimd/metro/state.ts';
 import { runReload } from '../commands/reload.ts';
 import * as buildCache from '../cache/build-cache.ts';
 import { resolveBuild, type FingerprintTarget, type ProjectFingerprint } from '../cache/build-cache.ts';
@@ -59,7 +59,7 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Command } from 'commander';
-import { collectorProcessTitle } from '../collector/ownership.ts';
+import { collectorProcessTitle } from '../stimd/logs/ownership.ts';
 import {
   getProject,
   loadConfig,

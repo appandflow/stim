@@ -1,4 +1,4 @@
-import { resultEnumCases, replaceReceivedField } from '../../mock-server/receive-fixtures';
+import { resultEnumCases, replaceReceivedField } from '../../../../packages/core/__tests__/fixtures/receive-fixtures';
 import { platformName } from '@/lib/workspaces';
 import {
   activityBadge,

@@ -39,7 +39,7 @@ import { deviceLeasePath, leaseIsExpired, parseLease, parseWorkspaceLeases } fro
 import { publishPresence } from '../daemon/client.ts';
 import { getExecutor } from '../exec.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { readWorkspaceLaunches } from '../supervisor/state.ts';
+import { readWorkspaceLaunches } from '../stimd/metro/state.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { findCommandWorkspaceAsync } from '../workspace/project.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';

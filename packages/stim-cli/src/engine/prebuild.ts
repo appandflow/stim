@@ -9,7 +9,7 @@ import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts'
 import { spawnDeclared } from './spawn-claims.ts';
 import { remoteCliInvocation } from './node-cli.ts';
 import { detectIsExpo } from '../workspace/project.ts';
-import { expoBinPath, expoBinRefusal, expoSdkMajor, expoTelemetryEnv } from '../supervisor/server-expo.ts';
+import { expoBinPath, expoBinRefusal, expoSdkMajor, expoTelemetryEnv } from '../stimd/metro/server-expo.ts';
 import {
   readWorkspaceState,
   updateWorkspaceState,

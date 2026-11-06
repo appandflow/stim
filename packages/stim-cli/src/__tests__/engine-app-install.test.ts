@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { ExecOptions, Executor } from '../exec.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
-import { isBundleActivityLine } from '../supervisor/server-expo.ts';
+import { isBundleActivityLine } from '../stimd/metro/server-expo.ts';
 import {
   LAUNCH_ERROR,
   devClientUrl,

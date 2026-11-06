@@ -38,9 +38,9 @@ import {
 import { pidExists } from '../../metro.ts';
 import { decideIdleStop, type IdleStopEvidence } from '../../policy/idle.ts';
 import { inspectProcessIdentity } from '../../process-identity.ts';
-import { METRO_REQUEST_EVENTS } from '../../supervisor/idle-stop.ts';
-import { resolveSupervisorTarget } from '../../supervisor/ownership.ts';
-import { MODE_COMMAND, readRemoteSession } from '../../supervisor/state.ts';
+import { METRO_REQUEST_EVENTS } from '../../stimd/metro/idle-stop.ts';
+import { resolveSupervisorTarget } from '../../stimd/metro/ownership.ts';
+import { MODE_COMMAND, readRemoteSession } from '../../stimd/metro/state.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../../workspace/in-use.ts';
 import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';

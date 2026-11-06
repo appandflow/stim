@@ -1,5 +1,5 @@
 import 'react-native-unistyles/mocks';
-import { receiveStatus } from '../../mock-server/receive-fixtures';
+import { receiveStatus } from '../../../../packages/core/__tests__/fixtures/receive-fixtures';
 import fixture from '../../mock-server/fixtures/status.json';
 import type { StatusPayload } from '@/protocol/types';
 

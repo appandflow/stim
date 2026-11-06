@@ -20,7 +20,7 @@ import { revokeDevice, serverIdentity, spendSecret, storeSetupSecret } from '../
 import { noiseConnect, setupClient, terminateClients } from './noise-client.ts';
 import { BuildConnection } from '../../stim-cli/src/offload/client.ts';
 import { hostConnector } from '../../stim-cli/src/device-host/hosted-client.ts';
-import { openAgentRelay, type AgentRelay } from '../../stim-cli/src/supervisor/agent-relay.ts';
+import { openAgentRelay, type AgentRelay } from '../../stim-cli/src/stimd/metro/agent-relay.ts';
 
 class FakeDriver implements HostedAgentDriver {
   readonly name = 'agent-device';

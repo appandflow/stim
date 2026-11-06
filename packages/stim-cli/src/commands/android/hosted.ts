@@ -4,7 +4,7 @@ import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { hostedAndroidStatus, type HostedDeviceSelectors, type HostedAppOffer } from '@stim-cli/core/state';
 import type { placeHostedAndroid, HostedAndroidTarget } from '../../device-host/hosted-android.ts';
 import { writeHostedAndroidAsync } from '../../workspace/placement-state.ts';
-import type { writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
+import type { writeWorkspaceLaunchAsync } from '../../stimd/metro/state.ts';
 import { LAUNCH_BUNDLING, LAUNCH_FATAL, type verifyLaunch } from '../../engine/launch-verify.ts';
 import type { followHostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
 import { verifyAndroidMetroRun } from './launch.ts';

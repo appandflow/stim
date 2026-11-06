@@ -22,7 +22,7 @@ import { quotedPath } from '@stim-cli/core';
 import type { Command } from 'commander';
 import { admissionLimits, getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
-import { describeMetroLastStop } from '../supervisor/stop-cause.ts';
+import { describeMetroLastStop } from '../stimd/metro/stop-cause.ts';
 import { detectIsExpo, projectShortcut } from '../workspace/project.ts';
 import { buildStatusLine } from '../engine/build-progress.ts';
 import { formatBytes, volumeRootFor } from '../fs-util.ts';

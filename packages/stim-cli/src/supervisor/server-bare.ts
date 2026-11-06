@@ -6,8 +6,8 @@ import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from
 import { resolveMetroSharedCache } from '../optimizations.ts';
 import { resolveProjectSettings, type SettingsObject } from '../workspace/settings.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { appendCacheStore, metroStoreRoot, registerMetroStore } from './metro-store.ts';
-import { supervisorError } from './errors.ts';
+import { appendCacheStore, metroStoreRoot, registerMetroStore } from '../stimd/metro/metro-store.ts';
+import { supervisorError } from '../stimd/metro/errors.ts';
 import { bundleResponseMiddleware } from '../injected/bundle-response.cjs';
 import { getExecutor } from '../exec.ts';
 

@@ -3,7 +3,7 @@ import { cancellableSleep } from '../cancellation.ts';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import { createNdjsonTail, readNdjsonGenerations, type NdjsonRecord } from '../ndjson.ts';
-import { DEV_MENU_LAUNCH_ARGS } from '../collector/ios-device.ts';
+import { DEV_MENU_LAUNCH_ARGS } from '../stimd/logs/ios-device.ts';
 import { APP_READINESS_TIMEOUT_MS, appReadinessSignal, type AppReadiness } from './app-readiness.ts';
 import { ANDROID_DISABLE_AUTO_LAUNCH_EXTRA, androidAppProcess, deviceShellArg } from './app-install.ts';
 

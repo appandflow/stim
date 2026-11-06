@@ -90,7 +90,7 @@ import {
   settingsLayers,
   settingOriginScope,
 } from '../../workspace/settings.ts';
-import { writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
+import { writeWorkspaceLaunchAsync } from '../../stimd/metro/state.ts';
 import { readWorkspaceState, writeWorkspaceStateAsync } from '../../workspace/workspace-state.ts';
 import { gitCommonDirAsync, repoRootAsync } from '../../workspace/worktree.ts';
 import { warmMetro } from '../../engine/metro-warmup.ts';

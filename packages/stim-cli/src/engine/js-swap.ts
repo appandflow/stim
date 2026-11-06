@@ -13,7 +13,7 @@ import { spawnDeclared } from './spawn-claims.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { killOnAbort } from '../workspace/git-read.ts';
 import { operationState } from './operation-state.ts';
-import { cleanLine, expoTelemetryEnv } from '../supervisor/server-expo.ts';
+import { cleanLine, expoTelemetryEnv } from '../stimd/metro/server-expo.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 

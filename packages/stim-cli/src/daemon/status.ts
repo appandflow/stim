@@ -9,7 +9,7 @@ import { formatBytes } from '../fs-util.ts';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { formatLongDuration } from '../command-output.ts';
 import type { Finding } from '../diagnostics/doctor.ts';
-import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { listWaiting } from '../engine/wait-queue.ts';

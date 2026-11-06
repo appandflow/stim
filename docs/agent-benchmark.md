@@ -134,16 +134,10 @@ also probes toolchain compatibility under the exact policy: the macOS kernel
 refuses a nested `sandbox_apply` of any profile that differs from the one a
 process already runs under, which breaks SwiftPM manifest and plugin sandboxes
 under every runner policy, and it refuses to execute `/bin/ps`, which
-agent-device's simulator recording needs for child process identity. An iOS
-run is refused before the clock starts when either probe fails and no pinned
-native compatibility adapter compensates. The policy, its digest, and the
+the process identity probe invokes. An iOS run is refused before the clock
+starts when either probe fails. The policy, its digest, and the
 probe results are retained with the private run metadata; a refused run keeps
 its probe results in its run directory.
-
-Recollecting after recorded worktree cleanup can retain a previously passing
-compatibility check when run identity, captured evidence hashes, and the pinned
-manifest are unchanged. Other audit checks and derived timings are recalculated;
-missing or changed evidence does not inherit the earlier verdict.
 
 If a later launch failure omits compiler-cache counters, collection can preserve
 the workspace's per-build ccache log for one unambiguous completed Android build.
@@ -227,13 +221,7 @@ cp /tmp/<run-id>-session.mp4 <run-dir>/proof/session.mp4
 env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device close
 ```
 
-When a native compatibility adapter is configured, the prompt inserts its
-pinned read-only proof command between recording-copy and session close. Run
-that exact command and await success before continuing. It binds the live
-compatibility check to the saved media; collection still verifies all other
-proof requirements. Leave the app, assigned device and worktree available for
-coordinator teardown. This extra step is identical across arms and does not
-move the screenshot readiness endpoint.
+Leave the app, assigned device and worktree available for coordinator teardown.
 
 The run-scoped MP4 captures Expo onboarding and Settings navigation for audit
 and promotional use. Every arm records with the same settings so capture

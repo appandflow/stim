@@ -30,7 +30,7 @@ import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-
 import { pullHostedNativeLogs, readHostedNativeLogs } from '../device-host/hosted-logs.ts';
 import { followHostedLogs, followHostedLaunchLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
-import { workspaceIdleProbe } from '../supervisor/idle-stop.ts';
+import { workspaceIdleProbe } from '../stimd/metro/idle-stop.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { runStop } from '../commands/stop.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
