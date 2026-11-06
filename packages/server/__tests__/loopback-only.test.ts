@@ -44,7 +44,8 @@ async function serve(...flags: string[]): Promise<Record<string, unknown>> {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
     vi.resetModules();
-    await import('../bin/stim-server.ts');
+    const { serve: serveServer } = await import('../src/cli.ts');
+    await serveServer(7787, [], [], flags.includes('--loopback-only'));
     await vi.waitFor(() => expect(fixture.options).toHaveLength(1));
     return fixture.options[0]!;
   } finally {

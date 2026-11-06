@@ -11,6 +11,7 @@ if (!nodeFloor) throw new Error(`engines.node must have the form >=X.Y.Z, got ${
 export default defineConfig({
   entry: {
     'stim-server': 'bin/stim-server.ts',
+    cli: 'src/cli.ts',
     'stim-service-runner': 'src/service-runner.ts',
     protocol: 'src/protocol.ts',
   },

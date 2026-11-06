@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { runService } from '../../../server/src/cli.ts';
+import { loadServerCli } from '../server-cli.ts';
 import { DEFAULT_LABEL, validateServeEnvironment } from '../../../server/src/service-plist.ts';
 
 export default function serviceCommand(program: Command): void {
@@ -37,6 +37,7 @@ export default function serviceCommand(program: Command): void {
       const pathPrepend = opts.pathPrepend ?? [];
       const problem = validateServeEnvironment(env, pathPrepend, false);
       if (problem) command.error(problem);
+      const { runService } = await loadServerCli();
       await runService(name, { ...opts, 'no-wait': opts.wait === false }, env, pathPrepend);
     });
   }

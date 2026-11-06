@@ -1,5 +1,5 @@
 import type { Command } from 'commander';
-import { setup } from '../../../server/src/cli.ts';
+import { loadServerCli } from '../server-cli.ts';
 
 export default function setupCommand(program: Command): void {
   program
@@ -16,5 +16,8 @@ export default function setupCommand(program: Command): void {
     .option('--json', 'print the result as JSON')
     .option('--verbose', 'print setup details')
     .option('--no-wait', 'interrupt active builds and hosted installs')
-    .action(() => setup(process.argv.slice(3)));
+    .action(async () => {
+      const { setup } = await loadServerCli();
+      await setup(process.argv.slice(3));
+    });
 }

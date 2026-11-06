@@ -14,16 +14,25 @@ const root = join(import.meta.dirname, '../../../..');
 
 test('the router reports its package version and serving retains the service process pid through shutdown', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-serve-cli-'));
-  const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home };
+  const env = { ...process.env, STIM_HOME: home, HOME: home, USERPROFILE: home, PATH: '' };
   const version = JSON.parse(readFileSync(join(root, 'packages/stim-cli/package.json'), 'utf8')).version;
   try {
     const printed = await execute(process.execPath, [join(root, 'packages/stim-cli/bin/stim.mjs'), '--version'], {
       env,
     });
     expect(printed.stdout.trim()).toBe(version);
+    const served = await execute(
+      process.execPath,
+      [join(root, 'packages/stim-cli/bin/stim.mjs'), 'serve', '--version'],
+      { env },
+    );
+    expect(served.stdout.trim()).toBe(version);
+    for (const args of [['--help'], ['serve', '--help']]) {
+      await execute(process.execPath, [join(root, 'packages/stim-cli/bin/stim.mjs'), ...args], { env });
+    }
     const child = spawn(
       process.execPath,
-      [join(root, 'packages/stim-cli/bin/cli.ts'), 'serve', '--service', '--share', '--port', '0'],
+      [join(root, 'packages/stim-cli/bin/stim.mjs'), 'serve', '--service', '--share', '--port', '0'],
       { env, stdio: ['ignore', 'pipe', 'pipe'] },
     );
     const exited = once(child, 'exit');

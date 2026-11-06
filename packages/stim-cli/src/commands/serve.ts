@@ -1,6 +1,6 @@
 import { Command, Option } from 'commander';
 import { bundledStim } from '../../../server/src/environment.ts';
-import { serve } from '../../../server/src/cli.ts';
+import { loadServerCli } from '../server-cli.ts';
 import { DEFAULT_PORT, validateServeEnvironment } from '../../../server/src/service-plist.ts';
 import pairCommand from './pair.ts';
 import pairingsCommand from './pairings.ts';
@@ -32,6 +32,7 @@ export default function serveCommand(program: Command, version: string, legacy =
         command.error(`--port must be a port number, got ${opts.port}.`);
       const problem = validateServeEnvironment(opts.env, opts.pathPrepend, true);
       if (problem) command.error(problem);
+      const { serve } = await loadServerCli();
       await serve(
         port,
         opts.env,
