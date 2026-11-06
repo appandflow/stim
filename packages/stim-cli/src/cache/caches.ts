@@ -1,12 +1,13 @@
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { readdir, rm, stat } from 'node:fs/promises';
-import { homedir, tmpdir } from 'os';
+import { tmpdir } from 'os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import { cacheDirRefusal, METRO_NAMED_CACHE_LAYOUT, type StimContext } from '@stim-cli/core';
 import { directorySize, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { registeredCaches } from './cache-manifest.ts';
 import { mapLimited, sizeConcurrency } from '../commands/gc/limited.ts';
+import { userHome } from '@stim-cli/core/state';
 
 export interface CacheDescriptor {
   name: string;
@@ -22,7 +23,7 @@ export interface CacheDescriptor {
 }
 
 function xcodeDerivedDataRoot(env: NodeJS.ProcessEnv): string {
-  return join(env.HOME || env.USERPROFILE || homedir(), 'Library', 'Developer', 'Xcode', 'DerivedData');
+  return join(userHome(env), 'Library', 'Developer', 'Xcode', 'DerivedData');
 }
 
 function compilationCache(env: NodeJS.ProcessEnv): CacheDescriptor | null {
@@ -37,7 +38,7 @@ function compilationCache(env: NodeJS.ProcessEnv): CacheDescriptor | null {
 }
 
 function gradleBuildCache(env: NodeJS.ProcessEnv, cwd: string): CacheDescriptor | null {
-  const gradleHome = env.GRADLE_USER_HOME || join(env.HOME || env.USERPROFILE || homedir(), '.gradle');
+  const gradleHome = env.GRADLE_USER_HOME || join(userHome(env), '.gradle');
   const dir = resolve(cwd, gradleHome, 'caches', 'build-cache-1');
   if (!existsSync(dir)) return null;
   return {

@@ -238,6 +238,22 @@ describe('pairing', () => {
 });
 
 describe('the phone protocol', () => {
+  it('advertises the phone API in hello', async () => {
+    const client = await pair(demo());
+    try {
+      expect(client.hello.result?.phoneApi).toBe(2);
+      expect(client.hello.result?.features).toEqual([
+        'physical-ios',
+        'physical-android',
+        'notifications',
+        'workspace-diff',
+        'macos-window',
+      ]);
+    } finally {
+      client.close();
+    }
+  });
+
   it("returns each workspace's errors in agreement with its status count", async () => {
     const client = await greeted(demo());
     const environments = fixtures.status.environments as { path: string; logs?: { errorsSinceMarker: number } }[];

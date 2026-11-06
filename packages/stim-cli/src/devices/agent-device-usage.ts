@@ -1,6 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { configDir } from '@stim-cli/core';
 import {
@@ -8,6 +7,7 @@ import {
   readAgentDeviceUsageCache,
   type AgentDeviceUsage,
   type AgentDeviceUsageRoots,
+  userHome,
 } from '@stim-cli/core/state';
 import { canonical, measureDu, writeUsageCache } from './report-only-usage.ts';
 import { inspectProcessStart, type ProcessStart } from '../process-identity.ts';
@@ -207,7 +207,7 @@ function readRunnerLock(dir: string): { pid: number; startTime: string } | 'unre
 }
 
 function discover(env?: NodeJS.ProcessEnv, cwd?: string): UsageTree {
-  const runnerRoot = canonical(join(env?.HOME || env?.USERPROFILE || homedir(), '.agent-device', 'apple-runner'));
+  const runnerRoot = canonical(join(userHome(env), '.agent-device', 'apple-runner'));
   const hostedDir = canonical(join(configDir(), 'server', 'agent-device'));
   const workspaceDirs = listWorkspaceDirs().map(({ dir, projectRoot }) => ({
     dir: canonical(workspaceAgentDeviceDir(dir)),
@@ -221,8 +221,7 @@ function discover(env?: NodeJS.ProcessEnv, cwd?: string): UsageTree {
     [...workspaceDirs.map(({ dir }) => dir), hostedDir].some(
       (dir) => contains(dir, candidate) || contains(candidate, dir),
     );
-  const stateDir =
-    candidate && !overlaps ? candidate : canonical(join(env?.HOME || env?.USERPROFILE || homedir(), '.agent-device'));
+  const stateDir = candidate && !overlaps ? candidate : canonical(join(userHome(env), '.agent-device'));
   const workspaces = workspaceDirs.filter(({ dir }) => existsSync(dir));
   const roots = { stateDir, runnerRoot, hostedDir, workspaceDirs: workspaces.map(({ dir }) => dir).toSorted() };
   const leaseDir = envDir('AGENT_DEVICE_IOS_RUNNER_LEASE_DIR', env, cwd) ?? join(runnerRoot, 'leases');

@@ -1,3 +1,49 @@
+import { existsSync, readdirSync } from 'node:fs';
+import { dirname, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const packagesDir = fileURLToPath(new URL('../../packages/', import.meta.url));
+const packageDirs = readdirSync(packagesDir)
+  .filter((name) => existsSync(resolve(packagesDir, name, 'package.json')))
+  .map((name) => resolve(packagesDir, name));
+const lit = (node) => (node?.type === 'Literal' ? node.value : undefined);
+
+const packageFence = {
+  meta: { type: 'problem', schema: [] },
+  create(context) {
+    const own = packageDirs.find((dir) => context.filename.startsWith(`${dir}${sep}`));
+    if (!own) return {};
+    const check = (node, spec) => {
+      if (typeof spec !== 'string' || !/^\.\.?(?:[/\\]|$)/.test(spec)) return;
+      const target = resolve(dirname(context.filename), spec);
+      if (target !== own && !target.startsWith(`${own}${sep}`))
+        context.report({ node, message: 'Use the package name for imports outside this package.' });
+    };
+    return {
+      ImportDeclaration: (node) => check(node, node.source.value),
+      ExportNamedDeclaration: (node) => node.source && check(node, node.source.value),
+      ExportAllDeclaration: (node) => check(node, node.source.value),
+      ImportExpression: (node) => check(node, lit(node.source)),
+      TSImportType: (node) => check(node, node.source.value),
+      CallExpression(node) {
+        const callee = node.callee;
+        const isResolve = !callee.computed && callee.object?.name === 'require' && callee.property?.name === 'resolve';
+        if (callee.name === 'require' || isResolve) check(node, lit(node.arguments[0]));
+      },
+      NewExpression(node) {
+        const base = node.arguments[1];
+        if (
+          node.callee.name === 'URL' &&
+          !base?.computed &&
+          base?.property?.name === 'url' &&
+          base.object?.meta?.name === 'import'
+        )
+          check(node, lit(node.arguments[0]));
+      },
+    };
+  },
+};
+
 const directive = /^\s*(?:eslint|oxlint)-disable(?:-next-line|-line)?(?=\s|$)(.*)$/s;
 const reasoned = /^\s+[^\s-].*?\s-{2,}\s+\S/s;
 
@@ -63,5 +109,10 @@ const refusalRemedy = {
 
 export default {
   meta: { name: 'stim' },
-  rules: { 'directive-reason': directiveReason, 'no-snapshot': noSnapshot, 'refusal-remedy': refusalRemedy },
+  rules: {
+    'package-fence': packageFence,
+    'directive-reason': directiveReason,
+    'no-snapshot': noSnapshot,
+    'refusal-remedy': refusalRemedy,
+  },
 };

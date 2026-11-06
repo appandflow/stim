@@ -50,6 +50,7 @@ import { createMaintenanceLane, runHomePasses, type HomePasses } from './passes.
 import { reclaimForBootWaiters } from './reclaim.ts';
 import { bootedParkedPending } from './booted-parked.ts';
 import { pendingDormant } from './stages.ts';
+import { decideTakeover } from '../policy/takeover.ts';
 
 const TICK_MS = 60_000;
 const DEPENDENCY_SCAN_MS = 10 * 60_000;
@@ -113,10 +114,11 @@ async function takeOverFrom(
 ): Promise<ProcessRecord | null> {
   const holder = daemonHolder(pid);
   const hello = holder ? await askDaemon('hello', HANDOVER_REPLY_MS) : null;
-  if (!holder || hello?.pid !== pid) return null;
+  const decision = decideTakeover(pid, holder, hello);
+  if (decision.action === 'none') return null;
   let stopped: ProcessRecord | null = null;
-  if ('build' in hello) {
-    const reply = await askDaemon('handover', HANDOVER_REPLY_MS, { pid, build: hello.build });
+  if (decision.action === 'ask-handover') {
+    const reply = await askDaemon('handover', HANDOVER_REPLY_MS, { pid, build: decision.build });
     if (reply?.accepted === false) return null;
     log('info', 'daemon_handover', `asked stim-daemon pid ${pid} to exit after its tick`);
   } else {

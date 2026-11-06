@@ -19,12 +19,13 @@ import type { IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { restoreProblem } from '../workspace/lightened.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
-import { executeAction, type ActContext } from '../maintenance/act.ts';
+import { executeAction, type ActContext, type ActionOutcome } from '../maintenance/act.ts';
 import { artifactWorktreesFor } from '../maintenance/artifacts.ts';
 import { cacheBlocked } from '../maintenance/measure.ts';
 import { cacheEntryProtectionFor } from '../maintenance/protect.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../maintenance/settings.ts';
 import { planRung6 } from '../maintenance/sweep.ts';
+import { causesOf, dormantAction, rungDecision, rungsFrom, type Cause, type Rung } from '../policy/pressure.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { clearDependency, rankDependencies, selectDependencies } from './dependencies.ts';
@@ -33,7 +34,6 @@ import {
   clearStoppedOutputs,
   dormantAfterMs,
   dormantCandidates,
-  enterDormantStage,
   idleStageCandidates,
   stoppedOutputCandidates,
 } from './stages.ts';
@@ -43,8 +43,6 @@ const GIB = 1024 ** 3;
 const SIZE_TIMEOUT_MS = 120_000;
 /** Under high pressure the dormant stage takes workspaces idle this long (ladder rung 4). */
 const DORMANT_HIGH_IDLE_MS = 10 * MINUTE_MS;
-
-type Cause = 'disk' | 'memory';
 
 export interface LadderInput {
   config: Config;
@@ -180,12 +178,13 @@ async function run(
     );
     return;
   }
-  let outcome;
+  let outcome: ActionOutcome;
   try {
     outcome = await executeAction(plan, { ...actContext(context.settings), operation: context.operation });
   } catch (error) {
     outcome = { status: 'failed' as const, bytes: 0, detail: error instanceof Error ? error.message : String(error) };
   }
+  const restored = outcome.status === 'done' ? (outcome.restore ?? restore) : undefined;
   recordAction(
     context,
     {
@@ -196,7 +195,7 @@ async function run(
       outcome: outcome.status,
       bytes: outcome.bytes,
       detail: outcome.detail,
-      ...(restore && outcome.status === 'done' ? { restore } : {}),
+      ...(restored ? { restore: restored } : {}),
     },
     context.why,
   );
@@ -399,28 +398,10 @@ async function dormantRung(context: RungContext): Promise<void> {
   const idleMs = context.level === 'critical' ? PRESSURE_IDLE_MS : DORMANT_HIGH_IDLE_MS;
   for (const candidate of await dormantCandidates(context.config, context, idleMs)) {
     if (!(await context.stillShort())) return;
-    const result = context.act
-      ? await enterDormantStage(candidate, context.config, idleMs, context.why, context.operation)
-      : {
-          outcome: 'would' as const,
-          bytes: context.measure ? await workspaceDeviceBytes(context, candidate.project) : 0,
-          detail: wouldDetail(context),
-          deleted: [],
-          restore: '',
-        };
-    recordAction(
-      context,
-      {
-        rung: 4,
-        kind: 'dormant-stage',
-        target: candidate.path,
-        workspace: candidate.path,
-        outcome: result.outcome,
-        bytes: result.bytes,
-        detail: result.detail,
-        ...(result.outcome === 'done' ? { restore: result.restore } : {}),
-      },
-      `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes`,
+    await run(
+      { ...context, why: `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes` },
+      dormantAction(candidate.path, idleMs, context.why),
+      { bytes: () => workspaceDeviceBytes(context, candidate.project) },
     );
   }
 }
@@ -537,27 +518,15 @@ async function sweepRung(context: RungContext, causes: readonly Cause[]): Promis
   }
 }
 
-const RUNGS: {
-  rung: number;
-  relieves: readonly Cause[];
-  act: (context: RungContext, causes: Cause[]) => Promise<void>;
-}[] = [
-  { rung: 0, relieves: ['memory'], act: bootedParkedRung },
-  { rung: 1, relieves: ['disk'], act: idleOutputsRung },
-  { rung: 2, relieves: ['disk'], act: parkedRung },
-  { rung: 3, relieves: ['disk'], act: cachesRung },
-  { rung: 4, relieves: ['disk'], act: dormantRung },
-  { rung: 5, relieves: ['disk'], act: dependenciesRung },
-  { rung: 6, relieves: ['disk', 'memory'], act: sweepRung },
-];
-
-function causesOf(pressure: DaemonPressure, relieves: readonly Cause[]): Cause[] {
-  return relieves.filter((cause) => pressure[cause] !== 'normal');
-}
-
-function levelOf(pressure: DaemonPressure, causes: readonly Cause[]): PressureLevel {
-  return causes.some((cause) => pressure[cause] === 'critical') ? 'critical' : causes.length ? 'high' : 'normal';
-}
+const RUNG_ACTS: Record<Rung, (context: RungContext, causes: Cause[]) => Promise<void>> = {
+  0: bootedParkedRung,
+  1: idleOutputsRung,
+  2: parkedRung,
+  3: cachesRung,
+  4: dormantRung,
+  5: dependenciesRung,
+  6: sweepRung,
+};
 
 /**
  * The pressure ladder after the activity pass, whose idle stage at 2 minutes is rung 1: rungs 1 to 6 top-down while
@@ -572,9 +541,19 @@ export async function runLadder(
   const actions: DaemonLadderAction[] = [];
   const settings = resolveMaintenanceSettings(input.config);
   const { force } = input;
+  const runRung = async (rung: Rung, context: RungContext, causes: Cause[]) => {
+    try {
+      await RUNG_ACTS[rung](context, causes);
+    } catch (error) {
+      input.log(
+        'warn',
+        'pressure_rung_failed',
+        `rung ${rung} failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
   if (force) {
-    for (const { rung, act } of RUNGS) {
-      if (rung < (input.fromRung ?? 0)) continue;
+    for (const { rung } of rungsFrom(input.fromRung)) {
       const context: RungContext = {
         ...input,
         rung,
@@ -585,26 +564,17 @@ export async function runLadder(
         stillShort: async () => true,
         why: force.why,
       };
-      try {
-        await act(context, ['disk', 'memory']);
-      } catch (error) {
-        input.log(
-          'warn',
-          'pressure_rung_failed',
-          `rung ${rung} failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
+      await runRung(rung, context, ['disk', 'memory']);
     }
     return { actions, pressure };
   }
   if (pressure.level === 'normal') return { actions, pressure };
   let current = pressure;
-  for (const { rung, relieves, act } of RUNGS) {
-    if (rung < (input.fromRung ?? 0)) continue;
+  for (const { rung, relieves } of rungsFrom(input.fromRung)) {
     current = await input.remeasure();
-    if (current.level === 'normal') break;
-    const causes = causesOf(current, relieves);
-    if (!causes.length) continue;
+    const decision = rungDecision(current, relieves);
+    if (decision === 'stop') break;
+    if (decision === 'skip') continue;
     const stillShort = async () => {
       current = await input.remeasure();
       return causesOf(current, relieves).length > 0;
@@ -612,22 +582,14 @@ export async function runLadder(
     const context: RungContext = {
       ...input,
       rung,
-      level: levelOf(current, causes),
+      level: decision.level,
       pressure: current,
       settings,
       actions,
       stillShort,
       why: `pressure level ${current.level}: ${current.reasons.join('; ')}`,
     };
-    try {
-      await act(context, causes);
-    } catch (error) {
-      input.log(
-        'warn',
-        'pressure_rung_failed',
-        `rung ${rung} failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    await runRung(rung, context, decision.causes);
   }
   return { actions, pressure: current };
 }

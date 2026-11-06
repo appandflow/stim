@@ -1,6 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import {
   machineCacheUsageFile,
@@ -8,6 +7,7 @@ import {
   type AgentDeviceUsage,
   type MachineCacheUsage,
   type SimRuntimeUsage,
+  userHome,
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { isAbsentPath, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
@@ -116,7 +116,7 @@ function scopedOutside(gradleHome: string, env?: NodeJS.ProcessEnv): boolean {
 }
 
 export function gradleUserHome(env?: NodeJS.ProcessEnv, cwd?: string): string {
-  return canonical(envDir('GRADLE_USER_HOME', env, cwd) ?? join(env?.HOME || env?.USERPROFILE || homedir(), '.gradle'));
+  return canonical(envDir('GRADLE_USER_HOME', env, cwd) ?? join(userHome(env), '.gradle'));
 }
 
 /** Each Gradle version's `caches/<version>` and `wrapper/dists/gradle-<version>-*` directories under `gradleHome`. */
@@ -138,7 +138,7 @@ function discover(env?: NodeJS.ProcessEnv, cwd?: string): Discovery {
   const notices: string[] = [];
   const versionDirs = gradleVersionDirs(gradleHome, notices);
   const caches = join(gradleHome, 'caches');
-  const xcode = join(env?.HOME || env?.USERPROFILE || homedir(), 'Library', 'Developer', 'Xcode');
+  const xcode = join(userHome(env), 'Library', 'Developer', 'Xcode');
   const deviceSupportEntries =
     process.platform === 'darwin'
       ? directories(xcode, notices)
@@ -262,7 +262,7 @@ async function orphanedDerivedData(
   operation?: StimContext,
 ): Promise<OrphanedDerivedData[]> {
   if (process.platform !== 'darwin') return [];
-  const root = join(env?.HOME || env?.USERPROFILE || homedir(), 'Library', 'Developer', 'Xcode', 'DerivedData');
+  const root = join(userHome(env), 'Library', 'Developer', 'Xcode', 'DerivedData');
   const mounted = listMountedVolumes();
   const orphans: OrphanedDerivedData[] = [];
   for (const name of directories(root, notices)) {
