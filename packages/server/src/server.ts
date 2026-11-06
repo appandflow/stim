@@ -86,11 +86,9 @@ import {
 import { UsageRecorder } from './usage-history.ts';
 import { DesktopReports } from './desktop-reports.ts';
 import {
-  BUILD_METHODS,
   DEVICE_HOST_METHODS,
   MAX_INPUT_TEXT,
   PROTOCOL_VERSION,
-  ENGINE_UPDATE_METHODS,
   type DesktopReportTarget,
   type ErrorCode,
   type ProtocolError,
@@ -197,8 +195,8 @@ import {
   subscribeStop,
   runAction,
 } from './handlers/lifecycle.ts';
+import { queuePlan, machineMethod, planBuild } from './handlers/build.ts';
 import { subscribeLogs, queryLogs } from './handlers/logs.ts';
-import { updateMethod } from './handlers/engine.ts';
 import { input, beginControl } from './handlers/control.ts';
 import { publishPresence } from './handlers/presence.ts';
 import { replayRange, archiveDetail, replayKeyframe, setRecording } from './handlers/replay.ts';
@@ -287,7 +285,6 @@ const STATUS_READ_WAIT_MS = 30_000;
 
 const REQUEST_LIMITS: RequestLimits = { connection: 32, device: 16 };
 const MAX_REPORT_WAITS = 16;
-const MAX_RETAINED_PLANS = 4;
 
 function isWorkspaceChangeMethod(method: string): method is 'workspace.files' | 'workspace.diff' {
   return method === 'workspace.files' || method === 'workspace.diff';
@@ -316,7 +313,7 @@ const LOCK_LIMITS: CommandLimits = { timeoutMs: 30_000, maxOutputBytes: 64 * 102
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const LISTEN_RETRY_MS = 5000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
-const PLAN_TIMEOUT_MS = 150_000;
+
 const DETAILS_TIMEOUT_MS = 150_000;
 
 const ACTION_LIMITS: CommandLimits = { timeoutMs: 120_000, maxOutputBytes: 1024 * 1024 };
@@ -1287,6 +1284,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       },
       readApprovals,
       approved,
+      buildAllowed,
       running,
       cancelling,
       logLimits,
@@ -1294,6 +1292,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       actionLimits,
       busyWorkspaces,
       retainedLifecycles,
+      planQueues,
       desktopReports,
       get recordingTurn() {
         return recordingTurn;
@@ -1315,6 +1314,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       controlLimits,
       adbEmulators,
       hostedDevices,
+      builds,
       presence,
       localAgents,
       control,
@@ -1340,6 +1340,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       releaseSlot,
       slotsFull,
       slotsMessage,
+      planRequests,
       persistentActions,
       get device() {
         return device;
@@ -1359,6 +1360,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       },
       set runId(value) {
         runId = value;
+      },
+      get buildSession() {
+        return buildSession;
+      },
+      set buildSession(value) {
+        buildSession = value;
       },
       get clientPing() {
         return clientPing;
@@ -1654,83 +1661,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       busyWorkspaces.add(cwd);
     }
 
-    function planBuild(id: RequestId, params: unknown): void {
-      if (!isJsonObject(params)) return error(id, 'bad-request', 'params must be an object.');
-      const { platform, slot } = params;
-      if (platform !== 'ios' && platform !== 'android') {
-        return error(id, 'bad-request', 'params.platform must be ios or android.');
-      }
-      if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
-        return error(id, 'bad-request', 'params.slot must be 1-64 letters, digits, underscores or hyphens.');
-      }
-      const cwd = workspaceDir(id, params.workspace, true);
-      if (!cwd) return;
-      queuePlan(id, cwd, { platform, ...(slot === undefined ? {} : { slot }) }, 'build.plan');
-    }
-
-    function queuePlan(
-      id: RequestId,
-      cwd: string,
-      plan: StimPlanOptions,
-      method: 'build.plan' | 'desktop.plan.get',
-      request?: string,
-    ): void {
-      if (request !== undefined && planRequests.size >= MAX_RETAINED_PLANS) {
-        error(id, 'limit-exceeded', 'Acknowledge retained plan refusals before requesting more previews.');
-        return;
-      }
-      let unresolved: DesktopPlanRefusal | undefined;
-      const finished = inProcessRead<'build.plan' | 'desktop.plan.get'>(
-        id,
-        `stim ${plan.platform}`,
-        async (signal) => {
-          try {
-            return await createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).plan({
-              ...plan,
-              signal,
-            });
-          } catch (cause) {
-            if (method !== 'desktop.plan.get' || !(cause instanceof StimError)) throw cause;
-            const refusal = { code: cause.code, message: cause.message, remedy: cause.remedy };
-            if (cause.code === 'STIM_CLAIM_UNAVAILABLE') unresolved = refusal;
-            return refusal;
-          }
-        },
-        options.commandLimits?.timeoutMs ?? PLAN_TIMEOUT_MS,
-        planQueues.get(cwd) ?? null,
-      );
-      if (!finished) return;
-      planQueues.set(cwd, finished.done);
-      if (request !== undefined) planRequests.set(request, { cancel: finished.cancel, refusal: () => unresolved });
-      void finished.done.finally(() => {
-        if (planQueues.get(cwd) === finished.done) planQueues.delete(cwd);
-        if (request !== undefined && planRequests.get(request)?.cancel === finished.cancel && !unresolved)
-          planRequests.delete(request);
-      });
-    }
-
-    async function buildMethod(id: RequestId, method: string, params: unknown, session: PairedDevice): Promise<void> {
-      if (!buildAllowed(session)) {
-        return error(id, 'forbidden', `${method} needs build access, which this machine has not granted this device.`);
-      }
-      buildSession ??= builds.session(session.id, socket, (event) => send(socket, event));
-      const answer =
-        method === 'build.offer'
-          ? await builds.offer(session.id, params, buildSession.signal)
-          : method === 'build.sync'
-            ? buildSession.sync(params)
-            : method === 'build.start'
-              ? await buildSession.start(params)
-              : method === 'build.cancel'
-                ? buildSession.cancel(params)
-                : method === 'build.attach'
-                  ? buildSession.attach(params)
-                  : method === 'build.cached-artifact'
-                    ? await buildSession.cachedArtifact(params)
-                    : await buildSession.artifact(params);
-      send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
-    }
-
     function desktopMethod(id: RequestId, method: string, params: unknown, owner: PairedDevice): Promise<void> | null {
       if (
         ![
@@ -1848,7 +1778,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           params.platform === 'macos'
             ? { platform: 'macos' }
             : { platform: params.platform, ...(params.slot === undefined ? {} : { slot: params.slot }) };
-        queuePlan(id, cwd, plan, 'desktop.plan.get', typeof params.request === 'string' ? params.request : undefined);
+        queuePlan(
+          ctx,
+          id,
+          cwd,
+          plan,
+          'desktop.plan.get',
+          typeof params.request === 'string' ? params.request : undefined,
+        );
         return Promise.resolve();
       }
       const cleanupSubscriptions: Record<string, typeof subscribeGc> = {
@@ -2131,18 +2068,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const answer =
         method === 'machines.update.start' ? await machineUpdates.start(machine) : await machineUpdates.status(machine);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
-    }
-
-    function machineMethod(
-      id: RequestId,
-      method: string,
-      params: unknown,
-      session: PairedDevice,
-    ): Promise<void> | null {
-      if ((BUILD_METHODS as readonly string[]).includes(method)) return buildMethod(id, method, params, session);
-      if ((ENGINE_UPDATE_METHODS as readonly string[]).includes(method))
-        return updateMethod(ctx, id, method, params, session);
-      return null;
     }
 
     function handleBinary(frame: Buffer): Promise<void> | void {
@@ -2438,7 +2363,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return error(id, 'forbidden', 'Explicit device-host approval is required.');
         return hostedMethod(id, message.method, message.params, device);
       }
-      const approvedMachine = machineMethod(id, message.method, message.params, device);
+      const approvedMachine = machineMethod(ctx, id, message.method, message.params, device);
       if (approvedMachine) return approvedMachine;
       const localMethod = Object.hasOwn(localMethods, message.method) ? localMethods[message.method] : undefined;
       if (localMethod) return localMethod(id, message.params);
@@ -2503,7 +2428,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return;
       }
       if (message.method === 'recording.set') return setRecording(ctx, id, message.params, device);
-      if (message.method === 'build.plan') return planBuild(id, message.params);
+      if (message.method === 'build.plan') return planBuild(ctx, id, message.params);
       if (message.method === 'machine.get') return send(socket, { id, result: await readMachineUsage() });
       if (message.method === 'machine.details') {
         const machinesPart = buildMachines.snapshot((cwd) => readDetailsReport('doctor', cwd), doctorTarget());

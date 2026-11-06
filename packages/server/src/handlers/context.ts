@@ -22,7 +22,7 @@ import { type CommandLimits, Pending } from '../stim-command.ts';
 import { type FrameLimits, FramePool } from '../frames.ts';
 import { type RecordLimits, Recorder } from '../recorder.ts';
 import { type PushLimits, type PushNotifierOptions, PushNotifier } from '../push.ts';
-import type { BuildLimits } from '../build.ts';
+import { type BuildLimits, BuildHost, type BuildSession } from '../build.ts';
 import { type HostedRelayOptions, HostedRelay } from '../hosted-relay.ts';
 import type { WebSocket } from 'ws';
 import { NoiseSocket } from '@stim-cli/core/noise-session';
@@ -54,6 +54,7 @@ import { HostedViews } from '../hosted-view.ts';
 import { ShareHub } from '../share.ts';
 import { EngineUpdates } from '../server-update.ts';
 import { HostedPresenceBridge } from '../hosted-presence-bridge.ts';
+import type { DesktopPlanRefusal } from '@stim-cli/core/protocol';
 
 export const INPUT_METHODS = [
   'input.touch',
@@ -280,6 +281,7 @@ export interface ConnectionContext {
   startup: StartupState;
   readonly readApprovals: () => Registries | null;
   readonly approved: () => Registries;
+  readonly buildAllowed: (session: Pick<PairedDevice, 'id'>) => boolean;
   readonly running: Set<() => Promise<void>>;
   readonly cancelling: Pending;
   readonly logLimits: LogLimits;
@@ -287,6 +289,7 @@ export interface ConnectionContext {
   readonly actionLimits: CommandLimits;
   readonly busyWorkspaces: Set<string>;
   readonly retainedLifecycles: Set<() => void>;
+  readonly planQueues: Map<string, Promise<void>>;
   readonly desktopReports: DesktopReports;
   recordingTurn: Promise<void>;
   closing: boolean;
@@ -298,6 +301,7 @@ export interface ConnectionContext {
   readonly controlLimits: ControlLimits;
   readonly adbEmulators: boolean;
   readonly hostedDevices: DeviceHost;
+  readonly builds: BuildHost;
   readonly presence: PresenceHub;
   readonly localAgents: LocalAgentPresence;
   readonly control: ControlHub;
@@ -318,11 +322,13 @@ export interface ConnectionContext {
   readonly releaseSlot: (cancel: () => Promise<void>) => void;
   readonly slotsFull: (needed?: number) => boolean;
   readonly slotsMessage: (needed?: number) => string;
+  readonly planRequests: Map<string, { cancel: () => Promise<void>; refusal: () => DesktopPlanRefusal | undefined }>;
   readonly persistentActions: Set<() => Promise<void>>;
   device: PairedDevice | null;
   desktopChallenge: { nonce: string; proof: string } | null;
   readonly tracker: RequestTracker;
   runId: string | null;
+  buildSession: BuildSession | null;
   clientPing: NodeJS.Timeout | undefined;
   readonly relay: HostedRelay;
   readonly refuse: (id: RequestId | null, code: ErrorCode, message: string, closeCode: number) => void;
