@@ -44,7 +44,12 @@ export function engineRunOp(env: NodeJS.ProcessEnv): Promise<RunOp | null> | nul
   let module = modules.get(dir);
   if (!module) {
     module = import(pathToFileURL(join(root, dir, 'dist', 'api.mjs')).href).then(
-      (api: { runOp?: unknown }) => (typeof api.runOp === 'function' ? (api.runOp as RunOp) : null),
+      (api: { runOp?: unknown }) => {
+        const { runOp } = api;
+        if (typeof runOp !== 'function') return null;
+        const run: RunOp = (name, args, ctx) => Reflect.apply(runOp, undefined, [name, args, ctx]);
+        return run;
+      },
       () => null,
     );
     modules.set(dir, module);

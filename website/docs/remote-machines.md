@@ -405,12 +405,6 @@ A worker whose stim-server predates protocol 2 cannot authenticate this machine.
 `stim service update --release <version>` there with this machine's
 Stim version, then `stim remote add <machine>` here.
 
-If active builds or a hosted native step (an install, for example) prevent that
-update, add `--no-wait` to the service update command. This interrupts that work
-during restart instead of waiting for it to finish; a server that resumes its hosted
-sessions leaves its other ready simulators and emulators running through the restart; shutdown, health checks and rollback
-still apply. Setup also accepts `--no-wait` for its managed-service update.
-
 ### Linux worker
 
 An x86_64 Linux machine can take this machine's offloaded Android debug
@@ -515,9 +509,9 @@ as step 4 of the manual path below.
    ```
 
    The unit is `~/.config/systemd/user/dev.stim.server.service` and the log
-   `~/.local/state/stim/dev.stim.server.log`. `service update` and
-   `service rollback` work as on a Mac, and an approved client can update the
-   server remotely.
+   `~/.local/state/stim/dev.stim.server.log`. `stim engine update` and
+   `stim engine rollback` work as on a Mac, and an approved client can update the
+   engine remotely.
 
 4. On your main machine, add the machine to `remote.machines`:
 
@@ -681,9 +675,9 @@ the Windows machine:
    ```
 
    The task starts at your logon and keeps running after you sign out; the
-   log is `%LOCALAPPDATA%\Stim\Logs\dev.stim.server.log`. `service update`
-   and `service rollback` work as on macOS and Linux, and an approved client can update
-   the server remotely.
+   log is `%LOCALAPPDATA%\Stim\Logs\dev.stim.server.log`. `stim engine update`
+   and `stim engine rollback` work as on macOS and Linux, and an approved client can update
+   the engine remotely.
    `--path-prepend` puts the real Node first on the server's `PATH`. A version
    manager's `node.exe` shim, such as pnpm's, breaks the Node IPC that Expo's
    config loader uses, and the build then fails with `fingerprint-mismatch`;

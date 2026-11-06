@@ -713,26 +713,27 @@ command when a named machine does not answer.
 Offload needs Stim releases with the same build compatibility version on both
 machines. It changes only in a release that changes what a worker builds, how it
 builds, or the build messages, so two machines on different Stim builds usually
-offload to each other. To move the remote machine's
-service to another build, run one of these there:
+offload to each other. A service installed while the Stim engine is installed
+(`stim engine install`) runs the engine's `bin/stimd`, so it follows the engine.
+To move the remote machine to another build, run one of these there:
 
 ```bash
-stim service update --release 1.14.0   # an exact release from npm
-stim service update --from ./packed     # pnpm pack output of a checkout
-stim service rollback                   # back to the previous server
+stim engine update          # the newest release on the engine's channel
+stim engine use 1.14.0      # an exact release from npm, pinned until stim engine update
+stim engine rollback        # back to the previous build, pinned until stim engine update
 ```
 
-`--release` installs that exact version from the public npm registry, and
-the update stops unless npm verifies each package's integrity and registry
-signature. `--from` installs the `.tgz` packages in the directory, checks the
-registry signature of every dependency they bring from npm, and does not look up
-Stim's own packages on the registry, so an unpublished version installs. Either way
-the new server is installed beside the running one and must start before the
-switch. The update waits up to 30 minutes for offloaded builds and hosted
-native steps to finish (a server that resumes its hosted sessions leaves the others running), restarts the job, and switches back to the previous server
-when the new job exits or does not answer within 90 seconds. It never changes pairings,
+The engine fetches a release from the public npm registry, runs its self-test,
+and switches once running builds and hosted native steps have drained; the
+service's stimd restarts on the new build. It never changes pairings,
 approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
-serve route.
+serve route. A client approved for builds or device hosting can ask for the
+same update from its machine with `stim remote update <mac>`. A build whose
+stimd exits abnormally three times within 10 minutes is marked bad and the
+engine goes back to the previous build on its own; `stim engine status` then
+shows `crash loop in <version>`, and the next newer release resumes updates.
+`engine.autoUpdate` decides whether the engine checks for updates by itself
+(on for an engine Stim Desktop installed or a service runs).
 
 A client machine this machine approved for builds or device hosting can request
 the same update over its tailnet connection, so the remote machine keeps up

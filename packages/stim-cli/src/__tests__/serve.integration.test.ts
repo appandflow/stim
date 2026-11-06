@@ -215,7 +215,7 @@ test('a Desktop net.ensure with other listener options restarts the net thread w
     const wider = await desktopEnsure(socket, { port: 0, loopbackOnly: false });
     expect(wider).toMatchObject({ listening: true });
     expect(wider.port).not.toBe(loopback.port);
-    await expect(fetch(`http://127.0.0.1:${loopback.port}/health`)).rejects.toThrow();
+    await expect(fetch(`http://127.0.0.1:${loopback.port}/health`)).rejects.toThrow('fetch failed');
     expect((await fetch(`http://127.0.0.1:${wider.port}/health`)).status).toBeLessThan(600);
     stimd.kill('SIGTERM');
     expect(await stimdExited).toEqual([0, null]);

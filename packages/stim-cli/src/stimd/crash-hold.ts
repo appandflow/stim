@@ -18,11 +18,12 @@ export type Boot = { at: number; build: string; abnormal?: true };
 
 /** The boots in a claim's details, as stimd recorded them. */
 export function parseBoots(value: unknown): Boot[] {
-  return (Array.isArray(value) ? value : []).flatMap((boot) =>
-    isJsonObject(boot) && typeof boot.at === 'number' && typeof boot.build === 'string'
-      ? [{ at: boot.at, build: boot.build, ...(boot.abnormal === true ? { abnormal: true as const } : {}) }]
-      : [],
-  );
+  return (Array.isArray(value) ? value : []).flatMap((boot) => {
+    if (!isJsonObject(boot) || typeof boot.at !== 'number' || typeof boot.build !== 'string') return [];
+    const parsed: Boot = { at: boot.at, build: boot.build };
+    if (boot.abnormal === true) parsed.abnormal = true;
+    return [parsed];
+  });
 }
 
 /** The boots stimd keeps at `now`: those of the last 10 minutes, at most 20, oldest first. */

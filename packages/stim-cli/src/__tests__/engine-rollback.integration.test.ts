@@ -107,14 +107,14 @@ beforeAll(() => {
     env: { ...process.env, npm_config_loglevel: 'error' },
   });
   versions.a = readJson(join(installed('a'), 'package.json')).version;
-  const [major, minor, patch] = versions.a.split('-')[0]!.split('.').map(Number);
+  const [major = 0, minor = 0, patch = 0] = (versions.a.split('-')[0] ?? '').split('.').map(Number);
   for (const [name, bump] of [
     ['b', 1],
     ['c', 2],
   ] as const) {
     cpSync(installed('a'), installed(name), { recursive: true, verbatimSymlinks: true });
     const manifest = readJson(join(installed(name), 'package.json'));
-    versions[name] = manifest.version = `${major}.${minor}.${patch! + bump}`;
+    versions[name] = manifest.version = `${major}.${minor}.${patch + bump}`;
     writeFileSync(join(installed(name), 'package.json'), JSON.stringify(manifest));
   }
   appendFileSync(

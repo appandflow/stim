@@ -202,6 +202,8 @@ export interface ServerOptions {
     node: string;
     script: string;
     runsAsService?: (label: string, port: number) => Promise<boolean>;
+    /** How an `engine.update` starts its detached `engine-select`; the service manager's way by default. */
+    detached?: (node: string, args: string[]) => { file: string; args: string[] };
   };
   /** Looks up the worktrees' pull requests; tests replace GitHub. */
   pullRequests?: PushNotifierOptions['pullRequests'];

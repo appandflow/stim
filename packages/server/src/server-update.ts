@@ -249,17 +249,17 @@ export class EngineUpdates {
         'This stim-server was not started by `stim service install`, so it cannot update itself. Update it where it runs.',
       );
     }
-    if (!runsFromEngine(this.options.script, this.options.env))
-      return refused(
-        'forbidden',
-        'This service does not run the Stim engine, so it cannot update itself. On this machine run `stim engine install`, then `stim service install`.',
-      );
     if ('packages' in parsed && !this.options.acceptsClientBuilds()) {
       return refused(
         'forbidden',
         'This machine installs only stim releases from npm. To take this build, run `stim settings set server.acceptClientBuilds true` on it.',
       );
     }
+    if (!runsFromEngine(this.options.script, this.options.env))
+      return refused(
+        'forbidden',
+        'This service does not run the Stim engine, so it cannot update itself. On this machine run `stim engine install`, then `stim service install`.',
+      );
     if (this.running)
       return refused('action-busy', `An update of this server is already running (${this.running.target}).`);
     const id = randomUUID();

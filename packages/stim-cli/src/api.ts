@@ -167,34 +167,36 @@ export class StimError extends Error {
  * Resources remain workspace-owned until stop() is called.
  */
 export function createStim(options: StimOptions): StimClient {
-  const local = createLocalStim(options);
-  const routed = Object.fromEntries(
-    Object.entries(local).map(([name, op]) => [
-      name,
-      typeof op !== 'function'
-        ? op
-        : (...args: unknown[]) => {
-            const engine = engineRunOp(options.env ?? process.env);
-            if (!engine) return Reflect.apply(op, local, args);
-            return engine.then((runEngineOp) =>
-              runEngineOp
-                ? runEngineOp(name, args, options).catch((failure: unknown) => {
-                    throw isPlainFailure(failure) ? new StimError(failure) : failure;
-                  })
-                : Reflect.apply(op, local, args),
-            );
-          },
-    ]),
-  );
-  return routed as unknown as StimClient;
+  return new Proxy(createLocalStim(options), {
+    get(local, name) {
+      const op: unknown = Reflect.get(local, name);
+      if (typeof op !== 'function' || typeof name !== 'string') return op;
+      return (...args: unknown[]) => {
+        const engine = engineRunOp(options.env ?? process.env);
+        if (!engine) return Reflect.apply(op, local, args);
+        return engine.then((runEngineOp) =>
+          runEngineOp
+            ? runEngineOp(name, args, options).catch((failure: unknown) => {
+                throw isPlainFailure(failure) ? new StimError(failure) : failure;
+              })
+            : Reflect.apply(op, local, args),
+        );
+      };
+    },
+  });
 }
 
-const isPlainFailure = (value: unknown): value is StimFailure =>
-  typeof value === 'object' &&
-  value !== null &&
-  !(value instanceof Error) &&
-  typeof (value as StimFailure).code === 'string' &&
-  typeof (value as StimFailure).message === 'string';
+function isPlainFailure(value: unknown): value is StimFailure {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !(value instanceof Error) &&
+    'code' in value &&
+    typeof value.code === 'string' &&
+    'message' in value &&
+    typeof value.message === 'string'
+  );
+}
 
 /**
  * F3's per-op entry: runs the operation `name` of a client made from `ctx` (the options of `createStim`) with `args`,

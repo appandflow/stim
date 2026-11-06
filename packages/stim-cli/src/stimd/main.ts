@@ -43,7 +43,7 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { stimBuild } from '../spawn-entry.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
-import { loadConfig, type Config } from '../workspace/config.ts';
+import { getConfigDir, loadConfig, type Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { relaunchWithLogFile } from '../detached-entry.ts';
 import {
@@ -76,7 +76,6 @@ import { crashLooping, holdCrashLoop, keptBoots, parseBoots, type Boot } from '.
 import { ASKED_MS, autoUpdateOn, checkForUpdate, DAILY_MS, lastUpdateCheck, updateDue } from './auto-update.ts';
 import { ownStoreEngine } from '../daemon/engine-switch.ts';
 import { readRecords } from '../engine-store/store.ts';
-import { getConfigDir } from '../workspace/config.ts';
 // compat C25 until removal-minor
 import { stopForeignSupervisors } from './foreign-supervisors.ts';
 // compat end
@@ -576,7 +575,7 @@ export async function runStimd({
             (running.loopbackOnly !== options.loopbackOnly ||
               (port !== undefined && port !== 0 && running.port !== null && port !== running.port));
           if (!running || restart) netServes = options;
-          const started = restart
+          const answer = restart
             ? (() => {
                 log('info', 'net_restart', 'Stim Desktop asked for other net thread options; restarting it');
                 restartingNet = true;
@@ -586,9 +585,9 @@ export async function runStimd({
                 });
               })()
             : net.ensure(options);
-          void started.then((answer) => {
+          void answer.then((state) => {
             lastContact = Date.now();
-            return reply({ op: 'net', ...answer });
+            return reply({ op: 'net', ...state });
           });
         } else if (op === 'net.connect') {
           socket.off('data', onData);
