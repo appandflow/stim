@@ -179,7 +179,7 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))(
   'the index on the installed Expo SDK',
   () => {
     test(
-      'a hit spawns nothing, and a react-native.config.js edit re-runs only the React Native config',
+      'a hit spawns nothing, and a react-native.config.js added re-runs the parts that list the app root, not resolve',
       SLOW,
       async () => {
         const root = expoApp('app');
@@ -191,21 +191,53 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))(
         expect(ran()).toEqual([]);
         write(join(root, 'react-native.config.js'), 'module.exports = { dependencies: {} };\n');
         const indexed = await key(root);
-        expect(ran()).toEqual(['react-native-config']);
+        expect(ran()).toEqual(['config', 'embed', 'react-native-config']);
         expect(indexed.hash).toBe((await key(root, 'skip')).hash);
         expect(indexed.hash).not.toBe(hit.hash);
       },
     );
 
-    test('an env value the config reads re-runs the config parts, not autolinking', SLOW, async () => {
+    test('an env value change re-runs the parts that read or enumerate the env, not resolve', SLOW, async () => {
       const root = expoApp('app');
       await settled();
       await key(root, 'use', { APP_FLAG: 'a' });
       ran();
       const indexed = await key(root, 'use', { APP_FLAG: 'b' });
-      expect(ran()).toEqual(['config', 'embed']);
+      expect(ran()).toEqual(['config', 'embed', 'react-native-config']);
       expect(indexed.hash).toBe((await key(root, 'skip', { APP_FLAG: 'b' })).hash);
     });
+
+    test(
+      'a module that appears where the config tried to require one, or a file deep in a listed tree, moves the key',
+      SLOW,
+      async () => {
+        const root = expoApp('app', {
+          'app.config.js': [
+            "const fs = require('fs');",
+            'let local = {};',
+            "try { local = require('./overrides/local.js'); } catch {}",
+            "const fonts = fs.readdirSync('./fonts', { recursive: true }).map(String).sort();",
+            'module.exports = ({ config }) => ({ ...config, extra: { local, fonts } });',
+            '',
+          ].join('\n'),
+          'fonts/a.ttf': 'a',
+          'overrides/keep.txt': 'keep',
+        });
+        await settled();
+        await key(root);
+        const hit = await key(root);
+        write(join(root, 'overrides', 'local.js'), "module.exports = { flag: 'local' };\n");
+        const required = await key(root);
+        expect(required.hash).not.toBe(hit.hash);
+        expect(required.hash).toBe((await key(root, 'skip')).hash);
+        await settled();
+        await key(root);
+        write(join(root, 'fonts', 'sub', 'b.ttf'), 'b');
+        const listed = await key(root);
+        expect(listed.hash).not.toBe(required.hash);
+        expect(listed.hash).toBe((await key(root, 'skip')).hash);
+      },
+    );
 
     test('a config that spawns a child is evaluated on every run', SLOW, async () => {
       const root = expoApp('app', {

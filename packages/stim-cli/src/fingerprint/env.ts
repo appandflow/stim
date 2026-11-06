@@ -49,6 +49,8 @@ const NAME_LITERAL = /['"]([A-Z][A-Z0-9_]{3,})['"]/g;
 const RUBY_CONSTANT = new RegExp(String.raw`^\s*([A-Z][A-Z0-9_]*)\s*=\s*['"]${NAME}['"]`, 'gm');
 
 export const isDenied = (name: string): boolean => DENIED.test(name);
+/** Names a shell session sets that no evaluation depends on; an app's own `STIM_*` variable is not one. */
+export const isSessionName = (name: string): boolean => VOLATILE.test(name) && !name.startsWith('STIM_');
 const STIM_MACHINE_LOCAL = /^STIM_(?:HOME|RUN_ID|ACCESS_TICKET)$/;
 const keyable = (name: string) => !isDenied(name) && !MACHINE_LOCAL.has(name) && !STIM_MACHINE_LOCAL.test(name);
 const defined = (env: Env) =>

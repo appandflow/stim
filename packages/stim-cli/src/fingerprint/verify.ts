@@ -1,10 +1,11 @@
 import { readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { ensurePrivateDir } from '@stim-cli/core';
 import { fingerprintIndexDir, fingerprintPendingVerifyDir } from '@stim-cli/core/state';
 import { debugLog } from '../debug-log.ts';
 import { fingerprint, type Fingerprint } from './evaluate.ts';
 import {
+  checkoutTag,
   withIndexLock,
   dropRecords,
   indexDir,
@@ -147,14 +148,18 @@ export const disagreementCount = (): number => readDisagreements().count;
 
 /** Disagreements no run has warned about yet, cleared as they are returned, and the total ever counted. */
 export function takeDisagreements(): Disagreements {
-  return withIndexLock(() => {
-    const known = readDisagreements();
-    if (known.unreported.length > 0)
-      try {
-        writeJson(disagreementsFile(), { count: known.count, unreported: [] });
-      } catch {}
-    return known;
-  });
+  try {
+    return withIndexLock(() => {
+      const known = readDisagreements();
+      if (known.unreported.length > 0)
+        try {
+          writeJson(disagreementsFile(), { count: known.count, unreported: [] });
+        } catch {}
+      return known;
+    });
+  } catch {
+    return { count: 0, unreported: [] };
+  }
 }
 
 /** Recomputes a key without the index and compares it with the one an index hit produced. */
@@ -220,7 +225,7 @@ export function verifyHit(
         envRef: { id: sha256(project), digest: envRef.digest },
       };
       try {
-        writeJson(join(fingerprintPendingVerifyDir(), `${dir.split(/[\\/]/).at(-1)}.json`), pending);
+        writeJson(join(fingerprintPendingVerifyDir(), `${basename(dir)}-${checkoutTag(project)}.json`), pending);
         return null;
       } catch {}
     }

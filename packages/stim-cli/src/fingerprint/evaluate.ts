@@ -13,6 +13,7 @@ import {
   envRows,
   evaluatorEnv,
   isDenied,
+  isSessionName,
   workspaceEnv,
   scriptEnvNames,
   templateScripts,
@@ -83,7 +84,8 @@ export interface Fingerprint {
 interface Trace {
   env: string[];
   enumerators: string[];
-  reads: { path: string; kind: ReadKind; hash?: string }[];
+  /** `resolve` is the listing of a directory module resolution searched; `tree` a recursive listing. */
+  reads: { path: string; kind: ReadKind | 'resolve'; hash?: string }[];
   modules: { path: string; hash: string }[];
   opaque: string[];
 }
@@ -313,11 +315,12 @@ function traceRows(
   const configPart = name === 'config' || name === 'configEmbedded';
   for (const { path, kind, hash } of trace.reads) {
     if (ours(path) || packageRoot(path)) continue;
+    if (kind === 'resolve') continue;
     if (kind !== 'file') {
       if (inApp(path) && (name === 'config' || name === 'configEmbedded'))
         rows.push(
-          kind === 'dir'
-            ? { name: `dir:${realForm(path, roots)}`, kind: 'file', hash: hash ?? ABSENT }
+          kind === 'dir' || kind === 'tree'
+            ? { name: `${kind}:${realForm(path, roots)}`, kind: 'file', hash: hash ?? ABSENT }
             : { name: `exists:${realForm(path, roots)}`, kind: 'file', hash: sha256(kind) },
         );
       continue;
@@ -376,12 +379,19 @@ const evaluatorKey = (): string =>
   ));
 
 /**
- * The env digest a part is checked against: a value's hash, a path's in its relocated form, or for `*` (project code
- * enumerated the env) every name and value the part ran with.
+ * The env digest a part is checked against: a value's hash, a path's in its relocated form, or for `*` (code, its own
+ * or a dependency's, enumerated the env) every name and value the part ran with but those of the shell session.
  */
 function envDigest(env: Record<string, string>, roots: Roots): (name: string) => string | null {
   return (name) => {
-    if (name === '*') return sha256(canonicalJson(Object.entries(env).toSorted(([a], [b]) => byCodeUnit(a, b))));
+    if (name === '*')
+      return sha256(
+        canonicalJson(
+          Object.entries(env)
+            .filter(([key]) => !isSessionName(key))
+            .toSorted(([a], [b]) => byCodeUnit(a, b)),
+        ),
+      );
     const value = env[name];
     if (value === undefined) return null;
     return sha256(canonicalJson(isAbsolute(value) ? ['path', relocate(resolve(value), roots)] : ['value', value]));
@@ -427,7 +437,7 @@ function buildEnvNames(
       if (scanned.has(dir)) continue;
       scanned.add(dir);
       const entry = installedPackage(dir) ? session?.pkg(dir) : undefined;
-      const found = entry?.scan ?? scriptNames(buildScripts(dir));
+      const found = (entry?.provenance?.mode === 'identity' ? entry.scan : undefined) ?? scriptNames(buildScripts(dir));
       if (entry) entry.scan = found;
       names.push(...found);
     }
@@ -541,7 +551,9 @@ async function evaluate(
       );
       const reads = traceReads(
         [
-          ...done.trace.reads,
+          ...done.trace.reads.map((read) =>
+            read.kind === 'resolve' ? { ...read, kind: 'dir' as const } : { ...read, kind: read.kind },
+          ),
           ...done.trace.modules.map((module) => ({ ...module, kind: 'module' as const })),
           ...[...candidates].map((path): { path: string; kind: ReadKind } => ({
             path,
@@ -555,7 +567,7 @@ async function evaluate(
         (dir) => owner(join(dir, 'package.json')) !== null,
       );
       const names = [...new Set([...done.trace.env, ...STARTUP_ENV])];
-      if (derived.enumerated) names.push('*');
+      if (done.trace.enumerators.length > 0) names.push('*');
       if (reads) {
         const recorded: PartRecord = {
           startedAtNs: String(since),

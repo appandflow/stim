@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { ensurePrivateDir } from '@stim-cli/core';
 import { fingerprintEnvDir, fingerprintIndexDir, fingerprintIndexLock, LOCKFILES } from '@stim-cli/core/state';
 import { withDirLock } from '../dir-lock.ts';
@@ -16,7 +16,7 @@ const INSTALL_STAMPS = ['.modules.yaml', '.package-lock.json', '.yarn-integrity'
 /** Where `patch-package` and the yarn and pnpm patch commands keep patches, which change installed files. */
 const PATCH_DIRS = ['patches', 'cng-patches', '.yarn/patches'];
 
-export type ReadKind = 'file' | 'module' | 'dir' | 'present' | 'absent' | 'package';
+export type ReadKind = 'file' | 'module' | 'dir' | 'tree' | 'present' | 'absent' | 'package';
 /** What one evaluation read, with a path relative to the app or the install root so a sibling checkout can reuse it. */
 export interface Read {
   path: string;
@@ -168,9 +168,10 @@ function locateValue(value: unknown, roots: Roots): unknown {
  */
 export function takeRead(path: string, kind: ReadKind, roots: Roots, since: bigint, hash?: string | null): Read | null {
   if (kind === 'absent') return { path: relocate(path, roots), kind };
-  if (kind === 'present') {
-    const type = entryType(path);
-    return type ? { path: relocate(path, roots), kind, hash: type } : null;
+  const type = kind === 'present' ? entryType(path) : null;
+  if (kind === 'present' && type !== 'file') {
+    const real = realOf(path);
+    return type && real ? { path: relocate(path, roots), kind, hash: type, real: relocate(real, roots) } : null;
   }
   const target = kind === 'package' ? join(path, 'package.json') : path;
   const stat = statKey(target);
@@ -178,28 +179,26 @@ export function takeRead(path: string, kind: ReadKind, roots: Roots, since: bigi
   if (!stat && kind !== 'package' && (kind !== 'module' || !parent)) return null;
   if ([stat, parent].some((info) => info && (racy(info.mtime, since) || racy(info.ctime, since)))) return null;
   const read: Read = { path: relocate(path, roots), kind, stat: stat?.key ?? null };
-  if (kind === 'dir') read.hash = hash ?? null;
-  else if (stat) {
-    read.hash = kind === 'module' ? (hash ?? null) : readHash(target);
-    const real = kind === 'package' ? null : realOf(target);
-    if (real) read.real = relocate(real, roots);
-  }
+  if (kind === 'dir' || kind === 'tree') read.hash = hash ?? null;
+  else if (stat) read.hash = kind === 'module' ? (hash ?? null) : readHash(target);
+  const real = stat && kind !== 'package' ? realOf(target) : null;
+  if (real) read.real = relocate(real, roots);
   return read;
 }
 
-function listNames(path: string): string[] | null {
+function listNames(path: string, recursive = false): string[] | null {
   try {
-    return readdirSync(path)
+    return readdirSync(path, { recursive })
       .map(String)
-      .filter((name) => name !== '.DS_Store')
+      .filter((name) => basename(name) !== '.DS_Store')
       .toSorted();
   } catch {
     return null;
   }
 }
 
-const listing = (path: string): string | null => {
-  const names = listNames(path);
+const listing = (path: string, recursive = false): string | null => {
+  const names = listNames(path, recursive);
   return names && sha256(JSON.stringify(names));
 };
 
@@ -211,14 +210,15 @@ export type Validity = 'stat' | 'content' | false;
  */
 export function checkRead(read: Read, roots: Roots): Validity {
   const path = locate(read.path, roots);
-  if (read.kind === 'present') return entryType(path) === read.hash ? 'stat' : false;
   if (read.kind === 'absent') return statSync(path, { throwIfNoEntry: false }) ? false : 'stat';
   const target = read.kind === 'package' ? join(path, 'package.json') : path;
+  const resolved = read.real === undefined || relocate(realOf(target) ?? '', roots) === read.real;
+  if (read.kind === 'present' && read.stat === undefined) return resolved && entryType(path) === read.hash && 'stat';
   const stat = statKey(target);
   if ((stat?.key ?? null) === read.stat) return 'stat';
-  if (!stat || read.stat === null || !read.hash) return false;
-  if (read.kind === 'dir') return listing(path) === read.hash ? 'content' : false;
-  if (read.real && relocate(realOf(target) ?? '', roots) !== read.real) return false;
+  if (!stat || read.stat === null || !read.hash || !resolved) return false;
+  if (read.kind === 'dir' || read.kind === 'tree')
+    return listing(path, read.kind === 'tree') === read.hash ? 'content' : false;
   return readHash(target) === read.hash ? 'content' : false;
 }
 
@@ -281,7 +281,7 @@ function readJson(path: string): unknown {
   }
 }
 
-/** The record files of an index directory, newest first, those this checkout wrote ahead of a sibling's. */
+/** The record files of an index directory, newest first. */
 export function recordFiles(dir: string): string[] {
   let names: string[];
   try {
@@ -431,12 +431,13 @@ export function writeWorkspaceEnv(project: string, env: Record<string, string>):
 /** The env a workspace last computed its fingerprint under, with its digest, or null. */
 export function readWorkspaceEnv(project: string): { env: Record<string, string>; digest: string } | null {
   let text: string;
+  let value: unknown;
   try {
     text = readFileSync(workspaceEnvFile(project), 'utf8');
+    value = JSON.parse(text);
   } catch {
     return null;
   }
-  const value = readJson(workspaceEnvFile(project));
   const env: Record<string, string> = {};
   for (const [name, entry] of Object.entries(value && typeof value === 'object' ? value : {})) {
     if (typeof entry !== 'string') return null;
@@ -445,7 +446,19 @@ export function readWorkspaceEnv(project: string): { env: Record<string, string>
   return value ? { env, digest: sha256(text) } : null;
 }
 
-const checkoutTag = (project: string) => sha256(project).slice(0, 8);
+/**
+ * Whether another checkout may reuse a part. Config parts never: project code can derive values from where it runs
+ * (`__dirname`) without reading anything. Autolinking parts may, unless they read files of their own work tree
+ * outside the app and install root, whose rows name the path.
+ */
+function shareable(slot: string, part: PartRecord): boolean {
+  if (slot.startsWith('config')) return false;
+  return !part.reads.some(
+    (read) => /^(?:file|module)$/.test(read.kind) && (read.path.startsWith('t:') || read.real?.startsWith('t:')),
+  );
+}
+
+export const checkoutTag = (project: string): string => sha256(project).slice(0, 8);
 
 const mtime = (path: string) => statSync(path, { throwIfNoEntry: false })?.mtimeMs;
 
@@ -595,18 +608,14 @@ export class IndexSession {
     return true;
   }
 
-  /**
-   * A recorded part whose env digests and reads all hold, with its paths placed in this checkout. Another checkout's
-   * part that read files of its work tree outside the app and install root is not reused: their rows name the path.
-   */
+  /** A recorded part whose env digests and reads all hold, with its paths placed in this checkout. */
   part(slot: string, envDigest: (name: string) => string | null): PartRecord | null {
     for (let index = 0; this.record(index); index++) {
       const loaded = this.record(index);
       const recorded = loaded?.stamps ? loaded.record.parts[slot] : undefined;
       if (!recorded) continue;
       const own = loaded?.record.checkout === this.roots.project;
-      if (!own && recorded.reads.some((read) => read.path.startsWith('t:') && /^(?:file|module)$/.test(read.kind)))
-        continue;
+      if (!own && !shareable(slot, recorded)) continue;
       if (!recorded.env.every(([name, hash]) => envDigest(name) === hash)) continue;
       if (!this.holds(recorded.reads)) continue;
       if (!own) this.sibling = true;
@@ -676,7 +685,7 @@ export class IndexSession {
       base?.checkout === this.roots.project && !this.sibling ? base.stamps : stampReads(this.roots, this.since);
     if (!stamps) return;
     const record = newRecord(this.key, this.roots.project, stamps);
-    record.parts = { ...base?.parts, ...this.parts };
+    record.parts = { ...(base?.checkout === this.roots.project ? base.parts : {}), ...this.parts };
     record.packages = this.packages;
     record.closure = this.closureEntry;
     try {

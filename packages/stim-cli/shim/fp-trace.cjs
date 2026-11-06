@@ -33,13 +33,13 @@ function record(kind, target) {
   const file = active && kind ? toPath(target) : null;
   if (!file || reads.has(`${kind}\0${file}`)) return;
   const entry = { path: file, kind };
-  if (kind === 'dir') {
+  if (kind === 'dir' || kind === 'tree' || kind === 'resolve') {
     try {
       entry.hash = sha256(
         JSON.stringify(
-          originalReaddirSync(file)
+          originalReaddirSync(file, { recursive: kind === 'tree' })
             .map(String)
-            .filter((name) => name !== '.DS_Store')
+            .filter((name) => path.basename(name) !== '.DS_Store')
             .toSorted(),
         ),
       );
@@ -101,17 +101,19 @@ function promise(name, kind) {
 
 for (const name of ['readFileSync', 'createReadStream']) sync(name, 'file');
 sync('openSync', opened);
-for (const name of ['readdirSync', 'opendirSync']) sync(name, 'dir');
+// A recursive listing (Node 20.1+) walks subdirectories without calling the patched readdir again.
+const listed = ([options]) => (options && typeof options === 'object' && options.recursive ? 'tree' : 'dir');
+for (const name of ['readdirSync', 'opendirSync']) sync(name, listed);
 for (const name of ['statSync', 'lstatSync']) sync(name, 'present', (result) => result === undefined);
 for (const name of ['accessSync', 'realpathSync']) sync(name, 'present');
 sync('existsSync', 'present', (result) => !result);
 callback('readFile', 'file');
 callback('open', opened);
-for (const name of ['readdir', 'opendir']) callback(name, 'dir');
+for (const name of ['readdir', 'opendir']) callback(name, listed);
 for (const name of ['stat', 'lstat', 'access', 'realpath']) callback(name, 'present');
 promise('readFile', 'file');
 promise('open', opened);
-for (const name of ['readdir', 'opendir']) promise(name, 'dir');
+for (const name of ['readdir', 'opendir']) promise(name, listed);
 for (const name of ['stat', 'lstat', 'access', 'realpath']) promise(name, 'present');
 
 /**
@@ -207,6 +209,15 @@ Module.prototype['_compile'] = function (content, filename, ...rest) {
 const hooks = typeof Module.registerHooks === 'function';
 if (hooks)
   Module.registerHooks({
+    // Node resolves require() and import through internal bindings the fs wrappers never see. The listing of the
+    // directory a relative or absolute specifier names covers a candidate that appears, or one that shadows another.
+    resolve(specifier, context, nextResolve) {
+      const parent = context.parentURL?.startsWith('file:') ? fileURLToPath(context.parentURL) : null;
+      if (path.isAbsolute(specifier)) record('resolve', path.dirname(specifier));
+      else if (parent && /^\.{1,2}(?:\/|$)/.test(specifier))
+        record('resolve', path.dirname(path.resolve(path.dirname(parent), specifier)));
+      return nextResolve(specifier, context);
+    },
     load(url, context, nextLoad) {
       const result = nextLoad(url, context);
       if (active && url.startsWith('file:') && result.source != null) {
