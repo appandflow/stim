@@ -20,6 +20,14 @@ on:
   schedule:
     - cron: '23 * * * *'
   workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  merge_group:
+  workflow_call:
+    inputs:
+      stage:
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -28,8 +36,56 @@ env:
   NEXT_THROTTLE_MINUTES: 5
 
 jobs:
+  api-check:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    name: ${{ matrix.surface }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    strategy:
+      fail-fast: false
+      matrix:
+        surface: [phoneApi, desktopApi]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        if: matrix.surface == 'phoneApi'
+        with:
+          cache: false
+          install: false
+      - if: matrix.surface == 'phoneApi'
+        run: pnpm install --frozen-lockfile --filter stim-mobile... --filter stim-monorepo
+      - run: node scripts/release-order.mjs "${{ matrix.surface }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  tag-order:
+    if: inputs.stage == 'desktop'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: node scripts/release-order.mjs desktop
+        env:
+          GH_TOKEN: ${{ github.token }}
+
   tag-on-main:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: inputs.stage == '' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -345,7 +401,7 @@ jobs:
           wait_for "npx -p @stim-cli/server@$version stim-server --version" server_runs
 
   next-publish:
-    if: github.repository == 'appandflow/stim' && github.ref == 'refs/heads/main' && vars.NEXT_PAUSED != 'true'
+    if: inputs.stage == '' && github.repository == 'appandflow/stim' && github.ref == 'refs/heads/main' && vars.NEXT_PAUSED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: release
@@ -357,6 +413,7 @@ jobs:
     permissions:
       contents: read
       checks: read
+      actions: write
       id-token: write
     env:
       PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server
@@ -462,6 +519,13 @@ jobs:
         with:
           cache: false
           install: false
+
+      - name: Record the previous next release
+        if: steps.version.outputs.version != ''
+        id: previous
+        run: |
+          printf 'version=' >> "$GITHUB_OUTPUT"
+          npm view stim dist-tags.next >> "$GITHUB_OUTPUT"
 
       - name: Set the version
         if: steps.version.outputs.version != ''
@@ -573,6 +637,13 @@ jobs:
           wave core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache transport transport-tailscale transport-local
           wave stim-cli
           wave ci server
+
+      - name: Dispatch Desktop next when desktopApi changed
+        if: steps.version.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_NEXT: ${{ steps.previous.outputs.version }}
+        run: node scripts/release-order.mjs desktop-next
 
       - name: Summary
         if: always() && steps.version.outputs.version != ''
