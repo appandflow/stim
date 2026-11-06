@@ -75,7 +75,7 @@ dependency order. `pnpm publish` packs with pnpm, so it substitutes the
 `workspace:` ranges the packages declare -- a bare `npm publish` from a package
 directory would upload them verbatim. Compute the dist-tag exactly as the
 workflow does (RELEASE.md section 1): `latest`, unless this version is a
-release candidate AND `npm view @stim-cli/core version` is already a stable
+release candidate AND `npm view stim version` is already a stable
 release, in which case `next`. 2FA is on, so each publish prompts for an OTP:
 
 ```bash
@@ -193,7 +193,7 @@ tarball is the only per-version proof.
 ## Stale or wrong dist-tags
 
 The workflow computes the publish dist-tag itself (RELEASE.md section 1): a
-release candidate lands on `next` only when `@stim-cli/core`'s registry
+release candidate lands on `next` only when `stim`'s registry
 `latest` is already stable; every other publish -- including every publish
 before 1.0.0 stable ships -- lands on `latest`. If a dist-tag still ends up
 stale or wrong, repair it with `npm dist-tag add|rm` and an OTP.
