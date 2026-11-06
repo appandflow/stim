@@ -5,7 +5,7 @@ import { ensurePrivateDir } from '@stim-cli/core';
 import { fingerprintEnvDir, fingerprintIndexDir, LOCKFILES } from '@stim-cli/core/state';
 import { gitLocation } from './git-index.ts';
 import { canonicalJson, FINGERPRINT_SCHEMA, sha256, type Input, type Layout, type Platform } from './key.ts';
-import { within, type Roots } from './walk.ts';
+import { field, within, type Roots } from './walk.ts';
 
 const RECORDS_PER_DIR = 8;
 const DIRS_PER_PLATFORM = 256;
@@ -89,7 +89,7 @@ export const startedAt = (): bigint => nowNs() - 1_000_000n;
  * can trail the wall clock by a few milliseconds, and some filesystems keep whole seconds, so a time within 50 ms of
  * the start, or within 2 s for a whole-second time, counts as during the computation.
  */
-export function racy(time: bigint, start: bigint): boolean {
+function racy(time: bigint, start: bigint): boolean {
   return time >= start - (time % 1_000_000_000n === 0n ? 2_000_000_000n : 50_000_000n);
 }
 
@@ -122,7 +122,7 @@ export function relocate(path: string, roots: Roots): string {
   return `a:${path}`;
 }
 
-export function locate(form: string, roots: Roots): string {
+function locate(form: string, roots: Roots): string {
   const rest = form.slice(2);
   if (form.startsWith('p:')) return join(roots.project, rest);
   if (form.startsWith('i:')) return join(roots.install, rest);
@@ -132,7 +132,7 @@ export function locate(form: string, roots: Roots): string {
 const PLACED = '\u0000';
 
 /** A JSON value with every absolute path inside the app or install root relocated, and back. */
-export function relocateValue(value: unknown, roots: Roots): unknown {
+function relocateValue(value: unknown, roots: Roots): unknown {
   if (typeof value === 'string')
     return isAbsolute(value) && (within(value, roots.project) || within(value, roots.install))
       ? PLACED + relocate(value, roots)
@@ -143,7 +143,7 @@ export function relocateValue(value: unknown, roots: Roots): unknown {
   return value;
 }
 
-export function locateValue(value: unknown, roots: Roots): unknown {
+function locateValue(value: unknown, roots: Roots): unknown {
   if (typeof value === 'string') return value.startsWith(PLACED) ? locate(value.slice(1), roots) : value;
   if (Array.isArray(value)) return value.map((item) => locateValue(item, roots));
   if (value && typeof value === 'object')
@@ -203,7 +203,7 @@ export function checkRead(read: Read, roots: Roots): Validity {
 }
 
 /** Install stamps of the app and the install root, and the lockfile, as reads. */
-export function stampReads(roots: Roots, since: bigint): Read[] | null {
+function stampReads(roots: Roots, since: bigint): Read[] | null {
   const paths = [...new Set([roots.project, roots.install])].flatMap((dir) =>
     INSTALL_STAMPS.map((name) => join(dir, 'node_modules', name)),
   );
@@ -278,22 +278,21 @@ export interface RecordKey {
 }
 
 /** A record of the current format, schema, evaluators and runtime, or null. */
-export function loadRecord(file: string, key: RecordKey): EvalRecord | null {
+function loadRecord(file: string, key: RecordKey): EvalRecord | null {
   const value = readJson(file);
-  if (!value || typeof value !== 'object') return null;
-  const record = value as Partial<EvalRecord>;
-  return record.format === INDEX_FORMAT &&
-    record.schema === FINGERPRINT_SCHEMA &&
-    record.evaluator === key.evaluator &&
-    record.runtime === key.runtime &&
-    typeof record.checkout === 'string' &&
-    Array.isArray(record.stamps) &&
-    record.parts &&
-    typeof record.parts === 'object' &&
-    record.packages &&
-    typeof record.packages === 'object'
-    ? (record as EvalRecord)
-    : null;
+  return isRecordOf(value, key) ? value : null;
+}
+
+function isRecordOf(value: unknown, key: RecordKey): value is EvalRecord {
+  return (
+    field(value, 'format') === INDEX_FORMAT &&
+    field(value, 'schema') === FINGERPRINT_SCHEMA &&
+    field(value, 'evaluator') === key.evaluator &&
+    field(value, 'runtime') === key.runtime &&
+    typeof field(value, 'checkout') === 'string' &&
+    Array.isArray(field(value, 'stamps')) &&
+    [field(value, 'parts'), field(value, 'packages')].every((part) => typeof part === 'object' && part !== null)
+  );
 }
 
 export function newRecord(key: RecordKey, checkout: string, stamps: Read[]): EvalRecord {
@@ -358,8 +357,11 @@ export class FileHashes {
     this.roots = roots;
     this.since = since;
     this.file = join(dir, `h-${sha256(roots.project).slice(0, 16)}.json`);
+    this.entries = {};
     const value = readJson(this.file);
-    this.entries = value && typeof value === 'object' ? (value as Record<string, [string, string]>) : {};
+    for (const [path, entry] of Object.entries(value && typeof value === 'object' ? value : {}))
+      if (Array.isArray(entry) && typeof entry[0] === 'string' && typeof entry[1] === 'string')
+        this.entries[path] = [entry[0], entry[1]];
   }
 
   hash(path: string, compute: () => string): string {
@@ -386,6 +388,8 @@ export class FileHashes {
   }
 }
 
+const workspaceEnvFile = (project: string): string => join(fingerprintEnvDir(), `${sha256(project)}.json`);
+
 /** Writes the env a workspace computed its fingerprint under, owner-only, when it changed; returns its digest. */
 export function writeWorkspaceEnv(project: string, env: Record<string, string>): string {
   const text = canonicalJson(env);
@@ -400,8 +404,6 @@ export function writeWorkspaceEnv(project: string, env: Record<string, string>):
   return digest;
 }
 
-export const workspaceEnvFile = (project: string): string => join(fingerprintEnvDir(), `${sha256(project)}.json`);
-
 /** The env a workspace last computed its fingerprint under, with its digest, or null. */
 export function readWorkspaceEnv(project: string): { env: Record<string, string>; digest: string } | null {
   let text: string;
@@ -410,9 +412,13 @@ export function readWorkspaceEnv(project: string): { env: Record<string, string>
   } catch {
     return null;
   }
-  const env = readJson(workspaceEnvFile(project));
-  if (!env || typeof env !== 'object' || Object.values(env).some((value) => typeof value !== 'string')) return null;
-  return { env: env as Record<string, string>, digest: sha256(text) };
+  const value = readJson(workspaceEnvFile(project));
+  const env: Record<string, string> = {};
+  for (const [name, entry] of Object.entries(value && typeof value === 'object' ? value : {})) {
+    if (typeof entry !== 'string') return null;
+    env[name] = entry;
+  }
+  return value ? { env, digest: sha256(text) } : null;
 }
 
 const checkoutTag = (project: string) => sha256(project).slice(0, 8);
@@ -438,7 +444,7 @@ export function newerThanInstall(roots: Roots): string | null {
 }
 
 /** Whether any package manager's install stamp exists for the app, so it covers what an install writes. */
-export function installStamped(roots: Roots): boolean {
+function installStamped(roots: Roots): boolean {
   return [roots.project, roots.install].some((dir) =>
     INSTALL_STAMPS.some((name) => statSync(join(dir, 'node_modules', name), { throwIfNoEntry: false })),
   );

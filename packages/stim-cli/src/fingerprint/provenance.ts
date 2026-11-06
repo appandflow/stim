@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { LOCKFILES } from '@stim-cli/core/state';
 import type { Provenance } from './index-store.ts';
+import { field } from './walk.ts';
 
 interface Identity {
   name: string;
@@ -27,13 +28,15 @@ function readText(path: string): string | null {
 /** npm's `packages` map, keyed by install path: `package-lock.json` v2 and v3 and `node_modules/.package-lock.json`. */
 function npm(text: string, lockDir: string): Classifier | null {
   const lock: unknown = JSON.parse(text);
-  const packages = (lock as { packages?: unknown }).packages;
-  const version = (lock as { lockfileVersion?: unknown }).lockfileVersion;
+  const packages = field(lock, 'packages');
+  const version = field(lock, 'lockfileVersion');
   if (!packages || typeof packages !== 'object' || (version !== 2 && version !== 3)) return null;
   return (dir) => {
-    const entry = (packages as Record<string, Record<string, unknown> | undefined>)[toPosix(relative(lockDir, dir))];
-    if (!entry || entry.link || !isUrl(entry.resolved) || typeof entry.integrity !== 'string') return CONTENT;
-    return { mode: 'identity', integrity: entry.integrity, resolved: entry.resolved };
+    const entry = field(packages, toPosix(relative(lockDir, dir)));
+    const resolved = field(entry, 'resolved');
+    const integrity = field(entry, 'integrity');
+    if (field(entry, 'link') || !isUrl(resolved) || typeof integrity !== 'string') return CONTENT;
+    return { mode: 'identity', integrity, resolved };
   };
 }
 
@@ -159,14 +162,14 @@ function yarnBerry(text: string): Classifier {
 /** `bun.lock`: a registry tuple names `<name>@<version>` and ends with its integrity. */
 function bun(text: string, lockDir: string): Classifier | null {
   const lock: unknown = JSON.parse(text.replace(/,(\s*[}\]])/g, '$1'));
-  const packages = (lock as { packages?: unknown }).packages;
+  const packages = field(lock, 'packages');
   if (!packages || typeof packages !== 'object') return null;
   return (dir, { name, version }) => {
     const key = toPosix(relative(lockDir, dir))
       .split('/')
       .filter((segment) => segment !== 'node_modules')
       .join('/');
-    const tuple = (packages as Record<string, unknown>)[key];
+    const tuple = field(packages, key);
     if (!Array.isArray(tuple) || tuple[0] !== `${name}@${version}`) return CONTENT;
     const integrity = tuple.at(-1);
     if (typeof integrity !== 'string' || !/^sha\d+-/.test(integrity) || typeof tuple[1] !== 'string') return CONTENT;

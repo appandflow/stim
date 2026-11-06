@@ -83,6 +83,7 @@ export function packageRows(
   missing: Iterable<string> = [],
 ): Input[] {
   const versions = new Map<string, Set<string>>();
+  const labels = new Map<string, Set<string>>();
   const byContent = new Set<string>();
   for (const name of missing) versions.set(name, versions.get(name) ?? new Set());
   for (const { name, version, provenance, content } of identities) {
@@ -91,6 +92,7 @@ export function packageRows(
     known.add(canonicalJson(content ? [version, null, null, null, content] : [version, integrity, resolved, patch]));
     if (mode === 'content') byContent.add(name);
     versions.set(name, known);
+    labels.set(name, (labels.get(name) ?? new Set()).add(version));
   }
   return [...versions].map(([name, set]) => {
     const sorted = [...set].toSorted(byCodeUnit);
@@ -98,7 +100,7 @@ export function packageRows(
       name: `package:${name}`,
       kind: 'package',
       hash: sha256(canonicalJson({ name, versions: sorted })),
-      version: sorted.map((entry) => String((JSON.parse(entry) as unknown[])[0])).join(' '),
+      version: [...(labels.get(name) ?? [])].toSorted(byCodeUnit).join(' '),
       mode: byContent.has(name) ? 'content' : 'identity',
     };
   });

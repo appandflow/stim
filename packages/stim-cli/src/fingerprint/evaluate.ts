@@ -77,13 +77,13 @@ export interface Fingerprint {
   opaque: string[];
   /** `index` when any evaluator part came from the validation index instead of a child. */
   from: 'evaluated' | 'index';
-  /** The keys the project's `fingerprint.config.js` exports; only `extraSources` is applied. */
+  /** The keys the project's `fingerprint.config.js` exports; Stim applies only `extraSources`. */
   fingerprintConfigKeys: string[];
 }
 interface Trace {
   env: string[];
   enumerators: string[];
-  reads: { path: string; kind: string; hash?: string }[];
+  reads: { path: string; kind: ReadKind; hash?: string }[];
   modules: { path: string; hash: string }[];
   opaque: string[];
 }
@@ -532,9 +532,12 @@ async function evaluate(
       );
       const reads = traceReads(
         [
-          ...done.trace.reads.map((read) => ({ ...read, kind: read.kind as ReadKind })),
+          ...done.trace.reads,
           ...done.trace.modules.map((module) => ({ ...module, kind: 'module' as const })),
-          ...[...candidates].map((path) => ({ path, kind: (existsSync(path) ? 'file' : 'absent') as ReadKind })),
+          ...[...candidates].map((path): { path: string; kind: ReadKind } => ({
+            path,
+            kind: existsSync(path) ? 'file' : 'absent',
+          })),
         ].filter(({ path }) => !within(path, SHIMS)),
         roots,
         since,
@@ -813,6 +816,6 @@ export async function fingerprint(
     portable,
     opaque: evaluated.opaque,
     from: evaluated.fromIndex ? 'index' : 'evaluated',
-    fingerprintConfigKeys: Object.keys(record(evaluated.fingerprintConfig)),
+    fingerprintConfigKeys: strings(record(evaluated.fingerprintConfig).keys),
   };
 }

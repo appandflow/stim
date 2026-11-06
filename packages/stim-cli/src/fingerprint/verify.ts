@@ -7,6 +7,7 @@ import { withDirLock } from '../dir-lock.ts';
 import { fingerprint, type Fingerprint } from './evaluate.ts';
 import { dropRecords, indexDir, newerThanInstall, nowNs, readWorkspaceEnv, writePrivate } from './index-store.ts';
 import { installRoot, targetLayout, type StaticTarget } from './inputs.ts';
+import { field } from './walk.ts';
 import { diffInputs, isUncertain, sha256, type InputChange, type Platform, type Uncertain } from './key.ts';
 
 /** An index hit is checked in the CLI once its directory has served more hits than this since a verification. */
@@ -14,7 +15,7 @@ const TRUST_HITS = 3;
 /** Or once it has gone this long without one. */
 const TRUST_NS = 10n * 60n * 1_000_000_000n;
 /** How long the end of a run waits for a background check that is still running before it gives the check up. */
-export const FINGERPRINT_CHECK_GRACE_MS = 3000;
+const FINGERPRINT_CHECK_GRACE_MS = 3000;
 
 export interface VerifyRequest {
   root: string;
@@ -35,7 +36,7 @@ interface Pending extends VerifyRequest {
   envRef: { id: string; digest: string };
 }
 
-export interface CheckResult {
+interface CheckResult {
   status: 'confirmed' | 'disagreed' | 'failed' | 'abandoned';
   recorded: string;
   current: string | null;
@@ -69,7 +70,12 @@ const trustFile = (dir: string) => join(dir, 'trust.json');
 
 function readTrust(dir: string): Trust | null {
   const value = readJson(trustFile(dir));
-  return value && typeof value === 'object' && typeof (value as Trust).hits === 'number' ? (value as Trust) : null;
+  const hits = field(value, 'hits');
+  const verifiedAtNs = field(value, 'verifiedAtNs');
+  const firstHitNs = field(value, 'firstHitNs');
+  return typeof hits === 'number' && typeof firstHitNs === 'string'
+    ? { hits, firstHitNs, verifiedAtNs: typeof verifiedAtNs === 'string' ? verifiedAtNs : null }
+    : null;
 }
 
 /** Counts one index hit and says whether the directory is past its trust bound (3 hits or 10 minutes unverified). */
@@ -101,11 +107,18 @@ interface Disagreements {
 }
 
 const readDisagreements = (): Disagreements => {
-  const value = readJson(disagreementsFile()) as Disagreements | null;
-  return value && typeof value.count === 'number' && Array.isArray(value.unreported)
-    ? value
-    : { count: 0, unreported: [] };
+  const value = readJson(disagreementsFile());
+  const count = field(value, 'count');
+  const unreported = field(value, 'unreported');
+  return {
+    count: typeof count === 'number' ? count : 0,
+    unreported: Array.isArray(unreported) ? unreported.filter(isDisagreement) : [],
+  };
 };
+
+const isDisagreement = (value: unknown): value is Disagreements['unreported'][number] =>
+  ['platform', 'recorded', 'current'].every((key) => typeof field(value, key) === 'string') &&
+  Array.isArray(field(value, 'changes'));
 
 /** Drops a directory whose recorded parts gave another key than a full computation, and counts it. */
 function disagree(dir: string, platform: Platform, recorded: string, current: string, changes: InputChange[]): void {
@@ -214,6 +227,12 @@ export function verifyHit(
   };
 }
 
+const isPending = (value: unknown): value is Pending =>
+  ['root', 'hash', 'embedMode'].every((key) => typeof field(value, key) === 'string') &&
+  typeof field(field(value, 'envRef'), 'digest') === 'string' &&
+  typeof field(field(value, 'target'), 'platform') === 'string' &&
+  Array.isArray(field(value, 'inputs'));
+
 /**
  * The passes' share of verification: recomputes up to `perPass` pending hits, one per index directory, under the env
  * their workspace recorded. A hit whose workspace env changed since it was recorded is dropped unchecked.
@@ -228,9 +247,9 @@ export async function verifyPending({ perPass, signal }: { perPass: number; sign
   let checked = 0;
   for (const name of names.slice(0, perPass)) {
     const file = join(fingerprintPendingVerifyDir(), name);
-    const pending = readJson(file) as Pending | null;
+    const pending = readJson(file);
     rmSync(file, { force: true });
-    if (!pending?.envRef || typeof pending.root !== 'string') continue;
+    if (!isPending(pending)) continue;
     let project: string;
     try {
       project = realpathSync.native(pending.root);

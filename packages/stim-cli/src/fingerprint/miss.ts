@@ -12,12 +12,13 @@ import {
 } from '@stim-cli/core/state';
 import { gitLocation } from './git-index.ts';
 import { diffInputs, FINGERPRINT_SCHEMA, type Input, type InputChange } from './key.ts';
+import { field } from './walk.ts';
 
 const MISS_CHANGE_CAP = 20;
 const SCHEMA_CHANGED = "stim's fingerprint definition changed (one-time miss)";
 
 /** What a cache entry stored about the key it was built under: `inputs.json`, or an older Expo-shaped source list. */
-export type StoredInputs = unknown;
+type StoredInputs = unknown;
 
 interface Baseline {
   fingerprint: string;
@@ -34,15 +35,15 @@ interface RecordedBuild {
 
 function recordedBuilds(state: WorkspaceState | null, platform: StatsPlatform): RecordedBuild[] {
   const builds: RecordedBuild[] = [];
-  for (const value of [state?.[LAST_BUILD_KEYS[platform]], state?.lastBuild]) {
-    const record = value as Record<string, unknown> | null | undefined;
-    if (record?.platform !== platform) continue;
-    const startedAt = typeof record.startedAt === 'string' ? record.startedAt : '';
-    if (typeof record.fingerprint === 'string' && typeof record.cacheKey === 'string')
-      builds.push({ fingerprint: record.fingerprint, cacheKey: record.cacheKey, startedAt });
-    const carried = (record.missReason as { baseline?: Record<string, unknown> | null } | undefined)?.baseline;
-    if (typeof carried?.fingerprint === 'string' && typeof carried.cacheKey === 'string')
-      builds.push({ fingerprint: carried.fingerprint, cacheKey: carried.cacheKey, startedAt });
+  for (const record of [state?.[LAST_BUILD_KEYS[platform]], state?.lastBuild]) {
+    if (field(record, 'platform') !== platform) continue;
+    const startedAt = field(record, 'startedAt');
+    for (const build of [record, field(field(record, 'missReason'), 'baseline')]) {
+      const fingerprint = field(build, 'fingerprint');
+      const cacheKey = field(build, 'cacheKey');
+      if (typeof fingerprint === 'string' && typeof cacheKey === 'string')
+        builds.push({ fingerprint, cacheKey, startedAt: typeof startedAt === 'string' ? startedAt : '' });
+    }
   }
   return builds;
 }
@@ -95,10 +96,12 @@ function findBaseline(
 
 /** The stored rows when they were written under this schema, else null: another schema's rows do not compare. */
 function sameSchemaInputs(stored: StoredInputs): Input[] | null {
-  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return null;
-  const { schema, inputs } = stored as { schema?: unknown; inputs?: unknown };
-  return schema === FINGERPRINT_SCHEMA && Array.isArray(inputs) ? (inputs as Input[]) : null;
+  const inputs = field(stored, 'inputs');
+  return field(stored, 'schema') === FINGERPRINT_SCHEMA && Array.isArray(inputs) ? inputs.filter(isInput) : null;
 }
+
+const isInput = (value: unknown): value is Input =>
+  ['name', 'kind', 'hash'].every((key) => typeof field(value, key) === 'string');
 
 const CATEGORY_RANK: Record<BuildMissCategory, number> = {
   'native-dependency': 0,
@@ -143,7 +146,7 @@ function describeChange({ name, kind, change }: InputChange): { category: BuildM
   }
 }
 
-export function missReasonFromChanges({
+function missReasonFromChanges({
   changes,
   baseline,
   rekeyedBy = [],
@@ -223,47 +226,5 @@ export function explainBuildMiss({
     }),
     changedNames: changes.map((change) => change.name),
     previousHash: baseline?.fingerprint ?? null,
-  };
-}
-
-/** A plan's miss reason, compared before the prebuild the run would do. */
-export function predictBuildMiss({
-  root,
-  platform,
-  current,
-  prebuild,
-  deps,
-}: {
-  root: string;
-  platform: StatsPlatform;
-  current: { inputs: readonly Input[] };
-  prebuild: 'generate' | 'regenerate' | null;
-  deps: MissDeps;
-}): BuildMissReason {
-  const { reason } = explainBuildMiss({ root, platform, current, deps });
-  const baseline = reason.baseline && { fingerprint: reason.baseline.fingerprint, from: reason.baseline.from };
-  if (!prebuild || !baseline) return { ...reason, baseline };
-  const dir = platform === 'ios' ? 'ios/' : 'android/';
-  return {
-    ...reason,
-    kind: 'prebuild-pending',
-    summary: `${reason.summary} (before prebuild ${prebuild}s ${dir})`,
-    baseline,
-  };
-}
-
-export function skippedMissReason(summary: string): BuildMissReason {
-  return { kind: 'cache-skipped', summary, changes: [], changeCount: 0, baseline: null, rekeyedBy: [] };
-}
-
-/** The miss reason of a run that built without the cache because no key could be computed. */
-export function uncertainMissReason(uncertain: string): BuildMissReason {
-  return {
-    kind: 'fingerprint-error',
-    summary: `no build-cache key: ${uncertain}`,
-    changes: [],
-    changeCount: 0,
-    baseline: null,
-    rekeyedBy: [],
   };
 }

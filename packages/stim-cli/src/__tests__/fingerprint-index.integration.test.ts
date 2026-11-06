@@ -28,7 +28,9 @@ import {
   takeRead,
   writeRecord,
 } from '../fingerprint/index-store.ts';
+import { fingerprintNotes } from '../fingerprint/doctor.ts';
 import { isUncertain } from '../fingerprint/key.ts';
+import { precomputePass } from '../fingerprint/precompute.ts';
 import {
   disagreementCount,
   localStoreGate,
@@ -125,13 +127,9 @@ const indexOf = (root: string) => indexDir('ios', root, { projectPath: 'ios', gr
 /** Makes the newest record serve an app config other than the one the tree evaluates to, as a tracer gap would. */
 function corruptRecord(root: string): void {
   const [file = ''] = recordFiles(indexOf(root));
-  const record = JSON.parse(readFileSync(file, 'utf8')) as {
-    parts: Record<string, { output: { config: Record<string, unknown> } }>;
-  };
-  const config = record.parts.config?.output.config;
-  if (!config) throw new Error('no config part recorded');
-  config.name = 'stale';
-  writeFileSync(file, JSON.stringify(record));
+  const text = readFileSync(file, 'utf8');
+  if (!text.includes('"name":"fp"')) throw new Error('no config part recorded');
+  writeFileSync(file, text.replaceAll('"name":"fp"', '"name":"stale"'));
 }
 
 describe('recorded reads', () => {
@@ -325,5 +323,43 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))('ve
     corruptRecord(root);
     const stale = await key(root);
     expect(await remoteStoreGate(request(root), stale, { env: env() })).toMatchObject({ store: false });
+  });
+});
+
+describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))('precompute and doctor', () => {
+  test(
+    'a pass brings a workspace up to date under the env its last run recorded, and verifies pending hits',
+    SLOW,
+    async () => {
+      const root = expoApp('app');
+      await settled();
+      const signal = new AbortController().signal;
+      expect((await precomputePass([request(root)], { admitted: true, signal })).precomputed).toEqual([
+        { root, outcome: 'skipped', reason: 'no fingerprint env recorded yet' },
+      ]);
+      const computed = await key(root, 'use', { APP_FLAG: 'recorded' });
+      const hit = await key(root, 'use', { APP_FLAG: 'recorded' });
+      verifyHit(request(root), hit, { env: env({ APP_FLAG: 'recorded' }), passes: true });
+      ran();
+      const pass = await precomputePass([request(root)], { admitted: true, signal });
+      expect(pass).toEqual({
+        precomputed: [{ root, outcome: 'computed', hash: computed.hash, from: 'index' }],
+        verified: 1,
+      });
+      expect(ran()).toEqual(['config', 'embed', 'react-native-config', 'resolve']);
+    },
+  );
+
+  test('doctor names ignored fingerprint.config.js keys and a lockfile it cannot read', SLOW, async () => {
+    const root = expoApp('app', {
+      'fingerprint.config.js': "module.exports = { extraSources: [], ignorePaths: ['ios/**'] };\n",
+    });
+    rmSync(join(root, 'pnpm-lock.yaml'));
+    write(join(root, 'bun.lockb'), '\u0000');
+    const notes = await fingerprintNotes(request(root), { env: env() });
+    expect(notes.map((note) => note.message)).toEqual([
+      "fingerprint.config.js ignorePaths is ignored by Stim's build-cache key",
+      'no readable lockfile, so every native package is hashed by its files',
+    ]);
   });
 });

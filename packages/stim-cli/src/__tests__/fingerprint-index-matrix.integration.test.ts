@@ -182,11 +182,8 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))(
           () => {
             const dir = join(app, 'node_modules', 'added-lib');
             nativePackage(dir, 'added-lib', '2.0.0');
-            const manifest = JSON.parse(readFileSync(join(app, 'package.json'), 'utf8')) as {
-              dependencies: Record<string, string>;
-            };
-            manifest.dependencies['added-lib'] = '*';
-            write(join(app, 'package.json'), JSON.stringify(manifest));
+            const manifest = readFileSync(join(app, 'package.json'), 'utf8');
+            write(join(app, 'package.json'), manifest.replace('"ws-lib":"*"', '"ws-lib":"*","added-lib":"*"'));
             reinstall();
           },
         ],
