@@ -393,11 +393,13 @@ export class OffloadJobs {
     return { result: { job: job.id } };
   }
 
-  /** Cancels the jobs of `client` with SIGTERM, resolving once each has exited. */
+  /** Cancels the jobs of `client`, ending their input and, off Windows, with SIGTERM; resolves once each has exited. */
   stop(client: string | null): Promise<void> {
     const jobs = [...this.jobs.values()].filter((job) => client === null || job.client === client);
     for (const job of jobs) {
-      job.child.kill('SIGTERM');
+      job.child.stdin?.end();
+      // Node's SIGTERM on Windows is TerminateProcess, which skips the job's cancellation of its builds; EOF runs it.
+      if (process.platform !== 'win32') job.child.kill('SIGTERM');
       setTimeout(() => job.child.kill('SIGKILL'), STOP_GRACE_MS).unref();
     }
     return Promise.all(jobs.map((job) => job.exited)).then(() => undefined);
