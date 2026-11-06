@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,9 +14,11 @@ const read = (file) => {
   }
 };
 let current = isAbsolute(root) ? read(join(root, 'current.json')) : null;
+const entry = (dist) =>
+  process.argv[2] === 'status' && existsSync(join(dist, 'status.mjs')) ? 'status.mjs' : 'cli.mjs';
 
 if (current === null) {
-  import('../dist/cli.mjs');
+  import(`../dist/${entry(join(import.meta.dirname, '..', 'dist'))}`);
 } else {
   const { installKind, route } = await import('./route.mjs');
   const self = dirname(dirname(realpathSync(fileURLToPath(import.meta.url))));
@@ -62,7 +64,7 @@ if (current === null) {
     else process.exitCode = run.status ?? 1;
   } else if (decision.run === 'engine') {
     Reflect.set(globalThis, Symbol.for('stim.main'), true);
-    import(pathToFileURL(engine('cli.mjs')).href).then(
+    import(pathToFileURL(engine(entry(join(root, current.dir, 'dist')))).href).then(
       (cli) => cli.main?.(process.argv, { invokedVersion: copy.version, onLoadError: runOwn }),
       runOwn,
     );
