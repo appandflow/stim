@@ -1,4 +1,4 @@
-import { eventEnumCases, replaceReceivedField } from '../../mock-server/receive-fixtures';
+import { eventEnumCases, replaceReceivedField } from '../../../../packages/core/__tests__/fixtures/receive-fixtures';
 import type { FrameEvent } from '@/protocol/types';
 import { matchingDeviceFrame, supportsFrame } from './device-frame';
 import type { DeviceFrameArtwork } from '@/protocol/types';
