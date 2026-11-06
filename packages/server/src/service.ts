@@ -19,6 +19,8 @@ import { isJsonObject, stimBuildDigest, tailscaleEnv } from '@stim-cli/core/stat
 import type { WorkerRootUsage } from './worker-areas.ts';
 import {
   answersAs,
+  launchdArguments,
+  withProgramArguments,
   DEFAULT_LABEL,
   DEFAULT_PORT,
   validateLabel,
@@ -278,6 +280,37 @@ export async function installService(options?: ServiceOptions): Promise<string[]
   return holdingUpdateClaim(options.label, () => installJob(options));
 }
 
+/**
+ * The engine store's `bin/stimd` shim, which `stim engine` promotion writes and rewrites at each flip, so a unit naming it
+ * never names a deleted build; null without an engine store.
+ */
+function engineShim(env: NodeJS.ProcessEnv = process.env): string | null {
+  const shim = join(env.STIM_ENGINE_ROOT || join(homedir(), '.stim', 'engine'), 'bin', 'stimd');
+  return existsSync(shim) ? shim : null;
+}
+
+/**
+ * Rewrites the LaunchAgent `label`, when it names node and a Stim script (`<node> <copy>/bin/stim.mjs serve --service`,
+ * as Stim 1.42 wrote it), to name the engine store's `bin/stimd` shim with the same options. launchd reads the file only
+ * when the job is bootstrapped, so the rewrite takes effect at the next bootstrap. Returns whether it rewrote the file.
+ */
+export async function rewriteUnitToShim(label: string): Promise<boolean> {
+  const stimd = serviceManager().name === 'launchd' ? engineShim() : null;
+  const installed = stimd ? await readInstalled(label) : null;
+  if (!stimd || !installed?.managed || installed.node === null || installed.script === null || installed.port === null)
+    return false;
+  const path = plistPath(label);
+  const args = launchdArguments({ ...installed, node: installed.node, script: installed.script, port: installed.port, stimd });
+  const partial = `${path}.${process.pid}.tmp`;
+  writeFileSync(
+    partial,
+    withProgramArguments(readFileSync(path, 'utf8'), [...(installed.host ? [installed.host, 'run'] : []), ...args]),
+    { mode: 0o644 },
+  );
+  renameSync(partial, path);
+  return true;
+}
+
 export async function installJob(
   options: ServiceOptions,
   setup?: { script: string; host: HostApp | null; requestPermissions: false },
@@ -304,11 +337,13 @@ export async function installJob(
   if (process.env.SHELL) environment.SHELL = process.env.SHELL;
   const manager = serviceManager();
   const host = setup ? setup.host : await manager.host();
+  const stimd = manager.name === 'launchd' ? engineShim() : null;
   const spec: ServiceSpec = {
     host: host?.executable ?? null,
     label: options.label,
     node: stableNode(process.env.PATH),
     script,
+    ...(stimd ? { stimd } : {}),
     port: options.port,
     env: setup && !options.env.length ? (previous?.env ?? []) : options.env,
     pathPrepend: setup && !options.pathPrepend.length ? (previous?.pathPrepend ?? []) : options.pathPrepend,
@@ -321,7 +356,7 @@ export async function installJob(
   const tailscale = findTailscale(process.env) ?? 'tailscale';
   if (
     setup &&
-    previous?.script === script &&
+    previous?.script === (stimd ?? script) &&
     previous.port === options.port &&
     previous.host === spec.host &&
     JSON.stringify(normalizeEnv(previous.env)) === JSON.stringify(normalizeEnv(spec.env)) &&

@@ -129,6 +129,11 @@ async function flip(root: string, build: string, manifest: Manifest, current: Cu
   mkdirSync(join(root, 'bin'), { recursive: true });
   writeRecord(join(root, 'bin', 'stim'), `#!/bin/sh\nexec "${node.path}" "${router}" "$@"`, 0o755);
   writeRecord(join(root, 'bin', 'stim.cmd'), `@"${node.path}" "${router}" %*\r`);
+  writeRecord(
+    join(root, 'bin', 'stimd'),
+    `#!/bin/sh\nexec "${node.path}" "${join(root, build, 'dist', 'cli.mjs')}" __stimd "$@"`,
+    0o755,
+  );
 }
 
 function fail(message: string): never {
