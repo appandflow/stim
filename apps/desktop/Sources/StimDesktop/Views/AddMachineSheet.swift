@@ -360,7 +360,7 @@ struct AddMachineSheet: View {
         if wizard.phase != .cancelled {
           Text(
             model.os == .macOS
-              ? "Run this on \(name), then approve each request there (y) in Terminal. When Stim Desktop on \(name) runs its own stim-server rather than a stim-server service, you can instead paste it there in Settings > Connections > Using this machine > Add > Machine to Build or Run Simulators Here, and choose Allow."
+              ? "Run this on \(name), then approve each request there (y) in Terminal. When Stim Desktop on \(name) runs its own stim-server rather than a stim service, you can instead paste it there in Settings > Connections > Using this machine > Add > Machine to Build or Run Simulators Here, and choose Allow."
               : "Run this on \(name), then approve each request there (y) in \(shell)."
           )
           .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
@@ -369,7 +369,7 @@ struct AddMachineSheet: View {
           Text(statusText).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
           if !wizard.revokeIds.isEmpty {
             Text("On \(name), revoke these requests:").font(.stim(.headline))
-            ForEach(wizard.revokeIds.sorted(), id: \.self) { CopyableCommand(command: "stim-server devices revoke \($0)") }
+            ForEach(wizard.revokeIds.sorted(), id: \.self) { CopyableCommand(command: "stim pairings revoke \($0)") }
           }
         } else {
           if wizard.journal == nil || wizard.failure(now: model.now) == .noAnswer || wizard.failure(now: model.now) == .expired {
@@ -467,7 +467,7 @@ struct AddMachineSheet: View {
       )
       if let older = model.olderThanSetup {
         Text(
-          "stim-server \(older) on \(name) speaks an older protocol and must be updated to \(setupTicketVariableVersion.description). If Stim Desktop runs it there, update Stim Desktop on \(name), then run the setup command again. For a stim-server service, the setup command updates it. Otherwise setup prints the exact update command there."
+          "stim-server \(older) on \(name) speaks an older protocol and must be updated to \(setupTicketVariableVersion.description). If Stim Desktop runs it there, update Stim Desktop on \(name), then run the setup command again. For a stim service, the setup command updates it. Otherwise setup prints the exact update command there."
         )
       }
       HStack {
@@ -500,7 +500,7 @@ struct AddMachineSheet: View {
       Text("The request lapsed. Stim asks again with the same ticket, at most once every 30 seconds while it is valid.")
     case .grantedOther(_, let journalId, _):
       Text("Another request from this Mac was approved. Revoke it on \(name), then generate a New command.")
-      CopyableCommand(command: "stim-server devices revoke \(journalId)")
+      CopyableCommand(command: "stim pairings revoke \(journalId)")
     case .funneled(let fix):
       Text("Setup refused because the route is public. On \(name), run:")
       CopyableCommand(command: fix)

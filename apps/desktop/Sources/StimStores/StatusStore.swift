@@ -383,7 +383,7 @@ public final class StatusStore: ObservableObject {
 
   private func readDoctor(cwd: String, client: ServerClient) async throws -> DoctorReport {
     try Task.checkCancellation()
-    guard case .open(let hello) = client.state, hello.features?.contains("desktop-reports") == true else {
+    guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
       throw ServerError(code: "unsupported", message: "Update the local stim-server to read setup reports.")
     }
     let result = try await client.report(["report": .string("doctor"), "cwd": .string(cwd)], restart: true)

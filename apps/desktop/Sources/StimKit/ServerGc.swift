@@ -15,7 +15,7 @@ public struct ServerGcResult: Sendable {
 ) async throws -> ServerGcResult {
   try Task.checkCancellation()
   let client = try desktopActionServer(connection, stimHome: stimHome, action: "clean up this Stim home")
-  guard case .open(let hello) = client.state, hello.features?.contains("desktop-gc") == true else {
+  guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
     throw ServerError(code: "unsupported", message: "Update stim-server to run cleanup from Desktop.")
   }
   guard command.program == "stim", command.arguments.first == "gc" else {

@@ -61,15 +61,8 @@ import { reactNativeBuildQuery } from './react-native-artifact.ts';
 import type { SyncPlan } from './signing-files.ts';
 import { namedBuildMachine, OffloadRefusal, workerFailureReason } from '../build-placement.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
-import {
-  buildsOnlyOnWorker,
-  toolchainMismatches,
-  toolchainNotes,
-  cocoapodsDifference,
-  type BuildTarget,
-  type OffloadProblem,
-  type WorkerToolchain,
-} from './toolchain.ts';
+import { toolchainMismatches, toolchainNotes, cocoapodsDifference, type OffloadProblem } from './toolchain.ts';
+import { buildsOnlyOnWorker, type BuildTarget, type WorkerToolchain } from '../engine/toolchain.ts';
 import { ambientContext, dependencyLockfile, swiftpmArtifactQuery, type StimContext } from '@stim-cli/core';
 import {
   PEER,

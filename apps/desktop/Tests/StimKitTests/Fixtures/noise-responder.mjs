@@ -2,14 +2,12 @@
 // With "hold" the socket stays open after message 3, so no reply to hello ever comes.
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { generateNoiseKeyPair } from '../../../../../packages/core/dist/noise.mjs';
+import { acceptNoise, keyFingerprint, secretValues } from '../../../../../packages/core/dist/noise-session.mjs';
 
 const [runtime, token, mode] = process.argv.slice(2);
 const modules = join(runtime, 'node_modules');
 const { WebSocketServer } = createRequire(join(modules, 'index.js'))('ws');
-const core = (file) => import(pathToFileURL(join(modules, '@stim-cli/core/dist', file)).href);
-const { generateNoiseKeyPair } = await core('noise.mjs');
-const { acceptNoise, keyFingerprint, secretValues } = await core('noise-session.mjs');
 
 const keyPair = generateNoiseKeyPair();
 const values = secretValues(Buffer.from(token, 'base64url'));

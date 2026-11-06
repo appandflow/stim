@@ -1,7 +1,7 @@
-import { readHostedAndroidStatus } from './device-host/hosted-android-status.ts';
-import { readHostedIosStatus } from './device-host/hosted-ios-status.ts';
+import type { readHostedAndroidStatus } from './device-host/hosted-android-status.ts';
+import type { readHostedIosStatus } from './device-host/hosted-ios-status.ts';
 import { machineNumber } from './machine-number.ts';
-import { readHostedMacosStatus } from './device-host/hosted-macos-status.ts';
+import type { readHostedMacosStatus } from './device-host/hosted-macos-status.ts';
 import { inspectProcessIdentity } from './process-identity.ts';
 import { deviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
 import { existsSync } from 'fs';
@@ -260,9 +260,18 @@ export function liveProbes({
     },
     listedAdb: () => listedAdb,
     metro: readMetroFacts,
-    hostedIos: readHostedIosStatus,
-    hostedAndroid: readHostedAndroidStatus,
-    hostedMacos: readHostedMacosStatus,
+    hostedIos: async (placements) =>
+      Object.keys(placements).length === 0
+        ? {}
+        : (await import('./device-host/hosted-ios-status.ts')).readHostedIosStatus(placements),
+    hostedAndroid: async (placements) =>
+      Object.keys(placements).length === 0
+        ? {}
+        : (await import('./device-host/hosted-android-status.ts')).readHostedAndroidStatus(placements),
+    hostedMacos: async (record) =>
+      !record?.host || record.supervisor || !record.hostLaunched
+        ? { record }
+        : (await import('./device-host/hosted-macos-status.ts')).readHostedMacosStatus(record),
     git: (worktrees, skip) => readWorktreeGit(worktrees, { maxAgeMs: gitMaxAgeMs, skip }),
     androidRuntime: androidRuntimeOf,
     physicalDevice: physicalDeviceReader(),

@@ -11,7 +11,7 @@
       let ticket = SetupTicket.generate(
         now: Date(timeIntervalSince1970: 1_791_284_400), randomBytes: { $0 = Array(0..<32) })
       let command =
-        "STIM_SETUP_TICKET=\(ticket.value) npx --yes --package @stim-cli/server@1.21.0 stim-server setup \\\n  --expires \(ticket.isoExpires) \\\n  --build \\\n  --device-host"
+        "STIM_SETUP_TICKET=\(ticket.value) npx --yes stim@1.21.0 setup \\\n  --expires \(ticket.isoExpires) \\\n  --build \\\n  --device-host"
       let request = try? SetupRequest.parse(command)
       func step(_ id: String, _ state: SetupJournal.Step.State, _ title: String, _ detail: String? = nil)
         -> SetupJournal.Step

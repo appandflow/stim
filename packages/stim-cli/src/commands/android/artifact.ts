@@ -44,19 +44,8 @@ import type { RunRecorder } from '../../engine/stats.ts';
 import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
 import { machineCapacity, type BuildMissReason, type MachineCapacity } from '@stim-cli/core/state';
 import { claimFailure } from '../../ownership-claim.ts';
-import { predictedRefusal, type pairedMachines } from '../../offload/build-machines.ts';
-import {
-  closeOffload,
-  chooseBuildMachine,
-  offloadBuild,
-  buildPlacementCandidates,
-  offloadPlacement,
-  offloadCheck,
-  placementLoad,
-  remotePhaseText,
-  type OffloadChoice,
-  type BuildHandoff,
-} from '../../offload/client.ts';
+import type { pairedMachines } from '../../offload/build-machines.ts';
+import type { OffloadChoice, BuildHandoff } from '../../offload/client.ts';
 import {
   fingerprintMismatchRemedy,
   missingPackageManagerRemedy,
@@ -506,6 +495,7 @@ export async function acquireAndroidArtifact(
       hereReason = cacheIneligible;
       return null;
     }
+    const { buildPlacementCandidates, offloadPlacement, offloadCheck } = await import('../../offload/client.ts');
     const { machines, localEnabled } = buildPlacementCandidates(buildMachine);
     if (localEnabled && machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local')
       return null;
@@ -549,6 +539,7 @@ export async function acquireAndroidArtifact(
         return null;
       });
       if (!check) return null;
+      const { predictedRefusal } = await import('../../offload/build-machines.ts');
       const predicted = predictedRefusal(buildMachine, check.problems);
       if (predicted)
         fallBack(predicted.reason, predicted.reason, {
@@ -572,6 +563,7 @@ export async function acquireAndroidArtifact(
       return null;
     }
     const request = offload.request;
+    const { chooseBuildMachine, closeOffload, placementLoad } = await import('../../offload/client.ts');
     const choice = await chooseBuildMachine({
       projectRoot: root,
       target,
@@ -633,6 +625,7 @@ export async function acquireAndroidArtifact(
         );
       return false;
     }
+    const { offloadBuild, remotePhaseText, placementLoad } = await import('../../offload/client.ts');
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
     const disownStaging = uncached ? run.own(stagingDir) : null;
     const outcome = await offloadBuild({

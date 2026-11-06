@@ -49,7 +49,7 @@ struct StatusStoreTests {
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/doctor-test.sock"), clientName: "test", clientVersion: "1",
       transport: { _, onEvent in
-        let transport = IdentityTransport(home: "test-home", onEvent: onEvent, features: ["desktop-reports"])
+        let transport = IdentityTransport(home: "test-home", onEvent: onEvent)
         socket = transport
         return transport
       })
@@ -92,7 +92,7 @@ struct StatusStoreTests {
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/doctor-test.sock"), clientName: "test", clientVersion: "1",
       transport: { _, onEvent in
-        let transport = IdentityTransport(home: "test-home", onEvent: onEvent, features: ["desktop-reports"])
+        let transport = IdentityTransport(home: "test-home", onEvent: onEvent)
         socket = transport
         return transport
       })
@@ -436,12 +436,10 @@ struct StatusStoreTests {
 
 @MainActor private final class IdentityTransport: ServerTransport {
   let home: String
-  let features: [String]
   var doctorRequests: [(id: JSONValue, cwd: String)] = []
   let onEvent: @MainActor (ServerTransportEvent) -> Void
 
-  init(home: String, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void, features: [String] = []) {
-    self.features = features
+  init(home: String, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void) {
     self.home = home
     self.onEvent = onEvent
   }
@@ -464,12 +462,12 @@ struct StatusStoreTests {
     }
     guard request["method"] == .string("hello") else { return }
     let result: JSONValue = .object([
-      "protocol": .number(1),
+      "protocol": .number(1), "desktopApi": .number(1),
       "server": .object([
         "id": .string(home), "name": .string("Mac"), "version": .string("1"), "stim": .string("1"),
       ]),
       "capabilities": .array([.string("read")]),
-      "features": .array(features.map(JSONValue.string)),
+
     ])
     reply(id, result)
   }
@@ -533,7 +531,7 @@ struct StatusStoreTests {
       reply([
         "id": id,
         "result": .object([
-          "protocol": .number(2),
+          "protocol": .number(2), "desktopApi": .number(1),
           "server": .object(["name": .string("Mac"), "version": .string("1"), "stim": .string("1")]),
           "capabilities": .array([.string("read")]),
         ]),

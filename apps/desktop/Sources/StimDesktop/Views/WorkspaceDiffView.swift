@@ -21,7 +21,7 @@ struct WorkspaceDiffView: View {
     guard let home, let connection = server.statsConnection,
       URL(fileURLWithPath: connection.home).resolvingSymlinksInPath().path == home,
       case .open(let hello) = connection.client.state,
-      hello.features?.contains("workspace-diff") == true, hello.capabilities.contains("read")
+      hello.desktopApi == ServerProtocol.desktopApi, hello.capabilities.contains("read")
     else { return nil }
     return connection.client
   }
@@ -94,9 +94,9 @@ struct WorkspaceDiffView: View {
 
   private var unavailable: String {
     switch server.link {
-    case .open(let features, let capabilities):
+    case .open(let desktopApi, let capabilities):
       if !capabilities.contains("read") { return "This connection needs read access to review changes." }
-      if features?.contains("workspace-diff") != true {
+      if desktopApi != ServerProtocol.desktopApi {
         return "This server does not offer workspace diffs. Update stim-server and reconnect."
       }
       guard let home else { return "Preparing the workspace connection" }

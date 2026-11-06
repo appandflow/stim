@@ -34,7 +34,6 @@ public enum AppPreferences {
     public static let notifiesDiskPressure = "notify.diskPressure"
     public static let servesPhones = "servesPhones"
     public static let updatesBuildMachines = "updatesBuildMachines"
-    public static let stimServerExecutable = "stimServerExecutable"
     /// The loopback port Stim Desktop runs or looks for stim-server on; unset means 7787. Set only with `defaults write`.
     public static let stimServerPort = "stimServerPort"
     /// The Stim home before Settings held one; `migrate` moves it into `stimHome` once.

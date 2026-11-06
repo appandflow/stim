@@ -90,6 +90,9 @@ jobs:
     if: ${{ !cancelled() && needs.verify.result == 'success' && (needs.demo-server.result == 'success' || needs.demo-server.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment: release
+    permissions:
+      contents: read
+      actions: read
     timeout-minutes: 120
     defaults:
       run:
@@ -144,6 +147,13 @@ jobs:
           fi
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
           echo "::notice::Mobile release mode: $mode"
+
+      - name: Stable npm and Desktop precede the production update
+        if: steps.mode.outputs.mode == 'update'
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-order.mjs mobile
 
       - name: Publish an update
         if: steps.mode.outputs.mode == 'update'

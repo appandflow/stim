@@ -136,9 +136,9 @@ struct PhysicalDeviceScreen: View {
 
   private var keyboardChords: Bool {
     guard !device.isPhysical, device.platform == "ios" || device.platform == "android",
-      case .open(let features, _) = ServerSession.session(for: owner)?.link ?? .connecting
+      case .open(let desktopApi, _) = ServerSession.session(for: owner)?.link ?? .connecting
     else { return false }
-    return features?.contains("device-keyboard") == true
+    return desktopApi == ServerProtocol.desktopApi
   }
 
   private var takesTwoFingers: Bool {

@@ -110,7 +110,7 @@ final class BuildMachinesModel {
   static func currentLocalStim() async -> LocalStim? {
     guard let client = ServerSession.shared.client, case .open(let hello) = client.state else { return nil }
     let server = await ServerController.shared.cli()
-    let script = server.launcher?.script ?? server.executable
+    let script = server.bundled?.script
     var adopted = false
     if case .running(_, owned: false) = ServerController.shared.state { adopted = true }
     return LocalStim(
@@ -194,7 +194,7 @@ final class BuildMachinesModel {
       if phase.isDone { break }
       if ContinuousClock.now > deadline {
         updates[entry] = .failed(
-          "No outcome after 45 minutes. On \(entry), run stim-server service status to see what it runs.")
+          "No outcome after 45 minutes. On \(entry), run stim service status to see what it runs.")
         break
       }
     }
