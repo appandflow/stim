@@ -382,6 +382,11 @@ describe('StimConnection', () => {
         `Mac runs stim 1.42.0. ${desktop}`,
       ],
       ['a lower phone API under a service', { ...hello, phoneApi: 1 }, `Mac runs stim 1.42.0. On Mac, run ${npm}.`],
+      [
+        'a lower phone API under stim serve',
+        { ...hello, phoneApi: 1, host: { ...host, owner: 'cli' } },
+        'Mac runs stim 1.42.0. On Mac, run npm i -g stim@latest, then restart stim serve.',
+      ],
     ];
     for (const [, result, reason] of cases) {
       const { connection, sockets, timers, states } = setup();
