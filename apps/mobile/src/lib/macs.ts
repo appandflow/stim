@@ -13,7 +13,6 @@ export interface PairedMac {
 }
 
 const INDEX_KEY = 'stim.macs';
-const legacyTokenKey = (id: string) => `stim.mac.${id}.token`;
 const identityKey = (id: string) => `stim.mac.${id}.home-id`;
 
 export async function rememberServerIdentity(id: string, serverId: string): Promise<void> {
@@ -44,18 +43,7 @@ function parseIndex(raw: string | null): Partial<PairedMac>[] {
 async function readIndex(): Promise<PairedMac[]> {
   const macs = parseIndex(await SecureStore.getItemAsync(INDEX_KEY));
   const current = macs.filter((mac): mac is PairedMac => typeof mac.serverKey === 'string');
-  if (current.length < macs.length) await dropProtocolOnePairings(macs, current);
   return (await clientKeyChanged()) ? dropAll(current) : current;
-}
-
-/** A pairing made before protocol 2 has a device token and no server key; the phone must pair again. */
-async function dropProtocolOnePairings(macs: Partial<PairedMac>[], current: PairedMac[]): Promise<void> {
-  for (const mac of macs) {
-    if (typeof mac.serverKey === 'string' || typeof mac.id !== 'string') continue;
-    await SecureStore.deleteItemAsync(legacyTokenKey(mac.id));
-    await SecureStore.deleteItemAsync(identityKey(mac.id));
-  }
-  await SecureStore.setItemAsync(INDEX_KEY, JSON.stringify(current));
 }
 
 let checkedClientKey = false;

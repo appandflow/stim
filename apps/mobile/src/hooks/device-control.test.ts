@@ -25,7 +25,7 @@ jest.mock('@/lib/machine-store', () => {
 const machines = (jest.requireMock('@/lib/machine-store') as { created: ReturnType<typeof createMachineStore>[] })
   .created[0]!;
 
-function openLink(connection: object, features: string[] = []) {
+function openLink(connection: object, hostCapabilities: string[] = []) {
   machines.patchLink('m1', {
     connection: connection as unknown as StimConnection,
     state: {
@@ -34,7 +34,7 @@ function openLink(connection: object, features: string[] = []) {
       server: { name: 'stim-server', version: '1', stim: '1' },
       actions: null,
       capabilities: ['control'],
-      features,
+      hostCapabilities,
       deviceId: null,
       deviceName: null,
     },
@@ -87,7 +87,7 @@ test('ignores simulator options returned by an ended connection with a reused se
     server: { name: 'stim-server', version: '1', stim: '1' },
     actions: null,
     capabilities: ['control' as const],
-    features: [],
+    hostCapabilities: [],
     deviceId: null,
     deviceName: null,
   };
@@ -131,7 +131,7 @@ test('starts native Control only when the server advertises native window input'
     server: { name: 'stim-server', version: '1', stim: '1' },
     actions: null,
     capabilities: ['control' as const],
-    features: ['macos-window'],
+    hostCapabilities: ['macos-window'],
     deviceId: null,
     deviceName: null,
   };
@@ -144,7 +144,7 @@ test('starts native Control only when the server advertises native window input'
   await act(async () => result.current.begin());
   expect(request).not.toHaveBeenCalled();
   await act(async () =>
-    machines.patchLink('m1', { state: { ...state, features: ['macos-window', 'macos-window-control'] } }),
+    machines.patchLink('m1', { state: { ...state, hostCapabilities: ['macos-window', 'macos-window-control'] } }),
   );
   await act(async () => result.current.begin());
   expect(result.current.state.kind).toBe('on');
@@ -201,7 +201,7 @@ test.each(['platform', 'postures', 'reason'])(
         server: { name: 'Mac', version: '1', stim: '1' },
         actions: null,
         capabilities: ['control'],
-        features: [],
+        hostCapabilities: [],
         deviceId: null,
         deviceName: null,
       },

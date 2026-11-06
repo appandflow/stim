@@ -7592,7 +7592,7 @@ describe('strict remote machine selection', () => {
     });
     expect(result.error?.remedy).toContain('JAVA_HOME');
     expect(result.error?.remedy).toContain('sdkmanager');
-    expect(result.error?.remedy).toContain('stim-server service update');
+    expect(result.error?.remedy).toContain('stim service update');
     expect(prebuild).not.toHaveBeenCalled();
     expect(existsSync(marker)).toBe(false);
     expect(choose).not.toHaveBeenCalled();

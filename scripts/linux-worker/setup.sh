@@ -39,8 +39,8 @@ usage() {
 Usage: setup.sh [options] [sdkmanager-package ...]
 
 Installs or verifies Node 22.12+ with Corepack (pnpm and yarn), JDK 17, the
-Android command-line tools in ~/Android/Sdk, Tailscale, @stim-cli/server, and
-the stim-server systemd user service with a tailnet-only route.
+Android command-line tools in ~/Android/Sdk, Tailscale, stim, and
+the stim systemd user service with a tailnet-only route.
 
 Packages named on the command line replace the default list
 (platforms;android-37.0, build-tools;37.0.0, ndk;27.1.12297006, cmake;3.22.1).
@@ -51,7 +51,7 @@ SDK licenses.
 Options:
   --emulator               Add the user to the kvm group and install the Android
                            emulator and an x86_64 API 36 system image.
-  --server-version V       @stim-cli/server version to install (default: latest).
+  --version V              stim version to install (default: latest).
   --hostname NAME          Tailscale machine name for a new login.
   --no-tailscale           Skip installing and logging in to Tailscale.
   --no-service             Skip the server install and the systemd service.
@@ -66,8 +66,8 @@ USAGE
 while [ $# -gt 0 ]; do
   case "$1" in
     --emulator) emulator=1 ;;
-    --server-version)
-      [ $# -ge 2 ] || { echo "--server-version needs a value" >&2; exit 2; }
+    --version)
+      [ $# -ge 2 ] || { echo "--version needs a value" >&2; exit 2; }
       server_version="$2"
       shift
       ;;
@@ -252,22 +252,22 @@ setup_tailscale() {
 }
 
 install_server() {
-  step "stim-server $server_version"
+  step "stim $server_version"
   local installed=""
-  if command -v stim-server >/dev/null; then installed="$(stim-server --version 2>/dev/null | head -n1 || true)"; fi
+  if command -v stim >/dev/null; then installed="$(stim serve --version 2>/dev/null | head -n1 || true)"; fi
   if [ "$server_version" != latest ] && [ "$installed" = "$server_version" ]; then
-    ok "stim-server $installed is already installed"
+    ok "stim $installed is already installed"
   else
-    npm_global_install "@stim-cli/server@$server_version"
-    ok "stim-server $(stim-server --version 2>/dev/null | head -n1 || true)"
+    npm_global_install "stim@$server_version"
+    ok "stim $(stim serve --version 2>/dev/null | head -n1 || true)"
   fi
   sudo loginctl enable-linger "$user_name"
   ok "linger is on for $user_name, so the service survives logout"
   local serve=()
   if [ "$tailscale_step" = 1 ]; then serve=(--serve); fi
-  stim-server service install "${serve[@]}" \
+  stim service install "${serve[@]}" \
     --env "JAVA_HOME=$JAVA_HOME_DIR" --env "ANDROID_HOME=$ANDROID_HOME_DIR"
-  stim-server service status || warn "stim-server service status reported a problem; see the output above"
+  stim service status || warn "stim service status reported a problem; see the output above"
 }
 
 next_steps() {
@@ -295,7 +295,7 @@ next_steps() {
        stim android --remote-build $name --no-build-cache
 EOF
   echo
-  echo "To pair the phone app with this machine, run 'stim-server pair' here."
+  echo "To pair the phone app with this machine, run 'stim pair' here."
   if [ "$emulator" = 1 ]; then
     echo
     echo "An emulator needs an x86_64 build. 16 GB of memory is tight for an emulator and a warm Gradle daemon; see the Linux worker docs."

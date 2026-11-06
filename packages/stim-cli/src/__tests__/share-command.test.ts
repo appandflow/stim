@@ -69,7 +69,7 @@ describe('stim share', () => {
     deps.request = (method, params) => requestLocalServer(method, params, { version: '9.9.9' });
     expect(await runShare('ios', { control: true }, deps, '9.9.9')).toMatchObject({
       ok: false,
-      error: { code: 'STIM_SERVER_NOT_RUNNING', remedy: expect.stringContaining('@stim-cli/server@9.9.9') },
+      error: { code: 'STIM_SERVER_NOT_RUNNING', remedy: expect.stringContaining('stim@9.9.9') },
     });
   });
 
@@ -206,7 +206,7 @@ describe('stim share', () => {
   it('names an outdated stim-server when it does not take a slug', async () => {
     const deps = fake([() => ({ error: { code: 'bad-request', message: 'share.start does not take slug.' } })]);
     expect(await runShare('ios', { slug: 'pokedex' }, deps, '1.0.0')).toMatchObject({
-      error: { code: 'STIM_SHARE_REFUSED', remedy: expect.stringContaining('stim-server service update') },
+      error: { code: 'STIM_SHARE_REFUSED', remedy: expect.stringContaining('stim service update') },
     });
   });
 
@@ -543,7 +543,7 @@ describe('stim share', () => {
       await runShare('android', {}, deps, '1.0.0');
       expect(await runShare('android', { reuse: true }, deps, '1.0.0')).toMatchObject({
         ok: false,
-        error: { code: 'STIM_SHARE_REFUSED', remedy: expect.stringContaining('stim-server service update') },
+        error: { code: 'STIM_SHARE_REFUSED', remedy: expect.stringContaining('stim service update') },
       });
     });
 

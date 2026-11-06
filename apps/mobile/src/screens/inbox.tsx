@@ -147,7 +147,7 @@ export function Inbox() {
             message={
               inbox.supported
                 ? t`What your machines notify about, such as an agent that looks stuck or work that finished, is listed here for 7 days.`
-                : t`Update stim-server on your machines to keep a history of their notifications.`
+                : t`Connect to a machine to see its notifications.`
             }
           />
         }

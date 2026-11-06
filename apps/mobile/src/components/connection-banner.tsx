@@ -22,10 +22,8 @@ function bannerText(state: Exclude<ConnectionState, { kind: 'open' }>): string {
     }
     case 'refused': {
       const { reason } = state;
-      if (state.code === 'server-outdated') return reason;
-      return state.code === 'protocol-unsupported'
-        ? t`${reason} Update this app or the Stim server on the machine.`
-        : t`${reason} Pair this machine again from Stim Desktop.`;
+      if (state.code === 'server-outdated' || state.code === 'protocol-unsupported') return reason;
+      return t`${reason} Pair this machine again from Stim Desktop.`;
     }
     case 'closed':
       return t`Disconnected`;

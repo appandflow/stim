@@ -47,12 +47,12 @@ Branch on the code, never on the message.`,
   An unreachable stop keeps the placement; rerun stim stop when the host answers.
   To see why a host was slow or refused: stim logs --source placement (hosts checked and
   reason codes), stim logs --source build (remote_connect_failed, remote_request_failed),
-  and the host's stim-server service log, searched for the run id (stim guide logs).
+  and the host's stim service log, searched for the run id (stim guide logs).
   A failed build handoff uses upload instead. A host on an older Stim is refused
   with peer-too-old, naming the npm i -g stim@<version> && stim service install
   to run on it.
   A name outside remote.machines is STIM_BAD_ARG. Missing or pending hosting
-  approval keeps the stim remote add and stim-server setup remedies.`,
+  approval keeps the stim remote add and stim setup remedies.`,
     },
     STIM_EAS_BUILD_MISSING: {
       summary: 'no completed EAS development build matches; build only with session authorization',
@@ -455,16 +455,16 @@ not change it.
 
 Run stim remote add <machine> to ask for build access if not approved. Check
 stim remote list. A person on the worker approves this machine
-by running the stim-server setup command stim remote add printed, with its ticket
+by running the stim setup command stim remote add printed, with its ticket
 and expiry (guide settings). Agents never run setup or approve requests.
 Rerun with --remote-build auto or remote for placement with local fallback, or
 --remote-build local to keep the build here.
 `,
     },
     STIM_WORKTREE_SERVICE: {
-      summary: 'worktree remove refuses a folder a stim-server service runs from',
+      summary: 'worktree remove refuses a folder a stim service runs from',
       body: () => `STIM_WORKTREE_SERVICE
-  A service that \`stim-server service install\` wrote runs a program from
+  A service that \`stim service install\` wrote runs a program from
   inside this worktree: on macOS a LaunchAgent with a StimService marker in
   ~/Library/LaunchAgents/<label>.plist, on Linux a systemd user unit with an
   [X-Stim] Managed=true section in ~/.config/systemd/user/<label>.service
@@ -473,8 +473,8 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   but stopped, because launchd or systemd starts it again, and a marked file
   Stim could not read. \`--force\` does not
   override it, and gc leaves the worktree in place.
-  Reinstall the service from another build (stim-server service install --label
-  <label> from a checkout that stays), or remove it with stim-server service
+  Reinstall the service from another build (stim service install --label
+  <label> from a checkout that stays), or remove it with stim service
   uninstall --label <label>, then run stim worktree remove again. Nothing was
   reclaimed or removed. Other processes with their working directory in the
   folder are not detected.`,
@@ -1176,11 +1176,11 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       body: () => `STIM_SERVER_NOT_RUNNING
   Web shares live inside this Stim home's stim-server. stim share ios|android
   starts one when none answers on the local socket. This code means that
-  failed: no stim-server of this exact stim version is installed (install it
-  with npm install --global @stim-cli/server@<version>, or open Stim
-  Desktop), or the one it started did not answer (the message names its log,
+  failed: the bundled server could not start or did not answer. Reinstall
+  with npm install --global stim@<version>, or open Stim Desktop.
+  The message names its log,
   $STIM_HOME/server/share-server.log; read it, fix what it names, then run
-  stim share again). From share list or share stop it only means that no
+  stim share again. From share list or share stop it only means that no
   server runs, so nothing is shared.`,
     },
     STIM_SHARE_REFUSED: {
@@ -1314,20 +1314,14 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   configure metro.publicUrl or let Stim supervise the server.`,
     },
     STIM_BARE_DEPS: {
-      summary: "the supervisor cannot host Metro from the project's node_modules; the @stim-cli/metro capture note",
+      summary: "the supervisor cannot host Metro from the project's node_modules",
       aliases: ['STIM_BARE_LOAD', 'STIM_BARE_API'],
       body: () => `STIM_BARE_DEPS / STIM_BARE_LOAD / STIM_BARE_API  (bare RN)
   The supervisor hosts Metro out of the PROJECT's node_modules, so metro,
   @react-native/dev-middleware and @react-native-community/cli-server-api must
   be installed there and must match the project's React Native. DEPS = not
   resolvable (install them), LOAD = installed but threw while loading,
-  API = loaded but is not the API Stim expects (mismatched versions).
-
-"@stim-cli/metro is not installed ... so bundler and client logs will not be
-captured"  (in metro.ndjson, bare RN)
-  The dev server is serving; only capture is missing, so \`logs\` would report
-  a quiet timeline for a broken build. Install \`@stim-cli/metro\` as a
-  devDependency of the project.`,
+  API = loaded but is not the API Stim expects (mismatched versions).`,
     },
     STIM_EXPO_BIN: {
       summary: 'node_modules/.bin/expo is missing; install dependencies',
@@ -1397,11 +1391,11 @@ captured"  (in metro.ndjson, bare RN)
   printed \`stim ios\` or \`stim android\` command; it restores the app
   from the cache or builds it.
 
-  The API run option \`recordedBuild: true\` (used by \`stim-ci run\`) installs the
+  The API run option \`recordedBuild: true\` (used by \`stim ci run\`) installs the
   app the last build with the same iOS scheme and configuration, or Android
   variant, recorded in this workspace's state. None is recorded, or its app was
   removed. Nothing was started. Build first with the same selectors and the same
-  Stim home (\`stim-ci build\`, or the API build), then run again. \`stim guide ci\`
+  Stim home (\`stim ci build\`, or the API build), then run again. \`stim guide ci\`
   has the flow. \`stim ios\` and \`stim android\` never use it.`,
     },
     STIM_BAD_ARG: {

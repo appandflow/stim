@@ -529,4 +529,4 @@ stim agent-device click <ref>`}
 
 Add the worker with `stim remote add <machine>` or use the [Desktop wizard](./remote-machines.md#use-the-desktop-wizard). A person at the worker approves `device-host` using the generated setup command. Approve only an expected client, since hosting lets it run native code on that Mac. Build and viewer access have separate grants.
 
-On the worker, run `stim-server devices` to list approvals or `stim-server devices revoke <id>` to remove one. [Hosted session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-session-protocol)
+On the worker, run `stim pairings` to list approvals or `stim pairings revoke <id>` to remove one. [Hosted sessions](./remote-machines.md#hosted-parking-and-restart)

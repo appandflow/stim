@@ -1,3 +1,4 @@
+import { PHONE_API } from '@stim-cli/core/protocol';
 import Constants from 'expo-constants';
 import { useIsFocused, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -18,7 +19,7 @@ import { applyWorkspaces, EMPTY_VIEWS, viewsPayload, type StatusViews } from '@/
 import type { MachineUsage, StatusPayload, StatusUsage } from '@/protocol/types';
 import { statusStorage } from '@/storage';
 
-export const CLIENT = { name: 'stim-mobile', version: Constants.expoConfig?.version ?? '0.0.0' };
+export const CLIENT = { name: 'stim-mobile', version: Constants.expoConfig?.version ?? '0.0.0', phoneApi: PHONE_API };
 
 const USAGE_INTERVAL_MS = 15_000;
 

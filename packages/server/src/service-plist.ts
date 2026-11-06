@@ -73,7 +73,7 @@ export function validateServeEnvironment(env: string[], pathPrepend: string[], s
     const parsed = serving && ENV_KEY_PATTERN.test(entry) ? { key: entry } : parseEnvAssignment(entry);
     if (typeof parsed === 'string') return parsed;
     if (!serving && JOB_KEYS.includes(parsed.key)) {
-      return `--env cannot set ${parsed.key}; start stim-server with ${parsed.key} set instead.`;
+      return `--env cannot set ${parsed.key}; start stim serve with ${parsed.key} set instead.`;
     }
   }
   for (const dir of pathPrepend) {

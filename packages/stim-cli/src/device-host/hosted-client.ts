@@ -97,7 +97,7 @@ function hostingCredential(machine: string): DeviceHostMachineCredential {
       `Run stim remote add ${machine}.`,
     );
   if (credential.state !== 'approved') {
-    const remedy = `A person on ${machine} runs the stim-server setup command stim remote add ${machine} printed; then run stim remote list.`;
+    const remedy = `A person on ${machine} runs the stim setup command stim remote add ${machine} printed; then run stim remote list.`;
     throw credentialRefusal(`${machine} has not confirmed hosting access for this machine. ${remedy}`, remedy);
   }
   return credential;

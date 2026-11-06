@@ -314,7 +314,7 @@ describe('service status permissions', () => {
 
   it('points a node-first service at reinstalling', () => {
     expect(statusLines({ ...status, host: null }, permissionPanes(27)).join('\n')).toContain(
-      '`stim-server service install` again',
+      '`stim service install` again',
     );
   });
 });

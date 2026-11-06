@@ -123,7 +123,7 @@ function readableCredentials(): MachineCredential[] {
 
 function revokeCommands(credentials: MachineCredential[]): string[] {
   return [...new Set(credentials.flatMap((each) => (each.deviceId ? [each.deviceId] : [])))].map(
-    (id) => `stim-server devices revoke ${id}`,
+    (id) => `stim pairings revoke ${id}`,
   );
 }
 
@@ -177,7 +177,7 @@ export default function remoteCommand(program: Command, version: string, io: Tai
   remote
     .command('add <machine>')
     .description(
-      'Append a remote machine to remote.machines, keeping the existing entries, and ask it for build and device-host approval. Prints the stim-server setup command a person runs there to approve this machine.',
+      'Append a remote machine to remote.machines, keeping the existing entries, and ask it for build and device-host approval. Prints the stim setup command a person runs there to approve this machine.',
     )
     .option('--json', 'print the result as JSON')
     .action((machine: string, opts: { json?: boolean }) =>
@@ -293,7 +293,7 @@ export default function remoteCommand(program: Command, version: string, io: Tai
         if (pending)
           console.log(
             chalk.dim(
-              `  -> A request to ${machine} was still pending here. If a person there approved it, find this machine in \`stim-server devices\` there and revoke it.`,
+              `  -> A request to ${machine} was still pending here. If a person there approved it, find this machine in \`stim pairings\` there and revoke it.`,
             ),
           );
       }),

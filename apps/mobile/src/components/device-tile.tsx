@@ -48,7 +48,7 @@ export function DeviceTile({
   const now = useNow(30_000);
   const streams =
     (device.running || Boolean(device.host && device.state !== 'stopped')) &&
-    streamsFrames(device, link.kind === 'open' ? link.features : null);
+    streamsFrames(device, link.kind === 'open' ? link.hostCapabilities : null);
   const { frame, error, delayed, delayedReason } = useFrame(workspace, device.platform, device.slot, streams, {
     physical: device.physical,
   });

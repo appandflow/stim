@@ -186,10 +186,10 @@ function serverNotReady(entry: string, startup: PeerStartup | null | undefined, 
           : '';
   const check =
     startup?.cause === 'home-unreadable'
-      ? `Check the disk that holds the Stim home on ${entry} (reconnect or wake an external drive); stim-server serves again by itself once it answers. \`stim-server service status\` there shows the exact reason.`
+      ? `Check the disk that holds the Stim home on ${entry} (reconnect or wake an external drive); stim-server serves again by itself once it answers. \`stim service status\` there shows the exact reason.`
       : startup?.state === 'pending'
         ? `Wait a few seconds and run \`stim doctor\` again.`
-        : `On ${entry}, run \`stim-server service status\` for the reason; the log file it prints has the rest.`;
+        : `On ${entry}, run \`stim service status\` for the reason; the log file it prints has the rest.`;
   return {
     layer: 'server',
     code: 'server-not-ready',
@@ -213,7 +213,7 @@ export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
       code: 'server-no-answer',
       title: 'Server not answering',
       message: `${entry} answers on Tailscale, but its serve route and stim-server sent no reply in time. stim-server may be starting, stalled or restarting.`,
-      remedy: `On ${entry}, run \`stim-server service status\`; it reports a restart loop or a Stim home it is still reading, and the log file to read.`,
+      remedy: `On ${entry}, run \`stim service status\`; it reports a restart loop or a Stim home it is still reading, and the log file to read.`,
     };
   }
   if (peer.online === false && transport?.kind === 'silent') {
@@ -232,7 +232,7 @@ export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
       code: 'route-missing',
       title: 'No serve route',
       message: `${entry} answers on the tailnet, but nothing accepts connections on ${route}, so it has no tailscale serve route for stim-server.`,
-      remedy: `On ${entry}, run \`stim-server service status\`; \`stim-server service install --serve\` creates the route.`,
+      remedy: `On ${entry}, run \`stim service status\`; \`stim service install --serve\` creates the route.`,
     };
   }
   if (transport?.kind === 'silent') {
@@ -250,7 +250,7 @@ export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
       code: 'route-tls',
       title: 'Route certificate',
       message: `The tailscale serve route on ${entry} (${route}) did not present a certificate ${host} accepts: ${sentence(transport.message)}`,
-      remedy: `On ${entry}, run \`tailscale serve status\`, then \`stim-server service install --serve\` to recreate the route.`,
+      remedy: `On ${entry}, run \`tailscale serve status\`, then \`stim service install --serve\` to recreate the route.`,
     };
   }
   if (transport?.kind === 'http') {
@@ -261,7 +261,7 @@ export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
         code: 'server-not-running',
         title: 'Server not running',
         message: `Tailscale and the serve route on ${entry} work, but nothing listens behind the route: stim-server is not running there (HTTP 502).`,
-        remedy: `On ${entry}, run \`stim-server service status\`; \`stim-server service install --serve\` starts it and keeps it running.`,
+        remedy: `On ${entry}, run \`stim service status\`; \`stim service install --serve\` starts it and keeps it running.`,
       };
     }
     if (status === 503) return serverNotReady(entry, input.startup, ' (HTTP 503)');
@@ -278,7 +278,7 @@ export function diagnoseUnreachable(input: UnreachableInput): RemoteDiagnosis {
     code: 'connect-failed',
     title: 'Not answering',
     message: `Could not connect to stim-server on ${entry}: ${sentence(input.reason)}`,
-    remedy: `On ${entry}, run \`stim-server service status\`. To keep it running there, run \`stim-server service install --serve\`.`,
+    remedy: `On ${entry}, run \`stim service status\`. To keep it running there, run \`stim service install --serve\`.`,
   };
 }
 
@@ -297,7 +297,7 @@ export function diagnoseLocalUnreachable(
       code: 'lan-not-listening',
       title: 'Not listening on the local network',
       message: `${entry} answers on the local network, but nothing accepts connections on port ${port}: its stim-server is not running or does not listen on that address.`,
-      remedy: `On ${entry}, run \`stim-server service status\`, and check that server.lanAddresses names the network interface or address ${host} reaches (\`npx --yes stim settings get server.lanAddresses\`). Its stim-server log names each entry it cannot use.`,
+      remedy: `On ${entry}, run \`stim service status\`, and check that server.lanAddresses names the network interface or address ${host} reaches (\`npx --yes stim settings get server.lanAddresses\`). Its server log names each entry it cannot use.`,
     };
   }
   if (transport?.kind === 'silent') {
@@ -316,7 +316,7 @@ export function diagnoseLocalUnreachable(
     code: 'connect-failed',
     title: 'Not answering',
     message: `Could not connect to stim-server on ${entry}: ${sentence(input.reason)}`,
-    remedy: `On ${entry}, run \`stim-server service status\`. To keep it running there, run \`stim-server service install\`.`,
+    remedy: `On ${entry}, run \`stim service status\`. To keep it running there, run \`stim service install\`.`,
   };
 }
 
@@ -331,7 +331,7 @@ export function unconfirmedKeyFinding(
     code,
     level: 'note',
     title: `Remote machine ${entry} needs its server key confirmed`,
-    detail: `${entry} approved ${host} and answered with the stim-server key fingerprint ${fingerprint}. On the local network nothing vouches for that key, so Stim pins it only after a person checks it against the fingerprint \`stim-server setup\` printed there. Until then ${host} does not use ${entry}.`,
+    detail: `${entry} approved ${host} and answered with the stim-server key fingerprint ${fingerprint}. On the local network nothing vouches for that key, so Stim pins it only after a person checks it against the fingerprint \`stim setup\` printed there. Until then ${host} does not use ${entry}.`,
     fix: `Run \`stim remote list\` in a terminal on ${host} and answer y only if the fingerprint matches. If it does not, another machine answered at that address: do not confirm, and check the address in remote.machines.`,
   };
 }

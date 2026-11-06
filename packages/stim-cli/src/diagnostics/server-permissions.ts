@@ -25,7 +25,7 @@ function socketFindings(setup: ServerSetup): Finding[] {
   if (socket.dir) {
     if (!socket.dir.isDirectory) {
       problems.push(`${dir} is not a directory`);
-      fixes.push(`Remove it (\`rm ${dir}\`) and restart stim-server, which creates it with mode 700`);
+      fixes.push(`Remove it (\`rm ${dir}\`) and restart stim serve, which creates it with mode 700`);
     } else {
       if (socket.dir.uid !== socket.uid) {
         problems.push(`${dir} belongs to uid ${socket.dir.uid}, not to this user (uid ${socket.uid})`);
@@ -54,7 +54,7 @@ function socketFindings(setup: ServerSetup): Finding[] {
       level: 'cost',
       title: "The Stim home's stim-server socket is not private to this user",
       detail: `${problems.join('; ')}. The socket answers without pairing or a key, and Stim Desktop's write authority on a server without Desktop's key depends on only this user being able to open it.`,
-      fix: `${fixes.join('; ')}. Then restart stim-server.`,
+      fix: `${fixes.join('; ')}. Then restart stim serve.`,
     },
   ];
 }

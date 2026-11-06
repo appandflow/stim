@@ -44,7 +44,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
   const { connection, state: link } = useMachineLink(tile.item.macId);
   const { item, device } = tile;
   const now = useNow(runningBuild(item.env, device) ? 1_000 : 30_000);
-  const streams = streamsFrames(device, link.kind === 'open' ? link.features : null);
+  const streams = streamsFrames(device, link.kind === 'open' ? link.hostCapabilities : null);
   const { frame, error } = useFrameSnapshot(
     connection,
     item.env.path,

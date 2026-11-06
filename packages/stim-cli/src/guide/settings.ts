@@ -556,7 +556,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         wrong. Neither answering means no warning, not an error.
   cache.provider        one optional SECOND-TIER cache provider: a module
                         path relative to the settings file that names it, or a
-                        package name. It implements the @stim-cli/cache
+                        package name. It implements the stim/plugin
                         contract and can serve Metro transforms, native build
                         artifacts, or both. The local filesystem stays tier
                         one; a provider is read only after a local miss and
@@ -879,7 +879,7 @@ wants a pool says so with the variable.
 
 SETUP TICKETS
 A remote machine approves this one when a person there runs
-\`stim-server setup\` with this machine's setup ticket (32 random bytes, 43
+\`stim setup\` with this machine's setup ticket (32 random bytes, 43
 base64url characters) in STIM_SETUP_TICKET. Stim Desktop's Add wizard makes the
 ticket and sets STIM_ACCESS_TICKET for one \`doctor --fix\` run; without it,
 \`stim remote add <machine>\` or \`doctor --fix\` makes one and prints the setup
@@ -888,7 +888,7 @@ instead paste that command in Settings > Connections > Using this machine >
 Add > Machine to Build or Run Simulators Here and answer each grant there; the
 same setup runs with the same rules and installs nothing. Only the Desktop that
 started the worker's server gets this; the terminal command still approves too.
-Agents never set STIM_ACCESS_TICKET, never run \`stim-server setup\`, never edit
+Agents never set STIM_ACCESS_TICKET, never run \`stim setup\`, never edit
 \`remote.*\`, \`server.*\` or \`hosting.*\` for the user, and never approve requests.
 Until setup approves, the worker answers unknown-secret and the entry stays
 pending; every \`stim remote list\` or doctor run tries again. The first connection after approval pins
@@ -910,7 +910,7 @@ wanting updates away from the desk, tell them about Stim Desktop > Settings >
 Connections > This machine uses > Add, or \`stim remote add <machine>\` in their terminal (another
 machine on the tailnet that builds for this one, or a Mac that also hosts simulators) or Connections > Using this machine > Add > Pair a Phone (the Stim phone
 app). Stim Desktop also suggests these itself, at most once a day and never
-during a build. Agents only tell the user: they never run \`stim-server setup\`,
+during a build. Agents only tell the user: they never run \`stim setup\`,
 never edit \`remote.*\`, \`server.*\` or \`hosting.*\` for the user, and never
 approve requests.
 
@@ -928,12 +928,12 @@ entries already there, asks it for build and device-host approval and prints
 the setup command for it. \`stim remote list\` contacts every listed machine
 and reports both approvals; it asks nothing new. \`stim remote remove\` drops the
 entry and forgets this machine's credentials for it; the remote machine keeps
-its approval until a person there runs the \`stim-server devices revoke\`
+its approval until a person there runs the \`stim pairings revoke\`
 command it prints. Each takes --json. \`stim settings set remote.machines\`
 replaces the whole list. Each machine in \`stim remote list --json\` carries
 serverKeyFingerprint (the pinned stim-server key, or null before the first
 answer), reachability (reachable, unreachable, key-changed or unknown, from
-this run's contact) and revoke, the \`stim-server devices revoke <id>\` commands
+this run's contact) and revoke, the \`stim pairings revoke <id>\` commands
 a person on that machine runs to withdraw its approvals.
 
 The order of \`remote.machines\` is the priority order for every workload: the
@@ -969,7 +969,7 @@ command \`stim remote add\` prints here:
 
 Every connection runs Stim's Noise handshake, so plain WebSocket carries it
 without TLS, and the address never identifies anyone. Nothing on a local network
-vouches for the worker's key, so \`stim-server setup\` prints the worker's server
+vouches for the worker's key, so \`stim setup\` prints the worker's server
 key fingerprint and \`stim remote list\`, run by a person in a terminal, shows
 the fingerprint the worker answered with and pins the key only after they
 confirm it matches. Until then the entry reports key-unconfirmed and is not
@@ -982,7 +982,7 @@ Release runs work there. Agent control of hosted iOS and Android Debug runs
 goes through a loopback port of this workspace's Metro supervisor, which
 carries it over its own authenticated connection; Release runs and hosted macOS
 apps there report agent control as none.
-\`stim-server pair\` puts \`ws://<address>:<port>\` in the phone pairing code
+\`stim pair\` puts \`ws://<address>:<port>\` in the phone pairing code
 when Tailscale is not running and \`server.lanAddresses\` is set.
 
 Automatic membership is separate from approval. In Desktop Settings > Remote
@@ -1047,20 +1047,20 @@ It defaults to false. On macOS the running server then prevents idle system slee
 connections from other machines: its Tailscale or server.lanAddresses listener is up and
 it is not a --loopback-only server. It lets go when the setting turns false, when those
 listeners go away, and when it stops, and it reads the setting without a restart.
-\`stim-server service status\` prints a keep awake line, and /health carries keepAwake
+\`stim service status\` prints a keep awake line, and /health carries keepAwake
 with held and, when not held, a reason (off, unsupported, loopback-only, not-listening,
-failed). A failed caffeinate is not restarted by itself: restart stim-server to retry. Turning
+failed). A failed caffeinate is not restarted by itself: restart stim serve to retry. Turning
 the setting off and on also works, but the server polls the setting every 5 seconds, so
-wait more than 5 seconds between the two and confirm with \`stim-server service status\`. On Linux and Windows the setting has no effect and the status says so. Agents
+wait more than 5 seconds between the two and confirm with \`stim service status\`. On Linux and Windows the setting has no effect and the status says so. Agents
 change this setting only when the user asks them to.
 
 DEVICE HOSTING
 Only \`stim remote add\` and \`doctor --fix\` ask for device-host access: they
-make a setup ticket and print the command. A person approves by running \`stim-server setup\` on the
+make a setup ticket and print the command. A person approves by running \`stim setup\` on the
 worker with that ticket: one ticket, one expiry, one record per capability for
 the key that holds the ticket, with a per-grant Y/n question (Enter approves) in a
 terminal or \`--yes\` otherwise, or in Stim Desktop on the worker (see SETUP
-TICKETS). Agents never run \`stim-server setup\` or approve requests. Setup never changes TCC or enables Funnel; an SSH-driven
+TICKETS). Agents never run \`stim setup\` or approve requests. Setup never changes TCC or enables Funnel; an SSH-driven
 run is not offered. Without a terminal or --yes, setup refuses before installing
 unless every chosen capability already has a matching approval. Desktop reuse
 requires an existing tailnet route. Ctrl-C or SIGTERM completes the journal,
@@ -1100,7 +1100,7 @@ app on an approved remote Mac (stim guide macos), and \`ios.remote\` and
 \`android.remote\` place simulators and emulators on them. To view or control a hosted macOS app, a person
 on that Mac approves Screen & System Audio Recording and Device Control and Data
 Access (Accessibility on macOS 26 and earlier) for Stim Host, the app
-\`stim-server service install\` runs the server under.
+\`stim service install\` runs the server under.
 
 On a remote Mac that hosts, \`hosting.agentDriver\` names the tool it starts so a
 client's coding agent can drive the macOS apps, iOS simulators and Android emulators it hosts for that client.
@@ -1123,7 +1123,7 @@ The same \`remote.machines\` list names the machines that may build for this one
   }
 
 \`stim remote add <machine>\`, run in any directory, makes a setup ticket for
-that machine and prints the \`stim-server setup\` command a person runs on that
+that machine and prints the \`stim setup\` command a person runs on that
 machine to approve this one, under the approval rule above; \`doctor --fix\`,
 run in an app directory, does the same for every named machine. The next
 \`stim remote list\` or doctor run pins the worker's stim-server key in $STIM_HOME/build-machines.json. A build grant is full access
@@ -1228,7 +1228,7 @@ and other Expo .env files, secrets included. Nothing under node_modules and no
 build output the fingerprint ignores is sent. A fingerprint-mismatch refusal
 names the sources that differ and the files pod install or prebuild rewrote there.
 Run stim remote add <machine> to ask for build access if not approved. A person
-on the worker approves it by running the stim-server setup command it printed, with
+on the worker approves it by running the stim setup command it printed, with
 its ticket and expiry. Check stim settings get remote.machines,
 or rerun with --remote-build auto or --remote-build local. Ctrl-C cancels
 the remote build without a local xcodebuild, Gradle or SwiftPM compile.
@@ -1436,22 +1436,22 @@ area and retains an area with a running or unfetched build, a bundle a hosted
 session can take, an open connection sending it a manifest, a running Gradle
 daemon, or a held or unresolved claim; its log names each removal and why an
 area stays. The next build of a removed area starts cold.
-\`stim-server service status\` prints a \`worker root:\` line with the root's size
+\`stim service status\` prints a \`worker root:\` line with the root's size
 as last measured, about every 6 hours (not measured on Windows).
-\`stim-server service install [--serve]\` on a remote machine keeps stim-server
+\`stim service install [--serve]\` on a remote machine keeps stim-server
 running as a login LaunchAgent on macOS, a systemd user service on Linux
 (\`sudo loginctl enable-linger <user>\` keeps it running after logout; install
 prints that command and never runs it), or a logon scheduled task on Windows; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
 pin a PATH entry or variable, such as a private CocoaPods, that stim-server's
 toolchain discovery does not find.
-\`stim-server service update --release <version>\` there moves the service to
-that exact stim-server release from the public npm registry once npm verifies
+\`stim service update --release <version>\` there moves the service to
+that exact stim release from the public npm registry once npm verifies
 its integrity and registry signatures; \`--from <dir>\` installs the packed
 packages of a checkout instead, with the same signature check on each npm
 dependency but none for Stim's own packages. It waits for offloaded builds and for hosted
 sessions with a native step in flight (an install, for example) to finish, restarts the job, which
 (on a server that reports it resumes sessions) leaves every other ready hosted iOS or Android session running for the new server to resume, and switches back when the new server
-exits or does not answer within 90 seconds; \`stim-server service rollback\` returns
+exits or does not answer within 90 seconds; \`stim service rollback\` returns
 to the previous server. A client machine approved for builds or device hosting
 there can ask for the same update over its tailnet connection: an npm release
 always, and its own packed build only while \`server.acceptClientBuilds\` is
@@ -1460,19 +1460,19 @@ Replacing a loaded service waits up to 45 seconds for its existing listeners to
 release the port. Uninstall does not wait for the port. If stopping the old job
 or starting the new one fails, install restores the previous plist or unit and attempts
 to restart a previously running service; if it cannot, it prints the
-launchctl bootout/bootstrap or systemctl --user daemon-reload/restart remedy. A running service does not prove readiness; check \`stim-server service status\`
+launchctl bootout/bootstrap or systemctl --user daemon-reload/restart remedy. A running service does not prove readiness; check \`stim service status\`
 and its reported log. The server listens before it touches the Stim home; a
 read-only child process reads the Stim home, server and recording directories,
 and until it returns \`/health\` answers 503 with \`startup.state\` pending.
 A read that does not return within 10 seconds, plus up to one second to stop
 the child, leaves the server listening and degraded, with the reason in
-\`/health\` and \`stim-server service status\`, and no status followers,
+\`/health\` and \`stim service status\`, and no status followers,
 watchers, native helpers or recorder; it reads again every 30 seconds and
 serves once a read returns. It preserves claims and recordings; it does not
 restore an inaccessible volume or grant filesystem access.
 
 STIM-SERVER SETUP CHECKS (stim doctor)
-\`stim doctor\` reads this machine's stim-server setup in any app directory and
+\`stim doctor\` reads this machine's stim setup in any app directory and
 reports problems as findings with the exact command or step; it never stops,
 starts, updates or reconfigures a server. It reads the installed service (the
 LaunchAgent on macOS, the systemd user unit on Linux), the process list, each
@@ -1487,13 +1487,13 @@ list, a \`note\` finding only the doctor report:
                          the local socket) and how to stop each other
   server-service-crash   cost: the service is installed but not running, or keeps
                          exiting (run count and last exit code, the log path and
-                         \`stim-server service rollback\` when a previous server
+                         \`stim service rollback\` when a previous server
                          exists); note: it restarted but runs now
   server-desktop-authority  cost: the server on the local socket (not Desktop's own)
                          sends no desktopApi or a lower one than this stim's, so
                          Desktop cannot run actions through it; update it
   server-version         note: a server's stim version differs from this stim; the
-                         service updates with \`stim-server service update --release
+                         service updates with \`stim service update --release
                          <version>\`, Desktop's bundled server with the app
   server-home            note: a server serves another Stim home than this stim's
   server-leftover        note: servers started by hand, with pid, home and port

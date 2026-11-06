@@ -33,7 +33,7 @@ describe('service toolchain', () => {
     );
     expect(finding).toMatchObject({ code: 'server-service-paths', level: 'cost' });
     expect(finding?.detail).toContain('the service cannot start');
-    expect(finding?.fix).toContain('stim-server service install --port 7788');
+    expect(finding?.fix).toContain('stim service install --port 7788');
   });
 
   it('notes a missing tool directory, which the service starts without', () => {

@@ -23,7 +23,7 @@ The app shows the workspaces, builds, devices and logs that Stim manages on your
 2. In the app, scan the QR code, or enter the displayed address and pairing token by hand. Manual entry works without camera access.
 3. A pairing token expires after five minutes. If it expired, create a new one.
 
-If the phone cannot reach the Mac, check that the Mac is awake, that Stim Desktop or stim-server is running, and that the Mac is serving phones. If you reach the Mac over Tailscale, check that Tailscale is connected on both devices. A saved view shows the last status the phone received, not current status, until the connection returns.
+If the phone cannot reach the Mac, check that the Mac is awake, that Stim Desktop or `stim serve` is running, and that the Mac is serving phones. If you reach the Mac over Tailscale, check that Tailscale is connected on both devices. A saved view shows the last status the phone received, not current status, until the connection returns.
 
 ## Controlling a device
 
@@ -31,7 +31,7 @@ A new pairing can look at workspaces, devices and logs. To tap and type on a dev
 
 ## Notifications
 
-Notifications are off until you turn them on in the app and allow them in iOS Settings. Check the categories you want and the quiet hours. An event set to Silent goes to the notification list without a sound. Remote notifications also need the Mac to be awake, running Stim Desktop or stim-server, and able to reach Expo's push service.
+Notifications are off until you turn them on in the app and allow them in iOS Settings. Check the categories you want and the quiet hours. An event set to Silent goes to the notification list without a sound. Remote notifications also need the Mac to be awake, running Stim Desktop or `stim serve`, and able to reach Expo's push service.
 
 ## Disconnecting a phone
 

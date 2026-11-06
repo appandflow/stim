@@ -531,8 +531,6 @@ function capacityLine(capacity: NonNullable<StatusPayload['capacity']>): string 
 }
 
 function detailsNote(details: ReturnType<typeof useMachineDetails>): string | null {
-  if (details.kind === 'unsupported')
-    return t`Update stim-server on the machine to see caches, runtimes and what Stim can free.`;
   if (details.kind === 'failed') {
     const { message } = details;
     return t`Disk details are unavailable: ${message}`;

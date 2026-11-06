@@ -23,7 +23,7 @@ export function devPairing(): PairingPayload | null {
 /** Spends the `.env.local` pairing code once; a Mac already stored for its endpoint is kept as it is. */
 export async function applyDevPairing(
   pairing: PairingPayload,
-  client: { name: string; version: string },
+  client: { name: string; version: string; phoneApi: number },
 ): Promise<PairedMac> {
   const existing = (await listMacs()).find((mac) => mac.endpoint === pairing.endpoint);
   if (existing) return existing;
