@@ -253,7 +253,9 @@ public enum NoiseCredential: Sendable {
       message = "This machine's key does not match the pairing code or the key Stim Desktop paired with."
     case "unknown-secret": message = "This pairing code expired or was already used. Show a new one on the machine."
     case "unauthorized": message = "This machine no longer knows this Mac. Pair again."
+    // compat C11 permanent
     case "protocol-unsupported": message = "This machine speaks a newer protocol. Update Stim Desktop."
+    // compat end
     default: message = "The machine refused the connection (\(code))."
     }
     return ServerError(code: code, message: message)

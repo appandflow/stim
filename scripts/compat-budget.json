@@ -1,0 +1,147 @@
+{
+  "rows": {
+    "C1": {
+      "loc": 15,
+      "end": "permanent",
+      "mechanism": "the launcher reads the engine pointer's format and refuses an unknown one"
+    },
+    "C2": {
+      "loc": 20,
+      "end": "permanent",
+      "mechanism": "a format per engine store file and handover journal"
+    },
+    "C4": {
+      "loc": 55,
+      "end": "permanent",
+      "mechanism": "home and machine state schema, snapshot and rollback to an equal schema"
+    },
+    "C5": {
+      "loc": 60,
+      "end": "permanent",
+      "mechanism": "one map of removed settings and environment variables to their replacements"
+    },
+    "C6": {
+      "loc": 30,
+      "end": "permanent",
+      "mechanism": "a Metro claim records the injected bundle digest; another digest is foreign until restart"
+    },
+    "C7": {
+      "loc": 70,
+      "end": "permanent",
+      "mechanism": "Stim Desktop's API integer in hello, each way"
+    },
+    "C8": {
+      "loc": 30,
+      "end": "permanent",
+      "mechanism": "Stim Desktop's native reads of engine files check their format"
+    },
+    "C9": {
+      "loc": 50,
+      "end": "permanent",
+      "mechanism": "the phone's API integer in hello, with update remedies on each side"
+    },
+    "C10": {
+      "loc": 1,
+      "end": "permanent",
+      "mechanism": "the pairing QR code refuses a payload version the app does not know"
+    },
+    "C11": {
+      "loc": 20,
+      "end": "permanent",
+      "mechanism": "the native framing's first byte; anything else gets protocol-unsupported"
+    },
+    "C12": {
+      "loc": 85,
+      "end": "permanent",
+      "mechanism": "a peer integer in hello, with one peer-too-old refusal"
+    },
+    "C14": {
+      "loc": 160,
+      "end": "permanent",
+      "mechanism": "offload jobs and probes run the client's exact build on the worker"
+    },
+    "C15": {
+      "loc": 15,
+      "end": "permanent",
+      "mechanism": "one integer per plugin kind, read from package.json without importing the plugin"
+    },
+    "C18": {
+      "loc": 10,
+      "end": "removal minor",
+      "mechanism": "the GitHub Action refuses a version below the one-package release"
+    },
+    "C19": {
+      "loc": 5,
+      "end": "permanent",
+      "mechanism": "the share viewer reloads on a new build id"
+    },
+    "C20": {
+      "loc": 20,
+      "end": "permanent",
+      "mechanism": "removed flags and API methods name their replacement through one path"
+    },
+    "C22": {
+      "loc": 60,
+      "end": "removal minor",
+      "mechanism": "the resident daemon takes over an older daemon's exclusive claim"
+    },
+    "C23": {
+      "loc": 40,
+      "end": "removal minor",
+      "mechanism": "the net thread stays off while an older stim-server holds its port"
+    },
+    "C25": {
+      "loc": 25,
+      "end": "removal minor",
+      "mechanism": "supervisors and collectors of another engine stop at the next idle point"
+    },
+    "C26": {
+      "loc": 25,
+      "end": "permanent",
+      "mechanism": "the first CLI socket frame declares its kind and build id"
+    }
+  },
+  "words": {
+    "safety": [
+      "packages/core/protocol.ts compat",
+      "packages/core/react-native-artifact.ts compat",
+      "packages/core/swiftpm-artifact.ts compat",
+      "packages/server/src/build.ts compat",
+      "packages/server/src/protocol.ts compat",
+      "packages/stim-cli/src/device-host/machines.ts compat",
+      "packages/stim-cli/src/offload/build-machines.ts compat",
+      "packages/stim-cli/src/offload/client.ts compat",
+      "packages/stim-cli/src/offload/react-native-artifact.ts compat",
+      "packages/stim-cli/src/offload/toolchain.ts compat",
+      "packages/stim-cli/src/offload/worker.ts compat"
+    ],
+    "wording": [
+      "packages/stim-cli/src/collector/ios.ts deprecat",
+      "packages/stim-cli/src/engine/app-install.ts legacy",
+      "packages/stim-cli/src/engine/errors-gradle.ts deprecat",
+      "packages/stim-cli/src/guide/metro.ts legacy",
+      "packages/stim-cli/src/integrations/native-xcode-inputs.ts legacy",
+      "packages/stim-cli/src/supervisor/server-expo.ts deprecat",
+      "packages/stim-cli/src/supervisor/server-expo.ts legacy"
+    ],
+    "bridge": [
+      "apps/mobile/src/lib/macs.ts legacy",
+      "apps/mobile/src/screens/workspace-detail.tsx legacy",
+      "packages/core/index.ts legacy",
+      "packages/core/protocol.ts legacy",
+      "packages/server/src/build.ts legacy",
+      "packages/server/src/protocol.ts legacy",
+      "packages/server/src/registry.ts legacy",
+      "packages/server/src/server.ts legacy",
+      "packages/stim-cli/src/cache/caches.ts legacy",
+      "packages/stim-cli/src/devices/sim-pool.ts legacy",
+      "packages/stim-cli/src/engine/device-android.ts legacy",
+      "packages/stim-cli/src/guide/errors.ts legacy",
+      "packages/stim-cli/src/guide/lifecycle.ts legacy",
+      "packages/stim-cli/src/guide/logs.ts legacy",
+      "packages/stim-cli/src/guide/settings.ts legacy",
+      "packages/stim-cli/src/integrations/native-android-plan.ts legacy",
+      "packages/stim-cli/src/offload/toolchain.ts legacy"
+    ]
+  }
+}
