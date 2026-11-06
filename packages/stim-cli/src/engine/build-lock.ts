@@ -17,6 +17,8 @@ import {
 import type { WaitedForBuild } from './build-facts.ts';
 import { segment } from './path-segment.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
+import { opWaiting } from '../daemon/client.ts';
+import { endForSwitch, switchedEngine } from '../daemon/engine-switch.ts';
 import { ambientContext } from '@stim-cli/core';
 
 const LOCK_SUFFIX = '.lock';
@@ -388,7 +390,14 @@ export async function waitForSharedBuild({
           },
         );
       }
-      waited = await wait({ platform, key, out, ceilingMs });
+      opWaiting(true);
+      try {
+        waited = await wait({ platform, key, out, ceilingMs });
+      } finally {
+        opWaiting(false);
+      }
+      const switched = switchedEngine();
+      if (switched) endForSwitch(switched.version);
     } catch (err) {
       const refusal = claimFailure(err, command);
       if (refusal) return { refusal };

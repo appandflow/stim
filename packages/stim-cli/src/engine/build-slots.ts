@@ -6,7 +6,8 @@ import { formatElapsed } from '../command-output.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle, type ClaimHolder } from '../ownership-claim.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 import { ambientContext } from '@stim-cli/core';
-import { daemonWaiter, notifyReleased } from '../daemon/client.ts';
+import { daemonWaiter, notifyReleased, opWaiting } from '../daemon/client.ts';
+import { endForSwitch, ownStoreEngine, stagedHold, switchedEngine, type StoreEngine } from '../daemon/engine-switch.ts';
 import { liveWaiters, queuePosition, takeWaitTicket, waitCeiling } from './wait-queue.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { admissionLimits } from '../workspace/config.ts';
@@ -42,6 +43,8 @@ interface AcquireBuildSlotOptions extends Omit<TryAcquireBuildSlotOptions, 'max'
   progressMs?: number;
   /** A fixed wait before `STIM_AT_CAPACITY`; absent, the queue's liveness ceiling applies. */
   ceilingMs?: number;
+  /** The engine store entry this build runs from; absent, the one this code runs from. */
+  engine?: StoreEngine | null;
 }
 
 export interface BuildSlotHandle {
@@ -151,6 +154,34 @@ function queueState(max: number, waiters: readonly ClaimHolder[]): string {
 }
 
 /**
+ * While another build is staged, holds a miss before its slot for at most `SLOT_HOLD_MS` after the staging, its op not
+ * pinned, so the running builds can drain; once the engine switches, ends the command with the rerun line.
+ */
+async function holdForSwitch(
+  engine: StoreEngine | null,
+  {
+    now,
+    out,
+    sleep,
+    intervalMs,
+  }: { now: () => number; out: (line: string) => void; sleep: (ms: number) => Promise<void>; intervalMs: number },
+): Promise<void> {
+  let held = false;
+  for (let staged = stagedHold(engine, now()); staged; staged = stagedHold(engine, now())) {
+    if (!held) {
+      held = true;
+      opWaiting(true);
+      const running = listBuildSlots().filter((slot) => slot.alive || slot.unresolved).length;
+      out(`switching Stim to ${staged.version}; waiting for ${running} running builds`);
+    }
+    await sleep(intervalMs);
+  }
+  const switched = switchedEngine(engine);
+  if (switched) endForSwitch(switched.version);
+  if (held) opWaiting(false);
+}
+
+/**
  * Takes one of the `max` build slots in arrival order, `max` being the option when given and else the current
  * `concurrency.maxBuilds`, read again every round so a raised cap admits a waiting build. A run that finds no free slot, or older runs waiting, joins the
  * build queue under `$STIM_HOME/build-waits`, retries each second and when the daemon wakes it, and prints a progress
@@ -170,14 +201,24 @@ export async function acquireBuildSlot({
   progressMs = SLOT_PROGRESS_MS,
   ceilingMs,
   automatic = false,
+  engine = ownStoreEngine(),
 }: AcquireBuildSlotOptions): Promise<BuildSlotHandle> {
   throwIfCancelled(signal, 'build slot');
   if (automatic) requireAutomaticMachine('build', 'local');
-  const readMax = () => maxOption ?? admissionLimits().maxBuilds;
-  const firstMax = readMax();
-  if (!firstMax || firstMax <= 0) return { acquired: true, unlimited: true };
   const waiter = daemonWaiter('build');
   const sleep = sleepOverride ?? ((ms: number) => waiter.wait(ms, signal));
+  try {
+    await holdForSwitch(engine, { now, out, sleep, intervalMs });
+  } catch (error) {
+    waiter.close();
+    throw error;
+  }
+  const readMax = () => maxOption ?? admissionLimits().maxBuilds;
+  const firstMax = readMax();
+  if (!firstMax || firstMax <= 0) {
+    waiter.close();
+    return { acquired: true, unlimited: true };
+  }
   const started = now();
   const ceiling = waitCeiling(now);
   let lastProgress = started;
@@ -186,6 +227,8 @@ export async function acquireBuildSlot({
     for (;;) {
       throwIfCancelled(signal, 'build slot');
       if (automatic) requireAutomaticMachine('build', 'local');
+      const switched = switchedEngine(engine);
+      if (switched) endForSwitch(switched.version);
       const max = readMax();
       const waiters = liveWaiters('build');
       const position = queuePosition(waiters, ticket);
@@ -196,6 +239,7 @@ export async function acquireBuildSlot({
       }
       if (!ticket) {
         ticket = takeWaitTicket('build', { root, displayName: root ? basename(root) : 'build', logFile }, waiters);
+        opWaiting(true);
         continue;
       }
       ceiling.update(
@@ -232,6 +276,7 @@ export async function acquireBuildSlot({
       await sleep(intervalMs);
     }
   } finally {
+    if (ticket) opWaiting(false);
     releaseClaim(ticket);
     waiter.close();
     waitingFor(null);

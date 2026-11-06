@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import type { SpawnOptions } from 'node:child_process';
 import { connect, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +10,9 @@ import {
   isJsonObject,
   SETTINGS,
   stimBuildId,
+  readJsonObject,
   stimdClaimRoot,
+  stimdRecordFile,
   stimdRunDir,
   stimdSocket,
   userHome,
@@ -19,6 +22,7 @@ import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim
 import { cancellableSleep } from '../cancellation.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
+import { endForSwitch, engineShim, ownStoreEngine, switchedEngine } from './engine-switch.ts';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { daemonMode, spawnsDaemon } from './mode.ts';
@@ -28,6 +32,7 @@ const CONTACT_TIMEOUT_MS = 250;
 const CLAIM_WAIT_MS = 5000;
 const CLAIM_POLL_MS = 50;
 const LAUNCH_TIMEOUT_MS = 5000;
+const OP_BEGIN_TIMEOUT_MS = 30_000;
 /** The label of the launchd job that runs a stimd, which it removes as it exits. */
 export const LAUNCHD_LABEL_ENV = 'STIMD_LAUNCHD_LABEL';
 
@@ -63,6 +68,9 @@ export function stimdBuildId(): string {
 }
 
 let refusedBuild: string | null = null;
+let opSocket: Socket | null = null;
+let following: Promise<never> | null = null;
+let admitting = false;
 
 /** Whether a stimd of another build refused this process's connection. */
 export function stimdRefused(): boolean {
@@ -70,10 +78,33 @@ export function stimdRefused(): boolean {
 }
 
 /**
- * Opens a connection to this home's stimd and sends `messages` after the first frame; `onMessage` gets every line
- * after stimd's answer to that frame. A stimd of another build answers `engine-changed` and closes the connection.
+ * Follows the engine to `version` once stimd says it switched: a CLI admitting its command (`op.begin`) runs it again,
+ * once, through the root's `bin/stim`, and resolves only by exiting with that run's code; a waiter ends with the rerun
+ * line. Null otherwise, and in a process that is not a CLI, which then treats stimd as unreachable.
  */
-function openStimd(messages: Record<string, unknown>[], onMessage: (message: Record<string, unknown>) => void): Socket {
+function followSwitch(version: string, waiter: boolean): Promise<never> | null {
+  // compat C26 permanent
+  const engine = ownStoreEngine();
+  if (!engine || !Reflect.get(globalThis, Symbol.for('stim.cli'))) return null;
+  if (waiter || (admitting && process.env.STIM_REEXEC)) endForSwitch(version);
+  if (!admitting) return null;
+  console.error(`Stim updated to ${version}; running this command on it`);
+  const options: SpawnOptions = { stdio: 'inherit', env: { ...process.env, STIM_REEXEC: '1' } };
+  const child = getExecutor().spawn(engineShim(engine), process.argv.slice(2), options);
+  return new Promise(() => child.once('exit', (code) => process.exit(code ?? 1)));
+  // compat end
+}
+
+/**
+ * Opens a connection to this home's stimd and sends `messages` after the first frame; `onMessage` gets every line
+ * after stimd's answer to that frame. A stimd of another build answers `engine-changed` and closes the connection, as
+ * does a stimd that relaunches on a new build; a `waiter` connection then ends the command (`followSwitch`).
+ */
+function openStimd(
+  messages: Record<string, unknown>[],
+  onMessage: (message: Record<string, unknown>) => void,
+  waiter = false,
+): Socket {
   const socket = connect(stimdSocket());
   let buffer = '';
   let answered = false;
@@ -95,18 +126,15 @@ function openStimd(messages: Record<string, unknown>[], onMessage: (message: Rec
       }
       buffer = buffer.slice(end + 1);
       if (!isJsonObject(message)) continue;
-      if (answered) onMessage(message);
-      else {
-        answered = true;
-        // compat C26 permanent
-        if (message.op === 'engine-changed' && refusedBuild === null) {
-          refusedBuild = String(message.build);
-          console.error(
-            `Stim: stimd pid ${String(message.pid)} serves this Stim home with another Stim build (${refusedBuild}, ${String(message.version)}; this command runs ${stimdBuildId()}), so this command does not use it. It exits once nothing runs in this Stim home.`,
-          );
-        }
-        // compat end
+      // compat C26 permanent
+      if (message.op === 'engine-changed') {
+        refusedBuild ??= String(message.build);
+        const next = switchedEngine();
+        if (next && next.build === message.build) following ??= followSwitch(next.version, waiter);
       }
+      // compat end
+      if (answered) onMessage(message);
+      else answered = true;
     }
   });
   socket.once('error', () => {});
@@ -126,7 +154,7 @@ function askStimd(
     const finish = (reply: Record<string, unknown> | null) => {
       clearTimeout(timer);
       socket?.destroy();
-      resolve(reply);
+      if (!following) resolve(reply);
     };
     const timer = setTimeout(() => finish(null), timeoutMs);
     socket = openStimd([{ ...fields, op }], (reply) => finish(reply));
@@ -161,6 +189,7 @@ const STIMD_ENV = new Set<string>([
   'AGENT_DEVICE_CLAIMS_DIR',
   'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR',
   'STIM_HOME',
+  'STIM_ENGINE_ROOT',
   'STIM_BUILD_CACHE',
   'STIM_METRO_CACHE',
   'STIM_TMPDIR',
@@ -261,10 +290,11 @@ export function launchStimd(
   env: NodeJS.ProcessEnv,
   mode: DaemonMode,
   platform: NodeJS.Platform = process.platform,
+  entry: string = spawnEntry('cli'),
+  extra: readonly string[] = [],
 ): { settled: Promise<void>; exited: () => boolean } {
   mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
-  const entry = spawnEntry('cli');
-  const args = [entry, '__stimd', '--mode', mode];
+  const args = [entry, '__stimd', '--mode', mode, ...extra];
   const kept = stimdEnv(env, platform);
   const never = { settled: new Promise<void>(() => {}), exited: () => false };
   if (platform === 'darwin') {
@@ -324,6 +354,7 @@ async function claimTaken({ settled, exited }: ReturnType<typeof launchStimd>): 
 export async function ensureStimd(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
+  pin = false,
 ): Promise<boolean> {
   if (!spawnsDaemon(env)) return false;
   try {
@@ -334,14 +365,66 @@ export async function ensureStimd(
       );
       return true;
     }
+    admitting = pin;
     if (stimdLive()) {
-      await askStimd('hello', CONTACT_TIMEOUT_MS);
+      if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
+      else if (!(await beginOp()) && stimdRefused() && (await successorBound())) await beginOp();
       return true;
     }
-    return await claimTaken(launchStimd(env, daemonMode(env), platform));
+    const taken = await claimTaken(launchStimd(env, daemonMode(env), platform));
+    if (taken && pin) await beginOp();
+    return taken;
   } catch {
     return false;
+  } finally {
+    admitting = false;
+    delete process.env.STIM_REEXEC;
   }
+}
+
+/**
+ * Sends `op.begin` and keeps the connection open until this process exits, which is the op's `op.end`: until then
+ * stimd counts the command's work as pinned, except while it waits at a build slot (`opWaiting`). stimd answers at
+ * once, or after a switch already under way, with `engine-changed`. False when it does not answer.
+ */
+function beginOp(): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (begun: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (following) return;
+      if (begun) {
+        opSocket = socket;
+        socket.unref();
+      } else socket.destroy();
+      resolve(begun);
+    };
+    const timer = setTimeout(() => finish(false), OP_BEGIN_TIMEOUT_MS);
+    const socket = openStimd([{ op: 'op.begin' }], (reply) => finish(reply.op === 'op.begun'));
+    socket.once('close', () => {
+      if (opSocket === socket) opSocket = null;
+      finish(false);
+    });
+  });
+}
+
+/** Whether a stimd of this build replaced, within `CLAIM_WAIT_MS`, the one of an older build that refused it. */
+async function successorBound(): Promise<boolean> {
+  for (const deadline = Date.now() + CLAIM_WAIT_MS; Date.now() < deadline;) {
+    if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
+      refusedBuild = null;
+      return true;
+    }
+    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
+  }
+  return false;
+}
+
+/** Tells stimd that this command's op waits at a build slot (`true`), so its work is not pinned, or runs again. */
+export function opWaiting(waiting: boolean): void {
+  opSocket?.write(`${JSON.stringify({ op: waiting ? 'op.wait' : 'op.resume' })}\n`);
 }
 
 const DAEMON_COMMANDS = ['start', 'ios', 'android', 'web', 'macos', 'revive'];
@@ -357,7 +440,7 @@ const INLINE_COMMANDS = ['doctor', 'start', 'ios', 'android'];
 export async function beforeCommand(
   name: string,
   env: NodeJS.ProcessEnv = process.env,
-  { cwd, recordUse, passes }: { cwd: string; recordUse: boolean; passes: boolean } = {
+  { cwd, recordUse, passes, pin = false }: { cwd: string; recordUse: boolean; passes: boolean; pin?: boolean } = {
     cwd: process.cwd(),
     recordUse: true,
     passes: true,
@@ -368,7 +451,7 @@ export async function beforeCommand(
   if (!creates && !inline) return;
   const { commandWorkspace } = await import('./command-workspace.ts');
   const root = commandWorkspace(creates && recordUse, env, cwd);
-  const held = creates && (await ensureStimd(env));
+  const held = creates && (await ensureStimd(env, process.platform, pin));
   if (held || !inline) return;
   const { runPassesInProcess } = await import('./passes.ts');
   await runPassesInProcess(name, env, root);
@@ -504,11 +587,15 @@ export function daemonWaiter(resource: DaemonResource): DaemonWaiter {
   let wake: (() => void) | null = null;
   const subscribe = () => {
     if (socket || !stimdLive()) return;
-    const opened = openStimd([{ op: ops.wait }], (message) => {
-      if (message.op !== ops.changed) return;
-      released = true;
-      wake?.();
-    });
+    const opened = openStimd(
+      [{ op: ops.wait }],
+      (message) => {
+        if (message.op !== ops.changed) return;
+        released = true;
+        wake?.();
+      },
+      true,
+    );
     socket = opened;
     opened.once('close', () => {
       if (socket === opened) socket = null;

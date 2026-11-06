@@ -54,6 +54,7 @@ export interface MainContext {
 
 /** Runs the CLI for `argv`, in `process.argv`'s shape. */
 export async function main(argv: string[], ctx: MainContext = {}): Promise<void> {
+  Reflect.set(globalThis, Symbol.for('stim.cli'), true);
   const program = new Command();
   program.name('stim').description('Isolated React Native dev environments per project/worktree').version(pkg.version);
 

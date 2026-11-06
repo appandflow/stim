@@ -1,27 +1,29 @@
-import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { inspectProcessStart } from '@stim-cli/core/process-identity';
-import { daemonClaimRoot } from '@stim-cli/core/state';
 import { readRunningProcesses, runningFromReason } from '../workspace/running-from.ts';
+import { keptEntries, readBuildClaims } from './claims.ts';
 import { takeLock } from './locks.ts';
 import { BUILD_DIR, readRecords, writeState } from './store.ts';
 import { removeTree, scratchName } from './tree.ts';
 
 const SCRATCH_MAX_AGE_MS = 60 * 60_000;
+const NPM_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 
 const ownerAlive = (name: string): boolean => inspectProcessStart(Number(name.split('-')[1])).status !== 'gone';
 
 /**
- * Removes store entries nothing can run: trees other than current, previous, staged and `keep` (the entries live
- * claims name) that no process runs from, scratch directories whose owner is gone or that are an hour old, and
- * `.trash` leftovers. Each goes by rename into `.trash` first, so a half-removed read-only tree never stays in place.
- * Runs under the promotion lock. Where processes cannot be listed (Windows), every tree is kept.
+ * Removes store entries nothing can run: trees `keptEntries` does not keep that no process runs from, scratch
+ * directories whose owner is gone or that are an hour old, `.trash` leftovers, and `.npm-cache` files untouched for a
+ * week. Each entry goes by rename into `.trash` first, so a half-removed read-only tree never stays in place. Runs
+ * under the promotion lock, so no fetch writes `.npm-cache` meanwhile. Where processes cannot be listed (Windows),
+ * every tree is kept.
  */
-export function collectStore(root: string, keep: Iterable<string> = [], now: number = Date.now()): string[] {
+export function collectStore(root: string, now: number = Date.now()): string[] {
   if (!existsSync(root)) return [];
-  const { current, previous, staged, state } = readRecords(root);
-  const kept = new Set([current?.dir, previous, staged?.dir, ...keep]);
+  const records = readRecords(root);
+  const { state } = records;
+  const kept = keptEntries(records, readBuildClaims(root));
   const running = readRunningProcesses();
   const trash = join(root, '.trash');
   mkdirSync(trash, { recursive: true });
@@ -37,16 +39,18 @@ export function collectStore(root: string, keep: Iterable<string> = [], now: num
     removed.push(name);
   }
   for (const name of readdirSync(trash)) removeTree(join(trash, name));
+  trimNpmCache(join(root, '.npm-cache'), now);
   const installed = state.installed.filter((each) => existsSync(join(root, each.dir)));
   if (installed.length !== state.installed.length || removed.length > 0) writeState(root, { ...state, installed });
   return removed;
 }
 
-/** The store entries live resident processes run from: `engineDir` in the shared claims of this home's daemon root. */
-export function liveEngineDirs(): string[] {
-  return readClaimSet(daemonClaimRoot()).live.flatMap(({ mode, details }) =>
-    mode === 'shared' && typeof details.engineDir === 'string' ? [details.engineDir] : [],
-  );
+function trimNpmCache(cache: string, now: number): void {
+  if (!existsSync(cache)) return;
+  for (const entry of readdirSync(cache, { recursive: true, withFileTypes: true })) {
+    const path = join(entry.parentPath, entry.name);
+    if (entry.isFile() && now - statSync(path).mtimeMs > NPM_CACHE_MAX_AGE_MS) rmSync(path, { force: true });
+  }
 }
 
 /** `stim gc --delete`: collects an installed store unless a promotion holds its lock. */
@@ -55,7 +59,7 @@ export async function collectInstalledStore(root: string): Promise<void> {
   const lock = await takeLock(root, '.lock.sock');
   if (!lock) return;
   try {
-    collectStore(root, liveEngineDirs());
+    collectStore(root);
   } finally {
     await lock.release();
   }

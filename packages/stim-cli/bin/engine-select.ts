@@ -19,6 +19,7 @@ const { values } = parseArgs({
     explicit: { type: 'boolean', default: false },
     'restore-state': { type: 'boolean', default: false },
     locked: { type: 'boolean', default: false },
+    flip: { type: 'boolean', default: false },
   },
 });
 const root = engineRoot(process.env);
@@ -33,17 +34,18 @@ try {
     pinReason: values.pin ?? null,
     restoreState: values['restore-state'],
     locked: values.locked,
+    flip: values.flip,
     channel: values.channel === 'next' || values.channel === 'latest' ? values.channel : undefined,
     ctx: processContext(process.cwd()),
   });
   if ('refused' in result) {
     process.stderr.write(`${result.refused}\n`);
-    if (!values.explicit) recordFailure(root, version, result.refused);
+    if (!values.explicit && !values.flip) recordFailure(root, version, result.refused);
   }
   process.stdout.write(`${JSON.stringify(result)}\n`);
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`engine-select: ${message}\n`);
-  if (!values.explicit) recordFailure(root, version, message);
+  if (!values.explicit && !values.flip) recordFailure(root, version, message);
   process.exitCode = 1;
 }
