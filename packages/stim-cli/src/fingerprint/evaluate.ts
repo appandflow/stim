@@ -98,12 +98,15 @@ interface Part {
   derived: Derived;
   env: Record<string, string>;
   fromIndex: boolean;
+  /** Records the part in the index; called only for a part the key uses. */
+  keep: () => void;
 }
 
 /** Env names Node reads below `process.env` (at startup, or in `os.homedir()` and `os.tmpdir()`); a part is reused only while they hold. */
 const STARTUP_ENV = ['NODE_OPTIONS', 'NODE_PATH', 'NODE_PRESERVE_SYMLINKS', 'NODE_ICU_DATA', 'HOME', 'TMPDIR'];
 
 const TIMEOUT_MS = 60_000;
+const unrecorded = (): void => {};
 const ABSENT = sha256(canonicalJson(['absent']));
 const SCRIPT = /\.(?:[cm]?js|[cm]?ts)$/;
 /** The static app config, whose evaluated form is the `config` row, version fields removed. */
@@ -494,6 +497,7 @@ async function evaluate(
   nativeDir: string,
   opts: FingerprintOptions,
   session: IndexSession | null,
+  settled: AbortSignal,
 ) {
   const root = roots.project;
   let outsideValue = false;
@@ -521,6 +525,7 @@ async function evaluate(
     args: string[],
     partEnv = env,
     slot: string = name,
+    signal = opts.signal,
   ): Promise<Part | EvalUncertain> => {
     const wrapped = args[0] === evaluator;
     const digest = envDigest(partEnv, roots);
@@ -535,15 +540,17 @@ async function evaluate(
         derived: cached.derived,
         env: partEnv,
         fromIndex: true,
+        keep: unrecorded,
       };
     const since = session?.since ?? 0n;
-    const done = await run(name, node, args, root, partEnv, opts.signal);
+    const done = await run(name, node, args, root, partEnv, signal);
     if (isUncertain(done)) return done;
     const output = parse(name, wrapped ? done.result : done.stdout);
     if (isUncertain(output)) return output;
     const traced = traceRows(name, done.trace, roots, excluded, owner);
     if (isUncertain(traced)) return traced;
     const derived: Derived = { ...traced, autolinking: autolinkingHash(name, output, wrapped, roots) };
+    let keep = unrecorded;
     if (session && done.trace.opaque.length === 0) {
       const modes = [record(output).mode, partEnv.NODE_ENV, 'development', 'production'];
       const candidates = new Set(
@@ -580,13 +587,27 @@ async function evaluate(
           wrapped,
           derived,
         };
-        session.keep(variant, recorded);
+        keep = () => session.keep(variant, recorded);
       }
     }
-    return { name, output, wrapped, envNames: done.trace.env, derived, env: partEnv, fromIndex: false };
+    return { name, output, wrapped, envNames: done.trace.env, derived, env: partEnv, fromIndex: false, keep };
   };
   const parts: Promise<Part | EvalUncertain>[] = [];
   const rows: Input[] = [];
+  const embedded = embedEnv(opts.env);
+  const embedLoader = (constants: string) => {
+    const script = join(constants, 'scripts', 'getAppConfig.js');
+    return existsSync(script) && readFileSync(script, 'utf8').includes('loadProjectEnv') ? opts.embedMode : 'env';
+  };
+  const embed = (constants: string, signal?: AbortSignal) =>
+    spawn(
+      'configEmbedded',
+      [evaluator, 'embed', root, platform, embedLoader(constants), constants],
+      embedded,
+      `configEmbedded:${embedLoader(constants)}`,
+      signal,
+    );
+  let early: { constants: string; part: Promise<Part | EvalUncertain> } | null = null;
   if (expo) {
     rows.push(...envRows('env:', ['EXPO_USE_COMMUNITY_AUTOLINKING'], env, true, form));
     const autolinking = findPackage(expo, 'expo-modules-autolinking') ?? findPackage(root, 'expo-modules-autolinking');
@@ -610,11 +631,15 @@ async function evaluate(
         ? spawn('rnConfig', [evaluator, 'rn', root, platform])
         : spawn('rnConfig', [bin, 'react-native-config', '--json', '--platform', platform]),
     );
+    const constants = findPackage(root, 'expo-constants');
+    if (constants)
+      early = { constants, part: embed(constants, opts.signal ? AbortSignal.any([opts.signal, settled]) : settled) };
   } else parts.push(spawn('rnConfig', [evaluator, 'rn', root, platform]));
   const done = await Promise.all(parts);
   const failure = done.find(isUncertain);
   if (failure) return failure;
   const evaluated = done.filter((part): part is Part => !isUncertain(part));
+  evaluated.forEach((part) => part.keep());
   const byName = new Map(evaluated.map((part) => [part.name, part]));
 
   const autolinked = new Set<string>();
@@ -677,7 +702,6 @@ async function evaluate(
       rows.push({ name: 'runtimeVersion', kind: 'config', hash: sha256(canonicalJson(output.runtimeVersion ?? null)) });
     if (nativePackages.has('expo-constants')) {
       const embeddedName: PartName = 'configEmbedded';
-      const embedded = embedEnv(opts.env);
       const linkedModules = record(resolved?.output).modules;
       const linked: unknown[] = Array.isArray(linkedModules) ? linkedModules : [];
       const constants =
@@ -685,22 +709,16 @@ async function evaluate(
           .map(installedPackage)
           .find((dir) => dir !== null) ?? findPackage(root, 'expo-constants');
       if (!constants) return failed('configEmbedded', 'found no expo-constants package to read its loader from');
-      const script = join(constants, 'scripts', 'getAppConfig.js');
-      const byMode = existsSync(script) && readFileSync(script, 'utf8').includes('loadProjectEnv');
+      const byMode = embedLoader(constants) !== 'env';
       const reuse =
         byMode &&
         opts.embedMode === mode &&
         config.envNames.every((name) => isDenied(name) || env[name] === embedded[name]);
-      const embedMode = byMode ? opts.embedMode : 'env';
       const part = reuse
         ? { ...config, name: embeddedName, env: embedded }
-        : await spawn(
-            'configEmbedded',
-            [evaluator, 'embed', root, platform, embedMode, constants],
-            embedded,
-            `configEmbedded:${embedMode}`,
-          );
+        : await (early?.constants === constants ? early.part : embed(constants));
       if (isUncertain(part)) return part;
+      if (!reuse) part.keep();
       if (reuse) rows.push(...envRows('env@embed:', config.envNames, embedded, false, form));
       else {
         evaluated.push(part);
@@ -802,7 +820,10 @@ export async function fingerprint(
   const nativeDir = nativeDirectory(project, target);
   const native = nativeMode({ expoResolves, tracked }, nativeDir);
   if (isUncertain(native)) return native;
-  const evaluated = await evaluate(roots, target.platform, native, nativeDir, opts, session);
+  const settled = new AbortController();
+  const evaluated = await evaluate(roots, target.platform, native, nativeDir, opts, session, settled.signal).finally(
+    () => settled.abort(),
+  );
   if (isUncertain(evaluated)) return evaluated;
   const statics = staticInputs(
     {
