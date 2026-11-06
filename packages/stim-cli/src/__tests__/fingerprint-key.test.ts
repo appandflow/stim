@@ -71,6 +71,7 @@ const fixedPreimage: Preimage = {
 
 function goldenHashes(): Record<'preimage' | 'cng' | 'bare' | 'monorepo', string> {
   const cng = tree({
+    'package-lock.json': '{}\n',
     'package.json':
       '{"name":"app","version":"1.0.0","scripts":{"start":"expo start"},"expo":{"install":{"exclude":["x"]}}}\n',
     'app.json': '{"expo":{"icon":"./assets/icon.png"}}\n',
@@ -81,6 +82,7 @@ function goldenHashes(): Record<'preimage' | 'cng' | 'bare' | 'monorepo', string
     'ios/Podfile': 'generated\n',
   });
   const bare = tree({
+    'package-lock.json': '{}\n',
     'package.json': '{"name":"bare","dependencies":{"react-native":"0.88.0"}}\n',
     'ios/Podfile': "platform :ios, '16.0'\n",
     'ios/Podfile.lock': 'PODS:\n  - React (0.88.0)\n\nCOCOAPODS: 1.16.2\n',
@@ -140,7 +142,8 @@ describe('fingerprint key', () => {
     expect(canonicalJson({ b: 1, B: [{ z: null, a: 'x' }], a: { y: true, x: false }, skip: undefined })).toBe(
       '{"B":[{"a":"x","z":null}],"a":{"x":false,"y":true},"b":1}',
     );
-    expect(canonicalJson({ é: 1, z: 2, '😀': 3 })).toBe('{"z":2,"é":1,"😀":3}');
+    const [accent, emoji] = [String.fromCodePoint(0xe9), String.fromCodePoint(0x1f600)];
+    expect(canonicalJson({ [emoji]: 3, [accent]: 1, z: 2 })).toBe(`{"z":2,"${accent}":1,"${emoji}":3}`);
     expect(() => canonicalJson({ n: Number.NaN })).toThrow(/no form/);
     expect(() => canonicalJson(new Date(0))).toThrow(/no form/);
   });

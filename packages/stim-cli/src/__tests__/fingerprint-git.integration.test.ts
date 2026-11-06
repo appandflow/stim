@@ -45,16 +45,21 @@ describe('git index reader', () => {
   );
 
   test.each([
-    ['version 2', ['update-index', '--index-version', '2']],
+    ['version 2', 2, ['update-index', '--index-version', '2']],
     [
       'version 3 with extended flags',
+      3,
       ['update-index', '--index-version', '3', '--skip-worktree', 'ios/App/Generated/Sources/Module1/File1.swift'],
     ],
-    ['version 4 with prefix-compressed names', ['update-index', '--index-version', '4']],
-  ])('reads %s as git ls-files lists it', async (_case, args) => {
-    const root = repo({ ...files, 'café.txt': 'x' });
+    ['version 4 with prefix-compressed names', 4, ['update-index', '--index-version', '4']],
+  ])('reads %s as git ls-files lists it', async (_case, version, args) => {
+    const root = repo({ ...files, [`caf${String.fromCodePoint(0xe9)}.txt`]: 'x' });
     git(root, ...args);
-    expect(parseGitIndex(readFileSync(join(root, '.git/index')))).not.toBeNull();
+    const index = readFileSync(join(root, '.git/index'));
+    expect(index.readUInt32BE(4)).toBe(version);
+    if (version === 3)
+      expect(git(root, 'ls-files', '-v')).toMatch(/^S ios\/App\/Generated\/Sources\/Module1\/File1\.swift$/m);
+    expect(parseGitIndex(index)).not.toBeNull();
     expect(await trackedPaths(root)).toEqual(lsFiles(root));
   });
 

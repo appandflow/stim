@@ -18,6 +18,8 @@ function tree(files: Record<string, string>): string {
   return root;
 }
 
+const project = (files: Record<string, string>) => tree({ 'package-lock.json': '{}', ...files });
+
 function write(root: string, files: Record<string, string>): void {
   for (const [path, text] of Object.entries(files)) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
@@ -223,7 +225,7 @@ describe('native subsets and static inputs', () => {
     ['bare React Native', false, [], 'tracked'],
   ];
   test.each(modes)('%s keys the native directory as %s', (_case, expoResolves, tracked, mode) => {
-    const root = tree({ 'package.json': '{}', 'ios/Podfile': '' });
+    const root = project({ 'package.json': '{}', 'ios/Podfile': '' });
     const result = inputsOf(
       root,
       { expoResolves, tracked: new Set(tracked.map((p) => join(root, p))) },
@@ -234,12 +236,12 @@ describe('native subsets and static inputs', () => {
   });
 
   test('outside git, an Expo app with a native directory has no key', () => {
-    const root = tree({ 'package.json': '{}', 'ios/Podfile': '' });
+    const root = project({ 'package.json': '{}', 'ios/Podfile': '' });
     expect(isUncertain(staticInputs({ root, tracked: null, expoResolves: true }, { platform: 'ios' }))).toBe(true);
   });
 
   test('patches, the patch manifest and fingerprint.config.js sources become rows', () => {
-    const root = tree({
+    const root = project({
       'package.json': '{"scripts":{"postinstall":"patch-package --patch-dir fixes"},"version":"1.0.0"}',
       'fixes/lib+1.0.0.patch': 'diff',
       'native-extra/x.gradle': '',
@@ -257,7 +259,7 @@ describe('native subsets and static inputs', () => {
       'native-extra/x.gradle',
       'package.json#native',
     ]);
-    const bumped = tree({
+    const bumped = project({
       'package.json': '{"scripts":{"postinstall":"patch-package --patch-dir fixes"},"version":"2.0.0"}',
     });
     expect(hashOf(inputsOf(bumped, {}, { platform: 'android' }).inputs, 'package.json#native')).toBe(

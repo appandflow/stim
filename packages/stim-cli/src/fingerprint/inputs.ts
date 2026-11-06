@@ -277,9 +277,8 @@ export function staticInputs(context: StaticContext, target: StaticTarget): Stat
     gradleRoot: ios ? null : (target.androidLayout?.gradleRootRelative ?? DEFAULT_ANDROID_GRADLE_ROOT),
     module: ios ? null : (target.androidLayout?.module ?? DEFAULT_ANDROID_MODULE),
   };
-  const nativeDir = ios
-    ? resolve(project, projectPath)
-    : (target.androidLayout?.gradleRoot ?? join(project, 'android'));
+  const declared = ios ? resolve(project, projectPath) : (target.androidLayout?.gradleRoot ?? join(project, 'android'));
+  const nativeDir = existsSync(declared) ? realpathSync.native(declared) : declared;
   const native = nativeMode(context, nativeDir);
   if (isUncertain(native)) return native;
   const extra = projectFingerprintConfig(context.fingerprintConfig, project);
