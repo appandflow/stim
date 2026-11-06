@@ -41,7 +41,14 @@ import { readWebRecord, webFacts } from '../web/state.ts';
 import type { Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { relaunchWithLogFile } from '../detached-entry.ts';
-import { LAUNCHD_LABEL_ENV, launchdLabelPrefix, stimdBuildId } from '../daemon/client.ts';
+import {
+  LAUNCHD_LABEL_ENV,
+  launchdLabelPrefix,
+  serveThroughStimd,
+  stimdBuildId,
+  stimdLive,
+  type NetAnswer,
+} from '../daemon/client.ts';
 import { getExecutor } from '../exec.ts';
 import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from '../daemon/mode.ts';
 import { ownedHere } from '../daemon/idle.ts';
@@ -82,6 +89,12 @@ const OPS: Record<Resource, { wait: string; waiting: string; released: string; c
   build: { wait: 'slot.wait', waiting: 'slot.waiting', released: 'slot.released', changed: 'slot.changed' },
   boot: { wait: 'boot.wait', waiting: 'boot.waiting', released: 'boot.released', changed: 'boot.changed' },
 };
+
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
+
+const reportNet = (answer: NetAnswer | null): void =>
+  answer?.listening ? undefined : console.error(`stimd: ${answer?.message ?? 'stimd did not answer'}`);
 
 async function takeClaim(
   root: string,
@@ -379,6 +392,8 @@ export async function runStimd({
               netOptions({
                 ...(port !== undefined && port >= 0 && port <= 65535 ? { port } : share ? { port: 0 } : {}),
                 loopbackOnly: share || params.loopbackOnly === true,
+                extraEnv: strings(params.extraEnv),
+                pathPrepend: strings(params.pathPrepend),
                 shareOnly: share,
                 ...(kind === 'desktop' ? { owner: 'desktop' } : {}),
               }),
@@ -675,11 +690,12 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
   }
   const at = argv.indexOf('--mode');
   try {
-    await runStimd({
+    const served = await runStimd({
       mode: parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ?? daemonMode({}),
       serve,
-      onNet: (answer) => (answer.listening ? undefined : console.error(`stimd: ${answer.message}`)),
+      onNet: reportNet,
     });
+    if (serve && !served && stimdLive()) await serveThroughStimd(serve, reportNet);
   } catch (error) {
     const message =
       isClaimRefusal(error) || isClaimUnavailable(error)

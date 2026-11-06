@@ -93,7 +93,7 @@ async function serveInStimd(serve: ServeOptions): Promise<void> {
     return refuse('a stim-daemon from an older Stim still holds this Stim home; it exits once nothing runs in it.');
   console.error('stim-server: a stimd already serves this Stim home; asking it to start its net thread.');
   let heard = false;
-  await serveThroughStimd({ port: serve.port, loopbackOnly: serve.loopbackOnly }, (answer) => {
+  await serveThroughStimd(serve, (answer) => {
     heard = true;
     if (answer?.listening)
       console.log(`stimd's net thread listens on port ${answer.port}; this process exits with it.`);

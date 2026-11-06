@@ -481,7 +481,9 @@ function nodeShim(node: string, pathPrepend: string[]): string | null {
 }
 
 export async function recordServiceRoute(label: string, port: number, record: ServeRecord): Promise<void> {
-  await withUpdateClaim(label, async (installed) => {
+  await holdingUpdateClaim(label, async () => {
+    const installed = await requireManaged(label);
+    if (!installed) throw new ServiceError(`${label} is not installed. Run \`stim service install\` first.`);
     if (installed.port !== port)
       throw new ServiceError(`${label} moved to port ${installed.port}; not recording this route.`);
     const path = plistPath(label);
@@ -998,6 +1000,10 @@ function withUpdateClaim<T>(
   serviceManager();
   return holdingUpdateClaim(label, async () => {
     const installed = await requireManaged(label);
+    if (installed?.script && !installed.node)
+      throw new ServiceError(
+        `${label} runs the Stim engine's stimd shim, which follows the engine; run \`stim engine update\`.`,
+      );
     if (!installed?.script || !installed.node || installed.port === null) {
       throw new ServiceError(`${label} is not installed. Run \`stim service install\` first.`);
     }

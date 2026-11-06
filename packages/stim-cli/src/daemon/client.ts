@@ -416,7 +416,7 @@ export async function ensureNet(share: boolean, env: NodeJS.ProcessEnv = process
  * resolves once that stimd closes the connection. A net thread that already runs keeps its own port and options.
  */
 export function serveThroughStimd(
-  params: { port: number; loopbackOnly: boolean },
+  params: { port: number; loopbackOnly: boolean; extraEnv: string[]; pathPrepend: string[] },
   onAnswer: (answer: NetAnswer | null) => void,
 ): Promise<void> {
   return new Promise((done) => {
