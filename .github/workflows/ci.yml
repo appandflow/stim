@@ -145,6 +145,37 @@ jobs:
             pnpm run test:unit --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
           fi
 
+      - name: Benchmark harness tests (vitest)
+        shell: bash
+        env:
+          BENCH_FULL_SUITE: ${{ inputs.full || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' }}
+        run: |
+          benchmark_paths=(
+            scripts/agent-benchmark/
+            scripts/launch-crash-benchmark.mjs
+            test/e2e/native/fixtures/xcode/
+            packages/stim-cli/package.json
+            packages/stim-cli/src/engine/eas-machine-root-guard-env.ts
+            packages/stim-cli/src/commands/gc/temp-leftovers-guard-env.ts
+            packages/stim-cli/src/daemon/passes-guard-env.ts
+            package.json
+            pnpm-lock.yaml
+            vitest.bench.config.ts
+            vitest.config.ts
+            vitest.setup.ts
+            vitest.global-tmpdir.ts
+            vitest.reap-children.ts
+            vitest.kill-run-processes.ts
+            .github/workflows/ci.yml
+          )
+          if [[ "$BENCH_FULL_SUITE" == true ]]; then
+            pnpm run test:bench
+          elif git diff --quiet HEAD^1 HEAD -- "${benchmark_paths[@]}"; then
+            echo "Benchmark harness unchanged; skipping test:bench"
+          else
+            pnpm run test:bench
+          fi
+
       - name: Integration tests (vitest)
         if: github.event_name != 'pull_request' && (github.event_name != 'push' || matrix.node == 24)
         run: pnpm run test:integration --reporter=default --reporter=json --outputFile.json=test-results/integration-${{ matrix.node }}.json

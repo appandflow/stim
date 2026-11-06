@@ -9,7 +9,10 @@ Stim has three test layers. The unit suite (`pnpm test`, Vitest, more than
 2,000 cases across six packages) is the bulk of the coverage. On top of it sit
 two end-to-end layers that exercise the _published loop_ rather than individual
 functions. The separately built runtime-floor job loads every published ESM
-entry point on Node 22.12.0.
+entry point on Node 22.12.0. Benchmark harness tests are excluded from
+`pnpm test`, `test:unit` and `test:integration`; run them with
+`pnpm run test:bench`. CI runs them only when the harness or its inputs change,
+and always on manual and full-suite runs.
 
 ## The fast cross-platform e2e
 
@@ -261,7 +264,10 @@ PATH).
 - **`ci.yml`** -- fast and **blocking** on every push to `main` and every pull request: the
   Linux jobs only, about 3 minutes on a pull request and 8 on a push, which adds the integration tests. The
   repository build matrix uses Node 22 and 24, runs frozen pnpm install, lint,
-  format check, ESM build, typecheck, knip, Vitest, and the cross-platform E2E.
+  format check, ESM build, typecheck, knip, unit tests, path-filtered
+  `pnpm run test:bench`, integration tests when enabled, and the cross-platform E2E.
+  The benchmark step compares `HEAD^1..HEAD`, like the focused unit selector,
+  and runs if the comparison fails. Manual and full-suite runs always include it.
   A separate job builds on Node 22.18 and then runs `test/runtime-floor.mjs`
   under exactly Node 22.12.0, the published floor, then `test/runtime-refusal.mjs`
   under Node 18, where both built bins must refuse with `STIM_NODE_UNSUPPORTED`.
@@ -277,7 +283,7 @@ PATH).
   `/bin/zsh` and case-insensitive-filesystem gates), so a new gated file joins
   without a workflow edit. Both it and the focused PR selector use
   `scripts/ci-unit-test-pattern.mjs` to match root test files and exclude
-  compatibility and browser tests. It runs each selected file in full, with a 60 second
+  compatibility, browser and agent-benchmark tests. It runs each selected file in full, with a 60 second
   test timeout, and uploads `unit-test-timings-macos`. Like every `ci.yml` job
   it is part of the `merge gate` poll on a pull request and does not run in the
   merge queue.

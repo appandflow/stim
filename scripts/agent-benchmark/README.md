@@ -278,6 +278,10 @@ or an actual run timeout. Exceeded phase targets and missing diagnosis token
 usage produce measurement warnings. The recovery mechanism is measured, not
 prescribed.
 
+Run `pnpm run test:bench` for the harness tests; they are excluded from
+`pnpm test`, `test:unit` and `test:integration`. CI runs them when the harness
+or its inputs change, and always on manual and full-suite runs.
+
 Run the self-tests before a campaign:
 
 ```bash
