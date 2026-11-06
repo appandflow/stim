@@ -595,6 +595,7 @@ async function evaluate(
         session.stamped,
         packageRoot,
         (dir) => owner(join(dir, 'package.json')) !== null,
+        session.reals,
       );
       const names = [...new Set([...done.trace.env, ...STARTUP_ENV])];
       if (done.trace.enumerators.length > 0) names.push('*');

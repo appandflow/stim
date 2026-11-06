@@ -517,9 +517,9 @@ export function traceReads(
   stamped: boolean,
   packageRoot: (path: string) => string | null,
   named: (dir: string) => boolean,
+  reals: Map<string, string | null>,
 ): Read[] | null {
   const reads = new Map<string, Read>();
-  const reals = new Map<string, string | null>();
   const real = (path: string): string | null => {
     if (!reals.has(path)) {
       const found = realOf(path);
@@ -558,6 +558,8 @@ export function traceReads(
  */
 export class IndexSession {
   readonly hashes: FileHashes;
+  /** Real paths `traceReads` resolved during this computation, shared by its parts. */
+  readonly reals: Map<string, string | null> = new Map();
   private readonly loaded: { record: EvalRecord; stamps: boolean; file: string }[] = [];
   private readonly used = new Set<string>();
   private files: string[] | null = null;
