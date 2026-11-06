@@ -8,6 +8,7 @@ tester.run('directive-reason', plugin.rules['directive-reason'], {
     '// oxlint-disable-next-line no-console -- the CLI prints here\nconsole.log(1);',
     '/* eslint-disable no-console -- a script */',
     '// eslint-enable no-console',
+    '// eslint-disable-next-line no-console ---- a longer separator',
     '// eslint-disabled is prose, not a directive',
   ],
   invalid: [
@@ -33,6 +34,7 @@ tester.run('refusal-remedy', plugin.rules['refusal-remedy'], {
     "failedResult({ code: 'STIM_NO_DEVICE', diagnostics: [{ message: 'm', remedy: 'r' }] });",
     "fail({ code: 'STIM_BAD_ARG', message: 'm' }, { code: 'STIM_CANCELLED' }, { code: 'STIM_CI_CANCELLED' });",
     "const options = { code: 'EEXIST' };",
+    "process.emitWarning('relative path', { code: 'STIM_RELATIVE_PATH' });",
   ],
   invalid: [
     { code: "fail({ code: 'STIM_NO_DEVICE', message: 'm' });", errors: 1 },

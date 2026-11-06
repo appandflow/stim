@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -9,10 +9,6 @@ const open = /^\s*\/\/ compat (C\d+) (permanent|until \S+)\s*$/;
 const close = /^\s*\/\/ compat end\s*$/;
 const word = /legacy|compat(?!ib)|deprecat|peer-too-old|STIM_BUILD_COMPAT/gi;
 
-/**
- * Non-blank lines between `// compat C<N> ...` and `// compat end`, per row; the indexes of those lines and their
- * markers; and the marker mistakes in `text`.
- */
 export function markedLines(file, text) {
   const counts = {};
   const problems = [];
@@ -41,7 +37,6 @@ export function markedLines(file, text) {
   return { counts, problems, marked };
 }
 
-/** Rows that are unknown or over their budget. */
 export function budgetProblems(counts, rows) {
   return Object.entries(counts).flatMap(([row, lines]) => {
     if (!rows[row]) return [`${row} is not a row of ${budgetFile}.`];
@@ -53,7 +48,7 @@ export function budgetProblems(counts, rows) {
 const tracked = (patterns) =>
   execFileSync('git', ['ls-files', '-z', ...patterns], { cwd: root, encoding: 'utf8' })
     .split('\0')
-    .filter(Boolean);
+    .filter((file) => file && existsSync(join(root, file)));
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const { rows, words } = JSON.parse(readFileSync(join(root, budgetFile), 'utf8'));

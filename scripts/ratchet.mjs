@@ -67,7 +67,7 @@ for (const { code, filename: reported } of diagnostics) {
   const kind = kinds[code];
   const name = packages.find((candidate) => filename.startsWith(`${candidate}/`));
   if (!kind || !name) throw new Error(`Unexpected oxlint result: ${code} in ${filename}`);
-  const bucket = /(^|\/)(__tests__|test)\/|\.test\.tsx?$/.test(filename.slice(name.length)) ? 'test' : 'src';
+  const bucket = /(^|\/)(__tests__|test)\/|\.test\.[cm]?[jt]sx?$/.test(filename.slice(name.length)) ? 'test' : 'src';
   if (counted[bucket].includes(kind)) counts[name][bucket][kind]++;
 }
 

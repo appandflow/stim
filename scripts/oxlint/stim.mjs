@@ -1,5 +1,5 @@
 const directive = /^\s*(?:eslint|oxlint)-disable(?:-next-line|-line)?(?=\s|$)(.*)$/s;
-const reasoned = /^\s+[^\s-].*?\s--\s+\S/s;
+const reasoned = /^\s+[^\s-].*?\s-{2,}\s+\S/s;
 
 const directiveReason = {
   meta: { type: 'problem', schema: [] },
@@ -31,7 +31,7 @@ const noSnapshot = {
         } else if (inlineSnapshots.has(name)) {
           const text = node.arguments.map((arg) => context.sourceCode.getText(arg)).join('\n');
           if (text.split('\n').length > inlineLines)
-            context.report({ node, message: `Keep inline snapshots under ${inlineLines} lines.` });
+            context.report({ node, message: `Keep inline snapshots to ${inlineLines} lines or fewer.` });
         }
       },
     };
@@ -48,6 +48,7 @@ const refusalRemedy = {
   create(context) {
     return {
       ObjectExpression(node) {
+        if (node.parent.type === 'CallExpression' && node.parent.callee.property?.name === 'emitWarning') return;
         const code = node.properties.find((p) => p.type === 'Property' && keyName(p) === 'code');
         const value = code && unwrap(code.value);
         if (value?.type !== 'Literal' || typeof value.value !== 'string' || !value.value.startsWith('STIM_')) return;

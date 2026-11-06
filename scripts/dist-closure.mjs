@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
@@ -39,7 +40,6 @@ function packageOf(file, cache) {
   throw new Error(`No package.json above ${file}`);
 }
 
-/** Workspace packages by name, so a bare `@stim-cli/*` import is walked into that package's built files. */
 export function workspacePackages(packagesDir) {
   const found = new Map();
   for (const name of readdirSync(packagesDir)) {
@@ -63,11 +63,7 @@ function resolveBare(specifier, workspace) {
   return join(pkg.dir, file);
 }
 
-/**
- * Every module a set of entry files loads through static imports, never through `import()`. Built files name their
- * source modules with tsdown's `//#region <path>` lines; a module is `<package name>/<path>`. Imports of packages
- * outside the workspace are recorded by specifier and not walked. Each module maps to the file chain that loads it.
- */
+/** tsdown names the source modules of a built file with `//#region <path>` lines. */
 export function staticClosure(entries, workspace) {
   const packages = new Map();
   const chain = new Map();
@@ -92,7 +88,6 @@ export function staticClosure(entries, workspace) {
   return modules;
 }
 
-/** The modules of a closure that a deny list forbids, each with its rule label and the file chain that loads it. */
 export function forbidden(modules, rules) {
   const hits = [];
   for (const [module, path] of modules) {
@@ -102,7 +97,6 @@ export function forbidden(modules, rules) {
   return hits;
 }
 
-/** The files each checked entry starts from: `--version` loads `cli.mjs` and the chunk it imports. */
 export function entryFiles(dist) {
   const cli = join(dist, 'cli.mjs');
   const main = /import\("(\.\/cli-[^"]+\.mjs)"\)/.exec(readFileSync(cli, 'utf8'));
@@ -120,8 +114,8 @@ export function entryFiles(dist) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const at = process.argv.indexOf('--enforce');
-  const enforce = at > 0 ? process.argv[at + 1].split(',') : [];
+  const { values } = parseArgs({ options: { enforce: { type: 'string', default: '' } } });
+  const enforce = values.enforce.split(',').filter(Boolean);
   const unknown = enforce.filter((name) => !deny[name]);
   if (unknown.length > 0) throw new Error(`Unknown entry for --enforce: ${unknown.join(', ')}`);
   const dist = join(root, 'packages/stim-cli/dist');
