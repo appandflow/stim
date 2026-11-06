@@ -15,6 +15,7 @@ import {
   type ClaimHolder,
 } from '../ownership-claim.ts';
 import type { WaitedForBuild } from './build-facts.ts';
+import { segment } from './path-segment.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 import { ambientContext } from '@stim-cli/core';
 
@@ -96,14 +97,6 @@ export const WAIT_CEILING_MS: number = 90 * 60 * 1000;
 
 function sleepAsync(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export function segment(value: string): string {
-  return (
-    String(value)
-      .replace(/[^A-Za-z0-9._-]+/g, '-')
-      .replace(/^\.+/, '') || 'unknown'
-  );
 }
 
 export function buildLocksDir(): string {
