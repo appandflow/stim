@@ -15,7 +15,6 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir, type MetroLink } from '@stim-cli/core';
 import {
   archiveDir,
-  serverLocalSocket,
   deviceHostArea,
   deviceHostAreas,
   readArchive,
@@ -136,7 +135,6 @@ import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
 import { createKeepAwake, type KeepAwakeStatus } from './keep-awake.ts';
 import { runsAsService } from './service.ts';
 import { ShareRoute, tailscaleFunnel } from './share-route.ts';
-import { listenLocal, type LocalListenerContext } from './local-listener.ts';
 import { serverTransports } from './server-transports.ts';
 import {
   type RequestLimits,
@@ -166,7 +164,7 @@ import {
   listArchived,
   statusRead,
 } from './handlers/status.ts';
-import { publishPresence } from './handlers/presence.ts';
+import { publishPresence, recordPresence } from './handlers/presence.ts';
 import { hostedMethod } from './handlers/device-host.ts';
 import { machineMethod, planBuild } from './handlers/build.ts';
 import { subscribeLogs, queryLogs } from './handlers/logs.ts';
@@ -227,8 +225,13 @@ function localHealthRequest(request: IncomingMessage): boolean {
 
 export interface RunningServer {
   addresses: { host: string; port: number }[];
-  /** The Unix socket this machine's own user connects on without Noise, or null when there is none. */
-  localSocket: string | null;
+  /**
+   * Serves one connection from this machine's own user, such as Stim Desktop, without Noise: stimd hands over the
+   * connections its CLI socket admits, where the kernel's check on the 0600 socket stands in for a peer uid.
+   */
+  acceptLocal: (stream: Duplex) => void;
+  /** Shows one agent action's presence, as `presence.publish` from a local client does. */
+  publishPresence: (params: unknown) => string | null;
   /** Settles once the first read of the Stim home finished: `ready`, or `degraded` while a read does not return. */
   ready: Promise<StartupState>;
   close: () => Promise<void>;
@@ -1996,9 +1999,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     wss.close();
     localWss.close();
     await Promise.all(
-      [...servers.values(), ...(localListener ? [localListener] : [])].map((listener) =>
-        settle(closeListener(listener)),
-      ),
+      [...servers.values()].map((listener) => settle(closeListener(listener))),
     );
     if (failures.length) throw new AggregateError(failures, 'Server resources did not close cleanly.');
   };
@@ -2091,27 +2092,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     servers.set(host, { server, sockets });
     addresses.push({ host, port: (server.address() as AddressInfo).port });
   }
-  let localSocket: string | null = null;
-  let localListener: { server: Server; sockets: Set<Socket> } | null = null;
-  const listenerContext: LocalListenerContext = {
-    get closing() {
-      return closing;
-    },
-    answerHealth,
-    upgradeLocal,
-    get localListener() {
-      return localListener;
-    },
-    set localListener(value) {
-      localListener = value;
-    },
-    get localSocket() {
-      return localSocket;
-    },
-    set localSocket(value) {
-      localSocket = value;
-    },
-  };
   try {
     for (const host of options.hosts) await listenOn(host);
   } catch (error) {
@@ -2189,19 +2169,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     if (reason === null) {
       if (startup.state === 'degraded') console.error('stim-server: the Stim home answers again; serving clients.');
-      const local = options.localSocket === undefined ? serverLocalSocket() : options.localSocket;
-      if (!localListener && local !== null && process.platform !== 'win32') {
-        try {
-          await listenLocal(listenerContext, local);
-        } catch (error) {
-          console.error(`stim-server: no local socket, so Stim Desktop cannot connect: ${(error as Error).message}`);
-        }
-        if (closing) {
-          if (localListener) await closeListener(localListener);
-          localListener = null;
-          return settle(startup);
-        }
-      }
       startup = { state: 'ready' };
       pruneSetup();
       if (options.shareServer && !shareServerGrace) {
@@ -2232,11 +2199,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     startupRetry = setTimeout(() => void checkHome(), options.startupRetryMs ?? STARTUP_RETRY_MS);
   };
   void checkHome();
+  const localHttp = createServer((request, response) => {
+    if (request.method === 'GET' && request.url === '/health') return void answerHealth(response);
+    response.writeHead(426, { 'content-type': 'text/plain' }).end('stim-server speaks WebSocket only.\n');
+  });
+  localHttp.on('upgrade', upgradeLocal);
   return {
     addresses,
-    get localSocket() {
-      return localSocket;
+    acceptLocal: (stream) => {
+      if (closing) return void stream.destroy();
+      localHttp.emit('connection', stream);
     },
+    publishPresence: (params) => recordPresence(localAgents, params)?.message ?? null,
     ready,
     close: async () => {
       for (const stop of stopWatching) stop();

@@ -11,6 +11,7 @@ export type SpawnEntryName =
   | 'web-run'
   | 'macos-run'
   | 'stimd-thread'
+  | 'net-thread'
   | 'engine-select'
   | '__self-test';
 
@@ -21,6 +22,7 @@ const DEV_ENTRIES: Record<SpawnEntryName, string> = {
   'web-run': './web/run.ts',
   'macos-run': './macos/run.ts',
   'stimd-thread': './stimd/threads.ts',
+  'net-thread': '../../server/src/net-thread.ts',
   'engine-select': '../bin/engine-select.ts',
   '__self-test': '../bin/self-test.ts',
 };

@@ -26,6 +26,7 @@ export default defineConfig({
     'share-links': 'src/workspace/share-links.ts',
     'build-artifact-cache': 'src/offload/build-artifact-cache.ts',
     'stimd-thread': 'src/stimd/threads.ts',
+    'net-thread': '../server/src/net-thread.ts',
     'supervisor-run': 'src/supervisor/run.ts',
     'collector-run': 'src/collector/run.ts',
     'web-run': 'src/web/run.ts',

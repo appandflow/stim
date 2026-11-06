@@ -96,8 +96,10 @@ function hostedPlacement(dir: string, platform: string, slot = 'default') {
 }
 
 export interface ServerOptions {
-  /** Private bootstrap received from the Desktop parent; never a persisted pairing capability. */
+  /** The key in stimd's `run/desktop.key` that admits a local connection to the Desktop-only methods. */
   desktopBootstrap?: DesktopBootstrap;
+  /** Who asked for this server, as `hello` reports it in `host.owner`; `service` with a service label, else `cli`. */
+  owner?: 'desktop';
   /** What `stim setup` runs with when Stim Desktop approves a request here; `defaultSetupDeps` by default. */
   setupDeps?: () => SetupDeps;
   host?: { executable: string; name: string };
@@ -121,8 +123,6 @@ export interface ServerOptions {
    * `graceMs` (two minutes by default) of the server being ready.
    */
   shareServer?: { idle: () => void; graceMs?: number };
-  /** The Unix socket for this machine's own user; defaults to core's serverLocalSocket(), null for none. */
-  localSocket?: string | null;
   stimCli: string;
   stimVersion: string;
   serverVersion: string;

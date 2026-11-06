@@ -1,16 +1,15 @@
 import tailscaleManifest from '@stim-cli/transport-tailscale/package.json' with { type: 'json' };
-import { realpathSync, statSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { hostname, networkInterfaces } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { readHostedSessions } from '@stim-cli/core/state';
-import { configDir } from '@stim-cli/core';
-import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
+import { pinnedReleaseFloor, readHostedSessions } from '@stim-cli/core/state';
 import { discoverToolchain } from '@stim-cli/core/toolchain';
 import { bundledStim } from './environment.ts';
 import { formatHostedSessions, readHostedSessionRows } from './hosted-sessions.ts';
 import { readAudit } from './actions.ts';
 import {
   installService,
+  rewriteUnitToShim,
   rollbackService,
   serviceStatus,
   statusLines,
@@ -46,8 +45,11 @@ import {
 import { keyFingerprint } from '@stim-cli/core/noise-session';
 import { hostFromExecutable, hostPermissionPanes } from './stim-host.ts';
 import { defaultSetupDeps, runSetup } from './setup.ts';
-import { startServer } from './server.ts';
-import { readDesktopBootstrap, watchLauncherLifetime } from './desktop-bootstrap.ts';
+import { startServer, type RunningServer } from './server.ts';
+import { DesktopBootstrap } from './desktop-bootstrap.ts';
+// compat C23 until removal-minor
+import { legacyServerRefusal } from './legacy-server-probe.ts';
+// compat end
 import type { ServeRoute } from '@stim-cli/core/protocol';
 import { loadTransport } from '@stim-cli/transport';
 import { localTransport, resolveLanAddresses } from '@stim-cli/transport-local';
@@ -101,25 +103,34 @@ function macName(tailscale: TailscaleState): string {
   return (tailscale.state === 'running' && tailscale.hostName) || hostname();
 }
 
-export async function serve(
-  port: number,
-  extraEnv: string[],
-  pathPrepend: string[],
-  loopbackOnly: boolean,
-  shareOnly = false,
-): Promise<void> {
-  const bootstrapFd = process.env.STIM_DESKTOP_BOOTSTRAP_FD;
-  const lifetimeFd = process.env.STIM_DESKTOP_LIFETIME_FD;
-  delete process.env.STIM_DESKTOP_BOOTSTRAP_FD;
-  delete process.env.STIM_DESKTOP_LIFETIME_FD;
-  if (lifetimeFd !== undefined && lifetimeFd !== '0') fail('Desktop lifetime input is invalid or unavailable.');
-  if (bootstrapFd !== undefined && bootstrapFd !== '0') fail('Desktop bootstrap input is invalid or unavailable.');
-  const desktopInput =
-    bootstrapFd === '0'
-      ? await readDesktopBootstrap(process.stdin).catch(() =>
-          fail('Desktop bootstrap input is invalid or unavailable.'),
-        )
-      : undefined;
+/** What `stim serve`, a service unit or a request to stimd asks the net thread to serve. */
+export interface NetOptions {
+  port: number;
+  extraEnv: string[];
+  pathPrepend: string[];
+  loopbackOnly: boolean;
+  /** Serves web shares only, and ends once the last one has, unless `keep` runs first. */
+  shareOnly: boolean;
+  /** The key in stimd's `run/desktop.key`. */
+  desktopKey: string;
+  owner?: 'desktop';
+  /** The script stimd's process runs, which a service unit names. */
+  script: string;
+}
+
+export interface NetThread {
+  server: RunningServer;
+  /** Stops a share-only server from ending with its last share. */
+  keep: () => void;
+  close: () => Promise<void>;
+}
+
+/** Thrown when the net thread cannot serve; its message is the whole refusal. */
+export class NetRefusal extends Error {}
+
+/** stim-server's listeners and handlers as stimd's net thread runs them. `idle` runs when a share-only server ends. */
+export async function serve(options: NetOptions, idle: () => void): Promise<NetThread> {
+  const { port, extraEnv, pathPrepend, loopbackOnly, shareOnly } = options;
   delete process.env.NODE_COMPILE_CACHE;
   const captureHost = hostFromExecutable(process.env.STIM_HOST_EXECUTABLE);
   const inherited = { ...process.env };
@@ -134,6 +145,10 @@ export async function serve(
   if (process.env.STIM_HOME) env.STIM_HOME = process.env.STIM_HOME;
   Object.assign(process.env, env);
   const currentEnv = () => ({ ...serveEnvironment(() => {}), ...(env.STIM_HOME ? { STIM_HOME: env.STIM_HOME } : {}) });
+  // compat C23 until removal-minor
+  const legacy = await legacyServerRefusal(port, pinnedReleaseFloor('stimd'));
+  if (legacy) throw new NetRefusal(legacy);
+  // compat end
 
   const loaded = await loadTransport({
     reference: '@stim-cli/transport-tailscale',
@@ -141,45 +156,26 @@ export async function serve(
     load: () => import('@stim-cli/transport-tailscale'),
     input: { env, options: {} },
   });
-  if ('unavailable' in loaded) fail(`the Tailscale transport is unavailable: ${loaded.unavailable}`);
+  if ('unavailable' in loaded) throw new NetRefusal(`the Tailscale transport is unavailable: ${loaded.unavailable}`);
   if (!isTailscaleTransport(loaded.transport))
-    fail('@stim-cli/transport-tailscale did not create a Tailscale transport');
+    throw new NetRefusal('@stim-cli/transport-tailscale did not create a Tailscale transport');
   const transport = loaded.transport;
   const { state: tailscale } = transport.snapshot();
   const lanSetting = watchServerSettings();
   await Promise.race([lanSetting.ready, new Promise((done) => setTimeout(done, 1000).unref())]);
   const lan = localTransport({ entries: lanSetting.current });
   const stim = bundledStim();
-  let shareClaim: ClaimHandle | null = null;
-  if (shareOnly) {
-    let attempt;
-    try {
-      attempt = tryAcquireClaim({
-        root: join(configDir(), 'server', 'share-server'),
-        mode: 'exclusive',
-        label: 'web share server',
-        details: { port },
-      });
-    } catch (error) {
-      fail(
-        `cannot record this server as the one stim share started: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    if (attempt.pending) releaseClaim(attempt.pending);
-    if (!attempt.acquired)
-      fail(`a stim-server started for web shares already runs (pid ${attempt.held?.owner.pid ?? 'unknown'}).`);
-    shareClaim = attempt.acquired;
-  }
-  let idle: (() => void) | null = null;
-  let server;
+  let kept = !shareOnly;
+  let server: RunningServer;
   try {
     server = await startServer({
-      desktopBootstrap: desktopInput?.bootstrap,
+      desktopBootstrap: new DesktopBootstrap(options.desktopKey),
+      ...(options.owner ? { owner: options.owner } : {}),
       name: macName(tailscale),
       host: captureHost,
       hosts: ['127.0.0.1'],
       ...(loopbackOnly ? { loopbackOnly: true } : {}),
-      ...(shareOnly ? { shareServer: { idle: () => idle?.() } } : {}),
+      ...(shareOnly ? { shareServer: { idle: () => (kept ? undefined : idle()) } } : {}),
       port,
       stimCli: join(dirname(stim.cli), '../dist/cli.mjs'),
       stimVersion: stim.version,
@@ -191,15 +187,23 @@ export async function serve(
       service: {
         label: serviceManagerOrNull()?.runningLabel(process.env) ?? null,
         node: process.execPath,
-        script: realpathSync(process.argv[1] ?? ''),
+        script: options.script,
       },
     });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {
-      fail(`port ${port} is in use; another stim-server may already be running. Pass --port to use another port.`);
-    }
+    lanSetting.stop();
+    lan.close?.();
+    transport.close?.();
+    if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE')
+      throw new NetRefusal(`port ${port} is in use; another stim-server may already be running. Pass --port to use another port.`);
     throw error;
   }
+  const label = serviceManagerOrNull()?.runningLabel(process.env);
+  if (label)
+    void rewriteUnitToShim(label).then(
+      (rewritten) => rewritten && console.log(`Rewrote ${label} to start the Stim engine's stimd shim.`),
+      (error: Error) => console.error(`stim-server: could not rewrite ${label} to name the stimd shim: ${error.message}`),
+    );
   console.log(`stim-server ${pkg.version} (stim ${stim.version}, protocol ${PROTOCOL_VERSION})`);
   for (const { host, port: bound } of server.addresses) {
     console.log(`listening on ws://${host.includes(':') ? `[${host}]` : host}:${bound}`);
@@ -234,46 +238,35 @@ export async function serve(
   };
   const stopLan = loopbackOnly ? () => {} : lan.watch(announceLan);
   if (!loopbackOnly) announceLan();
-  let shuttingDown = false;
-  const shutdown = () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    stopLan();
-    lanSetting.stop();
-    lan.close?.();
-    transport.close?.();
-    void server
-      .close()
-      .catch((error: unknown) => {
+  let closed: Promise<void> | null = null;
+  const close = () =>
+    (closed ??= (async () => {
+      stopLan();
+      lanSetting.stop();
+      lan.close?.();
+      transport.close?.();
+      await server.close().catch((error: unknown) => {
         reportShutdownFailure(error);
         process.exitCode = 1;
-      })
-      .finally(() => {
-        releaseClaim(shareClaim);
-        process.exit();
       });
-  };
-  idle = () => {
-    console.log('stim-server: no web share is left; stopping.');
-    shutdown();
-  };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
-  process.on('SIGHUP', shutdown);
-  const launcherClosed =
-    desktopInput?.closed ?? (lifetimeFd === '0' ? watchLauncherLifetime(process.stdin) : undefined);
-  void launcherClosed?.then(shutdown);
+    })());
   if (shareOnly) {
     const startup = await server.ready;
     if (startup.state !== 'ready') {
-      console.error(
-        `stim-server: not serving web shares, because ${startup.state === 'degraded' ? startup.reason : 'it did not start'}; stopping.`,
+      await close();
+      throw new NetRefusal(
+        `not serving web shares, because ${startup.state === 'degraded' ? startup.reason : 'it did not start'}.`,
       );
-      process.exitCode = 1;
-      shutdown();
     }
   }
-  if (!loopbackOnly) await announce(tailscale);
+  if (!loopbackOnly) void announce(tailscale);
+  return {
+    server,
+    keep: () => {
+      kept = true;
+    },
+    close,
+  };
 }
 
 function reportShutdownFailure(failure: unknown): void {
