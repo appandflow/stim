@@ -1,4 +1,3 @@
-import { FEATURES } from '@stim-cli/core/protocol';
 import { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS } from '@stim-cli/agent-driver-agent-device';
 import { includesArchives } from '../commands/gc/caches.ts';
 import { registerIos } from '../commands/ios.ts';
@@ -1120,11 +1119,7 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(hosted).toContain('outcomes.device["ios:host:<slot>"]');
   expect(hosted).toContain('agent-device <command> --remote-config <file>');
   expect(hosted).toContain('hosting.agentDriver');
-  expect(hosted).toContain('hosted-ios-agent');
-  expect(hosted).toContain('hosted-agent-link');
   const android = renderSection('lifecycle', 'hosted-android');
-  expect(android).toContain('hosted-android-agent');
-  expect(android).toContain('hosted-agent-link');
   expect(android).toContain('android.host.agent');
   expect(android).toContain('agent-device <command> --remote-config <file>');
   expect(android).toContain('close --shutdown');
@@ -1217,16 +1212,6 @@ test('agent-device cleanup guidance distinguishes shared state from workspace te
     expect(body).toContain('never trims or deletes the shared runner builds');
     expect(body).toContain("workspace's own agent-device dir goes only with its workspace");
   }
-});
-
-test.each(['ios', 'android'])('hosted %s data paths name their feature flag in the guides', (platform) => {
-  const feature = FEATURES.find((entry) => entry === `hosted-${platform}-data`);
-  assert(feature);
-  for (const body of [
-    renderSection('lifecycle', `hosted-${platform}`),
-    renderSection('errors', 'STIM_HOSTING_REFUSED'),
-  ])
-    expect(body).toContain(feature);
 });
 
 test('facts document the hosted GC JSON fields and result kind', () => {

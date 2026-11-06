@@ -28,12 +28,7 @@ import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { getConfigPath, getProject, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { pullHostedNativeLogs, readHostedNativeLogs } from '../device-host/hosted-logs.ts';
-import {
-  followHostedMacosLogs,
-  followHostedLogs,
-  syncHostedLogs,
-  followHostedLaunchLogs,
-} from '../device-host/hosted-logs-sync.ts';
+import { followHostedLogs, followHostedLaunchLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { workspaceIdleProbe } from '../supervisor/idle-stop.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
@@ -112,10 +107,8 @@ let pressure: string;
 let methods: { method: string; params: Record<string, unknown> }[];
 let blobs: Map<string, Buffer>;
 let manifest: { sha256: string; size: number };
-let hostFeatures: string[];
 let hostBusy: number[];
 let agentGrant: unknown;
-let features: boolean;
 let appLaunched: true | 'unverified';
 let appProcessState: 'running' | 'stopped' | 'unknown';
 let logRecords: Record<string, unknown>[];
@@ -131,7 +124,6 @@ beforeEach(async () => {
   writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 2, machines: [credential] }));
   methods = [];
   blobs = new Map();
-  features = true;
   appLaunched = true;
   appProcessState = 'running';
   logRecords = [];
@@ -145,15 +137,10 @@ beforeEach(async () => {
   capacity = 1;
   pressure = 'normal';
   tailnet.changed = false;
-  hostFeatures = ['hosted-app-state'];
   hostBusy = [];
   agentGrant = undefined;
   fixtureConnection = Object.create(BuildConnection.prototype) as BuildConnection;
   fixtureConnection.close = vi.fn<() => void>();
-  fixtureConnection.supports = (feature) =>
-    feature === 'hosted-ios-agent' || feature === 'hosted-ios-process' || feature === 'hosted-app-state'
-      ? hostFeatures.includes(feature)
-      : features;
   fixtureConnection.request = async (method, raw) => {
     const params = raw as Record<string, unknown> & {
       manifest: { sha256: string; size: number };
@@ -242,7 +229,6 @@ async function deliver(
     'mini',
     { deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' },
     readHostedIos(root)[slot],
-    mode,
   );
   try {
     return await placeHostedIos(target, {
@@ -309,14 +295,11 @@ test('a dev-client Metro port held on the host refuses with the metro.port remed
   expect(methods.some((entry) => entry.method === 'device-host.app.offer')).toBe(false);
 });
 
-test('the host Metro port probe answers from the host and counts an older or unanswering host as free', async () => {
+test('the host Metro port probe answers from the host and counts an unanswering host as free', async () => {
   hostBusy = [8083];
   const notes: string[] = [];
   const free = hostedMetroPortProbe('mini', (line) => notes.push(line));
   expect([await free(8082), await free(8083), await free(8084)]).toEqual([true, false, true]);
-  features = false;
-  expect(await hostedMetroPortProbe('mini', () => {})(8083)).toBe(true);
-  features = true;
   errorMethod = 'device-host.metro.ports';
   expect(await hostedMetroPortProbe('mini', (line) => notes.push(line))(8083)).toBe(true);
   expect(notes).toEqual([expect.stringContaining('Could not check which Metro ports are free on mini')]);
@@ -536,7 +519,6 @@ test('delivery reconnects after the build instead of using the offer connection'
   const previous = target.host.connection;
   const connection = Object.create(BuildConnection.prototype) as BuildConnection;
   connection.close = () => {};
-  connection.supports = () => false;
   connection.request = previous.request.bind(previous);
   const stale = vi.spyOn(previous, 'request').mockRejectedValue(new Error('connection dropped during build'));
   open.mockResolvedValue(connection);
@@ -579,7 +561,6 @@ test('hosted stop failures cannot overwrite the local default-slot outcome', asy
 });
 
 test('iOS grants keep credentials in separate slot files and close only the selected connection', async () => {
-  hostFeatures = ['hosted-ios-agent'];
   agentGrant = {
     driver: 'agent-device',
     path: `/device-host/agent/${sessionId}/`,
@@ -667,27 +648,6 @@ test('an unreachable stop retains the slot credential for retry', async () => {
   await expect(stopHostedIos(root)).rejects.toThrow('placement is kept');
   expect(existsSync(config)).toBe(true);
   expect(readHostedIos(root).default?.agent.driver).toBe('agent-device');
-});
-
-test('an older host gets no iOS log queries and follow warns once while retaining copied logs', async () => {
-  features = false;
-  writeHostedIos(root, 'default', placement());
-  writeHostedIos(root, 'tablet', placement());
-  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-  let stop: (() => void) | undefined;
-  try {
-    expect(await syncHostedLogs(root)).toBe(false);
-    stop = followHostedMacosLogs(root, { slot: 'default', failing: true, intervalMs: 10, retryMs: 10 });
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    expect(stderr).toHaveBeenCalledTimes(1);
-    expect(String(stderr.mock.calls[0]![0])).toContain('newer stim-server');
-    expect(methods.some((entry) => entry.method === 'device-host.logs.query')).toBe(false);
-    await stopHostedIos(root);
-    expect(methods.some((entry) => entry.method === 'device-host.stop')).toBe(true);
-  } finally {
-    stop?.();
-    stderr.mockRestore();
-  }
 });
 
 test('final log drain has a time bound even while pages advance', async () => {
@@ -795,14 +755,13 @@ test('a timed-out handoff retries busy offers within the upload fallback', async
   }
 });
 
-const autoPlacement = (localLive = false, appMode?: HostedAppOffer['mode']) =>
+const autoPlacement = (localLive = false) =>
   automaticDevicePlacement(
     {
       root,
       slot: 'default',
       platform: 'ios',
       selectors: {},
-      appMode,
       noWait: true,
     },
     {
@@ -987,24 +946,6 @@ test('auto stores its selection and reason after delivery, and a reserve race fa
   expect(readHostedIos(root)).toEqual({});
 });
 
-test('automatic process placement skips an older host but never replaces its recorded session', async () => {
-  const placed = await autoPlacement(false, 'process');
-  expect(placed.target).toBeNull();
-  expect(placed.skipped).toEqual([
-    expect.objectContaining({ machine: 'mini', reason: expect.stringContaining('process apps') }),
-  ]);
-  expect(methods).toEqual([]);
-  const original = placement();
-  writeHostedIos(root, 'default', original);
-  await expect(autoPlacement(false, 'process')).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
-  expect(methods).toEqual([]);
-  expect(readHostedIos(root).default).toEqual(original);
-  hostFeatures = ['hosted-ios-process'];
-  const resumed = await autoPlacement(false, 'process');
-  expect(resumed).toMatchObject({ sticky: true, target: { session: { id: sessionId } } });
-  expect(methods.some(({ method }) => method === 'device-host.offer' || method === 'device-host.reserve')).toBe(false);
-});
-
 test('automatic device exclusion skips offers, preserves a live session, and blocks a newly selected reservation', async () => {
   const selected = await autoPlacement();
   writeConfigSetting({ scope: 'machine' }, 'remote.devicePoolDisabled', ['mini']);
@@ -1028,7 +969,7 @@ test('automatic device exclusion skips offers, preserves a live session, and blo
   expect((await autoPlacement()).placement).toMatchObject({ decision: 'hosted', machine: 'mini' });
 });
 
-test('hosted launch process checks stay pinned to the attempt and report unsupported older hosts', async () => {
+test('hosted launch process checks stay pinned to the attempt', async () => {
   const original = placement();
   writeHostedIos(root, 'default', original);
   const output: string[] = [];
@@ -1045,12 +986,6 @@ test('hosted launch process checks stay pinned to the attempt and report unsuppo
     ]);
     appProcessState = 'unknown';
     expect(await logs.processAlive()).toBeNull();
-    hostFeatures = [];
-    const queried = methods.length;
-    expect(await logs.processAlive()).toBeNull();
-    expect(methods).toHaveLength(queried);
-    expect(output.join('')).toContain('Update stim-server on mini');
-    expect((await deliver(true)).launched).toBe('unverified');
   } finally {
     logs.stop();
   }

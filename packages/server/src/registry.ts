@@ -70,9 +70,9 @@ export interface PushRegistration {
   quietHours: QuietHours | null;
 }
 
-/** The events a registration asks for, with the legacy `disk` read as `machine` and other legacy names dropped. */
+/** The events a registration asks for, in `PUSH_EVENTS` order. */
 export function pushEvents(events: readonly unknown[]): PushEvent[] {
-  return PUSH_EVENTS.filter((event) => events.includes(event) || (event === 'machine' && events.includes('disk')));
+  return PUSH_EVENTS.filter((event) => events.includes(event));
 }
 
 /** Levels as `push.register` takes them, or null when `value` is not valid. */

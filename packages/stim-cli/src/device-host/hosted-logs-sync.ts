@@ -202,8 +202,6 @@ export function followHostedLaunchLogs(
     try {
       if (!placement) throw new Error('The hosted app placement is unavailable.');
       host = await connectHost(placement.machine, undefined, false, context?.signal);
-      if (!host.connection.supports('hosted-app-state'))
-        throw new Error(`Update stim-server on ${placement.machine} to verify hosted app process liveness.`);
       const result = await call(host, 'device-host.app.state', {
         session: placement.session,
         attempt: placement.appAttempt,

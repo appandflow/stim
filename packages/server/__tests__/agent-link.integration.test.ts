@@ -14,6 +14,7 @@ import {
   readHostedSessions,
   type HostedAgentIssuedGrant,
 } from '@stim-cli/core/state';
+import { PEER } from '../src/protocol.ts';
 import { startServer, type RunningServer } from '../src/server.ts';
 import { revokeDevice, serverIdentity, spendSecret, storeSetupSecret } from '../src/registry.ts';
 import { noiseConnect, setupClient, terminateClients } from './noise-client.ts';
@@ -271,14 +272,14 @@ test('the host links only the authenticated client own session, and stops relayi
     keyPair: setupClient(['device-host'], 'Other').keyPair,
   });
   expect(
-    await other.request('hello', { client: { name: 'other', version: '1' }, access: 'device-host' }),
+    await other.request('hello', { client: { name: 'other', version: '1', peer: PEER }, access: 'device-host' }),
   ).toHaveProperty('result.capabilities', ['device-host']);
   expect(await other.request('device-host.agent.link', { session })).toHaveProperty('error.code', 'unknown-session');
 
   const linked = [];
   for (let index = 0; index <= 16; index++) {
     const link = await noiseConnect(`ws://127.0.0.1:${port}`, { keyPair: clientIdentity() });
-    await link.request('hello', { client: { name: 'stim', version: '1' }, access: 'device-host' });
+    await link.request('hello', { client: { name: 'stim', version: '1', peer: PEER }, access: 'device-host' });
     expect(await link.request('device-host.agent.link', { session })).toHaveProperty('result', {});
     linked.push(link);
   }
@@ -320,7 +321,7 @@ test('the relay holds at most 8 local connections, and stopping the session clos
   for (const socket of local) socket.destroy();
 
   const link = await noiseConnect(`ws://127.0.0.1:${port}`, { keyPair: clientIdentity() });
-  await link.request('hello', { client: { name: 'stim', version: '1' }, access: 'device-host' });
+  await link.request('hello', { client: { name: 'stim', version: '1', peer: PEER }, access: 'device-host' });
   expect(await link.request('device-host.agent.link', { session })).toHaveProperty('result', {});
   const [connection] = connections;
   if (!connection) throw new Error('no hosted connection');
@@ -337,7 +338,7 @@ test('a hosted session stays ready while its client only holds an agent link, an
   const { machine } = approveLocalMachine(port);
   const { session } = await hostedApp(machine);
   const link = await noiseConnect(`ws://127.0.0.1:${port}`, { keyPair: clientIdentity() });
-  await link.request('hello', { client: { name: 'stim', version: '1' }, access: 'device-host' });
+  await link.request('hello', { client: { name: 'stim', version: '1', peer: PEER }, access: 'device-host' });
   expect(await link.request('device-host.agent.link', { session })).toHaveProperty('result', {});
   for (const connection of connections.splice(0)) connection.close();
 

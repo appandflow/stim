@@ -31,7 +31,6 @@ import {
 import {
   call,
   connectHost,
-  requireHostedAppMode,
   attach,
   hostedSession,
   settle,
@@ -87,7 +86,6 @@ export function prepareHostedNative(
   recorded: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice> | undefined,
   platform: 'ios' | 'android',
   resumeOnly: true,
-  mode?: HostedAppOffer['mode'],
 ): Promise<HostedNativeTarget | null>;
 export function prepareHostedNative(
   machine: string,
@@ -95,7 +93,6 @@ export function prepareHostedNative(
   recorded?: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>,
   platform?: 'ios' | 'android',
   resumeOnly?: false,
-  mode?: HostedAppOffer['mode'],
 ): Promise<HostedNativeTarget>;
 export async function prepareHostedNative(
   machine: string,
@@ -103,12 +100,10 @@ export async function prepareHostedNative(
   recorded?: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>,
   platform: 'ios' | 'android' = 'ios',
   resumeOnly = false,
-  mode?: HostedAppOffer['mode'],
 ): Promise<HostedNativeTarget | null> {
   let host: HostConnection | undefined;
   try {
     host = await connectHost(machine, undefined, true);
-    requireHostedAppMode(host, platform, mode);
     if (recorded) {
       let session: HostedSession | null = null;
       try {
@@ -243,10 +238,6 @@ export function hostedMetroPortProbe(
       let host: HostConnection | undefined;
       try {
         host = await connectHost(machine, undefined, false, runCancellationSignal(ambientContext()));
-        if (!host.connection.supports('hosted-metro-ports')) {
-          unknown = true;
-          return true;
-        }
         const { busy } = await call(host, 'device-host.metro.ports', { ports });
         if (!Array.isArray(busy) || busy.some((each) => !Number.isInteger(each)))
           throw new Error(`${machine} answered device-host.metro.ports without its busy ports.`);
@@ -321,12 +312,6 @@ async function placeHostedNativeOnce(
     enterPhase('device');
     host = await connectHost(host.machine, undefined, true, signal);
     target.host = host;
-    requireHostedAppMode(host, platform, mode);
-    if (mode === 'development' && !host.connection.supports('hosted-metro-link'))
-      throw Object.assign(new Error(`${host.machine} runs a stim-server that cannot link Metro.`), {
-        code: 'STIM_HOSTING_REFUSED',
-        remedy: `Update stim-server on ${host.machine}, then retry.`,
-      });
     let session =
       (target.session ? await attach(host, target.session.id, undefined, platform) : null) ??
       (await reserveHostedNative(
@@ -438,42 +423,36 @@ async function placeHostedNativeOnce(
     await upload(host, ids, (await call(host, 'device-host.app.offer', offer)).missing, content);
     let missing = (await call(host, 'device-host.app.offer', offer)).missing;
     if (handoff && handoff.serverKey === host.credential.serverKey && Array.isArray(missing) && missing.length) {
-      if (!host.connection.supports(platform === 'android' ? 'hosted-android-data' : 'hosted-ios-data')) {
-        note(
-          `${host.machine} needs a newer stim-server for ${platform === 'ios' ? 'iOS' : 'Android'} build handoff; uploading the app instead`,
+      try {
+        const taken = await call(
+          host,
+          'device-host.app.handoff',
+          { ...ids, build: { handoff: handoff.token, sha256: handoff.sha256 } },
+          60_000,
         );
-      } else {
-        try {
-          const taken = await call(
-            host,
-            'device-host.app.handoff',
-            { ...ids, build: { handoff: handoff.token, sha256: handoff.sha256 } },
-            60_000,
-          );
-          if (taken.files) note(`${host.machine} took ${String(taken.files)} files from the build it ran`);
-          missing = (await call(host, 'device-host.app.offer', offer)).missing;
-        } catch (error) {
-          note(`${error instanceof Error ? error.message : String(error)}; uploading the app instead`);
-          const fallbackDeadline = Date.now() + 60_000;
-          for (;;) {
-            try {
-              missing = (
-                await call(
-                  host,
-                  'device-host.app.offer',
-                  offer,
-                  Math.max(1, Math.min(20_000, fallbackDeadline - Date.now())),
-                )
-              ).missing;
-              break;
-            } catch (offerError) {
-              if (!String(offerError).includes('native operation in progress') || Date.now() >= fallbackDeadline)
-                throw offerError;
-              await cancellableSleep(Math.min(POLL_MS, Math.max(0, fallbackDeadline - Date.now())), {
-                signal: runCancellationSignal(ambientContext()),
-                what: 'hosted app offer',
-              });
-            }
+        if (taken.files) note(`${host.machine} took ${String(taken.files)} files from the build it ran`);
+        missing = (await call(host, 'device-host.app.offer', offer)).missing;
+      } catch (error) {
+        note(`${error instanceof Error ? error.message : String(error)}; uploading the app instead`);
+        const fallbackDeadline = Date.now() + 60_000;
+        for (;;) {
+          try {
+            missing = (
+              await call(
+                host,
+                'device-host.app.offer',
+                offer,
+                Math.max(1, Math.min(20_000, fallbackDeadline - Date.now())),
+              )
+            ).missing;
+            break;
+          } catch (offerError) {
+            if (!String(offerError).includes('native operation in progress') || Date.now() >= fallbackDeadline)
+              throw offerError;
+            await cancellableSleep(Math.min(POLL_MS, Math.max(0, fallbackDeadline - Date.now())), {
+              signal: runCancellationSignal(ambientContext()),
+              what: 'hosted app offer',
+            });
           }
         }
       }
@@ -501,25 +480,18 @@ async function placeHostedNativeOnce(
       agent: await agentAccess(
         platform === 'ios' ? iosAgentRemoteConfig(root, slot) : androidAgentRemoteConfig(root, slot),
         host.credential,
-        host.connection.supports(platform === 'ios' ? 'hosted-ios-agent' : 'hosted-android-agent')
-          ? delivery.agent
-          : undefined,
+        delivery.agent,
         note,
         platform,
         mode !== 'development'
           ? undefined
-          : !host.connection.supports('hosted-agent-link')
-            ? `${host.machine} runs a stim-server that cannot carry agent control over the local network. Update stim-server there, then retry.`
-            : (hostedAgentPort(root, session.id) ??
+          : (hostedAgentPort(root, session.id) ??
               `The Metro supervisor has no agent relay ready for ${host.machine}. Rerun this command; if it persists, run stim stop; stim start, then retry.`),
       ),
     };
-    const verifiesProcess = host.connection.supports('hosted-app-state');
-    if (mode !== 'development' && !verifiesProcess)
-      note(`Update stim-server on ${host.machine} to verify hosted app process liveness.`);
     return {
       placement,
-      launched: mode !== 'development' && verifiesProcess && delivery.launched === true ? true : 'unverified',
+      launched: mode !== 'development' && delivery.launched === true ? true : 'unverified',
     };
   } catch (error) {
     throw hostingRefusal(host.machine, error);

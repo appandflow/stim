@@ -1,3 +1,4 @@
+import { PEER } from '@stim-cli/core/protocol';
 import { testContext } from './_context.ts';
 import { createStim } from '../api.ts';
 import { createHash, randomUUID } from 'node:crypto';
@@ -149,7 +150,7 @@ async function fakeHost(): Promise<FakeHost> {
       if (host.silentMethods.has(method)) return;
       const reply = (result: unknown) => socket.send(JSON.stringify({ id, result }));
       if (method === 'hello')
-        return reply({ capabilities: host.capabilities, device: { id: 'client1', name: 'laptop' } });
+        return reply({ capabilities: host.capabilities, peer: PEER, device: { id: 'client1', name: 'laptop' } });
       if (host.forgetSession === params.session && (method === 'device-host.attach' || method === 'device-host.stop')) {
         return socket.send(
           JSON.stringify({

@@ -28,14 +28,11 @@ export function missingPackageManagerRemedy(machine: string, reason: string): st
   return `${machine} has no ${tool} on the PATH of its stim-server service, and the app's lockfile needs it. ${install}, then run the same command again, or rerun with --remote-build auto or --remote-build local.`;
 }
 
-export const ANDROID_RELEASE_UNSUPPORTED = 'its stim-server cannot build an Android release variant';
 export const HOLDS_SIGNING_FILE = 'holds an Android signing key or its password';
 const SIGNING_FAILURE = /\bsign(?:ing|ed)?\b|keystore|store_?file/i;
 
 /** The remedy for an offloaded release build stopped by signing material that stays on this machine; undefined for any other reason. */
 export function androidReleaseRemedy(reason: string): string | undefined {
-  if (reason.includes(ANDROID_RELEASE_UNSUPPORTED))
-    return 'Update stim-server on that machine to this Stim release: there, run `stim-server service update --release <version>`. Or build here with --remote-build local.';
   if (reason.includes(HOLDS_SIGNING_FILE))
     return 'Remove that key or password from the repository, or build here with --remote-build local.';
   return SIGNING_FAILURE.test(reason)

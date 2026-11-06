@@ -734,6 +734,7 @@ function hello(clientKey, deviceName) {
   return {
     protocol: 2,
     phoneApi: 2,
+    host: { owner: 'service', capabilities: ['physical-ios', 'physical-android'], app: null },
     server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
     capabilities: values.read ? ['read'] : ['read', 'control'],
     features: [

@@ -1,3 +1,5 @@
+import { PEER } from '@stim-cli/core/protocol';
+import { STIM_VERSION } from '../stim-version.ts';
 import { withAmbientContext } from '@stim-cli/core';
 import { testContext } from './_context.ts';
 import { createHash } from 'node:crypto';
@@ -81,7 +83,7 @@ async function fakeMachine(
   {
     drop = false,
     closeAfterStart = null,
-    hello = () => ({ result: { capabilities: ['build'] } }),
+    hello = () => ({ result: { capabilities: ['build'], peer: PEER } }),
     dropOnSync = false,
     attach = { result: { outcome: null } },
     artifact = null,
@@ -480,7 +482,7 @@ describe('offloadBuild', () => {
         hello: () =>
           ++hellos === 3
             ? { error: { code: 'identity-unavailable', message: 'tailscale whois failed' } }
-            : { result: { capabilities: ['build'] } },
+            : { result: { capabilities: ['build'], peer: PEER } },
       },
     );
     machines.push(machine);
@@ -542,7 +544,7 @@ describe('offloadBuild', () => {
         hello: () =>
           ++hellos === 2
             ? { error: { code: 'identity-unavailable', message: 'tailscale whois failed' } }
-            : { result: { capabilities: ['build'] } },
+            : { result: { capabilities: ['build'], peer: PEER } },
       },
     );
     machines.push(machine);
@@ -566,7 +568,7 @@ describe('offloadBuild', () => {
         drop: true,
         hello: () =>
           ++hellos === 1
-            ? { result: { capabilities: ['build'] } }
+            ? { result: { capabilities: ['build'], peer: PEER } }
             : { error: { code: 'unauthorized', message: 'This machine does not recognize this device token.' } },
       },
     );
@@ -609,7 +611,6 @@ describe('macOS artifact transfer', () => {
         { result: { job: 'j1' } },
         {
           artifact: { archive, digest },
-          hello: () => ({ result: { capabilities: ['build'], features: kind === 'valid' ? ['build-compat'] : [] } }),
         },
       );
       machines.push(machine);
@@ -658,7 +659,7 @@ describe('macOS artifact transfer', () => {
         },
         fingerprint: manifestDigest(files),
         stimBuild: 'b1',
-        ...(kind === 'valid' ? { compat: 1 } : {}),
+        compat: 1,
       });
       expect(outcome.ok).toBe(kind === 'valid');
       const observed = outcome.ok
@@ -693,7 +694,28 @@ describe('macOS artifact transfer', () => {
 });
 
 describe('native Xcode worker selection', () => {
-  test('an old worker is refused before offer or source upload', async () => {
+  test('a worker on a Stim before peer is refused with peer-too-old and the remedy, before any offer', async () => {
+    const machine = await fakeMachine(
+      'old',
+      offer(0.1),
+      { result: { job: 'unused' } },
+      { hello: () => ({ result: { capabilities: ['build'], server: { name: 'old', stim: '1.41.0' } } }) },
+    );
+    machines.push(machine);
+    const result = await chooseBuildMachine({
+      projectRoot: repo,
+      target: TARGET,
+      here: HERE,
+      note: () => {},
+      machines: [credential('old')],
+    });
+    expect(result).toBe(
+      `old: peer-too-old: old runs stim 1.41.0 (no peer), this Mac needs peer ${PEER}; on old run: npm i -g stim@${STIM_VERSION} && stim service install`,
+    );
+    expect(machine.methods).toEqual(['hello']);
+  });
+
+  test('a worker that cannot build Xcode is refused before offer or source upload', async () => {
     const machine = await fakeMachine('old', offer(0.1), { result: { job: 'unused' } });
     machines.push(machine);
     const result = await chooseBuildMachine({
@@ -714,7 +736,9 @@ describe('native Xcode worker selection', () => {
       offer(0.1),
       { result: { job: 'unused' } },
       {
-        hello: () => ({ result: { capabilities: ['build'], features: ['native-xcode-build'] } }),
+        hello: () => ({
+          result: { capabilities: ['build'], peer: PEER, host: { capabilities: ['native-xcode-build'] } },
+        }),
       },
     );
     machines.push(machine);
@@ -765,7 +789,9 @@ test('native results with a different transfer digest are refused before artifac
     offer(0.1),
     { result: { job: 'j-native' } },
     {
-      hello: () => ({ result: { capabilities: ['build'], features: ['native-xcode-build'] } }),
+      hello: () => ({
+        result: { capabilities: ['build'], peer: PEER, host: { capabilities: ['native-xcode-build'] } },
+      }),
       artifact: {
         archive: Buffer.from('not fetched'),
         digest: 'b'.repeat(64),
@@ -865,138 +891,127 @@ test.each([
 );
 
 describe('exact peer artifacts', () => {
-  test.each([
-    'hit',
-    'miss',
-    'corrupt',
-    'old-worker',
-    'changed-source',
-    'changed-during-fetch',
-    'crlf-listing',
-  ] as const)('SwiftPM cache-only %s never uploads sources or starts a compiler job', async (scenario) => {
-    const app = join(repo, 'archive-source', 'Sample.app');
-    mkdirSync(join(app, 'Contents/MacOS'), { recursive: true });
-    writeFileSync(join(app, 'Contents/Info.plist'), 'SwiftPM plist');
-    writeFileSync(join(app, 'Contents/MacOS/App'), 'SwiftPM executable');
-    writeFileSync(join(repo, '.gitignore'), '.env\n');
-    writeFileSync(join(repo, '.env'), 'private-worker-value');
-    const archivePath = join(repo, 'archive.tgz');
-    execFileSync('tar', ['-czf', archivePath, '-C', join(repo, 'archive-source'), 'Sample.app']);
-    const archive = readFileSync(archivePath);
-    const digest = createHash('sha256').update(archive).digest('hex');
-    const fingerprint = 'f'.repeat(64);
-    const request: Extract<BuildRequest, { platform: 'macos' }> = {
-      platform: 'macos',
-      product: 'App',
-      infoPlist: 'Info.plist',
-      bundleId: 'dev.example.App',
-      cacheArtifact: true,
-      artifactInputs: { complete: true, ignored: [], outputs: [], localFiles: ['.env'], environment: ['FLAVOR'] },
-    };
-    const target: BuildTarget = {
-      platform: 'macos',
-      local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
-    };
-    const machine = await fakeMachine(
-      'swiftpm',
-      {
-        ...offer(3),
-        capacity: { ...offer(3).capacity, declined: 'busy' },
-        artifact: {
-          fingerprint,
-          cacheKey: `swiftpm-peer-${fingerprint}`,
-          name: 'Sample.app',
-          size: archive.length,
-          sha256: digest,
-        },
-      },
-      { result: { job: 'unused' } },
-      {
-        hello: () => ({
-          result: {
-            capabilities: ['build'],
-            features: ['swiftpm-peer-cache', ...(scenario === 'old-worker' ? [] : ['build-compat'])],
+  test.each(['hit', 'miss', 'corrupt', 'changed-source', 'changed-during-fetch', 'crlf-listing'] as const)(
+    'SwiftPM cache-only %s never uploads sources or starts a compiler job',
+    async (scenario) => {
+      const app = join(repo, 'archive-source', 'Sample.app');
+      mkdirSync(join(app, 'Contents/MacOS'), { recursive: true });
+      writeFileSync(join(app, 'Contents/Info.plist'), 'SwiftPM plist');
+      writeFileSync(join(app, 'Contents/MacOS/App'), 'SwiftPM executable');
+      writeFileSync(join(repo, '.gitignore'), '.env\n');
+      writeFileSync(join(repo, '.env'), 'private-worker-value');
+      const archivePath = join(repo, 'archive.tgz');
+      execFileSync('tar', ['-czf', archivePath, '-C', join(repo, 'archive-source'), 'Sample.app']);
+      const archive = readFileSync(archivePath);
+      const digest = createHash('sha256').update(archive).digest('hex');
+      const fingerprint = 'f'.repeat(64);
+      const request: Extract<BuildRequest, { platform: 'macos' }> = {
+        platform: 'macos',
+        product: 'App',
+        infoPlist: 'Info.plist',
+        bundleId: 'dev.example.App',
+        cacheArtifact: true,
+        artifactInputs: { complete: true, ignored: [], outputs: [], localFiles: ['.env'], environment: ['FLAVOR'] },
+      };
+      const target: BuildTarget = {
+        platform: 'macos',
+        local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
+      };
+      const machine = await fakeMachine(
+        'swiftpm',
+        {
+          ...offer(3),
+          capacity: { ...offer(3).capacity, declined: 'busy' },
+          artifact: {
+            fingerprint,
+            cacheKey: `swiftpm-peer-${fingerprint}`,
+            name: 'Sample.app',
+            size: archive.length,
+            sha256: digest,
           },
-        }),
-        artifact: { archive, digest },
-        cachedFetch: scenario === 'miss' || scenario === 'corrupt' ? scenario : 'hit',
-        pause: scenario === 'changed-during-fetch' ? 'build.cached-artifact' : null,
-      },
-    );
-    machines.push(machine);
-    const choice = await chooseBuildMachine({
-      projectRoot: repo,
-      target,
-      here: { ...HERE, builds: 0 },
-      machines: [credential('swiftpm')],
-      swiftpmArtifact: request,
-      cacheOnly: true,
-      note: () => {},
-    });
-    expect(typeof choice).toBe(scenario === 'old-worker' ? 'string' : 'object');
-    const offered = machine.requests.find((entry) => entry.method === 'build.offer')?.params.swiftpmArtifact;
-    expect(Boolean(offered)).toBe(scenario !== 'old-worker');
-    expect(JSON.stringify(offered ?? {})).not.toContain('private-worker-value');
-    if (typeof choice === 'string') return;
-    if (scenario === 'changed-source') writeFileSync(join(repo, 'package.json'), '{"changed":true}');
-    const executor = getExecutor();
-    const original = executor.runFileAsync.bind(executor);
-    const tarSpy =
-      scenario === 'crlf-listing'
-        ? vi
-            .spyOn(executor, 'runFileAsync')
-            .mockImplementation((file, args, options) =>
-              file === 'tar' && args[0] === '-tf'
-                ? Promise.resolve(
-                    'Sample.app/\r\nSample.app/Contents/\r\nSample.app/Contents/Info.plist\r\nSample.app/Contents/MacOS/\r\nSample.app/Contents/MacOS/App\r\n',
-                  )
-                : original(file, args, options),
-            )
-        : null;
-    const pending = offloadBuild({
-      choice,
-      request,
-      stagingDir: join(home, 'staging'),
-      onPhase: () => {},
-      onEnter: () => {},
-      onRecord: () => {},
-      note: () => {},
-    });
-    if (scenario === 'changed-during-fetch') {
-      await vi.waitUntil(() => machine.methods.includes('build.cached-artifact'));
-      writeFileSync(join(repo, 'package.json'), '{"changedDuringFetch":true}');
-      machine.release();
-    }
-    const outcome = await pending;
-    tarSpy?.mockRestore();
-    expect(outcome.ok).toBe(scenario === 'hit' || scenario === 'crlf-listing');
-    const observed = outcome.ok
-      ? {
-          cacheHit: outcome.cacheHit,
-          syncMs: outcome.timings.syncMs,
-          uploadedBytes: outcome.timings.uploadedBytes,
-          workerMs: outcome.timings.workerMs,
-          contents: readFileSync(join(outcome.artifactPath, 'Contents/MacOS/App'), 'utf8'),
-        }
-      : { stagingRemoved: !existsSync(join(home, 'staging')) };
-    expect(observed).toEqual(
-      scenario === 'hit' || scenario === 'crlf-listing'
-        ? { cacheHit: true, syncMs: 0, uploadedBytes: 0, workerMs: 0, contents: 'SwiftPM executable' }
-        : { stagingRemoved: true },
-    );
-    expect(machine.methods).toEqual([
-      'hello',
-      'build.offer',
-      ...(scenario === 'changed-source' ? [] : ['build.cached-artifact']),
-    ]);
-    expect(
-      machine.requests.find((entry) => entry.method === 'build.cached-artifact')?.params.swiftpmArtifact ?? null,
-    ).toEqual(scenario === 'changed-source' ? null : offered);
-  });
+        },
+        { result: { job: 'unused' } },
+        {
+          artifact: { archive, digest },
+          cachedFetch: scenario === 'miss' || scenario === 'corrupt' ? scenario : 'hit',
+          pause: scenario === 'changed-during-fetch' ? 'build.cached-artifact' : null,
+        },
+      );
+      machines.push(machine);
+      const choice = await chooseBuildMachine({
+        projectRoot: repo,
+        target,
+        here: { ...HERE, builds: 0 },
+        machines: [credential('swiftpm')],
+        swiftpmArtifact: request,
+        cacheOnly: true,
+        note: () => {},
+      });
+      expect(typeof choice).toBe('object');
+      const offered = machine.requests.find((entry) => entry.method === 'build.offer')?.params.swiftpmArtifact;
+      expect(Boolean(offered)).toBe(true);
+      expect(JSON.stringify(offered ?? {})).not.toContain('private-worker-value');
+      if (typeof choice === 'string') return;
+      if (scenario === 'changed-source') writeFileSync(join(repo, 'package.json'), '{"changed":true}');
+      const executor = getExecutor();
+      const original = executor.runFileAsync.bind(executor);
+      const tarSpy =
+        scenario === 'crlf-listing'
+          ? vi
+              .spyOn(executor, 'runFileAsync')
+              .mockImplementation((file, args, options) =>
+                file === 'tar' && args[0] === '-tf'
+                  ? Promise.resolve(
+                      'Sample.app/\r\nSample.app/Contents/\r\nSample.app/Contents/Info.plist\r\nSample.app/Contents/MacOS/\r\nSample.app/Contents/MacOS/App\r\n',
+                    )
+                  : original(file, args, options),
+              )
+          : null;
+      const pending = offloadBuild({
+        choice,
+        request,
+        stagingDir: join(home, 'staging'),
+        onPhase: () => {},
+        onEnter: () => {},
+        onRecord: () => {},
+        note: () => {},
+      });
+      if (scenario === 'changed-during-fetch') {
+        await vi.waitUntil(() => machine.methods.includes('build.cached-artifact'));
+        writeFileSync(join(repo, 'package.json'), '{"changedDuringFetch":true}');
+        machine.release();
+      }
+      const outcome = await pending;
+      tarSpy?.mockRestore();
+      expect(outcome.ok).toBe(scenario === 'hit' || scenario === 'crlf-listing');
+      const observed = outcome.ok
+        ? {
+            cacheHit: outcome.cacheHit,
+            syncMs: outcome.timings.syncMs,
+            uploadedBytes: outcome.timings.uploadedBytes,
+            workerMs: outcome.timings.workerMs,
+            contents: readFileSync(join(outcome.artifactPath, 'Contents/MacOS/App'), 'utf8'),
+          }
+        : { stagingRemoved: !existsSync(join(home, 'staging')) };
+      expect(observed).toEqual(
+        scenario === 'hit' || scenario === 'crlf-listing'
+          ? { cacheHit: true, syncMs: 0, uploadedBytes: 0, workerMs: 0, contents: 'SwiftPM executable' }
+          : { stagingRemoved: true },
+      );
+      expect(machine.methods).toEqual([
+        'hello',
+        'build.offer',
+        ...(scenario === 'changed-source' ? [] : ['build.cached-artifact']),
+      ]);
+      expect(
+        machine.requests.find((entry) => entry.method === 'build.cached-artifact')?.params.swiftpmArtifact ?? null,
+      ).toEqual(scenario === 'changed-source' ? null : offered);
+    },
+  );
 
   test.each(
     (['ios', 'android'] as const).flatMap((platform) =>
-      (['hit', 'miss', 'corrupt', 'old-worker'] as const).map((scenario) => ({ platform, scenario })),
+      (['hit', 'miss', 'corrupt'] as const).map((scenario) => ({ platform, scenario })),
     ),
   )('RN $platform cache-only $scenario skips upload and compiler admission', async ({ platform, scenario }) => {
     const name = platform === 'ios' ? 'Sample.app' : 'Sample.apk';
@@ -1049,14 +1064,8 @@ describe('exact peer artifacts', () => {
       },
       { result: { job: 'unused' } },
       {
-        hello: () => ({
-          result: {
-            capabilities: ['build'],
-            features: ['react-native-peer-cache', ...(scenario === 'old-worker' ? [] : ['build-compat'])],
-          },
-        }),
         artifact: { archive, digest },
-        cachedFetch: scenario === 'old-worker' ? 'hit' : scenario,
+        cachedFetch: scenario,
       },
     );
     machines.push(machine);
@@ -1069,10 +1078,8 @@ describe('exact peer artifacts', () => {
       cacheOnly: true,
       note: () => {},
     });
-    expect(typeof choice).toBe(scenario === 'old-worker' ? 'string' : 'object');
-    expect(Boolean(machine.requests.find((e) => e.method === 'build.offer')?.params.reactNativeArtifact)).toBe(
-      scenario !== 'old-worker',
-    );
+    expect(typeof choice).toBe('object');
+    expect(Boolean(machine.requests.find((e) => e.method === 'build.offer')?.params.reactNativeArtifact)).toBe(true);
     if (typeof choice === 'string') return;
     const outcome = await offloadBuild({
       choice,
@@ -1179,16 +1186,6 @@ describe('exact peer artifacts', () => {
         },
         { result: { job: 'unused' } },
         {
-          hello: () => ({
-            result: {
-              capabilities: ['build'],
-              features: [
-                'native-gradle-build',
-                ...(scenario === 'old-worker' ? [] : ['native-gradle-peer-cache']),
-                ...(scenario === 'old-jdk-worker' ? [] : ['native-gradle-peer-jdk']),
-              ],
-            },
-          }),
           artifact: { archive, digest },
           cachedFetch: scenario === 'miss' || scenario === 'corrupt' ? scenario : 'hit',
         },
@@ -1205,11 +1202,8 @@ describe('exact peer artifacts', () => {
         note: () => {},
       });
       const offerRequest = machine.requests.find((entry) => entry.method === 'build.offer')!;
-      const unsupported = scenario === 'old-worker' || scenario === 'old-jdk-worker';
-      expect(typeof choice).toBe(unsupported ? 'string' : 'object');
-      expect(offerRequest.params.gradleArtifact).toEqual(unsupported ? undefined : { ...query, project: '' });
+      expect(offerRequest.params.gradleArtifact).toEqual({ ...query, project: '' });
       expect(machine.methods).toEqual(['hello', 'build.offer']);
-      if (unsupported) return;
       if (typeof choice === 'string') throw new Error(choice);
       const stagingDir = join(repo, 'staging');
       const result = await offloadBuild({
@@ -1267,10 +1261,10 @@ describe('exact peer artifacts', () => {
     },
   );
 
-  test.each(['auto', 'remote', 'named', 'legacy'] as const)(
+  test.each(['auto', 'remote', 'named'] as const)(
     'a missed Gradle APK reapplies %s placement before compiling, so only a named machine compiles while saturated',
     async (selection) => {
-      const named = selection === 'named' || selection === 'legacy';
+      const named = selection === 'named';
       writeFileSync(join(repo, '.gitignore'), 'staging/\n');
       const transfer = await nativeGradleTransfer(repo, { complete: true, ignored: [], outputs: [] });
       const machine = await fakeMachine(
@@ -1289,16 +1283,6 @@ describe('exact peer artifacts', () => {
         },
         { result: { job: 'new-build' } },
         {
-          hello: () => ({
-            result: {
-              capabilities: ['build'],
-              features: [
-                'native-gradle-build',
-                'native-gradle-peer-cache',
-                ...(selection === 'legacy' ? [] : ['native-gradle-peer-jdk']),
-              ],
-            },
-          }),
           cachedFetch: 'miss',
         },
       );
@@ -1334,7 +1318,7 @@ describe('exact peer artifacts', () => {
         machine.requests
           .filter((entry) => entry.method === 'build.offer')
           .map((entry) => Boolean(entry.params.gradleArtifact)),
-      ).toEqual(selection === 'legacy' ? [false] : [true, false]);
+      ).toEqual([true, false]);
     },
   );
 
@@ -1370,10 +1354,7 @@ describe('exact peer artifacts', () => {
         { result: { job: 'unused' } },
         {
           hello: () => ({
-            result: {
-              capabilities: ['build'],
-              features: ['native-xcode-build', 'native-xcode-toolchain', 'build-artifact-cache'],
-            },
+            result: { capabilities: ['build'], peer: PEER, host: { capabilities: ['native-xcode-build'] } },
           }),
           artifact: { archive, digest },
           cachedFetch: cachedFetch === 'escaping-link' || cachedFetch === 'extra-file' ? 'hit' : cachedFetch,

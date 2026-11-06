@@ -147,8 +147,7 @@ viewer's touch meanwhile is dropped and that viewer sees who is using the
 screen. A view-only viewer sees the same and sends nothing. Hosted sessions
 (--remote) work the same: viewers, touches and the pointer grab live in this
 machine's stim-server, and the agent's actions on the hosted device come from
-the host Mac (a host on an older Stim shows none; stim agent-device still shows
-the agent's command).
+the host Mac.
 
 A READABLE LINK (--slug)
 
@@ -412,8 +411,7 @@ SECURITY MODEL
   Android phone takes its lease. The polling never starts the control session and never keeps it alive: it reads only while a session runs
   (from the moment a viewer that can control connects) and does not count as input for the 5 minute idle end. Text a control
   viewer sends reaches the device clipboard and then every other control viewer's browser with sync on. A share without --control, a web page and a macOS app never read or set the device clipboard, and the text is never
-  logged. The stim-server protocol methods are input.clipboard.set and input.clipboard.get, behind the hello
-  feature device-clipboard.
+  logged. The stim-server protocol methods are input.clipboard.set and input.clipboard.get.
 - Two-finger gestures on an iOS simulator, Android emulator or Android phone: two real
   fingers on a phone or tablet, Option-drag with a mouse for a pinch (the second finger mirrors
   the first through the screen center) and Shift-Option-drag to move both fingers together. A

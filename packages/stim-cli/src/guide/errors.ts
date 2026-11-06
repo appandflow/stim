@@ -48,10 +48,9 @@ Branch on the code, never on the message.`,
   To see why a host was slow or refused: stim logs --source placement (hosts checked and
   reason codes), stim logs --source build (remote_connect_failed, remote_request_failed),
   and the host's stim-server service log, searched for the run id (stim guide logs).
-  A failed build handoff uses upload instead. If native log queries are unavailable,
-  logs prints a note on stderr and shows copied records. Update an older stim-server
-  on the host to enable handoff and native logs (hello features hosted-ios-data
-  for iOS and hosted-android-data for Android).
+  A failed build handoff uses upload instead. A host on an older Stim is refused
+  with peer-too-old, naming the npm i -g stim@<version> && stim service install
+  to run on it.
   A name outside remote.machines is STIM_BAD_ARG. Missing or pending hosting
   approval keeps the stim remote add and stim-server setup remedies.`,
     },
