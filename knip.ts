@@ -9,6 +9,7 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
     'packages/core/receive-validators.mjs',
     'packages/core/receive-validators.d.mts',
     'packages/stim-cli/shim/**',
+    'packages/stim-cli/src/injected/*.d.cts',
     'scripts/agent-benchmark/compat/ps-bridge.mjs',
     'scripts/agent-benchmark/stamp.mjs',
     'scripts/agent-benchmark/watch-app.mjs',
@@ -39,7 +40,7 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
     },
     'packages/stim-cli': {
       // The own fingerprint module lands before any command calls it; its tests are its only importers.
-      entry: production ? ['src/fingerprint/*.ts'] : [],
+      entry: ['src/injected/*.cjs', ...(production ? ['src/fingerprint/*.ts'] : [])],
       // tsdown bundles the workspace packages; their bare unique-pid import stays external.
       ignoreDependencies: production ? ['@stim-cli/*', 'unique-pid'] : [],
     },
@@ -50,10 +51,6 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
     'packages/agent-driver': {
       // The source imports @stim-cli/core types only, but the published declarations need the package installed.
       ignoreDependencies: production ? ['@stim-cli/core'] : [],
-    },
-    'packages/metro': {
-      // index.ts loads the metro-cache peer dependency with createRequire at runtime.
-      ignoreDependencies: production ? ['metro-cache'] : [],
     },
     'packages/server': {
       ignore: ['share-viewer/**'],

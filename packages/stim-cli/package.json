@@ -96,7 +96,6 @@
     "@stim-cli/cache": "workspace:*",
     "@stim-cli/ci": "workspace:*",
     "@stim-cli/core": "workspace:*",
-    "@stim-cli/metro": "workspace:*",
     "@stim-cli/server": "workspace:*",
     "@types/cross-spawn": "^6.0.6",
     "@types/which": "^3.0.4",

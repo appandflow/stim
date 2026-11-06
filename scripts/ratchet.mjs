@@ -13,7 +13,6 @@ const defaultPackages = [
   'packages/cache-s3',
   'packages/ci',
   'packages/core',
-  'packages/metro',
   'packages/server',
   'packages/stim-cli',
   'packages/transport',
