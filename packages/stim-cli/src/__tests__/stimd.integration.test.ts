@@ -205,7 +205,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     await listening();
     const record = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
     expect(record).toEqual({ format: 1, pid: child.pid, socket: stimdSocket(), build, version: expect.any(String) });
-    if (process.platform !== 'win32') expect(fs.statSync(stimdSocket()).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(stimdSocket()).mode & 0o777).toBe(0o600);
     const ask = (first: Record<string, unknown>) =>
       new Promise<string[]>((done) => {
         const socket = connect(record.socket);
