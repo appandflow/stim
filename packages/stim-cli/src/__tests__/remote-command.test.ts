@@ -127,10 +127,10 @@ test('update resolves an approved worker, selects its channel and prints its sta
     },
   });
   vi.spyOn(getExecutor(), 'runFileAsync').mockResolvedValue(
-    JSON.stringify([
-      { version: '9.10.0', peer: PEER - 1, 'dist-tags': { latest: '9.10.0', next: '9.11.0-next.1' } },
-      { version: '9.11.0-next.1', peer: PEER, 'dist-tags': { latest: '9.10.0', next: '9.11.0-next.1' } },
-    ]),
+    JSON.stringify({
+      versions: ['9.9.0', '9.10.0', '9.11.0-next.1'],
+      'dist-tags': { latest: '9.10.0', next: '9.11.0-next.1' },
+    }),
   );
   const out = await remote(fakeIo([]), 'update', 'mini');
   expect(updating.construct).toHaveBeenCalledWith(

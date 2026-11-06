@@ -39,7 +39,7 @@ const RECONNECT_WINDOW_MS = 3 * 60_000;
 const FATAL_HOST_ERRORS = new Set<string>(['forbidden', 'unauthorized', 'unknown-session', 'protocol-unsupported']);
 
 /** A host answer a retry cannot change: the approval ended, or the session is gone. */
-class FatalHostError extends Error {}
+export class FatalHostError extends Error {}
 
 const hostError = (error: ProtocolError): Error =>
   FATAL_HOST_ERRORS.has(error.code) ? new FatalHostError(error.message) : new Error(error.message);

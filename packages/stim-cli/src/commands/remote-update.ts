@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { PEER } from '@stim-cli/core/protocol';
 import { isJsonObject, readBuildMachines, readDeviceHostMachines } from '@stim-cli/core/state';
-import { Upstream } from '@stim-cli/server/hosted-relay';
+import { FatalHostError, Upstream } from '@stim-cli/server/hosted-relay';
 import { engineRoot } from '../engine-store/store.ts';
 import { getExecutor } from '../exec.ts';
 import { resolveEndpoint, type TailnetMachineIo } from '../offload/tailnet.ts';
@@ -14,9 +14,8 @@ async function packument(ctx: StimContext): Promise<Packument> {
     'npm',
     [
       'view',
-      'stim@*',
-      'version',
-      'peer',
+      'stim',
+      'versions',
       'dist-tags',
       '--json',
       '--registry=https://registry.npmjs.org/',
@@ -26,13 +25,12 @@ async function packument(ctx: StimContext): Promise<Packument> {
     ],
     { timeoutMs: 60_000, cwd: ctx.cwd, signal: ctx.signal },
   );
-  const records: unknown = JSON.parse(output);
+  const record: unknown = JSON.parse(output);
   const result: Packument = { 'dist-tags': {}, versions: {} };
-  for (const entry of Array.isArray(records) ? records : [records]) {
-    if (!isJsonObject(entry) || typeof entry.version !== 'string') continue;
-    result.versions[entry.version] = typeof entry.peer === 'number' ? { peer: entry.peer } : {};
-    if (isJsonObject(entry['dist-tags'])) result['dist-tags'] = entry['dist-tags'];
-  }
+  if (!isJsonObject(record)) return result;
+  if (Array.isArray(record.versions))
+    for (const version of record.versions) if (typeof version === 'string') result.versions[version] = {};
+  if (isJsonObject(record['dist-tags'])) result['dist-tags'] = record['dist-tags'];
   return result;
 }
 
@@ -81,7 +79,8 @@ export async function updateRemoteMachine(
       try {
         connection ??= await connect();
         status = await connection.request('engine.update.status', {});
-      } catch {
+      } catch (error) {
+        if (error instanceof FatalHostError) throw error;
         connection?.close();
         connection = null;
         await delay(250, undefined, { signal: ctx.signal });

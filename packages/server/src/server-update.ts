@@ -264,7 +264,7 @@ export class EngineUpdates {
     if (current?.pinned)
       return refused(
         'bad-request',
-        `the engine is pinned at ${current.version} (${current.pinReason}); on ${this.options.name || 'this machine'} run stim engine update to resume updates`,
+        `the engine is pinned at ${current.version} (${current.pinReason ?? 'no reason recorded'}); on ${this.options.name || 'this machine'} run stim engine update to resume updates`,
       );
     const bad = newestBad(state.bad);
     if ('version' in parsed && bad && compareVersions(parsed.version, bad) <= 0)
