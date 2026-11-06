@@ -288,7 +288,7 @@ struct NoiseInteropTests {
 
     var local: [ServerTransportEvent] = []
     let record = try #require(EngineFiles.stimd(stimHome: server.stimHome).value)
-    let socket = UnixSocketTransport(path: record.socket, onListening: { _ in }) { local.append($0) }
+    let socket = UnixSocketTransport(path: record.socket, onListening: { _ in }, onEvent: { local.append($0) })
     defer { socket.close() }
     socket.send(hello)
     for _ in 0..<400 where local.isEmpty { try await Task.sleep(for: .milliseconds(25)) }
