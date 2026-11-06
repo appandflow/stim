@@ -296,6 +296,30 @@ export function serverLocalSocket(): string {
   return localSocket(join(configDir(), 'server', 'local.sock'));
 }
 
+/** stimd's run directory: its single-instance claim, its record and, when the path fits, its CLI socket. */
+export function stimdRunDir(): string {
+  return join(configDir(), 'run');
+}
+
+/**
+ * stimd's CLI socket: `run/stimd.sock`, or on Windows a named pipe named after the Stim home.
+ */
+export function stimdSocket(): string {
+  if (process.platform === 'win32')
+    return `\\\\.\\pipe\\stimd-${createHash('sha256').update(configDir()).digest('hex').slice(0, 16)}`;
+  return localSocket(join(stimdRunDir(), 'stimd.sock'));
+}
+
+/** `{format, pid, socket, build, version}` of the running stimd, written by stimd alone. */
+export function stimdRecordFile(): string {
+  return join(stimdRunDir(), 'stimd.json');
+}
+
+/** The exclusive claim that keeps one stimd per Stim home. */
+export function stimdClaimRoot(): string {
+  return join(stimdRunDir(), 'stimd');
+}
+
 /** The home daemon's directory: its claim, log, snapshot and, when the path fits, its socket. */
 export function daemonDir(): string {
   return join(configDir(), 'daemon');
@@ -306,11 +330,7 @@ export function daemonClaimRoot(): string {
   return join(daemonDir(), 'claim');
 }
 
-/** The ownership claim a starting daemon holds while it takes over from a running daemon of another build. */
-export function daemonHandoverClaimRoot(): string {
-  return join(daemonDir(), 'handover');
-}
-
+/** The socket of a stim-daemon from Stim 1.40 to 1.42, which stimd stops at boot. */
 export function daemonSocket(): string {
   return localSocket(join(daemonDir(), 'daemon.sock'));
 }
