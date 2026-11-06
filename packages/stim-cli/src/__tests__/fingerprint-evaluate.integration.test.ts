@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, test } from 'vitest';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -264,19 +264,25 @@ describe.skipIf(!existsSync(MOBILE_MODULES))('fingerprint evaluators on the inst
     expect((await key(root, baseEnv())).hash).not.toBe(before.hash);
   });
 
-  test('a file outside the app that the config names is hashed and makes the key non-portable', SLOW, async () => {
-    const outside = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-outside-')));
-    temps.push(outside);
-    const plist = join(outside, 'GoogleService-Info.plist');
-    write(plist, 'one');
-    const root = expoApp({
-      'app.config.js': `module.exports = ({ config }) => ({ ...config, ios: { ...config.ios, googleServicesFile: ${JSON.stringify(plist)} } });\n`,
-    });
-    const before = await key(root, baseEnv());
-    expect(before.portable).toBe(false);
-    write(plist, 'two');
-    expect((await key(root, baseEnv())).hash).not.toBe(before.hash);
-  });
+  test(
+    'a file outside the app that the config names by a relative path is hashed and makes the key non-portable',
+    SLOW,
+    async () => {
+      const outside = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-outside-')));
+      temps.push(outside);
+      const plist = join(outside, 'GoogleService-Info.plist');
+      write(plist, 'one');
+      const root = expoApp({});
+      write(
+        join(root, 'app.config.js'),
+        `module.exports = ({ config }) => ({ ...config, ios: { ...config.ios, googleServicesFile: ${JSON.stringify(relative(root, plist))} } });\n`,
+      );
+      const before = await key(root, baseEnv());
+      expect(before.portable).toBe(false);
+      write(plist, 'two');
+      expect((await key(root, baseEnv())).hash).not.toBe(before.hash);
+    },
+  );
 
   test('a config that throws yields no key, naming the evaluator and its stderr', SLOW, async () => {
     const root = expoApp({ 'app.config.js': "throw new Error('config exploded');\n" });

@@ -1,6 +1,6 @@
 'use strict';
 
-// Fingerprint evaluator child: `fp-eval.cjs expo|embed|rn <root> <platform> [mode]`, run with cwd at the project's
+// Fingerprint evaluator child: `fp-eval.cjs expo|embed|rn <root> <platform> [mode] [expo-constants dir]`, run with cwd at the project's
 // real path and fp-trace.cjs preloaded. Writes one JSON object on fd 3; any failure exits non-zero.
 
 const fs = require('node:fs');

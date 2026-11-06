@@ -30,6 +30,12 @@ export function packageRoot(path: string): string | null {
   return at === -1 || segments.length < at + 2 + scope ? null : segments.slice(0, at + 2 + scope).join(sep);
 }
 
+/** The installed package a path under `node_modules` belongs to, when that directory is a named package. */
+export function installedPackage(path: string): string | null {
+  const root = packageRoot(path);
+  return root && typeof manifest(root).name === 'string' ? root : null;
+}
+
 /**
  * The packages that run when `expo prebuild` applies mods or React Native codegen runs, and their direct
  * dependencies. Their code runs after config evaluation, so no trace sees it. Transitive dependencies are left out:

@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { projectNodeBin } from '@stim-cli/core/toolchain';
 import { getExecutor } from '../exec.ts';
-import { entryPoints, findPackage, packageRoot, packageRows } from './closure.ts';
+import { entryPoints, findPackage, installedPackage, packageRoot, packageRows } from './closure.ts';
 import {
   buildEnvRows,
   buildScripts,
@@ -296,14 +296,9 @@ function traceRows(
   return { rows, packages, modules, opaque: trace.opaque.map((call) => `${part.name}: ${call}`) };
 }
 
-const pathStrings = (value: unknown): string[] =>
-  typeof value === 'string'
-    ? isAbsolute(value)
-      ? [value]
-      : []
-    : value && typeof value === 'object'
-      ? Object.values(value).flatMap(pathStrings)
-      : [];
+const strings = (value: unknown): string[] =>
+  typeof value === 'string' ? [value] : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
+const pathStrings = (value: unknown): string[] => strings(value).filter((string) => isAbsolute(string));
 
 /** Which autolinking setup a tracked native directory uses: Expo's command, the community CLI's, or neither. */
 function trackedAutolinking(nativeDir: string, platform: Platform): 'expo' | 'bare' | null {
@@ -461,9 +456,14 @@ async function evaluate(
     if (nativePackages.has('expo-constants')) {
       const embeddedName: PartName = 'configEmbedded';
       const embedded = embedEnv(opts.env);
-      const constants = (expo && findPackage(expo, 'expo-constants')) ?? findPackage(root, 'expo-constants');
+      const linkedModules = record(resolved?.output).modules;
+      const linked: unknown[] = Array.isArray(linkedModules) ? linkedModules : [];
+      const constants =
+        pathStrings(linked.find((module) => record(module).packageName === 'expo-constants'))
+          .map(installedPackage)
+          .find((dir) => dir !== null) ?? findPackage(root, 'expo-constants');
       if (!constants) return failed('configEmbedded', 'found no expo-constants package to read its loader from');
-      const script = constants ? join(constants, 'scripts', 'getAppConfig.js') : '';
+      const script = join(constants, 'scripts', 'getAppConfig.js');
       const byMode = existsSync(script) && readFileSync(script, 'utf8').includes('loadProjectEnv');
       const reuse =
         byMode &&
@@ -512,27 +512,33 @@ async function evaluate(
     ].filter((dir): dir is string => Boolean(dir)),
   ]);
   let buildEnv = buildEnvRows(texts, opts.env, platform, form);
-  for (let owners = buildEnv.paths.map(packageRoot); owners.some((dir) => dir && !scanned.has(dir));) {
+  for (let owners = buildEnv.paths.map(installedPackage); owners.some((dir) => dir && !scanned.has(dir));) {
     owners.forEach((dir) => dir && packages.add(dir));
     scan(owners.filter((dir): dir is string => Boolean(dir)));
     buildEnv = buildEnvRows(texts, opts.env, platform, form);
-    owners = buildEnv.paths.map(packageRoot);
+    owners = buildEnv.paths.map(installedPackage);
   }
   const { _internal: _, ...configValues } = record(output.config);
-  const configFiles = pathStrings(configValues).flatMap((value) => {
+  const configFiles = strings(configValues).flatMap((value) => {
+    if (!value || value.length >= 1024 || /[\0\n]/.test(value)) return [];
     try {
-      const real = realpathSync.native(value);
+      const real = realpathSync.native(resolve(root, value));
       const outside = !within(real, roots.project) && !within(real, roots.install) && !packageRoot(real);
       return outside && statSync(real).isFile() ? [real] : [];
     } catch {
       return [];
     }
   });
-  const pathRows = walk({
-    roots,
-    trees: [...buildEnv.paths.filter((path) => !packageRoot(path)), ...configFiles],
-    tracked: null,
-  });
+  let pathRows: ReturnType<typeof walk>;
+  try {
+    pathRows = walk({
+      roots,
+      trees: [...buildEnv.paths.filter((path) => !installedPackage(path)), ...configFiles],
+      tracked: null,
+    });
+  } catch (error) {
+    return { uncertain: `stim cannot read a file the build env or config names: ${String(error)}` };
+  }
   if (isUncertain(pathRows)) return pathRows;
   const closure = entryPoints(root, expo);
   rows.push(...buildEnv.rows, ...pathRows.inputs, ...packageRows([...packages, ...closure.dirs], closure.missing));
