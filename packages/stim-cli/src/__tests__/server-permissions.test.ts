@@ -6,7 +6,7 @@ import { health, reading, service, setup } from './_server-setup.ts';
 const DIR_OK = { isDirectory: true, mode: 0o40700, uid: 501 };
 const SOCKET_OK = { mode: 0o140600, uid: 501 };
 const socketReading = (over: Partial<SocketReading> = {}): SocketReading => ({
-  path: '/Users/me/.stim/server/local.sock',
+  path: '/Users/me/.stim/run/stimd.sock',
   dir: DIR_OK,
   socket: SOCKET_OK,
   uid: 501,
@@ -31,13 +31,13 @@ describe('socket permissions', () => {
       'a group-writable socket',
       { socket: { ...SOCKET_OK, mode: 0o140660 } },
       'mode 660',
-      'chmod 600 /Users/me/.stim/server/local.sock',
+      'chmod 600 /Users/me/.stim/run/stimd.sock',
     ],
     [
       'a socket owned by another user',
       { socket: { ...SOCKET_OK, uid: 0 } },
       'belongs to uid 0',
-      'sudo chown $USER /Users/me/.stim/server/local.sock',
+      'sudo chown $USER /Users/me/.stim/run/stimd.sock',
     ],
     [
       'a directory owned by another user',

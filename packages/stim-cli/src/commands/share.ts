@@ -4,7 +4,12 @@ import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { RESERVED_SHARE_SLUGS, SHARE_SLUG_PATTERN, type Methods, type WebShareRow } from '@stim-cli/core/protocol';
 import { shareLinkKey, splitShareUrl, type SavedShare } from '@stim-cli/core/state';
 import { ensureNet, type NetAnswer } from '../daemon/client.ts';
-import { LocalServerUnavailable, requestLocalServer, type LocalServerAnswer, type ShareMethod } from '../local-server.ts';
+import {
+  LocalServerUnavailable,
+  requestLocalServer,
+  type LocalServerAnswer,
+  type ShareMethod,
+} from '../local-server.ts';
 import { forgetShareLinks, pauseShareLinks, reusableShareLinks, saveShareLink } from '../workspace/share-links.ts';
 import { findCommandWorkspaceAsync } from '../workspace/project.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
@@ -95,7 +100,11 @@ async function ask<M extends ShareMethod>(
         return failure('STIM_SERVER_NOT_RUNNING', `No stimd runs for this Stim home.`, serverRemedy(version));
       }
       if (!started.listening) {
-        return failure('STIM_SERVER_NOT_RUNNING', started.message, 'Fix what the message names, then run stim share again.');
+        return failure(
+          'STIM_SERVER_NOT_RUNNING',
+          started.message,
+          'Fix what the message names, then run stim share again.',
+        );
       }
       return ask(deps, method, params, version);
     }

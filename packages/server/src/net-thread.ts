@@ -19,10 +19,7 @@ export type FromNet =
   | { type: 'end'; id: number }
   | { type: 'idle' };
 
-/**
- * A connection stimd's CLI socket handed over, carried as messages; `ws` and `http` call the socket methods a
- * `net.Socket` has, which mean nothing here.
- */
+/** A connection stimd's CLI socket handed over, carried as messages. */
 class Bridged extends Duplex {
   readonly id: number;
   readonly #post: (message: FromNet) => void;
@@ -44,15 +41,6 @@ class Bridged extends Duplex {
   override _destroy(error: Error | null, done: (error: Error | null) => void): void {
     this.#post({ type: 'end', id: this.id });
     done(error);
-  }
-  setTimeout(): this {
-    return this;
-  }
-  setNoDelay(): this {
-    return this;
-  }
-  setKeepAlive(): this {
-    return this;
   }
 }
 

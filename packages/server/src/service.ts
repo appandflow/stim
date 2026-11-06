@@ -300,7 +300,13 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
   if (!stimd || !installed?.managed || installed.node === null || installed.script === null || installed.port === null)
     return false;
   const path = plistPath(label);
-  const args = launchdArguments({ ...installed, node: installed.node, script: installed.script, port: installed.port, stimd });
+  const args = launchdArguments({
+    ...installed,
+    node: installed.node,
+    script: installed.script,
+    port: installed.port,
+    stimd,
+  });
   const partial = `${path}.${process.pid}.tmp`;
   writeFileSync(
     partial,

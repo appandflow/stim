@@ -64,6 +64,8 @@ async function serveInStimd(serve: ServeOptions): Promise<void> {
     import('../daemon/client.ts'),
     import('../daemon/mode.ts'),
   ]);
+  if ((bootstrapFd ?? '0') !== '0' || (lifetimeFd ?? '0') !== '0')
+    return refuse('Desktop bootstrap input is invalid or unavailable.');
   let desktop: Awaited<ReturnType<typeof readDesktopInput>> | undefined;
   if (bootstrapFd === '0') {
     try {
@@ -88,8 +90,9 @@ async function serveInStimd(serve: ServeOptions): Promise<void> {
   });
   if (served) return;
   console.error('stim-server: a stimd already serves this Stim home; asking it to start its net thread.');
-  await serveThroughStimd((answer) => {
-    if (answer?.listening) console.log(`stimd's net thread listens on port ${answer.port}; this process exits with it.`);
+  await serveThroughStimd({ port: serve.port, loopbackOnly: serve.loopbackOnly }, (answer) => {
+    if (answer?.listening)
+      console.log(`stimd's net thread listens on port ${answer.port}; this process exits with it.`);
     answered(answer);
   });
 }

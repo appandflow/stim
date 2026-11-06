@@ -1468,20 +1468,20 @@ STIM-SERVER SETUP CHECKS (stim doctor)
 reports problems as findings with the exact command or step; it never stops,
 starts, updates or reconfigures a server. It reads the installed service (the
 LaunchAgent on macOS, the systemd user unit on Linux), the process list, each
-server's \`/health\` on 127.0.0.1 (1.5 seconds at most) and the Stim home's
-local socket, and does nothing beyond the process list when no service, server
-process or socket exists. Findings carry a code that starts with \`server-\`;
+server's \`/health\` on 127.0.0.1 (1.5 seconds at most) and the net thread
+through stimd's socket, and does nothing beyond the process list when no
+service, server process or stimd socket exists. Findings carry a code that starts with \`server-\`;
 a \`cost\` finding is shown as a problem and reaches Stim Desktop's needs-attention
 list, a \`note\` finding only the doctor report:
   server-multiple        cost: several servers serve one Stim home (the service,
                          Stim Desktop's bundled server, a server started by hand);
-                         it names the one to keep (the service, else the one holding
-                         the local socket) and how to stop each other
+                         it names the one to keep (the service, else the one inside
+                         stimd) and how to stop each other
   server-service-crash   cost: the service is installed but not running, or keeps
                          exiting (run count and last exit code, the log path and
                          \`stim service rollback\` when a previous server
                          exists); note: it restarted but runs now
-  server-desktop-authority  cost: the server on the local socket (not Desktop's own)
+  server-desktop-authority  cost: the server stimd's socket reaches (not Desktop's own)
                          sends no desktopApi or a lower one than this stim's, so
                          Desktop cannot run actions through it; update it
   server-version         note: a server's stim version differs from this stim; the

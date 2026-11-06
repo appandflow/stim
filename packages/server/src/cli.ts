@@ -195,14 +195,17 @@ export async function serve(options: NetOptions, idle: () => void): Promise<NetT
     lan.close?.();
     transport.close?.();
     if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE')
-      throw new NetRefusal(`port ${port} is in use; another stim-server may already be running. Pass --port to use another port.`);
+      throw new NetRefusal(
+        `port ${port} is in use; another stim-server may already be running. Pass --port to use another port.`,
+      );
     throw error;
   }
   const label = serviceManagerOrNull()?.runningLabel(process.env);
   if (label)
     void rewriteUnitToShim(label).then(
       (rewritten) => rewritten && console.log(`Rewrote ${label} to start the Stim engine's stimd shim.`),
-      (error: Error) => console.error(`stim-server: could not rewrite ${label} to name the stimd shim: ${error.message}`),
+      (error: Error) =>
+        console.error(`stim-server: could not rewrite ${label} to name the stimd shim: ${error.message}`),
     );
   console.log(`stim-server ${pkg.version} (stim ${stim.version}, protocol ${PROTOCOL_VERSION})`);
   for (const { host, port: bound } of server.addresses) {

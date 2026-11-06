@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { Command } from 'commander';
 import { registerShare, runShare, type ShareDeps } from '../commands/share.ts';
 import { workspaceShareLinksFile } from '@stim-cli/core/state';
-import { LocalServerUnavailable, requestLocalServer, stopIdleShareServer } from '../local-server.ts';
+import { LocalServerUnavailable, requestLocalServer } from '../local-server.ts';
 
 const ROW = {
   id: 'w1',
@@ -40,7 +40,6 @@ function fake(answers: (() => unknown)[], start: Awaited<ReturnType<ShareDeps['s
       deps.starts++;
       return start;
     },
-    stopServer: async () => null,
     note: (line) => deps.notes.push(line),
     platform: 'darwin',
   };
@@ -112,36 +111,23 @@ describe('stim share', () => {
     }
   });
 
-  it('starts a stim-server when none runs, says how to stop it, then shares through it', async () => {
+  it("starts stimd's net thread when it does not run, then shares through it", async () => {
     const deps = fake([unavailable, () => ({ result: { ...ROW, auth: 'generated', password: 'abcdefghjkmnpqrs' } })], {
-      started: true,
-      pid: 4242,
-      log: '/home/server/share-server.log',
+      listening: true,
+      port: 7787,
     });
-    const result = await runShare('android', {}, deps, '1.0.0');
-    expect(result).toMatchObject({ ok: true, output: { url: ROW.url } });
+    expect(await runShare('android', {}, deps, '1.0.0')).toMatchObject({ ok: true, output: { url: ROW.url } });
     expect(deps.starts).toBe(1);
-    expect(deps.notes).toEqual([expect.stringMatching(/pid 4242.*share-server\.log.*stim share stop/)]);
     expect(deps.sent.map((each) => each.method)).toEqual(['share.start', 'share.start']);
   });
 
-  it('uses the server that won the socket instead of the one it started, and reports a start that failed', async () => {
-    const joined = fake([unavailable, () => ({ result: { ...ROW, auth: 'generated', password: 'x' } })], {
-      started: false,
-      reason: 'joined',
-    });
-    expect(await runShare('android', {}, joined, '1.0.0')).toMatchObject({ ok: true });
-    expect(joined.notes).toEqual([]);
-
-    const failed = fake([unavailable], {
-      started: false,
-      reason: 'failed',
-      message: 'stim-server did not start: it exited with code 1.',
-      log: '/home/server/share-server.log',
-    });
-    expect(await runShare('android', {}, failed, '1.0.0')).toMatchObject({
+  it('reports why the net thread did not start', async () => {
+    const message =
+      'stim-server 1.42.0 (Stim Desktop bundle, pid 4242) holds port 7787; update Stim Desktop (Stim > Check for Updates) or quit it. Phone, shares and remote builds for ~/.stim wait until then.';
+    const deps = fake([unavailable], { listening: false, message });
+    expect(await runShare('android', {}, deps, '1.0.0')).toMatchObject({
       ok: false,
-      error: { code: 'STIM_SERVER_NOT_RUNNING', message: expect.stringContaining('share-server.log') },
+      error: { code: 'STIM_SERVER_NOT_RUNNING', message },
     });
   });
 
@@ -206,7 +192,7 @@ describe('stim share', () => {
   it('names an outdated stim-server when it does not take a slug', async () => {
     const deps = fake([() => ({ error: { code: 'bad-request', message: 'share.start does not take slug.' } })]);
     expect(await runShare('ios', { slug: 'pokedex' }, deps, '1.0.0')).toMatchObject({
-      error: { code: 'STIM_SHARE_REFUSED', remedy: expect.stringContaining('stim service update') },
+      error: { code: 'STIM_SHARE_REFUSED', remedy: expect.stringContaining('stim engine update') },
     });
   });
 
@@ -253,12 +239,6 @@ describe('stim share', () => {
     const result = await runShare('android', { password: false }, deps, '1.0.0');
     expect(deps.notes).toContain(`Warning: ${warning}`);
     expect(result).toMatchObject({ ok: true, output: { warning } });
-  });
-
-  it('never stops a stim-server that stim share did not start', async () => {
-    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
-    expect(await stopIdleShareServer('1.0.0')).toBeNull();
-    expect(kill).not.toHaveBeenCalled();
   });
 
   describe('saved links and --reuse', () => {
@@ -513,28 +493,6 @@ describe('stim share', () => {
       expect(JSON.stringify(result)).not.toContain('until reused');
     });
 
-    it('says when the stim-server it stopped has not exited yet', async () => {
-      const deps = fake([() => ({ result: { stopped: [ROW] } })]);
-      deps.stopServer = async () => ({ pid: 4242, exited: false });
-      expect(await runShare('stop', {}, deps, '1.0.0')).toMatchObject({
-        ok: true,
-        output: { stoppedServer: 4242, stillStopping: true },
-        text: expect.stringContaining('has not exited yet'),
-      });
-    });
-
-    it('says the stim-server was left running when a share start is in flight', async () => {
-      const deps = fake([() => ({ result: { stopped: [] } })]);
-      deps.stopServer = async () => ({ pid: 4242, starting: 1 });
-      const result = await runShare('stop', {}, deps, '1.0.0');
-      expect(result).toMatchObject({
-        ok: true,
-        output: { keptServer: 4242, startingShares: 1 },
-        text: expect.stringContaining('Left the stim-server stim share started (pid 4242) running'),
-      });
-      expect(JSON.stringify(result)).not.toContain('stoppedServer');
-    });
-
     it('tells the person to update an older stim-server that does not take a saved link', async () => {
       const deps = fake([
         started(),
@@ -543,7 +501,7 @@ describe('stim share', () => {
       await runShare('android', {}, deps, '1.0.0');
       expect(await runShare('android', { reuse: true }, deps, '1.0.0')).toMatchObject({
         ok: false,
-        error: { code: 'STIM_SHARE_REFUSED', remedy: expect.stringContaining('stim service update') },
+        error: { code: 'STIM_SHARE_REFUSED', remedy: expect.stringContaining('stim engine update') },
       });
     });
 

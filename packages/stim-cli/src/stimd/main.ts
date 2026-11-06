@@ -370,9 +370,18 @@ export async function runStimd({
         } else if (op === 'presence.publish') {
           socket.end(`${JSON.stringify({ op: 'presence', forwarded: net.presence(message.params) })}\n`);
         } else if (op === 'net.ensure') {
-          const share = isJsonObject(message.params) && message.params.share === true;
+          const params = isJsonObject(message.params) ? message.params : {};
+          const share = params.share === true;
+          const port = Number.isInteger(params.port) ? Number(params.port) : undefined;
           void net
-            .ensure(netOptions({ loopbackOnly: share, shareOnly: share, ...(kind === 'desktop' ? { owner: 'desktop' } : {}) }))
+            .ensure(
+              netOptions({
+                ...(port !== undefined && port >= 0 && port <= 65535 ? { port } : {}),
+                loopbackOnly: share || params.loopbackOnly === true,
+                shareOnly: share,
+                ...(kind === 'desktop' ? { owner: 'desktop' } : {}),
+              }),
+            )
             .then((answer) => {
               lastContact = Date.now();
               return reply({ op: 'net', ...answer });
@@ -382,7 +391,8 @@ export async function runStimd({
           const head = buffer;
           buffer = Buffer.alloc(0);
           if (net.connect(socket, head)) reply({ op: 'net.connected' });
-          else socket.end(`${JSON.stringify({ op: 'error', code: 'net-off', message: 'the net thread does not run' })}\n`);
+          else
+            socket.end(`${JSON.stringify({ op: 'error', code: 'net-off', message: 'the net thread does not run' })}\n`);
           return;
         } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'tick') {

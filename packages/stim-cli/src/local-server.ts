@@ -80,9 +80,7 @@ export async function requestLocalServer<M extends LocalMethod>(
         );
       }
     });
-    socket.on('error', (error) =>
-      finish(() => reject(opened ? error : new LocalServerUnavailable(error.message))),
-    );
+    socket.on('error', (error) => finish(() => reject(opened ? error : new LocalServerUnavailable(error.message))));
     socket.on('close', () => finish(() => reject(new Error(`stim-server closed the connection during ${method}.`))));
   });
 }

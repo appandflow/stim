@@ -6,17 +6,16 @@ import { isJsonObject } from '@stim-cli/core/state';
 // compat C23 until removal-minor
 const PROBE_MS = 1500;
 
-/** -1, 0 or 1 as `a` is below, equal to or above `b`; a prerelease is below its release. */
-function compareVersions(a: string, b: string): number {
+/** Whether version `a` is below `b`; a prerelease is below its release. */
+function below(a: string, b: string): boolean {
   const [coreA = '', preA] = a.split('-', 2);
   const [coreB = '', preB] = b.split('-', 2);
-  const partsA = coreA.split('.').map(Number);
-  const partsB = coreB.split('.').map(Number);
-  for (let index = 0; index < 3; index++) {
-    const diff = (partsA[index] ?? 0) - (partsB[index] ?? 0);
-    if (diff) return Math.sign(diff);
-  }
-  return preA === undefined ? (preB === undefined ? 0 : 1) : preB === undefined ? -1 : 0;
+  const parts = coreB.split('.').map(Number);
+  const diff = coreA
+    .split('.')
+    .map((part, index) => Number(part) - (parts[index] ?? 0))
+    .find(Boolean);
+  return diff ? diff < 0 : preA !== undefined && preB === undefined;
 }
 
 function listener(port: number): Promise<string> {
@@ -41,7 +40,7 @@ export async function legacyServerRefusal(port: number, floor: string | null): P
     return null;
   }
   if (!isJsonObject(health) || health.server !== 'stim-server' || typeof health.version !== 'string') return null;
-  if (compareVersions(health.version, floor) >= 0) return null;
+  if (!below(health.version, floor)) return null;
   const home = configDir().replace(homedir(), '~');
   const pid = process.platform === 'win32' ? 'unknown' : await listener(port);
   return `stim-server ${health.version} (Stim Desktop bundle, pid ${pid}) holds port ${port}; update Stim Desktop (Stim > Check for Updates) or quit it. Phone, shares and remote builds for ${home} wait until then.`;

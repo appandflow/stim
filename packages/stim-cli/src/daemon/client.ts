@@ -402,20 +402,25 @@ function netAnswer(reply: Record<string, unknown> | null): NetAnswer | null {
 
 /**
  * Asks this home's stimd to start its net thread, for a web share (`share`: loopback only, ending with its last share)
- * or a pairing, starting a stimd first when none runs, whatever `daemon.mode` says. Null when no stimd answers.
+ * or a pairing. A web share starts a stimd first when none runs, whatever `daemon.mode` says; a pairing only where
+ * `daemon.mode` lets commands start one. Null when no stimd answers.
  */
 export async function ensureNet(share: boolean, env: NodeJS.ProcessEnv = process.env): Promise<NetAnswer | null> {
-  if (!stimdLive() && !(await claimTaken(launchStimd(env, daemonMode(env))))) return null;
+  if (!stimdLive() && (!(share || spawnsDaemon(env)) || !(await claimTaken(launchStimd(env, daemonMode(env))))))
+    return null;
   return netAnswer(await askStimd('net.ensure', NET_START_MS, share ? { params: { share: true } } : {}));
 }
 
 /**
- * Asks the stimd that holds this home to start its net thread, for a `stim serve` that found one running, and resolves
- * once that stimd closes the connection, with its first answer: null when it never answered.
+ * Asks the stimd that holds this home to start its net thread on `port`, for a `stim serve` that found one running, and
+ * resolves once that stimd closes the connection. A net thread that already runs keeps its own port and options.
  */
-export function serveThroughStimd(onAnswer: (answer: NetAnswer | null) => void): Promise<void> {
+export function serveThroughStimd(
+  params: { port: number; loopbackOnly: boolean },
+  onAnswer: (answer: NetAnswer | null) => void,
+): Promise<void> {
   return new Promise((done) => {
-    const socket = openStimd([{ op: 'net.ensure' }], (reply) => onAnswer(netAnswer(reply)));
+    const socket = openStimd([{ op: 'net.ensure', params }], (reply) => onAnswer(netAnswer(reply)));
     socket.once('close', () => done());
   });
 }

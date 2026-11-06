@@ -1998,9 +1998,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     wss.close();
     localWss.close();
-    await Promise.all(
-      [...servers.values()].map((listener) => settle(closeListener(listener))),
-    );
+    await Promise.all([...servers.values()].map((listener) => settle(closeListener(listener))));
     if (failures.length) throw new AggregateError(failures, 'Server resources did not close cleanly.');
   };
   async function listenOn(host: string): Promise<void> {
