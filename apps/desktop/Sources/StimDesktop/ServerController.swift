@@ -50,13 +50,13 @@ final class ServerController: ObservableObject {
     case refuse(String)
     case fail
 
-    static func decide(_ read: EngineRead<StimdRecord>, alive: (StimdRecord) -> Bool, childRunning: Bool, deadlinePassed: Bool)
+    static func decide(_ read: EngineRead<StimdRecord>, alive: (StimdRecord) -> Bool, deadlinePassed: Bool)
       -> StartupAction
     {
       switch read {
       case .found(let record) where alive(record): return .use(record)
       case .unknownFormat(let text): return .refuse(text)
-      case .found, .missing, .unreadable: return childRunning && !deadlinePassed ? .wait : .fail
+      case .found, .missing, .unreadable: return deadlinePassed ? .fail : .wait
       }
     }
   }
@@ -227,10 +227,11 @@ final class ServerController: ObservableObject {
     record = nil
     Task {
       switch StartupAction.decide(
-        EngineFiles.stimd(stimHome: stimHome), alive: EngineFiles.isAlive, childRunning: false, deadlinePassed: false)
+        EngineFiles.stimd(stimHome: stimHome), alive: EngineFiles.isAlive, deadlinePassed: false)
       {
-      case .use(let record): return use(record, owned: false)
-      case .refuse(let text): return refuse(text)
+      case .use(let record) where current == generation: return use(record, owned: false)
+      case .refuse(let text) where current == generation: return refuse(text)
+      case .use, .refuse: return
       case .wait, .fail: break
       }
       guard let launch = await prepareEngine(generation: current), current == generation else { return }
@@ -247,8 +248,7 @@ final class ServerController: ObservableObject {
       let deadline = Date().addingTimeInterval(Self.startTimeout)
       while current == generation {
         let action = StartupAction.decide(
-          EngineFiles.stimd(stimHome: stimHome), alive: EngineFiles.isAlive, childRunning: process?.isRunning == true,
-          deadlinePassed: Date() >= deadline)
+          EngineFiles.stimd(stimHome: stimHome), alive: EngineFiles.isAlive, deadlinePassed: Date() >= deadline)
         switch action {
         case .use(let record):
           use(record, owned: record.pid == process?.processIdentifier)
@@ -289,7 +289,7 @@ final class ServerController: ObservableObject {
     engine = need
     switch need {
     case .unreadable(let text):
-      refuse(text)
+      if current == generation { refuse(text) }
       return nil
     case .install(let version):
       guard await installEngine(version: version, generation: current) else { return nil }

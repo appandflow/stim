@@ -19,7 +19,7 @@ public struct DesktopBootstrapKey: Sendable {
   /// else, or not a key.
   public static func read(stimHome: String) -> DesktopBootstrapKey? {
     let path = "\(EngineFiles.runDirectory(stimHome: stimHome))/desktop.key"
-    let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    let descriptor = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
     guard descriptor >= 0 else { return nil }
     let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     var info = stat()

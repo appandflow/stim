@@ -124,7 +124,7 @@ import Network
       if frames.isEmpty { return }
     }
     if var head = handshake {
-      head.append(data)
+      head.append(frames)
       guard let rest = try WebSocketFraming.readUpgrade(head, key: key) else {
         handshake = head
         return

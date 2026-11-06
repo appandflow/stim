@@ -2104,8 +2104,7 @@ A pull request and a push to `main` that change Desktop run the token and
 ASCII checks on Linux, and on macOS the formatting lint and the debug build
 (`swift build -Xswiftc -warnings-as-errors`) with the linked SDK check. The
 build takes about 4 minutes and has no cache (see #5108). `swift test`, the Release
-configuration compile, the `stim-frames` helper compile, the hardened-runtime
-server start and an ad-hoc release package run in the `Full suite` workflow:
+configuration compile, the `stim-frames` helper compile and an ad-hoc release package run in the `Full suite` workflow:
 nightly at 04:30 UTC, on a pull request labeled `ci-full`, and before a stable
 release. A change that breaks only a test or one of those compiles is found by the
 nightly run, so run `swift test -Xswiftc -warnings-as-errors` yourself, or add `ci-full`.
@@ -2216,7 +2215,7 @@ defaults delete dev.stim.desktop debugLogging   # back to the default level
 
 A Stim Dev or `stim macos` copy has another bundle id; pass `-debugLogging YES` as a launch argument instead.
 
-Every `stim` and `stim-server` process Desktop starts gets `STIM_RUN_ID=desktop-<12 hex digits>`, the same id the log line carries. The id is in the child environment so the CLI and server can adopt it to follow a Desktop action end to end. Desktop never logs environment values. Before a line is written, `DebugLogRedaction` replaces token, ticket, secret, password, authorization and DSN values, `--token`-style flag values, bearer values, URL credentials, JWTs and long opaque strings. Help > Reveal Debug Log shows the file in Finder. Help > Copy Diagnostics copies the log path, the Desktop, macOS, `stim` and `stim-server` versions and the output of `stim doctor --json` for the selected workspace, redacted the same way.
+Every `stim` and `stimd` process Desktop starts gets `STIM_RUN_ID=desktop-<12 hex digits>`, the same id the log line carries. The id is in the child environment so the CLI and server can adopt it to follow a Desktop action end to end. Desktop never logs environment values. Before a line is written, `DebugLogRedaction` replaces token, ticket, secret, password, authorization and DSN values, `--token`-style flag values, bearer values, URL credentials, JWTs and long opaque strings. Help > Reveal Debug Log shows the file in Finder. Help > Copy Diagnostics copies the log path, the Desktop, macOS, `stim` and `stim-server` versions and the output of `stim doctor --json` for the selected workspace, redacted the same way.
 
 ## Crash reports
 

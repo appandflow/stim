@@ -122,7 +122,8 @@ public enum ManagedNode {
   /// Removes the managed releases other than this one whose directory `keep` (paths of Nodes in use) does not name.
   public static func prune(_ root: EngineRoot, keep: [String]) {
     let current = directory(root)
-    for name in (try? FileManager.default.contentsOfDirectory(atPath: root.runtime)) ?? [] where name.hasPrefix("node-v") {
+    for name in (try? FileManager.default.contentsOfDirectory(atPath: root.runtime)) ?? []
+    where name.hasPrefix("node-v") || name.hasPrefix(".staging-") {
       let path = "\(root.runtime)/\(name)"
       guard path != current, !keep.contains(where: { $0.hasPrefix(path + "/") }) else { continue }
       try? FileManager.default.removeItem(atPath: path)
@@ -171,7 +172,10 @@ public enum EngineNeed: Equatable, Sendable {
   ) -> EngineNeed {
     switch pointer {
     case .unknownFormat(let text): return .unreadable(text)
-    case .missing, .unreadable: return .install(version: wanted?.description ?? "next")
+    case .missing: return .install(version: wanted?.description ?? "next")
+    case .unreadable:
+      return .unreadable(
+        "The Stim engine's current.json cannot be read. Run stim engine status in Terminal, then Try Again.")
     case .found(let engine):
       guard let wanted, let have = SemanticVersion(engine.version), have < wanted else { return .ready(engine) }
       // compat C7 permanent

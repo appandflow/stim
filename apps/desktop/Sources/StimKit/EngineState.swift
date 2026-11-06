@@ -60,7 +60,7 @@ public enum EngineRead<Value: Equatable & Sendable>: Equatable, Sendable {
   }
 }
 
-private struct FormatHeader: Decodable { var format: Int? }
+private struct FormatHeader: Decodable { var format: JSONValue? }
 
 public enum EngineFiles {
   // compat C8 permanent
@@ -71,12 +71,14 @@ public enum EngineFiles {
   public static func read<Value: Decodable & Equatable & Sendable>(_: Value.Type, at path: String) -> EngineRead<Value> {
     guard let data = FileManager.default.contents(atPath: path) else { return .missing }
     guard let header = try? JSONDecoder().decode(FormatHeader.self, from: data) else { return .unreadable }
-    guard header.format == format else { return .unknownFormat(unknownFormatText(path, format: header.format)) }
+    guard header.format == .number(Double(format)) else {
+      return .unknownFormat(unknownFormatText(path, format: header.format?.json))
+    }
     return (try? JSONDecoder().decode(Value.self, from: data)).map(EngineRead.found) ?? .unreadable
   }
 
-  public static func unknownFormatText(_ path: String, format: Int?) -> String {
-    "\(abbreviatingHome(path)) has format \(format.map(String.init) ?? "none"), which this Stim Desktop cannot read. "
+  public static func unknownFormatText(_ path: String, format: String?) -> String {
+    "\(abbreviatingHome(path)) has format \(format ?? "none"), which this Stim Desktop cannot read. "
       + "Partial report: update Stim Desktop (Stim > Check for Updates)."
   }
   // compat end

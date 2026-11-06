@@ -186,8 +186,8 @@ jobs:
           # this commit or a later one; the hourly run builds it once the npm next channel catches up.
           engine=$(npm view stim@next version)
           if [[ ! "$engine" =~ \.g([0-9a-f]{7,})$ ]]; then
-            echo "::error::stim@next is $engine, which names no commit"
-            exit 1
+            echo "::notice::stim@next is $engine, which names no commit (a release candidate holds next); not building"
+            exit 0
           fi
           if [ "$PUBLISH" = true ] && ! git merge-base --is-ancestor "$SHA" "${BASH_REMATCH[1]}" 2>/dev/null; then
             echo "::notice::stim@next $engine is not built from $SHA or a later commit yet; not building"

@@ -121,9 +121,9 @@ composite action `.github/actions/desktop-build`.
   installed prerelease until a newer stable release. A prerelease is a candidate only for a build with a
   lower commit count, so a stable release tagged at a commit older than the newest next build is not offered
   to builds on the channel until a newer item appears.
-- **Bundled server.** A next build bundles the `stim-server` of the commit it builds, as a stable release
-  does. That server reports the version `packages/server` carries on `main`, such as `1.39.0`, although its
-  code can be newer than that npm release; the npm `next` dist-tag carries the unreleased packages.
+- **Engine version.** A next build embeds `stim@next` as `StimEngineVersion` and is built only once that
+  version names the Desktop commit or a later one. While `next` carries a release candidate, whose version
+  names no commit, the workflow skips with a notice.
 - **Pause.** `gh variable set DESKTOP_NEXT_PAUSED --body true` skips the workflow until
   `gh variable delete DESKTOP_NEXT_PAUSED`.
 - **Dry run.** Dispatching the workflow on `main` with `publish` off builds the head with the `release`

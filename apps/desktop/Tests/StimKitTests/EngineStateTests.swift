@@ -25,6 +25,10 @@ import Testing
       return
     }
     #expect(text.contains("format 2") && text.hasSuffix("update Stim Desktop (Stim > Check for Updates)."))
+    try Data("{\"format\":\"1\",\(fields)}".utf8).write(to: file)
+    #expect(
+      EngineFiles.read(StimdRecord.self, at: file.path)
+        == .unknownFormat(EngineFiles.unknownFormatText(file.path, format: #""1""#)))
     try Data("{\(fields)}".utf8).write(to: file)
     #expect(
       EngineFiles.read(StimdRecord.self, at: file.path) == .unknownFormat(EngineFiles.unknownFormatText(file.path, format: nil)))
@@ -55,7 +59,11 @@ import Testing
   @Test func onboardingInstallsUpdatesOrShowsThePinFromTheStoreAndTheVersionThisBuildNames() throws {
     let wanted = SemanticVersion("1.44.0")
     #expect(EngineNeed.decide(pointer: .missing, wanted: wanted, installedByDesktop: false) == .install(version: "1.44.0"))
-    #expect(EngineNeed.decide(pointer: .unreadable, wanted: nil, installedByDesktop: false) == .install(version: "next"))
+    #expect(EngineNeed.decide(pointer: .missing, wanted: nil, installedByDesktop: false) == .install(version: "next"))
+    guard case .unreadable = EngineNeed.decide(pointer: .unreadable, wanted: wanted, installedByDesktop: true) else {
+      Issue.record("an engine store Desktop cannot parse is never installed over")
+      return
+    }
     #expect(
       EngineNeed.decide(pointer: .unknownFormat("update"), wanted: wanted, installedByDesktop: true) == .unreadable("update"))
     let same = try pointer("1.44.0")
