@@ -10,7 +10,7 @@ type Env = NodeJS.ProcessEnv;
  * config loads it), which is pinned. They never become rows and are removed from the evaluator env.
  */
 const DENIED =
-  /^(?:DEBUG.*|NODE_DEBUG|NODE_V8_COVERAGE|NO_COLOR|NODE_DISABLE_COLORS|COLORTERM|TERM.*|TRACE_DEPRECATION|NO_DEPRECATION|__IS_WSL_TEST__|TEST_GRACEFUL_FS_GLOBAL_PATCH|COLUMNS|LINES|STIM_.*|TRAVIS|CIRCLECI|APPVEYOR|GITLAB_CI|GITHUB_ACTIONS|BUILDKITE|DRONE|CI_NAME|TEAMCITY_VERSION|GITEA_ACTIONS|TF_BUILD|AGENT_NAME)$/;
+  /^(?:DEBUG.*|NODE_DEBUG|NODE_V8_COVERAGE|NO_COLOR|NODE_DISABLE_COLORS|COLORTERM|TERM.*|TRACE_DEPRECATION|NO_DEPRECATION|__IS_WSL_TEST__|TEST_GRACEFUL_FS_GLOBAL_PATCH|COLUMNS|LINES|TRAVIS|CIRCLECI|APPVEYOR|GITLAB_CI|GITHUB_ACTIONS|BUILDKITE|DRONE|CI_NAME|TEAMCITY_VERSION|GITEA_ACTIONS|TF_BUILD|AGENT_NAME)$/;
 const VOLATILE = /^(?:PWD|OLDPWD|SHLVL|_|TMPDIR|SSH_.*|__CF.*|ITERM_.*|TMUX.*|VSCODE_.*|WINDOWID)$/;
 const PINS = { CI: '1', FORCE_COLOR: '0', LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', TZ: 'UTC' };
 const PINNED = new Set([...Object.keys(PINS), 'PWD', 'EXPO_NO_TELEMETRY']);
@@ -54,13 +54,14 @@ const defined = (env: Env) =>
   Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined));
 
 /**
- * The env every evaluator child and `expo prebuild` run under: the requester's, without Stim's own and diagnostic
+ * The env every evaluator child and `expo prebuild` run under: the requester's, without `STIM_*` and diagnostic
  * names, with the prebuild pins and a fixed locale, timezone and `PWD`, so terminals, CI and agents agree.
  */
 export function evaluatorEnv(requester: Env, root: string, platform: Platform): Record<string, string> {
   const env = defined(requester);
   for (const name of Object.keys(env))
-    if (isDenied(name) || (platform === 'ios' && /^ANDROID_(?:HOME|SDK_ROOT)$/.test(name))) delete env[name];
+    if (isDenied(name) || name.startsWith('STIM_') || (platform === 'ios' && /^ANDROID_(?:HOME|SDK_ROOT)$/.test(name)))
+      delete env[name];
   return { EXPO_NO_TELEMETRY: '1', ...env, ...PINS, PWD: root };
 }
 

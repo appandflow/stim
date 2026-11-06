@@ -61,7 +61,7 @@ export interface Fingerprint {
 interface Trace {
   env: string[];
   enumerators: string[];
-  reads: { path: string; kind: string }[];
+  reads: { path: string; kind: string; hash?: string }[];
   modules: { path: string; hash: string }[];
   opaque: string[];
 }
@@ -271,8 +271,18 @@ function traceRows(
     } else rows.push({ name: `virtual:${pathForm(path, roots)}`, kind: 'file', hash });
   }
   const compiled = new Set(trace.modules.map((module) => module.path));
-  for (const { path, kind } of trace.reads) {
-    if (kind !== 'file' || ours(path) || packageRoot(path) || SKIPPED_READS.has(basename(path))) continue;
+  for (const { path, kind, hash } of trace.reads) {
+    if (ours(path) || packageRoot(path)) continue;
+    if (kind !== 'file') {
+      if (inApp(path))
+        rows.push(
+          kind === 'dir'
+            ? { name: `dir:${realForm(path, roots)}`, kind: 'file', hash: hash ?? ABSENT }
+            : { name: `exists:${realForm(path, roots)}`, kind: 'file', hash: sha256(kind) },
+        );
+      continue;
+    }
+    if (SKIPPED_READS.has(basename(path))) continue;
     if (
       trace.opaque.includes('module.registerHooks missing') &&
       SCRIPT.test(path) &&
@@ -403,13 +413,16 @@ async function evaluate(
   const packages = new Set<string>();
   for (const path of autolinked) {
     const owner = packageRoot(path);
-    if (owner) packages.add(owner);
-    else
-      for (let dir = path; within(dir, roots.install) && dir !== root && dir !== roots.install; dir = dirname(dir))
-        if (existsSync(join(dir, 'package.json'))) {
-          contentPackages.add(dir);
-          break;
-        }
+    if (owner) {
+      packages.add(owner);
+      continue;
+    }
+    let dir = path;
+    while (dir !== root && dir !== roots.install && dirname(dir) !== dir && !existsSync(join(dir, 'package.json')))
+      dir = dirname(dir);
+    if (existsSync(join(dir, 'package.json')) && dir !== root && dir !== roots.install) contentPackages.add(dir);
+    else if (!within(path, roots.project) && !within(path, roots.install))
+      return { uncertain: `autolinking names ${path}, which belongs to no package stim can hash` };
   }
 
   const config = byName.get('config');
@@ -487,6 +500,7 @@ async function evaluate(
   if (native === 'generated' && expo && existsSync(join(expo, 'template.tgz')))
     texts.push(...templateScripts(join(expo, 'template.tgz')));
   const buildEnv = buildEnvRows(texts, opts.env, platform, (path) => realForm(path, roots));
+  for (const owner of buildEnv.paths.map(packageRoot)) if (owner) packages.add(owner);
   const pathRows = walk({ roots, trees: buildEnv.paths.filter((path) => !packageRoot(path)), tracked: null });
   if (isUncertain(pathRows)) return pathRows;
   const closure = entryPoints(root, expo);

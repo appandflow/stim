@@ -143,13 +143,14 @@ describe.skipIf(!existsSync(MOBILE_MODULES))('fingerprint evaluators on the inst
     async () => {
       const root = expoApp({
         'app.config.js':
-          "module.exports = ({ config }) => ({ ...config, extra: { api: process.env.NODE_ENV === 'development' ? process.env.DEV_API : process.env.API } });\n",
+          "module.exports = ({ config }) => ({ ...config, extra: { api: process.env.NODE_ENV === 'development' ? process.env.DEV_API : process.env.API, push: process.env.STIM_APP_PUSH ?? null } });\n",
         '.env.production': 'API=one\n',
       });
       recordSpawns();
       const debug = await key(root, baseEnv({ API: 'p1' }));
       expect(embedSpawns()).toBe(1);
       expect((await key(root, baseEnv({ API: 'p2' }))).hash).not.toBe(debug.hash);
+      expect((await key(root, baseEnv({ API: 'p1', STIM_APP_PUSH: '1' }))).hash).not.toBe(debug.hash);
       const release = await key(root, baseEnv(), 'production');
       const nodeEnvRelease = await key(root, baseEnv({ NODE_ENV: 'production' }), 'production');
       write(join(root, '.env.production'), 'API=two\n');

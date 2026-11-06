@@ -35,7 +35,14 @@ function record(kind, target) {
   const entry = { path: file, kind };
   if (kind === 'dir') {
     try {
-      entry.hash = sha256(JSON.stringify(originalReaddirSync(file).map(String).toSorted()));
+      entry.hash = sha256(
+        JSON.stringify(
+          originalReaddirSync(file)
+            .map(String)
+            .filter((name) => name !== '.DS_Store')
+            .toSorted(),
+        ),
+      );
     } catch {}
   }
   reads.set(`${kind}\0${file}`, entry);
