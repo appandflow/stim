@@ -18,9 +18,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { takeLock } from '../engine-store/locks.ts';
+import { machineCopy } from './fixtures/machine-copy.ts';
 
 const PACKAGE = fileURLToPath(new URL('../..', import.meta.url));
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 let tmp: string;
 let home: string;
 let root: string;
@@ -98,14 +98,7 @@ beforeAll(() => {
   env = { ...process.env, HOME: tmp, STIM_HOME: home, STIM_ENGINE_ROOT: root, STIM_DAEMON: 'on' };
   process.env.STIM_HOME = home;
   process.env.STIM_ENGINE_ROOT = root;
-  const packed = execFileSync(npm, ['pack', '--pack-destination', tmp], { cwd: PACKAGE, encoding: 'utf8' })
-    .trim()
-    .split('\n')
-    .at(-1);
-  assert(packed);
-  execFileSync(npm, ['install', '-g', '--prefix', join(tmp, 'a'), join(tmp, packed), '--ignore-scripts'], {
-    env: { ...process.env, npm_config_loglevel: 'error' },
-  });
+  machineCopy(PACKAGE, join(tmp, 'a'));
   versions.a = readJson(join(installed('a'), 'package.json')).version;
   const [major = 0, minor = 0, patch = 0] = (versions.a.split('-')[0] ?? '').split('.').map(Number);
   for (const [name, bump] of [

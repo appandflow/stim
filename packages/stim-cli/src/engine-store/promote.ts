@@ -103,7 +103,7 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
       }
       for (const home of promotion.restoreState ? homes : []) restoreSchema(home, manifest.schema, manifest.version);
       await flip(root, build, manifest, current, promotion, false);
-      for (const home of homes) migrateSchema(home, manifest.version);
+      migrateHomes(root, homes, manifest.version);
       collectStore(root);
       return { flipped: build };
     }
@@ -135,7 +135,7 @@ async function flipStaged(promotion: Promotion): Promise<PromotionResult> {
     pinned: staged.pinned,
   };
   await flip(root, own, manifest, current, { ...from, channel: staged.channel ?? promotion.channel }, true);
-  for (const home of homes) migrateSchema(home, manifest.version);
+  migrateHomes(root, homes, manifest.version);
   collectStore(root);
   return { flipped: own };
 }
@@ -198,6 +198,14 @@ async function flip(
     `#!/bin/sh\nexec "${node.path}" "${join(root, build, 'dist', 'cli.mjs')}" __stimd "$@"`,
     0o755,
   );
+}
+
+/** Migrates `homes` to this build's schema and records them in `state.json`'s `migrated`. */
+export function migrateHomes(root: string, homes: string[], version: string): void {
+  for (const home of homes) migrateSchema(home, version);
+  const { state } = readRecords(root);
+  const migrated = [...new Set([...(state.migrated ?? []), ...homes])];
+  if (migrated.length !== (state.migrated ?? []).length) writeState(root, { ...state, migrated });
 }
 
 function fail(message: string): never {

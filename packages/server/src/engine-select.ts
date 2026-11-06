@@ -22,18 +22,20 @@ export function engineSelectArgs(source: UpdateSource, setBy: string, explicit: 
   ];
 }
 
+const answered = (ok: boolean, message: string) => ({ ok, message, result: true });
+
 /** What one `engine-select` run printed on its last line, as one sentence. */
-export function engineSelectOutcome(output: string): { ok: boolean; message: string } {
+export function engineSelectOutcome(output: string): { ok: boolean; message: string; result: boolean } {
   let result: Record<string, unknown> = {};
   try {
     result = JSON.parse(output.trim().split('\n').at(-1) ?? '');
   } catch {}
-  if (typeof result.flipped === 'string') return { ok: true, message: `The engine now runs build ${result.flipped}.` };
+  if (typeof result.flipped === 'string') return answered(true, `The engine now runs build ${result.flipped}.`);
   if (typeof result.staged === 'string')
-    return { ok: true, message: `Build ${result.staged} is staged; the engine switches once running work drains.` };
-  if (result.busy === true) return { ok: false, message: 'Another process is changing the engine; run it again.' };
-  if (typeof result.refused === 'string') return { ok: false, message: `The engine refused it: ${result.refused}.` };
-  return { ok: false, message: 'engine-select printed no result.' };
+    return answered(true, `Build ${result.staged} is staged; the engine switches once running work drains.`);
+  if (result.busy === true) return answered(false, 'Another process is changing the engine; run it again.');
+  if (typeof result.refused === 'string') return answered(false, `The engine refused it: ${result.refused}.`);
+  return { ok: false, message: 'engine-select printed no result.', result: false };
 }
 
 /** Runs this build's `engine-select` on `source` and returns its outcome line, or throws its refusal. */

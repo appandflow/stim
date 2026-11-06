@@ -37,6 +37,8 @@ export type StoreState = {
   bad: { build: string; version: string; at: string }[];
   /** The `setBy` of the promotion that installed the engine, such as `install:desktop`; `engine.autoUpdate` reads it. */
   installedBy?: string;
+  /** Every Stim home and machine root a flip migrated, so a crash-loop rollback checks them after their stimds exit. */
+  migrated?: string[];
 };
 export type Records = { current: Current | null; staged: Staged | null; previous: string | null; state: StoreState };
 

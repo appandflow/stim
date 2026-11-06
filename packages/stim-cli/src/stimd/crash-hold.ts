@@ -65,9 +65,12 @@ export function crashLoopAction({
   };
 }
 
-/** Every Stim home a stimd claim under the engine root names, live or left by a crash, with this home and the machine root. */
+/**
+ * Every Stim home a stimd claim under the engine root names, live or left by a crash, every home a flip migrated, this
+ * home and the machine root.
+ */
 function claimedHomes(root: string, own: string): HomeSchema[] {
-  const homes = new Set([own, machineRoot()]);
+  const homes = new Set([own, machineRoot(), ...(readRecords(root).state.migrated ?? [])]);
   for (const { build } of readBuildClaims(root)) {
     const { live, dead } = readClaimSet(buildClaimRoot(root, build));
     for (const claim of [...live, ...dead]) if (typeof claim.details.home === 'string') homes.add(claim.details.home);

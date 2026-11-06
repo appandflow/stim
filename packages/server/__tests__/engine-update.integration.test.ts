@@ -100,7 +100,6 @@ console.log(JSON.stringify({ staged: 'ba9876543210' }));
         join(serviceRoot('dev.stim.test'), 'incoming', started.result.id),
         '--set-by',
         'engine.update',
-        '--explicit',
       ],
       files: { [name]: bytes.toString('base64') },
     });

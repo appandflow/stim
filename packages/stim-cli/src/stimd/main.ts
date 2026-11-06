@@ -251,6 +251,7 @@ export async function runStimd({
   desktopKey,
   onNet,
   afterSwitch = false,
+  service = serve !== undefined,
 }: {
   tickMs?: number;
   /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
@@ -265,6 +266,8 @@ export async function runStimd({
   onNet?: (answer: Awaited<ReturnType<ReturnType<typeof createNetThread>['ensure']>>) => void;
   /** Started by a stimd of the previous build after an engine switch: stops that build's supervisors when idle. */
   afterSwitch?: boolean;
+  /** Whether a service unit or `stim serve` runs this stimd, which turns `engine.autoUpdate`'s `auto` on. */
+  service?: boolean;
 } = {}): Promise<boolean> {
   const identity = stimBuild();
   const build = stimdBuildId();
@@ -314,13 +317,10 @@ export async function runStimd({
       releaseClaim(own);
       markAbnormal = null;
       if (current)
-        launchStimd(
-          process.env,
-          startMode,
-          process.platform,
-          join(store.root, current.dir, 'dist', 'cli.mjs'),
-          serveArgs(serve ?? null),
-        );
+        launchStimd(process.env, startMode, process.platform, join(store.root, current.dir, 'dist', 'cli.mjs'), [
+          '--after-switch',
+          ...serveArgs(serve ?? null, service),
+        ]);
       writer.close();
       return false;
     }
@@ -332,7 +332,7 @@ export async function runStimd({
     log('error', 'engine_crash_hold', message);
     let checked = updateCheckedAt;
     if (
-      autoUpdateOn(loadConfig()?.engine?.autoUpdate, readRecords(store.root).state.installedBy, serve !== undefined) &&
+      autoUpdateOn(loadConfig()?.engine?.autoUpdate, readRecords(store.root).state.installedBy, service) &&
       updateDue(checked, Date.now(), ASKED_MS)
     ) {
       const line = await checkForUpdate(store, 'crash hold').catch((error: unknown) => String(error));
@@ -381,7 +381,7 @@ export async function runStimd({
       const on = autoUpdateOn(
         loadConfig()?.engine?.autoUpdate,
         readRecords(follower.engine.root).state.installedBy,
-        serve !== undefined,
+        service,
       );
       if (!on || !updateDue(lastUpdateCheck(follower.engine.root), Date.now(), everyMs)) return;
     } catch {
@@ -491,7 +491,7 @@ export async function runStimd({
     await net.close();
     launchStimd(process.env, startMode, process.platform, join(root, next.build, 'dist', 'cli.mjs'), [
       '--after-switch',
-      ...serveArgs(carried),
+      ...serveArgs(carried, service),
     ]);
     for (const deadline = Date.now() + SUCCESSOR_BIND_MS; Date.now() < deadline;) {
       const record = readJsonObject(stimdRecordFile());
@@ -571,6 +571,8 @@ export async function runStimd({
           const running = net.running();
           const restart =
             kind === 'desktop' &&
+            !serve &&
+            !pinned() &&
             running !== null &&
             (running.loopbackOnly !== options.loopbackOnly ||
               (port !== undefined && port !== 0 && running.port !== null && port !== running.port));
@@ -900,11 +902,13 @@ function hostedNativeWork(session: HostedDeviceSession): boolean {
 
 /**
  * `serviceArguments`' inverse: the arguments a successor stimd takes to serve as this one's net thread did. A net thread
- * that only serves `stim share` is not carried over.
+ * that only serves `stim share` is not carried over, and one no service unit or `stim serve` started is marked
+ * `--carried`, so its successor does not count as a service.
  */
-function serveArgs(serve: ServeOptions | null): string[] {
+function serveArgs(serve: ServeOptions | null, service: boolean): string[] {
   if (!serve || serve.shareOnly) return [];
   return [
+    ...(service ? [] : ['--carried']),
     '--service',
     ...(serve.loopbackOnly ? ['--loopback-only'] : []),
     '--port',
@@ -965,6 +969,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
       serve,
       onNet: reportNet,
       afterSwitch: argv.includes('--after-switch'),
+      service: serve !== undefined && !argv.includes('--carried'),
     });
     if (serve && !served && stimdLive()) await serveThroughStimd(serve, reportNet);
   } catch (error) {

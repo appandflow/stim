@@ -167,19 +167,25 @@ export class StimError extends Error {
  * Resources remain workspace-owned until stop() is called.
  */
 export function createStim(options: StimOptions): StimClient {
-  return new Proxy(createLocalStim(options), {
-    get(local, name) {
-      const op: unknown = Reflect.get(local, name);
+  const local = createLocalStim(options);
+  const env = { ...(options.env ?? process.env) };
+  const ctx: StimOptions = { ...options, projectRoot: local.projectRoot, env };
+  return new Proxy(local, {
+    get(target, name) {
+      const op: unknown = Reflect.get(target, name);
       if (typeof op !== 'function' || typeof name !== 'string') return op;
       return (...args: unknown[]) => {
-        const engine = engineRunOp(options.env ?? process.env);
-        if (!engine) return Reflect.apply(op, local, args);
+        let engine: ReturnType<typeof engineRunOp> = null;
+        try {
+          if (options.admission !== 'none') engine = engineRunOp(env);
+        } catch {}
+        if (!engine) return Reflect.apply(op, target, args);
         return engine.then((runEngineOp) =>
           runEngineOp
-            ? runEngineOp(name, args, options).catch((failure: unknown) => {
+            ? runEngineOp(name, args, ctx).catch((failure: unknown) => {
                 throw isPlainFailure(failure) ? new StimError(failure) : failure;
               })
-            : Reflect.apply(op, local, args),
+            : Reflect.apply(op, target, args),
         );
       };
     },

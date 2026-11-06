@@ -366,7 +366,7 @@ export async function ensureStimd(
       );
       return true;
     }
-    admitting = pin;
+    admitting = pin && !held;
     if (stimdLive()) {
       if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
       else if (!(await beginOp(held)) && stimdRefused() && (await successorBound())) await beginOp(held);

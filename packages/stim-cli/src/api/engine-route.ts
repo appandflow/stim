@@ -27,14 +27,16 @@ function pointedDir(root: string): string | null {
 
 /**
  * The engine's `runOp` when the machine engine runs another build than this copy, as the router decides for a CLI
- * command; null when no engine is installed, this copy is the engine's build, this copy is a development tree, which
- * runs in place, or the engine's `dist/api.mjs` cannot load. Each call stats `current.json` once and reads it only
+ * command; null when no engine is installed, this copy runs from the store (a stimd's own clients and the engine's
+ * own build follow switches by relaunching), this copy is a development tree, which runs in place, or the engine's
+ * `dist/api.mjs` cannot load. Each call stats `current.json` once and reads it only
  * when it changed, so an op started after a switch runs the new build.
  */
 export function engineRunOp(env: NodeJS.ProcessEnv): Promise<RunOp | null> | null {
+  if (ownStoreEngine()) return null;
   const root = engineRoot(env);
   const dir = pointedDir(root);
-  if (!dir || ownStoreEngine()?.build === dir) return null;
+  if (!dir) return null;
   const self = dirname(dirname(fileURLToPath(import.meta.url)));
   try {
     if (installKind(realpathSync(self), realpathSync(root)) === 'development') return null;

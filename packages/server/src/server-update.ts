@@ -100,7 +100,8 @@ function readLastUpdate(root: string): EngineUpdateOutcome | null {
   try {
     const log = join(root, 'update.log');
     const ended = engineSelectOutcome(readFileSync(log, 'utf8'));
-    return { ...recorded, ...ended, at: statSync(log).mtime.toISOString() };
+    if (!ended.result) return recorded;
+    return { ...recorded, ok: ended.ok, message: ended.message, at: statSync(log).mtime.toISOString() };
   } catch {
     return recorded;
   }
@@ -391,7 +392,7 @@ export class EngineUpdates {
       this.options.detached ??
       serviceManagerOrNull()?.detached ??
       ((file: string, rest: string[]) => ({ file, args: rest }));
-    const command = detached(this.options.node, engineSelectArgs(source, 'engine.update', 'from' in source));
+    const command = detached(this.options.node, engineSelectArgs(source, 'engine.update', false));
     recordOutcome(this.root()!, { at: running.startedAt, target, ok: false, message: RUNNING });
     const child = spawn(command.file, command.args, {
       detached: true,

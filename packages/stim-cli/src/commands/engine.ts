@@ -7,9 +7,9 @@ import { processContext } from '../cli-operation.ts';
 import { getExecutor } from '../exec.ts';
 import { collectStore } from '../engine-store/gc.ts';
 import { takeLock } from '../engine-store/locks.ts';
-import { promote, type Promotion } from '../engine-store/promote.ts';
+import { migrateHomes, promote, type Promotion } from '../engine-store/promote.ts';
 import { newestBad } from '../engine-store/select.ts';
-import { machineRoot, migrateSchema, readSchema, SCHEMA } from '../engine-store/schema.ts';
+import { machineRoot, readSchema, SCHEMA } from '../engine-store/schema.ts';
 import { engineRoot, readManifest, readRecords } from '../engine-store/store.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 
@@ -73,7 +73,7 @@ export default function engineCommand(program: Command, version: string): void {
         refuse('STIM_ENGINE_REFUSED', `${self} runs in place.`, 'Run stim engine install from an installed stim.');
       const by = process.env.STIM_DESKTOP_APP ? 'desktop' : kind;
       await run(`install:${by}`, kind === 'npx' || kind === 'project' ? { version } : { dir: self });
-      for (const home of [configDir(), machineRoot()]) migrateSchema(home, version);
+      migrateHomes(engineRoot(process.env), [configDir(), machineRoot()], version);
     });
   engine
     .command('use')

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdirSync, rmSync } from 'node:fs';
+import { lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { connect, createServer, type Server } from 'node:net';
 import { join } from 'node:path';
 
@@ -14,8 +14,8 @@ export interface StoreLock {
  * died fails with `ECONNREFUSED`. Returns null while another process holds the lock.
  */
 export async function takeLock(root: string, name: '.lock.sock' | '.flip.sock'): Promise<StoreLock | null> {
-  const path = lockPath(join(root, name));
   mkdirSync(root, { recursive: true });
+  const path = lockPath(join(realpathSync(root), name));
   for (let attempt = 0; attempt < 3; attempt++) {
     const server = createServer();
     const bound = await new Promise<NodeJS.ErrnoException | null>((resolve) => {

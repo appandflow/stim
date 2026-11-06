@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { installServer } from '@stim-cli/server/release-install';
+import { recordJobUse } from '../engine-store/jobs.ts';
 import { readManifest } from '../engine-store/store.ts';
 import { fetchTree, removeTree, scratchName, seal, selfTest } from '../engine-store/tree.ts';
 
@@ -43,6 +44,7 @@ export async function installJobBuild(root: string, build: string, source: JobSo
         { mismatch: true },
       );
     await selfTest(staging, sealed);
+    recordJobUse(root, build, 'release' in source ? source.release : null);
     const tree = join(staging, build);
     if (!existsSync(join(root, build))) {
       const { mode } = statSync(tree);
