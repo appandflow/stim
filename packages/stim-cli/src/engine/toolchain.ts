@@ -12,7 +12,6 @@ import type { OffloadProblem } from '../offload/toolchain.ts';
 
 /** What must be identical on this Mac and a remote Mac for an iOS simulator build to come out the same. */
 export interface IosToolchain {
-  /** A digest of Stim's built code, compared only with a remote machine that reports no `compat`. */
   stimBuild: string | null;
   /** The Stim build compatibility version both sides must share. */
   compat: number;

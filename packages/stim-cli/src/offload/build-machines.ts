@@ -192,7 +192,7 @@ function problemFix(problem: OffloadProblem, entry: string): string {
     case 'checkout':
       return 'Offload syncs the files git lists; run Stim from a git checkout of the app.';
     case 'stim-build':
-      return `Update stim-server on ${entry} to a Stim release with the same build compatibility version as this machine (an older stim-server needs the same Stim build): there, run \`stim service update --release <version>\` for this machine's release, or \`--from <dir>\` with the packed packages of this machine's checkout.`;
+      return 'update the worker: stim service update --release <version>; update an old client: npm i -g stim@latest; Stim Desktop 0.2.5 or older: Stim > Check for Updates';
     case 'arch':
       return 'Use a remote machine with the same CPU architecture as this machine.';
     case 'xcode':

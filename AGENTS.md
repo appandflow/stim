@@ -434,8 +434,8 @@ outside it moves to its own issue and pull request.
   completed React Native and SwiftPM artifacts, when their bundled Stim
   reports the same `STIM_BUILD_COMPAT`
   (`packages/stim-cli/src/engine/toolchain.ts`, in the `stim` package because
-  `@stim-cli/core` is a ranged dependency); a machine that reports none needs
-  the same Stim build digest. Bump it when a machine with the same value but
+  `@stim-cli/core` is a ranged dependency); a machine that reports none is
+  refused and must be updated. Bump it when a machine with the same value but
   the other version of a file listed in `scripts/build-compat.json` would
   build a different artifact or read a build or artifact message
   differently; a fix that makes a failing worker build succeed, or a field

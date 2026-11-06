@@ -123,7 +123,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 if (process.argv[2] === 'offer-native-gradle') {
-  console.log(JSON.stringify({ stimBuild: 'fixture', arch: process.arch, jdk: '21', androidSdk: {} }));
+  console.log(JSON.stringify({ stimBuild: 'fixture', compat: 1, arch: process.arch, jdk: '21', androidSdk: {} }));
 } else {
   let text = '';
   for await (const part of process.stdin) text += part;
@@ -187,6 +187,7 @@ if (process.argv[2] === 'offer-native-gradle') {
           platform: 'android',
           fingerprint: null,
           stimBuild: 'fixture',
+          compat: 1,
           isExpo: false,
           native: {
             provider: 'gradle',

@@ -289,7 +289,7 @@ function macosBuildOptions(
       : swiftpmArtifactQuery({
           project: params.project,
           sourceDigest: params.fingerprint,
-          ...(typeof params.compat === 'number' ? { compat: params.compat } : { stimBuild: params.stimBuild }),
+          compat: params.compat,
           inputs: options.artifactInputs,
           build: {
             product: options.product,
@@ -1009,7 +1009,7 @@ export class BuildHost {
     const query = swiftpmArtifactQuery({
       project: job.project,
       sourceDigest: job.expectedFingerprint,
-      ...(typeof job.compat === 'number' ? { compat: job.compat } : { stimBuild: job.stimBuild }),
+      compat: job.compat,
       inputs: options.artifactInputs,
       build: {
         product: options.product,
@@ -2347,15 +2347,16 @@ export class BuildSession {
     if (this.closed) return refusal('build-refused', 'The connection closed.');
     const compat = typeof params.compat === 'number' ? params.compat : undefined;
     if (!toolchain) return refusal('build-refused', 'This machine runs Stim build unknown.');
-    if (compat !== undefined && toolchain.compat !== undefined) {
-      if (toolchain.compat !== compat)
-        return refusal(
-          'build-refused',
-          `This machine runs Stim build ${toolchain.stimBuild ?? 'unknown'} with build compatibility ${toolchain.compat}, not ${compat}.`,
-        );
-    } else if (toolchain.stimBuild !== params.stimBuild) {
-      return refusal('build-refused', `This machine runs Stim build ${toolchain.stimBuild ?? 'unknown'}.`);
-    }
+    if (compat === undefined || toolchain.compat === undefined)
+      return refusal(
+        'build-refused',
+        'Missing build compatibility version; update the worker: stim service update --release <version>; update an old client: npm i -g stim@latest; Stim Desktop 0.2.5 or older: Stim > Check for Updates',
+      );
+    if (toolchain.compat !== compat)
+      return refusal(
+        'build-refused',
+        `This machine runs Stim build ${toolchain.stimBuild ?? 'unknown'} with build compatibility ${toolchain.compat}, not ${compat}.`,
+      );
     const launched = this.host.launch({
       client: this.client,
       repo: params.repo,
@@ -2372,7 +2373,7 @@ export class BuildSession {
         cacheArtifact: params.cacheArtifact === true,
         ...podsOnWorkerJob(params),
         stimBuild: params.stimBuild,
-        ...(compat !== undefined && toolchain.compat !== undefined ? { compat } : {}),
+        compat,
         ...(typeof params.jdk === 'string' ? { jdk: params.jdk } : {}),
         configuration: optional(params.configuration),
         scheme: optional(params.scheme),

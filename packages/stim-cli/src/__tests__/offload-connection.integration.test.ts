@@ -41,6 +41,7 @@ vi.mock('../offload/build-machines.ts', async (importOriginal) => ({
 
 const TOOLCHAIN = {
   stimBuild: 'b1',
+  compat: 1,
   arch: 'arm64',
   xcode: 'Xcode 27.0',
   simulatorSdk: '27.0',
@@ -322,6 +323,27 @@ test('linked checkouts offer separate areas while projects in one checkout reuse
   const areas = machine.requests.filter(({ method }) => method === 'build.offer').map(({ params }) => params.repo);
   expect(areas[0]).not.toBe(areas[1]);
   expect(areas.slice(1)).toEqual([areas[1], areas[1], areas[1]]);
+});
+
+test('a worker without build compatibility is refused even with the same Stim build', async () => {
+  const machine = await fakeMachine(
+    'old',
+    { ...offer(0.1), toolchain: { ...TOOLCHAIN, compat: undefined } },
+    { result: { job: 'unused' } },
+  );
+  machines.push(machine);
+  const result = await chooseBuildMachine({
+    projectRoot: repo,
+    target: TARGET,
+    selected: 'old',
+    here: HERE,
+    note: () => {},
+    machines: [credential('old')],
+  });
+  expect(result).toContain(
+    'update the worker: stim service update --release <version>; update an old client: npm i -g stim@latest; Stim Desktop 0.2.5 or older: Stim > Check for Updates',
+  );
+  expect(machine.methods).toEqual(['hello', 'build.offer']);
 });
 
 describe('offloadBuild', () => {

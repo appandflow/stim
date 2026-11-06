@@ -16,7 +16,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { join } from 'node:path';
 const mode = process.argv[2];
 if (mode === 'offer') {
-  console.log(JSON.stringify({ stimBuild: 'b1', os: process.platform, arch: process.arch, xcode: 'Xcode 27', macosSdk: '27', runtimes: [], jdk: null, androidSdk: null }));
+  console.log(JSON.stringify({ stimBuild: 'b1', compat: 1, os: process.platform, arch: process.arch, xcode: 'Xcode 27', macosSdk: '27', runtimes: [], jdk: null, androidSdk: null }));
 } else {
   let text = '';
   for await (const chunk of process.stdin) text += chunk;
@@ -24,7 +24,7 @@ if (mode === 'offer') {
   const area = process.cwd();
   const privateFile = join(area, 'worker-private');
   if (mode === 'build' && !existsSync(privateFile)) writeFileSync(privateFile, 'private-pinned-value');
-  const query = mode === 'build' ? { project: input.project, sourceDigest: input.expectedFingerprint, stimBuild: input.stimBuild, inputs: input.macos.artifactInputs, build: { product: input.macos.product, infoPlist: input.macos.infoPlist, resources: {}, assetCatalog: null } } : input.query;
+  const query = mode === 'build' ? { project: input.project, sourceDigest: input.expectedFingerprint, compat: input.compat, inputs: input.macos.artifactInputs, build: { product: input.macos.product, infoPlist: input.macos.infoPlist, resources: {}, assetCatalog: null } } : input.query;
   const hash = createHash('sha256').update(JSON.stringify([query, readFileSync(privateFile, 'utf8')])).digest('hex');
   const identity = { hash, key: 'swiftpm-peer-' + hash };
   if (mode === 'swiftpm-artifact') console.log(JSON.stringify({ identity }));
@@ -61,7 +61,7 @@ if (mode === 'offer') {
   const query: BuildSwiftpmArtifactQuery = {
     project: '',
     sourceDigest: 'a'.repeat(64),
-    stimBuild: 'b1',
+    compat: 1,
     inputs: { complete: true, ignored: [], outputs: [], localFiles: [], environment: [] },
     build: { product: 'App', infoPlist: 'Info.plist', resources: {}, assetCatalog: null },
   };
@@ -75,7 +75,8 @@ if (mode === 'offer') {
         platform: 'macos',
         project: query.project,
         expectedFingerprint: query.sourceDigest,
-        stimBuild: query.stimBuild,
+        stimBuild: 'b1',
+        compat: query.compat,
         cacheArtifact: true,
         macos: { ...query.build, bundleId: 'dev.example.App', artifactInputs: query.inputs },
       },
