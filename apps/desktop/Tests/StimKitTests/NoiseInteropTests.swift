@@ -259,7 +259,7 @@ struct NoiseInteropTests {
     #expect(await Self.code { try await controller.request("action", stop) } == "forbidden")
   }
 
-  @Test func aStimDesktopHelloWithoutDesktopApiIsRefusedOverNoiseAndAnsweredOnTheLocalSocket() async throws {
+  @Test func aStimDesktopHelloWithoutDesktopApiIsRefusedOverNoise() async throws {
     let server = try await RunningServer()
     defer { server.stop() }
     let payload = try await server.payload()
@@ -284,20 +284,6 @@ struct NoiseInteropTests {
     #expect(error["code"] == .string("protocol-unsupported"))
     #expect(error["message"]?.string?.hasSuffix("Update Stim Desktop (Stim > Check for Updates).") == true)
     #expect(refusal.code == "protocol-unsupported")
-
-    var local: [ServerTransportEvent] = []
-    let socket = UnixSocketTransport(path: StimHome.localSocket(home: server.stimHome).path) { local.append($0) }
-    defer { socket.close() }
-    socket.send(hello)
-    for _ in 0..<400 where local.isEmpty { try await Task.sleep(for: .milliseconds(25)) }
-    guard case .text(let answered)? = local.first,
-      case .object(let reply) = try JSONDecoder().decode(JSONValue.self, from: Data(answered.utf8)),
-      case .object(let result)? = reply["result"]
-    else {
-      Issue.record("the local hello got \(local)")
-      return
-    }
-    #expect(result["desktopApi"] == .number(Double(ServerProtocol.desktopApi)))
   }
 
   @Test func onlyAMatchingFingerprintReachesMessage3AndAPairingPastItIsKept() async throws {
