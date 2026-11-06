@@ -38,8 +38,8 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
     'packages/stim-cli': {
       // The own fingerprint module lands before any command calls it; its tests are its only importers.
       entry: production ? ['src/fingerprint/*.ts'] : [],
-      // supervisor/server-bare.ts loads @stim-cli/metro with createRequire at runtime.
-      ignoreDependencies: production ? ['@stim-cli/metro'] : [],
+      // tsdown bundles the workspace packages; their bare unique-pid import stays external.
+      ignoreDependencies: production ? ['@stim-cli/*', 'unique-pid'] : [],
     },
     'packages/agent-driver': {
       // The source imports @stim-cli/core types only, but the published declarations need the package installed.

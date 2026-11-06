@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { ndjsonReporter } from '@stim-cli/metro';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { resolveMetroSharedCache } from '../optimizations.ts';
 import { resolveProjectSettings, type SettingsObject } from '../workspace/settings.ts';
@@ -103,19 +104,6 @@ export function resolveBareDeps(
     devMiddleware: modules['@react-native/dev-middleware'],
     serverApi: modules['@react-native-community/cli-server-api'],
   };
-}
-
-export function loadNdjsonReporter(
-  root: string,
-  { requireFrom = createRequire }: { requireFrom?: (id: string) => NodeJS.Require } = {},
-): ((opts: { dir: string }) => BareModule) | null {
-  for (const from of [import.meta.url, join(root, 'package.json')]) {
-    try {
-      const factory = requireFrom(from)('@stim-cli/metro').ndjsonReporter;
-      if (typeof factory === 'function') return factory;
-    } catch {}
-  }
-  return null;
 }
 
 export function loadFileStore(
@@ -303,7 +291,7 @@ export async function startBareServer({
   settings?: SettingsObject;
 }): Promise<BareServerHandle> {
   const { metro, devMiddleware, serverApi } = deps || resolveBareDeps(root);
-  const makeReporter = reporterFactory === undefined ? loadNdjsonReporter(root) : reporterFactory;
+  const makeReporter = reporterFactory === undefined ? ndjsonReporter : reporterFactory;
 
   const config = await metro.loadConfig({ cwd: root, port, resetCache });
   const sharedStoreInstalled = installSharedCacheStore({

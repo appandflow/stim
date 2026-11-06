@@ -1,10 +1,8 @@
-import assert from 'node:assert';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { appendCacheStore, hasStoreAt, metroStoreRoot } from '../supervisor/metro-store.ts';
 import {
-  loadNdjsonReporter,
   normalizeMetroTransformerPaths,
   resolveBareDeps,
   startBareServer,
@@ -118,16 +116,6 @@ describe('the symbolication reporter middleware', () => {
     symbolicationReporterMiddleware(reporter)({ url: '/symbolicate?x=1' }, malformed, () => {});
     malformed.end('not json');
     expect(events).toEqual([]);
-  });
-});
-
-describe('loadNdjsonReporter', () => {
-  test('resolves the one shared implementation from @stim-cli/metro', () => {
-    const factory = loadNdjsonReporter(root);
-    expect(typeof factory).toBe('function');
-    assert(factory);
-    const reporter = factory({ dir: join(root, '.stim', 'logs') });
-    expect(typeof reporter.update).toBe('function');
   });
 });
 

@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -69,6 +69,18 @@ function resolveBare(specifier, workspace) {
   return join(pkg.dir, file);
 }
 
+function sourceModules(file, packages) {
+  const pkg = packageOf(file, packages);
+  const regions = [...readFileSync(file, 'utf8').matchAll(region)].map((match) => match[1]);
+  return (regions.length > 0 ? regions : [relative(pkg.dir, file)]).flatMap((name) => {
+    const source = resolve(pkg.dir, name);
+    const sourcePackage = packageOf(source, packages);
+    return sourcePackage.dir !== pkg.dir && relative(sourcePackage.dir, source).startsWith(`dist${sep}`)
+      ? sourceModules(source, packages)
+      : [`${sourcePackage.name}/${relative(sourcePackage.dir, source).split(sep).join('/')}`];
+  });
+}
+
 /** tsdown names the source modules of a built file with `//#region <path>` lines. */
 export function staticClosure(entries, workspace) {
   const packages = new Map();
@@ -80,10 +92,8 @@ export function staticClosure(entries, workspace) {
     if (chain.has(file)) continue;
     chain.set(file, path);
     const source = readFileSync(file, 'utf8');
-    const pkg = packageOf(file, packages);
-    const regions = [...source.matchAll(region)].map((match) => match[1]);
-    for (const name of regions.length > 0 ? regions : [relative(pkg.dir, file)]) {
-      if (!modules.has(`${pkg.name}/${name}`)) modules.set(`${pkg.name}/${name}`, path);
+    for (const name of sourceModules(file, packages)) {
+      if (!modules.has(name)) modules.set(name, path);
     }
     for (const [, specifier] of source.matchAll(staticImport)) {
       const next = specifier.startsWith('.') ? resolve(dirname(file), specifier) : resolveBare(specifier, workspace);
