@@ -22,10 +22,21 @@ function buildId(dir: string): string {
   return hash.digest('hex').slice(0, 12);
 }
 
+const IGNORED_ENV = new Set(['STIM_RUN_ID', 'STIM_TRACE', 'STIM_NO_UPDATE_CHECK', 'STIM_ROUTER_FALLBACK']);
+
+/** The digest of this process's `STIM_` variables that stimd's status snapshot compares with its own. */
+function stimEnv(): string {
+  const entries = Object.entries(process.env)
+    .filter(([name, value]) => name.startsWith('STIM_') && !IGNORED_ENV.has(name) && value !== undefined)
+    .toSorted(([a], [b]) => (a < b ? -1 : 1));
+  return createHash('sha256').update(JSON.stringify(entries)).digest('hex');
+}
+
 /** stimd's answer to `status`, or null when no stimd of this build answers in time. */
 function askStimd(fresh: boolean): Promise<Record<string, unknown> | null> {
   const configured = process.env.STIM_HOME;
-  if (configured && !isAbsolute(configured)) return Promise.resolve(null);
+  for (const name of ['STIM_HOME', 'STIM_BUILD_CACHE', 'STIM_METRO_CACHE', 'STIM_ENGINE_ROOT'])
+    if (process.env[name] && !isAbsolute(String(process.env[name]))) return Promise.resolve(null);
   let socketPath: unknown;
   let build: string;
   try {
@@ -65,7 +76,7 @@ function askStimd(fresh: boolean): Promise<Record<string, unknown> | null> {
     });
     socket.once('connect', () =>
       socket.write(
-        `${JSON.stringify({ kind: 'cli', build })}\n${JSON.stringify({ op: 'status', params: { cwd: process.cwd(), fresh } })}\n`,
+        `${JSON.stringify({ kind: 'cli', build })}\n${JSON.stringify({ op: 'status', params: { cwd: process.cwd(), fresh, env: stimEnv() } })}\n`,
       ),
     );
   });

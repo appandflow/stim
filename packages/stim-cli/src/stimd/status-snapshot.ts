@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { Worker } from 'node:worker_threads';
@@ -11,6 +12,19 @@ const READ_AT_BOOT = 4;
 
 const failed = (error: unknown): string =>
   JSON.stringify({ op: 'status', error: error instanceof Error ? error.message : String(error) });
+
+const IGNORED_ENV = new Set(['STIM_RUN_ID', 'STIM_TRACE', 'STIM_NO_UPDATE_CHECK', 'STIM_ROUTER_FALLBACK']);
+
+/**
+ * A digest of the `STIM_` variables of `env` that can change a status payload. The status entry computes the same one
+ * for its caller, and stimd answers only a caller whose digest matches its own.
+ */
+function stimEnv(env: NodeJS.ProcessEnv): string {
+  const entries = Object.entries(env)
+    .filter(([name, value]) => name.startsWith('STIM_') && !IGNORED_ENV.has(name) && value !== undefined)
+    .toSorted(([a], [b]) => (a < b ? -1 : 1));
+  return createHash('sha256').update(JSON.stringify(entries)).digest('hex');
+}
 
 type Log = (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void;
 
@@ -38,20 +52,22 @@ export function createStatusSnapshots(log: Log, file: string): StatusSnapshots {
   let queue = Promise.resolve();
   let closed = false;
 
-  let pending: { resolve: (json: string) => void; reject: (error: Error) => void } | null = null;
+  let pending: { thread: Worker; resolve: (json: string) => void; reject: (error: Error) => void } | null = null;
   const start = () => {
     const thread = new Worker(spawnEntry('stimd-status'));
     thread.unref();
     const gone = (error: Error) => {
       if (worker === thread) worker = null;
-      pending?.reject(error);
+      if (pending?.thread !== thread) return;
+      pending.reject(error);
       pending = null;
     };
     thread.on('message', (message: { json?: string; failed?: string }) => {
+      if (pending?.thread !== thread) return;
       const answered = pending;
       pending = null;
-      if (typeof message.json === 'string') answered?.resolve(message.json);
-      else answered?.reject(new Error(message.failed ?? 'the status thread answered nothing'));
+      if (typeof message.json === 'string') answered.resolve(message.json);
+      else answered.reject(new Error(message.failed ?? 'the status thread answered nothing'));
     });
     thread.on('error', (error: unknown) => {
       const failure = error instanceof Error ? error : new Error(String(error));
@@ -67,7 +83,7 @@ export function createStatusSnapshots(log: Log, file: string): StatusSnapshots {
     const at = Date.now();
     try {
       const json = await new Promise<string>((resolve, reject) => {
-        pending = { resolve, reject };
+        pending = { thread, resolve, reject };
         thread.postMessage({ cwd });
       });
       return { json, at };
@@ -86,11 +102,8 @@ export function createStatusSnapshots(log: Log, file: string): StatusSnapshots {
       await queue;
       if (closed) throw new Error('stimd is stopping');
       const snapshot = await read(cwd);
-      const known = snapshots.has(cwd);
-      snapshots.delete(cwd);
       snapshots.set(cwd, snapshot);
-      for (const old of [...snapshots.keys()].slice(0, -KEPT)) snapshots.delete(old);
-      if (!known) writeFileSync(file, JSON.stringify([...snapshots.keys()]));
+      for (const old of [...snapshots.keys()].filter((key) => !recent.includes(key))) snapshots.delete(old);
     })().finally(() => probes.delete(cwd));
     queue = next.catch(() => {});
     probes.set(cwd, next);
@@ -101,15 +114,27 @@ export function createStatusSnapshots(log: Log, file: string): StatusSnapshots {
       log('warn', 'status_snapshot_failed', `status for ${cwd}: ${error instanceof Error ? error.message : error}`),
     );
 
+  const ownEnv = stimEnv(process.env);
+  let recent: string[] = [];
   try {
     const saved: unknown = JSON.parse(readFileSync(file, 'utf8'));
-    if (Array.isArray(saved)) for (const cwd of saved.slice(-READ_AT_BOOT)) if (typeof cwd === 'string') behind(cwd);
+    if (Array.isArray(saved)) recent = saved.filter((cwd): cwd is string => typeof cwd === 'string').slice(-KEPT);
   } catch {}
+  for (const cwd of recent.slice(-READ_AT_BOOT)) behind(cwd);
+  const used = (cwd: string) => {
+    if (recent.at(-1) === cwd) return;
+    recent = [...recent.filter((entry) => entry !== cwd), cwd].slice(-KEPT);
+    try {
+      writeFileSync(file, JSON.stringify(recent));
+    } catch {}
+  };
 
   return {
     async answer(params) {
-      const { cwd, fresh } = isJsonObject(params) ? params : {};
+      const { cwd, fresh, env } = isJsonObject(params) ? params : {};
       if (typeof cwd !== 'string' || !isAbsolute(cwd)) return failed('status names no absolute directory');
+      if (env !== ownEnv) return failed("the caller's STIM_ settings differ from stimd's");
+      used(cwd);
       if (fresh === true) {
         try {
           await probe(cwd);

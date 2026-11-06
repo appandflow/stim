@@ -49,6 +49,7 @@ afterEach(async () => {
   await new Promise((done) => (server ? server.close(done) : done(undefined)));
   server = null;
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   cli.main.mockClear();
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
@@ -62,7 +63,7 @@ test('--json prints the snapshot stimd answers for this directory, with its age,
   expect(printed()).toEqual({ environments: [], daemon: { running: true }, ageMs: 4200 });
   expect(requests).toEqual([
     { kind: 'cli', build: expect.stringMatching(/^[0-9a-f]{12}$/) },
-    { op: 'status', params: { cwd: process.cwd(), fresh: false } },
+    { op: 'status', params: { cwd: process.cwd(), fresh: false, env: expect.stringMatching(/^[0-9a-f]{64}$/) } },
   ]);
   expect(cli.main).not.toHaveBeenCalled();
 });
@@ -71,7 +72,7 @@ test('--json says booting while stimd has no snapshot, and --fresh asks stimd to
   await stimd({ op: 'status', ageMs: null, booting: true, status: null });
   await main(['node', 'stim', 'status', '--json', '--fresh']);
   expect(printed()).toEqual({ ageMs: null, booting: true });
-  expect(requests[1]).toEqual({ op: 'status', params: { cwd: process.cwd(), fresh: true } });
+  expect(requests[1]).toMatchObject({ op: 'status', params: { cwd: process.cwd(), fresh: true } });
 });
 
 test.each([
@@ -86,9 +87,9 @@ test.each([
   expect(cli.main).toHaveBeenCalledWith(['node', 'stim', ...args], {});
 });
 
-test('--json runs the CLI, which refuses it, when STIM_HOME is relative', async () => {
+test('--json runs the CLI, which refuses it, when a Stim path override is relative', async () => {
   await stimd({ op: 'status', ageMs: 1, status: {} });
-  process.env.STIM_HOME = 'relative/home';
+  vi.stubEnv('STIM_BUILD_CACHE', 'relative/cache');
   await main(['node', 'stim', 'status', '--json']);
   expect(requests).toEqual([]);
   expect(cli.main).toHaveBeenCalledTimes(1);
