@@ -126,5 +126,11 @@ test(
     assert.equal(pinned.current.pinned, true);
     assert.equal(pinned.current.pinReason, `rolled back from ${copies.c.version}`);
     assert.match(pinned.stderr, /the engine is pinned at .*run stim engine update to resume updates/);
+    assert.ok(
+      readFileSync(join(root, 'bin', 'stimd'), 'utf8').includes(
+        `"${join(root, pinned.current.dir, 'dist', 'cli.mjs')}" __stimd "$@"`,
+      ),
+      'the stimd shim names the current build',
+    );
   },
 );

@@ -84,17 +84,23 @@ for selection and timing commands.
 
 The macOS app lives in `apps/desktop`, a Swift package outside the pnpm
 workspace; see its README. It reads state and runs Stim operations through the
-matching-home local stim-server. It never reads or writes `$STIM_HOME` or falls
-back to an external Stim CLI. The bundled child proves its private Desktop
-authority for mutations; read-only or adopted connections retain their existing
-capability limits. A separately installed CLI is optional for coding agents and
-terminal use. External bootstrap tools run through `ProcessStream`.
-It connects to stim-server over the server's Unix socket, normally
-`$STIM_HOME/server/local.sock`. When that path exceeds macOS's 103-byte limit,
-core and Desktop use
-`/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`. Its directory
-is mode 0700 and owned by the server's user; the socket serves only that user
-without pairing or Noise. It may also pair, as a client, with another machine's
+matching-home stim-server, the net thread inside that home's stimd. It never
+reads or writes `$STIM_HOME` beyond `run/stimd.json` and `run/desktop.key`, and
+never falls back to an external Stim CLI. It proves the key in `run/desktop.key`
+(0600, written by stimd when it starts) with `desktop.authenticate` for its
+Desktop-only methods; a local connection without that proof keeps the local
+read and control capabilities only. A separately installed CLI is optional for
+coding agents and terminal use. External bootstrap tools run through
+`ProcessStream`.
+It connects through stimd's CLI socket, whose path `run/stimd.json` names
+(normally `$STIM_HOME/run/stimd.sock`; when that path exceeds macOS's 103-byte
+limit, `/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`). The
+first frame is `{"kind":"desktop"}`; `net.ensure` starts the net thread and
+answers `{port, listening: true}` or why it cannot start, and `net.connect`
+hands the rest of that connection to the net thread, where it speaks the
+WebSocket protocol as a local client. The socket's directory is mode 0700 and
+owned by stimd's user; the socket serves only that user without pairing or
+Noise. stim-server binds no Unix socket of its own. It may also pair, as a client, with another machine's
 stim-server, as the phone app does: it spends a `stim pair` token in
 protocol 2's Noise handshake, requires the payload's server-key fingerprint, and
 keeps its per-pairing client private key and pinned server key in the macOS
@@ -576,8 +582,8 @@ outside it moves to its own issue and pull request.
   `tailscale funnel`: the share listener binds `127.0.0.1` on the machine
   setting `share.port` for the user's own reverse proxy, links print under
   `share.publicUrl`, and the frame socket accepts exactly that URL's origin,
-  never Host or `X-Forwarded-*`. The CLI asks this Stim home's stim-server over its Unix socket
-  (`share.start|stop|list`, refused on every network connection); a share
+  never Host or `X-Forwarded-*`. The CLI asks this Stim home's stim-server through stimd's CLI socket
+  (`net.connect`, then `share.start|stop|list`, refused on every network connection); a share
   lives only in that server's memory and always expires. Each share started
   through `share.start`, by the CLI or by Stim Desktop, is saved by stim-server
   as soon as it starts (the CLI saves it itself only when the server's reply
@@ -593,7 +599,7 @@ outside it moves to its own issue and pull request.
   through the saving path, so it never rewrites the expiry. Each saved entry has a `state`:
   `live` from when `share` starts or reuses it, `stopped` after a deliberate
   `share stop`, `stim stop` or reclaim of its workspace. A restart or crash
-  leaves `live`, and a full stim-server (not the CLI's `--share` server) starts
+  leaves `live`, and a full stim-server (not a net thread `stim share` started) starts
   every live, unexpired entry of its home again when it starts, through
   `share.start`'s own path with the saved token or slug, passwords and expiry
   (`@stim-cli/core/state`'s `readLiveShareLinks`); one whose device is not there
@@ -633,7 +639,7 @@ outside it moves to its own issue and pull request.
   `share.publicUrl` set, a stim-server installed with `stim service`
   keeps the listener bound with no share and answers every request that is not
   a live share's with the fixed not-found page (404, no share data, nothing
-  kept about an ended share); the on-demand `--share` server and tailscale
+  kept about an ended share); a net thread `stim share` started and tailscale
   exposure never keep a listener. A workspace whose
   device is a hosted session is shared through this client's own device-host
   connection (one host frame subscription per codec for all viewers, control through
@@ -648,9 +654,11 @@ outside it moves to its own issue and pull request.
   holds is refused, never taken over;
   `--view-password` refuses without `--control`, with `--no-password` and when
   it equals `--password`. When no
-  stim-server answers, `stim share` starts `stim serve --share` (loopback
-  only, version-matched) and stops only a server holding the
-  `server/share-server` claim; that server exits after its last share.
+  net thread answers, `stim share` asks this home's stimd, started when none
+  runs, to start one for shares (`net.ensure` with `share`: loopback only); that
+  net thread ends after its last share unless Desktop, `stim pair` or
+  `stim serve` asked for it meanwhile. stimd stays running while its net
+  thread runs.
 
 ## Comment policy
 

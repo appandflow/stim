@@ -27,6 +27,7 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { connect as connectNet, createServer as createNetServer, type Socket } from 'node:net';
 import { homedir, networkInterfaces, tmpdir, totalmem } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
+import { duplexPair } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
@@ -50,7 +51,6 @@ import {
   isJsonObject,
   loadConfig,
   settingsJsonSchema,
-  serverLocalSocket,
   workspaceMetadataFile,
   workspaceShareLinksFile,
   workspaceStateFile,
@@ -628,7 +628,7 @@ function desktopProof(nonce: string, key = DESKTOP_KEY): string {
 
 /** Stim Desktop on this machine: the Unix socket, after hello and the private bootstrap proof. */
 async function desktop(): Promise<Client> {
-  const client = await localConnect(server!.localSocket!);
+  const client = await localConnect(server!);
   const reply = await client.request('hello', { client: CLIENT, desktopBootstrap: true });
   const offered = 'result' in reply ? (reply.result as HelloResult).desktopBootstrap : undefined;
   if (!offered) throw new Error(`no Desktop bootstrap challenge: ${JSON.stringify(reply)}`);
@@ -1279,7 +1279,7 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
 
   /** A local-socket client that asks for the challenge, as Stim Desktop does, without answering it yet. */
   async function asking(client: Record<string, unknown> = CLIENT) {
-    const socket = await localConnect(server!.localSocket!);
+    const socket = await localConnect(server!);
     const reply = await socket.request('hello', { client, desktopBootstrap: true });
     assert('result' in reply && isHello(reply.result));
     return { client: socket, hello: reply.result };
@@ -1301,7 +1301,7 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     });
     expect(await client.request('device-host.sessions')).toHaveProperty('result');
 
-    const cli = await localConnect(server!.localSocket!);
+    const cli = await localConnect(server!);
     const plain = await cli.request('hello', { client: { name: 'stim', version: '1' } });
     expect(plain).toMatchObject({ result: { capabilities: ['read', 'control'] } });
     expect(plain).not.toHaveProperty('result.desktopBootstrap');
@@ -1357,7 +1357,7 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
 
   it('a server Desktop did not start offers no challenge and grants its local socket, not its network clients, the Desktop methods', async () => {
     await start({ desktopBootstrap: null });
-    const client = await localConnect(server!.localSocket!);
+    const client = await localConnect(server!);
     const hello = await client.request('hello', { client: CLIENT, desktopBootstrap: true });
     expect(hello).toMatchObject({ result: { capabilities: ['read', 'control'] } });
     expect(hello).not.toHaveProperty('result.desktopBootstrap');
@@ -1389,8 +1389,8 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     const { client } = await asking();
     const write = { cwd: root, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
     expect(await client.request('desktop.settings.write', write)).toHaveProperty('error.code', 'forbidden');
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     expect(await plain.request('desktop.settings.write', write)).toHaveProperty('error.code', 'forbidden');
     expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
@@ -1398,7 +1398,7 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
 
   it('tells a local client the TCP port of the server behind the socket, and network clients nothing', async () => {
     const port = await start();
-    const local = await localConnect(server!.localSocket!);
+    const local = await localConnect(server!);
     expect(await local.request('hello', { client: CLIENT })).toHaveProperty('result.server.port', port);
     const { keyPair } = await pair(port, undefined, true);
     const network = await connect(port, undefined, { keyPair });
@@ -1509,7 +1509,7 @@ describe('pairing', () => {
         error: { code: 'protocol-unsupported', message: expect.stringContaining(remedy) },
       });
     }
-    const local = await localConnect(server!.localSocket!);
+    const local = await localConnect(server!);
     expect(await local.request('hello', { client: { name: 'stim', version: '1' } })).toHaveProperty(
       'result.peer',
       PEER,
@@ -1789,8 +1789,8 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     const { token } = createPairingToken(Date.now(), capabilitiesFor(true));
     const remote = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
     await remote.request('hello', { client: CLIENT });
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     for (const client of [remote, plain]) {
       for (const report of ['gc-history', 'builds'])
@@ -2395,117 +2395,6 @@ require('node:net').createServer().listen(0, '127.0.0.1');
   });
 });
 
-describe.skipIf(process.platform === 'win32')('local socket', () => {
-  const another = (name: string, localSocket?: string) =>
-    startServer({
-      hosts: ['127.0.0.1'],
-      port: 0,
-      stimCli: join(root, 'fake-stim.mjs'),
-      name,
-      localSocket,
-      stimVersion: '9.9.9',
-      serverVersion: '1.2.3',
-      tailscaleState: { state: 'not-running', backendState: 'Stopped' },
-      env: process.env,
-      frameHelper: null,
-      record: false,
-      history: false,
-      statusAtBoot: false,
-      pullRequests: async () => new Map(),
-    });
-
-  test('a long hosted home serves a private socket and removes it on close', async () => {
-    process.env.STIM_HOME = join(root, 'device-host', 'sessions', 'x'.repeat(80), 'home');
-    expect(Buffer.byteLength(join(process.env.STIM_HOME, 'server', 'local.sock'))).toBeGreaterThan(107);
-    mkdirSync(process.env.STIM_HOME, { recursive: true });
-    await start();
-    const socket = serverLocalSocket();
-    expect(Buffer.byteLength(socket)).toBeLessThanOrEqual(103);
-    expect(server!.localSocket).toBe(socket);
-    expect(statSync(socket).mode & 0o777).toBe(0o600);
-    expect(statSync(dirname(socket)).mode & 0o777).toBe(0o700);
-    const client = await localConnect(socket);
-    expect(await client.request('hello', { client: CLIENT })).toHaveProperty('result.device.id', 'local');
-    await server!.close();
-    server = null;
-    expect(existsSync(socket)).toBe(false);
-    expect(existsSync(`${socket}.claims`)).toBe(false);
-  });
-
-  test('two servers starting on one home over a stale socket leave exactly one serving it', async () => {
-    const socketPath = serverLocalSocket();
-    mkdirSync(dirname(socketPath), { recursive: true, mode: 0o700 });
-    writeFileSync(socketPath, 'stale');
-    writeFileSync(join(root, 'fake-stim.mjs'), FAKE_STIM);
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const servers = await Promise.all([another('A'), another('B')]);
-    try {
-      await Promise.all(servers.map((each) => each.ready));
-      expect(servers.filter((each) => each.localSocket === socketPath)).toHaveLength(1);
-      const client = await localConnect(socketPath);
-      expect(await client.request('hello', { client: CLIENT })).toHaveProperty('result.device.id', 'local');
-    } finally {
-      await Promise.all(servers.map((each) => each.close()));
-      error.mockRestore();
-    }
-  });
-
-  test('does not put its socket in a server directory that is a symbolic link', async () => {
-    const elsewhere = join(root, 'elsewhere');
-    mkdirSync(elsewhere, { mode: 0o755 });
-    symlinkSync(elsewhere, join(process.env.STIM_HOME!, 'server'));
-    writeFileSync(join(root, 'fake-stim.mjs'), FAKE_STIM);
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const linked = await another('Linked', join(process.env.STIM_HOME!, 'server', 'local.sock'));
-    try {
-      await linked.ready;
-      expect(linked.localSocket).toBeNull();
-      expect(statSync(elsewhere).mode & 0o777).toBe(0o755);
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('not a directory this user owns'));
-    } finally {
-      await linked.close();
-      error.mockRestore();
-    }
-  });
-
-  test('is private to this user, replaces a stale file and refuses a second server', async () => {
-    const socketPath = serverLocalSocket();
-    mkdirSync(dirname(socketPath), { recursive: true, mode: 0o755 });
-    writeFileSync(socketPath, 'stale');
-    await start();
-    expect(server!.localSocket).toBe(socketPath);
-    expect(statSync(socketPath).mode & 0o777).toBe(0o600);
-    expect(statSync(dirname(socketPath)).mode & 0o777).toBe(0o700);
-    expect(await (await desktop()).request('stats.get')).toHaveProperty('result');
-
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const second = await startServer({
-      hosts: ['127.0.0.1'],
-      port: 0,
-      stimCli: join(root, 'fake-stim.mjs'),
-      name: 'Second',
-      stimVersion: '9.9.9',
-      serverVersion: '1.2.3',
-      tailscaleState: { state: 'not-running', backendState: 'Stopped' },
-      env: process.env,
-      frameHelper: null,
-      record: false,
-      history: false,
-      statusAtBoot: false,
-      pullRequests: async () => new Map(),
-    });
-    try {
-      expect((await second.ready).state).toBe('ready');
-      expect(second.localSocket).toBeNull();
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('another stim-server answers'));
-    } finally {
-      await second.close();
-      error.mockRestore();
-    }
-    expect(await (await desktop()).request('stats.get')).toHaveProperty('result');
-  });
-});
-
 describe('setup approval', () => {
   test('a setup ticket records build and device-host access for one key, once', async () => {
     const port = await start();
@@ -2709,8 +2598,8 @@ describe('setup approval in Stim Desktop on this machine', () => {
     const remote = await returning(port, peer.keyPair, '100.64.0.2');
     const loopbackPairing = await authed(port, true);
     const build = await returning(port, setupClient(['build']).keyPair, '100.64.0.3', 'build');
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     for (const client of [remote, loopbackPairing, build, plain]) {
       expect(await client.request('desktop.setup.subscribe', asked.params)).toHaveProperty('error.code', 'forbidden');
@@ -2728,8 +2617,8 @@ describe('setup approval in Stim Desktop on this machine', () => {
 
   it('is not offered on a server Desktop did not start', async () => {
     await start({ setupDeps, desktopBootstrap: null });
-    assert(server?.localSocket);
-    const client = await localConnect(server.localSocket);
+    assert(server);
+    const client = await localConnect(server);
     await client.request('hello', { client: CLIENT });
     const asked = request();
     expect(await client.request('desktop.setup.subscribe', asked.params)).toHaveProperty('error.code', 'forbidden');
@@ -5029,8 +4918,8 @@ describe('unauthenticated connections', () => {
 
   it('survives a peer that resets the connection after a refused upgrade', async () => {
     const port = await start({ loopbackOnly: true });
-    const localSocket = server?.localSocket;
-    assert(localSocket);
+    assert(server);
+    const running = server;
     const upgradeRequest = (headers: string) =>
       `GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n${headers}\r\n`;
     const resetAfterRefusal = (headers: string) =>
@@ -5044,13 +4933,12 @@ describe('unauthenticated connections', () => {
       });
     const closeBeforeRefusal = (headers: string) =>
       new Promise<void>((resolve) => {
-        const refused = connectNet({ path: localSocket });
-        refused.once('connect', () =>
-          refused.write(upgradeRequest(headers), () => {
-            refused.destroy();
-            resolve();
-          }),
-        );
+        const [inside, refused] = duplexPair();
+        running.acceptLocal(inside);
+        refused.write(upgradeRequest(headers), () => {
+          refused.destroy();
+          resolve();
+        });
       });
     const uncaught: Error[] = [];
     const record = (error: Error) => uncaught.push(error);
@@ -6262,8 +6150,8 @@ describe.skipIf(process.platform === 'win32')('Desktop build logs', () => {
     expect(await remote.request('desktop.logs.subscribe', { workspace })).toMatchObject({
       error: { code: 'forbidden' },
     });
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     expect(await plain.request('desktop.logs.subscribe', { workspace })).toMatchObject({
       error: { code: 'forbidden' },
@@ -6516,9 +6404,8 @@ describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
     const port = await start();
     const remote = await authed(port);
     expect(await remote.request('desktop.settings.schema')).toHaveProperty('error.code', 'forbidden');
-    const socket = server?.localSocket;
-    assert(socket);
-    const plain = await localConnect(socket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     expect(await plain.request('desktop.settings.schema')).toHaveProperty('error.code', 'forbidden');
     const client = await desktop();
@@ -6555,9 +6442,8 @@ describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
       'error.code',
       'unknown-workspace',
     );
-    const socket = server?.localSocket;
-    assert(socket);
-    const plain = await localConnect(socket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     expect(await plain.request('desktop.settings.get', { cwd: selected })).toHaveProperty('error.code', 'forbidden');
     const client = await desktop();
@@ -7255,8 +7141,8 @@ describe('build.plan', () => {
     async () => {
       const port = await start();
       const phone = await authed(port);
-      assert(server?.localSocket);
-      const plain = await localConnect(server.localSocket);
+      assert(server);
+      const plain = await localConnect(server);
       await plain.request('hello', { client: CLIENT });
       for (const client of [phone, plain])
         expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
@@ -7377,8 +7263,8 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
   it('requires the proved local Desktop and refuses malformed requests without mutation', async () => {
     const port = await start();
     const remote = await authed(port, true);
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     const request = { cwd: workspace, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
     for (const client of [remote, plain]) {
@@ -7643,8 +7529,8 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
   it('requires the proved local Desktop and rejects invalid targets before starting work', async () => {
     const port = await start();
     const remote = await authed(port, true);
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     for (const client of [remote, plain]) {
       expect(await client.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
@@ -8131,8 +8017,8 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     const peer = await pair(port, undefined, true);
     const remote = await connect(port, undefined, { keyPair: peer.keyPair });
     await remote.request('hello', { client: CLIENT });
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     for (const client of [plain, remote])
       expect(await client.request('desktop.start.subscribe', { cwd: workspace })).toHaveProperty(
@@ -8295,8 +8181,8 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
     const browser = await reloadBrowser();
     const port = await start();
     const remote = await authed(port, true);
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     for (const client of [remote, plain])
       expect(await client.request('desktop.reload.subscribe', { cwd: workspace })).toHaveProperty(
@@ -12546,8 +12432,8 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
     const peer = await pair(port, undefined, true);
     const remote = await connect(port, undefined, { keyPair: peer.keyPair });
     await remote.request('hello', { client: CLIENT });
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     for (const client of [plain, remote]) {
       expect(
@@ -12785,11 +12671,11 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
 
   it.each(['plain local', 'phone control'])('denies warming from %s', async (mode) => {
     const port = await start();
-    assert(server?.localSocket);
+    assert(server);
     const client =
       mode === 'phone control'
         ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
-        : await localConnect(server.localSocket);
+        : await localConnect(server);
     await client.request('hello', { client: CLIENT });
     expect(await client.request('desktop.worktree.warm.subscribe', { cwd: workspace })).toHaveProperty(
       'error.code',
@@ -13169,11 +13055,11 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
   it.each(['plain local', 'phone control'])('denies removal from %s without deleting the target', async (mode) => {
     const fixture = removalFixture();
     const port = await start({ env: fixture.env });
-    assert(server?.localSocket);
+    assert(server);
     const client =
       mode === 'phone control'
         ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
-        : await localConnect(server.localSocket);
+        : await localConnect(server);
     await client.request('hello', { client: CLIENT });
     expect(
       await client.request('desktop.worktree.remove.subscribe', { cwd: workspace, target: fixture.linked }),
@@ -13269,8 +13155,8 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
     const port = await start({ env: fixture.env });
     const paired = await pair(port, undefined, true);
     const peer = await connect(port, undefined, { keyPair: paired.keyPair });
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     await peer.request('hello', { client: CLIENT });
     for (const client of [plain, peer]) {
@@ -13448,11 +13334,11 @@ describe.skipIf(process.platform === 'win32')('Desktop machine access requests',
 
   it.each(['plain local', 'phone control'])('denies access requests from %s', async (mode) => {
     const port = await start();
-    assert(server?.localSocket);
+    assert(server);
     const client =
       mode === 'phone control'
         ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
-        : await localConnect(server.localSocket);
+        : await localConnect(server);
     await client.request('hello', { client: CLIENT });
     expect(await client.request('desktop.machine-access.subscribe', { cwd: workspace })).toHaveProperty(
       'error.code',

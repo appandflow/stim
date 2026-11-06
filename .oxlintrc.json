@@ -322,6 +322,8 @@
         "packages/stim-cli/src/commands/revive.ts",
         "packages/stim-cli/src/commands/agent-device.ts",
         "packages/stim-cli/src/commands/share.ts",
+        "packages/stim-cli/src/commands/serve.ts",
+        "packages/stim-cli/src/commands/pair.ts",
         "packages/stim-cli/src/commands/device.ts",
         "packages/stim-cli/src/commands/device-provision.ts",
         "packages/stim-cli/src/commands/device-tools.ts",

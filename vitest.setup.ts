@@ -19,6 +19,8 @@ for (const key of Object.keys(process.env)) {
 
 process.env.STIM_DAEMON = 'off';
 process.env[HOME_PASSES_TEST_GUARD_ENV] = '1';
+// A test never reads or writes this machine's engine store or its bin/stimd shim.
+process.env.STIM_ENGINE_ROOT = join(tmpdir(), 'stim-test-engine-absent');
 
 // Must run before a test can redirect HOME, so this captures the real root
 // (see assertEasMachineRootWritable in eas-session-ledger.ts).

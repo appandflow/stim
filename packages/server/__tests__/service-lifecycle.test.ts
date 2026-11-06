@@ -17,6 +17,7 @@ import {
   installJob,
   installService,
   recordServiceRoute,
+  rewriteUnitToShim,
   rollbackService,
   serviceStatus,
   uninstallService,
@@ -315,6 +316,74 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
         JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' })),
       )?.env,
     ).toEqual(['ANDROID_HOME=/sdk']);
+  });
+
+  const installedPlist = () =>
+    parseInstalledPlist(
+      JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' })),
+    );
+
+  const engineShim = () => {
+    const shim = join(home, 'engine', 'bin', 'stimd');
+    mkdirSync(dirname(shim), { recursive: true });
+    writeFileSync(shim, '#!/bin/sh\n', { mode: 0o755 });
+    vi.stubEnv('STIM_ENGINE_ROOT', join(home, 'engine'));
+    return shim;
+  };
+
+  it("names the engine store's stimd shim with the server's options when the store has one", async () => {
+    const shim = engineShim();
+    const host = {
+      app: '/tmp/Stim Host.app',
+      executable: '/tmp/Stim Host.app/Contents/MacOS/stim-host',
+      name: 'Stim Host',
+      bundleId: 'dev.stim.host',
+      replaced: false,
+      adHoc: false,
+    };
+    await finish(
+      installJob(
+        { label, port: launchd.port, env: ['ANDROID_HOME=/sdk'], pathPrepend: ['/jdk/bin'], serve: false },
+        { script: process.argv[1] ?? '', host, requestPermissions: false },
+      ),
+    );
+    expect(installedPlist()).toMatchObject({
+      host: host.executable,
+      node: null,
+      script: shim,
+      port: launchd.port,
+      env: ['ANDROID_HOME=/sdk'],
+      pathPrepend: ['/jdk/bin'],
+      programArguments: [
+        host.executable,
+        'run',
+        shim,
+        '--service',
+        '--port',
+        String(launchd.port),
+        '--env',
+        'ANDROID_HOME',
+        '--path-prepend',
+        '/jdk/bin',
+      ],
+    });
+  });
+
+  it('rewrites a LaunchAgent that names node and a script to the shim once, keeping its options and environment', async () => {
+    const shim = engineShim();
+    const before = installedPlist();
+    expect(before?.node).toBe(process.execPath);
+    expect(await rewriteUnitToShim(label)).toBe(true);
+    expect(installedPlist()).toMatchObject({
+      host: before?.host,
+      node: null,
+      script: shim,
+      port: before?.port,
+      stimHome: before?.stimHome,
+      programArguments: [before?.host, 'run', shim, '--service', '--port', String(before?.port)],
+    });
+    expect(launchd.bootstraps).toEqual([]);
+    expect(await rewriteUnitToShim(label)).toBe(false);
   });
 
   it('waits for the old child listener to release the port before bootstrapping', async () => {

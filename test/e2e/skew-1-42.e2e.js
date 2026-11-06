@@ -11,10 +11,10 @@ import { generateNoiseKeyPair } from '../../packages/core/noise.ts';
 import { acceptNoise, newSecret, secretValues } from '../../packages/core/noise-session.ts';
 import { DESKTOP_API, PEER, PHONE_API } from '../../packages/core/protocol.ts';
 import { rpcResultIssue } from '../../packages/core/receive-protocol.ts';
-import { serverLocalSocket } from '../../packages/core/state/paths.ts';
+import { stimdRecordFile } from '../../packages/core/state/paths.ts';
 import {
-  localConnect,
   noiseConnect,
+  stimdConnect,
   setupClient,
   terminateClients,
 } from '../../packages/server/__tests__/noise-client.ts';
@@ -36,7 +36,7 @@ let port;
 let machine;
 const previousHome = process.env.STIM_HOME;
 const TEST = { timeout: 30_000 };
-const LOCAL_SOCKET = { ...TEST, skip: process.platform === 'win32' && 'stim-server opens no local socket on Windows' };
+const cliSocket = () => JSON.parse(readFileSync(stimdRecordFile(), 'utf8')).socket;
 
 before(async () => {
   process.env.STIM_HOME = home;
@@ -99,25 +99,6 @@ async function assertRefused({ connection, reply }, remedy) {
   assert.deepEqual(await connection.closedWith, REFUSED);
 }
 
-/**
- * 1.41's `readWebShares` (`packages/stim-cli/src/local-server.ts`): `hello` without any wire integer, then
- * `share.list`, on this home's local socket; `unknown-method` means a server before shares, any other error is
- * unreadable.
- */
-async function readWebShares141() {
-  const connection = await localConnect(serverLocalSocket());
-  try {
-    let answer = await connection.request('hello', { client: { name: 'stim', version: 'stim' } });
-    if (!answer.error) answer = await connection.request('share.list', {});
-    if (answer.error) return answer.error.code === 'unknown-method' ? null : { unreadable: answer.error.message };
-    return Array.isArray(answer.result?.shares)
-      ? answer.result.shares
-      : { unreadable: 'stim-server sent no share list' };
-  } finally {
-    connection.socket.terminate();
-  }
-}
-
 test('a 1.41 CLI offloading over Noise is turned away with peer-too-old and the update remedy', TEST, async () => {
   const { keyPair } = setupClient(['build'], 'Laptop');
   const cli = await noiseConnect(url(), { keyPair });
@@ -141,10 +122,6 @@ test('a 1.41 CLI offloading over Noise is turned away with peer-too-old and the 
   current.socket.close();
 });
 
-test('a 1.41 readWebShares on the 1.42 local socket reads the share list, never unreadable', LOCAL_SOCKET, async () => {
-  assert.deepEqual(await readWebShares141(), []);
-});
-
 test('a phone hello without phoneApi is refused with protocol-unsupported and the App Store remedy', TEST, async () => {
   await assertRefused(
     await pairedHello({ name: 'stim-mobile', version: '0.9.0' }),
@@ -158,8 +135,8 @@ test('a Stim Desktop hello without desktopApi is refused over Noise', TEST, asyn
   await assertRefused(await pairedHello(DESKTOP_1_41), 'Update Stim Desktop (Stim > Check for Updates).');
 });
 
-test('the same Stim Desktop hello is answered on the local socket', LOCAL_SOCKET, async () => {
-  const local = await localConnect(serverLocalSocket());
+test("the same Stim Desktop hello is answered through stimd's socket", TEST, async () => {
+  const local = await stimdConnect(cliSocket());
   try {
     const reply = await local.request('hello', { client: DESKTOP_1_41 });
     assert.equal(reply.error, undefined, JSON.stringify(reply));

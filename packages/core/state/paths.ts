@@ -291,11 +291,6 @@ function localSocket(path: string): string {
   return join('/tmp', `stim-sockets-${uid}`, `${createHash('sha256').update(path).digest('hex')}.sock`);
 }
 
-/** stim-server's Unix socket for this machine's own user. */
-export function serverLocalSocket(): string {
-  return localSocket(join(configDir(), 'server', 'local.sock'));
-}
-
 /** stimd's run directory: its single-instance claim, its record and, when the path fits, its CLI socket. */
 export function stimdRunDir(): string {
   return join(configDir(), 'run');
@@ -313,6 +308,11 @@ export function stimdSocket(): string {
 /** `{format, pid, socket, build, version}` of the running stimd, written by stimd alone. */
 export function stimdRecordFile(): string {
   return join(stimdRunDir(), 'stimd.json');
+}
+
+/** The 0600 key stimd writes at boot that admits Stim Desktop to the Desktop-only methods. */
+export function desktopKeyFile(): string {
+  return join(stimdRunDir(), 'desktop.key');
 }
 
 /** The exclusive claim that keeps one stimd per Stim home. */
