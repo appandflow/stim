@@ -355,6 +355,7 @@ export async function ensureStimd(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
   pin = false,
+  held?: Socket[],
 ): Promise<boolean> {
   if (!spawnsDaemon(env)) return false;
   try {
@@ -368,11 +369,11 @@ export async function ensureStimd(
     admitting = pin;
     if (stimdLive()) {
       if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
-      else if (!(await beginOp()) && stimdRefused() && (await successorBound())) await beginOp();
+      else if (!(await beginOp(held)) && stimdRefused() && (await successorBound())) await beginOp(held);
       return true;
     }
     const taken = await claimTaken(launchStimd(env, daemonMode(env), platform));
-    if (taken && pin) await beginOp();
+    if (taken && pin) await beginOp(held);
     return taken;
   } catch {
     return false;
@@ -384,10 +385,11 @@ export async function ensureStimd(
 
 /**
  * Sends `op.begin` and keeps the connection open until this process exits, which is the op's `op.end`: until then
- * stimd counts the command's work as pinned, except while it waits at a build slot (`opWaiting`). stimd answers at
- * once, or after a switch already under way, with `engine-changed`. False when it does not answer.
+ * stimd counts the command's work as pinned, except while it waits at a build slot (`opWaiting`). With `held`, an API
+ * operation's, the connection goes into it instead, and closing it ends the op. stimd answers at once, or after a
+ * switch already under way, with `engine-changed`. False when it does not answer.
  */
-function beginOp(): Promise<boolean> {
+function beginOp(held?: Socket[]): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (begun: boolean) => {
@@ -396,7 +398,8 @@ function beginOp(): Promise<boolean> {
       clearTimeout(timer);
       if (following) return;
       if (begun) {
-        opSocket = socket;
+        if (held) held.push(socket);
+        else opSocket = socket;
         socket.unref();
       } else socket.destroy();
       resolve(begun);
@@ -440,7 +443,13 @@ const INLINE_COMMANDS = ['doctor', 'start', 'ios', 'android'];
 export async function beforeCommand(
   name: string,
   env: NodeJS.ProcessEnv = process.env,
-  { cwd, recordUse, passes, pin = false }: { cwd: string; recordUse: boolean; passes: boolean; pin?: boolean } = {
+  {
+    cwd,
+    recordUse,
+    passes,
+    pin = false,
+    held,
+  }: { cwd: string; recordUse: boolean; passes: boolean; pin?: boolean; held?: Socket[] } = {
     cwd: process.cwd(),
     recordUse: true,
     passes: true,
@@ -451,8 +460,8 @@ export async function beforeCommand(
   if (!creates && !inline) return;
   const { commandWorkspace } = await import('./command-workspace.ts');
   const root = commandWorkspace(creates && recordUse, env, cwd);
-  const held = creates && (await ensureStimd(env, process.platform, pin));
-  if (held || !inline) return;
+  const taken = creates && (await ensureStimd(env, process.platform, pin, held));
+  if (taken || !inline) return;
   const { runPassesInProcess } = await import('./passes.ts');
   await runPassesInProcess(name, env, root);
 }

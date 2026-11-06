@@ -3,6 +3,8 @@ import { GOVERNED_COMMANDS, removedEnvironmentRefusal } from './daemon/mode.ts';
 import { removedSettingFindings, settingsLayers, projectSettingsContext } from './workspace/settings.ts';
 import { loadConfig } from './workspace/config.ts';
 import { findProjectRoot } from './workspace/project.ts';
+import { readRecords, engineRoot } from './engine-store/store.ts';
+import { STIM_VERSION } from './stim-version.ts';
 
 export type Admission = NonNullable<StimOptions['admission']>;
 
@@ -41,7 +43,7 @@ function apiCommand(operation: ApiOperation, platform: string | undefined): stri
  */
 export async function runOperation(
   entry: OperationEntry,
-): Promise<{ refusal: OperationRefusal } | { admitted: string | null }> {
+): Promise<{ refusal: OperationRefusal } | { admitted: string | null; end?: () => void }> {
   const command =
     entry.caller === 'cli'
       ? entry.command || null
@@ -49,19 +51,43 @@ export async function runOperation(
         ? apiCommand(entry.operation, entry.platform)
         : null;
   if (!command) return { admitted: null };
-  const refusal = removedEnvironmentRefusal(command, entry.env) ?? removedConfigRefusal(command, entry.cwd, entry.env);
+  const refusal =
+    fallbackRefusal(command, entry.env) ??
+    removedEnvironmentRefusal(command, entry.env) ??
+    removedConfigRefusal(command, entry.cwd, entry.env);
   if (refusal) return { refusal };
   if (entry.caller === 'cli' && entry.plan) return { admitted: null };
+  const held: import('node:net').Socket[] = [];
   try {
     const { beforeCommand } = await import('./daemon/client.ts');
     await beforeCommand(command, entry.env, {
       cwd: entry.cwd,
       recordUse: entry.caller === 'cli' || entry.operation !== 'start',
       passes: entry.caller === 'cli',
-      pin: entry.caller === 'cli',
+      pin: true,
+      ...(entry.caller === 'api' ? { held } : {}),
     });
   } catch {}
-  return { admitted: command };
+  return { admitted: command, end: () => held.forEach((socket) => socket.destroy()) };
+}
+
+/**
+ * A governed command in the copy the router ran because the engine could not load (`STIM_ROUTER_FALLBACK`): it would
+ * run beside the engine's stimd on a build that is not the engine's, so it refuses and names the repair this copy can
+ * make.
+ */
+function fallbackRefusal(command: string, env: NodeJS.ProcessEnv): OperationRefusal | null {
+  if (env.STIM_ROUTER_FALLBACK !== '1' || !GOVERNED_COMMANDS.has(command)) return null;
+  let engine = 'the engine';
+  try {
+    const current = readRecords(engineRoot(env)).current;
+    if (current) engine = `the engine ${current.version}`;
+  } catch {}
+  return {
+    code: 'STIM_ENGINE_UNAVAILABLE',
+    message: `${engine} cannot load (the line above says why), so ${command} does not run.`,
+    remedy: `Run npx stim@${STIM_VERSION} engine rollback or npx stim@${STIM_VERSION} engine use ${STIM_VERSION}.`,
+  };
 }
 
 function removedConfigRefusal(command: string, cwd: string, env: NodeJS.ProcessEnv): OperationRefusal | null {

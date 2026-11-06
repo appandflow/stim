@@ -1932,6 +1932,16 @@ not on any remote"  (worktree remove)
   store) and the command that gets past it, such as stim engine install or
   stim engine use <version>.`,
     },
+    STIM_ENGINE_UNAVAILABLE: {
+      summary: 'the machine engine cannot load, so this copy of stim ran instead and refuses to start work',
+      body: () => `STIM_ENGINE_UNAVAILABLE  ("the engine <version> cannot load ...")
+  The router could not load the engine's build (the line above names the
+  error) and ran the copy you invoked. start, ios, android, web, macos, revive
+  and gc refuse there, since they would run beside the engine's stimd on
+  another build; other commands run. Repair the pointer with this copy, as
+  the remedy names: npx stim@<this version> engine rollback, or
+  npx stim@<this version> engine use <this version>.`,
+    },
     STIM_ENGINE_SWITCHED: {
       summary: 'the machine engine switched to a newer build while this run waited',
       body: () => `STIM_ENGINE_SWITCHED  ("Stim updated to <version>; rerun")
