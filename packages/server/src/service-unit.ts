@@ -24,7 +24,6 @@ export function renderUnit(spec: ServiceSpec, previousScript: string | null = nu
   for (const [name, value] of environmentValues(spec.env)) environment.set(name, value);
   environment.set(LABEL_VARIABLE, spec.label);
   const lines = [
-    '# Written by `stim-server service install`; change it with `stim-server service`.',
     '[Unit]',
     `Description=stim-server (${spec.label})`,
     '',

@@ -110,7 +110,7 @@ Android Debug build for a known ABI ends in that ABI (`-arm64-v8a`), and an iOS
 simulator build ends in the architecture it runs on (`-arm64` or `-x86-64`):
 this Mac's for a local build in any configuration, the remote host's for a
 `--remote` build. A build of every architecture the project lists
-(`stim build --arch all`, `stim-ci build --arch all`) has no suffix. An app
+(`stim build --arch all`, `stim ci build --arch all`) has no suffix. An app
 built on Apple silicon therefore no longer runs on an Intel Mac's simulator;
 build it with `--arch all` for that.
 
@@ -579,7 +579,7 @@ measures. A worktree locked with `git worktree lock` always keeps them, so a
 rollback checkout stays runnable. Otherwise a worktree keeps them while its dev
 server runs or a native run or build holds it, for 2 minutes after its last
 git or Stim activity or a write at its top level, while git tracks a file in
-them, and while a stim-server service, the `stim` on your PATH or a running
+them, and while a stim service, the `stim` on your PATH or a running
 process (by command line or working directory) uses the worktree.
 It also keeps them when `stim worktree warm` could not restore the same
 versions: the source checkout lacks the directory, or the worktree's lockfile

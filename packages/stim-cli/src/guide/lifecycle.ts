@@ -506,16 +506,16 @@ prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
 \`stim android\` after an edit and use \`stim stop\` for scoped cleanup.`,
     },
     ci: {
-      summary: 'Build an app once, then install it and run tests through @stim-cli/ci with scoped cleanup',
+      summary: 'Build an app once, then install it and run tests through stim ci with scoped cleanup',
       body: () => `CONTINUOUS INTEGRATION
 
 Install app dependencies and platform tools first. Use a dedicated checkout:
 cleanup stops that workspace, including resources created before a build fails.
 
-  npx --yes --package @stim-cli/ci stim-ci build --platform ios --project ./app
-  npx --yes --package @stim-cli/ci stim-ci run --platform ios --project ./app --timeout 1800 -- pnpm test:e2e
+  npx --yes stim ci build --platform ios --project ./app
+  npx --yes stim ci run --platform ios --project ./app --timeout 1800 -- pnpm test:e2e
 
-Or install npm install --global @stim-cli/ci and use stim-ci directly.
+Or install npm install --global stim and use stim ci directly.
 Platforms: ios, android, macos, web. Everything after -- is argv, not a shell.
 Without --, run installs and launches the app, then stops it with exit code 0.
 build is the only step that compiles (or restores from the cache, or with
@@ -525,7 +525,7 @@ in workspace state under the Stim home; the last build for those selectors wins.
 run never builds, fingerprints or replaces JS: it installs and launches that
 recorded app as built and trusts it, then runs the test. A Debug app still gets
 Metro from run. With no recorded build for the selectors, run refuses with
-STIM_NO_RECORDED_BUILD and names the stim-ci build command. Build and run must
+STIM_NO_RECORDED_BUILD and names the stim ci build command. Build and run must
 share the Stim home (--home or STIM_HOME). macOS and web run unchanged: macOS
 run builds the app itself.
 Every iOS and Android run on this machine starts from clean app state, even when
@@ -567,7 +567,7 @@ CI=true alone does not change defaults, ownership or coordination. Persist only
 cache artifacts, not state, claims or device ledgers. Independent homes must
 not share a writable filesystem cache because its claims live in the home.
 
-The programmatic API is import { buildCI, runCI } from '@stim-cli/ci'. See its package
+The programmatic API is import { buildCI, runCI } from 'stim/ci'. See its package
 README for result types, cancellation, cache policy, and coordination findings.`,
     },
     'hosted-android': {
@@ -738,7 +738,7 @@ remain readable after stop.`,
 If Stim is not installed globally, replace stim with npx stim.
 
   stim remote add janics-mac-mini
-  # A person there runs the stim-server setup command it printed.
+  # A person there runs the stim setup command it printed.
   stim remote list
   stim ios --remote janics-mac-mini --device-type "iPhone 17 Pro" --runtime "iOS 27.0"
   stim status --json
@@ -828,8 +828,8 @@ independent and selects a compatible build worker for a cache miss.
 The host's own owned devices count toward concurrency.maxDevices and its per-platform cap
 (concurrency.maxIosDevices, concurrency.maxAndroidDevices; macOS apps use concurrency.maxMacosApps).
 
-Each record in stim-server devices --json carries kind (phone or desktop for
-a pairing from stim-server pair, build-client or device-host-client), access
+Each record in stim pairings --json carries kind (phone or desktop for
+a pairing from stim pair, build-client or device-host-client), access
 (view, control, build or run-devices), owner (this-machine for a phone or
 desktop, theirs-running-here for a build or device-host client) and
 keyFingerprint, the client key one machine's build and device-host records
@@ -837,7 +837,7 @@ share. clientApp and clientVersion are the app and version the client named in
 its last hello, shown once it has connected; a pairing is desktop when
 clientApp is Stim Desktop or Stim Dev and phone otherwise. They are display
 only and never change access. A person on the host renames a record
-with stim-server devices rename <id> <name>; the client sees the name on its
+with stim pairings rename <id> <name>; the client sees the name on its
 next connection, and its access does not change. An entry of a registry file
 that this stim-server cannot read is never dropped: every write keeps it as the
 text it had, it grants nothing, and devices --json lists it in unreadable as
@@ -845,7 +845,7 @@ text it had, it grants nothing, and devices --json lists it in unreadable as
 { file, version }, its records are not read, and writes to it are refused.
 Rename, grant and revoke refuse an unreadable id; the person edits the file.
 
-The host's person sees Hosted here rows in stim-server devices; --json adds
+The host's person sees Hosted here rows in stim pairings; --json adds
 hostedSessions beside devices. Rows show client, platform, device, installed
 app, state and since, newest first. Plain stopped sessions are omitted;
 parked and unknown sessions stay visible, with parked rows using the parking
@@ -1982,7 +1982,7 @@ THE BUILD CACHE HAS THREE LEVELS
      provider has.
   2. The project's own cache provider, on ANY project including bare React
      Native: \`cache.provider\` in the settings, a module implementing the
-     @stim-cli/cache contract (see \`guide settings\`). Consulted only when
+     stim/plugin cache-provider contract (see \`guide settings\`). Consulted only when
      level one misses, and its hit is stored into level one before install.
      The same contract serves the Metro transform cache.
   3. On an EXPO project only, EAS when the project configures it through

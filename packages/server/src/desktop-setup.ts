@@ -33,7 +33,7 @@ export interface DesktopSetup {
 }
 
 /**
- * Runs `stim-server setup` in this server for a request a person pasted into Stim Desktop on this machine. The person
+ * Runs `stim setup` in this server for a request a person pasted into Stim Desktop on this machine. The person
  * answers each grant in Desktop where setup would ask Y/n in a terminal; everything else is setup's own: the ticket and
  * expiry checks, the exclusive setup claim, the stored secret, the journal and the wait for the requesting machine.
  * Throws when setup would refuse the request's arguments.

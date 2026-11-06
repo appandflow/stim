@@ -292,7 +292,7 @@ npm install --global stim
 ```
 
 Update programmatic imports from `stim-cli/cache-manifest` to
-`stim/cache-manifest`. The `@stim-cli/*` packages keep their names.
+`stim/cache-manifest`. The server and CI runner ship in `stim`; use `stim serve` and `stim ci`.
 
 ## License
 

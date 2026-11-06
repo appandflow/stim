@@ -99,7 +99,7 @@ writes its own `build-artifact-<platform>.ndjson`. Build-only does not export
 distribution archives or infer a web compilation pipeline.
 An iOS or Android build also records its app in the workspace state; the last build for
 a scheme and configuration (or variant) wins. `easProfile` downloads a completed EAS
-development build instead of compiling. Use `buildCI` from `@stim-cli/ci` to build for CI;
+development build instead of compiling. Use `buildCI` from `stim ci` to build for CI;
 it exports the app only when given `exportPath`.
 
 Successful builds also return `facts.links.workspace`, the machine-aware HTTPS
@@ -113,7 +113,7 @@ only navigates to the workspace; it does not install or launch the built app.
 as the corresponding CLI command. On iOS and Android, `recordedBuild: true` instead
 installs and launches the app the last `build` with the same scheme and configuration
 (or variant) recorded in this workspace, without fingerprinting, building or replacing
-its JS, and refuses with `STIM_NO_RECORDED_BUILD` when there is none. `@stim-cli/ci`
+its JS, and refuses with `STIM_NO_RECORDED_BUILD` when there is none. `stim ci`
 uses it; the CLI does not.
 
 Unresolved native Metro cleanup preserves its claim roots in

@@ -177,9 +177,8 @@ WHAT IT NEEDS
   macOS or Linux host that runs the device.
 - A stim-server for this Stim home. The share lives inside it, and a server
   restart ends every share until the next one starts and restores the saved ones. When none runs, stim share starts one in the
-  background (stim-server --share: loopback only, no Desktop bootstrap) from
-  the stim-server package of this exact stim version installed next to stim,
-  else a stim-server on PATH that reports this version. It says so on stderr
+  background (stim serve --share: loopback only, no Desktop bootstrap) from
+  the server bundled into this stim build. It says so on stderr
   with the server's pid and log ($STIM_HOME/server/share-server.log). That
   server stops on its own when its last share ends (stim share stop, expiry,
   stim stop, worktree remove) or when no share starts within 2 minutes, and
@@ -267,7 +266,7 @@ share.publicUrl set it applies when the next share starts or the service
 restarts. Only one stim-server can bind share.port at a time.
 
 Links that ended or never existed: when stim-server runs as the background
-service (stim-server service install) and share.publicUrl is set in proxy mode,
+service (stim service install) and share.publicUrl is set in proxy mode,
 the listener binds share.port when the service starts and stays bound with no
 share live. It answers every request that is not a live share's, any path and
 method, with a "This share has ended or the link is wrong" page in the viewer's
@@ -276,17 +275,17 @@ existed (nothing about an ended share is kept). The page holds no share data
 and lists no shares; it sends Cache-Control: no-store and a strict CSP. The
 listener binds 127.0.0.1 only, adds no Tailscale route and no
 server/share-route claim, and closes when the service stops. The on-demand
-stim-server --share still exits after its last share, and tailscale exposure
+stim serve --share still exits after its last share, and tailscale exposure
 keeps no listener. A taken port is logged once; the next stim share refuses and
 names share.port.
 
 When stim-server is not running at all, the proxy needs its own page. The
-@stim-cli/server package ships dist/share-viewer/not-running.html (the same
+stim package ships dist/share-viewer/not-running.html (the same
 design, stylesheet inlined, no script). Copy it next to the proxy config, for
 example:
 
-  cd "$(mktemp -d)" && npm pack @stim-cli/server
-  tar -xzf stim-cli-server-*.tgz package/dist/share-viewer/not-running.html
+  cd "$(mktemp -d)" && npm pack stim
+  tar -xzf stim-*.tgz package/dist/share-viewer/not-running.html
   sudo install -D -m 644 package/dist/share-viewer/not-running.html /var/www/stim-share/not-running.html
 
 and answer 503 (temporary: the same link works once Stim runs) for the proxy's
@@ -335,7 +334,7 @@ SECURITY MODEL
   from its API. In tailscale mode only the share adds a Funnel route, and only
   to that listener: tailscale funnel --bg --yes --https=<port>
   http://127.0.0.1:<listener>. The route is removed when the last share ends.
-  stim-server setup and service never enable Funnel. In proxy mode nothing is
+  stim setup and service never enable Funnel. In proxy mode nothing is
   added to Tailscale, and the listener is reachable only by what runs on this
   machine, normally your reverse proxy.
 - The listener serves three things for each share: the viewer page, the frame

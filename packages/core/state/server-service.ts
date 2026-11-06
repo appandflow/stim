@@ -3,7 +3,7 @@ import { configDir } from '../index.ts';
 import { unitLines, unitWords } from '../systemd-unit.ts';
 import { isJsonObject, readJsonObject } from './json-file.ts';
 
-/** `tailscale serve` route a `stim-server service install --serve` recorded: its HTTPS port and who created it. */
+/** `tailscale serve` route a `stim service install --serve` recorded: its HTTPS port and who created it. */
 export interface ServeRecord {
   port: number;
   /** Whether `service install` created the `tailscale serve` route, so `uninstall` removes it. */
