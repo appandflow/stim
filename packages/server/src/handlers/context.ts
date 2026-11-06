@@ -51,6 +51,7 @@ import { DeviceHost } from '../device-host.ts';
 import { PresenceHub } from '../presence.ts';
 import { LocalAgentPresence } from '../local-agent-presence.ts';
 import { HostedViews } from '../hosted-view.ts';
+import { ShareHub } from '../share.ts';
 import { HostedPresenceBridge } from '../hosted-presence-bridge.ts';
 
 export const INPUT_METHODS = [
@@ -299,6 +300,7 @@ export interface ConnectionContext {
   readonly localAgents: LocalAgentPresence;
   readonly control: ControlHub;
   readonly hostedViews: HostedViews;
+  readonly shares: ShareHub;
   readonly push: PushNotifier;
   readonly hostedBridge: HostedPresenceBridge;
   readonly socket: ServerSocket;

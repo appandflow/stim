@@ -34,7 +34,6 @@ import {
   statusViews,
   type StatusViews,
   type SetupCapability,
-  SHARE_TOKEN,
   readShareLinks,
   shareLinkKey,
 } from '@stim-cli/core/state';
@@ -91,8 +90,6 @@ import {
   DEVICE_HOST_METHODS,
   MAX_INPUT_TEXT,
   PROTOCOL_VERSION,
-  RESERVED_SHARE_SLUGS,
-  SHARE_SLUG_PATTERN,
   ENGINE_UPDATE_METHODS,
   type DesktopReportTarget,
   type ErrorCode,
@@ -105,10 +102,10 @@ import {
 } from './protocol.ts';
 import { createStim, StimError, type StimPlanOptions } from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
-import { pauseShareLinkAsync, pauseShareLinksAsync, saveShareLinkAsync } from 'stim/share-links';
+import { pauseShareLinkAsync } from 'stim/share-links';
 import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
 import { restoreSavedShares } from './share-restore.ts';
-import { savedLinkIs, savedShareFor } from './share-save.ts';
+import { savedLinkIs } from './share-save.ts';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
 import { EXPO_PUSH_API, PushNotifier } from './push.ts';
 import {
@@ -153,7 +150,7 @@ import {
 import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DeviceViewers } from './viewers.ts';
 import { HostedShareSource } from './share-hosted.ts';
-import { SHARE_EXPIRY, ShareHub, type ShareRequest, type StartedShare } from './share.ts';
+import { ShareHub } from './share.ts';
 import { androidScreen, simulatorScreen, type ScreenSize } from './device-screen.ts';
 import { LocalAgentPresence } from './local-agent-presence.ts';
 import { PresenceHub, presenceKey } from './presence.ts';
@@ -176,6 +173,7 @@ import {
   INPUT_METHODS,
   type ConnectionContext,
 } from './handlers/context.ts';
+import { markSavedStopped, parseShareStart, shareMethod } from './handlers/share.ts';
 import { LOCAL_DEVICE_ID, CLOSE_BAD_REQUEST, hello } from './handlers/hello.ts';
 import { parseReplay, subscribeFrames } from './handlers/frames.ts';
 import {
@@ -479,116 +477,6 @@ function leaseGrace(leaseFor: string): { leaseGraceMs?: number } {
   const [, amount, unit] = /^(\d+)(s|m|h)$/.exec(leaseFor) ?? [];
   if (amount === undefined || unit === undefined) return {};
   return { leaseGraceMs: Number(amount) * (unit === 's' ? 1000 : unit === 'm' ? 60_000 : 3_600_000) };
-}
-
-/** Saves a started share through the CLI's share-links module; false when it could not (nothing logs a password). */
-async function saveStartedShare(request: ShareRequest, started: StartedShare): Promise<boolean> {
-  try {
-    let saved = false;
-    await saveShareLinkAsync(request.workspace, shareLinkKey(request), (existing) => {
-      const entry = savedShareFor(request, started, existing);
-      if (!entry) throw new Error('its link or a password is not known');
-      saved = true;
-      return entry;
-    });
-    return saved;
-  } catch (cause) {
-    console.error(
-      `stim-server: could not save the web share ${started.id} for reuse and restart: ${cause instanceof Error ? cause.message : String(cause)}`,
-    );
-    return false;
-  }
-}
-
-/** A share stopped on purpose must not come back when stim-server starts: marks its saved link stopped; why it could not. */
-async function markSavedStopped(mark: () => Promise<void>): Promise<string | null> {
-  try {
-    await mark();
-    return null;
-  } catch (cause) {
-    return cause instanceof Error ? cause.message : String(cause);
-  }
-}
-
-const SHARE_SLUG = new RegExp(SHARE_SLUG_PATTERN);
-
-/** Validates `share.start` params; returns why they are refused. */
-function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { workspace: string }) | string {
-  if (!isJsonObject(params)) return 'params must be an object.';
-  const {
-    workspace,
-    platform,
-    slot,
-    physical,
-    control,
-    expiresMinutes,
-    expiresAt,
-    token,
-    password,
-    passwordless,
-    view,
-    slug,
-    ...rest
-  } = params;
-  if (Object.keys(rest).length) return `share.start does not take ${Object.keys(rest).join(', ')}.`;
-  if (typeof workspace !== 'string') return 'params.workspace must be a workspace path.';
-  if (platform !== 'ios' && platform !== 'android') return 'params.platform must be ios or android.';
-  if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot)))
-    return 'params.slot must be 1-64 letters, digits, underscores or hyphens.';
-  if (physical !== undefined && typeof physical !== 'boolean') return 'params.physical must be true or false.';
-  if (control !== undefined && typeof control !== 'boolean') return 'params.control must be true or false.';
-  if (password !== undefined && (typeof password !== 'string' || password.length < 8 || password.length > 128))
-    return 'params.password must be 8 to 128 characters.';
-  if (passwordless !== undefined && typeof passwordless !== 'boolean')
-    return 'params.passwordless must be true or false.';
-  if (passwordless && password !== undefined) return 'A share takes a password or passwordless, not both.';
-  if (view !== undefined) {
-    if (!isJsonObject(view) || Object.keys(view).some((key) => key !== 'password'))
-      return 'params.view must be an object that takes only password.';
-    if (
-      view.password !== undefined &&
-      (typeof view.password !== 'string' || view.password.length < 8 || view.password.length > 128)
-    )
-      return 'params.view.password must be 8 to 128 characters.';
-    if (control !== true || passwordless) return 'params.view needs control and a password.';
-    if (view.password !== undefined && view.password === password)
-      return 'The view password and the control password must differ.';
-  }
-  if (slug !== undefined) {
-    if (typeof slug !== 'string' || !SHARE_SLUG.test(slug))
-      return 'params.slug must be 3 to 32 lowercase letters, digits or hyphens, starting and ending with a letter or digit.';
-    if (RESERVED_SHARE_SLUGS.includes(slug)) return `params.slug cannot be ${slug}: the share pages use that path.`;
-    if (passwordless) return 'A share with a slug needs a password: anyone can guess a slug.';
-  }
-  if (token !== undefined && slug !== undefined) return 'A share takes a slug or a token, not both.';
-  if (token !== undefined && (typeof token !== 'string' || !SHARE_TOKEN.test(token)))
-    return 'params.token must be a 43-character URL token.';
-  if (expiresAt !== undefined && expiresMinutes !== undefined)
-    return 'A share takes expiresMinutes or expiresAt, not both.';
-  let until: number | undefined;
-  if (expiresAt !== undefined) {
-    until = typeof expiresAt === 'string' ? Date.parse(expiresAt) : NaN;
-    if (!Number.isFinite(until) || until <= Date.now() || until > Date.now() + SHARE_EXPIRY.max * 60_000)
-      return `params.expiresAt must be a time within the next ${SHARE_EXPIRY.max} minutes.`;
-  }
-  const minutes =
-    until === undefined ? (expiresMinutes ?? SHARE_EXPIRY.default) : Math.ceil((until - Date.now()) / 60_000);
-  if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > SHARE_EXPIRY.max)
-    return `params.expiresMinutes must be a whole number of minutes from 1 to ${SHARE_EXPIRY.max}.`;
-  return {
-    workspace,
-    platform,
-    ...(slot && slot !== 'default' ? { slot } : {}),
-    ...(physical ? { physical } : {}),
-    control: control === true,
-    expiresMinutes: minutes,
-    ...(until === undefined ? {} : { expiresAt: until }),
-    ...(token === undefined ? {} : { token }),
-    ...(typeof password === 'string' ? { password } : {}),
-    ...(passwordless ? { passwordless } : {}),
-    ...(view ? { view: typeof view.password === 'string' ? { password: view.password } : {} } : {}),
-    ...(typeof slug === 'string' ? { slug } : {}),
-  };
 }
 
 function doctorTarget(): DoctorTarget {
@@ -1429,6 +1317,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       localAgents,
       control,
       hostedViews,
+      shares,
       push,
       hostedBridge,
       socket,
@@ -2507,63 +2396,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
-    async function shareMethod(
-      id: RequestId,
-      method: 'share.start' | 'share.stop' | 'share.list',
-      params: unknown,
-    ): Promise<void> {
-      if (!local) return error(id, 'forbidden', `${method} works only on this machine's local Unix socket.`);
-      if (method === 'share.list') {
-        if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length))
-          return error(id, 'bad-request', 'share.list takes no parameters.');
-        return send(socket, { id, result: { shares: shares.list(), starting: shares.startsInFlight } });
-      }
-      if (method === 'share.stop') {
-        if (
-          !isJsonObject(params) ||
-          typeof params.workspace !== 'string' ||
-          (params.id !== undefined && (typeof params.id !== 'string' || params.id === '')) ||
-          (params.slot !== undefined && (typeof params.slot !== 'string' || !SLOT_NAME.test(params.slot))) ||
-          Object.keys(params).some((key) => key !== 'workspace' && key !== 'id' && key !== 'slot')
-        )
-          return error(
-            id,
-            'bad-request',
-            'share.stop needs params.workspace and takes an optional params.id or params.slot.',
-          );
-        if (params.id !== undefined && params.slot !== undefined)
-          return error(id, 'bad-request', 'share.stop takes params.id or params.slot, not both.');
-        const workspace = params.workspace;
-        const slot = typeof params.slot === 'string' ? params.slot : undefined;
-        const row = params.id === undefined ? undefined : shares.list().find((each) => each.id === params.id);
-        if (params.id !== undefined && (!row || row.workspace !== workspace))
-          return error(id, 'bad-request', `No share ${params.id} in this workspace.`);
-        const unsaved = await markSavedStopped(() =>
-          row ? pauseShareLinkAsync(workspace, shareLinkKey(row)) : pauseShareLinksAsync(workspace, slot),
-        );
-        const stopped = row ? [await shares.stopOne(workspace, row.id)] : await shares.stop(workspace, undefined, slot);
-        if (unsaved)
-          return error(
-            id,
-            'action-failed',
-            `The share stopped, but its saved link could not be marked stopped (${unsaved}), so a stim-server restart can start it again. Run stim share stop --forget.`,
-          );
-        return send(socket, { id, result: { stopped: stopped.filter((each) => each !== null) } });
-      }
-      const parsed = parseShareStart(params);
-      if (typeof parsed === 'string') return error(id, 'bad-request', parsed);
-      const resolved = registeredWorkspace(parsed.workspace);
-      if ('code' in resolved) return error(id, resolved.code, resolved.message);
-      const request = { ...parsed, workspace: resolved.dir };
-      const started = await shares.start(request);
-      if ('code' in started) return send(socket, { id, error: started });
-      const saved = await saveStartedShare(request, started);
-      if (saved && !shares.list().some((row) => row.id === started.id)) {
-        await markSavedStopped(() => pauseShareLinkAsync(request.workspace, shareLinkKey(request)));
-      }
-      return send(socket, { id, result: saved ? { ...started, saved: true } : started });
-    }
-
     /**
      * Admits this local-socket connection to the Desktop-only methods when it proves the bundled Desktop's private key
      * against this connection's challenge. The challenge answers one attempt, so a replayed or late proof cannot win.
@@ -2594,9 +2426,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     const localMethods: Partial<Record<string, (id: RequestId, params: unknown) => void | Promise<void>>> = {
-      'share.start': (id, params) => shareMethod(id, 'share.start', params),
-      'share.stop': (id, params) => shareMethod(id, 'share.stop', params),
-      'share.list': (id, params) => shareMethod(id, 'share.list', params),
+      'share.start': (id, params) => shareMethod(ctx, id, 'share.start', params),
+      'share.stop': (id, params) => shareMethod(ctx, id, 'share.stop', params),
+      'share.list': (id, params) => shareMethod(ctx, id, 'share.list', params),
       'presence.publish': (id, params) => publishPresence(ctx, id, params),
     };
 
