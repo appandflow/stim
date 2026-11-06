@@ -180,8 +180,8 @@ export class OffloadJobs {
     const { stim, build, repo } = params;
     const why = this.refusal(client);
     if (why) return refused('build-busy', why);
-    this.recordUse(build, stim);
     let entry = this.entry(build);
+    if (entry && typeof entry !== 'string') this.recordUse(build, stim);
     if (!entry) {
       const upload = this.uploads.get(socket);
       if (typeof params.upload === 'string') {
@@ -231,7 +231,7 @@ export class OffloadJobs {
    * Refreshes `<root>/jobs/<build>.json`, which the engine store's GC reads to keep the client builds jobs used in the
    * last day (stim-cli's `engine-store/jobs.ts` owns the format). A write that fails only shortens that keep.
    */
-  private recordUse(build: string, version: string): void {
+  private recordUse(build: string, version: string | null): void {
     try {
       const dir = join(this.root(), 'jobs');
       mkdirSync(dir, { recursive: true });
@@ -327,6 +327,7 @@ export class OffloadJobs {
   }
 
   private install(build: string, source: [string, string]): Promise<InstallFailure> {
+    this.recordUse(build, source[0] === 'release' ? source[1] : null);
     return new Promise((resolve) => {
       const child = spawn(process.execPath, [this.options.stimCli, '__job', 'install', this.root(), build, ...source], {
         env: this.options.env(),
