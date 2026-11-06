@@ -54,7 +54,7 @@ import Testing
       return
     }
     let result: JSONValue = .object([
-      "protocol": .number(2),
+      "protocol": .number(2), "desktopApi": .number(1),
       "server": .object(
         [
           "id": serverID.map(JSONValue.string) ?? .null, "name": .string("floco"), "version": .string("1"),
@@ -207,7 +207,7 @@ private let code =
     rig.servers.forget(id: kept.id)
     #expect(rig.servers.entries.isEmpty)
     #expect(try rig.store.pairings().isEmpty)
-    #expect(rig.servers.forgotten?.command == "stim-server devices revoke device-7")
+    #expect(rig.servers.forgotten?.command == "stim pairings revoke device-7")
     rig.servers.stop()
   }
 
@@ -252,7 +252,7 @@ private let code =
       return
     }
     #expect(notice.title.contains("own server"))
-    #expect(notice.command == "stim-server devices revoke device-9")
+    #expect(notice.command == "stim pairings revoke device-9")
     #expect(try store.pairings().isEmpty)
     #expect(servers.entries.isEmpty)
   }
@@ -359,9 +359,9 @@ private let code =
   }
 
   @Test func theRevokeCommandNeverCarriesAServerSuppliedShellFragment() {
-    #expect(PairedServerWording.revokeCommand(deviceID: "a1b2c3d4") == "stim-server devices revoke a1b2c3d4")
+    #expect(PairedServerWording.revokeCommand(deviceID: "a1b2c3d4") == "stim pairings revoke a1b2c3d4")
     for bad in ["device-7; rm -rf ~", "x y", "a\nb", "$(id)", "`id`", "", String(repeating: "a", count: 65)] {
-      #expect(PairedServerWording.revokeCommand(deviceID: bad) == "stim-server devices", "\(bad)")
+      #expect(PairedServerWording.revokeCommand(deviceID: bad) == "stim pairings", "\(bad)")
     }
   }
 

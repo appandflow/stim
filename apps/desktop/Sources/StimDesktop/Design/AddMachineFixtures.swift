@@ -107,12 +107,12 @@
             case .stepFailed:
               steps[3] = .init(
                 id: "service", state: .failed, title: "Service install failed", detail: "LaunchAgent did not start",
-                fix: "stim-server service status")
+                fix: "stim service status")
             case .serverTooOld:
               steps[1] = .init(
                 id: "server", state: .failed, title: "Server is too old", detail: "1.20.2 predates setup support",
                 fix:
-                  "If Stim Desktop runs this server, update Stim Desktop with Check for Updates in its app menu. Otherwise run npm install --global @stim-cli/server@1.21.0 and restart the server."
+                  "If Stim Desktop runs this server, update Stim Desktop with Check for Updates in its app menu. Otherwise run npm install --global stim@1.21.0 and restart the server."
               )
             case .funneled:
               steps[4] = .init(
@@ -187,7 +187,7 @@
           [BuildMachineStatus].self,
           from: Data(
             #"""
-            [{"machine":"mini","state":"unreachable","dnsName":"mini.tail.test","diagnosis":{"layer":"server","code":"server-not-running","title":"Server not running","message":"stim-server is not running on mini.","remedy":"Start it there with stim-server service status."}},
+            [{"machine":"mini","state":"unreachable","dnsName":"mini.tail.test","diagnosis":{"layer":"server","code":"server-not-running","title":"Server not running","message":"stim-server is not running on mini.","remedy":"Start it there with stim service status."}},
              {"machine":"old-air","state":"approved","offloadable":true,"dnsName":"old-air.tail.test"}]
             """#.utf8))
         model.fixtureRegistered = (["mini", "old-air"], statuses)

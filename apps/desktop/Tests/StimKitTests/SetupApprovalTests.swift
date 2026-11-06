@@ -18,11 +18,20 @@ struct SetupApprovalTests {
 
   @Test func readsTheOneLineCommandStimRemoteAddPrints() throws {
     let request = try SetupRequest.parse(
-      "STIM_SETUP_TICKET=\(ticket.value) STIM_SETUP_ORIGIN=doctor npx --yes --package @stim-cli/server@1.21.0 stim-server setup --expires 2026-10-06T12:30:00.000Z --device-host\n"
+      "STIM_SETUP_TICKET=\(ticket.value) STIM_SETUP_ORIGIN=doctor npx --yes stim@1.21.0 setup --expires 2026-10-06T12:30:00.000Z --device-host\n"
     )
     #expect(request.ticket.value == ticket.value)
     #expect(request.expires == "2026-10-06T12:30:00.000Z")
     #expect(request.capabilities == [.deviceHost])
+  }
+
+  @Test func readsTheLegacyCommandStimRemoteAddPrints() throws {
+    let request = try SetupRequest.parse(
+      "STIM_SETUP_TICKET=\(ticket.value) STIM_SETUP_ORIGIN=doctor npx --yes --package @stim-cli/server@1.21.0 stim-server setup --expires \(ticket.isoExpires) --build --device-host"
+    )
+    #expect(request.ticket == ticket)
+    #expect(request.expires == ticket.isoExpires)
+    #expect(request.capabilities == [.build, .deviceHost])
   }
 
   @Test(arguments: [
@@ -31,13 +40,13 @@ struct SetupApprovalTests {
     ("--label other", .unsupported("--label")),
   ])
   func refusesSetupOptionsDesktopWouldNotApply(option: String, problem: SetupRequest.Problem) {
-    let command = "STIM_SETUP_TICKET=\(ticket.value) stim-server setup --expires \(ticket.isoExpires) --build \(option)"
+    let command = "STIM_SETUP_TICKET=\(ticket.value) stim setup --expires \(ticket.isoExpires) --build \(option)"
     #expect(throws: problem) { try SetupRequest.parse(command) }
   }
 
   @Test func refusesACommandWithoutItsTicket() {
     #expect(throws: SetupRequest.Problem.noTicket) {
-      try SetupRequest.parse("stim-server setup --expires \(ticket.isoExpires) --build")
+      try SetupRequest.parse("stim setup --expires \(ticket.isoExpires) --build")
     }
   }
 }

@@ -43,10 +43,10 @@ public enum ConnectionAccess: String, CaseIterable, Sendable {
   }
 }
 
-/// A phone or machine that uses this machine: every `stim-server devices` record that shares one client key.
+/// A phone or machine that uses this machine: every `stim pairings` record that shares one client key.
 public struct IncomingConnection: Identifiable, Equatable, Sendable {
   public enum Kind: Equatable, Sendable {
-    /// A pairing from `stim-server pair`, which a phone and Stim Desktop on another machine both use.
+    /// A pairing from `stim pair`, which a phone and Stim Desktop on another machine both use.
     case device
     case machine
   }
@@ -61,7 +61,7 @@ public struct IncomingConnection: Identifiable, Equatable, Sendable {
   public var access: [ConnectionAccess]
 
   /// The record whose access can change between View and Control; build and device-host approval change only on
-  /// this machine with `stim-server setup`.
+  /// this machine with `stim setup`.
   public var pairing: PairedDevice? { records.first(where: \.isPhone) }
 
   public var kindTitle: String { kind == .machine ? "Machine" : "Device" }
@@ -101,7 +101,7 @@ public struct RemoteMachineListing: Decodable, Equatable, Sendable {
 }
 
 public enum Connections {
-  /// The records of `stim-server devices --json`, one connection per client key in the order they arrive. Every record
+  /// The records of `stim pairings --json`, one connection per client key in the order they arrive. Every record
   /// that can connect is listed, whatever the phone app flag says.
   public static func incoming(_ devices: [PairedDevice]) -> [IncomingConnection] {
     var order: [String] = []
@@ -142,7 +142,7 @@ public enum Connections {
       if host?.state == .approved { access.append(.runDevices) }
       var commands = listed?.revoke ?? []
       for id in [build?.deviceId, host?.deviceId].compactMap({ $0 }) {
-        let command = "stim-server devices revoke \(id)"
+        let command = "stim pairings revoke \(id)"
         if !commands.contains(command) { commands.append(command) }
       }
       if let command = pairing.flatMap(revokeCommand), !commands.contains(command) { commands.append(command) }
@@ -159,7 +159,7 @@ public enum Connections {
   }
 
   private static func revokeCommand(_ entry: PairedServers.Entry) -> String? {
-    PairedServerWording.plainDeviceID(entry.pairing?.deviceID).map { "stim-server devices revoke \($0)" }
+    PairedServerWording.plainDeviceID(entry.pairing?.deviceID).map { "stim pairings revoke \($0)" }
   }
 
   private static func pairingAccess(_ entry: PairedServers.Entry) -> [ConnectionAccess] {
@@ -175,7 +175,7 @@ public enum Connections {
   guard let client = readCapableServer(connection, stimHome: stimHome) else {
     throw ServerError(code: "not-connected", message: "The local stim-server is not ready to list remote machines.")
   }
-  guard case .open(let hello) = client.state, hello.features?.contains("desktop-report-remote") == true else {
+  guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
     throw ServerError(code: "unsupported", message: "Update the local stim-server to list remote machines.")
   }
   let result = try await client.report(["report": .string("remote")])

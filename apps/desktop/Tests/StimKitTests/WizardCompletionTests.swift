@@ -230,7 +230,7 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertTrue(wizardFixIsCommand("gem install bundler"))
     XCTAssertFalse(wizardFixIsCommand("Install Bundler (`gem install bundler`) on mini."))
     XCTAssertFalse(wizardFixIsCommand("Use a remote Mac with the same CPU architecture as this Mac."))
-    XCTAssertFalse(wizardFixIsCommand("stim-server service update --release <version>"))
+    XCTAssertFalse(wizardFixIsCommand("stim service update --release <version>"))
   }
 
   func testTimingsComeFromTheLastRealOffloadDoneRecord() throws {

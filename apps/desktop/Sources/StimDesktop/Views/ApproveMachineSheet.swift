@@ -46,7 +46,7 @@ struct ApproveMachineSheet: View {
     )
     .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
     CopyableCommand(command: "stim remote add \(machineEntry ?? "<this machine>")", runsOn: "the other machine")
-    Text("Copy the stim-server setup command it shows and paste it here. Nothing is approved until you choose Allow.")
+    Text("Copy the stim setup command it shows and paste it here. Nothing is approved until you choose Allow.")
       .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
     TextEditor(text: $model.text)
       .font(.stim(.caption, mono: true))

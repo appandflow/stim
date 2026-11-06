@@ -178,7 +178,7 @@ struct ActionCenterTests {
       ])
       let stdout =
         doctor
-        ? #"{"project":"/selected","findings":[{"level":"cost","title":"Approve worker","detail":"Build access is pending.","fix":"Run stim-server setup on the worker."}]}"#
+        ? #"{"project":"/selected","findings":[{"level":"cost","title":"Approve worker","detail":"Build access is pending.","fix":"Run stim setup on the worker."}]}"#
         : "[]"
       socket.reply([
         "event": .string("desktop-remedy-ended"), "subscription": .string("repair"), "exitCode": .number(Double(exit)),
@@ -190,7 +190,7 @@ struct ActionCenterTests {
         #expect(String(decoding: run.stdout, as: UTF8.self).trimmingCharacters(in: .newlines) == stdout)
       } else {
         #expect(run.lines.contains(OutputLine(.stdout, "Approve worker: Build access is pending.")))
-        #expect(run.lines.contains(OutputLine(.stdout, "Run stim-server setup on the worker.")))
+        #expect(run.lines.contains(OutputLine(.stdout, "Run stim setup on the worker.")))
         #expect(run.lines.contains(OutputLine(.stdout, "Doctor completed with 1 finding(s).")))
       }
       #expect(run.logLines.contains { $0.text == "kept tracked output" })
@@ -371,17 +371,12 @@ struct ActionCenterTests {
     sent.append(message)
     if message["method"] == .string("hello") {
       var fields: [String: JSONValue] = [
-        "protocol": .number(2),
+        "protocol": .number(2), "desktopApi": .number(1),
         "server": .object([
           "name": .string("Mac"), "version": .string("1"), "stim": .string("1"), "port": .number(7787),
         ]),
         "capabilities": .array([.string("read"), .string("control")]),
-        "features": .array([
-          .string("desktop-doctor-run"), .string("desktop-remedy"), .string("desktop-device-tools"),
-          .string("desktop-settings-write"),
-          .string("desktop-reload"), .string("desktop-start"),
-          .string("desktop-run"), .string("desktop-gc"), .string("desktop-worktree-remove"), .string("desktop-worktree-warm"),
-        ]),
+
       ]
       if let key {
         let nonce = String(repeating: "A", count: 43)

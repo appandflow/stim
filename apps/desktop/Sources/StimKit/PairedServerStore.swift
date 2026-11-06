@@ -16,7 +16,7 @@ public struct PairedServer: Codable, Equatable, Sendable, Identifiable {
   /// The capabilities the last `hello` reported.
   public var capabilities: [String]
   public var pairedAt: Date
-  /// The id the server gave this pairing's record, which `stim-server devices revoke` takes; nil until a `hello`.
+  /// The id the server gave this pairing's record, which `stim pairings revoke` takes; nil until a `hello`.
   public var deviceID: String?
 
   public init(

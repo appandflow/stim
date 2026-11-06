@@ -76,7 +76,7 @@ public enum ServerHealthProbe: Equatable, Sendable {
   case notReady(ServerStartup, stimHome: String?)
 }
 
-/// `stim-server pair --json`: the QR payload and when its single-use token expires.
+/// `stim pair --json`: the QR payload and when its single-use token expires.
 public struct PairingCode: Decodable, Equatable, Sendable {
   public struct QR: Codable, Equatable, Sendable {
     public var v: Int
@@ -101,7 +101,7 @@ public struct PairingCode: Decodable, Equatable, Sendable {
   public var isLocalOnly: Bool { qr.endpoint.hasPrefix("ws://127.0.0.1") }
 }
 
-/// A device in `stim-server devices --json`.
+/// A device in `stim pairings --json`.
 public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   public var id: String
   public var name: String
@@ -112,7 +112,7 @@ public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   public var pairedAt: Date
   public var lastSeenAt: Date?
   public var capabilities: [String]
-  /// `phone` for a pairing from `stim-server pair`, `desktop` for Stim Desktop on another machine, `build-client` or
+  /// `phone` for a pairing from `stim pair`, `desktop` for Stim Desktop on another machine, `build-client` or
   /// `device-host-client`; absent from an older stim-server.
   public var kind: String?
 
@@ -125,7 +125,7 @@ public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   /// A machine that may run hosted devices here.
   public var isDeviceHostClient: Bool { capabilities.contains("device-host") }
 
-  /// A pairing from `stim-server pair` that reads and may control: a phone, or Stim Desktop on another machine.
+  /// A pairing from `stim pair` that reads and may control: a phone, or Stim Desktop on another machine.
   public var isPhone: Bool { !isBuildClient && !isDeviceHostClient }
 }
 
@@ -153,7 +153,7 @@ public struct BundledServer: Equatable, Sendable {
     guard let root = bundle.resourceURL?.appendingPathComponent("stim-server") else { return nil }
     let server = BundledServer(
       node: root.appendingPathComponent("bin/node").path,
-      script: root.appendingPathComponent("node_modules/@stim-cli/server/dist/stim-server.mjs").path)
+      script: root.appendingPathComponent("node_modules/stim/bin/stim.mjs").path)
     guard FileManager.default.isExecutableFile(atPath: server.node), FileManager.default.fileExists(atPath: server.script)
     else { return nil }
     return server
@@ -164,48 +164,17 @@ public struct BundledServer: Equatable, Sendable {
 public struct StimServerCLI: Sendable {
   public static let defaultPort = 7787
 
-  /// The override, the bundled server's script, or the first `stim-server` on the environment's `PATH`.
-  public let executable: String?
   public let environment: [String: String]
-  /// Runs `executable`'s script under the home directory's Node; nil runs `executable` through its own shebang.
-  public let launcher: NodeLauncher?
-  /// The server Stim.app carries, which runs unless an override is set.
   public let bundled: BundledServer?
 
-  public init(
-    environment: [String: String], override: String? = nil, launcher: NodeLauncher? = nil,
-    bundled: BundledServer? = BundledServer.inApp()
-  ) {
-    var environment = environment
-    if override?.isEmpty ?? true, let bundled {
-      self.executable = bundled.script
-      self.bundled = bundled
-      self.launcher = nil
-    } else {
-      self.executable = resolveExecutable("stim-server", override: override, environment: &environment)
-      self.bundled = nil
-      self.launcher = launcher
-    }
+  public init(environment: [String: String], bundled: BundledServer? = BundledServer.inApp()) {
     self.environment = environment
-  }
-
-  /// `init(environment:override:)` with a launcher, so a project's Node pin does not choose the Node it runs on.
-  /// `layout` names the package managers' global directories, which only a version-manager shim needs.
-  public static func resolve(
-    environment: [String: String], override: String? = nil,
-    layout: (() async -> PackageManagerLayout)? = nil
-  ) async -> StimServerCLI {
-    let cli = StimServerCLI(environment: environment, override: override)
-    guard cli.bundled == nil else { return cli }
-    let launcher = await NodeLauncher.resolve(
-      executable: cli.executable, name: "stim-server", environment: cli.environment, layout: layout)
-    return StimServerCLI(environment: environment, override: override, launcher: launcher)
+    self.bundled = bundled
   }
 
   private func command(_ arguments: [String]) throws -> (program: String, arguments: [String]) {
-    if let bundled { return (bundled.node, [bundled.script] + arguments) }
-    guard let executable else { throw Failure.notFound }
-    return try launcher?.command(arguments) ?? (executable, arguments)
+    guard let bundled else { throw Failure.notFound }
+    return (bundled.node, [bundled.script] + arguments)
   }
 
   public enum Failure: LocalizedError {
@@ -216,7 +185,7 @@ public struct StimServerCLI: Sendable {
       switch self {
       case .notFound:
         return
-          "This build of Stim Desktop does not include stim-server. Choose one in Settings, or install @stim-cli/server globally."
+          "This build of Stim Desktop does not include Stim. Update Stim Desktop (Stim > Check for Updates)."
       case .exited(let code, let stderr):
         return stderr.isEmpty ? "stim-server exited with status \(code)." : stderr
       }
@@ -247,20 +216,20 @@ public struct StimServerCLI: Sendable {
   }
 
   public func devices() async throws -> [PairedDevice] {
-    try decodeReporting(PairedDeviceList.self, from: await run(["devices", "--json"]), source: .cli, decoder: Self.decoder)
+    try decodeReporting(PairedDeviceList.self, from: await run(["pairings", "--json"]), source: .cli, decoder: Self.decoder)
       .devices
   }
 
   public func grant(_ id: String, control: Bool) async throws {
-    _ = try await run(["devices", "grant", id, control ? "--control" : "--read"])
+    _ = try await run(["pairings", "grant", id, control ? "--control" : "--read"])
   }
 
   public func revoke(_ id: String) async throws {
-    _ = try await run(["devices", "revoke", id])
+    _ = try await run(["pairings", "revoke", id])
   }
 
   public func rename(_ id: String, to name: String) async throws {
-    _ = try await run(["devices", "rename", id, name])
+    _ = try await run(["pairings", "rename", id, name])
   }
 
   /// Starts the server on `port`; it runs until terminated.
@@ -271,7 +240,7 @@ public struct StimServerCLI: Sendable {
     onLine: @escaping @Sendable (OutputLine) -> Void,
     onExit: @escaping @Sendable (Int32) -> Void
   ) throws -> Process {
-    let arguments = ["--port", String(port)] + (loopbackOnly ? ["--loopback-only"] : [])
+    let arguments = ["serve", "--port", String(port)] + (loopbackOnly ? ["--loopback-only"] : [])
     let command = try command(arguments)
     let run = DebugLog.CLIRun(tool: "stim-server", arguments: arguments, cwd: NSHomeDirectory())
     var environment = environment
@@ -279,9 +248,6 @@ public struct StimServerCLI: Sendable {
     environment.removeValue(forKey: "STIM_DESKTOP_LIFETIME_FD")
     let input = Pipe()
     if let bootstrap {
-      guard bundled != nil else {
-        throw ServerError(code: "forbidden", message: "Private Desktop bootstrap requires the bundled server.")
-      }
       try input.fileHandleForWriting.write(contentsOf: bootstrap.input)
       environment["STIM_DESKTOP_BOOTSTRAP_FD"] = "0"
     } else {
@@ -289,7 +255,7 @@ public struct StimServerCLI: Sendable {
     }
     defer { try? input.fileHandleForReading.close() }
     environment["STIM_RUN_ID"] = run.runID
-    if bundled != nil, let cache = Self.compileCache { environment["NODE_COMPILE_CACHE"] = cache }
+    if let cache = Self.compileCache { environment["NODE_COMPILE_CACHE"] = cache }
     let tail = LockedValue([String]())
     let lifetime = input.fileHandleForWriting
     do {

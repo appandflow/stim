@@ -62,7 +62,7 @@ final class SetupWizardTests: XCTestCase {
         XCTAssertEqual(command.contains("--device-host"), !host)
         XCTAssertTrue(
           command.hasPrefix(
-            "STIM_SETUP_TICKET=\(ticket.value) npx --yes --package @stim-cli/server@1.21.0 stim-server setup"))
+            "STIM_SETUP_TICKET=\(ticket.value) npx --yes stim@1.21.0 setup"))
         XCTAssertFalse(command.contains("--ticket"))
         XCTAssertFalse(command.contains("setup --yes"))
         XCTAssertFalse(command.contains("--client"))
@@ -90,7 +90,7 @@ final class SetupWizardTests: XCTestCase {
       Array(lines.prefix(3)),
       [
         "sudo tailscale set --operator=$USER &&", "sudo loginctl enable-linger $USER &&",
-        "STIM_SETUP_TICKET=\(ticket.value) npx --yes --package @stim-cli/server@1.21.0 stim-server setup",
+        "STIM_SETUP_TICKET=\(ticket.value) npx --yes stim@1.21.0 setup",
       ])
     XCTAssertEqual(lines.last, "  --build")
     XCTAssertFalse(
@@ -100,7 +100,7 @@ final class SetupWizardTests: XCTestCase {
     XCTAssertEqual(
       previewLines(capabilities: [.build], known: known, version: "1.21.0", os: .linux).map(\.text),
       [
-        "$ stim-server setup", "stim-server 1.21.0 installed", "systemd user service running",
+        "$ stim setup", "stim-server 1.21.0 installed", "systemd user service running",
         "tailnet route https 7443 (no Funnel)", "approved Laptop for builds",
       ])
     let service = SetupJournal.Step(id: "service", state: .ok, title: "Service")
@@ -126,7 +126,7 @@ final class SetupWizardTests: XCTestCase {
     let lines = command.components(separatedBy: " `\n")
     XCTAssertEqual(
       lines.first,
-      "& { $env:STIM_SETUP_TICKET='\(ticket.value)'; try { npx.cmd --yes --package \"@stim-cli/server@1.21.0\" stim-server setup"
+      "& { $env:STIM_SETUP_TICKET='\(ticket.value)'; try { npx.cmd --yes \"stim@1.21.0\" setup"
     )
     XCTAssertFalse(command.contains("--ticket"))
     XCTAssertEqual(
@@ -137,7 +137,7 @@ final class SetupWizardTests: XCTestCase {
     XCTAssertEqual(
       previewLines(capabilities: [.build], known: known, version: "1.21.0", os: .windows).map(\.text),
       [
-        "$ stim-server setup", "stim-server 1.21.0 installed", "scheduled task running",
+        "$ stim setup", "stim-server 1.21.0 installed", "scheduled task running",
         "tailnet route https 7443 (no Funnel)", "approved Laptop for builds",
       ])
     let xcode = SetupJournal.Step(id: "tools.Xcode", state: .ok, title: "Xcode", detail: "Not needed on Windows.")
@@ -152,7 +152,7 @@ final class SetupWizardTests: XCTestCase {
       {"v":1,"expiresAt":"2026-10-06T14:05:00Z",
       "capabilities":["build","device-host"],"steps":[
       {"id":"preflight","state":"ok","title":"Node verified"},
-      {"id":"server","state":"failed","title":"Server","detail":"predates setup support","fix":"npm install --global @stim-cli/server"},
+      {"id":"server","state":"failed","title":"Server","detail":"predates setup support","fix":"npm install --global stim"},
       {"id":"approve","state":"running","title":"Answer y/N"},
       {"id":"permissions.screenRecording","state":"skipped","title":"Screen recording"},
       {"id":"future","state":"new-state","title":"Future check"},
@@ -166,7 +166,7 @@ final class SetupWizardTests: XCTestCase {
     XCTAssertEqual(
       journalLines(journal, clientName: "Laptop"),
       [
-        .init(text: "$ stim-server setup", kind: .command), .init(text: "tailnet node verified", kind: .ok),
+        .init(text: "$ stim setup", kind: .command), .init(text: "tailnet node verified", kind: .ok),
         .init(text: "stim-server failed", kind: .failed),
         .init(text: "waiting for approval", kind: .pending),
         .init(text: "Screen recording permission skipped", kind: .skipped),
@@ -443,7 +443,7 @@ final class SetupWizardTests: XCTestCase {
     XCTAssertEqual(wizard.apply(.next(ticket), now: now), [])
     XCTAssertEqual(wizard.phase, .choose)
     XCTAssertNil(wizard.ticket)
-    XCTAssertEqual(previewLines(capabilities: [], known: SetupKnown()), [.init(text: "$ stim-server setup", kind: .command)])
+    XCTAssertEqual(previewLines(capabilities: [], known: SetupKnown()), [.init(text: "$ stim setup", kind: .command)])
     _ = wizard.apply(.capabilitiesChanged([.deviceHost]), now: now)
     _ = wizard.apply(.next(ticket), now: now)
     XCTAssertEqual(wizard.phase, .command)

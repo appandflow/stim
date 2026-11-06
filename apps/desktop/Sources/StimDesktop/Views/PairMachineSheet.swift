@@ -56,7 +56,7 @@ struct PairMachineSheet: View {
   @ViewBuilder private var form: some View {
     Text("On the machine, run this and paste everything it prints. The code works once, for 5 minutes.")
       .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
-    CopyableCommand(command: "stim-server pair", runsOn: "the machine")
+    CopyableCommand(command: "stim pair", runsOn: "the machine")
     TextEditor(text: $text)
       .font(.stim(.caption, mono: true))
       .frame(height: 110)
@@ -74,7 +74,7 @@ struct PairMachineSheet: View {
         .font(.stim(.footnote)).foregroundStyle(Palette.warning)
     }
     Text(
-      "A pairing lets this machine see what the machine's server shows a phone: workspace paths, status and logs, changed files including .env files, the doctor report and the live screens of its devices. A code from a plain stim-server pair can only read."
+      "A pairing lets this machine see what the machine's server shows a phone: workspace paths, status and logs, changed files including .env files, the doctor report and the live screens of its devices. A code from a plain stim pair can only read."
     )
     .font(.stim(.footnote)).foregroundStyle(Palette.tertiary).fixedSize(horizontal: false, vertical: true)
   }

@@ -14,8 +14,6 @@ final class Onboarding: ObservableObject {
     var stimOwner: PackageManager?
     var installers: [PackageManager]
     var defaultInstaller: PackageManager
-    var server: CLICompatibility?
-    var serverPath: String?
     var viewerKeys: [String]
     var node: CLICompatibility
     var nodePath: String?
@@ -25,16 +23,11 @@ final class Onboarding: ObservableObject {
     var home: String
     var androidSDK: String?
     var javaHome: String?
-    /// The Node, older than Stim supports, that kept `stim-server` from reporting its version.
-    var nodeBlockingServer: NodeRuntime?
 
     var nodeBlocksStim: Bool
-    var nodeBlocksServer: Bool
   }
 
   enum PopupKind {
-    case node
-    case server
     case viewer
   }
 
@@ -109,8 +102,6 @@ final class Onboarding: ObservableObject {
 
   func check() {
     let environment = environment
-    let defaults = UserDefaults.standard
-    let serverOverride = defaults.string(forKey: AppPreferences.Key.stimServerExecutable) ?? ""
     Task {
       let environment = await environment.value
       let report = await Task.detached {
@@ -129,24 +120,18 @@ final class Onboarding: ObservableObject {
         }
         let compatibility = CLICompatibility.check(
           executable: stim, versionOutput: versionOutput, minimum: SetupChecks.stimMinimum)
-        let server = await StimServerCLI.resolve(environment: environment, override: serverOverride) { packages }
         var node = launcher?.runtime
         if node == nil { node = await NodeRuntime.probe(environment: environment, home: home) }
         let nodePath = node?.path ?? SetupChecks.tool("node", environment: environment)
         let skillPath = SetupChecks.installedSkill(home: home) {
           FileManager.default.fileExists(atPath: $0)
         }
-        let serverCompatibility = CLICompatibility.check(
-          executable: server.executable, versionOutput: await server.versionOutput(),
-          minimum: StimServerCLI.minimumVersion)
         return Report(
           stim: compatibility,
           stimPath: stim,
           stimOwner: (launcher?.source ?? stim).flatMap { packages.owner(ofExecutable: $0) },
           installers: packages.installed,
           defaultInstaller: packages.defaultInstaller(path: environment["PATH"] ?? ""),
-          server: serverCompatibility,
-          serverPath: server.executable,
           viewerKeys: [],
           node: CLICompatibility.check(
             executable: nodePath, versionOutput: node?.version, minimum: SetupChecks.nodeMinimum),
@@ -158,12 +143,8 @@ final class Onboarding: ObservableObject {
             FileManager.default.fileExists(atPath: $0)
           },
           javaHome: environment["JAVA_HOME"].flatMap { $0.isEmpty ? nil : $0 },
-          nodeBlockingServer: serverCompatibility == .outdated(found: nil)
-            ? server.launcher.flatMap(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
           nodeBlocksStim: compatibility == .outdated(found: nil) && launcher != nil
-            && launcher?.runtime?.isSupported != true,
-          nodeBlocksServer: serverCompatibility == .outdated(found: nil) && server.launcher != nil
-            && server.launcher?.runtime?.isSupported != true)
+            && launcher?.runtime?.isSupported != true)
       }.value
       self.report = report
       refreshLatestStim()
@@ -307,21 +288,6 @@ final class Onboarding: ObservableObject {
     run(report?.stim == .missing ? "Install stim" : "Update stim", command)
   }
 
-  func installServer() {
-    let title = report?.server == .missing ? "Install stim-server" : "Update stim-server"
-    install(title, package: "@stim-cli/server@latest") { status in
-      guard status == 0 else { return }
-      ServerController.shared.stop()
-      ServerController.shared.start()
-    }
-  }
-
-  func chooseServer() {
-    guard choose(AppPreferences.Key.stimServerExecutable) else { return }
-    ServerController.shared.stop()
-    ServerController.shared.start()
-  }
-
   func useDesktopViewer() {
     let steps = (report?.viewerKeys ?? []).map {
       StimCommand(["settings", "set", $0, DesktopViewerSettings.value, "--scope", "machine"], cwd: NSHomeDirectory())
@@ -358,10 +324,6 @@ final class Onboarding: ObservableObject {
     }
   }
 
-  private func install(_ title: String, package: String, then: ((Int32?) -> Void)? = nil) {
-    run(title, PackageManager.npm.installCommand(package, cwd: NSHomeDirectory()), then: then)
-  }
-
   private func run(_ title: String, _ command: StimCommand, then: ((Int32?) -> Void)? = nil) {
     actions.run(title, steps: [command], key: Self.actionKey) { [weak self] run in
       then?(run.exitStatus)
@@ -369,16 +331,4 @@ final class Onboarding: ObservableObject {
     }
   }
 
-  @discardableResult
-  private func choose(_ key: String) -> Bool {
-    let panel = NSOpenPanel()
-    panel.canChooseFiles = true
-    panel.canChooseDirectories = false
-    panel.showsHiddenFiles = true
-    panel.prompt = "Choose"
-    guard panel.runModal() == .OK, let url = panel.url else { return false }
-    UserDefaults.standard.set(url.path, forKey: key)
-    check()
-    return true
-  }
 }

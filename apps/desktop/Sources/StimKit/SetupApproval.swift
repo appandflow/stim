@@ -1,6 +1,6 @@
 import Foundation
 
-/// A `stim-server setup` command another machine printed, pasted into Stim Desktop on the machine it asks to use.
+/// A `stim setup` command another machine printed, pasted into Stim Desktop on the machine it asks to use.
 public struct SetupRequest: Equatable, Sendable {
   public enum Problem: Error, Equatable, Sendable {
     case notASetupCommand
@@ -12,7 +12,7 @@ public struct SetupRequest: Equatable, Sendable {
 
     public var message: String {
       switch self {
-      case .notASetupCommand: return "Paste the whole stim-server setup command the other machine shows."
+      case .notASetupCommand: return "Paste the whole stim setup command the other machine shows."
       case .noTicket: return "The command has no setup ticket. Copy the whole command again, starting at STIM_SETUP_TICKET=."
       case .badExpiry: return "The command's --expires is not a time. Copy the whole command again."
       case .noCapability: return "The command asks for nothing: it needs --build or --device-host."
@@ -28,11 +28,16 @@ public struct SetupRequest: Equatable, Sendable {
   public var capabilities: [SetupCapability]
 
   /// Reads the command Stim Desktop's Build or Run Simulators There wizard, `stim remote add` or `stim doctor --fix`
-  /// prints for a Mac: `STIM_SETUP_TICKET=<ticket>`, then `stim-server setup` with `--expires` and the capabilities,
+  /// prints for a Mac: `STIM_SETUP_TICKET=<ticket>`, then `stim setup` with `--expires` and the capabilities,
   /// over one line or several joined by a trailing backslash.
   public static func parse(_ text: String) throws(Problem) -> SetupRequest {
     let tokens = text.replacingOccurrences(of: "\\\n", with: " ").split(whereSeparator: \.isWhitespace).map(String.init)
-    guard let setup = tokens.indices.first(where: { $0 > 0 && tokens[$0] == "setup" && tokens[$0 - 1].hasSuffix("stim-server") })
+    guard
+      let setup = tokens.indices.first(where: {
+        $0 > 0 && tokens[$0] == "setup"
+          && (tokens[$0 - 1] == "stim" || tokens[$0 - 1].hasSuffix("/stim") || tokens[$0 - 1].hasPrefix("stim@")
+            || tokens[$0 - 1] == "stim-server")  // compat: C7
+      })
     else { throw .notASetupCommand }
     let prefix = "STIM_SETUP_TICKET="
     guard let ticket = tokens[..<setup].first(where: { $0.hasPrefix(prefix) }).map({ String($0.dropFirst(prefix.count)) }),
@@ -69,7 +74,7 @@ public struct SetupRequest: Equatable, Sendable {
   }
 }
 
-/// What `stim-server setup` reported when Desktop approved a request on this machine.
+/// What `stim setup` reported when Desktop approved a request on this machine.
 public struct SetupApprovalResult: Decodable, Equatable, Sendable {
   public struct Grant: Decodable, Equatable, Sendable {
     public struct Client: Decodable, Equatable, Sendable {
@@ -126,7 +131,7 @@ public enum SetupAnswer: Equatable, Sendable {
   }
 }
 
-/// Runs `stim-server setup` for `request` in this machine's own server, which asks each grant through `onProgress`
+/// Runs `stim setup` for `request` in this machine's own server, which asks each grant through `onProgress`
 /// instead of a terminal, until setup ends. Only the connection of the Stim Desktop that started the server may.
 /// Cancelling withdraws the request: setup drops the ticket unless the requesting machine already spent it.
 @MainActor public func runSetupApproval(
@@ -137,7 +142,7 @@ public enum SetupAnswer: Equatable, Sendable {
   guard let client, case .open(let hello) = client.state else {
     throw ServerError(code: "not-connected", message: "Stim Desktop's stim-server is not ready. Try again.")
   }
-  guard client.hasDesktopAuthority, hello.features?.contains("desktop-setup") == true else {
+  guard client.hasDesktopAuthority, hello.host?.owner == "desktop", hello.desktopApi == ServerProtocol.desktopApi else {
     throw ServerError(
       code: "forbidden",
       message:
@@ -200,12 +205,12 @@ public struct ConnectionConfirmation: Equatable, Sendable {
   /// The commands that revoke it, run on the machine `revoke` names.
   public var revokeCommands: [String]
 
-  /// A phone or machine this machine now lets in, with the record ids `stim-server devices revoke` takes here.
+  /// A phone or machine this machine now lets in, with the record ids `stim pairings revoke` takes here.
   public static func incoming(name: String, access: [ConnectionAccess], ids: [String]) -> ConnectionConfirmation {
     ConnectionConfirmation(
       name: name, direction: .usingThisMachine, access: ConnectionAccess.ordered(access),
       revoke: "Revoke it in Settings > Connections > Using this machine, or run on this machine:",
-      revokeCommands: ids.map { "stim-server devices revoke \($0)" })
+      revokeCommands: ids.map { "stim pairings revoke \($0)" })
   }
 
   /// A machine this machine now uses. Removing it here never revokes it there, so the commands run on that machine.
@@ -214,7 +219,7 @@ public struct ConnectionConfirmation: Equatable, Sendable {
       name: name, direction: .thisMachineUses, access: ConnectionAccess.ordered(access),
       revoke:
         "Remove it in Settings > Connections > This machine uses. That forgets it here only; to revoke it on \(name) too, run there:",
-      revokeCommands: ids.map { "stim-server devices revoke \($0)" })
+      revokeCommands: ids.map { "stim pairings revoke \($0)" })
   }
 }
 

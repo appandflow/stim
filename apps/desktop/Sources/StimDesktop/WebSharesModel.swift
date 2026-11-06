@@ -35,12 +35,12 @@ final class WebSharesModel {
 
   static func localServerOffersViewPassword() -> Bool {
     guard let client = ServerSession.shared.client, case .open(let hello) = client.state else { return false }
-    return hello.features?.contains("share-view-password") == true
+    return hello.desktopApi == ServerProtocol.desktopApi
   }
 
   static func localServerStopsOneShare() -> Bool {
     guard let client = ServerSession.shared.client, case .open(let hello) = client.state else { return false }
-    return hello.features?.contains("share-stop-id") == true
+    return hello.desktopApi == ServerProtocol.desktopApi
   }
 
   /// A server that does not serve shares leaves `shares` nil.

@@ -5,7 +5,7 @@ import Testing
 
 @Suite struct PhysicalScreenTests {
   let now = Date(timeIntervalSince1970: 1_800_000_000)
-  let open = ServerLink.open(features: ["physical-ios", "physical-android"], capabilities: ["read", "control"])
+  let open = ServerLink.open(desktopApi: 1, capabilities: ["read", "control"])
 
   func phone(_ platform: String, connection: String = "connected", expiresIn: TimeInterval = 600) throws -> DeviceRef {
     let formatter = ISO8601DateFormatter()
@@ -23,21 +23,10 @@ import Testing
     #expect(
       PhysicalScreen(device: try phone("ios"), link: open, now: now)
         == .stream(control: "stim-server shows an iPhone's screen but does not drive it."))
-    let readOnly = ServerLink.open(features: ["physical-android"], capabilities: ["read"])
+    let readOnly = ServerLink.open(desktopApi: 1, capabilities: ["read"])
     #expect(
       PhysicalScreen(device: try phone("android"), link: readOnly, now: now)
         == .stream(control: "Stim Desktop's stim-server pairing is read only."))
-  }
-
-  @Test func asksForANewerServerWithoutThePlatformsFeature() throws {
-    let update = PhysicalScreen.message(
-      "The stim-server on this port is older than Stim Desktop and cannot show this device's screen. Update or stop it so Stim Desktop starts its own."
-    )
-    let older = ServerLink.open(features: nil, capabilities: ["read", "control"])
-    #expect(PhysicalScreen(device: try phone("android"), link: older, now: now) == update)
-    let iosOnly = ServerLink.open(features: ["physical-ios"], capabilities: ["read", "control"])
-    #expect(PhysicalScreen(device: try phone("android"), link: iosOnly, now: now) == update)
-    #expect(PhysicalScreen(device: try phone("ios"), link: iosOnly, now: now).canControl == false)
   }
 
   @Test func stopsStreamingOnceTheLeaseEndsBeforeStatusDropsTheDevice() throws {
@@ -56,17 +45,12 @@ import Testing
   }
 
   @Test func showsAHostedMacosAppOnlyThroughAServerThatRelaysIt() {
-    let relaying = ServerLink.open(features: ["macos-window", "macos-hosted"], capabilities: ["read", "control"])
+    let relaying = ServerLink.open(desktopApi: 1, capabilities: ["read", "control"])
     #expect(PhysicalScreen(hostedMacosOn: relaying).canControl)
-    let readOnly = ServerLink.open(features: ["macos-hosted"], capabilities: ["read"])
+    let readOnly = ServerLink.open(desktopApi: 1, capabilities: ["read"])
     #expect(
       PhysicalScreen(hostedMacosOn: readOnly) == .stream(control: "Stim Desktop's stim-server pairing is read only."))
-    let older = ServerLink.open(features: ["macos-window"], capabilities: ["read", "control"])
-    #expect(
-      PhysicalScreen(hostedMacosOn: older)
-        == .message(
-          "The stim-server on this port is older than Stim Desktop and cannot show this app's window. Update or stop it so Stim Desktop starts its own."
-        ))
+
   }
 
   func simulator(state: String, host: String? = nil) throws -> DeviceRef {
@@ -77,8 +61,8 @@ import Testing
 
   @Test func aPairedServersOwnSimulatorStreamsThroughItWithControlOnlyFromAControlPairing() throws {
     let booted = try simulator(state: "Booted")
-    let control = ServerLink.open(features: [], capabilities: ["read", "control"])
-    let readOnly = ServerLink.open(features: [], capabilities: ["read"])
+    let control = ServerLink.open(desktopApi: 1, capabilities: ["read", "control"])
+    let readOnly = ServerLink.open(desktopApi: 1, capabilities: ["read"])
     #expect(PhysicalScreen(pairedDevice: booted, server: "floco", link: control, now: now).canControl)
     #expect(
       PhysicalScreen(pairedDevice: booted, server: "floco", link: readOnly, now: now)
@@ -89,7 +73,7 @@ import Testing
   }
 
   @Test func aPairedServersDevicesOfferNoCommandToRunOnThisMac() throws {
-    let control = ServerLink.open(features: ["ios-hosted", "physical-android"], capabilities: ["read", "control"])
+    let control = ServerLink.open(desktopApi: 1, capabilities: ["read", "control"])
     #expect(
       PhysicalScreen(pairedDevice: try simulator(state: "stopped", host: "mini-2:7443"), server: "floco", link: control, now: now)
         == .message("The iOS session on mini-2 stopped."))
@@ -99,9 +83,7 @@ import Testing
     #expect(
       PhysicalScreen(pairedDevice: try phone("android", connection: "disconnected"), server: "floco", link: control, now: now)
         == .message("Not connected to floco."))
-    #expect(
-      PhysicalScreen(pairedDevice: try simulator(state: "ready", host: "mini-2:7443"), server: "floco", link: open, now: now)
-        == .message("Update stim-server on floco to show this device's screen."))
+
   }
 
   @Test func mapsKeysToTheProtocolsText() {
