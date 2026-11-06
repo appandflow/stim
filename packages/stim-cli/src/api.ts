@@ -1,6 +1,6 @@
 import { claimFailure } from './ownership-claim.ts';
 import { randomBytes } from 'node:crypto';
-import { readFileSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { stripVTControlCharacters } from 'node:util';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
@@ -51,6 +51,7 @@ import { operationState } from './engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { refuseRelativeStimPaths } from './workspace/config.ts';
 import { runOperation, type Admission, type ApiOperation } from './run-operation.ts';
+import { STIM_VERSION as version } from './stim-version.ts';
 import { ensureWorkspaceStorageAsync, workspaceLogsDir } from './workspace/paths.ts';
 import { ensureHomeIdentity } from './workspace/home-identity.ts';
 import { decodeSecret } from '@stim-cli/core/noise-session';
@@ -132,8 +133,6 @@ export type {
   StimWorktreeWarmResult,
   StimWorktreeRemoveResult,
 } from './api/types.ts';
-
-const version: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 export class StimError extends Error {
   readonly code: string;
