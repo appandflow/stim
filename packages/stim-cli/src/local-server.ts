@@ -12,7 +12,7 @@ import { pidExists } from './metro.ts';
 
 export type ShareMethod = 'share.start' | 'share.stop' | 'share.list';
 
-type LocalMethod = ShareMethod | 'presence.publish';
+type LocalMethod = ShareMethod;
 
 export type LocalServerAnswer<M extends LocalMethod> = (
   | { result: Methods[M]['result'] }

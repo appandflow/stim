@@ -160,7 +160,7 @@ export async function runHomePasses({
 
 export interface MaintenanceLane {
   /** Starts the slow passes from this tick's passes, unless the last ones still run. */
-  start(passes: HomePasses, act: boolean): void;
+  start(passes: Pick<HomePasses, 'config' | 'measured' | 'operation' | 'workspaces' | 'pressure'>, act: boolean): void;
   running(): boolean;
   /** The actions the slow passes took since the last call. */
   take(): DaemonLadderAction[];
