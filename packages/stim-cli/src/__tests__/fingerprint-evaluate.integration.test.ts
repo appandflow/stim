@@ -54,7 +54,7 @@ function expoApp(files: Record<string, string>, dependencies = ['expo', 'expo-co
     dependencies: Object.fromEntries(dependencies.map((name) => [name, '*'])),
   };
   write(join(root, 'package.json'), JSON.stringify(manifest));
-  write(join(root, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
+  write(join(root, 'pnpm-lock.yaml'), readFileSync(join(MOBILE_MODULES, '..', '..', '..', 'pnpm-lock.yaml'), 'utf8'));
   write(
     join(root, 'app.json'),
     JSON.stringify({ expo: { name: 'fp', slug: 'fp', ios: { config: { usesNonExemptEncryption: false } } } }),

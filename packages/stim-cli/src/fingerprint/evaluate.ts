@@ -26,9 +26,12 @@ import {
   traceReads,
   writeWorkspaceEnv,
   type Derived,
+  type PackageEntry,
   type PartRecord,
+  type Provenance,
   type ReadKind,
 } from './index-store.ts';
+import { lockfileClassifier, type Classifier } from './provenance.ts';
 import { installRoot, nativeDirectory, nativeMode, staticInputs, targetLayout, type StaticTarget } from './inputs.ts';
 import {
   byCodeUnit,
@@ -44,7 +47,7 @@ import {
   type Platform,
   type Uncertain,
 } from './key.ts';
-import { pathForm, walk, within, type Roots } from './walk.ts';
+import { nativeSubset, pathForm, walk, within, type Roots } from './walk.ts';
 
 type PartName = 'config' | 'configEmbedded' | 'expoAutolinking' | 'rnConfig';
 export interface EvalUncertain extends Uncertain {
@@ -239,6 +242,14 @@ function keyedConfig(config: unknown, roots: Roots): string {
   return canonicalJson(normalize(copy, roots, false));
 }
 
+function realOr(path: string): string {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return path;
+  }
+}
+
 function realForm(path: string, roots: Roots): string {
   try {
     return pathForm(realpathSync.native(path), roots);
@@ -419,6 +430,39 @@ function buildEnvNames(
     ].filter((dir): dir is string => Boolean(dir)),
   );
   return { names, scanned, scan };
+}
+
+/**
+ * The identity and provenance of each package a part loaded or the entry points name. A copy the lockfile does not
+ * show as a registry tarball is identified by the digest of its native files instead.
+ */
+function packageIdentities(
+  dirs: Iterable<string>,
+  roots: Roots,
+  session: IndexSession | null,
+): Uncertain | { name: string; version: string; provenance: Provenance; content?: string }[] {
+  let lockfile: Classifier | null = null;
+  const identities: { name: string; version: string; provenance: Provenance; content?: string }[] = [];
+  for (const dir of new Set(dirs)) {
+    const entry: PackageEntry = session?.pkg(dir) ?? { read: { path: dir, kind: 'package' } };
+    if (entry.name === undefined) {
+      const identity = packageIdentity(dir);
+      entry.name = identity?.name ?? null;
+      entry.version = identity?.version ?? '';
+    }
+    if (entry.name === null) continue;
+    const identity = { name: entry.name, version: entry.version ?? '' };
+    entry.provenance ??= (lockfile ??= lockfileClassifier(roots.install).classify)(realOr(dir), identity);
+    if (entry.provenance.mode === 'identity') {
+      identities.push({ ...identity, provenance: entry.provenance });
+      continue;
+    }
+    const walked = walk({ roots, trees: nativeSubset(dir), tracked: null, hashes: session?.hashes });
+    if (isUncertain(walked)) return walked;
+    const content = sha256(canonicalJson(walked.inputs.map((input) => [input.name, input.hash])));
+    identities.push({ ...identity, provenance: entry.provenance, content });
+  }
+  return identities;
 }
 
 async function evaluate(
@@ -680,14 +724,8 @@ async function evaluate(
   }
   if (isUncertain(pathRows)) return pathRows;
   const closure = session ? session.closure(() => entryPoints(root, expo)) : entryPoints(root, expo);
-  const identities = [...new Set([...packages, ...closure.dirs])].flatMap((dir) => {
-    const entry = session?.pkg(dir);
-    if (entry && entry.name !== undefined)
-      return entry.name === null ? [] : [{ name: entry.name, version: entry.version ?? '' }];
-    const identity = packageIdentity(dir);
-    if (entry) Object.assign(entry, { name: identity?.name ?? null, version: identity?.version ?? '' });
-    return identity ? [identity] : [];
-  });
+  const identities = packageIdentities([...packages, ...closure.dirs], roots, session);
+  if (isUncertain(identities)) return identities;
   rows.push(...buildEnv.rows, ...pathRows.inputs, ...packageRows(identities, closure.missing));
   const { home, username } = { home: homedir(), username: userInfo().username };
   const configText = keyedConfig(output.config, roots);
