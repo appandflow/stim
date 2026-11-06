@@ -70,7 +70,9 @@ test('units advance fake deadlines, integration exceptions keep real clocks, and
       integration,
       `test('integration opt-out', () => { vi.useRealTimers(); expect(vi.isFakeTimers()).toBe(false); });`,
     );
-    writeFileSync(lintConfig, readFileSync(join(root, '.oxlintrc.json')));
+    const lintRules = JSON.parse(readFileSync(join(root, '.oxlintrc.json'), 'utf8'));
+    lintRules.jsPlugins = lintRules.jsPlugins.map((plugin) => join(root, plugin));
+    writeFileSync(lintConfig, JSON.stringify(lintRules));
     const lint = spawnSync(
       process.execPath,
       [

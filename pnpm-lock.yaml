@@ -166,16 +166,17 @@ importers:
         version: link:../../../packages/ci
 
   apps/demo-server:
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: 5.20261001.1
-        version: 5.20261001.1
+    dependencies:
       '@noble/curves':
         specifier: 2.4.0
         version: 2.4.0
       '@stim-cli/core':
         specifier: workspace:^
         version: link:../../packages/core
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 5.20261001.1
+        version: 5.20261001.1
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1

@@ -103,7 +103,9 @@ export type ParsedFirstMessage =
 /** Splits the first WebSocket message into its prefix and Noise message 1. */
 export function parseFirstMessage(data: Uint8Array): ParsedFirstMessage {
   const bytes = Buffer.from(data);
+  // compat C11 permanent
   if (bytes.length < 1 || bytes[0] !== STIM_PROTOCOL_VERSION) return { error: 'protocol-unsupported' };
+  // compat end
   if (bytes.length > MAX_FIRST_MESSAGE_BYTES) return { error: 'handshake-failed' };
   if (bytes[1] === MODE_RETURNING)
     return { mode: MODE_RETURNING, prefix: bytes.subarray(0, 2), message: bytes.subarray(2) };
@@ -514,6 +516,7 @@ export function acceptNoise(
     };
     const timer = setTimeout(() => refuse('timeout'), options.timeoutMs);
     raw.on('close', onClose);
+    // compat C11 permanent
     if (!isBinary) {
       const bytes = bytesOf(first);
       let id: unknown = null;
@@ -529,6 +532,7 @@ export function acceptNoise(
       if (raw.readyState === 1) raw.send(JSON.stringify(reply));
       return refuse('protocol-unsupported', CLOSE_BAD_REQUEST);
     }
+    // compat end
     const message = parseFirstMessage(bytesOf(first));
     if ('error' in message)
       return refuse(message.error, message.error === 'protocol-unsupported' ? CLOSE_BAD_REQUEST : CLOSE_REFUSED);

@@ -23,7 +23,8 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
-      - 'scripts/type-assertion*'
+      - 'scripts/ratchet*'
+      - 'scripts/oxlint/**'
   pull_request:
     paths:
       - 'apps/mobile/**'
@@ -34,7 +35,8 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
-      - 'scripts/type-assertion*'
+      - 'scripts/ratchet*'
+      - 'scripts/oxlint/**'
 
 concurrency:
   group: mobile-${{ github.workflow }}-${{ github.ref }}${{ inputs.full && '-full' || '' }}

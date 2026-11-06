@@ -2,7 +2,8 @@
   ".github/actions/stim-ci": {
     "src": {
       "as": 2,
-      "nonNull": 0
+      "nonNull": 0,
+      "refusalRemedy": 0
     },
     "test": {
       "as": 2,
@@ -12,7 +13,8 @@
   "apps/demo-server": {
     "src": {
       "as": 9,
-      "nonNull": 0
+      "nonNull": 0,
+      "refusalRemedy": 0
     },
     "test": {
       "as": 7,
@@ -22,7 +24,8 @@
   "apps/mobile": {
     "src": {
       "as": 66,
-      "nonNull": 81
+      "nonNull": 81,
+      "refusalRemedy": 0
     },
     "test": {
       "as": 156,
@@ -32,7 +35,8 @@
   "packages/agent-driver": {
     "src": {
       "as": 2,
-      "nonNull": 0
+      "nonNull": 0,
+      "refusalRemedy": 0
     },
     "test": {
       "as": 0,
@@ -42,7 +46,8 @@
   "packages/agent-driver-agent-device": {
     "src": {
       "as": 10,
-      "nonNull": 8
+      "nonNull": 8,
+      "refusalRemedy": 0
     },
     "test": {
       "as": 14,
@@ -52,7 +57,8 @@
   "packages/cache": {
     "src": {
       "as": 16,
-      "nonNull": 2
+      "nonNull": 2,
+      "refusalRemedy": 0
     },
     "test": {
       "as": 0,
@@ -62,7 +68,8 @@
   "packages/cache-s3": {
     "src": {
       "as": 0,
-      "nonNull": 0
+      "nonNull": 0,
+      "refusalRemedy": 0
     },
     "test": {
       "as": 0,
@@ -72,7 +79,8 @@
   "packages/ci": {
     "src": {
       "as": 8,
-      "nonNull": 5
+      "nonNull": 5,
+      "refusalRemedy": 3
     },
     "test": {
       "as": 2,
@@ -82,7 +90,8 @@
   "packages/core": {
     "src": {
       "as": 177,
-      "nonNull": 49
+      "nonNull": 49,
+      "refusalRemedy": 1
     },
     "test": {
       "as": 29,
@@ -92,7 +101,8 @@
   "packages/expo-build-cache": {
     "src": {
       "as": 1,
-      "nonNull": 4
+      "nonNull": 4,
+      "refusalRemedy": 0
     },
     "test": {
       "as": 0,
@@ -102,7 +112,8 @@
   "packages/metro": {
     "src": {
       "as": 5,
-      "nonNull": 0
+      "nonNull": 0,
+      "refusalRemedy": 0
     },
     "test": {
       "as": 4,
@@ -112,7 +123,8 @@
   "packages/server": {
     "src": {
       "as": 308,
-      "nonNull": 118
+      "nonNull": 118,
+      "refusalRemedy": 14
     },
     "test": {
       "as": 293,
@@ -122,7 +134,8 @@
   "packages/stim-cli": {
     "src": {
       "as": 828,
-      "nonNull": 338
+      "nonNull": 338,
+      "refusalRemedy": 18
     },
     "test": {
       "as": 444,
@@ -132,7 +145,8 @@
   "packages/transport": {
     "src": {
       "as": 0,
-      "nonNull": 0
+      "nonNull": 0,
+      "refusalRemedy": 0
     },
     "test": {
       "as": 0,
@@ -142,7 +156,8 @@
   "packages/transport-local": {
     "src": {
       "as": 0,
-      "nonNull": 0
+      "nonNull": 0,
+      "refusalRemedy": 0
     },
     "test": {
       "as": 0,
@@ -152,7 +167,8 @@
   "packages/transport-tailscale": {
     "src": {
       "as": 1,
-      "nonNull": 3
+      "nonNull": 3,
+      "refusalRemedy": 0
     },
     "test": {
       "as": 0,
