@@ -109,12 +109,8 @@ final class BuildMachinesModel {
 
   static func currentLocalStim() async -> LocalStim? {
     guard let client = ServerSession.shared.client, case .open(let hello) = client.state else { return nil }
-    let server = await ServerController.shared.cli()
-    let script = server.bundled?.script
-    var adopted = false
-    if case .running(_, owned: false) = ServerController.shared.state { adopted = true }
-    return LocalStim(
-      version: hello.server.version, isRelease: adopted || (script.map(LocalStim.isInstalledPackage) ?? false))
+    let engine = EngineFiles.pointer(ServerController.shared.engineRoot).value
+    return LocalStim(version: hello.server.version, isRelease: engine.map(LocalStim.isRelease) ?? false)
   }
 
   func install(for status: BuildMachineStatus) -> StimInstall? {

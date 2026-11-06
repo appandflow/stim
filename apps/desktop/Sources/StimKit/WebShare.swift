@@ -130,20 +130,3 @@ public struct WebShareOptions: Equatable, Sendable {
     return params
   }
 }
-
-/// The confirmation Stim Desktop shows before it quits while its own stim-server holds live web shares.
-public struct WebShareQuitPrompt: Equatable, Sendable {
-  public var title: String
-  public var lines: [String]
-
-  /// Nil when no share is live. `name` gives a workspace's display name.
-  public init?(shares: [WebShare], now: Date = Date(), name: (String) -> String) {
-    guard !shares.isEmpty else { return nil }
-    title = shares.count == 1 ? "Quitting ends 1 web share." : "Quitting ends \(shares.count) web shares."
-    lines = shares.map {
-      "\(name($0.workspace)), \($0.platformLabel): \($0.accessLabel.lowercased()), \($0.viewersLabel), \($0.timeLeft(now: now))"
-    }
-  }
-
-  public static let detail = "Viewers are cut off and the links stop working. Stim Desktop runs the server that holds them."
-}

@@ -92,20 +92,6 @@ final class WebSharesModel {
     }
   }
 
-  /// The shares live now, or none when the server does not answer within `timeout`: a quit never waits on a dead server.
-  func liveShares(within timeout: Duration) async -> [WebShare] {
-    await withTaskGroup(of: [WebShare]?.self) { group in
-      group.addTask { @MainActor in try? await self.list() }
-      group.addTask {
-        try? await Task.sleep(for: timeout)
-        return nil
-      }
-      let first = await group.next() ?? nil
-      group.cancelAll()
-      return first ?? []
-    }
-  }
-
   private func list() async throws -> [WebShare] {
     let result = try await request("share.list", [:])
     return try decodeReporting(WebSharesPayload.self, from: result, source: .server).shares

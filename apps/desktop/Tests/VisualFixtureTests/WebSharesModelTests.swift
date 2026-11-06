@@ -65,17 +65,11 @@ final class WebSharesModelTests: XCTestCase {
     XCTAssertEqual(calls, [["workspace": .string("/w"), "id": .string("w1")], ["workspace": .string("/w")]])
   }
 
-  @MainActor func testAnOldServerLeavesNoShareListAndAnAnswerlessOneIsNoShares() async throws {
+  @MainActor func testAnOldServerLeavesNoShareList() async throws {
     let old = WebSharesModel(toasts: ToastCenter(voiceOver: false)) { _, _ in
       throw ServerError(code: "unknown-method", message: "No")
     }
     await old.refresh()
     XCTAssertNil(old.shares)
-    let silent = WebSharesModel(toasts: ToastCenter(voiceOver: false)) { _, _ in
-      try await Task.sleep(for: .seconds(30))
-      return .null
-    }
-    let live = await silent.liveShares(within: .milliseconds(50))
-    XCTAssertTrue(live.isEmpty)
   }
 }

@@ -1,8 +1,7 @@
 import Foundation
 
-/// The environment Stim Desktop runs Stim with. It never runs a login shell when the app carries the bundled
-/// server: Stim's own toolchain discovery, the one stim-server uses, fills in `PATH`, `ANDROID_HOME` and
-/// `JAVA_HOME`, and `STIM_HOME` and other variables come from Settings.
+/// The environment Stim Desktop runs external tools and the engine with: the login shell's, read once, with
+/// `STIM_HOME` and other variables from Settings. stimd discovers the toolchain for the commands it runs itself.
 public enum Toolchain {
   /// `KEY=VALUE` lines from the environment-overrides setting. Blank lines and lines starting with `#` are skipped,
   /// as is a line without `=` or with an invalid name.
@@ -33,36 +32,9 @@ public enum Toolchain {
     return environment
   }
 
-  /// `base` with the toolchain the bundled Node's `discoverToolchain` finds, or nil when it fails. The bundled Node's
-  /// own directory is left off `PATH`, so Desktop's Node checks see only the user's Node.
-  public static func discover(base: [String: String], bundled: BundledServer) async -> [String: String]? {
-    let script =
-      "import { discoverToolchain } from '@stim-cli/core/toolchain';"
-      + "process.stdout.write(JSON.stringify(discoverToolchain(process.env, undefined, { runningNode: false }).env));"
-    var request = ProcessRequest(
-      bundled.node, ["--input-type=module", "-e", script], cwd: bundled.root, environment: base, timeout: 5)
-    request.captureStderr = true
-    guard let result = try? await request.run(), result.succeeded,
-      let environment = try? JSONDecoder().decode([String: String].self, from: result.stdout)
-    else { return nil }
-    return environment
-  }
-
-  /// The environment for Stim commands: discovery through the bundled server's Node, or, in a build without it,
-  /// the login shell's environment with Settings applied on top.
-  public static func environment(
-    launch: [String: String], stimHome: String?, overrides: String?, bundled: BundledServer? = BundledServer.inApp()
-  ) async -> [String: String] {
+  /// The login shell's environment with Settings applied on top, read once at launch.
+  public static func environment(launch: [String: String], stimHome: String?, overrides: String?) async -> [String: String] {
     let base = settingsEnvironment(launch: launch, stimHome: stimHome, overrides: overrides)
-    if let bundled, let discovered = await discover(base: base, bundled: bundled) {
-      await LaunchMilestones.reach("toolchain-environment")
-      return discovered
-    }
-    DebugLog.warning(
-      .app,
-      bundled == nil
-        ? "this build carries no bundled stim-server, so the environment comes from the login shell"
-        : "the bundled toolchain discovery failed, so the environment comes from the login shell")
     let shell = await LoginShell.environment() ?? LoginShell.fallback(launch)
     await LaunchMilestones.reach("login-environment")
     var environment = shell

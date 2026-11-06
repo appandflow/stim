@@ -2,6 +2,8 @@ import AppKit
 import Foundation
 import StimKit
 
+/// The Stim home's stimd: found through `run/stimd.json`, or started from the machine's engine when none runs. Desktop
+/// never stops it; stimd serves the CLI too and exits on its own idle clock.
 @MainActor
 final class ServerController: ObservableObject {
   enum State: Equatable {
@@ -15,8 +17,8 @@ final class ServerController: ObservableObject {
       switch self {
       case .off: "off"
       case .starting: "starting"
-      case .running(_, let owned): "running(\(owned ? "started by Desktop" : "adopted"))"
-      case .notReady(let startup, let owned): "notReady(\(startup), \(owned ? "started by Desktop" : "adopted"))"
+      case .running(_, let owned): "running(\(owned ? "started by Desktop" : "found"))"
+      case .notReady(let startup, let owned): "notReady(\(startup), \(owned ? "started by Desktop" : "found"))"
       case .failed(let message): "failed(\(message))"
       }
     }
@@ -38,45 +40,29 @@ final class ServerController: ObservableObject {
       case .failed: "failed"
       }
     }
+  }
 
-    init(probe: ServerHealthProbe, owned: Bool, resolvedHome: String, port: Int) {
-      switch probe {
-      case .notReady(let startup, let stimHome):
-        if !owned, let stimHome,
-          let failure = StimHome.adoptionFailure(serverHome: stimHome, resolved: resolvedHome, port: port)
-        {
-          self = .failed(failure)
-        } else {
-          self = .notReady(startup, owned: owned)
-        }
-      case .ready(let health):
-        if !owned,
-          let failure = StimHome.adoptionFailure(serverHome: health.stimHome, resolved: resolvedHome, port: port)
-        {
-          self = .failed(failure)
-        } else {
-          self = .running(health, owned: owned)
-        }
+  /// What the start loop does after a poll of `run/stimd.json`.
+  enum StartupAction: Equatable {
+    case use(StimdRecord)
+    case wait
+    /// A record Desktop cannot read: `text` says to update Desktop.
+    case refuse(String)
+    case fail
+
+    static func decide(_ read: EngineRead<StimdRecord>, alive: (StimdRecord) -> Bool, childRunning: Bool, deadlinePassed: Bool)
+      -> StartupAction
+    {
+      switch read {
+      case .found(let record) where alive(record): return .use(record)
+      case .unknownFormat(let text): return .refuse(text)
+      case .found, .missing, .unreadable: return childRunning && !deadlinePassed ? .wait : .fail
       }
     }
   }
 
   static let shared = ServerController()
   static let startTimeout: TimeInterval = 15
-
-  enum StartupAction: Equatable {
-    case retry
-    case handOver
-    case fail
-
-    init(lastAnswer: ServerHealthProbe?, deadlinePassed: Bool) {
-      switch lastAnswer {
-      case .ready: self = .handOver
-      case .notReady: self = deadlinePassed ? .handOver : .retry
-      case nil: self = deadlinePassed ? .fail : .retry
-      }
-    }
-  }
 
   @Published private(set) var state = State.off {
     didSet {
@@ -87,22 +73,15 @@ final class ServerController: ObservableObject {
       if state.kind != oldValue.kind {
         Diagnostics.shared.breadcrumb("server", "state \(state.kind)")
         Diagnostics.shared.tag("server_state", state.kind)
-        if case .failed = state { Diagnostics.shared.report(.server(failure ?? .adoptionHomeMismatch)) }
+        if case .failed = state { Diagnostics.shared.report(.server(failure ?? .exited)) }
       }
       if case .running = state {
         if case .running = oldValue {} else { reloadDevices() }
       } else {
         hasDeviceList = false
       }
-      syncAdoption()
     }
   }
-  /// True while `state` comes from a server adopted, or started from the bundle, before the login environment
-  /// arrived; see `ServerAdoption`.
-  @Published private(set) var provisional = false {
-    didSet { syncAdoption() }
-  }
-  let adoption = ServerAdoptionGate()
   @Published private(set) var devices: [PairedDevice] = []
   private var hasDeviceList = false
   @Published private(set) var devicesError: String?
@@ -111,39 +90,27 @@ final class ServerController: ObservableObject {
   @Published private(set) var settingUpConnection = false
   @Published private(set) var connectionError: String?
   @Published private(set) var connectionRefusal: String?
+  /// What starting needs from the engine store, from the last start.
+  @Published private(set) var engine: EngineNeed?
+  /// What the start loop is doing while it installs or updates the engine.
+  @Published private(set) var startDetail: String?
+  /// The running stimd's record, which names the socket Desktop connects to.
+  @Published private(set) var record: StimdRecord?
+  /// The loopback port of stimd's network listener, once `net.ensure` answered.
+  @Published private(set) var netPort: Int?
   var reconnect: (() -> Void)?
 
   private var environment: Task<[String: String], Never>?
-  private var resolvedEnvironment: [String: String]?
-  private var provisionalHome = StimHome.path(environment: [:])
   /// The launch environment with the Settings Stim home and overrides, read once at launch like the CLI's.
   private var settingsEnvironment = ProcessInfo.processInfo.environment
   private var process: Process?
-  private var exiting: Process?
-  private var output: [String] = []
   private var generation = 0
   private var devicesEpoch = 0
-  private var missedProbes = 0
-  private var portHeldByStranger = false
-  private var startedLoopbackOnly = true
   private var failedAt: Date?
-  /// Why the next `.failed` state happens; nil is the adoption check in `State.init(probe:owned:resolvedHome:port:)`.
   private var failureKind: ServerFailureKind?
   private var retriesFailure = true
+  private var ensuringNet = false
   static let retryAfter: TimeInterval = 30
-  private var bootstrap: DesktopBootstrapKey?
-  private var automaticPort: Int?
-
-  var desktopBootstrap: DesktopBootstrapKey? {
-    guard case .running(_, owned: true) = state, process?.isRunning == true else { return nil }
-    return bootstrap
-  }
-
-  /// Whether Desktop started the server it is running, which quitting stops. An adopted server keeps running.
-  var runsOwnedServer: Bool {
-    guard case .running(_, owned: true) = state else { return false }
-    return process?.isRunning == true
-  }
 
   static let devicesInterval: Duration = .seconds(10)
   static let inactiveDevicesInterval: Duration = .seconds(60)
@@ -152,59 +119,13 @@ final class ServerController: ObservableObject {
     active: Self.devicesInterval, inactive: Self.inactiveDevicesInterval, isActive: { NSApplication.shared.isActive },
     tick: { [weak self] in
       guard let self else { return }
-      applyServingMode()
       retryFailure()
       guard isResponding else { return }
       refresh()
     })
 
-  var port: Int {
-    if let automaticPort { return automaticPort }
-    let port = UserDefaults.standard.integer(forKey: AppPreferences.Key.stimServerPort)
-    return (1...65535).contains(port) ? port : StimServerCLI.defaultPort
-  }
-
-  static func needsAutomaticPort(probe: ServerHealthProbe, resolvedHome: String, loopbackOnly: Bool, explicitPort: Bool)
-    -> Bool
-  {
-    guard loopbackOnly, !explicitPort else { return false }
-    let serverHome: String?
-    switch probe {
-    case .ready(let health): serverHome = health.stimHome
-    case .notReady(_, let home): serverHome = home
-    }
-    return serverHome.map { !StimHome.adopts(serverHome: $0, resolved: resolvedHome) } ?? false
-  }
-
-  static func portHeldReason(port: Int) -> String {
-    "Port \(port) is held by a program that does not answer as a stim-server, such as a stim-server too busy to reply. Stop it, or start Stim Desktop with -stimServerPort <port> to use another port."
-  }
-
-  static var serviceInstalled: Bool {
-    let home = ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory()
-    return FileManager.default.fileExists(atPath: "\(home)/Library/LaunchAgents/dev.stim.server.plist")
-  }
-
-  static func adoptedServerSilentReason(port: Int, serviceInstalled: Bool) -> String {
-    let server =
-      serviceInstalled
-      ? "The stim-server on port \(port), the dev.stim.server LaunchAgent,"
-      : "The stim-server on port \(port), which Stim Desktop did not start,"
-    let remedy =
-      serviceInstalled
-      ? "Check it with `stim service status`."
-      : "Start it again."
-    return
-      "\(server) is not answering. Stim Desktop waits for it and does not start its own server on that port. \(remedy) To use Desktop's own server instead, stop it and reopen Stim Desktop"
-  }
-
-  static func announcedLoopbackPort(_ line: OutputLine) -> Int? {
-    let prefix = "listening on ws://127.0.0.1:"
-    guard line.channel == .stdout, line.text.hasPrefix(prefix),
-      let port = Int(line.text.dropFirst(prefix.count)), (1...65535).contains(port)
-    else { return nil }
-    return port
-  }
+  var stimHome: String { StimHome.path(environment: settingsEnvironment) }
+  var engineRoot: EngineRoot { EngineRoot(environment: settingsEnvironment) }
 
   var phones: [PairedDevice] { devices.filter(\.isPhone) }
 
@@ -221,7 +142,18 @@ final class ServerController: ObservableObject {
   }
 
   /// Why the server is unusable, or nil while it starts, runs with an open connection or waits for its Stim home.
-  var problem: String? { Self.problem(state: state, connectionRefusal: connectionRefusal) }
+  var problem: String? { Self.problem(state: state, connectionRefusal: connectionRefusal) ?? engineNotice }
+
+  /// What to tell the person about an engine older than this Desktop that Desktop does not move forward itself.
+  var engineNotice: String? {
+    switch engine {
+    case .pinned(_, let text): return text
+    case .moveForward(let engine, automatic: false):
+      return
+        "The Stim engine \(engine.version) is older than this Stim Desktop needs (\(EngineInstall.wanted?.description ?? "")): run stim engine update, or Update Engine."
+    case .ready, .install, .moveForward(_, automatic: true), .unreadable, nil: return nil
+    }
+  }
 
   static func problem(state: State, connectionRefusal: String?) -> String? {
     switch state {
@@ -232,8 +164,8 @@ final class ServerController: ObservableObject {
     }
   }
 
-  /// A failure that can clear by itself, such as a port another program held for a moment, is retried from the
-  /// poller after `retryAfter` seconds. A server too old for `--loopback-only` is not.
+  /// A failure that can clear by itself, such as an engine download that lost the network, is retried from the
+  /// poller after `retryAfter` seconds. A file this Desktop cannot read is not.
   private func retryFailure() {
     guard retriesFailure, case .failed = state, let failedAt, Date().timeIntervalSince(failedAt) >= Self.retryAfter else {
       return
@@ -242,7 +174,9 @@ final class ServerController: ObservableObject {
   }
 
   func retry() {
-    if case .failed = state {
+    if engineNotice != nil, isRunning {
+      Task { await updateEngine() }
+    } else if case .failed = state {
       start()
     } else if connectionRefusal != nil {
       reconnect?()
@@ -255,22 +189,25 @@ final class ServerController: ObservableObject {
     if connectionRefusal != message { connectionRefusal = message }
   }
 
-  private var wantsLoopbackOnly: Bool { !UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) }
+  /// Asks stimd for its network listener when the session opens and phones may connect.
+  func connectionOpened() {
+    if UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) { Task { _ = await ensureNet() } }
+  }
 
   func configure(environment: Task<[String: String], Never>, settingsEnvironment: [String: String]) {
     self.environment = environment
     self.settingsEnvironment = settingsEnvironment
-    provisionalHome = StimHome.path(environment: settingsEnvironment)
-    Task {
-      resolvedEnvironment = await environment.value
-      await verifyAdoption()
-    }
     start()
     devicesPoller.start()
     NotificationCenter.default.addObserver(
       forName: UserDefaults.didChangeNotification, object: nil, queue: .main
     ) { [weak self] _ in
-      MainActor.assumeIsolated { self?.applyServingMode() }
+      MainActor.assumeIsolated {
+        guard let self, UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones), self.netPort == nil,
+          ServerSession.shared.isOpen
+        else { return }
+        Task { _ = await self.ensureNet() }
+      }
     }
     NotificationCenter.default.addObserver(
       forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
@@ -279,14 +216,11 @@ final class ServerController: ObservableObject {
     }
   }
 
-  /// Waits for the login environment and for a provisional adoption to be confirmed or dropped.
+  /// The engine CLI with the login environment and the Stim home Desktop runs.
   func cli() async -> StimServerCLI {
     var environment = await environment?.value ?? ProcessInfo.processInfo.environment
-    repeat { await adoption.settled() } while adoption.isProvisional
-    if case .running(let health, _) = state, adoption.allowsWrites(home: health.stimHome) {
-      environment["STIM_HOME"] = health.stimHome
-    }
-    return StimServerCLI(environment: environment)
+    if let home = settingsEnvironment["STIM_HOME"] { environment["STIM_HOME"] = home }
+    return StimServerCLI(environment: environment, engine: EngineLaunch.resolve(environment: environment))
   }
 
   func start() {
@@ -296,170 +230,188 @@ final class ServerController: ObservableObject {
     }
     generation += 1
     let current = generation
-    bootstrap = nil
-    provisional = false
     state = .starting
     retriesFailure = true
-    missedProbes = 0
-    portHeldByStranger = false
-    automaticPort = nil
+    netPort = nil
+    record = nil
     Task {
-      await waitForExiting()
-      guard current == generation else { return }
-      var automaticPortRefusal: State?
-      let probe = await StimServerCLI.health(port: port)
-      if probe == nil, await StimServerCLI.portIsHeld(port) {
-        guard current == generation else { return }
-        portHeldByStranger = true
-        state = .notReady(.degraded(Self.portHeldReason(port: port)), owned: false)
-        return
-      }
-      if let probe {
-        guard current == generation else { return }
-        if resolvedEnvironment == nil, let health = ServerAdoption.provisional(probe, provisionalHome: provisionalHome) {
-          provisional = true
-          state = .running(health, owned: false)
-          return
-        }
-        let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
-        guard current == generation else { return }
-        if Self.needsAutomaticPort(
-          probe: probe, resolvedHome: resolved, loopbackOnly: wantsLoopbackOnly,
-          explicitPort: UserDefaults.standard.object(forKey: AppPreferences.Key.stimServerPort) != nil)
-        {
-          automaticPortRefusal = State(probe: probe, owned: false, resolvedHome: resolved, port: port)
-          automaticPort = 0
-        } else {
-          state = State(probe: probe, owned: false, resolvedHome: resolved, port: port)
-          return
-        }
-      }
-      let cli: StimServerCLI
-      if let bundled = bundledCLI() {
-        cli = bundled
-        bootstrap = DesktopBootstrapKey()
-      } else {
-        cli = await self.cli()
-      }
-      guard current == generation else { return }
-      output = []
-      startedLoopbackOnly = wantsLoopbackOnly
-      if let automaticPortRefusal,
-        !startedLoopbackOnly || UserDefaults.standard.object(forKey: AppPreferences.Key.stimServerPort) != nil
+      switch StartupAction.decide(
+        EngineFiles.stimd(stimHome: stimHome), alive: EngineFiles.isAlive, childRunning: false, deadlinePassed: false)
       {
-        automaticPort = nil
-        bootstrap = nil
-        state = automaticPortRefusal
-        return
+      case .use(let record): return use(record, owned: false)
+      case .refuse(let text): return refuse(text)
+      case .wait, .fail: break
       }
+      guard let launch = await prepareEngine(generation: current), current == generation else { return }
+      let command = launch.stimd(engineRoot)
       do {
-        process = try cli.serve(
-          port: port,
-          loopbackOnly: startedLoopbackOnly,
-          bootstrap: bootstrap,
-          onLine: { line in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self.record(line, generation: current) } }
-          },
-          onExit: { status in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self.exited(status, generation: current) } }
-          })
+        process = try Self.launch(command, environment: launchEnvironment) { status in
+          DispatchQueue.main.async { MainActor.assumeIsolated { self.exited(status, generation: current) } }
+        }
       } catch {
-        bootstrap = nil
         failureKind = .launchFailed
-        state = .failed(error.localizedDescription)
+        state = .failed("Could not start stimd: \(error.localizedDescription)")
         return
       }
       let deadline = Date().addingTimeInterval(Self.startTimeout)
-      var lastAnswer: ServerHealthProbe?
-      var action = StartupAction.retry
-      while action == .retry {
-        try? await Task.sleep(for: .milliseconds(250))
-        guard current == generation, process != nil else { return }
-        let probe = await StimServerCLI.health(port: port)
-        guard current == generation, process != nil else { return }
-        if let probe {
-          lastAnswer = probe
-          state = State(probe: probe, owned: true, resolvedHome: StimHome.path(environment: cli.environment), port: port)
+      while current == generation {
+        let action = StartupAction.decide(
+          EngineFiles.stimd(stimHome: stimHome), alive: EngineFiles.isAlive, childRunning: process?.isRunning == true,
+          deadlinePassed: Date() >= deadline)
+        switch action {
+        case .use(let record):
+          use(record, owned: record.pid == process?.processIdentifier)
+          return
+        case .refuse(let text):
+          return refuse(text)
+        case .fail:
+          failureKind = .noAnswer
+          state = .failed(
+            "stimd did not write \(abbreviatingHome(EngineFiles.runDirectory(stimHome: stimHome)))/stimd.json within \(Int(Self.startTimeout)) seconds.\(Self.logTail())"
+          )
+          return
+        case .wait:
+          try? await Task.sleep(for: .milliseconds(250))
         }
-        action = StartupAction(lastAnswer: lastAnswer, deadlinePassed: Date() >= deadline)
       }
-      guard current == generation, process != nil, action == .fail else { return }
-      generation += 1
-      terminate()
-      failureKind = .noAnswer
-      state = .failed("stim-server did not answer on port \(port) within \(Int(Self.startTimeout)) seconds.")
     }
+  }
+
+  /// The environment stimd starts with: the launch environment with the Settings Stim home and overrides, so it waits
+  /// for nothing. It discovers the toolchain for the commands it runs itself.
+  private var launchEnvironment: [String: String] {
+    var environment = settingsEnvironment
+    if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
+    return environment
+  }
+
+  /// Installs the engine on a Mac without one, with the managed Node runtime when the Mac has no Node 22.12 or later,
+  /// and moves an older one forward when Desktop installed it. Nil, with a failed state, when it cannot.
+  private func prepareEngine(generation current: Int) async -> EngineLaunch? {
+    if let development = EngineLaunch.resolve(environment: settingsEnvironment), development.isDevelopment {
+      return development
+    }
+    let root = engineRoot
+    let need = EngineNeed.decide(
+      pointer: EngineFiles.pointer(root), wanted: EngineInstall.wanted,
+      installedByDesktop: UserDefaults.standard.bool(forKey: AppPreferences.Key.engineInstalledByDesktop))
+    engine = need
+    switch need {
+    case .unreadable(let text):
+      refuse(text)
+      return nil
+    case .install(let version):
+      guard await installEngine(version: version, generation: current) else { return nil }
+    case .moveForward(_, automatic: true):
+      await updateEngine(generation: current)
+    case .ready(let pointer), .moveForward(let pointer, automatic: false), .pinned(let pointer, _):
+      ManagedNode.prune(root, keep: pointer.node.map(\.path))
+    }
+    guard current == generation else { return nil }
+    if case .install = need {
+      engine = EngineNeed.decide(
+        pointer: EngineFiles.pointer(root), wanted: EngineInstall.wanted, installedByDesktop: true)
+    }
+    guard FileManager.default.isExecutableFile(atPath: root.stimd) else {
+      failureKind = .launchFailed
+      state = .failed(
+        "The Stim engine at \(abbreviatingHome(root.path)) has no bin/stimd. Run stim engine update, then Try Again.")
+      return nil
+    }
+    return .installed(root)
+  }
+
+  private func installEngine(version: String, generation current: Int) async -> Bool {
+    let environment = await environment?.value ?? ProcessInfo.processInfo.environment
+    let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
+    let root = engineRoot
+    var node: NodeRuntime
+    switch NodeChoice.decide(
+      system: await NodeRuntime.probe(environment: environment, home: home), managed: ManagedNode.installed(root))
+    {
+    case .use(let found): node = found
+    case .download:
+      startDetail = "Installing Node.js \(ManagedNode.version) for the Stim engine"
+      do {
+        node = try await ManagedNode.install(root)
+      } catch {
+        return fail(.engineUnavailable, error.localizedDescription, generation: current)
+      }
+    }
+    guard current == generation else { return false }
+    startDetail = "Installing the Stim engine \(version)"
+    defer { startDetail = nil }
+    var install = EngineInstall.installRequest(version: version, node: node, environment: environment, home: home)
+    install.environment?["STIM_ENGINE_ROOT"] = settingsEnvironment["STIM_ENGINE_ROOT"]
+    guard let result = try? await install.run(), result.succeeded else {
+      return fail(.engineUnavailable, "Could not install the Stim engine \(version) with npx.", generation: current)
+    }
+    UserDefaults.standard.set(true, forKey: AppPreferences.Key.engineInstalledByDesktop)
+    return current == generation
+  }
+
+  /// `stim engine update` through the engine; a failure leaves the older engine running.
+  func updateEngine(generation current: Int? = nil) async {
+    let environment = await environment?.value ?? ProcessInfo.processInfo.environment
+    startDetail = "Updating the Stim engine"
+    defer { startDetail = nil }
+    let update = EngineInstall.updateRequest(engineRoot, environment: environment, home: NSHomeDirectory())
+    let result = try? await update.run()
+    if result?.succeeded != true { DebugLog.warning(.server, "stim engine update failed: \(result?.stderrText ?? "")") }
+    guard current == nil || current == generation else { return }
+    engine = EngineNeed.decide(
+      pointer: EngineFiles.pointer(engineRoot), wanted: EngineInstall.wanted,
+      installedByDesktop: UserDefaults.standard.bool(forKey: AppPreferences.Key.engineInstalledByDesktop))
+  }
+
+  private func fail(_ kind: ServerFailureKind, _ message: String, generation current: Int) -> Bool {
+    startDetail = nil
+    guard current == generation else { return false }
+    failureKind = kind
+    state = .failed(message)
+    return false
+  }
+
+  private func refuse(_ text: String) {
+    retriesFailure = false
+    failureKind = .unknownFormat
+    state = .failed(text)
+  }
+
+  private func use(_ record: StimdRecord, owned: Bool) {
+    self.record = record
+    state = .running(ServerHealth(record: record, stimHome: stimHome), owned: owned)
   }
 
   func stop() {
     DebugLog.info(.server, "stop requested")
     generation += 1
-    terminate()
     state = .off
-    provisional = false
   }
 
-  /// The bundled server, started with the launch environment and the Stim home and overrides from Settings, so it
-  /// waits for nothing. It discovers the toolchain for the commands it runs itself.
-  private func bundledCLI() -> StimServerCLI? {
-    guard let bundled = BundledServer.inApp()
-    else { return nil }
-    var environment = settingsEnvironment
-    if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
-    return StimServerCLI(environment: environment, bundled: bundled)
-  }
-
-  /// Confirms or drops a provisional adoption once the login environment has arrived. A dropped server is looked
-  /// for again from the start, now with the login environment's Stim home.
-  private func verifyAdoption() async {
-    guard provisional, case .running(let adopted, owned: false) = state, let resolved = resolvedEnvironment else { return }
-    let current = generation
-    let probe = await StimServerCLI.health(port: port)
-    guard current == generation, provisional else { return }
-    if let health = ServerAdoption.confirmed(
-      adopted: adopted, probe: probe, loginHome: StimHome.path(environment: resolved))
-    {
-      state = .running(health, owned: false)
-      provisional = false
-      LaunchMilestones.reach("server-adoption-verified")
-      return
+  /// Asks stimd to start its network listener, which pairing, phones, shares and other machines need, and reads its
+  /// health. Returns the listener's port, or nil when stimd refused or Desktop has no open connection.
+  func ensureNet() async -> Int? {
+    if let netPort { return netPort }
+    guard !ensuringNet, let client = ServerSession.shared.client, client.isOpen else { return nil }
+    ensuringNet = true
+    defer { ensuringNet = false }
+    do {
+      let result = try await client.request("net.ensure", [:])
+      guard case .object(let fields) = result, case .number(let port)? = fields["port"], (1...65535).contains(Int(port))
+      else { return nil }
+      netPort = Int(port)
+      connectionError = nil
+      refresh()
+      return netPort
+    } catch {
+      connectionError = error.localizedDescription
+      return nil
     }
-    DebugLog.warning(.server, "dropped the provisionally adopted stim-server for \(adopted.stimHome)")
-    generation += 1
-    state = .off
-    provisional = false
-    start()
-  }
-
-  private func syncAdoption() {
-    switch state {
-    case .running(let health, _):
-      adoption.set(provisional ? .provisional(home: health.stimHome) : .verified(home: health.stimHome))
-    case .off, .starting, .notReady, .failed:
-      adoption.set(.none)
-    }
-  }
-
-  /// Restarts the server Desktop started when Allow connections changes which addresses it should listen on. A
-  /// server Desktop did not start is never touched. A failed start is tried again, since the other mode may work.
-  private func applyServingMode() {
-    guard startedLoopbackOnly != wantsLoopbackOnly else { return }
-    if process != nil {
-      stop()
-      start()
-    } else if case .failed = state {
-      start()
-    }
-  }
-
-  private func waitForExiting() async {
-    guard let process = exiting else { return }
-    await Task.detached { Self.waitForExit(process) }.value
-    if exiting === process { exiting = nil }
   }
 
   func setUpConnection() async -> String? {
-    guard isRunning else { return "The Stim server is not running. Try again." }
+    guard isRunning else { return "The Stim engine is not running. Try again." }
     guard !settingUpConnection else { return "Connection setup is already running. Try again." }
     settingUpConnection = true
     connectionError = nil
@@ -468,11 +420,12 @@ final class ServerController: ObservableObject {
       connectionError = "The local Desktop connection is not ready. Try again."
       return connectionError
     }
+    guard await ensureNet() != nil else {
+      return connectionError ?? "The Stim engine did not start its network listener. Try again."
+    }
     do {
       _ = try await client.request("route.setup", [:])
       refresh()
-    } catch let error as ServerError where error.code == "unknown-method" {
-      connectionError = "Update stim-server to set up the phone connection from Desktop."
     } catch {
       connectionError = error.localizedDescription
     }
@@ -484,14 +437,13 @@ final class ServerController: ObservableObject {
       throw ServerError(code: "not-connected", message: "Turn on Allow connections to pair a phone.")
     }
     let cli = await cli()
-    guard isRunning, case .ready(let before) = await StimServerCLI.health(port: port) else {
+    guard isRunning, let port = await ensureNet(), case .ready(let before) = await StimServerCLI.health(port: port) else {
       throw ServerError(code: "not-connected", message: "Could not verify the phone connection. Try again.")
     }
     if before.loopbackOnly == true {
       throw ServerError(
         code: "not-connected",
-        message:
-          "The stim-server on this port serves this Mac only, so a phone could not connect. Stop it, or quit the Stim Desktop that started it, and try again."
+        message: "The Stim engine serves this Mac only, so a phone could not connect. Turn on Allow connections and try again."
       )
     }
     if before.tailscale.isRunning && before.route?.state != "routed" {
@@ -518,8 +470,10 @@ final class ServerController: ObservableObject {
     return code
   }
 
+  /// Checks that the recorded stimd still runs, starting again when it is gone, and reads its network listener's
+  /// health when it has one.
   func refresh() {
-    if case .notReady = state {} else if !provisional { reloadDevices() }
+    if case .notReady = state {} else { reloadDevices() }
     let owned: Bool
     switch state {
     case .running(_, let value), .notReady(_, let value): owned = value
@@ -527,39 +481,26 @@ final class ServerController: ObservableObject {
     }
     let current = generation
     Task {
+      guard case .found(let found) = EngineFiles.stimd(stimHome: stimHome), EngineFiles.isAlive(found), found == record else {
+        guard current == generation else { return }
+        DebugLog.info(.server, "stimd exited; starting again")
+        generation += 1
+        state = .off
+        start()
+        return
+      }
+      guard let port = netPort else { return }
       let probe = await StimServerCLI.health(port: port)
-      let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
-      guard current == generation, isResponding, !provisional else { return }
+      guard current == generation, isResponding else { return }
       switch probe {
-      case .notReady(let startup, let stimHome)
-      where owned || (stimHome.map { StimHome.adopts(serverHome: $0, resolved: resolved) } ?? true):
-        missedProbes = 0
-        portHeldByStranger = false
-        state = .notReady(startup, owned: owned)
-      case .ready(let health) where owned || StimHome.adopts(serverHome: health.stimHome, resolved: resolved):
-        missedProbes = 0
-        portHeldByStranger = false
+      case .ready(let health):
         state = .running(health, owned: owned)
         if health.nativeViewerOpened == true { NativeViewerPermissions.shared.viewerOpened(serverOwned: owned) }
-      default:
-        if !owned {
-          missedProbes += 1
-          guard missedProbes >= 2 else { return }
-          if probe == nil, !portHeldByStranger {
-            state = .notReady(
-              .degraded(Self.adoptedServerSilentReason(port: port, serviceInstalled: Self.serviceInstalled)), owned: false)
-            return
-          }
-          let held = probe == nil ? await StimServerCLI.portIsHeld(port) : false
-          guard current == generation, isResponding, !provisional else { return }
-          if held {
-            state = .notReady(.degraded(Self.portHeldReason(port: port)), owned: false)
-            return
-          }
-          missedProbes = 0
-          state = .off
-          start()
-        }
+      case .notReady(let startup, _):
+        state = .notReady(startup, owned: owned)
+      case nil:
+        netPort = nil
+        state = .running(ServerHealth(record: found, stimHome: stimHome), owned: owned)
       }
     }
   }
@@ -572,7 +513,7 @@ final class ServerController: ObservableObject {
   func reloadDevices() {
     let epoch = devicesEpoch
     let current = generation
-    let health: ServerHealth? = if case .running(let health, _) = state { health } else { nil }
+    let running = isRunning
     Task {
       let cli = await cli()
       guard epoch == devicesEpoch, current == generation else { return }
@@ -580,7 +521,7 @@ final class ServerController: ObservableObject {
       guard epoch == devicesEpoch, current == generation else { return }
       switch result {
       case .success(let devices):
-        hasDeviceList = health != nil
+        hasDeviceList = running
         self.devices = devices.map { device in
           guard let control = pendingGrants[device.id] else { return device }
           var device = device
@@ -645,50 +586,53 @@ final class ServerController: ObservableObject {
     }
   }
 
-  func stopForQuit() {
-    generation += 1
-    terminate()
-    if let exiting { Self.waitForExit(exiting) }
-  }
-
-  private func terminate() {
-    bootstrap = nil
-    if let process, process.isRunning {
-      process.terminate()
-      exiting = process
-    }
-    process = nil
-  }
-
-  /// SIGTERM lets the server close its clients and its `stim status` child; SIGKILL follows after 3 seconds.
-  private nonisolated static func waitForExit(_ process: Process) {
-    let deadline = Date().addingTimeInterval(3)
-    while process.isRunning, Date() < deadline { usleep(50_000) }
-    guard process.isRunning else { return }
-    kill(process.processIdentifier, SIGKILL)
-    process.waitUntilExit()
-  }
-
-  private func record(_ line: OutputLine, generation: Int) {
-    guard generation == self.generation else { return }
-    if automaticPort == 0, let bound = Self.announcedLoopbackPort(line) { automaticPort = bound }
-    output = Array((output + [line.text]).suffix(20))
-  }
-
   private func exited(_ status: Int32, generation: Int) {
     guard generation == self.generation else { return }
-    bootstrap = nil
     process = nil
-    provisional = false
-    let detail = output.filter { !$0.isEmpty }.joined(separator: "\n")
-    retriesFailure = !detail.contains("Unknown option '--loopback-only'")
-    if !retriesFailure {
-      failureKind = .tooOld
-      state = .failed(
-        "This bundled Stim is too old to run on loopback only. Update Stim Desktop (Stim > Check for Updates).")
-      return
+    guard case .starting = state else { return }
+    DebugLog.info(.server, "stimd exited status=\(status) while starting")
+  }
+
+  /// Where the stimd Desktop starts writes its output: beside Desktop's own debug log, so it outlives the app.
+  static var logURL: URL {
+    let name = DebugLog.logURL.lastPathComponent
+    return DebugLog.logURL.deletingLastPathComponent().appendingPathComponent("stimd" + name.dropFirst("Desktop".count))
+  }
+
+  private static func logTail() -> String {
+    guard let text = try? String(contentsOf: logURL, encoding: .utf8) else { return "" }
+    let tail = text.split(whereSeparator: \.isNewline).suffix(3).joined(separator: "\n")
+    return tail.isEmpty ? "" : "\n\(tail)"
+  }
+
+  /// Starts stimd detached from Desktop's lifetime: no input, output appended to `logURL`, which restarts past 2 MB.
+  private static func launch(
+    _ command: (program: String, arguments: [String]), environment: [String: String],
+    onExit: @escaping @Sendable (Int32) -> Void
+  ) throws -> Process {
+    let files = FileManager.default
+    let log = logURL
+    try files.createDirectory(at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+    if let size = (try? files.attributesOfItem(atPath: log.path))?[.size] as? Int, size > 2_000_000 {
+      try? files.removeItem(at: log)
     }
-    failureKind = .exited
-    state = .failed("stim-server exited with status \(status).\(detail.isEmpty ? "" : "\n\(detail)")")
+    if !files.fileExists(atPath: log.path) {
+      files.createFile(atPath: log.path, contents: nil, attributes: [.posixPermissions: 0o600])
+    }
+    let output = try FileHandle(forWritingTo: log)
+    output.seekToEndOfFile()
+    defer { try? output.close() }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: command.program)
+    process.arguments = command.arguments
+    process.environment = environment
+    process.currentDirectoryURL = URL(fileURLWithPath: NSHomeDirectory())
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = output
+    process.standardError = output
+    process.terminationHandler = { onExit($0.terminationStatus) }
+    DebugLog.info(.server, "starting stimd: \(command.program) \(command.arguments.joined(separator: " "))")
+    try process.run()
+    return process
   }
 }

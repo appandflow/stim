@@ -4,13 +4,16 @@ import Testing
 
 @testable import StimKit
 
-private let interopRuntime = ProcessInfo.processInfo.environment["STIM_TEST_SERVER_RUNTIME"]
+private let interopPackage = ProcessInfo.processInfo.environment["STIM_TEST_STIM_PACKAGE"]
+private let interopNode = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").lazy
+  .map { "\($0)/node" }.first { FileManager.default.isExecutableFile(atPath: $0) }
 
 /// Pairs Desktop's Noise client with a real stim-server over loopback TCP, and with core's own responder for what a
-/// real server cannot be made to do. `STIM_TEST_SERVER_RUNTIME` names a runtime `scripts/server-runtime.mjs` staged.
-@MainActor @Suite(.serialized, .enabled(if: interopRuntime != nil))
+/// real server cannot be made to do. `STIM_TEST_STIM_PACKAGE` names a built `stim` package directory, run with the
+/// first `node` on `PATH`.
+@MainActor @Suite(.serialized, .enabled(if: interopPackage != nil && interopNode != nil))
 struct NoiseInteropTests {
-  static let runtime = interopRuntime
+  static let runtime = interopPackage
   static let responder = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
     .appendingPathComponent("Fixtures/noise-responder.mjs").path
 
@@ -21,8 +24,7 @@ struct NoiseInteropTests {
     private var buffer = Data()
 
     init(_ arguments: [String], environment: [String: String]) throws {
-      let runtime = try #require(interopRuntime)
-      process.executableURL = URL(fileURLWithPath: runtime).appendingPathComponent("bin/node")
+      process.executableURL = URL(fileURLWithPath: try #require(interopNode))
       process.arguments = arguments
       process.environment = environment
       let output = Pipe()
@@ -116,7 +118,7 @@ struct NoiseInteropTests {
     var stimHome: String { home.appendingPathComponent(".stim").path }
 
     init() async throws {
-      let runtime = try #require(interopRuntime)
+      let runtime = try #require(interopPackage)
       home = FileManager.default.temporaryDirectory.appendingPathComponent("stim-noise-\(UUID().uuidString)")
       try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
       environment = [
@@ -124,8 +126,7 @@ struct NoiseInteropTests {
         "PATH": "/usr/bin:/bin",
       ]
       script =
-        URL(fileURLWithPath: runtime).appendingPathComponent("node_modules/stim/bin/stim.mjs")
-        .path
+        URL(fileURLWithPath: runtime).appendingPathComponent("bin/stim.mjs").path
       port = try NoiseInteropTests.freePort()
       server = try Child([script, "serve", "--port", String(port), "--loopback-only"], environment: environment)
       var ready = false
@@ -286,7 +287,7 @@ struct NoiseInteropTests {
     #expect(refusal.code == "protocol-unsupported")
 
     var local: [ServerTransportEvent] = []
-    let socket = UnixSocketTransport(path: StimHome.localSocket(home: server.stimHome).path) { local.append($0) }
+    let socket = UnixSocketTransport(path: server.stimHome + "/server/local.sock") { local.append($0) }
     defer { socket.close() }
     socket.send(hello)
     for _ in 0..<400 where local.isEmpty { try await Task.sleep(for: .milliseconds(25)) }

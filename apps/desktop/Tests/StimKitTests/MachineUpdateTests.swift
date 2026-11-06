@@ -113,7 +113,7 @@ import Testing
     #expect(MachineUpdatePhase.from(failed, startedAt: started) == .failed("did not answer. Switched back."))
   }
 
-  @Test func offersAnUpdateOnlyForAnApprovedMachineOnAnotherStimBuild() throws {
+  @Test func offersAnUpdateForAnOutdatedOrAnApprovedMachineOnAnotherStimBuild() throws {
     let report = try JSONDecoder().decode(
       DoctorReport.self,
       from: Data(
@@ -122,9 +122,10 @@ import Testing
           {"machine":"mini","state":"approved","offloadable":false,"reasons":["Stim build a there, b here"],
            "problems":[{"code":"stim-build","reason":"Stim build a there, b here"}]},
           {"machine":"studio","state":"approved","offloadable":false,"problems":[{"code":"xcode","reason":"Xcode differs"}]},
-          {"machine":"old","state":"revoked","problems":[{"code":"stim-build","reason":"x"}]}]}
+          {"machine":"old","state":"revoked","problems":[{"code":"stim-build","reason":"x"}]},
+          {"machine":"lower","state":"outdated","diagnosis":{"layer":"compat","code":"peer-too-old","title":"Server is outdated","message":"lower runs stim 1.42.0 (peer 1).","remedy":"Run stim remote update lower."}}]}
         """#.utf8))
-    #expect(try #require(report.remoteMachines).map(needsStimUpdate) == [true, false, false])
-    #expect(try #require(report.remoteMachines).map(stimBuildHere) == ["b", nil, nil])
+    #expect(try #require(report.remoteMachines).map(needsStimUpdate) == [true, false, false, true])
+    #expect(try #require(report.remoteMachines).map(stimBuildHere) == ["b", nil, nil, nil])
   }
 }

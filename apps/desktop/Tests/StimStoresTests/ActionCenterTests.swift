@@ -1,8 +1,8 @@
 import CryptoKit
 import Foundation
-import StimKit
 import Testing
 
+@testable import StimKit
 @testable import StimStores
 
 @MainActor
@@ -84,11 +84,11 @@ struct ActionCenterTests {
 
   @Test(arguments: ["reload", "start", "run", "gc", "worktree.remove", "worktree.warm"])
   func lifecycleActionsKeepResultsInActivityAndRunTheNextStepWithoutCLI(action: String) async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     var transport: DoctorTransport?
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Reload", clientVersion: "1",
-      serverPort: 7787, bootstrap: { key },
+      bootstrap: { key },
       transport: { _, onEvent in
         let next = DoctorTransport(onEvent: onEvent, key: key)
         transport = next
@@ -143,11 +143,11 @@ struct ActionCenterTests {
     ["device", "unlock", "ios", "--slot", "secondary", "--json"],
   ])
   func repairActionsKeepProgressAndTerminalRefusalsWithoutCLI(arguments: [String]) async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     var transport: DoctorTransport?
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Repair", clientVersion: "1",
-      serverPort: 7787, bootstrap: { key },
+      bootstrap: { key },
       transport: { _, onEvent in
         let next = DoctorTransport(onEvent: onEvent, key: key)
         transport = next
@@ -200,11 +200,11 @@ struct ActionCenterTests {
   }
 
   @Test func deviceToolsUseTheAuthenticatedSameHomeServerWithoutCLI() async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     var transport: DoctorTransport?
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Tools", clientVersion: "1",
-      serverPort: 7787, bootstrap: { key },
+      bootstrap: { key },
       transport: { _, onEvent in
         let next = DoctorTransport(onEvent: onEvent, key: key)
         transport = next
@@ -239,11 +239,11 @@ struct ActionCenterTests {
   }
 
   @Test func settingsKeepJSONAndRefusalsInActivityWithoutCLI() async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     var transport: DoctorTransport?
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Settings", clientVersion: "1",
-      serverPort: 7787, bootstrap: { key },
+      bootstrap: { key },
       transport: { _, onEvent in
         let next = DoctorTransport(onEvent: onEvent, key: key)
         transport = next
@@ -400,4 +400,18 @@ struct ActionCenterTests {
   func reply(_ message: [String: JSONValue]) {
     onEvent(.text(String(decoding: try! JSONEncoder().encode(JSONValue.object(message)), as: UTF8.self)))
   }
+}
+
+extension DesktopBootstrapKey {
+  /// A key as stimd writes one to `run/desktop.key`, and its file text.
+  static func random() -> DesktopBootstrapKey {
+    DesktopBootstrapKey(encoded: base64URL(Data((0..<32).map { _ in UInt8.random(in: 0...255) })))!
+  }
+
+  var input: Data { Data((base64URL(key.withUnsafeBytes { Data($0) }) + "\n").utf8) }
+}
+
+private func base64URL(_ data: Data) -> String {
+  data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+    .replacingOccurrences(of: "=", with: "")
 }

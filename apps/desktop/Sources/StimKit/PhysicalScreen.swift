@@ -14,11 +14,9 @@ public enum PhysicalScreen: Equatable, Sendable {
   case stream(control: String?)
   case message(String, remedy: String? = nil)
 
-  /// The local server Desktop connected to is not the one it bundles; Desktop starts its own once that one stops.
+  /// The engine Desktop connected to predates the device's stream.
   static func olderServer(showing what: String) -> PhysicalScreen {
-    .message(
-      "The stim-server on this port is older than Stim Desktop and cannot show \(what). Update or stop it so Stim Desktop starts its own."
-    )
+    .message("The Stim engine is older than Stim Desktop and cannot show \(what). Run stim engine update.")
   }
 
   /// `now` decides an expired lease before `stim status` drops the device.

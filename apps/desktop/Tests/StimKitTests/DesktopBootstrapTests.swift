@@ -20,11 +20,11 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 
 @Suite struct DesktopBootstrapKeyTests {
   @Test func verifiesTheServerBeforeProducingTheSeparateClientProof() {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let challenge = bootstrapChallenge(key)
     #expect(key.clientProof(for: challenge) == bootstrapSignature(key, "client:\(challenge.nonce)"))
     #expect(key.clientProof(for: challenge) != challenge.proof)
-    #expect(DesktopBootstrapKey().clientProof(for: challenge) == nil)
+    #expect(DesktopBootstrapKey.random().clientProof(for: challenge) == nil)
     #expect(
       key.clientProof(for: DesktopBootstrapChallenge(nonce: String(repeating: "B", count: 43), proof: challenge.proof)) == nil)
     #expect(
@@ -34,69 +34,30 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(key.clientProof(for: DesktopBootstrapChallenge(nonce: "invalid", proof: challenge.proof)) == nil)
   }
 
-  @Test func theBundledChildReadsThePrivatePipeWithoutAnArgumentOrEnvironmentSecret() async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("desktop-bootstrap-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: root) }
-    let script = root.appendingPathComponent("child.pl")
-    try #"""
-    use Digest::SHA qw(hmac_sha256);
-    use MIME::Base64 qw(decode_base64 encode_base64);
-    my $key = <STDIN>; $key =~ s/\n\z//;
-    die 'invalid input' unless length($key) == 43;
-    die 'secret exposed' if index(join(' ', @ARGV, values %ENV), $key) >= 0;
-    die 'missing marker' unless $ENV{STIM_DESKTOP_BOOTSTRAP_FD} eq '0';
-    my $nonce = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
-    my $encoded = $key; $encoded =~ tr{-_}{+/};
-    my $proof = encode_base64(hmac_sha256("server:$nonce", decode_base64($encoded . '=')), '');
-    $proof =~ tr{+/}{-_}; $proof =~ s/=+$//;
-    print '{"nonce":"' . $nonce . '","proof":"' . $proof . '"}' . "\n";
-    """#.write(to: script, atomically: true, encoding: .utf8)
-    let key = DesktopBootstrapKey()
-    let environment = StimServerCLI(environment: [:], bundled: BundledServer(node: "/usr/bin/perl", script: script.path))
-    let lines = LockedValue([OutputLine]())
-    let exit = LockedValue<Int32?>(nil)
-    let process = try environment.serve(
-      bootstrap: key, onLine: { line in lines.withLock { $0.append(line) } }, onExit: { status in exit.withLock { $0 = status } })
-    defer { if process.isRunning { process.terminate() } }
-    for _ in 0..<500 {
-      if exit.withLock({ $0 }) != nil { break }
-      try await Task.sleep(for: .milliseconds(10))
-    }
-    #expect(exit.withLock { $0 } == 0)
-    let output = lines.withLock { $0.filter { $0.channel == .stdout }.map(\.text).joined(separator: "\n") }
-    let challenge = try JSONDecoder().decode(DesktopBootstrapChallenge.self, from: Data(output.utf8))
-    #expect(key.clientProof(for: challenge) == bootstrapSignature(key, "client:\(challenge.nonce)"))
-    let secret = String(decoding: key.input, as: UTF8.self).trimmingCharacters(in: .newlines)
-    #expect(!output.contains(secret))
-    #expect(!(process.arguments ?? []).contains(secret))
-    #expect(!(process.environment ?? [:]).values.contains(secret))
+  @Test func readsOnlyAPrivateKeyFileThisUserOwns() throws {
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent("desktop-key-\(UUID().uuidString)")
+    let run = home.appendingPathComponent("run")
+    try FileManager.default.createDirectory(at: run, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: home) }
+    let file = run.appendingPathComponent("desktop.key")
+    #expect(DesktopBootstrapKey.read(stimHome: home.path) == nil)
+    let key = DesktopBootstrapKey.random()
+    try key.input.write(to: file)
+    try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+    #expect(DesktopBootstrapKey.read(stimHome: home.path) == nil)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    let read = try #require(DesktopBootstrapKey.read(stimHome: home.path))
+    let challenge = bootstrapChallenge(key)
+    #expect(read.clientProof(for: challenge) == key.clientProof(for: challenge))
+    try FileManager.default.removeItem(at: file)
+    try FileManager.default.createSymbolicLink(at: file, withDestinationURL: home.appendingPathComponent("elsewhere"))
+    try key.input.write(to: home.appendingPathComponent("elsewhere"))
+    #expect(DesktopBootstrapKey.read(stimHome: home.path) == nil)
+    try FileManager.default.removeItem(at: file)
+    try Data("short\n".utf8).write(to: file)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    #expect(DesktopBootstrapKey.read(stimHome: home.path) == nil)
   }
-
-  @Test func aChildWithoutAKeyGetsAnOpenLifetimePipeUntilItExits() async throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("desktop-lifetime-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: root) }
-    let script = root.appendingPathComponent("child.pl")
-    try #"""
-    $| = 1;
-    print "marker=$ENV{STIM_DESKTOP_LIFETIME_FD} bootstrap=" . (defined $ENV{STIM_DESKTOP_BOOTSTRAP_FD} ? 'set' : 'unset') . "\n";
-    my $line = <STDIN>;
-    print "stdin closed\n";
-    """#.write(to: script, atomically: true, encoding: .utf8)
-    let environment = StimServerCLI(
-      environment: ["STIM_DESKTOP_LIFETIME_FD": "stale"], bundled: BundledServer(node: "/usr/bin/perl", script: script.path))
-    let lines = LockedValue([OutputLine]())
-    let exit = LockedValue<Int32?>(nil)
-    let process = try environment.serve(
-      onLine: { line in lines.withLock { $0.append(line) } }, onExit: { status in exit.withLock { $0 = status } })
-    defer { if process.isRunning { process.terminate() } }
-    try await Task.sleep(for: .milliseconds(500))
-    #expect(lines.withLock { $0.map(\.text) } == ["marker=0 bootstrap=unset"])
-    #expect(exit.withLock { $0 } == nil)
-    process.terminate()
-  }
-
 }
 
 @Suite @MainActor struct DesktopBootstrapClientTests {
@@ -122,7 +83,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     var socket: FakeTransport?
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/stim-test/server/local.sock"), clientName: "Stim Desktop", clientVersion: "1",
-      serverPort: 7787, bootstrap: { key },
+      bootstrap: { key },
       transport: { _, event in
         let next = FakeTransport(onEvent: event)
         socket = next
@@ -135,7 +96,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test func stopKeepsBackToBackProgressAndTheFlatSlotResult() async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -169,7 +130,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test func reloadPreservesProgressJSONAndTypedRefusalsWithoutCLI() async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -217,7 +178,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test func startPreservesProgressJSONAndTypedRefusalsWithoutCLI() async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -290,7 +251,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     (["web", "--headed", "--json"], ["platform": JSONValue.string("web"), "headed": .bool(true)]),
   ])
   func platformRunsKeepSelectorsProgressFlatFactsAndRefusals(arguments: [String], options: [String: JSONValue]) async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -351,7 +312,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   func cleanupKeepsSelectorsOrderedProgressAndPartialFailureReports(arguments: [String], options: [String: JSONValue])
     async throws
   {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -406,7 +367,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test func cleanupRefusesMalformedSelectorsBeforeDispatch() async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -438,7 +399,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   func removalPreservesSourceCleanupPartialFailureAndOrderedProgress(
     arguments: [String], options: [String: JSONValue], removed: Bool, exit: Int
   ) async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -477,7 +438,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test func removalRejectsMalformedSelectorsAndSuccessfulResults() async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -519,7 +480,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test func platformCommandsRefuseUnsupportedOptions() async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -542,7 +503,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 
   @Test(arguments: ["run", "gc", "worktree.warm"])
   func mutationsRefuseMalformedSuccessReports(action: String) async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer(
@@ -592,7 +553,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   @Test(arguments: [false, true], [false, true])
   func machineAccessRequestsUseThePrivateServerAndKeepTypedFailures(explicitTicket: Bool, cancelBeforeFailure: Bool) async throws
   {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -639,7 +600,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 
   @Test(arguments: [0, 1])
   func warmingKeepsProgressAndFailureDiagnosticsAndRejectsRefresh(exit: Int) async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -688,7 +649,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test func settingsPreserveMaskedResultsAndTypedRefusalsWithoutCLI() async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -747,7 +708,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 
   @Test(arguments: ["home", "authority"])
   func settingsRefuseWrongHomeServersWithoutAuthorityAndOldServers(reason: String) async throws {
-    let key = reason == "authority" ? nil : DesktopBootstrapKey()
+    let key = reason == "authority" ? nil : DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer(
@@ -773,7 +734,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test func cancellingSettingsKeepsTheSharedConnectionAndIgnoresTheLateReply() async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -802,12 +763,12 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   @Test(arguments: ["settings", "reload", "start", "run", "gc", "worktree.remove", "worktree.warm", "remedy"])
   func mutationsDoNotReplayAfterTheConnectionDropsAndReconnects(action: String) async throws {
     let method = action == "settings" ? "desktop.settings.write" : "desktop.\(action).subscribe"
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     var sockets: [FakeTransport] = []
     var reconnect: (@MainActor () -> Void)?
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/stim-test/server/local.sock"), clientName: "Stim Desktop", clientVersion: "1",
-      serverPort: 7787, bootstrap: { key },
+      bootstrap: { key },
       transport: { _, event in
         let socket = FakeTransport(onEvent: event)
         sockets.append(socket)
@@ -880,7 +841,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 
   @Test(arguments: ["stop", "reload"])
   func cancellingAnActionUnsubscribesWithoutDisconnectingTheSharedClient(action: String) async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -923,7 +884,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     ["start", "run", "gc", "worktree.remove", "worktree.warm", "remedy", "machine-access"])
   func lifecycleCancellationWaitsForCleanupAcknowledgement(state: (Bool, Bool), action: String) async throws {
     let (accepted, retained) = state
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer(
@@ -996,7 +957,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 
   @Test(arguments: [false, true], ["start", "run", "gc", "worktree.remove", "worktree.warm", "remedy"])
   func lifecycleCancellationPreservesATerminalRecoveryAlreadyDispatched(beforeCancel: Bool, action: String) async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer(
@@ -1066,7 +1027,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     arguments: ["home", "authority"],
     ["stop", "reload", "start", "run", "gc", "worktree.remove", "worktree.warm", "remedy", "machine-access"])
   func actionsRefuseWrongHomeMissingAuthorityAndOldServers(reason: String, action: String) async throws {
-    let key = reason == "authority" ? nil : DesktopBootstrapKey()
+    let key = reason == "authority" ? nil : DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer(
@@ -1119,7 +1080,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test func authorityRequiresBothTheChildProofAndTheServerAcceptanceAndEndsOnDisconnect() async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     let challenge = bootstrapChallenge(key)
@@ -1138,16 +1099,16 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test func aDifferentChildCannotExtractTheParentProof() async throws {
-    let (client, socket) = try await client(key: DesktopBootstrapKey())
+    let (client, socket) = try await client(key: DesktopBootstrapKey.random())
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(DesktopBootstrapKey())))
+    socket.answer("hello", hello(bootstrapChallenge(DesktopBootstrapKey.random())))
     await settle()
     #expect(!client.isOpen && !client.hasDesktopAuthority && socket.closed)
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.authenticate") })
   }
 
   @Test func disconnectWhileAuthenticatingCannotRestoreAuthorityWithALateReply() async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer("hello", hello(bootstrapChallenge(key)))
@@ -1159,7 +1120,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test(arguments: [false, true]) func serversThatOfferNoDesktopActionsStayConnectedWithoutAuthority(hasKey: Bool) async throws {
-    let (client, socket) = try await client(key: hasKey ? DesktopBootstrapKey() : nil)
+    let (client, socket) = try await client(key: hasKey ? DesktopBootstrapKey.random() : nil)
     defer { client.stop() }
     socket.answer("hello", hello())
     await settle()
@@ -1177,7 +1138,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   @Test(arguments: [false, true]) func aServerWithoutAPrivateKeyGrantsItsLocalSocketAuthorityWithoutAProof(hasKey: Bool)
     async throws
   {
-    let (client, socket) = try await client(key: hasKey ? DesktopBootstrapKey() : nil)
+    let (client, socket) = try await client(key: hasKey ? DesktopBootstrapKey.random() : nil)
     defer { client.stop() }
     socket.answer("hello", hello(owner: "cli"))
     await settle()
@@ -1215,7 +1176,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 
   @Test(arguments: [nil, 0, 2] as [Int?])
   func refusesAnIncompatibleDesktopApiBeforeSendingProof(api: Int?) async throws {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     guard case .object(var fields) = hello(bootstrapChallenge(key)) else { return }
@@ -1228,29 +1189,15 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       return
     }
     #expect(error.code == "protocol-unsupported")
-    #expect(error.message.contains(api == 2 ? "Update Stim Desktop" : "npm i -g stim@1.42.0 && stim service install"))
+    #expect(error.message.contains(api == 2 ? "Update Stim Desktop" : "run stim engine update"))
     #expect(!client.hasDesktopAuthority)
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.authenticate") })
   }
 
-  @Test func refusesAnotherServersSocketBeforeSendingAnyProof() async throws {
-    let key = DesktopBootstrapKey()
-    let (client, socket) = try await client(key: key)
-    defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), port: 9999))
-    await settle()
-    #expect(!socket.sent.contains { $0["method"] == .string("desktop.authenticate") })
-    #expect(!client.isOpen && !client.hasDesktopAuthority)
-    guard case .refused(let error) = client.state else {
-      Issue.record("expected a refusal, got \(client.state)")
-      return
-    }
-    #expect(error.code == "other-server")
-  }
   private func planClient(authority: Bool = true) async throws -> (
     ServerClient, FakeTransport, [String: String]
   ) {
-    let key = DesktopBootstrapKey()
+    let key = DesktopBootstrapKey.random()
     let (client, socket) = try await client(key: authority ? key : nil)
     socket.answer("hello", hello(authority ? bootstrapChallenge(key) : nil))
     await settle()
@@ -1442,4 +1389,18 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(client.isOpen && ended)
   }
 
+}
+
+extension DesktopBootstrapKey {
+  /// A key as stimd writes one to `run/desktop.key`, and its file text.
+  static func random() -> DesktopBootstrapKey {
+    DesktopBootstrapKey(encoded: base64URL(Data((0..<32).map { _ in UInt8.random(in: 0...255) })))!
+  }
+
+  var input: Data { Data((base64URL(key.withUnsafeBytes { Data($0) }) + "\n").utf8) }
+}
+
+private func base64URL(_ data: Data) -> String {
+  data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+    .replacingOccurrences(of: "=", with: "")
 }
