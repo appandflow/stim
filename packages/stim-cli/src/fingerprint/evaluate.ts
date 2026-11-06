@@ -308,6 +308,7 @@ async function evaluate(
   const pinned = projectNodeBin(root, opts.env);
   const node = pinned ? join(pinned.bin, process.platform === 'win32' ? 'node.exe' : 'node') : process.execPath;
   const evaluator = join(SHIMS, 'fp-eval.cjs');
+  if (!existsSync(evaluator)) return { uncertain: 'the Stim installation is missing shim/fp-eval.cjs' };
   const expo = findPackage(root, 'expo');
   const spawn = async (name: PartName, args: string[], partEnv = env): Promise<Part | EvalUncertain> => {
     const done = await run(name, node, args, root, partEnv, opts.signal);

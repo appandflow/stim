@@ -30,7 +30,7 @@ function toPath(target) {
 }
 
 function record(kind, target) {
-  const file = active ? toPath(target) : null;
+  const file = active && kind ? toPath(target) : null;
   if (!file || reads.has(`${kind}\0${file}`)) return;
   const entry = { path: file, kind };
   if (kind === 'dir') {
@@ -42,6 +42,9 @@ function record(kind, target) {
 }
 
 const missing = (error) => error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
+const kindOf = (kind, rest) => (typeof kind === 'function' ? kind(rest) : kind);
+const opened = ([flags]) =>
+  flags === undefined || typeof flags === 'function' || flags === 0 || flags === 'r' || flags === 'rs' ? 'file' : null;
 
 function sync(name, kind, absentWhen) {
   const original = fs[name];
@@ -53,7 +56,7 @@ function sync(name, kind, absentWhen) {
       if (missing(error)) record('absent', target);
       throw error;
     }
-    record(absentWhen?.(result) ? 'absent' : kind, target);
+    record(absentWhen?.(result) ? 'absent' : kindOf(kind, rest), target);
     return result;
   };
   if (original.native) wrapped.native = original.native;
@@ -66,7 +69,7 @@ function callback(name, kind) {
     const done = rest.at(-1);
     if (typeof done === 'function')
       rest[rest.length - 1] = (error, ...results) => {
-        if (!error) record(kind, target);
+        if (!error) record(kindOf(kind, rest), target);
         else if (missing(error)) record('absent', target);
         done(error, ...results);
       };
@@ -80,7 +83,7 @@ function promise(name, kind) {
   const original = fs.promises[name];
   fs.promises[name] = function (target, ...rest) {
     return original.call(this, target, ...rest).then(
-      (result) => (record(kind, target), result),
+      (result) => (record(kindOf(kind, rest), target), result),
       (error) => {
         if (missing(error)) record('absent', target);
         throw error;
@@ -89,15 +92,18 @@ function promise(name, kind) {
   };
 }
 
-for (const name of ['readFileSync', 'openSync', 'createReadStream']) sync(name, 'file');
+for (const name of ['readFileSync', 'createReadStream']) sync(name, 'file');
+sync('openSync', opened);
 for (const name of ['readdirSync', 'opendirSync']) sync(name, 'dir');
 for (const name of ['statSync', 'lstatSync']) sync(name, 'present', (result) => result === undefined);
 for (const name of ['accessSync', 'realpathSync']) sync(name, 'present');
 sync('existsSync', 'present', (result) => !result);
-for (const name of ['readFile', 'open']) callback(name, 'file');
+callback('readFile', 'file');
+callback('open', opened);
 for (const name of ['readdir', 'opendir']) callback(name, 'dir');
 for (const name of ['stat', 'lstat', 'access', 'realpath']) callback(name, 'present');
-for (const name of ['readFile', 'open']) promise(name, 'file');
+promise('readFile', 'file');
+promise('open', opened);
 for (const name of ['readdir', 'opendir']) promise(name, 'dir');
 for (const name of ['stat', 'lstat', 'access', 'realpath']) promise(name, 'present');
 
