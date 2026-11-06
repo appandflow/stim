@@ -1,4 +1,5 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { byCodeUnit, canonicalJson, sha256, type Input, type Platform } from './key.ts';
@@ -138,20 +139,23 @@ export function jobEnv(base: Env, client: { set: Record<string, string>; absent:
 }
 
 /** Podfile, podspec, Ruby, Gradle and CMake files under `dir`, without installed or generated subtrees. */
-export function buildScripts(dir: string): string[] {
+export async function buildScripts(dir: string): Promise<string[]> {
   let entries;
   try {
-    entries = readdirSync(dir, { withFileTypes: true });
+    entries = await readdir(dir, { withFileTypes: true });
   } catch {
     return [];
   }
   const generated = entries.some((entry) => BUILD_SIBLINGS.test(entry.name));
-  return entries.flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory())
-      return PRUNED.has(entry.name) || (generated && entry.name === 'build') ? [] : buildScripts(path);
-    return entry.isFile() && SCANNED.test(entry.name) ? [path] : [];
-  });
+  const found = await Promise.all(
+    entries.map((entry) => {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory())
+        return PRUNED.has(entry.name) || (generated && entry.name === 'build') ? [] : buildScripts(path);
+      return entry.isFile() && SCANNED.test(entry.name) ? [path] : [];
+    }),
+  );
+  return found.flat();
 }
 
 /**

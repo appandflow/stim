@@ -61,9 +61,9 @@ function nativePackages(): string[] {
 describe.skipIf(!existsSync(join(MOBILE, 'node_modules')))('build env scan over the installed SDK', () => {
   const packages = nativePackages();
 
-  test('scans every Podfile, podspec, Ruby, Gradle and CMake file of the native packages', () => {
+  test('scans every Podfile, podspec, Ruby, Gradle and CMake file of the native packages', async () => {
     expect(packages.length).toBeGreaterThan(20);
-    for (const dir of packages) expect(buildScripts(dir).toSorted()).toEqual(listScripts(dir).toSorted());
+    for (const dir of packages) expect((await buildScripts(dir)).toSorted()).toEqual(listScripts(dir).toSorted());
   });
 
   test('parses every line that reads the env, or keys every name its file could pass to a dynamic read', () => {

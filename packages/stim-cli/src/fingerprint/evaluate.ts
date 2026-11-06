@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -411,12 +412,13 @@ function autolinkingHash(name: PartName, output: unknown, wrapped: boolean, root
     : null;
 }
 
-const scriptNames = (paths: string[]) => paths.flatMap((path) => scriptEnvNames(readFileSync(path, 'utf8')));
+const scriptNames = async (paths: string[]) =>
+  (await Promise.all(paths.map((path) => readFile(path, 'utf8')))).flatMap(scriptEnvNames);
 
 /**
  * The env names the native build scripts read: the tracked native directory's or the prebuild template's, React
  * Native's, autolinking's and the Gradle plugin's, and every package `scan` adds. An installed package's names are
- * kept in the index under its `package.json`.
+ * kept in the index under its `package.json`. Scans run in the background; `settle` waits for every one started.
  */
 function buildEnvNames(
   root: string,
@@ -424,11 +426,26 @@ function buildEnvNames(
   nativeDir: string,
   expo: string | null,
   session: IndexSession | null,
-): { names: string[]; scanned: Set<string>; scan: (dirs: Iterable<string>) => void } {
+): { names: string[]; scanned: Set<string>; scan: (dirs: Iterable<string>) => void; settle: () => Promise<void> } {
   const reactNative = findPackage(root, 'react-native');
   const scanned = new Set<string>();
   const names: string[] = [];
-  if (native === 'tracked') names.push(...scriptNames(buildScripts(nativeDir)));
+  const pending: Promise<unknown>[] = [];
+  let failure: unknown = null;
+  const track = (found: Promise<string[]>, entry?: PackageEntry) =>
+    pending.push(
+      found.then(
+        (list) => {
+          if (entry) entry.scan = list;
+          names.push(...list);
+          return list;
+        },
+        (error: unknown) => {
+          failure ??= error;
+        },
+      ),
+    );
+  if (native === 'tracked') track(buildScripts(nativeDir).then(scriptNames));
   if (native === 'generated' && expo && existsSync(join(expo, 'template.tgz'))) {
     const entry = session?.pkg(expo);
     const template =
@@ -442,10 +459,13 @@ function buildEnvNames(
       if (scanned.has(dir)) continue;
       scanned.add(dir);
       const entry = installedPackage(dir) ? session?.pkg(dir) : undefined;
-      const found = (entry?.provenance?.mode === 'identity' ? entry.scan : undefined) ?? scriptNames(buildScripts(dir));
-      if (entry) entry.scan = found;
-      names.push(...found);
+      const known = entry?.provenance?.mode === 'identity' ? entry.scan : undefined;
+      track(known ? Promise.resolve(known) : buildScripts(dir).then(scriptNames), entry);
     }
+  };
+  const settle = async () => {
+    await Promise.all(pending);
+    if (failure) throw failure;
   };
   scan(
     [
@@ -454,7 +474,7 @@ function buildEnvNames(
       reactNative && findPackage(reactNative, '@react-native/gradle-plugin'),
     ].filter((dir): dir is string => Boolean(dir)),
   );
-  return { names, scanned, scan };
+  return { names, scanned, scan, settle };
 }
 
 /**
@@ -635,7 +655,25 @@ async function evaluate(
     if (constants)
       early = { constants, part: embed(constants, opts.signal ? AbortSignal.any([opts.signal, settled]) : settled) };
   } else parts.push(spawn('rnConfig', [evaluator, 'rn', root, platform]));
-  const done = await Promise.all(parts);
+  const { names: buildNames, scanned, scan, settle } = buildEnvNames(root, native, nativeDir, expo, session);
+  const linkedPackages = (part: Part): string[] => {
+    const output = record(part.wrapped ? record(part.output).config : part.output);
+    const paths =
+      part.name === 'expoAutolinking'
+        ? pathStrings(part.output)
+        : part.name === 'rnConfig'
+          ? Object.values(record(output.dependencies)).map((dependency) => record(dependency).root)
+          : [];
+    return paths.flatMap((path) => (typeof path === 'string' && packageRoot(path)) || []);
+  };
+  const done = await Promise.all(
+    parts.map((pending) =>
+      pending.then((part) => {
+        if (!isUncertain(part)) scan([...part.derived.packages, ...linkedPackages(part)]);
+        return part;
+      }),
+    ),
+  );
   const failure = done.find(isUncertain);
   if (failure) return failure;
   const evaluated = done.filter((part): part is Part => !isUncertain(part));
@@ -734,13 +772,14 @@ async function evaluate(
     }
   }
 
-  const { names, scanned, scan } = buildEnvNames(root, native, nativeDir, expo, session);
   scan([...packages, ...contentPackages]);
-  let buildEnv = buildEnvRows(names, opts.env, platform, form);
+  await settle();
+  let buildEnv = buildEnvRows(buildNames, opts.env, platform, form);
   for (let owned = buildEnv.paths.map(installedPackage); owned.some((dir) => dir && !scanned.has(dir));) {
     owned.forEach((dir) => dir && packages.add(dir));
     scan(owned.filter((dir): dir is string => Boolean(dir)));
-    buildEnv = buildEnvRows(names, opts.env, platform, form);
+    await settle();
+    buildEnv = buildEnvRows(buildNames, opts.env, platform, form);
     owned = buildEnv.paths.map(installedPackage);
   }
   const { _internal: _, ...configValues } = record(output.config);
