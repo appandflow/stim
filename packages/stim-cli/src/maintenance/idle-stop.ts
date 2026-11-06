@@ -37,6 +37,7 @@ import {
   workspaceProcessLockError,
 } from '../engine/workspace-process-lock.ts';
 import { pidExists } from '../metro.ts';
+import { decideIdleStop, type IdleStopEvidence } from '../policy/idle.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { METRO_REQUEST_EVENTS } from '../supervisor/idle-stop.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
@@ -49,56 +50,12 @@ import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
 import type { MaintenancePlan } from './plan.ts';
 
+export { decideIdleStop, type IdleStopDecision, type IdleStopEvidence } from '../policy/idle.ts';
+
 const HOUR_MS = 3_600_000;
 const SETTING = 'maintenance.idleStopHours';
 const STIM_SESSION = 'stim-teardown-inventory';
 const AGENT_DEVICE_DRIVERS = new Set(['agent-device-claim', 'agent-device-lease']);
-
-/**
- * The activity signals: a Stim command or the native run it started, a Metro bundle, manifest or HMR request, an
- * agent-device action, an input stim-server forwarded, and a person using the focused Simulator or emulator window.
- * Device logs, in-app logs, dev server output and log modification times are not activity.
- */
-type IdleStopBasis =
-  | 'stim command'
-  | 'native run'
-  | 'Metro request'
-  | 'agent-device command'
-  | 'stim-server input'
-  | 'Simulator or emulator window';
-
-export interface IdleStopEvidence {
-  activity: { basis: IdleStopBasis; at: number }[];
-  keep: string[];
-}
-
-export type IdleStopDecision =
-  | { stop: true; idleMs: number; last: IdleStopEvidence['activity'][number] }
-  | { stop: false; reason: string; active?: true; last?: IdleStopEvidence['activity'][number] };
-
-export function decideIdleStop(
-  evidence: IdleStopEvidence,
-  { idleMs, now, setting = SETTING }: { idleMs: number; now: number; setting?: string },
-): IdleStopDecision {
-  if (!(idleMs > 0)) return { stop: false, reason: `${setting} is 0` };
-  const last = evidence.activity
-    .filter(({ at }) => Number.isFinite(at))
-    .reduce<IdleStopEvidence['activity'][number] | null>(
-      (best, entry) => (!best || entry.at > best.at ? entry : best),
-      null,
-    );
-  const idle = last ? now - last.at : NaN;
-  if (last && idle < idleMs)
-    return {
-      stop: false,
-      active: true,
-      last,
-      reason: `its last ${last.basis} was ${formatLongDuration(Math.max(0, idle))} ago, within ${setting}`,
-    };
-  if (evidence.keep.length) return { stop: false, reason: evidence.keep.join('; '), ...(last ? { last } : {}) };
-  if (!last) return { stop: false, reason: 'its last activity is unknown' };
-  return { stop: true, idleMs: idle, last };
-}
 
 async function idleStopHours(
   root: string,
@@ -501,7 +458,7 @@ export async function planIdleStop({
       serving: found.serving,
       operation,
     });
-    const decision = decideIdleStop(evidence, { idleMs, now });
+    const decision = decideIdleStop(evidence, { idleMs, now, setting: SETTING });
     if (!decision.stop) {
       if (!decision.active) plan.skips.push({ target: root, reason: decision.reason, workspace: root });
       continue;
@@ -565,7 +522,7 @@ export async function stopIdleWorkspace(
       serving: found.serving,
       operation,
     });
-    const decision = decideIdleStop(evidence, { idleMs, now });
+    const decision = decideIdleStop(evidence, { idleMs, now, setting: SETTING });
     return decision.stop ? null : decision.reason;
   };
   const signal = operation?.signal;

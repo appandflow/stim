@@ -6,6 +6,7 @@ import { parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.
 import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
 import { deviceLeasePath, leaseIsExpired, parseLease, parseWorkspaceLeases } from '../engine/device-lease.ts';
 import { liveShareKeepReason } from '../local-server.ts';
+import { decideIdleStop, IDLE_SETTING, type IdleStopEvidence } from '../policy/idle.ts';
 import { getProject } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { describeError } from './errors.ts';
@@ -141,15 +142,21 @@ export function watchIdleDevServer({
   checkMs?: number;
 }): () => void {
   const idleMinutes = async (): Promise<number | null> => {
-    const last = Math.max(serverActivityAt(), ...[probe.lastActivityAt()].filter(Number.isFinite));
-    if (now() - last < idleStopMs) return null;
+    const activity: IdleStopEvidence['activity'] = [
+      { basis: 'Metro request', at: serverActivityAt() },
+      { basis: 'stim command', at: probe.lastActivityAt() },
+    ];
+    const decide = (keep: string[]) =>
+      decideIdleStop({ activity, keep }, { idleMs: idleStopMs, now: now(), setting: IDLE_SETTING });
+    if (!decide([]).stop) return null;
     let blocker: string | null;
     try {
       blocker = await probe.blocker();
     } catch (error) {
       blocker = describeError(error);
     }
-    return blocker ? null : Math.floor((now() - last) / MINUTE_MS);
+    const decision = decide(blocker ? [blocker] : []);
+    return decision.stop ? Math.floor(decision.idleMs / MINUTE_MS) : null;
   };
   let deciding = false;
   const timer = setInterval(
@@ -190,7 +197,10 @@ export function watchIdleDevices({
   let deciding = false;
   const timer = setInterval(
     () => {
-      if (deciding || now() - lastUseAt() < idleMs) return;
+      if (deciding) return;
+      const activity: IdleStopEvidence['activity'] = [{ basis: 'stim command', at: lastUseAt() }];
+      const decision = decideIdleStop({ activity, keep: [] }, { idleMs, now: now(), setting: IDLE_SETTING });
+      if (!decision.stop && decision.active) return;
       let due: boolean;
       try {
         due = hasDue();
