@@ -116,7 +116,7 @@ test('a bump rewrites every published version and leaves the lockfile alone', ()
     assert.notEqual(before, '99.0.0');
 
     const cli = readManifest(root, 'stim-cli');
-    assert.equal(cli.dependencies['@stim-cli/core'], 'workspace:*', 'the bump must not touch the ranges');
+    assert.equal(cli.devDependencies['@stim-cli/core'], 'workspace:*', 'the bump must not touch the ranges');
     assert.equal(
       readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8'),
       lockBefore,
@@ -153,7 +153,7 @@ test('a manifest the bump cannot rewrite leaves every version where it was', () 
   });
 });
 
-test('pnpm pack ships the CLI internal dependencies as exact versions', () => {
+test('pnpm pack ships the CLI without private workspace runtime dependencies', () => {
   const out = mkdtempSync(join(tmpdir(), 'stim-release-pack-'));
   try {
     const packed = execFileSync('pnpm', ['pack', '--pack-destination', out], {
@@ -168,8 +168,10 @@ test('pnpm pack ships the CLI internal dependencies as exact versions', () => {
 
     assert.equal(shipped.name, 'stim');
     assert.equal(shipped.version, version);
-    for (const name of ['@stim-cli/cache', '@stim-cli/core', '@stim-cli/metro']) {
-      assert.equal(shipped.dependencies[name], version);
+    for (const group of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+      for (const name of Object.keys(shipped[group] ?? {})) {
+        assert.equal(name.startsWith('@stim-cli/'), false, `${group}.${name} reached the tarball`);
+      }
     }
     assert.equal(JSON.stringify(shipped).includes('workspace:'), false, 'a workspace: range reached the tarball');
   } finally {
