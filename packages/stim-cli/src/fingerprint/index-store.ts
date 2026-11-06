@@ -236,7 +236,8 @@ export function indexDir(platform: Platform, project: string, layout: Layout): s
   return join(fingerprintIndexDir(platform), sha256(canonicalJson([...identity, layout])));
 }
 
-function writePrivate(path: string, text: string): void {
+/** Writes a file owner-only through a temporary file and a rename. */
+export function writePrivate(path: string, text: string): void {
   const temp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
   try {
     writeFileSync(temp, text, { mode: 0o600, flag: 'wx' });
@@ -406,6 +407,26 @@ export function readWorkspaceEnv(project: string): { env: Record<string, string>
 }
 
 const checkoutTag = (project: string) => sha256(project).slice(0, 8);
+
+const mtime = (path: string) => statSync(path, { throwIfNoEntry: false })?.mtimeMs;
+
+/**
+ * A patch or the lockfile written after the newest install stamp, which an install has not applied yet; null when
+ * every one is older, or no package manager wrote a stamp to compare with.
+ */
+export function newerThanInstall(roots: Roots): string | null {
+  const dirs = [...new Set([roots.project, roots.install])];
+  const stamps = dirs.flatMap((dir) => INSTALL_STAMPS.map((name) => mtime(join(dir, 'node_modules', name)) ?? []));
+  if (stamps.length === 0) return null;
+  const installed = Math.max(...stamps.flat());
+  const inputs = [
+    ...LOCKFILES.map((name) => join(roots.install, name)),
+    ...dirs.flatMap((dir) =>
+      PATCH_DIRS.flatMap((name) => (listNames(join(dir, name)) ?? []).map((file) => join(dir, name, file))),
+    ),
+  ];
+  return inputs.find((path) => (mtime(path) ?? 0) > installed) ?? null;
+}
 
 /** Whether any package manager's install stamp exists for the app, so it covers what an install writes. */
 export function installStamped(roots: Roots): boolean {

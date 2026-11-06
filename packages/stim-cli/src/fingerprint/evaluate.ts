@@ -77,6 +77,8 @@ export interface Fingerprint {
   opaque: string[];
   /** `index` when any evaluator part came from the validation index instead of a child. */
   from: 'evaluated' | 'index';
+  /** The keys the project's `fingerprint.config.js` exports; only `extraSources` is applied. */
+  fingerprintConfigKeys: string[];
 }
 interface Trace {
   env: string[];
@@ -811,5 +813,6 @@ export async function fingerprint(
     portable,
     opaque: evaluated.opaque,
     from: evaluated.fromIndex ? 'index' : 'evaluated',
+    fingerprintConfigKeys: Object.keys(record(evaluated.fingerprintConfig)),
   };
 }
