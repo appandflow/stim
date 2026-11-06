@@ -2,11 +2,12 @@ import Foundation
 
 /// The parts of stim-server's WebSocket protocol (`packages/server/src/protocol.ts`) that Stim Desktop speaks.
 public enum ServerProtocol {
+  public static let desktopApi = 1
   /// Error codes that refuse the client until it pairs again or updates; clients retry the others. The network ones
   /// are the phone's (`sessionRefusal` in `apps/mobile/src/lib/connection.ts`); `other-server` is the local socket's
   /// adoption check.
   public static let refusalCodes: Set<String> = [
-    "unauthorized", "protocol-unsupported", "server-outdated", "server-key-mismatch", "unknown-secret", "other-server",
+    "unauthorized", "protocol-unsupported", "server-key-mismatch", "unknown-secret", "other-server",
   ]
 
   /// The methods stim-server answers only on its Unix socket (`desktopMethod` in `packages/server/src/server.ts`).
@@ -54,15 +55,18 @@ public struct HelloResult: Decodable, Equatable, Sendable {
   public var protocolVersion: Int
   public var server: Server
   public var capabilities: [String]
-  /// What the server serves beyond the base protocol, such as `physical-android`; nil from a server older than it.
-  public var features: [String]?
+  public var desktopApi: Int?
+  public struct Host: Decodable, Equatable, Sendable {
+    public var owner: String?
+  }
+  public var host: Host?
   /// The `action` names this connection may run; nil from a server older than it.
   public var actions: [String]?
   public var device: Device?
   public var desktopBootstrap: DesktopBootstrapChallenge?
 
   enum CodingKeys: String, CodingKey {
-    case server, capabilities, features, actions, device, desktopBootstrap
+    case server, capabilities, desktopApi, host, actions, device, desktopBootstrap
     case protocolVersion = "protocol"
   }
 

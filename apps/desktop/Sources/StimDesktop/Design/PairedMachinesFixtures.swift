@@ -23,7 +23,7 @@
       let actions = capabilities.contains("control") ? #"["reload","stop"]"# : "[]"
       let hello = """
         {"protocol":2,"server":{"id":"floco-id","name":"floco","version":"1.32.0","stim":"1.32.0"},
-         "capabilities":\(capabilities),"features":["ios-hosted","android-hosted"],"actions":\(actions),
+         "capabilities":\(capabilities),"desktopApi":1,"actions":\(actions),
          "device":{"id":"d-4f2a","name":"Stim Desktop"}}
         """
       let state =
@@ -96,7 +96,7 @@
               owner: key.owner, serverName: "floco", access: access,
               link: offline
                 ? .unavailable("Can't reach floco: The machine stopped answering. Retrying.")
-                : .open(features: ["ios-hosted", "android-hosted"], capabilities: capabilities),
+                : .open(desktopApi: 1, capabilities: capabilities),
               connectionLine: offline
                 ? "Offline since \(now.addingTimeInterval(-300).formatted(date: .omitted, time: .shortened)). This is the last status floco reported."
                 : nil))

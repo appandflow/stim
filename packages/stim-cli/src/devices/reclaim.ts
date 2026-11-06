@@ -1,7 +1,5 @@
 import { endWorkspaceShares } from '../local-server.ts';
 import type { StimContext } from '@stim-cli/core';
-import { stopHostedAndroid } from '../device-host/hosted-android.ts';
-import { stopHostedIos } from '../device-host/hosted-ios.ts';
 import { archiveWorkspace } from '../archive.ts';
 import { clearNamedPorts } from '../named-ports.ts';
 import { projectDeviceSlots } from './device-slots.ts';
@@ -37,14 +35,13 @@ import {
   type ManagedTunnelRecord,
 } from '../supervisor/state.ts';
 import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
-import { isJsonObject, LAST_BUILD_KEYS, readMacosRecord } from '@stim-cli/core/state';
+import { isJsonObject, LAST_BUILD_KEYS, readMacosRecord, hostedNativeRecords } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
 import { macosAppPresent } from '../macos/state.ts';
 import { readWebRecord } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { removePhoneReverses } from './phone-reverses.ts';
-import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from '../engine/tunnel.ts';
 import { getExecutor } from '../exec.ts';
 import { runOperationFile } from '../engine/operation-exec.ts';
@@ -163,7 +160,8 @@ type StopSession = (
   operation?: StimContext,
 ) => { status: 'torn-down' | 'failed'; reason?: string } | Promise<{ status: 'torn-down' | 'failed'; reason?: string }>;
 
-function defaultStopSession(root: string, sessionId: string, operation?: StimContext) {
+async function defaultStopSession(root: string, sessionId: string, operation?: StimContext) {
+  const { resolveEasCliBin } = await import('../engine/remote-cache.ts');
   return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null, operation });
 }
 
@@ -607,10 +605,16 @@ async function reclaimIdleProject(
         };
   skippedDevices.push(...skippedCollectors);
   failedDevices.push(...failedCollectors);
-  for (const platform of ['ios', 'android'] as const) {
+  for (const platform of (['ios', 'android'] as const).filter(
+    (kind) => Object.keys(hostedNativeRecords(readWorkspaceState(path), kind)).length > 0,
+  )) {
     signal?.throwIfAborted();
     try {
-      await (platform === 'ios' ? stopHostedIos : stopHostedAndroid)(path, undefined, signal);
+      await (
+        platform === 'ios'
+          ? (await import('../device-host/hosted-ios.ts')).stopHostedIos
+          : (await import('../device-host/hosted-android.ts')).stopHostedAndroid
+      )(path, undefined, signal);
     } catch (error) {
       throwIfCleanupInterrupted(error, operation);
       const failed: SkippedDevice = { platform, name: `hosted ${platform} device`, reason: (error as Error).message };

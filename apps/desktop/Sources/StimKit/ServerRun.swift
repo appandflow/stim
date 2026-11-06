@@ -15,7 +15,7 @@ public struct ServerRunResult: Sendable {
 ) async throws -> ServerRunResult {
   try Task.checkCancellation()
   let client = try desktopActionServer(connection, stimHome: stimHome, action: "run this app for this Stim home")
-  guard case .open(let hello) = client.state, hello.features?.contains("desktop-run") == true else {
+  guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
     throw ServerError(code: "unsupported", message: "Update stim-server to run apps from Desktop.")
   }
   guard command.program == "stim", let platform = command.arguments.first,

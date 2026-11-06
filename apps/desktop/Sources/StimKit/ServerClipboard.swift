@@ -28,11 +28,11 @@ public struct ClipboardTooLarge: Error, Equatable, LocalizedError, Sendable {
     /// clipboard to reach: a physical iPhone, a macOS app and a web page refuse it.
     /// `server` names the paired machine that owns the device, or is nil for this Mac's server.
     public init(platform: String, physical: Bool, link: ServerLink, control: PhysicalStream.Control, server: String?) {
-      guard platform == "android" || (platform == "ios" && !physical), case .open(let features, _) = link else {
+      guard platform == "android" || (platform == "ios" && !physical), case .open(let desktopApi, _) = link else {
         self = .none
         return
       }
-      guard features?.contains("device-clipboard") == true else {
+      guard desktopApi == ServerProtocol.desktopApi else {
         self = .unsupported(
           "Update stim-server\(server.map { " on \($0)" } ?? "") to copy text to and from this device.")
         return

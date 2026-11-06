@@ -123,10 +123,10 @@ struct NoiseInteropTests {
         "PATH": "/usr/bin:/bin",
       ]
       script =
-        URL(fileURLWithPath: runtime).appendingPathComponent("node_modules/@stim-cli/server/dist/stim-server.mjs")
+        URL(fileURLWithPath: runtime).appendingPathComponent("node_modules/stim/bin/stim.mjs")
         .path
       port = try NoiseInteropTests.freePort()
-      server = try Child([script, "--port", String(port), "--loopback-only"], environment: environment)
+      server = try Child([script, "serve", "--port", String(port), "--loopback-only"], environment: environment)
       var ready = false
       for _ in 0..<120 where !ready {
         let health = URL(string: "http://127.0.0.1:\(port)/health")!
@@ -166,7 +166,7 @@ struct NoiseInteropTests {
     }
 
     func grant(_ deviceID: String, _ scope: String) async throws {
-      let grant = try Child([script, "devices", "grant", deviceID, scope], environment: environment)
+      let grant = try Child([script, "pairings", "grant", deviceID, scope], environment: environment)
       grant.process.waitUntilExit()
       #expect(grant.process.terminationStatus == 0)
     }

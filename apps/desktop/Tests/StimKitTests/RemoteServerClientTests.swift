@@ -61,8 +61,8 @@ import Testing
     #expect(retries.delays.isEmpty)
     #expect(server.closed)
 
-    func event(_ code: UInt16?, _ reason: String?, answered: Bool = true) -> ServerTransportEvent {
-      NoiseClientTransport.closeEvent(description: "closed", code: code, reason: reason, serverAnswered: answered)
+    func event(_ code: UInt16?, _ reason: String?) -> ServerTransportEvent {
+      NoiseClientTransport.closeEvent(description: "closed", code: code, reason: reason)
     }
     for code in ["server-key-mismatch", "unknown-secret", "unauthorized", "protocol-unsupported"] {
       guard case .refused(let refusal) = event(4401, code) else {
@@ -71,11 +71,6 @@ import Testing
       }
       #expect(refusal.code == code)
     }
-    guard case .refused(let outdated) = event(4400, "unexpected binary frame", answered: false) else {
-      Issue.record("a protocol 1 close is not a refusal")
-      return
-    }
-    #expect(outdated.code == "server-outdated")
     for (code, reason) in [
       (UInt16(4401), "handshake-failed"), (4400, "unexpected binary frame"), (1006, nil), (4401, "bad-request"),
     ] {
@@ -153,10 +148,10 @@ import Testing
     guard method == "hello" else { return }
     if case .object(let params)? = request["params"] { helloParams = params }
     let hello: JSONValue = .object([
-      "protocol": .number(2),
+      "protocol": .number(2), "desktopApi": .number(1),
       "server": .object(["id": .string("floco"), "name": .string("floco"), "version": .string("1"), "stim": .string("1")]),
       "capabilities": .array([.string("read")]),
-      "features": .array([]),
+
       "actions": .array([]),
     ])
     let reply = String(decoding: try! JSONEncoder().encode(JSONValue.object(["id": id, "result": hello])), as: UTF8.self)

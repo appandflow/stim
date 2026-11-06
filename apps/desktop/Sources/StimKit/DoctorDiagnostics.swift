@@ -9,7 +9,7 @@ import Foundation
   }
   let report: String
   do {
-    guard hello.features?.contains("desktop-reports") == true else {
+    guard hello.desktopApi == ServerProtocol.desktopApi else {
       throw ServerError(code: "unsupported", message: "Update the local stim-server to read setup reports.")
     }
     let result = try await client.report(["report": .string("doctor"), "cwd": .string(cwd)])

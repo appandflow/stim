@@ -23,7 +23,7 @@ import Foundation
       throw ServerError(
         code: "not-connected", message: "The local stim-server is not ready to check machine access for this Stim home.")
     }
-    guard case .open(let hello) = client.state, hello.features?.contains("desktop-reports") == true else {
+    guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
       throw ServerError(code: "unsupported", message: "Update the local stim-server to read setup reports.")
     }
     let result = try await client.report(["report": .string("doctor"), "cwd": .string(cwd)])
@@ -35,7 +35,7 @@ import Foundation
 
   private func request(cwd: String, ticket: String?, stimHome: String) async throws -> DoctorReport {
     let client = try desktopActionServer(server(), stimHome: stimHome, action: "request machine access for this Stim home")
-    guard case .open(let hello) = client.state, hello.features?.contains("desktop-machine-access") == true else {
+    guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
       throw ServerError(code: "unsupported", message: "Update stim-server to request machine access from Desktop.")
     }
     var params: [String: JSONValue] = ["cwd": .string(cwd)]

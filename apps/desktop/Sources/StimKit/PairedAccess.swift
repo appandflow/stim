@@ -44,6 +44,6 @@ public struct PairedAccess: Equatable, Sendable {
   }
 
   static func grantCommand(deviceID: String?) -> String {
-    "stim-server devices grant \(PairedServerWording.plainDeviceID(deviceID) ?? "<id>") --control"
+    "stim pairings grant \(PairedServerWording.plainDeviceID(deviceID) ?? "<id>") --control"
   }
 }

@@ -7,7 +7,7 @@ import Testing
   func open(capabilities: [String], actions: String?) throws -> ServerClient.State {
     let actionsJSON = actions.map { #","actions":\#($0)"# } ?? ""
     let json = #"""
-      {"protocol":2,"server":{"id":"f","name":"floco","version":"1","stim":"1"},
+      {"protocol":2,"desktopApi":1,"server":{"id":"f","name":"floco","version":"1","stim":"1"},
        "capabilities":\#(capabilities),"device":{"id":"d-1","name":"Mac"}\#(actionsJSON)}
       """#
     return .open(try JSONDecoder().decode(HelloResult.self, from: Data(json.utf8)))
@@ -26,7 +26,7 @@ import Testing
     let access = PairedAccess(state: state, server: "floco", deviceID: "d-1")
     #expect(access.actions.isEmpty)
     #expect(
-      access.reason == "floco lets this Mac view only. On floco, run stim-server devices grant d-1 --control, then Reconnect.")
+      access.reason == "floco lets this Mac view only. On floco, run stim pairings grant d-1 --control, then Reconnect.")
   }
 
   @Test func neverBuildsAGrantCommandFromADeviceIDThatIsNotPlain() throws {
@@ -34,7 +34,7 @@ import Testing
     let access = PairedAccess(state: state, server: "floco", deviceID: "d-1; rm -rf ~")
     #expect(
       access.reason
-        == "floco lets this Mac view only. On floco, run stim-server devices grant <id> --control, then Reconnect.")
+        == "floco lets this Mac view only. On floco, run stim pairings grant <id> --control, then Reconnect.")
   }
 
   @Test func namesWhyNoActionIsOfferedWhenDisconnectedOrTheServerPredatesActions() throws {

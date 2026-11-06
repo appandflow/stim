@@ -139,12 +139,12 @@ import Testing
       #"""
       {"machine":"studio","state":"unreachable","diagnosis":{"layer":"server","code":"server-not-running","title":"Server not running",
         "message":"nothing listens behind the route (HTTP 502).",
-        "remedy":"On studio, run `stim-server service status`; `stim-server service install --serve` starts it and keeps it running."}}
+        "remedy":"On studio, run `stim service status`; `stim service install --serve` starts it and keeps it running."}}
       """#)
     let detail = MachineDetail(MachineDetail.Input(entry: "studio", status: down))
     let situation = try #require(detail.situation)
     #expect(situation.title == "Server not running")
-    #expect(situation.commands == ["stim-server service status", "stim-server service install --serve"])
+    #expect(situation.commands == ["stim service status", "stim service install --serve"])
     #expect(detail.groups.isEmpty)
 
     let pending = try status(#"{"machine":"studio","state":"pending"}"#)

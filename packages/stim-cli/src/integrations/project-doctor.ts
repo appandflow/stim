@@ -1,5 +1,5 @@
 import type { DoctorContext, DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
-import type { BuildTarget } from '../offload/toolchain.ts';
+import type { BuildTarget } from '../engine/toolchain.ts';
 import type { StimContext } from '@stim-cli/core';
 import type { SettingsObject } from '../workspace/settings.ts';
 

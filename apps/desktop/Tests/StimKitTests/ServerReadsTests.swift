@@ -79,13 +79,6 @@ import Testing
     #expect(server.sent.filter { $0.method == "desktop.reports.get" }.count == 2)
   }
 
-  @Test func anOlderServerGetsTheWholeInvalidation() async throws {
-    let server = BusyServer(refusals: [:], features: ["desktop-reports"])
-    let client = await open(server)
-    defer { client.stop() }
-    _ = try await client.report(["report": .string("gc")])
-    #expect(server.sent.filter { $0.method == "desktop.reports.invalidate" }.map(\.params) == [[:]])
-  }
 }
 
 @MainActor private final class BusyServer: ServerTransport {
@@ -99,15 +92,12 @@ import Testing
   private(set) var heldReports: [JSONValue] = []
   private var refusals: [String: Int]
   private let holdReports: Bool
-  private let features: [String]
 
   init(
-    refusals: [String: Int], holdReports: Bool = false,
-    features: [String] = ["desktop-reports", "desktop-settings", "desktop-report-invalidate-target"]
+    refusals: [String: Int], holdReports: Bool = false
   ) {
     self.refusals = refusals
     self.holdReports = holdReports
-    self.features = features
   }
 
   func close() {}
@@ -132,10 +122,10 @@ import Testing
       reply(
         id,
         .object([
-          "protocol": .number(1),
+          "protocol": .number(1), "desktopApi": .number(1),
           "server": .object(["id": .string("home"), "name": .string("Mac"), "version": .string("1"), "stim": .string("1")]),
           "capabilities": .array([.string("read")]),
-          "features": .array(features.map(JSONValue.string)),
+
         ]))
     case "desktop.reports.get":
       if holdReports { heldReports.append(id) } else { reply(id, snapshot) }

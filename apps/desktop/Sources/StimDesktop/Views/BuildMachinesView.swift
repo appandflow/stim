@@ -236,7 +236,7 @@ struct PairingNotices: View {
         Text(
           forgotten.revokes
             ? "\(forgotten.name.capitalizedFirst) still lists this machine. To revoke it there too, run this there."
-            : "\(forgotten.name.capitalizedFirst) still lists this machine. Run this there to find it, then revoke it with stim-server devices revoke and its id."
+            : "\(forgotten.name.capitalizedFirst) still lists this machine. Run this there to find it, then revoke it with stim pairings revoke and its id."
         )
         .foregroundStyle(Palette.secondary)
         CopyableCommand(command: forgotten.command, runsOn: forgotten.name)
@@ -693,7 +693,7 @@ private struct RemoveMachineSheet: View {
         }
         if connection.entry != nil {
           Text("To stop stim-server there if nothing else uses it:").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-          CopyableCommand(command: "stim-server service uninstall", runsOn: connection.name)
+          CopyableCommand(command: "stim service uninstall", runsOn: connection.name)
         }
       }
       if let entry = connection.entry {

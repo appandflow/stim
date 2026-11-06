@@ -1020,12 +1020,12 @@ final class AddMachineModelTests: XCTestCase {
       answer([
         "id": id,
         "result": .object([
-          "protocol": .number(1),
+          "protocol": .number(1), "desktopApi": .number(1),
           "server": .object([
             "id": .string("home"), "name": .string("Mac"), "version": .string("1"), "stim": .string("1"),
           ]),
           "capabilities": .array([.string("read")]),
-          "features": .array([.string("desktop-reports"), .string("desktop-settings")]),
+
         ]),
       ])
     case "desktop.reports.get":

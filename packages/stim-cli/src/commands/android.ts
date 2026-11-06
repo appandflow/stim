@@ -1,7 +1,7 @@
 import type { RuntimePreparationResult } from '../engine/runtime-plan.ts';
-import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
+import type { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { selectAndroidPlacement } from './android/remote.ts';
-import { prepareHostedAndroid, placeHostedAndroid } from '../device-host/hosted-android.ts';
+import type { prepareHostedAndroid, placeHostedAndroid } from '../device-host/hosted-android.ts';
 import {
   readHostedAndroid,
   writeDevicePlacementAsync,
@@ -9,7 +9,7 @@ import {
   hostedMetroSettings,
 } from '../workspace/placement-state.ts';
 import { finishHostedAndroidRun } from './android/hosted.ts';
-import { followHostedLaunchLogs } from '../device-host/hosted-logs-sync.ts';
+import type { followHostedLaunchLogs } from '../device-host/hosted-logs-sync.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
 import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
 import { parseMachine } from '@stim-cli/core/state';
@@ -1464,10 +1464,11 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         metroPort,
         logsDir,
         selectors,
-        place: options.placeHostedAndroid ?? placeHostedAndroid,
+        place: options.placeHostedAndroid ?? (await import('../device-host/hosted-android.ts')).placeHostedAndroid,
         writePlacement: options.writeHostedAndroid ?? writeHostedAndroidAsync,
         verifyLaunch: verifyLaunched,
-        followLogs: options.followHostedLaunchLogs ?? followHostedLaunchLogs,
+        followLogs:
+          options.followHostedLaunchLogs ?? (await import('../device-host/hosted-logs-sync.ts')).followHostedLaunchLogs,
         writeLaunch,
         readApkPackage,
         resolveDevClientScheme,

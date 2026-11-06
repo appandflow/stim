@@ -217,7 +217,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
       shared = running
     } else {
       var scope: [String: JSONValue] = [:]
-      if case .open(let hello) = state, hello.features?.contains("desktop-report-invalidate-target") == true {
+      if case .open(let hello) = state, hello.desktopApi == ServerProtocol.desktopApi {
         scope = target
       }
       let read = ReportRead()
@@ -359,8 +359,13 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
       do {
         let result = try await send(
           on: transport, "hello",
-          ["client": .object(["name": .string(clientName), "version": .string(clientVersion)])]
-            .merging(bootstrap == nil ? [:] : ["desktopBootstrap": .bool(true)]) { $1 })
+          [
+            "client": .object([
+              "name": .string(clientName), "version": .string(clientVersion),
+              "desktopApi": .number(Double(ServerProtocol.desktopApi)),
+            ])
+          ]
+          .merging(bootstrap == nil ? [:] : ["desktopBootstrap": .bool(true)]) { $1 })
         guard current == generation else { return }
         let hello = try decodeReporting(HelloResult.self, from: result, source: .server)
         if let serverPort, !hello.isServer(onPort: serverPort) {
@@ -370,6 +375,16 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
               "Another stim-server owns this Stim home's socket, not the one on port \(serverPort). Stop the other server, or give each server its own STIM_HOME."
           )
         }
+        // compat C7 permanent
+        guard hello.desktopApi == ServerProtocol.desktopApi else {
+          let location = isRemote ? "on \(hello.server.name)" : "on port \(serverPort ?? StimServerCLI.defaultPort)"
+          let message =
+            (hello.desktopApi ?? 0) < ServerProtocol.desktopApi
+            ? "stim-server \(hello.server.version) \(location) is older than Stim Desktop; run npm i -g stim@1.42.0 && stim service install, or quit it"
+            : "stim \(hello.server.version) \(location) uses a newer Desktop API. Update Stim Desktop (Stim > Check for Updates)."
+          throw ServerError(code: "protocol-unsupported", message: message)
+        }
+        // compat end
         if let bootstrap, let challenge = hello.desktopBootstrap {
           guard let proof = bootstrap.clientProof(for: challenge) else {
             throw ServerError(code: "forbidden", message: "The server could not prove its private Desktop bootstrap.")
@@ -380,7 +395,9 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
             throw ServerError(code: "forbidden", message: "The server did not authorize private Desktop access.")
           }
           hasDesktopAuthority = true
-        } else if !isRemote, hello.features?.contains("desktop-local-authority") == true {
+        } else if !isRemote, let owner = hello.host?.owner, ["service", "cli"].contains(owner),
+          hello.capabilities.contains("control")
+        {
           hasDesktopAuthority = true
         }
         retry = Self.minimumRetry
