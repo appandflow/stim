@@ -20,6 +20,8 @@ import {
   readDaemonSnapshot,
   readMaintenanceState,
   readHostedSessions,
+  readHostedAppMetadata,
+  type HostedDeviceSession,
   type DaemonMode,
   type DaemonRecentAction,
   type DaemonSnapshot,
@@ -39,7 +41,7 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { stimBuild } from '../spawn-entry.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
-import type { Config } from '../workspace/config.ts';
+import { loadConfig, type Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { relaunchWithLogFile } from '../detached-entry.ts';
 import {
@@ -343,14 +345,15 @@ export async function runStimd({
   };
   const open = new Set<Socket>();
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
-  let engineDirs: string[] = [];
+  let engineDirs: string[] = follower ? workspaceEngineDirs(loadConfig()) : [];
+  let netServes: ServeOptions | null = serve ?? null;
   let switchedTo: { build: string; version: string } | null = null;
   let foreignLeft = afterSwitch;
   let heldSwitch = false;
   const pinned = (): boolean =>
     [...ops.values()].includes('pinned') ||
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
-    (net.running() !== null && readHostedSessions().some((session) => session.state === 'preparing'));
+    (net.running() !== null && readHostedSessions().some(hostedNativeWork));
   const checkEngine = async (): Promise<void> => {
     if (!follower || switchedTo || closing) return;
     let next: Awaited<ReturnType<typeof follower.check>>;
@@ -377,12 +380,14 @@ export async function runStimd({
     const changed = `${JSON.stringify({ op: 'engine-changed', ...next, pid: process.pid })}\n`;
     for (const list of [waiters.build, waiters.boot, tickReplies]) list.length = 0;
     for (const socket of open) socket.end(changed);
+    const running = net.running();
+    const carried = running && netServes ? { ...netServes, shareOnly: running.shareOnly } : null;
     const why = `the engine switched to ${next.version} (${next.build})`;
     shutdown(why);
     await net.close();
     launchStimd(process.env, startMode, process.platform, join(root, next.build, 'dist', 'cli.mjs'), [
       '--after-switch',
-      ...serveArgs(serve),
+      ...serveArgs(carried),
     ]);
     for (const deadline = Date.now() + SUCCESSOR_BIND_MS; Date.now() < deadline;) {
       const record = readJsonObject(stimdRecordFile());
@@ -450,21 +455,19 @@ export async function runStimd({
           const params = isJsonObject(message.params) ? message.params : {};
           const share = params.share === true;
           const port = Number.isInteger(params.port) ? Number(params.port) : undefined;
-          void net
-            .ensure(
-              netOptions({
-                ...(port !== undefined && port >= 0 && port <= 65535 ? { port } : share ? { port: 0 } : {}),
-                loopbackOnly: share || params.loopbackOnly === true,
-                extraEnv: strings(params.extraEnv),
-                pathPrepend: strings(params.pathPrepend),
-                shareOnly: share,
-                ...(kind === 'desktop' ? { owner: 'desktop' } : {}),
-              }),
-            )
-            .then((answer) => {
-              lastContact = Date.now();
-              return reply({ op: 'net', ...answer });
-            });
+          const options = netOptions({
+            ...(port !== undefined && port >= 0 && port <= 65535 ? { port } : share ? { port: 0 } : {}),
+            loopbackOnly: share || params.loopbackOnly === true,
+            extraEnv: strings(params.extraEnv),
+            pathPrepend: strings(params.pathPrepend),
+            shareOnly: share,
+            ...(kind === 'desktop' ? { owner: 'desktop' } : {}),
+          });
+          if (!net.running()) netServes = options;
+          void net.ensure(options).then((answer) => {
+            lastContact = Date.now();
+            return reply({ op: 'net', ...answer });
+          });
         } else if (op === 'net.connect') {
           socket.off('data', onData);
           const head = buffer;
@@ -755,11 +758,29 @@ function workspaceEngineDirs(config: Config | null): string[] {
   });
 }
 
-/** `serviceArguments`' inverse: the arguments a successor stimd takes to serve as this one did. */
-function serveArgs(serve: ServeOptions | undefined): string[] {
-  if (!serve) return [];
+/**
+ * Whether a hosted session has native work in flight: it is being prepared, or an app is being received or installed
+ * into it. A receipt that cannot be read counts as none.
+ */
+function hostedNativeWork(session: HostedDeviceSession): boolean {
+  if (session.state === 'preparing') return true;
+  if (!session.appAttempt) return false;
+  try {
+    return ['receiving', 'installing'].includes(readHostedAppMetadata(session.id, session.appAttempt).state);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `serviceArguments`' inverse: the arguments a successor stimd takes to serve as this one's net thread did. A net thread
+ * that only serves `stim share` is not carried over.
+ */
+function serveArgs(serve: ServeOptions | null): string[] {
+  if (!serve || serve.shareOnly) return [];
   return [
     '--service',
+    ...(serve.loopbackOnly ? ['--loopback-only'] : []),
     '--port',
     String(serve.port),
     ...serve.extraEnv.flatMap((entry) => ['--env', entry]),
@@ -783,6 +804,7 @@ export function serviceArguments(argv: readonly string[]): ServeOptions | undefi
   for (let index = 0; index < argv.length; index++) {
     const value = argv[index + 1];
     if (value === undefined) break;
+    if (argv[index] === '--loopback-only') serve.loopbackOnly = true;
     if (argv[index] === '--port') serve.port = /^\d+$/.test(value) ? Number(value) : serve.port;
     else if (argv[index] === '--env') serve.extraEnv.push(value);
     else if (argv[index] === '--path-prepend') serve.pathPrepend.push(value);

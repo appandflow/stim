@@ -177,7 +177,8 @@ function agentSessionsActedAt(root: string): number | string {
   return latest;
 }
 
-function metroRequestAt(root: string, since: number, serving: boolean): number | string {
+/** The last Metro bundle, manifest or HMR request in the workspace's log since `since`, or why it cannot be read. */
+export function metroRequestAt(root: string, since: number, serving: boolean): number | string {
   const file = join(workspaceLogsDir(root), 'metro.ndjson');
   const rotated = rotatedLogPath(file);
   const records = [];

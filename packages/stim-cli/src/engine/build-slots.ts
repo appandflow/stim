@@ -227,6 +227,8 @@ export async function acquireBuildSlot({
     for (;;) {
       throwIfCancelled(signal, 'build slot');
       if (automatic) requireAutomaticMachine('build', 'local');
+      const switched = switchedEngine(engine);
+      if (switched) endForSwitch(switched.version);
       const max = readMax();
       const waiters = liveWaiters('build');
       const position = queuePosition(waiters, ticket);
@@ -240,8 +242,6 @@ export async function acquireBuildSlot({
         opWaiting(true);
         continue;
       }
-      const switched = switchedEngine(engine);
-      if (switched) endForSwitch(switched.version);
       ceiling.update(
         position,
         turn.unverified.length
