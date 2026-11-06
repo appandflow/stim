@@ -29,7 +29,7 @@ const CLAIM_WAIT_MS = 5000;
 const CLAIM_POLL_MS = 50;
 const LAUNCH_TIMEOUT_MS = 5000;
 /** The label of the launchd job that runs a stimd, which it removes as it exits. */
-export const LAUNCHD_LABEL_ENV = 'STIM_LAUNCHD_LABEL';
+export const LAUNCHD_LABEL_ENV = 'STIMD_LAUNCHD_LABEL';
 
 /**
  * Whether a stimd, or a stim-daemon from Stim 1.40 to 1.42, holds this home's daemon claim. A claim Stim cannot resolve
