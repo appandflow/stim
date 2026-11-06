@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { defineConfig } from 'tsdown';
 import { SETTINGS_SCHEMA_FILE, settingsJsonSchema } from '@stim-cli/core/state';
@@ -72,6 +72,9 @@ export default defineConfig({
   fixedExtension: true,
   hooks: {
     'build:done': () => {
+      mkdirSync('dist/injected', { recursive: true });
+      for (const name of readdirSync('src/injected').filter((entry) => /\.(cjs|d\.cts)$/.test(entry)))
+        copyFileSync(`src/injected/${name}`, `dist/injected/${name}`);
       writeFileSync(`dist/${SETTINGS_SCHEMA_FILE}`, `${JSON.stringify(settingsJsonSchema(), null, 2)}\n`);
       copyFileSync('helper/stim-footprint.swift', 'dist/stim-footprint.swift');
       copyFileSync('helper/stim-clonefile.c', 'dist/stim-clonefile.c');

@@ -218,7 +218,7 @@ describe('starting a tunnel', () => {
   });
 });
 describe('the Metro store injected into an Expo child', () => {
-  const adapter = '/pkg/Stim/shim/expo-metro-config.cjs';
+  const adapter = '/pkg/Stim/dist/injected/expo-metro-config.cjs';
 
   test('the env additions point Expo at the adapter and preserve an existing override', () => {
     expect(
@@ -241,7 +241,7 @@ describe('the Metro store injected into an Expo child', () => {
   test('the adapter ships in this package and is found from here', () => {
     const found = expoMetroConfigPath();
     assert(found);
-    expect(found.endsWith(join('shim', 'expo-metro-config.cjs'))).toBe(true);
+    expect(found.endsWith(join('injected', 'expo-metro-config.cjs'))).toBe(true);
     expect(existsSync(found)).toBe(true);
     expect(expoMetroConfigPath(pathToFileURL(resolve('/nowhere/at/all/x.js')).href)).toBe(null);
   });

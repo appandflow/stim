@@ -88,7 +88,7 @@ const EXPO_ADAPTER_FILE = 'expo-metro-config.cjs';
 
 export function expoMetroConfigPath(fromUrl: string = import.meta.url): string | null {
   const here = dirname(fileURLToPath(fromUrl));
-  for (const rel of ['../shim', '../../shim']) {
+  for (const rel of ['./injected', '../injected']) {
     const candidate = resolve(here, rel, EXPO_ADAPTER_FILE);
     if (existsSync(candidate)) return candidate;
   }

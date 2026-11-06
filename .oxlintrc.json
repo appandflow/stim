@@ -89,22 +89,6 @@
       }
     },
     {
-      "files": ["packages/metro/**/*.{ts,mts,mjs,js}"],
-      "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
-      "rules": {
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": [
-              {
-                "regex": "^@stim-cli/(?!(?:metro|cache|core)(?:/|$))|^stim(?:/|$)"
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
       "files": ["packages/ci/**/*.{ts,mts,mjs,js}"],
       "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
       "rules": {

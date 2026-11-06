@@ -19,12 +19,6 @@ Install `stim` and use `stim start`, `stim ios`, or `stim android`.
 Install `@stim-cli/cache-s3` for remote native artifact storage. See
 [Build caches](./build-caches.md) for provider configuration.
 
-## Metro configuration
-
-`@stim-cli/metro` is no longer published. Remove `sharedCacheStores` from
-`metro.config.js`; Stim's injected config sets `cacheStores` when Stim starts
-Metro. Metro keeps its local cache.
-
 ## Retired Expo build-cache provider
 
 `@stim-cli/expo-build-cache` is no longer shipped or published. Published versions

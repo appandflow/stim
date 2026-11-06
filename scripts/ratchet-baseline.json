@@ -89,24 +89,13 @@
   },
   "packages/core": {
     "src": {
-      "as": 177,
+      "as": 171,
       "nonNull": 49,
       "refusalRemedy": 1
     },
     "test": {
-      "as": 29,
-      "nonNull": 20
-    }
-  },
-  "packages/metro": {
-    "src": {
-      "as": 4,
-      "nonNull": 0,
-      "refusalRemedy": 0
-    },
-    "test": {
-      "as": 0,
-      "nonNull": 1
+      "as": 21,
+      "nonNull": 19
     }
   },
   "packages/server": {
@@ -127,7 +116,7 @@
       "refusalRemedy": 17
     },
     "test": {
-      "as": 440,
+      "as": 439,
       "nonNull": 611
     }
   },
