@@ -1,12 +1,14 @@
 {
   "$schema": "../node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript"],
+  "jsPlugins": ["./oxlint/stim.mjs"],
   "categories": {
     "correctness": "off",
     "suspicious": "off"
   },
   "rules": {
     "typescript/consistent-type-assertions": ["error", { "assertionStyle": "never" }],
-    "typescript/no-non-null-assertion": "error"
+    "typescript/no-non-null-assertion": "error",
+    "stim/refusal-remedy": "error"
   }
 }

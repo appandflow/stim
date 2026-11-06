@@ -733,6 +733,7 @@ function runsBothPlatforms(env) {
 function hello(clientKey, deviceName) {
   return {
     protocol: 2,
+    phoneApi: 2,
     server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
     capabilities: values.read ? ['read'] : ['read', 'control'],
     features: [

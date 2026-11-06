@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "unicorn", "oxc", "import", "node", "promise", "vitest"],
+  "jsPlugins": ["./scripts/oxlint/stim.mjs"],
   "options": {
     "denyWarnings": true,
     "reportUnusedDisableDirectives": "error"
@@ -29,6 +30,9 @@
       }
     ],
     "no-unused-vars": "warn",
+    "no-warning-comments": ["error", { "terms": ["todo", "fixme", "hack", "xxx"] }],
+    "stim/directive-reason": "error",
+    "stim/no-snapshot": "error",
     "typescript/ban-ts-comment": "error",
     "typescript/no-explicit-any": "error",
     "vitest/no-commented-out-tests": "off",
@@ -52,6 +56,13 @@
     "unicorn/require-post-message-target-origin": "off"
   },
   "overrides": [
+    {
+      "files": ["packages/**/*.{ts,tsx,mts,mjs,js,cjs,cts}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*"],
+      "rules": {
+        "stim/package-fence": "error"
+      }
+    },
     {
       "files": ["packages/stim-cli/src/**/*.ts"],
       "excludeFiles": ["packages/stim-cli/src/exec.ts", "packages/stim-cli/src/__tests__/**", "**/*.test.ts"],
@@ -287,7 +298,7 @@
         "packages/stim-cli/src/integrations/swiftpm-macos.ts",
         "packages/stim-cli/src/offload/access-ticket.ts",
         "packages/stim-cli/src/offload/client.ts",
-        "packages/stim-cli/src/offload/selection.ts",
+        "packages/stim-cli/src/build-placement.ts",
         "packages/stim-cli/src/offload/worker.ts",
         "packages/stim-cli/src/temporary.ts",
         "packages/stim-cli/src/web/runtime.ts"

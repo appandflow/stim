@@ -14,7 +14,7 @@ import {
   storeTieredBuild,
   type LoadCacheProviderResult,
   type ProviderCallResult,
-} from '@stim-cli/cache';
+} from '@stim-cli/cache/tiers';
 import {
   prepareProviderDownloadDir,
   providerDownloadPath,
@@ -64,7 +64,7 @@ import {
   namedBuildMachine,
   OffloadRefusal,
   requireLocalBuild,
-} from '../../offload/selection.ts';
+} from '../../build-placement.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { RecordedBuild } from '../../engine/recorded-build.ts';
 import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';

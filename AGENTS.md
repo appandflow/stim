@@ -922,6 +922,11 @@ Do not store the same artifact under both keys. A recorded fingerprint from
 `$STIM_HOME/fingerprint-memo` may stand in only for the pre-mutation lookup.
 The post-mutation fingerprint, the build worker and `doctor` always compute it
 in full. Write a record only from a full fingerprint, never from a recorded one.
+A record's key is the static digest, which leaves out the Stim version. Bump
+`STATIC_SCHEMA` (`packages/stim-cli/src/cache/static-fingerprint.ts`) when the
+other version of a file listed in `scripts/static-fingerprint.json` could give
+a tree the same static digest but a different full fingerprint; `pnpm run lint`
+fails until `node scripts/static-fingerprint.mjs --update` records the change.
 
 ### 11. Preserve launch status semantics
 

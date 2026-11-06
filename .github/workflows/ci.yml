@@ -107,6 +107,9 @@ jobs:
       - name: Build (tsdown, all packages)
         run: pnpm run build
 
+      - name: Hot-path closures of the built CLI
+        run: pnpm run dist:closure
+
       - name: Committed Action bundle matches source
         id: action-bundle
         run: git diff --exit-code -- .github/actions/stim-ci/dist
@@ -143,7 +146,7 @@ jobs:
           fi
 
       - name: Integration tests (vitest)
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && (github.event_name != 'push' || matrix.node == 24)
         run: pnpm run test:integration --reporter=default --reporter=json --outputFile.json=test-results/integration-${{ matrix.node }}.json
 
       - name: Retain unit-test timings
@@ -156,7 +159,7 @@ jobs:
           retention-days: 7
 
       - name: Retain integration-test timings
-        if: always() && github.event_name != 'pull_request'
+        if: always() && github.event_name != 'pull_request' && (github.event_name != 'push' || matrix.node == 24)
         uses: actions/upload-artifact@v4
         with:
           name: integration-test-timings-node-${{ matrix.node }}

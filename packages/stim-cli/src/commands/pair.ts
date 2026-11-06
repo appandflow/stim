@@ -1,5 +1,6 @@
 import type { Command } from 'commander';
 import { loadServerCli } from '../server-cli.ts';
+// oxlint-disable-next-line stim/package-fence -- @stim-cli/server has no public entry for this module until the one-package fold merges the two packages.
 import { DEFAULT_PORT } from '../../../server/src/service-plist.ts';
 
 export default function pairCommand(program: Command): void {

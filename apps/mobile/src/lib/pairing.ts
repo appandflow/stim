@@ -76,7 +76,9 @@ export function parsePairingCode(text: string): PairingResult {
       ok: false,
       error: t`This pairing code is from an older stim-server. Update stim-server on the machine that showed it.`,
     };
+  // compat C10 permanent
   if (v !== 2) return { ok: false, error: t`This pairing code needs a newer version of the app.` };
+  // compat end
   if (typeof endpoint !== 'string' || typeof pairingToken !== 'string' || typeof fingerprint !== 'string') {
     return { ok: false, error: t`This QR code is not a Stim pairing code.` };
   }

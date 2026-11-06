@@ -871,6 +871,7 @@ describe('the Swift port in Stim Desktop', () => {
     expect(vectors.length).toBeGreaterThan(20);
     const status = captured as unknown as OversightStatus;
     const titles = { status, titles: status.environments.map((e) => oversightTitle(e, status)) };
+    // oxlint-disable-next-line stim/no-snapshot -- the Swift tests in apps/desktop replay this file, and vitest -u rewrites it
     await expect(`${JSON.stringify({ oversee: vectors, quietHours, titles }, null, 2)}\n`).toMatchFileSnapshot(
       '../../../apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json',
     );

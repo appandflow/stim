@@ -1,6 +1,6 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { HOLDS_SIGNING_FILE } from './selection.ts';
+import { HOLDS_SIGNING_FILE } from '../build-placement.ts';
 
 const KEYSTORE_FILE = /(?:\.(?:keystore|jks|p12|pfx)|(?:^|\/)keystore\.properties)$/i;
 const VALUE_FILE = /(?:\.properties|(?:^|\/)credentials\.json)$/i;

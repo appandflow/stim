@@ -5,7 +5,7 @@ import {
   reversePorts,
   type HostedAndroidPlacement,
 } from '@stim-cli/core/state';
-import { readHostedNative } from '../device-host/ios-state.ts';
+import { readHostedNative } from '../workspace/placement-state.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { nativeRunCommand } from '../engine/slot-launch.ts';
 import { deviceSlotPlatforms, parseDeviceSlotKey } from '../devices/device-slots.ts';

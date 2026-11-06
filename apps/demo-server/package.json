@@ -12,10 +12,12 @@
     "test": "vitest run",
     "test:live": "vitest run --config vitest.live.config.ts"
   },
+  "dependencies": {
+    "@noble/curves": "2.4.0",
+    "@stim-cli/core": "workspace:^"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261001.1",
-    "@noble/curves": "2.4.0",
-    "@stim-cli/core": "workspace:^",
     "@types/ws": "^8.18.1",
     "wrangler": "4.147.0",
     "ws": "^8.21.3"

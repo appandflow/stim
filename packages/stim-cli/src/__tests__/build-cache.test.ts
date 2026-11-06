@@ -36,6 +36,9 @@ import {
   storedSources,
   untrackedNativeFiles,
 } from '../cache/build-cache.ts';
+import { trackedPaths as gitTrackedPaths } from '../fingerprint/git-index.ts';
+import { staticInputs } from '../fingerprint/inputs.ts';
+import { isUncertain, preimage, preimageHash } from '../fingerprint/key.ts';
 import { writeSignedApk } from './_signed-apk.ts';
 import { recordedSignedTail } from '../engine/apk-signed-tail.ts';
 import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
@@ -397,7 +400,18 @@ describe('library example apps in the main checkout', () => {
   }, 60_000);
 });
 
-describe('Podfile.lock checksums of podspecs that embed the checkout path', () => {
+const ownFingerprint = async (dir: string) => {
+  const result = staticInputs(
+    { root: dir, tracked: await gitTrackedPaths(dir), expoResolves: false },
+    { platform: 'ios' },
+  );
+  return isUncertain(result) ? null : preimageHash(preimage('ios', result.native, result.layout, result.inputs));
+};
+
+describe.each([
+  ['@expo/fingerprint', async (dir: string) => (await fingerprintOffline(dir, { platform: 'ios' }))?.hash],
+  ['own fingerprint', ownFingerprint],
+])('Podfile.lock checksums of podspecs that embed the checkout path (%s)', (_name, hashOf) => {
   const sha1 = (text: string) => createHash('sha1').update(text).digest('hex');
   let base: string;
   beforeEach(() => {
@@ -428,8 +442,6 @@ describe('Podfile.lock checksums of podspecs that embed the checkout path', () =
     getExecutor().runFile('git', ['-C', dir, 'init', '--quiet'], { timeoutMs: 10_000 });
     return dir;
   }
-
-  const hashOf = async (dir: string) => (await fingerprintOffline(dir, { platform: 'ios' }))?.hash;
 
   test.each([false, true])(
     'two checkouts of one commit that ran pod install fingerprint alike (project hook: %s)',

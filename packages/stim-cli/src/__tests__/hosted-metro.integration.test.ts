@@ -6,7 +6,7 @@ import { hostedMetroLinks } from '@stim-cli/core/state';
 import { watchHostedMetro } from '../supervisor/hosted-metro.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { closeHostedMetro, hostedAgentPort, requireHostedMetro } from '../device-host/metro-request.ts';
-import { writeHostedNative } from '../device-host/ios-state.ts';
+import { writeHostedNative } from '../workspace/placement-state.ts';
 import type { HostedIosPlacement } from '@stim-cli/core/state';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 

@@ -160,9 +160,11 @@ function sessionRefusal(event: SessionClose): { code: string; reason: string } |
   if (event.reason === 'unauthorized') {
     return { code: 'unauthorized', reason: t`The machine no longer knows this phone.` };
   }
+  // compat C11 permanent
   if (event.reason === 'protocol-unsupported') {
     return { code: 'protocol-unsupported', reason: t`The machine speaks a newer protocol. Update the app.` };
   }
+  // compat end
   return null;
 }
 

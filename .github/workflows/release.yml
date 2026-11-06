@@ -136,14 +136,14 @@ jobs:
 
           if [[ "$tag_version" == *-* ]]; then
             err_log="$(mktemp)"
-            if current=$(npm view @stim-cli/core version 2>"$err_log"); then
+            if current=$(npm view stim version 2>"$err_log"); then
               if [[ -n "$current" && "$current" != *-* ]]; then
                 dist_tag=next
               fi
             elif grep -q 'code E404' "$err_log"; then
               :
             else
-              echo "::error::npm view @stim-cli/core version failed and did not report E404; refusing to guess a dist-tag: $(cat "$err_log")"
+              echo "::error::npm view stim version failed and did not report E404; refusing to guess a dist-tag: $(cat "$err_log")"
               rm -f "$err_log"
               exit 1
             fi
@@ -428,7 +428,7 @@ jobs:
         env:
           SHA: ${{ steps.head.outputs.sha }}
         run: |
-          base=$(node -p "require('./packages/core/package.json').version")
+          base=$(node -p "require('./packages/stim-cli/package.json').version")
           if [[ "$base" == *-* ]]; then
             echo "::notice::main carries the release candidate $base, which owns the next dist-tag; not publishing"
             exit 0

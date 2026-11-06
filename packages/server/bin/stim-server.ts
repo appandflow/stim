@@ -12,6 +12,7 @@ if (encode(process.versions.node) < encode(floor)) {
   );
   process.exitCode = 1;
 } else {
+  // oxlint-disable-next-line stim/package-fence -- the stim-server shim runs stim serve from the CLI source until the one-package fold merges the two packages.
   const { legacyMain } = await import('../../stim-cli/src/commands/serve.ts');
   await legacyMain();
 }

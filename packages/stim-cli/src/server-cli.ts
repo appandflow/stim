@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
+// oxlint-disable-next-line stim/package-fence -- @stim-cli/server has no public entry for this module until the one-package fold merges the two packages.
 export async function loadServerCli(): Promise<typeof import('../../server/src/cli.ts')> {
   const schema = require.resolve('@stim-cli/server/protocol.schema.json');
   return import(pathToFileURL(join(dirname(schema), 'cli.mjs')).href);

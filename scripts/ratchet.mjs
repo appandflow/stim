@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const baselineFile = join(root, 'scripts/type-assertion-baseline.json');
+const baselineFile = join(root, 'scripts/ratchet-baseline.json');
 const defaultPackages = [
   '.github/actions/stim-ci',
   'packages/agent-driver',
@@ -24,14 +24,24 @@ const named = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 const packages = named.length > 0 ? named : defaultPackages;
 const missing = packages.filter((name) => !existsSync(join(root, name)));
 if (missing.length > 0) throw new Error(`No such package directory: ${missing.join(', ')}`);
-const kinds = { 'typescript(consistent-type-assertions)': 'as', 'typescript(no-non-null-assertion)': 'nonNull' };
+const kinds = {
+  'typescript(consistent-type-assertions)': 'as',
+  'typescript(no-non-null-assertion)': 'nonNull',
+  'stim(refusal-remedy)': 'refusalRemedy',
+};
+const counted = { src: ['as', 'nonNull', 'refusalRemedy'], test: ['as', 'nonNull'] };
+const advice = {
+  as: 'Narrow the type instead of asserting it.',
+  nonNull: 'Narrow the type instead of asserting it.',
+  refusalRemedy: 'Give each STIM_* refusal a remedy that says how to recover.',
+};
 
 const lint = spawnSync(
   process.execPath,
   [
     join(root, 'node_modules/oxlint/bin/oxlint'),
     '-c',
-    join(root, 'scripts/type-assertions.oxlintrc.json'),
+    join(root, 'scripts/ratchet.oxlintrc.json'),
     '--disable-nested-config',
     '-f',
     'json',
@@ -46,14 +56,18 @@ const { diagnostics } = JSON.parse(lint.stdout);
 
 const baseline = JSON.parse(readFileSync(baselineFile, 'utf8'));
 const counts = {};
-for (const name of packages) counts[name] = { src: { as: 0, nonNull: 0 }, test: { as: 0, nonNull: 0 } };
+for (const name of packages) {
+  counts[name] = Object.fromEntries(
+    Object.entries(counted).map(([bucket, names]) => [bucket, Object.fromEntries(names.map((kind) => [kind, 0]))]),
+  );
+}
 for (const { code, filename: reported } of diagnostics) {
   const filename = reported.replaceAll('\\', '/');
   const kind = kinds[code];
   const name = packages.find((candidate) => filename.startsWith(`${candidate}/`));
   if (!kind || !name) throw new Error(`Unexpected oxlint result: ${code} in ${filename}`);
-  const bucket = /(^|\/)(__tests__|test)\/|\.test\.tsx?$/.test(filename.slice(name.length)) ? 'test' : 'src';
-  counts[name][bucket][kind]++;
+  const bucket = /(^|\/)(__tests__|test)\/|\.test\.[cm]?[jt]sx?$/.test(filename.slice(name.length)) ? 'test' : 'src';
+  if (counted[bucket].includes(kind)) counts[name][bucket][kind]++;
 }
 
 if (process.argv.includes('--update')) {
@@ -64,23 +78,24 @@ if (process.argv.includes('--update')) {
   process.exit(0);
 }
 
-const update = `Run ${['node scripts/type-assertion-ratchet.mjs', ...named, '--update'].join(' ')} from the repository root to write the current counts to scripts/type-assertion-baseline.json.`;
+const update = `Run ${['node scripts/ratchet.mjs', ...named, '--update'].join(' ')} from the repository root to write the current counts to scripts/ratchet-baseline.json.`;
 const above = [];
 const below = [];
 for (const name of packages) {
-  for (const bucket of ['src', 'test']) {
-    for (const kind of ['as', 'nonNull']) {
+  for (const [bucket, names] of Object.entries(counted)) {
+    for (const kind of names) {
       const now = counts[name][bucket][kind];
       const allowed = baseline[name]?.[bucket]?.[kind] ?? 0;
-      if (now > allowed) above.push(`${name} ${bucket}: ${now} ${kind} assertions, baseline ${allowed}.`);
-      else if (now < allowed) below.push(`${name} ${bucket}: ${now} ${kind} assertions, baseline ${allowed}.`);
+      if (now > allowed) above.push({ kind, line: `${name} ${bucket}: ${now} ${kind}, baseline ${allowed}.` });
+      else if (now < allowed) below.push(`${name} ${bucket}: ${now} ${kind}, baseline ${allowed}.`);
     }
   }
 }
 if (below.length > 0) console.error(`${below.join('\n')}\nThe baseline can be lowered. ${update}`);
 if (above.length > 0) {
+  const hints = [...new Set(above.map(({ kind }) => advice[kind]))].join(' ');
   console.error(
-    `${above.join('\n')}\nNarrow the type instead of asserting it. A needed assertion raises the baseline: ${update}`,
+    `${above.map(({ line }) => line).join('\n')}\n${hints} A needed exception raises the baseline: ${update}`,
   );
   process.exit(1);
 }

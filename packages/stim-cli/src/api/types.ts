@@ -42,6 +42,13 @@ export interface StimOptions {
    * An exception cancels the operation and rejects it with that exception.
    */
   onProgress?: (event: StimProgress) => void;
+  /**
+   * `command` (the default) applies the matching CLI command's policy before an operation runs: `start`, `build` and
+   * `run` refuse while a removed or leftover-off setting is present and make sure the home's daemon runs; `gc` and
+   * `collectGarbage` take the same refusals. The daemon's passes never run in the calling process. `none` skips it, for
+   * a caller that already runs inside a Stim resident process such as stim-server.
+   */
+  admission?: 'command' | 'none';
 }
 
 export type StimRunOptions = PlatformRunOptions & {
@@ -104,7 +111,10 @@ export interface StimStartOptions {
   resetCache?: boolean;
   waitSeconds?: number;
   signal?: AbortSignal;
-  /** Runs once with the resolved app before usage recording or startup; throwing refuses the operation. */
+  /**
+   * Runs once with the resolved app before usage recording or startup, and after admission (see
+   * `StimOptions.admission`); throwing refuses the operation.
+   */
   beforeStart?: (workspace: string) => void;
 }
 

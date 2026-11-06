@@ -1,6 +1,8 @@
 import { Command, Option } from 'commander';
+// oxlint-disable-next-line stim/package-fence -- @stim-cli/server has no public entry for this module until the one-package fold merges the two packages.
 import { bundledStim } from '../../../server/src/environment.ts';
 import { loadServerCli } from '../server-cli.ts';
+// oxlint-disable-next-line stim/package-fence -- @stim-cli/server has no public entry for this module until the one-package fold merges the two packages.
 import { DEFAULT_PORT, validateServeEnvironment } from '../../../server/src/service-plist.ts';
 import pairCommand from './pair.ts';
 import pairingsCommand from './pairings.ts';

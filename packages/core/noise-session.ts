@@ -1,19 +1,16 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
 import {
-  generateNoiseKeyPair,
   HandshakeState,
   MAX_HANDSHAKE_MESSAGE_BYTES,
   NOISE_XX,
   NOISE_XX_PSK2,
   NoiseError,
-  noiseKeyPairFromPrivateKey,
   NoiseTransport,
   type NoiseDh,
   type NoiseKeyPair,
 } from './noise.ts';
+export { readOrCreateKeyFile } from './x25519-key.ts';
 
 /** The protocol version byte that opens every protocol 2 connection. */
 export const STIM_PROTOCOL_VERSION = 2;
@@ -103,7 +100,9 @@ export type ParsedFirstMessage =
 /** Splits the first WebSocket message into its prefix and Noise message 1. */
 export function parseFirstMessage(data: Uint8Array): ParsedFirstMessage {
   const bytes = Buffer.from(data);
+  // compat C11 permanent
   if (bytes.length < 1 || bytes[0] !== STIM_PROTOCOL_VERSION) return { error: 'protocol-unsupported' };
+  // compat end
   if (bytes.length > MAX_FIRST_MESSAGE_BYTES) return { error: 'handshake-failed' };
   if (bytes[1] === MODE_RETURNING)
     return { mode: MODE_RETURNING, prefix: bytes.subarray(0, 2), message: bytes.subarray(2) };
@@ -121,37 +120,6 @@ export function parseFirstMessage(data: Uint8Array): ParsedFirstMessage {
 /** `"stim noise v1" || prefix`, so the handshake authenticates the version, mode and lookup. */
 export function handshakePrologue(prefix: Uint8Array): Buffer {
   return Buffer.concat([PROLOGUE, prefix]);
-}
-
-/**
- * The long-term X25519 key in `file`, created with mode 0600 the first time. A file that exists but does not hold a
- * 32-byte key throws instead of being replaced, because a new key makes every pinned peer refuse this side.
- */
-export function readOrCreateKeyFile(file: string): NoiseKeyPair {
-  const read = (): NoiseKeyPair => {
-    const bytes = readFileSync(file);
-    if (bytes.length !== 32)
-      throw new Error(`${file} does not hold a 32-byte X25519 key; move it away to make a new one`);
-    return noiseKeyPairFromPrivateKey(bytes);
-  };
-  try {
-    return read();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-  }
-  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-  const keyPair = generateNoiseKeyPair();
-  const temporary = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-  writeFileSync(temporary, keyPair.privateKey, { mode: 0o600, flag: 'wx' });
-  try {
-    linkSync(temporary, file);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    return read();
-  } finally {
-    rmSync(temporary, { force: true });
-  }
-  return keyPair;
 }
 
 /** The subset of a `ws` WebSocket that a Noise session runs on. */
@@ -514,6 +482,7 @@ export function acceptNoise(
     };
     const timer = setTimeout(() => refuse('timeout'), options.timeoutMs);
     raw.on('close', onClose);
+    // compat C11 permanent
     if (!isBinary) {
       const bytes = bytesOf(first);
       let id: unknown = null;
@@ -529,6 +498,7 @@ export function acceptNoise(
       if (raw.readyState === 1) raw.send(JSON.stringify(reply));
       return refuse('protocol-unsupported', CLOSE_BAD_REQUEST);
     }
+    // compat end
     const message = parseFirstMessage(bytesOf(first));
     if ('error' in message)
       return refuse(message.error, message.error === 'protocol-unsupported' ? CLOSE_BAD_REQUEST : CLOSE_REFUSED);

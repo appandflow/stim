@@ -103,12 +103,14 @@ jobs:
       - if: github.event_name == 'merge_group'
         run: pnpm run lint
       - if: github.event_name == 'merge_group'
-        run: node scripts/type-assertion-ratchet.mjs apps/demo-server
+        run: node scripts/ratchet.mjs apps/demo-server
       - if: github.event_name == 'merge_group'
         working-directory: apps/mobile
-        run: node ../../scripts/type-assertion-ratchet.mjs apps/mobile
+        run: node ../../scripts/ratchet.mjs apps/mobile
       - if: github.event_name == 'merge_group'
         run: pnpm run build
+      - if: github.event_name == 'merge_group'
+        run: pnpm run dist:closure
       - if: github.event_name == 'merge_group'
         run: pnpm run typecheck
       - if: github.event_name == 'merge_group'

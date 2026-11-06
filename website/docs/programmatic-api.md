@@ -43,7 +43,18 @@ its settings overrides from it and passes it to its child processes. Omitted pat
 that environment, captured when the client is created, and normal Stim
 configuration. The client's home is fixed at creation.
 Progress events contain `stream` (`stdout` or `stderr`) and `message`, an output
-chunk which can contain partial lines. Without a callback the API stays silent.
+chunk which can contain partial lines. Without a callback the API stays silent,
+except for a diagnostic about an unresolvable stim-daemon claim, which goes to
+stderr.
+
+Operations apply the matching CLI command's policy first, as `stim start`,
+`stim ios` and `stim gc` do. `start`, `build` and `run` refuse while the
+environment or settings still set a removed or leftover-off setting, and make
+sure the home's stim-daemon runs. `gc` and `collectGarbage` take the same
+refusals. Unlike the CLI, the API never runs the daemon's passes in the calling
+process. `beforeStart` runs after this policy. Pass `admission: 'none'` to skip
+it when the caller already runs inside a Stim resident process, as stim-server
+does.
 
 All operations run in the importing process against the client's home and
 project and invoke the same lifecycle operations as the CLI, so clients for

@@ -15,12 +15,17 @@ import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { prepareHostedAndroid, placeHostedAndroid, stopHostedAndroid } from '../device-host/hosted-android.ts';
 import { androidAgentRemoteConfig } from '../device-host/hosted-native.ts';
-import { readHostedAndroid, writeHostedNative } from '../device-host/ios-state.ts';
+import { readHostedAndroid, writeHostedNative } from '../workspace/placement-state.ts';
 import { runReload } from '../commands/reload.ts';
 
 const writeHostedAndroid = (root: string, slot: string, host: HostedAndroidPlacement | null): void =>
   writeHostedNative(root, slot, host, 'android');
 
+vi.mock('../tailscale-status.ts', async (original) => ({
+  ...(await original<typeof import('../tailscale-status.ts')>()),
+  tailscaleStatus: () => null,
+  tailscaleStatusAsync: async () => null,
+}));
 vi.mock('../offload/tailnet.ts', async (original) => ({
   ...(await original<typeof import('../offload/tailnet.ts')>()),
   realIo: { ...(await original<typeof import('../offload/tailnet.ts')>()).realIo, status: () => null },

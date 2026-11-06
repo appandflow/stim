@@ -13,7 +13,8 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
-      - 'scripts/type-assertion*'
+      - 'scripts/ratchet*'
+      - 'scripts/oxlint/**'
   pull_request:
     paths:
       - 'apps/demo-server/**'
@@ -24,7 +25,8 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
-      - 'scripts/type-assertion*'
+      - 'scripts/ratchet*'
+      - 'scripts/oxlint/**'
 
 concurrency:
   group: demo-server-${{ github.ref }}
@@ -46,7 +48,7 @@ jobs:
       - run: pnpm --filter @stim-cli/core run build
       - run: pnpm exec oxfmt --check apps/demo-server .github/workflows/demo-server.yml .github/workflows/demo-server-deploy.yml
       - run: pnpm exec oxlint apps/demo-server
-      - run: node scripts/type-assertion-ratchet.mjs apps/demo-server
+      - run: node scripts/ratchet.mjs apps/demo-server
       - working-directory: apps/demo-server
         run: pnpm run typecheck
       - working-directory: apps/demo-server

@@ -805,7 +805,7 @@ const debugExecutor: Executor = {
   },
 };
 
-// oxlint-disable-next-line typescript/no-explicit-any
+// oxlint-disable-next-line typescript/no-explicit-any -- a test double may stand in for an executor method of any signature
 export type MockExecutor = { [K in keyof Executor]?: (...args: any[]) => any };
 
 let active: Executor = debugExecutor;

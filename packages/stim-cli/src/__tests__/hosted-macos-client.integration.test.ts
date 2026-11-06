@@ -20,6 +20,7 @@ import { Command } from 'commander';
 import { WebSocketServer } from 'ws';
 import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 import { deviceHostMachinesFile, macosAppState, readMacosRecord } from '@stim-cli/core/state';
+import * as coreState from '@stim-cli/core/state';
 import logsCommand from '../commands/logs.ts';
 import macosCommand, { runMacos } from '../commands/macos.ts';
 import { followHostedMacosLogs, syncHostedMacosLogs } from '../device-host/hosted-logs-sync.ts';
@@ -30,7 +31,6 @@ import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../ex
 import { stopMacosApp } from '../macos/stop.ts';
 import * as offload from '../offload/client.ts';
 import { BuildConnection } from '../offload/client.ts';
-import * as buildMachines from '../offload/build-machines.ts';
 import { getConfigPath, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import * as automatic from '../device-host/auto-placement.ts';
 import { macosProcess } from '../macos/state.ts';
@@ -731,7 +731,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     '%s: the toolchain match with this Mac applies only when the app stays on its builder',
     async (_name, buildKey, runsOnWorker) => {
       writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini'], build: 'remote' } }));
-      vi.spyOn(buildMachines, 'pairedMachines').mockReturnValue([
+      vi.spyOn(coreState, 'readBuildMachines').mockReturnValue([
         {
           machine: 'mini',
           transport: 'tailscale',

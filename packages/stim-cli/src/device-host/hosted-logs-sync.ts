@@ -9,7 +9,7 @@ import {
   type HostedAndroidPlacement,
 } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
-import { readHostedIos, readHostedAndroid } from './ios-state.ts';
+import { readHostedIos, readHostedAndroid } from '../workspace/placement-state.ts';
 import { pullHostedNativeLogs, pullHostedMacosLogs, readHostedNativeLogs } from './hosted-logs.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { connectHost, type HostConnection } from './hosted-macos.ts';

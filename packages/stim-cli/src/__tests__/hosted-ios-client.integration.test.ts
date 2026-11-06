@@ -20,9 +20,9 @@ import { join } from 'node:path';
 import { BuildConnection } from '../offload/client.ts';
 import { deviceHostMachinesFile, type HostedIosPlacement, type HostedAppOffer } from '@stim-cli/core/state';
 import { prepareHostedIos, placeHostedIos, stopHostedIos } from '../device-host/hosted-ios.ts';
-import { hostedAgentSessionName } from '../device-host/agent-connection.ts';
+import { hostedAgentSessionName } from '../hosted-names.ts';
 import { hostedMetroPortProbe, iosAgentRemoteConfig } from '../device-host/hosted-native.ts';
-import { readHostedIos, writeHostedNative } from '../device-host/ios-state.ts';
+import { readHostedIos, writeHostedNative } from '../workspace/placement-state.ts';
 import { applyHostedIosProbe } from '../device-host/hosted-ios-status.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { getConfigPath, getProject, upsertProject, writeConfigSetting } from '../workspace/config.ts';
@@ -64,6 +64,11 @@ vi.mock('node:fs', async (importOriginal) => {
     },
   };
 });
+vi.mock('../tailscale-status.ts', async (original) => ({
+  ...(await original<typeof import('../tailscale-status.ts')>()),
+  tailscaleStatus: () => null,
+  tailscaleStatusAsync: async () => null,
+}));
 vi.mock('../offload/tailnet.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../offload/tailnet.ts')>()),
   realIo: { ...(await importOriginal<typeof import('../offload/tailnet.ts')>()).realIo, status: () => null },

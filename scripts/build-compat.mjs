@@ -49,7 +49,7 @@ function trackedFiles() {
   return result.stdout.split('\0').filter(Boolean);
 }
 
-function blobIds(files) {
+export function blobIds(files) {
   const present = files.filter((file) => existsSync(join(root, file)));
   if (!present.length) return {};
   const result = spawnSync('git', ['hash-object', '--', ...present], { cwd: root, encoding: 'utf8' });

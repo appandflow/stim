@@ -1,7 +1,6 @@
 import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
-import { WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import type { Methods, WebShareRow } from '@stim-cli/core/protocol';
@@ -36,15 +35,16 @@ const START_POLL_MS = 250;
  * Sends one request to this Stim home's own stim-server over its local Unix socket, after `hello`, and returns the
  * answer. Throws {@link LocalServerUnavailable} when no server listens there.
  */
-export function requestLocalServer<M extends LocalMethod>(
+export async function requestLocalServer<M extends LocalMethod>(
   method: M,
   params: Methods[M]['params'],
   { version, timeoutMs = TIMEOUT_MS }: { version: string; timeoutMs?: number },
 ): Promise<LocalServerAnswer<M>> {
   const path = serverLocalSocket();
   if (process.platform === 'win32' || !existsSync(path)) {
-    return Promise.reject(new LocalServerUnavailable(`no stim-server socket at ${path}`));
+    throw new LocalServerUnavailable(`no stim-server socket at ${path}`);
   }
+  const { WebSocket } = await import('ws');
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(`ws+unix://${path}:/`);
     let opened = false;
@@ -99,9 +99,10 @@ export interface LocalHello {
 }
 
 /** Asks the server on this Stim home's local Unix socket for its `hello`; null when none answers within `timeoutMs`. */
-export function readLocalHello(version: string, timeoutMs: number): Promise<LocalHello | null> {
+export async function readLocalHello(version: string, timeoutMs: number): Promise<LocalHello | null> {
   const path = serverLocalSocket();
-  if (process.platform === 'win32' || !existsSync(path)) return Promise.resolve(null);
+  if (process.platform === 'win32' || !existsSync(path)) return null;
+  const { WebSocket } = await import('ws');
   return new Promise((resolve) => {
     const socket = new WebSocket(`ws+unix://${path}:/`);
     const finish = (hello: LocalHello | null) => {
