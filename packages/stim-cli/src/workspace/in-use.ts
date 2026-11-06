@@ -21,7 +21,7 @@ import {
   workspaceProcessLockError,
   workspaceProcessLockPath,
 } from '../engine/workspace-process-lock.ts';
-import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { getProject } from './config.ts';
 import { workspaceDir } from './paths.ts';

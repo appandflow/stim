@@ -5,14 +5,14 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { type NdjsonWriter, parseNdjsonText } from '../ndjson.ts';
-import { expoSdkMajor, inferLevel, recordFromLine, startExpoServer } from '../supervisor/server-expo.ts';
+import { expoSdkMajor, inferLevel, recordFromLine, startExpoServer } from '../stimd/metro/server-expo.ts';
 import {
   expoMetroConfigPath,
   expoMetroStoreEnv,
   metroStoreConfirmedRoot,
   metroStoreRoot,
-} from '../supervisor/metro-store.ts';
-import { trackDevServerActivity } from '../supervisor/idle-stop.ts';
+} from '../stimd/metro/metro-store.ts';
+import { trackDevServerActivity } from '../stimd/metro/idle-stop.ts';
 import { IMPOSSIBLE_PID, makeChildProcess } from './_factories.ts';
 
 type ExpoExitInfo = { code: number | null; signal: NodeJS.Signals | null; error?: Error };
@@ -218,7 +218,7 @@ describe('starting a tunnel', () => {
   });
 });
 describe('the Metro store injected into an Expo child', () => {
-  const adapter = '/pkg/Stim/shim/expo-metro-config.cjs';
+  const adapter = '/pkg/Stim/dist/injected/expo-metro-config.cjs';
 
   test('the env additions point Expo at the adapter and preserve an existing override', () => {
     expect(
@@ -241,7 +241,7 @@ describe('the Metro store injected into an Expo child', () => {
   test('the adapter ships in this package and is found from here', () => {
     const found = expoMetroConfigPath();
     assert(found);
-    expect(found.endsWith(join('shim', 'expo-metro-config.cjs'))).toBe(true);
+    expect(found.endsWith(join('injected', 'expo-metro-config.cjs'))).toBe(true);
     expect(existsSync(found)).toBe(true);
     expect(expoMetroConfigPath(pathToFileURL(resolve('/nowhere/at/all/x.js')).href)).toBe(null);
   });

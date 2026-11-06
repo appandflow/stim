@@ -31,9 +31,9 @@ import {
 } from '../stimd/passes/idle-stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { IDLE_SETTING, idleKeep, idleScope, PRESSURE_IDLE_MS, type IdleKeepFacts } from '../policy/idle.ts';
-import { metroStoreRoot } from '../supervisor/metro-store.ts';
-import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
-import { MODE_COMMAND } from '../supervisor/state.ts';
+import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
+import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
+import { MODE_COMMAND } from '../stimd/metro/state.ts';
 import { getProject, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';

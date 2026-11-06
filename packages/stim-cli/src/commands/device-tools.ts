@@ -5,7 +5,7 @@ import { getExecutor, type ExecOptions } from '../exec.ts';
 import { androidToolCwd, androidToolPath, resolveOwnedAvdSerialAsync } from '../devices/android.ts';
 import { deviceSlotKey, deviceSlotPlatforms, parseDeviceSlotOption } from '../devices/device-slots.ts';
 import { listAllIosSimsAsync, resolveOwnedIosSim } from '../devices/ios.ts';
-import { readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts';
+import { readRemoteSession, readWorkspaceLaunches } from '../stimd/metro/state.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';

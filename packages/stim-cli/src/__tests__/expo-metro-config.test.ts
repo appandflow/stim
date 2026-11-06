@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expoMetroConfigPath } from '../supervisor/metro-store.ts';
+import { expoMetroConfigPath } from '../stimd/metro/metro-store.ts';
 
 let project: string;
 let adapter: string;

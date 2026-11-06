@@ -18,7 +18,7 @@ import type { DoctorReport } from '../commands/doctor.ts';
 import type { RemoteListing } from '../commands/remote.ts';
 import type { GcPayload, GcReadOptions } from '../commands/gc.ts';
 import type { ReloadFacts, ReloadPlatform } from '../commands/reload.ts';
-import type { StartFacts } from '../supervisor/start-facts.ts';
+import type { StartFacts } from '../stimd/metro/start-facts.ts';
 import type { DeviceToolRequest, PlatformRunOptions } from '@stim-cli/core/protocol';
 
 export type StimPlatform = 'ios' | 'android' | 'macos' | 'web';

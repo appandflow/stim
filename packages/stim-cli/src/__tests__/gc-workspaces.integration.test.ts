@@ -73,8 +73,8 @@ import {
 } from '../ownership-claim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { recordDeferredShutdown } from '../devices/deferred-shutdown.ts';
-import { registerCollector } from '../collector/state.ts';
-import { LOG_ROTATE_BYTES, buildCacheRoot, withAmbientContext } from '@stim-cli/core';
+import { registerCollector } from '../stimd/logs/state.ts';
+import { LOG_ROTATE_BYTES, buildCacheRoot, withAmbientContext, withDirLock } from '@stim-cli/core';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import * as identities from '../process-identity.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
@@ -349,6 +349,13 @@ describe('workspace directories without workspace.json', () => {
     return dir;
   }
 
+  test('a real metadata dir lock blocks workspace residue inspection while held', () => {
+    const dir = husk(join(projects, 'held'));
+    withDirLock(join(dir, 'metadata.lock'), () => {
+      expect(listWorkspaceDirs().find((entry) => entry.dir === dir)?.residue?.blocked).toBe('metadata.lock is held');
+    });
+  });
+
   test('gc --delete removes the leftovers of a removed workspace and keeps everything else', async () => {
     const gone = husk(join(projects, 'gone'), { 'log-error-index.json': '{}' });
     const empty = husk(join(projects, 'empty'), {}, null);
@@ -358,7 +365,7 @@ describe('workspace directories without workspace.json', () => {
     const stateful = husk(join(projects, 'stateful'), { 'state.json': '{}' });
     const renamed = husk(join(projects, 'renamed'), {}, join(projects, 'other'));
     const held = husk(join(projects, 'held'));
-    plantClaim(join(held, 'metadata.lock'), 'exclusive', liveClaimOwner());
+    plantClaim(join(held, 'metadata.lock.claims'), 'exclusive', liveClaimOwner());
     const unnamed = husk(join(projects, 'unnamed'), { 'ended-agents.json': '{}' }, null);
 
     const report = await captureLog(() => runGc({}));

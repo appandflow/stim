@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { appProcessFromPid, INSTALL_ERROR, type AppProcessProbe } from './app-install.ts';
-import { TOOL_ERROR_PREFIX } from '../collector/ios-device.ts';
+import { TOOL_ERROR_PREFIX } from '../stimd/logs/ios-device.ts';
 
 const DEVICECTL_TIMEOUT_MS = 30_000;
 

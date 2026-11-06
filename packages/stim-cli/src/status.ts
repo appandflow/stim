@@ -5,7 +5,7 @@ import { deviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
 import { clockTime, formatElapsed, formatLongDuration, plural } from './command-output.ts';
 import type { ProjectRecord } from './workspace/config.ts';
 import type { LeaseFileEntry } from './engine/device-lease.ts';
-import type { RemoteSessionRecord } from './supervisor/state.ts';
+import type { RemoteSessionRecord } from './stimd/metro/state.ts';
 import { cdpEndpoint, type WebFacts } from './web/state.ts';
 import type {
   AndroidRuntimeFacts,

@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import type { ChildProcess } from 'node:child_process';
 import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
-import { recordFromLine } from '../supervisor/server-expo.ts';
+import { recordFromLine } from '../stimd/metro/server-expo.ts';
 import { clearWorkspaceStateKeys, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { deviceLeasePath, fileLeaseIo } from '../engine/device-lease.ts';

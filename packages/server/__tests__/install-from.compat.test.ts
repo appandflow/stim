@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { packWorkspace, workspacePackages } from '../src/machine-update.ts';
-import { installServer } from '../src/service.ts';
+import { installServer } from '../src/release-install.ts';
 
 const UNPUBLISHED = '99.0.0';
 const SERVER_DIR = fileURLToPath(new URL('../../stim-cli', import.meta.url));
@@ -61,7 +61,8 @@ describe('stim service update --from against real npm', () => {
     ) as { invalid: unknown[]; missing: unknown[] };
     expect(audit).toEqual({ invalid: [], missing: [] });
 
-    const lock = JSON.parse(readFileSync(join(installed.dir, 'package-lock.json'), 'utf8')) as {
+    // npm audits installed locations; its hidden lockfile excludes omitted optional packages.
+    const lock = JSON.parse(readFileSync(join(installed.dir, 'node_modules', '.package-lock.json'), 'utf8')) as {
       packages: Record<string, { resolved?: string }>;
     };
     const fromRegistry = Object.values(lock.packages).filter((entry) => entry.resolved?.startsWith('https://'));

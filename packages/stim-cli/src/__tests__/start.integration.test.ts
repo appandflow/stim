@@ -25,9 +25,9 @@ import {
 import { workspaceAgentDeviceDir, supervisorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { workspaceMetadataFile } from '@stim-cli/core/state';
 import { clearWorkspaceStateKeys, readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { readMetroTunnel } from '../supervisor/state.ts';
-import * as supervisorState from '../supervisor/state.ts';
-import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import { readMetroTunnel } from '../stimd/metro/state.ts';
+import * as supervisorState from '../stimd/metro/state.ts';
+import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import {
   liveSupervisor,
   failureEvidence,

@@ -1,9 +1,9 @@
-import { recordFromLine } from '../supervisor/server-expo.ts';
+import { recordFromLine } from '../stimd/metro/server-expo.ts';
 import { metroBundleState } from '../metro-bundle.ts';
 import { once } from 'node:events';
 import { createServer, get, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { bundleResponseMiddleware } from '../../shim/bundle-response.cjs';
+import { bundleResponseMiddleware } from '../injected/bundle-response.cjs';
 
 let server: Server;
 afterEach(async () => {

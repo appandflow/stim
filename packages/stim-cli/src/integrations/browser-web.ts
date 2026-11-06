@@ -6,7 +6,7 @@ import { readMetroRecords } from '../engine/launch-verify.ts';
 import { resolveProjectMetro } from '../metro.ts';
 import { getNamedPort } from '../named-ports.ts';
 import { readNdjsonGenerations } from '../ndjson.ts';
-import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { findChrome, CHROME_INSTALL_REMEDY } from '../web/chrome.ts';
 import {
   EXPO_WEB_DEPENDENCIES,

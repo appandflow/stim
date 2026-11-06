@@ -1,7 +1,7 @@
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { stimBuildDigest } from '@stim-cli/core/state';
+import { stimBuildId } from '@stim-cli/core/state';
 import { STIM_VERSION } from './stim-version.ts';
 
 export type SpawnEntryName =
@@ -11,7 +11,9 @@ export type SpawnEntryName =
   | 'web-run'
   | 'macos-run'
   | 'daemon-run'
-  | 'passes-run';
+  | 'passes-run'
+  | 'engine-select'
+  | '__self-test';
 
 const DEV_ENTRIES: Record<SpawnEntryName, string> = {
   cli: '../bin/cli.ts',
@@ -21,6 +23,8 @@ const DEV_ENTRIES: Record<SpawnEntryName, string> = {
   'macos-run': './macos/run.ts',
   'daemon-run': './daemon/run.ts',
   'passes-run': './daemon/passes-run.ts',
+  'engine-select': '../bin/engine-select.ts',
+  '__self-test': '../bin/self-test.ts',
 };
 
 export function spawnEntry(name: SpawnEntryName): string {
@@ -34,10 +38,10 @@ export function spawnEntry(name: SpawnEntryName): string {
 export interface StimBuild {
   /**
    * Whether this Stim runs from an installed package: its code, symlinks resolved, sits under a `node_modules`
-   * directory. A checkout's own `dist`, `npm link`, `pnpm link --global` and a run from source are development builds.
+   * directory or in an engine store entry. A checkout's own `dist`, `npm link`, `pnpm link --global` and a run from source are development builds.
    */
   installed: boolean;
-  /** The digest of an installed build's code; null for a development build. */
+  /** The build id of an installed build's code; null for a development build. */
   digest: string | null;
   version: string;
 }
@@ -47,7 +51,8 @@ export function stimBuild(): StimBuild {
   const dir = dirname(fileURLToPath(import.meta.url));
   let installed = false;
   try {
-    installed = realpathSync(dir).split(sep).includes('node_modules');
+    installed =
+      realpathSync(dir).split(sep).includes('node_modules') || existsSync(join(dir, '..', '.stim-manifest.json'));
   } catch {}
-  return { installed, digest: installed ? stimBuildDigest(dir) : null, version: STIM_VERSION };
+  return { installed, digest: installed ? stimBuildId(dir) : null, version: STIM_VERSION };
 }

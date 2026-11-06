@@ -6,7 +6,7 @@ import { getExecutor, type ExecOptions } from '../exec.ts';
 import { cancelledError, throwIfCancelled } from '../cancellation.ts';
 import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
 import { resolvePackageJson } from '../workspace/project.ts';
-import { expoBinFromPackage } from '../supervisor/server-expo.ts';
+import { expoBinFromPackage } from '../stimd/metro/server-expo.ts';
 import { operationState } from './operation-state.ts';
 
 function nodeScript(file: string): boolean {

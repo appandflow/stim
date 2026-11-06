@@ -41,7 +41,7 @@ import {
 } from '../../engine/app-install.ts';
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
-import { workspaceDevServerMode, writeWorkspaceLaunchAsync, type LaunchedArtifact } from '../../supervisor/state.ts';
+import { workspaceDevServerMode, writeWorkspaceLaunchAsync, type LaunchedArtifact } from '../../stimd/metro/state.ts';
 import { recordPhoneReverse } from '../../devices/phone-reverses.ts';
 import { applyRecordedReverses } from '../../reverse-ports.ts';
 import type {
@@ -65,7 +65,7 @@ import {
   displayPath,
 } from './support.ts';
 import type { CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';
-import { verifyCollectorOwnership } from '../../collector/ownership.ts';
+import { verifyCollectorOwnership } from '../../stimd/logs/ownership.ts';
 import { pidExists } from '../../metro.ts';
 import type { OwnedDeviceRecord } from '../../engine/device.ts';
 import { remoteAndroidDeps } from '../../engine/device-remote.ts';

@@ -24,7 +24,7 @@ import {
   verifyIosDeviceReleaseLaunch,
   type IosDeviceEntry,
 } from '../engine/ios-device.ts';
-import { deviceConsoleLevel, parseDeviceConsoleLine } from '../collector/ios-device.ts';
+import { deviceConsoleLevel, parseDeviceConsoleLine } from '../stimd/logs/ios-device.ts';
 import { hostLanCandidates, lanCandidates } from '../engine/lan-address.ts';
 
 const PHONE = '00008030-001A2B3C4D5E802E';

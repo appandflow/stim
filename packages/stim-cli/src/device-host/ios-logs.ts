@@ -11,7 +11,7 @@ import {
   hostedNativeLogsDir,
   isJsonObject,
 } from '@stim-cli/core/state';
-import { parseLogStreamLine } from '../collector/ios.ts';
+import { parseLogStreamLine } from '../stimd/logs/ios.ts';
 import { getExecutor } from '../exec.ts';
 import { collectHostedNativeLogs } from './native-logs.ts';
 import { readIosCrashReports } from '../diagnostics/native-crash.ts';

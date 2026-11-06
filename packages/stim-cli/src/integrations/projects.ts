@@ -1,7 +1,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { MODE_BARE, MODE_EXPO } from '../supervisor/state.ts';
-import type { ServerStarter } from '../supervisor/types.ts';
+import { MODE_BARE, MODE_EXPO } from '../stimd/metro/state.ts';
+import type { ServerStarter } from '../stimd/metro/types.ts';
 import { nativeAndroidIntegration } from './native-android-discovery.ts';
 import {
   appProjectProblem,
@@ -37,7 +37,7 @@ interface NativeProjectIntegration {
 
 const expo: NativeProjectIntegration = {
   mode: MODE_EXPO,
-  loadDevServer: async () => (await import('../supervisor/server-expo.ts')).startExpoServer,
+  loadDevServer: async () => (await import('../stimd/metro/server-expo.ts')).startExpoServer,
   platforms(root) {
     const appJson = readAppJson(root);
     const config = appJson?.expo ?? appJson;

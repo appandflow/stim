@@ -29,9 +29,9 @@ import {
   survivingServer,
   unseenEmulatorError,
 } from '../stimd/passes/idle-stop.ts';
-import { metroStoreRoot } from '../supervisor/metro-store.ts';
+import { metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import { dormantAction, dormantThresholdMs, longestIdleFirst } from '../policy/pressure.ts';
-import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';

@@ -4,7 +4,7 @@ import { LOG_ROTATE_BYTES, withDirLockAsync, ambientWrite } from '@stim-cli/core
 import { isJsonObject, parseHostedLogsCursor, type HostedLogsCursor } from '@stim-cli/core/state';
 import { deviceSlotFileKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import { macosDir } from '../macos/state.ts';
-import { androidLogGroups, isAndroidCrashText } from '../collector/android.ts';
+import { androidLogGroups, isAndroidCrashText } from '../stimd/logs/android.ts';
 import { createNdjsonWriter, readNdjsonGenerations, type NdjsonRecord } from '../ndjson.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { call, type HostConnection } from './hosted-client.ts';
