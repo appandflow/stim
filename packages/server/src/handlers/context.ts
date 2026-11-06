@@ -21,7 +21,7 @@ import type { LogLimits } from '../logs.ts';
 import { type CommandLimits, Pending } from '../stim-command.ts';
 import { type FrameLimits, FramePool } from '../frames.ts';
 import { type RecordLimits, Recorder } from '../recorder.ts';
-import type { PushLimits, PushNotifierOptions } from '../push.ts';
+import { type PushLimits, type PushNotifierOptions, PushNotifier } from '../push.ts';
 import type { BuildLimits } from '../build.ts';
 import { type HostedRelayOptions, HostedRelay } from '../hosted-relay.ts';
 import type { WebSocket } from 'ws';
@@ -299,6 +299,7 @@ export interface ConnectionContext {
   readonly localAgents: LocalAgentPresence;
   readonly control: ControlHub;
   readonly hostedViews: HostedViews;
+  readonly push: PushNotifier;
   readonly hostedBridge: HostedPresenceBridge;
   readonly socket: ServerSocket;
   readonly local: boolean;

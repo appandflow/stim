@@ -90,10 +90,7 @@ import {
   BUILD_METHODS,
   DEVICE_HOST_METHODS,
   MAX_INPUT_TEXT,
-  NOTIFICATION_LEVELS,
   PROTOCOL_VERSION,
-  PUSH_EVENTS,
-  PUSH_TOKEN_PATTERN,
   RESERVED_SHARE_SLUGS,
   SHARE_SLUG_PATTERN,
   ENGINE_UPDATE_METHODS,
@@ -112,15 +109,11 @@ import { pauseShareLinkAsync, pauseShareLinksAsync, saveShareLinkAsync } from 's
 import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
 import { restoreSavedShares } from './share-restore.ts';
 import { savedLinkIs, savedShareFor } from './share-save.ts';
-import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
 import { EXPO_PUSH_API, PushNotifier } from './push.ts';
 import {
   buildClientsReadable,
   dropPushToken,
-  parseLevels,
-  parseQuietHours,
-  pushEvents,
   readBuildClients,
   readRegistries,
   recordsForKey,
@@ -133,7 +126,6 @@ import {
   type KeyRecords,
   type PairedDevice,
   type Registries,
-  validStuckMinutes,
 } from './registry.ts';
 import {
   acceptNoise,
@@ -211,6 +203,7 @@ import { subscribeLogs, queryLogs } from './handlers/logs.ts';
 import { input, beginControl } from './handlers/control.ts';
 import { replayRange, archiveDetail, replayKeyframe, setRecording } from './handlers/replay.ts';
 import { workspaceChanges, workspaceCommand } from './handlers/workspace.ts';
+import { registerPush } from './handlers/push.ts';
 export type { ServerOptions } from './handlers/context.ts';
 
 const SHARE_SERVER_GRACE_MS = 2 * 60_000;
@@ -319,7 +312,6 @@ const CONTROL_LIMITS: ControlLimits = {
   foldTimeoutMs: 40_000,
 };
 const LOCK_LIMITS: CommandLimits = { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 };
-const pushToken = new RegExp(PUSH_TOKEN_PATTERN);
 
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const LISTEN_RETRY_MS = 5000;
@@ -1436,6 +1428,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       localAgents,
       control,
       hostedViews,
+      push,
       hostedBridge,
       socket,
       local,
@@ -1821,50 +1814,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         if (request !== undefined && planRequests.get(request)?.cancel === finished.cancel && !unresolved)
           planRequests.delete(request);
       });
-    }
-
-    function registerPush(id: RequestId, params: unknown, session: PairedDevice): void {
-      const value = isJsonObject(params) ? params : {};
-      const { token, events, ref } = value;
-      const agentOnly = value.agentOnly ?? false;
-      const stuckMinutes = value.stuckMinutes ?? DEFAULT_STUCK_MINUTES;
-      const quietHours = value.quietHours === undefined ? null : parseQuietHours(value.quietHours);
-      const levels = value.levels === undefined ? undefined : parseLevels(value.levels);
-      if (
-        typeof token !== 'string' ||
-        !pushToken.test(token) ||
-        !Array.isArray(events) ||
-        events.length === 0 ||
-        !events.every((event) => (PUSH_EVENTS as readonly unknown[]).includes(event)) ||
-        typeof agentOnly !== 'boolean' ||
-        typeof ref !== 'string' ||
-        ref.length === 0 ||
-        ref.length > 128 ||
-        !validStuckMinutes(stuckMinutes) ||
-        (value.quietHours !== undefined && quietHours === null) ||
-        levels === null
-      ) {
-        return error(
-          id,
-          'bad-request',
-          'push.register takes an Expo push token, one or more events from ' +
-            `${PUSH_EVENTS.join(', ')}, a ref of 1 to 128 characters, and optionally stuckMinutes from 1 to 240 and ` +
-            'quietHours { start, end, timeZone } in minutes after midnight and an IANA time zone, and levels ' +
-            `mapping events to ${NOTIFICATION_LEVELS.join(' or ')}.`,
-        );
-      }
-      const registered = setDevicePush(session.id, {
-        token,
-        events: pushEvents(events),
-        ...(levels ? { levels } : {}),
-        ref,
-        registeredAt: new Date().toISOString(),
-        stuckMinutes,
-        quietHours,
-      });
-      if (!registered) return error(id, 'unauthorized', 'This device is no longer paired.');
-      push.refresh();
-      send(socket, { id, result: {} });
     }
 
     async function buildMethod(id: RequestId, method: string, params: unknown, session: PairedDevice): Promise<void> {
@@ -2793,7 +2742,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         void input(ctx, id, inputMethod, message.params, device);
         return;
       }
-      if (message.method === 'push.register') return registerPush(id, message.params, device);
+      if (message.method === 'push.register') return registerPush(ctx, id, message.params, device);
       if (message.method === 'notifications.list') {
         const params = message.params ?? {};
         const since = isJsonObject(params) ? params.since : undefined;
