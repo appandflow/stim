@@ -21,7 +21,7 @@ import "timers";
 import { spawn } from "node:child_process";
 import fs, { cpSync, existsSync as existsSync$1, lstatSync, mkdirSync, mkdtempSync, readFileSync as readFileSync$1, readdirSync, realpathSync, renameSync, rmSync } from "node:fs";
 import os$1, { EOL as EOL$1, tmpdir } from "node:os";
-import { dirname, join, resolve as resolve$1 } from "node:path";
+import { basename, dirname, join, resolve as resolve$1 } from "node:path";
 import process$1 from "node:process";
 import https from "node:https";
 import * as stream$2 from "stream";
@@ -97521,7 +97521,7 @@ If the error persists, please check whether Actions and API requests are operati
 };
 new DefaultArtifactClient();
 //#endregion
-//#region ../../../packages/ci/dist/artifacts-uz0iNJt9.mjs
+//#region ../../../packages/stim-cli/dist/artifacts-l8ftRvXX.mjs
 async function regularFiles(directory, resolveDirectory = false) {
 	try {
 		if (resolveDirectory) directory = await realpath$1(directory);
@@ -97547,6 +97547,17 @@ async function diagnosticArtifactFiles(artifactsDir) {
 	const files = (await regularFiles(artifactsDir, true)).filter((name) => reports.has(name)).map((name) => join(artifactsDir, name));
 	const logs = join(artifactsDir, "logs");
 	return [...files, ...(await regularFiles(logs)).filter(isLog).map((name) => join(logs, name))];
+}
+//#endregion
+//#region ../../../packages/core/state/release-floors.json
+var oneEngine = null;
+//#endregion
+//#region src/ci-floor.ts
+function refuseCiBelowFloor(version, cliPath, floor = oneEngine) {
+	const oldBin = basename(cliPath) === "stim-ci.mjs";
+	const order = floor ? version.replace(/-.*/, "").localeCompare(floor, "en", { numeric: true }) : 0;
+	const message = oldBin ? "cli-path names a stim-ci executable; this action runs stim ci. Point cli-path at stim's bin (node_modules/stim/bin/stim.mjs or packages/stim-cli/bin/stim.mjs in the stim repo), or pin the action to an older ref" : version && floor && (order < 0 || !order && version.includes("-")) ? `version ${version} installs @stim-cli/ci; this action runs stim ci from stim ${floor} or later. Set version: ${floor} or pin the action to an older ref` : "";
+	if (message) throw new Error(message);
 }
 //#endregion
 //#region src/action.ts
@@ -97575,6 +97586,7 @@ function readInputs(input, root, host = process.platform) {
 	const cli = input("cli-path");
 	const version = input("version");
 	if (!cli && !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?$/.test(version)) throw new Error("version must be an exact published version when cli-path is absent.");
+	refuseCiBelowFloor(version, cli);
 	const timeout = input("timeout") || "1800";
 	if (!/^\d+$/.test(timeout) || !Number.isSafeInteger(Number(timeout) * 1e3) || Number(timeout) <= 0) throw new Error("timeout must be a positive whole number of seconds.");
 	const upload = input("upload-artifacts") || "true";
@@ -97679,7 +97691,7 @@ function setResultOutputs(build, run, setOutput) {
 }
 async function installCli(version, root) {
 	const base = join(process.env.RUNNER_TOOL_CACHE ?? process.env.RUNNER_TEMP ?? tmpdir(), "stim-ci-action", version);
-	const cli = join(base, "node_modules", "@stim-cli", "ci", "dist", "stim-ci.mjs");
+	const cli = join(base, "node_modules", "stim", "bin", "stim.mjs");
 	if (existsSync$1(cli)) return {
 		cli,
 		code: 0
@@ -97693,7 +97705,7 @@ async function installCli(version, root) {
 			"--ignore-scripts",
 			"--no-audit",
 			"--no-fund",
-			`@stim-cli/ci@${version}`
+			`stim@${version}`
 		], root);
 		if (code !== 0) return {
 			cli,
@@ -97761,6 +97773,7 @@ async function runAction() {
 	if ((options.onlyBuild || options.platform === "ios" || options.platform === "android" || Boolean(options.exportPath)) && options.platform !== "web") {
 		const buildArgs = [
 			cli,
+			"ci",
 			"build",
 			...common,
 			...options.selectors,
@@ -97778,6 +97791,7 @@ async function runAction() {
 	if (!options.onlyBuild) {
 		const args = [
 			cli,
+			"ci",
 			"run",
 			...common,
 			...options.selectors
