@@ -18,6 +18,7 @@ import { sourceManifest } from '../offload/native-source.ts';
 import { readSwiftpmWorkerToolchain, swiftpmWorkerArtifactSnapshot } from '../offload/swiftpm-artifact.ts';
 import { withAmbientContext } from '@stim-cli/core';
 import { BuildHost } from '../job/offload/host.ts';
+import { androidToolchain } from '../engine/toolchain.ts';
 import type { BuildSwiftpmArtifactQuery } from '@stim-cli/core/protocol';
 
 test('real SwiftPM app reuse survives worker checkout and output removal without another compilation', async () => {
@@ -35,7 +36,7 @@ test('real SwiftPM app reuse survives worker checkout and output removal without
   const root = await realpath(await mkdtemp(join(tmpdir(), 'stim-swiftpm-peer-compat-')));
   const home = join(root, 'home');
   const project = join(root, 'client');
-  const cli = fileURLToPath(new URL('../../stim-cli/dist/cli.mjs', import.meta.url));
+  const cli = fileURLToPath(new URL('../../dist/cli.mjs', import.meta.url));
   const worker = fileURLToPath(new URL('../../dist/cli.mjs', import.meta.url));
   let host: BuildHost | undefined;
   let session: ReturnType<BuildHost['session']> | undefined;
@@ -93,7 +94,7 @@ print(try String(contentsOf: path, encoding: .utf8), terminator: "")
     const query: BuildSwiftpmArtifactQuery = {
       project: '',
       sourceDigest: manifestDigest(manifest),
-      stimBuild,
+      compat: androidToolchain().compat,
       inputs: {
         complete: true,
         ignored: [],
@@ -142,6 +143,7 @@ print(try String(contentsOf: path, encoding: .utf8), terminator: "")
       platform: 'macos',
       fingerprint: query.sourceDigest,
       stimBuild,
+      compat: query.compat,
       cacheArtifact: true,
       macos: { ...query.build, bundleId: 'dev.stim.peer.compat', artifactInputs: query.inputs },
     });
