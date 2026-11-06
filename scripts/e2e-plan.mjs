@@ -1,12 +1,13 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SUITES = ['smoke', 'loop', 'caches', 'pool'];
+const SUITES = ['smoke', 'loop', 'caches', 'pool', 'engine'];
 const ALL = ['loop', 'caches', 'pool'];
 const PLATFORMS = {
   ios: ['smoke', 'loop', 'caches', 'pool'],
   android: ['smoke', 'loop', 'caches'],
   windows: ['smoke', 'loop'],
+  engine: ['engine'],
 };
 
 function requested({ eventName, labels, suite, action, changedLabel }) {
