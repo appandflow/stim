@@ -9,6 +9,8 @@ import { join } from 'node:path';
 import { generateNoiseKeyPair } from '@stim-cli/core/noise';
 import { initiateNoise, keyFingerprint, type InitiateOptions } from '@stim-cli/core/noise-session';
 import { WebSocket } from 'ws';
+import type { Method } from '@stim-cli/core/phone-protocol';
+import { isRpcError, isRpcEvent, isRpcResult } from '@stim-cli/core/receive-protocol';
 
 import { smoke } from '../../scripts/smoke.mjs';
 
@@ -103,11 +105,16 @@ async function open(options: Partial<InitiateOptions>) {
     closed = { code, reason: reason.toString() };
   });
   let nextId = 1;
-  const request = async (method: string, params: Record<string, unknown> = {}): Promise<Message> => {
+  const request = async (method: Method, params: Record<string, unknown> = {}): Promise<Message> => {
     const id = nextId++;
     socket.send(JSON.stringify({ id, method, params }));
     await vi.waitFor(() => expect(received.some((message) => message.id === id)).toBe(true), { timeout: 10_000 });
-    return received.find((message) => message.id === id)!;
+    const reply = received.find((message) => message.id === id) ?? { id };
+    expect({ method, ok: reply.error ? isRpcError(reply.error) : isRpcResult(method, reply.result) }).toEqual({
+      method,
+      ok: true,
+    });
+    return reply;
   };
   return { socket, received, request, closed: () => closed };
 }
@@ -146,6 +153,10 @@ it('serves its pairing code, pairs over protocol 2, streams, takes Control and t
 
   await first.request('workspaces.subscribe');
   await vi.waitFor(() => expect(first.received.some((message) => message.event === 'workspaces')).toBe(true));
+
+  for (const event of first.received.filter((message) => message.event === 'workspaces'))
+    expect(isRpcEvent(event)).toBe(true);
+  console.log('Demo smoke: Noise pairing, hello phone validator and workspaces event validator passed.');
 
   const target = { workspace: SEARCH, platform: 'ios', slot: 'default' };
   const frames = await first.request('frames.subscribe', target);
