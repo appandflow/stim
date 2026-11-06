@@ -23,6 +23,24 @@ const PS = `
 `;
 
 describe('parseServerProcesses', () => {
+  it('discovers router and dist serve processes without counting other CLI invocations', () => {
+    const router = '/Users/me/Stim CLI/bin/stim.mjs';
+    const cli = '/Users/me/stim/dist/cli.mjs';
+    const ps = [
+      `800 1 node ${router} serve --share --port=54011`,
+      `801 1 node ${cli} serve --service`,
+      `802 1 node ${router} service update --release 1.41.0`,
+      `803 1 node ${cli}`,
+      `804 1 node ${router} serve --help`,
+      `805 1 node ${cli} serve --version`,
+      '806 1 node /Users/me/other/cli.mjs serve',
+    ].join('\n');
+    expect(parseServerProcesses(ps).map(({ pid, script, port, share }) => ({ pid, script, port, share }))).toEqual([
+      { pid: 800, script: router, port: 54011, share: true },
+      { pid: 801, script: cli, port: 7787, share: false },
+    ]);
+  });
+
   it('does not count an npx wrapper or a shell wrapper, and reads --port=<n>', () => {
     const ps = [
       '700 1 /usr/local/bin/node /usr/local/lib/node_modules/npm/bin/npm-cli.js exec stim-server --port 7791',
