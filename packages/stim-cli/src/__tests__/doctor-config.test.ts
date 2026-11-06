@@ -170,6 +170,7 @@ describe('against a config file on disk', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     delete process.env.STIM_HOME;
     if (savedToolchain === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
     else process.env.STIM_ANDROID_CAS_TOOLCHAIN = savedToolchain;
@@ -180,6 +181,21 @@ describe('against a config file on disk', () => {
   function writeConfig(config: Record<string, unknown>) {
     writeFileSync(join(home, 'config.json'), JSON.stringify(config));
   }
+
+  test.each(['STIM_MAX_BUILDS', 'STIM_MAX_IOS_DEVICES'])(
+    'doctor reports invalid %s instead of rejecting',
+    async (variable) => {
+      vi.stubEnv(variable, 'bogus');
+      const findings = await runDoctor(project);
+      expect(findings).toContainEqual(
+        expect.objectContaining({
+          level: 'cost',
+          detail: `Invalid ${variable} value "bogus". Expected a whole number, 0 or more.`,
+          fix: expect.stringContaining('unset the environment variable'),
+        }),
+      );
+    },
+  );
 
   test('a remote.build hand-edited into the machine config to an invalid value reaches doctor', async () => {
     writeConfig({ version: 2, repos: {}, projects: {}, remote: { build: 'bad word' } });

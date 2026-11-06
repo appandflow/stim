@@ -1123,26 +1123,36 @@ export async function runDoctor(
   };
   if (machineSettings.corrupt) return { findings: [machineSettings.corrupt], context };
 
-  const limits = typeof concurrency === 'function' ? concurrency() : concurrency;
   let concurrencyFinding: Finding | null = null;
-  const platformMax = getPlatformDeviceLimits();
-  if (
-    (limits && (limits.maxBuilds || limits.maxDevices)) ||
-    platformMax.ios ||
-    platformMax.android ||
-    platformMax.macos
-  ) {
-    concurrencyFinding = checkConcurrency({
-      maxBuilds: limits?.maxBuilds,
-      maxDevices: limits?.maxDevices,
-      platformMax,
-      liveDevices: liveDevices
-        ? liveDevices()
-        : options.operation
-          ? await countLiveOwnedDevicesAsync(options.operation)
-          : countLiveOwnedDevices(),
-      activeBuilds: activeBuilds ? activeBuilds() : countActiveBuilds(),
-    });
+  try {
+    const limits = typeof concurrency === 'function' ? concurrency() : concurrency;
+    const platformMax = getPlatformDeviceLimits();
+    if (
+      (limits && (limits.maxBuilds || limits.maxDevices)) ||
+      platformMax.ios ||
+      platformMax.android ||
+      platformMax.macos
+    ) {
+      concurrencyFinding = checkConcurrency({
+        maxBuilds: limits?.maxBuilds,
+        maxDevices: limits?.maxDevices,
+        platformMax,
+        liveDevices: liveDevices
+          ? liveDevices()
+          : options.operation
+            ? await countLiveOwnedDevicesAsync(options.operation)
+            : countLiveOwnedDevices(),
+        activeBuilds: activeBuilds ? activeBuilds() : countActiveBuilds(),
+      });
+    }
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || error.code !== 'STIM_BAD_ARG') throw error;
+    concurrencyFinding = finding(
+      'cost',
+      'A concurrency limit is invalid',
+      error.message,
+      'Fix the value with `stim settings set <key> <value>`, or unset the environment variable.',
+    );
   }
 
   const settingShapeFindings = settingShapeErrors(projectSettings).map((error) =>

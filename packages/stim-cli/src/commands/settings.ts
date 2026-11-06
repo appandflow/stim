@@ -10,6 +10,7 @@ import {
 import {
   REMOVED_SETTINGS,
   replacementAdvice,
+  settingDefinition,
   SETTING_SCOPES,
   type SettingEntry,
   type SettingWriteResult,
@@ -149,7 +150,7 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
     .option('--json', 'print the setting after removal as JSON')
     .action((key: string, opts: SubcommandOptions, command: Command) =>
       run(wantsJson(opts, command), io, async () => {
-        if (REMOVED_SETTINGS.has(key)) {
+        if (REMOVED_SETTINGS.has(key) && !settingDefinition(key)) {
           const removal = await unsetReplacedSetting(
             { key, scope: opts.scope },
             { cwd: process.cwd(), env, note: io.note },

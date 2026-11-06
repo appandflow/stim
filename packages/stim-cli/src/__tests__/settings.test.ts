@@ -270,6 +270,13 @@ test('every known setting has a shape, and a wrong-typed value is one refusal na
   }
 });
 
+test.each([
+  ['ios.signingIdentitySha1', ` ${'A'.repeat(40)} `],
+  ['ios.lanHost', ' 192.168.1.42 '],
+])('shape validation accepts surrounding spaces supported by %s', (key, value) => {
+  expect(settingShapeErrors(nestedSetting(key, value))).toEqual([]);
+});
+
 test('unknownSettingKeys tolerates empty and malformed input', () => {
   expect(unknownSettingKeys({})).toEqual([]);
   expect(unknownSettingKeys(null)).toEqual([]);

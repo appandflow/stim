@@ -76,11 +76,15 @@ export function settingShapeErrors(settings: unknown): string[] {
   }
   for (const setting of LAYERED_SETTINGS) {
     if (SETTINGS_WITH_RESOLVE_TIME_FALLBACK.has(setting.key)) continue;
-    const value = settingValueAt(settings, setting.key);
-    if (value === undefined) continue;
+    const raw = settingValueAt(settings, setting.key);
+    if (raw === undefined) continue;
+    const value =
+      typeof raw === 'string' && (setting.key === 'ios.signingIdentitySha1' || setting.key === 'ios.lanHost')
+        ? raw.trim()
+        : raw;
     const expected =
       BOUNDS_CHECKED_WHEN_USED.has(setting.key) && typeof value === 'number' ? null : settingValueError(setting, value);
-    if (expected) errors.push(`Invalid ${setting.key} setting ${JSON.stringify(value)}. Expected ${expected}.`);
+    if (expected) errors.push(`Invalid ${setting.key} setting ${JSON.stringify(raw)}. Expected ${expected}.`);
   }
   return errors;
 }
