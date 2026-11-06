@@ -11,6 +11,8 @@
     "packages/stim-cli/shim/android-optimizations.gradle",
     "packages/stim-cli/shim/android-worker-release.gradle",
     "packages/stim-cli/shim/expo-metro-config.cjs",
+    "packages/stim-cli/shim/fp-eval.cjs",
+    "packages/stim-cli/shim/fp-trace.cjs",
     "packages/stim-cli/shim/native-android.gradle",
     "packages/stim-cli/src/cache/build-cache.ts",
     "packages/stim-cli/src/commands/android/build.ts",
@@ -24,7 +26,9 @@
     "packages/stim-cli/src/engine/gradle.ts",
     "packages/stim-cli/src/engine/prebuild.ts",
     "packages/stim-cli/src/engine/release-metro.ts",
+    "packages/stim-cli/src/engine/toolchain.ts",
     "packages/stim-cli/src/engine/xcode.ts",
+    "packages/stim-cli/src/fingerprint/",
     "packages/stim-cli/src/integrations/",
     "packages/stim-cli/src/macos/stage.ts",
     "packages/stim-cli/src/offload/build-artifact-cache.ts",
@@ -37,5 +41,5 @@
     "packages/stim-cli/src/optimizations.ts",
     "packages/stim-cli/src/supervisor/project-node.ts"
   ],
-  "digest": "4f12185700dc572e6156246f31b011ab1a8c4ceab23f97d93788afba073103b5"
+  "digest": "88ca60b29e4576d90152143d9f779393fbc12ce2fcf1db7cac0f7cc401342d4f"
 }

@@ -106,7 +106,7 @@ struct WebSocketFramingTests {
     let hello = try JSONDecoder().decode(
       HelloResult.self,
       from: Data(
-        #"{"protocol":2,"server":{"name":"Mac","version":"1.2.3","stim":"1.2.3","port":7787},"capabilities":["read"],"device":{"id":"local","name":"Stim Dev"}}"#
+        #"{"protocol":2,"desktopApi":1,"server":{"name":"Mac","version":"1.2.3","stim":"1.2.3","port":7787},"capabilities":["read"],"device":{"id":"local","name":"Stim Dev"}}"#
           .utf8))
     #expect(hello.isServer(onPort: 7787))
     #expect(!hello.isServer(onPort: 17911))

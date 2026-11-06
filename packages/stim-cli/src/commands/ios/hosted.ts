@@ -137,7 +137,7 @@ export async function finishHostedIosRun({
   let launchWarning: string | undefined;
   let unattributed = false;
   if (appMode === 'development') {
-    const hostedLogs = d.followHostedLaunchLogs(root, slot, 'ios', launchedAt, operation);
+    const hostedLogs = await d.followHostedLaunchLogs(root, slot, 'ios', launchedAt, operation);
     let verification;
     try {
       verification = await verifyIosMetroRun({

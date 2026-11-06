@@ -21,7 +21,7 @@ import Foundation
     guard let client = readCapableServer(server(), stimHome: StimHome.path(environment: environment)) else {
       throw ServerError(code: "not-connected", message: "The local stim-server is not ready to read storage for this Stim home.")
     }
-    guard case .open(let hello) = client.state, hello.features?.contains("desktop-reports") == true else {
+    guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
       throw ServerError(code: "unsupported", message: "Update the local stim-server to read storage reports.")
     }
     let result = try await client.report(["report": .string("gc")])

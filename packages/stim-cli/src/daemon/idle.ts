@@ -30,6 +30,7 @@ import {
   type IdleStopDecision,
 } from '../maintenance/idle-stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
+import { IDLE_SETTING, idleKeep, idleScope, PRESSURE_IDLE_MS, type IdleKeepFacts } from '../policy/idle.ts';
 import { metroStoreRoot } from '../supervisor/metro-store.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { MODE_COMMAND } from '../supervisor/state.ts';
@@ -47,9 +48,8 @@ import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/work
 
 const MINUTE_MS = 60_000;
 const SIZE_TIMEOUT_MS = 60_000;
-const SETTING = 'idle.minutes';
-/** Under high or critical pressure, the idle stage takes every workspace idle this long (ladder rung 1). */
-export const PRESSURE_IDLE_MS: number = 2 * MINUTE_MS;
+
+export { PRESSURE_IDLE_MS };
 
 export interface IdlePassInput {
   config: Config | null;
@@ -78,13 +78,13 @@ type Candidate =
 function thresholdName(input: Pick<IdlePassInput, 'pressure'>): string {
   return input.pressure
     ? `the ${PRESSURE_IDLE_MS / MINUTE_MS}-minute idle threshold of ${input.pressure.level} pressure`
-    : SETTING;
+    : IDLE_SETTING;
 }
 
 function thresholdWhy(input: Pick<IdlePassInput, 'pressure'>, minutes: number): string {
   return input.pressure
     ? `pressure level ${input.pressure.level}: ${input.pressure.reasons.join('; ')}`
-    : `${SETTING} is ${minutes}`;
+    : `${IDLE_SETTING} is ${minutes}`;
 }
 
 /** Whether this Stim home owns the device: config records alone do not prove it in a scoped home. */
@@ -106,60 +106,44 @@ function supervisorOf(path: string, project: ProjectRecord) {
  * owned device it cannot see, or `idle.minutes` 0.
  */
 async function candidate(path: string, project: ProjectRecord, input: IdlePassInput): Promise<Candidate> {
-  if (input.protectedRoot && canonicalPath(input.protectedRoot) === canonicalPath(path)) return { runs: false };
   const supervisor = supervisorOf(path, project);
   const state = readWorkspaceState(path);
-  const booted = input.devices.filter((device) => device.project === path && ownedHere(device));
+  const devices = input.devices.filter((device) => device.project === path);
+  const booted = devices.filter(ownedHere);
   const slots = projectDeviceSlots(project);
   const ownsIos = slots.some(({ platforms }) => platforms.ios?.owned === true);
   const orphan = supervisor.status === 'stale' ? survivingServer(state?.supervisor) : null;
-  const serving = supervisor.status === 'ours' || supervisor.status === 'unverified' || orphan !== null;
-  if (input.unsupervised && serving) return { runs: false };
-  if (ownsIos && input.sims === null)
-    return { runs: true, kept: `its simulators cannot be listed (${input.simsError ?? 'unknown error'})` };
-  const deferredHere = (device: OwnedDeviceActivity) =>
-    device.kind === 'ios' && holdsDeferredShutdown(state, device.slot, device.id, input.now);
-  if (!serving && booted.length > 0 && booted.every(deferredHere)) return { runs: false };
-  if (!serving && booted.length === 0) {
-    const foreign = input.devices.filter((device) => device.project === path && !ownedHere(device));
-    if (!foreign.length) return { runs: false };
-    return {
-      runs: true,
-      kept: `${foreign.map((device) => device.name).join(', ')} not in this Stim home's created-devices ledger, so the idle stage leaves it`,
-    };
-  }
-  let minutes: number;
+  const scope = idleScope({
+    protected: !!input.protectedRoot && canonicalPath(input.protectedRoot) === canonicalPath(path),
+    serving: supervisor.status === 'ours' || supervisor.status === 'unverified' || orphan !== null,
+    unsupervised: input.unsupervised === true,
+    simsError: ownsIos && input.sims === null ? (input.simsError ?? 'unknown error') : null,
+    booted: booted.map((device) => ({
+      deferred: device.kind === 'ios' && holdsDeferredShutdown(state, device.slot, device.id, input.now),
+    })),
+    foreign: devices.filter((device) => !booted.includes(device)).map((device) => device.name),
+  });
+  if (scope) return scope;
+  let settings: IdleKeepFacts['settings'];
   try {
     const { operation } = input;
-    const { settings } = operation
+    const resolved = operation
       ? await resolveProjectSettingsAsync(path, { env: operation.env, signal: operation.signal, declareFor: operation })
       : resolveProjectSettings(path);
-    if (maintenanceKeepSetting(settings)) return { runs: true, kept: 'pinned by maintenance.keep' };
-    minutes = idleMinutesSetting(settings);
+    settings = { keep: maintenanceKeepSetting(resolved.settings), minutes: idleMinutesSetting(resolved.settings) };
   } catch (error) {
-    return {
-      runs: true,
-      kept: `its settings cannot be resolved: ${error instanceof Error ? error.message : String(error)}`,
-    };
+    settings = { error: error instanceof Error ? error.message : String(error) };
   }
-  if (minutes === 0) return { runs: true, kept: `${SETTING} is 0` };
-  if (supervisor.status === 'unverified')
-    return {
-      runs: true,
-      kept: `its dev server supervisor cannot be verified: ${supervisor.reason ?? 'unknown identity'}`,
-    };
-  if (orphan) return { runs: true, kept: orphan };
-  if (supervisor.status === 'ours' && state?.supervisor?.mode === MODE_COMMAND)
-    return { runs: true, kept: 'its dev server runs metro.command, whose bundle and HMR requests Stim cannot see' };
-  if (supervisor.status === 'ours' && state?.supervisor?.hmrUpdates !== true)
-    return {
-      runs: true,
-      kept: 'its dev server does not report its requests to Stim: an Expo SDK before 54, or a server an older Stim started, which stim stop and stim start restart',
-    };
-  const hosted = hostedFacts(path);
-  if (hosted.unreadable.length) return { runs: true, kept: hosted.unreadable.join('; ') };
-  const [placement] = hosted.placements;
-  if (placement) return { runs: true, kept: `its ${placement.label} runs on ${placement.machine}` };
+  const threshold = idleKeep({
+    settings,
+    supervisor,
+    command: state?.supervisor?.mode === MODE_COMMAND,
+    hmrUpdates: state?.supervisor?.hmrUpdates === true,
+    orphan,
+    hosted: hostedFacts(path),
+    pressured: Boolean(input.pressure),
+  });
+  if ('kept' in threshold) return { runs: true, kept: threshold.kept };
   const seen = new Set(booted.flatMap((device) => (device.kind === 'android' ? [device.id] : [])));
   const unseen = slots.flatMap(({ platforms }) =>
     platforms.android?.owned && platforms.android.avdName && !seen.has(platforms.android.avdName)
@@ -168,14 +152,7 @@ async function candidate(path: string, project: ProjectRecord, input: IdlePassIn
   );
   const emulators = unseen.length ? await unseenEmulatorError(unseen, input.operation) : null;
   if (emulators) return { runs: true, kept: emulators };
-  const idleMs = input.pressure ? Math.min(minutes * MINUTE_MS, PRESSURE_IDLE_MS) : minutes * MINUTE_MS;
-  return {
-    runs: true,
-    idleMs,
-    minutes: Math.ceil(idleMs / MINUTE_MS),
-    serving: supervisor.status === 'ours',
-    booted,
-  };
+  return { runs: true, ...threshold, serving: supervisor.status === 'ours', booted };
 }
 
 async function decide(

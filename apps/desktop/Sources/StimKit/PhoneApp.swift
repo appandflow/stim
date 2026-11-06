@@ -45,18 +45,6 @@ public enum PhoneApp {
         "recording.enabled on this Mac. While stim-server runs it keeps the last 15 minutes of each simulator, emulator and Chrome page, which \(replayers). A workspace or repository setting still wins. Turning it off deletes the recordings."
     }
 
-    public static func serverPopupTitle(missing: Bool, phoneApp: Bool) -> String {
-      let action = missing ? "Install" : "Update"
-      return phoneApp ? "\(action) stim-server to serve phones" : "\(action) stim-server"
-    }
-
-    public static func serverPopupDetail(minimum: String, phoneApp: Bool) -> String {
-      let subject =
-        phoneApp
-        ? "stim-server shares Stim's status with paired phones"
-        : "stim-server serves device replay, the diff viewer and archived logs"
-      return "\(subject), and Stim Desktop needs \(minimum) or later."
-    }
   }
 }
 

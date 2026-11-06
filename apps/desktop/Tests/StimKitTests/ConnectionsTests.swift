@@ -55,7 +55,7 @@ struct ConnectionsTests {
           {"machine":"mini","priority":1,"deviceHost":null,
            "build":{"machine":"mini","state":"pending","deviceId":"b1","tailnet":{"name":"t.ts.net"},
                     "host":{"name":"Stim Host","screenRecording":true,"accessibility":true}},
-           "serverKeyFingerprint":"\(mini.id)","reachability":"reachable","revoke":["stim-server devices revoke b1"]},
+           "serverKeyFingerprint":"\(mini.id)","reachability":"reachable","revoke":["stim pairings revoke b1"]},
           {"machine":"studio","priority":2,"build":null,"deviceHost":{"machine":"studio","state":"approved","deviceId":"h2"},
            "serverKeyFingerprint":null,"reachability":"reachable","revoke":[]}],
          "findings":[]}
@@ -67,8 +67,8 @@ struct ConnectionsTests {
     #expect(rows.map(\.name) == ["mini", "studio", "floco", "Unreadable pairing"])
     #expect(rows[0].pairing?.id == mini.id && rows[0].entry == "mini")
     #expect(rows[0].access == [.view, .control, .build])
-    #expect(rows[0].revokeCommands == ["stim-server devices revoke b1", "stim-server devices revoke d-mini"])
-    #expect(rows[1].access == [.runDevices] && rows[1].revokeCommands == ["stim-server devices revoke h2"])
+    #expect(rows[0].revokeCommands == ["stim pairings revoke b1", "stim pairings revoke d-mini"])
+    #expect(rows[1].access == [.runDevices] && rows[1].revokeCommands == ["stim pairings revoke h2"])
     #expect(rows[2].entry == nil && rows[2].access == [.view])
     #expect(rows[2].revokeCommands.isEmpty)
     #expect(rows[3].revokeCommands.isEmpty)

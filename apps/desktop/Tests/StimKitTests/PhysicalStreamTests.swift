@@ -189,12 +189,12 @@ import Testing
   @Test func offersTheClipboardOnlyForADeviceTheServerCanMoveTextTo() {
     let on = PhysicalStream.Control.on(session: "c1")
     func access(
-      _ platform: String, physical: Bool = false, features: [String]? = ["device-clipboard"], control: PhysicalStream.Control = on
+      _ platform: String, physical: Bool = false, control: PhysicalStream.Control = on
     )
       -> ServerClipboard.Access
     {
       ServerClipboard.Access(
-        platform: platform, physical: physical, link: .open(features: features, capabilities: ["read", "control"]),
+        platform: platform, physical: physical, link: .open(desktopApi: 1, capabilities: ["read", "control"]),
         control: control, server: "Mini")
     }
     #expect(access("ios") == .ready(session: "c1"))
@@ -202,9 +202,7 @@ import Testing
     #expect(access("ios", physical: true) == .none)
     #expect(access("macos") == .none)
     #expect(access("ios", control: .starting) == .none)
-    #expect(
-      access("ios", features: ["ios-hosted"]) == .unsupported("Update stim-server on Mini to copy text to and from this device."))
-    #expect(access("android", features: nil) != .none)
+
     #expect(
       ServerClipboard.Access(platform: "ios", physical: false, link: .connecting, control: on, server: nil) == .none)
   }
@@ -396,14 +394,13 @@ import Testing
     transport.answer(
       "hello",
       .object([
-        "protocol": .number(1),
+        "protocol": .number(1), "desktopApi": .number(1),
         "server": .object(["name": .string("Mac"), "version": .string("1"), "stim": .string("1")]),
         "capabilities": .array([.string("read"), .string("control")]),
-        "features": .array([.string("physical-android")]),
+
       ]))
     await settle()
-    let hello = try #require({ if case .open(let hello) = client.state { return hello } else { return nil } }())
-    #expect(hello.features == ["physical-android"])
+    try #require(client.isOpen)
     transport.reply([
       "event": .string("control-ended"), "session": .string("c1"), "reason": .string("idle"),
       "message": .string("No input for 5 minutes."),

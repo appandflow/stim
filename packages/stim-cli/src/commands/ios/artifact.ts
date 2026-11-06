@@ -43,19 +43,8 @@ import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../e
 import type { NdjsonWriter } from '../../ndjson.ts';
 import { artifactCachePolicy } from '../../optimizations.ts';
 import { claimFailure } from '../../ownership-claim.ts';
-import {
-  closeOffload,
-  chooseBuildMachine,
-  offloadBuild,
-  buildPlacementCandidates,
-  offloadPlacement,
-  offloadCheck,
-  placementLoad,
-  remotePhaseText,
-  type OffloadChoice,
-  type BuildHandoff,
-} from '../../offload/client.ts';
-import { predictedRefusal, type pairedMachines } from '../../offload/build-machines.ts';
+import type { OffloadChoice, BuildHandoff } from '../../offload/client.ts';
+import type { pairedMachines } from '../../offload/build-machines.ts';
 import {
   fingerprintMismatchRemedy,
   missingPackageManagerRemedy,
@@ -498,6 +487,7 @@ export async function acquireIosArtifact(
       hereReason = cacheIneligible;
       return null;
     }
+    const { buildPlacementCandidates, offloadPlacement, offloadCheck } = await import('../../offload/client.ts');
     const { machines, localEnabled } = buildPlacementCandidates(buildMachine);
     if (localEnabled && machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local')
       return null;
@@ -542,6 +532,7 @@ export async function acquireIosArtifact(
     const offload = recipe.offload;
     if (placement.code === 'named' && named && offload && runtime) {
       const { problems } = await offloadCheck(root, async () => [await offload.target(runtime)])(named);
+      const { predictedRefusal } = await import('../../offload/build-machines.ts');
       const predicted = predictedRefusal(buildMachine, problems);
       if (predicted) throw new OffloadRefusal(buildMachine, predicted.reason, predicted.remedy);
     }
@@ -564,6 +555,7 @@ export async function acquireIosArtifact(
     let asked: PlacementCandidate[] = [];
     const target = await offload.target(candidate.runtime);
     localCocoapods = target.platform === 'ios' ? target.local.cocoapods : null;
+    const { chooseBuildMachine, closeOffload, placementLoad } = await import('../../offload/client.ts');
     const choice = await chooseBuildMachine({
       projectRoot: root,
       target,
@@ -617,6 +609,7 @@ export async function acquireIosArtifact(
       if (namedBuildMachine(buildMachine)) fallBack('the build fingerprint or cache key is unavailable');
       return false;
     }
+    const { offloadBuild, remotePhaseText, placementLoad } = await import('../../offload/client.ts');
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
     const outcome = await offloadBuild({
       choice,

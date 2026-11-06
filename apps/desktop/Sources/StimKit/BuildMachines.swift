@@ -484,10 +484,10 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
         "It answered with a different stim-server key than the one this machine pinned, so Stim does not connect to it. If that machine was replaced or reinstalled, remove it here, which forgets the old key, then set it up again."
     case .keyUnconfirmed:
       return
-        "It answered with a stim-server key this machine has not confirmed. In a terminal on this machine, run stim remote list and answer y only if the fingerprint matches the one stim-server setup printed on \(machine)."
+        "It answered with a stim-server key this machine has not confirmed. In a terminal on this machine, run stim remote list and answer y only if the fingerprint matches the one stim setup printed on \(machine)."
     case .outdated:
       return
-        "Its stim-server is older than this machine's Stim. On \(machine), run stim-server service update --release <version>, then run stim remote add \(machine) on this machine."
+        "Its stim-server is older than this machine's Stim. On \(machine), run npm i -g stim@<version> && stim service install, then run stim remote add \(machine) on this machine."
     case .credentialsUnavailable:
       return
         "This machine cannot read the credentials it keeps for hosted simulators. Restore read access to device-host-machines.json in the Stim home, then check again."

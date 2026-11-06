@@ -92,7 +92,7 @@ runs:
 
     - name: Install the bundled server's workspace packages (lifecycle scripts stay blocked)
       shell: bash
-      run: pnpm install --frozen-lockfile --filter '@stim-cli/server...' --filter stim-monorepo
+      run: pnpm install --frozen-lockfile --filter 'stim...' --filter stim-monorepo
 
     - name: Build before any secret is loaded
       shell: bash

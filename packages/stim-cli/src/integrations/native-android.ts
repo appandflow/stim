@@ -11,7 +11,7 @@ import { androidProcessRuntime } from '../commands/android/launch.ts';
 import { buildGradle, androidSdkRefusal, type GradlePreflightFailure, type LocateApkResult } from '../engine/gradle.ts';
 import { resolveCcache } from '../engine/ccache.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { androidToolchainAsync } from '../offload/toolchain.ts';
+import { androidToolchainAsync } from '../engine/toolchain.ts';
 import { settingValueAt } from '../workspace/settings.ts';
 import { gradleOffloadInputs, nativeGradleTransfer, type GradleTransfer } from './native-gradle-inputs.ts';
 import {
