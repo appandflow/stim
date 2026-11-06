@@ -10,15 +10,19 @@ import type { FrameLimits } from '../frames.ts';
 import type { RecordLimits } from '../recorder.ts';
 import type { PushLimits, PushNotifierOptions } from '../push.ts';
 import type { BuildLimits } from '../build.ts';
-import type { DeviceHostLimits } from '@stim-cli/core/state';
+import type { DeviceHostLimits, StatusViews, StatusPayload } from '@stim-cli/core/state';
 import type { HostedRelayOptions } from '../hosted-relay.ts';
 import type { WebSocket } from 'ws';
 import { NoiseSocket } from '@stim-cli/core/noise-session';
-import type { ServerMessage, HelloHost, RequestId, ErrorCode } from '../protocol.ts';
+import type { ServerMessage, HelloHost, ProtocolError, RequestId, ErrorCode, VideoCodec } from '../protocol.ts';
+import { StatusFeed } from '../status-feed.ts';
+import type { JsonObject } from '../feed.ts';
 import type { StartupState } from '../startup.ts';
 import type { Registries, PairedDevice } from '../registry.ts';
 import { UsageSampler } from '../machine.ts';
+import { UsageRecorder } from '../usage-history.ts';
 import { DeviceHost } from '../device-host.ts';
+import { ControlHub } from '../control.ts';
 
 export interface ServerOptions {
   /** Private bootstrap received from the Desktop parent; never a persisted pairing capability. */
@@ -160,15 +164,22 @@ export interface ConnectionContext {
   readonly options: ServerOptions;
   homeId: string | undefined;
   readonly hostHealth: () => Promise<HelloHost['app'] | undefined>;
+  readonly statusFeed: StatusFeed;
+  readonly viewsOf: (payload: JsonObject) => StatusViews;
+  readonly currentStatus: () => Promise<{ payload: StatusPayload } | { failed: string }>;
   readonly hostsDevices: boolean;
   startup: StartupState;
   readonly readApprovals: () => Registries | null;
   readonly sessions: Map<ServerSocket, PairedDevice>;
   readonly sampler: UsageSampler;
+  readonly usage: UsageRecorder;
+  readonly recordUsage: () => () => void;
   readonly hostedDevices: DeviceHost;
+  readonly control: ControlHub;
   readonly socket: ServerSocket;
   readonly local: boolean;
   readonly clientKey: string | null;
+  readonly subscriptions: Map<string, () => void | Promise<void | ProtocolError>>;
   device: PairedDevice | null;
   desktopChallenge: { nonce: string; proof: string } | null;
   readonly tracker: RequestTracker;
@@ -176,5 +187,7 @@ export interface ConnectionContext {
   clientPing: NodeJS.Timeout | undefined;
   readonly refuse: (id: RequestId | null, code: ErrorCode, message: string, closeCode: number) => void;
   readonly timer: NodeJS.Timeout;
+  readonly error: (id: RequestId, code: ErrorCode, message: string) => void;
+  readonly openSubscription: (id: RequestId, result?: { video?: VideoCodec }) => string | null;
   readonly addresses: { host: string; port: number }[];
 }

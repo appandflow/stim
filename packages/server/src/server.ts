@@ -45,13 +45,8 @@ import {
   type RecordingPlatform,
   type NdjsonRecord,
   type StatusPayload,
-  archivedUsage,
-  KeyedEntities,
   statusViews,
-  type ArchivedWorkspace,
   type StatusViews,
-  type WorkspaceSummary,
-  type WorktreeRow,
   type SetupCapability,
   SHARE_TOKEN,
   readShareLinks,
@@ -148,7 +143,6 @@ import {
   RESERVED_SHARE_SLUGS,
   SHARE_SLUG_PATTERN,
   ENGINE_UPDATE_METHODS,
-  ARCHIVED_PAGE_LIMIT,
   type DesktopReportTarget,
   type DeviceToolRequest,
   type ArchiveDetailResult,
@@ -255,6 +249,14 @@ import {
   type ConnectionContext,
 } from './handlers/context.ts';
 import { LOCAL_DEVICE_ID, CLOSE_BAD_REQUEST, hello } from './handlers/hello.ts';
+import {
+  subscribeWorkspaces,
+  subscribeWorkspace,
+  subscribeMachine,
+  readBuildsHistory,
+  listArchived,
+  statusRead,
+} from './handlers/status.ts';
 export type { ServerOptions } from './handlers/context.ts';
 
 const SHARE_SERVER_GRACE_MS = 2 * 60_000;
@@ -361,12 +363,6 @@ const MAX_PAYLOAD = 64 * 1024;
 const METRO_LINK_BUFFERED_BYTES = 1024 * 1024;
 const MAX_SUBSCRIPTIONS = 32;
 
-const archiveCursor = (archive: ArchivedWorkspace) => `${archive.removedAt}|${archive.id}`;
-
-function lastCursor(page: readonly ArchivedWorkspace[]): string | null {
-  const last = page.at(-1);
-  return last ? archiveCursor(last) : null;
-}
 const STATUS_READ_WAIT_MS = 30_000;
 
 const REQUEST_LIMITS: RequestLimits = { connection: 32, device: 16 };
@@ -2063,6 +2059,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         homeId = value;
       },
       hostHealth,
+      statusFeed,
+      viewsOf,
+      currentStatus,
       hostsDevices,
       get startup() {
         return startup;
@@ -2073,10 +2072,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       readApprovals,
       sessions,
       sampler,
+      usage,
+      recordUsage,
       hostedDevices,
+      control,
       socket,
       local,
       clientKey,
+      subscriptions,
       get device() {
         return device;
       },
@@ -2104,6 +2107,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       },
       refuse,
       timer,
+      error,
+      openSubscription,
       addresses,
     };
 
@@ -2251,158 +2256,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return subscription;
     }
 
-    function subscribeWorkspaces(id: RequestId): void {
-      const subscription = openSubscription(id);
-      if (!subscription) return;
-      const workspaces = new KeyedEntities<WorkspaceSummary>((workspace) => workspace.path);
-      const worktrees = new KeyedEntities<WorktreeRow>((worktree) => worktree.path);
-      let archived: string | null = null;
-      let seq = 0;
-      const unsubscribe = statusFeed.subscribe({
-        item: (payload) => {
-          const views = viewsOf(payload);
-          const archivedText = JSON.stringify(views.archived);
-          if (archived === null) {
-            workspaces.reset(views.workspaces);
-            worktrees.reset(views.worktrees);
-            archived = archivedText;
-            const { workspaces: summaries, worktrees: rows, archived: summary } = views;
-            return send(socket, {
-              event: 'workspaces',
-              subscription,
-              seq: seq++,
-              snapshot: { workspaces: summaries, worktrees: rows, archived: summary },
-            });
-          }
-          const changedWorkspaces = workspaces.next(views.workspaces);
-          const changedWorktrees = worktrees.next(views.worktrees);
-          const archivedChanged = archivedText !== archived;
-          archived = archivedText;
-          if (!changedWorkspaces && !changedWorktrees && !archivedChanged) return;
-          send(socket, {
-            event: 'workspaces',
-            subscription,
-            seq: seq++,
-            ...(changedWorkspaces ? { workspaces: changedWorkspaces } : {}),
-            ...(changedWorktrees ? { worktrees: changedWorktrees } : {}),
-            ...(archivedChanged ? { archived: views.archived } : {}),
-          });
-        },
-        failed: (message) => {
-          subscriptions.delete(subscription);
-          send(socket, { event: 'error', subscription, error: { code: 'status-failed', message } });
-        },
-      });
-      subscriptions.set(subscription, unsubscribe);
-    }
-
-    function subscribeWorkspace(id: RequestId, params: unknown): void {
-      const workspace = isJsonObject(params) ? params.workspace : undefined;
-      if (typeof workspace !== 'string' || !workspace)
-        return error(id, 'bad-request', 'params.workspace must be a workspace path from the workspace list.');
-      const subscription = openSubscription(id);
-      if (!subscription) return;
-      let last: string | null = null;
-      let seq = 0;
-      const unsubscribe = statusFeed.subscribe({
-        item: (payload) => {
-          const environment = viewsOf(payload).details.get(workspace) ?? null;
-          const text = JSON.stringify(environment);
-          if (text === last) return;
-          last = text;
-          send(socket, { event: 'workspace', subscription, seq: seq++, environment });
-        },
-        failed: (message) => {
-          subscriptions.delete(subscription);
-          send(socket, { event: 'error', subscription, error: { code: 'status-failed', message } });
-        },
-      });
-      subscriptions.set(subscription, unsubscribe);
-    }
-
-    function subscribeMachine(id: RequestId): void {
-      const subscription = openSubscription(id);
-      if (!subscription) return;
-      const stopUsage = recordUsage();
-      let last: string | null = null;
-      let seq = 0;
-      const unsubscribe = statusFeed.subscribe({
-        item: (payload) => {
-          const history = usage.history();
-          const leases = control.ownLeaseTimes();
-          const event = {
-            machine: viewsOf(payload).machine,
-            ...(history ? { usage: history } : {}),
-            ...(leases.length ? { ownLeases: leases } : {}),
-          };
-          const text = JSON.stringify(event);
-          if (text === last) return;
-          last = text;
-          send(socket, { event: 'machine', subscription, seq: seq++, ...event });
-        },
-        failed: (message) => {
-          stopUsage();
-          subscriptions.delete(subscription);
-          send(socket, { event: 'error', subscription, error: { code: 'status-failed', message } });
-        },
-      });
-      subscriptions.set(subscription, () => {
-        stopUsage();
-        unsubscribe();
-      });
-    }
-
-    async function statusRead<M extends 'builds.history' | 'archived.list' | 'worktrees.list' | 'maintenance.get'>(
-      id: RequestId,
-      read: (payload: StatusPayload) => { result: Methods[M]['result'] } | { code: ErrorCode; message: string },
-    ): Promise<void> {
-      const status = await currentStatus();
-      if (socket.readyState !== socket.OPEN) return;
-      if ('failed' in status) return error(id, 'status-failed', status.failed);
-      const answer = read(status.payload);
-      if ('code' in answer) return error(id, answer.code, answer.message);
-      send(socket, { id, result: answer.result });
-    }
-
-    function readBuildsHistory(id: RequestId, params: unknown): Promise<void> {
-      const workspace = isJsonObject(params) ? params.workspace : undefined;
-      return statusRead<'builds.history'>(id, (payload) => {
-        const environment = payload.environments.find((each) => each.path === workspace);
-        if (!environment) return { code: 'unknown-workspace', message: 'No workspace has that path.' };
-        return { result: { builds: environment.builds ?? {} } };
-      });
-    }
-
-    function listArchived(id: RequestId, params: unknown): Promise<void> {
-      const before = isJsonObject(params) && typeof params.before === 'string' ? params.before : null;
-      const requested = isJsonObject(params) && typeof params.limit === 'number' ? params.limit : ARCHIVED_PAGE_LIMIT;
-      const limit = Math.max(1, Math.min(ARCHIVED_PAGE_LIMIT, Math.floor(requested)));
-      return statusRead<'archived.list'>(id, (payload) => {
-        const archives = payload.archived ?? [];
-        const newest = archives.toSorted((a, b) => archiveCursor(b).localeCompare(archiveCursor(a)));
-        const from = before === null ? 0 : newest.findIndex((archive) => archiveCursor(archive) < before);
-        const page = from === -1 ? [] : newest.slice(from, from + limit);
-        const more = from !== -1 && from + limit < newest.length;
-        return {
-          result: {
-            archived: page,
-            usage: payload.archivedUsage ?? archivedUsage(archives),
-            next: more ? lastCursor(page) : null,
-          },
-        };
-      });
-    }
-
     const statusMethods: Partial<Record<string, (id: RequestId, params: unknown) => void | Promise<void>>> = {
-      'workspaces.subscribe': subscribeWorkspaces,
-      'workspace.subscribe': subscribeWorkspace,
-      'machine.subscribe': subscribeMachine,
-      'builds.history': readBuildsHistory,
-      'archived.list': listArchived,
+      'workspaces.subscribe': (id) => subscribeWorkspaces(ctx, id),
+      'workspace.subscribe': (id, params) => subscribeWorkspace(ctx, id, params),
+      'machine.subscribe': (id) => subscribeMachine(ctx, id),
+      'builds.history': (id, params) => readBuildsHistory(ctx, id, params),
+      'archived.list': (id, params) => listArchived(ctx, id, params),
       'worktrees.list': (id) =>
-        statusRead<'worktrees.list'>(id, (payload) => ({ result: { worktrees: payload.unprovisionedWorktrees } })),
+        statusRead<'worktrees.list'>(ctx, id, (payload) => ({ result: { worktrees: payload.unprovisionedWorktrees } })),
       'maintenance.get': (id) =>
-        statusRead<'maintenance.get'>(id, (payload) => ({ result: { maintenance: payload.maintenance ?? null } })),
+        statusRead<'maintenance.get'>(ctx, id, (payload) => ({ result: { maintenance: payload.maintenance ?? null } })),
     };
 
     function subscribeLogs(id: RequestId, params: unknown, fullBackfill = false): void | Promise<void> {
