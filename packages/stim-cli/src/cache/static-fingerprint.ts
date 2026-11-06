@@ -6,12 +6,11 @@ import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:p
 import { normalizeOptionsAsync } from '@expo/fingerprint/build/Options.js';
 import { isIgnoredPathWithMatchObjects } from '@expo/fingerprint/build/utils/Path.js';
 import { gitAsync } from '../workspace/git.ts';
-import { STIM_VERSION } from '../stim-version.ts';
 import { DEFAULT_IOS_PROJECT_PATH } from '../workspace/settings.ts';
 import { expoEnvFiles, fingerprintOptions, type FingerprintTarget } from './build-cache.ts';
 import { canonicalPodfileLockOf, stimOnlyHooks } from './podfile-lock.ts';
 
-const STATIC_SCHEMA = 1;
+const STATIC_SCHEMA = 2;
 
 /** More files than this outside git, or ignored by git, means the static check reads too much to be worth it. */
 const UNTRACKED_FILE_CAP = 2000;
@@ -580,7 +579,6 @@ async function computeDigest(
   const require = createRequire(import.meta.url);
   const identity = {
     schema: STATIC_SCHEMA,
-    stim: STIM_VERSION,
     fingerprint: String(field(require('@expo/fingerprint/package.json'), 'version')),
     platform: target.platform,
     root: toPosix(relative(top, root)),

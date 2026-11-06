@@ -8,8 +8,8 @@ import {
   PROVIDER_LOAD_TIMEOUT_ENV,
   PROVIDER_LOAD_TIMEOUT_MS,
   type CacheProviderConfig,
-  type loadCacheProvider,
-} from '@stim-cli/cache';
+} from '@stim-cli/cache/tiers';
+import type { loadCacheProvider } from '@stim-cli/cache';
 import { trackReportResource } from '../report-runtime.ts';
 import type { BuildCacheHit, BuildPlanPayload, StatsPlatform } from '@stim-cli/core/state';
 import { artifactIn, entryDir } from '../cache/build-cache.ts';

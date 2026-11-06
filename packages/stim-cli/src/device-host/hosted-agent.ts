@@ -1,7 +1,11 @@
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { parseHostedAgentGrant, type DeviceHostMachineCredential, type HostedAgentAccess } from '@stim-cli/core/state';
-import { parseMachine } from '../offload/tailnet.ts';
+import {
+  parseHostedAgentGrant,
+  parseMachine,
+  type DeviceHostMachineCredential,
+  type HostedAgentAccess,
+} from '@stim-cli/core/state';
 import { hostedAgentLine } from '../hosted-names.ts';
 import { agentClientFiles, agentDriverClient } from './agent-drivers.ts';
 

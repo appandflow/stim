@@ -21,7 +21,7 @@ import {
   type SupervisorRecord,
 } from '@stim-cli/core/state';
 import { isOnMountedVolume } from '../fs-util.ts';
-import { realIo, tailscaleStatusAsync } from '../offload/tailnet.ts';
+import { tailscaleStatus, tailscaleStatusAsync } from '../tailscale-status.ts';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import { releaseClaim } from '../ownership-claim.ts';
 import { sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
@@ -80,19 +80,11 @@ export function saveConfig(config: Config): void {
   }
 }
 
-const CONFIG_VERSION = 2;
-
 export function ensureConfig(): Config {
   return withConfigLock(() => {
     const existing = loadConfig();
-    if (existing) {
-      if (existing.version !== CONFIG_VERSION) {
-        existing.version = CONFIG_VERSION;
-        saveConfig(existing);
-      }
-      return existing;
-    }
-    const fresh = { version: CONFIG_VERSION, projects: {}, repos: {} };
+    if (existing) return existing;
+    const fresh = { projects: {}, repos: {} };
     saveConfig(fresh);
     return fresh;
   });
@@ -295,7 +287,7 @@ function localDevicePoolOff(dottedKey: string, value: unknown): boolean {
 
 export function writeConfigSetting(target: ConfigSettingsTarget, dottedKey: string, value: unknown): boolean {
   if (target.scope === 'workspace') requireAbsoluteProjectPath(target.projectPath);
-  const status = target.scope === 'machine' && localDevicePoolOff(dottedKey, value) ? realIo.status() : null;
+  const status = target.scope === 'machine' && localDevicePoolOff(dottedKey, value) ? tailscaleStatus() : null;
   return withConfigLock(() => applyConfigSetting(target, dottedKey, value, status));
 }
 

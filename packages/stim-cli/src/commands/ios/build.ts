@@ -3,7 +3,6 @@ import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import type { PlatformBuildOptions } from '@stim-cli/core/protocol';
 import { constants, promises as fs } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { loadCacheProvider } from '@stim-cli/cache';
 import { hostSimulatorArch, type StimContext } from '@stim-cli/core';
 import { phaseLine } from '../../command-output.ts';
 import { listIosRuntimes } from '../../devices/ios.ts';
@@ -257,7 +256,7 @@ export async function buildIosOperation(
               },
             },
             {
-              loadCacheProvider,
+              loadCacheProvider: async (input) => (await import('@stim-cli/cache')).loadCacheProvider(input),
               checkEasAuth,
               resolveRemote,
               uploadRemote,
