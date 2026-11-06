@@ -29,6 +29,10 @@ export default function serviceCommand(program: Command): void {
         .option('--from <dir>', 'install packaged releases from a directory')
         .option('--no-wait', 'interrupt active builds and hosted installs');
     command.action(async (opts) => {
+      if (name === 'install' && program.name() === 'stim')
+        command.error(
+          'Service installation through stim is not available yet. Run `stim-server service install` instead.',
+        );
       const env = opts.env ?? [];
       const pathPrepend = opts.pathPrepend ?? [];
       const problem = validateServeEnvironment(env, pathPrepend, false);

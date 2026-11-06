@@ -351,6 +351,7 @@ export async function discardTypedAhead(stream: NodeJS.ReadableStream & { isTTY?
 }
 
 export function defaultSetupDeps(): SetupDeps {
+  const stimDist = join(dirname(bundledStim().cli), '../dist');
   const manager = serviceManagerOrNull();
   const platform = manager?.name === 'systemd' ? 'linux' : manager?.name === 'taskscheduler' ? 'win32' : 'darwin';
   return {
@@ -451,7 +452,7 @@ export function defaultSetupDeps(): SetupDeps {
     async toolchain(options) {
       const env = applyServeEnvironment(discoverToolchain(process.env).env, options.env, options.pathPrepend);
       const host = new BuildHost({
-        worker: join(dirname(bundledStim().cli), 'offload-worker.mjs'),
+        worker: join(stimDist, 'offload-worker.mjs'),
         env,
         ready: () => false,
       });
@@ -463,7 +464,7 @@ export function defaultSetupDeps(): SetupDeps {
     },
     node: stableNode(process.env.PATH),
     versions: (label) => join(serviceRoot(label), 'versions'),
-    stimBuild: stimBuildDigest(dirname(bundledStim().cli)),
+    stimBuild: stimBuildDigest(stimDist),
   };
 }
 

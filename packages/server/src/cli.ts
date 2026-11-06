@@ -1,6 +1,6 @@
 import { realpathSync, statSync } from 'node:fs';
 import { hostname, networkInterfaces } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { readHostedSessions } from '@stim-cli/core/state';
 import { configDir } from '@stim-cli/core';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
@@ -179,7 +179,7 @@ export async function serve(
       ...(loopbackOnly ? { loopbackOnly: true } : {}),
       ...(shareOnly ? { shareServer: { idle: () => idle?.() } } : {}),
       port,
-      stimCli: stim.cli,
+      stimCli: join(dirname(stim.cli), '../dist/cli.mjs'),
       stimVersion: stim.version,
       serverVersion: pkg.version,
       env,

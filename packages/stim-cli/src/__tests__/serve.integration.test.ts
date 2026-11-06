@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -5,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import { stimBuildDigest } from '@stim-cli/core/state';
+import { localConnect } from '../../../server/__tests__/noise-client.ts';
 
 const execute = promisify(execFile);
 const root = join(import.meta.dirname, '../../../..');
@@ -47,7 +50,19 @@ test('the router reports its package version and serving retains the service pro
         health = await response.json();
       } while (response.status === 503);
       expect(response.status).toBe(200);
-      expect(health).toMatchObject({ server: 'stim-server', version });
+      const digest = stimBuildDigest(join(root, 'packages/stim-cli/dist'));
+      expect(digest).not.toBeNull();
+      expect(health).toMatchObject({ server: 'stim-server', version, stimBuild: digest });
+      if (process.platform !== 'win32') {
+        const client = await localConnect(join(home, 'server/local.sock'));
+        try {
+          await client.request('hello', { client: { name: 'stim', version } });
+          const status = await client.request('worktrees.list', {});
+          assert.deepStrictEqual('result' in status ? status.result : status, { worktrees: [] });
+        } finally {
+          client.socket.terminate();
+        }
+      }
       const claims = readClaimSet(join(home, 'server', 'share-server')).live;
       expect(claims).toHaveLength(1);
       expect(claims[0]?.owner.pid).toBe(child.pid);
