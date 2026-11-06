@@ -69,7 +69,7 @@ describe('createMachineStore', () => {
       protocol: 1,
       actions: [],
       capabilities: ['read'],
-      features: [],
+      hostCapabilities: [],
       deviceId: null,
       deviceName: null,
     });

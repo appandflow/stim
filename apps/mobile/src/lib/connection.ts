@@ -8,6 +8,7 @@ import {
   rpcEventIssue,
   rpcResultIssue,
 } from '@stim-cli/core/receive-protocol';
+import { PHONE_API } from '@stim-cli/core/protocol';
 
 import {
   ACTIONS,
@@ -38,11 +39,11 @@ export type ConnectionState =
       protocol: number;
       actions: ActionName[] | null;
       capabilities: string[];
-      /** What the server serves beyond the base protocol, such as `physical-android`. */
-      features: string[];
-      /** This phone's id on the machine, as `stim-server devices` lists it; null from a server that predates it. */
+      /** What the machine can do because of what it is, such as `physical-android`, from `hello.host`. */
+      hostCapabilities: string[];
+      /** This phone's id on the machine, as `stim pairings` lists it; null from a server that predates it. */
       deviceId: string | null;
-      /** The name that record carries on the machine, which `stim-server devices rename` changes; null from a server that predates it. */
+      /** The name that record carries on the machine, which `stim pairings rename` changes; null from a server that predates it. */
       deviceName: string | null;
     }
   | { kind: 'waiting'; retryInMs: number; reason: string }
@@ -94,7 +95,7 @@ export interface ConnectionOptions {
   endpoint: string;
   /** The server key this phone pinned when it paired, base64url. */
   serverKey: string;
-  client: { name: string; version: string };
+  client: { name: string; version: string; phoneApi: number };
   onState?: (state: ConnectionState) => void;
   createSocket?: SocketFactory;
   setTimer?: (fn: () => void, ms: number) => unknown;
@@ -127,24 +128,14 @@ const MAX_RETRY_MS = 30_000;
 const INVALID_BACKOFF_MS = 60_000;
 const REFUSAL_CODES = new Set(['unauthorized', 'pairing-expired', 'protocol-unsupported']);
 
-/**
- * Why a session that closed will not work on retry, or null for a lost connection. A protocol 1 stim-server closes
- * with 4400 "unexpected binary frame" on the Noise prefix, before answering it. A protocol 2 server names its refusal
- * in the close reason.
- */
 /** The native session could not read or store this phone's key, which no reconnect to the Mac can fix. */
 function keyStorageProblem(event: SessionClose): string | null {
   if (!event.error?.includes('client-key-unavailable')) return null;
   return t`This phone could not read its Stim key from secure storage. Unlock the phone and reopen Stim.`;
 }
 
+/** Why a session that closed will not work on retry, or null for a lost connection; the server names it in the close reason. */
 function sessionRefusal(event: SessionClose): { code: string; reason: string } | null {
-  if (!event.serverAnswered && event.code === 4400 && event.reason === 'unexpected binary frame') {
-    return {
-      code: 'server-outdated',
-      reason: t`Update stim-server on the machine. It speaks an older protocol than this app.`,
-    };
-  }
   if (event.error === 'server-key-mismatch') {
     return {
       code: 'server-key-mismatch',
@@ -167,6 +158,22 @@ function sessionRefusal(event: SessionClose): { code: string; reason: string } |
   // compat end
   return null;
 }
+
+// compat C9 permanent
+/** The update card for a machine whose `hello` serves an older phone API than this app's, or null. */
+function outdatedServer(hello: Methods['hello']['result']): string | null {
+  if ((hello.phoneApi ?? 0) >= PHONE_API) return null;
+  const { name: mac, stim } = hello.server;
+  const owner = hello.host && 'owner' in hello.host ? hello.host.owner : null;
+  const desktop = t`Update Stim Desktop (Stim > Check for Updates).`;
+  if (owner === 'desktop') return t`${mac} runs stim ${stim}. ${desktop}`;
+  if (owner === 'service')
+    return t`${mac} runs stim ${stim}. On ${mac}, run npm i -g stim@latest && stim service install.`;
+  if (owner === 'cli')
+    return t`${mac} runs stim ${stim}. On ${mac}, run npm i -g stim@latest, then restart stim serve.`;
+  return t`${mac} runs stim ${stim}. ${desktop} If Stim Desktop is not installed on ${mac}, run npm i -g stim@latest && stim service install.`;
+}
+// compat end
 
 /**
  * One authenticated connection to a Stim server. It reconnects with a delay that doubles from 1 to
@@ -299,6 +306,17 @@ export class StimConnection {
       this.send(socket, 'hello', { client: this.options.client }).then(
         (hello) => {
           if (socket !== this.socket) return;
+          // compat C9 permanent
+          const outdated = outdatedServer(hello);
+          if (outdated) {
+            reportFailure({ kind: 'connection', errorClass: 'refused:server-outdated' });
+            this.detach(outdated);
+            socket.close();
+            this.stopped = true;
+            this.options.onState?.({ kind: 'refused', code: 'server-outdated', reason: outdated });
+            return;
+          }
+          // compat end
           session.accepted = true;
           this.open = true;
           if (Date.now() - this.lastInvalidAt > INVALID_BACKOFF_MS) this.retryMs = MIN_RETRY_MS;
@@ -310,7 +328,7 @@ export class StimConnection {
               hello.actions?.filter((action): action is ActionName => ACTIONS.some((known) => known === action)) ??
               null,
             capabilities: hello.capabilities,
-            features: hello.features ?? [],
+            hostCapabilities: hello.host && 'capabilities' in hello.host ? hello.host.capabilities : [],
             deviceId: hello.device?.id ?? null,
             deviceName: hello.device?.name ?? null,
           });
@@ -401,20 +419,6 @@ export class StimConnection {
       },
       (error: Error) => {
         if (session && !session.accepted) return;
-        if (
-          socket === this.socket &&
-          (sub.method === 'workspaces.subscribe' || sub.method === 'machine.subscribe') &&
-          error instanceof RequestError &&
-          error.error.code === 'unknown-method'
-        ) {
-          this.close();
-          this.options.onState?.({
-            kind: 'refused',
-            code: 'server-outdated',
-            reason: t`Update stim-server on the machine to load its live status.`,
-          });
-          return;
-        }
         sub.onEvent({ event: 'error', error: { code: 'subscribe-failed', message: error.message } });
       },
     );
@@ -526,7 +530,7 @@ export function pair(
   endpoint: string,
   secret: { pairingToken: string; fingerprint?: string },
   deviceName: string,
-  client: { name: string; version: string },
+  client: { name: string; version: string; phoneApi: number },
   socketFactory: SocketFactory = createSocket,
 ): Promise<{ serverKey: string; serverName: string; serverId?: string }> {
   return new Promise((resolve, reject) => {

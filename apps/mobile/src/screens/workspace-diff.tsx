@@ -38,18 +38,18 @@ export function WorkspaceDiff({ path, file, group }: { path: string; file?: stri
   const router = useRouter();
   const focused = useIsFocused();
   const { connection, state, mac } = useMacConnection();
-  const supported = state.kind === 'open' && state.features.includes('workspace-diff');
+  const connected = state.kind === 'open';
   const files = usePolledRequest(
     connection,
     'workspace.files',
     { workspace: path, group },
-    { active: supported && focused && file === undefined },
+    { active: connected && focused && file === undefined },
   );
   const patch = usePolledRequest(
     connection,
     'workspace.diff',
     { workspace: path, path: file ?? '' },
-    { active: supported && focused && file !== undefined },
+    { active: connected && focused && file !== undefined },
   );
   const rows = files.data?.files ?? [];
   const lines = useMemo(
@@ -84,12 +84,9 @@ export function WorkspaceDiff({ path, file, group }: { path: string; file?: stri
   );
   const request = file === undefined ? files : patch;
   const title = file ?? (group === 'untracked' ? t`New Files` : t`Changed Files`);
-  const note =
-    state.kind !== 'open'
-      ? t`Connect to the machine to view changes.`
-      : !supported
-        ? t`Update Stim on the machine to view workspace diffs.`
-        : (request.error?.message ?? (!request.data ? t`Loading changes...` : null));
+  const note = !connected
+    ? t`Connect to the machine to view changes.`
+    : (request.error?.message ?? (!request.data ? t`Loading changes...` : null));
   return (
     <View style={styles.root}>
       <Stack.Screen options={{ title }} />

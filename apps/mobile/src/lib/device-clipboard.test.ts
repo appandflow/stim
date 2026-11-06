@@ -1,25 +1,22 @@
 import { clipboardAvailable, copyDeviceClipboard, pasteFromPhone, utf8Bytes } from './device-clipboard';
 
-const FEATURES = ['device-clipboard'];
 const E_ACUTE = String.fromCodePoint(0xe9);
 const EURO = String.fromCodePoint(0x20ac);
 const EMOJI = String.fromCodePoint(0x1f600);
 
 describe('clipboardAvailable', () => {
-  test('needs a control session and the server feature', () => {
+  test('needs a control session', () => {
     const ios: Parameters<typeof clipboardAvailable>[0] = { platform: 'ios', physical: false, controlling: true };
-    expect(clipboardAvailable(ios, FEATURES)).toBe(true);
-    expect(clipboardAvailable({ ...ios, controlling: false }, FEATURES)).toBe(false);
-    expect(clipboardAvailable(ios, ['physical-ios'])).toBe(false);
-    expect(clipboardAvailable(ios, null)).toBe(false);
+    expect(clipboardAvailable(ios)).toBe(true);
+    expect(clipboardAvailable({ ...ios, controlling: false })).toBe(false);
   });
 
   test('covers simulators, emulators and Android phones, not a web page, a Mac app or an iPhone', () => {
-    expect(clipboardAvailable({ controlling: true, platform: 'android', physical: false }, FEATURES)).toBe(true);
-    expect(clipboardAvailable({ controlling: true, platform: 'android', physical: true }, FEATURES)).toBe(true);
-    expect(clipboardAvailable({ controlling: true, platform: 'ios', physical: true }, FEATURES)).toBe(false);
-    expect(clipboardAvailable({ controlling: true, platform: 'web', physical: false }, FEATURES)).toBe(false);
-    expect(clipboardAvailable({ controlling: true, platform: 'macos', physical: false }, FEATURES)).toBe(false);
+    expect(clipboardAvailable({ controlling: true, platform: 'android', physical: false })).toBe(true);
+    expect(clipboardAvailable({ controlling: true, platform: 'android', physical: true })).toBe(true);
+    expect(clipboardAvailable({ controlling: true, platform: 'ios', physical: true })).toBe(false);
+    expect(clipboardAvailable({ controlling: true, platform: 'web', physical: false })).toBe(false);
+    expect(clipboardAvailable({ controlling: true, platform: 'macos', physical: false })).toBe(false);
   });
 });
 

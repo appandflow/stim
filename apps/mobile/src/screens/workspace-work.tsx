@@ -32,7 +32,7 @@ export function WorkspaceWork({ path, archive: archiveId }: { path: string; arch
   const router = useRouter();
   const { mac, state } = useMacConnection();
   const pending = useArchivesPending(mac?.id ?? '');
-  const canDiff = !archiveId && state.kind === 'open' && state.features.includes('workspace-diff');
+  const canDiff = !archiveId && state.kind === 'open';
   const openDiff = (group: 'changed' | 'untracked') =>
     router.push({ pathname: '/mac/[id]/diff', params: { id: mac?.id ?? '', path, group } });
   const now = useNow(30_000);

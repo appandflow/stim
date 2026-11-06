@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { RequestError, type StimConnection } from '@/lib/connection';
+import type { StimConnection } from '@/lib/connection';
 import type { Method, Methods } from '@/protocol/types';
 
 export interface PolledRequestOptions<M extends Method> {
@@ -25,8 +25,7 @@ export interface PolledRequest<M extends Method> {
 
 /**
  * Sends `method` when `active` turns on and each `intervalMs` while it stays on. An answer older than one
- * already delivered, or one arriving after the effect ended, is dropped. A server that answers `unknown-method`
- * stops the interval.
+ * already delivered, or one arriving after the effect ended, is dropped.
  */
 export function usePolledRequest<M extends Method>(
   connection: StimConnection | null,
@@ -61,7 +60,6 @@ export function usePolledRequest<M extends Method>(
         },
         (error: Error) => {
           if (cancelled) return;
-          if (error instanceof RequestError && error.error.code === 'unknown-method') clearInterval(timer);
           setFailure({ key, error });
           latest.current.onError?.(error);
         },

@@ -1,13 +1,12 @@
 import { useEffect, useRef } from 'react';
 
 import { usePolledRequest } from '@/hooks/polled-request';
-import { RequestError, type StimConnection } from '@/lib/connection';
+import type { StimConnection } from '@/lib/connection';
 import type { MachineDetails } from '@/protocol/types';
 
 export type MachineDetailsState =
   | { kind: 'loading' }
   | { kind: 'ready'; details: MachineDetails }
-  | { kind: 'unsupported' }
   | { kind: 'failed'; message: string };
 
 const REFRESH_MS = 60_000;
@@ -31,8 +30,7 @@ function schedulePending(details: MachineDetails, pending: Pending, refetch: () 
 
 /**
  * The Mac's `machine.details`, asked when `active` turns on and each minute while it stays on; the server
- * shares one result per minute, so asking more often gets nothing newer. A server that predates it answers
- * `unknown-method`, and the screen hides what needs it. A failed refresh keeps the last result.
+ * shares one result per minute, so asking more often gets nothing newer. A failed refresh keeps the last result.
  *
  * The server never waits for `stim doctor` to answer: a reply with `buildMachinesPending` carries whatever
  * build-machine result it has cached (possibly none yet) while a refresh runs in the background. While that
@@ -60,7 +58,6 @@ export function useMachineDetails(connection: StimConnection | null, active: boo
     [connection, active],
   );
 
-  if (error instanceof RequestError && error.error.code === 'unknown-method') return { kind: 'unsupported' };
   if (data) return { kind: 'ready', details: data };
   if (error) return { kind: 'failed', message: error.message };
   return { kind: 'loading' };
