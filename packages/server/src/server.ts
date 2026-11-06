@@ -39,10 +39,8 @@ import {
   shareLinkKey,
 } from '@stim-cli/core/state';
 import { createRequestLog } from './request-log.ts';
-import { actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
+import { loadAudit } from './actions.ts';
 import { cachedPeerNode } from './peer-node.ts';
-import { parsePlatformRun } from './platform-run.ts';
-import { parsePlatformBuild } from './platform-build.ts';
 import { configuredAgentDriver, recoverAgentDrivers, stoppingAgentDriver } from './agent-drivers.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost } from './device-host.ts';
@@ -53,15 +51,7 @@ import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay } from './hosted-relay.ts';
 import { BuildHost, type BuildSession } from './build.ts';
 import type { WorkerRootUsage } from './worker-areas.ts';
-import {
-  CLIPBOARD_INPUT_COST,
-  ControlHub,
-  parseControlBegin,
-  parseInput,
-  take,
-  SLOT_NAME,
-  type Controller,
-} from './control.ts';
+import { ControlHub, SLOT_NAME, type Controller } from './control.ts';
 import { Recorder } from './recorder.ts';
 import { pruneSetupJournals, setupJournalForClient } from './setup-journal.ts';
 import { defaultSetupDeps } from './setup.ts';
@@ -74,10 +64,8 @@ import {
   type StartupState,
 } from './startup.ts';
 import {
-  ClaimUnavailableError,
   claimRemoveCommand,
   exclusiveClaimDir,
-  readClaimSet,
   releaseClaim,
   sharedClaimDir,
   tryAcquireClaim,
@@ -106,35 +94,19 @@ import {
   PROTOCOL_VERSION,
   PUSH_EVENTS,
   PUSH_TOKEN_PATTERN,
-  RELOAD_PLATFORMS,
   RESERVED_SHARE_SLUGS,
   SHARE_SLUG_PATTERN,
   ENGINE_UPDATE_METHODS,
   type DesktopReportTarget,
-  type DeviceToolRequest,
   type ErrorCode,
   type ProtocolError,
   type HelloHost,
-  type PlatformRunOptions,
-  type PlatformBuildOptions,
   type Methods,
   type RequestId,
   type MetroLinkOpenEvent,
   type VideoCodec,
 } from './protocol.ts';
-import {
-  createStim,
-  StimError,
-  type StimProgress,
-  type StimPlanOptions,
-  type StimReloadOptions,
-  type StimStartOptions,
-  type StimGcMutationOptions,
-  type StimWorktreeRemoveOptions,
-  type StimWorktreeWarmOptions,
-  type StimClient,
-  type StimStopOptions,
-} from 'stim';
+import { createStim, StimError, type StimPlanOptions } from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
 import { pauseShareLinkAsync, pauseShareLinksAsync, saveShareLinkAsync } from 'stim/share-links';
 import { holdNativeRun, SHARE_CLAIM_WAIT_MS } from './share-claim.ts';
@@ -177,7 +149,7 @@ import {
 } from '@stim-cli/core/noise-session';
 import { EngineUpdates } from './server-update.ts';
 import { MachineUpdates } from './machine-update.ts';
-import { Pending, STDERR_TAIL, type CommandLimits, type CommandOutcome } from './stim-command.ts';
+import { Pending, type CommandLimits } from './stim-command.ts';
 import { readHostPermissions } from './stim-host.ts';
 import type { Transport, TransportIdentity } from '@stim-cli/transport';
 import {
@@ -200,13 +172,16 @@ import { ShareRoute, tailscaleFunnel } from './share-route.ts';
 import {
   type RequestLimits,
   type ControlLimits,
-  readFailure,
   type ServerOptions,
+  readFailure,
   type ServerSocket,
+  auditSafely,
+  registeredWorkspace,
+  AUDIT_FIELD_CHARS,
   send,
   type Replayable,
   trackers,
-  viewHostedPlacement,
+  INPUT_METHODS,
   type ConnectionContext,
 } from './handlers/context.ts';
 import { LOCAL_DEVICE_ID, CLOSE_BAD_REQUEST, hello } from './handlers/hello.ts';
@@ -219,26 +194,26 @@ import {
   listArchived,
   statusRead,
 } from './handlers/status.ts';
+import {
+  subscribeReload,
+  subscribeGc,
+  subscribeMachineAccess,
+  subscribeRemedy,
+  subscribeWorktreeRemove,
+  subscribeWorktreeWarm,
+  subscribeBuild,
+  subscribeRun,
+  subscribeStart,
+  subscribeStop,
+  runAction,
+} from './handlers/lifecycle.ts';
 import { subscribeLogs, queryLogs } from './handlers/logs.ts';
+import { input, beginControl } from './handlers/control.ts';
 import { replayRange, archiveDetail, replayKeyframe, setRecording } from './handlers/replay.ts';
 import { workspaceChanges, workspaceCommand } from './handlers/workspace.ts';
 export type { ServerOptions } from './handlers/context.ts';
 
 const SHARE_SERVER_GRACE_MS = 2 * 60_000;
-
-const INPUT_METHODS = [
-  'input.touch',
-  'input.text',
-  'input.button',
-  'input.rotate',
-  'input.posture',
-  'input.simulator',
-  'input.scroll',
-  'input.key',
-  'input.window',
-  'input.clipboard.set',
-  'input.clipboard.get',
-] as const;
 
 interface ServerHealth {
   host?: HelloHost['app'];
@@ -351,528 +326,8 @@ const LISTEN_RETRY_MS = 5000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
 const PLAN_TIMEOUT_MS = 150_000;
 const DETAILS_TIMEOUT_MS = 150_000;
-const AUDIT_FIELD_CHARS = 256;
+
 const ACTION_LIMITS: CommandLimits = { timeoutMs: 120_000, maxOutputBytes: 1024 * 1024 };
-
-type StopOutcome =
-  | { ok: true; stdout: string; summary: string }
-  | (Extract<CommandOutcome, { ok: false }> & { code?: string });
-
-function stopAction(
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  limits: CommandLimits,
-  options: Pick<StimStopOptions, 'slot' | 'beforeStop'> & { onProgress?: (progress: StimProgress) => void } = {},
-) {
-  let root = realpathSync(cwd);
-  if (!lstatSync(root).isDirectory()) throw new Error('The workspace is not a directory.');
-  let stderr = '';
-  const client = createStim({
-    admission: 'none',
-    projectRoot: root,
-    env,
-    onProgress: ({ stream, message }) => {
-      if (stream === 'stderr') stderr = (stderr + message).slice(-STDERR_TAIL);
-      options.onProgress?.({ stream, message });
-    },
-  });
-  const abort = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<StopOutcome>((resolve) => {
-    timer = setTimeout(() => {
-      resolve({ ok: false, message: `stim stop did not finish within ${limits.timeoutMs / 1000} s.` });
-      abort.abort();
-    }, limits.timeoutMs);
-  });
-  const drained: Promise<StopOutcome> = Promise.resolve()
-    .then(() =>
-      client.stop({
-        slot: options.slot,
-        signal: abort.signal,
-        beforeStop: (workspace) => {
-          options.beforeStop?.(workspace);
-          root = workspace;
-        },
-      }),
-    )
-    .then(
-      (result): StopOutcome => {
-        const stdout = JSON.stringify({ root, ok: result.ok, ...result.outcomes });
-        if (Buffer.byteLength(stdout) > limits.maxOutputBytes)
-          return { ok: false, message: `stim stop printed more than ${limits.maxOutputBytes} bytes.` };
-        return result.ok
-          ? { ok: true, stdout, summary: result.summary }
-          : { ok: false, stdout, message: `${result.summary}${stderr.trim() ? `\n${stderr.trim()}` : ''}` };
-      },
-      (cause: unknown): StopOutcome => ({
-        ok: false,
-        message: readFailure(cause),
-        ...(cause instanceof StimError ? { code: cause.code } : {}),
-      }),
-    )
-    .finally(() => clearTimeout(timer));
-  return {
-    outcome: Promise.race([drained, deadline]),
-    drained,
-    cancel: async () => {
-      abort.abort();
-      await drained;
-    },
-  };
-}
-
-type ReloadOutcome = StopOutcome & { code?: string; unresolved?: boolean };
-
-function reloadAction(
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  limits: CommandLimits,
-  options: Pick<StimReloadOptions, 'platform' | 'beforeReload'> & {
-    onProgress?: (progress: StimProgress) => void;
-  } = {},
-) {
-  const abort = new AbortController();
-  let bytes = 0;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<ReloadOutcome>((resolve) => {
-    timer = setTimeout(() => {
-      resolve({
-        ok: false,
-        code: 'STIM_RELOAD_TIMEOUT',
-        message: `stim reload did not finish within ${limits.timeoutMs / 1000} s.`,
-      });
-      abort.abort();
-    }, limits.timeoutMs);
-  });
-  const drained: Promise<ReloadOutcome> = Promise.resolve()
-    .then(() =>
-      createStim({
-        admission: 'none',
-        projectRoot: cwd,
-        env,
-        onProgress: (progress) => {
-          bytes += Buffer.byteLength(progress.message);
-          if (bytes > limits.maxOutputBytes)
-            throw new StimError({
-              code: 'STIM_OUTPUT_LIMIT',
-              message: `stim reload printed more than ${limits.maxOutputBytes} bytes.`,
-            });
-          options.onProgress?.(progress);
-        },
-      }).reload({ platform: options.platform, signal: abort.signal, beforeReload: options.beforeReload }),
-    )
-    .then(
-      (result): ReloadOutcome => {
-        const shared =
-          result.strategy === 'metro-broadcast'
-            ? ' The request was broadcast to all connected Metro clients.'
-            : result.targets && result.targets > 1
-              ? ` The request addressed ${result.targets} matching devices.`
-              : '';
-        return {
-          ok: true,
-          stdout: JSON.stringify(result),
-          summary: `Reload requested for ${result.appId} via ${result.strategy}.${shared} Completion is not observed; verify the expected UI and run stim logs --errors.`,
-        };
-      },
-      (cause: unknown): ReloadOutcome => ({
-        ok: false,
-        message: readFailure(cause),
-        ...(cause instanceof StimError
-          ? {
-              code: cause.code,
-              stdout: JSON.stringify({ code: cause.code, message: cause.message, remedy: cause.remedy }),
-              unresolved: cause.code === 'STIM_CLAIM_UNAVAILABLE',
-            }
-          : {}),
-      }),
-    )
-    .then((outcome): ReloadOutcome =>
-      bytes + Buffer.byteLength(outcome.stdout ?? '') > limits.maxOutputBytes
-        ? {
-            ok: false,
-            code: 'STIM_OUTPUT_LIMIT',
-            unresolved: outcome.unresolved,
-            message: `stim reload printed more than ${limits.maxOutputBytes} bytes.`,
-          }
-        : outcome,
-    )
-    .finally(() => clearTimeout(timer));
-  return {
-    outcome: Promise.race([drained, deadline]),
-    drained,
-    cancel: async () => {
-      abort.abort();
-      await drained;
-    },
-  };
-}
-
-type StartOutcome = StopOutcome & {
-  code?: string;
-  unresolved?: boolean;
-  retainedClaimRoots?: string[];
-  cleanupComplete?: Promise<void>;
-  cleanupSettled?: () => boolean;
-};
-
-function lifecycleAction(
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  limits: CommandLimits,
-  label: string,
-  timeoutCode: string,
-  execute: (client: StimClient, signal: AbortSignal) => Promise<StopOutcome>,
-  onProgress?: (progress: StimProgress) => void,
-) {
-  const abort = new AbortController();
-  let bytes = 0;
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    abort.abort();
-  }, limits.timeoutMs);
-  const drained: Promise<StartOutcome> = Promise.resolve()
-    .then(() =>
-      execute(
-        createStim({
-          admission: 'none',
-          projectRoot: cwd,
-          env,
-          onProgress: (progress) => {
-            bytes += Buffer.byteLength(progress.message);
-            if (bytes > limits.maxOutputBytes)
-              throw new StimError({
-                code: 'STIM_OUTPUT_LIMIT',
-                message: `${label} printed more than ${limits.maxOutputBytes} bytes.`,
-              });
-            onProgress?.(progress);
-          },
-        }),
-        abort.signal,
-      ),
-    )
-    .then(
-      (result): StartOutcome => result,
-      (cause: unknown): StartOutcome => {
-        const details = cause instanceof StimError && isJsonObject(cause.details) ? cause.details.cause : undefined;
-        const cleanup = cause instanceof StimError ? cause.cause : undefined;
-        const settled = cleanup instanceof Error && 'cleanupSettled' in cleanup ? cleanup.cleanupSettled : undefined;
-        return {
-          ok: false,
-          message: readFailure(cause),
-          ...(cause instanceof StimError
-            ? {
-                code: cause.code,
-                stdout: JSON.stringify({ code: cause.code, message: cause.message, remedy: cause.remedy }),
-                unresolved:
-                  cause.code === 'STIM_CLAIM_UNAVAILABLE' &&
-                  !(cleanup instanceof ClaimUnavailableError && !('reportCleanup' in cleanup)),
-                ...(typeof settled === 'function' ? { cleanupSettled: () => settled() === true } : {}),
-                ...(cleanup instanceof Error &&
-                'cleanupComplete' in cleanup &&
-                cleanup.cleanupComplete instanceof Promise
-                  ? { cleanupComplete: cleanup.cleanupComplete }
-                  : {}),
-                ...(isJsonObject(details) &&
-                Array.isArray(details.retainedClaimRoots) &&
-                details.retainedClaimRoots.every((root) => typeof root === 'string' && isAbsolute(root))
-                  ? { retainedClaimRoots: details.retainedClaimRoots }
-                  : {}),
-              }
-            : {}),
-        };
-      },
-    )
-    .then((outcome): StartOutcome =>
-      !outcome.unresolved && bytes + Buffer.byteLength(outcome.stdout ?? '') > limits.maxOutputBytes
-        ? {
-            ok: false,
-            code: 'STIM_OUTPUT_LIMIT',
-            unresolved: outcome.unresolved,
-            retainedClaimRoots: outcome.retainedClaimRoots,
-            message: `${label} printed more than ${limits.maxOutputBytes} bytes.`,
-          }
-        : outcome,
-    )
-    .then((outcome): StartOutcome =>
-      timedOut && !outcome.unresolved
-        ? {
-            ok: false,
-            code: timeoutCode,
-            message: `${label} did not finish within ${limits.timeoutMs / 1000} s.`,
-          }
-        : outcome,
-    )
-    .finally(() => clearTimeout(timer));
-  return {
-    outcome: drained,
-    drained,
-    cancel: async () => {
-      abort.abort();
-      return await drained;
-    },
-  };
-}
-
-function startAction(
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  limits: CommandLimits,
-  options: Pick<StimStartOptions, 'remote' | 'resetCache' | 'waitSeconds' | 'beforeStart'> & {
-    onProgress?: (progress: StimProgress) => void;
-  } = {},
-) {
-  return lifecycleAction(
-    cwd,
-    env,
-    limits,
-    'stim start',
-    'STIM_METRO_TIMEOUT',
-    async (client, signal) => {
-      const result = await client.start({
-        remote: options.remote,
-        resetCache: options.resetCache,
-        waitSeconds: options.waitSeconds,
-        beforeStart: options.beforeStart,
-        signal,
-      });
-      return {
-        ok: true,
-        stdout: JSON.stringify(result),
-        summary: `Dev server ${result.alreadyRunning ? 'already running' : 'ready'} on port ${result.port}.`,
-      };
-    },
-    options.onProgress,
-  );
-}
-
-function platformRunAction(
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  limits: CommandLimits,
-  options: PlatformRunOptions,
-  onProgress: (progress: StimProgress) => void,
-) {
-  return lifecycleAction(
-    cwd,
-    env,
-    limits,
-    `stim ${options.platform}`,
-    'STIM_RUN_FAILED',
-    async (client, signal) => {
-      const result = await client.run({ ...options, signal });
-      const summary =
-        result.platform === 'web'
-          ? `${result.facts.url} ${result.facts.launched === true ? 'loaded' : result.facts.launched}. ${
-              result.facts.running
-                ? 'Logs: stim logs --errors.'
-                : 'The owned Chrome is no longer running. Run stim logs --errors, then stim web again.'
-            }`
-          : `${options.platform} run completed.`;
-      return { ok: true, stdout: JSON.stringify(result), summary };
-    },
-    onProgress,
-  );
-}
-
-function platformBuildAction(
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  limits: CommandLimits,
-  options: PlatformBuildOptions,
-  onProgress: (progress: StimProgress) => void,
-) {
-  return lifecycleAction(
-    cwd,
-    env,
-    limits,
-    `${options.platform} build`,
-    'STIM_BUILD_FAILED',
-    async (client, signal) => {
-      const result = await client.build({ ...options, signal });
-      return { ok: true, stdout: JSON.stringify(result), summary: `${options.platform} build completed.` };
-    },
-    onProgress,
-  );
-}
-
-function gcAction(
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  limits: CommandLimits,
-  options: Omit<StimGcMutationOptions, 'signal'>,
-  onProgress: (progress: StimProgress) => void,
-) {
-  return lifecycleAction(
-    cwd,
-    env,
-    limits,
-    'stim gc',
-    'STIM_GC_TIMEOUT',
-    async (client, signal) => {
-      const { report, exitCode } = await client.collectGarbage({ ...options, signal });
-      const stdout = JSON.stringify(report);
-      return exitCode === 0
-        ? { ok: true, stdout, summary: 'Garbage collection completed.' }
-        : { ok: false, stdout, code: 'STIM_GC_FAILED', message: 'Garbage collection reported failures.' };
-    },
-    onProgress,
-  );
-}
-
-function machineAccessAction(
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  limits: CommandLimits,
-  ticket: string | undefined,
-  onProgress: (progress: StimProgress) => void,
-) {
-  return lifecycleAction(
-    cwd,
-    env,
-    limits,
-    'Machine access request',
-    'STIM_REPORT_TIMEOUT',
-    async (client, signal) => ({
-      ok: true,
-      stdout: JSON.stringify(await client.requestMachineAccess({ ticket, signal })),
-      summary: 'Machine access report completed.',
-    }),
-    onProgress,
-  );
-}
-
-function deviceToolRequest(value: unknown): DeviceToolRequest | null {
-  if (!isJsonObject(value) || (value.platform !== 'ios' && value.platform !== 'android')) return null;
-  const { platform } = value;
-  const only = (...fields: string[]) =>
-    Object.keys(value).every((key) => ['tool', 'platform', ...fields].includes(key));
-  if (value.tool === 'location') {
-    if (only('clear') && value.clear === true) return { tool: 'location', platform, clear: true };
-    if (only('set') && typeof value.set === 'string' && value.set.length <= 256)
-      return { tool: 'location', platform, set: value.set };
-  } else if (
-    value.tool === 'permission' &&
-    only('action', 'service') &&
-    (value.action === 'grant' || value.action === 'revoke' || value.action === 'reset') &&
-    typeof value.service === 'string' &&
-    value.service.length <= 1024
-  ) {
-    return { tool: 'permission', platform, action: value.action, service: value.service };
-  } else if (
-    value.tool === 'push' &&
-    platform === 'ios' &&
-    only('payload') &&
-    typeof value.payload === 'string' &&
-    value.payload.length <= 65_536
-  ) {
-    return { tool: 'push', platform, payload: value.payload };
-  } else if (
-    value.tool === 'network' &&
-    platform === 'android' &&
-    only('state') &&
-    (value.state === 'on' || value.state === 'off')
-  ) {
-    return { tool: 'network', platform, state: value.state };
-  }
-  return null;
-}
-
-function remedyAction(
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  limits: CommandLimits,
-  request: Methods['desktop.remedy.subscribe']['params'],
-  admit: (workspace: string) => void,
-  onProgress: (progress: StimProgress) => void,
-) {
-  return lifecycleAction(
-    cwd,
-    env,
-    limits,
-    'Desktop remedy',
-    'STIM_REPORT_TIMEOUT',
-    async (client, signal) => {
-      if (request.action === 'doctor-fix') {
-        const { report, exitCode } = await client.repairDoctor({
-          platform: request.platform,
-          signal,
-          beforeRepair: admit,
-        });
-        const stdout = JSON.stringify(report);
-        return exitCode === 0
-          ? { ok: true, stdout, summary: 'Doctor repair completed.' }
-          : { ok: false, stdout, code: 'STIM_DOCTOR_REPAIR_FAILED', message: 'Doctor reported repair refusals.' };
-      }
-      if (request.action === 'device-tool') {
-        const result = await client.deviceTool({
-          request: request.request,
-          slot: request.slot,
-          signal,
-          beforeTool: admit,
-        });
-        return { ok: true, stdout: JSON.stringify(result), summary: 'Device change completed.' };
-      }
-      const released = await client.unlockDevice({
-        platform: request.platform,
-        slot: request.slot,
-        signal,
-        beforeUnlock: admit,
-      });
-      return { ok: true, stdout: JSON.stringify(released), summary: `Released ${released.length} device lease(s).` };
-    },
-    onProgress,
-  );
-}
-
-function worktreeWarmAction(
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  limits: CommandLimits,
-  options: Omit<StimWorktreeWarmOptions, 'signal'>,
-  onProgress: (progress: StimProgress) => void,
-) {
-  return lifecycleAction(
-    cwd,
-    env,
-    limits,
-    'stim worktree warm',
-    'STIM_WORKTREE_WARM_TIMEOUT',
-    async (client, signal) => {
-      const result = await client.warmWorktree({ ...options, signal });
-      const stdout = JSON.stringify(result);
-      return result.exitCode === 0
-        ? { ok: true, stdout, summary: 'Worktree warming completed.' }
-        : { ok: false, stdout, code: 'STIM_WORKTREE_WARM_FAILED', message: 'Worktree warming reported failures.' };
-    },
-    onProgress,
-  );
-}
-
-function worktreeRemoveAction(
-  cwd: string,
-  env: NodeJS.ProcessEnv,
-  limits: CommandLimits,
-  options: Omit<StimWorktreeRemoveOptions, 'signal'>,
-  onProgress: (progress: StimProgress) => void,
-) {
-  return lifecycleAction(
-    cwd,
-    env,
-    limits,
-    'stim worktree remove',
-    'STIM_WORKTREE_REMOVE_TIMEOUT',
-    async (client, signal) => {
-      const result = await client.removeWorktree({ ...options, signal });
-      const stdout = JSON.stringify(result);
-      return result.exitCode === 0
-        ? { ok: true, stdout, summary: 'Worktree cleanup completed.' }
-        : { ok: false, stdout, code: 'STIM_WORKTREE_REMOVE_FAILED', message: 'Worktree cleanup reported failures.' };
-    },
-    onProgress,
-  );
-}
 
 function isLoopback(address: string | undefined): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
@@ -1018,41 +473,12 @@ class PendingConnections {
   }
 }
 
-function auditSafely(record: AuditRecord): void {
-  try {
-    appendAudit(record);
-  } catch (cause) {
-    console.error(`stim-server: could not append to the action log: ${(cause as Error).message}`);
-  }
-}
-
 function requestId(value: unknown): RequestId | null {
   return typeof value === 'number' || typeof value === 'string' ? value : null;
 }
 
 function validPlanRequest(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
-}
-
-type ResolvedWorkspace = { dir: string } | { code: ErrorCode; message: string };
-
-function registeredWorkspace(workspace: unknown): ResolvedWorkspace {
-  if (typeof workspace !== 'string') {
-    return { code: 'bad-request', message: 'params.workspace must be an environment path from a status payload.' };
-  }
-  let projects: Record<string, unknown>;
-  try {
-    projects = loadConfig()?.projects ?? {};
-  } catch (cause) {
-    return { code: 'stim-failed', message: (cause as Error).message };
-  }
-  const dir = Object.keys(projects).find((path) => path === workspace);
-  if (dir === undefined)
-    return { code: 'unknown-workspace', message: `${workspace} is not a Stim workspace on this machine.` };
-  if (!existsSync(dir)) {
-    return { code: 'unknown-workspace', message: `${dir} is registered but no longer exists on this machine.` };
-  }
-  return { dir };
 }
 
 /** The share hub's recording grace from the control lease's `stim device lock --for` duration, such as `2m`. */
@@ -1983,6 +1409,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       logLimits,
       commandLimits,
       actionLimits,
+      busyWorkspaces,
+      retainedLifecycles,
+      desktopReports,
       get recordingTurn() {
         return recordingTurn;
       },
@@ -1999,6 +1428,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       sampler,
       usage,
       recordUsage,
+      controllers,
+      controlLimits,
       adbEmulators,
       hostedDevices,
       presence,
@@ -2023,6 +1454,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       releaseSlot,
       slotsFull,
       slotsMessage,
+      persistentActions,
       get device() {
         return device;
       },
@@ -2053,6 +1485,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       timer,
       error,
       canControl,
+      inputs,
+      characters,
+      shapeChanges,
+      controller,
       workspaceDir,
       readDir,
       openSubscription,
@@ -2067,112 +1503,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         controllers.set(socket, found);
       }
       return found;
-    }
-
-    async function beginControl(id: RequestId, params: unknown, session: PairedDevice): Promise<void> {
-      const raw = isJsonObject(params) ? params : {};
-      const clip = (value: unknown) => (typeof value === 'string' ? value.slice(0, AUDIT_FIELD_CHARS) : null);
-      const refuseControl = (code: ErrorCode, message: string) => {
-        auditSafely({
-          at: new Date().toISOString(),
-          device: { id: session.id, name: session.name },
-          action: 'control.begin',
-          workspace: clip(raw.workspace),
-          ...(typeof raw.platform === 'string' ? { platform: clip(raw.platform)! } : {}),
-          ...(raw.platform === 'ios' || raw.platform === 'android'
-            ? { slot: typeof raw.slot === 'string' ? clip(raw.slot)! : 'default' }
-            : {}),
-          ok: false,
-          error: { code, message: clip(message)! },
-        });
-        error(id, code, message);
-      };
-      if (!canControl(session)) {
-        return refuseControl(
-          'forbidden',
-          `This device can only read. On the machine, run \`stim pairings grant ${session.id} --control\` to let it control devices.`,
-        );
-      }
-      const parsed = parseControlBegin(params);
-      if ('code' in parsed) return refuseControl(parsed.code, parsed.message);
-      const resolved = registeredWorkspace(parsed.value.workspace);
-      if ('code' in resolved) return refuseControl(resolved.code, resolved.message);
-      const host = viewHostedPlacement(resolved.dir, parsed.value.platform, parsed.value.slot, parsed.value.physical);
-      const owner = controller(session);
-      if (host) {
-        if (
-          parsed.value.physical ||
-          (parsed.value.platform === 'macos' && parsed.value.slot !== undefined && parsed.value.slot !== 'default')
-        ) {
-          return refuseControl(
-            'bad-request',
-            parsed.value.platform === 'ios'
-              ? 'Hosted iOS control requires a non-physical target.'
-              : parsed.value.platform === 'android'
-                ? 'Hosted Android control requires a non-physical target.'
-                : 'Hosted macOS control requires the default, non-physical target.',
-          );
-        }
-        return relay.begin(
-          id,
-          host,
-          parsed.value.takeOver === true,
-          () => socket.readyState === socket.OPEN && controllers.get(socket) === owner && canControl(session),
-          {
-            workspace: resolved.dir,
-            device: { id: session.id, name: session.name },
-            platform: parsed.value.platform as 'ios' | 'android' | 'macos',
-            slot: parsed.value.slot,
-          },
-        );
-      }
-      const outcome = await control.begin(
-        owner,
-        { ...parsed.value, workspace: resolved.dir },
-        resolved.dir,
-        () => socket.readyState === socket.OPEN && controllers.get(socket) === owner && canControl(session),
-      );
-      if ('code' in outcome) return refuseControl(outcome.code, outcome.message);
-      send(socket, { id, result: outcome });
-    }
-
-    async function input(
-      id: RequestId,
-      method: (typeof INPUT_METHODS)[number],
-      params: unknown,
-      session: Pick<PairedDevice, 'id' | 'name'>,
-    ): Promise<void> {
-      const owner = controller(session);
-      const parsed = parseInput(method, params, (name) => relay.targetOf(name) ?? control.targetOf(owner, name));
-      if ('code' in parsed) return error(id, parsed.code, parsed.message);
-      const { command: sent } = parsed.value;
-      const cost = sent.input === 'clipboard' || sent.input === 'clipboard-get' ? CLIPBOARD_INPUT_COST : 1;
-      const boundary = sent.input === 'touch' && (sent.phase === 'down' || sent.phase === 'up');
-      const debt = boundary ? controlLimits.inputPerSecond : 0;
-      if (!take(inputs, cost, controlLimits.inputPerSecond, controlLimits.inputPerSecond, debt)) {
-        return error(id, 'limit-exceeded', `A connection can send ${controlLimits.inputPerSecond} inputs a second.`);
-      }
-      if (
-        sent.input === 'text' &&
-        !take(characters, sent.text.length, controlLimits.textCharsPerSecond, MAX_INPUT_TEXT)
-      ) {
-        return error(
-          id,
-          'limit-exceeded',
-          `A connection can type ${controlLimits.textCharsPerSecond} characters a second. Send the rest shortly.`,
-        );
-      }
-      const { shapeChangesPerSecond } = controlLimits;
-      if (
-        (sent.input === 'rotate' || sent.input === 'posture' || sent.input === 'simulator') &&
-        !take(shapeChanges, 1, shapeChangesPerSecond, shapeChangesPerSecond)
-      ) {
-        return error(id, 'limit-exceeded', `A connection can rotate or fold ${shapeChangesPerSecond} times a second.`);
-      }
-      if (relay.control(id, method, params)) return;
-      const refused = await control.input(owner, parsed.value.session, parsed.value.command);
-      if (refused && 'code' in refused) return error(id, refused.code, refused.message);
-      send(socket, { id, result: refused ?? {} });
     }
 
     function workspaceDir(id: RequestId, workspace: unknown, required: boolean): string | null {
@@ -2305,667 +1635,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       else holdSlot(cancel);
       running.add(cancel);
       return { done: task, cancel };
-    }
-
-    function runAction(id: RequestId, params: unknown, session: PairedDevice): void {
-      const startedAt = Date.now();
-      const raw = isJsonObject(params) ? params : {};
-      const clip = (value: unknown) => (typeof value === 'string' ? value.slice(0, AUDIT_FIELD_CHARS) : null);
-      const record: AuditRecord = {
-        at: new Date(startedAt).toISOString(),
-        device: { id: session.id, name: session.name },
-        action: clip(raw.action),
-        workspace: clip(raw.workspace),
-        ...(typeof raw.platform === 'string' ? { platform: clip(raw.platform)! } : {}),
-        ok: false,
-      };
-      const audit = (outcome: Pick<AuditRecord, 'ok' | 'error' | 'durationMs'>) => {
-        const logged = outcome.error ? { ...outcome.error, message: clip(outcome.error.message)! } : undefined;
-        try {
-          appendAudit({ ...record, ...outcome, ...(logged ? { error: logged } : {}) });
-        } catch (cause) {
-          console.error(`stim-server: could not append to the action log: ${(cause as Error).message}`);
-        }
-      };
-      const refuseAction = (code: ErrorCode, message: string) => {
-        audit({ ok: false, error: { code, message } });
-        error(id, code, message);
-      };
-      if (!canControl(session)) {
-        return refuseAction(
-          'forbidden',
-          `This device can only read. On the machine, run \`stim pairings grant ${session.id} --control\` to let it run actions.`,
-        );
-      }
-      const parsed = parseAction(params);
-      if ('code' in parsed) return refuseAction(parsed.code, parsed.message);
-      const { action } = parsed;
-      const resolved = registeredWorkspace(action.workspace);
-      if ('code' in resolved) return refuseAction(resolved.code, resolved.message);
-      if (slotsFull()) return refuseAction('limit-exceeded', slotsMessage());
-      if (busyWorkspaces.has(resolved.dir)) {
-        return refuseAction(
-          'action-busy',
-          `An action is already running in ${resolved.dir}. Try again when it finishes.`,
-        );
-      }
-      let admittedCwd = resolved.dir;
-      let run: ReturnType<typeof stopAction> | ReturnType<typeof reloadAction>;
-      try {
-        run =
-          action.action === 'stop'
-            ? stopAction(resolved.dir, options.env, actionLimits, {
-                beforeStop: (workspace) => {
-                  if (workspace === resolved.dir) return;
-                  if (busyWorkspaces.has(workspace))
-                    throw new StimError({
-                      code: 'STIM_ACTION_BUSY',
-                      message: `An action is already running in ${workspace}.`,
-                    });
-                  busyWorkspaces.add(workspace);
-                  admittedCwd = workspace;
-                  record.workspace = clip(workspace);
-                },
-              })
-            : reloadAction(resolved.dir, options.env, actionLimits, {
-                platform: action.platform,
-                beforeReload: (workspace) => {
-                  if (workspace === resolved.dir) return;
-                  if (busyWorkspaces.has(workspace))
-                    throw new StimError({
-                      code: 'STIM_ACTION_BUSY',
-                      message: `An action is already running in ${workspace}.`,
-                    });
-                  busyWorkspaces.add(workspace);
-                  admittedCwd = workspace;
-                  record.workspace = clip(workspace);
-                },
-              });
-      } catch (cause) {
-        return refuseAction('action-failed', `stim ${action.action} could not start (${(cause as Error).message}).`);
-      }
-      busyWorkspaces.add(resolved.dir);
-      let finished = false;
-      const release = (outcome: CommandOutcome & { unresolved?: boolean }) => {
-        if (outcome.unresolved) return;
-        releaseSlot(cancel);
-        persistentActions.delete(cancel);
-        running.delete(cancel);
-        busyWorkspaces.delete(resolved.dir);
-        busyWorkspaces.delete(admittedCwd);
-      };
-      const finish = (outcome: ReturnType<typeof actionOutcome>) => {
-        if (finished) return;
-        finished = true;
-        audit({ ok: outcome.ok, ...(outcome.ok ? {} : { error: outcome.error }), durationMs: Date.now() - startedAt });
-        if (outcome.ok)
-          send(socket, { id, result: { action: action.action, workspace: admittedCwd, output: outcome.output } });
-        else send(socket, { id, error: outcome.error });
-      };
-      const cancel = async () => {
-        finish({
-          ok: false,
-          error: { code: 'action-failed', message: 'stim-server stopped before the action finished.' },
-        });
-        await run.cancel();
-        release(await run.drained);
-      };
-      holdSlot(cancel);
-      persistentActions.add(cancel);
-      running.add(cancel);
-      void run.outcome.then((outcome) =>
-        finish(
-          !outcome.ok && 'code' in outcome && outcome.code === 'STIM_ACTION_BUSY'
-            ? { ok: false, error: { code: 'action-busy', message: outcome.message } }
-            : actionOutcome(outcome),
-        ),
-      );
-      void run.drained.then(release);
-    }
-
-    function subscribeStop(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (
-        !isJsonObject(params) ||
-        Object.keys(params).some((key) => key !== 'cwd' && key !== 'slot') ||
-        typeof params.cwd !== 'string' ||
-        params.cwd.length > 4096 ||
-        params.cwd.includes('\0') ||
-        !isAbsolute(params.cwd) ||
-        (params.slot !== undefined &&
-          (typeof params.slot !== 'string' ||
-            !SLOT_NAME.test(params.slot) ||
-            ['constructor', 'prototype', '__proto__'].includes(params.slot)))
-      ) {
-        return error(id, 'bad-request', 'Stop requires an absolute cwd and an optional device slot or web.');
-      }
-      let cwd: string;
-      try {
-        cwd = realpathSync(params.cwd);
-        if (!lstatSync(cwd).isDirectory()) throw new Error('The workspace is not a directory.');
-      } catch (cause) {
-        return error(id, 'bad-request', `Cannot stop this workspace: ${readFailure(cause)}`);
-      }
-      if (busyWorkspaces.has(cwd)) return error(id, 'action-busy', `An action is already running in ${cwd}.`);
-      const subscription = openSubscription(id);
-      if (!subscription) return;
-      const startedAt = Date.now();
-      let admittedCwd = cwd;
-      const slot = typeof params.slot === 'string' ? params.slot : undefined;
-      let observing = true;
-      let terminal: StopOutcome | undefined;
-      const finish = (outcome: StopOutcome) => {
-        terminal ??= outcome;
-        if (!observing) return;
-        observing = false;
-        subscriptions.delete(subscription);
-        send(socket, {
-          event: 'desktop-stop-ended',
-          subscription,
-          exitCode: outcome.ok ? 0 : 1,
-          stdout: outcome.stdout ?? '',
-          message: outcome.ok ? outcome.summary : outcome.message,
-        });
-      };
-      let outputBytes = 0;
-      let run: ReturnType<typeof stopAction>;
-      try {
-        run = stopAction(cwd, options.env, actionLimits, {
-          slot,
-          beforeStop: (workspace) => {
-            if (workspace === cwd) return;
-            if (busyWorkspaces.has(workspace))
-              throw new StimError({
-                code: 'STIM_ACTION_BUSY',
-                message: `An action is already running in ${workspace}.`,
-              });
-            busyWorkspaces.add(workspace);
-            admittedCwd = workspace;
-          },
-          onProgress: (progress) => {
-            if (!observing) return;
-            outputBytes += Buffer.byteLength(progress.message);
-            if (outputBytes > actionLimits.maxOutputBytes) {
-              finish({ ok: false, message: `stim stop printed more than ${actionLimits.maxOutputBytes} bytes.` });
-              void run.cancel();
-              return;
-            }
-            send(socket, { event: 'desktop-stop-progress', subscription, ...progress });
-          },
-        });
-      } catch (cause) {
-        finish({ ok: false, message: readFailure(cause) });
-        return;
-      }
-      const cancel = () => run.cancel();
-      busyWorkspaces.add(cwd);
-      running.add(cancel);
-      subscriptions.set(subscription, () => {
-        observing = false;
-        void cancel();
-      });
-      void run.outcome.then(finish);
-      void run.drained.then((outcome) => {
-        running.delete(cancel);
-        busyWorkspaces.delete(cwd);
-        busyWorkspaces.delete(admittedCwd);
-        const recorded = terminal ?? outcome;
-        auditSafely({
-          at: new Date(startedAt).toISOString(),
-          device: { id: owner.id, name: owner.name },
-          action: 'stop',
-          workspace: admittedCwd,
-          ...(slot === undefined ? {} : { slot }),
-          ok: recorded.ok,
-          durationMs: Date.now() - startedAt,
-          ...(recorded.ok
-            ? {}
-            : { error: { code: 'action-failed', message: recorded.message.slice(0, AUDIT_FIELD_CHARS) } }),
-        });
-        return undefined;
-      });
-    }
-
-    function subscribeReload(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (
-        !isJsonObject(params) ||
-        Object.keys(params).some((key) => key !== 'cwd' && key !== 'platform') ||
-        typeof params.cwd !== 'string' ||
-        params.cwd.length > 4096 ||
-        params.cwd.includes('\0') ||
-        !isAbsolute(params.cwd)
-      )
-        return error(
-          id,
-          'bad-request',
-          'Reload requires an absolute cwd and an optional ios, android or web platform.',
-        );
-      const platform = RELOAD_PLATFORMS.find((candidate) => candidate === params.platform);
-      if (params.platform !== undefined && platform === undefined)
-        return error(id, 'bad-request', 'Choose ios, android or web for reload.');
-      let cwd: string;
-      try {
-        cwd = realpathSync(params.cwd);
-        if (!lstatSync(cwd).isDirectory()) throw new Error('The workspace is not a directory.');
-      } catch (cause) {
-        return error(id, 'bad-request', `Cannot reload this workspace: ${readFailure(cause)}`);
-      }
-      if (slotsFull()) return error(id, 'limit-exceeded', slotsMessage());
-      if (busyWorkspaces.has(cwd)) return error(id, 'action-busy', `An action is already running in ${cwd}.`);
-      const subscription = openSubscription(id);
-      if (!subscription) return;
-      const startedAt = Date.now();
-      let admittedCwd = cwd;
-      let observing = true;
-      let terminal: ReloadOutcome | undefined;
-      const finish = (outcome: ReloadOutcome) => {
-        terminal ??= outcome;
-        if (!observing) return;
-        observing = false;
-        subscriptions.delete(subscription);
-        send(socket, {
-          event: 'desktop-reload-ended',
-          subscription,
-          exitCode: outcome.ok ? 0 : 1,
-          stdout: outcome.stdout ?? '',
-          message: outcome.ok ? outcome.summary : outcome.message,
-        });
-      };
-      const run = reloadAction(cwd, options.env, actionLimits, {
-        platform,
-        beforeReload: (workspace) => {
-          if (workspace === cwd) return;
-          if (busyWorkspaces.has(workspace))
-            throw new StimError({ code: 'STIM_ACTION_BUSY', message: `An action is already running in ${workspace}.` });
-          busyWorkspaces.add(workspace);
-          admittedCwd = workspace;
-        },
-        onProgress: (progress) => {
-          if (observing) send(socket, { event: 'desktop-reload-progress', subscription, ...progress });
-        },
-      });
-      const cancel = () => run.cancel();
-      holdSlot(cancel);
-      running.add(cancel);
-      busyWorkspaces.add(cwd);
-      subscriptions.set(subscription, () => {
-        observing = false;
-        void cancel();
-      });
-      void run.outcome.then(finish);
-      void run.drained.then((outcome) => {
-        if (!outcome.unresolved) {
-          releaseSlot(cancel);
-          running.delete(cancel);
-          busyWorkspaces.delete(cwd);
-          busyWorkspaces.delete(admittedCwd);
-        }
-        const recorded = terminal ?? outcome;
-        auditSafely({
-          at: new Date(startedAt).toISOString(),
-          device: { id: owner.id, name: owner.name },
-          action: 'reload',
-          workspace: admittedCwd,
-          ...(platform ? { platform } : {}),
-          ok: recorded.ok,
-          durationMs: Date.now() - startedAt,
-          ...(recorded.ok
-            ? {}
-            : {
-                error: {
-                  code: 'action-failed',
-                  message: outcome.unresolved ? 'STIM_CLAIM_UNAVAILABLE' : recorded.code || 'STIM_RELOAD_FAILED',
-                },
-              }),
-        });
-        return undefined;
-      });
-    }
-
-    function subscribeStart(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (
-        !isJsonObject(params) ||
-        Object.keys(params).some((key) => !['cwd', 'remote', 'resetCache', 'waitSeconds'].includes(key)) ||
-        typeof params.cwd !== 'string' ||
-        params.cwd.length > 4096 ||
-        params.cwd.includes('\0') ||
-        !isAbsolute(params.cwd) ||
-        (params.remote !== undefined && typeof params.remote !== 'boolean') ||
-        (params.resetCache !== undefined && typeof params.resetCache !== 'boolean') ||
-        (params.waitSeconds !== undefined &&
-          (typeof params.waitSeconds !== 'number' ||
-            !Number.isSafeInteger(params.waitSeconds) ||
-            params.waitSeconds <= 0))
-      )
-        return error(
-          id,
-          'bad-request',
-          'Start requires an absolute cwd, optional remote/resetCache booleans, and a positive whole waitSeconds.',
-        );
-      const remote = typeof params.remote === 'boolean' ? params.remote : undefined;
-      const resetCache = typeof params.resetCache === 'boolean' ? params.resetCache : undefined;
-      const waitSeconds = typeof params.waitSeconds === 'number' ? params.waitSeconds : undefined;
-      subscribeLifecycle(id, params.cwd, owner, 'start', (cwd, beforeStart, onProgress) =>
-        startAction(cwd, options.env, actionLimits, { remote, resetCache, waitSeconds, beforeStart, onProgress }),
-      );
-    }
-
-    function subscribeRun(id: RequestId, params: unknown, owner: PairedDevice): void {
-      const parsed = parsePlatformRun(params);
-      if (!parsed) return error(id, 'bad-request', 'Run requires an absolute cwd and valid platform options.');
-      const limits = { ...actionLimits, timeoutMs: options.actionLimits?.timeoutMs ?? 60 * 60_000 };
-      subscribeLifecycle(
-        id,
-        parsed.cwd,
-        owner,
-        'run',
-        (cwd, _beforeRun, onProgress) => platformRunAction(cwd, options.env, limits, parsed.options, onProgress),
-        parsed.options.platform,
-      );
-    }
-
-    function subscribeBuild(id: RequestId, params: unknown, owner: PairedDevice): void {
-      const parsed = parsePlatformBuild(params);
-      if (!parsed) return error(id, 'bad-request', 'Build requires an absolute cwd and valid artifact-only options.');
-      const limits = { ...actionLimits, timeoutMs: options.actionLimits?.timeoutMs ?? 60 * 60_000 };
-      subscribeLifecycle(
-        id,
-        parsed.cwd,
-        owner,
-        'build',
-        (cwd, _beforeBuild, onProgress) => platformBuildAction(cwd, options.env, limits, parsed.options, onProgress),
-        parsed.options.platform,
-      );
-    }
-
-    function subscribeGc(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (
-        !isJsonObject(params) ||
-        Object.keys(params).some((key) => !['cwd', 'cache', 'olderThan', 'worktrees', 'delete'].includes(key)) ||
-        typeof params.cwd !== 'string' ||
-        params.cwd.length > 4096 ||
-        params.cwd.includes('\0') ||
-        !isAbsolute(params.cwd) ||
-        (params.cache !== undefined &&
-          (typeof params.cache !== 'string' || !params.cache.trim() || params.cache.length > 1024)) ||
-        (params.olderThan !== undefined &&
-          (typeof params.olderThan !== 'number' || !Number.isSafeInteger(params.olderThan))) ||
-        (params.worktrees !== undefined && typeof params.worktrees !== 'boolean') ||
-        (params.delete !== undefined && typeof params.delete !== 'boolean')
-      )
-        return error(
-          id,
-          'bad-request',
-          'GC requires an absolute cwd and valid cache, age, worktree and delete selectors.',
-        );
-      const request = {
-        cache: typeof params.cache === 'string' ? params.cache : undefined,
-        olderThan: typeof params.olderThan === 'number' ? params.olderThan : undefined,
-        worktrees: typeof params.worktrees === 'boolean' ? params.worktrees : undefined,
-        delete: typeof params.delete === 'boolean' ? params.delete : undefined,
-      };
-      subscribeLifecycle(id, params.cwd, owner, 'gc', (cwd, _admit, onProgress) =>
-        gcAction(cwd, options.env, actionLimits, request, onProgress),
-      );
-    }
-
-    function subscribeRemedy(id: RequestId, params: unknown, owner: PairedDevice): void {
-      const tool = isJsonObject(params) && params.action === 'device-tool' ? deviceToolRequest(params.request) : null;
-      if (
-        !isJsonObject(params) ||
-        (params.action !== 'doctor-fix' && params.action !== 'device-unlock' && params.action !== 'device-tool') ||
-        (params.action === 'device-tool' && tool === null) ||
-        Object.keys(params).some(
-          (key) =>
-            ![
-              'cwd',
-              'action',
-              ...(params.action === 'device-tool'
-                ? ['request', 'slot']
-                : ['platform', ...(params.action === 'device-unlock' ? ['slot'] : [])]),
-            ].includes(key),
-        ) ||
-        typeof params.cwd !== 'string' ||
-        params.cwd.length > 4096 ||
-        params.cwd.includes('\0') ||
-        !isAbsolute(params.cwd) ||
-        (params.platform !== undefined && params.platform !== 'ios' && params.platform !== 'android') ||
-        (params.slot !== undefined &&
-          (typeof params.slot !== 'string' ||
-            !SLOT_NAME.test(params.slot) ||
-            ['constructor', 'prototype', '__proto__'].includes(params.slot)))
-      )
-        return error(
-          id,
-          'bad-request',
-          'Choose an absolute cwd and a supported typed doctor, device-unlock or device-tool request.',
-        );
-      const request: Methods['desktop.remedy.subscribe']['params'] =
-        params.action === 'device-tool' && tool
-          ? {
-              cwd: params.cwd,
-              action: 'device-tool',
-              request: tool,
-              slot: typeof params.slot === 'string' ? params.slot : undefined,
-            }
-          : params.action === 'doctor-fix'
-            ? { cwd: params.cwd, action: params.action, platform: params.platform }
-            : {
-                cwd: params.cwd,
-                action: 'device-unlock',
-                platform: params.platform,
-                slot: typeof params.slot === 'string' ? params.slot : undefined,
-              };
-      subscribeLifecycle(id, params.cwd, owner, 'remedy', (cwd, admit, onProgress) =>
-        remedyAction(
-          cwd,
-          options.env,
-          request.action === 'device-tool'
-            ? { ...actionLimits, timeoutMs: Math.min(actionLimits.timeoutMs, 60_000) }
-            : actionLimits,
-          request,
-          admit,
-          onProgress,
-        ),
-      );
-    }
-
-    function subscribeMachineAccess(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (
-        !isJsonObject(params) ||
-        Object.keys(params).some((key) => key !== 'cwd' && key !== 'ticket') ||
-        typeof params.cwd !== 'string' ||
-        params.cwd.length > 4096 ||
-        params.cwd.includes('\0') ||
-        !isAbsolute(params.cwd) ||
-        (params.ticket !== undefined && (typeof params.ticket !== 'string' || !decodeSecret(params.ticket)))
-      )
-        return error(id, 'bad-request', 'Machine access requires an absolute cwd and an optional valid setup ticket.');
-      const ticket = typeof params.ticket === 'string' ? params.ticket : undefined;
-      subscribeLifecycle(id, params.cwd, owner, 'machine-access', (cwd, _admit, onProgress) =>
-        machineAccessAction(cwd, options.env, actionLimits, ticket, onProgress),
-      );
-    }
-
-    function subscribeWorktreeWarm(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (
-        !isJsonObject(params) ||
-        Object.keys(params).some((key) => key !== 'cwd') ||
-        typeof params.cwd !== 'string' ||
-        params.cwd.length > 4096 ||
-        params.cwd.includes('\0') ||
-        !isAbsolute(params.cwd)
-      )
-        return error(id, 'bad-request', 'Worktree warming requires only an absolute cwd.');
-      const limits = { ...actionLimits, timeoutMs: options.actionLimits?.timeoutMs ?? 90 * 60_000 };
-      subscribeLifecycle(id, params.cwd, owner, 'worktree-warm', (cwd, beforeWarm, onProgress) =>
-        worktreeWarmAction(cwd, options.env, limits, { beforeWarm }, onProgress),
-      );
-    }
-
-    function subscribeWorktreeRemove(id: RequestId, params: unknown, owner: PairedDevice): void {
-      if (
-        !isJsonObject(params) ||
-        Object.keys(params).some((key) => !['cwd', 'target', 'force'].includes(key)) ||
-        typeof params.cwd !== 'string' ||
-        params.cwd.length > 4096 ||
-        params.cwd.includes('\0') ||
-        !isAbsolute(params.cwd) ||
-        (params.target !== undefined &&
-          (typeof params.target !== 'string' ||
-            params.target.length > 4096 ||
-            params.target.includes('\0') ||
-            !isAbsolute(params.target))) ||
-        (params.force !== undefined && typeof params.force !== 'boolean')
-      )
-        return error(
-          id,
-          'bad-request',
-          'Worktree removal requires an absolute cwd, optional absolute target and boolean force.',
-        );
-      const request = {
-        target: typeof params.target === 'string' ? params.target : undefined,
-        force: typeof params.force === 'boolean' ? params.force : undefined,
-      };
-      subscribeLifecycle(id, params.cwd, owner, 'worktree-remove', (cwd, beforeRemove, onProgress) =>
-        worktreeRemoveAction(cwd, options.env, actionLimits, { ...request, beforeRemove }, onProgress),
-      );
-    }
-
-    function subscribeLifecycle(
-      id: RequestId,
-      requestedCwd: string,
-      owner: PairedDevice,
-      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove' | 'worktree-warm' | 'machine-access' | 'remedy',
-      begin: (
-        cwd: string,
-        admit: (workspace: string) => void,
-        progress: (value: StimProgress) => void,
-      ) => ReturnType<typeof startAction>,
-      platform?: PlatformRunOptions['platform'],
-    ): void {
-      let cwd: string;
-      try {
-        cwd = realpathSync(requestedCwd);
-        if (!lstatSync(cwd).isDirectory()) throw new Error('The workspace is not a directory.');
-      } catch (cause) {
-        return error(id, 'bad-request', `Cannot ${kind} this workspace: ${readFailure(cause)}`);
-      }
-      if (slotsFull()) return error(id, 'limit-exceeded', slotsMessage());
-      if (busyWorkspaces.has(cwd)) return error(id, 'action-busy', `An action is already running in ${cwd}.`);
-      const subscription = openSubscription(id);
-      if (!subscription) return;
-      const startedAt = Date.now();
-      let admittedCwd = cwd;
-      const admittedWorkspaces = new Set<string>();
-      let observing = true;
-      let terminal: StartOutcome | undefined;
-      const finish = (outcome: StartOutcome) => {
-        terminal ??= outcome;
-        if (!observing) return;
-        observing = false;
-        subscriptions.delete(subscription);
-        send(socket, {
-          event: `desktop-${kind}-ended`,
-          subscription,
-          exitCode: outcome.ok ? 0 : 1,
-          stdout: outcome.stdout ?? '',
-          message: outcome.ok ? outcome.summary : outcome.message,
-        });
-      };
-      const run = begin(
-        cwd,
-        (workspace) => {
-          if (admittedWorkspaces.has(workspace)) return;
-          if (workspace !== cwd && busyWorkspaces.has(workspace))
-            throw new StimError({ code: 'STIM_ACTION_BUSY', message: `An action is already running in ${workspace}.` });
-          if (admittedWorkspaces.size === 0) admittedCwd = workspace;
-          admittedWorkspaces.add(workspace);
-          busyWorkspaces.add(workspace);
-        },
-        (progress) => {
-          if (observing) send(socket, { event: `desktop-${kind}-progress`, subscription, ...progress });
-        },
-      );
-      const cancel = async () => {
-        await run.cancel();
-      };
-      holdSlot(cancel);
-      running.add(cancel);
-      busyWorkspaces.add(cwd);
-      subscriptions.set(subscription, async (): Promise<ProtocolError | void> => {
-        observing = false;
-        const outcome = await run.cancel();
-        if (!outcome.ok && outcome.unresolved) return { code: 'action-failed', message: outcome.message };
-        return undefined;
-      });
-      void run.outcome.then(finish);
-      void run.drained.then((outcome) => {
-        if (
-          kind === 'gc' ||
-          kind === 'worktree-remove' ||
-          kind === 'worktree-warm' ||
-          kind === 'machine-access' ||
-          kind === 'remedy'
-        )
-          desktopReports.invalidate();
-        const release = () => {
-          releaseSlot(cancel);
-          running.delete(cancel);
-          busyWorkspaces.delete(cwd);
-          for (const workspace of admittedWorkspaces) busyWorkspaces.delete(workspace);
-        };
-        const roots = outcome.retainedClaimRoots;
-        if (outcome.unresolved) {
-          const reconcile = () => {
-            if (!roots?.length && !outcome.cleanupSettled) return;
-            if (
-              roots?.some((root) => {
-                const claims = readClaimSet(root);
-                return claims.live.length > 0 || claims.unresolved.length > 0;
-              })
-            )
-              return;
-            if (outcome.cleanupSettled && !outcome.cleanupSettled()) return;
-            release();
-            retainedLifecycles.delete(reconcile);
-          };
-          if (!roots?.length && !outcome.cleanupSettled && outcome.cleanupComplete) {
-            void outcome.cleanupComplete.then(release, () => {});
-          } else {
-            retainedLifecycles.add(reconcile);
-          }
-        } else {
-          release();
-        }
-        const recorded = terminal ?? outcome;
-        auditSafely({
-          at: new Date(startedAt).toISOString(),
-          device: { id: owner.id, name: owner.name },
-          action: kind,
-          workspace: admittedCwd,
-          ...(platform ? { platform } : {}),
-          ok: recorded.ok,
-          durationMs: Date.now() - startedAt,
-          ...(recorded.ok
-            ? {}
-            : {
-                error: {
-                  code: 'action-failed',
-                  message: outcome.unresolved
-                    ? 'STIM_CLAIM_UNAVAILABLE'
-                    : recorded.code ||
-                      (kind === 'start'
-                        ? 'STIM_METRO_START_FAILED'
-                        : kind === 'gc'
-                          ? 'STIM_GC_FAILED'
-                          : kind === 'build'
-                            ? 'STIM_BUILD_FAILED'
-                            : 'STIM_RUN_FAILED'),
-                },
-              }),
-        });
-        return undefined;
-      });
     }
 
     function writeDesktopSetting(id: RequestId, params: unknown, owner: PairedDevice): void {
@@ -3282,7 +1951,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return Promise.resolve();
       }
       if (method === 'desktop.reload.subscribe') {
-        subscribeReload(id, params, owner);
+        subscribeReload(ctx, id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.plan.cancel') {
@@ -3349,23 +2018,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       const subscribeCleanup = cleanupSubscriptions[method];
       if (subscribeCleanup) {
-        subscribeCleanup(id, params, owner);
+        subscribeCleanup(ctx, id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.build.subscribe') {
-        subscribeBuild(id, params, owner);
+        subscribeBuild(ctx, id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.run.subscribe') {
-        subscribeRun(id, params, owner);
+        subscribeRun(ctx, id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.start.subscribe') {
-        subscribeStart(id, params, owner);
+        subscribeStart(ctx, id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.stop.subscribe') {
-        subscribeStop(id, params, owner);
+        subscribeStop(ctx, id, params, owner);
         return Promise.resolve();
       }
       if (method === 'desktop.doctor.run') {
@@ -3842,7 +2511,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (method.startsWith('device-host.input.')) {
         const inputMethod = method.slice('device-host.'.length) as (typeof INPUT_METHODS)[number];
-        return input(id, inputMethod, raw, session);
+        return input(ctx, id, inputMethod, raw, session);
       }
       if (method === 'device-host.runtime.install') {
         const cancellation = new AbortController();
@@ -4106,9 +2775,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'stats.get' || message.method === 'settings.get') {
         return workspaceCommand(ctx, id, message.method, message.params);
       }
-      if (message.method === 'action') return runAction(id, message.params, device);
+      if (message.method === 'action') return runAction(ctx, id, message.params, device);
       if (message.method === 'control.begin') {
-        void beginControl(id, message.params, device);
+        void beginControl(ctx, id, message.params, device);
         return;
       }
       if (message.method === 'control.end') {
@@ -4121,7 +2790,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const inputMethod = INPUT_METHODS.find((method) => method === message.method);
       if (inputMethod) {
-        void input(id, inputMethod, message.params, device);
+        void input(ctx, id, inputMethod, message.params, device);
         return;
       }
       if (message.method === 'push.register') return registerPush(id, message.params, device);

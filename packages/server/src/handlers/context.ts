@@ -4,6 +4,7 @@ import {
   readWorkspaceState,
   hostedAndroidPlacements,
   type DeviceHostLimits,
+  loadConfig,
   type StatusViews,
   type StatusPayload,
   type HostedAndroidPlacement,
@@ -26,28 +27,45 @@ import { type HostedRelayOptions, HostedRelay } from '../hosted-relay.ts';
 import type { WebSocket } from 'ws';
 import { NoiseSocket } from '@stim-cli/core/noise-session';
 import { StimError } from 'stim';
+import { type AuditRecord, appendAudit } from '../actions.ts';
 import type {
   ServerMessage,
+  ErrorCode,
   FramesSeekParams,
   HelloHost,
   ProtocolError,
   RequestId,
-  ErrorCode,
   VideoCodec,
   Methods,
 } from '../protocol.ts';
+import { existsSync } from 'node:fs';
 import { StatusFeed } from '../status-feed.ts';
 import type { JsonObject } from '../feed.ts';
 import type { StartupState } from '../startup.ts';
 import type { Registries, PairedDevice } from '../registry.ts';
+import { DesktopReports } from '../desktop-reports.ts';
 import { UsageSampler } from '../machine.ts';
 import { UsageRecorder } from '../usage-history.ts';
+import { type Controller, ControlHub } from '../control.ts';
 import { DeviceHost } from '../device-host.ts';
 import { PresenceHub } from '../presence.ts';
 import { LocalAgentPresence } from '../local-agent-presence.ts';
-import { ControlHub } from '../control.ts';
 import { HostedViews } from '../hosted-view.ts';
 import { HostedPresenceBridge } from '../hosted-presence-bridge.ts';
+
+export const INPUT_METHODS = [
+  'input.touch',
+  'input.text',
+  'input.button',
+  'input.rotate',
+  'input.posture',
+  'input.simulator',
+  'input.scroll',
+  'input.key',
+  'input.window',
+  'input.clipboard.set',
+  'input.clipboard.get',
+] as const;
 
 export function viewHostedPlacement(
   dir: string,
@@ -195,9 +213,19 @@ export interface RequestLimits {
   device: number;
 }
 
+export const AUDIT_FIELD_CHARS = 256;
+
 export function readFailure(cause: unknown): string {
   if (!(cause instanceof StimError)) return cause instanceof Error ? cause.message : String(cause);
   return `${cause.code}: ${cause.message}${cause.remedy ? ` ${cause.remedy}` : ''}`;
+}
+
+export function auditSafely(record: AuditRecord): void {
+  try {
+    appendAudit(record);
+  } catch (cause) {
+    console.error(`stim-server: could not append to the action log: ${(cause as Error).message}`);
+  }
 }
 
 export const trackers: WeakMap<ServerSocket, RequestTracker> = new WeakMap<ServerSocket, RequestTracker>();
@@ -205,6 +233,27 @@ export const trackers: WeakMap<ServerSocket, RequestTracker> = new WeakMap<Serve
 export function send(socket: ServerSocket, message: ServerMessage | string): void {
   if (typeof message !== 'string') trackers.get(socket)?.reply(message);
   if (socket.readyState === socket.OPEN) socket.send(typeof message === 'string' ? message : JSON.stringify(message));
+}
+
+type ResolvedWorkspace = { dir: string } | { code: ErrorCode; message: string };
+
+export function registeredWorkspace(workspace: unknown): ResolvedWorkspace {
+  if (typeof workspace !== 'string') {
+    return { code: 'bad-request', message: 'params.workspace must be an environment path from a status payload.' };
+  }
+  let projects: Record<string, unknown>;
+  try {
+    projects = loadConfig()?.projects ?? {};
+  } catch (cause) {
+    return { code: 'stim-failed', message: (cause as Error).message };
+  }
+  const dir = Object.keys(projects).find((path) => path === workspace);
+  if (dir === undefined)
+    return { code: 'unknown-workspace', message: `${workspace} is not a Stim workspace on this machine.` };
+  if (!existsSync(dir)) {
+    return { code: 'unknown-workspace', message: `${dir} is registered but no longer exists on this machine.` };
+  }
+  return { dir };
 }
 
 export interface Replayable {
@@ -233,12 +282,17 @@ export interface ConnectionContext {
   readonly logLimits: LogLimits;
   readonly commandLimits: CommandLimits;
   readonly actionLimits: CommandLimits;
+  readonly busyWorkspaces: Set<string>;
+  readonly retainedLifecycles: Set<() => void>;
+  readonly desktopReports: DesktopReports;
   recordingTurn: Promise<void>;
   closing: boolean;
   readonly sessions: Map<ServerSocket, PairedDevice>;
   readonly sampler: UsageSampler;
   readonly usage: UsageRecorder;
   readonly recordUsage: () => () => void;
+  readonly controllers: Map<ServerSocket, Controller>;
+  readonly controlLimits: ControlLimits;
   readonly adbEmulators: boolean;
   readonly hostedDevices: DeviceHost;
   readonly presence: PresenceHub;
@@ -258,6 +312,7 @@ export interface ConnectionContext {
   readonly releaseSlot: (cancel: () => Promise<void>) => void;
   readonly slotsFull: (needed?: number) => boolean;
   readonly slotsMessage: (needed?: number) => string;
+  readonly persistentActions: Set<() => Promise<void>>;
   device: PairedDevice | null;
   desktopChallenge: { nonce: string; proof: string } | null;
   readonly tracker: RequestTracker;
@@ -268,6 +323,10 @@ export interface ConnectionContext {
   readonly timer: NodeJS.Timeout;
   readonly error: (id: RequestId, code: ErrorCode, message: string) => void;
   readonly canControl: (session: Pick<PairedDevice, 'id'>) => boolean;
+  readonly inputs: { tokens: number; at: number };
+  readonly characters: { tokens: number; at: number };
+  readonly shapeChanges: { tokens: number; at: number };
+  readonly controller: (session: Pick<PairedDevice, 'id' | 'name'>) => Controller;
   readonly workspaceDir: (id: RequestId, workspace: unknown, required: boolean) => string | null;
   readonly readDir: (id: RequestId, target: { workspace?: string; archive?: string }) => string | null;
   readonly openSubscription: (id: RequestId, result?: { video?: VideoCodec }) => string | null;
