@@ -71,7 +71,9 @@ export function describeState(state: ConnectionState, missing: boolean): string 
       return t`Offline \u00B7 retrying in ${seconds}s`;
     }
     case 'refused':
-      return state.code === 'protocol-unsupported' ? t`Needs an update` : t`Pair again`;
+      return state.code === 'protocol-unsupported' || state.code === 'server-outdated'
+        ? t`Needs an update`
+        : t`Pair again`;
     default:
       return t`Disconnected`;
   }

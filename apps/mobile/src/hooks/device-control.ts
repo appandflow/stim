@@ -108,7 +108,7 @@ export function useDeviceControl(
     (takeOver = false) => {
       if (
         !connection ||
-        (platform === 'macos' && (link.kind !== 'open' || !link.features.includes('macos-window-control')))
+        (platform === 'macos' && (link.kind !== 'open' || !link.hostCapabilities.includes('macos-window-control')))
       )
         return;
       setHeld({ kind: 'starting' });

@@ -1,7 +1,7 @@
 import { t } from '@lingui/core/macro';
 import * as Clipboard from 'expo-clipboard';
 import * as Linking from 'expo-linking';
-import { Redirect, Stack, useIsFocused, useNavigation, useRouter } from 'expo-router';
+import { Redirect, Stack, useNavigation, useRouter } from 'expo-router';
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -36,9 +36,7 @@ import {
 } from '@/components/workspace-cards';
 import { withAlpha } from '@/design/color';
 import { useArchiveDetail } from '@/hooks/archive-detail';
-import { useAppForeground } from '@/hooks/app-foreground';
 import { useHeaderInset } from '@/hooks/header-inset';
-import { useReplayRangeState } from '@/hooks/replay-range';
 import { archiveError } from '@/lib/archived';
 import { archivedPage } from '@/lib/archived-page';
 import { isGitHubPullUrl } from '@/lib/github';
@@ -70,7 +68,7 @@ import {
 } from '@/lib/worktree-page';
 import { workspaceAgentSessions } from '@/lib/agents';
 import { ARCHIVE_GRACE_MS, workspaceArchiveDecision } from '@/lib/archived';
-import { RequestError, type ConnectionState } from '@/lib/connection';
+import type { ConnectionState } from '@/lib/connection';
 import { tildeHome } from '@/lib/paths';
 import { planKey } from '@/lib/plan-checks';
 import {
@@ -120,18 +118,6 @@ function ArchivedDetail({ archive: id }: { archive: string }) {
   const archive = status?.archived?.find((entry) => entry.id === id);
   const archivesPending = useArchives(true, mac?.id ?? '');
   const detail = useArchiveDetail(id);
-  const legacy = detail.error instanceof RequestError && detail.error.error.code === 'unknown-method';
-  const focused = useIsFocused();
-  const foreground = useAppForeground();
-  const probe = legacy && focused && foreground;
-  const ios = useReplayRangeState({ archive: id, platform: 'ios', slot: 'default' }, probe);
-  const android = useReplayRangeState({ archive: id, platform: 'android', slot: 'default' }, probe);
-  const web = useReplayRangeState({ archive: id, platform: 'web', slot: 'default' }, probe);
-  const ranges = [
-    { platform: 'ios', range: ios },
-    { platform: 'android', range: android },
-    { platform: 'web', range: web },
-  ];
   const now = useNow(30_000);
   const [bannerHeight, setBannerHeight] = useState(0);
   if (!archive)
@@ -147,15 +133,9 @@ function ArchivedDetail({ archive: id }: { archive: string }) {
       </ScrollView>
     );
   const page = archivedPage(archive, detail.data, now);
-  const recordings = (
-    legacy
-      ? ranges.flatMap(({ platform, range }) =>
-          range.data ? [{ platform, slot: 'default', spans: range.data.spans }] : [],
-        )
-      : page.recordings
-  ).filter((recording) => recording.spans.length);
-  const recordingError = legacy ? ranges.find(({ range }) => range.error)?.range.error : detail.error;
-  const recordingsLoaded = legacy ? ranges.every(({ range }) => range.data || range.error) : !!detail.data;
+  const recordings = page.recordings.filter((recording) => recording.spans.length);
+  const recordingError = detail.error;
+  const recordingsLoaded = !!detail.data;
   const { env } = page;
   const lines = Object.keys(env.lastBuilds ?? {})
     .filter((platform): platform is Platform => platform === 'ios' || platform === 'android')
@@ -257,7 +237,7 @@ function ArchivedDetail({ archive: id }: { archive: string }) {
         ) : (
           <Text variant="footnote" tone="secondary">
             {recordingError
-              ? archiveError(recordingError, legacy ? 'replay' : 'detail')
+              ? archiveError(recordingError, 'detail')
               : recordingsLoaded
                 ? t`No recording available.`
                 : t`Loading...`}

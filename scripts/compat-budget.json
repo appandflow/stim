@@ -126,8 +126,6 @@
       "packages/stim-cli/src/supervisor/server-expo.ts legacy"
     ],
     "bridge": [
-      "apps/mobile/src/lib/macs.ts legacy",
-      "apps/mobile/src/screens/workspace-detail.tsx legacy",
       "packages/core/index.ts legacy",
       "packages/server/src/build.ts legacy",
       "packages/stim-cli/src/cache/caches.ts legacy",

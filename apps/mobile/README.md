@@ -131,10 +131,10 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   with **Rename** and **Remove** on each row and **Pair** in the header. While
   connected, a row also shows the machine's own name when this phone labels it
   differently, and this phone's record on that machine (the name and id
-  `stim-server devices` lists, from `hello`'s `device`). **Rename** changes only
+  `stim pairings` lists, from `hello`'s `device`). **Rename** changes only
   the name this phone shows; renaming this phone's record on the machine needs
-  `stim-server devices rename <id> <name>` there. **Remove** forgets the pairing
-  on this phone; its confirmation first shows the `stim-server devices revoke <id>`
+  `stim pairings rename <id> <name>` there. **Remove** forgets the pairing
+  on this phone; its confirmation first shows the `stim pairings revoke <id>`
   command that revokes this phone on the machine, which keeps listing it until then. A
   connected machine's row shows the pairing's scope, **Can control** or
   **Read-only** (see [Read-only pairings](#read-only-pairings)).
@@ -418,14 +418,17 @@ it is encrypted. The QR code is `v: 2` and carries the server key's fingerprint
 (base64url of its SHA-256); the app ignores fields it does not know. When pairing,
 the session checks the key the server proves against the fingerprint before it
 sends message 3, which carries the phone's name as `{"name": ...}`, then pins the
-full key; `hello` carries only the client name and version. Since Noise
-encrypts the session, plain `ws://` is accepted for private IP addresses as well as
-`wss://` anywhere. Pairings made with protocol 1 are dropped on launch and must
-pair again. A stim-server that predates protocol 2 closes the connection on the
-Noise prefix with 4400 `unexpected binary frame`, and the app then says to update
-stim-server on that machine. A protocol 2 server names its refusal in the close
-reason (`unknown-secret` for a spent or expired pairing code, `unauthorized` for a
-phone it no longer knows).
+full key; `hello` carries the client name, version and `phoneApi`, the phone's
+wire integer (2). Since Noise encrypts the session, plain `ws://` is accepted for
+private IP addresses as well as `wss://` anywhere. The server names its refusal in
+the close reason (`unknown-secret` for a spent or expired pairing code,
+`unauthorized` for a phone it no longer knows) or answers `hello` with
+`protocol-unsupported` when this app is older than the machine's Stim, and the app
+shows that message. When the machine's `hello` carries no `phoneApi` or a lower
+one, its Stim is older than this app: the app closes the connection and shows an
+update card naming the remedy, Stim Desktop's update when `hello.host.owner` is
+`desktop`, `npm i -g stim@latest && stim service install` for a service, and both
+when the `hello` predates `host.owner`.
 
 ## Device view
 
@@ -482,7 +485,7 @@ logs card opening native runtime stdout/stderr in the existing log viewer.
 macOS uses no Metro. Stopped and unverified apps retain their status tile.
 
 A running app's tile opens the same viewer with `platform: "macos"`, in the default
-slot, when the server advertises `macos-window`. It has no replay. The server captures only
+slot, when the machine lists `macos-window` in `hello.host.capabilities`. It has no replay. The server captures only
 the front standard window of the app whose PID, process start time, executable and
 bundle match its owned launch record, following it as the app opens, switches, closes
 or resizes windows; other apps and the desktop are excluded.
@@ -651,11 +654,9 @@ ends when the lease does. The viewer has no rotate buttons for a phone, which
 turns only in hand. A physical device is not recorded, so its viewer has no
 replay timeline or Recording badge.
 
-A phone tile streams only when the connected machine's `stim-server` lists that
-platform's feature, `physical-ios` or `physical-android`, in its hello
-`features`. An older server would ignore `physical` and stream the slot's
-simulator or emulator instead, so while connected to one the tile asks for a
-`stim-server` update.
+A phone tile streams only when the connected machine lists that platform,
+`physical-ios` or `physical-android`, in its hello `host.capabilities`; only a Mac
+lists `physical-ios`.
 
 The viewer is the one screen on a phone that turns to landscape with the
 phone; every other screen stays portrait. In landscape the title stays on
@@ -694,8 +695,8 @@ or Android skin; artwork is not bundled in the app or repository. Touches stay
 inside the screen aperture, and taps on the bezel send no device input. Rotation
 metadata must match the current capture; otherwise the viewer shows the screen
 without its housing. Replay, physical phones, web pages and Android foldable
-or circular devices remain frameless. Missing artwork or an older server also
-keeps the frameless viewer.
+or circular devices remain frameless. Missing artwork also keeps the frameless
+viewer.
 
 Framed H.264 needs a mobile build containing the native orientation-clear acknowledgement; older clients stay frameless. Rotation clears old screen pixels before matching housing is shown. JPEG and housing images reset their displayed content on orientation changes.
 
@@ -735,8 +736,7 @@ to the inner panel the screen shows. The session ends when you turn
 Control off, leave the view, lose the connection, or after 5 minutes without
 input; the banner says why.
 
-On an iOS simulator, an Android emulator or an Android phone, when the server lists
-`device-clipboard`, **More** also has **Paste from Phone** and **Copy Device
+On an iOS simulator, an Android emulator or an Android phone, **More** also has **Paste from Phone** and **Copy Device
 Clipboard** while Control is on. Paste reads the phone's clipboard when you tap it
 (iOS asks to allow the paste), sets the device clipboard to that text and pastes it
 into the focused field; text over 8 KiB is not sent, and a note says so. An iOS
@@ -799,7 +799,7 @@ its sheet. Wherever the app
 would offer a control action, a read-only pairing shows it disabled with a
 short reason, and **Allow Control** explains the upgrade: in Stim Desktop on
 the machine, **Settings**, **Phones**, turn on **Allow Control** for this phone,
-or run `stim-server devices grant <id> --control` with this phone's id. A
+or run `stim pairings grant <id> --control` with this phone's id. A
 connection learns its scope only from `hello`, so **Reconnect** opens a new
 connection to pick up the grant. When the server refuses control or an action
 with `forbidden`, or ends a control session for that reason, the app
@@ -918,9 +918,8 @@ store, which a new build or update keeps, and forgetting the machine deletes it.
 Tapping a push or local notification marks its entry read: a push carries the
 entry's number, and a local notification the rule's id, which matches the
 newest entry with that id; a tap that launches the app is applied once that
-machine's history is listed. A machine whose server predates the history
-(`notifications` missing from `hello`'s `features`) adds nothing, and without
-one the menu has no **Notifications** row. The categories, wording and icons
+machine's history is listed. Until a machine has connected, the menu has no
+**Notifications** row. The categories, wording and icons
 are the ones Stim Desktop's inbox uses.
 
 A background check was not added: `expo-background-task` runs at most every
@@ -1115,10 +1114,8 @@ stim-server's segment format, with its agent-action markers in
 
 The mock status includes three archived workspaces: a merged PR with logs and
 an iOS recording, an archive without footage, and an archive replaced by a live
-workspace. Set `STIM_MOCK_LEGACY_ARCHIVES=1` when starting the mock to keep those
-rows visible while refusing archive requests with `bad-request`, so the update
-hints can be checked. Archived log subscriptions end with `logs-ended`; the
-phone uses one-shot queries instead.
+workspace. Archived log subscriptions end with `logs-ended`; the phone uses
+one-shot queries instead.
 
 To screenshot slot waits, run `pnpm run mock-server --slot-waits` and pair with
 `ws://127.0.0.1:7787`. Open the iOS build sheet for `a4-building` to see a device
@@ -1233,7 +1230,7 @@ Metro picks up a rewritten `.env.local`; reload the app after `dev:pair`.
   reaches the machine from the iOS Simulator but not from an Android emulator.
   The endpoint must be one the device can reach.
 
-Revoke the development pairing when you are done; `stim-server devices` lists it.
+Revoke the development pairing when you are done; `stim pairings` lists it.
 
 ## Variants
 

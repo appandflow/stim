@@ -35,13 +35,13 @@ function pairingState(state: string, machine: string): State {
       return {
         title: t`Key not confirmed`,
         tone: 'warning',
-        remedy: t`run stim remote list in a terminal on the computer this phone is paired with, and answer y only if the fingerprint matches the one stim-server setup printed on ${machine}`,
+        remedy: t`run stim remote list in a terminal on the computer this phone is paired with, and answer y only if the fingerprint matches the one stim setup printed on ${machine}`,
       };
     case 'outdated':
       return {
         title: t`Server is outdated`,
         tone: 'warning',
-        remedy: t`on ${machine}, run stim-server service update --release <version>, then run stim remote add ${machine} on the computer this phone is paired with`,
+        remedy: t`on ${machine}, run stim service update --release <version>, then run stim remote add ${machine} on the computer this phone is paired with`,
       };
     case 'not-on-tailnet':
       return { title: t`Not on the tailnet`, tone: 'warning' };

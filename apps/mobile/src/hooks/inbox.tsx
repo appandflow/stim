@@ -86,7 +86,7 @@ function list(macId: string, connection: StimConnection): Promise<void> {
 type OpenState = Extract<ConnectionState, { kind: 'open' }>;
 
 function keepsHistory(state: ConnectionState): state is OpenState {
-  return state.kind === 'open' && state.features.includes('notifications');
+  return state.kind === 'open';
 }
 
 /** Marks read what a tapped notification of Mac `macId` reported, once its history is listed. */
