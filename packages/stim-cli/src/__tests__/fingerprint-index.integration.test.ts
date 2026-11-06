@@ -248,6 +248,35 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))(
       },
     );
 
+    test.each([
+      { listed: "fs.readdirSync('./drop')", late: './drop/late.txt' },
+      { listed: "fs.readdirSync('./drop', { recursive: true })", late: './drop/sub/late.txt' },
+    ])(
+      'a directory the config lists ($listed) and then writes into is not recorded from the later listing',
+      SLOW,
+      async ({ listed, late }) => {
+        const root = expoApp('app', {
+          'app.config.js': [
+            "const fs = require('fs');",
+            'let entries = null;',
+            "if (!process.argv.includes('embed')) {",
+            `  entries = ${listed}.map(String).sort();`,
+            `  fs.writeFileSync('${late}', 'late');`,
+            '}',
+            'module.exports = ({ config }) => ({ ...config, extra: { entries } });',
+            '',
+          ].join('\n'),
+          'drop/sub/a.txt': 'a',
+        });
+        await settled();
+        await key(root);
+        ran();
+        const second = await key(root);
+        expect(ran()).toContain('config');
+        expect(second.hash).toBe((await key(root, 'skip')).hash);
+      },
+    );
+
     test('a local plugin directory switching its package.json main moves the key', SLOW, async () => {
       const root = expoApp('app', {
         'app.config.js': "module.exports = ({ config }) => ({ ...config, extra: { v: require('./plug') } });\n",

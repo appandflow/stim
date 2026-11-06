@@ -1,7 +1,7 @@
 'use strict';
 
 // Preloaded with --require into every fingerprint evaluator child. Records what the evaluation read and writes it
-// as one JSON object on fd 4 at exit: env names, files, directory listings, existence probes, compiled modules, the
+// as one JSON object on fd 4 at exit: env names, files, listed directories, existence probes, compiled modules, the
 // files of code that enumerated process.env, and the calls that make a result unrepeatable.
 
 const fs = require('node:fs');
@@ -34,22 +34,23 @@ function toPath(target) {
   return null;
 }
 
+// A recursive listing is hashed as it is read: a later change deep in the tree leaves the root's stat as it was, so
+// the parent could not tell its own listing from the one the evaluation saw. A single directory is listed by the parent.
 function record(kind, target) {
   const file = active && kind ? toPath(target) : null;
   if (!file || reads.has(`${kind}\0${file}`)) return;
   const entry = { path: file, kind };
-  if (kind === 'dir' || kind === 'tree' || kind === 'resolve') {
+  if (kind === 'tree')
     try {
       entry.hash = sha256(
         JSON.stringify(
-          originalReaddirSync(file, { recursive: kind === 'tree' })
+          originalReaddirSync(file, { recursive: true })
             .map(String)
             .filter((name) => path.basename(name) !== '.DS_Store')
             .toSorted(),
         ),
       );
     } catch {}
-  }
   reads.set(`${kind}\0${file}`, entry);
 }
 
@@ -156,7 +157,7 @@ function callerSite() {
 // reads are the enumeration, recorded once with the enumerating file, not as reads of each name.
 const realEnv = process.env;
 const read = (key) => {
-  if (active && typeof key === 'string' && !enumerationSites.has(callerSite()?.site)) env.add(key);
+  if (active && typeof key === 'string' && !env.has(key) && !enumerationSites.has(callerSite()?.site)) env.add(key);
 };
 const traced = new Proxy(realEnv, {
   get(target, key) {
@@ -250,17 +251,29 @@ function resolving(specifier, parent, resolve) {
   return resolved;
 }
 
+// Node's default resolve step for a CommonJS require calls Module._resolveFilename inside the hook, so the inner call
+// for the same request and parent is the one resolution the hook already records.
+let hooked = null;
 const resolveFilename = Module._resolveFilename;
 Module._resolveFilename = function (request, parent, ...rest) {
   const from = typeof parent?.filename === 'string' ? parent.filename : null;
-  return resolving(request, from, () => resolveFilename.call(this, request, parent, ...rest));
+  const resolve = () => resolveFilename.call(this, request, parent, ...rest);
+  return hooked?.specifier === request && hooked.parent === from ? resolve() : resolving(request, from, resolve);
 };
 
 if (hooks)
   Module.registerHooks({
     resolve(specifier, context, nextResolve) {
       const parent = context.parentURL?.startsWith('file:') ? fileURLToPath(context.parentURL) : null;
-      return resolving(specifier, parent, () => nextResolve(specifier, context));
+      return resolving(specifier, parent, () => {
+        const outer = hooked;
+        hooked = { specifier, parent };
+        try {
+          return nextResolve(specifier, context);
+        } finally {
+          hooked = outer;
+        }
+      });
     },
     load(url, context, nextLoad) {
       const result = nextLoad(url, context);
