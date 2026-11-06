@@ -18,11 +18,11 @@ import {
   installService,
   recordServiceRoute,
   rollbackService,
-  serverBuild,
   serviceStatus,
   uninstallService,
   updateService,
 } from '../src/service.ts';
+import { serverBuild } from '../src/release-install.ts';
 import { parseInstalledPlist, renderPlist } from '../src/service-plist.ts';
 
 const launchd = vi.hoisted(() => ({

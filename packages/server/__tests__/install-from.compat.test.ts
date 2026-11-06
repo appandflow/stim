@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { packWorkspace, workspacePackages } from '../src/machine-update.ts';
-import { installServer } from '../src/service.ts';
+import { installServer } from '../src/release-install.ts';
 
 const UNPUBLISHED = '99.0.0';
 const SERVER_DIR = fileURLToPath(new URL('../../stim-cli', import.meta.url));

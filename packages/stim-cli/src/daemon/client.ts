@@ -262,8 +262,8 @@ export async function ensureDaemon(
 
 const DAEMON_COMMANDS = ['start', 'ios', 'android', 'web', 'macos', 'revive'];
 const INLINE_COMMANDS = ['doctor', 'start', 'ios', 'android'];
-/** Commands that never run the passes: `gc` runs its own, and `agent-device` runs once per UI action. */
-const PASSLESS_COMMANDS = ['guide', 'settings', 'help', 'gc', 'agent-device'];
+/** Commands that never run the passes: `gc` runs its own, `agent-device` runs once per UI action, `engine` manages the store. */
+const PASSLESS_COMMANDS = ['guide', 'settings', 'help', 'gc', 'agent-device', 'engine'];
 
 export type PassPlacement = 'inline' | 'background' | 'none';
 
