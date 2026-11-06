@@ -95,7 +95,8 @@ export async function requestLocalServer<M extends LocalMethod>(
 export interface LocalHello {
   version: string;
   port: number | null;
-  features: string[];
+  /** The server's Stim Desktop integer; 0 from a server before it had one. */
+  desktopApi: number;
 }
 
 /** Asks the server on this Stim home's local Unix socket for its `hello`; null when none answers within `timeoutMs`. */
@@ -122,9 +123,7 @@ export async function readLocalHello(version: string, timeoutMs: number): Promis
         finish({
           version: server.version,
           port: typeof server.port === 'number' ? server.port : null,
-          features: Array.isArray(result.features)
-            ? result.features.filter((each: unknown) => typeof each === 'string')
-            : [],
+          desktopApi: typeof result.desktopApi === 'number' ? result.desktopApi : 0,
         });
       } catch {
         finish(null);

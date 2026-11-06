@@ -2,13 +2,12 @@ import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { createHash } from 'node:crypto';
 import { Command } from 'commander';
 import logsCommand from '../commands/logs.ts';
-import { syncHostedLogs, followHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { runStop } from '../commands/stop.ts';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deviceHostMachinesFile, type HostedAndroidPlacement, type HostedAppOffer } from '@stim-cli/core/state';
+import { deviceHostMachinesFile, type HostedAndroidPlacement } from '@stim-cli/core/state';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { BuildConnection } from '../offload/client.ts';
 import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts';
@@ -58,9 +57,6 @@ let methods: { method: string; params: Record<string, unknown> }[];
 let manifest: Buffer;
 let blobs: Map<string, Buffer>;
 let retained: Map<string, Buffer>;
-let dataFeature: boolean;
-let agentFeature: boolean;
-let processFeature: boolean;
 let appLaunched: true | 'unverified';
 let agentGrant: unknown;
 let agentNotice: string | undefined;
@@ -99,9 +95,6 @@ beforeEach(() => {
   manifest = Buffer.alloc(0);
   blobs = new Map();
   retained = new Map();
-  dataFeature = true;
-  agentFeature = true;
-  processFeature = true;
   appLaunched = true;
   agentGrant = undefined;
   agentNotice = undefined;
@@ -113,12 +106,6 @@ beforeEach(() => {
   );
   const connection = Object.create(BuildConnection.prototype) as BuildConnection;
   connection.close = () => {};
-  connection.supports = (feature) =>
-    feature === 'hosted-android-process'
-      ? processFeature
-      : feature === 'hosted-android-agent'
-        ? agentFeature
-        : feature !== 'hosted-android-data' || dataFeature;
   connection.request = async (method, raw) => {
     const params = raw as Record<string, unknown>;
     methods.push({ method, params });
@@ -331,21 +318,6 @@ test('stim logs queries the host for native logs only when device records can be
   }
 });
 
-test('older Android hosts get an update note and no log queries during sync or follow', async () => {
-  writeHostedAndroid(root, 'default', placement);
-  dataFeature = false;
-  const warning = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-  expect(await syncHostedLogs(root)).toBe(false);
-  expect(warning).toHaveBeenCalledWith(expect.stringContaining('needs a newer stim-server'));
-  const stop = followHostedLogs(root, false);
-  try {
-    await vi.waitFor(() => expect(warning.mock.calls.length).toBe(2), { timeout: 2000 });
-    expect(methods.some((entry) => entry.method === 'device-host.logs.query')).toBe(false);
-  } finally {
-    stop();
-  }
-});
-
 const grant = () => ({
   driver: 'agent-device',
   path: `/device-host/agent/${session}/`,
@@ -373,22 +345,18 @@ async function deliverAgent(slot = 'default', note: (line: string) => void = () 
   });
 }
 
-test.each(['older-host', 'unavailable'])(
-  'Android %s reports no driver and removes obsolete credentials',
-  async (reason) => {
-    agentGrant = reason === 'older-host' ? grant() : { driver: 'none' };
-    agentFeature = reason !== 'older-host';
-    agentNotice = reason === 'unavailable' ? 'Agent control requires agent-device 0.21.22 or later.' : undefined;
-    const file = androidAgentRemoteConfig(root, 'default');
-    mkdirSync(join(file, '..'), { recursive: true });
-    writeFileSync(file, '{}');
-    const notes: string[] = [];
-    const run = await deliverAgent('default', (line) => notes.push(line));
-    expect(run.placement.agent.driver).toBe('none');
-    expect(existsSync(file)).toBe(false);
-    expect(notes.includes('Agent control requires agent-device 0.21.22 or later.')).toBe(reason === 'unavailable');
-  },
-);
+test('an unavailable Android agent driver reports no driver and removes obsolete credentials', async () => {
+  agentGrant = { driver: 'none' };
+  agentNotice = 'Agent control requires agent-device 0.21.22 or later.';
+  const file = androidAgentRemoteConfig(root, 'default');
+  mkdirSync(join(file, '..'), { recursive: true });
+  writeFileSync(file, '{}');
+  const notes: string[] = [];
+  const run = await deliverAgent('default', (line) => notes.push(line));
+  expect(run.placement.agent.driver).toBe('none');
+  expect(existsSync(file)).toBe(false);
+  expect(notes).toContain('Agent control requires agent-device 0.21.22 or later.');
+});
 
 test('an unreachable Android stop retains the slot credential for retry', async () => {
   agentGrant = grant();
@@ -400,13 +368,12 @@ test('an unreachable Android stop retains the slot credential for retry', async 
   expect(existsSync(androidAgentRemoteConfig(root, 'default'))).toBe(true);
 });
 
-const autoPlacement = (localLive = false, appMode?: HostedAppOffer['mode']) =>
+const autoPlacement = (localLive = false) =>
   automaticDevicePlacement(
     {
       root,
       slot: 'default',
       platform: 'android',
-      appMode,
       selectors: {},
       noWait: true,
     },

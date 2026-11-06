@@ -7819,18 +7819,6 @@ describe('strict remote machine selection', () => {
     expect(store).not.toHaveBeenCalled();
   });
 
-  test('a machine without Android release support gets a remedy to update it', async () => {
-    configureMini();
-    const { offload } = offloadedRelease();
-    offload.mockResolvedValue({
-      ok: false,
-      machine: 'mini',
-      reason: 'its stim-server cannot build an Android release variant',
-    });
-    const result = await harness({ buildMachine: 'mini', variant: 'release', build: vi.fn<() => never>() }).run();
-    expect(result.error?.remedy).toContain('stim-server service update');
-  });
-
   test('a password file in the sync gets a remedy about that file, not about signing here', async () => {
     configureMini();
     const reason = 'signing.properties holds an Android signing key or its password, and it stays here';
@@ -8817,14 +8805,12 @@ describe('registered Android project recipes', () => {
         device,
         agent: { driver: 'none' as const, setting: 'hosting.agentDriver' as const },
       };
-      const modes: unknown[] = [];
       const delivered: unknown[] = [];
       const h = harness({
         variant,
         json: true,
         ...(hosted ? { remoteDevice: 'mini', slot: 'tablet', metroCheck: false } : {}),
-        prepareHostedAndroid: async (_machine: string, _selectors: unknown, _recorded: unknown, mode: unknown) => {
-          modes.push(mode);
+        prepareHostedAndroid: async () => {
           return { host: { machine: 'mini', connection: { close() {} } }, choice: device, session: null };
         },
         placeHostedAndroid: async (
@@ -8890,7 +8876,6 @@ describe('registered Android project recipes', () => {
         expect(result.facts?.host?.machine).toBe(hosted && !badSignature ? 'mini' : undefined);
         expect(h.calls.ensureDevice).toHaveLength(hosted ? 0 : attempt);
         expect(h.calls.booted).toHaveLength(hosted ? 0 : attempt);
-        expect(modes).toEqual(hosted ? Array(attempt).fill('process') : []);
         expect(delivered).toEqual(
           hosted && !badSignature
             ? Array.from({ length: attempt }, () => ({

@@ -70,9 +70,9 @@ export interface PushRegistration {
   quietHours: QuietHours | null;
 }
 
-/** The events a registration asks for, with the legacy `disk` read as `machine` and other legacy names dropped. */
+/** The events a registration asks for, in `PUSH_EVENTS` order. */
 export function pushEvents(events: readonly unknown[]): PushEvent[] {
-  return PUSH_EVENTS.filter((event) => events.includes(event) || (event === 'machine' && events.includes('disk')));
+  return PUSH_EVENTS.filter((event) => events.includes(event));
 }
 
 /** Levels as `push.register` takes them, or null when `value` is not valid. */
@@ -219,7 +219,7 @@ function cleanClientText(text: string): string {
 }
 
 /** What Stim Desktop names itself in `hello`: `Stim Desktop` for the release app and `Stim Dev` for a development build. */
-const DESKTOP_CLIENT_APPS: readonly string[] = ['Stim Desktop', 'Stim Dev'];
+export const DESKTOP_CLIENT_APPS: readonly string[] = ['Stim Desktop', 'Stim Dev'];
 
 /** Whether a record's recorded client app is Stim Desktop. A client names itself, so this is for display only. */
 export function isDesktopClient(device: PairedDevice): boolean {

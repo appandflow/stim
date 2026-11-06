@@ -47,10 +47,6 @@ export function openAgentRelay({
     try {
       connection = await connect();
       if (closed || socket.destroyed) return void connection.close();
-      if (!connection.supports('hosted-agent-link'))
-        throw new Error(
-          `${machine} runs a stim-server that cannot carry agent control over the local network. Update stim-server there, then retry.`,
-        );
       const reply = await connection.request('device-host.agent.link', { session });
       if ('error' in reply) throw new Error(`${machine} refused the agent link: ${reply.error.message}`);
       if (closed || socket.destroyed) return void connection.close();

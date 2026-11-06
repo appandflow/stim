@@ -52,7 +52,7 @@ import {
   type PeerStartup,
   type Transport,
 } from './diagnosis.ts';
-import type { RemoteDiagnosis } from '@stim-cli/core/protocol';
+import { PEER, type RemoteDiagnosis } from '@stim-cli/core/protocol';
 
 const HELLO_TIMEOUT_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 3000;
@@ -78,9 +78,8 @@ export type MachineAuth =
 export type HelloReply =
   | {
       result: {
-        host?: { name: string; screenRecording: boolean; accessibility: boolean } | null;
+        host?: { app?: unknown };
         capabilities: string[];
-        features?: string[];
         device: { id: string; name: string };
       };
       /** The server key the handshake authenticated. */
@@ -339,7 +338,7 @@ async function hello(target: Endpoint, auth: MachineAuth, operation?: StimContex
   }
   const reply = await sayHello(
     socket,
-    { client: { name: 'stim', version: '1' }, access: auth.access },
+    { client: { name: 'stim', version: '1', peer: PEER }, access: auth.access },
     HELLO_TIMEOUT_MS,
   );
   socket.close(1000);

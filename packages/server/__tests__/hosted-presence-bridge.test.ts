@@ -3,7 +3,7 @@ import { HostedPresenceBridge } from '../src/hosted-presence-bridge.ts';
 
 type Route = Parameters<Upstream['route']>[1];
 
-function fixture(features: string[] = ['hosted-presence'], reply: unknown = { result: { subscription: 'up' } }) {
+function fixture(reply: unknown = { result: { subscription: 'up' } }) {
   const routes = new Map<string, Route>();
   const requests: { method: string; params: unknown }[] = [];
   const released = vi.fn<() => void>();
@@ -17,7 +17,6 @@ function fixture(features: string[] = ['hosted-presence'], reply: unknown = { re
       routes.set(name, route);
       return () => routes.delete(name);
     },
-    supports: (feature: string) => features.includes(feature),
   } as unknown as Upstream;
   const hosts = {
     acquire: async () => {
@@ -53,13 +52,8 @@ test("puts the agent actions the host publishes into the hub under the device's 
   expect(f.requests.at(-1)).toEqual({ method: 'device-host.unsubscribe', params: { subscription: 'up' } });
 });
 
-test('asks a host that does not list hosted-presence for nothing, and gives up quietly when the host refuses', async () => {
-  const old = fixture(['presence']);
-  old.bridge.follow('key', host);
-  await vi.waitFor(() => expect(old.released).toHaveBeenCalledTimes(1));
-  expect(old.requests).toEqual([]);
-
-  const refused = fixture(['hosted-presence'], { error: { code: 'unknown-session', message: 'No such session.' } });
+test('gives up quietly when the host refuses', async () => {
+  const refused = fixture({ error: { code: 'unknown-session', message: 'No such session.' } });
   refused.bridge.follow('key', host);
   await vi.waitFor(() => expect(refused.released).toHaveBeenCalledTimes(1));
   expect(refused.routes.size).toBe(0);

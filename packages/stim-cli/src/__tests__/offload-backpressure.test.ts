@@ -1,3 +1,4 @@
+import { PEER } from '@stim-cli/core/protocol';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,7 +12,7 @@ import { testContext } from './_context.ts';
 vi.mock('../offload/tailnet.ts', async (original) => ({
   ...(await original<typeof import('../offload/tailnet.ts')>()),
   openAuthenticated: async () => socket,
-  sayHello: async () => ({ result: { capabilities: ['build'] } }),
+  sayHello: async () => ({ result: { capabilities: ['build'], peer: PEER } }),
 }));
 
 class BufferedSocket extends EventEmitter implements RawSocket {

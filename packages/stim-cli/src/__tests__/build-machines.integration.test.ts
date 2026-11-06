@@ -63,7 +63,7 @@ function fakeIo(replies: HelloReply[], os = 'macOS') {
 
 const notYet: HelloReply = { error: { code: 'unknown-secret', message: 'The machine does not know this ticket yet.' } };
 const approved = (host?: { name: string; screenRecording: boolean; accessibility: boolean }): HelloReply => ({
-  result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' }, ...(host ? { host } : {}) },
+  result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' }, ...(host ? { host: { app: host } } : {}) },
   serverKey: SERVER_KEY,
 });
 const refused: HelloReply = { error: { code: 'unauthorized', message: 'Pair again.' } };

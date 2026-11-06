@@ -1,6 +1,6 @@
 import { isJsonObject, type StatusPayload } from '@stim-cli/core/state';
 import type { AuditRecord } from './actions.ts';
-import { isExtendedDeviceKey, type Controller, type InputCommand, type SessionTarget } from './control.ts';
+import type { Controller, InputCommand, SessionTarget } from './control.ts';
 import type { FrameHint } from './frame-helper.ts';
 import type { Frame, FrameListener } from './frames.ts';
 import { GRAB_IDLE_MS, PointerGrab } from './pointer-grab.ts';
@@ -187,8 +187,7 @@ export class HostedShareSource implements ShareSource {
 
   congested(): void {
     const open = this.streams.h264.open;
-    if (!open?.lease.connection.supports('hosted-congestion') || Date.now() - this.congestedAt < CONGESTION_NOTICE_MS)
-      return;
+    if (!open || Date.now() - this.congestedAt < CONGESTION_NOTICE_MS) return;
     this.congestedAt = Date.now();
     void open.lease.connection
       .request('device-host.frames.congested', { subscription: open.subscription })
@@ -376,22 +375,6 @@ export class HostedShareSource implements ShareSource {
       this.grabIdle = command.phase === 'up' ? null : setTimeout(() => this.lift(this.grab.expire()), GRAB_IDLE_MS);
       this.grabIdle?.unref();
       this.show(participant, command);
-    }
-    if (method.startsWith('input.clipboard.') && !control.lease.connection.supports('device-clipboard')) {
-      return {
-        code: 'action-failed',
-        message: `${this.host.machine} cannot set or read a clipboard: update its Stim.`,
-      };
-    }
-    if (
-      command.input === 'key' &&
-      isExtendedDeviceKey(command.key, command.modifiers) &&
-      !control.lease.connection.supports('device-keyboard')
-    ) {
-      return {
-        code: 'action-failed',
-        message: `${this.host.machine} takes only the arrows and Escape as keys: update its Stim.`,
-      };
     }
     try {
       const reply = await control.lease.connection.request(`device-host.${method}`, { ...params, session });

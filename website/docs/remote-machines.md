@@ -267,8 +267,10 @@ worker are reused under the same rule. A stim-server too old to report a build
 compatibility version needs exactly the same Stim build as this machine. When
 the versions differ, doctor reports `stim-build` and builds stay on this
 machine until the worker runs a compatible release; see [Tools](#tools).
-Hosted simulators and emulators do not compare versions: they check the
-features the host's stim-server reports.
+Hosted simulators and emulators do not compare versions. Every connection
+between two machines also compares one wire integer, `peer`: a machine whose
+Stim is older than this one's is refused with `peer-too-old` and the
+`npm i -g stim@<version> && stim service install` to run there.
 
 Stim Desktop's **Install This Mac's Build** only moves a worker forward. It reads
 the worker's Stim release first and disables the button, with the reason beside
@@ -559,7 +561,7 @@ A Linux machine that starts workspaces, such as a bot running `stim ios --remote
 
 Pairing needs the phone to reach the machine's tailnet address, so a phone on another tailnet needs the machine shared to it.
 
-What does not run on Linux: Mac window capture, Xcode builds, the `stim-frames` helper and iOS devices. The server leaves the matching `features` out of its `hello` and does not try to build the helper.
+What does not run on Linux: Mac window capture, Xcode builds, the `stim-frames` helper and iOS devices. The server leaves the matching capabilities out of its `hello` and does not try to build the helper.
 
 #### Emulators and memory
 

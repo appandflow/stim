@@ -1,9 +1,4 @@
-import type {
-  HostedAndroidChoice,
-  HostedAndroidPlacement,
-  HostedDeviceSelectors,
-  HostedAppOffer,
-} from '@stim-cli/core/state';
+import type { HostedAndroidChoice, HostedAndroidPlacement, HostedDeviceSelectors } from '@stim-cli/core/state';
 import { prepareHostedNative, placeHostedNative, stopHostedNative, type HostedNativeTarget } from './hosted-native.ts';
 import { connectHost, call } from './hosted-client.ts';
 import { requestHostedMetro } from './metro-request.ts';
@@ -18,9 +13,8 @@ export async function prepareHostedAndroid(
   machine: string,
   selectors: HostedDeviceSelectors,
   recorded?: HostedAndroidPlacement,
-  mode?: HostedAppOffer['mode'],
 ): Promise<HostedAndroidTarget> {
-  return (await prepareHostedNative(machine, selectors, recorded, 'android', false, mode)) as HostedAndroidTarget;
+  return (await prepareHostedNative(machine, selectors, recorded, 'android', false)) as HostedAndroidTarget;
 }
 export async function placeHostedAndroid(
   target: HostedAndroidTarget,

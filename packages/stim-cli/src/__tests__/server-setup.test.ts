@@ -1,3 +1,4 @@
+import { DESKTOP_API } from '@stim-cli/core/protocol';
 import { describe, expect, it } from 'vitest';
 import { health, reading, service, setup } from './_server-setup.ts';
 import {
@@ -112,7 +113,7 @@ describe('serverSetupFindings', () => {
           reading({ pid: 200, port: 7787, kind: 'desktop', label: undefined }),
           reading({ pid: 300, port: 7790, kind: 'manual', label: undefined }),
         ],
-        local: { port: 7790, version: '1.41.0', features: [] },
+        local: { port: 7790, version: '1.41.0', desktopApi: 0 },
       }),
     );
     expect(finding?.fix).toContain('Keep pid 300');
@@ -320,22 +321,22 @@ describe('serverSetupFindings', () => {
   });
 
   describe('Desktop write authority', () => {
-    it('flags a service server on the local socket that does not advertise it, with the update command', () => {
+    it('flags a service server on the local socket without desktopApi, with the update command', () => {
       const [finding] = serverSetupFindings(
         setup({
           version: '1.42.0',
           servers: [reading({ health: health({ stim: '1.42.0' }) })],
-          local: { port: 7788, version: '1.40.0', features: ['desktop-reports'] },
+          local: { port: 7788, version: '1.40.0', desktopApi: 0 },
         }),
       );
       expect(finding).toMatchObject({ code: 'server-desktop-authority', level: 'cost' });
       expect(finding?.fix).toBe('Run `stim-server service update --release 1.42.0`.');
     });
 
-    it('does not flag Desktop-keyed servers or servers that advertise it', () => {
-      const local = { port: 7788, version: '1.41.0', features: [] };
+    it('does not flag Desktop-keyed servers or servers that send desktopApi', () => {
+      const local = { port: 7788, version: '1.41.0', desktopApi: 0 };
       expect(codes(setup({ servers: [reading({ kind: 'desktop', label: undefined })], local }))).toEqual([]);
-      expect(codes(setup({ local: { ...local, features: ['desktop-local-authority'] } }))).toEqual([]);
+      expect(codes(setup({ local: { ...local, desktopApi: DESKTOP_API } }))).toEqual([]);
     });
   });
 });

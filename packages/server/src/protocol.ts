@@ -4,7 +4,7 @@ import { MAX_REVERSE_PORTS, SETTING_SCOPES } from '@stim-cli/core/state';
 import {
   PROTOCOL_VERSION,
   CAPABILITIES,
-  FEATURES,
+  HOST_CAPABILITIES,
   type Method,
   PUSH_TOKEN_PATTERN,
   SHARE_SLUG_PATTERN,
@@ -32,7 +32,6 @@ import {
   BUILD_REPO_PATTERN,
   BUILD_RUBY_VERSION_PATTERN,
   PUSH_EVENTS,
-  LEGACY_PUSH_EVENTS,
   NOTIFICATION_LEVELS,
   NOTIFICATION_SUPPRESSIONS,
   CONTROL_END_REASONS,
@@ -824,6 +823,9 @@ export function protocolJsonSchema(): JsonSchema {
               name: { type: 'string' },
               version: { type: 'string' },
               runId: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,64}$' },
+              peer: { type: 'integer' },
+              phoneApi: { type: 'integer' },
+              desktopApi: { type: 'integer' },
             },
           },
           access: { enum: ['build', 'device-host'] },
@@ -832,25 +834,37 @@ export function protocolJsonSchema(): JsonSchema {
       },
       HelloResult: {
         type: 'object',
-        required: ['protocol', 'server', 'capabilities', 'features', 'actions', 'device'],
+        required: ['host', 'protocol', 'peer', 'phoneApi', 'desktopApi', 'server', 'capabilities', 'actions', 'device'],
         additionalProperties: false,
         properties: {
           host: {
-            anyOf: [
-              { type: 'null' },
-              {
-                type: 'object',
-                required: ['name', 'screenRecording', 'accessibility'],
-                additionalProperties: false,
-                properties: {
-                  name: { type: 'string' },
-                  screenRecording: { type: 'boolean' },
-                  accessibility: { type: 'boolean' },
-                },
+            type: 'object',
+            required: ['owner', 'capabilities', 'app'],
+            additionalProperties: false,
+            properties: {
+              owner: { enum: ['desktop', 'service', 'cli'] },
+              capabilities: { type: 'array', items: { enum: [...HOST_CAPABILITIES] } },
+              app: {
+                anyOf: [
+                  { type: 'null' },
+                  {
+                    type: 'object',
+                    required: ['name', 'screenRecording', 'accessibility'],
+                    additionalProperties: false,
+                    properties: {
+                      name: { type: 'string' },
+                      screenRecording: { type: 'boolean' },
+                      accessibility: { type: 'boolean' },
+                    },
+                  },
+                ],
               },
-            ],
+            },
           },
           protocol: { type: 'integer' },
+          peer: { type: 'integer' },
+          phoneApi: { type: 'integer' },
+          desktopApi: { type: 'integer' },
           server: {
             type: 'object',
             required: ['name', 'version', 'stim'],
@@ -865,7 +879,6 @@ export function protocolJsonSchema(): JsonSchema {
             },
           },
           capabilities: { type: 'array', items: { enum: [...CAPABILITIES] } },
-          features: { type: 'array', items: { enum: [...FEATURES] } },
           actions: { type: 'array', items: { enum: [...ACTIONS] } },
           device: {
             type: 'object',
@@ -2074,7 +2087,7 @@ export function protocolJsonSchema(): JsonSchema {
                 type: 'array',
                 minItems: 1,
                 uniqueItems: true,
-                items: { enum: [...PUSH_EVENTS, ...LEGACY_PUSH_EVENTS] },
+                items: { enum: [...PUSH_EVENTS] },
               },
               levels: {
                 type: 'object',

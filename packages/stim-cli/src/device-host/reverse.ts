@@ -14,13 +14,6 @@ export async function syncHostedReverses(
   session: string,
 ): Promise<HostedReverse[]> {
   const ports = reversePorts(readWorkspaceState(root));
-  if (!host.connection.supports('hosted-reverse-ports')) {
-    if (ports.length === 0) return [];
-    throw Object.assign(new Error(`${host.machine} runs a stim-server that cannot reverse ports.`), {
-      code: 'STIM_HOSTING_REFUSED',
-      remedy: `Update stim-server on ${host.machine}, then run stim ports reverse again.`,
-    });
-  }
   const result = await call(host, 'device-host.reverse.set', { session, ports });
   const answered: unknown[] = Array.isArray(result.ports) ? result.ports : [];
   const bound = answered.flatMap((each) =>

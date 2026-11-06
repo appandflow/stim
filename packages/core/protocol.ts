@@ -44,170 +44,46 @@ export const CAPABILITIES = ['read', 'control', 'build', 'device-host'] as const
 export type Capability = (typeof CAPABILITIES)[number];
 
 /**
- * What this server serves beyond protocol version 1's base, so a client can tell before it asks. `physical-ios` and
- * `physical-android` are `physical: true` on `frames.subscribe` for that platform's leased device, and for an
- * Android phone also on `control.begin`. An older server ignores `physical` on `frames.subscribe` and would stream
- * the slot's Stim-owned device instead. `notifications` is `notifications.list` and the `notification` event.
- * `macos-hosted` relays `frames.subscribe` and control for a workspace whose macOS app
- * `stim macos --remote` placed on another Mac.
- * `ios-hosted` and `android-hosted` relay hosted native frames and control by workspace slot through the client's server.
- * `hosted-ios-agent` adds session-scoped iOS agent-device grants to installed app launch/attach results.
- * `hosted-android-agent` adds serial-pinned Android agent-device grants to installed app and session attach results.
- * `macos-windows` is the `macos-windows` event on a macOS `frames.subscribe`, naming the window capture follows
- * and the app's other windows.
- * `hosted-congestion` is `device-host.frames.congested`, which lowers the bitrate of a hosted video subscription
- * whose client is behind.
- * `macos-window-select` is `input.window`, which pins the view to a macOS app window named by `macos-windows`,
- * bringing it to the front, or with null resumes following the front window.
- * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
- * `hosted-android-data` is Android APK build handoff and native log queries, persisted before device deletion.
- * `hosted-app-state` queries the current process state of an installed iOS or Android app attempt.
- * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
- * `hosted-metro-link` carries hosted Metro over `device-host.metro.link` connections the client opens, so the host never
- * connects to the client.
- * `hosted-reverse-ports` is `device-host.reverse.set`, which makes servers on the client's loopback reachable from a
- * hosted device at the same `localhost` ports, over `device-host.metro.link` connections registered for one `port`.
- * `hosted-agent-link` is `device-host.agent.link`, which carries one HTTP connection to a session's agent route over a
- * connection its client opened and authenticated, so agent control needs no tailnet node.
- * `hosted-metro-ports` is `device-host.metro.ports`, which names the listed ports that already accept loopback
- * connections on the host, apart from the requesting client's own dev-client bridges.
- * `native-xcode-build` accepts native Xcode provider requests with a separate source-transfer identity.
- * `native-xcode-toolchain` accepts native Xcode discovery without unrelated platform or Ruby probes.
- * `build-artifact-cache` offers and fetches exact completed native Xcode archives without a build job.
- * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
- * `native-gradle-artifact-cache` applies caller cache policy to verified worker-scoped APK reuse.
- * `react-native-peer-cache` offers development archives with build-proven fingerprints, options and toolchains.
- * `fingerprint-sources` accepts `fingerprintSources` on `build.start`, so a fingerprint mismatch names the differing sources.
- * `fingerprint-ignored` accepts `fingerprintIgnored` on `build.start`, the paths the caller's git ignored that the machine's git cannot.
- * `fingerprint-tracked` accepts `fingerprintTracked` on `build.start`, the top-level entries the caller's git tracks although an ignore pattern matches them.
- * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
- * `native-gradle-peer-jdk` accepts an exact JDK major on native Gradle artifact queries.
- * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
- * `build-dependency-cache` checks dependency warmth against the requested project and install selection.
- * `server-update` is `engine.update.status`, `engine.update` and `engine.update.chunk`.
- * `build-compat` accepts `compat` on `build.start`, and in place of `stimBuild` in React Native and SwiftPM artifact
- * queries.
- * `build-reuse-artifact` accepts `reuseArtifact` with `podsOnWorker` on `build.start`.
- * `build-android-release` builds an Android release variant with no signing key and a rebundled JS, and returns an
- * unsigned APK for a client to sign.
- * `build-jdk` accepts `jdk` on `build.start`, the JDK major an Android build runs on; the machine finds an installed JDK of that
- * major when its default differs.
- * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
- * `desktop-machine-history` adds machine-wide build and cleanup history to those reports.
- * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
- * `desktop-report-remote` serves `{ "report": "remote" }`, the remote machines as `stim remote list --json` prints them.
- * `desktop-report-invalidate-target` accepts a report target in `desktop.reports.invalidate`, which then invalidates only it.
- * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
- * `desktop-settings-schema` supplies this server's registry-derived settings schema to local Desktop clients.
- * `desktop-settings-write` mutates settings on the proved local Desktop connection.
- * `desktop-stop` streams private Desktop workspace or slot stop progress and its terminal result.
- * `desktop-start` streams dev-server startup progress and its result on the proved local Desktop connection.
- * `desktop-run` streams platform build/install/launch progress and facts on the proved local Desktop connection.
- * `desktop-build` streams build-only progress and artifact facts on the proved local Desktop connection.
- * `desktop-plan` reads next-build reports for selected folders on the proved local Desktop connection.
- * `desktop-setup` runs `stim-server setup` for a pasted request on the proved local Desktop connection, which answers
- * each grant with `desktop.setup.answer`.
- * `share-stop-id` lets `share.stop` take a share `id` and end only that share.
- * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
- * `share-view-password` is `share.start`'s `view` parameter and the rows' `viewAuth`.
- * `share-reuse` is `share.start`'s `token` and `expiresAt`, which start a share under a URL token a stopped share had.
- * `share-starting` is `share.list`'s `starting`: the `share.start` requests the server has not yet answered.
- * `shared-control` is several clients controlling one device at once: `control.begin` and
- * `device-host.control.begin` refuse no other client or driver, and no session ends with `taken-over`.
- * `share-waiting` is `share.stop`'s `slot`, which ends only that slot's shares: a share whose device goes away is
- * stopped for now instead of ending, so stopping a slot has to end its shares explicitly.
- * `share-slug` is `share.start`'s `slug` parameter and the rows' `slug`.
- * `hosted-presence` is `device-host.presence.subscribe`: the `presence` events of a hosted session, which carry what the
- * agent drives on it. A host lists it only with `presence`.
- * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
- * `device-clipboard` is `input.clipboard.set` and `input.clipboard.get` (and `device-host.input.clipboard.*`): set the clipboard
- * of an iOS simulator, an Android emulator or an Android phone, optionally pasting it, and read it back.
- * `device-keyboard` is `input.key` on an iOS simulator or an Android emulator (and `device-host.input.key`) with every
- * `INPUT_KEYS` key and its modifiers; before it, an iOS or Android device took only the arrows and Escape.
+ * The wire integer between Stim CLIs, daemons, servers and workers, sent in `hello.client` and in the `hello` result.
+ * It changes only on a removal, rename or change of meaning; an addition answers `unknown-method` on an older side.
+ * A server refuses a missing or lower one on its network listener; a client refuses a server that sends a lower one.
  */
-export const FEATURES = [
+export const PEER = 1;
+
+/** The refusal a CLI or server gives a worker or device host whose `peer` is missing or lower than {@link PEER}. */
+// compat C12 permanent
+export function peerTooOld(machine: string, stim: string, peer: number, version: string): string {
+  const sent = peer > 0 ? `peer ${peer}` : 'no peer';
+  return `peer-too-old: ${machine} runs stim ${stim} (${sent}), this Mac needs peer ${PEER}; on ${machine} run: npm i -g stim@${version} && stim service install`;
+}
+// compat end
+
+/** Stim Mobile's wire integer, under the same rule as {@link PEER}. */
+export const PHONE_API = 2;
+
+/** Stim Desktop's wire integer, under the same rule as {@link PEER}. */
+export const DESKTOP_API = 1;
+
+/**
+ * What a machine can do because of what it is, not which Stim it runs, listed in `hello.host.capabilities`.
+ * `physical-ios` and `physical-android` stream and control that platform's leased physical device; the `macos-*`
+ * entries are the macOS window view and its controls; `duo-frames` is the Surface Duo frame; `native-xcode-build` and
+ * `native-xcode-toolchain` build Xcode projects for other machines. Only a Mac lists the iOS and macOS entries.
+ */
+export const HOST_CAPABILITIES = [
   'physical-ios',
   'physical-android',
-  'notifications',
   'macos-window',
   'macos-windows',
   'macos-window-select',
   'macos-window-control',
   'macos-keyboard-extended',
-  'device-frames',
-  'macos-hosted',
-  'ios-hosted',
-  'android-hosted',
-  'hosted-ios-agent',
-  'hosted-android-agent',
   'duo-frames',
-  'workspace-diff',
-  'hosted-congestion',
-  'hosted-ios-data',
-  'hosted-ios-process',
-  'hosted-app-state',
   'native-xcode-build',
   'native-xcode-toolchain',
-  'build-artifact-cache',
-  'native-gradle-build',
-  'native-gradle-artifact-cache',
-  'native-gradle-peer-cache',
-  'native-gradle-peer-jdk',
-  'react-native-peer-cache',
-  'fingerprint-sources',
-  'fingerprint-ignored',
-  'fingerprint-tracked',
-  'swiftpm-peer-cache',
-  'build-dependency-cache',
-  'hosted-android-data',
-  'hosted-android-process',
-  'hosted-metro-ports',
-  'hosted-metro-link',
-  'hosted-reverse-ports',
-  'hosted-agent-link',
-  'server-update',
-  'build-compat',
-  'build-jdk',
-  'build-android-release',
-  'build-reuse-artifact',
-  'desktop-reports',
-  'desktop-machine-history',
-  'desktop-report-platform',
-  'desktop-report-remote',
-  'desktop-report-invalidate-target',
-  'desktop-settings',
-  'desktop-settings-schema',
-  'desktop-settings-write',
-  'desktop-full-logs',
-  'desktop-doctor-run',
-  'desktop-machine-access',
-  'desktop-remedy',
-  'desktop-device-tools',
-  'desktop-stop',
-  'desktop-reload',
-  'desktop-start',
-  'desktop-run',
-  'desktop-build',
-  'desktop-gc',
-  'desktop-worktree-remove',
-  'desktop-worktree-warm',
-  'desktop-plan',
-  'desktop-setup',
-  'desktop-local-authority',
-  'share-stop-id',
-  'presence',
-  'device-clipboard',
-  'device-keyboard',
-  'share-view-password',
-  'share-waiting',
-  'hosted-presence',
-  'share-slug',
-  'share-reuse',
-  'share-starting',
-  'shared-control',
 ] as const;
 
-export type Feature = (typeof FEATURES)[number];
+export type HostCapability = (typeof HOST_CAPABILITIES)[number];
 
 export const METHODS = [
   'hello',
@@ -445,8 +321,11 @@ export type RequestId = number | string;
  * socket. Authentication already happened; capabilities come from the server's record of the client's key.
  */
 export interface HelloParams {
-  /** `runId` is the CLI invocation's id: letters, digits, `.`, `_`, `-`, at most 64. The server puts it on its log lines for the connection. */
-  client: { name: string; version: string; runId?: string };
+  /**
+   * `runId` is the CLI invocation's id: letters, digits, `.`, `_`, `-`, at most 64. The server puts it on its log lines
+   * for the connection. A CLI, daemon or server sends `peer`, Stim Mobile `phoneApi`, Stim Desktop `desktopApi`.
+   */
+  client: { name: string; version: string; runId?: string; peer?: number; phoneApi?: number; desktopApi?: number };
   /**
    * Which of the key's own records this connection acts as: its `build` or `device-host` approval. Without it, the
    * pairing in `devices.json`. It never widens what a record allows.
@@ -456,10 +335,22 @@ export interface HelloParams {
   desktopBootstrap?: true;
 }
 
+/**
+ * Who runs the server: Stim Desktop, a service unit or a person's own `stim serve`; what the machine can do; and, under
+ * Stim Host, the grants macOS gives that app, or null if unavailable or not under Stim Host.
+ */
+export interface HelloHost {
+  owner: 'desktop' | 'service' | 'cli';
+  capabilities: HostCapability[];
+  app: { name: string; screenRecording: boolean; accessibility: boolean } | null;
+}
+
 export interface HelloResult {
-  /** Present when the server runs under Stim Host: the grants macOS gives that app, or null if unavailable. */
-  host?: { name: string; screenRecording: boolean; accessibility: boolean } | null;
+  host: HelloHost;
   protocol: number;
+  peer: number;
+  phoneApi: number;
+  desktopApi: number;
   /**
    * The machine's name, this package's version, the version of the `stim` it runs, and the home directory of the
    * user it runs as, so clients can show paths under it as `~/...`.
@@ -467,7 +358,6 @@ export interface HelloResult {
   /** `port`, on the local socket only, is the server's TCP port, so a client can tell which server answered. */
   server: { name: string; version: string; stim: string; home?: string; id?: string; port?: number };
   capabilities: Capability[];
-  features: Feature[];
   /** The actions this device may run: every one of {@link ACTIONS} with `control`, none without. */
   actions: ActionName[];
   /** The record this connection authenticated as, as `stim-server devices` lists it; `local` on the Unix socket. */
@@ -625,7 +515,7 @@ export interface FrameTarget {
    */
   at?: number;
   rate?: FramesSeekParams['rate'];
-  /** Asks for `presence` events about who acts on the device; the server lists the `presence` feature. */
+  /** Asks for `presence` events about who acts on the device. */
   presence?: boolean;
 }
 
@@ -1145,8 +1035,8 @@ export interface BuildOfferParams {
 }
 
 /**
- * Which Stim built an artifact: the build compatibility version from a client that saw the `build-compat` feature,
- * else the exact Stim build digest.
+ * Which Stim built an artifact: the build compatibility version from a client that reports one, else the exact Stim
+ * build digest.
  */
 export type BuildStimIdentity = { stimBuild: string; compat?: never } | { compat: number; stimBuild?: never };
 
@@ -1372,7 +1262,7 @@ export interface BuildStartParams {
   stimBuild: string;
   /** The client's Stim build compatibility version, compared instead of `stimBuild` by a machine that reports one. */
   compat?: number;
-  /** The JDK major the client's Android build ran on; a machine with the `build-jdk` feature builds on a JDK of that major. */
+  /** The JDK major the client's Android build ran on; the machine builds on a JDK of that major. */
   jdk?: string;
   cacheArtifact?: boolean;
   /**
@@ -1571,11 +1461,6 @@ export const PUSH_EVENTS = ['started', 'stuck', 'looping', 'finished', 'machine'
 
 export type PushEvent = (typeof PUSH_EVENTS)[number];
 
-/** Events phones registered before `PUSH_EVENTS`: `disk` stands for `machine`, and the others no longer push. */
-export const LEGACY_PUSH_EVENTS = ['build-failed', 'log-errors', 'disk', 'app-stopped', 'slow-build'] as const;
-
-export type LegacyPushEvent = (typeof LEGACY_PUSH_EVENTS)[number];
-
 /**
  * How a pushed event is delivered: `alert` with a banner and sound, `silent` to the notification list only (iOS
  * `interruptionLevel` `passive`, the Android `updates` channel). An event the device leaves out of `events` is off.
@@ -1603,7 +1488,7 @@ export interface QuietHours {
  */
 export interface PushRegisterParams {
   token: string;
-  events: (PushEvent | LegacyPushEvent)[];
+  events: PushEvent[];
   levels?: Partial<Record<PushEvent, NotificationLevel>>;
   agentOnly?: boolean;
   ref: string;

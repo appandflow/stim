@@ -1,3 +1,4 @@
+import { PEER } from '@stim-cli/core/protocol';
 import { expect, test } from 'vitest';
 import { BuildConnection } from '../offload/client.ts';
 import { setRemoteLogSink } from '../remote-log.ts';
@@ -21,7 +22,7 @@ test('a delayed remote request failure stays with its initiating workspace after
       socket.send(
         JSON.stringify(
           method === 'hello'
-            ? { id, result: { capabilities: ['build'] } }
+            ? { id, result: { capabilities: ['build'], peer: PEER } }
             : { id, error: { code: 'worker-failed', message: method } },
         ),
       );
