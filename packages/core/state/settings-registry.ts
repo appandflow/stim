@@ -18,7 +18,7 @@ export const SETTING_SCOPES: readonly SettingScope[] = ['machine', 'workspace', 
 
 export type SettingType =
   | { kind: 'string'; pattern?: string; patternHelp?: string }
-  | { kind: 'path'; absolute?: boolean; relative?: boolean }
+  | { kind: 'path'; absolute?: boolean; relative?: boolean; patternHelp?: string }
   | { kind: 'strings' }
   | { kind: 'number'; integer?: boolean; minimum?: number; exclusiveMinimum?: number; maximum?: number }
   | { kind: 'boolean' }
@@ -83,94 +83,39 @@ export const IOS_SIMULATOR_APPS = ['xcode', 'siniulator', 'stim-desktop', 'none'
 
 export const ANDROID_EMULATOR_APPS = ['emulator', 'stim-desktop'] as const;
 
-/**
- * A setting Stim no longer reads. `key` names the setting that replaced it, when one did, and `value` maps an old
- * value to that setting's; `replacement` says what replaced it in words. `env` is the old environment override; with
- * `refuses`, the commands the stim-daemon governs refuse to run while it is set.
- */
+// compat C5 permanent
 export interface RemovedSetting {
   key?: string;
   replacement: string;
   env?: string;
+  scopes?: readonly SettingScope[];
   refuses?: true;
   value?: (old: unknown) => string | null;
+  off?: (old: unknown) => string | null;
+  kept?: string;
 }
-
 function sameNumber(old: unknown): string | null {
   const value = typeof old === 'string' && old.trim() ? Number(old) : old;
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? String(value) : null;
 }
+const offAtZero = (old: unknown): string | null => (sameNumber(old) === '0' ? '0' : null);
 const FIXED_LADDER = 'nothing replaced it; the pressure ladder has fixed rules';
-
-function fixed(env: string): RemovedSetting {
-  return { replacement: FIXED_LADDER, env, refuses: true };
-}
-
-export const REPLACED_SETTINGS: Readonly<Record<string, RemovedSetting>> = {
-  'remote.buildMode': {
-    key: 'remote.build',
-    replacement: 'remote.build',
-    env: 'STIM_REMOTE_BUILD_MODE',
-    value: (old) => (old === 'auto' ? 'auto' : old === 'force' ? 'remote' : old === 'off' ? 'local' : null),
-  },
-  'metro.idleStopMinutes': {
-    key: 'idle.minutes',
-    replacement: 'idle.minutes, which stops the dev server and the owned devices together',
-    value: sameNumber,
-  },
-  'devices.idleShutdownMinutes': {
-    key: 'idle.minutes',
-    replacement: 'idle.minutes, which stops the dev server and the owned devices together',
-    value: sameNumber,
-  },
-  'share.webrtc': {
-    replacement: 'nothing replaced it; web share viewers take video over the share socket only',
-    env: 'STIM_WEBRTC_STUN',
-  },
-  'devices.reclaimIdleMinutes': {
-    replacement:
-      "the stim-daemon's reclaim rule replaced it: while a run waits to boot, the daemon shuts down the longest-idle device of another workspace idle 2 minutes or more",
-  },
-  'maintenance.deviceIdleDays': {
-    key: 'idle.dormantDays',
-    replacement: 'idle.dormantDays, after which an idle workspace goes dormant and its owned devices are deleted',
-    env: 'STIM_MAINTENANCE_DEVICE_IDLE_DAYS',
-    refuses: true,
-    value: sameNumber,
-  },
-  'budget.minFreeDiskGb': {
-    key: 'disk.minFreeGb',
-    replacement: 'disk.minFreeGb',
-    env: 'STIM_BUDGET_MIN_FREE_DISK_GB',
-    refuses: true,
-    value: sameNumber,
-  },
-  'budget.hardFloorDiskGb': {
-    key: 'disk.hardFloorGb',
-    replacement: 'disk.hardFloorGb',
-    env: 'STIM_BUDGET_HARD_FLOOR_DISK_GB',
-    refuses: true,
-    value: sameNumber,
-  },
-  'maintenance.criticalFreeDiskGb': {
-    key: 'disk.criticalFreeGb',
-    replacement: 'disk.criticalFreeGb',
-    env: 'STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB',
-    refuses: true,
-    value: sameNumber,
-  },
-  'maintenance.mode': {
-    key: 'daemon.mode',
-    replacement: 'daemon.mode, which also decides whether start, ios, android and gc run the passes themselves',
-    env: 'STIM_MAINTENANCE',
-    refuses: true,
-    value: (old) => (old === 'on' || old === 'report' || old === 'off' ? old : null),
-  },
-  'daemon.enabled': {
-    key: 'daemon.mode',
-    replacement: 'daemon.mode',
-    value: (old) => (old === true || old === 'true' ? 'on' : old === false || old === 'false' ? 'off' : null),
-  },
+const fixed = (env: string): RemovedSetting => ({ replacement: FIXED_LADDER, env, refuses: true });
+// prettier-ignore
+export const REMOVED_SETTINGS: ReadonlyMap<string, RemovedSetting> = new Map(Object.entries({
+  'remote.buildMode': { key: 'remote.build', replacement: 'remote.build', env: 'STIM_REMOTE_BUILD_MODE', value: (old) => old === 'auto' ? 'auto' : old === 'force' ? 'remote' : old === 'off' ? 'local' : null },
+  'metro.idleStopMinutes': { key: 'idle.minutes', replacement: 'idle.minutes, which stops the dev server and the owned devices together', value: sameNumber, off: offAtZero, scopes: ['workspace', 'repo', 'committed'] },
+  'devices.idleShutdownMinutes': { key: 'idle.minutes', replacement: 'idle.minutes, which stops the dev server and the owned devices together', value: sameNumber, off: offAtZero, scopes: ['machine', 'workspace', 'repo', 'committed'] },
+  'share.webrtc': { replacement: 'nothing replaced it; web share viewers take video over the share socket only', env: 'STIM_WEBRTC_STUN' },
+  'devices.reclaimIdleMinutes': { replacement: "the stim-daemon's reclaim rule replaced it: while a run waits to boot, the daemon shuts down the longest-idle device of another workspace idle 2 minutes or more" },
+  'maintenance.deviceIdleDays': { key: 'idle.dormantDays', replacement: 'idle.dormantDays, after which an idle workspace goes dormant and its owned devices are deleted', env: 'STIM_MAINTENANCE_DEVICE_IDLE_DAYS', refuses: true, value: sameNumber },
+  'budget.minFreeDiskGb': { key: 'disk.minFreeGb', replacement: 'disk.minFreeGb', env: 'STIM_BUDGET_MIN_FREE_DISK_GB', refuses: true, value: sameNumber },
+  'budget.hardFloorDiskGb': { key: 'disk.hardFloorGb', replacement: 'disk.hardFloorGb', env: 'STIM_BUDGET_HARD_FLOOR_DISK_GB', refuses: true, value: sameNumber },
+  'maintenance.criticalFreeDiskGb': { key: 'disk.criticalFreeGb', replacement: 'disk.criticalFreeGb', env: 'STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB', refuses: true, value: sameNumber },
+  'maintenance.mode': { key: 'daemon.mode', replacement: 'daemon.mode, which also decides whether start, ios, android and gc run the passes themselves', env: 'STIM_MAINTENANCE', refuses: true, value: (old) => old === 'on' || old === 'report' || old === 'off' ? old : null, off: (old) => old === 'off' || old === 'report' ? old : null, scopes: ['machine'] },
+  'daemon.enabled': { key: 'daemon.mode', replacement: 'daemon.mode', value: (old) => old === true || old === 'true' ? 'on' : old === false || old === 'false' ? 'off' : null },
+  'maintenance.idleStopHours': { key: 'idle.dormantDays', replacement: 'idle.dormantDays for workspace dormancy', off: offAtZero, scopes: ['machine', 'workspace', 'repo', 'committed'], kept: 'now applies to hosted device sessions only' },
+  'caches.injectMetroStore': { key: 'optimizations.metroSharedCache', replacement: 'optimizations.metroSharedCache', value: (old) => old === true || old === 'true' ? 'true' : old === false || old === 'false' ? 'false' : null },
   'budget.maxCommittedMemoryGb': fixed('STIM_BUDGET_MAX_COMMITTED_MEMORY_GB'),
   'budget.maxLiveWorkspaces': fixed('STIM_BUDGET_MAX_LIVE_WORKSPACES'),
   'maintenance.pressureCheckMinutes': fixed('STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES'),
@@ -183,44 +128,22 @@ export const REPLACED_SETTINGS: Readonly<Record<string, RemovedSetting>> = {
   'maintenance.idleCheckMinutes': fixed('STIM_MAINTENANCE_IDLE_CHECK_MINUTES'),
   'maintenance.urgentFreeDiskGb': fixed('STIM_MAINTENANCE_URGENT_FREE_DISK_GB'),
   'maintenance.pressureProtectMinutes': fixed('STIM_MAINTENANCE_PRESSURE_PROTECT_MINUTES'),
-};
-
-/**
- * What to do instead of a removed setting: the setting that replaced it, when one did, and the command that sets it
- * to the old value's equivalent, with `--scope` when the replacement lives in several layers and `scope` is one of
- * them. Null for a key that was never removed.
- */
+}));
 export function replacementAdvice(
   key: string,
   old: unknown,
   scope?: SettingScope,
-): { key: string | null; replacement: string; command: string | null } | null {
-  const replaced = Object.hasOwn(REPLACED_SETTINGS, key) ? REPLACED_SETTINGS[key] : undefined;
-  if (!replaced) return null;
-  const value = replaced.key && replaced.value ? replaced.value(old) : null;
-  const target = replaced.key ? SETTINGS.find((setting) => setting.key === replaced.key) : undefined;
+): (RemovedSetting & { command: string | null }) | null {
+  const removed = REMOVED_SETTINGS.get(key);
+  if (!removed || removed.kept) return null;
+  const value = removed.value?.(old);
+  const target = settingDefinition(removed.key ?? '');
   const scoped =
     scope && target && target.scopes.length > 1 && target.scopes.includes(scope) ? ` --scope ${scope}` : '';
-  return {
-    key: replaced.key ?? null,
-    replacement: replaced.replacement,
-    command: replaced.key && value ? `stim settings set ${replaced.key} ${value}${scoped}` : null,
-  };
+  const command = removed.key && value ? `stim settings set ${removed.key} ${value}${scoped}` : null;
+  return { ...removed, command };
 }
-
-/** How Stim words a removed setting `name` (a key or its environment variable): `X was replaced by Y` or `X is no longer read by Stim: ...`. */
-export function removedSettingWords(name: string, removed: RemovedSetting): string {
-  return removed.key
-    ? `${name} was replaced by ${removed.replacement}`
-    : `${name} is no longer read by Stim: ${removed.replacement}`;
-}
-
-/** The removed settings whose old environment variable `env` sets, with what replaced each. */
-export function removedEnvironment(env: NodeJS.ProcessEnv): { key: string; env: string; replaced: RemovedSetting }[] {
-  return Object.entries(REPLACED_SETTINGS).flatMap(([key, replaced]) =>
-    replaced.env && env[replaced.env]?.trim() ? [{ key, env: replaced.env, replaced }] : [],
-  );
-}
+// compat end
 
 export const SHARE_DEFAULT_PORT = 7790;
 
@@ -234,43 +157,6 @@ const PROJECT: readonly SettingScope[] = ['workspace', 'repo', 'committed'];
 const EVERY: readonly SettingScope[] = ['machine', 'workspace', 'repo', 'committed'];
 const MACHINE: readonly SettingScope[] = ['machine'];
 const RECORDING: readonly SettingScope[] = ['machine', 'workspace', 'repo'];
-
-/** An old setting value that turned a mechanism off, and what turns it off now. */
-export interface LeftoverOffRule {
-  /** The setting that turns it off now. */
-  key: string;
-  /** The layers the old setting was read from. */
-  scopes: readonly SettingScope[];
-  /** The new setting's value for an old value that turned it off; null for any other old value. */
-  off: (old: unknown) => string | null;
-  /**
-   * Set when the old setting is still read for something else, which this says. Its value then never refuses; doctor
-   * reports it until `key` is set anywhere.
-   */
-  kept?: string;
-}
-
-const offAtZero = (old: unknown): string | null => (sameNumber(old) === '0' ? '0' : null);
-
-/**
- * The old values that turned a mechanism off. While a loaded config layer still holds one of a removed setting, start,
- * ios, android, web, macos, revive and gc refuse, so the old off never silently becomes a default that acts.
- */
-export const LEFTOVER_OFF: Readonly<Record<string, LeftoverOffRule>> = {
-  'maintenance.mode': {
-    key: 'daemon.mode',
-    scopes: MACHINE,
-    off: (old) => (old === 'off' || old === 'report' ? old : null),
-  },
-  'metro.idleStopMinutes': { key: 'idle.minutes', scopes: PROJECT, off: offAtZero },
-  'devices.idleShutdownMinutes': { key: 'idle.minutes', scopes: EVERY, off: offAtZero },
-  'maintenance.idleStopHours': {
-    key: 'idle.dormantDays',
-    scopes: EVERY,
-    off: offAtZero,
-    kept: 'now applies to hosted device sessions only',
-  },
-};
 
 const STRING = { kind: 'string' } as const;
 const PATH = { kind: 'path' } as const;
@@ -358,7 +244,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'ios.projectPath',
-    type: RELATIVE_PATH,
+    type: { ...RELATIVE_PATH, patternHelp: 'a directory path relative to the app directory' },
     scopes: ['workspace', 'committed'],
     default: 'ios',
     description: "Directory under the app that holds a bare React Native app's Xcode project and Podfile",
@@ -373,13 +259,18 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'ios.simslimProfile',
-    type: RELATIVE_PATH,
+    type: { ...RELATIVE_PATH, patternHelp: 'a relative JSON file path inside the app directory' },
     scopes: PROJECT,
     description: 'SimSlim JSON profile under the app',
   },
   {
     key: 'ios.signingIdentity',
-    type: STRING,
+    type: {
+      kind: 'string',
+      pattern: '^(?![\\s\\S]*[\\r\\n\\0])(?=[\\s\\S]*\\S)[\\s\\S]+$',
+      patternHelp:
+        'the identity name `security find-identity -v -p codesigning` prints, such as "Apple Development: Jane (TEAMID5678)"',
+    },
     scopes: PROJECT,
     description: 'Keychain identity used to re-seal a device build',
   },
@@ -449,14 +340,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'android.avdConfigFile',
-    type: RELATIVE_PATH,
+    type: { ...RELATIVE_PATH, patternHelp: 'a relative file path inside the app directory' },
     scopes: PROJECT,
     description: 'AVD config.ini fragment under the app',
   },
   { key: 'android.avdConfig', type: OBJECT, scopes: PROJECT, description: 'Validated AVD config values' },
   {
     key: 'android.gradleRoot',
-    type: RELATIVE_PATH,
+    type: { ...RELATIVE_PATH, patternHelp: 'a directory path relative to the app directory' },
     scopes: ['workspace', 'committed'],
     default: 'android',
     description:
@@ -739,7 +630,12 @@ export const SETTINGS: readonly SettingDefinition[] = [
     committedAt: 'repository',
     description: 'Branch `worktree warm --refresh` expects the source checkout on',
   },
-  { key: 'cache.provider', type: STRING, scopes: PROJECT, description: 'Second-tier cache provider module' },
+  {
+    key: 'cache.provider',
+    type: { kind: 'string', pattern: '\\S', patternHelp: 'a module path or package name' },
+    scopes: PROJECT,
+    description: 'Second-tier cache provider module',
+  },
   { key: 'cache.options', type: OBJECT, scopes: PROJECT, description: 'Options passed to the cache provider' },
   {
     key: 'iosSimulatorApp',
@@ -1295,7 +1191,9 @@ function numberBounds(type: {
   return noun;
 }
 
-export function settingValueError(setting: SettingDefinition, value: unknown): string | null {
+export function settingValueError(definition: SettingDefinition | string, value: unknown): string | null {
+  const setting = typeof definition === 'string' ? settingDefinition(definition) : definition;
+  if (!setting) throw new Error(`Unknown Stim setting: ${definition}`);
   const { type } = setting;
   if (!acceptsShape(setting, value)) {
     return type.kind === 'number' ? numberBounds(type) : expectedShape(type);
@@ -1315,7 +1213,8 @@ export function settingValueError(setting: SettingDefinition, value: unknown): s
   if (type.kind === 'path') {
     const path = value as string;
     if (type.absolute && !isAbsolute(path)) return 'an absolute path';
-    if (type.relative && (path.trim() === '' || isAbsolute(path))) return 'a relative path inside the app directory';
+    if (type.relative && (path.trim() === '' || path !== path.trim() || /[\r\n\0]/.test(path) || isAbsolute(path)))
+      return type.patternHelp ?? 'a relative path inside the app directory';
   }
   if (type.kind === 'string' && type.pattern && !new RegExp(type.pattern).test(value as string)) {
     return type.patternHelp ?? `a string matching ${type.pattern}`;
@@ -1345,4 +1244,79 @@ export function coerceSettingText(setting: SettingDefinition, raw: string): unkn
   } catch {
     return raw;
   }
+}
+
+export function settingValueAt(settings: unknown, path: string): unknown {
+  let node = settings;
+  for (const segment of path.split('.')) {
+    if (!isJsonObject(node)) return undefined;
+    node = node[segment];
+  }
+  return node;
+}
+
+/** Sets a dotted key, or deletes it and empty parents when value is undefined. Returns whether a write occurred. */
+export function setSettingValueAt(settings: Record<string, unknown>, path: string, value: unknown): boolean {
+  const parts = path.split('.');
+  const leaf = parts.at(-1) ?? '';
+  const chain: Array<{ parent: Record<string, unknown>; key: string }> = [];
+  let node = settings;
+  for (const key of parts.slice(0, -1)) {
+    const child = node[key];
+    let next: Record<string, unknown>;
+    if (isJsonObject(child)) next = child;
+    else {
+      if (value === undefined) return false;
+      next = {};
+      node[key] = next;
+    }
+    chain.push({ parent: node, key });
+    node = next;
+  }
+  if (value !== undefined) node[leaf] = value;
+  else {
+    if (!(leaf in node)) return false;
+    delete node[leaf];
+    for (const { parent, key } of chain.toReversed()) {
+      if (Object.keys(node).length) break;
+      delete parent[key];
+      node = parent;
+    }
+  }
+  return true;
+}
+
+/** Resolves and validates env, scoped-home, CI, config and default values, in that order. */
+export function machineSettingValue(
+  key: string,
+  { config, env }: { config: unknown; env: NodeJS.ProcessEnv },
+): { value: unknown; error: string | null } {
+  const setting = settingDefinition(key);
+  if (!setting) return { value: undefined, error: `${key} is not in the settings registry` };
+  const raw = setting.env ? env[setting.env] : undefined;
+  const explicit = raw !== undefined && raw !== '';
+  let value: unknown;
+  let checked: unknown;
+  if (explicit) {
+    value = coerceSettingText(setting, raw.trim());
+    checked = value;
+  } else {
+    const parts = key.split('.');
+    for (let index = 1; index < parts.length; index++) {
+      const group = parts.slice(0, index).join('.');
+      const container = settingValueAt(config, group);
+      if (container !== undefined && !isJsonObject(container))
+        return { value: undefined, error: `${group} in the config is not an object` };
+    }
+    const configured = settingValueAt(config, key);
+    checked = configured === undefined ? setting.default : configured;
+    if (env.STIM_HOME && setting.scopedHomeValue !== undefined) value = setting.scopedHomeValue;
+    else if (env.CI && setting.ciValue !== undefined) value = setting.ciValue;
+    else value = checked;
+  }
+  const expected = checked === undefined ? null : settingValueError(setting, checked);
+  const error = expected
+    ? `Invalid ${explicit ? setting.env : key} value ${JSON.stringify(explicit ? raw : checked)}. Expected ${expected}.`
+    : null;
+  return { value, error };
 }

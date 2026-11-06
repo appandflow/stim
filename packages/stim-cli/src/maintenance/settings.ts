@@ -1,12 +1,4 @@
-import { isScopedHome } from '@stim-cli/core';
-import {
-  SETTINGS,
-  coerceSettingText,
-  settingValueError,
-  loadConfig,
-  type Config,
-  type MaintenanceMode,
-} from '@stim-cli/core/state';
+import { SETTINGS, machineSettingValue, loadConfig, type Config, type MaintenanceMode } from '@stim-cli/core/state';
 import { daemonMode } from '../daemon/mode.ts';
 
 const PER_WORKSPACE = new Set(['maintenance.keep', 'maintenance.idleStopHours']);
@@ -43,22 +35,9 @@ export function resolveMaintenanceSettings(
       (entry.key.startsWith('maintenance.') && !PER_WORKSPACE.has(entry.key)) || /^caches\..*MaxGb$/.test(entry.key),
   )) {
     const [group, name] = setting.key.split('.') as [string, string];
-    const rawEnv = setting.env ? env[setting.env] : undefined;
-    const layer = config?.[group];
-    const configured = layer && typeof layer === 'object' ? (layer as Record<string, unknown>)[name] : undefined;
-    const value =
-      rawEnv !== undefined
-        ? coerceSettingText(setting, rawEnv)
-        : isScopedHome(env) && setting.scopedHomeValue !== undefined
-          ? setting.scopedHomeValue
-          : env.CI && setting.ciValue !== undefined
-            ? setting.ciValue
-            : configured === undefined
-              ? setting.default
-              : configured;
-    const error = value === undefined ? null : settingValueError(setting, value);
+    const { value, error } = machineSettingValue(setting.key, { config, env });
     if (error) {
-      invalid.push(`${setting.key}: expected ${error}`);
+      invalid.push(`${setting.key}: ${error}`);
       if (group === 'maintenance') disabled = true;
     }
     result[name] = error ? setting.default : value;

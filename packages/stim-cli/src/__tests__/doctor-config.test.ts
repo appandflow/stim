@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
 import { checkMachineSettings, readMachineSettings } from '../diagnostics/doctor-config.ts';
-import { leftoverOffRefusal } from '../workspace/leftover-off.ts';
 import {
   reactNativeDoctorFindings,
   type DoctorInspectionOptions,
@@ -36,9 +35,16 @@ function check(settings: SettingsObject, present: string[] = [], env: NodeJS.Pro
   });
 }
 
-test('an unreadable remote.buildMode still names the setting that replaced it', () => {
-  const [finding] = check({ remote: { buildMode: 'sometimes' } });
-  expect(finding?.fix).toBe(`Set remote.build, then remove remote.buildMode from ${MACHINE}.`);
+test.each([
+  ['remote.buildMode', { remote: { buildMode: 'sometimes' } }, 'Set remote.build'],
+  [
+    'caches.injectMetroStore',
+    { caches: { injectMetroStore: false } },
+    'Run `stim settings set optimizations.metroSharedCache false --scope machine`',
+  ],
+])('%s names the setting that replaced it', (key, settings, remedy) => {
+  const [finding] = check(settings);
+  expect(finding?.fix).toBe(`${remedy}, then remove ${key} from ${MACHINE}.`);
 });
 
 test('STIM_REMOTE_BUILD_MODE in the environment is reported with its replacement', () => {
@@ -164,6 +170,7 @@ describe('against a config file on disk', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     delete process.env.STIM_HOME;
     if (savedToolchain === undefined) delete process.env.STIM_ANDROID_CAS_TOOLCHAIN;
     else process.env.STIM_ANDROID_CAS_TOOLCHAIN = savedToolchain;
@@ -175,12 +182,20 @@ describe('against a config file on disk', () => {
     writeFileSync(join(home, 'config.json'), JSON.stringify(config));
   }
 
-  test('maintenance.idleStopHours 0, a current setting, never makes a governed command refuse', () => {
-    writeConfig({ version: 2, projects: {}, repos: {}, maintenance: { idleStopHours: 0 } });
-    expect(leftoverOffRefusal('gc', project, {})).toBeNull();
-    writeConfig({ version: 2, projects: {}, repos: {}, maintenance: { idleStopHours: 0, mode: 'off' } });
-    expect(leftoverOffRefusal('gc', project, {})?.message).toMatch(/^maintenance\.mode "off" in /);
-  });
+  test.each(['STIM_MAX_BUILDS', 'STIM_MAX_IOS_DEVICES'])(
+    'doctor reports invalid %s instead of rejecting',
+    async (variable) => {
+      vi.stubEnv(variable, 'bogus');
+      const findings = await runDoctor(project);
+      expect(findings).toContainEqual(
+        expect.objectContaining({
+          level: 'cost',
+          detail: `Invalid ${variable} value "bogus". Expected a whole number, 0 or more.`,
+          fix: expect.stringContaining('unset the environment variable'),
+        }),
+      );
+    },
+  );
 
   test('a remote.build hand-edited into the machine config to an invalid value reaches doctor', async () => {
     writeConfig({ version: 2, repos: {}, projects: {}, remote: { build: 'bad word' } });

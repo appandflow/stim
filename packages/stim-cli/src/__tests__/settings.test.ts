@@ -178,7 +178,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'android.systemImage': { valid: 'system-images;android-36;google_apis;arm64-v8a', invalid: {}, expected: 'a string' },
   'android.deviceProfile': { valid: 'pixel_fold', invalid: 7, expected: 'a string' },
   'android.installImages': { valid: 'never', invalid: 'always', expected: 'one of: auto, never' },
-  'android.dataPartitionSizeGb': { valid: 8, invalid: '8', expected: 'a number' },
+  'android.dataPartitionSizeGb': { valid: 8, invalid: '8', expected: 'a whole number from 6 through 16384' },
   'android.avdConfigFile': { valid: 'avd/config.ini', invalid: {}, expected: 'a string path' },
   'android.avdConfig': { valid: { 'hw.ramSize': 4096 }, invalid: 'hw.ramSize=4096', expected: 'an object' },
   'android.gradleRoot': { valid: '../..', invalid: {}, expected: 'a string path' },
@@ -268,6 +268,13 @@ test('every known setting has a shape, and a wrong-typed value is one refusal na
     expect(unknownSettingKeys(nestedSetting(key, shapeCase.invalid))).toEqual([]);
     expect(unknownSettingKeys(nestedSetting(key, shapeCase.valid))).toEqual([]);
   }
+});
+
+test.each([
+  ['ios.signingIdentitySha1', ` ${'A'.repeat(40)} `],
+  ['ios.lanHost', ' 192.168.1.42 '],
+])('shape validation accepts surrounding spaces supported by %s', (key, value) => {
+  expect(settingShapeErrors(nestedSetting(key, value))).toEqual([]);
 });
 
 test('unknownSettingKeys tolerates empty and malformed input', () => {

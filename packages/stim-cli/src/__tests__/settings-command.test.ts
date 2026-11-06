@@ -230,6 +230,16 @@ test('get of the removed remote.buildMode points at remote.build', async () => {
   expect(note.join('\n')).toContain('was replaced by remote.build');
 });
 
+test('unset of maintenance.idleStopHours removes the still-active machine setting', async () => {
+  saveConfig({ version: 2, projects: {}, repos: {}, maintenance: { idleStopHours: 0 } });
+
+  const { out, exitCode } = await settings(['unset', 'maintenance.idleStopHours', '--scope', 'machine', '--json']);
+
+  expect(exitCode).toBe(0);
+  expect(JSON.parse(out[0] ?? '')).toMatchObject({ key: 'maintenance.idleStopHours', scope: 'machine', changed: true });
+  expect(loadConfig()?.maintenance ?? {}).not.toHaveProperty('idleStopHours');
+});
+
 test('unset of the removed remote.buildMode removes it from every layer that has it', async () => {
   const machine = join(home, 'config.json');
   writeFileSync(

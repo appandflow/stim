@@ -1,4 +1,4 @@
-import { loadConfig, removedEnvironment, settingDefinition, type Config, type DaemonMode } from '@stim-cli/core/state';
+import { loadConfig, REMOVED_SETTINGS, settingDefinition, type Config, type DaemonMode } from '@stim-cli/core/state';
 
 const MODE = settingDefinition('daemon.mode');
 
@@ -62,7 +62,9 @@ export function removedEnvironmentRefusal(
   env: NodeJS.ProcessEnv = process.env,
 ): { code: 'STIM_BAD_ARG'; message: string; remedy: string } | null {
   if (!GOVERNED_COMMANDS.has(command)) return null;
-  const found = removedEnvironment(env).filter(({ replaced }) => replaced.refuses);
+  const found = [...REMOVED_SETTINGS].flatMap(([key, replaced]) =>
+    replaced.refuses && replaced.env && env[replaced.env]?.trim() ? [{ key, env: replaced.env, replaced }] : [],
+  );
   if (!found.length) return null;
   const replaced = found.map(({ key, env: name, replaced: entry }) => {
     const target = entry.key ? settingDefinition(entry.key) : null;
