@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { installServer } from '@stim-cli/server/release-install';
+import { readManifest } from '../engine-store/store.ts';
 import { fetchTree, removeTree, scratchName, seal, selfTest } from '../engine-store/tree.ts';
 
 /** Where an offload job's build comes from: an npm release, or a directory holding the client's packed `.tgz`. */
@@ -16,7 +17,7 @@ export type JobSource = { release: string } | { from: string };
 export async function installJobBuild(root: string, build: string, source: JobSource): Promise<string> {
   const staging = join(root, scratchName());
   const scratch = join(staging, scratchName());
-  mkdirSync(staging);
+  mkdirSync(staging, { recursive: true });
   try {
     if ('release' in source) {
       try {
@@ -46,11 +47,15 @@ export async function installJobBuild(root: string, build: string, source: JobSo
     if (!existsSync(join(root, build))) {
       const { mode } = statSync(tree);
       chmodSync(tree, mode | 0o200);
-      renameSync(tree, join(root, build));
-      chmodSync(join(root, build), mode);
+      try {
+        renameSync(tree, join(root, build));
+        chmodSync(join(root, build), mode);
+      } catch (error) {
+        if (!readManifest(join(root, build))) throw error;
+      }
     }
     return sealed;
   } finally {
-    removeTree(staging);
+    if (existsSync(staging)) removeTree(staging);
   }
 }
