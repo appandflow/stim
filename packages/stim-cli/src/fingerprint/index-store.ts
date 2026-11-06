@@ -151,12 +151,18 @@ function locateValue(value: unknown, roots: Roots): unknown {
   return value;
 }
 
-/** The record of one path as it is now, or null when it changed during the computation that started at `since`. */
+/**
+ * The record of one path as it is now, or null when it changed during the computation that started at `since`, or is
+ * gone although the computation read it. A module with no file (one a loader compiled in memory) is recorded absent
+ * when its directory did not change during the computation.
+ */
 export function takeRead(path: string, kind: ReadKind, roots: Roots, since: bigint, hash?: string | null): Read | null {
   if (kind === 'present' || kind === 'absent') return { path: relocate(path, roots), kind };
   const target = kind === 'package' ? join(path, 'package.json') : path;
   const stat = statKey(target);
-  if (stat && (racy(stat.mtime, since) || racy(stat.ctime, since))) return null;
+  const parent = stat ? null : statKey(join(target, '..'));
+  if (!stat && kind !== 'package' && (kind !== 'module' || !parent)) return null;
+  if ([stat, parent].some((info) => info && (racy(info.mtime, since) || racy(info.ctime, since)))) return null;
   const read: Read = { path: relocate(path, roots), kind, stat: stat?.key ?? null };
   if (kind === 'dir') read.hash = hash ?? null;
   else if (stat) {

@@ -765,7 +765,7 @@ export async function fingerprint(
   const project = realpathSync.native(root);
   const roots: Roots = { project, install: installRoot(project) };
   const session =
-    opts.index === 'skip'
+    opts.index === 'skip' || !existsSync(join(SHIMS, 'fp-trace.cjs'))
       ? null
       : new IndexSession(
           indexDir(target.platform, project, targetLayout(target)),

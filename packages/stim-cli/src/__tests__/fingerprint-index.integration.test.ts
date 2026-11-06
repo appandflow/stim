@@ -135,11 +135,13 @@ function corruptRecord(root: string): void {
 describe('recorded reads', () => {
   const roots = () => ({ project: base, install: base });
 
-  test('a file written during the computation is not recorded, and one written before it is', () => {
+  test('a file written during the computation or gone since is not recorded, and one written before it is', () => {
     const file = join(base, 'a.txt');
     write(file, 'one');
     expect(takeRead(file, 'file', roots(), nowNs())).toBeNull();
     expect(takeRead(file, 'file', roots(), nowNs() + LATER)).toMatchObject({ kind: 'file', path: 'p:a.txt' });
+    rmSync(file);
+    expect(takeRead(file, 'file', roots(), nowNs() + LATER)).toBeNull();
   });
 
   test('a rewrite with the old mtime fails by ctime, and a same-bytes replacement holds by content only', () => {
