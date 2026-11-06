@@ -269,13 +269,13 @@ describe.each(['build', 'device-host'] as const)('%s approval', (capability) => 
   it('grants access only through setup, never through pair or devices grant', () => {
     const result = plain('pair', `--${capability}`, '--port', '17787');
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain(`--${capability} applies only to \`stim-server setup\``);
+    expect(result.stderr).toContain(`--${capability} applies only to \`stim setup\``);
     expect(readdirSync(home)).not.toContain('server');
     const id = setupClient([capability]).records[capability]!.id;
     expect(plain('devices', 'rename', id, 'Renamed').status).toBe(0);
     const granted = plain('devices', 'grant', id, `--${capability}`);
     expect(granted.status).toBe(1);
-    expect(granted.stderr).toContain('stim-server setup');
+    expect(granted.stderr).toContain('stim setup');
     expect(plain('devices', 'grant', id, '--control').status).toBe(1);
     expect(plain('devices', 'revoke', id).status).toBe(0);
     expect((run('devices', '--json') as { devices: unknown[] }).devices).toEqual([]);

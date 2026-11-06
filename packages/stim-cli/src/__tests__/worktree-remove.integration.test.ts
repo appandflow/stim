@@ -1466,7 +1466,7 @@ const systemdUnit = (
   label: string,
   script: string,
   managed: boolean,
-) => `# Written by \`stim-server service install\`; change it with \`stim-server service\`.
+) => `# Written by \`stim service install\`; change it with \`stim service\`.
 [Unit]
 Description=stim-server (${label})
 
@@ -1479,7 +1479,7 @@ ${managed ? '\n[X-Stim]\nManaged=true\n' : ''}
 WantedBy=default.target
 `;
 
-describe('stim-server service guard for systemd user units', () => {
+describe('stim service guard for systemd user units', () => {
   const identity = (path: string) => path;
   test.each([
     {
@@ -1548,9 +1548,9 @@ test.skipIf(process.platform !== 'linux')(
   30_000,
 );
 
-describe.skipIf(process.platform !== 'darwin')('stim-server service guard', () => {
+describe.skipIf(process.platform !== 'darwin')('stim service guard', () => {
   test.each([
-    { name: 'a stim-server service script inside the worktree refuses removal, even with --force', marked: true },
+    { name: 'a stim service script inside the worktree refuses removal, even with --force', marked: true },
     { name: 'a LaunchAgent that stim-server did not install does not block removal', marked: false },
   ])(
     'against a real repo: $name',

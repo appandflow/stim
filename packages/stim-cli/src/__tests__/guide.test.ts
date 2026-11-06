@@ -496,7 +496,7 @@ test('emulator boot guidance routes the emulator viewer preference to the settin
   expect(renderTopic('lifecycle')).toContain('androidEmulatorApp');
 });
 
-test('the settings topic documents every stim-server setup finding code doctor reports', () => {
+test('the settings topic documents every stim setup finding code doctor reports', () => {
   const body = renderTopic('settings');
   for (const code of SERVER_FINDING_CODES) expect(body).toContain(code);
 });
@@ -1025,13 +1025,13 @@ test('hosting setup routes approval through doctor and a separate person-granted
   expect(settings).toContain('remote.machines');
   expect(settings).toContain('doctor --fix');
   expect(settings).toContain('STIM_SETUP_TICKET');
-  expect(settings).toContain('stim-server setup');
-  expect(renderTopic('agent')).toMatch(/Agents never run stim-server setup and never approve access requests/);
+  expect(settings).toContain('stim setup');
+  expect(renderTopic('agent')).toMatch(/Agents never run stim setup and never approve access requests/);
   expect(settings).toContain('$STIM_HOME/device-host-machines.json');
   expect(renderSection('facts', 'payloads')).toContain('deviceHosts');
 });
 
-test('the guides name the connection fields of stim-server devices and stim remote list, and rename', () => {
+test('the guides name the connection fields of stim pairings and stim remote list, and rename', () => {
   const lifecycle = renderSection('lifecycle', 'hosted-ios');
   for (const term of [
     'kind',
@@ -1041,7 +1041,7 @@ test('the guides name the connection fields of stim-server devices and stim remo
     'theirs-running-here',
     'clientApp',
     'desktop',
-    'stim-server devices rename',
+    'stim pairings rename',
   ])
     expect(lifecycle).toContain(term);
   const settings = renderTopic('settings');
@@ -1056,7 +1056,7 @@ test('access ticket guidance routes agents to settings and reserves setup for a 
     const body = renderTopic(topic);
     expect(body).toContain(env);
     expect(body).toMatch(/Agents never set/i);
-    expect(body).toContain('stim-server setup');
+    expect(body).toContain('stim setup');
     expect(body).toMatch(/never approve requests|or approve requests/);
   }
   expect(renderTopic('agent')).toContain('stim guide settings');
@@ -1072,7 +1072,7 @@ test('agents tell the user about remote machines and the phone app and never set
   }
   const settings = renderTopic('settings');
   assert(settings);
-  expect(settings.replace(/\s+/g, ' ')).toContain('never run `stim-server setup`');
+  expect(settings.replace(/\s+/g, ' ')).toContain('never run `stim setup`');
 });
 
 test('the macos guide covers the declared command flags and project settings', () => {

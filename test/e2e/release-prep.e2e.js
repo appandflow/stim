@@ -9,20 +9,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
 const SCRIPT = join(REPO, 'scripts', 'release-prep.mjs');
-const PACKAGE_DIRS = [
-  'core',
-  'cache',
-  'cache-s3',
-  'agent-driver',
-  'agent-driver-agent-device',
-  'metro',
-  'stim-cli',
-  'ci',
-  'transport',
-  'transport-tailscale',
-  'transport-local',
-  'server',
-];
+const PACKAGE_DIRS = ['stim-cli', 'cache-s3'];
 const EXACT_RANGE = 'workspace:*';
 
 const manifestIn = (root, dir) => join(root, 'packages', dir, 'package.json');
@@ -36,9 +23,6 @@ const runPrep = (root, ...args) =>
     env: { ...process.env, RELEASE_PREP_ROOT: root, RELEASE_PREP_SKIP_LICENSES: '1' },
   });
 
-// A workspace pnpm can resolve without the network: every importer the lockfile
-// names, and no dependency versions to re-resolve because the internal edges are
-// `workspace:` ranges and `link:` targets.
 const makeWorkspace = () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-release-prep-'));
   for (const file of ['pnpm-workspace.yaml', 'pnpm-lock.yaml']) cpSync(join(REPO, file), join(root, file));
@@ -51,6 +35,18 @@ const makeWorkspace = () => {
     mkdirSync(join(root, 'packages', dir), { recursive: true });
     cpSync(join(REPO, 'packages', dir, 'package.json'), manifestIn(root, dir));
   }
+  mkdirSync(join(root, 'packages/core/state'), { recursive: true });
+  writeFileSync(join(root, 'packages/core/state/release-floors.json'), '{"oneEngine":null}\n');
+  const corePath = manifestIn(root, 'core');
+  const core = readManifest(root, 'core');
+  core.scripts.build = `node -e "require('fs').mkdirSync('dist', {recursive:true}); require('fs').copyFileSync('state/release-floors.json', 'dist/release-floors.json')"`;
+  writeFileSync(corePath, `${JSON.stringify(core, null, 2)}\n`);
+  mkdirSync(join(root, '.github/actions/stim-ci/dist'), { recursive: true });
+  writeFileSync(join(root, '.github/actions/stim-ci/dist/main.mjs'), 'unpinned');
+  const actionPath = join(root, '.github/actions/stim-ci/package.json');
+  const action = JSON.parse(readFileSync(actionPath, 'utf8'));
+  action.scripts.build = `node -e "require('fs').copyFileSync('../../../packages/core/dist/release-floors.json', 'dist/main.mjs')"`;
+  writeFileSync(actionPath, `${JSON.stringify(action, null, 2)}\n`);
   const rootManifest = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8'));
   delete rootManifest.scripts.preinstall;
   writeFileSync(join(root, 'package.json'), `${JSON.stringify(rootManifest, null, 2)}\n`);
@@ -91,9 +87,9 @@ test('the published packages share one version and only workspace:* ranges', () 
 test('--check refuses an internal range that is not workspace:*', () => {
   withWorkspace((root) => {
     for (const range of ['^1.0.0', 'workspace:^']) {
-      const core = readManifest(root, 'core');
+      const core = readManifest(root, 'stim-cli');
       core.devDependencies = { ...core.devDependencies, stim: range };
-      writeFileSync(manifestIn(root, 'core'), `${JSON.stringify(core, null, 2)}\n`);
+      writeFileSync(manifestIn(root, 'stim-cli'), `${JSON.stringify(core, null, 2)}\n`);
 
       const result = runPrep(root, '--check');
       assert.equal(result.status, 1, result.stdout);
@@ -104,7 +100,8 @@ test('--check refuses an internal range that is not workspace:*', () => {
 
 test('a bump rewrites every published version and leaves the lockfile alone', () => {
   withWorkspace((root) => {
-    const before = readManifest(root, 'core').version;
+    const before = readManifest(root, 'stim-cli').version;
+    const privateBefore = readManifest(root, 'core').version;
     const lockBefore = readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8');
 
     const result = runPrep(root, '99.0.0');
@@ -114,6 +111,7 @@ test('a bump rewrites every published version and leaves the lockfile alone', ()
       Array.from({ length: PACKAGE_DIRS.length }, () => '99.0.0'),
     );
     assert.notEqual(before, '99.0.0');
+    assert.equal(readManifest(root, 'core').version, privateBefore);
 
     const cli = readManifest(root, 'stim-cli');
     assert.equal(cli.devDependencies['@stim-cli/core'], 'workspace:*', 'the bump must not touch the ranges');
@@ -179,20 +177,24 @@ test('pnpm pack ships the CLI without private workspace runtime dependencies', (
   }
 });
 
-test('the packed CI runner depends on the exact matching Stim version', () => {
-  const out = mkdtempSync(join(tmpdir(), 'stim-ci-pack-'));
-  try {
-    const packed = execFileSync('pnpm', ['pack', '--pack-destination', out], {
-      cwd: join(REPO, 'packages', 'ci'),
-      encoding: 'utf8',
-    })
-      .trim()
-      .split('\n')
-      .at(-1);
-    const shipped = JSON.parse(execFileSync('tar', ['-xzOf', packed, 'package/package.json'], { encoding: 'utf8' }));
-    assert.equal(shipped.dependencies.stim, readManifest(REPO, 'stim-cli').version);
-    assert.equal(JSON.stringify(shipped).includes('workspace:'), false);
-  } finally {
-    rmSync(out, { recursive: true, force: true });
-  }
+test('release floors reject patches, stay unpinned for candidates, and pin once at a stable minor', () => {
+  withWorkspace((root) => {
+    const floorPath = join(root, 'packages/core/state/release-floors.json');
+    const bundlePath = join(root, '.github/actions/stim-ci/dist/main.mjs');
+    const floors = () => JSON.parse(readFileSync(floorPath, 'utf8'));
+    const before = versionsIn(root);
+    const patch = runPrep(root, '99.0.1');
+    assert.equal(patch.status, 1);
+    assert.match(patch.stderr, /patch cannot ship pending release floors/);
+    assert.deepEqual(versionsIn(root), before);
+    assert.equal(floors().oneEngine, null);
+    assert.equal(runPrep(root, '99.0.0-rc.1').status, 0);
+    assert.equal(floors().oneEngine, null);
+    assert.equal(readFileSync(bundlePath, 'utf8'), 'unpinned');
+    assert.equal(runPrep(root, '99.0.0').status, 0);
+    assert.equal(floors().oneEngine, '99.0.0');
+    assert.deepEqual(JSON.parse(readFileSync(bundlePath, 'utf8')), floors());
+    assert.equal(runPrep(root, '99.0.1').status, 0);
+    assert.equal(floors().oneEngine, '99.0.0');
+  });
 });

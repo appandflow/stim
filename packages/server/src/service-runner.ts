@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 /**
- * The Windows supervisor of `stim-server service`. It imports nothing but Node, so `install` can copy this one file
+ * The Windows supervisor of `stim service`. It imports nothing but Node, so `install` can copy this one file
  * beside the service and it keeps working whatever server version the service runs.
  */
 export interface SupervisorState {

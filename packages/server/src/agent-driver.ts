@@ -171,7 +171,7 @@ export class HostedAgentHost {
   private reason(error: unknown): string {
     if (error instanceof AgentDriverUnavailable) return error.message;
     process.stderr.write(`Hosted agent driver failed: ${(error as Error).message}\n`);
-    return 'Agent control failed to start on the hosting Mac. Check its stim-server log.';
+    return 'Agent control failed to start on the hosting Mac. Check its server log.';
   }
 
   appStopped(session: string, device?: string | { serial: string; avdName: string }): Promise<void> {

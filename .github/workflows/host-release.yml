@@ -151,7 +151,7 @@ jobs:
             flags="--latest=false"
             case "$VERSION" in *-*) flags="$flags --prerelease" ;; esac
             gh release create "$GITHUB_REF_NAME" --verify-tag $flags --title "Stim Host $VERSION" \
-              --notes "The signed launcher that \`stim-server service install\` installs on hosting Macs. \`SHA256SUMS\` lists the checksum that @stim-cli/server pins."
+              --notes "The signed launcher that \`stim service install\` installs on hosting Macs. \`SHA256SUMS\` lists the checksum that stim pins."
           fi
           gh release upload "$GITHUB_REF_NAME" "$out/StimHost-$VERSION.zip" "$out/SHA256SUMS"
           cat "$out/SHA256SUMS"

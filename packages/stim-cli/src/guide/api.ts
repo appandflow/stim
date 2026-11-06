@@ -200,7 +200,7 @@ whether or not the install is skipped, on a local simulator or emulator only: a
 run placed on another machine or on EAS is not cleaned. Both refuse device, and
 cleanAppState refuses a local simulator or emulator Stim does not own, with
 STIM_BAD_ARG.
-@stim-cli/ci sets both; the CLI and the private Desktop transport set neither.
+stim ci sets both; the CLI and the private Desktop transport set neither.
 Web requires a running server, just like stim web.
 
 build produces an artifact without acquiring a device, starting a runtime, or
@@ -233,7 +233,7 @@ Copy or export a result you need to keep before the next build. easProfile downl
 completed EAS development build instead of compiling; it never starts an EAS build.
 A build leaves a running app's last build record and build log untouched; it
 writes its own build-artifact-<platform>.ndjson. No distribution archive or web build
-pipeline is inferred. Use @stim-cli/ci's buildCI to record the build and, with exportPath, export a portable artifact for your CI provider.
+pipeline is inferred. Use buildCI from stim/ci to record the build and, with exportPath, export a portable artifact for your CI provider.
 
 Unresolved native Metro cleanup keeps error.details.cause.retainedClaimRoots and
 STIM_CLAIM_UNAVAILABLE even after cancellation. Web cancellation stops pending

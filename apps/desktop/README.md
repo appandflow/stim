@@ -286,12 +286,12 @@ paired phone gets the flag on at first launch with flags. The phone app is docum
 `website/docs/phone-app.md`.
 
 **Settings > Connections > This machine uses** lists this machine's pairings with other machines'
-stim-servers and opens **Add... > View or Control Its Work...**, which takes the output of `stim-server pair` (the bare JSON or the
+stim-servers and opens **Add... > View or Control Its Work...**, which takes the output of `stim pair` (the bare JSON or the
 `{ qr, expiresAt }` form of `--json`). `PairedServers` (StimKit) holds the list and the pairing in progress: one
 `ServerClient` per pairing while Desktop runs, reporting the connection and recording each `hello` back to the store, and one
 pairing at a time. Items live in the data-protection Keychain, one per pairing, and an ad-hoc copy
 keeps them in memory only. An item that cannot be decoded shows as unreadable with Remove. Remove deletes the key
-and shows `stim-server devices revoke <id>`; it does not revoke on the machine. A key the Keychain cannot read
+and shows `stim pairings revoke <id>`; it does not revoke on the machine. A key the Keychain cannot read
 right now is tried again, not reported as revoked.
 
 `PairedServerSessions` wraps each of those clients in a `ServerSession` (owner `.paired(<pairing id>)`), so a pairing
@@ -1195,7 +1195,7 @@ Paths longer than macOS's 103-byte limit use
 0600 in a 0700 directory, so only your user can connect, and the server gives
 that connection every local capability without pairing or a token. The app names
 itself "Stim Desktop", or "Stim Dev" for a Stim Dev build (see
-[Build the app](#build-the-app)), and is not listed in `stim-server devices`. A
+[Build the app](#build-the-app)), and is not listed in `stim pairings`. A
 stim-server older than protocol 2 has no socket; the app does not connect to it
 and says to update it.
 
@@ -1280,10 +1280,9 @@ ended), Control turns off and the tile says why.
 
 Desktop runs a local `stim-server` while it is open; there is no switch. The app
 bundles it: `Contents/Resources/stim-server` holds a pinned official Node.js LTS
-(universal, `strip -x`, signed with the hardened runtime) and `@stim-cli/server` with the `stim`
-packages it runs, so the server always matches the app and needs no global install,
+(universal, `strip -x`, signed with the hardened runtime) and the bundled `stim` engine, so the server always matches the app and needs no global install,
 Node version manager or login shell to start. A Mac that serves without Desktop, such
-as a build worker, still installs `@stim-cli/server` from npm. Replay, the diff viewer, archived logs, hosted app and simulator
+as a build worker, still installs `stim` from npm. Replay, the diff viewer, archived logs, hosted app and simulator
 views and device recordings all read from it. At launch the app checks
 `http://127.0.0.1:7787/health`. When a server answers, the app uses it if
 Desktop uses the default home or the server serves Desktop's resolved
@@ -1291,9 +1290,9 @@ home. When a different explicit Stim home needs its own loopback-only server,
 Desktop lets the OS choose a free port instead; hosted test copies use this path.
 An explicit `-stimServerPort <port>` or serving phones keeps the selected port
 and reports a home mismatch. A server the app did not start, such as the
-`stim-server service` LaunchAgent on a Mac that hosts for others, is never stopped
+`stim service` LaunchAgent on a Mac that hosts for others, is never stopped
 or reconfigured and keeps running after the app quits. If no server answers, the app runs
-`stim-server --port 7787 --loopback-only`, which listens on `127.0.0.1` and never on
+`stim serve --port 7787 --loopback-only`, which listens on `127.0.0.1` and never on
 a Tailscale address, and stops it with SIGTERM when the app quits, followed by SIGKILL
 if it has not exited after 3 seconds. A
 killed server leaves its `stim status --watch` child running until that child's
@@ -1312,9 +1311,7 @@ interrupts. `--loopback-only` removes the server's own Tailscale listeners and m
 request that a `tailscale serve --https` route forwards to the port, so paired phones and other
 Macs cannot reach it; Desktop never removes or edits the route. Turning **Allow connections** off restarts the
 server Desktop started in loopback-only mode, which disconnects paired phones and machines until
-connections are allowed again. The bundled server runs unless you choose another `stim-server` in
-**Settings > Advanced**, such as a checkout's build; a build without the bundle, such as a
-`stim macos` copy or `swift run`, finds `stim-server` on the login shell's `PATH`. When
+connections are allowed again. Desktop runs the server from its bundled `stim` engine. When
 no server answers, Desktop starts the bundled server at once with the launch environment,
 the Stim home and the environment overrides from **Settings > Advanced > Environment**
 (see [Environment](#environment)); the server discovers the toolchain for the commands it
@@ -1327,7 +1324,7 @@ the Mac's own server. While a server runs, **Settings > Connections > Using this
 seconds and the app every 10 seconds while it is active, otherwise every 60
 seconds. When a server the app adopted misses two checks in a row, the app shows it as
 degraded and keeps checking: it never starts its own server onto that port while the adopted
-server is gone, so a `stim-server service` LaunchAgent that restarts, updates or crashes keeps
+server is gone, so a `stim service` LaunchAgent that restarts, updates or crashes keeps
 its port. The message names the `dev.stim.server` LaunchAgent when its plist is installed for this
 user. The app starts its own server only when it adopted none, no server answers on the port and nothing holds it:
 at launch, or later once a port a program that is not a stim-server held at launch is free. To use Desktop's own server instead, stop the adopted one and reopen Stim
@@ -1341,7 +1338,7 @@ has adopted a server started with another home. Those phones stop working once S
 serves `~/.stim` again.
 
 A stim-server that already answers on the port with a matching Stim home, such as
-the LaunchAgent that `stim-server setup` or `stim-server service install` creates, is
+the LaunchAgent that `stim setup` or `stim service install` creates, is
 adopted as not started by the app, whatever **Allow connections** says, so build and
 device-host requests from other Macs reach the Allow / Deny dialog. If Desktop's own
 server fails and a LaunchAgent server comes up, the next retry (every 30 seconds or
@@ -1353,7 +1350,7 @@ over TCP gets none (a network connection never receives them). Only the bundled 
 server older than Desktop, or one another Stim Desktop started, offers no actions: each of them
 refuses with that reason. Approving another machine's build or device-host request in Desktop still
 needs the bundled server's private key, so against an adopted server that sheet refuses and
-points to `stim-server setup` in Terminal. A server with another Stim
+points to `stim setup` in Terminal. A server with another Stim
 home is not adopted: the sidebar footer
 shows the mismatch and Desktop keeps retrying. Before its environment is ready, Desktop
 adopts a ready server provisionally when the Stim home it runs with would adopt it, so the
@@ -1384,7 +1381,7 @@ including non-ignored `.env` files. A phone allowed to control
 can also drive simulators and emulators and run reload and stop.
 An iPhone that turns on notifications gets push notifications from the server
 while **Allow connections** is on, even when the app on the phone is closed; see
-[Push notifications](../../packages/server/README.md#push-notifications).
+[Push notifications](../../website/docs/phone-app.md#notifications).
 
 **Add... > Pair a Phone...** in **Settings > Connections > Using this machine** opens a five-step wizard: get the apps, connect Tailscale,
 allow connections, scan a code, and see the paired phone. It is also available
@@ -1397,7 +1394,7 @@ The installation step shows branded QR codes and App Store actions for Stim Mobi
 and Tailscale. Stim Mobile's destination uses its reserved Apple app ID; the public
 listing is not available yet.
 
-Codes come from `stim-server pair --json`, with `--control` for **View and
+Codes come from `stim pair --json`, with `--control` for **View and
 control** (the default). Each single-use code expires after five minutes; the
 wizard replaces expired codes automatically up to three times, then offers
 **Show a New Code**. Changing access generates a new code; the previous code
@@ -1407,8 +1404,7 @@ waits for the phone and shows its name and access on the success screen.
 
 Paired phones are listed in **Settings > Connections**, described in
 [Connections](#connections). **Settings > Advanced** holds **Record device screens for replay** and a **stim-server**
-section with the server's status, **Try Again** after a failure and the
-executable override.
+section with the server's status and **Try Again** after a failure.
 
 When Tailscale runs, the wizard's **Allow Connections** step (or **Set Up** next to a
 missing route in Settings > Connections) configures and verifies a dedicated
@@ -1433,27 +1429,27 @@ server listens on the tailnet, with a one-line warning when Tailscale is off, th
 connections are off while records exist. **Fix...** opens the phone wizard at its Tailscale step when the Phone app flag
 is on; without it, a missing route offers **Set Up**, which sends `route.setup`. **Keep this machine awake** shows only
 when `stim settings` lists `server.keepAwake`, and writes it at machine scope. `Connections.incoming` (StimKit) groups
-the records of `stim-server devices --json` by `keyFingerprint`, so a machine approved for builds and hosting is one row
-with **Build** and **Run devices**. A row shows the name, **Device** for a `stim-server pair` pairing (a phone or another
+the records of `stim pairings --json` by `keyFingerprint`, so a machine approved for builds and hosting is one row
+with **Build** and **Run devices**. A row shows the name, **Device** for a `stim pair` pairing (a phone or another
 machine's Desktop; until servers report `kind: desktop` the two cannot be told apart) or **Machine**, last connected,
 the access pills and **Revoke Access...**, which revokes every record of the key. Its menu holds **Change Access**
-(**View** or **Control**, through `stim-server devices grant`, for the pairing record only), **Rename...**
-(`stim-server devices rename <id> <name>` for every record of the row) and each record id. Every record that can
+(**View** or **Control**, through `stim pairings grant`, for the pairing record only), **Rename...**
+(`stim pairings rename <id> <name>` for every record of the row) and each record id. Every record that can
 connect is listed whatever the Phone app flag says; the flag hides only **Add... > Pair a Phone...** and the phone
 wizard. **Revoke Access...** revokes the records one after another and keeps the first failure shown. **Share links**
 and **Running here** follow.
 
 **Add... > Machine to Build or Run Simulators Here...** opens the approval sheet (`ApproveMachineSheet`). It shows
-`stim remote add <this machine>` for the other machine and a field for the `stim-server setup` command that machine
+`stim remote add <this machine>` for the other machine and a field for the `stim setup` command that machine
 prints. `SetupRequest.parse` (StimKit) reads the ticket, `--expires`, `--build` and `--device-host` and refuses any other
 option, which still needs a terminal. **Continue** sends `desktop.setup.subscribe` on the proved bundled-server
 connection, and the server runs the same setup in process. Each grant shows **Allow** and **Don't Allow**, answered
-with `desktop.setup.answer` naming that capability; a missing macOS permission shows **Skip**, naming that permission. When Desktop uses a server it did not start, or a `stim-server service` is installed, the request is refused with a pointer to Terminal, since this path never installs or changes a service. The sheet then waits for the requesting machine
+with `desktop.setup.answer` naming that capability; a missing macOS permission shows **Skip**, naming that permission. When Desktop uses a server it did not start, or a `stim service` is installed, the request is refused with a pointer to Terminal, since this path never installs or changes a service. The sheet then waits for the requesting machine
 to connect; closing it withdraws the request. It ends on the confirmation screen. **Add... > Share Link...** still
 explains where shares start, because a share needs a running device.
 
 Every Add path ends on `ConnectionConfirmationView`: the name, the direction (**Using this machine** or **This machine
-uses**), the access pills and where to revoke it, with the `stim-server devices revoke` commands. Outgoing paths say that
+uses**), the access pills and where to revoke it, with the `stim pairings revoke` commands. Outgoing paths say that
 removing the connection here forgets it here only. The phone wizard, **Pair with a Machine**, the remote machine
 wizard's Done step and the approval sheet use it.
 
@@ -1467,7 +1463,7 @@ the Keychain pairing whose id equals the entry's `serverKeyFingerprint` from the
 then the pairings no entry shares, including unreadable ones. Without that report, from
 an older server, entries and pairings stay separate rows. Doctor's states win over the report's. Access pills come from
 the pairing's capabilities and the approved build and device-host states. **Remove...** opens one sheet that removes
-the entry from `remote.machines`, forgets the pairing, and lists the `stim-server devices revoke <id>` commands to run
+the entry from `remote.machines`, forgets the pairing, and lists the `stim pairings revoke <id>` commands to run
 on that machine: the report's `revoke`, the doctor `deviceId`s and the pairing's device id.
 
 `BuildMachineStatus.State` maps every state `stim remote list --json` and `stim doctor --json` emit to a title, tone and
@@ -1506,7 +1502,7 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
      offline-only hint consider the other peers.
 2. **What it does.** Builds and Hosted simulators checkboxes and the animated
    preview of what setup will do. Both can be off. Then Next is disabled and
-   the preview holds only `$ stim-server setup` and a cursor. A Linux or Windows machine
+   the preview holds only `$ stim setup` and a cursor. A Linux or Windows machine
    gets Builds only (Android Debug builds); Hosted simulators is disabled with
    its reason, and the preview names a systemd user service (Linux) or a
    scheduled task (Windows) and no Stim Host.
@@ -1612,13 +1608,13 @@ recorded in the setup journal appear.
 
 **Remove...** in Connections takes the Mac out of `remote.machines` and forgets a
 pairing that shares its server key. Its sheet shows what to run on that machine, since
-removing it here never revokes this machine there: `stim-server devices revoke <id>` for
-this machine's build, hosting and pairing records, and `stim-server service uninstall`. It
+removing it here never revokes this machine there: `stim pairings revoke <id>` for
+this machine's build, hosting and pairing records, and `stim service uninstall`. It
 also says that an `ios.remote` or `android.remote` naming the Mac needs
 changing.
 
 Another Mac on the tailnet can build for this one once a person on it approves
-this Mac (see [Build access](../../packages/server/README.md#build-access)).
+this Mac (see [Build access](../../website/docs/remote-machines.md)).
 
 On the Mac that wants to build elsewhere, **Stim > Settings > Connections > This machine uses**
 is a list of the entries of the `remote.machines` machine setting, in that order.
@@ -1803,11 +1799,11 @@ local disk cleanup actions.
 ### Using this machine
 
 The Remote Machines list is the **This machine uses** segment of
-[Connections](#connections). Machines approved with `stim-server setup` on this machine
+[Connections](#connections). Machines approved with `stim setup` on this machine
 to build here or to host simulator and emulator sessions here are listed with the
 phones under **Using this machine**, one row per client key, with **Build** and
 **Run devices** in the warning color and **Revoke Access...**, which runs
-`stim-server devices revoke <id>` for every record of the key. A device-host
+`stim pairings revoke <id>` for every record of the key. A device-host
 approval grants no read, control or build access, and does not start a device.
 **Running here** lists the simulators, emulators and apps those machines run on
 this Mac, with the client, device, app, state and session age. **Stop** asks for
@@ -2043,8 +2039,7 @@ The setup guide still checks `stim --version` on its discovered PATH to offer
 optional agent CLI installation and updates. It resolves package ownership through
 symbolic links and pnpm shims, then uses that package manager's global install
 command. An installation outside those global directories gets no update button.
-`stim-server` ships inside the app; an override in **Settings > Advanced** is
-still installed and updated with npm.
+`stim serve` ships inside the app and updates with Stim Desktop.
 
 Once a day, and at launch, the app also reads the
 `latest` version of `stim` from `registry.npmjs.org/stim/latest`; it skips the
@@ -2057,9 +2052,7 @@ command as **Update stim**. It only notifies: nothing updates in the
 background, because replacing `stim` while agents run commands would break them,
 and a `stim` that no package manager owns, such as a linked checkout, is never
 offered an update. Agent CLI checks resolve the current installation again without
-requiring a Desktop restart. While phones are
-served, `stim-server --version` gets the same check; the bundled server always passes
-it, and an outdated override is offered `@stim-cli/server@latest`. When the local server is ready, the banner offers once
+requiring a Desktop restart. When the local server is ready, the banner offers once
 to set `iosSimulatorApp` and `androidEmulatorApp` to `stim-desktop` through the
 same private local settings transport. It skips a key that is already set or
 that the installed `stim` does not list. **Not Now** hides the offer for good.
@@ -2268,7 +2261,7 @@ The bundle copies Inter, JetBrains Mono, and the brand artwork, including the an
 (`NODE_VERSION`) from nodejs.org once into `.build/node`, checks the tarball
 against the SHA-256 the script pins and against that release's `SHASUMS256.txt`,
 keeps `bin/node` and its `LICENSE`, strips local symbols, and joins the arm64 and
-x64 binaries with `lipo` for `--universal`. It builds `@stim-cli/server` and the
+x64 binaries with `lipo` for `--universal`. It builds `stim` and the
 workspace packages it imports, packs them with `pnpm pack`, and lays out their
 third-party dependencies at the versions `pnpm-lock.yaml` resolves, without
 symbolic links, keeping only the darwin `unique-pid` prebuilds. It refuses a

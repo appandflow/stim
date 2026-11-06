@@ -115,7 +115,7 @@ const config: Config = {
           title: 'Packages',
           items: [
             { label: 'stim', href: 'https://www.npmjs.com/package/stim' },
-            { label: '@stim-cli/metro', href: 'https://www.npmjs.com/package/@stim-cli/metro' },
+            { label: '@stim-cli/cache-s3', href: 'https://www.npmjs.com/package/@stim-cli/cache-s3' },
           ],
         },
         {

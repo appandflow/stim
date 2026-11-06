@@ -3,7 +3,6 @@
   "singleQuote": true,
   "printWidth": 120,
   "ignorePatterns": [
-    "packages/core/state/release-floors.json",
     "**/dist/**",
     "**/node_modules/**",
     "website/build/**",

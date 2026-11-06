@@ -155,7 +155,7 @@ describe('serverSetupFindings', () => {
       }),
     );
     const versions = findings.filter((each) => each.code === 'server-version');
-    expect(versions[0]?.fix).toBe('Run `stim-server service update --release 1.41.0`.');
+    expect(versions[0]?.fix).toBe('Run `stim service update --release 1.41.0`.');
     expect(versions[1]?.fix).toContain('Update Stim Desktop');
   });
 
@@ -170,7 +170,7 @@ describe('serverSetupFindings', () => {
     );
     expect(finding?.code).toBe('server-home');
     expect(finding?.detail).toContain('/Users/me/.stim-work');
-    expect(finding?.fix).toContain('STIM_HOME=/Users/me/.stim stim-server service install --port 7788');
+    expect(finding?.fix).toContain('STIM_HOME=/Users/me/.stim stim service install --port 7788');
   });
 
   describe('service state', () => {
@@ -190,7 +190,7 @@ describe('serverSetupFindings', () => {
       expect(finding).toMatchObject({ code: 'server-service-crash', level: 'cost' });
       expect(finding?.detail).toContain('14 times');
       expect(finding?.fix).toContain('dev.stim.server.log');
-      expect(finding?.fix).toContain('stim-server service rollback');
+      expect(finding?.fix).toContain('stim service rollback');
     });
 
     it('does not call a service that has never exited a crash while its health is slow to answer', () => {
@@ -330,7 +330,7 @@ describe('serverSetupFindings', () => {
         }),
       );
       expect(finding).toMatchObject({ code: 'server-desktop-authority', level: 'cost' });
-      expect(finding?.fix).toBe('Run `stim-server service update --release 1.42.0`.');
+      expect(finding?.fix).toBe('Run `stim service update --release 1.42.0`.');
     });
 
     it('does not flag Desktop-keyed servers or servers that send desktopApi', () => {
