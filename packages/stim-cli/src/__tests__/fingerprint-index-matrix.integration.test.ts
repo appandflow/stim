@@ -159,6 +159,7 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))(
 
       beforeEach(async () => {
         app = fixture(stamped);
+        await new Promise((resolve) => setTimeout(resolve, 100));
         before = (await key('use')).hash;
         const hit = await key('use');
         if (hit.from !== 'index' || hit.hash !== before) throw new Error('the second computation was not an index hit');
