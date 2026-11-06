@@ -11,7 +11,7 @@ const slot = fc.record({
 });
 
 describe('build slot admission', () => {
-  test('the waiters that may claim are the front of the queue and never outnumber the slots no live build holds', () => {
+  test('exactly the front waiters, as many as the slots no live build holds, may claim, and unverifiable holders start the ceiling', () => {
     fc.assert(
       fc.property(
         fc.array(slot, { maxLength: 10 }),
@@ -19,11 +19,11 @@ describe('build slot admission', () => {
         fc.nat(12),
         (slots, max, waiting) => {
           const busy = busySlots(slots, max);
-          const live = slots.filter(({ index, alive }) => alive && index !== null && index < max).length;
+          const below = slots.filter(({ index }) => index !== null && index < max);
+          const free = Math.max(0, max - below.filter(({ alive }) => alive).length);
           const claims = Array.from({ length: waiting + 1 }, (_, i) => slotTurn(i + 1, max, busy).claim);
-          const allowed = claims.filter(Boolean).length;
-          expect(claims.slice(0, allowed).every(Boolean)).toBe(true);
-          expect(allowed + live).toBeLessThanOrEqual(Math.max(max, live));
+          expect(claims).toEqual(claims.map((_, i) => i < free));
+          expect(slotTurn(1, max, busy).unverified).toEqual(below.filter(({ unresolved }) => unresolved));
         },
       ),
     );
