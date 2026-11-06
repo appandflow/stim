@@ -3,8 +3,8 @@ import { buildCI, runCI, type CIBuildOptions, type CIOptions } from './index.ts'
 
 declare const STIM_CI_VERSION: string;
 
-const HELP = `Usage: stim-ci build --platform <ios|android|macos> [options]
-       stim-ci run --platform <ios|android|macos|web> [options] [-- <command> [args...]]
+const HELP = `Usage: stim ci build --platform <ios|android|macos> [options]
+       stim ci run --platform <ios|android|macos|web> [options] [-- <command> [args...]]
 
 Build is the only step that compiles. It records the app for this checkout, platform and
 selectors, and exports it only with --export.
@@ -61,7 +61,7 @@ function parse(argv: string[]): Invocation {
   });
   const stage = positionals[0];
   if (positionals.length !== 1 || (stage !== 'run' && stage !== 'build'))
-    throw new Error('Expected stim-ci build or run.');
+    throw new Error('Expected stim ci build or run.');
   const platform = values.platform;
   if (platform !== 'ios' && platform !== 'android' && platform !== 'macos' && platform !== 'web') {
     throw new Error('--platform must be ios, android, macos or web.');
@@ -87,9 +87,9 @@ function parse(argv: string[]): Invocation {
   if (platform !== 'android' && (values.variant !== undefined || values.abi !== undefined))
     throw new Error('--variant and --abi only apply to Android.');
   if (stage === 'build') {
-    if (separator >= 0) throw new Error('Build does not take a test command. Use stim-ci run to launch and test.');
+    if (separator >= 0) throw new Error('Build does not take a test command. Use stim ci run to launch and test.');
     if (platform === 'web')
-      throw new Error('Web projects have no native build artifact. Use stim-ci run --platform web.');
+      throw new Error('Web projects have no native build artifact. Use stim ci run --platform web.');
     if (values.arch !== undefined && !['arm64', 'x86_64', 'all'].includes(values.arch))
       throw new Error('--arch must be arm64, x86_64 or all.');
     if (values.abi !== undefined && !['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64', 'all'].includes(values.abi))
@@ -158,7 +158,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     process.stdout.write(`${JSON.stringify(result)}\n`);
     process.exitCode = result.exitCode;
   } catch (error) {
-    process.stderr.write(`stim-ci: ${(error as Error).message}\n`);
+    process.stderr.write(`stim ci: ${(error as Error).message}\n`);
     process.exitCode = 1;
   } finally {
     process.off('SIGINT', interrupt);

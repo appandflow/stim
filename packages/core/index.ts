@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 
 import { withDirLock } from './dir-lock.ts';
 import { isJsonObject } from './state/json-file.ts';
+import { machineSettingValue } from './state/settings-registry.ts';
 import { ambientContext, ambientEnv } from './context.ts';
 export { withDirLock, withDirLockAsync, withDirLockTransaction, type DirLockOptions } from './dir-lock.ts';
 export {
@@ -121,9 +122,8 @@ function logSize(file: string): number {
 export function cachePathSetting(key: 'buildCache' | 'metroCache'): string | null {
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(path.join(configDir(), 'config.json'), 'utf-8'));
-    const caches = isJsonObject(parsed) ? parsed.caches : undefined;
-    const value = isJsonObject(caches) ? caches[key] : undefined;
-    return typeof value === 'string' && path.isAbsolute(value) ? value : null;
+    const { value, error } = machineSettingValue(`caches.${key}`, { config: parsed, env: {} });
+    return error ? null : ((value as string | undefined) ?? null);
   } catch {
     return null;
   }

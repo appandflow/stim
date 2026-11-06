@@ -126,7 +126,8 @@ class MockSocket {
   static viewStatus = statusFixture.payload;
   static homeId: string | undefined;
   static holdWorkspaces = false;
-  static refuseViews = false;
+  static helloClient: unknown;
+  static olderStim = false;
   static holdMachine = false;
   static archiveReply: ((before: string | undefined, reply: (result: object) => void) => void) | null = null;
   static latest: MockSocket | null = null;
@@ -147,14 +148,23 @@ class MockSocket {
   }
 
   send(raw: string) {
-    const { id, method, params } = JSON.parse(raw) as { id: number; method: string; params?: { before?: string } };
+    const { id, method, params } = JSON.parse(raw) as {
+      id: number;
+      method: string;
+      params?: { before?: string; client?: unknown };
+    };
     MockSocket.sent.push(method);
     const reply = (message: object) => setTimeout(() => this.onmessage?.(JSON.stringify(message)), 0);
     if (method === 'hello') {
+      MockSocket.helloClient = params?.client;
+      const integers = MockSocket.olderStim
+        ? { host: null }
+        : { peer: 1, phoneApi: 2, desktopApi: 1, host: { owner: 'service', capabilities: [], app: null } };
       reply({
         id,
         result: {
           protocol: 2,
+          ...integers,
           server: {
             id: MockSocket.homeId,
             name: 'Mock machine',
@@ -165,14 +175,9 @@ class MockSocket {
           capabilities: ['read', 'control'],
           actions: ['reload', 'stop'],
           device: { id: 'phone', name: 'Phone' },
-          features: [],
         },
       });
     } else if (method === 'workspaces.subscribe' || method === 'machine.subscribe') {
-      if (MockSocket.refuseViews) {
-        reply({ id, error: { code: 'unknown-method', message: 'unknown method' } });
-        return;
-      }
       const views = statusViews(
         (this.endpoint === ENDPOINT
           ? MockSocket.viewStatus
@@ -322,6 +327,7 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
   expect(readyLogs()).toBe(1);
   await act(() => jest.advanceTimersByTimeAsync(600));
   expect(MockSocket.sent).toContain('workspaces.subscribe');
+  expect(MockSocket.helloClient).toMatchObject({ name: 'stim-mobile', phoneApi: 2 });
   expect(MockSocket.sent).not.toContain('archived.list');
   await act(async () => {
     activate();
@@ -537,7 +543,7 @@ afterEach(() => {
   MockSocket.viewStatus = statusFixture.payload;
   MockSocket.homeId = undefined;
   MockSocket.holdWorkspaces = false;
-  MockSocket.refuseViews = false;
+  MockSocket.olderStim = false;
   MockSocket.holdMachine = false;
   MockSocket.archiveReply = null;
   MockSocket.all = [];
@@ -610,14 +616,20 @@ it('does not resolve a shared link from previous workspace views after reconnect
     await jest.advanceTimersByTimeAsync(1000);
   });
   expect(result.getPathname()).toBe('/open');
-  MockSocket.refuseViews = true;
+  MockSocket.olderStim = true;
+  const sentBefore = MockSocket.sent.length;
   await act(async () => {
     current.close();
     current.onclose?.({ code: 1006, reason: 'reconnect' });
     router.replace(`/mac/${MAC_ID}`);
     await jest.advanceTimersByTimeAsync(6000);
   });
-  expect(screen.getByText('Update stim-server on the machine to load its live status.')).toBeTruthy();
+  expect(
+    screen.getByText(
+      `Mock machine runs stim ${statusFixture.stimVersion}. Update Stim Desktop (Stim > Check for Updates). If Stim Desktop is not installed on Mock machine, run npm i -g stim@latest && stim service install.`,
+    ),
+  ).toBeTruthy();
   expect(screen.queryByText(/Pair this machine again/)).toBeNull();
+  expect(MockSocket.sent.slice(sentBefore)).toEqual(['hello']);
   expect(MockSocket.sent).not.toContain('status.subscribe');
 }, 60_000);

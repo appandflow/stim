@@ -15,7 +15,7 @@ public struct ServerWorktreeWarmResult: Sendable {
 ) async throws -> ServerWorktreeWarmResult {
   try Task.checkCancellation()
   let client = try desktopActionServer(connection, stimHome: stimHome, action: "warm worktrees from this Stim home")
-  guard case .open(let hello) = client.state, hello.features?.contains("desktop-worktree-warm") == true else {
+  guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
     throw ServerError(code: "unsupported", message: "Update stim-server to warm worktrees from Desktop.")
   }
   guard command.program == "stim", command.arguments == ["worktree", "warm"] else {

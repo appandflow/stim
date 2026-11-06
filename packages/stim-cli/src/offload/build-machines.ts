@@ -2,7 +2,7 @@ import { withDirLockAsync, type StimContext } from '@stim-cli/core';
 import { reportSignal } from '../report-runtime.ts';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import type { HelloResult, RemoteDiagnosis } from '@stim-cli/core/protocol';
+import type { HelloHost, RemoteDiagnosis } from '@stim-cli/core/protocol';
 import {
   buildMachinesFile,
   buildMachinesLock,
@@ -118,7 +118,7 @@ interface BuildMachineReport {
   /** The tailnet this machine was signed in to when it first reached the machine; absent for a pairing from before it was kept. */
   tailnet?: TailnetIdentity;
   expiresAt?: string;
-  host?: NonNullable<HelloResult['host']>;
+  host?: NonNullable<HelloHost['app']>;
   /** For an approved machine: whether it would take this project's build now, and every reason it would not. */
   offloadable?: boolean;
   reasons?: string[];
@@ -188,11 +188,11 @@ function problemFix(problem: OffloadProblem, entry: string): string {
   if (problem.followsFrom) return `Fix the ${problem.followsFrom} problem on ${entry} first; this follows from it.`;
   switch (code) {
     case 'unreachable':
-      return `Check that stim-server runs on ${entry} and that its tailscale serve route answers, then run \`stim doctor\` again. To keep it running there, run \`stim-server service install --serve\` on ${entry}.`;
+      return `Check that stim-server runs on ${entry} and that its tailscale serve route answers, then run \`stim doctor\` again. To keep it running there, run \`stim service install --serve\` on ${entry}.`;
     case 'checkout':
       return 'Offload syncs the files git lists; run Stim from a git checkout of the app.';
     case 'stim-build':
-      return 'update the worker: stim-server service update --release <version>; update an old client: npm i -g stim@latest; Stim Desktop 0.2.5 or older: Stim > Check for Updates';
+      return 'update the worker: stim service update --release <version>; update an old client: npm i -g stim@latest; Stim Desktop 0.2.5 or older: Stim > Check for Updates';
     case 'arch':
       return 'Use a remote machine with the same CPU architecture as this machine.';
     case 'xcode':
@@ -217,7 +217,7 @@ function problemFix(problem: OffloadProblem, entry: string): string {
     case 'jdk':
       return (
         commandFix(problem, entry) ??
-        `Start stim-server on ${entry} with JAVA_HOME at a JDK of the same major version as this machine's.`
+        `Start stim serve on ${entry} with JAVA_HOME at a JDK of the same major version as this machine's.`
       );
     case 'android-sdk':
     case 'ndk':
@@ -468,7 +468,7 @@ async function inspectMachine(
       };
     }
   }
-  const permissions = readHostPermissions(outcome.result.host);
+  const permissions = readHostPermissions(outcome.result.host?.app);
   const host = permissions ? { host: permissions } : {};
   if (!check) return { report: { ...paired, state: 'approved', ...host }, finding: null };
   const { capacity, problems, notes = [] } = await check(outcome.credential);

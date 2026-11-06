@@ -161,10 +161,6 @@ export async function pullHostedNativeLogs(
   platform: 'ios' | 'android' = 'ios',
   signal?: AbortSignal,
 ): Promise<number | undefined> {
-  if (!host.connection.supports(platform === 'ios' ? 'hosted-ios-data' : 'hosted-android-data'))
-    throw new Error(
-      `${host.machine} needs a newer stim-server to collect hosted ${platform === 'ios' ? 'iOS' : 'Android'} native logs.`,
-    );
   return await pullHostedMacosLogs(root, placement, host, { platform, slot }, final ? 1024 : MAX_PAGES, final, signal);
 }
 

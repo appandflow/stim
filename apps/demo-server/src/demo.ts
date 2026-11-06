@@ -13,6 +13,7 @@ import {
   type SecretValues,
 } from '@stim-cli/core/noise-session';
 import { statusViews, withDerivedFacts } from '@stim-cli/core/phone-protocol';
+import { MAX_CLIPBOARD_BYTES } from '@stim-cli/core/protocol';
 
 import { filterRecords, shiftTimestamps, usageHistory } from '../../mobile/mock-server/payloads.mjs';
 
@@ -271,7 +272,7 @@ export class DemoConnection {
   private readonly helloTimer: Timer;
   private readonly sessions = new Map<
     string,
-    { target: string; key: string; platform: string; down?: { x: number; y: number } }
+    { target: string; key: string; platform: string; clipboard: string; down?: { x: number; y: number } }
   >();
   private queue: Promise<void> = Promise.resolve();
   private closed = false;
@@ -351,6 +352,7 @@ export class DemoConnection {
       result: {
         protocol: PROTOCOL,
         phoneApi: 2,
+        host: { owner: 'service', capabilities: ['physical-ios', 'physical-android', 'macos-window'], app: null },
         server: {
           name: this.machine.name,
           version: fixtures.stimVersion,
@@ -497,6 +499,8 @@ export class DemoConnection {
       case 'input.scroll':
       case 'input.key':
       case 'input.window':
+      case 'input.clipboard.set':
+      case 'input.clipboard.get':
         return this.input(method, params);
       case 'workspace.files':
         return { result: { files: changedFiles(params.group), truncated: false } };
@@ -570,7 +574,7 @@ export class DemoConnection {
     }
     const session = `c${this.nextSession++}`;
     const { target, key } = deviceTarget(params);
-    this.sessions.set(session, { target, key, platform });
+    this.sessions.set(session, { target, key, platform, clipboard: '' });
     return {
       result: {
         session,
@@ -609,6 +613,9 @@ export class DemoConnection {
         return { result: SIMULATOR };
       case 'input.posture':
         return { error: ['bad-request', 'This device does not fold.'] };
+      case 'input.clipboard.set':
+      case 'input.clipboard.get':
+        return clipboard(method, params, session);
       default:
         return { result: {} };
     }
@@ -644,6 +651,42 @@ export class DemoConnection {
     }, ACTION_MS);
     return { deferred: true };
   }
+}
+
+function clipboard(
+  method: 'input.clipboard.set' | 'input.clipboard.get',
+  params: Params,
+  session: { platform: string; clipboard: string },
+): Outcome {
+  if (session.platform === 'web' || session.platform === 'macos') {
+    return {
+      error: [
+        'bad-request',
+        'Only an iOS simulator, an Android emulator and an Android phone have a clipboard to set or read.',
+      ],
+    };
+  }
+  const { text, paste } = params;
+  if (method === 'input.clipboard.get') {
+    if (text !== undefined || paste !== undefined) {
+      return { error: ['bad-request', 'input.clipboard.get takes only session.'] };
+    }
+    return { result: { text: session.clipboard } };
+  }
+  if (
+    typeof text !== 'string' ||
+    new TextEncoder().encode(text).length > MAX_CLIPBOARD_BYTES ||
+    (paste !== undefined && typeof paste !== 'boolean')
+  ) {
+    return {
+      error: [
+        'bad-request',
+        `input.clipboard.set takes text of at most ${MAX_CLIPBOARD_BYTES} UTF-8 bytes and an optional paste flag.`,
+      ],
+    };
+  }
+  session.clipboard = text;
+  return { result: {} };
 }
 
 function deviceTarget(params: Params): { target: string; key: string; platform: string; slot: string } {

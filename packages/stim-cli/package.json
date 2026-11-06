@@ -23,9 +23,10 @@
     "directory": "packages/stim-cli"
   },
   "bin": {
-    "stim": "dist/cli.mjs"
+    "stim": "bin/stim.mjs"
   },
   "files": [
+    "bin/stim.mjs",
     "dist",
     "shim",
     "skill",
@@ -59,6 +60,21 @@
       "types": "./dist/build-artifact-cache.d.mts",
       "module-sync": "./dist/build-artifact-cache.mjs",
       "default": "./dist/build-artifact-cache.mjs"
+    },
+    "./ci": {
+      "types": "./dist/ci.d.mts",
+      "module-sync": "./dist/ci.mjs",
+      "default": "./dist/ci.mjs"
+    },
+    "./ci/artifacts": {
+      "types": "./dist/ci/artifacts.d.mts",
+      "module-sync": "./dist/ci/artifacts.mjs",
+      "default": "./dist/ci/artifacts.mjs"
+    },
+    "./plugin": {
+      "types": "./dist/plugin.d.mts",
+      "module-sync": "./dist/plugin.mjs",
+      "default": "./dist/plugin.mjs"
     }
   },
   "scripts": {
@@ -66,24 +82,28 @@
   },
   "dependencies": {
     "@expo/fingerprint": "^0.21.5",
-    "@stim-cli/agent-driver": "workspace:*",
-    "@stim-cli/agent-driver-agent-device": "workspace:*",
-    "@stim-cli/cache": "workspace:*",
-    "@stim-cli/core": "workspace:*",
-    "@stim-cli/metro": "workspace:*",
     "@xmldom/xmldom": "0.9.12",
     "chalk": "^6.0.0",
     "commander": "^15.0.0",
     "cross-spawn": "^7.0.6",
+    "unique-pid": "0.1.1",
     "which": "^5.0.0",
     "ws": "^8.21.3"
   },
   "devDependencies": {
-    "@stim-cli/expo-build-cache": "workspace:*",
+    "@stim-cli/agent-driver": "workspace:*",
+    "@stim-cli/agent-driver-agent-device": "workspace:*",
+    "@stim-cli/cache": "workspace:*",
+    "@stim-cli/ci": "workspace:*",
+    "@stim-cli/core": "workspace:*",
+    "@stim-cli/metro": "workspace:*",
+    "@stim-cli/server": "workspace:*",
     "@types/cross-spawn": "^6.0.6",
     "@types/which": "^3.0.4",
-    "@types/ws": "^8.18.1",
-    "unique-pid": "0.1.1"
+    "@types/ws": "^8.18.1"
+  },
+  "optionalDependencies": {
+    "node-datachannel": "0.33.6"
   },
   "engines": {
     "node": ">=22.12.0"

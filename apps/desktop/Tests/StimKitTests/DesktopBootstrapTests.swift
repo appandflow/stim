@@ -97,26 +97,20 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     process.terminate()
   }
 
-  @Test func anExternalOverrideCannotReceiveThePrivateKey() throws {
-    let environment = StimServerCLI(environment: [:], override: "/bin/cat", bundled: nil)
-    #expect(throws: ServerError(code: "forbidden", message: "Private Desktop bootstrap requires the bundled server.")) {
-      try environment.serve(bootstrap: DesktopBootstrapKey(), onLine: { _ in }, onExit: { _ in })
-    }
-  }
 }
 
 @Suite @MainActor struct DesktopBootstrapClientTests {
-  private func hello(_ challenge: DesktopBootstrapChallenge? = nil, port: Int = 7787, features: [String] = ["desktop-stop"])
+  private func hello(_ challenge: DesktopBootstrapChallenge? = nil, port: Int = 7787, owner: String = "desktop")
     -> JSONValue
   {
     var fields: [String: JSONValue] = [
-      "protocol": .number(2),
+      "protocol": .number(2), "desktopApi": .number(1),
       "server": .object([
         "name": .string("Mac"), "version": .string("1"), "stim": .string("1"), "port": .number(Double(port)),
       ]),
       "capabilities": .array([.string("read"), .string("control")]),
       "device": .object(["id": .string("d1"), "name": .string("Stim Desktop")]),
-      "features": .array(features.map(JSONValue.string)),
+      "host": .object(["owner": .string(owner), "capabilities": .array([])]),
     ]
     if let challenge {
       fields["desktopBootstrap"] = .object(["nonce": .string(challenge.nonce), "proof": .string(challenge.proof)])
@@ -178,7 +172,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-reload"]))
+    socket.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -226,7 +220,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-start"]))
+    socket.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -299,7 +293,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-run"]))
+    socket.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -360,7 +354,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-gc"]))
+    socket.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -415,7 +409,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-gc"]))
+    socket.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -447,7 +441,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-worktree-remove"]))
+    socket.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -486,7 +480,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-worktree-remove"]))
+    socket.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -528,7 +522,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-run"]))
+    socket.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -552,7 +546,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer(
-      "hello", hello(bootstrapChallenge(key), features: ["desktop-\(action.replacingOccurrences(of: ".", with: "-"))"]))
+      "hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -601,7 +595,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-machine-access"]))
+    socket.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -648,7 +642,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-worktree-warm"]))
+    socket.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -697,7 +691,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-settings-write"]))
+    socket.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -751,7 +745,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(refusal.code == "STIM_NO_PROJECT" && refusal.message == "No app" && refusal.remedy == "Choose an app")
   }
 
-  @Test(arguments: ["home", "authority", "feature"])
+  @Test(arguments: ["home", "authority"])
   func settingsRefuseWrongHomeServersWithoutAuthorityAndOldServers(reason: String) async throws {
     let key = reason == "authority" ? nil : DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
@@ -759,8 +753,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     socket.answer(
       "hello",
       hello(
-        key.map { bootstrapChallenge($0) },
-        features: reason == "feature" || reason == "authority" ? [] : ["desktop-settings-write"]))
+        key.map { bootstrapChallenge($0) }))
     await settle()
     if key != nil {
       socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
@@ -773,7 +766,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
         connection: (client, reason == "home" ? "/another-home" : "/tmp/stim-test"))
       Issue.record("Settings must refuse this connection")
     } catch let error as ServerError {
-      #expect(error.code == (reason == "feature" ? "unsupported" : "not-connected"))
+      #expect(error.code == "not-connected")
       #expect(error.message.contains("on this stim-server") == (reason == "authority"))
     }
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.settings.write") })
@@ -783,7 +776,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-settings-write"]))
+    socket.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -808,7 +801,6 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
 
   @Test(arguments: ["settings", "reload", "start", "run", "gc", "worktree.remove", "worktree.warm", "remedy"])
   func mutationsDoNotReplayAfterTheConnectionDropsAndReconnects(action: String) async throws {
-    let feature = action == "settings" ? "desktop-settings-write" : "desktop-\(action.replacingOccurrences(of: ".", with: "-"))"
     let method = action == "settings" ? "desktop.settings.write" : "desktop.\(action).subscribe"
     let key = DesktopBootstrapKey()
     var sockets: [FakeTransport] = []
@@ -829,7 +821,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     defer { client.stop() }
     await settle()
     let first = try #require(sockets.first)
-    first.answer("hello", hello(bootstrapChallenge(key), features: [feature]))
+    first.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     first.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -878,7 +870,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     await settle()
     let second = try #require(sockets.last)
     #expect(second !== first)
-    second.answer("hello", hello(bootstrapChallenge(key), features: [feature]))
+    second.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     second.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -891,7 +883,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
-    socket.answer("hello", hello(bootstrapChallenge(key), features: ["desktop-\(action)"]))
+    socket.answer("hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -935,7 +927,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer(
-      "hello", hello(bootstrapChallenge(key), features: ["desktop-\(action.replacingOccurrences(of: ".", with: "-"))"]))
+      "hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -1008,7 +1000,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     let (client, socket) = try await client(key: key)
     defer { client.stop() }
     socket.answer(
-      "hello", hello(bootstrapChallenge(key), features: ["desktop-\(action.replacingOccurrences(of: ".", with: "-"))"]))
+      "hello", hello(bootstrapChallenge(key)))
     await settle()
     socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
     await settle()
@@ -1071,7 +1063,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   }
 
   @Test(
-    arguments: ["home", "authority", "feature"],
+    arguments: ["home", "authority"],
     ["stop", "reload", "start", "run", "gc", "worktree.remove", "worktree.warm", "remedy", "machine-access"])
   func actionsRefuseWrongHomeMissingAuthorityAndOldServers(reason: String, action: String) async throws {
     let key = reason == "authority" ? nil : DesktopBootstrapKey()
@@ -1080,8 +1072,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     socket.answer(
       "hello",
       hello(
-        key.map { bootstrapChallenge($0) },
-        features: reason == "feature" ? [] : ["desktop-\(action.replacingOccurrences(of: ".", with: "-"))"]))
+        key.map { bootstrapChallenge($0) }))
     await settle()
     if key != nil {
       socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
@@ -1122,7 +1113,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
       }
       Issue.record("Action must refuse this connection")
     } catch let error as ServerError {
-      #expect(error.code == (reason == "feature" ? "unsupported" : "not-connected"))
+      #expect(error.code == "not-connected")
     }
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.\(action).subscribe") })
   }
@@ -1188,7 +1179,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
   {
     let (client, socket) = try await client(key: hasKey ? DesktopBootstrapKey() : nil)
     defer { client.stop() }
-    socket.answer("hello", hello(features: ["desktop-local-authority"]))
+    socket.answer("hello", hello(owner: "cli"))
     await settle()
     #expect(client.isOpen && client.hasDesktopAuthority)
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.authenticate") })
@@ -1196,15 +1187,15 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     #expect(!client.isOpen && !client.hasDesktopAuthority)
   }
 
-  @Test func aServerThatAdvertisesWriteFeaturesWithoutGrantingLocalAuthorityIsNotTrusted() async throws {
+  @Test func anAdoptedDesktopServerWithoutThePrivateProofIsNotTrusted() async throws {
     let (client, socket) = try await client(key: nil)
     defer { client.stop() }
-    socket.answer("hello", hello(features: ["desktop-settings-write", "desktop-gc"]))
+    socket.answer("hello", hello())
     await settle()
     #expect(client.isOpen && !client.hasDesktopAuthority)
   }
 
-  @Test func aPairedServerNeverGetsAuthorityFromItsFeatures() async throws {
+  @Test func aPairedServerNeverGetsLocalAuthority() async throws {
     var socket: FakeTransport?
     let client = ServerClient(
       endpoint: URL(string: "ws://100.64.0.1:7787")!, clientName: "Stim Desktop", clientVersion: "1",
@@ -1217,9 +1208,29 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     client.start()
     await settle()
     defer { client.stop() }
-    try #require(socket).answer("hello", hello(features: ["desktop-local-authority"]))
+    try #require(socket).answer("hello", hello(owner: "cli"))
     await settle()
     #expect(client.isOpen && !client.hasDesktopAuthority)
+  }
+
+  @Test(arguments: [nil, 0, 2] as [Int?])
+  func refusesAnIncompatibleDesktopApiBeforeSendingProof(api: Int?) async throws {
+    let key = DesktopBootstrapKey()
+    let (client, socket) = try await client(key: key)
+    defer { client.stop() }
+    guard case .object(var fields) = hello(bootstrapChallenge(key)) else { return }
+    fields["desktopApi"] = api.map { .number(Double($0)) }
+    if api == nil { fields["host"] = .object(["screenRecording": .bool(true)]) }
+    socket.answer("hello", .object(fields))
+    await settle()
+    guard case .refused(let error) = client.state else {
+      Issue.record("Expected an API refusal")
+      return
+    }
+    #expect(error.code == "protocol-unsupported")
+    #expect(error.message.contains(api == 2 ? "Update Stim Desktop" : "npm i -g stim@1.42.0 && stim service install"))
+    #expect(!client.hasDesktopAuthority)
+    #expect(!socket.sent.contains { $0["method"] == .string("desktop.authenticate") })
   }
 
   @Test func refusesAnotherServersSocketBeforeSendingAnyProof() async throws {
@@ -1236,12 +1247,12 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
     }
     #expect(error.code == "other-server")
   }
-  private func planClient(authority: Bool = true, feature: Bool = true) async throws -> (
+  private func planClient(authority: Bool = true) async throws -> (
     ServerClient, FakeTransport, [String: String]
   ) {
     let key = DesktopBootstrapKey()
     let (client, socket) = try await client(key: authority ? key : nil)
-    socket.answer("hello", hello(authority ? bootstrapChallenge(key) : nil, features: feature ? ["desktop-plan"] : []))
+    socket.answer("hello", hello(authority ? bootstrapChallenge(key) : nil))
     await settle()
     if authority {
       socket.answer("desktop.authenticate", .object(["authorized": .bool(true)]))
@@ -1298,9 +1309,9 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
             code: "STIM_NO_DEVICE", message: "No image installed.", remedy: "Install one.")))
   }
 
-  @Test(arguments: ["home", "authority", "feature"])
+  @Test(arguments: ["home", "authority"])
   func buildPlanReadsRefuseAnUnavailableBundledServer(reason: String) async throws {
-    let (client, _, environment) = try await planClient(authority: reason != "authority", feature: reason != "feature")
+    let (client, _, environment) = try await planClient(authority: reason != "authority")
     defer { client.stop() }
     do {
       _ = try await readServerBuildPlan(
@@ -1308,7 +1319,7 @@ private func bootstrapChallenge(_ key: DesktopBootstrapKey, nonce: String = Stri
         connection: (client, reason == "home" ? "/other" : "/tmp/stim-test"))
       Issue.record("A plan needs the matching bundled server and feature")
     } catch let error as ServerError {
-      #expect(error.code == (reason == "feature" ? "unsupported" : "not-connected"))
+      #expect(error.code == "not-connected")
     }
   }
 

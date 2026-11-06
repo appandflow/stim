@@ -29,8 +29,7 @@ releases its leases; `worktree remove` reclaims everything the workspace owns.
 
 Install the CLI globally or run it with npx. The package and command are both
 `stim`. If you previously installed `stim-cli` globally, run
-`npm uninstall --global stim-cli` first. The `@stim-cli/*` packages keep their
-names.
+`npm uninstall --global stim-cli` first. The server and CI runner ship in `stim`.
 
 <StimInstallTabs />
 

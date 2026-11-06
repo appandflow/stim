@@ -99,7 +99,7 @@ jobs:
           install: false
       - name: Install the bundled server's workspace packages
         if: inputs.full
-        run: pnpm install --frozen-lockfile --filter '@stim-cli/server...' --filter stim-monorepo
+        run: pnpm install --frozen-lockfile --filter 'stim...' --filter stim-monorepo
       - name: Stage the bundled stim-server
         if: inputs.full
         run: node scripts/server-runtime.mjs "$RUNNER_TEMP/stim-server"
@@ -136,7 +136,7 @@ jobs:
           env -i HOME="$home" "$runtime/bin/node" --input-type=module \
             -e "const { capture } = await import('$runtime/node_modules/unique-pid/index.mjs'); if (!capture(process.pid).ok) process.exit(1);"
           env -i HOME="$home" STIM_HOME="$home/.stim" SHELL=/bin/sh "$runtime/bin/node" \
-            "$runtime/node_modules/@stim-cli/server/dist/stim-server.mjs" --port 7999 --loopback-only &
+            "$runtime/node_modules/stim/bin/stim.mjs" serve --port 7999 --loopback-only &
           for _ in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:7999/health; then
               kill %1

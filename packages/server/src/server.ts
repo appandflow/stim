@@ -10,7 +10,6 @@ import {
 import { connect as connectSocket, isIP, Socket, type AddressInfo } from 'node:net';
 import { duplexPair, type Duplex } from 'node:stream';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir, type MetroLink } from '@stim-cli/core';
@@ -139,13 +138,15 @@ import { DesktopReports } from './desktop-reports.ts';
 import {
   ACTIONS,
   BUILD_METHODS,
+  DESKTOP_API,
   DEVICE_HOST_METHODS,
-  FEATURES,
+  HOST_CAPABILITIES,
   MAX_INPUT_TEXT,
   FRAME_EDGE,
   FRAME_FPS,
-  LEGACY_PUSH_EVENTS,
   NOTIFICATION_LEVELS,
+  PEER,
+  PHONE_API,
   PLATFORMS,
   PROTOCOL_VERSION,
   PUSH_EVENTS,
@@ -154,7 +155,7 @@ import {
   RELOAD_PLATFORMS,
   RESERVED_SHARE_SLUGS,
   SHARE_SLUG_PATTERN,
-  SERVER_UPDATE_METHODS,
+  ENGINE_UPDATE_METHODS,
   ARCHIVED_PAGE_LIMIT,
   type DesktopReportTarget,
   type DeviceToolRequest,
@@ -165,6 +166,7 @@ import {
   type ErrorCode,
   type ProtocolError,
   type FrameTarget,
+  type HelloHost,
   type HelloResult,
   type Platform,
   type PlatformRunOptions,
@@ -199,6 +201,7 @@ import { NotificationLog, notificationLogFile, publicEntry } from './notificatio
 import { EXPO_PUSH_API, PushNotifier, type PushLimits, type PushNotifierOptions } from './push.ts';
 import {
   buildClientsReadable,
+  DESKTOP_CLIENT_APPS,
   dropPushToken,
   parseLevels,
   parseQuietHours,
@@ -232,7 +235,7 @@ import {
   TRANSPORT_OVERHEAD_BYTES,
 } from '@stim-cli/core/noise-session';
 import { readWorkspaceDiff } from './workspace-diff.ts';
-import { ServerUpdates } from './server-update.ts';
+import { EngineUpdates } from './server-update.ts';
 import { MachineUpdates } from './machine-update.ts';
 import { Pending, STDERR_TAIL, type CommandLimits, type CommandOutcome } from './stim-command.ts';
 import { readHostPermissions } from './stim-host.ts';
@@ -289,7 +292,7 @@ function hostedPlacement(dir: string, platform: string, slot = 'default') {
 export interface ServerOptions {
   /** Private bootstrap received from the Desktop parent; never a persisted pairing capability. */
   desktopBootstrap?: DesktopBootstrap;
-  /** What `stim-server setup` runs with when Stim Desktop approves a request here; `defaultSetupDeps` by default. */
+  /** What `stim setup` runs with when Stim Desktop approves a request here; `defaultSetupDeps` by default. */
   setupDeps?: () => SetupDeps;
   host?: { executable: string; name: string };
   name: string;
@@ -408,7 +411,7 @@ interface ControlLimits {
 }
 
 interface ServerHealth {
-  host?: HelloResult['host'];
+  host?: HelloHost['app'];
   startup: StartupState;
   server: 'stim-server';
   name: string;
@@ -517,17 +520,30 @@ const MAX_KEYFRAME_READS = 8;
 const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRecords: 20_000 };
 const HELPER_RETRY_MS = 5 * 60_000;
 
-const MACOS_ONLY_FEATURES: readonly string[] = [
-  'physical-ios',
-  'macos-window',
-  'macos-windows',
-  'macos-window-select',
-  'macos-window-control',
-  'macos-keyboard-extended',
-  'duo-frames',
-  'native-xcode-build',
-  'native-xcode-toolchain',
-];
+const wireInteger = (value: unknown) => (typeof value === 'number' && Number.isInteger(value) ? value : 0);
+
+/** Why the network listener turns a client away: a missing or lower integer for the surface it speaks. */
+function helloRefusal(client: JsonObject, access: unknown, machine: string, stim: string): string | null {
+  // compat C12 permanent
+  if (access !== undefined || client.peer !== undefined) {
+    const peer = wireInteger(client.peer);
+    if (peer >= PEER) return null;
+    const sent = peer ? `speaks peer ${peer}` : 'sends no peer';
+    return `peer-too-old: ${machine} runs stim ${stim} (peer ${PEER}); this stim ${sent}; update this Mac: npm i -g stim@${stim}, then stim service install if it runs Stim as a service`;
+  }
+  // compat end
+  // compat C7 permanent
+  if (client.desktopApi !== undefined || DESKTOP_CLIENT_APPS.includes(String(client.name)))
+    return wireInteger(client.desktopApi) >= DESKTOP_API
+      ? null
+      : `${machine} runs stim ${stim}, which needs a newer Stim Desktop. Update Stim Desktop (Stim > Check for Updates).`;
+  // compat end
+  // compat C9 permanent
+  if (wireInteger(client.phoneApi) >= PHONE_API) return null;
+  return `${machine} runs stim ${stim}, which needs a newer Stim Mobile. Update Stim Mobile from the App Store or TestFlight.`;
+  // compat end
+}
+
 /**
  * Test switch: set to 1, a `physical` target may resolve to an emulator its workspace leases with `stim device
  * lock`, which then streams and takes input over adb as a phone does. It exists to exercise the physical-device
@@ -1485,9 +1501,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     return address;
   }
   let homeId: string | undefined;
-  let hostProbe: Promise<HelloResult['host']> | undefined;
+  let hostProbe: Promise<HelloHost['app']> | undefined;
   let hostExpires = 0;
-  const hostHealth = (): Promise<HelloResult['host']> => {
+  const hostHealth = (): Promise<HelloHost['app'] | undefined> => {
     if (!options.host) return Promise.resolve(undefined);
     if (!hostProbe || Date.now() >= hostExpires) {
       hostExpires = Infinity;
@@ -1955,11 +1971,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const ownStimBuild = stimBuildDigest(dirname(options.stimCli));
   const machineUpdates = new MachineUpdates({
     version: options.serverVersion,
-    serverDir: dirname(dirname(options.service?.script || fileURLToPath(import.meta.url))),
+    stimDir: dirname(dirname(options.stimCli)),
     status: () => tailscale.rawStatus(),
     endpoint: options.hostedRelay?.endpoint,
   });
-  const updates = new ServerUpdates({
+  const updates = new EngineUpdates({
     label: options.service?.label ?? null,
     port: options.port,
     build: { version: options.serverVersion, stimBuild: ownStimBuild },
@@ -1976,7 +1992,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       auditSafely({
         at: new Date().toISOString(),
         device: by,
-        action: `server.update.${phase}`,
+        action: `engine.update.${phase}`,
         workspace: target,
         ok,
         ...(ok ? {} : { error: { code: 'action-failed', message: message.slice(0, AUDIT_FIELD_CHARS) } }),
@@ -2189,7 +2205,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     relays.set(socket, relay);
 
     const refuse = (id: RequestId | null, code: ErrorCode, message: string, closeCode: number) => {
-      if (!device && code !== 'home-unavailable') limiter.record(limitKey);
+      if (!device && code !== 'home-unavailable' && code !== 'protocol-unsupported') limiter.record(limitKey);
       send(socket, { id, error: { code, message } });
       socket.close(closeCode, code);
     };
@@ -2232,10 +2248,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           access === undefined ? 'unauthorized' : 'forbidden',
           access === undefined
             ? 'This machine has no pairing for this client. Pair again.'
-            : `This machine has not approved this client for ${access}. Approve it with \`stim-server setup\` there.`,
+            : `This machine has not approved this client for ${access}. Approve it with \`stim setup\` there.`,
           CLOSE_REFUSED,
         );
       }
+      const tooOld = local ? null : helloRefusal(params.client, access, options.name, options.stimVersion);
+      if (tooOld) return refuse(id, 'protocol-unsupported', tooOld, CLOSE_REFUSED);
       device = chosen;
       if (!local) touchDevice(device.id, params.client);
       if (access === 'device-host' && !local) {
@@ -2263,7 +2281,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const host = options.host ? await probing : undefined;
       if (options.host) tracker.step(id, 'probe', Date.now() - probeWaited);
       const result: HelloResult = {
+        host: {
+          owner: options.desktopBootstrap ? 'desktop' : options.service?.label ? 'service' : 'cli',
+          capabilities: hostsDevices ? [...HOST_CAPABILITIES] : ['physical-android'],
+          app: host ?? null,
+        },
         protocol: PROTOCOL_VERSION,
+        peer: PEER,
+        phoneApi: PHONE_API,
+        desktopApi: DESKTOP_API,
         server: {
           name: options.name,
           version: options.serverVersion,
@@ -2272,57 +2298,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           id: homeId,
           ...(local && addresses[0] ? { port: addresses[0].port } : {}),
         },
-        ...(options.host ? { host } : {}),
         capabilities: device.capabilities,
-        features: FEATURES.filter(
-          (feature) =>
-            (hostsDevices || !MACOS_ONLY_FEATURES.includes(feature)) &&
-            (![
-              'desktop-settings-write',
-              'desktop-reload',
-              'desktop-start',
-              'desktop-run',
-              'desktop-build',
-              'desktop-gc',
-              'desktop-worktree-remove',
-              'desktop-worktree-warm',
-              'desktop-machine-access',
-              'desktop-remedy',
-              'desktop-device-tools',
-              'desktop-plan',
-              'desktop-setup',
-            ].includes(feature) ||
-              keyless ||
-              desktopChallenge !== null) &&
-            (feature !== 'desktop-setup' || desktopChallenge !== null) &&
-            (feature !== 'desktop-local-authority' || keyless) &&
-            (local ||
-              ![
-                'desktop-plan',
-                'desktop-reports',
-                'desktop-machine-history',
-                'desktop-report-platform',
-                'desktop-report-remote',
-                'desktop-report-invalidate-target',
-                'desktop-settings',
-                'desktop-settings-schema',
-                'desktop-settings-write',
-                'desktop-full-logs',
-                'desktop-doctor-run',
-                'desktop-stop',
-                'desktop-reload',
-                'desktop-start',
-                'desktop-run',
-                'desktop-build',
-                'desktop-gc',
-                'desktop-worktree-remove',
-                'desktop-worktree-warm',
-                'desktop-machine-access',
-                'desktop-remedy',
-                'desktop-device-tools',
-                'desktop-setup',
-              ].includes(feature)),
-        ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
         device: { id: device.id, name: device.name },
         ...(desktopChallenge ? { desktopBootstrap: desktopChallenge } : {}),
@@ -2372,7 +2348,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!canControl(session)) {
         return refuseControl(
           'forbidden',
-          `This device can only read. On the machine, run \`stim-server devices grant ${session.id} --control\` to let it control devices.`,
+          `This device can only read. On the machine, run \`stim pairings grant ${session.id} --control\` to let it control devices.`,
         );
       }
       const parsed = parseControlBegin(params);
@@ -3261,7 +3237,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!canControl(session)) {
         return refuseAction(
           'forbidden',
-          `This device can only read. On the machine, run \`stim-server devices grant ${session.id} --control\` to let it run actions.`,
+          `This device can only read. On the machine, run \`stim pairings grant ${session.id} --control\` to let it run actions.`,
         );
       }
       const parsed = parseAction(params);
@@ -4224,7 +4200,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!canControl(session)) {
         return refuseSetting(
           'forbidden',
-          `This device can only read. On the machine, run \`stim-server devices grant ${session.id} --control\` to let it change settings.`,
+          `This device can only read. On the machine, run \`stim pairings grant ${session.id} --control\` to let it change settings.`,
         );
       }
       if (typeof enabled !== 'boolean') return refuseSetting('bad-request', 'params.enabled must be true or false.');
@@ -4341,7 +4317,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         !pushToken.test(token) ||
         !Array.isArray(events) ||
         events.length === 0 ||
-        !events.every((event) => ([...PUSH_EVENTS, ...LEGACY_PUSH_EVENTS] as readonly unknown[]).includes(event)) ||
+        !events.every((event) => (PUSH_EVENTS as readonly unknown[]).includes(event)) ||
         typeof agentOnly !== 'boolean' ||
         typeof ref !== 'string' ||
         ref.length === 0 ||
@@ -4804,7 +4780,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       session: PairedDevice,
     ): Promise<void> | null {
       if ((BUILD_METHODS as readonly string[]).includes(method)) return buildMethod(id, method, params, session);
-      if ((SERVER_UPDATE_METHODS as readonly string[]).includes(method))
+      if ((ENGINE_UPDATE_METHODS as readonly string[]).includes(method))
         return updateMethod(id, method, params, session);
       return null;
     }
@@ -4822,9 +4798,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           `${method} needs this machine's build or device-host approval of the requesting machine.`,
         );
       }
-      if (method === 'server.update.status') return send(socket, { id, result: await updates.status() });
+      if (method === 'engine.update.status') return send(socket, { id, result: await updates.status() });
       const answer =
-        method === 'server.update.start'
+        method === 'engine.update'
           ? await updates.start({ id: session.id, name: session.name }, params)
           : updates.chunk(session.id, params);
       send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
@@ -5425,7 +5401,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   ): Promise<void> {
     const limitKey = peer ?? 'local';
     /**
-     * `unknown-secret` is not a failure: a requester polls with its setup ticket until `stim-server setup` stores it,
+     * `unknown-secret` is not a failure: a requester polls with its setup ticket until `stim setup` stores it,
      * and a 16-byte lookup reveals nothing without the PSK. It has its own, far higher, limit per address.
      */
     const refuse = (code: string) => {

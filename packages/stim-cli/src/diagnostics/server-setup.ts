@@ -1,3 +1,4 @@
+import { DESKTOP_API } from '@stim-cli/core/protocol';
 import type { InstalledService, LaunchdJob, UnitJob } from '@stim-cli/core/state';
 import type { Finding } from './doctor.ts';
 import { compareStimVersions } from './stim-installations.ts';
@@ -73,7 +74,7 @@ export interface ServerReading extends ServerProcess {
 interface LocalServerReading {
   port: number | null;
   version: string;
-  features: string[];
+  desktopApi: number;
 }
 
 export interface ServerSetup {
@@ -124,16 +125,19 @@ export interface NetworkReading {
 /** The launcher a macOS service runs the server under repeats the server's command line; its node child is the server. */
 const STIM_HOST_LAUNCHER = /\/Contents\/MacOS\/stim-host run /;
 
-const SERVER_COMMAND = /^\S*[/\\]?node(?:\.exe)?\s+(?:-\S+\s+)*(.*?stim-server(?:\.mjs)?)(?=\s|$)(?:\s+(.*))?$/;
+const SERVER_COMMAND =
+  /^\S*[/\\]?node(?:\.exe)?\s+(?:-\S+\s+)*(.*?(?:stim-server(?:\.mjs)?|(?:bin\/stim|dist\/cli)\.mjs))(?=\s|$)(?:\s+(.*))?$/;
 const SERVER_SCRIPT = /(?:^|\/)stim-server(?:\.mjs)?$/;
+const CLI_SCRIPT = /(?:^|\/)(?:bin\/stim|dist\/cli)\.mjs$/;
 
 export function parseServerProcesses(ps: string): ServerProcess[] {
   const servers: ServerProcess[] = [];
   for (const row of parseProcessRows(ps)) {
     if (STIM_HOST_LAUNCHER.test(row.command)) continue;
     const [, script, rest = ''] = SERVER_COMMAND.exec(row.command) ?? [];
-    if (script === undefined || !SERVER_SCRIPT.test(script)) continue;
+    if (script === undefined) continue;
     const args = rest.split(/\s+/).filter(Boolean);
+    if (!SERVER_SCRIPT.test(script) && (!CLI_SCRIPT.test(script) || args.shift() !== 'serve')) continue;
     if (args[0] !== undefined && !args[0].startsWith('-')) continue;
     if (args.includes('--version') || args.includes('--help')) continue;
     const flag = args.findIndex((each) => each === '--port' || each.startsWith('--port='));
@@ -200,9 +204,9 @@ export const sameHome = (a: string, b: string): boolean => a.replace(/\/+$/, '')
 
 function updateRemedy(server: ServerReading, version: string): string {
   if (server.kind === 'service')
-    return `Run \`stim-server service update${labelFlag(server.label ?? '')} --release ${version}\`.`;
+    return `Run \`stim service update${labelFlag(server.label ?? '')} --release ${version}\`.`;
   if (server.kind === 'desktop')
-    return 'Update Stim Desktop; it bundles the server it runs. Or install a server separately with `stim-server service install` so Desktop adopts it.';
+    return 'Update Stim Desktop; it bundles the server it runs. Or install a server separately with `stim service install` so Desktop adopts it.';
   return `Stop pid ${server.pid} and start \`stim-server\` from the installation on PATH again.`;
 }
 
@@ -243,7 +247,7 @@ function homeFindings(setup: ServerSetup): Finding[] {
     if (!server.health || server.kind === 'share' || sameHome(server.health.stimHome, setup.stimHome)) return [];
     const service = server.kind === 'service' ? setup.services.find((each) => each.label === server.label) : null;
     const fix = service
-      ? `If the service should serve ${setup.stimHome}, run \`STIM_HOME=${setup.stimHome} stim-server service install${labelFlag(service.label)} --port ${server.port}\` again, repeating any --env and --path-prepend it was installed with (\`stim-server service status\` lists them). If ${server.health.stimHome} is the right home, unset STIM_HOME in this shell.`
+      ? `If the service should serve ${setup.stimHome}, run \`STIM_HOME=${setup.stimHome} stim service install${labelFlag(service.label)} --port ${server.port}\` again, repeating any --env and --path-prepend it was installed with (\`stim service status\` lists them). If ${server.health.stimHome} is the right home, unset STIM_HOME in this shell.`
       : `Run \`stim\` with STIM_HOME=${server.health.stimHome}, or stop the server and start it with STIM_HOME=${setup.stimHome}.`;
     return [
       {
@@ -271,7 +275,7 @@ function serviceStateFindings(setup: ServerSetup): Finding[] {
     const server = setup.servers.find((each) => each.kind === 'service' && each.label === service.label);
     const log = installed.logPath ? ` The log is ${installed.logPath}.` : '';
     const rollback = installed.previousScript
-      ? ` The previous server is still installed: \`stim-server service rollback${labelFlag(service.label)}\` switches back to it.`
+      ? ` The previous server is still installed: \`stim service rollback${labelFlag(service.label)}\` switches back to it.`
       : '';
     const last = lastExit(job);
     const failed = last?.failed === true;
@@ -285,8 +289,8 @@ function serviceStateFindings(setup: ServerSetup): Finding[] {
           detail: `${service.manager === 'launchd' ? 'launchd' : 'systemd'} has no running job for ${service.label}, so nothing serves this Stim home through it.${log}`,
           fix:
             service.manager === 'launchd'
-              ? `Run \`launchctl bootstrap gui/${process.getuid?.() ?? 501} ~/Library/LaunchAgents/${service.label}.plist\`, or remove the service with \`stim-server service uninstall${labelFlag(service.label)}\`.${rollback}`
-              : `Run \`systemctl --user restart ${service.label}.service\`, or remove the service with \`stim-server service uninstall${labelFlag(service.label)}\`.${rollback}`,
+              ? `Run \`launchctl bootstrap gui/${process.getuid?.() ?? 501} ~/Library/LaunchAgents/${service.label}.plist\`, or remove the service with \`stim service uninstall${labelFlag(service.label)}\`.${rollback}`
+              : `Run \`systemctl --user restart ${service.label}.service\`, or remove the service with \`stim service uninstall${labelFlag(service.label)}\`.${rollback}`,
         },
       ];
     }
@@ -343,7 +347,7 @@ function multipleFindings(setup: ServerSetup): Finding[] {
     const others = members.filter((each) => each !== keep);
     const steps = others.map((each) =>
       each.kind === 'service'
-        ? `Remove the ${each.label} service with \`stim-server service uninstall${labelFlag(each.label ?? '')}\`.`
+        ? `Remove the ${each.label} service with \`stim service uninstall${labelFlag(each.label ?? '')}\`.`
         : each.kind === 'desktop'
           ? `Quit Stim Desktop, then open it with \`-stimServerPort ${keep.port}\` so it adopts the server on port ${keep.port} instead of starting its own.`
           : `Stop pid ${each.pid} with \`kill ${each.pid}\`.`,
@@ -401,16 +405,14 @@ function keepAwakeFindings(setup: ServerSetup): Finding[] {
       level: 'note',
       title: 'This Mac serves build or device clients but may sleep',
       detail: `${total} approved client${total === 1 ? '' : 's'} (${kinds.join(', ')}) use this Mac's stim-server, and \`server.keepAwake\` is off, so an idle Mac sleeps and drops their builds and sessions.`,
-      fix: 'Run `stim settings set server.keepAwake true`; the server then holds a sleep assertion on AC power while it serves other machines. Confirm with `stim-server service status`.',
+      fix: 'Run `stim settings set server.keepAwake true`; the server then holds a sleep assertion on AC power while it serves other machines. Confirm with `stim service status`.',
     },
   ];
 }
 
-const DESKTOP_AUTHORITY_FEATURE = 'desktop-local-authority';
-
 function desktopAuthorityFindings(setup: ServerSetup): Finding[] {
   const local = setup.local;
-  if (!local || local.features.includes(DESKTOP_AUTHORITY_FEATURE)) return [];
+  if (!local || local.desktopApi >= DESKTOP_API) return [];
   const owner = setup.servers.find((server) => local.port !== null && server.port === local.port);
   if (!owner || owner.kind === 'desktop' || owner.kind === 'share') return [];
   const compared = compareStimVersions(local.version, setup.version);
@@ -420,13 +422,13 @@ function desktopAuthorityFindings(setup: ServerSetup): Finding[] {
       code: 'server-desktop-authority',
       level: 'cost',
       title: "The stim-server on this Stim home's socket is too old for Desktop actions",
-      detail: `${describeServer(owner)} runs ${local.version} and does not advertise ${DESKTOP_AUTHORITY_FEATURE}, so Stim Desktop reads from it but refuses to run actions through it (start, stop, reload, setup fixes).`,
+      detail: `${describeServer(owner)} runs ${local.version} without Stim Desktop's API ${DESKTOP_API}, so Stim Desktop reads from it but refuses to run actions through it (start, stop, reload, setup fixes).`,
       fix:
         owner.kind === 'service' && target
-          ? `Run \`stim-server service update${labelFlag(owner.label ?? '')} --release ${target}\`.`
+          ? `Run \`stim service update${labelFlag(owner.label ?? '')} --release ${target}\`.`
           : owner.kind === 'service'
-            ? `Run \`stim-server service update${labelFlag(owner.label ?? '')} --release <version>\` with a version newer than ${local.version}.`
-            : `Stop pid ${owner.pid} and start a newer \`stim-server\`, or install it as a service with \`stim-server service install\`.`,
+            ? `Run \`stim service update${labelFlag(owner.label ?? '')} --release <version>\` with a version newer than ${local.version}.`
+            : `Stop pid ${owner.pid} and start a newer \`stim-server\`, or install it as a service with \`stim service install\`.`,
     },
   ];
 }

@@ -8,7 +8,7 @@ import { videoPacket } from '../src/video.ts';
 type Route = Parameters<Upstream['route']>[1];
 type Presence = ConstructorParameters<typeof HostedShareSource>[4];
 
-function fixture(replies: Record<string, unknown> = {}, features: string[] = [], shown?: Presence) {
+function fixture(replies: Record<string, unknown> = {}, shown?: Presence) {
   const routes = new Map<string, Route>();
   const requests: { method: string; params: unknown }[] = [];
   const released = vi.fn<() => void>();
@@ -25,7 +25,6 @@ function fixture(replies: Record<string, unknown> = {}, features: string[] = [],
       routes.set(name, route);
       return () => routes.delete(name);
     },
-    supports: (feature: string) => features.includes(feature),
   } as unknown as Upstream;
   const hosts = {
     acquire: async () => {
@@ -106,9 +105,7 @@ describe('a share of a hosted device', () => {
 
   it('opens an H.264 host subscription for video viewers beside the JPEG one, and asks it for keyframes and lower bitrate', async () => {
     let next = 0;
-    const f = fixture({ 'device-host.frames.subscribe': () => ({ subscription: `up${++next}` }) }, [
-      'hosted-congestion',
-    ]);
+    const f = fixture({ 'device-host.frames.subscribe': () => ({ subscription: `up${++next}` }) });
     const jpeg = listener();
     f.source.subscribe(jpeg, hint);
     await vi.waitFor(() => expect(f.routes.has('s:up1')).toBe(true));
@@ -137,14 +134,6 @@ describe('a share of a hosted device', () => {
       { method: 'device-host.frames.keyframe', params: { subscription: 'up2' } },
       { method: 'device-host.frames.congested', params: { subscription: 'up2' } },
     ]);
-  });
-
-  it('never sends a congestion notice to a host that does not support it', async () => {
-    const f = fixture({ 'device-host.frames.subscribe': { subscription: 'up' } });
-    f.source.subscribe({ ...listener(), video: vi.fn<(unit: unknown) => void>() }, hint);
-    await vi.waitFor(() => expect(f.routes.has('s:up')).toBe(true));
-    f.source.congested();
-    expect(f.requests.map((entry) => entry.method)).toEqual(['device-host.frames.subscribe']);
   });
 
   it('fails every viewer, naming the host, when the host refuses or ends the stream', async () => {
@@ -202,14 +191,11 @@ describe('a share of a hosted device', () => {
     ]);
   });
 
-  it('forwards the clipboard calls to a host that advertises device-clipboard and returns the text it read', async () => {
-    const f = fixture(
-      {
-        'device-host.control.begin': { session: 'hc1', postures: [] },
-        'device-host.input.clipboard.get': { text: 'host text' },
-      },
-      ['device-clipboard'],
-    );
+  it('forwards the clipboard calls to the host and returns the text it read', async () => {
+    const f = fixture({
+      'device-host.control.begin': { session: 'hc1', postures: [] },
+      'device-host.input.clipboard.get': { text: 'host text' },
+    });
     await f.source.begin(owner, { workspace: '/w', platform: 'ios' }, '/w', () => true);
     expect(
       await f.source.input(owner, 'hc1', 'input.clipboard.set', { text: 'abc', paste: true }, unusedCommand, viewer),
@@ -224,29 +210,14 @@ describe('a share of a hosted device', () => {
   });
 
   it('returns only the typed flag of a hosted clipboard set', async () => {
-    const f = fixture(
-      {
-        'device-host.control.begin': { session: 'hc1', postures: [] },
-        'device-host.input.clipboard.set': { typed: true, extra: 1 },
-      },
-      ['device-clipboard'],
-    );
+    const f = fixture({
+      'device-host.control.begin': { session: 'hc1', postures: [] },
+      'device-host.input.clipboard.set': { typed: true, extra: 1 },
+    });
     await f.source.begin(owner, { workspace: '/w', platform: 'ios' }, '/w', () => true);
     expect(
       await f.source.input(owner, 'hc1', 'input.clipboard.set', { text: 'abc', paste: true }, unusedCommand, viewer),
     ).toEqual({ typed: true });
-  });
-
-  it('refuses the clipboard calls for a host without device-clipboard, without sending them', async () => {
-    const f = fixture({ 'device-host.control.begin': { session: 'hc1', postures: [] } });
-    await f.source.begin(owner, { workspace: '/w', platform: 'ios' }, '/w', () => true);
-    const before = f.requests.length;
-    for (const method of ['input.clipboard.set', 'input.clipboard.get']) {
-      expect(await f.source.input(owner, 'hc1', method, { text: 'abc' }, unusedCommand, viewer)).toMatchObject({
-        code: 'action-failed',
-      });
-    }
-    expect(f.requests).toHaveLength(before);
   });
 
   it('returns the host refusal when control is refused, and tells the viewer owner when the host ends control', async () => {
@@ -285,11 +256,14 @@ describe('presence on a share of a hosted device', () => {
     };
     const unfollow = vi.fn<() => void>();
     const follow = vi.fn<(key: string) => () => void>(() => unfollow);
-    const f = fixture({ 'device-host.control.begin': { session: 'hc1', postures: [] }, ...replies }, [], {
-      hub,
-      key: 'device',
-      follow,
-    });
+    const f = fixture(
+      { 'device-host.control.begin': { session: 'hc1', postures: [] }, ...replies },
+      {
+        hub,
+        key: 'device',
+        follow,
+      },
+    );
     await f.source.begin(owner, { workspace: '/w', platform: 'ios' }, '/w', () => true);
     const send = (who: PresenceParticipant, command: unknown) =>
       f.source.input(owner, 'hc1', 'input.touch', { ...(command as object) }, command as never, who);

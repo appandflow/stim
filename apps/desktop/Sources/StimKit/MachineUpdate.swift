@@ -1,7 +1,7 @@
 import Foundation
 
 /// Where an update of another Mac's stim-server stands, as the local stim-server's `machines.update.status` reports
-/// it: the host's own `server.update.status`, why it could not be read, and how much of this Mac's build went out.
+/// it: the host's own `engine.update.status`, why it could not be read, and how much of this Mac's build went out.
 public struct MachineUpdateStatus: Decodable, Equatable, Sendable {
   public struct Remote: Decodable, Equatable, Sendable {
     public struct Server: Decodable, Equatable, Sendable {
@@ -10,7 +10,7 @@ public struct MachineUpdateStatus: Decodable, Equatable, Sendable {
     }
 
     public var server: Server?
-    /// The stim-server service label it runs under; nil when it does not run as a service and cannot update itself.
+    /// The stim service label it runs under; nil when it does not run as a service and cannot update itself.
     public var service: String?
     public var running: Running?
     public var last: Outcome?
@@ -205,7 +205,7 @@ public func stimInstall(for machine: BuildMachineStatus, remote: MachineUpdateSt
   }
   if server.service == nil {
     return blocked(
-      "stim-server on \(name) was not started by `stim-server service install`, so it cannot update itself. Update it on \(name)."
+      "stim-server on \(name) was not started by `stim service install`, so it cannot update itself. Update it on \(name)."
     )
   }
   if !local.isRelease, !server.acceptsClientBuilds {

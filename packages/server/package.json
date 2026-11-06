@@ -1,6 +1,7 @@
 {
   "name": "@stim-cli/server",
   "version": "1.40.0",
+  "private": true,
   "description": "Serves Stim status to paired clients over Tailscale, and runs reload and stop for clients granted control.",
   "license": "MIT",
   "repository": {
@@ -25,7 +26,22 @@
       "module-sync": "./dist/protocol.mjs",
       "default": "./dist/protocol.mjs"
     },
-    "./protocol.schema.json": "./dist/protocol.schema.json"
+    "./protocol.schema.json": "./dist/protocol.schema.json",
+    "./cli": {
+      "types": "./dist/cli.d.mts",
+      "module-sync": "./dist/cli.mjs",
+      "default": "./dist/cli.mjs"
+    },
+    "./environment": {
+      "types": "./dist/environment.d.mts",
+      "module-sync": "./dist/environment.mjs",
+      "default": "./dist/environment.mjs"
+    },
+    "./service-plist": {
+      "types": "./dist/service-plist.d.mts",
+      "module-sync": "./dist/service-plist.mjs",
+      "default": "./dist/service-plist.mjs"
+    }
   },
   "scripts": {
     "build": "tsdown"

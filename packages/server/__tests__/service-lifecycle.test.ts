@@ -1,13 +1,25 @@
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
+import { stimBuildDigest } from '@stim-cli/core/state';
 import {
   installJob,
   installService,
   recordServiceRoute,
   rollbackService,
+  serverBuild,
+  serviceStatus,
   uninstallService,
   updateService,
 } from '../src/service.ts';
@@ -53,12 +65,16 @@ vi.mock('node:child_process', async (importOriginal) => {
         if (args[0] === 'install') {
           for (const [name, manifest, entry] of [
             ['@stim-cli/server', { version: '1.0.0' }, 'stim-server.mjs'],
-            ['stim', { bin: { stim: 'dist/cli.mjs' } }, 'cli.mjs'],
+            ['stim', { version: '1.0.0', bin: { stim: 'bin/stim.mjs' } }, 'cli.mjs'],
           ] as const) {
             const pkg = join(staging, 'node_modules', name);
             mkdirSync(join(pkg, 'dist'), { recursive: true });
             writeFileSync(join(pkg, 'package.json'), JSON.stringify(manifest));
             writeFileSync(join(pkg, 'dist', entry), 'console.log("1.0.0");');
+            if (name === 'stim') {
+              mkdirSync(join(pkg, 'bin'));
+              writeFileSync(join(pkg, 'bin', 'stim.mjs'), "import '../dist/cli.mjs';");
+            }
           }
         }
         return callback(null, args[0] === 'audit' ? '{"invalid":[],"missing":[]}' : '', '');
@@ -226,6 +242,28 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
+  });
+
+  it('compares the service and PATH builds using dist when the CLI entry is a bin router', async () => {
+    const stim = join(home, 'node_modules', 'stim');
+    mkdirSync(join(stim, 'bin'), { recursive: true });
+    mkdirSync(join(stim, 'dist'));
+    writeFileSync(join(stim, 'package.json'), JSON.stringify({ bin: { stim: 'bin/stim.mjs' } }));
+    writeFileSync(join(stim, 'bin', 'stim.mjs'), "import '../dist/cli.mjs';");
+    writeFileSync(join(stim, 'dist', 'cli.mjs'), 'console.log("1.0.0");');
+    const server = join(home, 'node_modules', '@stim-cli', 'server');
+    mkdirSync(join(server, 'dist'), { recursive: true });
+    writeFileSync(join(server, 'package.json'), JSON.stringify({ version: '1.0.0' }));
+    const script = join(server, 'dist', 'stim-server.mjs');
+    writeFileSync(script, '');
+    const digest = stimBuildDigest(join(stim, 'dist'));
+    expect(digest).not.toBeNull();
+    expect(serverBuild(script)).toEqual({ version: '1.0.0', stimBuild: digest });
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    symlinkSync(join(stim, 'bin', 'stim.mjs'), join(bin, 'stim'));
+    vi.stubEnv('PATH', [bin, process.env.PATH].join(delimiter));
+    expect((await serviceStatus(label)).stimBuild).toEqual({ service: digest, cli: digest, match: true });
   });
 
   it('setup records only the created route without restarting or changing the installed invocation', async () => {

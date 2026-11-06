@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react-native';
 
-import { RequestError, type StimConnection } from '@/lib/connection';
+import type { StimConnection } from '@/lib/connection';
 
 import { usePolledRequest } from './polled-request';
 
@@ -14,8 +14,6 @@ function fakeConnection() {
   const request = jest.fn(() => new Promise((resolve, reject) => pending.push({ resolve, reject })));
   return { connection: { request } as unknown as StimConnection, request, pending };
 }
-
-const unknownMethod = () => new RequestError({ code: 'unknown-method', message: 'no' });
 
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => jest.useRealTimers());
@@ -43,15 +41,6 @@ test('drops an answer older than one already delivered', async () => {
   await act(async () => pending[1]!.resolve({ n: 2 }));
   await act(async () => pending[0]!.resolve({ n: 1 }));
   expect(result.current.data).toEqual({ n: 2 });
-});
-
-test('stops asking after unknown-method and reports the error', async () => {
-  const { connection, request, pending } = fakeConnection();
-  const { result } = await poll(connection);
-  await act(async () => pending[0]!.reject(unknownMethod()));
-  await act(async () => jest.advanceTimersByTime(5_000));
-  expect(request).toHaveBeenCalledTimes(1);
-  expect(result.current.error).toBeInstanceOf(RequestError);
 });
 
 test('keeps asking after another failure and keeps the last answer', async () => {

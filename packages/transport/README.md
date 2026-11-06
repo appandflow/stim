@@ -1,20 +1,24 @@
 # @stim-cli/transport
 
 The contract between stim-server and the transports that carry phones and other machines to it. A transport
-package exports `apiVersion`, `id` and `createTransport()`, and stim-server loads it with `loadTransport()`:
+package declares `stimPlugin.kinds.transport: 1` in package.json and exports `id` and `createTransport()`, and stim-server loads it with `loadTransport()`:
 
 ```ts
 import { loadTransport } from '@stim-cli/transport';
 
 const loaded = await loadTransport({
   reference: '@stim-cli/transport-tailscale',
+  manifest: () =>
+    import('@stim-cli/transport-tailscale/package.json', { with: { type: 'json' } }).then(
+      ({ default: manifest }) => manifest,
+    ),
   load: () => import('@stim-cli/transport-tailscale'),
   input: { env: process.env, options: {} },
 });
 if ('unavailable' in loaded) console.error(loaded.unavailable);
 ```
 
-`loadTransport()` never throws. A missing package, a different `apiVersion`, a failing `createTransport()` or a
+`loadTransport()` never throws. A missing package, a different manifest kind integer, a failing `createTransport()` or a
 load that takes longer than 10 seconds comes back as `unavailable` with the reason.
 
 A transport declares its `traits` and implements the capabilities it has:

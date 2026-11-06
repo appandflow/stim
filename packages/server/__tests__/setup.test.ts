@@ -286,7 +286,7 @@ test('Desktop reuse installs no release or LaunchAgent and refuses an old app be
   expect(old.actions).toEqual([]);
   const fix = readSetupJournal(options.journal)?.steps.find((s) => s.id === 'server')?.fix;
   expect(fix).toContain('update Stim Desktop');
-  expect(fix).toContain('npm install --global @stim-cli/server@1.16.0 and restart the server');
+  expect(fix).toContain('npm install --global stim@1.16.0 and restart the server');
 });
 
 test('Funnel refuses before approval and records the off command', async () => {
@@ -711,12 +711,6 @@ test('a registry hint completes only this ticket grant before the next approval 
     expect(await pending).toBe(0);
     vi.clearAllTimers();
   }
-});
-
-test('setup refuses a ticket on the command line and names the environment variable instead', () => {
-  expect(() => parseSetupArgs([...args, '--ticket', ticket], now, undefined)).toThrow(
-    /no longer takes --ticket.*STIM_SETUP_TICKET=<ticket>/,
-  );
 });
 
 test.each([

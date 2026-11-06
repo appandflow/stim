@@ -70,18 +70,18 @@ Open **Help > Discover Stim** for more workflows and copyable agent prompts.
 Open **Settings > Connections**. **Using this machine** shows incoming access and running shares. **This machine uses** shows the machines you connect to.
 
 - **Pair a phone.** Enable **Phone app** under **Settings > Advanced > Feature flags**, then choose **Using this machine > Add… > Pair a Phone…**. The wizard sets up private Tailscale access. [Phone app](./phone-app.md)
-- **Pause incoming connections.** For the server Desktop starts, turn off **Allow connections**. This keeps existing pairings. If you run a standalone service, check its exposure with `stim-server service status`. Stop web shares separately under **Share links**.
+- **Pause incoming connections.** For the server Desktop starts, turn off **Allow connections**. This keeps existing pairings. If you run a standalone service, check its exposure with `stim service status`. Stop web shares separately under **Share links**.
 - **Remove incoming access.** Choose **Revoke Access…** on a phone or machine's row. To end a hosted session, use **Running here > Stop**.
 
 ### Pair with another machine
 
 Use Tailscale or configure a private LAN address on the machine you want to view. A loopback-only address such as `127.0.0.1` works only on that machine. [Local network setup](./remote-machines.md#local-network-without-tailscale)
 
-1. On the other machine, run `stim-server pair` for viewing or `stim-server pair --control` to also allow device control, reload and stop.
+1. On the other machine, run `stim pair` for viewing or `stim pair --control` to also allow device control, reload and stop.
 2. In Desktop, choose **This machine uses > Add… > View or Control Its Work…** and paste the command output. Verify the fingerprint against the other machine. The code works once and expires in five minutes.
 3. Open the machine's workspace from the sidebar.
 
-Pair only with machines you own. Pairing can expose live device screens, logs and unignored files. To revoke access on the other machine, run the `stim-server devices revoke <id>` command that Desktop shows when you remove the pairing.
+Pair only with machines you own. Pairing can expose live device screens, logs and unignored files. To revoke access on the other machine, run the `stim pairings revoke <id>` command that Desktop shows when you remove the pairing.
 
 ## Add a remote machine
 

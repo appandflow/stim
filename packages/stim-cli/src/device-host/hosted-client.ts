@@ -11,7 +11,6 @@ import {
   isJsonObject,
   readDeviceHostMachines,
   type DeviceHostMachineCredential,
-  type HostedAppOffer,
 } from '@stim-cli/core/state';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { BuildConnection } from '../offload/client.ts';
@@ -98,7 +97,7 @@ function hostingCredential(machine: string): DeviceHostMachineCredential {
       `Run stim remote add ${machine}.`,
     );
   if (credential.state !== 'approved') {
-    const remedy = `A person on ${machine} runs the stim-server setup command stim remote add ${machine} printed; then run stim remote list.`;
+    const remedy = `A person on ${machine} runs the stim setup command stim remote add ${machine} printed; then run stim remote list.`;
     throw credentialRefusal(`${machine} has not confirmed hosting access for this machine. ${remedy}`, remedy);
   }
   return credential;
@@ -189,19 +188,6 @@ export function hostConnector(machine: string): () => Promise<BuildConnection> {
       { code: opened.code ?? 'closed' },
     );
   };
-}
-
-export function requireHostedAppMode(
-  host: HostConnection,
-  platform: 'ios' | 'android',
-  mode?: HostedAppOffer['mode'],
-): void {
-  if (mode !== 'process') return;
-  if (!host.connection.supports(platform === 'ios' ? 'hosted-ios-process' : 'hosted-android-process'))
-    throw credentialRefusal(
-      `${host.machine} does not support hosted ${platform} process apps.`,
-      `Update stim-server on ${host.machine} to a version supporting hosted ${platform} process apps, then retry.`,
-    );
 }
 
 export async function call(

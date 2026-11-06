@@ -12,26 +12,13 @@ see [Each release](./apps/mobile/README.md#each-release) and
 
 ## 0. The published packages
 
-```
-packages/core                @stim-cli/core                shared primitives (cache roots, cache key, registration)
-packages/stim-cli            stim                          the CLI
-packages/ci                  @stim-cli/ci                  CI lifecycle and stim-ci executable
-packages/cache               @stim-cli/cache               cache provider contract and tier coordination
-packages/cache-s3            @stim-cli/cache-s3            optional S3-compatible cache provider
-packages/expo-build-cache    @stim-cli/expo-build-cache    Expo build cache provider
-packages/metro               @stim-cli/metro               shared Metro transform cache + log reporter
-packages/agent-driver        @stim-cli/agent-driver        hosted agent driver contract for stim-server
-packages/agent-driver-agent-device @stim-cli/agent-driver-agent-device agent-device hosted agent driver
-packages/transport           @stim-cli/transport           transport contract for stim-server
-packages/transport-tailscale @stim-cli/transport-tailscale Tailscale transport for stim-server
-packages/transport-local     @stim-cli/transport-local     local network transport for stim-server
-packages/server              @stim-cli/server              stim-server, read-only status for paired clients
+```text
+packages/stim-cli  stim                CLI, server, CI and public APIs
+packages/cache-s3  @stim-cli/cache-s3  optional S3-compatible cache provider
 ```
 
-**Every package carries the same version and is published together** -- the
-caches, the CLI/API, CI runner, and the server are one product, and a shared version beats a
-compatibility matrix. A release with no changes to a package still publishes
-it. `@stim-cli/ci` and `@stim-cli/server` depend on `stim`, so they publish after it.
+Both published packages carry the same version. The other workspace packages
+are private and keep their own builds for repository consumers.
 
 Run every command from the repo root unless a step says otherwise. Each
 package ships its own README in its own tarball; the root README is a landing
@@ -88,7 +75,7 @@ Every package name must already exist on npm, because trusted publishing can
 only be configured for an existing package:
 
 ```bash
-for p in @stim-cli/core @stim-cli/cache @stim-cli/cache-s3 @stim-cli/agent-driver @stim-cli/agent-driver-agent-device @stim-cli/metro @stim-cli/expo-build-cache stim @stim-cli/ci @stim-cli/transport @stim-cli/transport-tailscale @stim-cli/transport-local @stim-cli/server; do
+for p in stim @stim-cli/cache-s3; do
   npm view "$p" name >/dev/null || echo "$p: first publication required"
 done
 ```
@@ -121,9 +108,9 @@ If anything in the list is breaking, call it out under "Removed (breaking)" /
 "Migration notes" in the draft release notes.
 
 Before pre-flight, write `docs/releases/X.Y.Z.md`. This is the evidence index
-for the QA gate, not a post-tag changelog exercise. Use the sections `New`,
+for candidate verification. Use the sections `New`,
 `Removed (breaking)`, `Fixes`, `Docs`, and `Migration notes`, omitting empty
-sections. An expedited candidate also has a `QA` section. Link prior commits with
+sections. Link prior commits with
 `[<short-sha>](https://github.com/appandflow/stim/commit/<sha>)`, and say
 which package a line concerns when it is not the CLI. The version commit later
 includes this already-reviewed file.
@@ -146,24 +133,32 @@ preparation, `git status --short` may show only the draft
    disagree. It rewrites the `version` fields together, refreshes the
    lockfile, regenerates `apps/mobile/src/generated/licenses.json` (it embeds
    the workspace versions, and CI runs `licenses:check` on it), then re-reads
-   the manifests to confirm all packages landed on the new version and that the
+   the published manifests to confirm all packages landed on the new version and that the
    lockfile still matches them, and leaves the candidate uncommitted and
    untagged. If any of that fails it puts the manifests and the licenses file
    back as they were, so a failed run is never half-bumped. The licenses step
    runs `expo export`, so a fresh checkout needs `pnpm install --frozen-lockfile`
-   and `pnpm --filter @stim-cli/core run build` first.
+   and a workspace build first.
 
-   Nothing else moves. The packages depend on each other as `workspace:*`, so
-   there is no dependency range to bump: pnpm packs each internal dependency
-   as the exact release version, never a `^` range (verified in step 3).
+   Release floors live in `packages/core/state/release-floors.json`. A null
+   floor resolves to the next minor from a stable build version, or the minor
+   named by a release candidate. A stable `X.Y.0` prep pins every null floor
+   and rebuilds the CI action bundle. Candidates leave floors unpinned. A
+   patch prep refuses while any floor is null. Pinned floors never move.
+
+   Workspace links stay at `workspace:*` during a bump, including Stim's
+   development dependencies. Stim bundles the `@stim-cli/*` code and ships no
+   runtime dependency on those packages. pnpm substitutes remaining workspace
+   ranges when packing; no `workspace:` range may reach a published tarball
+   (verified in step 3).
    `pnpm run release:prep --check` audits that shape -- package versions in
    lockstep, every internal range exactly `workspace:*` -- without changing
    anything.
 
-   Confirm all packages moved:
+   Confirm the published packages moved:
 
    ```bash
-   grep -H '"version"' packages/*/package.json
+   grep -H '"version"' packages/{stim-cli,cache-s3}/package.json
    ```
 
 2. **Install and run the pre-flight against those exact files.** Run only
@@ -191,18 +186,18 @@ preparation, `git status --short` may show only the draft
    When CI or the merge queue is unavailable, run `pnpm run format:check`,
    `pnpm run lint`, `pnpm run typecheck`, `pnpm run knip`, `pnpm test`,
    `pnpm run test:e2e` and `pnpm run test:runtime` here as well, and record that
-   in the release report. The expedited RC lane in section 3 omits
-   `pnpm run test:compat`; do not combine the two lanes informally.
+   in the release report.
 
 3. **Verify each npm tarball** ships only what should ship, that each one
-   carries its own README, and that every `@stim-cli/*` and `stim` dependency
-   names the exact release version, with no `^` or `~`. Pack with `pnpm`, never `npm`: the release workflow publishes
+   carries its own README, and that Stim has no `@stim-cli/*` runtime
+   dependencies. Any remaining inter-package dependencies name the exact
+   release version, with no `^` or `~`. Pack with `pnpm`, never `npm`: the release workflow publishes
    pnpm-packed tarballs, and `npm pack` prints the unsubstituted `workspace:`
    ranges rather than what actually publishes.
 
    ```bash
    out=$(mktemp -d)
-   for p in core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server; do
+   for p in stim-cli cache-s3; do
      tgz=$(cd "packages/$p" && pnpm pack --pack-destination "$out" | tail -1)
      echo "== $p ($(tar -tzf "$tgz" | wc -l | tr -d ' ') files)"
      tar -tzf "$tgz" | grep -E 'README|LICENSE'
@@ -213,130 +208,23 @@ preparation, `git status --short` may show only the draft
 
    Keep the `files` whitelists tight (`dist`, `shim`, `skill`, `LICENSE`,
    `README.md` for the CLI; `dist`, `README.md`, `LICENSE` for the other
-   packages). Every published JavaScript entry lives under `dist/`, including
-   the server's `stim-server` bin. A
+   packages). The `stim` bin lives under `bin/` and loads its bundled
+   JavaScript from `dist/`. A
    `workspace:` range in that output means the tarball was not packed by pnpm;
    stop and fix the packing before publishing.
 
 4. **Inspect the candidate diff.** `git status --short` should contain only the
-   package manifests and the draft release notes. `pnpm-lock.yaml` no
+   published package manifests, any newly pinned release floors, the rebuilt
+   action bundle and the draft release notes. `pnpm-lock.yaml` no
    longer moves with a version bump -- it records the internal edges as
    `workspace:` specifiers and `link:` targets, neither of which carries a
    version. Resolve anything else before QA.
 
-## 3. Pre-tag QA gate
-
-Do not create the version commit or tag until this gate passes. The candidate
-prepared in section 2 is the one every command must exercise. Start with the
-automated native suites described in [`docs/e2e-and-ci.md`](./docs/e2e-and-ci.md):
-
-```bash
-node test/e2e/native/run-native-e2e.mjs --framework <bare|expo> --platform <ios|android>
-node test/e2e/native/run-cache-e2e.mjs --framework <bare|expo> --platform <ios|android> --summary /tmp/cache-summary.json
-```
-
-Choose the matrix from the changes since the last published tag by running the
-table below over the diff, as `scripts/release-qa-matrix.data.mjs` encodes it in
-paths:
-
-```bash
-# "v$last" is the last published version resolved in section 1, not the version being cut.
-node scripts/release-qa-matrix.mjs "v$last"                    # the checklist, with a reason per row
-node scripts/release-qa-matrix.mjs "v$last" --format markdown  # the QA section for docs/releases
-```
-
-It prints every required row with the changed paths that require it, and every
-omitted row with the diff-based reason this gate already demands. A changed path
-the mapping does not cover makes the full matrix required: add its rule and
-rerun rather than deciding that one by hand. Reading the table yourself stays
-valid, and a disagreement with the script is a mapping bug to fix in the same
-release. The design is in
-[docs/specs/2026-09-18-release-qa-orchestration-design.md](./docs/specs/2026-09-18-release-qa-orchestration-design.md).
-
-| Change since the last release                                           | Required evidence                                                |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Command lifecycle, worktrees, devices, or framework detection           | `loop` for each affected framework/platform                      |
-| Log collection, error queries, or timeline behavior                     | field protocol logs row on each affected platform                |
-| Build, cache, fingerprint, Pods, Metro, single-flight, or `gc` behavior | `caches` for each affected platform and each affected Metro mode |
-| Project detection, prebuild, monorepo, or hoisted-dependency behavior   | field protocol on a representative real repository               |
-| Remote device, tunnel, or remote build-cache behavior                   | field protocol with the affected authenticated provider          |
-| Release build or JS/APK swap behavior                                   | field protocol release row on each affected platform             |
-| Android variant or artifact selection                                   | field protocol on a real flavored Android repository             |
-| Launch status, remedies, or interaction UX                              | field protocol launch-evidence row on each affected platform     |
-
-A minor release runs every applicable row. A patch may omit unaffected rows,
-but the release report must name each omission and why the diff cannot affect
-it. A major release runs the full matrix on at least two representative real
-repositories.
-
-The manual rows and report format are in
-[`docs/field-test-protocol.md`](./docs/field-test-protocol.md). Follow its
-[progress-update cadence](./docs/field-test-protocol.md#progress-updates)
-throughout QA, including long-running automated suites. Do not repeat
-the cache suite by hand: attach its machine-readable summary. Attach the loop
-suite result and log for each loop row. Run manual rows with the built candidate
-CLI as described by the protocol, never `stim@latest`. Every claim in the
-draft release notes needs a matching automated check or manual observation.
-Missing evidence is not a pass.
-
-Before continuing:
-
-- [ ] every required row passed, or is explicitly omitted with a diff-based reason
-- [ ] every automated summary and manual observation is attached to the release PR or task
-- [ ] every release-note claim points to evidence
-- [ ] zero CRITICAL findings remain
-- [ ] every HIGH finding is fixed, or accepted explicitly and named in the release notes
-
-### Expedited RC lane
-
-Use this lane only when the user or release owner explicitly asks for an
-expedited, quick, or no-QA release. It shortens feedback for a prerelease; it is
-not available for a stable version.
-
-All of these conditions are required:
-
-- The target version has a prerelease suffix such as `-rc.N`.
-- Every included change was merged through a reviewed pull request with its
-  blocking CI green.
-- No CRITICAL or HIGH finding remains open for the included changes.
-- The changes since the last published version do not alter package boundaries,
-  version preparation, tarball packing, trusted publishing, or the Release
-  workflow. Those changes use the full lane.
-- The registry and tag checks in section 1 show no partial release to recover.
-
-Complete section 2 steps 1, 3, and 4. In place of section 2 step 2, run its
-preflight without `pnpm run test:compat`.
-
-The tarball inspection remains mandatory. It is the proof that the exact files
-about to publish have the intended versions, package contents, READMEs, and no
-unsubstituted `workspace:` ranges.
-
-The expedited lane may omit `pnpm run test:compat` and all of the pre-tag
-native and manual rows in section 3. Record that choice in the release note
-instead of implying those checks passed:
-
-```markdown
-## QA
-
-Expedited RC authorized on YYYY-MM-DD. Omitted before the version commit:
-test:compat and the pre-tag native/manual matrix. Retained before the version
-commit: release:prep --check, candidate build, CLI version/help/guide, and
-tarball inspection. Retained after the version commit lands: the release gate
-of section 4 step 4 on the exact release commit (merge gate, Node 22 and 24
-unit and cross-platform e2e jobs, published-runtime job).
-```
-
-Section 4 is unchanged. In particular, land the candidate through the merge
-queue without a tag, wait for the release gate on that exact commit, and only
-then create the immutable tag and publish through the normal workflow. A failed
-short preflight, tarball check, or release gate ends the expedited lane; fix it
-and repeat the affected gate rather than waiving it.
-
 ## 4. Cut the release
 
-1. **Freeze the evidence and notes.** Compare the draft release notes against
-   the completed QA report one last time. If a claim or accepted HIGH needs a
-   correction, update the notes and repeat the affected gate rows now.
+1. **Freeze the evidence and notes.** Check each release-note claim against
+   candidate verification. Correct the notes and rerun affected checks before
+   continuing.
 2. **Open the version commit as a pull request** with a
    `chore: X.Y.Z — <one-line summary>` title and let the merge queue land it.
    The body can be terse; the GitHub release notes carry the real changelog.
@@ -438,7 +326,7 @@ and repeat the affected gate rather than waiving it.
    commit. A tag pushed without it fails in the first job, before anything is
    published; run the suite on a branch at that commit and re-run the failed
    job. A prerelease (`-rc.N`) needs no `Full suite` run, and neither does the
-   expedited RC lane, whose gate stays the Linux jobs above. The `next`
+   candidate release gate, which stays the Linux jobs above. The `next`
    channels (npm and Desktop) never wait for it. A flaky job in the suite is a
    failure to read, not to re-run blindly: the same rule as section 5.
 
@@ -489,8 +377,8 @@ and repeat the affected gate rather than waiving it.
    that already exists, computes the dist-tag (section 1) and publishes every
    package to it. Its `smoke` job then waits, up to 15 minutes per check, for
    the registry to serve each version, its tarball and the dist-tag, and runs
-   `npx stim@X.Y.Z --version`, `stim-ci --version` from `@stim-cli/ci@X.Y.Z`
-   and `stim-server --version` from `@stim-cli/server@X.Y.Z` in a scratch
+   `npx stim@X.Y.Z --version`, `npx stim@X.Y.Z ci --version`
+   and `npx stim@X.Y.Z serve --version` in a scratch
    directory.
 
    The `Release` run holds only `tag-on-main`, `publish` and `smoke`, so it
@@ -512,18 +400,14 @@ and repeat the affected gate rather than waiving it.
    cd /tmp && npx "stim@$version" --version
    cd /tmp && npx "stim@$version" guide agent >/dev/null
    npm pack "stim@$version" --dry-run 2>&1 | grep ' README.md$'
-   npm view "@stim-cli/core@$version" version
-   npm view "@stim-cli/cache@$version" version
-   npm view "@stim-cli/expo-build-cache@$version" version
-   npm view "@stim-cli/metro@$version" version
-   cd /tmp && npx -p "@stim-cli/ci@$version" stim-ci --version
-   cd /tmp && npx -p "@stim-cli/server@$version" stim-server --version
+   cd /tmp && npx --yes "stim@$version" ci --version
+   cd /tmp && npx --yes "stim@$version" serve --version
    ```
    Keep the `cd /tmp`. Inside this repository, `npx "stim@$version"` with the
    workspace's own `stim` version does not download the release: npm treats
    the workspace package as installed and runs whichever `stim` is first on
    `PATH`, so the check can pass or fail against a different build. The same
-   holds for `npx -p`. The `smoke` job runs from a scratch directory for this
+   applies to every subcommand. The `smoke` job runs from a scratch directory for this
    reason.
    The `npm pack` line lists the published tarball's README. Do not check
    `npm view "stim@$version" readme`: it prints the registry's package-level
@@ -542,6 +426,28 @@ and repeat the affected gate rather than waiving it.
   published packages are broken on that platform is `priority: P0`: follow
   [docs/release-recovery.md](./docs/release-recovery.md). Do not hold the
   release report, the Desktop release or the machine updates for them.
+
+- When retiring workspace packages, deprecate their published names by hand
+  after the stable release is visible on npm. OIDC publishing cannot deprecate;
+  this needs an npm owner login and 2FA. Set `version` to the stable cut:
+
+  ```bash
+  version=X.Y.0
+  for name in core cache ci server transport transport-tailscale transport-local agent-driver agent-driver-agent-device; do
+    npm deprecate "@stim-cli/$name@*" "moved into stim $version; see https://github.com/appandflow/stim/blob/main/docs/releases/$version.md"
+  done
+  npm deprecate '@stim-cli/metro@*' "no longer published; remove sharedCacheStores from metro.config.js, Stim's injected config sets cacheStores when Stim starts Metro"
+  npm deprecate '@stim-cli/expo-build-cache@*' "deprecated in stim $version; run builds through stim ios or stim android and remove expo.buildCacheProvider from the app config"
+  for name in core cache ci server transport transport-tailscale transport-local agent-driver agent-driver-agent-device metro expo-build-cache; do
+    npm view "@stim-cli/$name" deprecated
+  done
+  ```
+
+- When a release changes the phone or Desktop API integer, publish npm first,
+  then the matching Desktop release, then the production phone update. Update
+  workers with `npm i -g stim@<version> && stim service install`. Prepare the
+  stable cut within an hour of merging the API change; run the Full suite on
+  the exact candidate commit before tagging it.
 
 - Leave every `package.json` at the just-released version. The next release
   bumps them as part of its own section 2, step 1; we don't carry a `-dev`
@@ -580,7 +486,7 @@ and repeat the affected gate rather than waiving it.
    did). Only a frozen surface (rule 6) needs a major.
 5. **A changed meaning gets a new name.** The old name refuses and names the
    new one for 30 days; an unchanged meaning keeps its name. 1.36.0 changed
-   `stim-ci run` in place, which this rule forbids.
+   `stim ci run` in place, which this rule forbids.
 6. **Frozen surfaces change only in a major.** The phone's native framing is
    frozen: its first byte is the protocol version and anything else gets
    `protocol-unsupported`, because installed phone binaries change only
@@ -605,8 +511,7 @@ npm install --global stim@next
   the version the packages carry on `main`, so `1.39.0` on `main` publishes
   `1.40.0-next.20261103040825.g751e1f0`. It sorts above every published
   release and below the next minor, and a plain `npm install stim` or a `^`
-  range never selects it. All the packages publish at that one version: the
-  libraries first, then `stim`, then `@stim-cli/ci` and `@stim-cli/server`.
+  range never selects it. Both published packages use that version.
 - **Throttle.** The job waits until `NEXT_THROTTLE_MINUTES` (5) after the
   current `next` was published, then publishes whatever is the head of `main`
   at that moment. GitHub keeps one run active and one pending, so under
@@ -647,7 +552,7 @@ next build: only the short appcast publish of each workflow takes turns.
 
 ## Stim Host releases
 
-`stim-server service install` installs the Stim Host app on a hosting Mac
+`stim service install` installs the Stim Host app on a hosting Mac
 (`packages/server/host/`). Its signed build ships apart from the npm packages,
 because macOS keys the person's Screen Recording and control grants to its
 signature, and it only needs a new version when the launcher changes.
@@ -662,7 +567,7 @@ signature, and it only needs a new version when the launcher changes.
    a build that is not signed and notarized; a dispatched run is a dry run.
 2. Pin the release in `RELEASE` in `packages/server/src/stim-host.ts`: the
    version and the SHA-256 from the workflow's `SHA256SUMS`. From the next
-   `@stim-cli/server` release (or checkout build), `install` downloads that zip,
+   `stim` release (or checkout build), `install` downloads that zip,
    checks the digest and the team's Developer ID signature, and installs
    `~/Applications/Stim Host.app` (`dev.stim.host`). A Mac that had Stim Host
    Dev keeps that bundle in `~/Applications`; its owner can delete it and its
@@ -682,10 +587,6 @@ signed unless `HOST_SIGNING_IDENTITY` is set.
 - Force-push tags. Cut a new version.
 - Skip the tarball check in section 2, step 3. Untracked files have shipped
   before, and it is the only place a `workspace:` range would be caught by hand.
-- Use the expedited RC lane for a stable version, release-workflow change, or a
-  candidate with an unresolved CRITICAL or HIGH finding.
-- Treat “no QA” as permission to skip the release gate on the exact release
-  commit, candidate version verification, or tarball inspection.
 - Hold the tag or the publish for a nightly run. Only the `Full suite` run on
   the release commit (section 4, step 4) gates a stable version.
 - Publish one package at a new version and leave the others behind. The shared

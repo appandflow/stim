@@ -40,7 +40,6 @@ const PAIRING_TTL_MS = 5 * 60 * 1000;
 const DEVICES_FILE = join(tmpdir(), 'stim-mobile-mock-server-devices.json');
 const IDENTITY_FILE = join(tmpdir(), 'stim-mobile-mock-server-identity.key');
 const fixtures = loadFixtures({ slotWaits: values['slot-waits'], capacity: values.capacity });
-const legacyArchives = process.env.STIM_MOCK_LEGACY_ARCHIVES === '1';
 const recording = loadRecording();
 const recordingFor = (params) => {
   if (!params.archive) return recording;
@@ -695,14 +694,12 @@ function serve(socket, device) {
     let outcome;
     try {
       if (method === 'archive.detail') {
-        if (legacyArchives) return fail(id, 'unknown-method', `Unknown method ${method}.`);
         if (typeof params.archive !== 'string' || !params.archive || params.workspace !== undefined)
           return fail(id, 'bad-request', 'Send an archive id.');
         if (!fixtures.status.archived.some((archive) => archive.id === params.archive))
           return fail(id, 'unknown-workspace', `Archive ${params.archive} is not a Stim archive on this machine.`);
       }
       if (['logs.query', 'logs.subscribe', 'replay.range', 'replay.keyframe', 'frames.subscribe'].includes(method)) {
-        if (legacyArchives && !params.workspace) return fail(id, 'bad-request', 'workspace is required.');
         if (Boolean(params.workspace) === Boolean(params.archive))
           return fail(id, 'bad-request', 'Send exactly one workspace or archive.');
         if (params.archive && !fixtures.status.archived.some((archive) => archive.id === params.archive))
@@ -734,6 +731,7 @@ function hello(clientKey, deviceName) {
   return {
     protocol: 2,
     phoneApi: 2,
+    host: { owner: 'service', capabilities: ['physical-ios', 'physical-android'], app: null },
     server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
     capabilities: values.read ? ['read'] : ['read', 'control'],
     features: [

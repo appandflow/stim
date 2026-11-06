@@ -163,7 +163,6 @@ if (process.argv[2] === 'offer-native-gradle') {
   const connection = await BuildConnection.open(endpoint, paired.credential.serverKey!, 5000);
   if (!(connection instanceof BuildConnection)) throw new Error(connection.failure);
   try {
-    expect(connection.supports('native-gradle-peer-cache')).toBe(true);
     const query = {
       project: '',
       sourceDigest: 'a'.repeat(64),

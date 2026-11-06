@@ -1,6 +1,8 @@
 import type { StimClient, StimOptions } from './api/types.ts';
-import { removedEnvironmentRefusal } from './daemon/mode.ts';
-import { leftoverOffRefusal } from './workspace/leftover-off.ts';
+import { GOVERNED_COMMANDS, removedEnvironmentRefusal } from './daemon/mode.ts';
+import { removedSettingFindings, settingsLayers, projectSettingsContext } from './workspace/settings.ts';
+import { loadConfig } from './workspace/config.ts';
+import { findProjectRoot } from './workspace/project.ts';
 
 export type Admission = NonNullable<StimOptions['admission']>;
 
@@ -47,7 +49,7 @@ export async function runOperation(
         ? apiCommand(entry.operation, entry.platform)
         : null;
   if (!command) return { admitted: null };
-  const refusal = removedEnvironmentRefusal(command, entry.env) ?? leftoverOffRefusal(command, entry.cwd, entry.env);
+  const refusal = removedEnvironmentRefusal(command, entry.env) ?? removedConfigRefusal(command, entry.cwd, entry.env);
   if (refusal) return { refusal };
   if (entry.caller === 'cli' && entry.plan) return { admitted: null };
   try {
@@ -59,4 +61,26 @@ export async function runOperation(
     });
   } catch {}
   return { admitted: command };
+}
+
+function removedConfigRefusal(command: string, cwd: string, env: NodeJS.ProcessEnv): OperationRefusal | null {
+  if (!GOVERNED_COMMANDS.has(command)) return null;
+  let found: ReturnType<typeof removedSettingFindings>;
+  try {
+    const root = findProjectRoot(cwd);
+    found = removedSettingFindings(settingsLayers(root ? projectSettingsContext(root) : {}), loadConfig(), env).filter(
+      (entry) => entry.refuses,
+    );
+  } catch {
+    return null;
+  }
+  if (!found.length) return null;
+  const steps = [
+    ...new Set([...found.flatMap((entry) => (entry.set ? [entry.set] : [])), ...found.map((entry) => entry.unset)]),
+  ];
+  return {
+    code: 'STIM_BAD_ARG',
+    message: found.map((entry) => entry.message).join(' '),
+    remedy: `Run, in order: ${steps.map((step) => `\`${step}\``).join(', ')}. Then run the command again.`,
+  };
 }

@@ -9,6 +9,7 @@ import {
   type RawSocket,
 } from '@stim-cli/core/noise-session';
 import type { Method } from '@stim-cli/core/phone-protocol';
+import { MAX_CLIPBOARD_BYTES } from '@stim-cli/core/protocol';
 import { isRpcError, isRpcEvent, isRpcResult } from '@stim-cli/core/receive-protocol';
 
 import { DemoMachine, upgradeFromWebPage, workerDh, type DemoAuth, type DeviceRecord } from '../src/demo.ts';
@@ -452,6 +453,24 @@ describe('Control', () => {
     );
     watcher.close();
     driver.close();
+  });
+
+  it('keeps a clipboard per control session that set replaces and get reads', async () => {
+    const client = await pair(demo());
+    const target = { workspace: SEARCH, platform: 'ios', slot: 'default' };
+    const first = (await client.request('control.begin', target)).result?.session;
+    const second = (await client.request('control.begin', target)).result?.session;
+
+    expect(
+      (await client.request('input.clipboard.set', { session: first, text: 'water 2 L', paste: true })).result,
+    ).toEqual({});
+    expect((await client.request('input.clipboard.get', { session: first })).result).toEqual({ text: 'water 2 L' });
+    expect((await client.request('input.clipboard.get', { session: second })).result).toEqual({ text: '' });
+    const tooLong = '\u00e9'.repeat(MAX_CLIPBOARD_BYTES / 2 + 1);
+    expect((await client.request('input.clipboard.set', { session: first, text: tooLong })).error?.code).toBe(
+      'bad-request',
+    );
+    client.close();
   });
 
   it('refuses a workspace that is not in the status payload', async () => {

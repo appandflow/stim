@@ -21,6 +21,8 @@ import type { WorkerRootUsage } from './worker-areas.ts';
 import {
   answersAs,
   DEFAULT_LABEL,
+  DEFAULT_PORT,
+  validateLabel,
   planServe,
   normalizeEnv,
   ServiceError,
@@ -56,6 +58,7 @@ export interface ServiceOptions {
   env: string[];
   pathPrepend: string[];
   serve: boolean;
+  stimHome?: string | null;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -236,7 +239,7 @@ export async function requireManaged(label: string): Promise<InstalledService | 
   }
   if (installed && !installed.managed) {
     throw new ServiceError(
-      `${plistPath(label)} was not written by \`stim-server service install\`; not touching it. Use another --label.`,
+      `${plistPath(label)} was not written by \`stim service install\`; not touching it. Use another --label.`,
     );
   }
   if (!installed && (await loaded(label))) {
@@ -247,8 +250,33 @@ export async function requireManaged(label: string): Promise<InstalledService | 
   return installed;
 }
 
-export async function installService(options: ServiceOptions): Promise<string[]> {
-  serviceManager();
+export async function installService(options?: ServiceOptions): Promise<string[]> {
+  const manager = serviceManager();
+  // compat C12 permanent
+  if (!options) {
+    const root = dirname(manager.root(DEFAULT_LABEL));
+    const notes: string[] = [];
+    for (const entry of existsSync(root) ? readdirSync(root, { withFileTypes: true }) : []) {
+      if (!entry.isDirectory() || validateLabel(entry.name)) continue;
+      notes.push(
+        ...(await holdingUpdateClaim(entry.name, async () => {
+          const installed = await manager.read(entry.name);
+          if (!installed?.managed || installed.port === null) return [];
+          return installJob({
+            label: installed.label,
+            port: installed.port,
+            env: installed.env,
+            pathPrepend: installed.pathPrepend,
+            stimHome: installed.stimHome,
+            serve: false,
+          });
+        })),
+      );
+    }
+    if (notes.length) return notes;
+    options = { label: DEFAULT_LABEL, port: DEFAULT_PORT, env: [], pathPrepend: [], serve: false };
+  }
+  // compat end
   return holdingUpdateClaim(options.label, () => installJob(options));
 }
 
@@ -256,7 +284,9 @@ export async function installJob(
   options: ServiceOptions,
   setup?: { script: string; host: HostApp | null; requestPermissions: false },
 ): Promise<string[]> {
-  const script = realpathSync(setup?.script ?? process.argv[1] ?? '');
+  const script = realpathSync(
+    setup?.script ?? join(dirname(createRequire(import.meta.url).resolve('stim/package.json')), 'bin', 'stim.mjs'),
+  );
   const previous = await requireManaged(options.label);
   if (previous?.serve?.created && previous.port !== options.port) {
     throw new ServiceError(
@@ -271,7 +301,8 @@ export async function installJob(
     createRoute = prepared.create;
   }
   const environment: Record<string, string> = {};
-  if (process.env.STIM_HOME) environment.STIM_HOME = process.env.STIM_HOME;
+  const stimHome = options.stimHome === undefined ? process.env.STIM_HOME : options.stimHome;
+  if (stimHome) environment.STIM_HOME = stimHome;
   if (process.env.SHELL) environment.SHELL = process.env.SHELL;
   const manager = serviceManager();
   const host = setup ? setup.host : await manager.host();
@@ -355,7 +386,7 @@ export async function installJob(
   }
 
   const notes = [`Installed ${options.label}: ${path}`, `Log: ${spec.logPath}`];
-  const follow = `Run \`stim-server service status --label ${options.label}\` and check ${spec.logPath}.`;
+  const follow = `Run \`stim service status --label ${options.label}\` and check ${spec.logPath}.`;
   const noun =
     manager.name === 'launchd' ? 'LaunchAgent' : manager.name === 'taskscheduler' ? 'Scheduled task' : 'Service';
   notes.push(
@@ -477,8 +508,7 @@ export interface ServiceStatus {
 function stimDist(from: string): string | null {
   try {
     const manifest = createRequire(from).resolve('stim/package.json');
-    const pkg = JSON.parse(readFileSync(manifest, 'utf8')) as { bin: { stim: string } };
-    return dirname(join(dirname(manifest), pkg.bin.stim));
+    return join(dirname(manifest), 'dist');
   } catch {
     return null;
   }
@@ -488,7 +518,7 @@ function stimOnPath(): string | null {
   for (const dir of (process.env.PATH ?? '').split(delimiter)) {
     if (!dir) continue;
     try {
-      return dirname(realpathSync(join(dir, 'stim')));
+      return stimDist(realpathSync(join(dir, 'stim')));
     } catch {
       continue;
     }
@@ -560,7 +590,7 @@ const KEEP_AWAKE_REASONS: Record<KeepAwakeReason, string> = {
   unsupported: 'not held, only macOS supports it',
   'loopback-only': 'not held, this server accepts only this machine',
   'not-listening': 'not held, no tailnet or local network listener is up',
-  failed: 'not held, caffeinate did not start or stopped (restart stim-server to retry)',
+  failed: 'not held, caffeinate did not start or stopped (restart stim serve to retry)',
 };
 
 function keepAwakeText(keepAwake: KeepAwakeStatus): string {
@@ -632,7 +662,7 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
     }
   } else if (status.manager === 'launchd') {
     lines.push(
-      `  macOS attributes ${panes.screen} and ${panes.control} to node. Run \`stim-server service install\` again to use Stim Host.`,
+      `  macOS attributes ${panes.screen} and ${panes.control} to node. Run \`stim service install\` again to use Stim Host.`,
     );
   }
   lines.push(`  node: ${status.node}`, `  server: ${status.script}`);
@@ -718,8 +748,8 @@ const IDLE_WAIT_MS = 30 * 60_000;
 const IDLE_POLL_MS = 5000;
 const NPM_TIMEOUT_MS = 10 * 60_000;
 const REGISTRY = 'https://registry.npmjs.org/';
-const SERVER_PACKAGE = '@stim-cli/server';
-const SERVER_SCRIPT = ['node_modules', '@stim-cli', 'server', 'dist', 'stim-server.mjs'];
+const SERVER_PACKAGE = 'stim';
+const SERVER_SCRIPT = ['node_modules', 'stim', 'bin', 'stim.mjs'];
 
 export type UpdateSource = { release: string } | { from: string };
 
@@ -930,7 +960,7 @@ export async function installServer(
     if (problem) throw new ServiceError(`${problem}. Not switching to it.`);
     const script = join(staging, ...SERVER_SCRIPT);
     const build = existsSync(script) ? serverBuild(script) : null;
-    const serverDigest = existsSync(script) ? stimBuildDigest(dirname(script)) : null;
+    const serverDigest = existsSync(script) ? stimBuildDigest(join(dirname(script), '..', 'dist')) : null;
     if (!build?.stimBuild || !serverDigest) {
       throw new ServiceError(`The install has no ${SERVER_PACKAGE} with its stim build.`);
     }
@@ -1146,7 +1176,7 @@ function withUpdateClaim<T>(
   return holdingUpdateClaim(label, async () => {
     const installed = await requireManaged(label);
     if (!installed?.script || !installed.node || installed.port === null) {
-      throw new ServiceError(`${label} is not installed. Run \`stim-server service install\` first.`);
+      throw new ServiceError(`${label} is not installed. Run \`stim service install\` first.`);
     }
     return work({ ...installed, script: installed.script, node: installed.node, port: installed.port });
   });
@@ -1207,7 +1237,7 @@ async function switchToSource(
   const flag = label === DEFAULT_LABEL ? '' : ` --label ${label}`;
   return [
     `${label} now runs ${describeBuild(target.build)} from ${target.dir}.`,
-    `The previous server stays installed: ${installed.script}. \`stim-server service rollback${flag}\` switches back to it.`,
+    `The previous server stays installed: ${installed.script}. \`stim service rollback${flag}\` switches back to it.`,
   ];
 }
 

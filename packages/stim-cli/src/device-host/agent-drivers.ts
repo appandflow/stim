@@ -1,8 +1,14 @@
+import agentDeviceManifest from '@stim-cli/agent-driver-agent-device/package.json' with { type: 'json' };
+import type { PluginSource } from '@stim-cli/core/plugin-loader';
 import { loadAgentDriverModule, type AgentDriverClient } from '@stim-cli/agent-driver';
 import type { HostedAgentDriverName } from '@stim-cli/core/state';
 
-const DRIVERS: Record<Exclude<HostedAgentDriverName, 'none'>, { load: () => Promise<unknown>; configFile: string }> = {
-  'agent-device': { load: () => import('@stim-cli/agent-driver-agent-device'), configFile: 'agent-device-remote.json' },
+const DRIVERS: Record<Exclude<HostedAgentDriverName, 'none'>, PluginSource & { configFile: string }> = {
+  'agent-device': {
+    load: () => import('@stim-cli/agent-driver-agent-device'),
+    manifest: () => agentDeviceManifest,
+    configFile: 'agent-device-remote.json',
+  },
 };
 
 function registered(name: string): name is keyof typeof DRIVERS {
@@ -14,8 +20,8 @@ export async function agentDriverClient(
   name: string,
 ): Promise<{ client: AgentDriverClient } | { unavailable: string }> {
   if (!registered(name)) return { unavailable: `this Stim has no ${name} driver` };
-  const { load, configFile } = DRIVERS[name];
-  const loaded = await loadAgentDriverModule(name, load);
+  const { configFile } = DRIVERS[name];
+  const loaded = await loadAgentDriverModule(name, DRIVERS[name]);
   if ('unavailable' in loaded) return loaded;
   const { client } = loaded.module;
   if (!client) return { unavailable: `the ${name} driver has no client` };

@@ -1,6 +1,7 @@
 {
   "name": "@stim-cli/core",
   "version": "1.40.0",
+  "private": true,
   "description": "Shared internal cache and runtime primitives for Stim packages.",
   "license": "MIT",
   "repository": {
@@ -76,6 +77,11 @@
       "types": "./dist/workspace-link.d.mts",
       "module-sync": "./dist/workspace-link.mjs",
       "default": "./dist/workspace-link.mjs"
+    },
+    "./plugin-loader": {
+      "types": "./dist/plugin-loader.d.mts",
+      "module-sync": "./dist/plugin-loader.mjs",
+      "default": "./dist/plugin-loader.mjs"
     }
   },
   "scripts": {

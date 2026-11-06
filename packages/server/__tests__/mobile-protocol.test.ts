@@ -6,12 +6,12 @@ import type * as Server from '../src/protocol.ts';
 type BuildMethod = (typeof Server.BUILD_METHODS)[number];
 
 type DeviceHostMethod = (typeof Server.DEVICE_HOST_METHODS)[number];
-type ServerUpdateMethod = (typeof Server.SERVER_UPDATE_METHODS)[number];
+type EngineUpdateMethod = (typeof Server.ENGINE_UPDATE_METHODS)[number];
 type PhoneMethod = Exclude<
   keyof Server.Methods,
   | BuildMethod
   | DeviceHostMethod
-  | ServerUpdateMethod
+  | EngineUpdateMethod
   | 'desktop.authenticate'
   | 'desktop.reports.get'
   | 'desktop.reports.subscribe'

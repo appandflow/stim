@@ -3,8 +3,7 @@ import Foundation
 /// Stim Desktop's connection to its local stim-server, as a physical device's tile needs it.
 public enum ServerLink: Equatable, Sendable {
   case connecting
-  /// `features` is nil from a server older than the `features` hello field.
-  case open(features: [String]?, capabilities: [String])
+  case open(desktopApi: Int?, capabilities: [String])
   /// The server is unreachable or refused Stim Desktop, with why.
   case unavailable(String)
 }
@@ -44,8 +43,8 @@ public enum PhysicalScreen: Equatable, Sendable {
       switch link {
       case .connecting: self = .message("Connecting to stim-server")
       case .unavailable(let reason): self = .message(reason)
-      case .open(let features, let capabilities):
-        guard features?.contains("\(device.platform)-hosted") == true else {
+      case .open(let desktopApi, let capabilities):
+        guard desktopApi == ServerProtocol.desktopApi else {
           self = Self.olderServer(showing: "this simulator's screen")
           return
         }
@@ -74,8 +73,8 @@ public enum PhysicalScreen: Equatable, Sendable {
       self = .message("Connecting to stim-server")
     case .unavailable(let reason):
       self = .message(reason)
-    case .open(let features, let capabilities):
-      guard features?.contains("physical-\(device.platform)") == true else {
+    case .open(let desktopApi, let capabilities):
+      guard desktopApi == ServerProtocol.desktopApi else {
         self = Self.olderServer(showing: "this device's screen")
         return
       }
@@ -117,11 +116,8 @@ public enum PhysicalScreen: Equatable, Sendable {
       self = .message("Connecting to \(server)")
     case .unavailable(let reason):
       self = .message(reason)
-    case .open(let features, let capabilities):
-      let feature =
-        device.hostedMachine != nil
-        ? "\(device.platform)-hosted" : device.isPhysical ? "physical-\(device.platform)" : nil
-      if let feature, features?.contains(feature) != true {
+    case .open(let desktopApi, let capabilities):
+      if desktopApi != ServerProtocol.desktopApi {
         self = .message("Update stim-server on \(server) to show this device's screen.")
       } else if device.isPhysical, device.platform == "ios" {
         self = .stream(control: "stim-server shows an iPhone's screen but does not drive it.")
@@ -138,8 +134,8 @@ public enum PhysicalScreen: Equatable, Sendable {
       self = .message("Connecting to stim-server")
     case .unavailable(let reason):
       self = .message(reason)
-    case .open(let features, let capabilities):
-      guard features?.contains("macos-hosted") == true else {
+    case .open(let desktopApi, let capabilities):
+      guard desktopApi == ServerProtocol.desktopApi else {
         self = Self.olderServer(showing: "this app's window")
         return
       }

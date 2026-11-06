@@ -32,7 +32,8 @@ struct CLIFailureTests {
       exit 3
       """)
 
-    let environment = StimServerCLI(environment: ["PATH": "/usr/bin:/bin"], override: server)
+    let environment = StimServerCLI(
+      environment: ["PATH": "/usr/bin:/bin"], bundled: BundledServer(node: "/bin/sh", script: server))
 
     let error = await #expect(throws: StimServerCLI.Failure.self) { try await environment.revoke("phone-1") }
     #expect(error?.localizedDescription == "No device named phone-1.")

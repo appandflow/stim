@@ -71,29 +71,26 @@ export function deviceKey(device: Pick<DeviceRef, 'platform' | 'slot' | 'physica
 type ServedDevice = Pick<DeviceRef, 'platform' | 'owned' | 'physical' | 'running' | 'state' | 'host'>;
 
 /**
- * Whether stim-server serves the device's screen: an owned one, or a connected physical device whose platform the
- * Mac's stim-server lists in its hello `features` (`physical-ios`, view only, or `physical-android`). An older server
- * ignores `physical` and would stream the slot's owned device instead. `features` is null while the Mac is not
- * connected, when nothing streams and the tile waits for it like any other.
+ * Whether the machine serves the device's screen: an owned or hosted one, a macOS window, or a connected physical
+ * device whose platform the machine lists in its hello `host.capabilities` (`physical-ios`, view only, or
+ * `physical-android`). `hostCapabilities` is null while the machine is not connected, when nothing streams and the
+ * tile waits for it like any other.
  */
-export function streamsFrames(device: ServedDevice, features: readonly string[] | null): boolean {
-  if (device.host && (device.platform === 'ios' || device.platform === 'android'))
-    return device.state !== 'stopped' && (features === null || features.includes(`${device.platform}-hosted`));
-  if (device.platform === 'macos') return device.running && (features === null || features.includes('macos-window'));
+export function streamsFrames(device: ServedDevice, hostCapabilities: readonly string[] | null): boolean {
+  if (device.host && (device.platform === 'ios' || device.platform === 'android')) return device.state !== 'stopped';
+  if (device.platform === 'macos')
+    return device.running && (hostCapabilities === null || hostCapabilities.includes('macos-window'));
   if (!device.physical) return device.owned;
-  return device.running && (features === null || features.includes(`physical-${device.platform}`));
+  return device.running && (hostCapabilities === null || hostCapabilities.includes(`physical-${device.platform}`));
 }
 
 /** Why a device {@link streamsFrames} does not serve shows no screen. */
 export function unservedReason(device: ServedDevice): string {
-  if (device.host && (device.platform === 'ios' || device.platform === 'android'))
-    return device.state === 'stopped'
-      ? t`Not running`
-      : t`Update stim-server on the machine to see this device's screen.`;
-  if (device.platform === 'macos') return t`Update stim-server on the machine to view this app window.`;
+  if (device.host && (device.platform === 'ios' || device.platform === 'android')) return t`Not running`;
+  if (device.platform === 'macos') return t`This machine does not serve app windows.`;
   if (!device.physical) return t`Frames are only served for devices Stim owns.`;
   if (!device.running) return device.state;
-  return t`Update stim-server on the machine to see this device's screen.`;
+  return t`This machine does not stream this device's screen.`;
 }
 
 function iosDevice(slot: string, sim: SimState): DeviceRef {

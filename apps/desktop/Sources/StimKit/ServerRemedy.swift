@@ -43,16 +43,16 @@ public struct ServerRemedyResult: Sendable {
     throw ServerError(code: "bad-request", message: "Unsupported Desktop repair command.")
   }
   return try await runServerRemedy(
-    params: params, stimHome: stimHome, connection: connection, feature: "desktop-remedy", json: json, onLine: onLine)
+    params: params, stimHome: stimHome, connection: connection, json: json, onLine: onLine)
 }
 
 @MainActor func runServerRemedy(
   params: [String: JSONValue], stimHome: String, connection: (client: ServerClient, home: String)?,
-  feature: String, json: Bool, onLine: @escaping @MainActor (OutputLine) -> Void = { _ in }
+  json: Bool, onLine: @escaping @MainActor (OutputLine) -> Void = { _ in }
 ) async throws -> ServerRemedyResult {
   try Task.checkCancellation()
   let client = try desktopActionServer(connection, stimHome: stimHome, action: "run this Desktop action from this Stim home")
-  guard case .open(let hello) = client.state, hello.features?.contains(feature) == true else {
+  guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
     throw ServerError(
       code: "unsupported", message: "Update stim-server to run this Desktop action.")
   }

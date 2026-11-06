@@ -7,24 +7,24 @@ import {
 } from '@aws-sdk/client-s3';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { deserialize, serialize } from 'node:v8';
 import { create } from 'tar';
-import {
-  buildResolveTimeoutMs,
-  CACHE_PROVIDER_API_VERSION,
-  type CacheProvider,
-  type FileCacheCapability,
-} from '@stim-cli/cache';
+import type { CacheProvider, FileCacheCapability } from 'stim/plugin';
 import { scopedClientContext, type ScopedClientContext } from './credentials.ts';
 import { scopedWorker } from './worker.ts';
 
-export const apiVersion: typeof CACHE_PROVIDER_API_VERSION = CACHE_PROVIDER_API_VERSION;
+export const apiVersion = 1 as const;
+
+function buildResolveTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.STIM_CACHE_BUILD_RESOLVE_TIMEOUT_MS?.trim();
+  const parsed = Number(raw);
+  return raw && /^[1-9]\d*$/.test(raw) && Number.isSafeInteger(parsed) ? parsed : 30_000;
+}
 
 export interface S3FileCacheOptions {
   bucket: string;
@@ -306,31 +306,6 @@ export function createCacheProvider({
           );
           signal.throwIfAborted();
           await files.store({ key: `builds/${platform}/${key}`, sourcePath: archive, overwrite, signal });
-        });
-      },
-    },
-    metro: {
-      async get({ cacheName, key, signal }) {
-        return scratch(async (dir) => {
-          const path = await files.resolve({
-            key: `metro/${encodeURIComponent(cacheName)}/${key.toString('hex')}`,
-            destinationDir: dir,
-            signal,
-          });
-          if (!path) return null;
-          return deserialize(await readFile(path, { signal }));
-        });
-      },
-      async set({ cacheName, key, value, signal }) {
-        await scratch(async (dir) => {
-          const path = join(dir, 'transform');
-          await writeFile(path, serialize(value), { signal });
-          await files.store({
-            key: `metro/${encodeURIComponent(cacheName)}/${key.toString('hex')}`,
-            sourcePath: path,
-            overwrite: true,
-            signal,
-          });
         });
       },
     },

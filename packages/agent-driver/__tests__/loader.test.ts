@@ -16,6 +16,9 @@ function driver(name = 'fake', start = () => Promise.reject(new AgentDriverUnava
   };
 }
 
+const manifest = () => ({ stimPlugin: { kinds: { 'agent-driver': 1 } } });
+const source = (module: unknown) => ({ manifest, load: () => Promise.resolve(module) });
+
 const fake = (overrides: Record<string, unknown> = {}) => ({
   apiVersion: 1,
   id: 'fake',
@@ -25,13 +28,21 @@ const fake = (overrides: Record<string, unknown> = {}) => ({
 
 test('a module that is not a version 1 driver with the expected id is unavailable, never a throw', async () => {
   const unavailable = async (load: () => Promise<unknown>) => {
-    const loaded = await loadAgentDriverModule('fake', load, 20);
+    const loaded = await loadAgentDriverModule('fake', { load, manifest }, 20);
     return 'unavailable' in loaded ? loaded.unavailable : null;
   };
   expect(await unavailable(() => Promise.reject(new Error('Cannot find package x\n  at stack')))).toBe(
     'Cannot find package x',
   );
-  expect(await unavailable(() => Promise.resolve(fake({ apiVersion: 2 })))).toBe('expected apiVersion 1, found 2');
+  const incompatible = await loadAgentDriverModule('fake', {
+    manifest: () => ({ stimPlugin: { kinds: { 'agent-driver': 2 } } }),
+    load: () => {
+      throw new Error('imported');
+    },
+  });
+  expect(incompatible).toEqual({
+    unavailable: 'plugin fake speaks agent-driver 2, this stim speaks 1: stim engine update',
+  });
   expect(await unavailable(() => Promise.resolve({ default: fake() }))).toBeNull();
   expect(await unavailable(() => Promise.resolve(fake({ id: 'other' })))).toBe('expected id "fake", found "other"');
   expect(await unavailable(() => Promise.resolve(fake({ createAgentDriver: undefined })))).toBe(
@@ -51,11 +62,11 @@ test('a factory that throws or returns a driver under another name is unavailabl
       throw new Error('bad options');
     },
   });
-  expect(await loadAgentDriver('fake', () => Promise.resolve(throwing), input)).toEqual({
+  expect(await loadAgentDriver('fake', source(throwing), input)).toEqual({
     unavailable: 'createAgentDriver() failed: bad options',
   });
   const renamed = fake({ createAgentDriver: () => driver('other') });
-  expect(await loadAgentDriver('fake', () => Promise.resolve(renamed), input)).toEqual({
+  expect(await loadAgentDriver('fake', source(renamed), input)).toEqual({
     unavailable: 'the driver is named "other", not "fake"',
   });
 });
@@ -64,7 +75,7 @@ test('a module or factory that fails in an unusual way is unavailable, never a r
   const unhandled = vi.fn<(reason: unknown) => void>();
   process.on('unhandledRejection', unhandled);
   try {
-    expect(await loadAgentDriverModule('fake', () => Promise.resolve(fake({ apiVersion: 2n })))).toEqual({
+    expect(await loadAgentDriverModule('fake', source(null))).toEqual({
       unavailable: expect.any(String),
     });
     const getter = fake();
@@ -73,10 +84,10 @@ test('a module or factory that fails in an unusual way is unavailable, never a r
         throw new Error('no client');
       },
     });
-    expect(await loadAgentDriverModule('fake', () => Promise.resolve(getter))).toEqual({ unavailable: 'no client' });
+    expect(await loadAgentDriverModule('fake', source(getter))).toEqual({ unavailable: 'no client' });
     const async = fake({ createAgentDriver: () => Promise.reject(new Error('later')) });
-    expect(await loadAgentDriver('fake', () => Promise.resolve(async), input)).toEqual({
-      unavailable: 'createAgentDriver() must return the driver, not a promise',
+    expect(await loadAgentDriver('fake', source(async), input)).toEqual({
+      unavailable: 'createAgentDriver() failed: later',
     });
     await vi.advanceTimersByTimeAsync(10);
     expect(unhandled).not.toHaveBeenCalled();
@@ -89,6 +100,7 @@ test('the contract kit fails a driver whose forward() throws or never answers', 
   const run = (forward: () => void) =>
     runAgentDriverContract({
       id: 'fake',
+      manifest,
       load: () => Promise.resolve(fake({ createAgentDriver: () => ({ ...driver(), forward }) })),
       unavailableInput: input,
       app,
@@ -103,4 +115,27 @@ test('the contract kit fails a driver whose forward() throws or never answers', 
   const blocked = failedNames(() => undefined);
   await vi.runAllTimersAsync();
   expect(await blocked).toEqual(throwing);
+});
+
+test('awaits an async driver factory and stops a driver returned after the deadline', async () => {
+  const stop = vi.fn<() => Promise<void>>(async () => {});
+  const module = fake({ createAgentDriver: async () => ({ ...driver(), stop }) });
+  expect(await loadAgentDriver('fake', source(module), input)).toHaveProperty('driver');
+  const pending = loadAgentDriver(
+    'fake',
+    source(
+      fake({
+        createAgentDriver: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 40));
+          return { ...driver(), stop };
+        },
+      }),
+    ),
+    input,
+    10,
+  );
+  await vi.advanceTimersByTimeAsync(10);
+  expect(await pending).toEqual({ unavailable: 'the module did not load within 10ms' });
+  await vi.advanceTimersByTimeAsync(30);
+  expect(stop).toHaveBeenCalledOnce();
 });

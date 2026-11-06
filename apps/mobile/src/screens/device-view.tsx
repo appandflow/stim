@@ -169,11 +169,11 @@ export function DeviceView({
   const running = Boolean(
     device &&
     (device.running || (device.host && device.state !== 'stopped')) &&
-    streamsFrames(device, link.kind === 'open' ? link.features : null),
+    streamsFrames(device, link.kind === 'open' ? link.hostCapabilities : null),
   );
   const viewOnly =
     (physical && platform === 'ios') ||
-    (platform === 'macos' && (link.kind !== 'open' || !link.features.includes('macos-window-control')));
+    (platform === 'macos' && (link.kind !== 'open' || !link.hostCapabilities.includes('macos-window-control')));
   const slotRange = useReplayRange({ workspace, platform, slot });
   const range = physical || device?.host ? null : slotRange;
   const replayOff = !physical && env?.recording?.enabled === false;
@@ -188,15 +188,14 @@ export function DeviceView({
     !physical &&
     !(platform === 'android' && device?.host) &&
     (platform === 'ios' || platform === 'android') &&
-    link.kind === 'open' &&
-    link.features?.includes('device-frames') === true;
+    link.kind === 'open';
   const duoSupported =
     !device?.host &&
     !physical &&
     platform === 'ios' &&
     /\bDuo\b/.test(device?.model ?? '') &&
     link.kind === 'open' &&
-    link.features?.includes('duo-frames') === true;
+    link.hostCapabilities.includes('duo-frames');
   const streamOptions = {
     enabled: streams,
     fps: preset.fps,
@@ -489,10 +488,7 @@ export function DeviceView({
   };
   const press = (button: InputButton) => control.button(button);
   const [clipboardBusy, setClipboardBusy] = useState(false);
-  const showClipboard = clipboardAvailable(
-    { platform, physical, controlling },
-    link.kind === 'open' ? link.features : null,
-  );
+  const showClipboard = clipboardAvailable({ platform, physical, controlling });
   const clipboardFailed = (title: string) => (cause: Error) => Alert.alert(title, cause.message);
   const pasteFromPhoneToDevice = () => {
     setClipboardBusy(true);
@@ -604,7 +600,7 @@ export function DeviceView({
     platform === 'macos' &&
     controlling &&
     link.kind === 'open' &&
-    link.features.includes('macos-window-select') &&
+    link.hostCapabilities.includes('macos-window-select') &&
     windows &&
     (windows.windows.length > 1 || windows.pinned)
       ? [
@@ -1083,7 +1079,7 @@ export function DeviceView({
             keyboard={keyboard}
             shown={typingBarShown}
             macos={platform === 'macos'}
-            extendedKeys={link.kind === 'open' && link.features.includes('macos-keyboard-extended')}
+            extendedKeys={link.kind === 'open' && link.hostCapabilities.includes('macos-keyboard-extended')}
             onFocus={() => setTyping(true)}
             onBlur={() => setTyping(false)}
             onHeight={setTypingBarHeight}

@@ -32,7 +32,11 @@ function status(os?: string) {
 }
 const notYet: HelloReply = { error: { code: 'unknown-secret', message: 'not yet' } };
 const hosting = (host?: { name: string; screenRecording: boolean; accessibility: boolean }): HelloReply => ({
-  result: { capabilities: ['device-host'], device: { id: 'host12', name: 'laptop' }, ...(host ? { host } : {}) },
+  result: {
+    capabilities: ['device-host'],
+    device: { id: 'host12', name: 'laptop' },
+    ...(host ? { host: { app: host } } : {}),
+  },
   serverKey: SERVER_KEY,
 });
 function fakeIo(replies: HelloReply[], os?: string) {
@@ -227,7 +231,7 @@ test('missing hosting grants produce a note without changing approval', async ()
   expect(finding?.title).toMatch(
     /mini.*Screen & System Audio Recording.*Device Control and Data Access.*Stim Host Dev/,
   );
-  expect(finding?.fix).toContain('stim-server service install');
+  expect(finding?.fix).toContain('stim service install');
 });
 
 test('automatic hosting considers only the remote machines this machine asked for device-host access', async () => {

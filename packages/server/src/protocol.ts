@@ -4,7 +4,7 @@ import { MAX_REVERSE_PORTS, SETTING_SCOPES } from '@stim-cli/core/state';
 import {
   PROTOCOL_VERSION,
   CAPABILITIES,
-  FEATURES,
+  HOST_CAPABILITIES,
   type Method,
   PUSH_TOKEN_PATTERN,
   SHARE_SLUG_PATTERN,
@@ -32,7 +32,6 @@ import {
   BUILD_REPO_PATTERN,
   BUILD_RUBY_VERSION_PATTERN,
   PUSH_EVENTS,
-  LEGACY_PUSH_EVENTS,
   NOTIFICATION_LEVELS,
   NOTIFICATION_SUPPRESSIONS,
   CONTROL_END_REASONS,
@@ -488,7 +487,7 @@ export function protocolJsonSchema(): JsonSchema {
           },
         },
       },
-      ServerUpdateProgress: {
+      EngineUpdateProgress: {
         type: 'object',
         required: ['id', 'by', 'target', 'state', 'startedAt', 'missing', 'log'],
         additionalProperties: false,
@@ -515,7 +514,7 @@ export function protocolJsonSchema(): JsonSchema {
           log: { type: 'array', items: { type: 'string' } },
         },
       },
-      ServerUpdateStatus: {
+      EngineUpdateStatus: {
         type: 'object',
         required: ['server', 'service', 'acceptsClientBuilds', 'running', 'last'],
         additionalProperties: false,
@@ -528,7 +527,7 @@ export function protocolJsonSchema(): JsonSchema {
           },
           service: { type: ['string', 'null'] },
           acceptsClientBuilds: { type: 'boolean' },
-          running: { anyOf: [{ $ref: '#/$defs/ServerUpdateProgress' }, { type: 'null' }] },
+          running: { anyOf: [{ $ref: '#/$defs/EngineUpdateProgress' }, { type: 'null' }] },
           last: {
             anyOf: [
               {
@@ -552,7 +551,7 @@ export function protocolJsonSchema(): JsonSchema {
         required: ['remote', 'unreachable', 'upload'],
         additionalProperties: false,
         properties: {
-          remote: { anyOf: [{ $ref: '#/$defs/ServerUpdateStatus' }, { type: 'null' }] },
+          remote: { anyOf: [{ $ref: '#/$defs/EngineUpdateStatus' }, { type: 'null' }] },
           unreachable: { type: ['string', 'null'] },
           upload: {
             anyOf: [
@@ -824,6 +823,9 @@ export function protocolJsonSchema(): JsonSchema {
               name: { type: 'string' },
               version: { type: 'string' },
               runId: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,64}$' },
+              peer: { type: 'integer' },
+              phoneApi: { type: 'integer' },
+              desktopApi: { type: 'integer' },
             },
           },
           access: { enum: ['build', 'device-host'] },
@@ -832,25 +834,37 @@ export function protocolJsonSchema(): JsonSchema {
       },
       HelloResult: {
         type: 'object',
-        required: ['protocol', 'server', 'capabilities', 'features', 'actions', 'device'],
+        required: ['host', 'protocol', 'peer', 'phoneApi', 'desktopApi', 'server', 'capabilities', 'actions', 'device'],
         additionalProperties: false,
         properties: {
           host: {
-            anyOf: [
-              { type: 'null' },
-              {
-                type: 'object',
-                required: ['name', 'screenRecording', 'accessibility'],
-                additionalProperties: false,
-                properties: {
-                  name: { type: 'string' },
-                  screenRecording: { type: 'boolean' },
-                  accessibility: { type: 'boolean' },
-                },
+            type: 'object',
+            required: ['owner', 'capabilities', 'app'],
+            additionalProperties: false,
+            properties: {
+              owner: { enum: ['desktop', 'service', 'cli'] },
+              capabilities: { type: 'array', items: { enum: [...HOST_CAPABILITIES] } },
+              app: {
+                anyOf: [
+                  { type: 'null' },
+                  {
+                    type: 'object',
+                    required: ['name', 'screenRecording', 'accessibility'],
+                    additionalProperties: false,
+                    properties: {
+                      name: { type: 'string' },
+                      screenRecording: { type: 'boolean' },
+                      accessibility: { type: 'boolean' },
+                    },
+                  },
+                ],
               },
-            ],
+            },
           },
           protocol: { type: 'integer' },
+          peer: { type: 'integer' },
+          phoneApi: { type: 'integer' },
+          desktopApi: { type: 'integer' },
           server: {
             type: 'object',
             required: ['name', 'version', 'stim'],
@@ -865,7 +879,6 @@ export function protocolJsonSchema(): JsonSchema {
             },
           },
           capabilities: { type: 'array', items: { enum: [...CAPABILITIES] } },
-          features: { type: 'array', items: { enum: [...FEATURES] } },
           actions: { type: 'array', items: { enum: [...ACTIONS] } },
           device: {
             type: 'object',
@@ -2074,7 +2087,7 @@ export function protocolJsonSchema(): JsonSchema {
                 type: 'array',
                 minItems: 1,
                 uniqueItems: true,
-                items: { enum: [...PUSH_EVENTS, ...LEGACY_PUSH_EVENTS] },
+                items: { enum: [...PUSH_EVENTS] },
               },
               levels: {
                 type: 'object',
@@ -2313,7 +2326,7 @@ export function protocolJsonSchema(): JsonSchema {
             },
           }),
           request('build.attach', buildJob),
-          request('server.update.status'),
+          request('engine.update.status'),
           request('device-host.sessions'),
           request('device-host.sessions.stop', session({})),
           request('share.start', {
@@ -2376,14 +2389,14 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: { machine: { type: 'string', minLength: 1 } },
           }),
-          request('server.update.start', {
+          request('engine.update', {
             oneOf: [
               {
                 type: 'object',
-                required: ['release'],
+                required: ['version'],
                 additionalProperties: false,
                 properties: {
-                  release: { type: 'string', pattern: '^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$' },
+                  version: { type: 'string', pattern: '^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$' },
                 },
               },
               {
@@ -2410,7 +2423,7 @@ export function protocolJsonSchema(): JsonSchema {
               },
             ],
           }),
-          request('server.update.chunk', {
+          request('engine.update.chunk', {
             type: 'object',
             required: ['id', 'name', 'offset', 'data'],
             additionalProperties: false,
@@ -2442,8 +2455,8 @@ export function protocolJsonSchema(): JsonSchema {
                   { $ref: '#/$defs/HostedAppOfferResult' },
                   { $ref: '#/$defs/HostedAppChunkResult' },
                   { $ref: '#/$defs/HostedAppHandoffResult' },
-                  { $ref: '#/$defs/ServerUpdateStatus' },
-                  { $ref: '#/$defs/ServerUpdateProgress' },
+                  { $ref: '#/$defs/EngineUpdateStatus' },
+                  { $ref: '#/$defs/EngineUpdateProgress' },
                   { $ref: '#/$defs/MachineUpdateStatus' },
                   { $ref: '#/$defs/HelloResult' },
                   { $ref: '#/$defs/DesktopAuthenticateResult' },

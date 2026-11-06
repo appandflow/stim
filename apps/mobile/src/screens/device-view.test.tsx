@@ -20,7 +20,7 @@ let mockPhysical = false;
 let mockHosted = false;
 let mockStopped = false;
 const mockStream = jest.fn();
-let mockFeatures = ['frames'];
+let mockHostCapabilities = ['frames'];
 const mockSelectWindow = jest.fn();
 const mockWindow = { id: 12, title: 'App', frame: { x: 0, y: 0, width: 800, height: 600 } };
 let mockWindows: import('@/hooks/device-stream').DeviceStream['windows'] = null;
@@ -104,7 +104,7 @@ jest.mock('@/hooks/machines', () => ({
   }),
   useMacConnection: () => ({
     mac: { id: 'm1', name: 'Fixture Mac' },
-    state: { kind: 'open', deviceId: 'phone', features: mockFeatures },
+    state: { kind: 'open', deviceId: 'phone', hostCapabilities: mockHostCapabilities },
     connection: null,
   }),
 }));
@@ -230,7 +230,7 @@ beforeEach(() => {
   mockStopped = false;
   mockStream.mockClear();
   mockArtwork = false;
-  mockFeatures = ['frames', 'device-frames'];
+  mockHostCapabilities = ['frames', 'device-frames'];
   mockWindows = null;
   jest.clearAllMocks();
 });
@@ -326,7 +326,7 @@ it('keeps physical iPhones view-only without rotation buttons', async () => {
 
 it('lets a Duo viewer enable its device frame with Control off', async () => {
   mockControlling = false;
-  mockFeatures = ['frames', 'device-frames', 'duo-frames'];
+  mockHostCapabilities = ['frames', 'device-frames', 'duo-frames'];
   const screen = await render(
     <I18nProvider i18n={i18n}>
       <DeviceView workspace="/fixture" platform="ios" slot="default" />
@@ -484,7 +484,7 @@ it('keeps the frame presentation toggle available without a control lease or con
 });
 
 it.each([false, true])('keeps native mouse and window selection in the main bar (pinned: %s)', async (pinned) => {
-  mockFeatures = ['macos-window', 'macos-window-control', 'macos-window-select'];
+  mockHostCapabilities = ['macos-window', 'macos-window-control', 'macos-window-select'];
   mockWindows = { current: mockWindow, windows: [mockWindow, { ...mockWindow, id: 13, title: '' }], pinned };
   const screen = await render(
     <I18nProvider i18n={i18n}>
@@ -520,7 +520,7 @@ it.each([
   'gates Window by platform, control, feature and window mode (%s, %s, %s, %s, %s)',
   async (platform, controlling, supported, count, pinned, visible) => {
     mockControlling = controlling;
-    mockFeatures = ['macos-window-control', ...(supported ? ['macos-window-select'] : [])];
+    mockHostCapabilities = ['macos-window-control', ...(supported ? ['macos-window-select'] : [])];
     mockWindows = {
       current: mockWindow,
       windows: Array.from({ length: count }, (_, id) => ({ ...mockWindow, id: mockWindow.id + id })),
@@ -538,7 +538,7 @@ it.each([
 it.each(['ios', 'android'] as const)('labels a stopped hosted %s device as placed, not running', async (platform) => {
   mockHosted = true;
   mockStopped = true;
-  mockFeatures = [`${platform}-hosted`, 'device-frames'];
+  mockHostCapabilities = [`${platform}-hosted`, 'device-frames'];
   const screen = await render(
     <I18nProvider i18n={i18n}>
       <DeviceView workspace="/fixture" platform={platform} slot="default" />
@@ -553,7 +553,7 @@ it.each(['ios', 'android'] as const)(
   'shows a hosted %s machine label and subscribes through the paired Mac without replay or duo frames',
   async (platform) => {
     mockHosted = true;
-    mockFeatures = [`${platform}-hosted`, 'device-frames', 'duo-frames'];
+    mockHostCapabilities = [`${platform}-hosted`, 'device-frames', 'duo-frames'];
     const screen = await render(
       <I18nProvider i18n={i18n}>
         <DeviceView workspace="/fixture" platform={platform} slot="default" />

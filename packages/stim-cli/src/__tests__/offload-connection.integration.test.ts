@@ -1,3 +1,5 @@
+import { PEER } from '@stim-cli/core/protocol';
+import { STIM_VERSION } from '../stim-version.ts';
 import { withAmbientContext } from '@stim-cli/core';
 import { testContext } from './_context.ts';
 import { createHash } from 'node:crypto';
@@ -82,7 +84,7 @@ async function fakeMachine(
   {
     drop = false,
     closeAfterStart = null,
-    hello = () => ({ result: { capabilities: ['build'] } }),
+    hello = () => ({ result: { capabilities: ['build'], peer: PEER } }),
     dropOnSync = false,
     attach = { result: { outcome: null } },
     artifact = null,
@@ -339,7 +341,7 @@ test('a worker without build compatibility is refused even with the same Stim bu
     machines: [credential('old')],
   });
   expect(result).toContain(
-    'update the worker: stim-server service update --release <version>; update an old client: npm i -g stim@latest; Stim Desktop 0.2.5 or older: Stim > Check for Updates',
+    'update the worker: stim service update --release <version>; update an old client: npm i -g stim@latest; Stim Desktop 0.2.5 or older: Stim > Check for Updates',
   );
   expect(machine.methods).toEqual(['hello', 'build.offer']);
 });
@@ -502,7 +504,7 @@ describe('offloadBuild', () => {
         hello: () =>
           ++hellos === 3
             ? { error: { code: 'identity-unavailable', message: 'tailscale whois failed' } }
-            : { result: { capabilities: ['build'] } },
+            : { result: { capabilities: ['build'], peer: PEER } },
       },
     );
     machines.push(machine);
@@ -564,7 +566,7 @@ describe('offloadBuild', () => {
         hello: () =>
           ++hellos === 2
             ? { error: { code: 'identity-unavailable', message: 'tailscale whois failed' } }
-            : { result: { capabilities: ['build'] } },
+            : { result: { capabilities: ['build'], peer: PEER } },
       },
     );
     machines.push(machine);
@@ -588,7 +590,7 @@ describe('offloadBuild', () => {
         drop: true,
         hello: () =>
           ++hellos === 1
-            ? { result: { capabilities: ['build'] } }
+            ? { result: { capabilities: ['build'], peer: PEER } }
             : { error: { code: 'unauthorized', message: 'This machine does not recognize this device token.' } },
       },
     );
@@ -631,7 +633,6 @@ describe('macOS artifact transfer', () => {
         { result: { job: 'j1' } },
         {
           artifact: { archive, digest },
-          hello: () => ({ result: { capabilities: ['build'], features: ['build-compat'] } }),
         },
       );
       machines.push(machine);
@@ -715,7 +716,28 @@ describe('macOS artifact transfer', () => {
 });
 
 describe('native Xcode worker selection', () => {
-  test('an old worker is refused before offer or source upload', async () => {
+  test('a worker on a Stim before peer is refused with peer-too-old and the remedy, before any offer', async () => {
+    const machine = await fakeMachine(
+      'old',
+      offer(0.1),
+      { result: { job: 'unused' } },
+      { hello: () => ({ result: { capabilities: ['build'], server: { name: 'old', stim: '1.41.0' } } }) },
+    );
+    machines.push(machine);
+    const result = await chooseBuildMachine({
+      projectRoot: repo,
+      target: TARGET,
+      here: HERE,
+      note: () => {},
+      machines: [credential('old')],
+    });
+    expect(result).toBe(
+      `old: peer-too-old: old runs stim 1.41.0 (no peer), this Mac needs peer ${PEER}; on old run: npm i -g stim@${STIM_VERSION} && stim service install`,
+    );
+    expect(machine.methods).toEqual(['hello']);
+  });
+
+  test('a worker that cannot build Xcode is refused before offer or source upload', async () => {
     const machine = await fakeMachine('old', offer(0.1), { result: { job: 'unused' } });
     machines.push(machine);
     const result = await chooseBuildMachine({
@@ -736,7 +758,9 @@ describe('native Xcode worker selection', () => {
       offer(0.1),
       { result: { job: 'unused' } },
       {
-        hello: () => ({ result: { capabilities: ['build'], features: ['native-xcode-build'] } }),
+        hello: () => ({
+          result: { capabilities: ['build'], peer: PEER, host: { capabilities: ['native-xcode-build'] } },
+        }),
       },
     );
     machines.push(machine);
@@ -787,7 +811,9 @@ test('native results with a different transfer digest are refused before artifac
     offer(0.1),
     { result: { job: 'j-native' } },
     {
-      hello: () => ({ result: { capabilities: ['build'], features: ['native-xcode-build'] } }),
+      hello: () => ({
+        result: { capabilities: ['build'], peer: PEER, host: { capabilities: ['native-xcode-build'] } },
+      }),
       artifact: {
         archive: Buffer.from('not fetched'),
         digest: 'b'.repeat(64),
@@ -928,12 +954,6 @@ describe('exact peer artifacts', () => {
         },
         { result: { job: 'unused' } },
         {
-          hello: () => ({
-            result: {
-              capabilities: ['build'],
-              features: ['swiftpm-peer-cache', 'build-compat'],
-            },
-          }),
           artifact: { archive, digest },
           cachedFetch: scenario === 'miss' || scenario === 'corrupt' ? scenario : 'hit',
           pause: scenario === 'changed-during-fetch' ? 'build.cached-artifact' : null,
@@ -951,7 +971,7 @@ describe('exact peer artifacts', () => {
       });
       expect(typeof choice).toBe('object');
       const offered = machine.requests.find((entry) => entry.method === 'build.offer')?.params.swiftpmArtifact;
-      expect(offered).toBeDefined();
+      expect(Boolean(offered)).toBe(true);
       expect(JSON.stringify(offered ?? {})).not.toContain('private-worker-value');
       if (typeof choice === 'string') return;
       if (scenario === 'changed-source') writeFileSync(join(repo, 'package.json'), '{"changed":true}');
@@ -1066,12 +1086,6 @@ describe('exact peer artifacts', () => {
       },
       { result: { job: 'unused' } },
       {
-        hello: () => ({
-          result: {
-            capabilities: ['build'],
-            features: ['react-native-peer-cache', 'build-compat'],
-          },
-        }),
         artifact: { archive, digest },
         cachedFetch: scenario,
       },
@@ -1087,7 +1101,7 @@ describe('exact peer artifacts', () => {
       note: () => {},
     });
     expect(typeof choice).toBe('object');
-    expect(machine.requests.find((e) => e.method === 'build.offer')?.params.reactNativeArtifact).toBeDefined();
+    expect(Boolean(machine.requests.find((e) => e.method === 'build.offer')?.params.reactNativeArtifact)).toBe(true);
     if (typeof choice === 'string') return;
     const outcome = await offloadBuild({
       choice,
@@ -1194,16 +1208,6 @@ describe('exact peer artifacts', () => {
         },
         { result: { job: 'unused' } },
         {
-          hello: () => ({
-            result: {
-              capabilities: ['build'],
-              features: [
-                'native-gradle-build',
-                ...(scenario === 'old-worker' ? [] : ['native-gradle-peer-cache']),
-                ...(scenario === 'old-jdk-worker' ? [] : ['native-gradle-peer-jdk']),
-              ],
-            },
-          }),
           artifact: { archive, digest },
           cachedFetch: scenario === 'miss' || scenario === 'corrupt' ? scenario : 'hit',
         },
@@ -1220,11 +1224,8 @@ describe('exact peer artifacts', () => {
         note: () => {},
       });
       const offerRequest = machine.requests.find((entry) => entry.method === 'build.offer')!;
-      const unsupported = scenario === 'old-worker' || scenario === 'old-jdk-worker';
-      expect(typeof choice).toBe(unsupported ? 'string' : 'object');
-      expect(offerRequest.params.gradleArtifact).toEqual(unsupported ? undefined : { ...query, project: '' });
+      expect(offerRequest.params.gradleArtifact).toEqual({ ...query, project: '' });
       expect(machine.methods).toEqual(['hello', 'build.offer']);
-      if (unsupported) return;
       if (typeof choice === 'string') throw new Error(choice);
       const stagingDir = join(repo, 'staging');
       const result = await offloadBuild({
@@ -1282,10 +1283,10 @@ describe('exact peer artifacts', () => {
     },
   );
 
-  test.each(['auto', 'remote', 'named', 'legacy'] as const)(
+  test.each(['auto', 'remote', 'named'] as const)(
     'a missed Gradle APK reapplies %s placement before compiling, so only a named machine compiles while saturated',
     async (selection) => {
-      const named = selection === 'named' || selection === 'legacy';
+      const named = selection === 'named';
       writeFileSync(join(repo, '.gitignore'), 'staging/\n');
       const transfer = await nativeGradleTransfer(repo, { complete: true, ignored: [], outputs: [] });
       const machine = await fakeMachine(
@@ -1304,16 +1305,6 @@ describe('exact peer artifacts', () => {
         },
         { result: { job: 'new-build' } },
         {
-          hello: () => ({
-            result: {
-              capabilities: ['build'],
-              features: [
-                'native-gradle-build',
-                'native-gradle-peer-cache',
-                ...(selection === 'legacy' ? [] : ['native-gradle-peer-jdk']),
-              ],
-            },
-          }),
           cachedFetch: 'miss',
         },
       );
@@ -1349,7 +1340,7 @@ describe('exact peer artifacts', () => {
         machine.requests
           .filter((entry) => entry.method === 'build.offer')
           .map((entry) => Boolean(entry.params.gradleArtifact)),
-      ).toEqual(selection === 'legacy' ? [false] : [true, false]);
+      ).toEqual([true, false]);
     },
   );
 
@@ -1385,10 +1376,7 @@ describe('exact peer artifacts', () => {
         { result: { job: 'unused' } },
         {
           hello: () => ({
-            result: {
-              capabilities: ['build'],
-              features: ['native-xcode-build', 'native-xcode-toolchain', 'build-artifact-cache'],
-            },
+            result: { capabilities: ['build'], peer: PEER, host: { capabilities: ['native-xcode-build'] } },
           }),
           artifact: { archive, digest },
           cachedFetch: cachedFetch === 'escaping-link' || cachedFetch === 'extra-file' ? 'hit' : cachedFetch,

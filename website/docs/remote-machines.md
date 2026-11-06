@@ -12,7 +12,7 @@ Use a remote machine to build your app or run a simulator when this machine is b
 
 [Set up in Desktop](#use-the-desktop-wizard) · [Set up from the CLI](#cli-equivalent) · [Check requirements](#requirements) · [Troubleshoot](#troubleshooting)
 
-The server command ships in `@stim-cli/server`. See [CLI setup](#cli-equivalent) for global and npx invocations.
+The server ships in `stim`; start it with `stim serve`. See [CLI setup](#cli-equivalent) for global and npx invocations.
 
 ## Use the Desktop wizard
 
@@ -246,13 +246,13 @@ Gradle home. The worker removes these areas by itself:
 It always keeps each client's most recently used area. It retains an area with a
 running or unfetched build, a bundle a hosted session can still take, an open
 connection sending it a manifest, a running Gradle daemon, or an ownership claim
-that is held or unresolved. The stim-server log has one line for each removal and
+that is held or unresolved. The server log has one line for each removal and
 one for each area it retains, with the reason. If a delete fails, the log says so
 once and a later pass finishes it. The next build of a removed
 checkout uploads what it needs again and starts cold. A client's shared blobs and
 CocoaPods, pnpm and SwiftPM caches stay until the client is removed.
 
-`stim-server service status` prints a `worker root:` line with the root's size as
+`stim service status` prints a `worker root:` line with the root's size as
 last measured, about every 6 hours, and the local `/health` answer carries it as
 `workerRoot`. Windows workers do not measure it.
 
@@ -263,11 +263,12 @@ each other when the versions are equal, whatever their Stim releases or builds.
 The version changes only in a release that changes what a worker builds, how it
 builds it, or the build and artifact messages, so a release on one machine and a
 checkout build on the other usually still offload. Completed artifacts on a
-worker are reused under the same rule. When
-the versions differ, doctor reports `stim-build` and builds stay on this
+worker are reused under the same rule. When the versions differ, doctor reports `stim-build` and builds stay on this
 machine until the worker runs a compatible release; see [Tools](#tools).
-Hosted simulators and emulators do not compare versions: they check the
-features the host's stim-server reports.
+Hosted simulators and emulators do not compare versions. Every connection
+between two machines also compares one wire integer, `peer`: a machine whose
+Stim is older than this one's is refused with `peer-too-old` and the
+`npm i -g stim@<version> && stim service install` to run there.
 
 Stim Desktop's **Install This Mac's Build** only moves a worker forward. It reads
 the worker's Stim release first and disables the button, with the reason beside
@@ -287,7 +288,7 @@ command, with the ticket and expiry filled in. On a machine without Desktop,
 <TabItem value="global" label="Global">
 
 ```bash
-STIM_SETUP_TICKET=<43-base64url-characters> stim-server setup \
+STIM_SETUP_TICKET=<43-base64url-characters> stim setup \
   --expires <ISO-time> \
   --build \
   --device-host
@@ -297,7 +298,7 @@ STIM_SETUP_TICKET=<43-base64url-characters> stim-server setup \
 <TabItem value="npx" label="npx">
 
 ```bash
-STIM_SETUP_TICKET=<43-base64url-characters> npx --yes --package @stim-cli/server@<version> stim-server setup \
+STIM_SETUP_TICKET=<43-base64url-characters> npx --yes stim setup \
   --expires <ISO-time> \
   --build \
   --device-host
@@ -336,7 +337,7 @@ Export `STIM_HOME` before setup if needed; `--env` cannot set it.
 | 2    | No grant before expiry, or an expired command.                             |
 | 3    | At least one grant, but another capability, permission or tool is missing. |
 
-See [Set up a worker machine](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-machine)
+See [Set up a worker machine](./commands.md#stim-setup)
 for the full server reference.
 
 ### Manual setup
@@ -347,15 +348,15 @@ Without the wizard, install or run the server on the worker machine:
 <TabItem value="global" label="Global">
 
 ```bash
-npm install --global @stim-cli/server@1.21.0
-stim-server service install --serve
+npm install --global stim@1.21.0
+stim service install --serve
 ```
 
 </TabItem>
 <TabItem value="npx" label="npx">
 
 ```bash
-npx --yes --package @stim-cli/server@1.21.0 stim-server service install --serve
+npx --yes stim service install --serve
 ```
 
 </TabItem>
@@ -368,7 +369,7 @@ directory and keeps the remote machines already in `remote.machines`. Add
 
 <StimTabs code={`stim remote add janics-mac-mini`} />
 
-`stim remote add` prints a `stim-server setup` command with a new setup
+`stim remote add` prints a `stim setup` command with a new setup
 ticket. A person on the worker runs it there to approve this machine, as in
 [Use the Desktop wizard](#use-the-desktop-wizard); it asks once for build and once for
 device hosting. Approve only what you want to use; a listed machine that never granted an approval
@@ -389,7 +390,7 @@ stim remote remove janics-mac-mini
 `stim remote list` reports each machine's build and device-host approval in
 placement order and asks nothing new. `stim remote remove` drops the entry and
 forgets this machine's credentials for it; the worker keeps its approval until
-a person there runs the `stim-server devices revoke <id>` command it prints.
+a person there runs the `stim pairings revoke <id>` command it prints.
 If the hosting credentials file is unreadable, `stim remote remove` keeps the
 entry and credentials and names the file. Use a compatible Stim version,
 restore read access, or restore the file from a trusted backup, then retry.
@@ -401,7 +402,7 @@ machine that has not been asked.
 
 A worker whose stim-server predates protocol 2 cannot authenticate this machine.
 `stim doctor` reports it as `outdated` and names the update: run
-`stim-server service update --release <version>` there with this machine's
+`stim service update --release <version>` there with this machine's
 Stim version, then `stim remote add <machine>` here.
 
 If active builds or a hosted native step (an install, for example) prevent that
@@ -443,9 +444,9 @@ It installs or verifies:
   prints a login URL: open it in a browser to sign the machine in to your
   tailnet. The script never takes an auth key. It then runs
   `tailscale set --operator=$USER`;
-- `@stim-cli/server` (`--server-version <version>`, default `latest`), a
+- `stim` (`--version <version>`, default `latest`), a
   `loginctl enable-linger`, and the systemd user service from
-  `stim-server service install --serve` with `JAVA_HOME` and `ANDROID_HOME`.
+  `stim service install --serve` with `JAVA_HOME` and `ANDROID_HOME`.
 
 Add `--emulator` to also put your user in the `kvm` group and install the
 Android emulator package and an x86_64 API 36 system image (see
@@ -506,11 +507,11 @@ as step 4 of the manual path below.
    needs `sudo`; with nvm it does not:
 
    ```bash
-   sudo npm install --global @stim-cli/server@latest
-   stim-server service install --serve \
+   sudo npm install --global stim@latest
+   stim service install --serve \
      --env JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
      --env ANDROID_HOME=$HOME/Android/Sdk
-   stim-server service status
+   stim service status
    ```
 
    The unit is `~/.config/systemd/user/dev.stim.server.service` and the log
@@ -545,20 +546,20 @@ project with iOS too still reports it offloadable for Android builds.
 
 A Linux machine that starts workspaces, such as a bot running `stim ios --remote <mac>`, can run `stim-server` as the owning server for them. The phone app pairs with that machine and sees its workspaces, its offloaded builds and the hosted simulators it started, which it reaches through the Linux machine's server and not through the Mac that hosts them. Stim Desktop does not pair with other machines' servers yet.
 
-1. Install the server beside `stim` and run it as a systemd user service, as in the manual path above:
+1. Install `stim` and run its server as a systemd user service, as in the manual path above:
 
    ```bash
-   npm install --global --prefix ~/.local @stim-cli/server@<stim version>
-   stim-server service install
+   npm install --global --prefix ~/.local stim@<stim version>
+   stim service install
    ```
 
    `service status` finds the user manager without a login session by defaulting `XDG_RUNTIME_DIR` to `/run/user/<uid>`. Run `sudo loginctl enable-linger $USER` once so the service survives logout.
 
-2. Run `stim-server pair` on the Linux machine, over SSH if you like. Without a `tailscale serve` route it prints the server's direct tailnet address, `ws://<tailnet IP>:7787`, which the server already listens on, and says so on stderr. With `--serve` at install, or `sudo tailscale set --operator=$USER` and the `tailscale serve` command it prints, the endpoint is `wss://<name>.<tailnet>.ts.net:7443`.
+2. Run `stim pair` on the Linux machine, over SSH if you like. Without a `tailscale serve` route it prints the server's direct tailnet address, `ws://<tailnet IP>:7787`, which the server already listens on, and says so on stderr. With `--serve` at install, or `sudo tailscale set --operator=$USER` and the `tailscale serve` command it prints, the endpoint is `wss://<name>.<tailnet>.ts.net:7443`.
 
 Pairing needs the phone to reach the machine's tailnet address, so a phone on another tailnet needs the machine shared to it.
 
-What does not run on Linux: Mac window capture, Xcode builds, the `stim-frames` helper and iOS devices. The server leaves the matching `features` out of its `hello` and does not try to build the helper.
+What does not run on Linux: Mac window capture, Xcode builds, the `stim-frames` helper and iOS devices. The server leaves the matching capabilities out of its `hello` and does not try to build the helper.
 
 #### Emulators and memory
 
@@ -608,7 +609,7 @@ On this machine, add the worker and ask for access:
 
 <StimTabs code={`stim remote add local:10.0.0.92`} />
 
-On the worker, run the `stim-server setup` command it printed; on a Linux or
+On the worker, run the `stim setup` command it printed; on a Linux or
 Windows worker, which takes builds only, leave out `--device-host`. Setup checks
 that stim-server listens on the local network, and skips the tailnet route when
 Tailscale is not running there. It prints the endpoints and the worker's
@@ -631,10 +632,10 @@ The setup command doctor prints carries the ticket in `STIM_SETUP_TICKET`, and
 the ticket is a credential: once setup stores it, the first machine to spend it
 gets the approval. On a tailnet that machine also had to be in your tailnet; on
 a local network it only needs the ticket and a route to the worker. Copy the
-command only to the worker. Afterward, `stim-server devices` on the worker lists
+command only to the worker. Afterward, `stim pairings` on the worker lists
 the address each approved machine connected from; the name in setup's approval
 line is the one the requesting machine chose. A person on the worker can give
-a record a clearer name with `stim-server devices rename <id> <name>`; its
+a record a clearer name with `stim pairings rename <id> <name>`; its
 access does not change. The ticket also lands in
 the worker's shell history; it stops working when it expires, within two hours.
 
@@ -655,7 +656,7 @@ this workspace's Metro supervisor, which carries each request to the worker
 over its own authenticated connection, so it works while `stim start` runs.
 The worker needs a stim-server that advertises `hosted-agent-link`. Hosted
 Release runs and hosted macOS apps on a local network machine report agent
-control as `none` with the reason. `stim-server pair` puts the worker's local network
+control as `none` with the reason. `stim pair` puts the worker's local network
 endpoint in the phone pairing code when Tailscale is not running there and
 `server.lanAddresses` is set.
 
@@ -672,11 +673,11 @@ the Windows machine:
    tailnet-only route. No administrator rights are needed:
 
    ```powershell
-   npm install --global @stim-cli/server@latest
-   stim-server service install --serve --path-prepend "C:\Program Files\nodejs" `
+   npm install --global stim@latest
+   stim service install --serve --path-prepend "C:\Program Files\nodejs" `
      --env JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-17" `
      --env ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
-   stim-server service status
+   stim service status
    ```
 
    The task starts at your logon and keeps running after you sign out; the
@@ -758,8 +759,8 @@ remain until revoked there. After finishing, use **Settings > Connections > This
 machine uses > Remove** on the main machine, or run `stim remote remove <machine>`, which also
 forgets this machine's credentials for it.
 
-On the worker, run the summary's `stim-server devices revoke <id>` for each
-grant you want to remove. Optional `stim-server service uninstall --label
+On the worker, run the summary's `stim pairings revoke <id>` for each
+grant you want to remove. Optional `stim service uninstall --label
 <label>` removes the managed service and only the route that install created.
 A reused Desktop server and its route remain managed by Desktop. Stim Host,
 other pairings and macOS permission grants remain; remove permissions in
@@ -841,11 +842,11 @@ code={`stim logs --source placement
 stim logs --source build`}
 />
 
-Placement logs show why each machine was selected or skipped. For request timings, set `debug.logs` on the worker and read its stim-server service log.
+Placement logs show why each machine was selected or skipped. For request timings, set `debug.logs` on the worker and read its stim service log.
 
-### Check this machine's stim-server setup
+### Check this machine's stim setup
 
-Run `stim doctor` on the worker. It reports competing servers, version or home mismatches, route problems, missing permissions and service startup failures, with suggested fixes. Use `stim-server service status` for the installed service.
+Run `stim doctor` on the worker. It reports competing servers, version or home mismatches, route problems, missing permissions and service startup failures, with suggested fixes. Use `stim service status` for the installed service.
 
 ## Ask your agent
 

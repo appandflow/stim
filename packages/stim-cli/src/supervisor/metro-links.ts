@@ -129,13 +129,6 @@ export function openMetroLinks({
       connection = await connect();
       if (closed) return void connection.close();
       live.add(connection);
-      if (!connection.supports(reverse ? 'hosted-reverse-ports' : 'hosted-metro-link'))
-        throw Object.assign(
-          new Error(
-            `${machine} runs a stim-server that cannot link ${reverse ? 'reverse ports' : 'Metro'}. Update stim-server there, then retry.`,
-          ),
-          { code: 'STIM_HOSTING_REFUSED' },
-        );
       const each = connection;
       let paired = false;
       let ended = false;

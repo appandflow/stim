@@ -16,10 +16,16 @@ test('closes a transport that a factory creates after the load timed out', async
       return { ...transport, close: finish };
     },
   };
-  const pending = loadTransport({ reference: 'fake', load: async () => module, input, timeoutMs: 10 });
+  const pending = loadTransport({
+    reference: 'fake',
+    manifest: () => ({ stimPlugin: { kinds: { transport: 1 } } }),
+    load: async () => module,
+    input,
+    timeoutMs: 10,
+  });
   await vi.advanceTimersByTimeAsync(10);
   const result = await pending;
-  expect(result).toEqual({ unavailable: 'fake did not load within 10ms' });
+  expect(result).toEqual({ unavailable: 'the module did not load within 10ms' });
   await vi.advanceTimersByTimeAsync(30);
   await closed;
 });

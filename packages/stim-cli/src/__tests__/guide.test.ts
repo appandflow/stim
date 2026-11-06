@@ -1,4 +1,3 @@
-import { FEATURES } from '@stim-cli/core/protocol';
 import { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS } from '@stim-cli/agent-driver-agent-device';
 import { includesArchives } from '../commands/gc/caches.ts';
 import { registerIos } from '../commands/ios.ts';
@@ -23,7 +22,7 @@ import {
   CAPACITY_REFUSAL_MAX_AGE_MS,
   PLACEMENT_DECISIONS,
   PLACEMENT_WORDS,
-  REPLACED_SETTINGS,
+  REMOVED_SETTINGS,
   MAX_REVERSE_PORTS,
 } from '@stim-cli/core/state';
 import assert from 'node:assert';
@@ -306,7 +305,7 @@ test('the errors topic documents every code the build commands, the Node check a
       'engine/ios-device.ts',
     ].map((f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8')),
     readFileSync(new URL('../../bin/node-check.ts', import.meta.url), 'utf-8'),
-    readFileSync(new URL('../../../server/bin/node-check.ts', import.meta.url), 'utf-8'),
+    readFileSync(new URL('../../../server/bin/stim-server.ts', import.meta.url), 'utf-8'),
   ].join('\n');
   const codes = scrapedCodes(sources);
   expect(codes.size).toBeGreaterThan(0);
@@ -497,7 +496,7 @@ test('emulator boot guidance routes the emulator viewer preference to the settin
   expect(renderTopic('lifecycle')).toContain('androidEmulatorApp');
 });
 
-test('the settings topic documents every stim-server setup finding code doctor reports', () => {
+test('the settings topic documents every stim setup finding code doctor reports', () => {
   const body = renderTopic('settings');
   for (const code of SERVER_FINDING_CODES) expect(body).toContain(code);
 });
@@ -523,19 +522,23 @@ test('the placement words are documented for every workload, and a removed setti
     expect(PLACEMENT_WORDS.filter((word) => !body.includes(word))).toEqual([]);
   }
   for (const body of [renderTopic('macos'), renderSection('lifecycle', 'hosted-ios')]) {
-    for (const key of Object.keys(REPLACED_SETTINGS)) expect(body).not.toContain(key);
+    for (const key of [...REMOVED_SETTINGS].filter(([, entry]) => !entry.kept).map(([name]) => name))
+      expect(body).not.toContain(key);
   }
   const settings = renderTopic('settings');
   assert(settings);
   expect(settings).toContain(`stim settings set remote.machines '["fast-mini","slow-mini"]'`);
-  for (const [key, replaced] of Object.entries(REPLACED_SETTINGS)) {
+  for (const [key, replaced] of [...REMOVED_SETTINGS].filter(([, entry]) => !entry.kept)) {
     for (const name of [`\`${key}\``, replaced.env ?? key, `stim settings unset ${key}`])
       expect(settings).toContain(name);
   }
 });
 
 test('only the settings topic names a removed setting, and every section of every other topic leaves them out', () => {
-  const removed = Object.keys(REPLACED_SETTINGS).filter((key) => key !== 'remote.buildMode');
+  const removed = [...REMOVED_SETTINGS]
+    .filter(([, entry]) => !entry.kept)
+    .map(([key]) => key)
+    .filter((key) => key !== 'remote.buildMode');
   for (const [name, topic] of Object.entries(TOPICS)) {
     if (name === 'settings') continue;
     const bodies = [
@@ -1026,13 +1029,13 @@ test('hosting setup routes approval through doctor and a separate person-granted
   expect(settings).toContain('remote.machines');
   expect(settings).toContain('doctor --fix');
   expect(settings).toContain('STIM_SETUP_TICKET');
-  expect(settings).toContain('stim-server setup');
-  expect(renderTopic('agent')).toMatch(/Agents never run stim-server setup and never approve access requests/);
+  expect(settings).toContain('stim setup');
+  expect(renderTopic('agent')).toMatch(/Agents never run stim setup and never approve access requests/);
   expect(settings).toContain('$STIM_HOME/device-host-machines.json');
   expect(renderSection('facts', 'payloads')).toContain('deviceHosts');
 });
 
-test('the guides name the connection fields of stim-server devices and stim remote list, and rename', () => {
+test('the guides name the connection fields of stim pairings and stim remote list, and rename', () => {
   const lifecycle = renderSection('lifecycle', 'hosted-ios');
   for (const term of [
     'kind',
@@ -1042,7 +1045,7 @@ test('the guides name the connection fields of stim-server devices and stim remo
     'theirs-running-here',
     'clientApp',
     'desktop',
-    'stim-server devices rename',
+    'stim pairings rename',
   ])
     expect(lifecycle).toContain(term);
   const settings = renderTopic('settings');
@@ -1057,7 +1060,7 @@ test('access ticket guidance routes agents to settings and reserves setup for a 
     const body = renderTopic(topic);
     expect(body).toContain(env);
     expect(body).toMatch(/Agents never set/i);
-    expect(body).toContain('stim-server setup');
+    expect(body).toContain('stim setup');
     expect(body).toMatch(/never approve requests|or approve requests/);
   }
   expect(renderTopic('agent')).toContain('stim guide settings');
@@ -1073,7 +1076,7 @@ test('agents tell the user about remote machines and the phone app and never set
   }
   const settings = renderTopic('settings');
   assert(settings);
-  expect(settings.replace(/\s+/g, ' ')).toContain('never run `stim-server setup`');
+  expect(settings.replace(/\s+/g, ' ')).toContain('never run `stim setup`');
 });
 
 test('the macos guide covers the declared command flags and project settings', () => {
@@ -1120,11 +1123,7 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(hosted).toContain('outcomes.device["ios:host:<slot>"]');
   expect(hosted).toContain('agent-device <command> --remote-config <file>');
   expect(hosted).toContain('hosting.agentDriver');
-  expect(hosted).toContain('hosted-ios-agent');
-  expect(hosted).toContain('hosted-agent-link');
   const android = renderSection('lifecycle', 'hosted-android');
-  expect(android).toContain('hosted-android-agent');
-  expect(android).toContain('hosted-agent-link');
   expect(android).toContain('android.host.agent');
   expect(android).toContain('agent-device <command> --remote-config <file>');
   expect(android).toContain('close --shutdown');
@@ -1217,16 +1216,6 @@ test('agent-device cleanup guidance distinguishes shared state from workspace te
     expect(body).toContain('never trims or deletes the shared runner builds');
     expect(body).toContain("workspace's own agent-device dir goes only with its workspace");
   }
-});
-
-test.each(['ios', 'android'])('hosted %s data paths name their feature flag in the guides', (platform) => {
-  const feature = FEATURES.find((entry) => entry === `hosted-${platform}-data`);
-  assert(feature);
-  for (const body of [
-    renderSection('lifecycle', `hosted-${platform}`),
-    renderSection('errors', 'STIM_HOSTING_REFUSED'),
-  ])
-    expect(body).toContain(feature);
 });
 
 test('facts document the hosted GC JSON fields and result kind', () => {

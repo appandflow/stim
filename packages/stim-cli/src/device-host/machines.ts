@@ -2,7 +2,7 @@ import { withDirLockAsync, type StimContext } from '@stim-cli/core';
 import { reportSignal } from '../report-runtime.ts';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
-import type { HelloResult, RemoteDiagnosis } from '@stim-cli/core/protocol';
+import type { HelloHost, RemoteDiagnosis } from '@stim-cli/core/protocol';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import {
   deviceHostMachinesClaims,
@@ -71,7 +71,7 @@ interface MachineReport {
   deviceId?: string;
   requestedAt?: string;
   expiresAt?: string;
-  host?: NonNullable<HelloResult['host']>;
+  host?: NonNullable<HelloHost['app']>;
 }
 
 interface Inspection {
@@ -374,7 +374,7 @@ export async function inspectDeviceHostMachines(
         ...(saved ? { requestedAt: saved.requestedAt } : {}),
       };
       if (outcome.state === 'approved') {
-        const host = readHostPermissions(outcome.result.host);
+        const host = readHostPermissions(outcome.result.host?.app);
         if (host && (host.screenRecording === false || host.accessibility === false)) {
           const panes = [
             ...(host.screenRecording === false
@@ -392,7 +392,7 @@ export async function inspectDeviceHostMachines(
             note(
               `Remote Mac ${machine} needs ${panes.join(' and ')} for ${host.name}`,
               detail.join(' '),
-              `On ${machine}, approve ${host.name} in System Settings > Privacy & Security, or run \`stim-server service install\` there again to show the requests.`,
+              `On ${machine}, approve ${host.name} in System Settings > Privacy & Security, or run \`stim service install\` there again to show the requests.`,
             ),
           );
         }

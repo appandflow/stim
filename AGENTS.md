@@ -18,7 +18,7 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
 `ios`, `android`, `web`, `reload`, `revive`, `agent-device`, `share [stop|list]`, `ports [get|stop|release|reverse]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove`, `settings [get|set|unset]`,
-`status`, `stats`, `gc`, and `guide`. Do not add commands or flags without an explicit product decision.
+`status`, `stats`, `gc`, `guide`, `serve`, `pair`, `pairings`, `service`, `setup`, and `ci`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 
 Runtime state belongs under `$STIM_HOME/workspaces/`, not in the project
@@ -95,11 +95,11 @@ core and Desktop use
 `/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`. Its directory
 is mode 0700 and owned by the server's user; the socket serves only that user
 without pairing or Noise. It may also pair, as a client, with another machine's
-stim-server, as the phone app does: it spends a `stim-server pair` token in
+stim-server, as the phone app does: it spends a `stim pair` token in
 protocol 2's Noise handshake, requires the payload's server-key fingerprint, and
 keeps its per-pairing client private key and pinned server key in the macOS
 Keychain, never under `$STIM_HOME`. The pinned key is the trust boundary;
-Desktop accepts only tailnet endpoints, and `stim-server pair` refuses a Funnel
+Desktop accepts only tailnet endpoints, and `stim pair` refuses a Funnel
 route. A remote server grants it only the capabilities recorded for its key:
 `read`, plus `control` for a `--control` pairing. `desktop.*`, `route.setup`,
 `machines.update.*` and `device-host.sessions*` stay Unix-socket-only. Desktop
@@ -223,9 +223,9 @@ the type and priority.
   defect or a feature that unblocks other work. `priority: P2` is normal and the
   default when unsure. `priority: P3` is nice to have.
 - `area: cli` is `packages/stim-cli`, including its README and guide.
-  `area: core`, `area: cache` (with `packages/expo-build-cache`),
+  `area: core`, `area: cache`,
   `area: metro`, `area: server` and `area: ci` are the matching `packages/`
-  directories; `area: ci` is the `@stim-cli/ci` package, not GitHub workflows.
+  directories; `area: ci` is the CI implementation, not GitHub workflows.
   `area: desktop` is `apps/desktop`. `area: mobile` is `apps/mobile` and its
   mock server, `apps/demo-server`. `area: website` is `website/`, and
   `area: docs` is `docs/` and the root documents. `area: repo` is everything
@@ -325,8 +325,7 @@ outside it moves to its own issue and pull request.
 - **Single exec wrapper.** Route all child processes through
   `packages/stim-cli/src/exec.ts`. Use `runFile` for user-controlled paths.
   Lint rejects value imports of `node:child_process` and `cross-spawn`
-  elsewhere in the CLI source. `expo-build-cache` cannot import CLI code, so it
-  calls `node:child_process` directly.
+  elsewhere in the CLI source.
 - **Pure parsing and decision logic.** Keep parsers and selectors separate from
   thin I/O wrappers. Test complex logic directly when it adds distinct coverage;
   simple helpers remain covered through their callers.
@@ -360,10 +359,9 @@ outside it moves to its own issue and pull request.
 - **Cache contracts.** The cache packages must work without `Stim` installed.
   Keep their config path, cache root, cache key, and registration behavior
   aligned with the CLI. Resolution order is environment, machine config, then
-  default. Update `cache-packages.test.ts` when those rules change. Published
-  packages depend on each other at the exact release version (`workspace:*`,
-  never `workspace:^`), so a cache package installed beside a different `stim`
-  version brings its own copy of `@stim-cli/core`.
+  default. Update `cache-packages.test.ts` when those rules change. The published packages are `stim` and
+  `@stim-cli/cache-s3`. Internal workspace ranges stay `workspace:*`; folded
+  packages are private and are bundled into `stim`.
 - **Source format.** Keep files under `src/`, `bin/`, and `test/` ASCII-only.
   Markdown can use Unicode.
 - **SwiftPM TMPDIR.** Run `swift` children with the ambient `TMPDIR`. SwiftPM
@@ -399,7 +397,7 @@ outside it moves to its own issue and pull request.
   tailnet run its project code on this machine to build. The requesting machine
   makes a setup ticket (Stim Desktop's Add Machine flow, or `stim remote add`
   or `stim doctor --fix`, which print the command), and a person approves it by running
-  `stim-server setup` on the worker with the ticket in `STIM_SETUP_TICKET`.
+  `stim setup` on the worker with the ticket in `STIM_SETUP_TICKET`.
   Running setup is the worker-side approval: a person on the
   worker approves the key holding one ticket, once per capability, until one
   expiry, with a per-grant Y/n confirmation (Enter approves) in
@@ -413,7 +411,7 @@ outside it moves to its own issue and pull request.
   get `forbidden` on those methods. The terminal command, `--yes` included,
   approves as before. An SSH-driven run is not offered. Setup
   never enables Funnel or changes TCC. There is no pairing code for build, and
-  `stim-server devices grant` never grants it.
+  `stim pairings grant` never grants it.
   It never comes with `read` or `control`. Build clients live in
   `server/build-clients.json`, apart from `devices.json`. The client names its
   remote machines in `remote.machines` and pins each one's stim-server key in
@@ -472,13 +470,13 @@ outside it moves to its own issue and pull request.
   Cancellation drains only that repository; whole-client revocation and low
   memory retain their client-scoped cleanup. Low-memory sweeps wait until no
   offloaded build is running. Gradle stops a daemon
-  whose Gradle home is deleted. `stim-server service` installs,
+  whose Gradle home is deleted. `stim service` installs,
   reports and removes the worker's per-user service, a LaunchAgent on macOS,
   a systemd user unit on Linux or a scheduled task on Windows, whose action is
   Stim's supervisor because Task Scheduler does not restart an exited process,
   and, only when asked, a tailnet-only serve
   route; it never enables Funnel, never runs sudo or elevates, and never touches pairings,
-  `$STIM_HOME/server` or settings. `stim-server service update` and
+  `$STIM_HOME/server` or settings. `stim service update` and
   `rollback` install a server version beside the running one under
   `~/Library/Application Support/Stim/services/<label>/versions/` on macOS or
   `~/.local/share/stim/services/<label>/versions/` on Linux or
@@ -508,7 +506,7 @@ outside it moves to its own issue and pull request.
   through core's `tryAcquireBuildSlotClaim`.
 - **Hosted devices.** `device-host` approval is separate from read, control and
   build, and permits the client's native app code in its own hosted simulator.
-  A person on the worker approves it by running `stim-server setup` there with
+  A person on the worker approves it by running `stim setup` there with
   the requesting machine's setup ticket: the key holding one ticket, once per
   capability, until one expiry, with a per-grant Y/n confirmation (Enter approves) in a terminal (`--yes`
   otherwise), or in Stim Desktop on the worker under the same rules, as Build
@@ -636,7 +634,7 @@ outside it moves to its own issue and pull request.
   recorder or capture before a signed-in viewer connects. The viewer's
   stylesheet and its scripts are fixed bundled files served without a token
   under `/s/assets/`; they carry no share data. In proxy mode with
-  `share.publicUrl` set, a stim-server installed with `stim-server service`
+  `share.publicUrl` set, a stim-server installed with `stim service`
   keeps the listener bound with no share and answers every request that is not
   a live share's with the fixed not-found page (404, no share data, nothing
   kept about an ended share); the on-demand `--share` server and tailscale
@@ -654,7 +652,7 @@ outside it moves to its own issue and pull request.
   holds is refused, never taken over;
   `--view-password` refuses without `--control`, with `--no-password` and when
   it equals `--password`. When no
-  stim-server answers, `stim share` starts `stim-server --share` (loopback
+  stim-server answers, `stim share` starts `stim serve --share` (loopback
   only, version-matched) and stops only a server holding the
   `server/share-server` claim; that server exits after its last share.
 

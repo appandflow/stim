@@ -1,3 +1,4 @@
+import manifest from '../package.json' with { type: 'json' };
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +18,7 @@ test('agent-device passes the agent driver contract', async () => {
   const session = '11111111-1111-4111-8111-111111111111';
   const results = await runAgentDriverContract({
     id: 'agent-device',
+    manifest: () => manifest,
     load: () => import('../index.ts'),
     unavailableInput: {
       env: { HOME: root, STIM_AGENT_DEVICE_BIN: join(root, 'missing', 'agent-device') },

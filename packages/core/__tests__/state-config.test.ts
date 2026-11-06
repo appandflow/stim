@@ -1,6 +1,12 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  SETTINGS,
+  machineSettingValue,
+  setSettingValueAt,
+  type SettingDefinition,
+} from '../state/settings-registry.ts';
 import { getBootedGraceMinutes, getConcurrencyLimits, getParkedMax, loadConfig } from '../state/config.ts';
 
 let tmpHome: string;
@@ -76,4 +82,63 @@ test.each([
   }
   expect((err as { code?: string } | undefined)?.code).toBe('STIM_CONFIG_CORRUPT');
   expect((err as Error).message).toMatch(reason);
+});
+
+function configuredValue(setting: SettingDefinition): unknown {
+  switch (setting.type.kind) {
+    case 'boolean':
+      return false;
+    case 'number':
+      return Math.max(setting.type.minimum ?? 0, setting.type.exclusiveMinimum ?? 0) + 1;
+    case 'choice':
+      return setting.type.choices[1] ?? setting.type.choices[0];
+    case 'strings':
+      return ['entry'];
+    case 'object':
+      return { entry: true };
+    case 'path':
+      return setting.type.absolute ? '/tmp/entry' : 'entry';
+    case 'bundle-url':
+      return `/index.bundle?platform=${setting.key.split('.').at(-1)}`;
+    case 'string':
+      if (setting.key === 'ios.signingIdentitySha1') return 'A'.repeat(40);
+      if (setting.key === 'android.module') return ':entry';
+      if (setting.key === 'share.publicUrl' || setting.key === 'web.url') return 'https://example.com';
+      return 'entry';
+  }
+}
+
+test.each(SETTINGS)('$key resolves its sources and registry default without losing explicit values', (setting) => {
+  const value = configuredValue(setting);
+  const config = {};
+  setSettingValueAt(config, setting.key, value);
+  expect(machineSettingValue(setting.key, { config: null, env: {} })).toEqual({ value: setting.default, error: null });
+  expect(machineSettingValue(setting.key, { config, env: {} })).toEqual({ value, error: null });
+  for (const [name, override] of [
+    ['STIM_HOME', setting.scopedHomeValue],
+    ['CI', setting.ciValue],
+  ] as const) {
+    const env = { [name]: '1' };
+    expect(machineSettingValue(setting.key, { config, env })).toEqual({ value: override ?? value, error: null });
+    const raw = typeof value === 'string' ? value : JSON.stringify(value);
+    const explicit = setting.env ? { [setting.env]: raw } : {};
+    const overriddenConfig = {};
+    setSettingValueAt(overriddenConfig, setting.key, null);
+    expect(
+      machineSettingValue(setting.key, {
+        config: setting.env ? overriddenConfig : config,
+        env: { ...env, ...explicit },
+      }),
+    ).toEqual({
+      value: setting.env ? value : (override ?? value),
+      error: null,
+    });
+  }
+});
+
+test.each(['bogus', '-1', '1.5'])('an invalid concurrency environment limit %s refuses before admission', (raw) => {
+  writeConfig({ concurrency: { maxBuilds: 4 }, projects: {}, repos: {} });
+  expect(() => getConcurrencyLimits({ env: { STIM_MAX_BUILDS: raw } })).toThrow(
+    `Invalid STIM_MAX_BUILDS value ${JSON.stringify(raw)}. Expected a whole number, 0 or more.`,
+  );
 });

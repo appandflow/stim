@@ -56,8 +56,8 @@
   },
   "packages/cache": {
     "src": {
-      "as": 16,
-      "nonNull": 2,
+      "as": 11,
+      "nonNull": 1,
       "refusalRemedy": 0
     },
     "test": {
@@ -98,48 +98,37 @@
       "nonNull": 20
     }
   },
-  "packages/expo-build-cache": {
-    "src": {
-      "as": 1,
-      "nonNull": 4,
-      "refusalRemedy": 0
-    },
-    "test": {
-      "as": 0,
-      "nonNull": 0
-    }
-  },
   "packages/metro": {
     "src": {
-      "as": 5,
+      "as": 4,
       "nonNull": 0,
       "refusalRemedy": 0
     },
     "test": {
-      "as": 4,
+      "as": 0,
       "nonNull": 1
     }
   },
   "packages/server": {
     "src": {
-      "as": 308,
+      "as": 306,
       "nonNull": 118,
       "refusalRemedy": 14
     },
     "test": {
-      "as": 293,
-      "nonNull": 420
+      "as": 286,
+      "nonNull": 412
     }
   },
   "packages/stim-cli": {
     "src": {
-      "as": 828,
-      "nonNull": 338,
-      "refusalRemedy": 18
+      "as": 823,
+      "nonNull": 335,
+      "refusalRemedy": 17
     },
     "test": {
-      "as": 444,
-      "nonNull": 612
+      "as": 440,
+      "nonNull": 611
     }
   },
   "packages/transport": {

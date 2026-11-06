@@ -133,7 +133,7 @@ public struct LogQuery: Hashable, Sendable {
       return
     }
     if query.buildRun != nil {
-      guard case .open(let hello) = client.state, hello.features?.contains("desktop-full-logs") == true else {
+      guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
         onEvent(.failed("Update the local stim-server to read complete build logs."))
         return
       }

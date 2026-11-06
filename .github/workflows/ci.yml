@@ -104,14 +104,6 @@ jobs:
       - name: Shared RPC validators match the contract
         run: pnpm run rpc:check
 
-      # Build every package with tsdown as ESM. Proves the published artifacts
-      # compile.
-      #
-      # BEFORE typecheck, and that order is load-bearing. The cache packages
-      # are consumed by stim-cli's suite as `@stim-cli/expo-build-cache` and
-      # `@stim-cli/metro`; their declaration files are
-      # build OUTPUT, so a typecheck that runs first cannot resolve either
-      # module and fails with TS2307 on a tree that is perfectly fine.
       - name: Build (tsdown, all packages)
         run: pnpm run build
 

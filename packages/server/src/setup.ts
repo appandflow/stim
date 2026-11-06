@@ -99,8 +99,6 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
   const { values } = parseArgs({
     args,
     options: {
-      client: { type: 'string' },
-      ticket: { type: 'string' },
       expires: { type: 'string' },
       build: { type: 'boolean' },
       'device-host': { type: 'boolean' },
@@ -114,14 +112,6 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
       'no-wait': { type: 'boolean' },
     },
   });
-  if (values.ticket !== undefined)
-    throw new SetupRefusal(
-      'setup no longer takes --ticket, because other users on this machine can read command-line arguments. Set STIM_SETUP_TICKET=<ticket> before stim-server setup, or copy a new command from Stim Desktop.',
-    );
-  if (values.client !== undefined)
-    throw new SetupRefusal(
-      'setup no longer takes --client: the setup ticket alone names the requesting machine. Copy a new command from Stim Desktop, or run `stim remote add <this machine>` on the requesting machine.',
-    );
   const secret = ticket ? decodeSecret(ticket) : null;
   if (!secret) throw new SetupRefusal('STIM_SETUP_TICKET takes the 43 base64url characters of the setup ticket.');
   const capabilities = (['build', 'device-host'] as const).filter((cap) => values[cap]);
@@ -288,7 +278,7 @@ export interface SetupDeps {
 
 export function setupClaim(): () => void {
   const root = join(serverDir(), 'setup.claims');
-  const attempt = tryAcquireClaim({ root, mode: 'exclusive', label: 'stim-server setup' });
+  const attempt = tryAcquireClaim({ root, mode: 'exclusive', label: 'stim setup' });
   if (attempt.pending) releaseClaim(attempt.pending);
   if (!attempt.acquired) {
     const path = attempt.held?.path ?? root;
@@ -361,6 +351,7 @@ export async function discardTypedAhead(stream: NodeJS.ReadableStream & { isTTY?
 }
 
 export function defaultSetupDeps(): SetupDeps {
+  const stimDist = join(dirname(bundledStim().cli), '../dist');
   const manager = serviceManagerOrNull();
   const platform = manager?.name === 'systemd' ? 'linux' : manager?.name === 'taskscheduler' ? 'win32' : 'darwin';
   return {
@@ -461,7 +452,7 @@ export function defaultSetupDeps(): SetupDeps {
     async toolchain(options) {
       const env = applyServeEnvironment(discoverToolchain(process.env).env, options.env, options.pathPrepend);
       const host = new BuildHost({
-        worker: join(dirname(bundledStim().cli), 'offload-worker.mjs'),
+        worker: join(stimDist, 'offload-worker.mjs'),
         env,
         ready: () => false,
       });
@@ -473,7 +464,7 @@ export function defaultSetupDeps(): SetupDeps {
     },
     node: stableNode(process.env.PATH),
     versions: (label) => join(serviceRoot(label), 'versions'),
-    stimBuild: stimBuildDigest(dirname(bundledStim().cli)),
+    stimBuild: stimBuildDigest(stimDist),
   };
 }
 
@@ -704,8 +695,8 @@ function printSuccess(
   );
   for (const gap of gaps) printer.line(`  Fix (${gap.subject}): ${gap.fix}`);
   const undo = [
-    ...output.granted.map((g) => `stim-server devices revoke ${g.id}`),
-    ...(output.managed && output.granted.length ? [`stim-server service uninstall --label ${output.label}`] : []),
+    ...output.granted.map((g) => `stim pairings revoke ${g.id}`),
+    ...(output.managed && output.granted.length ? [`stim service uninstall --label ${output.label}`] : []),
   ];
   if (undo.length) printer.dim(`To undo: ${undo.join('; ')}`);
   if (output.fingerprint) printer.dim(`Server key fingerprint: ${output.fingerprint}`);
@@ -741,14 +732,14 @@ function summarizeSetup(
   if (output.lan) log(`Local network: ${output.lan.join(', ')}.`);
   for (const grant of output.granted) {
     log(`${grant.capability}: ${grant.client.name}, request ${grant.id}.`);
-    log(`Undo: stim-server devices revoke ${grant.id}`);
+    log(`Undo: stim pairings revoke ${grant.id}`);
   }
   log(
     `Permissions: screen recording ${output.permissions.screenRecording}; device control ${output.permissions.deviceControl}.`,
   );
   for (const tool of output.tools) log(`${tool.tool}: ${tool.state}.`);
   for (const warning of output.warnings) log(warning);
-  if (output.managed) log(`Undo: stim-server service uninstall --label ${output.label}`);
+  if (output.managed) log(`Undo: stim service uninstall --label ${output.label}`);
 }
 
 /**
@@ -773,7 +764,7 @@ async function localNetwork(
       false,
       desktop
         ? 'Check server.lanAddresses with `npx --yes stim settings get server.lanAddresses`, then quit and reopen Stim Desktop.'
-        : `Check server.lanAddresses with \`npx --yes stim settings get server.lanAddresses\`, and the log \`stim-server service status --label ${opts.label}\` names.`,
+        : `Check server.lanAddresses with \`npx --yes stim settings get server.lanAddresses\`, and the log \`stim service status --label ${opts.label}\` names.`,
     );
   const { port } = lan;
   const endpoints = lan.addresses.map((address) => `ws://${address}:${port}`);
@@ -888,7 +879,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       installed = await wait(deps.installed(opts.label));
       if (deps.desktop && installed)
         throw new SetupRefusal(
-          `The stim-server service ${opts.label} is installed on this machine, so Stim Desktop does not approve requests here. Run the setup command in a terminal on this machine instead.`,
+          `The stim service ${opts.label} is installed on this machine, so Stim Desktop does not approve requests here. Run the setup command in a terminal on this machine instead.`,
         );
       if (installed && installed.port !== opts.port)
         throw new SetupRefusal(`${opts.label} uses port ${installed.port}; rerun with that --port or another --label.`);
@@ -911,8 +902,8 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         !desktop,
       );
       const fix = desktop
-        ? `If Stim Desktop runs this server, update Stim Desktop with Check for Updates in its app menu. Otherwise run npm install --global @stim-cli/server@${version} and restart the server.`
-        : `stim-server service update --label ${opts.label} --release ${version}${opts.noWait ? ' --no-wait' : ''}`;
+        ? `If Stim Desktop runs this server, update Stim Desktop with Check for Updates in its app menu. Otherwise run npm install --global stim@${version} and restart the server.`
+        : `stim service update --label ${opts.label} --release ${version}${opts.noWait ? ' --no-wait' : ''}`;
       if (decision === 'too-old')
         throw new SetupRefusal(
           `This server predates setup support (${current?.version} speaks protocol ${health?.protocol ?? 1}; setup needs protocol ${SETUP_PROTOCOL}). ${desktop ? "Update and restart the app's server, then rerun setup." : 'Update the service, then rerun setup.'}`,

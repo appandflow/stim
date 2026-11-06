@@ -8,7 +8,7 @@ import { packWorkspace, workspacePackages } from '../src/machine-update.ts';
 import { installServer } from '../src/service.ts';
 
 const UNPUBLISHED = '99.0.0';
-const SERVER_DIR = fileURLToPath(new URL('..', import.meta.url));
+const SERVER_DIR = fileURLToPath(new URL('../../stim-cli', import.meta.url));
 
 let root: string;
 
@@ -46,7 +46,7 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-describe('stim-server service update --from against real npm', () => {
+describe('stim service update --from against real npm', () => {
   it('installs packed Stim packages at an unpublished version and still audits registry packages', async () => {
     const from = join(root, 'incoming');
     const versions = join(root, 'versions');
@@ -71,7 +71,7 @@ describe('stim-server service update --from against real npm', () => {
 
     const changed = join(root, 'changed');
     mkdirSync(changed);
-    await packAtUnpublishedVersion(changed, '@stim-cli/transport-tailscale');
+    await packAtUnpublishedVersion(changed, 'stim');
     const reinstalled = await installServer(versions, { from: changed }, process.execPath, () => {});
     expect(reinstalled.dir).not.toBe(installed.dir);
   }, 600_000);

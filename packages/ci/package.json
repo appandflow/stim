@@ -1,15 +1,13 @@
 {
   "name": "@stim-cli/ci",
   "version": "1.40.0",
+  "private": true,
   "description": "Build Stim app artifacts or run Stim apps and test commands in CI with diagnostics and scoped cleanup.",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/appandflow/stim.git",
     "directory": "packages/ci"
-  },
-  "bin": {
-    "stim-ci": "dist/stim-ci.mjs"
   },
   "files": [
     "dist",
@@ -29,6 +27,11 @@
       "types": "./dist/artifacts.d.mts",
       "module-sync": "./dist/artifacts.mjs",
       "default": "./dist/artifacts.mjs"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.mts",
+      "module-sync": "./dist/cli.mjs",
+      "default": "./dist/cli.mjs"
     }
   },
   "scripts": {

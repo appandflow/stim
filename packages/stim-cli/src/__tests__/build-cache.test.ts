@@ -42,7 +42,6 @@ import { isUncertain, preimage, preimageHash } from '../fingerprint/key.ts';
 import { writeSignedApk } from './_signed-apk.ts';
 import { recordedSignedTail } from '../engine/apk-signed-tail.ts';
 import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
-import { buildCacheKey as providerKey } from '../../../expo-build-cache/index.js';
 
 // @expo/fingerprint 0.21 runs `npx react-native config` in a project without expo-modules-autolinking, which downloads
 // react-native from the npm registry on a cold runner; this option reads the autolinking sources from Expo instead.
@@ -90,23 +89,6 @@ test('evictBuild removes one entry and leaves its neighbours and the cache direc
 test('storeBuild refuses a path that is not there rather than creating an empty entry', async () => {
   await expect(storeBuild('ios', 'fp3', join(root, 'missing.app'), root)).rejects.toThrow(/No build to store/);
   expect(existsSync(entryDir('ios', 'fp3', root))).toBe(false);
-});
-
-test('the CLI and the Expo provider compute the same key', () => {
-  for (const [platform, options] of [
-    ['ios', {}],
-    ['ios', { configuration: 'Release' }],
-    ['ios', { buildProfile: 'opt-test' }],
-    ['android', { buildProfile: 'opt-test', compiler: 'apple-cas-test' }],
-    ['ios', { device: 'generic' }],
-    ['ios', { device: 'Janic iPhone' }],
-    ['ios', { device: true }],
-    ['ios', { arch: 'x86_64', scheme: 'App' }],
-    ['android', { variant: 'release', device: 'emulator-5554', abi: 'arm64-v8a' }],
-    ['android', { variant: 'release', compiler: 'apple-cas-012345' }],
-  ] as [string, Record<string, unknown>][]) {
-    expect(buildCacheKey(platform, 'hash', options)).toBe(providerKey(platform, 'hash', options));
-  }
 });
 
 test('a module under android/ other than app keeps its build outputs out of the fingerprint', () => {

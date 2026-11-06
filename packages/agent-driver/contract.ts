@@ -1,3 +1,4 @@
+import type { PluginSource } from '@stim-cli/core/plugin-loader';
 import { createServer, request as httpRequest } from 'node:http';
 import type { HostedAgentIssuedGrant } from '@stim-cli/core/state';
 import {
@@ -17,9 +18,7 @@ export interface AgentDriverContractResult {
   error?: string;
 }
 
-export interface AgentDriverContractOptions {
-  /** Imports the driver module, for example `() => import('@stim-cli/agent-driver-x')`. */
-  load: () => Promise<unknown>;
+export interface AgentDriverContractOptions extends PluginSource {
   id: string;
   /** Factory input for a host whose driving tool is not installed. */
   unavailableInput: AgentDriverInput;
@@ -105,32 +104,33 @@ function checks(module: AgentDriverModule, options: AgentDriverContractOptions) 
     {
       name: 'the driver carries the module id',
       run: async () => {
-        assert(fresh().name === options.id, `the driver is named ${JSON.stringify(fresh().name)}`);
+        assert((await fresh()).name === options.id, `the driver is named ${JSON.stringify((await fresh()).name)}`);
       },
     },
     {
       name: 'stop before start resolves',
       run: async () => {
-        await fresh().stop();
+        await (await fresh()).stop();
       },
     },
     {
       name: 'revoking an unknown session resolves',
       run: async () => {
-        await fresh().revoke(UNKNOWN_SESSION);
+        await (await fresh()).revoke(UNKNOWN_SESSION);
       },
     },
     {
       name: 'issuing before start refuses',
       run: async () => {
-        await rejects(() => fresh().issue(options.app));
+        const driver = await fresh();
+        await rejects(() => driver.issue(options.app));
       },
     },
     {
       name: 'forwarding without a grant answers with an error status',
       run: async () => {
         const status = await forwardStatus(
-          fresh(),
+          await fresh(),
           UNKNOWN_SESSION,
           options.checkTimeoutMs ?? AGENT_DRIVER_CONTRACT_CHECK_TIMEOUT_MS,
         );
@@ -140,7 +140,7 @@ function checks(module: AgentDriverModule, options: AgentDriverContractOptions) 
     {
       name: 'start refuses with AgentDriverUnavailable when the tool is missing, then stops',
       run: async () => {
-        const driver = fresh();
+        const driver = await fresh();
         const error = await rejects(() => driver.start());
         assert(error instanceof AgentDriverUnavailable, `start failed with ${String(error)}`);
         await driver.stop();
@@ -189,7 +189,7 @@ function checks(module: AgentDriverModule, options: AgentDriverContractOptions) 
 export async function runAgentDriverContract(
   options: AgentDriverContractOptions,
 ): Promise<AgentDriverContractResult[]> {
-  const loaded = await loadAgentDriverModule(options.id, options.load);
+  const loaded = await loadAgentDriverModule(options.id, options);
   if ('unavailable' in loaded) return [{ name: 'the module loads', passed: false, error: loaded.unavailable }];
   const results: AgentDriverContractResult[] = [{ name: 'the module loads', passed: true }];
   for (const check of checks(loaded.module, options)) {

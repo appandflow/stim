@@ -8,7 +8,7 @@ import Foundation
 ) async throws -> BuildPlanOutcome {
   try Task.checkCancellation()
   let client = try desktopActionServer(connection, stimHome: stimHome, action: "check builds for this Stim home")
-  guard case .open(let hello) = client.state, hello.features?.contains("desktop-plan") == true else {
+  guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
     throw ServerError(code: "unsupported", message: "Update stim-server to check builds from Desktop.")
   }
   let request = UUID().uuidString

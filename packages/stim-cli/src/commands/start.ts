@@ -39,7 +39,6 @@ import {
   updateWorkspaceStateAsync,
   withWorkspaceStateLockAsync,
 } from '../workspace/workspace-state.ts';
-import { CACHE_PROVIDER_ENV, cacheProviderEnv } from '@stim-cli/cache/tiers';
 import {
   WorkspaceProcessCleanupError,
   workspaceProcessLockError,
@@ -66,7 +65,6 @@ import {
   remoteAndroidSetting,
   cacheProviderSettingError,
   remoteIosSetting,
-  resolveCacheProviderConfig,
   resolveAndroidLayout,
   resolveIosProjectDir,
   resolveProjectSettingsAsync,
@@ -572,7 +570,6 @@ export async function startDevServer(
   const serverMode = metroCommand ? MODE_COMMAND : isExpo ? MODE_EXPO : MODE_BARE;
   const expoServer = serverMode === MODE_EXPO;
   const worktreeRoot = settingsContext.repoRoot ?? root;
-  const cacheProvider = resolveCacheProviderConfig(settingsContext);
   const run = async (): Promise<StartFacts> => {
     const settingError = metroTunnelSettingError(settings);
     if (settingError) {
@@ -877,7 +874,6 @@ export async function startDevServer(
           ...ambientEnv(),
           ...(origin ? { [PUBLIC_METRO_ENV]: origin, EXPO_PACKAGER_PROXY_URL: origin } : {}),
         };
-        childEnv[CACHE_PROVIDER_ENV] = cacheProviderEnv(cacheProvider);
         for (const held of claims) markClaimChildPending(held);
         const child =
           d.platform === 'win32'

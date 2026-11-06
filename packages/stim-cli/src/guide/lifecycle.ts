@@ -394,8 +394,7 @@ paths or compiler overrides. The miss reason explains the exclusion. --plan
 refuses such a prediction; omit --plan to prepare and build the app.
 
 A compatible approved remote Mac can compile a native Xcode app with
---remote-build auto or --remote-build <name>. Both peers must support
-native-xcode-build. This first worker path requires a verified artifact identity
+--remote-build auto or --remote-build <name>. This first worker path requires a verified artifact identity
 and all inputs contained in the repository and visible to git. Ignored or
 external inputs keep the build here, and placement names the first one; their
 bytes are never silently omitted. The common case is a Finder .DS_Store that a
@@ -409,16 +408,14 @@ Native Xcode apps can install on an already approved hosting Mac with
 process-mode support:
   stim ios --scheme MyApp --configuration Debug --remote janics-mac-mini --json
 
-The host must advertise hosted-ios-process; older hosts refuse with an update
-remedy before reservation or upload. --remote auto skips incompatible hosts,
-but an existing session stays on its recorded host until stim stop. Debug,
-Release and custom configurations use the offered simulator architecture,
+--remote auto skips incompatible hosts, but an existing session stays on its
+recorded host until stim stop. Debug, Release and custom configurations use the
+offered simulator architecture,
 report metroPort: null, and close any previous session Metro bridge. Logs,
 view/control, agent access and scoped stop use the existing hosted-ios services.
-A host advertising hosted-app-state checks the current installed app attempt's
-process when Debug verifies its bundle. Release and native process launches
-wait three seconds before requiring a live process. Older hosts print an update
-hint and their release/process result stays unverified. A failed process query
+The host checks the current installed app attempt's process when Debug verifies
+its bundle. Release and native process launches wait three seconds before
+requiring a live process. A failed process query
 is unknown; it does not establish a crash. Verify UI and interaction separately
 from the host's live process evidence.
 
@@ -509,16 +506,16 @@ prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
 \`stim android\` after an edit and use \`stim stop\` for scoped cleanup.`,
     },
     ci: {
-      summary: 'Build an app once, then install it and run tests through @stim-cli/ci with scoped cleanup',
+      summary: 'Build an app once, then install it and run tests through stim ci with scoped cleanup',
       body: () => `CONTINUOUS INTEGRATION
 
 Install app dependencies and platform tools first. Use a dedicated checkout:
 cleanup stops that workspace, including resources created before a build fails.
 
-  npx --yes --package @stim-cli/ci stim-ci build --platform ios --project ./app
-  npx --yes --package @stim-cli/ci stim-ci run --platform ios --project ./app --timeout 1800 -- pnpm test:e2e
+  npx --yes stim ci build --platform ios --project ./app
+  npx --yes stim ci run --platform ios --project ./app --timeout 1800 -- pnpm test:e2e
 
-Or install npm install --global @stim-cli/ci and use stim-ci directly.
+Or install npm install --global stim and use stim ci directly.
 Platforms: ios, android, macos, web. Everything after -- is argv, not a shell.
 Without --, run installs and launches the app, then stops it with exit code 0.
 build is the only step that compiles (or restores from the cache, or with
@@ -528,7 +525,7 @@ in workspace state under the Stim home; the last build for those selectors wins.
 run never builds, fingerprints or replaces JS: it installs and launches that
 recorded app as built and trusts it, then runs the test. A Debug app still gets
 Metro from run. With no recorded build for the selectors, run refuses with
-STIM_NO_RECORDED_BUILD and names the stim-ci build command. Build and run must
+STIM_NO_RECORDED_BUILD and names the stim ci build command. Build and run must
 share the Stim home (--home or STIM_HOME). macOS and web run unchanged: macOS
 run builds the app itself.
 Every iOS and Android run on this machine starts from clean app state, even when
@@ -570,7 +567,7 @@ CI=true alone does not change defaults, ownership or coordination. Persist only
 cache artifacts, not state, claims or device ledgers. Independent homes must
 not share a writable filesystem cache because its claims live in the home.
 
-The programmatic API is import { buildCI, runCI } from '@stim-cli/ci'. See its package
+The programmatic API is import { buildCI, runCI } from 'stim/ci'. See its package
 README for result types, cancellation, cache policy, and coordination findings.`,
     },
     'hosted-android': {
@@ -623,9 +620,7 @@ adb against the host serial on this machine. Release variants skip Metro. Launch
 is true only with client bundle evidence or a live host release process;
 bundling requires a bundle request and unverified has no launch evidence.
 
-Native Gradle apps use process mode for every variant. The host must advertise
-hosted-android-process; older hosts refuse before admission or APK upload.
-Native runs close any previous Metro bridge, launch the signed APK and require
+Native Gradle apps use process mode for every variant. Native runs close any previous Metro bridge, launch the signed APK and require
 a live app process for launched=true. --no-metro-check is allowed, and reload
 refuses because there is no Metro runtime. Re-run stim android after an edit.
 Hosted Android uses the same hosted-app-state liveness check and three-second
@@ -654,17 +649,16 @@ arrive through local Metro.
 AGENT CONTROL
 
 Set hosting.agentDriver to agent-device on the hosting Mac. Both machines need
-agent-device 0.21.30 or later. The host advertises hosted-android-agent and
-starts one loopback daemon per installed Android session. Its policy allows
+agent-device 0.21.30 or later. The host starts one loopback daemon per installed Android session. Its policy allows
 only the exact ledger-owned emulator serial and denies device shutdown.
 The host verifies the policy digest and android-instance backend before granting
-control. An older host, missing binary or unsupported policy reports driver: none;
+control. A missing binary or unsupported policy reports driver: none;
 the host's notice explains unavailable control.
 
 On a local: machine, daemonBaseUrl is http://127.0.0.1:<port> of this
 workspace's Metro supervisor, which carries each request to the host over its
-own authenticated device-host connection (host feature hosted-agent-link). It
-works for Debug runs while stim start runs; Release runs report driver: none.
+own authenticated device-host connection (device-host.agent.link). It works
+for Debug runs while stim start runs; Release runs report driver: none.
 
 android.host.agent in stim status --json provides driver, remoteConfig and
 command, never its token. Each slot has a separate 0600 file under the workspace
@@ -735,9 +729,7 @@ a device warning naming any dropped interval. Followers share a child-aware log
 claim; install and stop cancel and settle the worker before native operations.
 Stop copies logs once, after the host's final collection and teardown, bounded to
 30 seconds with progress on stderr; Ctrl-C cancels the copy and keeps the placement. Collected logs
-remain readable after stop. The host advertises hosted-android-data for Android
-handoff and native logs. Older hosts get a newer stim-server note, use upload
-and show records already copied here.`,
+remain readable after stop.`,
     },
     'hosted-ios': {
       summary: 'iOS on a named approved Mac: strict placement, private Metro, status and stop',
@@ -746,7 +738,7 @@ and show records already copied here.`,
 If Stim is not installed globally, replace stim with npx stim.
 
   stim remote add janics-mac-mini
-  # A person there runs the stim-server setup command it printed.
+  # A person there runs the stim setup command it printed.
   stim remote list
   stim ios --remote janics-mac-mini --device-type "iPhone 17 Pro" --runtime "iOS 27.0"
   stim status --json
@@ -836,8 +828,8 @@ independent and selects a compatible build worker for a cache miss.
 The host's own owned devices count toward concurrency.maxDevices and its per-platform cap
 (concurrency.maxIosDevices, concurrency.maxAndroidDevices; macOS apps use concurrency.maxMacosApps).
 
-Each record in stim-server devices --json carries kind (phone or desktop for
-a pairing from stim-server pair, build-client or device-host-client), access
+Each record in stim pairings --json carries kind (phone or desktop for
+a pairing from stim pair, build-client or device-host-client), access
 (view, control, build or run-devices), owner (this-machine for a phone or
 desktop, theirs-running-here for a build or device-host client) and
 keyFingerprint, the client key one machine's build and device-host records
@@ -845,7 +837,7 @@ share. clientApp and clientVersion are the app and version the client named in
 its last hello, shown once it has connected; a pairing is desktop when
 clientApp is Stim Desktop or Stim Dev and phone otherwise. They are display
 only and never change access. A person on the host renames a record
-with stim-server devices rename <id> <name>; the client sees the name on its
+with stim pairings rename <id> <name>; the client sees the name on its
 next connection, and its access does not change. An entry of a registry file
 that this stim-server cannot read is never dropped: every write keeps it as the
 text it had, it grants nothing, and devices --json lists it in unreadable as
@@ -853,7 +845,7 @@ text it had, it grants nothing, and devices --json lists it in unreadable as
 { file, version }, its records are not read, and writes to it are refused.
 Rename, grant and revoke refuse an unreadable id; the person edits the file.
 
-The host's person sees Hosted here rows in stim-server devices; --json adds
+The host's person sees Hosted here rows in stim pairings; --json adds
 hostedSessions beside devices. Rows show client, platform, device, installed
 app, state and since, newest first. Plain stopped sessions are omitted;
 parked and unknown sessions stay visible, with parked rows using the parking
@@ -976,8 +968,6 @@ client to copy, until the host removes the home an hour after the session stoppe
 materialized bundles are removed at stop. Native queries read persisted
 entries, overlap by five seconds and de-duplicate; info-level or later-persisted
 entries may be unavailable. JavaScript logs arrive through Metro.
-The host advertises hosted-ios-data for iOS handoff and native logs. An older
-host gets an update note, uses uploads and shows logs already copied here.
 
 AGENT CONTROL
 
@@ -994,8 +984,8 @@ teardown; clear a named claim only after proving its owner and child are gone.
 
 On a local: machine, daemonBaseUrl is http://127.0.0.1:<port> of this
 workspace's Metro supervisor, which carries each request to the host over its
-own authenticated device-host connection (host feature hosted-agent-link). It
-works for Debug runs while stim start runs; Release runs report driver: none.
+own authenticated device-host connection (device-host.agent.link). It works
+for Debug runs while stim start runs; Release runs report driver: none.
 
 The client writes a separate 0600 remote-config file for each workspace slot.
 Status prints agent: <command>; ios.host.agent in --json carries driver,
@@ -1033,15 +1023,11 @@ hints are refused and only reporting/artifact metadata passes through.
 
 ${HOSTED_RECORDING('simulator')}
 
-If hosting.agentDriver is none, the driver cannot enforce its policy, or the
-host does not advertise hosted-ios-agent, agent reports
+If hosting.agentDriver is none or the driver cannot enforce its policy, agent reports
 { driver: 'none', setting: 'hosting.agentDriver' }. A run whose host disables
 the driver prints a notice; plain status also names the host setting when
 agent control is unavailable. Update the host and check its setting and
 agent-device installation. No other simulator becomes reachable.
-Client hello carries only name and version, not features, so the host cannot gate
-daemon startup or grant issuance on client support. The client checks the host's
-hosted-ios-agent feature before using a grant.
 
 Stim Desktop and the phone app view and control the simulator through this
 machine's stim-server relay, with an "on <machine>" label. Turn on Allow connections
@@ -1849,9 +1835,7 @@ with machine or project optimization settings; see \`guide settings\`:
            Expo's config override on SDK 54+. Expo SDK 53 and older use their
            normal Metro cache. Turn it off machine-wide with
            { "optimizations": { "metroSharedCache": false } } in
-           ~/.stim/config.json; see \`guide settings\`. A project that calls
-           \`sharedCacheStores()\` from @stim-cli/metro in its own metro
-           config also gets the \`cache.provider\` tier behind that store.
+           ~/.stim/config.json; see \`guide settings\`.
 
 Every Stim Android build uses a CMake staging profile, including the default
 ccache mode. The first run with this layout configures a separate build tree;
@@ -1998,7 +1982,7 @@ THE BUILD CACHE HAS THREE LEVELS
      provider has.
   2. The project's own cache provider, on ANY project including bare React
      Native: \`cache.provider\` in the settings, a module implementing the
-     @stim-cli/cache contract (see \`guide settings\`). Consulted only when
+     stim/plugin cache-provider contract (see \`guide settings\`). Consulted only when
      level one misses, and its hit is stored into level one before install.
      The same contract serves the Metro transform cache.
   3. On an EXPO project only, EAS when the project configures it through

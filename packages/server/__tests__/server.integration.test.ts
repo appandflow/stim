@@ -66,6 +66,10 @@ import { DeviceHost } from '../src/device-host.ts';
 import { FeedPool } from '../src/feed.ts';
 import { FramePool, ownedDevice } from '../src/frames.ts';
 import {
+  DESKTOP_API,
+  HOST_CAPABILITIES,
+  PEER,
+  PHONE_API,
   protocolJsonSchema,
   type ArchiveDetailResult,
   type HelloResult,
@@ -367,7 +371,7 @@ const PAYLOADS = [
 // The fake tailscale is a script with a shebang, which Windows cannot execute.
 const fakeTailscale = process.platform !== 'win32';
 
-const CLIENT = { name: 'test client', version: '0.0.0' };
+const CLIENT = { name: 'test client', version: '0.0.0', peer: PEER };
 
 const PEERS = {
   '100.64.0.2': { node: 'nPhoneA', user: 'janic@example.com' },
@@ -1274,7 +1278,7 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
   const isHello = validator.compile<HelloResult>({ $ref: 'protocol#/$defs/HelloResult' });
 
   /** A local-socket client that asks for the challenge, as Stim Desktop does, without answering it yet. */
-  async function asking(client = CLIENT) {
+  async function asking(client: Record<string, unknown> = CLIENT) {
     const socket = await localConnect(server!.localSocket!);
     const reply = await socket.request('hello', { client, desktopBootstrap: true });
     assert('result' in reply && isHello(reply.result));
@@ -1357,10 +1361,6 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     const hello = await client.request('hello', { client: CLIENT, desktopBootstrap: true });
     expect(hello).toMatchObject({ result: { capabilities: ['read', 'control'] } });
     expect(hello).not.toHaveProperty('result.desktopBootstrap');
-    expect(hello).toMatchObject({
-      result: { features: expect.arrayContaining(['desktop-settings-write', 'desktop-gc', 'desktop-local-authority']) },
-    });
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-setup']) } });
     for (const method of ['desktop.gc.subscribe', 'desktop.start.subscribe', 'desktop.worktree.remove.subscribe'])
       expect(await client.request(method, {})).toHaveProperty('error.code', 'bad-request');
     const write = { cwd: root, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
@@ -1375,11 +1375,7 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     const port = server!.addresses[0]!.port;
     const { keyPair } = await pair(port, undefined, true);
     const network = await connect(port, undefined, { keyPair });
-    expect(await network.request('hello', { client: CLIENT })).toMatchObject({
-      result: {
-        features: expect.not.arrayContaining(['desktop-settings-write', 'desktop-gc', 'desktop-local-authority']),
-      },
-    });
+    await network.request('hello', { client: CLIENT });
     expect(await network.request('device-host.sessions')).toHaveProperty('error.code', 'forbidden');
     expect(await network.request('desktop.settings.write', { ...write, value: '5' })).toHaveProperty(
       'error.code',
@@ -1390,15 +1386,12 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
 
   it('keeps a Desktop-started server closed to a local client that does not prove its key', async () => {
     await start();
-    const { client, hello } = await asking();
-    expect(hello.features).toContain('desktop-settings-write');
-    expect(hello.features).not.toContain('desktop-local-authority');
+    const { client } = await asking();
     const write = { cwd: root, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
     expect(await client.request('desktop.settings.write', write)).toHaveProperty('error.code', 'forbidden');
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
-    const unproved = await plain.request('hello', { client: CLIENT });
-    expect(unproved).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings-write']) } });
+    await plain.request('hello', { client: CLIENT });
     expect(await plain.request('desktop.settings.write', write)).toHaveProperty('error.code', 'forbidden');
     expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
   });
@@ -1475,29 +1468,52 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
 });
 
 describe('pairing', () => {
-  it('does not advertise macOS-only features from a machine that is not a Mac, but keeps the hosted relays', async () => {
+  it('lists only the Android phone capability in hello.host from a machine that is not a Mac', async () => {
     const port = await start({ hostsDevices: false });
     const { token } = createPairingToken();
     const client = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
     const hello = await client.request('hello', { client: CLIENT });
-    for (const mac of [
-      'physical-ios',
-      'macos-window',
-      'macos-windows',
-      'macos-window-select',
-      'macos-window-control',
-      'macos-keyboard-extended',
-      'duo-frames',
-      'native-xcode-build',
-      'native-xcode-toolchain',
-    ]) {
-      expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining([mac]) } });
-    }
-    expect(hello).toMatchObject({
-      result: {
-        features: expect.arrayContaining(['ios-hosted', 'android-hosted', 'macos-hosted', 'device-frames']),
+    expect(hello).toHaveProperty('result.host.capabilities', ['physical-android']);
+  });
+  it('refuses a network client below its wire integer with the remedy for its surface, and serves it on the local socket', async () => {
+    const port = await start();
+    const worker = setupClient(['build']);
+    const cli = await connect(port, undefined, { keyPair: worker.keyPair });
+    expect(
+      await cli.request('hello', { client: { name: 'stim', version: '1', runId: 'old' }, access: 'build' }),
+    ).toEqual({
+      id: expect.any(Number),
+      error: {
+        code: 'protocol-unsupported',
+        message:
+          'peer-too-old: Test Mac runs stim 9.9.9 (peer 1); this stim sends no peer; update this Mac: npm i -g stim@9.9.9, then stim service install if it runs Stim as a service',
       },
     });
+    expect(await cli.closedWith).toEqual({ code: 4401, reason: 'protocol-unsupported' });
+    const current = await connect(port, undefined, { keyPair: worker.keyPair });
+    expect(await current.request('hello', { client: CLIENT, access: 'build' })).toHaveProperty('result.peer', PEER);
+
+    const { keyPair } = await pair(port);
+    const phone = 'Update Stim Mobile from the App Store or TestFlight.';
+    for (const [client, remedy] of [
+      [{ name: 'iPhone', version: '1.0.0' }, phone],
+      [{ name: 'iPhone', version: '1.0.0', phoneApi: PHONE_API - 1 }, phone],
+      [
+        { name: 'Stim Desktop', version: '0.9.0', desktopApi: DESKTOP_API - 1 },
+        'Update Stim Desktop (Stim > Check for Updates).',
+      ],
+      [{ name: 'Stim Desktop', version: '0.9.0' }, 'Update Stim Desktop (Stim > Check for Updates).'],
+    ] as const) {
+      const older = await connect(port, undefined, { keyPair });
+      expect(await older.request('hello', { client })).toMatchObject({
+        error: { code: 'protocol-unsupported', message: expect.stringContaining(remedy) },
+      });
+    }
+    const local = await localConnect(server!.localSocket!);
+    expect(await local.request('hello', { client: { name: 'stim', version: '1' } })).toHaveProperty(
+      'result.peer',
+      PEER,
+    );
   });
 
   it('records the app and version a hello names without changing what the device may do', async () => {
@@ -1505,7 +1521,9 @@ describe('pairing', () => {
     const keyPair = generateNoiseKeyPair();
     const { token } = createPairingToken();
     const first = await connect(port, undefined, { secret: token, keyPair });
-    const paired = await first.request('hello', { client: { name: 'Stim Desktop', version: '1.4.0' } });
+    const paired = await first.request('hello', {
+      client: { name: 'Stim Desktop', version: '1.4.0', desktopApi: DESKTOP_API },
+    });
     expect(paired).toMatchObject({ result: { capabilities: ['read'] } });
     first.socket.close();
     expect(readDevices()).toEqual([
@@ -1530,7 +1548,7 @@ describe('pairing', () => {
     assert(spent?.device);
     expect(spent.device).not.toHaveProperty('clientApp');
     const client = await connect(port, undefined, { keyPair });
-    await client.request('hello', { client: { name: 'stim-mobile', version: '0.9.0' } });
+    await client.request('hello', { client: { name: 'stim-mobile', version: '0.9.0', phoneApi: PHONE_API } });
     expect(readDevices()).toEqual([{ ...spent.device, clientApp: 'stim-mobile', clientVersion: '0.9.0' }]);
   });
 
@@ -1559,63 +1577,10 @@ describe('pairing', () => {
         protocol: 2,
         server: { name: 'Test Mac', version: '1.2.3', stim: '9.9.9', home: homedir() },
         capabilities: ['read'],
-        features: [
-          'physical-ios',
-          'physical-android',
-          'notifications',
-          'macos-window',
-          'macos-windows',
-          'macos-window-select',
-          'macos-window-control',
-          'macos-keyboard-extended',
-          'device-frames',
-          'macos-hosted',
-          'ios-hosted',
-          'android-hosted',
-          'hosted-ios-agent',
-          'hosted-android-agent',
-          'duo-frames',
-          'workspace-diff',
-          'hosted-congestion',
-          'hosted-ios-data',
-          'hosted-ios-process',
-          'hosted-app-state',
-          'native-xcode-build',
-          'native-xcode-toolchain',
-          'build-artifact-cache',
-          'native-gradle-build',
-          'native-gradle-artifact-cache',
-          'native-gradle-peer-cache',
-          'native-gradle-peer-jdk',
-          'react-native-peer-cache',
-          'fingerprint-sources',
-          'fingerprint-ignored',
-          'fingerprint-tracked',
-          'swiftpm-peer-cache',
-          'build-dependency-cache',
-          'hosted-android-data',
-          'hosted-android-process',
-          'hosted-metro-ports',
-          'hosted-metro-link',
-          'hosted-reverse-ports',
-          'hosted-agent-link',
-          'server-update',
-          'build-compat',
-          'build-jdk',
-          'build-android-release',
-          'build-reuse-artifact',
-          'share-stop-id',
-          'presence',
-          'device-clipboard',
-          'device-keyboard',
-          'share-view-password',
-          'share-waiting',
-          'hosted-presence',
-          'share-slug',
-          'share-reuse',
-          'share-starting',
-          'shared-control',
-        ],
+        host: { capabilities: [...HOST_CAPABILITIES], app: null },
+        peer: PEER,
+        phoneApi: PHONE_API,
+        desktopApi: DESKTOP_API,
         actions: [],
         device: { name: 'Test phone' },
       },
@@ -1823,36 +1788,10 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     });
     const { token } = createPairingToken(Date.now(), capabilitiesFor(true));
     const remote = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
-    const hello = await remote.request('hello', { client: CLIENT });
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-machine-history']) } });
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-remote']) } });
-    expect(hello).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-report-invalidate-target']) },
-    });
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings']) } });
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-full-logs']) } });
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-device-tools']) } });
-    expect(hello).toMatchObject({
-      result: {
-        features: expect.not.arrayContaining(['desktop-doctor-run', 'desktop-remedy']),
-      },
-    });
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-stop']) } });
+    await remote.request('hello', { client: CLIENT });
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
-    expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
-      result: {
-        features: expect.arrayContaining([
-          'desktop-reports',
-          'desktop-machine-history',
-          'desktop-report-platform',
-          'desktop-report-remote',
-          'desktop-report-invalidate-target',
-        ]),
-      },
-    });
+    await plain.request('hello', { client: CLIENT });
     for (const client of [remote, plain]) {
       for (const report of ['gc-history', 'builds'])
         expect(await client.request('desktop.reports.get', { report })).toHaveProperty('error.code', 'forbidden');
@@ -2791,9 +2730,7 @@ describe('setup approval in Stim Desktop on this machine', () => {
     await start({ setupDeps, desktopBootstrap: null });
     assert(server?.localSocket);
     const client = await localConnect(server.localSocket);
-    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-setup']) },
-    });
+    await client.request('hello', { client: CLIENT });
     const asked = request();
     expect(await client.request('desktop.setup.subscribe', asked.params)).toHaveProperty('error.code', 'forbidden');
     expect(asked.stored()).toBe(false);
@@ -3929,7 +3866,7 @@ describe('offloaded builds', () => {
         },
       });
       const { client } = await buildClient(port);
-      expect(await client.request('server.update.status')).toMatchObject({
+      expect(await client.request('engine.update.status')).toMatchObject({
         result: {
           server: { version: '1.2.3' },
           service: 'dev.stim.test',
@@ -3938,16 +3875,16 @@ describe('offloaded builds', () => {
         },
       });
       expect(
-        await client.request('server.update.start', { packages: [{ name: 'a.tgz', size: 1, sha256: sha('a') }] }),
+        await client.request('engine.update', { packages: [{ name: 'a.tgz', size: 1, sha256: sha('a') }] }),
       ).toMatchObject({ error: { code: 'forbidden', message: expect.stringContaining('server.acceptClientBuilds') } });
-      expect(await client.request('server.update.start', { release: 'latest' })).toMatchObject({
+      expect(await client.request('engine.update', { version: 'latest' })).toMatchObject({
         error: { code: 'bad-request' },
       });
       const host = await returning(port, setupClient(['device-host']).keyPair, '100.64.0.3', 'device-host');
-      expect(await host.request('server.update.status')).toMatchObject({ result: { service: 'dev.stim.test' } });
+      expect(await host.request('engine.update.status')).toMatchObject({ result: { service: 'dev.stim.test' } });
       const viewer = await authed(port);
-      expect(await viewer.request('server.update.status')).toMatchObject({ error: { code: 'forbidden' } });
-      expect(await viewer.request('server.update.start', { release: '1.15.0' })).toMatchObject({
+      expect(await viewer.request('engine.update.status')).toMatchObject({ error: { code: 'forbidden' } });
+      expect(await viewer.request('engine.update', { version: '1.15.0' })).toMatchObject({
         error: { code: 'forbidden' },
       });
     },
@@ -3967,18 +3904,18 @@ describe('offloaded builds', () => {
         service: { label: 'dev.stim.drain', node: process.execPath, script: updater, runsAsService: async () => true },
       });
       const { client } = await buildClient(port);
-      expect(await client.request('server.update.start', { release: '1.15.0' })).toMatchObject({
+      expect(await client.request('engine.update', { version: '1.15.0' })).toMatchObject({
         result: { state: 'installing' },
       });
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: { capacity: { declined: 'stim-server is updating to release 1.15.0' } },
       });
       writeFileSync(release, '');
-      await eventually(() => readAudit().some((record) => record.action === 'server.update.ended'));
+      await eventually(() => readAudit().some((record) => record.action === 'engine.update.ended'));
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: { capacity: { declined: null } },
       });
-      expect(await client.request('server.update.status')).toMatchObject({
+      expect(await client.request('engine.update.status')).toMatchObject({
         result: {
           running: null,
           last: { ok: false, message: expect.stringContaining(': Another update is running.;') },
@@ -3991,7 +3928,7 @@ describe('offloaded builds', () => {
         message: 'updated by another run',
       };
       writeFileSync(join(serviceRoot('dev.stim.drain'), 'last-update.json'), JSON.stringify(later));
-      expect(await client.request('server.update.status')).toMatchObject({ result: { last: later } });
+      expect(await client.request('engine.update.status')).toMatchObject({ result: { last: later } });
     } finally {
       if (home === undefined) delete process.env.HOME;
       else process.env.HOME = home;
@@ -4742,7 +4679,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       ]);
       expect(first.host).toEqual({ name: 'Stim Host Dev', screenRecording: false, accessibility: true });
       expect(second.host).toEqual(first.host);
-      expect(hello).toMatchObject({ result: { host: first.host } });
+      expect(hello).toMatchObject({ result: { host: { app: first.host } } });
       const validator = new Ajv2020({ strict: false, validateFormats: false });
       validator.addSchema(protocolJsonSchema(), 'protocol');
       const acceptsHello = validator.compile({ $ref: 'protocol#/$defs/HelloResult' });
@@ -5647,15 +5584,6 @@ describe('push.register', () => {
     revokeDevice(readDevices()[0]!.id);
     expect(readDevices()).toEqual([]);
     await until(() => statusWorkers().length === 0, 1000);
-  });
-
-  it('reads the events an older phone registers: disk as machine, the rest as nothing', async () => {
-    const port = await start();
-    const client = await authed(port);
-    const legacy = { token: PUSH.token, events: ['build-failed', 'disk'], agentOnly: true, ref: 'mac-1' };
-    expect(await client.request('push.register', legacy)).toEqual({ id: 2, result: {} });
-    expect(readDevices()[0]!.push).toMatchObject({ events: ['machine'], stuckMinutes: 15, quietHours: null });
-    expect(readDevices()[0]!.push!.levels).toBeUndefined();
   });
 
   it('refuses a token that is not an Expo push token and unknown events', async () => {
@@ -6591,8 +6519,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
     const socket = server?.localSocket;
     assert(socket);
     const plain = await localConnect(socket);
-    const hello = await plain.request('hello', { client: CLIENT });
-    expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-settings-schema']) } });
+    await plain.request('hello', { client: CLIENT });
     expect(await plain.request('desktop.settings.schema')).toHaveProperty('error.code', 'forbidden');
     const client = await desktop();
     for (const params of [null, { cwd: workspace }]) {
@@ -6631,8 +6558,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
     const socket = server?.localSocket;
     assert(socket);
     const plain = await localConnect(socket);
-    const hello = await plain.request('hello', { client: CLIENT });
-    expect(hello).toMatchObject({ result: { features: expect.arrayContaining(['desktop-settings']) } });
+    await plain.request('hello', { client: CLIENT });
     expect(await plain.request('desktop.settings.get', { cwd: selected })).toHaveProperty('error.code', 'forbidden');
     const client = await desktop();
     for (const params of [undefined, null, {}, { cwd: 'relative' }, { cwd: selected, workspace: selected }]) {
@@ -7331,8 +7257,7 @@ describe('build.plan', () => {
       const phone = await authed(port);
       assert(server?.localSocket);
       const plain = await localConnect(server.localSocket);
-      const hello = await plain.request('hello', { client: CLIENT });
-      expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-plan']) } });
+      await plain.request('hello', { client: CLIENT });
       for (const client of [phone, plain])
         expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
           'error.code',
@@ -7454,9 +7379,7 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
     const remote = await authed(port, true);
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
-    expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-settings-write']) },
-    });
+    await plain.request('hello', { client: CLIENT });
     const request = { cwd: workspace, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
     for (const client of [remote, plain]) {
       expect(await client.request('desktop.settings.write', request)).toHaveProperty('error.code', 'forbidden');
@@ -7722,9 +7645,7 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
     const remote = await authed(port, true);
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
-    expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.arrayContaining(['desktop-stop']) },
-    });
+    await plain.request('hello', { client: CLIENT });
     for (const client of [remote, plain]) {
       expect(await client.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
         'error.code',
@@ -8209,8 +8130,7 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     const port = await start();
     const peer = await pair(port, undefined, true);
     const remote = await connect(port, undefined, { keyPair: peer.keyPair });
-    const hello = await remote.request('hello', { client: CLIENT });
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-start']) } });
+    await remote.request('hello', { client: CLIENT });
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     await plain.request('hello', { client: CLIENT });
@@ -8377,8 +8297,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
     const remote = await authed(port, true);
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
-    const hello = await plain.request('hello', { client: CLIENT });
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reload']) } });
+    await plain.request('hello', { client: CLIENT });
     for (const client of [remote, plain])
       expect(await client.request('desktop.reload.subscribe', { cwd: workspace })).toHaveProperty(
         'error.code',
@@ -10976,7 +10895,7 @@ describe('frames.subscribe', () => {
                 let result: Record<string, unknown> = {};
                 if (request.method === 'hello') {
                   if (request.params.access !== 'device-host') return socket.close();
-                  result = { capabilities: ['device-host'] };
+                  result = { capabilities: ['device-host'], peer: PEER };
                 } else if (request.method === 'device-host.control.begin') {
                   if (request.params.session !== session) return socket.close();
                   result = { session: 'c1', platform: 'macos', lease: null, postures: [] };
@@ -12626,9 +12545,7 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
     const port = await start();
     const peer = await pair(port, undefined, true);
     const remote = await connect(port, undefined, { keyPair: peer.keyPair });
-    expect(await remote.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining([`desktop-${kind}`]) },
-    });
+    await remote.request('hello', { client: CLIENT });
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
     await plain.request('hello', { client: CLIENT });
@@ -12873,9 +12790,7 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
       mode === 'phone control'
         ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
         : await localConnect(server.localSocket);
-    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-worktree-warm']) },
-    });
+    await client.request('hello', { client: CLIENT });
     expect(await client.request('desktop.worktree.warm.subscribe', { cwd: workspace })).toHaveProperty(
       'error.code',
       'forbidden',
@@ -13356,12 +13271,8 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
     const peer = await connect(port, undefined, { keyPair: paired.keyPair });
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
-    expect(await plain.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-gc']) },
-    });
-    expect(await peer.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-gc']) },
-    });
+    await plain.request('hello', { client: CLIENT });
+    await peer.request('hello', { client: CLIENT });
     for (const client of [plain, peer]) {
       expect(
         await client.request('desktop.gc.subscribe', { cwd: workspace, cache: 'rpc-fixture', delete: true }),
@@ -13542,9 +13453,7 @@ describe.skipIf(process.platform === 'win32')('Desktop machine access requests',
       mode === 'phone control'
         ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
         : await localConnect(server.localSocket);
-    expect(await client.request('hello', { client: CLIENT })).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-machine-access']) },
-    });
+    await client.request('hello', { client: CLIENT });
     expect(await client.request('desktop.machine-access.subscribe', { cwd: workspace })).toHaveProperty(
       'error.code',
       'forbidden',

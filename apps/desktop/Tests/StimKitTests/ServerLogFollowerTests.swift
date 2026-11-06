@@ -23,8 +23,9 @@ import Testing
     socket.answer(
       "hello",
       .object([
-        "protocol": .number(2), "server": .object(["name": .string("Mac"), "version": .string("1"), "stim": .string("1")]),
-        "capabilities": .array([.string("read")]), "features": .array([.string("desktop-full-logs")]),
+        "protocol": .number(2), "desktopApi": .number(1),
+        "server": .object(["name": .string("Mac"), "version": .string("1"), "stim": .string("1")]),
+        "capabilities": .array([.string("read")]),
       ]))
     await settle()
     return (client, socket)

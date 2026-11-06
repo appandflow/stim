@@ -76,7 +76,8 @@ test.each([false, true])('SIGTERM exits after close (kept claims: %s)', async (f
   });
   try {
     vi.resetModules();
-    await import('../bin/stim-server.ts');
+    const { serve } = await import('../src/cli.ts');
+    await serve(7787, [], [], false);
     expect(shutdown).toBeDefined();
     shutdown!();
     await exited;

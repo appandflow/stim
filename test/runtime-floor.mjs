@@ -25,7 +25,6 @@ const packageDirs = [
   'agent-driver',
   'agent-driver-agent-device',
   'metro',
-  'expo-build-cache',
   'ci',
   'transport',
   'transport-tailscale',
@@ -59,7 +58,6 @@ const entrypoints = [
   ['@stim-cli/agent-driver', 'loadAgentDriver'],
   ['@stim-cli/agent-driver-agent-device', 'createAgentDriver'],
   ['@stim-cli/cache-s3', 'createS3FileCache', 'cache-s3'],
-  ['@stim-cli/expo-build-cache', 'cacheRoot'],
   ['@stim-cli/metro', 'sharedCacheStores'],
   ['@stim-cli/transport', 'loadTransport', 'server'],
   ['@stim-cli/transport-tailscale', 'createTransport', 'server'],
@@ -220,12 +218,11 @@ const version = execFileSync(process.execPath, ['packages/stim-cli/dist/cli.mjs'
 const cliPackage = JSON.parse(readFileSync(join(repositoryRoot, 'packages', 'stim-cli', 'package.json'), 'utf8'));
 assert.equal(version, cliPackage.version);
 
-const serverVersion = execFileSync(process.execPath, ['packages/server/dist/stim-server.mjs', '--version'], {
+const serverVersion = execFileSync(process.execPath, ['packages/stim-cli/bin/stim.mjs', 'serve', '--version'], {
   cwd: repositoryRoot,
   encoding: 'utf8',
 }).trim();
-const serverPackage = JSON.parse(readFileSync(join(repositoryRoot, 'packages', 'server', 'package.json'), 'utf8'));
-assert.equal(serverVersion, serverPackage.version);
+assert.equal(serverVersion, cliPackage.version);
 
 const ciRequire = createRequire(join(repositoryRoot, 'packages', 'ci', 'package.json'));
 assert.equal(typeof ciRequire('@stim-cli/ci').runCI, 'function');

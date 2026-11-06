@@ -113,6 +113,7 @@ struct NoiseInteropTests {
     private let script: String
     private let environment: [String: String]
     private let home: URL
+    var stimHome: String { home.appendingPathComponent(".stim").path }
 
     init() async throws {
       let runtime = try #require(interopRuntime)
@@ -123,10 +124,10 @@ struct NoiseInteropTests {
         "PATH": "/usr/bin:/bin",
       ]
       script =
-        URL(fileURLWithPath: runtime).appendingPathComponent("node_modules/@stim-cli/server/dist/stim-server.mjs")
+        URL(fileURLWithPath: runtime).appendingPathComponent("node_modules/stim/bin/stim.mjs")
         .path
       port = try NoiseInteropTests.freePort()
-      server = try Child([script, "--port", String(port), "--loopback-only"], environment: environment)
+      server = try Child([script, "serve", "--port", String(port), "--loopback-only"], environment: environment)
       var ready = false
       for _ in 0..<120 where !ready {
         let health = URL(string: "http://127.0.0.1:\(port)/health")!
@@ -166,7 +167,7 @@ struct NoiseInteropTests {
     }
 
     func grant(_ deviceID: String, _ scope: String) async throws {
-      let grant = try Child([script, "devices", "grant", deviceID, scope], environment: environment)
+      let grant = try Child([script, "pairings", "grant", deviceID, scope], environment: environment)
       grant.process.waitUntilExit()
       #expect(grant.process.terminationStatus == 0)
     }
@@ -218,7 +219,7 @@ struct NoiseInteropTests {
       }
     }
     defer { raw.close() }
-    raw.send(#"{"id":1,"method":"hello","params":{"client":{"name":"raw","version":"1"}}}"#)
+    raw.send(#"{"id":1,"method":"hello","params":{"client":{"name":"raw","version":"1","desktopApi":1}}}"#)
     raw.send(#"{"id":2,"method":"desktop.settings.get","params":{}}"#)
     for _ in 0..<400 where replies.count < 2 { try await Task.sleep(for: .milliseconds(25)) }
     guard replies.count == 2, case .object(let refused) = replies[1], case .object(let error)? = refused["error"] else {
@@ -256,6 +257,47 @@ struct NoiseInteropTests {
 
     try await server.grant(deviceID, "--read")
     #expect(await Self.code { try await controller.request("action", stop) } == "forbidden")
+  }
+
+  @Test func aStimDesktopHelloWithoutDesktopApiIsRefusedOverNoiseAndAnsweredOnTheLocalSocket() async throws {
+    let server = try await RunningServer()
+    defer { server.stop() }
+    let payload = try await server.payload()
+    let hello = #"{"id":1,"method":"hello","params":{"client":{"name":"Stim Desktop","version":"0.9.0"}}}"#
+
+    var remote: [ServerTransportEvent] = []
+    let credential = NoiseCredential.firstContact(
+      secret: payload.secret, fingerprint: payload.fingerprint, deviceName: "Interop Mac", pinned: [])
+    let noise = NoiseClientTransport(
+      url: payload.endpoint, clientKey: Curve25519.KeyAgreement.PrivateKey(), credential: credential
+    ) { remote.append($0) }
+    defer { noise.close() }
+    noise.send(hello)
+    for _ in 0..<400 where remote.count < 2 { try await Task.sleep(for: .milliseconds(25)) }
+    guard remote.count == 2, case .text(let text) = remote[0], case .refused(let refusal) = remote[1],
+      case .object(let reply) = try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)),
+      case .object(let error)? = reply["error"]
+    else {
+      Issue.record("the Noise hello got \(remote)")
+      return
+    }
+    #expect(error["code"] == .string("protocol-unsupported"))
+    #expect(error["message"]?.string?.hasSuffix("Update Stim Desktop (Stim > Check for Updates).") == true)
+    #expect(refusal.code == "protocol-unsupported")
+
+    var local: [ServerTransportEvent] = []
+    let socket = UnixSocketTransport(path: StimHome.localSocket(home: server.stimHome).path) { local.append($0) }
+    defer { socket.close() }
+    socket.send(hello)
+    for _ in 0..<400 where local.isEmpty { try await Task.sleep(for: .milliseconds(25)) }
+    guard case .text(let answered)? = local.first,
+      case .object(let reply) = try JSONDecoder().decode(JSONValue.self, from: Data(answered.utf8)),
+      case .object(let result)? = reply["result"]
+    else {
+      Issue.record("the local hello got \(local)")
+      return
+    }
+    #expect(result["desktopApi"] == .number(Double(ServerProtocol.desktopApi)))
   }
 
   @Test func onlyAMatchingFingerprintReachesMessage3AndAPairingPastItIsKept() async throws {

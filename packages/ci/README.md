@@ -1,4 +1,4 @@
-# @stim-cli/ci
+# Stim CI
 
 Build an app once, then install and launch it through Stim, run your test
 command and stop the workspace. The library imports the public API from `stim`;
@@ -12,11 +12,11 @@ that slot. Do not point CI at a developer's active checkout.
 
 ## Build, then run
 
-`stim-ci build` is the only step that compiles. `stim-ci run` never compiles:
+`stim ci build` is the only step that compiles. `stim ci run` never compiles:
 
 ```sh
-npx --yes --package @stim-cli/ci stim-ci build --platform ios --project ./app
-npx --yes --package @stim-cli/ci stim-ci run --platform ios --project ./app -- pnpm test:e2e
+npx --yes stim ci build --platform ios --project ./app
+npx --yes stim ci run --platform ios --project ./app -- pnpm test:e2e
 ```
 
 `build` compiles or restores the app from the native artifact cache, without
@@ -33,7 +33,7 @@ it trusts the recorded build, so rebuild after changing the project. A Debug app
 loads its JS from Metro, which `run` starts as before. With no recorded build for
 the selectors (or after its app was removed), `run` refuses before touching a
 device with `STIM_NO_RECORDED_BUILD`, and the failure's `remedy` names the command
-to run first, such as `stim-ci build --platform ios --scheme App`. `build` and
+to run first, such as `stim ci build --platform ios --scheme App`. `build` and
 `run` must use the same Stim home: pass the same `--home`, or keep the default.
 
 Every iOS and Android `run` on this machine starts the app from clean state on
@@ -78,11 +78,11 @@ the build stage.
 
 ## Command line
 
-Or install `npm install --global @stim-cli/ci`, then:
+Or install `npm install --global stim`, then:
 
 ```sh
-stim-ci build --platform android --project ./app
-stim-ci run --platform android --project ./app --artifacts ./test-results --timeout 1800 -- pnpm test:e2e
+stim ci build --platform android --project ./app
+stim ci run --platform android --project ./app --artifacts ./test-results --timeout 1800 -- pnpm test:e2e
 ```
 
 `--platform` accepts `ios`, `android`, `macos`, or `web`. `--project` defaults
@@ -159,7 +159,7 @@ symlinks, nested directories, or paths referenced by log records. It does not
 copy build binaries or caches. Collection failures appear in `diagnostics.error`
 without replacing the setup or test exit code.
 
-Providers can import `diagnosticArtifactFiles` from `@stim-cli/ci/artifacts` to
+Providers can import `diagnosticArtifactFiles` from `stim/ci/artifacts` to
 list the regular result, run, test and diagnostic files for upload. The helper
 only selects those known files and the copied logs; custom test outputs need
 the provider's own explicit upload configuration.
@@ -167,7 +167,7 @@ the provider's own explicit upload configuration.
 ## Library
 
 ```ts
-import { runCI } from '@stim-cli/ci';
+import { runCI } from 'stim/ci';
 
 const result = await runCI({
   projectRoot: '/checkout/app',
@@ -227,10 +227,10 @@ For another disposable runner dedicated to one job, explicitly provide a fresh
 job home and a job-local artifact cache:
 
 ```sh
-stim-ci build --platform ios --project ./app \
+stim ci build --platform ios --project ./app \
   --home "$RUNNER_TEMP/stim-home" \
   --build-cache "$RUNNER_TEMP/stim-build-cache"
-stim-ci run --platform ios --project ./app \
+stim ci run --platform ios --project ./app \
   --home "$RUNNER_TEMP/stim-home" \
   --build-cache "$RUNNER_TEMP/stim-build-cache" \
   --artifacts "$RUNNER_TEMP/stim-results" \

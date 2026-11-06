@@ -62,7 +62,7 @@ const app = join(root, 'app');
 const home = join(root, 'client-home');
 const hostHome = join(root, 'host-home');
 const cli = fileURLToPath(new URL('../../../packages/stim-cli/dist/cli.mjs', import.meta.url));
-const serverCli = fileURLToPath(new URL('../../../packages/server/dist/stim-server.mjs', import.meta.url));
+const serverCli = fileURLToPath(new URL('../../../packages/stim-cli/bin/stim.mjs', import.meta.url));
 const env = {
   ...process.env,
   CI: '1',
@@ -419,12 +419,12 @@ try {
   secrets.add(credential.deviceToken);
   assert.equal(credential.nodeId, 'ci-host');
   const listed = JSON.parse(
-    await run('host-pending', process.execPath, [serverCli, 'devices', '--json'], { env: hostEnv }),
+    await run('host-pending', process.execPath, [serverCli, 'pairings', '--json'], { env: hostEnv }),
   );
   const request = listed.devices.find((entry) => entry.id === credential.deviceId);
   assert.equal(request.requestedCapability, 'device-host');
   assert.deepEqual(request.capabilities, []);
-  await run('host-grant', process.execPath, [serverCli, 'devices', 'grant', credential.deviceId, '--device-host'], {
+  await run('host-grant', process.execPath, [serverCli, 'pairings', 'grant', credential.deviceId, '--device-host'], {
     env: hostEnv,
   });
   assert.equal((await inspectDeviceHostMachines({ fix: false })).machines[0].state, 'approved');

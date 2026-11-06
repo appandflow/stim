@@ -10716,7 +10716,6 @@ describe('registered iOS project recipes', () => {
         device: hostDevice,
         agent: { driver: 'none', setting: 'hosting.agentDriver' },
       };
-      const modes: unknown[] = [];
       const delivered: unknown[] = [];
       const deps: LooseDeps = {
         projectRegistry: createProjectRegistry(projectIntegrations),
@@ -10724,8 +10723,7 @@ describe('registered iOS project recipes', () => {
         readBundleExecutable,
         listAllIosSims: () => [{ udid: UDID, state: 'Shutdown', name: 'stim-fixture' }],
         resolveSettings: () => ({ optimizations: { releaseBundleSwap: false } }),
-        prepareHostedIos: async (_machine, _selectors, _recorded, mode) => {
-          modes.push(mode);
+        prepareHostedIos: async () => {
           return { host: { machine: 'mini', connection: { close() {} } }, choice: hostDevice, session: null };
         },
         placeHostedIos: async (_target, options) => {
@@ -10767,7 +10765,6 @@ describe('registered iOS project recipes', () => {
         metroPort: null,
         deviceId: placement.session,
       });
-      expect(modes).toEqual(['process', 'process']);
       expect(delivered).toHaveLength(2);
       for (const delivery of delivered)
         expect(delivery).toEqual({ mode: 'process', release: configuration !== 'Debug', devClientScheme: undefined });

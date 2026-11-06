@@ -101,7 +101,17 @@ class FakeSocket {
 
 const flush = () => jest.advanceTimersByTimeAsync(0);
 const currentWorkspace = { path: '/current', live: false, memoryMb: 0, warnings: [], issues: [] };
-const hello = { protocol: 2, server: { name: 'Mac', version: '1', stim: '1.9.0' }, capabilities: ['read'] };
+const host = { owner: 'service', capabilities: ['physical-android'], app: null };
+const hello = {
+  protocol: 2,
+  peer: 1,
+  phoneApi: 2,
+  desktopApi: 1,
+  host,
+  server: { name: 'Mac', version: '1', stim: '1.42.0' },
+  capabilities: ['read'],
+};
+const client = { name: 'test', version: '0', phoneApi: 2 };
 
 function setup() {
   const sockets: FakeSocket[] = [];
@@ -110,7 +120,7 @@ function setup() {
   const connection = new StimConnection({
     endpoint: 'wss://mac',
     serverKey: 'pinned',
-    client: { name: 'test', version: '0' },
+    client,
     createSocket: (_url, auth) => {
       const socket = new FakeSocket(auth);
       sockets.push(socket);
@@ -260,10 +270,6 @@ describe('StimConnection', () => {
 
   it('pins the stored server key and stops retrying when the server refuses the session', async () => {
     const refusals: [SessionClose, string][] = [
-      [
-        { code: 4400, reason: 'unexpected binary frame', serverAnswered: false, handshakeComplete: false },
-        'server-outdated',
-      ],
       [{ code: 4401, reason: 'unauthorized', serverAnswered: true, handshakeComplete: true }, 'unauthorized'],
       [
         { code: 1006, reason: '', serverAnswered: true, handshakeComplete: false, error: 'server-key-mismatch' },
@@ -341,7 +347,7 @@ describe('StimConnection', () => {
     expect(events).toEqual([]);
   });
 
-  it('stops retrying when the server refuses the token or required live views', async () => {
+  it('stops retrying when the server refuses the token', async () => {
     const { connection, sockets, timers, states } = setup();
     connection.start();
     sockets[0].onopen?.('k');
@@ -349,41 +355,75 @@ describe('StimConnection', () => {
     await flush();
     expect(timers).toHaveLength(0);
     expect(states.at(-1)).toEqual({ kind: 'refused', code: 'unauthorized', reason: 'unauthorized' });
-    for (const [method, params, refused] of [
-      ['workspaces.subscribe', {}, true],
-      ['machine.subscribe', {}, true],
-      ['logs.subscribe', { workspace: '/w' }, false],
-    ] as const) {
-      const next = setup();
-      next.connection.subscribe(method, params, () => {});
-      next.connection.start();
-      next.sockets[0].onopen?.('k');
-      next.sockets[0].reply('hello', hello);
+  });
+
+  it('sends its phone API in hello and shows an update card for a machine whose hello serves an older one', async () => {
+    const desktop = 'Update Stim Desktop (Stim > Check for Updates).';
+    const npm = 'npm i -g stim@latest && stim service install';
+    const cases: [string, object, string][] = [
+      [
+        'a 1.41 hello',
+        { protocol: 2, server: { name: 'Mac', version: '1.41.0', stim: '1.41.0' }, capabilities: ['read'], host: null },
+        `Mac runs stim 1.41.0. ${desktop} If Stim Desktop is not installed on Mac, run ${npm}.`,
+      ],
+      [
+        'a 1.41 hello under Stim Host',
+        {
+          ...hello,
+          peer: undefined,
+          phoneApi: undefined,
+          host: { name: 'Stim Host', screenRecording: true, accessibility: false },
+        },
+        `Mac runs stim 1.42.0. ${desktop} If Stim Desktop is not installed on Mac, run ${npm}.`,
+      ],
+      [
+        'a lower phone API under Stim Desktop',
+        { ...hello, phoneApi: 1, host: { ...host, owner: 'desktop' } },
+        `Mac runs stim 1.42.0. ${desktop}`,
+      ],
+      ['a lower phone API under a service', { ...hello, phoneApi: 1 }, `Mac runs stim 1.42.0. On Mac, run ${npm}.`],
+      [
+        'a lower phone API under stim serve',
+        { ...hello, phoneApi: 1, host: { ...host, owner: 'cli' } },
+        'Mac runs stim 1.42.0. On Mac, run npm i -g stim@latest, then restart stim serve.',
+      ],
+    ];
+    for (const [, result, reason] of cases) {
+      const { connection, sockets, timers, states } = setup();
+      connection.subscribe('workspaces.subscribe', {}, () => {});
+      connection.start();
+      sockets[0].onopen?.('k');
+      expect(sockets[0].sent[0]).toMatchObject({ method: 'hello', params: { client: { phoneApi: 2 } } });
+      sockets[0].reply('hello', result);
       await flush();
-      next.sockets[0].fail(method, 'unknown-method');
-      await flush();
-      expect(next.sockets[0].closed).toBe(refused);
-      expect(next.states.at(-1)).toMatchObject(
-        refused ? { kind: 'refused', code: 'server-outdated' } : { kind: 'open' },
-      );
-      expect(next.timers).toEqual([]);
-      next.connection.close();
+      expect(states.at(-1)).toEqual({ kind: 'refused', code: 'server-outdated', reason });
+      expect(sockets[0].closed).toBe(true);
+      expect(sockets[0].sent.map((m) => m.method)).toEqual(['hello']);
+      expect(timers).toEqual([]);
     }
   });
 
-  it('reports the actions and features hello grants, and their defaults from a server that predates them', async () => {
+  it("reports the actions hello grants and the machine's host capabilities", async () => {
     const { connection, sockets, timers, states } = setup();
     connection.start();
     sockets[0].onopen?.('k');
     sockets[0].reply('hello', { ...hello, capabilities: ['read', 'control'], actions: ['reload', 'stop'] });
     await flush();
-    expect(states.at(-1)).toMatchObject({ kind: 'open', actions: ['reload', 'stop'], features: [] });
+    expect(states.at(-1)).toMatchObject({
+      kind: 'open',
+      actions: ['reload', 'stop'],
+      hostCapabilities: ['physical-android'],
+    });
     sockets[0].close();
     timers[0].fn();
     sockets[1].onopen?.('k');
-    sockets[1].reply('hello', { ...hello, features: ['physical-android'] });
+    sockets[1].reply('hello', { ...hello, host: { ...host, capabilities: ['physical-ios', 'macos-window'] } });
     await flush();
-    expect(states.at(-1)).toMatchObject({ kind: 'open', actions: null, features: ['physical-android'] });
+    expect(states.at(-1)).toMatchObject({
+      kind: 'open',
+      actions: null,
+      hostCapabilities: ['physical-ios', 'macos-window'],
+    });
   });
 
   it('reconnects at once on request, so a grant made on the machine shows without waiting for a drop', async () => {
@@ -484,35 +524,25 @@ describe('StimConnection', () => {
 describe('pair', () => {
   it('spends the pairing token with the device name and QR fingerprint, and returns the key to pin', async () => {
     let socket!: FakeSocket;
-    const result = pair(
-      'wss://mac',
-      { pairingToken: 'p', fingerprint: 'fp' },
-      'iPhone',
-      { name: 'test', version: '0' },
-      (_url, auth) => {
-        socket = new FakeSocket(auth);
-        return socket;
-      },
-    );
+    const result = pair('wss://mac', { pairingToken: 'p', fingerprint: 'fp' }, 'iPhone', client, (_url, auth) => {
+      socket = new FakeSocket(auth);
+      return socket;
+    });
     expect(socket.auth).toEqual({ pairingToken: 'p', fingerprint: 'fp', name: 'iPhone' });
     socket.onopen?.('qr');
-    expect(socket.sent[0]).toEqual({ id: 1, method: 'hello', params: { client: { name: 'test', version: '0' } } });
+    expect(socket.sent[0]).toEqual({ id: 1, method: 'hello', params: { client } });
     socket.reply('hello', hello);
     await expect(result).resolves.toEqual({ serverKey: 'qr', serverName: 'Mac' });
     expect(socket.closed).toBe(true);
   });
 
-  it('reports an unreachable endpoint, and tells an old stim-server apart', async () => {
+  it('reports an unreachable endpoint and a spent pairing code', async () => {
     const socket = new FakeSocket();
-    const result = pair('wss://mac', { pairingToken: 'p' }, 'iPhone', { name: 'test', version: '0' }, () => socket);
+    const result = pair('wss://mac', { pairingToken: 'p' }, 'iPhone', client, () => socket);
     socket.close();
     await expect(result).rejects.toThrow('Cannot reach wss://mac.');
-    const old = new FakeSocket();
-    const refused = pair('wss://mac', { pairingToken: 'p' }, 'iPhone', { name: 'test', version: '0' }, () => old);
-    old.drop({ code: 4400, reason: 'unexpected binary frame', serverAnswered: false, handshakeComplete: false });
-    await expect(refused).rejects.toThrow('Update stim-server on the machine.');
     const spent = new FakeSocket();
-    const expired = pair('wss://mac', { pairingToken: 'p' }, 'iPhone', { name: 'test', version: '0' }, () => spent);
+    const expired = pair('wss://mac', { pairingToken: 'p' }, 'iPhone', client, () => spent);
     spent.drop({ code: 4401, reason: 'unknown-secret', serverAnswered: true, handshakeComplete: false });
     await expect(expired).rejects.toThrow('expired or was already used');
   });
@@ -550,7 +580,7 @@ describe('RPC receive validation', () => {
     sockets[1].onopen?.('k');
     sockets[1].reply('hello', { ...hello, features: ['future-feature'], extra: true });
     await flush();
-    expect(states.at(-1)).toMatchObject({ kind: 'open', features: ['future-feature'] });
+    expect(states.at(-1)).toMatchObject({ kind: 'open' });
     connection.close();
   });
 
@@ -610,13 +640,7 @@ describe('RPC receive validation', () => {
 
   it('rejects a malformed pairing hello before storing the Mac', async () => {
     const socket = new FakeSocket();
-    const promise = pair(
-      'wss://mac',
-      { pairingToken: 'pairing' },
-      'Phone',
-      { name: 'test', version: '0' },
-      () => socket,
-    );
+    const promise = pair('wss://mac', { pairingToken: 'pairing' }, 'Phone', client, () => socket);
     const rejected = expect(promise).rejects.toThrow('invalid pairing response');
     socket.onopen?.('k');
     socket.reply('hello', { ...hello, server: { name: 5 } });
@@ -748,7 +772,7 @@ describe('failure reports', () => {
       'wss://janics-mac.tail1a2b3.ts.net:7433',
       { pairingToken: 'pairing-secret-token' },
       'Janic phone',
-      { name: 't', version: '0' },
+      client,
       () => socket,
     );
     const rejected = expect(promise).rejects.toThrow();

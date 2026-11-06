@@ -64,7 +64,7 @@ public struct MachineFix: Equatable, Sendable {
   }
 }
 
-/// The commands a sentence puts in backticks, such as "run `stim-server service install --serve` on mini".
+/// The commands a sentence puts in backticks, such as "run `stim service install --serve` on mini".
 func backtickCommands(in text: String) -> [String] {
   text.split(separator: "`", omittingEmptySubsequences: false).enumerated()
     .filter { $0.offset % 2 == 1 }

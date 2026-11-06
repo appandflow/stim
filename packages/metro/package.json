@@ -1,6 +1,7 @@
 {
   "name": "@stim-cli/metro",
   "version": "1.40.0",
+  "private": true,
   "description": "Metro integration for Stim: shared transforms across worktrees and structured logs.",
   "license": "MIT",
   "repository": {
@@ -27,7 +28,6 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "@stim-cli/cache": "workspace:*",
     "@stim-cli/core": "workspace:*"
   },
   "peerDependencies": {

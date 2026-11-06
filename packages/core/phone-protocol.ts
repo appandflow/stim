@@ -457,21 +457,26 @@ export type PhoneServerEvent =
 type OptionalFields<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
 
 export type PhoneHelloResult = OptionalFields<
-  Omit<Wire.HelloResult, 'server' | 'features' | 'capabilities' | 'actions' | 'approval'>,
-  'device'
+  Omit<Wire.HelloResult, 'server' | 'host' | 'capabilities' | 'actions' | 'approval'>,
+  'device' | 'peer' | 'phoneApi' | 'desktopApi'
 > & {
   actions?: string[];
   server: OptionalFields<Wire.HelloResult['server'], 'home'>;
-  features?: string[];
+  host?: { owner: string; capabilities: string[]; app: Wire.HelloHost['app'] } | PhoneStimHostGrants | null;
   capabilities: string[];
   approval?: { state: string; expiresAt: string };
 };
+
+// compat C9 permanent
+/** A server before `phoneApi` sent Stim Host's grants as `host` itself. */
+type PhoneStimHostGrants = NonNullable<Wire.HelloHost['app']>;
+// compat end
 
 export type PhoneMethods = Omit<
   Wire.Methods,
   | (typeof Wire.BUILD_METHODS)[number]
   | (typeof Wire.DEVICE_HOST_METHODS)[number]
-  | (typeof Wire.SERVER_UPDATE_METHODS)[number]
+  | (typeof Wire.ENGINE_UPDATE_METHODS)[number]
   | 'desktop.authenticate'
   | 'desktop.reports.get'
   | 'desktop.reports.subscribe'

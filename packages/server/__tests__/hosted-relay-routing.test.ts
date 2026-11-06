@@ -31,7 +31,6 @@ it.each([
   );
   const connection = {
     request,
-    supports: () => false,
     route: (name: string, route: Parameters<Upstream['route']>[1]) => {
       routes.set(name, route);
       return () => {
@@ -150,7 +149,7 @@ it.each([
   relay.close();
 });
 
-async function clipboardCalls(supported: boolean) {
+async function clipboardCalls() {
   const messages: (ServerMessage | Buffer)[] = [];
   const request = vi.fn<(method: string, params: unknown) => Promise<{ result: Record<string, unknown> }>>(
     async (method) => ({
@@ -164,7 +163,6 @@ async function clipboardCalls(supported: boolean) {
   );
   const connection = {
     request,
-    supports: (feature: string) => supported && (feature === 'device-clipboard' || feature === 'device-keyboard'),
     route: () => () => {},
   } as unknown as Upstream;
   const hosts = { acquire: async () => ({ connection, release: () => {} }) } as unknown as HostConnections;
@@ -193,8 +191,8 @@ async function clipboardCalls(supported: boolean) {
   return { sent: request.mock.calls.slice(begun), answers: answers() };
 }
 
-it('forwards the clipboard calls to a hosted session whose host advertises device-clipboard', async () => {
-  const { sent, answers } = await clipboardCalls(true);
+it('forwards the clipboard calls and key chords to a hosted session', async () => {
+  const { sent, answers } = await clipboardCalls();
   expect(sent).toEqual([
     ['device-host.input.clipboard.set', { session: 'host-control', text: 'abc', paste: true }],
     ['device-host.input.clipboard.get', { session: 'host-control' }],
@@ -205,17 +203,6 @@ it('forwards the clipboard calls to a hosted session whose host advertises devic
     { id: 2, result: {} },
     { id: 3, result: { text: 'from the host' } },
     { id: 4, result: {} },
-    { id: 5, result: {} },
-  ]);
-});
-
-it('refuses the clipboard calls and key chords for a host without the feature, sending only the bare arrow', async () => {
-  const { sent, answers } = await clipboardCalls(false);
-  expect(sent).toEqual([['device-host.input.key', { session: 'host-control', key: 'left', modifiers: [] }]]);
-  expect(answers).toEqual([
-    { id: 2, error: { code: 'action-failed', message: expect.stringContaining('update its Stim') } },
-    { id: 3, error: { code: 'action-failed', message: expect.stringContaining('update its Stim') } },
-    { id: 4, error: { code: 'action-failed', message: expect.stringContaining('update its Stim') } },
     { id: 5, result: {} },
   ]);
 });
@@ -232,7 +219,6 @@ describe('presence of a hosted device on the relay', () => {
               ? { state: 'stopped' }
               : { session: 'host-control' },
       }),
-      supports: () => false,
       route: (name: string, route: Parameters<Upstream['route']>[1]) => {
         routes.set(name, route);
         return () => routes.delete(name);
@@ -323,7 +309,6 @@ describe('a hosted frame subscription whose host connection drops', () => {
           }
           return { result: {} };
         },
-        supports: () => false,
         route: (name: string, route: Route) => {
           own.set(name, route);
           return () => own.delete(name);

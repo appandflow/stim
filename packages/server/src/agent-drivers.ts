@@ -1,3 +1,5 @@
+import agentDeviceManifest from '@stim-cli/agent-driver-agent-device/package.json' with { type: 'json' };
+import type { PluginSource } from '@stim-cli/core/plugin-loader';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -10,8 +12,8 @@ import {
 } from '@stim-cli/agent-driver';
 import type { HostedAgentDriverName } from '@stim-cli/core/state';
 
-const DRIVERS: Record<Exclude<HostedAgentDriverName, 'none'>, () => Promise<unknown>> = {
-  'agent-device': () => import('@stim-cli/agent-driver-agent-device'),
+const DRIVERS: Record<Exclude<HostedAgentDriverName, 'none'>, PluginSource> = {
+  'agent-device': { load: () => import('@stim-cli/agent-driver-agent-device'), manifest: () => agentDeviceManifest },
 };
 
 const NAMES = Object.keys(DRIVERS) as (keyof typeof DRIVERS)[];
@@ -45,7 +47,7 @@ export async function configuredAgentDriver(
   if ('unavailable' in loaded) {
     process.stderr.write(`The ${name} agent driver could not load: ${loaded.unavailable}\n`);
     throw new AgentDriverUnavailable(
-      `The ${name} agent driver could not load on the hosting Mac. Check its stim-server log.`,
+      `The ${name} agent driver could not load on the hosting Mac. Check its server log.`,
     );
   }
   return loaded.driver;

@@ -760,7 +760,7 @@ async function runIos(
   });
   if (modelRefusal) return fail(modelRefusal);
   const selectors = hostedIosSelectors(deviceType, runtime);
-  const connected = await connectIosTarget(remoteSelection, selectors, d, appMode);
+  const connected = await connectIosTarget(remoteSelection, selectors, d);
   if ('failure' in connected) return fail(connected.failure);
   const hostedTarget = connected.target;
   try {

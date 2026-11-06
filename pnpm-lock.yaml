@@ -164,9 +164,9 @@ importers:
       '@actions/core':
         specifier: 3.0.1
         version: 3.0.1
-      '@stim-cli/ci':
+      stim:
         specifier: workspace:*
-        version: link:../../../packages/ci
+        version: link:../../../packages/stim-cli
 
   apps/demo-server:
     dependencies:
@@ -413,19 +413,24 @@ importers:
         specifier: workspace:*
         version: link:../core
 
-  packages/cache: {}
+  packages/cache:
+    dependencies:
+      '@stim-cli/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/cache-s3:
     dependencies:
       '@aws-sdk/client-s3':
         specifier: ^3.1149.0
         version: 3.1149.0
-      '@stim-cli/cache':
-        specifier: workspace:*
-        version: link:../cache
       tar:
         specifier: ^7.5.22
         version: 7.5.22
+    devDependencies:
+      stim:
+        specifier: workspace:*
+        version: link:../stim-cli
 
   packages/ci:
     dependencies:
@@ -446,17 +451,8 @@ importers:
         specifier: 0.1.1
         version: 0.1.1
 
-  packages/expo-build-cache:
-    dependencies:
-      '@stim-cli/core':
-        specifier: workspace:*
-        version: link:../core
-
   packages/metro:
     dependencies:
-      '@stim-cli/cache':
-        specifier: workspace:*
-        version: link:../cache
       '@stim-cli/core':
         specifier: workspace:*
         version: link:../core
@@ -500,21 +496,6 @@ importers:
       '@expo/fingerprint':
         specifier: ^0.21.5
         version: 0.21.5(supports-color@8.1.1)
-      '@stim-cli/agent-driver':
-        specifier: workspace:*
-        version: link:../agent-driver
-      '@stim-cli/agent-driver-agent-device':
-        specifier: workspace:*
-        version: link:../agent-driver-agent-device
-      '@stim-cli/cache':
-        specifier: workspace:*
-        version: link:../cache
-      '@stim-cli/core':
-        specifier: workspace:*
-        version: link:../core
-      '@stim-cli/metro':
-        specifier: workspace:*
-        version: link:../metro
       '@xmldom/xmldom':
         specifier: 0.9.12
         version: 0.9.12
@@ -527,6 +508,9 @@ importers:
       cross-spawn:
         specifier: ^7.0.6
         version: 7.0.6
+      unique-pid:
+        specifier: 0.1.1
+        version: 0.1.1
       which:
         specifier: ^5.0.0
         version: 5.0.0
@@ -534,9 +518,27 @@ importers:
         specifier: ^8.21.3
         version: 8.21.3
     devDependencies:
-      '@stim-cli/expo-build-cache':
+      '@stim-cli/agent-driver':
         specifier: workspace:*
-        version: link:../expo-build-cache
+        version: link:../agent-driver
+      '@stim-cli/agent-driver-agent-device':
+        specifier: workspace:*
+        version: link:../agent-driver-agent-device
+      '@stim-cli/cache':
+        specifier: workspace:*
+        version: link:../cache
+      '@stim-cli/ci':
+        specifier: workspace:*
+        version: link:../ci
+      '@stim-cli/core':
+        specifier: workspace:*
+        version: link:../core
+      '@stim-cli/metro':
+        specifier: workspace:*
+        version: link:../metro
+      '@stim-cli/server':
+        specifier: workspace:*
+        version: link:../server
       '@types/cross-spawn':
         specifier: ^6.0.6
         version: 6.0.6
@@ -546,11 +548,16 @@ importers:
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
-      unique-pid:
-        specifier: 0.1.1
-        version: 0.1.1
+    optionalDependencies:
+      node-datachannel:
+        specifier: 0.33.6
+        version: 0.33.6
 
-  packages/transport: {}
+  packages/transport:
+    dependencies:
+      '@stim-cli/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/transport-local:
     dependencies:
@@ -3346,6 +3353,55 @@ packages:
 
   '@nodable/entities@3.1.0':
     resolution: {integrity: sha512-LsS/DjHr+uDM647Gru/cA8+J3a3HfhttwCKLyuoyN7yXTFCxKBtSgMQBvrW9yNPa2/zDRUNuGPaH5QUFoa4arQ==}
+
+  '@node-datachannel/android-arm64@0.33.6':
+    resolution: {integrity: sha512-UzSnd1vSN//3pqyvuufbaIQemvRfIHn/7DAy7wjoYk9tzkJp4SMk1FrNhkhmev89SH/h7yTac6PlGxGe5oHcKw==}
+    cpu: [arm64]
+    os: [android]
+
+  '@node-datachannel/darwin-arm64@0.33.6':
+    resolution: {integrity: sha512-vE2fN6D0BJJ3yZo5guJo2j1q7JeQbl+VyIs6vbkjEp654tQtTo3y7a4l3xB0bwDD27TOlkOlaSLJQRj6ZXqQdQ==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@node-datachannel/darwin-x64@0.33.6':
+    resolution: {integrity: sha512-EtRB2THMR11XMzbNhMEwaZtipaUxFz+PgeVx7hE+er6Ai1Fzzv7XexrMWDG11ahdpEZ8fAxlxuyELs33/WH1Cg==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@node-datachannel/linux-arm64-gnu@0.33.6':
+    resolution: {integrity: sha512-phMRjx8NEfW70i768LCQDEF2C6Q2vtYsS4DPXv/zbb2cJClaU5fjKFQfQ1XBCNIi1ClfpSd3Cl/rn/7SS+paTQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@node-datachannel/linux-arm64-musl@0.33.6':
+    resolution: {integrity: sha512-T9bqllJ9YkpgqgRFEfsPpfgfMDXdA7CIiJ4c1XXGPLSeqVFgDbf/WCewkE7q4xA+tKRLoOOtc2XgMGwVnlxXVQ==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@node-datachannel/linux-x64-gnu@0.33.6':
+    resolution: {integrity: sha512-NUTbne64++ZxwEJ9uppAAmYnFAfJAggf7gboioPdhr13P17GTQRCUgmipYrh1V0D4333x6NCBZyQaNv0n4WmpQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@node-datachannel/linux-x64-musl@0.33.6':
+    resolution: {integrity: sha512-dlWP4ycOJrTAl9UvxGofq0zwPhl6iAr1b0ZcBUgDfb2CXmbcJWCvg6OsJ6u8BVSV41eNXALmaRpU0wttas/f1g==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@node-datachannel/win32-arm64-msvc@0.33.6':
+    resolution: {integrity: sha512-ttly7XRUrSOcOOGJvtm9gh2beAPUNOBOUc3Hk82LfMHHP7jJMkXNDns/ML+UVGommAcNyPhoZkRH62O7tSVQYw==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@node-datachannel/win32-x64-msvc@0.33.6':
+    resolution: {integrity: sha512-N5GW6XH11Iuu+kyHLTiCMcCHdwWwpKqvtYril0LzQm6xBgmGQN3JXxFmgi4g4usw1nLy6WhBWADjbhSXJiiEMA==}
+    cpu: [x64]
+    os: [win32]
 
   '@nodelib/fs.scandir@2.1.5':
     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
@@ -9334,6 +9390,10 @@ packages:
 
   no-case@3.0.4:
     resolution: {integrity: sha512-fgAN3jGAh+RoxUGZHTSOLJIqUc2wmoBwGR4tbpNAKmmovFoWq0OdRkb0VkldReO2a2iBT/OEulG9XSUc10r3zg==}
+
+  node-datachannel@0.33.6:
+    resolution: {integrity: sha512-n7RzImzysrOVFx/lXfkQQ4fL0wsuPXBFc8KM69V29iyIor/UX7Ej+edzNGWJm+3mApZG9nkLi7FsGAZhQCDA4w==}
+    engines: {node: '>=18.20.0'}
 
   node-emoji@2.2.0:
     resolution: {integrity: sha512-Z3lTE9pLaJF47NyMhd4ww1yFTAP8YhYI8SleJiHzM46Fgpm5cnNzSl9XfzFNqbaz+VlJrIj3fXQ4DeN1Rjm6cw==}
@@ -16426,6 +16486,33 @@ snapshots:
 
   '@nodable/entities@3.1.0': {}
 
+  '@node-datachannel/android-arm64@0.33.6':
+    optional: true
+
+  '@node-datachannel/darwin-arm64@0.33.6':
+    optional: true
+
+  '@node-datachannel/darwin-x64@0.33.6':
+    optional: true
+
+  '@node-datachannel/linux-arm64-gnu@0.33.6':
+    optional: true
+
+  '@node-datachannel/linux-arm64-musl@0.33.6':
+    optional: true
+
+  '@node-datachannel/linux-x64-gnu@0.33.6':
+    optional: true
+
+  '@node-datachannel/linux-x64-musl@0.33.6':
+    optional: true
+
+  '@node-datachannel/win32-arm64-msvc@0.33.6':
+    optional: true
+
+  '@node-datachannel/win32-x64-msvc@0.33.6':
+    optional: true
+
   '@nodelib/fs.scandir@2.1.5':
     dependencies:
       '@nodelib/fs.stat': 2.0.5
@@ -23034,6 +23121,21 @@ snapshots:
     dependencies:
       lower-case: 2.0.2
       tslib: 2.8.1
+
+  node-datachannel@0.33.6:
+    dependencies:
+      detect-libc: 2.1.2
+    optionalDependencies:
+      '@node-datachannel/android-arm64': 0.33.6
+      '@node-datachannel/darwin-arm64': 0.33.6
+      '@node-datachannel/darwin-x64': 0.33.6
+      '@node-datachannel/linux-arm64-gnu': 0.33.6
+      '@node-datachannel/linux-arm64-musl': 0.33.6
+      '@node-datachannel/linux-x64-gnu': 0.33.6
+      '@node-datachannel/linux-x64-musl': 0.33.6
+      '@node-datachannel/win32-arm64-msvc': 0.33.6
+      '@node-datachannel/win32-x64-msvc': 0.33.6
+    optional: true
 
   node-emoji@2.2.0:
     dependencies:

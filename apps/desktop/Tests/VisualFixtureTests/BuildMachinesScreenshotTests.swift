@@ -70,11 +70,11 @@
           [{"machine":"mini","state":"unreachable","dnsName":"mini.tail1234.ts.net","deviceId":"a1b2c3d4",
             "diagnosis":{"layer":"server","code":"server-not-ready","title":"Server not ready",
               "message":"stim-server on mini is running but is not serving clients (HTTP 503). It cannot read its Stim home, usually because the disk holding ~/.stim is disconnected or not responding.",
-              "remedy":"Check the disk that holds the Stim home on mini (reconnect or wake an external drive); stim-server serves again by itself once it answers. `stim-server service status` there shows the exact reason."}},
+              "remedy":"Check the disk that holds the Stim home on mini (reconnect or wake an external drive); stim-server serves again by itself once it answers. `stim service status` there shows the exact reason."}},
            {"machine":"studio","state":"unreachable","dnsName":"studio.tail1234.ts.net","deviceId":"e5f6a7b8",
             "diagnosis":{"layer":"server","code":"server-not-running","title":"Server not running",
               "message":"Tailscale and the serve route on studio work, but nothing listens behind the route: stim-server is not running there (HTTP 502).",
-              "remedy":"On studio, run `stim-server service status`; `stim-server service install --serve` starts it and keeps it running."}},
+              "remedy":"On studio, run `stim service status`; `stim service install --serve` starts it and keeps it running."}},
            {"machine":"air","state":"unreachable","dnsName":"air.tail1234.ts.net","deviceId":"c9d0e1f2",
             "diagnosis":{"layer":"peer","code":"peer-offline","title":"Machine is offline",
               "message":"air is offline on Tailscale (last seen 3 h ago).",
@@ -344,8 +344,8 @@
                 "janics-mac-mini": .blocked(
                   StimInstallBlock(
                     reason:
-                      "stim-server on janics-mac-mini cannot be updated from here yet. Update it once there with `stim-server service update`.",
-                    action: .runOnRemote("stim-server service update")))
+                      "stim-server on janics-mac-mini cannot be updated from here yet. Update it once there with `stim service update`.",
+                    action: .runOnRemote("stim service update")))
               ], poolDisabled: pools))
         ),
         (

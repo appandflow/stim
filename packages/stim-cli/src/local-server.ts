@@ -1,5 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { configDir } from '@stim-cli/core';
@@ -96,7 +95,8 @@ export async function requestLocalServer<M extends LocalMethod>(
 export interface LocalHello {
   version: string;
   port: number | null;
-  features: string[];
+  /** The server's Stim Desktop integer; 0 from a server before it had one. */
+  desktopApi: number;
 }
 
 /** Asks the server on this Stim home's local Unix socket for its `hello`; null when none answers within `timeoutMs`. */
@@ -123,9 +123,7 @@ export async function readLocalHello(version: string, timeoutMs: number): Promis
         finish({
           version: server.version,
           port: typeof server.port === 'number' ? server.port : null,
-          features: Array.isArray(result.features)
-            ? result.features.filter((each: unknown) => typeof each === 'string')
-            : [],
+          desktopApi: typeof result.desktopApi === 'number' ? result.desktopApi : 0,
         });
       } catch {
         finish(null);
@@ -208,22 +206,6 @@ function shareServerPaths(): { claim: string; log: string } {
   return { claim: join(dir, 'share-server'), log: join(dir, 'share-server.log') };
 }
 
-/** How to run a stim-server of exactly `version`: the package installed with this CLI, else `stim-server` on PATH. */
-export async function resolveShareServer(version: string): Promise<{ file: string; args: string[] } | null> {
-  try {
-    const schema = createRequire(import.meta.url).resolve('@stim-cli/server/protocol.schema.json');
-    const root = dirname(dirname(schema));
-    const pkg: unknown = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-    if (isJsonObject(pkg) && pkg.version === version) {
-      return { file: process.execPath, args: [join(root, 'dist', 'stim-server.mjs')] };
-    }
-  } catch {}
-  const onPath = getExecutor().findExecutable('stim-server');
-  if (!onPath) return null;
-  const printed = await getExecutor().runFileQuietAsync(onPath, ['--version'], { timeoutMs: 15_000 });
-  return printed?.trim() === version ? { file: onPath, args: [] } : null;
-}
-
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const probe = createServer();
@@ -243,7 +225,7 @@ export type ShareServerStart =
   | { started: false; reason: 'failed'; message: string; log: string };
 
 /**
- * Starts a loopback-only stim-server in the background for this Stim home, as `stim-server --share`, and waits until
+ * Starts a loopback-only stim-server in the background for this Stim home, as `stim serve --share`, and waits until
  * its local socket answers. When another server won the socket meanwhile, it stops its own and reports `joined`.
  */
 export async function startShareServer(
@@ -257,7 +239,7 @@ export async function startShareServer(
   let exited: string | null = null;
   let child;
   try {
-    child = getExecutor().spawn(server.file, [...server.args, '--share', '--port', String(port)], {
+    child = getExecutor().spawn(server.file, [...server.args, 'serve', '--share', '--port', String(port)], {
       detached: true,
       stdio: ['ignore', fd, fd],
     });

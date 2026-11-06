@@ -55,27 +55,25 @@ import {
 import { nativeGradleTransfer, type GradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
-import { isReleaseVariant } from '../commands/android/support.ts';
+import { STIM_VERSION } from '../stim-version.ts';
 import { isReleaseConfiguration } from '../commands/ios/support.ts';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
 import type { SyncPlan } from './signing-files.ts';
-import {
-  ANDROID_RELEASE_UNSUPPORTED,
-  namedBuildMachine,
-  OffloadRefusal,
-  workerFailureReason,
-} from '../build-placement.ts';
+import { namedBuildMachine, OffloadRefusal, workerFailureReason } from '../build-placement.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import { toolchainMismatches, toolchainNotes, cocoapodsDifference, type OffloadProblem } from './toolchain.ts';
 import { buildsOnlyOnWorker, type BuildTarget, type WorkerToolchain } from '../engine/toolchain.ts';
 import { ambientContext, dependencyLockfile, swiftpmArtifactQuery, type StimContext } from '@stim-cli/core';
-import type {
-  BuildArtifactIdentity,
-  BuildOfferParams,
-  BuildGradleArtifactQuery,
-  BuildReactNativeArtifactQuery,
-  BuildSwiftpmArtifactQuery,
-  CachedBuildArtifact,
+import {
+  PEER,
+  peerTooOld,
+  type BuildArtifactIdentity,
+  type BuildOfferParams,
+  type BuildGradleArtifactQuery,
+  type BuildReactNativeArtifactQuery,
+  type BuildSwiftpmArtifactQuery,
+  type CachedBuildArtifact,
+  type HostCapability,
 } from '@stim-cli/core/protocol';
 
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -408,13 +406,13 @@ export class BuildConnection {
   private ended = false;
   private readonly keepalive: NodeJS.Timeout;
   private readonly socket: NoiseSocket;
-  private readonly features: readonly string[];
+  private readonly host: readonly string[];
   private readonly context: StimContext | undefined;
   private readonly unregisterExitCleanup: (() => void) | undefined;
 
-  private constructor(socket: NoiseSocket, features: readonly string[], context: StimContext | undefined) {
+  private constructor(socket: NoiseSocket, host: readonly string[], context: StimContext | undefined) {
     this.socket = socket;
-    this.features = features;
+    this.host = host;
     this.context = context;
     this.unregisterExitCleanup = closeOnExit(socket, context);
     this.keepalive = setInterval(() => {
@@ -499,7 +497,7 @@ export class BuildConnection {
     if (!('send' in socket)) return socket;
     const reply = await sayHello(
       socket,
-      { client: { name: 'stim', version: '1', runId: runId() }, access: capability },
+      { client: { name: 'stim', version: '1', runId: runId(), peer: PEER }, access: capability },
       Math.max(1, timeoutMs - (Date.now() - started)),
     );
     if ('error' in reply) {
@@ -515,16 +513,27 @@ export class BuildConnection {
         code: 'forbidden',
       };
     }
-    const features = reply.result.features;
+    // compat C12 permanent
+    const { peer, server, host } = reply.result;
+    if (typeof peer !== 'number' || peer < PEER) {
+      socket.terminate();
+      const named = isJsonObject(server) ? server : {};
+      const machine = String(named.name ?? target.host);
+      const failure = peerTooOld(machine, String(named.stim ?? 'an older stim'), Number(peer ?? 0), STIM_VERSION);
+      return { failure, refused: true, code: 'protocol-unsupported' };
+    }
+    // compat end
+    const listed = isJsonObject(host) && Array.isArray(host.capabilities) ? host.capabilities : [];
     return new BuildConnection(
       socket,
-      Array.isArray(features) ? features.filter((each): each is string => typeof each === 'string') : [],
+      listed.filter((each): each is string => typeof each === 'string'),
       context,
     );
   }
 
-  supports(feature: string): boolean {
-    return this.features.includes(feature);
+  /** Whether the machine lists `capability` in `hello.host`: what it can do because of what it is. */
+  can(capability: HostCapability): boolean {
+    return this.host.includes(capability);
   }
 
   request(method: string, params: unknown, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Reply> {
@@ -806,10 +815,7 @@ export function closeOffload(choice: OffloadChoice): void {
   for (const each of choice.runnersUp.splice(0)) each.connection.close();
 }
 
-const NATIVE_BUILD_FEATURE = { xcode: 'native-xcode-build', gradle: 'native-gradle-build' } as const;
-
-const unsupportedNative = (provider: 'xcode' | 'gradle'): string =>
-  `This worker does not support native ${provider === 'xcode' ? 'Xcode' : 'Gradle'} builds.`;
+const XCODE_UNSUPPORTED = 'This worker does not support native Xcode builds.';
 
 const ANDROID_PACKAGE = /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/;
 const FINGERPRINT = /^[0-9a-f]{40,128}$/;
@@ -849,35 +855,22 @@ async function probeMachine(
   );
   if (!(connection instanceof BuildConnection))
     return { credential, failure: connection.failure, refused: connection.refused };
-  if (identity.native && !connection.supports(NATIVE_BUILD_FEATURE[identity.native])) {
+  if (identity.native === 'xcode' && !connection.can('native-xcode-build')) {
     connection.close();
-    return { credential, failure: unsupportedNative(identity.native) };
+    return { credential, failure: XCODE_UNSUPPORTED };
   }
-  const native =
-    identity.native === 'gradle' || (identity.native && connection.supports('native-xcode-toolchain'))
-      ? identity.native
-      : undefined;
+  const native = identity.native;
   const reply = await connection.request(
     'build.offer',
     {
       repo: identity.repo,
       ...(identity.lockfile ? { lockfile: identity.lockfile } : {}),
-      ...(identity.dependencies && connection.supports('build-dependency-cache')
-        ? { dependencies: identity.dependencies }
-        : {}),
+      ...(identity.dependencies ? { dependencies: identity.dependencies } : {}),
       ...(native ? { native } : identity.rubyVersion ? { rubyVersion: identity.rubyVersion } : {}),
-      ...(native === 'xcode' && identity.artifact && connection.supports('build-artifact-cache')
-        ? { artifact: identity.artifact }
-        : {}),
-      ...(identity.swiftpmArtifact && connection.supports('swiftpm-peer-cache')
-        ? { swiftpmArtifact: identity.swiftpmArtifact }
-        : {}),
-      ...(identity.reactNativeArtifact && connection.supports('react-native-peer-cache')
-        ? { reactNativeArtifact: identity.reactNativeArtifact }
-        : {}),
-      ...(native === 'gradle' && identity.gradleArtifact && queriesGradlePeerCache(connection, identity.gradleArtifact)
-        ? { gradleArtifact: identity.gradleArtifact }
-        : {}),
+      ...(native === 'xcode' && identity.artifact ? { artifact: identity.artifact } : {}),
+      ...(identity.swiftpmArtifact ? { swiftpmArtifact: identity.swiftpmArtifact } : {}),
+      ...(identity.reactNativeArtifact ? { reactNativeArtifact: identity.reactNativeArtifact } : {}),
+      ...(native === 'gradle' && identity.gradleArtifact ? { gradleArtifact: identity.gradleArtifact } : {}),
     },
     offerMs,
   );
@@ -891,22 +884,13 @@ async function probeMachine(
     ...reported,
     warm: {
       ...reported.warm,
-      dependencies:
-        identity.dependencies !== undefined &&
-        connection.supports('build-dependency-cache') &&
-        reported.warm.dependencies,
+      dependencies: identity.dependencies !== undefined && reported.warm.dependencies,
     },
   };
   return {
     credential,
     connection,
-    offer:
-      (identity.swiftpmArtifact && !connection.supports('swiftpm-peer-cache')) ||
-      (identity.reactNativeArtifact && !connection.supports('react-native-peer-cache')) ||
-      (native === 'gradle' &&
-        (!identity.gradleArtifact || !queriesGradlePeerCache(connection, identity.gradleArtifact)))
-        ? { ...offer, artifact: null }
-        : offer,
+    offer: native === 'gradle' && !identity.gradleArtifact ? { ...offer, artifact: null } : offer,
   };
 }
 
@@ -1097,10 +1081,8 @@ export type BuildRequest =
     };
 
 function startJdk(choice: OffloadChoice): { jdk?: string } {
-  const { target, connection } = choice;
-  return target.platform === 'android' && target.local.jdk && connection.supports('build-jdk')
-    ? { jdk: target.local.jdk }
-    : {};
+  const { target } = choice;
+  return target.platform === 'android' && target.local.jdk ? { jdk: target.local.jdk } : {};
 }
 
 function leavesPodsToWorker(choice: OffloadChoice, request: BuildRequest): boolean {
@@ -1112,9 +1094,7 @@ function startPods(choice: OffloadChoice, request: BuildRequest): { podsOnWorker
   if (request.platform !== 'ios' || !leavesPodsToWorker(choice, request)) return {};
   return {
     podsOnWorker: true,
-    ...(request.reuseArtifact === true &&
-    choice.connection.supports('build-reuse-artifact') &&
-    !isReleaseConfiguration(request.configuration)
+    ...(request.reuseArtifact === true && !isReleaseConfiguration(request.configuration)
       ? { reuseArtifact: true }
       : {}),
   };
@@ -1136,17 +1116,11 @@ function rebuiltFingerprint(
     : null;
 }
 
-function queriesGradlePeerCache(connection: BuildConnection, query: BuildGradleArtifactQuery): boolean {
-  return (
-    connection.supports('native-gradle-peer-cache') && (!query.jdk || connection.supports('native-gradle-peer-jdk'))
-  );
-}
-
-function macosBuildParameters(request: Extract<BuildRequest, { platform: 'macos' }>, peerCache: boolean) {
+function macosBuildParameters(request: Extract<BuildRequest, { platform: 'macos' }>) {
   return {
-    ...(request.cacheArtifact === true && peerCache ? { cacheArtifact: true } : {}),
+    ...(request.cacheArtifact === true ? { cacheArtifact: true } : {}),
     macos: {
-      ...(request.artifactInputs && peerCache ? { artifactInputs: request.artifactInputs } : {}),
+      ...(request.artifactInputs ? { artifactInputs: request.artifactInputs } : {}),
       product: request.product,
       infoPlist: request.infoPlist,
       bundleId: request.bundleId,
@@ -1190,7 +1164,6 @@ async function peerArtifact(
     )
       throw new Error('The SwiftPM artifact query does not match the build request.');
     if (
-      !choice.connection.supports('swiftpm-peer-cache') ||
       manifestDigest(
         await sourceManifest(
           choice.identity.repoRoot,
@@ -1212,9 +1185,7 @@ async function peerArtifact(
       )
     )
       throw new Error('The React Native artifact query does not match the build request.');
-    return choice.connection.supports('react-native-peer-cache')
-      ? matchingArtifact(choice.offer, `react-native-${reactNative.platform}`)
-      : null;
+    return matchingArtifact(choice.offer, `react-native-${reactNative.platform}`);
   }
   const query = choice.gradleArtifact;
   if (query) {
@@ -1229,14 +1200,9 @@ async function peerArtifact(
       !isDeepStrictEqual(query.android, request.android)
     )
       throw new Error('The Gradle artifact query does not match the build request.');
-    return queriesGradlePeerCache(choice.connection, query) ? matchingArtifact(choice.offer, 'native-gradle') : null;
+    return matchingArtifact(choice.offer, 'native-gradle');
   }
-  if (
-    request.platform === 'ios' &&
-    request.native &&
-    typeof fingerprint === 'string' &&
-    choice.connection.supports('build-artifact-cache')
-  )
+  if (request.platform === 'ios' && request.native && typeof fingerprint === 'string')
     return matchingArtifact(choice.offer, { fingerprint, cacheKey: request.native.cacheKey });
   return null;
 }
@@ -1274,9 +1240,9 @@ async function resumeJob(
         connection.close();
         break;
       }
-      if (native && !connection.supports(NATIVE_BUILD_FEATURE[native])) {
+      if (native === 'xcode' && !connection.can('native-xcode-build')) {
         connection.close();
-        return unsupportedNative(native);
+        return XCODE_UNSUPPORTED;
       }
       const early: ProgressEvent[] = [];
       connection.onProgress((event) => early.push(event));
@@ -1308,13 +1274,8 @@ async function resumeJob(
 }
 
 function unsupportedBuild(connection: BuildConnection, request: BuildRequest): string | null {
-  const native = request.platform !== 'macos' ? request.native : undefined;
-  if (native)
-    return connection.supports(NATIVE_BUILD_FEATURE[native.provider]) ? null : unsupportedNative(native.provider);
-  return request.platform === 'android' &&
-    isReleaseVariant(request.android.variant) &&
-    !connection.supports('build-android-release')
-    ? ANDROID_RELEASE_UNSUPPORTED
+  return request.platform !== 'macos' && request.native?.provider === 'xcode' && !connection.can('native-xcode-build')
+    ? XCODE_UNSUPPORTED
     : null;
 }
 
@@ -1536,8 +1497,8 @@ interface FingerprintInputs {
   trackedPaths?: readonly string[];
 }
 
-function fingerprintSourcesParam(inputs: FingerprintInputs | null, connection: BuildConnection) {
-  if (!inputs || !connection.supports('fingerprint-sources')) return {};
+function fingerprintSourcesParam(inputs: FingerprintInputs | null) {
+  if (!inputs) return {};
   return {
     fingerprintSources: inputs.sources.map((source) => ({
       id: source.type === 'contents' ? source.id : source.filePath,
@@ -1546,13 +1507,13 @@ function fingerprintSourcesParam(inputs: FingerprintInputs | null, connection: B
   };
 }
 
-function fingerprintIgnoredParam(inputs: FingerprintInputs | null, connection: BuildConnection) {
-  if (!inputs?.ignoredPaths?.length || !connection.supports('fingerprint-ignored')) return {};
+function fingerprintIgnoredParam(inputs: FingerprintInputs | null) {
+  if (!inputs?.ignoredPaths?.length) return {};
   return { fingerprintIgnored: [...inputs.ignoredPaths] };
 }
 
-function fingerprintTrackedParam(inputs: FingerprintInputs | null, connection: BuildConnection) {
-  if (!inputs?.trackedPaths?.length || !connection.supports('fingerprint-tracked')) return {};
+function fingerprintTrackedParam(inputs: FingerprintInputs | null) {
+  if (!inputs?.trackedPaths?.length) return {};
   return { fingerprintTracked: [...inputs.trackedPaths] };
 }
 
@@ -1798,9 +1759,9 @@ export async function offloadBuild(
         project: identity.project,
         platform: request.platform,
         fingerprint: request.platform === 'macos' ? synced.digest : expectedFingerprint,
-        ...fingerprintSourcesParam(inputs, choice.connection),
-        ...fingerprintIgnoredParam(inputs, choice.connection),
-        ...fingerprintTrackedParam(inputs, choice.connection),
+        ...fingerprintSourcesParam(inputs),
+        ...fingerprintIgnoredParam(inputs),
+        ...fingerprintTrackedParam(inputs),
         ...(native
           ? {
               native: {
@@ -1810,13 +1771,13 @@ export async function offloadBuild(
                   ? { cacheKey: native.cacheKey, arch: native.arch, parameters: native.snapshot.parameters }
                   : {
                       inputs: native.transfer.declaration,
-                      ...(choice.connection.supports('native-gradle-artifact-cache') ? { cache: native.cache } : {}),
+                      cache: native.cache,
                     }),
               },
             }
           : {}),
         ...(request.platform === 'macos'
-          ? macosBuildParameters(request, choice.connection.supports('swiftpm-peer-cache'))
+          ? macosBuildParameters(request)
           : {
               configuration: request.platform === 'ios' ? request.configuration : null,
               scheme: request.platform === 'ios' ? request.scheme : null,
@@ -1824,9 +1785,7 @@ export async function offloadBuild(
               runtime: request.platform === 'ios' ? request.runtime : null,
               packageName: packageName(join(identity.repoRoot, identity.project)),
               isExpo: request.isExpo,
-              ...(!native && request.cacheArtifact === true && choice.connection.supports('react-native-peer-cache')
-                ? { cacheArtifact: true }
-                : {}),
+              ...(!native && request.cacheArtifact === true ? { cacheArtifact: true } : {}),
               optimizations:
                 request.platform === 'ios' && isJsonObject(request.optimizations) ? request.optimizations : null,
               ...(request.platform === 'android' ? { android: request.android } : {}),

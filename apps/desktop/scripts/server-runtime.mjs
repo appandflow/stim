@@ -22,18 +22,7 @@ const NODE_SHA256 = {
   arm64: '6239d4cf92d864487ec8cd3615038f7b67e7f58b77b21cd2f09ea9fbd68065fe',
   x64: '0ae5a24c24bb7d015cd816c5036b3f90f2945aa872fcf54e58da054753b3a299',
 };
-const PACKAGES = [
-  'core',
-  'cache',
-  'agent-driver',
-  'agent-driver-agent-device',
-  'metro',
-  'stim-cli',
-  'transport',
-  'transport-tailscale',
-  'transport-local',
-  'server',
-];
+const PACKAGES = ['stim-cli'];
 
 const usage = 'usage: node scripts/server-runtime.mjs <destination> [--universal]';
 const args = process.argv.slice(2);
@@ -112,7 +101,7 @@ async function stageNode(bin) {
 }
 
 function packWorkspace(into) {
-  run('pnpm', ['--filter', '@stim-cli/server...', 'run', 'build'], {
+  run('pnpm', ['--filter', 'stim...', 'run', 'build'], {
     cwd: root,
     stdio: ['ignore', 'ignore', 'inherit'],
   });
@@ -135,7 +124,7 @@ function packWorkspace(into) {
 
 function lockedTree() {
   const [server] = JSON.parse(
-    run('pnpm', ['list', '--prod', '--depth', 'Infinity', '--json', '--filter', '@stim-cli/server'], {
+    run('pnpm', ['list', '--prod', '--depth', 'Infinity', '--json', '--filter', 'stim'], {
       cwd: root,
       maxBuffer: 64 * 1024 * 1024,
     }).toString(),
@@ -221,9 +210,9 @@ try {
   rmSync(packs, { recursive: true, force: true });
 }
 pruneOtherPlatforms(join(destination, 'node_modules'));
-const script = join(destination, 'node_modules/@stim-cli/server/dist/stim-server.mjs');
-const expected = JSON.parse(readFileSync(join(root, 'packages/server/package.json'), 'utf8')).version;
-const reported = run(node, [script, '--version'], {
+const script = join(destination, 'node_modules/stim/bin/stim.mjs');
+const expected = JSON.parse(readFileSync(join(root, 'packages/stim-cli/package.json'), 'utf8')).version;
+const reported = run(node, [script, 'serve', '--version'], {
   env: { HOME: process.env.HOME ?? '' },
 })
   .toString()

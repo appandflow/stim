@@ -15,7 +15,7 @@ public struct ServerStartResult: Sendable {
 ) async throws -> ServerStartResult {
   try Task.checkCancellation()
   let client = try desktopActionServer(connection, stimHome: stimHome, action: "start this workspace for this Stim home")
-  guard case .open(let hello) = client.state, hello.features?.contains("desktop-start") == true else {
+  guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
     throw ServerError(code: "unsupported", message: "Update stim-server to start workspaces from Desktop.")
   }
   guard command.program == "stim", command.arguments.first == "start" else {

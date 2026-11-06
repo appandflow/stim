@@ -131,7 +131,7 @@ public struct DeviceToolError: LocalizedError, Equatable {
 ) async throws -> DeviceToolResult {
   let result = try await runServerRemedy(
     params: tool.remedyParams(platform: platform, slot: slot, cwd: cwd), stimHome: stimHome,
-    connection: connection, feature: "desktop-device-tools", json: true)
+    connection: connection, json: true)
   guard result.exitStatus == 0 else { throw DeviceToolError(stdout: result.stdout, stderr: result.message) }
   return try JSONDecoder().decode(DeviceToolResult.self, from: result.stdout)
 }

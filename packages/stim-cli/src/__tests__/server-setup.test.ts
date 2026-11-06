@@ -1,3 +1,4 @@
+import { DESKTOP_API } from '@stim-cli/core/protocol';
 import { describe, expect, it } from 'vitest';
 import { health, reading, service, setup } from './_server-setup.ts';
 import {
@@ -23,6 +24,24 @@ const PS = `
 `;
 
 describe('parseServerProcesses', () => {
+  it('discovers router and dist serve processes without counting other CLI invocations', () => {
+    const router = '/Users/me/Stim CLI/bin/stim.mjs';
+    const cli = '/Users/me/stim/dist/cli.mjs';
+    const ps = [
+      `800 1 node ${router} serve --share --port=54011`,
+      `801 1 node ${cli} serve --service`,
+      `802 1 node ${router} service update --release 1.41.0`,
+      `803 1 node ${cli}`,
+      `804 1 node ${router} serve --help`,
+      `805 1 node ${cli} serve --version`,
+      '806 1 node /Users/me/other/cli.mjs serve',
+    ].join('\n');
+    expect(parseServerProcesses(ps).map(({ pid, script, port, share }) => ({ pid, script, port, share }))).toEqual([
+      { pid: 800, script: router, port: 54011, share: true },
+      { pid: 801, script: cli, port: 7787, share: false },
+    ]);
+  });
+
   it('does not count an npx wrapper or a shell wrapper, and reads --port=<n>', () => {
     const ps = [
       '700 1 /usr/local/bin/node /usr/local/lib/node_modules/npm/bin/npm-cli.js exec stim-server --port 7791',
@@ -94,7 +113,7 @@ describe('serverSetupFindings', () => {
           reading({ pid: 200, port: 7787, kind: 'desktop', label: undefined }),
           reading({ pid: 300, port: 7790, kind: 'manual', label: undefined }),
         ],
-        local: { port: 7790, version: '1.41.0', features: [] },
+        local: { port: 7790, version: '1.41.0', desktopApi: 0 },
       }),
     );
     expect(finding?.fix).toContain('Keep pid 300');
@@ -136,7 +155,7 @@ describe('serverSetupFindings', () => {
       }),
     );
     const versions = findings.filter((each) => each.code === 'server-version');
-    expect(versions[0]?.fix).toBe('Run `stim-server service update --release 1.41.0`.');
+    expect(versions[0]?.fix).toBe('Run `stim service update --release 1.41.0`.');
     expect(versions[1]?.fix).toContain('Update Stim Desktop');
   });
 
@@ -151,7 +170,7 @@ describe('serverSetupFindings', () => {
     );
     expect(finding?.code).toBe('server-home');
     expect(finding?.detail).toContain('/Users/me/.stim-work');
-    expect(finding?.fix).toContain('STIM_HOME=/Users/me/.stim stim-server service install --port 7788');
+    expect(finding?.fix).toContain('STIM_HOME=/Users/me/.stim stim service install --port 7788');
   });
 
   describe('service state', () => {
@@ -171,7 +190,7 @@ describe('serverSetupFindings', () => {
       expect(finding).toMatchObject({ code: 'server-service-crash', level: 'cost' });
       expect(finding?.detail).toContain('14 times');
       expect(finding?.fix).toContain('dev.stim.server.log');
-      expect(finding?.fix).toContain('stim-server service rollback');
+      expect(finding?.fix).toContain('stim service rollback');
     });
 
     it('does not call a service that has never exited a crash while its health is slow to answer', () => {
@@ -302,22 +321,22 @@ describe('serverSetupFindings', () => {
   });
 
   describe('Desktop write authority', () => {
-    it('flags a service server on the local socket that does not advertise it, with the update command', () => {
+    it('flags a service server on the local socket without desktopApi, with the update command', () => {
       const [finding] = serverSetupFindings(
         setup({
           version: '1.42.0',
           servers: [reading({ health: health({ stim: '1.42.0' }) })],
-          local: { port: 7788, version: '1.40.0', features: ['desktop-reports'] },
+          local: { port: 7788, version: '1.40.0', desktopApi: 0 },
         }),
       );
       expect(finding).toMatchObject({ code: 'server-desktop-authority', level: 'cost' });
-      expect(finding?.fix).toBe('Run `stim-server service update --release 1.42.0`.');
+      expect(finding?.fix).toBe('Run `stim service update --release 1.42.0`.');
     });
 
-    it('does not flag Desktop-keyed servers or servers that advertise it', () => {
-      const local = { port: 7788, version: '1.41.0', features: [] };
+    it('does not flag Desktop-keyed servers or servers that send desktopApi', () => {
+      const local = { port: 7788, version: '1.41.0', desktopApi: 0 };
       expect(codes(setup({ servers: [reading({ kind: 'desktop', label: undefined })], local }))).toEqual([]);
-      expect(codes(setup({ local: { ...local, features: ['desktop-local-authority'] } }))).toEqual([]);
+      expect(codes(setup({ local: { ...local, desktopApi: DESKTOP_API } }))).toEqual([]);
     });
   });
 });
