@@ -8,7 +8,8 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
-import { BuildHost, type BuildLimits } from '../src/build.ts';
+import { BuildWorkerRoot, type BuildLimits } from '../src/build.ts';
+import { BuildHost } from '../../stim-cli/src/job/offload/host.ts';
 import { buildSlotPath, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 
@@ -20,11 +21,19 @@ const socket = { readyState: WebSocket.OPEN, OPEN: WebSocket.OPEN, send: () => {
 
 let home: string;
 let root: string;
-let running: BuildHost | null = null;
+let running: BuildHost | BuildWorkerRoot | null = null;
+let live: { client: string; repo: string }[] = [];
 
 const start = (limits: Partial<BuildLimits> = {}) => {
-  running = new BuildHost({ worker: 'unused', env: process.env, limits });
-  return running;
+  const host = new BuildHost({ worker: 'unused', env: process.env, limits });
+  running = host;
+  return host;
+};
+
+const startRoot = () => {
+  const workerRoot = new BuildWorkerRoot({ jobs: () => live, stopJobs: async () => {} });
+  running = workerRoot;
+  return workerRoot;
 };
 
 beforeEach(() => {
@@ -37,6 +46,7 @@ beforeEach(() => {
 afterEach(async () => {
   await running?.close();
   running = null;
+  live = [];
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
 });
@@ -138,7 +148,7 @@ test('refuses a blob whose declared size would take the worker volume under its 
 });
 
 test("shutdown awaits a revoked client's deletion, but not through a symlink or outside the worker root", async () => {
-  const host = start();
+  const host = startRoot();
   mkdirSync(join(root, 'gone', 'repos', 'app-1', 'src'), { recursive: true });
   writeFileSync(join(root, 'gone', 'repos', 'app-1', 'src', 'a'), 'x');
   const outside = join(home, 'outside');
@@ -184,11 +194,11 @@ test("shutdown awaits a revoked client's deletion, but not through a symlink or 
   expect(existsSync(root)).toBe(true);
 });
 
-test('prunes blobs no mirror or open manifest references, and none while a mirror is unreadable', () => {
-  const host = start();
+test('prunes blobs no mirror references once no job of the client runs, and none while a mirror is unreadable', () => {
+  const host = startRoot();
   const client = join(root, 'client');
   const blob = (text: string) => join(client, 'blobs', sha(text).slice(0, 2), sha(text));
-  for (const text of ['mirrored', 'synced', 'stale']) {
+  for (const text of ['mirrored', 'stale']) {
     mkdirSync(join(blob(text), '..'), { recursive: true });
     writeFileSync(blob(text), text);
   }
@@ -199,8 +209,10 @@ test('prunes blobs no mirror or open manifest references, and none while a mirro
     join(client, 'repos', 'app-1', 'mirror.json'),
     JSON.stringify({ a: { sha256: sha('mirrored'), kind: 'file', mtimeMs: 0, size: 8 } }),
   );
-  const session = host.session('client', socket, () => {});
-  session.sync({ repo: 'app-2', files: [file('b', 'synced')], done: true });
+  live = [{ client: 'client', repo: 'app-2' }];
+  host.pruneBlobs('client');
+  expect(existsSync(blob('stale'))).toBe(true);
+  live = [];
 
   mkdirSync(join(client, 'repos', 'app-3'));
   writeFileSync(join(client, 'repos', 'app-3', 'mirror.json'), '{');
@@ -211,12 +223,7 @@ test('prunes blobs no mirror or open manifest references, and none while a mirro
   host.pruneBlobs('client');
   expect(existsSync(blob('stale'))).toBe(false);
   expect(existsSync(blob('mirrored'))).toBe(true);
-  expect(existsSync(blob('synced'))).toBe(true);
   expect(existsSync(incoming)).toBe(true);
-
-  session.close(false);
-  host.pruneBlobs('client');
-  expect(existsSync(blob('synced'))).toBe(false);
 });
 
 test('caps the declared bytes of one manifest across its pages', () => {

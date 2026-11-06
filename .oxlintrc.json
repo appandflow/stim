@@ -308,7 +308,7 @@
         "packages/stim-cli/src/stimd/**",
         "packages/stim-cli/src/daemon/**",
         "packages/stim-cli/src/device-host/run.ts",
-        "packages/stim-cli/src/offload/worker.ts",
+        "packages/stim-cli/src/job/**",
         "packages/stim-cli/src/commands/engine.ts",
         "packages/stim-cli/src/commands/gc.ts",
         "packages/stim-cli/src/commands/gc/**",
@@ -449,7 +449,7 @@
         "packages/stim-cli/src/offload/access-ticket.ts",
         "packages/stim-cli/src/offload/client.ts",
         "packages/stim-cli/src/build-placement.ts",
-        "packages/stim-cli/src/offload/worker.ts",
+        "packages/stim-cli/src/job/**",
         "packages/stim-cli/src/temporary.ts",
         "packages/stim-cli/src/web/runtime.ts"
       ],

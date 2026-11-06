@@ -3,6 +3,8 @@ import { EventEmitter } from 'node:events';
 import {
   HandshakeState,
   MAX_HANDSHAKE_MESSAGE_BYTES,
+  NOISE_BINARY,
+  NOISE_TEXT,
   NOISE_XX,
   NOISE_XX_PSK2,
   NoiseError,
@@ -531,3 +533,45 @@ export function acceptNoise(
     raw.on('message', onMessage);
   });
 }
+
+// compat C14 permanent
+/**
+ * The largest frame on an offload job's pipe: a Noise message's plaintext, its type byte and body. A server message
+ * can hold 16 MiB, so the length takes 4 bytes.
+ */
+export const MAX_JOB_FRAME_BYTES: number = MAX_SERVER_MESSAGE_BYTES + 1;
+
+/** One Noise message on an offload job's pipe: a 4-byte big-endian length, then the message's type byte and body. */
+export function jobFrame(data: Uint8Array, binary: boolean): Buffer {
+  const header = Buffer.allocUnsafe(5);
+  header.writeUInt32BE(data.length + 1, 0);
+  header[4] = binary ? NOISE_BINARY : NOISE_TEXT;
+  return Buffer.concat([header, data]);
+}
+
+/** Splits an offload job's pipe into the messages `jobFrame` wrote, keeping each message's bytes and type unread. */
+export class JobFrameReader {
+  #buffered: Buffer = Buffer.alloc(0);
+
+  /** The whole frames `chunk` completes. Throws on a frame over {@link MAX_JOB_FRAME_BYTES} or of no Noise type. */
+  push(chunk: Buffer): { data: Buffer; binary: boolean }[] {
+    this.#buffered = this.#buffered.length ? Buffer.concat([this.#buffered, chunk]) : chunk;
+    const frames: { data: Buffer; binary: boolean }[] = [];
+    while (this.#buffered.length >= 4) {
+      const length = this.#buffered.readUInt32BE(0);
+      if (length < 1 || length > MAX_JOB_FRAME_BYTES) throw new RangeError(`A job frame of ${length} bytes`);
+      if (this.#buffered.length < 4 + length) break;
+      const type = this.#buffered[4];
+      if (type !== NOISE_TEXT && type !== NOISE_BINARY) throw new RangeError(`A job frame of type ${type}`);
+      frames.push({ data: this.#buffered.subarray(5, 4 + length), binary: type === NOISE_BINARY });
+      this.#buffered = this.#buffered.subarray(4 + length);
+    }
+    return frames;
+  }
+
+  /** Whether part of a frame is still unread, as at a pipe that ended mid-frame. */
+  get partial(): boolean {
+    return this.#buffered.length > 0;
+  }
+}
+// compat end

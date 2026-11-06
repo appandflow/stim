@@ -55,11 +55,12 @@ import {
   workspaceShareLinksFile,
   workspaceStateFile,
   readSetupJournal,
+  stimBuildId,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
 import { ShareHub, type StartedShare } from '../src/share.ts';
 import * as stim from 'stim';
-import { BuildHost } from '../src/build.ts';
+import { BuildHost } from '../../stim-cli/src/job/offload/host.ts';
 import { DesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import { HostedAgentHost } from '../src/agent-driver.ts';
 import { DeviceHost } from '../src/device-host.ts';
@@ -175,6 +176,15 @@ setInterval(() => {
 const FAKE_STIM = `
 import { appendFileSync, existsSync, mkdirSync, statSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
+if (process.argv[2] === '__job') {
+  const { serveOffloadJob } = await import(process.env.FAKE_JOB_SERVE);
+  const stop = new AbortController();
+  process.on('SIGTERM', () => stop.abort());
+  const worker = [join(dirname(process.argv[1]), 'offload-worker.mjs')];
+  const code = await serveOffloadJob(process.argv[3], JSON.parse(process.env.STIM_JOB_SPEC), process.stdin, process.stdout, stop.signal, worker);
+  await new Promise((resolve) => process.stdout.write('', resolve));
+  process.exit(code);
+}
 const args = process.argv.slice(2);
 const env = process.env;
 const pidFile = join(env.FAKE_STIM_PIDS, String(process.pid));
@@ -533,6 +543,7 @@ async function start(
     env: {
       ...process.env,
       FAKE_STIM_PIDS: pids,
+      FAKE_JOB_SERVE: fileURLToPath(new URL('../../stim-cli/src/job/offload/serve.ts', import.meta.url)),
       FAKE_STIM_CALLS: calls,
       FAKE_STIM_PAYLOADS: JSON.stringify(PAYLOADS),
       FAKE_STIM_RECORDS: JSON.stringify(RECORDS),
@@ -1480,13 +1491,12 @@ describe('pairing', () => {
     const worker = setupClient(['build']);
     const cli = await connect(port, undefined, { keyPair: worker.keyPair });
     expect(
-      await cli.request('hello', { client: { name: 'stim', version: '1', runId: 'old' }, access: 'build' }),
+      await cli.request('hello', { client: { name: 'stim', version: '1', runId: 'old', peer: 1 }, access: 'build' }),
     ).toEqual({
       id: expect.any(Number),
       error: {
         code: 'protocol-unsupported',
-        message:
-          'peer-too-old: Test Mac runs stim 9.9.9 (peer 1); this stim sends no peer; update this Mac: npm i -g stim@9.9.9, then stim service install if it runs Stim as a service',
+        message: 'peer-too-old: Test Mac runs stim 9.9.9 (peer 2); update this Mac: npm i -g stim@9.9.9',
       },
     });
     expect(await cli.closedWith).toEqual({ code: 4401, reason: 'protocol-unsupported' });
@@ -3228,11 +3238,11 @@ describe('hosted device sessions', () => {
   );
 });
 
-test('build.start rejects escaping or oversized macOS resources before probing the toolchain', async () => {
+test('build.start rejects escaping or oversized macOS resources before starting the worker', async () => {
   const host = new BuildHost({ worker: 'unused-worker', env: process.env });
-  const toolchain = vi.spyOn(host, 'toolchain').mockResolvedValue(null);
+  const toolchain = vi.spyOn(host, 'launch').mockReturnValue({ error: { code: 'build-refused', message: 'launched' } });
   const session = host.session('client', {} as WebSocket, () => {});
-  const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'digest', stimBuild: 'b1' };
+  const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'digest', stimBuild: 'b1', compat: 3 };
   const macos = { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' };
   const validate = new Ajv2020({ strict: false }).compile({ ...protocolJsonSchema(), $ref: '#/$defs/ClientRequest' });
   try {
@@ -3261,9 +3271,7 @@ test('build.start rejects escaping or oversized macOS resources before probing t
     expect(validate({ id: 'request', method: 'build.start', params: { ...valid, jdk: '17' } })).toBe(true);
     for (const jdk of ['17.0.1', '', '17; id', 17])
       expect(validate({ id: 'request', method: 'build.start', params: { ...valid, jdk } })).toBe(false);
-    expect(await session.start(valid)).toMatchObject({
-      error: { code: 'build-refused', message: 'This machine runs Stim build unknown.' },
-    });
+    expect(await session.start(valid)).toMatchObject({ error: { code: 'build-refused', message: 'launched' } });
     expect(toolchain).toHaveBeenCalledOnce();
     expect(
       validate({
@@ -3284,7 +3292,7 @@ test('build.start rejects escaping or oversized macOS resources before probing t
   }
 });
 
-test('build.start requires matching build compatibility versions', async () => {
+test('build.start needs the build compatibility version and passes it and the JDK to the worker job', async () => {
   const host = new BuildHost({ worker: 'unused-worker', env: process.env });
   const worker = {
     stimBuild: 'b1',
@@ -3312,10 +3320,8 @@ test('build.start requires matching build compatibility versions', async () => {
     session.sync({ repo: 'app-1', files: [], done: true });
     expect(await message({ stimBuild: 'b2', compat: 3 })).toBe('launched');
     expect(launch.mock.calls.at(-1)?.[0].job).toMatchObject({ stimBuild: 'b2', compat: 3 });
-    expect(await message({ stimBuild: 'b1', compat: 4 })).toBe(
-      'This machine runs Stim build b1 with build compatibility 3, not 4.',
-    );
     expect(launch.mock.calls.at(-1)?.[0].job).not.toHaveProperty('jdk');
+    expect(await message({ stimBuild: 'b1' })).toBe('build.start needs params.compat.');
     expect(await message({ stimBuild: 'b2', compat: 3, jdk: '17' })).toBe('launched');
     expect(launch.mock.calls.at(-1)?.[0].job).toMatchObject({ jdk: '17' });
     expect(launch).toHaveBeenCalledTimes(2);
@@ -3327,7 +3333,7 @@ test('build.start requires matching build compatibility versions', async () => {
 
 test('native Gradle requires declared source scope and a null artifact identity before worker admission', async () => {
   const host = new BuildHost({ worker: 'unused-worker', env: process.env });
-  const toolchain = vi.spyOn(host, 'toolchain').mockResolvedValue(null);
+  const toolchain = vi.spyOn(host, 'launch').mockReturnValue({ error: { code: 'build-refused', message: 'launched' } });
   const session = host.session('client', {} as WebSocket, () => {});
   const android = { variant: 'freeRelease', abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'none' };
   const inputs = { complete: true, ignored: [], outputs: ['app/build'] };
@@ -3344,6 +3350,7 @@ test('native Gradle requires declared source scope and a null artifact identity 
     platform: 'android',
     fingerprint: null,
     stimBuild: 'b1',
+    compat: 3,
     android,
     native,
   };
@@ -3376,10 +3383,8 @@ test('native Gradle requires declared source scope and a null artifact identity 
       { ...valid, fingerprint: 'fake-reusable-identity' },
     ])
       expect(validate({ id: 'request', method: 'build.start', params })).toBe(false);
-    expect(await session.start(valid)).toMatchObject({
-      error: { code: 'build-refused', message: 'This machine runs Stim build unknown.' },
-    });
-    expect(toolchain).toHaveBeenCalledExactlyOnceWith(null, 'gradle');
+    expect(await session.start(valid)).toMatchObject({ error: { code: 'build-refused', message: 'launched' } });
+    expect(toolchain).toHaveBeenCalledOnce();
   } finally {
     toolchain.mockRestore();
     await host.close();
@@ -3496,9 +3501,10 @@ test('native build admission rejects invalid provider identity before toolchain 
     expect(toolchain).toHaveBeenLastCalledWith(null, 'xcode');
     toolchain.mockClear();
     expect(validate({ id: 'request', method: 'build.start', params: base })).toBe(true);
+    const launch = vi.spyOn(host, 'launch').mockReturnValue({ error: { code: 'build-refused', message: 'launched' } });
     expect(await session.start(base)).toHaveProperty('error.code', 'build-refused');
-    expect(toolchain).toHaveBeenCalledOnce();
-    expect(toolchain).toHaveBeenCalledWith(null, 'xcode');
+    expect(toolchain).not.toHaveBeenCalled();
+    expect(launch).toHaveBeenCalledOnce();
   } finally {
     toolchain.mockRestore();
     await host.close();
@@ -3531,13 +3537,20 @@ describe('offloaded builds', () => {
 
   beforeEach(() => configure({ server: { maxLoadPerCore: 100_000 } }));
 
+  const startJob = (client: Client) =>
+    client.request('job.start', { kind: 'offload-build', stim: '9.9.9', build: stimBuildId(root), repo: 'app-1' });
+
   async function buildClient(
     port: number,
     peer = '100.64.0.2',
     machine = setupClient(['build'], 'Laptop'),
-  ): Promise<{ client: Client; id: string; keyPair: NoiseKeyPair }> {
+    job = true,
+  ): Promise<{ client: Client; id: string; keyPair: NoiseKeyPair; spliced: string }> {
     const client = await returning(port, machine.keyPair, peer, 'build');
-    return { client, id: machine.records.build!.id, keyPair: machine.keyPair };
+    const started = job ? await startJob(client) : { result: { job: '' } };
+    expect(started).toHaveProperty('result.job');
+    const spliced = (started as { result: { job: string } }).result.job;
+    return { client, id: machine.records.build!.id, keyPair: machine.keyPair, spliced };
   }
 
   async function eventually(check: () => boolean): Promise<void> {
@@ -3680,13 +3693,8 @@ describe('offloaded builds', () => {
       expect(readAudit()).toMatchObject([{ action: 'build', workspace: 'app-1', ok: true }]);
 
       const viewer = await authed(port);
-      expect(await viewer.request('build.offer', { repo: 'app-1' })).toMatchObject({ error: { code: 'forbidden' } });
-      expect(
-        await viewer.request('build.cached-artifact', {
-          repo: 'app-1',
-          artifact: { fingerprint: 'f00d', cacheKey: 'complete-key' },
-        }),
-      ).toHaveProperty('error.code', 'forbidden');
+      expect(await startJob(viewer)).toMatchObject({ error: { code: 'forbidden' } });
+      expect(await viewer.request('build.offer', { repo: 'app-1' })).toHaveProperty('error.code', 'unknown-method');
       expect(await viewer.request('device-host.offer', { platform: 'ios' })).toHaveProperty('error.code', 'forbidden');
     },
   );
@@ -3720,6 +3728,7 @@ describe('offloaded builds', () => {
       const area = join(root, 'home', 'build-worker', id, 'repos', 'app-1');
       rmSync(join(area, 'out'), { recursive: true, force: true });
       const again = await returning(port, keyPair, '100.64.0.2', 'build');
+      expect(await startJob(again)).toHaveProperty('result.job');
       expect(await again.request('build.offer', { repo: 'app-1', native: 'xcode', artifact: identity })).toHaveProperty(
         'result.artifact',
         {
@@ -3754,7 +3763,7 @@ describe('offloaded builds', () => {
           runsAsService: async () => true,
         },
       });
-      const { client } = await buildClient(port);
+      const { client } = await buildClient(port, undefined, undefined, false);
       expect(await client.request('engine.update.status')).toMatchObject({
         result: {
           server: { version: '1.2.3' },
@@ -3803,16 +3812,17 @@ describe('offloaded builds', () => {
           detached: (node, args) => ({ file: node, args: [updater, ...args] }),
         },
       });
-      const { client } = await buildClient(port);
+      const { client } = await buildClient(port, undefined, undefined, false);
       expect(await client.request('engine.update', { version: '1.15.0' })).toMatchObject({
         result: { state: 'installing' },
       });
-      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
-        result: { capacity: { declined: 'stim-server is updating to release 1.15.0' } },
+      expect(await startJob(client)).toMatchObject({
+        error: { code: 'build-busy', message: 'stim-server is updating to release 1.15.0' },
       });
       writeFileSync(release, '');
       await eventually(() => readAudit().some((record) => record.action === 'engine.update.ended'));
-      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+      const { client: building } = await buildClient(port);
+      expect(await building.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: { capacity: { declined: null } },
       });
       expect(await client.request('engine.update.status')).toMatchObject({
@@ -4128,7 +4138,7 @@ describe('offloaded builds', () => {
   );
 
   test.skipIf(!fakeTailscale)('deletes a fetched macOS build nobody takes once its handoff lapses', async () => {
-    const port = await start({ buildLimits: { handoffMs: 50 } });
+    const port = await start({ buildLimits: { handoffMs: 50, daemonSweepMs: 50 } });
     const { out } = await nativeBuild(port, '100.64.0.2');
     await eventually(() => !existsSync(out));
   });
@@ -4232,7 +4242,7 @@ describe('offloaded builds', () => {
     async () => {
       const gate = join(root, 'gate');
       const port = await start({ env: { FAKE_WORKER_GATE: gate } });
-      const { client, keyPair } = await buildClient(port);
+      const { client, keyPair, spliced } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       const job = ((await client.request('build.start', START)) as { result: { job: string } }).result.job;
@@ -4240,18 +4250,21 @@ describe('offloaded builds', () => {
       client.socket.terminate();
       expect(await client.closed).toBe(1006);
 
-      const other = await buildClient(port, '100.64.0.3');
-      expect(await other.client.request('build.attach', { job })).toMatchObject({ error: { code: 'bad-request' } });
+      const other = await buildClient(port, '100.64.0.3', undefined, false);
+      expect(await other.client.request('job.start', { attach: spliced })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
 
       const again = await returning(port, keyPair, '100.64.0.2', 'build');
-      expect(await again.request('build.attach', { job })).toEqual({ id: 2, result: { outcome: null } });
+      expect(await again.request('job.start', { attach: spliced })).toMatchObject({ result: { job: spliced } });
+      expect(await again.request('build.attach', { job })).toEqual({ id: 3, result: { outcome: null } });
       writeFileSync(gate, '');
       expect((await progress(again)).at(-1)).toMatchObject({ job, outcome: { ok: true } });
-      again.socket.send(JSON.stringify({ id: 3, method: 'build.artifact', params: { job } }));
+      again.socket.send(JSON.stringify({ id: 4, method: 'build.artifact', params: { job } }));
       expect(((await again.next()) as unknown as { binary: Buffer }).binary.subarray(32).toString()).toBe(
         'app archive bytes',
       );
-      expect(await again.next()).toMatchObject({ id: 3, result: { name: 'App.app' } });
+      expect(await again.next()).toMatchObject({ id: 4, result: { name: 'App.app' } });
     },
   );
 
@@ -4260,13 +4273,14 @@ describe('offloaded builds', () => {
     async () => {
       const gate = join(root, 'gate');
       const port = await start({ env: { FAKE_WORKER_GATE: gate } });
-      const { client, keyPair } = await buildClient(port);
+      const { client, keyPair, spliced } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       const job = ((await client.request('build.start', START)) as { result: { job: string } }).result.job;
 
       const again = await returning(port, keyPair, '100.64.0.2', 'build');
-      expect(await again.request('build.attach', { job })).toEqual({ id: 2, result: { outcome: null } });
+      expect(await again.request('job.start', { attach: spliced })).toMatchObject({ result: { job: spliced } });
+      expect(await again.request('build.attach', { job })).toEqual({ id: 3, result: { outcome: null } });
       client.socket.close(1000);
       expect(await client.closed).toBe(1000);
       writeFileSync(gate, '');

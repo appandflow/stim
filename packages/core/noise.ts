@@ -24,6 +24,7 @@ const MAX_NONCE = 2n ** 64n - 1n;
 const EMPTY = Buffer.alloc(0);
 const TEXT = 0x01;
 const BINARY = 0x02;
+export { TEXT as NOISE_TEXT, BINARY as NOISE_BINARY };
 
 // RFC 8410 DER wrappers; node:crypto on Node 22.12 has no raw X25519 key import.
 const SPKI_X25519 = Buffer.from('302a300506032b656e032100', 'hex');

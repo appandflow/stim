@@ -1,26 +1,24 @@
 import { existsSync } from 'node:fs';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
-import { runArtifactQuery } from '../src/artifact-query.ts';
+import { runArtifactQuery } from '../job/offload/artifact-query.ts';
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readPid } from './pid-file.ts';
+import { readPid } from '../../../server/__tests__/pid-file.ts';
 import { stimBuildDigest } from '@stim-cli/core/state';
-import { getExecutor } from '../../stim-cli/src/exec.ts';
-import { processContext } from '../../stim-cli/src/cli-operation.ts';
-import { validateMacosArtifactPlatform } from '../../stim-cli/src/macos/artifact-platform.ts';
-import { reidentifyBundle } from '../../stim-cli/src/macos/stage.ts';
-import { manifestDigest } from '../../stim-cli/src/offload/manifest.ts';
-import { sourceManifest } from '../../stim-cli/src/offload/native-source.ts';
-import {
-  readSwiftpmWorkerToolchain,
-  swiftpmWorkerArtifactSnapshot,
-} from '../../stim-cli/src/offload/swiftpm-artifact.ts';
+import { getExecutor } from '../exec.ts';
+import { processContext } from '../cli-operation.ts';
+import { validateMacosArtifactPlatform } from '../macos/artifact-platform.ts';
+import { reidentifyBundle } from '../macos/stage.ts';
+import { manifestDigest } from '../offload/manifest.ts';
+import { sourceManifest } from '../offload/native-source.ts';
+import { readSwiftpmWorkerToolchain, swiftpmWorkerArtifactSnapshot } from '../offload/swiftpm-artifact.ts';
 import { withAmbientContext } from '@stim-cli/core';
-import { BuildHost } from '../src/build.ts';
+import { BuildHost } from '../job/offload/host.ts';
+import { androidToolchain } from '../engine/toolchain.ts';
 import type { BuildSwiftpmArtifactQuery } from '@stim-cli/core/protocol';
 
 test('real SwiftPM app reuse survives worker checkout and output removal without another compilation', async () => {
@@ -38,8 +36,8 @@ test('real SwiftPM app reuse survives worker checkout and output removal without
   const root = await realpath(await mkdtemp(join(tmpdir(), 'stim-swiftpm-peer-compat-')));
   const home = join(root, 'home');
   const project = join(root, 'client');
-  const cli = fileURLToPath(new URL('../../stim-cli/dist/cli.mjs', import.meta.url));
-  const worker = fileURLToPath(new URL('../../stim-cli/dist/offload-worker.mjs', import.meta.url));
+  const cli = fileURLToPath(new URL('../../dist/cli.mjs', import.meta.url));
+  const worker = fileURLToPath(new URL('../../dist/cli.mjs', import.meta.url));
   let host: BuildHost | undefined;
   let session: ReturnType<BuildHost['session']> | undefined;
   vi.stubEnv('STIM_HOME', home);
@@ -96,7 +94,7 @@ print(try String(contentsOf: path, encoding: .utf8), terminator: "")
     const query: BuildSwiftpmArtifactQuery = {
       project: '',
       sourceDigest: manifestDigest(manifest),
-      stimBuild,
+      compat: androidToolchain().compat,
       inputs: {
         complete: true,
         ignored: [],
@@ -111,7 +109,12 @@ print(try String(contentsOf: path, encoding: .utf8), terminator: "")
         assetCatalog: null,
       },
     };
-    host = new BuildHost({ worker, env: environment, limits: { timeoutMs: 120_000, killGraceMs: 1000 } });
+    host = new BuildHost({
+      worker,
+      workerArgs: ['__job', 'offload-worker'],
+      env: environment,
+      limits: { timeoutMs: 120_000, killGraceMs: 1000 },
+    });
     const frames: Buffer[] = [];
     const logs: unknown[] = [];
     session = host.session(
@@ -140,6 +143,7 @@ print(try String(contentsOf: path, encoding: .utf8), terminator: "")
       platform: 'macos',
       fingerprint: query.sourceDigest,
       stimBuild,
+      compat: query.compat,
       cacheArtifact: true,
       macos: { ...query.build, bundleId: 'dev.stim.peer.compat', artifactInputs: query.inputs },
     });
@@ -151,11 +155,15 @@ print(try String(contentsOf: path, encoding: .utf8), terminator: "")
     host.forget(job);
     const area = join(host.clientDir('compat-builder'), 'repos', 'swiftpm-compat');
     for (const directory of ['src', 'macos', 'out']) await rm(join(area, directory), { recursive: true });
-    host.drain('native cache acceptance');
+    const config = JSON.parse(await readFile(join(home, 'config.json'), 'utf8'));
+    await writeFile(
+      join(home, 'config.json'),
+      JSON.stringify({ ...config, server: { ...config.server, buildsPaused: true } }),
+    );
     const offer = await host.offer('compat-builder', { repo: 'swiftpm-compat', swiftpmArtifact: query });
     if ('error' in offer || !offer.result.artifact) throw new Error(JSON.stringify({ offer, logs }));
     expect(host.running()).toBe(0);
-    expect(offer.result.capacity.declined).toBe('native cache acceptance');
+    expect(offer.result.capacity.declined).toMatch(/server.buildsPaused/);
     expect(
       await session.cachedArtifact({ repo: 'swiftpm-compat', artifact: offer.result.artifact, swiftpmArtifact: query }),
     ).toEqual({ result: offer.result.artifact });
@@ -185,9 +193,9 @@ print(try String(contentsOf: path, encoding: .utf8), terminator: "")
       }),
     );
   } finally {
-    session?.close(false);
+    session?.close();
     await host?.close();
-    if (host) await host.remove('compat-builder');
+    if (host) await rm(host.clientDir('compat-builder'), { recursive: true, force: true });
     await command(process.execPath, [cli, 'worktree', 'remove', project]);
     vi.unstubAllEnvs();
     await rm(root, { recursive: true, force: true });
@@ -218,7 +226,7 @@ setInterval(() => {}, 1000);
   vi.stubEnv('STIM_HOME', join(root, 'home'));
   const abort = new AbortController();
   const query = runArtifactQuery({
-    worker: fileURLToPath(new URL('../../stim-cli/dist/offload-worker.mjs', import.meta.url)),
+    command: [fileURLToPath(new URL('../../dist/cli.mjs', import.meta.url)), '__job', 'offload-worker'],
     area,
     env: { ...process.env, PATH: `${tools}:${process.env.PATH ?? ''}`, STIM_QUERY_PROBE_PID: marker },
     query: {
@@ -296,7 +304,7 @@ test('project-selected Swift changes invalidate receipts, and a pruned custom se
     await writeFile(installedCompiler, '#!/bin/sh\nprintf "Swift project-two\\n"\n');
     const lookup = () =>
       runArtifactQuery({
-        worker: fileURLToPath(new URL('../../stim-cli/dist/offload-worker.mjs', import.meta.url)),
+        command: [fileURLToPath(new URL('../../dist/cli.mjs', import.meta.url)), '__job', 'offload-worker'],
         area,
         env: environment,
         query,
@@ -352,7 +360,7 @@ test.each(['SWIFT_EXEC', 'SWIFT_EXEC_MANIFEST'])(
       const snapshot = await swiftpmWorkerArtifactSnapshot(project, query, before, environment);
       const lookup = () =>
         runArtifactQuery({
-          worker: fileURLToPath(new URL('../../stim-cli/dist/offload-worker.mjs', import.meta.url)),
+          command: [fileURLToPath(new URL('../../dist/cli.mjs', import.meta.url)), '__job', 'offload-worker'],
           area,
           env: environment,
           query,
@@ -431,7 +439,7 @@ else throw new Error('Unexpected SDK query: ' + args.join(' '));
       const snapshot = await swiftpmWorkerArtifactSnapshot(project, query, before, environment);
       const lookup = () =>
         runArtifactQuery({
-          worker: fileURLToPath(new URL('../../stim-cli/dist/offload-worker.mjs', import.meta.url)),
+          command: [fileURLToPath(new URL('../../dist/cli.mjs', import.meta.url)), '__job', 'offload-worker'],
           area,
           env: environment,
           query,

@@ -49,8 +49,8 @@ Branch on the code, never on the message.`,
   reason codes), stim logs --source build (remote_connect_failed, remote_request_failed),
   and the host's stim service log, searched for the run id (stim guide logs).
   A failed build handoff uses upload instead. A host on an older Stim is refused
-  with peer-too-old, naming the npm i -g stim@<version> && stim service install
-  to run on it.
+  with peer-too-old, naming stim remote update <mac>, or the
+  npm i -g stim@<version> && stim service install to run on it.
   A name outside remote.machines is STIM_BAD_ARG. Missing or pending hosting
   approval keeps the stim remote add and stim setup remedies.`,
     },

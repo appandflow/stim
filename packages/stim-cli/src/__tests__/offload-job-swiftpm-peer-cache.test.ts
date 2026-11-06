@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BuildHost } from '../src/build.ts';
+import { BuildHost } from '../job/offload/host.ts';
 import type { BuildSwiftpmArtifactQuery } from '@stim-cli/core/protocol';
 
 test('a paused worker retains an exact SwiftPM archive after checkout pruning and rechecks private inputs before fetch', async () => {
@@ -88,11 +88,14 @@ if (mode === 'offer') {
     const area = join(host.clientDir('builder'), 'repos', 'app-1');
     await rm(join(area, 'src'), { recursive: true });
     await rm(join(area, 'out'), { recursive: true });
-    host.drain('maintenance');
+    await writeFile(
+      join(root, 'home', 'config.json'),
+      JSON.stringify({ server: { maxLoadPerCore: 100_000, buildsPaused: true } }),
+    );
     const response = await host.offer('builder', { repo: 'app-1', swiftpmArtifact: query });
     if ('error' in response || !response.result.artifact) throw new Error('Expected the retained SwiftPM artifact.');
     const artifact = response.result.artifact;
-    expect(response.result.capacity.declined).toBe('maintenance');
+    expect(response.result.capacity.declined).toMatch(/server.buildsPaused/);
     expect(host.running()).toBe(0);
     for (const [client, repo, changed] of [
       ['other-client', 'app-1', query],
@@ -117,7 +120,7 @@ if (mode === 'offer') {
     expect(await readFile(join(area, 'compiler-called'), 'utf8')).toBe('compile\n');
     expect(JSON.stringify(response)).not.toContain('private-pinned-value');
   } finally {
-    session.close(false);
+    session.close();
     await host.close();
     vi.unstubAllEnvs();
     await rm(root, { recursive: true, force: true });

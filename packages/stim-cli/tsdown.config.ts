@@ -32,7 +32,6 @@ export default defineConfig({
     'web-run': 'src/web/run.ts',
     'macos-run': 'src/macos/run.ts',
     'device-host-worker': 'src/device-host/run.ts',
-    'offload-worker': 'src/offload/worker.ts',
     'status-worker': 'src/status-worker.ts',
     'doctor-fingerprint': 'bin/doctor-fingerprint.ts',
     'fingerprint-precompute': 'bin/fingerprint-precompute.ts',
@@ -47,6 +46,7 @@ export default defineConfig({
   platform: 'node',
   alias: {
     '@stim-cli/ci/cli': resolve('../ci/src/cli.ts'),
+    '@stim-cli/server/build': resolve('../server/src/build.ts'),
     '@stim-cli/server/cli': resolve('../server/src/cli.ts'),
     '@stim-cli/server/environment': resolve('../server/src/environment.ts'),
     '@stim-cli/server/release-install': resolve('../server/src/release-install.ts'),

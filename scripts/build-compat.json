@@ -4,7 +4,6 @@
     "packages/core/dependency-install.ts",
     "packages/core/react-native-artifact.ts",
     "packages/core/swiftpm-artifact.ts",
-    "packages/server/src/build.ts",
     "packages/stim-cli/shim/android-cas-pch.cmake",
     "packages/stim-cli/shim/android-cas.gradle",
     "packages/stim-cli/shim/android-cas.toolchain.cmake",
@@ -30,6 +29,8 @@
     "packages/stim-cli/src/fingerprint/",
     "packages/stim-cli/src/injected/expo-metro-config.cjs",
     "packages/stim-cli/src/integrations/",
+    "packages/stim-cli/src/job/offload/host.ts",
+    "packages/stim-cli/src/job/offload/worker.ts",
     "packages/stim-cli/src/macos/stage.ts",
     "packages/stim-cli/src/offload/build-artifact-cache.ts",
     "packages/stim-cli/src/offload/manifest.ts",
@@ -37,9 +38,8 @@
     "packages/stim-cli/src/offload/react-native-artifact.ts",
     "packages/stim-cli/src/offload/swiftpm-artifact.ts",
     "packages/stim-cli/src/offload/toolchain.ts",
-    "packages/stim-cli/src/offload/worker.ts",
     "packages/stim-cli/src/optimizations.ts",
     "packages/stim-cli/src/stimd/metro/project-node.ts"
   ],
-  "digest": "6cd589303f86ee08bd6c256b2a1091cd3be6948fc10a8b15fdac0fb2291d05b3"
+  "digest": "abed0ac85535d5255c29123acd52293d413178599fe6d41af5f51bd7b24c41f2"
 }

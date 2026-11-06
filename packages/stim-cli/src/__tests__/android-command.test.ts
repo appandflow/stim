@@ -7573,7 +7573,6 @@ describe('strict remote machine selection', () => {
           { code: 'jdk', reason: 'JDK 17 there, JDK 21 here' },
           { code: 'android-sdk', reason: 'Android SDK missing there' },
           { code: 'ndk', reason: 'NDK 27.1 missing there' },
-          { code: 'stim-build', reason: 'incompatible Stim build there' },
           { code: 'busy', reason: 'busy (load)' },
         ],
       };
@@ -7587,12 +7586,10 @@ describe('strict remote machine selection', () => {
     const result = await harness({ buildMachine: 'mini', planPrebuildFor: () => 'generate', prebuild }).run();
     expect(result.error).toMatchObject({
       code: 'STIM_OFFLOAD_REFUSED',
-      message:
-        'mini: JDK 17 there, JDK 21 here; Android SDK missing there; NDK 27.1 missing there; incompatible Stim build there',
+      message: 'mini: JDK 17 there, JDK 21 here; Android SDK missing there; NDK 27.1 missing there',
     });
     expect(result.error?.remedy).toContain('JAVA_HOME');
     expect(result.error?.remedy).toContain('sdkmanager');
-    expect(result.error?.remedy).toContain('stim service update');
     expect(prebuild).not.toHaveBeenCalled();
     expect(existsSync(marker)).toBe(false);
     expect(choose).not.toHaveBeenCalled();

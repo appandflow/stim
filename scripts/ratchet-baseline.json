@@ -100,23 +100,23 @@
   },
   "packages/server": {
     "src": {
-      "as": 304,
-      "nonNull": 115,
+      "as": 296,
+      "nonNull": 113,
       "refusalRemedy": 14
     },
     "test": {
-      "as": 286,
-      "nonNull": 400
+      "as": 289,
+      "nonNull": 407
     }
   },
   "packages/stim-cli": {
     "src": {
-      "as": 823,
-      "nonNull": 335,
+      "as": 845,
+      "nonNull": 343,
       "refusalRemedy": 17
     },
     "test": {
-      "as": 439,
+      "as": 441,
       "nonNull": 611
     }
   },

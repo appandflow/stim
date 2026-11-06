@@ -258,16 +258,17 @@ last measured, about every 6 hours, and the local `/health` answer carries it as
 
 ### Stim versions
 
-Each Stim release carries a build compatibility version. Two machines build for
-each other when the versions are equal, whatever their Stim releases or builds.
-The version changes only in a release that changes what a worker builds, how it
-builds it, or the build and artifact messages, so a release on one machine and a
-checkout build on the other usually still offload. Completed artifacts on a
-worker are reused under the same rule. When the versions differ, doctor reports `stim-build` and builds stay on this
-machine until the worker runs a compatible release; see [Tools](#tools).
-Hosted simulators and emulators do not compare versions. Every connection
-between two machines also compares one wire integer, `peer`: a machine whose
-Stim is older than this one's is refused with `peer-too-old` and the
+An offloaded build runs this machine's exact Stim build on the worker, so the
+two machines can run different Stim releases. The worker installs a published
+release from npm the first time it sees it, which takes a few seconds; until
+then it answers that it is installing and `auto` builds here. A build from a
+checkout or from `stim engine use <path>` is sent to the worker, which takes it
+only while its `server.acceptClientBuilds` is `true`; otherwise it refuses
+with `This machine takes only published Stim builds.` and the setting to
+change. Completed artifacts on a worker are reused when both Stim builds carry
+the same build compatibility version. Every connection between two machines
+also compares one wire integer, `peer`: a worker whose Stim is older than this
+one's is refused with `peer-too-old`, `stim remote update <mac>`, and the
 `npm i -g stim@<version> && stim service install` to run there.
 
 Stim Desktop's **Install This Mac's Build** only moves a worker forward. It reads
