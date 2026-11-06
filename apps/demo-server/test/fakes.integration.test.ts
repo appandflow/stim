@@ -26,13 +26,13 @@ it('demo hello, RPCs and subscription events pass the phone receive validators',
     { id: 'abcd1234', name: 'Phone' },
   );
   onTestFinished(() => connection.close());
-  const workspace = fixtures.status.environments[0]!.path;
+  const workspace = fixtures.status.environments[0]?.path ?? '';
   let nextId = 1;
   const request = async (method: Method, params: Record<string, unknown> = {}): Promise<Message> => {
     const id = nextId++;
     await connection.receive(JSON.stringify({ id, method, params }));
     await vi.waitFor(() => expect(received.some((message) => message.id === id)).toBe(true));
-    const message = received.find((candidate) => candidate.id === id)!;
+    const message = received.find((candidate) => candidate.id === id) ?? { id };
     expect({ method, ok: message.error ? isRpcError(message.error) : isRpcResult(method, message.result) }).toEqual({
       method,
       ok: true,
@@ -68,13 +68,14 @@ it('demo hello, RPCs and subscription events pass the phone receive validators',
     });
   }
   expect((await request('stats.get')).error).toBeDefined();
-  for (const method of [
+  const subscribeMethods: Method[] = [
     'workspaces.subscribe',
     'workspace.subscribe',
     'machine.subscribe',
     'logs.subscribe',
     'frames.subscribe',
-  ] as const) {
+  ];
+  for (const method of subscribeMethods) {
     const reply = await request(method, { workspace, platform: 'ios' });
     const subscription = reply.result?.subscription;
     await vi.waitFor(() => expect(received.some((message) => message.subscription === subscription)).toBe(true), {

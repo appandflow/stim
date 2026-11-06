@@ -105,17 +105,15 @@ async function open(options: Partial<InitiateOptions>) {
     closed = { code, reason: reason.toString() };
   });
   let nextId = 1;
-  const request = async (method: string, params: Record<string, unknown> = {}): Promise<Message> => {
+  const request = async (method: Method, params: Record<string, unknown> = {}): Promise<Message> => {
     const id = nextId++;
     socket.send(JSON.stringify({ id, method, params }));
     await vi.waitFor(() => expect(received.some((message) => message.id === id)).toBe(true), { timeout: 10_000 });
-    const reply = received.find((message) => message.id === id)!;
-    expect({ method, ok: reply.error ? isRpcError(reply.error) : isRpcResult(method as Method, reply.result) }).toEqual(
-      {
-        method,
-        ok: true,
-      },
-    );
+    const reply = received.find((message) => message.id === id) ?? { id };
+    expect({ method, ok: reply.error ? isRpcError(reply.error) : isRpcResult(method, reply.result) }).toEqual({
+      method,
+      ok: true,
+    });
     return reply;
   };
   return { socket, received, request, closed: () => closed };
