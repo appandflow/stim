@@ -6,6 +6,7 @@ import { configSettingRefusal, envSettingRefusal } from '../workspace/settings-p
 import { compilerCacheFallbackMessage, type CompilerCacheFallback, type Optimizations } from '../optimizations.ts';
 import {
   mergeSettingsLayers,
+  removedSettingFindings,
   PATH_SETTINGS,
   readCommittedSettings,
   SETTINGS_WITH_RESOLVE_TIME_FALLBACK,
@@ -15,8 +16,7 @@ import {
   unknownSettingKeys,
   type SettingsLayer,
 } from '../workspace/settings.ts';
-import { removedEnvironment, replacementAdvice, settingDefinition, type SettingsObject } from '@stim-cli/core/state';
-import { leftoverOffSettings } from '../workspace/leftover-off.ts';
+import { REMOVED_SETTINGS, replacementAdvice, settingDefinition, type SettingsObject } from '@stim-cli/core/state';
 
 export interface MachineSettings {
   settings: SettingsObject;
@@ -128,7 +128,7 @@ export function checkMachineSettings({
     findings.push(compilerCacheFinding({ fallback: reported, optimizations, file: fallbackEntry?.file ?? null }));
   }
 
-  const leftovers = leftoverOffSettings(layers, machineConfig, env);
+  const leftovers = removedSettingFindings(layers, machineConfig, env);
   for (const leftover of leftovers)
     findings.push({
       level: 'cost',
@@ -188,7 +188,9 @@ export function checkMachineSettings({
       fix: buildEnvRefusal.remedy,
     });
 
-  for (const { key, env: name, replaced } of removedEnvironment(env)) {
+  for (const [key, replaced] of REMOVED_SETTINGS) {
+    const name = replaced.env;
+    if (!name || !env[name]?.trim()) continue;
     const raw = (env[name] ?? '').trim();
     const advice = replacementAdvice(key, /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : raw);
     const instead = replaced.key ? settingDefinition(replaced.key)?.env : undefined;

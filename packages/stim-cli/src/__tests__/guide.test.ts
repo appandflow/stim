@@ -22,7 +22,7 @@ import {
   CAPACITY_REFUSAL_MAX_AGE_MS,
   PLACEMENT_DECISIONS,
   PLACEMENT_WORDS,
-  REPLACED_SETTINGS,
+  REMOVED_SETTINGS,
   MAX_REVERSE_PORTS,
 } from '@stim-cli/core/state';
 import assert from 'node:assert';
@@ -522,19 +522,23 @@ test('the placement words are documented for every workload, and a removed setti
     expect(PLACEMENT_WORDS.filter((word) => !body.includes(word))).toEqual([]);
   }
   for (const body of [renderTopic('macos'), renderSection('lifecycle', 'hosted-ios')]) {
-    for (const key of Object.keys(REPLACED_SETTINGS)) expect(body).not.toContain(key);
+    for (const key of [...REMOVED_SETTINGS].filter(([, entry]) => !entry.kept).map(([name]) => name))
+      expect(body).not.toContain(key);
   }
   const settings = renderTopic('settings');
   assert(settings);
   expect(settings).toContain(`stim settings set remote.machines '["fast-mini","slow-mini"]'`);
-  for (const [key, replaced] of Object.entries(REPLACED_SETTINGS)) {
+  for (const [key, replaced] of [...REMOVED_SETTINGS].filter(([, entry]) => !entry.kept)) {
     for (const name of [`\`${key}\``, replaced.env ?? key, `stim settings unset ${key}`])
       expect(settings).toContain(name);
   }
 });
 
 test('only the settings topic names a removed setting, and every section of every other topic leaves them out', () => {
-  const removed = Object.keys(REPLACED_SETTINGS).filter((key) => key !== 'remote.buildMode');
+  const removed = [...REMOVED_SETTINGS]
+    .filter(([, entry]) => !entry.kept)
+    .map(([key]) => key)
+    .filter((key) => key !== 'remote.buildMode');
   for (const [name, topic] of Object.entries(TOPICS)) {
     if (name === 'settings') continue;
     const bodies = [

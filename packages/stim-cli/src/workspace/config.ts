@@ -9,6 +9,7 @@ import { isAbsolute } from 'path';
 import { configDir, ensurePrivateDir } from '@stim-cli/core';
 import {
   getConfigPath,
+  setSettingValueAt,
   loadConfig,
   withConfigLock,
   withConfigLockAsync,
@@ -336,11 +337,7 @@ function applyConfigSetting(target: ConfigSettingsTarget, dottedKey: string, val
   const cfg = value === undefined ? loadConfig() : ensureConfig();
   const settings = cfg ? targetSettings(cfg, target, value !== undefined) : null;
   if (!cfg || !settings) return false;
-  if (value === undefined) {
-    if (!deleteNested(settings, dottedKey)) return false;
-  } else {
-    writeNested(settings, dottedKey, value);
-  }
+  if (!setSettingValueAt(settings, dottedKey, value)) return false;
   if (target.scope === 'machine') {
     if (dottedKey === 'remote.buildPoolDisabled' || dottedKey === 'remote.machines')
       validateAutomaticPool('build', cfg);
@@ -348,52 +345,6 @@ function applyConfigSetting(target: ConfigSettingsTarget, dottedKey: string, val
       validateAutomaticPool('device', cfg, (machine) => !cannotHost(status, machine));
   }
   saveConfig(cfg);
-  return true;
-}
-
-function writeNested(obj: Record<string, unknown>, dottedKey: string, value: unknown): void {
-  const keys = dottedKey.split('.');
-  let cur = obj;
-  for (let i = 0; i < keys.length - 1; i++) {
-    const k = keys[i];
-    if (k === undefined) continue;
-    const next = cur[k];
-    if (typeof next !== 'object' || next === null) {
-      cur[k] = {};
-    }
-    cur = cur[k] as Record<string, unknown>;
-  }
-  const leaf = keys[keys.length - 1];
-  if (leaf !== undefined) cur[leaf] = value;
-}
-
-function deleteNested(obj: Record<string, unknown>, dottedKey: string): boolean {
-  const keys = dottedKey.split('.');
-  const chain: Record<string, unknown>[] = [obj];
-  let cur = obj;
-  for (let i = 0; i < keys.length - 1; i++) {
-    const k = keys[i];
-    if (k === undefined) return false;
-    const next = cur[k];
-    if (next == null || typeof next !== 'object') return false;
-    cur = next as Record<string, unknown>;
-    chain.push(cur);
-  }
-  const leaf = keys[keys.length - 1];
-  if (leaf === undefined) return false;
-  if (!(leaf in cur)) return false;
-  delete cur[leaf];
-  for (let i = chain.length - 2; i >= 0; i--) {
-    const parent = chain[i];
-    const key = keys[i];
-    const child = chain[i + 1];
-    if (parent === undefined || key === undefined || child === undefined) break;
-    if (Object.keys(child).length === 0) {
-      delete parent[key];
-    } else {
-      break;
-    }
-  }
   return true;
 }
 

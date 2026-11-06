@@ -4,7 +4,6 @@ import { configDir } from '@stim-cli/core';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { getConfigPath, withConfigLockAsync, writeConfigSettingAsync, type ConfigSettingsTarget } from './config.ts';
 import { NO_PROJECT_REFUSAL } from './project.ts';
-import type { SettingsObject } from './settings.ts';
 import {
   committedDirectory,
   layerFile,
@@ -17,10 +16,10 @@ import {
 } from './settings-payload.ts';
 import {
   coerceSettingText,
+  setSettingValueAt,
   isJsonObject,
   isSensitiveReference,
-  REPLACED_SETTINGS,
-  removedSettingWords,
+  REMOVED_SETTINGS,
   replacementAdvice,
   SETTING_SCOPES,
   settingDefinition,
@@ -35,14 +34,14 @@ import { deleteTurnedOffRecordings, recordingLayers } from './recordings.ts';
 export function requireSetting(key: string, raw?: string, scope?: string): SettingDefinition {
   const setting = settingDefinition(key);
   if (setting) return setting;
-  const replaced = Object.hasOwn(REPLACED_SETTINGS, key) ? REPLACED_SETTINGS[key] : undefined;
+  const replaced = REMOVED_SETTINGS.get(key);
   if (replaced) {
     const layer = (SETTING_SCOPES as readonly string[]).includes(scope ?? '') ? (scope as SettingScope) : undefined;
     const command = replacementAdvice(key, raw, layer)?.command;
     const unset = `run \`stim settings unset ${key}\` to remove the leftover key`;
     throw new SettingsRefusal(
       'STIM_BAD_ARG',
-      `${removedSettingWords(JSON.stringify(key), replaced)}.`,
+      `${JSON.stringify(key)} ${replaced.key ? `was replaced by ${replaced.replacement}` : `is no longer read by Stim: ${replaced.replacement}`}.`,
       replaced.key
         ? `${command ? `Run \`${command}\`` : `Set ${replaced.key} (\`stim guide settings\` lists its values)`}, then ${unset}.`
         : `${unset.charAt(0).toUpperCase()}${unset.slice(1)}.`,
@@ -143,28 +142,7 @@ function writeCommitted(file: string, key: string, value: unknown, signal?: Abor
         `Repair ${file}, then run the command again.`,
       );
     }
-    const parts = key.split('.');
-    const chain: SettingsObject[] = [parsed];
-    for (const part of parts.slice(0, -1)) {
-      const node = chain.at(-1)!;
-      if (!isJsonObject(node[part])) {
-        if (value === undefined) return false;
-        node[part] = {};
-      }
-      chain.push(node[part] as SettingsObject);
-    }
-    const leaf = parts.at(-1)!;
-    const parent = chain.at(-1)!;
-    if (value === undefined) {
-      if (!(leaf in parent)) return false;
-      delete parent[leaf];
-      for (let index = chain.length - 1; index > 0; index--) {
-        if (Object.keys(chain[index]!).length > 0) break;
-        delete chain[index - 1]![parts[index - 1]!];
-      }
-    } else {
-      parent[leaf] = value;
-    }
+    if (!setSettingValueAt(parsed, key, value)) return false;
     const indent = /\n([ \t]+)"/.exec(text)?.[1] ?? 2;
     const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     writeFileSync(tmp, `${JSON.stringify(parsed, null, indent)}\n`);
@@ -287,5 +265,5 @@ export async function unsetReplacedSetting(
         : target && (await writeConfigSettingAsync(target, key, undefined, signal));
     if (changed) removed.push({ scope: entry.scope, file: entry.file });
   }
-  return { key, replacedBy: REPLACED_SETTINGS[key]?.key ?? null, removed };
+  return { key, replacedBy: REMOVED_SETTINGS.get(key)?.key ?? null, removed };
 }

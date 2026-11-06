@@ -4,7 +4,7 @@ import { configDir } from '../index.ts';
 import { loadConfig } from './config.ts';
 import { isJsonObject } from './json-file.ts';
 import { isTcpPort, MAX_REVERSE_PORTS } from './reverse-ports.ts';
-import { coerceSettingText, settingDefinition, settingValueError } from './settings-registry.ts';
+import { machineSettingValue } from './settings-registry.ts';
 import {
   hostedMacosAppSlot,
   parseHostedMacosChoice,
@@ -154,38 +154,17 @@ export interface HostedDeviceSession extends HostedDeviceRequest {
   reverses?: Record<string, number>;
 }
 
-function machineSetting(key: string, env: NodeJS.ProcessEnv): { value: unknown } | { invalid: string } {
-  const setting = settingDefinition(key);
-  if (!setting?.env) return { invalid: `${key} is not in the settings registry` };
-  const raw = env[setting.env];
-  const fromEnv = raw !== undefined && raw !== '';
-  let value: unknown;
-  if (fromEnv) value = coerceSettingText(setting, raw);
-  else if (env.STIM_HOME && setting.scopedHomeValue !== undefined) value = setting.scopedHomeValue;
-  else if (env.CI && setting.ciValue !== undefined) value = setting.ciValue;
-  else {
-    const [group = '', name = ''] = key.split('.');
-    const container = loadConfig()?.[group];
-    if (container !== undefined && !isJsonObject(container))
-      return { invalid: `${group} in the config is not an object` };
-    const configured = container?.[name];
-    value = configured === undefined ? setting.default : configured;
-  }
-  const error = settingValueError(setting, value);
-  return error ? { invalid: `${fromEnv ? setting.env : key} is invalid: expected ${error}` } : { value };
-}
-
 /**
  * The window after which stim-server stops a hosted session whose client is gone: the machine-scope
  * `maintenance.idleStopHours` of the home it runs in, 0 unless `daemon.mode` is on. An invalid value is reported so
  * the caller stops nothing.
  */
 export function hostedIdleStopHours(env: NodeJS.ProcessEnv): { hours: number } | { invalid: string } {
-  const mode = machineSetting('daemon.mode', env);
-  if ('invalid' in mode) return mode;
+  const mode = machineSettingValue('daemon.mode', { config: loadConfig(), env });
+  if (mode.error) return { invalid: mode.error };
   if (mode.value !== 'on') return { hours: 0 };
-  const hours = machineSetting('maintenance.idleStopHours', env);
-  if ('invalid' in hours) return hours;
+  const hours = machineSettingValue('maintenance.idleStopHours', { config: loadConfig(), env });
+  if (hours.error) return { invalid: hours.error };
   return typeof hours.value === 'number'
     ? { hours: hours.value }
     : { invalid: 'maintenance.idleStopHours is not a number' };

@@ -8,7 +8,7 @@ import {
   SettingsRefusal,
 } from '../workspace/settings-payload.ts';
 import {
-  REPLACED_SETTINGS,
+  REMOVED_SETTINGS,
   replacementAdvice,
   SETTING_SCOPES,
   type SettingEntry,
@@ -149,7 +149,7 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
     .option('--json', 'print the setting after removal as JSON')
     .action((key: string, opts: SubcommandOptions, command: Command) =>
       run(wantsJson(opts, command), io, async () => {
-        if (Object.hasOwn(REPLACED_SETTINGS, key)) {
+        if (REMOVED_SETTINGS.has(key)) {
           const removal = await unsetReplacedSetting(
             { key, scope: opts.scope },
             { cwd: process.cwd(), env, note: io.note },
