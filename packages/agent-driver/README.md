@@ -10,6 +10,7 @@ dependencies, never from a project.
 
 ## Writing a driver
 
+Declare `"stimPlugin": { "kinds": { "agent-driver": 1 } }` in package.json.
 A driver package exports:
 
 ```js
@@ -23,7 +24,7 @@ export const actions = { read };
 export async function recover({ env, stateDir, claimRoot }) {}
 ```
 
-`createAgentDriver` returns a `HostedAgentDriver` named `id`. stim-server
+`createAgentDriver` returns a `HostedAgentDriver` named `id`, directly or through a promise. stim-server
 authenticates the client, its tailnet node and the session before it calls
 `forward`; the driver confines every forwarded request to the one app or
 device it issued the grant for, and refuses with `AgentDriverUnavailable`
@@ -44,16 +45,18 @@ run left behind for a stim-server process that is gone. It rejects naming what
 it could not resolve; stim-server logs that and continues.
 
 `loadAgentDriverModule` and `loadAgentDriver` never throw. A failed or slow
-import, a module with another `apiVersion` or `id`, or a factory that throws
+import, a manifest with another kind integer, a module with another `id`, or a factory that throws
 resolves to `{ unavailable }` with a one-line reason.
 
 ## Contract tests
 
 ```js
-import { runAgentDriverContract } from '@stim-cli/agent-driver';
+import { runAgentDriverContract } from 'stim/plugin';
 
 const results = await runAgentDriverContract({
   id: 'my-tool',
+  manifest: () =>
+    import('my-tool-driver/package.json', { with: { type: 'json' } }).then(({ default: manifest }) => manifest),
   load: () => import('my-tool-driver'),
   unavailableInput: { env: { PATH: '' }, stateDir, claimRoot },
   app: { client: 'client', session, bundleId: 'dev.example.app', pid: 4242 },

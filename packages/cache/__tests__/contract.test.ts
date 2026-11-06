@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { runCacheProviderContract } from '../contract.ts';
@@ -15,15 +15,8 @@ afterEach(() => {
 });
 
 function memoryProvider(): CacheProvider {
-  const transforms = new Map<string, unknown>();
   const builds = new Map<string, string>();
   return {
-    metro: {
-      get: ({ key }) => transforms.get(key.toString('hex')) ?? null,
-      set: ({ key, value }) => {
-        transforms.set(key.toString('hex'), value);
-      },
-    },
     builds: {
       resolve: ({ key, destinationDir }) => {
         const source = builds.get(key);
@@ -53,63 +46,4 @@ test('the contract covers an iOS artifact directory', async () => {
   });
 
   expect(results.filter((result) => !result.passed)).toEqual([]);
-});
-
-test('a capability that ignores its abort signal fails the contract', async () => {
-  const pending = runCacheProviderContract({
-    provider: {
-      metro: { get: () => new Promise(() => {}), set: () => {} },
-    },
-    projectRoot: workDir,
-    workDir,
-    checkTimeoutMs: 400,
-    abortSettleMs: 100,
-  });
-  await vi.runAllTimersAsync();
-  const results = await pending;
-
-  const aborting = results.find((result) => result.name === 'metro get settles when its signal aborts');
-  expect(aborting?.passed).toBe(false);
-  expect(aborting?.error).toMatch(/did not settle within \d+ms/);
-}, 30_000);
-
-test('the runner loads a module reference the way Stim does', async () => {
-  writeFileSync(
-    join(workDir, 'package.json'),
-    JSON.stringify({ name: 'contract-fixture', version: '1.0.0', type: 'module' }),
-  );
-  writeFileSync(
-    join(workDir, 'cache.mjs'),
-    `export const apiVersion = 1;
-export function createCacheProvider() {
-  const transforms = new Map();
-  return {
-    metro: {
-      get: ({ key }) => transforms.get(key.toString('hex')) ?? null,
-      set: ({ key, value }) => {
-        transforms.set(key.toString('hex'), value);
-      },
-    },
-  };
-}
-`,
-  );
-
-  const passing = await runCacheProviderContract({
-    providerModule: './cache.mjs',
-    projectRoot: workDir,
-    workDir,
-  });
-  expect(passing.filter((result) => !result.passed)).toEqual([]);
-  expect(new Set(passing.map((result) => result.capability))).toEqual(new Set(['metro']));
-
-  writeFileSync(join(workDir, 'old.mjs'), 'export const apiVersion = 2;\n');
-  const rejected = await runCacheProviderContract({
-    providerModule: './old.mjs',
-    projectRoot: workDir,
-    workDir,
-  });
-  expect(rejected.length).toBe(1);
-  expect(rejected[0]).toMatchObject({ capability: 'module', passed: false });
-  expect(rejected[0]?.error).toMatch(/apiVersion/);
 });

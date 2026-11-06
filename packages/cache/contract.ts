@@ -5,13 +5,13 @@ import { loadCacheProvider, type CacheProvider } from './provider.ts';
 
 export interface CacheContractCheck {
   name: string;
-  capability: 'metro' | 'builds';
+  capability: 'builds';
   run(): Promise<void>;
 }
 
 export interface CacheContractResult {
   name: string;
-  capability: 'metro' | 'builds' | 'module';
+  capability: 'builds' | 'module';
   passed: boolean;
   error?: string;
 }
@@ -20,7 +20,6 @@ export interface CacheContractOptions {
   provider: CacheProvider;
   projectRoot: string;
   workDir: string;
-  cacheName?: string;
   platform?: 'ios' | 'android';
   checkTimeoutMs?: number;
   abortSettleMs?: number;
@@ -28,7 +27,7 @@ export interface CacheContractOptions {
 
 /**
  * Loads the provider the way Stim does, from a module reference, so a provider
- * author exercises `apiVersion` and factory validation as well as the
+ * author exercises manifest and factory validation as well as the
  * capability checks.
  */
 export interface CacheContractModuleOptions extends Omit<CacheContractOptions, 'provider'> {
@@ -72,82 +71,6 @@ function neverAborted(): AbortSignal {
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
-}
-
-function metroChecks({
-  provider,
-  projectRoot,
-  cacheName = 'app',
-  abortSettleMs = ABORT_SETTLE_MS,
-}: Required<Pick<CacheContractOptions, 'provider' | 'projectRoot'>> & {
-  cacheName?: string;
-  abortSettleMs?: number;
-}): CacheContractCheck[] {
-  const metro = provider.metro;
-  if (!metro) return [];
-  const context = { projectRoot, cacheName, signal: neverAborted() };
-
-  return [
-    {
-      name: 'metro get returns null or undefined for an unknown key',
-      capability: 'metro',
-      async run() {
-        const value = await metro.get({ ...context, key: randomBytes(32) });
-        assert(value === null || value === undefined, `expected a miss, received ${JSON.stringify(value)}`);
-      },
-    },
-    {
-      name: 'metro set then get returns the stored buffer',
-      capability: 'metro',
-      async run() {
-        const key = randomBytes(32);
-        const value = randomBytes(64);
-        await metro.set({ ...context, key, value });
-        const stored = await metro.get({ ...context, key });
-        assert(Buffer.isBuffer(stored), `expected a Buffer, received ${typeof stored}`);
-        assert(Buffer.compare(stored as Buffer, value) === 0, 'the stored buffer does not match the written buffer');
-      },
-    },
-    {
-      name: 'metro set then get returns the stored object',
-      capability: 'metro',
-      async run() {
-        const key = randomBytes(32);
-        const value = { code: `contract-${randomUUID()}`, map: [1, 2, 3] };
-        await metro.set({ ...context, key, value });
-        const stored = await metro.get({ ...context, key });
-        assert(
-          JSON.stringify(stored) === JSON.stringify(value),
-          `expected ${JSON.stringify(value)}, received ${JSON.stringify(stored)}`,
-        );
-      },
-    },
-    {
-      name: 'metro get settles when its signal aborts',
-      capability: 'metro',
-      async run() {
-        await settlesAfterAbort(
-          (signal) => metro.get({ projectRoot, cacheName, key: randomBytes(32), signal }),
-          abortSettleMs,
-        );
-      },
-    },
-    {
-      name: 'metro keys do not collide',
-      capability: 'metro',
-      async run() {
-        const first = randomBytes(32);
-        const second = randomBytes(32);
-        await metro.set({ ...context, key: first, value: Buffer.from('first') });
-        await metro.set({ ...context, key: second, value: Buffer.from('second') });
-        const stored = await metro.get({ ...context, key: first });
-        assert(
-          Buffer.isBuffer(stored) && stored.toString() === 'first',
-          'the second write overwrote the value of an unrelated key',
-        );
-      },
-    },
-  ];
 }
 
 function buildChecks({
@@ -354,12 +277,6 @@ async function loadContractProvider(
 
 export function cacheProviderContractChecks(options: CacheContractOptions): CacheContractCheck[] {
   return [
-    ...metroChecks({
-      provider: options.provider,
-      projectRoot: options.projectRoot,
-      ...(options.cacheName ? { cacheName: options.cacheName } : {}),
-      ...(options.abortSettleMs ? { abortSettleMs: options.abortSettleMs } : {}),
-    }),
     ...buildChecks({
       provider: options.provider,
       projectRoot: options.projectRoot,

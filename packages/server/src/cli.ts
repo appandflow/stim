@@ -1,3 +1,4 @@
+import tailscaleManifest from '@stim-cli/transport-tailscale/package.json' with { type: 'json' };
 import { realpathSync, statSync } from 'node:fs';
 import { hostname, networkInterfaces } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -136,6 +137,7 @@ export async function serve(
 
   const loaded = await loadTransport({
     reference: '@stim-cli/transport-tailscale',
+    manifest: () => tailscaleManifest,
     load: () => import('@stim-cli/transport-tailscale'),
     input: { env, options: {} },
   });
