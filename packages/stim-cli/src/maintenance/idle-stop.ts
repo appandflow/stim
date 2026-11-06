@@ -27,7 +27,6 @@ import {
   listAdbDevices,
   listAdbDevicesAsync,
 } from '../devices/android.ts';
-import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { leaseIsExpired, listLeaseFiles } from '../engine/device-lease.ts';
 import { liveShareKeepReason } from '../local-server.ts';
@@ -157,6 +156,7 @@ async function hostedKeepReasons(facts: ReturnType<typeof hostedFacts>): Promise
   const keep = [...facts.unreadable];
   if (keep.length) return keep;
   for (const { label, machine, session, platform } of facts.placements) {
+    const { probeHostedSession } = await import('../device-host/hosted-client.ts');
     const probe = await probeHostedSession({ machine, session, platform }, { ttlMs: 0 });
     if (probe.state === 'ready' || probe.state === 'stopped') continue;
     const why =

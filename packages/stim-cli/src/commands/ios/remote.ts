@@ -5,7 +5,6 @@ import { runCancellationSignal } from '../../engine/native-run.ts';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { resolveSimulatorAppFlag } from './support.ts';
 import { devicePlacementRecord, type PlacementRecord } from '../../placement-log.ts';
-import { devicePlacementLine } from '../../device-host/auto-placement.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import chalk from 'chalk';
 import { phaseLine } from '../../command-output.ts';
@@ -170,6 +169,7 @@ export async function selectIosPlacement(
       machine,
       reason: 'selected explicitly',
     };
+    const { devicePlacementLine } = await import('../../device-host/auto-placement.ts');
     args.phase('placement:', devicePlacementLine(placement, []));
     args.log?.(
       devicePlacementRecord({
@@ -230,6 +230,7 @@ export async function selectIosPlacement(
           }
         : {}),
     });
+    const { devicePlacementLine } = await import('../../device-host/auto-placement.ts');
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));
     log?.(
       devicePlacementRecord({
