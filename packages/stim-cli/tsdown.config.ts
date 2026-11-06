@@ -37,6 +37,8 @@ export default defineConfig({
     'doctor-fingerprint': 'bin/doctor-fingerprint.ts',
     'fingerprint-precompute': 'bin/fingerprint-precompute.ts',
     'windows-report': 'bin/windows-report.ts',
+    'engine-select': 'bin/engine-select.ts',
+    '__self-test': 'bin/self-test.ts',
   },
   format: 'esm',
   dts: true,

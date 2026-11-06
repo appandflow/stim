@@ -1350,6 +1350,11 @@ export default function gcCommand(program: Command): void {
     )
     .option('--json', 'print the report as JSON on stdout; every other line goes to stderr')
     .action(async (opts: RunGcOptions) => {
+      if (opts.delete) {
+        const { collectInstalledStore } = await import('../engine-store/gc.ts');
+        const { engineRoot } = await import('../engine-store/root.ts');
+        await collectInstalledStore(engineRoot(process.env));
+      }
       const { interrupted } = await runProcessOperation(process.cwd(), (operation) =>
         withDrainingCancellation(operation, operation.signal, () => runGc(opts, { operation })),
       );

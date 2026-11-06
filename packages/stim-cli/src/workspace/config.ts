@@ -55,7 +55,7 @@ export function getConfigDir(): string {
 }
 
 export function refuseRelativeStimPaths(env: NodeJS.ProcessEnv = process.env): void {
-  for (const name of ['STIM_HOME', 'STIM_BUILD_CACHE', 'STIM_METRO_CACHE']) {
+  for (const name of ['STIM_HOME', 'STIM_BUILD_CACHE', 'STIM_METRO_CACHE', 'STIM_ENGINE_ROOT']) {
     const value = env[name];
     if (!value || isAbsolute(value)) continue;
     const error = new Error(
