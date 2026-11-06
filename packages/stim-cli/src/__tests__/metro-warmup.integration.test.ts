@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { warmMetro } from '../engine/metro-warmup.ts';
-import { bundleResponseMiddleware } from '../../shim/bundle-response.cjs';
+import { bundleResponseMiddleware } from '../injected/bundle-response.cjs';
 
 let server: Server;
 afterEach(async () => {

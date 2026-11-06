@@ -37,6 +37,11 @@
       "module-sync": "./dist/environment.mjs",
       "default": "./dist/environment.mjs"
     },
+    "./release-install": {
+      "types": "./dist/release-install.d.mts",
+      "module-sync": "./dist/release-install.mjs",
+      "default": "./dist/release-install.mjs"
+    },
     "./service-plist": {
       "types": "./dist/service-plist.d.mts",
       "module-sync": "./dist/service-plist.mjs",

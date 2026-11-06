@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { defineConfig } from 'tsdown';
 import { SETTINGS_SCHEMA_FILE, settingsJsonSchema } from '@stim-cli/core/state';
@@ -36,6 +36,8 @@ export default defineConfig({
     'doctor-fingerprint': 'bin/doctor-fingerprint.ts',
     'fingerprint-precompute': 'bin/fingerprint-precompute.ts',
     'windows-report': 'bin/windows-report.ts',
+    'engine-select': 'bin/engine-select.ts',
+    '__self-test': 'bin/self-test.ts',
   },
   format: 'esm',
   dts: true,
@@ -46,6 +48,7 @@ export default defineConfig({
     '@stim-cli/ci/cli': resolve('../ci/src/cli.ts'),
     '@stim-cli/server/cli': resolve('../server/src/cli.ts'),
     '@stim-cli/server/environment': resolve('../server/src/environment.ts'),
+    '@stim-cli/server/release-install': resolve('../server/src/release-install.ts'),
     '@stim-cli/server/service-plist': resolve('../server/src/service-plist.ts'),
   },
   noExternal: [/^@stim-cli\//],
@@ -68,6 +71,9 @@ export default defineConfig({
   fixedExtension: true,
   hooks: {
     'build:done': () => {
+      mkdirSync('dist/injected', { recursive: true });
+      for (const name of readdirSync('src/injected').filter((entry) => /\.(cjs|d\.cts)$/.test(entry)))
+        copyFileSync(`src/injected/${name}`, `dist/injected/${name}`);
       writeFileSync(`dist/${SETTINGS_SCHEMA_FILE}`, `${JSON.stringify(settingsJsonSchema(), null, 2)}\n`);
       copyFileSync('helper/stim-footprint.swift', 'dist/stim-footprint.swift');
       copyFileSync('helper/stim-clonefile.c', 'dist/stim-clonefile.c');

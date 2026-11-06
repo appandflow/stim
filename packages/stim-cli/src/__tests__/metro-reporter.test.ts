@@ -1,14 +1,15 @@
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
+import { workspaceLogDir } from '@stim-cli/core';
 
-import { ndjsonReporter } from '../index.ts';
+import { ndjsonReporter } from '../injected/metro-reporter.cjs';
 
 function tempDir() {
   return fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), 'stim-reporter-')));
 }
 
-function records(dir, file) {
+function records(dir: string, file: string) {
   const text = fs.readFileSync(path.join(dir, file), 'utf-8');
   return text
     .split('\n')
@@ -16,7 +17,7 @@ function records(dir, file) {
     .map((line) => JSON.parse(line));
 }
 
-function withDir(fn) {
+function withDir(fn: (dir: string) => void) {
   const dir = tempDir();
   try {
     fn(dir);
@@ -132,17 +133,17 @@ test('unstable_server_log carries its own level', () => {
 test('unknown and malformed shapes never throw, and never write a corrupt line', () => {
   withDir((dir) => {
     const reporter = ndjsonReporter({ dir });
-    const circular = { self: null };
+    const circular: { self: unknown } = { self: null };
     circular.self = circular;
 
     expect(() => {
-      reporter.update();
-      reporter.update(null);
+      Reflect.apply(reporter.update, reporter, []);
+      Reflect.apply(reporter.update, reporter, [null]);
       reporter.update({});
       reporter.update({ type: 'client_log' });
       reporter.update({ type: 'client_log', level: 'log', data: circular });
       reporter.update({ type: 'bundling_error' });
-      reporter.update({ type: 42 });
+      Reflect.apply(reporter.update, reporter, [{ type: 42 }]);
     }).not.toThrow();
 
     for (const file of ['metro.ndjson', 'client.ndjson']) {
@@ -158,7 +159,7 @@ test('unknown and malformed shapes never throw, and never write a corrupt line',
   });
 });
 
-test.skipIf((Boolean(process.getuid) && process.getuid!() === 0) || process.platform === 'win32')(
+test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
   'an unwritable directory costs records, not the server (skipped on Windows: mode 500 does not take write access away from a directory)',
   () => {
     withDir((dir) => {
@@ -178,3 +179,57 @@ test.skipIf((Boolean(process.getuid) && process.getuid!() === 0) || process.plat
     });
   },
 );
+
+test('rotation replaces the previous generation and starts a fresh log at eight MiB', () => {
+  withDir((dir) => {
+    const file = path.join(dir, 'metro.ndjson');
+    fs.writeFileSync(`${file}.1`, 'older generation');
+    fs.writeFileSync(file, 'previous generation');
+    fs.truncateSync(file, 8 * 1024 * 1024);
+    const reporter = ndjsonReporter({ dir });
+    reporter.update({ type: 'unstable_server_log', level: 'info', data: ['new generation'] });
+    expect(fs.statSync(`${file}.1`).size).toBe(8 * 1024 * 1024);
+    expect(records(dir, 'metro.ndjson').map((record) => record.msg)).toEqual(['new generation']);
+    expect(reporter.drops).toBe(0);
+  });
+});
+
+test('a failed rotation preserves logging without counting a dropped record', () => {
+  withDir((dir) => {
+    const file = path.join(dir, 'metro.ndjson');
+    fs.writeFileSync(file, 'previous generation');
+    fs.truncateSync(file, 8 * 1024 * 1024);
+    fs.mkdirSync(`${file}.1`);
+    const reporter = ndjsonReporter({ dir });
+    reporter.update({ type: 'bundle_build_done' });
+    expect(fs.statSync(`${file}.1`).isDirectory()).toBe(true);
+    expect(fs.statSync(file).size).toBeGreaterThan(8 * 1024 * 1024);
+    expect(fs.readFileSync(file, 'utf8')).toContain('bundle build done');
+    expect(reporter.drops).toBe(0);
+  });
+});
+
+test.each(['absolute', 'relative', 'unset'])('the default log directory matches core with %s STIM_HOME', (mode) => {
+  withDir((home) => {
+    const projectRoot = path.join(home, 'Caf\u00e9 @ Scope');
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(projectRoot);
+    const warning = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    vi.stubEnv(
+      'STIM_HOME',
+      mode === 'absolute' ? path.join(home, 'custom') : mode === 'relative' ? 'relative' : undefined,
+    );
+    try {
+      const dir = workspaceLogDir(projectRoot);
+      const reporter = ndjsonReporter();
+      reporter.update({ type: 'bundle_build_done' });
+      expect(reporter.dir).toBe(dir);
+      expect(records(dir, 'metro.ndjson').map((record) => record.msg)).toEqual(['bundle build done']);
+    } finally {
+      cwd.mockRestore();
+      warning.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+});

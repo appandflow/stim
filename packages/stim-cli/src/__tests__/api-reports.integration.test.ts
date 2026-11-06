@@ -8,7 +8,6 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
-  rmSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs';
@@ -22,7 +21,7 @@ import { Command } from 'commander';
 import * as cliOperation from '../cli-operation.ts';
 import { recordGcResult, takeGcResults } from '../commands/gc/results.ts';
 import { getExecutor } from '../exec.ts';
-import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
+import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { collectGradleVersions } from '../commands/gc/gradle-versions.ts';
 import * as tailnet from '../offload/tailnet.ts';
@@ -1127,7 +1126,8 @@ test.each([
   });
   writeFileSync(file, pending);
   const lock = join(item.home, `${name}.lock`);
-  mkdirSync(lock);
+  const held = tryAcquireClaim({ root: `${lock}.claims`, mode: 'exclusive' }).acquired;
+  if (!held) throw new Error('Could not acquire fixture claim.');
   const controller = new AbortController();
   let ticked = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1160,14 +1160,14 @@ test.each([
     ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
     expect(ticked).toBe(true);
     expect(readFileSync(file, 'utf8')).toBe(pending);
-    expect(existsSync(lock)).toBe(true);
+    expect(readClaimSet(`${lock}.claims`).live).toHaveLength(1);
     expect(JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8')).projects).toBeUndefined();
   } finally {
     clearTimeout(timer);
     controller.abort();
     io.mockRestore();
     probe.mockRestore();
-    rmSync(lock, { recursive: true, force: true });
+    releaseClaim(held);
   }
 });
 

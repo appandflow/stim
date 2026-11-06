@@ -10,6 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { readClaimSet } from '../ownership-claim.ts';
 import { writeAvdProcessLock } from './_factories.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -266,7 +267,7 @@ test('detachment holds the config lock and deletion cannot remove a new AVD at t
   const directory = orphan();
   race.afterRename = (from) => {
     if (from !== directory) return;
-    expect(existsSync(join(process.env.STIM_HOME!, 'config.lock'))).toBe(true);
+    expect(readClaimSet(join(process.env.STIM_HOME!, 'config.lock.claims')).live).toHaveLength(1);
     const replacement = orphan();
     register('stim-orphan', replacement);
     upsertProject(home, { platforms: { android: { avdName: 'stim-orphan', owned: true } } });

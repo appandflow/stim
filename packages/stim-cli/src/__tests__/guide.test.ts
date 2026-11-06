@@ -382,15 +382,14 @@ test('emulator teardown signals only a verified process and names the refusal', 
   expect(body).toContain('so it sent no signal');
 });
 
-test('short lock recovery requires checking the holder before manual removal', () => {
+test('short lock recovery leaves a dead owner to the claim and names no directory to remove', () => {
   const body = renderSection('errors', 'STIM_LOCK_TIMEOUT');
   expect(body).toMatch(/never expire based on age/);
-  expect(body).toMatch(/if none is running, remove the named directory/);
-  expect(body).toMatch(/proven-dead owner is recovered automatically/);
+  expect(body).toMatch(/proven-dead owner\s+is recovered automatically/);
   expect(body).toContain('STIM_CLAIM_UNAVAILABLE');
   expect(body).toContain('<path>.claims');
-  expect(body).toMatch(/empty before marker publication/);
-  expect(body).toContain("rm -rf '<path>'");
+  expect(body).not.toContain('rm -rf');
+  expect(body).not.toMatch(/marker/);
 });
 
 test('the rendered guide carries the warm --refresh contract, not just its source', () => {
