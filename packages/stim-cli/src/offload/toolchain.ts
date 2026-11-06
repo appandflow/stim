@@ -361,13 +361,13 @@ function runtimeProblem(runtime: string, worker: WorkerToolchain, followsXcode: 
 export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain): OffloadProblem[] {
   const { local } = target;
   const out: OffloadProblem[] = [];
-  if (
-    !local.stimBuild ||
-    (worker.compat !== undefined ? worker.compat !== local.compat : worker.stimBuild !== local.stimBuild)
-  ) {
+  if (!local.stimBuild || worker.compat === undefined || worker.compat !== local.compat) {
     out.push({
       code: 'stim-build',
-      reason: `Stim build ${worker.stimBuild ?? 'unknown'} there, ${local.stimBuild ?? 'unknown'} here`,
+      reason:
+        worker.compat === undefined
+          ? 'The worker reports no build compatibility version; update the worker: npm i -g @stim-cli/server@latest && stim-server service update; update an old client: npm i -g stim@latest; Stim Desktop 0.2.5 or older: Stim > Check for Updates'
+          : `Stim build ${worker.stimBuild ?? 'unknown'} there, ${local.stimBuild ?? 'unknown'} here`,
     });
   }
   if (target.platform === 'android') return [...out, ...androidMismatches(target.local, target.requires, worker)];

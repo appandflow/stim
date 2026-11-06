@@ -869,10 +869,10 @@ async function probeMachine(
       ...(native === 'xcode' && identity.artifact && connection.supports('build-artifact-cache')
         ? { artifact: identity.artifact }
         : {}),
-      ...(identity.swiftpmArtifact && queriesPeerCache(connection, 'swiftpm-peer-cache')
+      ...(identity.swiftpmArtifact && connection.supports('swiftpm-peer-cache')
         ? { swiftpmArtifact: identity.swiftpmArtifact }
         : {}),
-      ...(identity.reactNativeArtifact && queriesPeerCache(connection, 'react-native-peer-cache')
+      ...(identity.reactNativeArtifact && connection.supports('react-native-peer-cache')
         ? { reactNativeArtifact: identity.reactNativeArtifact }
         : {}),
       ...(native === 'gradle' && identity.gradleArtifact && queriesGradlePeerCache(connection, identity.gradleArtifact)
@@ -901,8 +901,8 @@ async function probeMachine(
     credential,
     connection,
     offer:
-      (identity.swiftpmArtifact && !queriesPeerCache(connection, 'swiftpm-peer-cache')) ||
-      (identity.reactNativeArtifact && !queriesPeerCache(connection, 'react-native-peer-cache')) ||
+      (identity.swiftpmArtifact && !connection.supports('swiftpm-peer-cache')) ||
+      (identity.reactNativeArtifact && !connection.supports('react-native-peer-cache')) ||
       (native === 'gradle' &&
         (!identity.gradleArtifact || !queriesGradlePeerCache(connection, identity.gradleArtifact)))
         ? { ...offer, artifact: null }
@@ -1103,10 +1103,6 @@ function startJdk(choice: OffloadChoice): { jdk?: string } {
     : {};
 }
 
-function startCompat(choice: OffloadChoice): { compat?: number } {
-  return choice.connection.supports('build-compat') ? { compat: choice.target.local.compat } : {};
-}
-
 function leavesPodsToWorker(choice: OffloadChoice, request: BuildRequest): boolean {
   const { target } = choice;
   return request.platform === 'ios' && !request.native && target.platform === 'ios' && buildsOnlyOnWorker(target.local);
@@ -1138,14 +1134,6 @@ function rebuiltFingerprint(
   return leavesPodsToWorker(choice, request) && typeof fingerprint === 'string' && FINGERPRINT.test(fingerprint)
     ? fingerprint
     : null;
-}
-
-/** Peer artifact queries carry `compat`, which a stim-server without `build-compat` refuses. */
-function queriesPeerCache(
-  connection: BuildConnection,
-  feature: 'swiftpm-peer-cache' | 'react-native-peer-cache',
-): boolean {
-  return connection.supports(feature) && connection.supports('build-compat');
 }
 
 function queriesGradlePeerCache(connection: BuildConnection, query: BuildGradleArtifactQuery): boolean {
@@ -1202,7 +1190,7 @@ async function peerArtifact(
     )
       throw new Error('The SwiftPM artifact query does not match the build request.');
     if (
-      !queriesPeerCache(choice.connection, 'swiftpm-peer-cache') ||
+      !choice.connection.supports('swiftpm-peer-cache') ||
       manifestDigest(
         await sourceManifest(
           choice.identity.repoRoot,
@@ -1224,7 +1212,7 @@ async function peerArtifact(
       )
     )
       throw new Error('The React Native artifact query does not match the build request.');
-    return queriesPeerCache(choice.connection, 'react-native-peer-cache')
+    return choice.connection.supports('react-native-peer-cache')
       ? matchingArtifact(choice.offer, `react-native-${reactNative.platform}`)
       : null;
   }
@@ -1828,7 +1816,7 @@ export async function offloadBuild(
             }
           : {}),
         ...(request.platform === 'macos'
-          ? macosBuildParameters(request, queriesPeerCache(choice.connection, 'swiftpm-peer-cache'))
+          ? macosBuildParameters(request, choice.connection.supports('swiftpm-peer-cache'))
           : {
               configuration: request.platform === 'ios' ? request.configuration : null,
               scheme: request.platform === 'ios' ? request.scheme : null,
@@ -1836,9 +1824,7 @@ export async function offloadBuild(
               runtime: request.platform === 'ios' ? request.runtime : null,
               packageName: packageName(join(identity.repoRoot, identity.project)),
               isExpo: request.isExpo,
-              ...(!native &&
-              request.cacheArtifact === true &&
-              queriesPeerCache(choice.connection, 'react-native-peer-cache')
+              ...(!native && request.cacheArtifact === true && choice.connection.supports('react-native-peer-cache')
                 ? { cacheArtifact: true }
                 : {}),
               optimizations:
@@ -1846,7 +1832,7 @@ export async function offloadBuild(
               ...(request.platform === 'android' ? { android: request.android } : {}),
             }),
         stimBuild: choice.target.local.stimBuild,
-        ...startCompat(choice),
+        compat: choice.target.local.compat,
         ...startJdk(choice),
         ...startPods(choice, request),
       });

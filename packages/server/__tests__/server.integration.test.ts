@@ -313,7 +313,7 @@ import { createHash } from 'node:crypto';
 import { delimiter, dirname, join } from 'node:path';
 const print = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
 if (process.argv[2].startsWith('offer')) {
-  print({ stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0', macosSdk: '27.0', cocoapods: '1.16.2', runtimes: ['iOS-27-0'] });
+  print({ stimBuild: 'b1', compat: 3, arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0', macosSdk: '27.0', cocoapods: '1.16.2', runtimes: ['iOS-27-0'] });
 } else {
   const job = JSON.parse(readFileSync(0, 'utf8'));
   const record = join(process.env.FAKE_STIM_PIDS, '..', 'job.json');
@@ -3458,7 +3458,7 @@ test('build.start rejects escaping or oversized macOS resources before probing t
   }
 });
 
-test('build.start compares the build compatibility version when both machines report one, else the Stim build', async () => {
+test('build.start requires matching build compatibility versions', async () => {
   const host = new BuildHost({ worker: 'unused-worker', env: process.env });
   const worker = {
     stimBuild: 'b1',
@@ -3489,14 +3489,10 @@ test('build.start compares the build compatibility version when both machines re
     expect(await message({ stimBuild: 'b1', compat: 4 })).toBe(
       'This machine runs Stim build b1 with build compatibility 3, not 4.',
     );
-    expect(await message({ stimBuild: 'b2' })).toBe('This machine runs Stim build b1.');
-    expect(await message({ stimBuild: 'b1' })).toBe('launched');
     expect(launch.mock.calls.at(-1)?.[0].job).not.toHaveProperty('jdk');
     expect(await message({ stimBuild: 'b2', compat: 3, jdk: '17' })).toBe('launched');
     expect(launch.mock.calls.at(-1)?.[0].job).toMatchObject({ jdk: '17' });
-    toolchain.mockResolvedValue({ ...worker, compat: undefined });
-    expect(await message({ stimBuild: 'b2', compat: 3 })).toBe('This machine runs Stim build b1.');
-    expect(launch).toHaveBeenCalledTimes(3);
+    expect(launch).toHaveBeenCalledTimes(2);
   } finally {
     toolchain.mockRestore();
     await host.close();
@@ -3622,6 +3618,7 @@ test('native build admission rejects invalid provider identity before toolchain 
     isExpo: false,
     fingerprint: 'input-key',
     stimBuild: 'b1',
+    compat: 3,
     native,
     optimizations: { compilationCache: true, swiftCompilationCache: null, prefixMapping: true },
   };
@@ -3698,6 +3695,7 @@ describe('offloaded builds', () => {
     isExpo: true,
     optimizations: null,
     stimBuild: 'b1',
+    compat: 3,
   };
   const configure = (config: Record<string, unknown>) =>
     writeFileSync(
@@ -4034,7 +4032,7 @@ describe('offloaded builds', () => {
       const { client, id } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('Package.swift', 'x')], done: true });
       client.socket.send(blob('x'));
-      const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'f00d', stimBuild: 'b1' };
+      const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'f00d', stimBuild: 'b1', compat: 3 };
       const macos = {
         product: 'Sample',
         infoPlist: 'Support/Info.plist',
@@ -4088,6 +4086,7 @@ describe('offloaded builds', () => {
       platform,
       fingerprint: 'f00d',
       stimBuild: 'b1',
+      compat: 3,
       ...(platform === 'android'
         ? {
             android: {

@@ -263,8 +263,7 @@ each other when the versions are equal, whatever their Stim releases or builds.
 The version changes only in a release that changes what a worker builds, how it
 builds it, or the build and artifact messages, so a release on one machine and a
 checkout build on the other usually still offload. Completed artifacts on a
-worker are reused under the same rule. A stim-server too old to report a build
-compatibility version needs exactly the same Stim build as this machine. When
+worker are reused under the same rule. When
 the versions differ, doctor reports `stim-build` and builds stay on this
 machine until the worker runs a compatible release; see [Tools](#tools).
 Hosted simulators and emulators do not compare versions: they check the
