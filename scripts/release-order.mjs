@@ -80,8 +80,7 @@ async function main() {
         : api(`compare/${base}...${event.merge_group.head_sha}`)
             .commits.flatMap((commit) => api(`commits/${commit.sha}/pulls`))
             .filter((pr) => pr.state === 'open');
-      const labels =
-        prs.length && prs.every((pr) => pr.labels.some((label) => label.name === nativeLabel)) ? [nativeLabel] : [];
+      const labels = prs.some((pr) => pr.labels.some((label) => label.name === nativeLabel)) ? [nativeLabel] : [];
       const fingerprint =
         after > before && !labels.length
           ? JSON.parse(
