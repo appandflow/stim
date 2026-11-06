@@ -13,10 +13,10 @@ import {
   buildUploadTimeoutMs,
   resolveTieredBuild,
   storeTieredBuild,
-  type loadCacheProvider,
   type LoadCacheProviderResult,
   type ProviderCallResult,
-} from '@stim-cli/cache';
+} from '@stim-cli/cache/tiers';
+import type { loadCacheProvider } from '@stim-cli/cache';
 import { prepareProviderDownloadDir, providerDownloadPath, type storedAppId } from '../../cache/build-cache.ts';
 import type { RecordedBuild } from '../../engine/recorded-build.ts';
 import type { FingerprintCheck } from '../../cache/fingerprint-memo.ts';

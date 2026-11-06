@@ -5,14 +5,17 @@ import { parseArgs } from 'node:util';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
+const cacheRules = [
+  ['cache provider loader', /^@stim-cli\/cache\/provider\.ts$/],
+  ['cache contract', /^@stim-cli\/cache\/contract\.ts$/],
+];
 const shared = [
   ['ws', /^ws(\/|$)/],
   ['node-datachannel', /^node-datachannel(\/|$)/],
   ['Noise', /^@stim-cli\/core\/noise/],
   ['offload/', /^stim\/src\/offload\//],
   ['device-host/', /^stim\/src\/device-host\//],
-  ['cache provider loader', /^@stim-cli\/cache\/provider\.ts$/],
-  ['cache contract', /^@stim-cli\/cache\/contract\.ts$/],
+  ...cacheRules,
 ];
 const fingerprint = ['@expo/fingerprint', /^@expo\/fingerprint(\/|$)/];
 const deny = {
@@ -22,6 +25,7 @@ const deny = {
   status: [...shared, fingerprint],
   'agent-device': [...shared, fingerprint],
   api: shared,
+  tiers: cacheRules,
 };
 
 const staticImport = /^(?:import|export)\s(?:[^'";]*?\sfrom\s*)?["']([^"']+)["']/gm;
@@ -110,6 +114,7 @@ export function entryFiles(dist) {
     entries[name] = [...base, join(dist, chunk[1])];
   }
   entries.api = [join(dist, 'api.mjs')];
+  entries.tiers = [join(dist, '../../cache/dist/tiers.mjs')];
   return entries;
 }
 

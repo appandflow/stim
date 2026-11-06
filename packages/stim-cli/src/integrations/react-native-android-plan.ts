@@ -4,7 +4,7 @@ import { readDoctorFingerprint } from '../doctor-fingerprint.ts';
 import { memoizedFingerprint } from '../cache/fingerprint-memo.ts';
 import { reportSignal } from '../report-runtime.ts';
 import chalk from 'chalk';
-import { loadCacheProvider } from '@stim-cli/cache';
+import type { loadCacheProvider } from '@stim-cli/cache';
 import { buildCacheKey, fingerprintProject } from '../cache/build-cache.ts';
 import { phaseLine } from '../command-output.ts';
 import {
@@ -67,7 +67,7 @@ const DEFAULT_PLAN_DEPS: AndroidPlanDeps = {
   avdSystemImage: ownedAvdSystemImage,
   avdDirectory: ownedAvdDirectory,
   listAvds: listAvdsAsync,
-  loadCacheProvider,
+  loadCacheProvider: async (input) => (await import('@stim-cli/cache')).loadCacheProvider(input),
   loadProjectProvider,
   checkEasAuth,
   resolveRemote,

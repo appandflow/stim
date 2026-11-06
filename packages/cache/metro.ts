@@ -5,7 +5,7 @@ import {
   type ProviderCallResult,
   type MetroCacheCapability,
   type WarnOnce,
-} from './provider.ts';
+} from './provider-core.ts';
 
 export const METRO_READ_TIMEOUT_MS = 2_000;
 export const METRO_WRITE_TIMEOUT_MS = 10_000;

@@ -4,7 +4,6 @@ import type { PlatformBuildOptions } from '@stim-cli/core/protocol';
 import type { StimContext } from '@stim-cli/core';
 import { constants, promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { loadCacheProvider } from '@stim-cli/cache';
 import { providerUploadOutcome, storedAppId } from '../../cache/build-cache.ts';
 import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { phaseLine } from '../../command-output.ts';
@@ -226,7 +225,7 @@ export async function buildAndroidOperation(
               easAuth: checkEasAuth,
               resolveRemoteBuild: resolveRemote,
               uploadRemoteBuild: uploadRemote,
-              loadCacheProviderModule: loadCacheProvider,
+              loadCacheProviderModule: async (input) => (await import('@stim-cli/cache')).loadCacheProvider(input),
               storedAppId,
               acquireSlot: acquireBuildSlot,
               releaseSlot: releaseBuildSlot,

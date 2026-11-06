@@ -21,6 +21,11 @@
       "types": "./dist/index.d.mts",
       "module-sync": "./dist/index.mjs",
       "default": "./dist/index.mjs"
+    },
+    "./tiers": {
+      "types": "./dist/tiers.d.mts",
+      "module-sync": "./dist/tiers.mjs",
+      "default": "./dist/tiers.mjs"
     }
   },
   "scripts": {

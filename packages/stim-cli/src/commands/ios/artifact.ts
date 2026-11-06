@@ -14,7 +14,7 @@ import {
   storeTieredBuild,
   type LoadCacheProviderResult,
   type ProviderCallResult,
-} from '@stim-cli/cache';
+} from '@stim-cli/cache/tiers';
 import {
   prepareProviderDownloadDir,
   providerDownloadPath,

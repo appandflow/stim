@@ -9,7 +9,7 @@ import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.t
 import { hostedMetroPortProbe } from '../../device-host/hosted-native.ts';
 import { readHostedIos, writeHostedIosAsync } from '../../device-host/ios-state.ts';
 import { followHostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
-import { loadCacheProvider } from '@stim-cli/cache';
+import type { loadCacheProvider } from '@stim-cli/cache';
 import { buildIos, discoverXcodeProject } from '../../integrations/react-native-build.ts';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { memoizedFingerprint } from '../../cache/fingerprint-memo.ts';
@@ -268,7 +268,7 @@ export const DEFAULT_DEPS: IosDeps = {
   resolveBuild,
   storeBuild,
   resolveCacheProviderConfig,
-  loadCacheProvider,
+  loadCacheProvider: async (input) => (await import('@stim-cli/cache')).loadCacheProvider(input),
   acquireBuildLock,
   releaseBuildLock,
   waitForBuild,
