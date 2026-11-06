@@ -47,6 +47,7 @@ export default defineConfig({
     '@stim-cli/ci/cli': resolve('../ci/src/cli.ts'),
     '@stim-cli/server/cli': resolve('../server/src/cli.ts'),
     '@stim-cli/server/environment': resolve('../server/src/environment.ts'),
+    '@stim-cli/server/release-install': resolve('../server/src/release-install.ts'),
     '@stim-cli/server/service-plist': resolve('../server/src/service-plist.ts'),
   },
   noExternal: [/^@stim-cli\//],

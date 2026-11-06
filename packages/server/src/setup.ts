@@ -30,14 +30,13 @@ import {
   fetchHealth,
   holdingUpdateClaim,
   installJob,
-  installServer,
   prepareRoute,
   recordServiceRoute,
   requireManaged,
-  serverBuild,
   stableNode,
   updateInstalledService,
 } from './service.ts';
+import { installServer, serverBuild } from './release-install.ts';
 import {
   applyServeEnvironment,
   compareVersions,
