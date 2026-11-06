@@ -144,7 +144,13 @@ function matchIgnore(patterns: readonly Pattern[], path: string, isDir: boolean)
 
 const toPosix = (path: string) => path.split(sep).join('/');
 
+/** An absolute POSIX path with no empty, `.` or `..` segment and no trailing separator: `path.relative` leaves it as is. */
+const NORMAL = /^\/(?:[^/]+(?:\/[^/]+)*)?$/;
+const DOTS = /(?:^|\/)\.{1,2}(?:\/|$)/;
+const normal = (path: string) => NORMAL.test(path) && !DOTS.test(path);
+
 export function within(path: string, dir: string): boolean {
+  if (sep === '/' && normal(path) && normal(dir)) return path === dir || path.startsWith(dir === '/' ? dir : `${dir}/`);
   const rel = relative(dir, path);
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
