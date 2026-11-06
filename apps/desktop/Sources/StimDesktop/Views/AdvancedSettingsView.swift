@@ -49,7 +49,7 @@ struct AdvancedSettingsView: View {
         Text("Environment")
       } footer: {
         Text(
-          "Stim Desktop runs no login shell: Stim finds Node, Homebrew, the Android SDK and Java itself. Set the Stim home here instead of STIM_HOME, and add other variables, such as STIM_* settings, as KEY=VALUE lines. They are stored in plain text, so keep secrets out. Changes apply when Stim Desktop restarts."
+          "stimd finds Node, Homebrew, the Android SDK and Java itself. Set the Stim home here instead of STIM_HOME, and add other variables, such as STIM_* settings, as KEY=VALUE lines. They are stored in plain text, so keep secrets out. Changes apply when Stim Desktop restarts."
         )
         .foregroundStyle(Palette.tertiary)
       }
@@ -60,7 +60,7 @@ struct AdvancedSettingsView: View {
         Text("stim-server")
       } footer: {
         Text(
-          "Stim Desktop runs stim-server while it is open, on this Mac only, for device replay, the diff viewer, archived logs and hosted views. It uses one that already serves this Stim home."
+          "Stim Desktop uses this Stim home's stimd for device replay, the diff viewer, archived logs and hosted views, and starts it from the Stim engine when none runs. Quitting Stim Desktop leaves it running."
         )
         .foregroundStyle(Palette.tertiary)
       }

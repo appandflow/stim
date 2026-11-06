@@ -21,11 +21,12 @@ struct CLIFailureTests {
     #expect(fetched.error == nil)
   }
 
-  @Test func namesTheStderrOfAFailedStimServerCommand() async throws {
+  @Test func namesTheStderrOfAFailedEngineCommand() async throws {
     let dir = try scratchDirectory()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let server = try fake(
-      in: dir, name: "stim-server",
+    try FileManager.default.createDirectory(at: dir.appendingPathComponent("bin"), withIntermediateDirectories: true)
+    _ = try fake(
+      in: dir, name: "bin/stim.mjs",
       """
       #!/bin/sh
       printf '\nNo device named phone-1.\n\n' >&2
@@ -33,7 +34,7 @@ struct CLIFailureTests {
       """)
 
     let environment = StimServerCLI(
-      environment: ["PATH": "/usr/bin:/bin"], bundled: BundledServer(node: "/bin/sh", script: server))
+      environment: ["PATH": "/usr/bin:/bin"], engine: .development(package: dir.path, node: "/bin/sh"))
 
     let error = await #expect(throws: StimServerCLI.Failure.self) { try await environment.revoke("phone-1") }
     #expect(error?.localizedDescription == "No device named phone-1.")

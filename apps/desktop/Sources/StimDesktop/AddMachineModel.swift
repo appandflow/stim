@@ -109,7 +109,7 @@ final class AddMachineModel {
         },
         version: {
           let environment = await environment.value
-          let server = StimServerCLI(environment: environment)
+          let server = StimServerCLI(environment: environment, engine: EngineLaunch.resolve(environment: environment))
           return await server.versionOutput()?.trimmingCharacters(in: .whitespacesAndNewlines)
         },
         toolsDoctor: { cwd, platform in
@@ -687,7 +687,7 @@ final class AddMachineModel {
             {"project":"/fixture","findings":[
             {"code":"build-machine-xcode","level":"cost","title":"Remote machine mini has a different Xcode","detail":"Xcode mismatch","fix":"Install and select the same Xcode on mini and this Mac (`xcode-select -p` on each)."},
             {"code":"build-machine-bundler","level":"cost","title":"Remote machine mini lacks Bundler","detail":"No Bundler","fix":"Install Bundler (`gem install bundler`) on mini, on the PATH its stim-server's login shell sets."},
-            {"code":"build-machine-stim-build","level":"cost","title":"Remote machine mini has a different Stim build","detail":"Stim build mismatch","fix":"Update stim-server on mini to the same Stim build as this machine: there, run `stim service update --release <version>` for this machine's release."}]}
+            {"code":"build-machine-stim-build","level":"cost","title":"Remote machine mini has a different Stim build","detail":"Stim build mismatch","fix":"Update the Stim engine on mini to the same Stim build as this machine: run `stim remote update mini` on this machine."}]}
             """.utf8)
         ).findings
       case .toolsBusy:

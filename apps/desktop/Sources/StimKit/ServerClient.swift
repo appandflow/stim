@@ -90,7 +90,6 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   private let clientName: String
   private let clientVersion: String
   private let bootstrap: @MainActor () -> DesktopBootstrapKey?
-  private let serverPort: Int?
   private let makeTransport: ServerTransportFactory
   private let schedule: ServerScheduler
   private var transport: ServerTransport?
@@ -108,13 +107,11 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   /// Changes whenever the active transport is replaced or dropped, including reconnects to the same server.
   public private(set) var generation = 0
 
-  /// `endpoint` is the file URL of this Stim home's server's Unix socket, or a paired server's `ws://` or `wss://`
-  /// URL, whose `transport` runs the Noise handshake. With `serverPort`, the client refuses a socket whose server does
-  /// not listen on that TCP port, before it sends any bootstrap proof: two servers that share a Stim home share its
-  /// socket path. A remote endpoint never runs the bootstrap and never sends `ServerProtocol.isLocalOnly` methods.
+  /// `endpoint` is the file URL of the socket this Stim home's stimd names in `run/stimd.json`, or a paired server's
+  /// `ws://` or `wss://` URL, whose `transport` runs the Noise handshake. A remote endpoint never runs the bootstrap
+  /// and never sends `ServerProtocol.isLocalOnly` methods.
   public init(
     endpoint: URL, clientName: String, clientVersion: String,
-    serverPort: Int? = nil,
     bootstrap: @escaping @MainActor () -> DesktopBootstrapKey? = { nil },
     transport: @escaping ServerTransportFactory = UnixSocketTransport.make,
     scheduler: @escaping ServerScheduler = ServerClient.dispatchAfter
@@ -122,7 +119,6 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     self.endpoint = endpoint
     self.clientName = clientName
     self.clientVersion = clientVersion
-    self.serverPort = serverPort
     self.bootstrap = bootstrap
     self.makeTransport = transport
     self.schedule = scheduler
@@ -368,20 +364,17 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
           .merging(bootstrap == nil ? [:] : ["desktopBootstrap": .bool(true)]) { $1 })
         guard current == generation else { return }
         let hello = try decodeReporting(HelloResult.self, from: result, source: .server)
-        if let serverPort, !hello.isServer(onPort: serverPort) {
-          throw ServerError(
-            code: "other-server",
-            message:
-              "Another stim-server owns this Stim home's socket, not the one on port \(serverPort). Stop the other server, or give each server its own STIM_HOME."
-          )
-        }
         // compat C7 permanent
         guard hello.desktopApi == ServerProtocol.desktopApi else {
-          let location = isRemote ? "on \(hello.server.name)" : "on port \(serverPort ?? StimServerCLI.defaultPort)"
+          let older = (hello.desktopApi ?? 0) < ServerProtocol.desktopApi
           let message =
-            (hello.desktopApi ?? 0) < ServerProtocol.desktopApi
-            ? "stim-server \(hello.server.version) \(location) is older than Stim Desktop; run npm i -g stim@1.42.0 && stim service install, or quit it"
-            : "stim \(hello.server.version) \(location) uses a newer Desktop API. Update Stim Desktop (Stim > Check for Updates)."
+            isRemote
+            ? older
+              ? "stim \(hello.server.version) on \(hello.server.name) is older than Stim Desktop; run stim remote update \(hello.server.name)"
+              : "stim \(hello.server.version) on \(hello.server.name) uses a newer Desktop API. Update Stim Desktop (Stim > Check for Updates)."
+            : older
+              ? "The Stim engine \(hello.server.version) is older than Stim Desktop; run stim engine update"
+              : "The Stim engine \(hello.server.version) uses a newer Desktop API. Update Stim Desktop (Stim > Check for Updates)."
           throw ServerError(code: "protocol-unsupported", message: message)
         }
         // compat end
@@ -653,7 +646,9 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   }
 }
 
-/// A WebSocket over stim-server's Unix socket, `$STIM_HOME/server/local.sock`, reporting on the main actor.
+/// A WebSocket over the Unix socket stimd names in `$STIM_HOME/run/stimd.json`, reporting on the main actor. Before the
+/// upgrade it declares `kind: desktop`, asks stimd to start its network listener (`net.ensure`, whose port goes to
+/// `onListening`) and hands the connection to it (`net.connect`); a listener stimd cannot start refuses the connection.
 /// URLSession cannot reach a Unix socket, and Network.framework's WebSocket protocol aborts on a Unix endpoint before
 /// it sends the upgrade, so this frames a plain stream connection with `WebSocketFraming`.
 @MainActor public final class UnixSocketTransport: ServerTransport {
@@ -666,18 +661,25 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   public static func make(_ socket: URL, _ onEvent: @escaping @MainActor (ServerTransportEvent) -> Void)
     -> ServerTransport
   {
-    UnixSocketTransport(path: socket.path, onEvent: onEvent)
+    UnixSocketTransport(path: socket.path, onListening: { _ in }, onEvent: onEvent)
   }
 
-  init(path: String, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void) {
+  /// `loopbackOnly` asks for a listener that serves this Mac only, while Allow connections is off, and `port` for a
+  /// port other than the default 7787, 0 for one the system picks.
+  public init(
+    path: String, loopbackOnly: Bool = true, port: Int? = nil, onListening: @escaping @MainActor (Int) -> Void,
+    onEvent: @escaping @MainActor (ServerTransportEvent) -> Void
+  ) {
     socket = WebSocketStream(
-      to: .unix(path: path), using: .tcp, host: "localhost", path: "/", maximumMessageSize: Self.maximumMessageSize
+      to: .unix(path: path), using: .tcp, host: "localhost", path: "/", maximumMessageSize: Self.maximumMessageSize,
+      prelude: Self.stimdPrelude(loopbackOnly: loopbackOnly, port: port, onListening: onListening)
     ) { event in
       switch event {
       case .message(.text, let payload): onEvent(.text(String(decoding: payload, as: UTF8.self)))
       case .message(.binary, let payload): onEvent(.data(payload))
       case .message: break
       case .closed(let description, _, _): onEvent(.closed(description))
+      case .refused(let text): onEvent(.refused(ServerError(code: "net-refused", message: text)))
       }
     }
   }
@@ -685,4 +687,38 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   public func send(_ text: String) { socket.send(.text, Data(text.utf8)) }
 
   public func close() { socket.close() }
+
+  /// The lines stimd's CLI socket reads before it hands the connection to its network listener.
+  static func stimdPrelude(loopbackOnly: Bool, port: Int?, onListening: @escaping @MainActor (Int) -> Void)
+    -> [WebSocketStream.PreludeStep]
+  {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    let line = { (fields: [String: JSONValue]) in
+      (try? encoder.encode(JSONValue.object(fields))).map { $0 + Data([10]) } ?? Data()
+    }
+    return [
+      // compat C7 permanent
+      .init(line: line(["kind": .string("desktop")])) { reply in
+        reply["op"] == .string("hello") ? nil : reply["message"]?.string ?? "stimd refused Stim Desktop."
+      },
+      // compat end
+      .init(
+        line: line([
+          "op": .string("net.ensure"),
+          "params": .object(
+            ["loopbackOnly": .bool(loopbackOnly)].merging(port.map { ["port": .number(Double($0))] } ?? [:]) { $1 }),
+        ])
+      ) { reply in
+        guard reply["op"] == .string("net"), reply["listening"] == .bool(true),
+          let port = reply["port"]?.number.flatMap(ServerProtocol.exactInteger)
+        else { return reply["message"]?.string ?? "stimd did not start its network listener." }
+        onListening(port)
+        return nil
+      },
+      .init(line: line(["op": .string("net.connect")])) { reply in
+        reply["op"] == .string("net.connected") ? nil : reply["message"]?.string ?? "stimd's network listener stopped."
+      },
+    ]
+  }
 }

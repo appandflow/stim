@@ -17,14 +17,11 @@ final class Onboarding: ObservableObject {
     var viewerKeys: [String]
     var node: CLICompatibility
     var nodePath: String?
-    var brewPath: String?
     var skillPath: String?
     /// `HOME` in Stim Desktop's environment, where the setup commands run and the skills CLI installs.
     var home: String
     var androidSDK: String?
     var javaHome: String?
-
-    var nodeBlocksStim: Bool
   }
 
   enum PopupKind {
@@ -108,20 +105,19 @@ final class Onboarding: ObservableObject {
         let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
         let packages = await PackageManagerLayout.probe(environment: environment, home: home)
         let stim = SetupChecks.tool("stim", environment: environment)
-        let launcher = await NodeLauncher.resolve(executable: stim, name: "stim", environment: environment) { packages }
         var versionOutput: String?
         if let stim,
-          let command = try? (launcher?.command(["--version"]) ?? (program: stim, arguments: ["--version"])),
-          let result = try? await ProcessRequest(
-            command.program, command.arguments, environment: environment, timeout: 10
-          ).run(), result.succeeded
+          let result = try? await ProcessRequest(stim, ["--version"], cwd: home, environment: environment, timeout: 10).run(),
+          result.succeeded
         {
           versionOutput = result.stdoutText
         }
         let compatibility = CLICompatibility.check(
           executable: stim, versionOutput: versionOutput, minimum: SetupChecks.stimMinimum)
-        var node = launcher?.runtime
-        if node == nil { node = await NodeRuntime.probe(environment: environment, home: home) }
+        var node = await NodeRuntime.probe(environment: environment, home: home)
+        if node?.isSupported != true, let managed = ManagedNode.installed(EngineRoot(environment: environment, home: home)) {
+          node = managed
+        }
         let nodePath = node?.path ?? SetupChecks.tool("node", environment: environment)
         let skillPath = SetupChecks.installedSkill(home: home) {
           FileManager.default.fileExists(atPath: $0)
@@ -129,28 +125,24 @@ final class Onboarding: ObservableObject {
         return Report(
           stim: compatibility,
           stimPath: stim,
-          stimOwner: (launcher?.source ?? stim).flatMap { packages.owner(ofExecutable: $0) },
+          stimOwner: stim.flatMap { packages.owner(ofExecutable: $0) },
           installers: packages.installed,
           defaultInstaller: packages.defaultInstaller(path: environment["PATH"] ?? ""),
           viewerKeys: [],
           node: CLICompatibility.check(
             executable: nodePath, versionOutput: node?.version, minimum: SetupChecks.nodeMinimum),
           nodePath: nodePath,
-          brewPath: SetupChecks.tool("brew", environment: environment),
           skillPath: skillPath,
           home: home,
           androidSDK: MachineCheck.androidSDK(environment: environment, home: home) {
             FileManager.default.fileExists(atPath: $0)
           },
-          javaHome: environment["JAVA_HOME"].flatMap { $0.isEmpty ? nil : $0 },
-          nodeBlocksStim: compatibility == .outdated(found: nil) && launcher != nil
-            && launcher?.runtime?.isSupported != true)
+          javaHome: environment["JAVA_HOME"].flatMap { $0.isEmpty ? nil : $0 })
       }.value
       self.report = report
       refreshLatestStim()
       setup.stim = report.stim
       setup.node = report.node
-      setup.brewPath = report.brewPath
       setup.skillPath = report.skillPath
       setup.skillChecked = true
       setup.notifications = await Self.notificationAccess()
@@ -179,7 +171,25 @@ final class Onboarding: ObservableObject {
 
   private var home: String { report?.home ?? NSHomeDirectory() }
 
-  var installNodeCommand: StimCommand { StimCommand(["install", "node"], cwd: home, program: "brew") }
+  @Published private(set) var installingNode = false
+  @Published private(set) var nodeInstallError: String?
+
+  /// Downloads the managed Node.js runtime, checked against nodejs.org's `SHASUMS256.txt`, then checks again.
+  func installManagedNode() {
+    guard !installingNode else { return }
+    installingNode = true
+    nodeInstallError = nil
+    Task {
+      let root = EngineRoot(environment: await environment.value)
+      do {
+        _ = try await ManagedNode.install(root)
+      } catch {
+        nodeInstallError = error.localizedDescription
+      }
+      installingNode = false
+      check()
+    }
+  }
   var installer: PackageManager { installerChoice ?? report?.defaultInstaller ?? .npm }
   /// Installs `stim`, or updates it with the manager that owns it; nil when `stim` is installed but no package
   /// manager owns it, as a linked checkout, so there is nothing for the app to update.

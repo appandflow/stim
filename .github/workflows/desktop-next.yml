@@ -42,6 +42,7 @@ jobs:
       publish: ${{ steps.mode.outputs.publish }}
       sha: ${{ steps.plan.outputs.sha }}
       version: ${{ steps.plan.outputs.version }}
+      engine: ${{ steps.plan.outputs.engine }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -181,9 +182,21 @@ jobs:
               exit 0
             fi
           fi
+          # The app installs the engine version it embeds, so a publish waits until stim@next is built from
+          # this commit or a later one; the hourly run builds it once the npm next channel catches up.
+          engine=$(npm view stim@next version)
+          if [[ ! "$engine" =~ \.g([0-9a-f]{7,})$ ]]; then
+            echo "::notice::stim@next is $engine, which names no commit (a release candidate holds next); not building"
+            exit 0
+          fi
+          if [ "$PUBLISH" = true ] && ! git merge-base --is-ancestor "$SHA" "${BASH_REMATCH[1]}" 2>/dev/null; then
+            echo "::notice::stim@next $engine is not built from $SHA or a later commit yet; not building"
+            exit 0
+          fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "building $version from $SHA"
+          echo "engine=$engine" >> "$GITHUB_OUTPUT"
+          echo "building $version from $SHA with the engine $engine"
 
   build:
     needs: plan
@@ -213,6 +226,7 @@ jobs:
           tag: ${{ env.TAG }}
           channel: next
           appcast-url: ${{ env.APPCAST_URL }}
+          engine-version: ${{ needs.plan.outputs.engine }}
           sparkle-public-ed-key: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
           sentry-dsn: ${{ vars.STIM_DESKTOP_SENTRY_DSN }}
           cert-p12-base64: ${{ secrets.DESKTOP_CERT_P12_BASE64 }}

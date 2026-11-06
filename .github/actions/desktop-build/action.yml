@@ -18,6 +18,9 @@ inputs:
   appcast-url:
     description: The appcast's own URL.
     required: true
+  engine-version:
+    description: The published stim version the app installs or moves the Stim engine to (StimEngineVersion).
+    required: true
   sparkle-public-ed-key:
     description: The public half of the Sparkle EdDSA key.
     required: false
@@ -85,26 +88,14 @@ runs:
         node-version: 22
         package-manager-cache: false
 
-    - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
-      with:
-        cache: false
-        install: false
-
-    - name: Install the bundled server's workspace packages (lifecycle scripts stay blocked)
-      shell: bash
-      run: pnpm install --frozen-lockfile --filter 'stim...' --filter stim-monorepo
-
     - name: Build before any secret is loaded
       shell: bash
       working-directory: apps/desktop
       env:
         SPARKLE_PUBLIC_ED_KEY: ${{ inputs.sparkle-public-ed-key }}
         STIM_DESKTOP_SENTRY_DSN: ${{ inputs.sentry-dsn }}
-      run: |
-        DESKTOP_SERVER_RUNTIME="$GITHUB_WORKSPACE/apps/desktop/.build/stim-server"
-        echo "DESKTOP_SERVER_RUNTIME=$DESKTOP_SERVER_RUNTIME" >> "$GITHUB_ENV"
-        node scripts/server-runtime.mjs "$DESKTOP_SERVER_RUNTIME" --universal
-        scripts/bundle.sh --universal --release --server "$DESKTOP_SERVER_RUNTIME"
+        STIM_ENGINE_VERSION: ${{ inputs.engine-version }}
+      run: scripts/bundle.sh --universal --release
 
     - name: Import the Developer ID certificate
       shell: bash
@@ -202,6 +193,7 @@ runs:
         VERSION: ${{ inputs.version }}
         SPARKLE_PUBLIC_ED_KEY: ${{ inputs.sparkle-public-ed-key }}
         STIM_DESKTOP_SENTRY_DSN: ${{ inputs.sentry-dsn }}
+        STIM_ENGINE_VERSION: ${{ inputs.engine-version }}
         SENTRY_AUTH_TOKEN: ${{ inputs.sentry-auth-token }}
         SENTRY_ORG: ${{ inputs.sentry-org }}
         SENTRY_PROJECT: ${{ inputs.sentry-project }}

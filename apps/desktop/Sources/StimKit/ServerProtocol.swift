@@ -69,10 +69,6 @@ public struct HelloResult: Decodable, Equatable, Sendable {
     case server, capabilities, desktopApi, host, actions, device, desktopBootstrap
     case protocolVersion = "protocol"
   }
-
-  /// Whether the server that answered on the socket is the one listening on `port`. Two servers that share a Stim
-  /// home also share its socket path, so the socket can belong to another server than the one Desktop adopted.
-  public func isServer(onPort port: Int) -> Bool { server.port == port }
 }
 
 /// A device slot of a workspace, as `replay.range` and `frames.subscribe` name it.

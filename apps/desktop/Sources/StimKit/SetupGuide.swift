@@ -83,8 +83,6 @@ public struct SetupChecks: Equatable, Sendable {
 
   public var stim: CLICompatibility?
   public var node: CLICompatibility?
-  /// Homebrew's `brew`, which can install Node.js, when it is on Stim Desktop's PATH.
-  public var brewPath: String?
   /// The installed skill's `SKILL.md`, or nil when none was found.
   public var skillPath: String?
   public var skillChecked = false
@@ -97,13 +95,12 @@ public struct SetupChecks: Equatable, Sendable {
   public var projectCheck: CheckOutcome?
 
   public init(
-    stim: CLICompatibility? = nil, node: CLICompatibility? = nil, brewPath: String? = nil, skillPath: String? = nil,
+    stim: CLICompatibility? = nil, node: CLICompatibility? = nil, skillPath: String? = nil,
     skillChecked: Bool = false, notifications: NotificationAccess? = nil, xcodeCheck: CheckOutcome? = nil,
     javaCheck: CheckOutcome? = nil, projectCheck: CheckOutcome? = nil, phone: PhoneSetup = PhoneSetup()
   ) {
     self.stim = stim
     self.node = node
-    self.brewPath = brewPath
     self.skillPath = skillPath
     self.skillChecked = skillChecked
     self.notifications = notifications
