@@ -115,8 +115,8 @@ means a release never landed: see
 Look at every commit in the list and decide:
 
 - **Patch** (`0.2.0 -> 0.2.1`) — bug fixes, doc-only changes, internal refactors with no user-visible effect.
-- **Minor** (`0.2.0 -> 0.3.0`) — new commands, new flags, additions to existing commands. Pre-1.0, breaking changes also go here; a new major is reserved for 1.0 stabilization or a deliberate grouped-breaking-changes cut.
-- **Major** (`0.x -> 1.0`, `1.x -> 2.0`) — only post-1.0, or when intentionally cutting a 1.0.
+- **Minor** (`0.2.0 -> 0.3.0`) — new commands, new flags, additions to existing commands, and breaking changes that follow [Compatibility and breaking changes](#compatibility-and-breaking-changes).
+- **Major** (`1.x -> 2.0`) — only a change to a frozen surface (rule 6 of that section).
 
 If anything in the list is breaking, call it out under "Removed (breaking)" /
 "Migration notes" in the draft release notes.
@@ -552,6 +552,44 @@ and repeat the affected gate rather than waiving it.
   packages. See [apps/desktop/RELEASING.md](./apps/desktop/RELEASING.md).
   Tag it without waiting for a `Desktop next` run: the two workflows build in
   parallel and take turns only to publish the appcast.
+
+## Compatibility and breaking changes
+
+1. **A compatibility path needs a named population that cannot update.** The
+   default is to delete the old behaviour. A kept path names who runs the old
+   side, why they cannot update before they meet the new side, how many they
+   are, and when the path ends. "Someone might run an old copy" is not a
+   population. Each kept path is a row of `scripts/compat-budget.json`, and its
+   lines sit between `// compat C<N> permanent` (or `until <version>`) and
+   `// compat end`; `node scripts/compat-budget.mjs --report` counts them per
+   row, and `pnpm run lint` fails a row over its budget.
+2. **Same build by construction beats a check.** Two Stim processes that talk
+   on one machine run the same build. An older process is ended or restarted,
+   never bridged.
+3. **Every surface between different builds carries one integer that changes
+   only on a removal, a rename or a change of meaning.** A request the other
+   side does not know answers `unknown-method` (or `unknown-field`), and the
+   caller tells the person to update the older side, as
+   `apps/mobile/src/lib/connection.ts` does for a stim-server without
+   `workspaces.subscribe`. Sides on the same integer never refuse each other.
+4. **A breaking change lands in a minor, with a refusal and a remedy.** The
+   release bumps the surface's integer, ships a refusal that names the side to
+   update and the command that updates it, and lists the break under
+   `## Removed (breaking)` in its release notes. Clients too old to know the
+   integer get `protocol-unsupported`. A patch never breaks anything (1.17.1
+   did). Only a frozen surface (rule 6) needs a major.
+5. **A changed meaning gets a new name.** The old name refuses and names the
+   new one for 30 days; an unchanged meaning keeps its name. 1.36.0 changed
+   `stim-ci run` in place, which this rule forbids.
+6. **Frozen surfaces change only in a major.** The phone's native framing is
+   frozen: its first byte is the protocol version and anything else gets
+   `protocol-unsupported`, because installed phone binaries change only
+   through App Store review. A surface joins this list only by passing rule 1.
+7. **Release order is part of the design.** Native phone code reaches the
+   stores before a Stim release requires it, `next` publishes no production
+   phone JavaScript, and a bump of an integer the phone or Stim Desktop reads
+   starts the stable cut within an hour, which publishes the production phone
+   update or the matching Stim Desktop.
 
 ## Prerelease channel
 
