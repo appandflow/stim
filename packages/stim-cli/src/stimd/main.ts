@@ -345,7 +345,10 @@ export async function runStimd({
   };
   const open = new Set<Socket>();
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
-  let engineDirs: string[] = follower ? workspaceEngineDirs(loadConfig()) : [];
+  let engineDirs: string[] = [];
+  try {
+    if (follower) engineDirs = workspaceEngineDirs(loadConfig());
+  } catch {}
   let netServes: ServeOptions | null = serve ?? null;
   let switchedTo: { build: string; version: string } | null = null;
   let foreignLeft = afterSwitch;

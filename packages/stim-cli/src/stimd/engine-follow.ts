@@ -95,7 +95,7 @@ export function followEngine(log: Log): EngineFollower | null {
           timeoutMs: FLIP_TIMEOUT_MS,
           env: { STIM_ENGINE_ROOT: engine.root, STIM_HOME: getConfigDir() },
         });
-        log('info', 'engine_flipped', `${staged}: ${output.trim()}`, {
+        log(output.includes('"refused"') ? 'warn' : 'info', 'engine_flipped', `${staged}: ${output.trim()}`, {
           build: staged,
           flipMs: Math.round(performance.now() - started),
         });

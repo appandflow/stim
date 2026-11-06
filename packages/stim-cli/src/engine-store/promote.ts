@@ -116,7 +116,10 @@ async function flipStaged(promotion: Promotion): Promise<PromotionResult> {
   if (staged.restoreState) for (const home of homes) restoreSchema(home, manifest.schema, manifest.version);
   else {
     const refusal = homes.map((home) => schemaRefusal(home, manifest.schema)).find(Boolean);
-    if (refusal) return { refused: refusal };
+    if (refusal) {
+      removeRecord(join(root, 'staged.json'));
+      return { refused: refusal };
+    }
   }
   const from = { ...promotion, setBy: staged.setBy ?? promotion.setBy, pinReason: staged.pinReason ?? null };
   await flip(root, own, manifest, current, { ...from, channel: staged.channel ?? promotion.channel }, true);
