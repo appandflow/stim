@@ -77,7 +77,7 @@ export function settingShapeErrors(settings: unknown): string[] {
   for (const setting of LAYERED_SETTINGS) {
     if (SETTINGS_WITH_RESOLVE_TIME_FALLBACK.has(setting.key)) continue;
     const raw = settingValueAt(settings, setting.key);
-    if (raw === undefined) continue;
+    if (raw === undefined || (setting.key === 'cache.provider' && typeof raw === 'string')) continue;
     const value =
       typeof raw === 'string' && (setting.key === 'ios.signingIdentitySha1' || setting.key === 'ios.lanHost')
         ? raw.trim()

@@ -1296,10 +1296,11 @@ export function machineSettingValue(
   const raw = setting.env ? env[setting.env] : undefined;
   const explicit = raw !== undefined && raw !== '';
   let value: unknown;
-  if (explicit) value = coerceSettingText(setting, raw.trim());
-  else if (env.STIM_HOME && setting.scopedHomeValue !== undefined) value = setting.scopedHomeValue;
-  else if (env.CI && setting.ciValue !== undefined) value = setting.ciValue;
-  else {
+  let checked: unknown;
+  if (explicit) {
+    value = coerceSettingText(setting, raw.trim());
+    checked = value;
+  } else {
     const parts = key.split('.');
     for (let index = 1; index < parts.length; index++) {
       const group = parts.slice(0, index).join('.');
@@ -1308,11 +1309,14 @@ export function machineSettingValue(
         return { value: undefined, error: `${group} in the config is not an object` };
     }
     const configured = settingValueAt(config, key);
-    value = configured === undefined ? setting.default : configured;
+    checked = configured === undefined ? setting.default : configured;
+    if (env.STIM_HOME && setting.scopedHomeValue !== undefined) value = setting.scopedHomeValue;
+    else if (env.CI && setting.ciValue !== undefined) value = setting.ciValue;
+    else value = checked;
   }
-  const expected = value === undefined ? null : settingValueError(setting, value);
+  const expected = checked === undefined ? null : settingValueError(setting, checked);
   const error = expected
-    ? `Invalid ${explicit ? setting.env : key} value ${JSON.stringify(explicit ? raw : value)}. Expected ${expected}.`
+    ? `Invalid ${explicit ? setting.env : key} value ${JSON.stringify(explicit ? raw : checked)}. Expected ${expected}.`
     : null;
   return { value, error };
 }
