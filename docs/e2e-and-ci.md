@@ -275,7 +275,9 @@ PATH).
   cannot run. `scripts/ci-darwin-unit-test-files.mjs` derives the list from
   the test sources (`process.platform` compared with `'darwin'`, plus the
   `/bin/zsh` and case-insensitive-filesystem gates), so a new gated file joins
-  without a workflow edit. It runs each selected file in full, with a 60 second
+  without a workflow edit. Both it and the focused PR selector use
+  `scripts/ci-unit-test-pattern.mjs` to match root test files and exclude
+  compatibility and browser tests. It runs each selected file in full, with a 60 second
   test timeout, and uploads `unit-test-timings-macos`. Like every `ci.yml` job
   it is part of the `merge gate` poll on a pull request and does not run in the
   merge queue.
