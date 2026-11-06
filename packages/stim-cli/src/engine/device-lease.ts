@@ -13,6 +13,9 @@ import {
   writeWorkspaceState,
 } from '../workspace/workspace-state.ts';
 import { segment } from './path-segment.ts';
+import { displacedLeases, leaseGrant, leaseIsExpired, leaseRaise, type LeaseKind } from '../policy/admission.ts';
+
+export { leaseIsExpired, type LeaseKind };
 
 export const LEASE_VERSION = 1;
 export const DEFAULT_LEASE_MS: number = 5 * 60 * 1000;
@@ -24,7 +27,6 @@ const LOCK_SUFFIX = '.lock';
 const DURATION = /^[1-9][0-9]*(s|m)$/;
 
 export type LeasePlatform = 'ios' | 'android';
-export type LeaseKind = 'declared' | 'run';
 
 export interface DeviceLease {
   version: number;
@@ -176,10 +178,6 @@ export function parseWorkspaceLeases(value: unknown): WorkspaceLeases {
   return leases;
 }
 
-export function leaseIsExpired(lease: DeviceLease, now: number): boolean {
-  return Date.parse(lease.expiresAt) <= now;
-}
-
 export function parseLeaseDuration(value: string): { ms: number } | { error: string } {
   const raw = String(value ?? '').trim();
   const match = DURATION.exec(raw);
@@ -256,54 +254,61 @@ export function takeLease(
     const key = deviceSlotKey(platform, slot);
     const previous = io.readHolder(root)[key];
     if (previous && previous.id !== id) releaseHeld(root, platform, previous, io, slot);
-    for (const entry of listLeaseFiles(io)) {
-      const other = entry.lease;
-      if (
-        !other ||
-        other.platform !== platform ||
-        other.holder !== root ||
-        (other.slot ?? 'default') !== slot ||
-        other.id === id
-      )
-        continue;
-      releaseByRoot(root, platform, other.id, io);
-    }
+    const others = displacedLeases(
+      listLeaseFiles(io).map((entry) => entry.lease),
+      { root, platform, slot, id },
+    );
+    for (const other of others) releaseByRoot(root, platform, other.id, io);
 
     const declared = previous?.kind === 'declared' && previous.id === id;
     const path = deviceLeasePath(platform, id);
-    const result = io.withLeaseLock(deviceLeaseLockPath(platform, id), (): TakeLeaseResult => {
-      const now = io.now();
-      const raw = io.readLease(path);
-      const current = parseLease(raw);
-      if (raw !== null && !current) return { status: 'unreadable', path };
-      const asked = now + durationMs;
-      if (current && !leaseIsExpired(current, now)) {
-        if (current.holder !== root || (current.slot ?? 'default') !== slot) return { status: 'held', lease: current };
-        const floor = declared && kind === 'run' ? Math.max(asked, Date.parse(current.expiresAt)) : asked;
-        const kept = {
-          ...current,
-          deviceName: deviceName ?? current.deviceName,
-          expiresAt: new Date(floor).toISOString(),
-        };
-        return { status: 'set', lease: writeLease(kept, io) };
-      }
-      const expiresAt = new Date(asked).toISOString();
-      const granted: DeviceLease = {
-        version: LEASE_VERSION,
-        ...(slot === 'default' ? {} : { slot }),
-        platform,
-        id,
-        deviceName,
-        holder: root,
-        token: randomBytes(12).toString('hex'),
-        grantedAt: new Date(now).toISOString(),
-        expiresAt,
-      };
-      return { status: 'taken', lease: writeLease(granted, io) };
-    });
+    const { result, recorded } = io.withLeaseLock(
+      deviceLeaseLockPath(platform, id),
+      (): { result: TakeLeaseResult; recorded?: LeaseKind } => {
+        const now = io.now();
+        const raw = io.readLease(path);
+        const current = parseLease(raw);
+        const grant = leaseGrant({
+          lease: raw !== null && !current ? 'unreadable' : current,
+          root,
+          slot,
+          kind,
+          declared,
+          now,
+          durationMs,
+        });
+        switch (grant.status) {
+          case 'unreadable':
+            return { result: { status: 'unreadable', path } };
+          case 'held':
+            return { result: { status: 'held', lease: grant.lease } };
+          case 'set': {
+            const kept = {
+              ...grant.lease,
+              deviceName: deviceName ?? grant.lease.deviceName,
+              expiresAt: new Date(grant.expiresAt).toISOString(),
+            };
+            return { result: { status: 'set', lease: writeLease(kept, io) }, recorded: grant.kind };
+          }
+          case 'taken': {
+            const granted: DeviceLease = {
+              version: LEASE_VERSION,
+              ...(slot === 'default' ? {} : { slot }),
+              platform,
+              id,
+              deviceName,
+              holder: root,
+              token: randomBytes(12).toString('hex'),
+              grantedAt: new Date(now).toISOString(),
+              expiresAt: new Date(grant.expiresAt).toISOString(),
+            };
+            return { result: { status: 'taken', lease: writeLease(granted, io) }, recorded: grant.kind };
+          }
+        }
+      },
+    );
 
-    if (result.status === 'taken' || result.status === 'set') {
-      const recorded = result.status === 'set' && declared ? 'declared' : kind;
+    if (recorded && (result.status === 'taken' || result.status === 'set')) {
       io.writeHolder(root, { ...io.readHolder(root), [key]: { id, token: result.lease.token, kind: recorded } });
     }
     return result;
@@ -324,11 +329,13 @@ export function raiseLease(
   const path = deviceLeasePath(platform, record.id);
   return io.withLeaseLock(deviceLeaseLockPath(platform, record.id), (): RaiseLeaseResult => {
     const current = parseLease(io.readLease(path));
-    if (!current || current.token !== record.token) return { status: 'lost', lease: current };
-    const floor = io.now() + minMs;
-    if (Date.parse(current.expiresAt) >= floor) return { status: 'raised', lease: current };
-    const raised = { ...current, expiresAt: new Date(floor).toISOString() };
-    return { status: 'raised', lease: writeLease(raised, io) };
+    const raise = leaseRaise(current, record.token, io.now(), minMs);
+    if (raise.status === 'lost') return { status: 'lost', lease: current };
+    if (raise.status === 'kept') return { status: 'raised', lease: raise.lease };
+    return {
+      status: 'raised',
+      lease: writeLease({ ...raise.lease, expiresAt: new Date(raise.expiresAt).toISOString() }, io),
+    };
   });
 }
 
