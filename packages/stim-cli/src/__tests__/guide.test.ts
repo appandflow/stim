@@ -335,7 +335,7 @@ test('the errors topic documents every code the engine can emit under a command'
   const body = renderTopic('errors');
   assert(body);
   const sources = [
-    'offload/selection.ts',
+    'build-placement.ts',
     'workspace/config.ts',
     'engine/workspace-process-lock.ts',
     'engine/build-slots.ts',

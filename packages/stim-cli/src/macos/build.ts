@@ -22,7 +22,7 @@ import {
   type BuildHandoff,
   type OffloadChoice,
 } from '../offload/client.ts';
-import { automaticBuild, namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../offload/selection.ts';
+import { automaticBuild, namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../build-placement.ts';
 import { macosDir } from './state.ts';
 import { reidentifyBundle } from './stage.ts';
 import { validateMacosArtifactPlatform } from './artifact-platform.ts';

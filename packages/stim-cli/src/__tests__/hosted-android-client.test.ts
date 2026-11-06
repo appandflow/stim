@@ -15,7 +15,7 @@ import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { prepareHostedAndroid, placeHostedAndroid, stopHostedAndroid } from '../device-host/hosted-android.ts';
 import { androidAgentRemoteConfig } from '../device-host/hosted-native.ts';
-import { readHostedAndroid, writeHostedNative } from '../device-host/ios-state.ts';
+import { readHostedAndroid, writeHostedNative } from '../workspace/placement-state.ts';
 import { runReload } from '../commands/reload.ts';
 
 const writeHostedAndroid = (root: string, slot: string, host: HostedAndroidPlacement | null): void =>

@@ -1,4 +1,4 @@
-import { ambientWrite, workspaceId } from '@stim-cli/core';
+import { ambientWrite } from '@stim-cli/core';
 import { isJsonObject, parseNdjsonLine } from '@stim-cli/core/state';
 import { realpathSync } from 'node:fs';
 import { phaseLine } from '../command-output.ts';
@@ -14,14 +14,6 @@ function canonical(path: string): string | null {
 
 function report(message: string): void {
   ambientWrite('stderr', `${phaseLine('device', message.replace(/\s+/g, ' '))}\n`);
-}
-
-/**
- * The agent-device session `stim agent-device` uses for a hosted device when the agent names none. agent-device keeps
- * one saved remote connection per name for the whole machine, so the name carries the workspace id.
- */
-export function hostedAgentSessionName(root: string, platform: 'ios' | 'android', slot: string): string {
-  return `stim-${slot}-${platform}-${workspaceId(root).slice(0, 8)}`;
 }
 
 /** Closes the saved agent-device connection `session` (agent-device's `default` when omitted) if it uses `remoteConfig`. */

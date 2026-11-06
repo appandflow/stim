@@ -298,7 +298,7 @@
         "packages/stim-cli/src/integrations/swiftpm-macos.ts",
         "packages/stim-cli/src/offload/access-ticket.ts",
         "packages/stim-cli/src/offload/client.ts",
-        "packages/stim-cli/src/offload/selection.ts",
+        "packages/stim-cli/src/build-placement.ts",
         "packages/stim-cli/src/offload/worker.ts",
         "packages/stim-cli/src/temporary.ts",
         "packages/stim-cli/src/web/runtime.ts"

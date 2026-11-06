@@ -5,6 +5,7 @@ import {
   HOSTED_METRO_REQUESTS_KEY,
   hostedMetroRequests,
   isJsonObject,
+  type SettingsObject,
   type DevicePlacement,
   type HostedIosPlacement,
   type HostedAndroidPlacement,
@@ -12,7 +13,7 @@ import {
   type HostedIosDevice,
   type HostedAndroidDevice,
 } from '@stim-cli/core/state';
-import { readWorkspaceState, updateWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, updateWorkspaceState, withWorkspaceStateLockAsync } from './workspace-state.ts';
 
 export function readHostedNative(
   root: string,
@@ -122,4 +123,20 @@ export function writeHostedAndroidAsync(
 
 export function readHostedAndroid(root: string, slot?: string): Record<string, HostedAndroidPlacement> {
   return readHostedNative(root, 'android', slot) as Record<string, HostedAndroidPlacement>;
+}
+
+export function hostedMetroSettings(settings: SettingsObject, hosted: boolean): SettingsObject {
+  return hosted
+    ? {
+        ...settings,
+        ios: { ...(isJsonObject(settings.ios) ? settings.ios : {}), remote: undefined },
+        android: { ...(isJsonObject(settings.android) ? settings.android : {}), remote: undefined },
+        metro: {
+          ...(isJsonObject(settings.metro) ? settings.metro : {}),
+          tunnel: undefined,
+          publicUrl: undefined,
+          ngrokUrl: undefined,
+        },
+      }
+    : settings;
 }

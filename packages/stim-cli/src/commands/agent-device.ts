@@ -32,7 +32,7 @@ import {
 import type { PresencePublishParams } from '@stim-cli/core/protocol';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { runProcessOperation } from '../cli-operation.ts';
-import { hostedAgentSessionName } from '../device-host/agent-connection.ts';
+import { hostedAgentSessionName } from '../hosted-names.ts';
 import { resolveOwnedAvdSerialAsync } from '../devices/android.ts';
 import { deviceSlotKey, parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import { deviceLeasePath, leaseIsExpired, parseLease, parseWorkspaceLeases } from '../engine/device-lease.ts';

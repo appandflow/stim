@@ -41,7 +41,7 @@ import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { stopBundleInstances, stopMacosAppHeld, stopProcesses as stopMacosProcesses } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
+import { resolveBuildPlacement, parseBuildMachineOption } from '../build-placement.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { upsertProject, withConfigLockAsync } from '../workspace/config.ts';
 import {

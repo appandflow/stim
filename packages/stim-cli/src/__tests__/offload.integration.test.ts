@@ -12,7 +12,7 @@ import {
   requireLocalBuild,
   resolveBuildMachine,
   resolveBuildPlacement,
-} from '../offload/selection.ts';
+} from '../build-placement.ts';
 import { withAmbientContext } from '@stim-cli/core';
 import { testContext } from './_context.ts';
 import type { MachineCapacity, BuildMachineCredential } from '@stim-cli/core/state';
