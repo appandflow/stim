@@ -57,8 +57,168 @@
   },
   "overrides": [
     {
+      "files": ["packages/core/**/*.{ts,mts,mjs,js}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@stim-cli/(?!(?:core)(?:/|$))|^stim(?:/|$)"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/cache/**/*.{ts,mts,mjs,js}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@stim-cli/(?!(?:cache)(?:/|$))|^stim(?:/|$)"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/metro/**/*.{ts,mts,mjs,js}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@stim-cli/(?!(?:metro|cache|core)(?:/|$))|^stim(?:/|$)"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/ci/**/*.{ts,mts,mjs,js}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@stim-cli/(?!(?:ci)(?:/|$))|^stim/(?!(?:package\\.json|cache-manifest|pull-requests|share-links|build-artifact-cache|ci|ci/artifacts)$)"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/server/**/*.{ts,mts,mjs,js}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@stim-cli/(?!(?:server|agent-driver|agent-driver-agent-device|core|transport|transport-local|transport-tailscale)(?:/|$))|^stim/(?!(?:package\\.json|cache-manifest|pull-requests|share-links|build-artifact-cache|ci|ci/artifacts)$)"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/transport/**/*.{ts,mts,mjs,js}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@stim-cli/(?!(?:transport)(?:/|$))|^stim(?:/|$)"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/transport-local/**/*.{ts,mts,mjs,js}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@stim-cli/(?!(?:transport-local|transport)(?:/|$))|^stim(?:/|$)"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/transport-tailscale/**/*.{ts,mts,mjs,js}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@stim-cli/(?!(?:transport-tailscale|core|transport)(?:/|$))|^stim(?:/|$)"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/agent-driver/**/*.{ts,mts,mjs,js}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@stim-cli/(?!(?:agent-driver|core)(?:/|$))|^stim(?:/|$)"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/agent-driver-agent-device/**/*.{ts,mts,mjs,js}"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*", "**/tsdown.config.*"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@stim-cli/(?!(?:agent-driver-agent-device|agent-driver|core)(?:/|$))|^stim(?:/|$)"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": ["packages/**/*.{ts,tsx,mts,mjs,js,cjs,cts}"],
-      "excludeFiles": ["**/__tests__/**", "**/*.test.*"],
+      "excludeFiles": ["**/__tests__/**", "**/*.test.*", "packages/stim-cli/tsdown.config.ts"],
       "rules": {
         "stim/package-fence": "error"
       }

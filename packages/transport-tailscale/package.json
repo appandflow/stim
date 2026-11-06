@@ -1,6 +1,7 @@
 {
   "name": "@stim-cli/transport-tailscale",
   "version": "1.40.0",
+  "private": true,
   "description": "Tailscale transport for stim-server: tailnet-only serve route, whois identity and peer pinning.",
   "license": "MIT",
   "repository": {

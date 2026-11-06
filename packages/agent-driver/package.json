@@ -1,6 +1,7 @@
 {
   "name": "@stim-cli/agent-driver",
   "version": "1.40.0",
+  "private": true,
   "description": "Hosted agent driver contract for stim-server.",
   "license": "MIT",
   "repository": {

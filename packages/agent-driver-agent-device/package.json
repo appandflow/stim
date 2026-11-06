@@ -1,6 +1,7 @@
 {
   "name": "@stim-cli/agent-driver-agent-device",
   "version": "1.40.0",
+  "private": true,
   "description": "agent-device driver for stim-server hosted apps.",
   "license": "MIT",
   "repository": {

@@ -152,9 +152,11 @@ preparation, `git status --short` may show only the draft
    runs `expo export`, so a fresh checkout needs `pnpm install --frozen-lockfile`
    and `pnpm --filter @stim-cli/core run build` first.
 
-   Nothing else moves. The packages depend on each other as `workspace:*`, so
-   there is no dependency range to bump: pnpm packs each internal dependency
-   as the exact release version, never a `^` range (verified in step 3).
+   Workspace links stay at `workspace:*` during a bump, including Stim's
+   development dependencies. Stim bundles the `@stim-cli/*` code and ships no
+   runtime dependency on those packages. pnpm substitutes remaining workspace
+   ranges when packing; no `workspace:` range may reach a published tarball
+   (verified in step 3).
    `pnpm run release:prep --check` audits that shape -- package versions in
    lockstep, every internal range exactly `workspace:*` -- without changing
    anything.
@@ -194,8 +196,9 @@ preparation, `git status --short` may show only the draft
    `pnpm run test:compat`; do not combine the two lanes informally.
 
 3. **Verify each npm tarball** ships only what should ship, that each one
-   carries its own README, and that every `@stim-cli/*` and `stim` dependency
-   names the exact release version, with no `^` or `~`. Pack with `pnpm`, never `npm`: the release workflow publishes
+   carries its own README, and that Stim has no `@stim-cli/*` runtime
+   dependencies. Any remaining inter-package dependencies name the exact
+   release version, with no `^` or `~`. Pack with `pnpm`, never `npm`: the release workflow publishes
    pnpm-packed tarballs, and `npm pack` prints the unsubstituted `workspace:`
    ranges rather than what actually publishes.
 
