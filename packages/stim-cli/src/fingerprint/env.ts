@@ -49,6 +49,8 @@ const NAME_LITERAL = /['"]([A-Z][A-Z0-9_]{3,})['"]/g;
 const RUBY_CONSTANT = new RegExp(String.raw`^\s*([A-Z][A-Z0-9_]*)\s*=\s*['"]${NAME}['"]`, 'gm');
 
 export const isDenied = (name: string): boolean => DENIED.test(name);
+/** Names a shell session sets that no evaluation depends on; an app's own `STIM_*` variable is not one. */
+export const isSessionName = (name: string): boolean => VOLATILE.test(name) && !name.startsWith('STIM_');
 const STIM_MACHINE_LOCAL = /^STIM_(?:HOME|RUN_ID|ACCESS_TICKET)$/;
 const keyable = (name: string) => !isDenied(name) && !MACHINE_LOCAL.has(name) && !STIM_MACHINE_LOCAL.test(name);
 const defined = (env: Env) =>
@@ -64,6 +66,26 @@ export function evaluatorEnv(requester: Env, root: string, platform: Platform): 
     if (isDenied(name) || name.startsWith('STIM_') || (platform === 'ios' && /^ANDROID_(?:HOME|SDK_ROOT)$/.test(name)))
       delete env[name];
   return { EXPO_NO_TELEMETRY: '1', ...env, ...PINS, PWD: root };
+}
+
+/** Stim's own secrets, which no app config or build script reads. */
+const STIM_SECRET = /^STIM_(?:KEYSTORE_PASSWORD|SETUP_TICKET|ASC_KEY_.*)$/;
+
+/**
+ * What a workspace's fingerprint env file keeps: the requester's env without diagnostic, shell-session and Stim
+ * machine or secret names, so precompute and verification can reproduce every part.
+ */
+export function workspaceEnv(requester: Env): Record<string, string> {
+  const env = defined(requester);
+  for (const name of Object.keys(env))
+    if (
+      isDenied(name) ||
+      STIM_MACHINE_LOCAL.test(name) ||
+      STIM_SECRET.test(name) ||
+      (VOLATILE.test(name) && !name.startsWith('STIM_') && name !== 'TMPDIR')
+    )
+      delete env[name];
+  return env;
 }
 
 /**
@@ -137,7 +159,7 @@ export function buildScripts(dir: string): string[] {
  * constant the same file assigns. A file that mentions the env more often than it reads a parsed name, such as
  * `ENV[name]` or `System.env.X`, contributes every quoted upper-case literal it contains as well.
  */
-function scriptEnvNames(text: string): string[] {
+export function scriptEnvNames(text: string): string[] {
   const constants = new Map([...text.matchAll(RUBY_CONSTANT)].map((match) => [match[1], match[2]]));
   const literal = LITERAL_READS.flatMap((form) => [...text.matchAll(form)].map((match) => match[2] ?? ''));
   const viaConstants = [...text.matchAll(CONSTANT_READ)].map((match) => constants.get(match[2] ?? ''));
@@ -173,17 +195,17 @@ export function templateScripts(tgz: string): string[] {
 }
 
 /**
- * Row 24: every env name the native build scripts read, valued from the env the native build runs under, plus every
- * `ORG_GRADLE_PROJECT_*` on Android, which Gradle reads as project properties. An absolute path value is keyed in
- * its `pathForm`, and returned so its file or tree can be hashed too.
+ * Row 24: every env name the native build scripts read (`scriptEnvNames` of each script), valued from the env the
+ * native build runs under, plus every `ORG_GRADLE_PROJECT_*` on Android, which Gradle reads as project properties. An
+ * absolute path value is keyed in its `pathForm`, and returned so its file or tree can be hashed too.
  */
 export function buildEnvRows(
-  texts: readonly string[],
+  scanned: Iterable<string>,
   env: Env,
   platform: Platform,
   pathForm: (path: string) => string,
 ): { rows: Input[]; paths: string[] } {
-  const names = new Set(texts.flatMap(scriptEnvNames).filter((name) => keyable(name) && !BUILD_DENIED.has(name)));
+  const names = new Set([...scanned].filter((name) => keyable(name) && !BUILD_DENIED.has(name)));
   if (platform === 'android')
     for (const name of Object.keys(env)) if (name.startsWith('ORG_GRADLE_PROJECT_')) names.add(name);
   const paths = [...names]
