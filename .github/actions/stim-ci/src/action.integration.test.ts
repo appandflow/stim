@@ -152,8 +152,8 @@ test.each([false, true])(
     const files = github.upload.mock.calls[0]![1];
     expect(files).toEqual([join(root, 'results/result.json'), join(root, 'results/test.stderr.log')]);
     const args = JSON.parse(readFileSync(join(root, 'results/argv.json'), 'utf8'));
-    expect(onlyBuild ? args[0] : args.slice(-7)).toEqual(
-      onlyBuild ? 'build' : ['--', 'bash', '-e', '-o', 'pipefail', '-c', github.inputs.command],
+    expect(onlyBuild ? args.slice(0, 2) : args.slice(-7)).toEqual(
+      onlyBuild ? ['ci', 'build'] : ['--', 'bash', '-e', '-o', 'pipefail', '-c', github.inputs.command],
     );
     expect(args).toContain(join(root, 'home with spaces'));
     expect(github.output).toHaveBeenCalledWith('result', join(root, 'results/result.json'));
@@ -243,7 +243,10 @@ writeFileSync(join(dir, 'ready'), 'ready');
     expect(existsSync(join(root, 'results/ready'))).toBe(true);
     process.emit('SIGTERM');
     expect(await running).toBe(130);
-    expect(JSON.parse(readFileSync(join(root, 'results/argv.json'), 'utf8'))[0]).toBe(onlyBuild ? 'build' : 'run');
+    expect(JSON.parse(readFileSync(join(root, 'results/argv.json'), 'utf8')).slice(0, 2)).toEqual([
+      'ci',
+      onlyBuild ? 'build' : 'run',
+    ]);
     expect(JSON.parse(readFileSync(join(root, 'results/result.json'), 'utf8')).exitCode).toBe(130);
     expect(github.upload).toHaveBeenCalled();
   },
@@ -293,10 +296,17 @@ test.each([false, true])(
     github.inputs.export = 'out/app.tar.gz';
     expect(await runAction()).toBe(0);
     const [build, run] = seen.calls();
-    expect(build?.slice(0, 3)).toEqual(['build', '--platform', 'ios']);
+    expect(build?.slice(0, 4)).toEqual(['ci', 'build', '--platform', 'ios']);
     expect(build).toEqual(expect.arrayContaining(['--export', join(root, 'out/app.tar.gz')]));
     expect(build).not.toContain('--artifacts');
-    expect(seen.calls().map((call) => call[0])).toEqual(onlyBuild ? ['build'] : ['build', 'run']);
+    expect(seen.calls().map((call) => call.slice(0, 2))).toEqual(
+      onlyBuild
+        ? [['ci', 'build']]
+        : [
+            ['ci', 'build'],
+            ['ci', 'run'],
+          ],
+    );
     expect(run ?? []).not.toContain('--artifacts');
     expect(github.upload).not.toHaveBeenCalled();
     expect(github.output).not.toHaveBeenCalledWith('result', expect.anything());
@@ -312,8 +322,8 @@ test.skipIf(process.platform === 'win32')(
     delete github.inputs.command;
     expect(await runAction()).toBe(0);
     const [build, run] = seen.calls();
-    expect(build?.[0]).toBe('build');
-    expect(run?.[0]).toBe('run');
+    expect(build?.slice(0, 2)).toEqual(['ci', 'build']);
+    expect(run?.slice(0, 2)).toEqual(['ci', 'run']);
     expect(run).not.toContain('--');
     expect(github.output).toHaveBeenCalledWith('exit-code', '0');
   },
@@ -340,13 +350,13 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'sets build and run facts as outputs from the results stim-ci prints',
+  'sets build and run facts as outputs from the results stim ci prints',
   async () => {
     github.inputs.platform = 'ios';
     delete github.inputs.artifacts;
     writeFileSync(
       join(root, 'fixture.mjs'),
-      `const build = process.argv[2] === 'build';
+      `const build = process.argv[3] === 'build';
 console.log('progress line');
 console.log(JSON.stringify(build
   ? { stage: 'build', artifactPath: '/out/app.tar.gz', build: { facts: { appPath: '/w/App.app', bundleId: 'com.example', cacheHit: 'local' } } }
@@ -371,7 +381,7 @@ test.skipIf(process.platform === 'win32')('sets the Android build facts when the
   delete github.inputs.artifacts;
   writeFileSync(
     join(root, 'fixture.mjs'),
-    `if (process.argv[2] === 'build') console.log(JSON.stringify({ stage: 'build', artifactPath: null, build: { facts: { apkPath: '/w/app.apk', androidPackage: 'com.example', cacheHit: false } } }));
+    `if (process.argv[3] === 'build') console.log(JSON.stringify({ stage: 'build', artifactPath: null, build: { facts: { apkPath: '/w/app.apk', androidPackage: 'com.example', cacheHit: false } } }));
 else process.exitCode = 4;`,
   );
   expect(await runAction()).toBe(4);
@@ -396,7 +406,7 @@ test.each([true, false])(
     delete github.inputs.artifacts;
     writeFileSync(
       join(root, 'fixture.mjs'),
-      `if (process.argv[2] === 'build') console.log(JSON.stringify({ stage: 'build', artifactPath: '/out/App.tar.gz', build: { facts: { bundle: '/w/App.app', bundleId: 'com.example', build: { cacheHit: false } } } }));
+      `if (process.argv[3] === 'build') console.log(JSON.stringify({ stage: 'build', artifactPath: '/out/App.tar.gz', build: { facts: { bundle: '/w/App.app', bundleId: 'com.example', build: { cacheHit: false } } } }));
 else console.log(JSON.stringify({ exitCode: 0, run: { facts: { bundle: '/w/App.app', bundleId: 'com.example', build: { cacheHit: false } } } }));`,
     );
     expect(await runAction()).toBe(0);
@@ -408,27 +418,36 @@ test.skipIf(process.platform === 'win32')('stops before run when the build fails
   const seen = recorder();
   delete github.inputs.artifacts;
   github.inputs.platform = 'android';
-  writeFileSync(join(root, 'fixture.mjs'), `process.exitCode = process.argv[2] === 'build' ? 7 : 0;`);
+  writeFileSync(join(root, 'fixture.mjs'), `process.exitCode = process.argv[3] === 'build' ? 7 : 0;`);
   expect(await runAction()).toBe(7);
   github.inputs.platform = 'web';
   recorder();
   expect(await runAction()).toBe(0);
-  expect(seen.calls().map((call) => call[0])).toEqual(['run']);
+  expect(seen.calls().map((call) => call.slice(0, 2))).toEqual([['ci', 'run']]);
 });
 
-test.skipIf(process.platform === 'win32')(
-  'reuses the CLI installed for this version without installing again',
-  async () => {
-    const seen = recorder();
-    const script = join(root, 'tools', 'stim-ci-action', '1.2.3', 'node_modules/@stim-cli/ci/dist/stim-ci.mjs');
-    mkdirSync(join(script, '..'), { recursive: true });
-    writeFileSync(script, readFileSync(join(root, 'fixture.mjs'), 'utf8'));
-    vi.stubEnv('RUNNER_TOOL_CACHE', join(root, 'tools'));
-    delete github.inputs['cli-path'];
-    github.inputs.version = '1.2.3';
-    delete github.inputs.artifacts;
-    github.inputs.platform = 'web';
-    expect(await runAction()).toBe(0);
-    expect(seen.calls()).toHaveLength(1);
-  },
-);
+test.skipIf(process.platform === 'win32')('installs stim@version and runs its bin with ci', async () => {
+  const seen = recorder();
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, 'npm'),
+    `#!/bin/sh
+printf '%s\\n' "$*" > "${join(root, 'npm.txt')}"
+mkdir -p "$3/node_modules/stim/bin"
+cp "${join(root, 'fixture.mjs')}" "$3/node_modules/stim/bin/stim.mjs"
+`,
+    { mode: 0o755 },
+  );
+  vi.stubEnv('PATH', `${bin}:${process.env.PATH}`);
+  vi.stubEnv('RUNNER_TOOL_CACHE', join(root, 'cache'));
+  vi.stubEnv('RUNNER_TEMP', root);
+  delete github.inputs['cli-path'];
+  github.inputs.version = '1.42.0';
+  delete github.inputs.artifacts;
+  expect(await runAction()).toBe(0);
+  const npm = readFileSync(join(root, 'npm.txt'), 'utf8');
+  expect(npm).toContain('stim@1.42.0');
+  expect(npm).not.toContain('@stim-cli/ci');
+  expect(seen.calls().map((call) => call.slice(0, 2))).toEqual([['ci', 'run']]);
+});
