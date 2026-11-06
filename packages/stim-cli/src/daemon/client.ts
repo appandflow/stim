@@ -165,9 +165,11 @@ const STIMD_ENV = new Set<string>([
   ...SETTINGS.flatMap((setting) => (setting.env && !setting.sensitive ? [setting.env] : [])),
 ]);
 
-function stimdEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+/** Windows environment names are case-insensitive, and `Path` and `SystemRoot` are their usual spelling there. */
+function stimdEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Record<string, string> {
   const kept: Record<string, string> = {};
-  for (const [name, value] of Object.entries(env)) if (value !== undefined && STIMD_ENV.has(name)) kept[name] = value;
+  for (const [name, value] of Object.entries(env))
+    if (value !== undefined && STIMD_ENV.has(platform === 'win32' ? name.toUpperCase() : name)) kept[name] = value;
   return kept;
 }
 
@@ -258,7 +260,7 @@ export function launchStimd(
   mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
   const entry = spawnEntry('cli');
   const args = [entry, '__stimd', '--mode', mode];
-  const kept = stimdEnv(env);
+  const kept = stimdEnv(env, platform);
   const never = { settled: new Promise<void>(() => {}), exited: () => false };
   if (platform === 'darwin') {
     const host = stimHost(env);

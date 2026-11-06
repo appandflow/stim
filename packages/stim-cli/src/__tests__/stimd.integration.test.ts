@@ -902,13 +902,18 @@ test('on win32 a command starts stimd through the hidden launcher, which passes 
   setExecutor({ ...getExecutor(), spawn });
   onTestFinished(() => resetExecutor());
 
-  await ensureStimd({ ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' }, 'win32');
+  await ensureStimd({ ...process.env, STIM_HOME: home, STIM_DAEMON: 'on', Path: 'C:\\tools' }, 'win32');
 
   expect(spawn).toHaveBeenCalledTimes(1);
   expect(spawn).toHaveBeenCalledWith(
     'powershell.exe',
     expect.any(Array),
-    expect.objectContaining({ windowsHide: true, detached: false, stdio: 'ignore' }),
+    expect.objectContaining({
+      windowsHide: true,
+      detached: false,
+      stdio: 'ignore',
+      env: expect.objectContaining({ Path: 'C:\\tools' }),
+    }),
   );
   expect(spawn.mock.calls.at(0)?.[2]?.env?.STIM_WINDOWS_LAUNCH_ARGS).toMatch(
     /"__stimd" "--mode" "on" "--log-file" ".*stimd\.log"$/,
