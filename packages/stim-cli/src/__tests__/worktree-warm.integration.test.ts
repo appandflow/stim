@@ -340,6 +340,7 @@ test('warm reports carried dependency and Pods lockfile mismatches against the l
   expect(result.stderr).toMatch(/carried dependencies may be stale.*package-lock.json.*`npm ci` deletes node_modules/);
   expect(result.stderr).toMatch(/carried ios\/Pods does not match/);
   expect(readFileSync(join(target, 'ios/Podfile.lock'), 'utf-8')).toBe('branch pods\n');
+  expect(readFileSync(join(target, 'ios/Pods/Manifest.lock'), 'utf-8')).toBe('main pods');
 }, 30_000);
 
 test('warm notes on stderr when carried prebuilt React Native frameworks are another flavor than the build', async () => {
