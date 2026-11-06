@@ -18,7 +18,7 @@ import {
   describeDiagnostic,
   type Diagnostic,
 } from './errors-xcode.ts';
-import { cleanLine } from '../supervisor/server-expo.ts';
+import { cleanLine } from '../stimd/metro/server-expo.ts';
 import type { CompilationCacheActivity } from './build-facts.ts';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { ambientContext, type StimContext } from '@stim-cli/core';

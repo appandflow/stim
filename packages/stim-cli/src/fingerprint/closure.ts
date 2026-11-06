@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
+import type { Provenance } from './index-store.ts';
 import { byCodeUnit, canonicalJson, sha256, type Input } from './key.ts';
 
 const EXPO_ENTRY_POINTS = ['@expo/cli', '@expo/prebuild-config', '@expo/config-plugins'];
@@ -66,19 +67,32 @@ export function entryPoints(root: string, expo: string | null): { dirs: string[]
   return { dirs: [...dirs], missing: [...missing] };
 }
 
+/** A package's `name` and `version` from its `package.json`, or null when it names none. */
+export function packageIdentity(dir: string): { name: string; version: string } | null {
+  const { name, version } = manifest(dir);
+  return typeof name === 'string' ? { name, version: typeof version === 'string' ? version : '' } : null;
+}
+
 /**
- * One identity row per package name. Two installed versions of one name hash their sorted versions together; a name
- * that does not resolve hashes an empty list.
+ * One row per package name: its installed versions with the lockfile's integrity, `resolved` and patch hash, sorted.
+ * A copy hashed by content (not a registry tarball, or an origin the lockfile reader cannot tell) carries the digest
+ * of its native files instead and marks the row's `mode`. A name that does not resolve hashes an empty list.
  */
-export function packageRows(dirs: Iterable<string>, missing: Iterable<string> = []): Input[] {
+export function packageRows(
+  identities: Iterable<{ name: string; version: string; provenance?: Provenance; content?: string }>,
+  missing: Iterable<string> = [],
+): Input[] {
   const versions = new Map<string, Set<string>>();
+  const labels = new Map<string, Set<string>>();
+  const byContent = new Set<string>();
   for (const name of missing) versions.set(name, versions.get(name) ?? new Set());
-  for (const dir of new Set(dirs)) {
-    const { name, version } = manifest(dir);
-    if (typeof name !== 'string') continue;
+  for (const { name, version, provenance, content } of identities) {
     const known = versions.get(name) ?? new Set();
-    known.add(typeof version === 'string' ? version : '');
+    const { mode = 'identity', integrity = null, resolved = null, patch = null } = provenance ?? {};
+    known.add(canonicalJson(content ? [version, null, null, null, content] : [version, integrity, resolved, patch]));
+    if (mode === 'content') byContent.add(name);
     versions.set(name, known);
+    labels.set(name, (labels.get(name) ?? new Set()).add(version));
   }
   return [...versions].map(([name, set]) => {
     const sorted = [...set].toSorted(byCodeUnit);
@@ -86,8 +100,8 @@ export function packageRows(dirs: Iterable<string>, missing: Iterable<string> = 
       name: `package:${name}`,
       kind: 'package',
       hash: sha256(canonicalJson({ name, versions: sorted })),
-      version: sorted.join(' '),
-      mode: 'identity',
+      version: [...(labels.get(name) ?? [])].toSorted(byCodeUnit).join(' '),
+      mode: byContent.has(name) ? 'content' : 'identity',
     };
   });
 }

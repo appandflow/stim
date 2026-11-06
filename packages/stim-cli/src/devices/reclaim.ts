@@ -12,7 +12,7 @@ import {
 } from '../workspace/config.ts';
 import { existsSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTreeAsync, pidExists, signalProcessTreeAsync } from '../metro.ts';
-import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../supervisor/stop-cause.ts';
+import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../stimd/metro/stop-cause.ts';
 import { ensureStimd } from '../daemon/client.ts';
 import { readBootedParkDeadline } from './booted-park.ts';
 import {
@@ -25,7 +25,7 @@ import {
 import { acquireAvdClaim } from './avd-claim.ts';
 import { releaseClaim } from '../ownership-claim.ts';
 import { parkedMaxSetting } from './sim-pool.ts';
-import { verifyCollectorOwnership } from '../collector/ownership.ts';
+import { verifyCollectorOwnership } from '../stimd/logs/ownership.ts';
 import {
   MODE_COMMAND,
   clearManagedMetroTunnel,
@@ -33,7 +33,7 @@ import {
   readMetroTunnel,
   readRemoteSessionId,
   type ManagedTunnelRecord,
-} from '../supervisor/state.ts';
+} from '../stimd/metro/state.ts';
 import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { isJsonObject, LAST_BUILD_KEYS, readMacosRecord, hostedNativeRecords } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
@@ -49,7 +49,7 @@ import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.t
 import { agentDeviceDaemon } from './activity.ts';
 import { phaseLine } from '../command-output.ts';
 import { workspaceAgentDeviceDir, workspaceDir } from '../workspace/paths.ts';
-import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { emptyWorkspaceDir, withIdleWorkspace } from '../workspace/in-use.ts';
 import {
   inspectProcessIdentity,

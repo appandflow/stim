@@ -8,7 +8,7 @@ import {
   resultEnumCases,
   eventEnumCases,
   archivedLogsEnded,
-} from '../../mock-server/receive-fixtures';
+} from '../../../../packages/core/__tests__/fixtures/receive-fixtures';
 import type { StatusPayload, Methods } from '@/protocol/types';
 import { pair, pairingScope, StimConnection, type ConnectionState } from '@/lib/connection';
 import type { SessionClose, SocketAuth, VideoStream } from '@/lib/socket';

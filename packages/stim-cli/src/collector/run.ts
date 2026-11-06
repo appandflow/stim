@@ -8,9 +8,9 @@ import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { createLineReader } from '../process-output.ts';
-import { parseDeviceConsoleLine, startIosDeviceConsole } from './ios-device.ts';
-import { appNameFromBundleId, parseLogStreamLine, startIosLogStream } from './ios.ts';
-import { collectorProcessTitle } from './ownership.ts';
+import { parseDeviceConsoleLine, startIosDeviceConsole } from '../stimd/logs/ios-device.ts';
+import { appNameFromBundleId, parseLogStreamLine, startIosLogStream } from '../stimd/logs/ios.ts';
+import { collectorProcessTitle } from '../stimd/logs/ownership.ts';
 import {
   type PidResolution,
   type PidWatcher,
@@ -19,7 +19,7 @@ import {
   startAndroidLogcat,
   waitForAppPid,
   watchAppPid,
-} from './android.ts';
+} from '../stimd/logs/android.ts';
 
 export const PLATFORMS: string[] = ['ios', 'android'];
 
@@ -138,7 +138,7 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
   };
 }
 
-import { readCollectors, registerCollector, unregisterCollector } from './state.ts';
+import { readCollectors, registerCollector, unregisterCollector } from '../stimd/logs/state.ts';
 import { captureProcessToken } from '../process-identity.ts';
 export { readCollectors, registerCollector, unregisterCollector };
 

@@ -18,6 +18,8 @@ export interface Roots {
   project: string;
   /** Real path of the nearest directory at or above the app that holds a lockfile; the app when none does. */
   install: string;
+  /** Real path of the git work tree top above the app, when the app is in one. */
+  top?: string;
 }
 
 interface Pattern {
@@ -231,6 +233,8 @@ export interface WalkOptions {
   /** Files hashed after a transform of their bytes, by real path. */
   transforms?: ReadonlyMap<string, (bytes: Buffer) => Buffer | string>;
   limits?: { files: number; bytes: number };
+  /** A content hash cache: returns the known hash of an unchanged file, else calls `compute`. */
+  hashes?: { hash(path: string, compute: () => string): string };
 }
 
 export interface WalkResult {
@@ -273,6 +277,10 @@ export function walk(options: WalkOptions): WalkResult | Uncertain {
     if (files > limits.files || bytes > limits.bytes) throw new LimitExceeded();
     const transform = options.transforms?.get(path);
     if (transform) return sha256(transform(readFileSync(path)));
+    return options.hashes ? options.hashes.hash(path, () => contentHash(path, size)) : contentHash(path, size);
+  };
+
+  const contentHash = (path: string, size: number): string => {
     const hash = createHash('sha256');
     const buffer = Buffer.allocUnsafe(Math.min(CHUNK, Math.max(size, 1)));
     const fd = openSync(path, 'r');

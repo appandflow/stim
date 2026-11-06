@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readHostedAppMetadata, readHostedDevice, readHostedNativeLogsCheckpoint } from '@stim-cli/core/state';
-import { androidClockOffset, parseLogcatLine, parsePidof } from '../collector/android.ts';
+import { androidClockOffset, parseLogcatLine, parsePidof } from '../stimd/logs/android.ts';
 import { androidToolPath } from '../devices/android.ts';
 import { getExecutor } from '../exec.ts';
 import { assertHostedAndroidSerial } from './android-app.ts';

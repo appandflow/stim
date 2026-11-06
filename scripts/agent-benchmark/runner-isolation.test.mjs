@@ -268,7 +268,7 @@ describe('benchmark runner filesystem isolation', () => {
     },
   );
 
-  it('refuses iOS timing when the exact policy blocks nested sandboxes or ps identity and no adapter compensates', () => {
+  it('refuses iOS timing when the exact policy blocks nested sandboxes or ps identity', () => {
     const paths = fixture();
     const isolation = verifiedIsolation(paths.root, paths.policy);
     const refusals = {
@@ -290,7 +290,6 @@ describe('benchmark runner filesystem isolation', () => {
     expect(() =>
       verifyIsolationCompatibility(isolation, {
         platform: 'ios',
-        nativeCompatibility: null,
         execute: execute(['nested', 'ps']),
       }),
     ).toThrow(
@@ -307,26 +306,19 @@ describe('benchmark runner filesystem isolation', () => {
     const nested = calls.find(([, args]) => args.at(-1) === '/usr/bin/true')[1];
     expect(nested.slice(2, 4)).toEqual(['/usr/bin/sandbox-exec', '-p']);
     expect(nested[4]).toContain('(deny default)');
-    expect(() =>
-      verifyIsolationCompatibility(isolation, { platform: 'ios', nativeCompatibility: null, execute: execute(['ps']) }),
-    ).toThrow('/bin/sh: /bin/ps: Operation not permitted');
-    expect(
-      verifyIsolationCompatibility(isolation, {
-        platform: 'ios',
-        nativeCompatibility: { manifestSha256: 'pinned' },
-        execute: execute(['nested', 'ps']),
-      }),
-    ).toEqual(bothRefused);
+    expect(() => verifyIsolationCompatibility(isolation, { platform: 'ios', execute: execute(['ps']) })).toThrow(
+      '/bin/sh: /bin/ps: Operation not permitted',
+    );
     expect(
       verifyIsolationCompatibility(isolation, {
         platform: 'android',
-        nativeCompatibility: null,
         execute: execute(['nested', 'ps']),
       }),
     ).toEqual(bothRefused);
-    expect(
-      verifyIsolationCompatibility(isolation, { platform: 'ios', nativeCompatibility: null, execute: execute([]) }),
-    ).toEqual({ nestedSandbox: { permitted: true }, processIdentity: { permitted: true } });
+    expect(verifyIsolationCompatibility(isolation, { platform: 'ios', execute: execute([]) })).toEqual({
+      nestedSandbox: { permitted: true },
+      processIdentity: { permitted: true },
+    });
   });
 
   it.skipIf(process.platform !== 'darwin')(
@@ -334,13 +326,12 @@ describe('benchmark runner filesystem isolation', () => {
     () => {
       const paths = fixture();
       const isolation = prepare(paths);
-      expect(() =>
-        verifyIsolationCompatibility(isolation, { platform: 'ios', nativeCompatibility: null, execute: realExecute }),
-      ).toThrow('sandbox-exec: sandbox_apply: Operation not permitted');
+      expect(() => verifyIsolationCompatibility(isolation, { platform: 'ios', execute: realExecute })).toThrow(
+        'sandbox-exec: sandbox_apply: Operation not permitted',
+      );
       const calls = [];
       const record = verifyIsolationCompatibility(isolation, {
         platform: 'android',
-        nativeCompatibility: null,
         execute: (file, args) => {
           calls.push(args);
           return realExecute(file, args);

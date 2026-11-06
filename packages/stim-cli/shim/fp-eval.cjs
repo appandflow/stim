@@ -60,8 +60,9 @@ function fingerprintConfig() {
   const file = path.join(root, 'fingerprint.config.js');
   if (!fs.existsSync(file)) return null;
   const loaded = require(file);
-  const sources = (loaded && loaded.default ? loaded.default : loaded)?.extraSources;
-  return sources === undefined ? {} : { extraSources: sources };
+  const exported = (loaded && loaded.default ? loaded.default : loaded) ?? {};
+  const keys = Object.keys(exported);
+  return exported.extraSources === undefined ? { keys } : { extraSources: exported.extraSources, keys };
 }
 
 async function runtimeVersion(expoDir, config) {

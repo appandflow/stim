@@ -176,7 +176,7 @@ const compatibilityProbes = {
   processIdentity: ['/bin/sh', ['-c', '/bin/ps -p "$$" -o lstart=']],
 };
 
-export function verifyIsolationCompatibility(isolation, { platform, nativeCompatibility, execute }) {
+export function verifyIsolationCompatibility(isolation, { platform, execute }) {
   const record = {};
   for (const [name, [command, args]] of Object.entries(compatibilityProbes)) {
     const invocation = isolatedRunnerInvocation(isolation, command, args);
@@ -187,18 +187,18 @@ export function verifyIsolationCompatibility(isolation, { platform, nativeCompat
       record[name] = { permitted: false, error: String(error.stderr ?? '').trim() || error.message };
     }
   }
-  if (platform !== 'ios' || nativeCompatibility) return record;
+  if (platform !== 'ios') return record;
   const refuse = (message) => {
     throw Object.assign(new Error(message), { isolationCompatibility: record });
   };
   if (!record.nestedSandbox.permitted) {
     refuse(
-      `benchmark isolation refuses nested sandboxes (${record.nestedSandbox.error}); iOS SwiftPM manifest and plugin sandboxes cannot build under the runner policy without the native compatibility adapter`,
+      `benchmark isolation refuses nested sandboxes (${record.nestedSandbox.error}); iOS SwiftPM manifest and plugin sandboxes cannot build under the runner policy`,
     );
   }
   if (!record.processIdentity.permitted) {
     refuse(
-      `benchmark isolation denies ps process identity (${record.processIdentity.error}); agent-device simulator recording cannot run under the runner policy without the native compatibility adapter`,
+      `benchmark isolation denies ps process identity (${record.processIdentity.error}); agent-device simulator recording cannot run under the runner policy`,
     );
   }
   return record;

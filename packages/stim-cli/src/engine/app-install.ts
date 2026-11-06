@@ -12,7 +12,7 @@ import {
   resolveOwnedIosSim,
   uninstallIosApp,
 } from '../devices/ios.ts';
-import { DEV_MENU_LAUNCH_ARGS } from '../collector/ios-device.ts';
+import { DEV_MENU_LAUNCH_ARGS } from '../stimd/logs/ios-device.ts';
 
 export const INSTALL_ERROR = 'STIM_INSTALL_FAILED';
 export const LAUNCH_ERROR = 'STIM_LAUNCH_FAILED';

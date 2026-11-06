@@ -21,6 +21,11 @@ let active = true;
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const originalReaddirSync = fs.readdirSync;
+const originalStatSync = fs.statSync;
+const exists = (file, directory) => {
+  const info = originalStatSync(file, { throwIfNoEntry: false });
+  return Boolean(info && (directory ? info.isDirectory() : info.isFile()));
+};
 
 function toPath(target) {
   if (typeof target === 'string') return path.resolve(target);
@@ -33,13 +38,13 @@ function record(kind, target) {
   const file = active && kind ? toPath(target) : null;
   if (!file || reads.has(`${kind}\0${file}`)) return;
   const entry = { path: file, kind };
-  if (kind === 'dir') {
+  if (kind === 'dir' || kind === 'tree' || kind === 'resolve') {
     try {
       entry.hash = sha256(
         JSON.stringify(
-          originalReaddirSync(file)
+          originalReaddirSync(file, { recursive: kind === 'tree' })
             .map(String)
-            .filter((name) => name !== '.DS_Store')
+            .filter((name) => path.basename(name) !== '.DS_Store')
             .toSorted(),
         ),
       );
@@ -101,17 +106,19 @@ function promise(name, kind) {
 
 for (const name of ['readFileSync', 'createReadStream']) sync(name, 'file');
 sync('openSync', opened);
-for (const name of ['readdirSync', 'opendirSync']) sync(name, 'dir');
+// A recursive listing (Node 20.1+) walks subdirectories without calling the patched readdir again.
+const listed = ([options]) => (options && typeof options === 'object' && options.recursive ? 'tree' : 'dir');
+for (const name of ['readdirSync', 'opendirSync']) sync(name, listed);
 for (const name of ['statSync', 'lstatSync']) sync(name, 'present', (result) => result === undefined);
 for (const name of ['accessSync', 'realpathSync']) sync(name, 'present');
 sync('existsSync', 'present', (result) => !result);
 callback('readFile', 'file');
 callback('open', opened);
-for (const name of ['readdir', 'opendir']) callback(name, 'dir');
+for (const name of ['readdir', 'opendir']) callback(name, listed);
 for (const name of ['stat', 'lstat', 'access', 'realpath']) callback(name, 'present');
 promise('readFile', 'file');
 promise('open', opened);
-for (const name of ['readdir', 'opendir']) promise(name, 'dir');
+for (const name of ['readdir', 'opendir']) promise(name, listed);
 for (const name of ['stat', 'lstat', 'access', 'realpath']) promise(name, 'present');
 
 /**
@@ -205,8 +212,56 @@ Module.prototype['_compile'] = function (content, filename, ...rest) {
   return compile.call(this, content, filename, ...rest);
 };
 const hooks = typeof Module.registerHooks === 'function';
+// Node resolves require(), require.resolve() and import, and reads package.json main and exports, through internal
+// bindings the fs wrappers never see. The listings of the directories a relative or absolute specifier names, the
+// node_modules directories a failed bare specifier searched, and the package.json of the package a module resolved
+// into cover a candidate that appears or shadows another and a changed entry.
+function resolving(specifier, parent, resolve) {
+  const target = path.isAbsolute(specifier)
+    ? specifier
+    : parent && /^\.{1,2}(?:\/|$)/.test(specifier)
+      ? path.resolve(path.dirname(parent), specifier)
+      : null;
+  if (target) {
+    record('resolve', path.dirname(target));
+    if (exists(target, true)) record('resolve', target);
+  }
+  let resolved;
+  try {
+    resolved = resolve();
+  } catch (error) {
+    if (!target && parent && !specifier.startsWith('node:'))
+      for (let dir = path.dirname(parent); ; dir = path.dirname(dir)) {
+        if (exists(path.join(dir, 'node_modules'), true)) record('resolve', path.join(dir, 'node_modules'));
+        if (path.dirname(dir) === dir) break;
+      }
+    throw error;
+  }
+  const file = typeof resolved === 'string' ? resolved : resolved?.url;
+  const real = file?.startsWith('file:') ? fileURLToPath(file) : path.isAbsolute(file ?? '') ? file : null;
+  if (active && real)
+    for (let dir = path.dirname(real); ; dir = path.dirname(dir)) {
+      if (exists(path.join(dir, 'package.json'), false)) {
+        record('file', path.join(dir, 'package.json'));
+        break;
+      }
+      if (path.dirname(dir) === dir) break;
+    }
+  return resolved;
+}
+
+const resolveFilename = Module._resolveFilename;
+Module._resolveFilename = function (request, parent, ...rest) {
+  const from = typeof parent?.filename === 'string' ? parent.filename : null;
+  return resolving(request, from, () => resolveFilename.call(this, request, parent, ...rest));
+};
+
 if (hooks)
   Module.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      const parent = context.parentURL?.startsWith('file:') ? fileURLToPath(context.parentURL) : null;
+      return resolving(specifier, parent, () => nextResolve(specifier, context));
+    },
     load(url, context, nextLoad) {
       const result = nextLoad(url, context);
       if (active && url.startsWith('file:') && result.source != null) {

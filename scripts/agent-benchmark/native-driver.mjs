@@ -1,13 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeRunnerHome, spawnStamped } from './runner.mjs';
 import { benchmarkEnvironment, isolatedShellEnvironment } from './shell-environment.mjs';
 import { isolatedRunnerInvocation, prepareRunnerIsolation, runnerIsolationPolicy } from './runner-isolation.mjs';
 import { reconstructCommandEvidence } from './command-evidence.mjs';
-import { verifyNativeCompatibilityTools, probeNativeCompatibility } from './native-compat.mjs';
 import { nativeProcessIdentityValid, nativeSourceProof, nativeTaskPrompt } from './native-task.mjs';
 
 if (!process.env.STIM_BENCH_ROOT) throw new Error('STIM_BENCH_ROOT is required');
@@ -48,7 +47,6 @@ const coordinatorHashes = () =>
       'stamp.mjs',
       'shell-environment.mjs',
       'runner-isolation.mjs',
-      'native-compat.mjs',
       'command-evidence.mjs',
     ].map((name) => [name, sha256(fileURLToPath(new URL(name, import.meta.url)))]),
   );
@@ -195,42 +193,12 @@ async function dispatch() {
     if (actual[key] !== ready[key]) throw new Error(`Native golden pin mismatch: ${key}`);
   if (ready.sourceSha256 !== sha256(join(fixture.fixtureDirectory, fixture.source)))
     throw new Error('Prepared native source changed');
-  const compatibility = verifyNativeCompatibilityTools(
-    process.env.STIM_BENCH_NATIVE_COMPAT_MANIFEST,
-    pins.NATIVE_COMPAT_SHA256,
-    process.env.STIM_BENCH_AGENT_DEVICE_BIN,
-  );
   const toolBin = join(directory, `tools-${coordinatorHashes()['native-driver.mjs'].slice(0, 12)}`);
   mkdirSync(toolBin, { recursive: true });
   const swiftWrapper = join(toolBin, 'swift');
   const swiftScript =
     '#!/bin/sh\nif [ "$1" = build ]; then shift; exec /usr/bin/swift build --disable-sandbox -Xswiftc -disable-sandbox "$@"; fi\nexec /usr/bin/swift "$@"\n';
   writeFileSync(swiftWrapper, swiftScript, { mode: 0o755 });
-  if (platform === 'android' && compatibility.emulatorProcess && !existsSync(join(toolBin, 'ps')))
-    symlinkSync(join(compatibility.directory, 'emulator-process', 'ps'), join(toolBin, 'ps'));
-  const macosProcessSource = fileURLToPath(new URL('./compat/macos-processes.c', import.meta.url));
-  if (platform === 'macos') {
-    const adapterManifest = join(toolBin, 'process-adapter.json');
-    if (!existsSync(join(toolBin, 'ps'))) {
-      run('/usr/bin/clang', [
-        '-std=c11',
-        '-O2',
-        '-Wall',
-        '-Wextra',
-        '-Werror',
-        macosProcessSource,
-        '-o',
-        join(toolBin, 'ps'),
-      ]);
-      save(adapterManifest, { sourceSha256: sha256(macosProcessSource), binarySha256: sha256(join(toolBin, 'ps')) });
-    }
-    const expectedAdapter = JSON.parse(readFileSync(adapterManifest, 'utf8'));
-    if (
-      expectedAdapter.sourceSha256 !== sha256(macosProcessSource) ||
-      expectedAdapter.binarySha256 !== sha256(join(toolBin, 'ps'))
-    )
-      throw new Error('Native macOS process adapter changed');
-  }
   const samples = await loadGate();
   const runId = `native-${platform}-${arm}-${Date.now()}`;
   const runDir = join(directory, 'results', runId);
@@ -282,7 +250,6 @@ async function dispatch() {
         fixture.fixtureDirectory,
         toolBin,
         join(root, 'allowed-bin'),
-        dirname(process.env.STIM_BENCH_NATIVE_COMPAT_MANIFEST),
         ...(arm === 'stim' ? [join(root, 'bin'), join(root, 'runtime')] : []),
       ],
       writePaths: [join(fixture.fixtureDirectory, '.git'), runnerEnv.ANDROID_AVD_HOME].filter(Boolean),
@@ -303,19 +270,6 @@ async function dispatch() {
     probeRoots: [root, join(directory, 'results'), join(directory, 'golden-stim-home')],
     probeParent: runnerEnv.TMPDIR,
     execute: (file, args) => run(file, args, { env: runnerEnv }),
-  });
-  if (platform === 'macos') {
-    const processProbe = isolatedRunnerInvocation(isolation, join(toolBin, 'ps'), ['-axww', '-o', 'pid=,comm=']);
-    if (
-      !run(processProbe.command, processProbe.args, { env: runnerEnv })
-        .split('\n')
-        .some((line) => line.startsWith(`${process.pid} `))
-    )
-      throw new Error('Native macOS process adapter cannot see coordinator');
-  }
-  const compatibilityProbe = probeNativeCompatibility(compatibility, (file, args) => {
-    const call = isolatedRunnerInvocation(isolation, file, args);
-    return run(call.command, call.args, { env: runnerEnv });
   });
   const profileInvocation = isolatedRunnerInvocation(isolation, process.env.STIM_BENCH_CODEX_BIN, [
     'debug',
@@ -350,7 +304,6 @@ async function dispatch() {
     proofDirectory,
     session: runId,
     stateDirectory,
-    processIdentityTool: join(compatibility.directory, 'agent-device/dist/src/native-process'),
   });
   writeFileSync(join(runDir, 'prompt.txt'), prompt);
   const meta = {
@@ -364,15 +317,9 @@ async function dispatch() {
     serviceTier: 'priority',
     fixture,
     provenance: actual,
-    compatibility,
-    compatibilityProbe,
     toolBin,
     swiftWrapperSha256: sha256(swiftWrapper),
     coordinatorHashes: coordinatorHashes(),
-    processAdapter:
-      platform === 'macos'
-        ? { sourceSha256: sha256(macosProcessSource), binarySha256: sha256(join(toolBin, 'ps')) }
-        : null,
     isolation,
     loadGate: samples,
     worktree,
@@ -457,23 +404,7 @@ function collect(runDir) {
   }
   if (JSON.stringify(meta.coordinatorHashes) !== JSON.stringify(coordinatorHashes()))
     invalidReasons.push('coordinator-changed');
-  if (
-    meta.processAdapter &&
-    (meta.processAdapter.sourceSha256 !==
-      sha256(fileURLToPath(new URL('./compat/macos-processes.c', import.meta.url))) ||
-      meta.processAdapter.binarySha256 !== sha256(join(meta.toolBin, 'ps')))
-  )
-    invalidReasons.push('process-adapter-changed');
   if (meta.swiftWrapperSha256 !== sha256(join(meta.toolBin, 'swift'))) invalidReasons.push('swift-wrapper-changed');
-  try {
-    verifyNativeCompatibilityTools(
-      process.env.STIM_BENCH_NATIVE_COMPAT_MANIFEST,
-      pins.NATIVE_COMPAT_SHA256,
-      process.env.STIM_BENCH_AGENT_DEVICE_BIN,
-    );
-  } catch {
-    invalidReasons.push('compatibility-tools-changed');
-  }
   const result = {
     schemaVersion: 1,
     cohort: meta.cohort,

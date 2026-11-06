@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 import { hostedMetroLinks } from '@stim-cli/core/state';
-import { watchHostedMetro } from '../supervisor/hosted-metro.ts';
+import { watchHostedMetro } from '../stimd/metro/hosted-metro.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { closeHostedMetro, hostedAgentPort, requireHostedMetro } from '../device-host/metro-request.ts';
 import { writeHostedNative } from '../workspace/placement-state.ts';
@@ -57,14 +57,14 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 vi.mock('../device-host/hosted-client.ts', () => ({ probeHostedSession: links.probe }));
-vi.mock('../supervisor/metro-links.ts', () => ({
+vi.mock('../stimd/metro/metro-links.ts', () => ({
   openMetroLinks: ({ onReady, onLost }: { onReady: () => void; onLost: () => void }) => {
     links.lost.mockImplementation(onLost);
     queueMicrotask(onReady);
     return { close: links.close };
   },
 }));
-vi.mock('../supervisor/agent-relay.ts', () => ({
+vi.mock('../stimd/metro/agent-relay.ts', () => ({
   openAgentRelay: ({ port }: { port?: number }) => {
     links.relayPort(port);
     return { port: Promise.resolve(51234), close: links.relayClose };

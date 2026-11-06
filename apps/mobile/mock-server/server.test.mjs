@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,10 +9,10 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { generateNoiseKeyPair } from '@stim-cli/core/noise';
 import { initiateNoise } from '@stim-cli/core/noise-session';
-import { isRpcResult } from '@stim-cli/core/receive-protocol';
+import { isRpcError, isRpcEvent, isRpcResult } from '@stim-cli/core/receive-protocol';
 import { WebSocket } from 'ws';
 
-test('advertises the phone API in hello', { timeout: 10_000 }, async (t) => {
+test('mock hello, RPCs and subscription events pass the phone receive validators', { timeout: 10_000 }, async (t) => {
   const listener = createServer().listen(0, '127.0.0.1');
   await once(listener, 'listening');
   const port = listener.address().port;
@@ -58,12 +58,27 @@ test('advertises the phone API in hello', { timeout: 10_000 }, async (t) => {
     name: 'Test phone',
     timeoutMs: 5_000,
   });
-  const reply = once(socket, 'message');
-  socket.send(JSON.stringify({ id: 1, method: 'hello', params: {} }));
-  const [data] = await reply;
-  const { result } = JSON.parse(data.toString());
+  const received = [];
+  socket.on('message', (data) => received.push(JSON.parse(data.toString())));
+  const waitFor = async (matches) => {
+    const signal = AbortSignal.timeout(3_000);
+    while (!received.some(matches)) await once(socket, 'message', { signal });
+    return received.find(matches);
+  };
+  let nextId = 1;
+  const request = async (method, params = {}) => {
+    const id = nextId++;
+    socket.send(JSON.stringify({ id, method, params }));
+    const message = await waitFor((candidate) => candidate.id === id);
+    assert.deepEqual(
+      { method, ok: message.error ? isRpcError(message.error) : isRpcResult(method, message.result) },
+      { method, ok: true },
+    );
+    return message;
+  };
+  const { result } = await request('hello');
   assert.equal(result.phoneApi, 2);
-  assert.ok(isRpcResult('hello', result));
+  assert.deepEqual(result.host, { owner: 'service', capabilities: result.host.capabilities, app: null });
   assert.deepEqual(result.features, [
     'ios-hosted',
     'android-hosted',
@@ -73,4 +88,40 @@ test('advertises the phone API in hello', { timeout: 10_000 }, async (t) => {
     'workspace-diff',
     'device-clipboard',
   ]);
+  const status = JSON.parse(readFileSync(new URL('./fixtures/status.json', import.meta.url), 'utf8'));
+  const workspace = status.payload.environments[0].path;
+  const calls = [
+    ['archived.list', {}],
+    ['logs.query', { workspace, tail: 20 }],
+    ['workspace.files', { workspace, group: 'tracked' }],
+    ['workspace.diff', { workspace, path: 'src/app.tsx' }],
+    ['build.plan', { workspace, platform: 'ios', slot: 'second' }],
+    ['build.plan', { workspace, platform: 'android' }],
+    ['settings.get', {}],
+    ['recording.set', { enabled: true }],
+    ['replay.range', { workspace, platform: 'ios' }],
+    ['machine.get', {}],
+    ['machine.history', {}],
+    ['machine.details', {}],
+    ['notifications.list', {}],
+    ['frames.keyframe', {}],
+    ['action', { workspace, action: 'reload', platform: 'ios' }],
+  ];
+  for (const [method, params] of calls) assert.notEqual((await request(method, params)).result, undefined, method);
+  assert.ok((await request('stats.get')).error);
+  for (const method of [
+    'workspaces.subscribe',
+    'workspace.subscribe',
+    'machine.subscribe',
+    'logs.subscribe',
+    'frames.subscribe',
+  ]) {
+    const reply = await request(method, { workspace, platform: 'ios' });
+    const subscription = reply.result.subscription;
+    await waitFor((message) => message.subscription === subscription);
+    for (const event of received.filter((message) => message.subscription === subscription)) {
+      assert.deepEqual({ method, ok: isRpcEvent(event) }, { method, ok: true });
+    }
+    await request('unsubscribe', { subscription });
+  }
 });

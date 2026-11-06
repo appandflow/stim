@@ -39,8 +39,6 @@ import {
 } from './golden-state.mjs';
 import { launchCrashSetup } from './launch-crash-setup.mjs';
 import { benchmarkTaskPrompt } from './task-prompt.mjs';
-import { probeNativeCompatibility, verifyNativeCompatibility } from './native-compat.mjs';
-import { compatibilityProofEvidence, prepareCompatibilityProof } from './compatibility-proof.mjs';
 import {
   androidApplicationLabelFromBadging,
   matchesExpectedAndroidEmulator,
@@ -91,7 +89,6 @@ const worktreeParent = resolve(process.env.STIM_BENCH_WORKTREE_PARENT ?? join(ro
 const stimPackage = resolve(process.env.STIM_BENCH_STIM_PACKAGE ?? join(root, 'runtime', 'node_modules', 'stim'));
 const stimCli = join(stimPackage, 'dist', 'cli.mjs');
 const agentDeviceBin = process.env.STIM_BENCH_AGENT_DEVICE_BIN ?? 'agent-device';
-const nativeCompatManifest = process.env.STIM_BENCH_NATIVE_COMPAT_MANIFEST;
 const claudeBin = process.env.STIM_BENCH_CLAUDE_BIN ?? 'claude';
 const codexBin = process.env.STIM_BENCH_CODEX_BIN ?? 'codex';
 const agentSkillsRoot = process.env.STIM_BENCH_SKILLS_ROOT;
@@ -393,12 +390,6 @@ function ensureDirs() {
 }
 
 function prepareAllowedBin() {
-  const compatibility = verifyNativeCompatibility(
-    nativeCompatManifest,
-    pins.NATIVE_COMPAT_SHA256,
-    main,
-    executablePath(agentDeviceBin),
-  );
   const names = [
     'adb',
     'agent-device',
@@ -414,19 +405,10 @@ function prepareAllowedBin() {
     'sdkmanager',
     'watchman',
   ];
-  if (compatibility) names.push('xcodebuild');
-  if (compatibility?.emulatorProcess) names.push('ps');
   for (const name of names) {
     let source;
     try {
-      source =
-        name === 'agent-device'
-          ? executablePath(agentDeviceBin)
-          : name === 'ps' && compatibility?.emulatorProcess
-            ? join(compatibility.directory, 'emulator-process/ps')
-            : name === 'xcodebuild' && compatibility
-              ? join(compatibility.directory, 'bin/xcodebuild')
-              : run('/usr/bin/which', [name], { cwd: root });
+      source = name === 'agent-device' ? executablePath(agentDeviceBin) : run('/usr/bin/which', [name], { cwd: root });
     } catch {
       continue;
     }
@@ -583,12 +565,6 @@ function preflight(requestedPlatform = 'ios') {
   ensureDirs();
   prepareAllowedBin();
   const actual = versionChecks();
-  const nativeCompatibility = verifyNativeCompatibility(
-    nativeCompatManifest,
-    pins.NATIVE_COMPAT_SHA256,
-    main,
-    executablePath(agentDeviceBin),
-  );
   const targets = benchmarkTargets();
   if (!readFileSync(join(stimBin, 'stim'), 'utf8').includes(stimCli)) {
     throw new Error('Stim shim does not target the pinned CLI checkout');
@@ -639,7 +615,6 @@ function preflight(requestedPlatform = 'ios') {
     checkedAt: new Date().toISOString(),
     locale: benchmarkLocale,
     actual,
-    nativeCompatibility,
     disk,
     load,
     thermal,
@@ -978,7 +953,7 @@ function prepareLaunchCrashFixture(arm, runId, environment, platform) {
   };
 }
 
-function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform = 'ios', compatibilityProof = null) {
+function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform = 'ios') {
   const platform = checkedPlatform(requestedPlatform);
   const source = variant === launchCrashVariant ? crash.fixtureCheckout : main;
   const worktree = join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId);
@@ -1006,7 +981,6 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
       `cp ${screenshot} ${join(runDir, 'proof', 'settings.png')}`,
       `${prefix} record stop`,
       `cp ${recording} ${join(runDir, 'proof', 'session.mp4')}`,
-      ...(compatibilityProof ? [compatibilityProof.command] : []),
       `${prefix} close`,
     ]
       .map((command, index) => `${index + 1}. \`${command}\``)
@@ -1038,7 +1012,7 @@ function writeClaudeGuidance(codexHome, arm, runDir) {
   return { path, skillNames };
 }
 
-function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidance = null, compatibilityProof = null) {
+function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidance = null) {
   const runTmp = join(runDir, 'tmp');
   return prepareRunnerIsolation({
     policy: runnerIsolationPolicy({
@@ -1047,17 +1021,11 @@ function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidan
       readPaths: [
         ...benchmarkFixtureReadPaths(main, crash?.setup),
         allowedBin,
-        ...(nativeCompatManifest ? [dirname(realpathSync(nativeCompatManifest))] : []),
         ...(arm === 'stim' ? [stimBin, join(root, 'runtime'), stimPackage] : []),
       ],
       writePaths: [join(main, '.git'), env.GRADLE_USER_HOME, env.ANDROID_AVD_HOME].filter(Boolean),
       scopedAccess: {
-        readPaths: [
-          crash?.fixtureCheckout,
-          claudeGuidance?.path,
-          compatibilityProof?.helper,
-          compatibilityProof?.node,
-        ].filter(Boolean),
+        readPaths: [crash?.fixtureCheckout, claudeGuidance?.path].filter(Boolean),
         writePaths: [
           join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId),
           join(runDir, 'runner-home'),
@@ -1276,28 +1244,14 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     });
   }
   const crash = variant === launchCrashVariant ? prepareLaunchCrashFixture(arm, runId, env, platform) : null;
-  if (crash && nativeCompatManifest)
-    verifyNativeCompatibility(
-      nativeCompatManifest,
-      pins.NATIVE_COMPAT_SHA256,
-      crash.fixtureCheckout,
-      executablePath(agentDeviceBin),
-    );
-  const compatibilityProof = prepareCompatibilityProof({
-    runId,
-    worktree: join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId),
-    runDir,
-    compatibility: preflightReport.nativeCompatibility,
-  });
-  const prompt = promptFor(arm, variant, runId, runDir, crash, platform, compatibilityProof);
+  const prompt = promptFor(arm, variant, runId, runDir, crash, platform);
   writeFileSync(join(runDir, 'prompt.txt'), `${prompt}\n`);
   const shellProvenance = verifyRunnerShell(arm, env);
   const claudeGuidance = runnerKind === 'claude' ? writeClaudeGuidance(codexHome, arm, runDir) : null;
-  const isolation = prepareRunIsolation(runId, runDir, env, arm, crash, claudeGuidance, compatibilityProof);
+  const isolation = prepareRunIsolation(runId, runDir, env, arm, crash, claudeGuidance);
   try {
     preflightReport.isolationCompatibility = verifyIsolationCompatibility(isolation, {
       platform,
-      nativeCompatibility: preflightReport.nativeCompatibility,
       execute: (file, args) => run(file, args, { cwd: crash?.fixtureCheckout ?? main, env, timeout: 30_000 }),
     });
   } catch (error) {
@@ -1309,13 +1263,6 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     }
     throw error;
   }
-  preflightReport.nativeCompatibilityProbe = probeNativeCompatibility(
-    preflightReport.nativeCompatibility,
-    (file, args) => {
-      const invocation = isolatedRunnerInvocation(isolation, file, args);
-      return run(invocation.command, invocation.args, { cwd: crash?.fixtureCheckout ?? main, env, timeout: 30_000 });
-    },
-  );
   const profile = verifyRunnerProfile(codexHome, env, arm, runDir, isolation);
   const agentDevice = prepareAgentDeviceRun(runId, platform, expectedParkedSimulator?.udid ?? null);
   const dispatchAt = new Date().toISOString();
@@ -1336,7 +1283,6 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     dispatchAt,
     timingTarget,
     preflight: preflightReport,
-    compatibilityProof,
     expectedStimShellProvenance: arm === 'stim' ? expectedStimShellProvenance() : null,
     stimShellProvenance: shellProvenance,
     profile: { ...profile, claudeGuidance, isolation, runnerEnvironment },
@@ -2101,7 +2047,6 @@ function collect(runDir) {
     commandAudit.commands,
     ccacheLogEvidence({ runDir, meta, commands: commandAudit.commands, worktree, capture: true }),
   );
-  const nativeCompatibility = compatibilityProofEvidence(meta, worktree, commandAudit.commands, screen, recording);
   const proof = proofFor(meta, appAlive, runDir, worktree, commandAudit.completedEvents, screen);
   const rollout =
     meta.runner === 'claude'
@@ -2138,7 +2083,6 @@ function collect(runDir) {
     diagnosis?.valid && meta.runner !== 'claude' ? usageAtOrBefore(rollout, diagnosis.observedAt) : null;
   const measurementWarnings = benchmarkMeasurementWarnings({ ...meta, timing, ccache, diagnosis, diagnosisUsage });
   const invalidReasons = [
-    ...(nativeCompatibility && !nativeCompatibility.valid ? ['native-compatibility-changed-or-unverified'] : []),
     ...(appAlive.error && !appAliveErrorIsSuperseded(appAlive, proof, screen) ? [appAlive.error] : []),
     ...(meta.runnerResult?.code === 0 ? [] : [`runner-exit-${meta.runnerResult?.code}`]),
     ...(runnerMetrics?.isError ? [`runner-${runnerMetrics.terminalReason ?? 'error'}`] : []),
@@ -2171,7 +2115,6 @@ function collect(runDir) {
     arm: meta.arm,
     variant: meta.variant,
     valid: invalidReasons.length === 0,
-    nativeCompatibility,
     invalidReasons,
     measurementWarnings,
     watcherWarnings: appAliveErrorIsSuperseded(appAlive, proof, screen) ? [appAlive.error] : [],

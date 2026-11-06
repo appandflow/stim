@@ -6,7 +6,7 @@ import {
   eventEnumCases,
   archivedLogsEnded,
   replaceReceivedField,
-} from '../../../apps/mobile/mock-server/receive-fixtures.ts';
+} from './fixtures/receive-fixtures.ts';
 import type { StatusPayload } from '../phone-protocol.ts';
 import { statusViews } from '../state/status-views.ts';
 import { isRpcError, isRpcEvent, isRpcResult, rpcEventIssue, rpcResultIssue } from '../receive-protocol.ts';

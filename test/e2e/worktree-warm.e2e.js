@@ -129,37 +129,6 @@ test('warm names a file blocking the claim store and preserves it with the print
   }
 });
 
-test('warm leaves the selected tracked base unchanged and reports mismatched copied Pods', () => {
-  const repo = join(ctx.tmp, 'pods-app');
-  const branchLock = 'PODS:\n  - fmt (11.0.2)\n';
-  const workingLock = 'PODS:\n  - fmt (11.0.2)\n  - RNScreens (4.0.0)\n';
-  mkdirSync(join(repo, 'ios'), { recursive: true });
-  writeFileSync(join(repo, '.gitignore'), 'ios/Pods/\n');
-  writeFileSync(join(repo, 'ios', 'Podfile'), "platform :ios, '15.1'\n");
-  writeFileSync(join(repo, 'ios', 'Podfile.lock'), branchLock);
-  for (const args of [
-    ['init', '-b', 'main'],
-    ['config', 'user.email', 'e2e@example.com'],
-    ['config', 'user.name', 'stim-cli e2e'],
-    ['config', 'commit.gpgsign', 'false'],
-    ['add', '-A'],
-    ['commit', '-m', 'pods fixture'],
-  ]) {
-    execFileSync('git', ['-C', repo, ...args], { encoding: 'utf-8' });
-  }
-  writeFileSync(join(repo, 'ios', 'Podfile.lock'), workingLock);
-  mkdirSync(join(repo, 'ios', 'Pods'), { recursive: true });
-  writeFileSync(join(repo, 'ios', 'Pods', 'Manifest.lock'), workingLock);
-
-  const linked = create('pods-warmed', repo);
-  const warmed = warm(linked);
-  assert.equal(warmed.status, 0, warmed.stderr);
-  assert.equal(readFileSync(join(linked, 'ios/Podfile.lock'), 'utf-8'), branchLock);
-  assert.equal(readFileSync(join(linked, 'ios/Pods/Manifest.lock'), 'utf-8'), workingLock);
-  assert.equal(readFileSync(join(repo, 'ios/Podfile.lock'), 'utf-8'), workingLock);
-  assert.match(warmed.stderr, /carried ios\/Pods does not match/);
-});
-
 function create(name, repo = ctx.repo, detached = false) {
   const linked = join(ctx.tmp, name);
   execFileSync('git', ['-C', repo, 'worktree', 'add', ...(detached ? ['--detach'] : ['-b', name]), linked, 'HEAD']);

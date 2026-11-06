@@ -3,8 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { startCommandServer } from '../supervisor/server-command.ts';
-import { startExpoServer } from '../supervisor/server-expo.ts';
+import { startCommandServer } from '../stimd/metro/server-command.ts';
+import { startExpoServer } from '../stimd/metro/server-expo.ts';
 import { makeChildProcess, makeExecutor } from './_factories.ts';
 
 afterEach(() => {

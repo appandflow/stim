@@ -7,9 +7,9 @@ import { spawnEntry } from '../../spawn-entry.ts';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { PLATFORM } from './support.ts';
 import { androidToolCwd } from '../../devices/android.ts';
-import { verifyCollectorOwnership } from '../../collector/ownership.ts';
+import { verifyCollectorOwnership } from '../../stimd/logs/ownership.ts';
 import { pidExists, signalProcessTree } from '../../metro.ts';
-import { readCollectors } from '../../collector/state.ts';
+import { readCollectors } from '../../stimd/logs/state.ts';
 import { phaseLine } from '../../command-output.ts';
 import { ambientEnv } from '@stim-cli/core';
 

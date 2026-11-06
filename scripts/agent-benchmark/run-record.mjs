@@ -47,31 +47,6 @@ export function durableRunRecord(previous, next, cleanupCompleted = false) {
   if (
     cleanupCompleted &&
     previous?.valid === true &&
-    ['runId', 'stage', 'runner', 'model', 'arm', 'variant', 'worktree'].every(
-      (key) => typeof previous[key] === 'string' && previous[key] && previous[key] === next[key],
-    ) &&
-    previous.nativeCompatibility?.valid === true &&
-    next.nativeCompatibility?.valid === false &&
-    next.nativeCompatibility.reason === 'run worktree missing for compatibility validation' &&
-    previous.nativeCompatibility.manifestSha256 &&
-    previous.nativeCompatibility.manifestSha256 === next.nativeCompatibility.manifestSha256 &&
-    ['events', 'settingsPng', 'transcript', 'proof', 'recording'].every(
-      (key) => previous.evidenceSha256?.[key] && previous.evidenceSha256[key] === next.evidenceSha256?.[key],
-    )
-  ) {
-    const invalidReasons = next.invalidReasons.filter(
-      (reason) => reason !== 'native-compatibility-changed-or-unverified',
-    );
-    return {
-      ...next,
-      nativeCompatibility: previous.nativeCompatibility,
-      invalidReasons,
-      valid: invalidReasons.length === 0,
-    };
-  }
-  if (
-    cleanupCompleted &&
-    previous?.valid === true &&
     next.valid === false &&
     next.invalidReasons.length > 0 &&
     next.invalidReasons.every((reason) => cleanupOnlyReasons.has(reason)) &&

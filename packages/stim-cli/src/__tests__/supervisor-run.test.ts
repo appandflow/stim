@@ -16,12 +16,12 @@ import { join, resolve as absolute } from 'node:path';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { parseNdjsonText } from '../ndjson.ts';
 import { supervisorPidFile, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
-import { supervisorError } from '../supervisor/errors.ts';
+import { supervisorError } from '../stimd/metro/errors.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { daemonClaimRoot, deviceViewersDir, readDeviceIdleShutdowns, readIdleStop } from '@stim-cli/core/state';
 import * as ios from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
-import { workspaceIdleProbe, type IdleProbe } from '../supervisor/idle-stop.ts';
+import { workspaceIdleProbe, type IdleProbe } from '../stimd/metro/idle-stop.ts';
 import { serveShareList, shareRow } from './_share-list-server.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { startBuildProgress } from '../engine/build-progress.ts';
@@ -29,7 +29,7 @@ import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
-import { MODE_COMMAND, type WorkspaceLaunchRecord } from '../supervisor/state.ts';
+import { MODE_COMMAND, type WorkspaceLaunchRecord } from '../stimd/metro/state.ts';
 import {
   MODE_BARE,
   MODE_EXPO,
@@ -42,7 +42,7 @@ import {
 } from '../supervisor/run.ts';
 
 const hostedMetro = vi.hoisted(() => ({ open: false }));
-vi.mock('../supervisor/hosted-metro.ts', () => ({
+vi.mock('../stimd/metro/hosted-metro.ts', () => ({
   watchHostedMetro: () => {
     hostedMetro.open = true;
     return async () => {

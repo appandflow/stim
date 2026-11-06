@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
-import { readWorkspaceLaunches, type WorkspaceLaunchRecord } from '../supervisor/state.ts';
+import { readWorkspaceLaunches, type WorkspaceLaunchRecord } from '../stimd/metro/state.ts';
 import { siblingPlatformSlots } from '../engine/slot-launch.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { upsertProject } from '../workspace/config.ts';

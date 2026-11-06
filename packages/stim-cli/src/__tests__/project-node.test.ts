@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { unmetNodePin, withProjectNode } from '../supervisor/project-node.ts';
+import { unmetNodePin, withProjectNode } from '../stimd/metro/project-node.ts';
 
 describe('project Node pins', () => {
   let dir: string;

@@ -206,7 +206,6 @@ export const rows: MutationRow[] = [
     id: 'versions',
     class: 'excluded',
     description: 'all five app version fields stay outside the native key',
-    gap: '#5334',
     applies: appJson,
     apply: (root) =>
       edit(root, 'app.json', ({ expo }) => {
