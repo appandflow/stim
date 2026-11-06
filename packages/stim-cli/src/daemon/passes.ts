@@ -11,7 +11,7 @@ import { processContext } from '../cli-operation.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
-import { daemonClaimHeld, requestDaemonTick } from './client.ts';
+import { daemonClaimHeld, requestDaemonTick, stimdRefused } from './client.ts';
 import { commandWorkspace } from './command-workspace.ts';
 import { runBootedParkedPass } from './booted-parked.ts';
 import { runDormantDependencies } from './dependencies.ts';
@@ -419,15 +419,15 @@ export async function runForcedLadder({
 }
 
 /**
- * Runs the pressure ladder now: one daemon tick when a daemon runs, else, while no daemon of another build holds the
- * home and runs its own, the ladder in this process, which never takes `protectedRoot`.
+ * Runs the pressure ladder now: one daemon tick when a daemon runs, else, unless a stimd of another build refused this
+ * process and runs its own, the ladder in this process, which never takes `protectedRoot`.
  */
 export async function runLadderNow(
   env: NodeJS.ProcessEnv,
   signal?: AbortSignal,
   protectedRoot?: string,
 ): Promise<void> {
-  if ((await requestDaemonTick(env, signal)) || daemonClaimHeld()) return;
+  if ((await requestDaemonTick(env, signal)) || stimdRefused()) return;
   signal?.throwIfAborted();
   try {
     await runCommandLadder('command', env, protectedRoot);

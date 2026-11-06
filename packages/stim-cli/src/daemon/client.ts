@@ -64,6 +64,11 @@ export function stimdBuildId(): string {
 
 let refusedBuild: string | null = null;
 
+/** Whether a stimd of another build refused this process's connection. */
+export function stimdRefused(): boolean {
+  return refusedBuild !== null;
+}
+
 /**
  * Opens a connection to this home's stimd and sends `messages` after the first frame; `onMessage` gets every line
  * after stimd's answer to that frame. A stimd of another build answers `engine-changed` and closes the connection.

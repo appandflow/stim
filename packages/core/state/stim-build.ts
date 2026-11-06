@@ -24,7 +24,7 @@ export function stimBuildDigest(dir: string): string | null {
   }
 }
 
-/** A build's id: the first 12 hex characters of {@link stimBuildDigest}. */
+/** A build's id: the first 12 hex characters of its digest, which names its tree in the engine store. */
 export function stimBuildId(dir: string): string | null {
   return stimBuildDigest(dir)?.slice(0, 12) ?? null;
 }
