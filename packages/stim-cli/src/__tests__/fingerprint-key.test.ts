@@ -104,9 +104,13 @@ function goldenHashes(): Record<'preimage' | 'cng' | 'bare' | 'monorepo', string
   });
   return {
     preimage: preimageHash(fixedPreimage),
-    cng: keyOf(cng, '.', { expoResolves: true, config: { icon: './assets/icon.png' } }, { platform: 'ios' }, [
-      'package.json',
-    ]),
+    cng: keyOf(
+      cng,
+      '.',
+      { expoResolves: true, config: { icon: './assets/icon.png', assetsDir: './assets' } },
+      { platform: 'ios' },
+      ['package.json'],
+    ),
     bare: keyOf(bare, '.', { expoResolves: false }, { platform: 'ios' }, [
       'ios/Podfile',
       'ios/Podfile.lock',

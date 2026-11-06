@@ -141,9 +141,10 @@ function projectFingerprintConfig(value: unknown, root: string): { trees: string
 
 /**
  * Files and directories the app config names: every string value that resolves to an existing path inside the app or
- * its install root, other than the app, its ancestors, installed packages and generated native directories.
+ * its install root, other than the app, its ancestors, installed packages and the native directories, which have rows
+ * of their own when they are inputs. Expo's `_internal` block holds the config loader's own paths.
  */
-function configNamedPaths(config: unknown, roots: Roots, generated: readonly string[]): string[] {
+function configNamedPaths(config: unknown, roots: Roots, nativeDirs: readonly string[]): string[] {
   const found = new Set<string>();
   const visit = (value: unknown): void => {
     if (Array.isArray(value)) value.forEach(visit);
@@ -159,12 +160,16 @@ function configNamedPaths(config: unknown, roots: Roots, generated: readonly str
         (within(real, roots.project) || within(real, roots.install)) &&
         !within(roots.project, real) &&
         !relative(roots.install, real).split(sep).includes('node_modules') &&
-        !generated.some((dir) => within(real, dir))
+        !nativeDirs.some((dir) => within(real, dir))
       )
         found.add(real);
     }
   };
-  visit(config);
+  visit(
+    Object.fromEntries(
+      Object.entries(config && typeof config === 'object' ? config : {}).filter(([key]) => key !== '_internal'),
+    ),
+  );
   return [...found];
 }
 
@@ -244,17 +249,11 @@ function moduleDirs(dir: string): string[] {
   });
 }
 
-function nativeTrees(roots: Roots, nativeDir: string, target: StaticTarget): string[] {
-  const { project } = roots;
-  if (target.platform === 'ios') {
-    if (nativeDir !== project) return [nativeDir];
-    return readdirSync(project)
-      .filter((name) => !APP_ROOT_SKIPPED.has(name) && !name.startsWith('.watchman-cookie-'))
-      .map((name) => join(project, name));
-  }
-  const layout = target.androidLayout;
-  if (!layout?.custom) return [nativeDir];
-  return [...ANDROID_ROOT_SOURCES.map((name) => join(layout.gradleRoot, name)), layout.moduleDir];
+function nativeTrees(project: string, nativeDir: string, target: StaticTarget): string[] {
+  const layout = target.platform === 'android' && target.androidLayout?.custom ? target.androidLayout : null;
+  if (!layout) return [nativeDir];
+  if (nativeDir !== project) return [nativeDir, layout.moduleDir];
+  return [...ANDROID_ROOT_SOURCES.map((name) => join(nativeDir, name)), layout.moduleDir];
 }
 
 /**
@@ -265,7 +264,7 @@ function nativeTrees(roots: Roots, nativeDir: string, target: StaticTarget): str
 export function staticInputs(context: StaticContext, target: StaticTarget): StaticInputs | Uncertain {
   const project = realpathSync.native(context.root);
   const roots: Roots = { project, install: installRoot(project) };
-  if (existsSync(join(project, '.pnp.cjs')))
+  if ([project, roots.install].some((dir) => existsSync(join(dir, '.pnp.cjs'))))
     return {
       uncertain: 'Yarn Plug-n-Play installs have no node_modules to read',
       remedy: 'Set nodeLinker: node-modules.',
@@ -295,20 +294,18 @@ export function staticInputs(context: StaticContext, target: StaticTarget): Stat
   }
   const codegen = field(field(manifest, 'codegenConfig'), 'jsSrcsDir');
   const trees = [
-    ...(native === 'tracked' ? nativeTrees(roots, nativeDir, target) : []),
+    ...(native === 'tracked' ? nativeTrees(project, nativeDir, target) : []),
     ...[project, roots.install].flatMap((dir) => PATCH_DIRS.map((name) => join(dir, name))),
     ...patched.dirs,
     ...patched.files,
     ...moduleRoots.flatMap(moduleDirs),
     ...(context.contentPackages ?? []).flatMap((dir) => nativeSubset(dir)),
     ...(typeof codegen === 'string' ? [resolve(project, codegen)] : []),
-    ...configNamedPaths(
-      context.config,
-      roots,
-      [join(project, DEFAULT_IOS_PROJECT_PATH), join(project, DEFAULT_ANDROID_GRADLE_ROOT), nativeDir].filter(
-        (dir) => nativeMode(context, dir) === 'generated',
-      ),
-    ),
+    ...configNamedPaths(context.config, roots, [
+      join(project, DEFAULT_IOS_PROJECT_PATH),
+      join(project, DEFAULT_ANDROID_GRADLE_ROOT),
+      nativeDir,
+    ]),
     ...extra.trees,
   ];
   const podfileLock = join(nativeDir, 'Podfile.lock');
@@ -317,6 +314,7 @@ export function staticInputs(context: StaticContext, target: StaticTarget): Stat
     trees,
     ignore: compileIgnore(readText(join(project, '.fingerprintignore')) ?? ''),
     tracked: context.tracked,
+    skip: ios && nativeDir === project ? [...APP_ROOT_SKIPPED].map((name) => join(project, name)) : [],
     trackedOnly: ios && native === 'tracked' ? [join(nativeDir, 'main.jsbundle'), join(nativeDir, 'assets')] : [],
     keepSigningFiles: target.keepSigningFiles,
     transforms: new Map(
@@ -324,7 +322,7 @@ export function staticInputs(context: StaticContext, target: StaticTarget): Stat
         ? [
             [
               podfileLock,
-              (bytes: Buffer) => canonicalPodfileLock(bytes.toString('utf8'), join(nativeDir, 'Pods'), project),
+              (bytes: Buffer) => canonicalPodfileLock(bytes.toString('utf8'), join(nativeDir, 'Pods'), context.root),
             ],
           ]
         : [],
@@ -339,5 +337,9 @@ export function staticInputs(context: StaticContext, target: StaticTarget): Stat
   const inputs: Input[] = [...walked.inputs, ...extra.rows, ...(patched.row ? [patched.row] : [])];
   if (manifest !== null)
     inputs.push({ name: 'package.json#native', kind: 'manifest', hash: sha256(canonicalJson(projected)) });
-  return { native, layout, inputs: mergeInputs(inputs), portable: walked.portable };
+  try {
+    return { native, layout, inputs: mergeInputs(inputs), portable: walked.portable };
+  } catch (error) {
+    return { uncertain: `${String(error instanceof Error ? error.message : error)}, so they cannot be told apart` };
+  }
 }

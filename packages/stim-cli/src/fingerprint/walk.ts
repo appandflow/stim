@@ -86,8 +86,10 @@ function globSource(glob: string): string {
     }
     if (char === '*') out += '[^/]*';
     else if (char === '?') out += '[^/]';
-    else if (char === '\\' && i + 1 < glob.length) out += `\\${glob.charAt(++i)}`;
-    else if (char === '[') {
+    else if (char === '\\') {
+      const next = glob.charAt(++i);
+      out += /[.*+?^${}()|[\]\\/]/.test(next) ? `\\${next}` : next;
+    } else if (char === '[') {
       const close = glob.indexOf(']', i + 2);
       if (close === -1) out += '\\[';
       else {
@@ -120,8 +122,10 @@ export function compileIgnore(text: string): Pattern[] {
     if (dirOnly) line = line.slice(0, -1);
     const anchored = line.includes('/');
     line = line.replace(/^\//, '');
-    if (!line) continue;
-    patterns.push({ negate, dirOnly, regex: new RegExp(`^${anchored ? '' : '(?:.*/)?'}${globSource(line)}$`) });
+    if (!line || /(?<!\\)(?:\\\\)*\\$/.test(line)) continue;
+    try {
+      patterns.push({ negate, dirOnly, regex: new RegExp(`^${anchored ? '' : '(?:.*/)?'}${globSource(line)}$`) });
+    } catch {}
   }
   return patterns;
 }
@@ -167,8 +171,8 @@ function realOrNull(path: string): string | null {
 
 /**
  * The parts of a package a native build reads: the paths its autolinking entry names, top-level podspecs, `ios/`,
- * `apple/`, `android/` and `cpp/`, its codegen spec directory and its native manifests. The whole package when none of
- * those exist.
+ * `apple/`, `android/` and `cpp/`, any other top-level directory its podspecs or Android build files mention, its
+ * codegen spec directory and its native manifests. The whole package when none of those exist.
  */
 export function nativeSubset(root: string, named: readonly string[] = []): string[] {
   const entries = readdirSync(root);
@@ -178,6 +182,25 @@ export function nativeSubset(root: string, named: readonly string[] = []): strin
     ...['ios', 'apple', 'android', 'cpp'].filter((name) => entries.includes(name)).map((name) => join(root, name)),
   ];
   if (sources.length === 0) return [root];
+  const buildFiles = [
+    ...entries.filter((name) => name.endsWith('.podspec')),
+    ...['build.gradle', 'build.gradle.kts', 'CMakeLists.txt'].map((name) => join('android', name)),
+  ]
+    .map((name) => {
+      try {
+        return readFileSync(join(root, name), 'utf8');
+      } catch {
+        return '';
+      }
+    })
+    .join('\n');
+  for (const name of entries) {
+    const path = join(root, name);
+    if (sources.includes(path) || name === 'node_modules' || !statSync(path, { throwIfNoEntry: false })?.isDirectory())
+      continue;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`(?:^|[^\\w.-])${escaped}/`).test(buildFiles)) sources.push(path);
+  }
   let manifest: unknown = null;
   try {
     manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
@@ -200,6 +223,8 @@ export interface WalkOptions {
   ignore?: readonly Pattern[];
   /** Real paths git tracks, or null outside a git work tree. */
   tracked: ReadonlySet<string> | null;
+  /** Paths never walked, whatever the patterns say. */
+  skip?: readonly string[];
   /** Paths that are inputs only while git tracks them or a file under them. */
   trackedOnly?: readonly string[];
   keepSigningFiles?: boolean;
@@ -214,6 +239,7 @@ export interface WalkResult {
 }
 
 class LimitExceeded extends Error {}
+class AppLink extends Error {}
 
 type Sink = (path: string, hash: string, outside: boolean) => void;
 
@@ -228,6 +254,7 @@ export function walk(options: WalkOptions): WalkResult | Uncertain {
   const limits = options.limits ?? LIMITS;
   const builtIn = options.keepSigningFiles ? BUILT_IN : [...SIGNING, ...BUILT_IN];
   const trackedOnly = new Set(options.trackedOnly ?? []);
+  const skipped = new Set(options.skip ?? []);
   const trackedDirs = new Set<string>();
   for (const path of tracked ?? [])
     for (let dir = dirname(path); !trackedDirs.has(dir) && dirname(dir) !== dir; dir = dirname(dir))
@@ -263,7 +290,7 @@ export function walk(options: WalkOptions): WalkResult | Uncertain {
 
   const excluded = (path: string, tree: string, isDir: boolean, siblings: readonly string[]): boolean => {
     const name = path.slice(path.lastIndexOf(sep) + 1);
-    if (isDir && path === roots.project) return true;
+    if ((isDir && path === roots.project) || skipped.has(path)) return true;
     if (trackedOnly.has(path) || (isDir && name.endsWith('.xcworkspace'))) return !isTracked(path, isDir);
     const generated =
       isDir &&
@@ -277,6 +304,12 @@ export function walk(options: WalkOptions): WalkResult | Uncertain {
     return own ?? (generated || (matchIgnore(builtIn, inTree, isDir) ?? false));
   };
 
+  const ignoredAncestor = (path: string): boolean => {
+    if (!within(path, roots.project)) return false;
+    const parts = toPosix(relative(roots.project, path)).split('/').slice(0, -1);
+    return parts.some((_, i) => matchIgnore(options.ignore ?? [], parts.slice(0, i + 1).join('/'), true) === true);
+  };
+
   const link = (path: string, sink: Sink): void => {
     const text = readlinkSync(path);
     const target = realOrNull(path);
@@ -284,8 +317,9 @@ export function walk(options: WalkOptions): WalkResult | Uncertain {
     const inside = target !== null && (within(target, roots.project) || within(target, roots.install));
     if (!target || !stat) sink(path, sha256(canonicalJson(['symlink', text, null])), false);
     else if (stat.isDirectory() && inside) {
+      if (within(roots.project, target)) throw new AppLink(path);
       sink(path, sha256(canonicalJson(['symlink', text])), false);
-      if (!within(roots.project, target)) queue.push(target);
+      queue.push(target);
     } else if (stat.isDirectory()) {
       sink(path, sha256(canonicalJson(['symlink', text, outsideDigest(target)])), true);
     } else if (stat.isFile()) {
@@ -335,8 +369,13 @@ export function walk(options: WalkOptions): WalkResult | Uncertain {
       if (!real || walked.has(real)) continue;
       walked.add(real);
       const stat = statSync(real);
+      if (
+        real !== roots.project &&
+        (excluded(real, dirname(real), stat.isDirectory(), readdirSync(dirname(real))) || ignoredAncestor(real))
+      )
+        continue;
       if (stat.isDirectory()) visit(real, real, row);
-      else if (stat.isFile() && !excluded(real, dirname(real), false, [])) row(real, hashFile(real, stat.size), false);
+      else if (stat.isFile()) row(real, hashFile(real, stat.size), false);
     }
   } catch (error) {
     if (error instanceof LimitExceeded)
@@ -344,6 +383,8 @@ export function walk(options: WalkOptions): WalkResult | Uncertain {
         uncertain: `the fingerprint inputs exceed ${limits.files} files or ${limits.bytes} bytes`,
         remedy: 'Exclude generated output with .fingerprintignore.',
       };
+    if (error instanceof AppLink)
+      return { uncertain: `${error.message} links to the app directory or a directory that contains it` };
     throw error;
   }
   return { inputs, portable };

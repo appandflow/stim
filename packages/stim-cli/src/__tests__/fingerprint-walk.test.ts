@@ -55,6 +55,10 @@ describe('.fingerprintignore matcher', () => {
     'sub/b.log': '',
     'top.txt': '',
     'sub/top.txt': '',
+    'deep/top.txt': '',
+    'other/sub/d.txt': '',
+    'd.txt': '',
+    '1.txt': '',
     'sub/c.txt': '',
     'deep/x/gen/out.c': '',
     'out/file': '',
@@ -69,6 +73,11 @@ describe('.fingerprintignore matcher', () => {
       'a leading or inner slash anchors to the app root',
       '/top.txt\nsub/*.txt',
       ['sub/c.txt', 'sub/top.txt', 'top.txt'],
+    ],
+    [
+      'an escaped letter is that letter, and an invalid pattern matches nothing',
+      '[z-a].txt\n\\d.txt',
+      ['d.txt', 'other/sub/d.txt'],
     ],
     ['** crosses directories', '**/gen/**', ['deep/x/gen/out.c']],
     ['a trailing slash matches directories only', 'out/', ['out/file']],
@@ -153,7 +162,7 @@ describe.skipIf(process.platform === 'win32')('fingerprint walk through symlinks
     const root = tree({ 'shared/Common.swift': 'v1', 'secrets/Info.plist': 'p1', 'ios/Podfile': '' });
     symlinkSync('../shared', join(root, 'ios/Shared'));
     symlinkSync('../secrets/Info.plist', join(root, 'ios/Info.plist'));
-    symlinkSync('..', join(root, 'shared/up'));
+    symlinkSync('.', join(root, 'shared/loop'));
     symlinkSync('missing', join(root, 'ios/Dangling'));
     const trees = [join(root, 'ios')];
     const before = walked(root, { trees });
@@ -163,12 +172,14 @@ describe.skipIf(process.platform === 'win32')('fingerprint walk through symlinks
       'ios/Podfile',
       'ios/Shared',
       'shared/Common.swift',
-      'shared/up',
+      'shared/loop',
     ]);
     write(root, { 'shared/Common.swift': 'v2', 'secrets/Info.plist': 'p2' });
     const after = walked(root, { trees });
     expect(hashOf(after, 'shared/Common.swift')).not.toBe(hashOf(before, 'shared/Common.swift'));
     expect(hashOf(after, 'ios/Info.plist')).not.toBe(hashOf(before, 'ios/Info.plist'));
+    symlinkSync('..', join(root, 'shared/up'));
+    expect(isUncertain(walk({ roots: { project: root, install: root }, trees, tracked: null }))).toBe(true);
   });
 
   test('a target outside the project and install root is hashed into an outside row and makes the key non-portable', () => {
@@ -191,7 +202,9 @@ describe('native subsets and static inputs', () => {
   test('a local native package counts its native parts and codegen specs, not its JS', () => {
     const lib = tree({
       'package.json': '{"name":"lib","codegenConfig":{"jsSrcsDir":"specs"}}',
-      'Lib.podspec': '',
+      'Lib.podspec': 's.source_files = "ios/**/*.swift", "Common/cpp/**/*.{h,cpp}"',
+      'Common/cpp/Lib.cpp': '',
+      'docs/guide.md': '',
       'ios/Lib.swift': '',
       'specs/NativeLib.ts': '',
       'src/index.ts': '',
@@ -201,7 +214,7 @@ describe('native subsets and static inputs', () => {
       nativeSubset(lib)
         .map((path) => path.slice(lib.length + 1))
         .toSorted(),
-    ).toEqual(['Lib.podspec', 'ios', 'package.json', 'specs']);
+    ).toEqual(['Common', 'Lib.podspec', 'ios', 'package.json', 'specs']);
     const js = tree({ 'package.json': '{}', 'index.js': '' });
     expect(nativeSubset(js)).toEqual([js]);
   });
@@ -233,6 +246,72 @@ describe('native subsets and static inputs', () => {
     );
     expect(result.native).toBe(mode);
     expect(names(result.inputs).includes('ios/Podfile')).toBe(mode === 'tracked');
+  });
+
+  test('an iOS project at the app root counts the app minus generated state, ignored paths and other platforms', () => {
+    const root = project({
+      'package.json': '{}',
+      '.fingerprintignore': 'docs/\n',
+      'App.xcodeproj/project.pbxproj': '',
+      'App/AppDelegate.swift': '',
+      'App.xcworkspace/contents.xcworkspacedata': '',
+      '.expo/devices.json': '',
+      'vendor/bundle/gem.rb': '',
+      'docs/readme.md': '',
+      'android/build.gradle': '',
+      'modules/legacy/android/build.gradle': '',
+    });
+    const { inputs } = inputsOf(root, {}, { platform: 'ios', iosProjectPath: '.' });
+    expect(names(inputs)).toEqual([
+      '.fingerprintignore',
+      'App.xcodeproj/project.pbxproj',
+      'App/AppDelegate.swift',
+      'modules/legacy/android/build.gradle',
+      'package-lock.json',
+      'package.json',
+      'package.json#native',
+    ]);
+    write(root, { '.fingerprintignore': 'docs/\nmodules/legacy/\n' });
+    expect(names(inputsOf(root, {}, { platform: 'ios', iosProjectPath: '.' }).inputs)).not.toContain(
+      'modules/legacy/android/build.gradle',
+    );
+  });
+
+  test('a custom Android module keeps the other Gradle modules of its root', () => {
+    const root = project({
+      'package.json': '{}',
+      'android/settings.gradle': '',
+      'android/mobile/build.gradle': '',
+      'android/mobile/build/outputs/app.apk': '',
+      'android/shared/build.gradle': '',
+      'android/shared/src/main/java/Shared.kt': '',
+    });
+    const layout = {
+      gradleRoot: join(root, 'android'),
+      gradleRootRelative: 'android',
+      module: ':mobile',
+      moduleDir: join(root, 'android/mobile'),
+      custom: true,
+    };
+    expect(names(inputsOf(root, {}, { platform: 'android', androidLayout: layout }).inputs)).toEqual([
+      'android/mobile/build.gradle',
+      'android/settings.gradle',
+      'android/shared/build.gradle',
+      'android/shared/src/main/java/Shared.kt',
+      'package.json#native',
+    ]);
+  });
+
+  test('two different packages that would share a row name give no key', () => {
+    const root = project({
+      'package.json': '{}',
+      'node_modules/bar/android/B.kt': 'a',
+      'node_modules/foo/node_modules/bar/android/B.kt': 'b',
+    });
+    const contentPackages = [join(root, 'node_modules/bar'), join(root, 'node_modules/foo/node_modules/bar')];
+    expect(
+      isUncertain(staticInputs({ root, tracked: null, expoResolves: false, contentPackages }, { platform: 'android' })),
+    ).toBe(true);
   });
 
   test('outside git, an Expo app with a native directory has no key', () => {
