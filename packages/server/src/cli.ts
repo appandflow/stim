@@ -409,13 +409,19 @@ export async function runService(
     if (sub === 'install') {
       const installPort = values.port === undefined ? DEFAULT_PORT : validatePort(values.port);
       if (typeof installPort === 'string') fail(installPort);
-      for (const line of await installService({
-        label,
-        port: installPort,
-        env,
-        pathPrepend,
-        serve: values.serve === true,
-      })) {
+      const explicit =
+        values.label !== undefined || values.port !== undefined || values.serve || env.length || pathPrepend.length;
+      for (const line of await installService(
+        explicit
+          ? {
+              label,
+              port: installPort,
+              env,
+              pathPrepend,
+              serve: values.serve === true,
+            }
+          : undefined,
+      )) {
         console.log(line);
       }
     } else if (sub === 'status') {

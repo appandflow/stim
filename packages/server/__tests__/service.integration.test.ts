@@ -16,9 +16,10 @@ import {
   validateServeEnvironment,
   type ServiceSpec,
 } from '../src/service-plist.ts';
-import { statusLines, updateService, type ServiceStatus } from '../src/service.ts';
+import { installService, statusLines, updateService, type ServiceStatus } from '../src/service.ts';
 import type { WorkerRootUsage } from '../src/worker-areas.ts';
 import type { KeepAwakeStatus } from '../src/keep-awake.ts';
+import { serviceManager } from '../src/service-manager.ts';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { permissionPanes } from '@stim-cli/core/state';
 import { installHostApp, unpackRelease } from '../src/stim-host.ts';
@@ -27,7 +28,7 @@ const SPEC: ServiceSpec = {
   label: 'dev.stim.server',
   host: null,
   node: '/opt/homebrew/bin/node',
-  script: '/Users/me/stim & co/node_modules/@stim-cli/server/dist/stim-server.mjs',
+  script: '/Users/me/stim & co/node_modules/stim/bin/stim.mjs',
   port: 7787,
   env: ['GEM_HOME=/gems', 'LANG=en_US.UTF-8', 'EXPO_TOKEN=s3cr&t<x>==y'],
   pathPrepend: ['/gems/bin'],
@@ -78,7 +79,7 @@ describe('service plist', () => {
             ],
           });
           const next =
-            '/Users/me/Library/Application Support/Stim/services/dev.stim.server/versions/2.0.0-0123456789abcdef/node_modules/@stim-cli/server/dist/stim-server.mjs';
+            '/Users/me/Library/Application Support/Stim/services/dev.stim.server/versions/2.0.0-0123456789abcdef/node_modules/stim/bin/stim.mjs';
           const installed = parseInstalledPlist(json)!;
           execFileSync('plutil', [
             '-replace',
@@ -392,7 +393,7 @@ it('refuses a Funnel route and an unreadable config, and never plans to create o
 
 it('prunes only installs that hold neither the current nor the previous server', () => {
   const versions = '/Users/me/Library/Application Support/Stim/services/dev.stim.server/versions';
-  const script = (dir: string) => `${versions}/${dir}/node_modules/@stim-cli/server/dist/stim-server.mjs`;
+  const script = (dir: string) => `${versions}/${dir}/node_modules/stim/bin/stim.mjs`;
   expect(
     unusedInstalls(
       versions,
@@ -401,4 +402,66 @@ it('prunes only installs that hold neither the current nor the previous server',
     ),
   ).toEqual(['1.14.0-a-10', '1.15.0-b-2', '.install-123']);
   expect(unusedInstalls(versions, ['1.15.0-b-2'], [script('1.15.0-b-2'), script('1.14.0-a-1')])).toEqual([]);
+});
+
+describe.skipIf(process.platform !== 'darwin')('managed unit conversion', () => {
+  it("converts all recorded managed units and preserves each unit's options and route", async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-service-convert-'));
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('STIM_HOME', join(home, 'state'));
+    const manager = serviceManager();
+    const running = new Set<string>();
+    vi.spyOn(manager, 'job').mockImplementation(async (label) =>
+      running.has(label) ? { state: 'running', pid: process.pid, runs: 1, lastExitCode: null } : null,
+    );
+    vi.spyOn(manager, 'start').mockImplementation(async (label) => {
+      running.add(label);
+      return { ok: true, stdout: '', stderr: '' };
+    });
+    vi.spyOn(manager, 'host').mockResolvedValue(null);
+    vi.spyOn(manager, 'sessionNotes').mockResolvedValue([]);
+    vi.stubGlobal('fetch', async (url: string) => {
+      const port = Number(new URL(url).port);
+      if (!running.has(`dev.stim.convert${port}`)) throw new Error('not listening');
+      return new Response(JSON.stringify({ server: 'stim-server', version: '1.42.0', startup: { state: 'ready' } }));
+    });
+    const records = Array.from([7790, 7791], (port): ServiceSpec => ({
+      ...SPEC,
+      label: `dev.stim.convert${port}`,
+      port,
+      script: join(home, 'old', 'stim-server.mjs'),
+      env: [`TOOL_PORT=${port}`],
+      pathPrepend: [join(home, `tools-${port}`)],
+      environment: port === 7790 ? { STIM_HOME: join(home, `state-${port}`) } : {},
+      serve: { port: port + 100, created: port === 7790 },
+    }));
+    try {
+      for (const record of records) {
+        mkdirSync(manager.root(record.label), { recursive: true });
+        mkdirSync(join(home, 'Library', 'LaunchAgents'), { recursive: true });
+        const old = renderPlist(record).replace('\t\t<string>serve</string>\n\t\t<string>--service</string>\n', '');
+        writeFileSync(manager.file(record.label), old);
+      }
+      await installService();
+      for (const record of records) {
+        const installed = await manager.read(record.label);
+        expect(installed).toMatchObject({
+          label: record.label,
+          port: record.port,
+          env: record.env,
+          pathPrepend: record.pathPrepend,
+          stimHome: record.environment.STIM_HOME ?? null,
+          serve: record.serve,
+          managed: true,
+        });
+        expect(installed?.script).toMatch(/\/stim\.mjs$/);
+        expect(installed?.programArguments.slice(2, 4)).toEqual(['serve', '--service']);
+      }
+    } finally {
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
 });

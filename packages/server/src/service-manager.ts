@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { isJsonObject } from '@stim-cli/core/state';
 import {
@@ -341,7 +342,17 @@ const taskScheduler: ServiceManager = {
     if (!node) return { ok: false, stdout: '', stderr: `${taskScheduler.file(label)} names no server.` };
     const runner = join(taskScheduler.root(label), 'stim-service-runner.mjs');
     mkdirSync(taskScheduler.root(label), { recursive: true });
-    copyFileSync(join(dirname(fileURLToPath(import.meta.url)), 'stim-service-runner.mjs'), runner);
+    const bundledRunner = join(
+      dirname(createRequire(import.meta.url).resolve('stim/package.json')),
+      'dist',
+      'stim-service-runner.mjs',
+    );
+    copyFileSync(
+      existsSync(bundledRunner)
+        ? bundledRunner
+        : join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'stim-service-runner.mjs'),
+      runner,
+    );
     const whoami = await run('whoami', ['/user', '/fo', 'csv', '/nh']);
     const user = /"(S-1-[\d-]+)"\s*$/.exec(whoami.stdout.trim())?.[1];
     if (!user)

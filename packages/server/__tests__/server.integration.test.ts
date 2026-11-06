@@ -3931,7 +3931,7 @@ describe('offloaded builds', () => {
         },
       });
       const { client } = await buildClient(port);
-      expect(await client.request('server.update.status')).toMatchObject({
+      expect(await client.request('engine.update.status')).toMatchObject({
         result: {
           server: { version: '1.2.3' },
           service: 'dev.stim.test',
@@ -3940,16 +3940,16 @@ describe('offloaded builds', () => {
         },
       });
       expect(
-        await client.request('server.update.start', { packages: [{ name: 'a.tgz', size: 1, sha256: sha('a') }] }),
+        await client.request('engine.update', { packages: [{ name: 'a.tgz', size: 1, sha256: sha('a') }] }),
       ).toMatchObject({ error: { code: 'forbidden', message: expect.stringContaining('server.acceptClientBuilds') } });
-      expect(await client.request('server.update.start', { release: 'latest' })).toMatchObject({
+      expect(await client.request('engine.update', { version: 'latest' })).toMatchObject({
         error: { code: 'bad-request' },
       });
       const host = await returning(port, setupClient(['device-host']).keyPair, '100.64.0.3', 'device-host');
-      expect(await host.request('server.update.status')).toMatchObject({ result: { service: 'dev.stim.test' } });
+      expect(await host.request('engine.update.status')).toMatchObject({ result: { service: 'dev.stim.test' } });
       const viewer = await authed(port);
-      expect(await viewer.request('server.update.status')).toMatchObject({ error: { code: 'forbidden' } });
-      expect(await viewer.request('server.update.start', { release: '1.15.0' })).toMatchObject({
+      expect(await viewer.request('engine.update.status')).toMatchObject({ error: { code: 'forbidden' } });
+      expect(await viewer.request('engine.update', { version: '1.15.0' })).toMatchObject({
         error: { code: 'forbidden' },
       });
     },
@@ -3969,18 +3969,18 @@ describe('offloaded builds', () => {
         service: { label: 'dev.stim.drain', node: process.execPath, script: updater, runsAsService: async () => true },
       });
       const { client } = await buildClient(port);
-      expect(await client.request('server.update.start', { release: '1.15.0' })).toMatchObject({
+      expect(await client.request('engine.update', { version: '1.15.0' })).toMatchObject({
         result: { state: 'installing' },
       });
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: { capacity: { declined: 'stim-server is updating to release 1.15.0' } },
       });
       writeFileSync(release, '');
-      await eventually(() => readAudit().some((record) => record.action === 'server.update.ended'));
+      await eventually(() => readAudit().some((record) => record.action === 'engine.update.ended'));
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: { capacity: { declined: null } },
       });
-      expect(await client.request('server.update.status')).toMatchObject({
+      expect(await client.request('engine.update.status')).toMatchObject({
         result: {
           running: null,
           last: { ok: false, message: expect.stringContaining(': Another update is running.;') },
@@ -3993,7 +3993,7 @@ describe('offloaded builds', () => {
         message: 'updated by another run',
       };
       writeFileSync(join(serviceRoot('dev.stim.drain'), 'last-update.json'), JSON.stringify(later));
-      expect(await client.request('server.update.status')).toMatchObject({ result: { last: later } });
+      expect(await client.request('engine.update.status')).toMatchObject({ result: { last: later } });
     } finally {
       if (home === undefined) delete process.env.HOME;
       else process.env.HOME = home;

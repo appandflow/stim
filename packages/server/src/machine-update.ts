@@ -22,7 +22,7 @@ import {
   type Endpoint,
 } from '@stim-cli/core/state';
 import { Upstream } from './hosted-relay.ts';
-import type { MachineUpdateStatus, ProtocolError, ServerUpdateProgress } from './protocol.ts';
+import type { MachineUpdateStatus, ProtocolError, EngineUpdateProgress } from './protocol.ts';
 
 const CHUNK_BYTES = 24 * 1024;
 const DEPENDENCY_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies'] as const;
@@ -38,8 +38,7 @@ interface Manifest {
 
 const readManifest = (dir: string) => JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as Manifest;
 
-/** The range pnpm publishes for a `workspace:` range of a package at `version`. */
-export function publishedRange(range: string, version: string): string {
+function publishedRange(range: string, version: string): string {
   const spec = range.slice('workspace:'.length);
   if (spec === '*') return version;
   if (spec === '^' || spec === '~') return `${spec}${version}`;
@@ -55,13 +54,13 @@ function installedDir(from: string, name: string): string | null {
 }
 
 /**
- * The packages of the Stim checkout `serverDir` runs from: it and every package it reaches through `workspace:`
- * ranges, by name. Null when `serverDir` is an installed package, which a release update matches instead.
+ * The packages of the Stim checkout `stimDir` runs from: it and every package it reaches through `workspace:`
+ * ranges, by name. Null when `stimDir` is an installed package, which a release update matches instead.
  */
-export function workspacePackages(serverDir: string): Map<string, string> | null {
-  if (serverDir.split(sep).includes('node_modules')) return null;
+export function workspacePackages(stimDir: string): Map<string, string> | null {
+  if (stimDir.split(sep).includes('node_modules')) return null;
   let checkout = false;
-  for (let dir = serverDir, depth = 0; !checkout && depth < 4 && dirname(dir) !== dir; dir = dirname(dir), depth++) {
+  for (let dir = stimDir, depth = 0; !checkout && depth < 4 && dirname(dir) !== dir; dir = dirname(dir), depth++) {
     checkout = existsSync(join(dir, 'pnpm-workspace.yaml'));
   }
   if (!checkout) return null;
@@ -81,7 +80,7 @@ export function workspacePackages(serverDir: string): Map<string, string> | null
       }
     }
   };
-  visit(serverDir);
+  visit(stimDir);
   return found;
 }
 
@@ -101,7 +100,7 @@ export async function packWorkspace(
   packages: Map<string, string>,
 ): Promise<{ name: string; bytes: Buffer; sha256: string }[]> {
   const versions = new Map([...packages].map(([name, dir]) => [name, readManifest(dir).version]));
-  const out = mkdtempSync(join(tmpdir(), 'stim-server-pack-'));
+  const out = mkdtempSync(join(tmpdir(), 'stim-engine-pack-'));
   try {
     const packed = [];
     for (const [name, dir] of packages) {
@@ -129,12 +128,14 @@ export async function packWorkspace(
       delete manifest.scripts;
       writeFileSync(join(contents, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
       const file = `${name.replace('@', '').replace('/', '-')}-${manifest.version}.tgz`;
-      // macOS tar adds an AppleDouble `._<name>` entry for each file with extended attributes unless
-      // COPYFILE_DISABLE is set; npm would install those as extra `.mjs` files and change the Stim build digest.
-      await run('/usr/bin/tar', ['-czf', join(out, file), '-C', stage, 'package'], {
-        ...process.env,
-        COPYFILE_DISABLE: '1',
-      });
+      // macOS tar writes AppleDouble entries for extended attributes unless COPYFILE_DISABLE is set.
+      await run(
+        process.platform === 'win32'
+          ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+          : '/usr/bin/tar',
+        ['-czf', join(out, file), '-C', stage, 'package'],
+        { ...process.env, COPYFILE_DISABLE: '1' },
+      );
       const bytes = readFileSync(join(out, file));
       packed.push({ name: file, bytes, sha256: createHash('sha256').update(bytes).digest('hex') });
     }
@@ -146,8 +147,8 @@ export async function packWorkspace(
 
 export interface MachineUpdateOptions {
   version: string;
-  /** The `@stim-cli/server` package directory this server runs from. */
-  serverDir: string;
+  /** The `stim` package directory this server runs from. */
+  stimDir: string;
   status: () => unknown | Promise<unknown>;
   endpoint?: (found: Endpoint) => Endpoint;
 }
@@ -159,12 +160,17 @@ interface Upload {
   active: boolean;
 }
 
+// compat C12 permanent
+const manualUpdate = (machine: string, version: string) =>
+  `Update Stim on ${machine}: npm i -g stim@${version} && stim service install. If its engine is pinned, run stim engine update there. Update Stim Desktop too (Stim > Check for Updates).`;
+// compat end
+
 const failed = (code: ProtocolError['code'], message: string): { error: ProtocolError } => ({
   error: { code, message },
 });
 
 /**
- * Asks an approved remote machine or device host to update its stim-server to what this machine runs: the same npm
+ * Asks an approved remote machine or device host to update its Stim package to what this machine runs: the same npm
  * release, or this checkout's own packed build. It connects with the credential `stim doctor --fix` stored for that
  * machine, and goes ahead only with the stim-server that proves it holds the key pinned at approval.
  */
@@ -196,16 +202,10 @@ export class MachineUpdates {
       upstream.close();
       throw error;
     }
-    if (!upstream.supports('server-update')) {
-      upstream.close();
-      throw new Error(
-        `stim-server on ${machine} cannot be updated from here yet. Update it once there with \`stim-server service update\`.`,
-      );
-    }
     return upstream;
   }
 
-  async start(machine: string): Promise<Answer<ServerUpdateProgress>> {
+  async start(machine: string): Promise<Answer<EngineUpdateProgress>> {
     if (this.uploads.get(machine)?.active) return failed('action-busy', `This machine is already updating ${machine}.`);
     const upload: Upload = { sent: 0, total: 0, error: null, active: true };
     this.uploads.set(machine, upload);
@@ -213,24 +213,28 @@ export class MachineUpdates {
     let uploading = false;
     try {
       upstream = await this.connect(machine);
-      const workspace = workspacePackages(this.options.serverDir);
-      if (!workspace) {
-        const reply = await upstream.request('server.update.start', { release: this.options.version });
-        return 'error' in reply ? reply : { result: reply.result as ServerUpdateProgress };
+      // compat C12 permanent
+      if (this.options.stimDir.split(sep).includes('node_modules')) {
+        const reply = await upstream.request('engine.update', { version: this.options.version });
+        return 'error' in reply ? this.refusal(machine, reply) : { result: reply.result as EngineUpdateProgress };
       }
+      // compat end
+      const workspace = workspacePackages(this.options.stimDir) ?? new Map([['stim', this.options.stimDir]]);
       const packages = await packWorkspace(workspace);
-      const reply = await upstream.request('server.update.start', {
+      const reply = await upstream.request('engine.update', {
         packages: packages.map(({ name, bytes, sha256 }) => ({ name, size: bytes.length, sha256 })),
       });
-      if ('error' in reply) return reply;
-      const progress = reply.result as ServerUpdateProgress;
+      if ('error' in reply) return this.refusal(machine, reply);
+      const progress = reply.result as EngineUpdateProgress;
       upload.total = packages.reduce((sum, each) => sum + each.bytes.length, 0);
       uploading = true;
       const connection = upstream;
       void this.send(connection, progress.id, packages, upload).finally(() => connection.close());
       return { result: progress };
     } catch (error) {
-      return failed('action-failed', (error as Error).message);
+      // compat C12 permanent
+      return failed('action-failed', `${(error as Error).message} ${manualUpdate(machine, this.options.version)}`);
+      // compat end
     } finally {
       if (!uploading) {
         upload.active = false;
@@ -239,6 +243,14 @@ export class MachineUpdates {
       }
     }
   }
+
+  // compat C12 permanent
+  private refusal(machine: string, reply: { error: ProtocolError }): { error: ProtocolError } {
+    return reply.error.code === 'unknown-method' || reply.error.code === 'protocol-unsupported'
+      ? failed(reply.error.code, manualUpdate(machine, this.options.version))
+      : reply;
+  }
+  // compat end
 
   private async send(
     upstream: Upstream,
@@ -250,7 +262,7 @@ export class MachineUpdates {
       for (const { name, bytes } of packages) {
         for (let offset = 0; offset < bytes.length; offset += CHUNK_BYTES) {
           const data = bytes.subarray(offset, offset + CHUNK_BYTES);
-          const reply = await upstream.request('server.update.chunk', {
+          const reply = await upstream.request('engine.update.chunk', {
             id,
             name,
             offset,
@@ -277,8 +289,9 @@ export class MachineUpdates {
       return { result: { remote: null, unreachable: (error as Error).message, upload: local } };
     }
     try {
-      const reply = await upstream.request('server.update.status', {});
-      if ('error' in reply) return { result: { remote: null, unreachable: reply.error.message, upload: local } };
+      const reply = await upstream.request('engine.update.status', {});
+      if ('error' in reply)
+        return { result: { remote: null, unreachable: this.refusal(machine, reply).error.message, upload: local } };
       return { result: { remote: reply.result as MachineUpdateStatus['remote'], unreachable: null, upload: local } };
     } catch (error) {
       return { result: { remote: null, unreachable: (error as Error).message, upload: local } };

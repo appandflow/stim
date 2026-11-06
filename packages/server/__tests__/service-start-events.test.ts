@@ -37,10 +37,6 @@ vi.mock('node:fs', async (original) => {
   const fs = await original<typeof import('node:fs')>();
   return {
     ...fs,
-    copyFileSync: (source: string, destination: string) => {
-      if (source.endsWith('stim-service-runner.mjs')) fs.writeFileSync(destination, 'fixture');
-      else fs.copyFileSync(source, destination);
-    },
     watch: (_file: string, _options: unknown, changed: (event: string, filename: string | null) => void) => {
       const watcher = Object.assign(new EventEmitter(), {
         changed,

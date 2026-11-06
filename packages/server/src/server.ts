@@ -10,7 +10,6 @@ import {
 import { connect as connectSocket, isIP, Socket, type AddressInfo } from 'node:net';
 import { duplexPair, type Duplex } from 'node:stream';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir, type MetroLink } from '@stim-cli/core';
@@ -154,7 +153,7 @@ import {
   RELOAD_PLATFORMS,
   RESERVED_SHARE_SLUGS,
   SHARE_SLUG_PATTERN,
-  SERVER_UPDATE_METHODS,
+  ENGINE_UPDATE_METHODS,
   ARCHIVED_PAGE_LIMIT,
   type DesktopReportTarget,
   type DeviceToolRequest,
@@ -232,7 +231,7 @@ import {
   TRANSPORT_OVERHEAD_BYTES,
 } from '@stim-cli/core/noise-session';
 import { readWorkspaceDiff } from './workspace-diff.ts';
-import { ServerUpdates } from './server-update.ts';
+import { EngineUpdates } from './server-update.ts';
 import { MachineUpdates } from './machine-update.ts';
 import { Pending, STDERR_TAIL, type CommandLimits, type CommandOutcome } from './stim-command.ts';
 import { readHostPermissions } from './stim-host.ts';
@@ -1955,11 +1954,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const ownStimBuild = stimBuildDigest(dirname(options.stimCli));
   const machineUpdates = new MachineUpdates({
     version: options.serverVersion,
-    serverDir: dirname(dirname(options.service?.script || fileURLToPath(import.meta.url))),
+    stimDir: dirname(dirname(options.stimCli)),
     status: () => tailscale.rawStatus(),
     endpoint: options.hostedRelay?.endpoint,
   });
-  const updates = new ServerUpdates({
+  const updates = new EngineUpdates({
     label: options.service?.label ?? null,
     port: options.port,
     build: { version: options.serverVersion, stimBuild: ownStimBuild },
@@ -1976,7 +1975,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       auditSafely({
         at: new Date().toISOString(),
         device: by,
-        action: `server.update.${phase}`,
+        action: `engine.update.${phase}`,
         workspace: target,
         ok,
         ...(ok ? {} : { error: { code: 'action-failed', message: message.slice(0, AUDIT_FIELD_CHARS) } }),
@@ -4804,7 +4803,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       session: PairedDevice,
     ): Promise<void> | null {
       if ((BUILD_METHODS as readonly string[]).includes(method)) return buildMethod(id, method, params, session);
-      if ((SERVER_UPDATE_METHODS as readonly string[]).includes(method))
+      if ((ENGINE_UPDATE_METHODS as readonly string[]).includes(method))
         return updateMethod(id, method, params, session);
       return null;
     }
@@ -4822,9 +4821,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           `${method} needs this machine's build or device-host approval of the requesting machine.`,
         );
       }
-      if (method === 'server.update.status') return send(socket, { id, result: await updates.status() });
+      if (method === 'engine.update.status') return send(socket, { id, result: await updates.status() });
       const answer =
-        method === 'server.update.start'
+        method === 'engine.update'
           ? await updates.start({ id: session.id, name: session.name }, params)
           : updates.chunk(session.id, params);
       send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });

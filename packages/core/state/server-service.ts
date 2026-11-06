@@ -54,7 +54,7 @@ export function installedService(job: JobFields): InstalledService {
   const env: string[] = [];
   const pathPrepend: string[] = [];
   let port: number | null = null;
-  for (let index = 0; index < args.length; index += 2) {
+  for (let index = args[0] === 'serve' && args[1] === '--service' ? 2 : 0; index < args.length; index += 2) {
     const flag = args[index];
     const next = args[index + 1];
     if (next === undefined) break;
