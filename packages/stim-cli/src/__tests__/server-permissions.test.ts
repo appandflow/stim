@@ -25,7 +25,7 @@ describe('socket permissions', () => {
       'a world-readable directory',
       { dir: { ...DIR_OK, mode: 0o40755 } },
       'mode 755',
-      'chmod 700 /Users/me/.stim/server',
+      'chmod 700 /Users/me/.stim/run',
     ],
     [
       'a group-writable socket',
@@ -43,13 +43,13 @@ describe('socket permissions', () => {
       'a directory owned by another user',
       { dir: { ...DIR_OK, uid: 0 } },
       'uid 0',
-      'sudo chown $USER /Users/me/.stim/server',
+      'sudo chown $USER /Users/me/.stim/run',
     ],
     [
       'a directory that is a symlink or file',
       { dir: { ...DIR_OK, isDirectory: false } },
       'is not a directory',
-      'rm /Users/me/.stim/server',
+      'rm /Users/me/.stim/run',
     ],
   ])('reports %s with its command', (_name, over, problem, fix) => {
     const [finding] = serverPermissionFindings(setup({ socket: socketReading(over) }));
