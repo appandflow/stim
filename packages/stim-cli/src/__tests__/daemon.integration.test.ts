@@ -23,6 +23,7 @@ import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.
 import { acquireBuildSlot, releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { liveWaiters, takeWaitTicket } from '../engine/wait-queue.ts';
 import { askDaemon, beforeCommand, ensureDaemon, passPlacement, requestDaemonTick } from '../daemon/client.ts';
+import { runOperation } from '../run-operation.ts';
 import * as reclaim from '../daemon/reclaim.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
@@ -1128,11 +1129,11 @@ test.skipIf(process.platform === 'win32')(
 
     for (const name of ['start', 'ios', 'android', 'doctor', 'web', 'macos', 'revive', 'logs', 'status'])
       await beforeCommand(name, env);
-    expect(ran.mock.calls).toEqual(
-      ['start', 'ios', 'android', 'doctor'].map((name) => [name, expect.objectContaining({ report: false })]),
-    );
+    expect(ran.mock.calls).toEqual(['start', 'ios', 'android', 'doctor'].map((name) => [name, { report: false }]));
 
     ran.mockClear();
+    await runOperation({ caller: 'api', operation: 'start', admission: 'command', cwd: process.cwd(), env });
+    expect(ran).not.toHaveBeenCalled();
     for (const name of ['start', 'doctor']) await beforeCommand(name, { ...env, STIM_DAEMON: 'off' });
     expect(ran).not.toHaveBeenCalled();
     await beforeCommand('doctor', { ...env, [HOME_PASSES_TEST_GUARD_ENV]: '1' });
@@ -1221,9 +1222,7 @@ describe('on win32, which has no daemon', () => {
 
     for (const name of ['start', 'ios', 'android', 'doctor']) await beforeCommand(name, env);
 
-    expect(ran.mock.calls).toEqual(
-      ['start', 'ios', 'android', 'doctor'].map((name) => [name, expect.objectContaining({ report: false })]),
-    );
+    expect(ran.mock.calls).toEqual(['start', 'ios', 'android', 'doctor'].map((name) => [name, { report: false }]));
     expect(spawned).toEqual([]);
   });
 

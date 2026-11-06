@@ -30,7 +30,7 @@ describe('runOperation', () => {
     ['run', 'web', 'web'],
     ['build', 'tvos', null],
     ['start', undefined, 'start'],
-    ['repairDoctor', undefined, 'doctor'],
+    ['repairDoctor', undefined, null],
     ['collectGarbage', undefined, 'gc'],
     ['settings', undefined, null],
     ['stop', undefined, null],

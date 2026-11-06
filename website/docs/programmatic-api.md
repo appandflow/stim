@@ -48,13 +48,13 @@ except for a diagnostic about an unresolvable stim-daemon claim, which goes to
 stderr.
 
 Operations apply the matching CLI command's policy first, as `stim start`,
-`stim ios`, `stim gc` and `stim doctor` do. `start`, `build` and `run` refuse
-while the environment or settings still set a removed or leftover-off setting,
-and make sure the home's stim-daemon runs. `gc` and `collectGarbage` take the
-same refusals. `doctor` and `repairDoctor` run the daemon's passes in process
-when no daemon holds the home. A `before*` callback runs after this policy.
-Pass `admission: 'none'` to skip it when the caller already runs inside a Stim
-resident process, as stim-server does.
+`stim ios` and `stim gc` do. `start`, `build` and `run` refuse while the
+environment or settings still set a removed or leftover-off setting, and make
+sure the home's stim-daemon runs. `gc` and `collectGarbage` take the same
+refusals. Unlike the CLI, the API never runs the daemon's passes in the calling
+process. `beforeStart` runs after this policy. Pass `admission: 'none'` to skip
+it when the caller already runs inside a Stim resident process, as stim-server
+does.
 
 All operations run in the importing process against the client's home and
 project and invoke the same lifecycle operations as the CLI, so clients for

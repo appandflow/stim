@@ -50,7 +50,6 @@ export async function plannedMaintenance(
     background = false,
     operation,
     deviceActivity,
-    protectedRoot,
   }: {
     devices?: boolean;
     /** Plans the cap trims of the recorded sizes. */
@@ -63,12 +62,10 @@ export async function plannedMaintenance(
     operation?: StimContext;
     /** Reads owned device activity for an operation, such as from the daemon tick's measurement. */
     deviceActivity?: (withSims: boolean) => Promise<OwnedDeviceActivity[]>;
-    /** The workspace the triggering command runs in, when it is not the one containing the process's cwd. */
-    protectedRoot?: string;
   } = {},
 ): Promise<PlannedMaintenance> {
   const env = operation?.env ?? process.env;
-  const root = protectedRoot ?? triggeringRoot(operation);
+  const root = triggeringRoot(operation);
   const idleStops = async (): Promise<MaintenancePlan> => {
     const now = Date.now();
     try {

@@ -45,8 +45,8 @@ export interface StimOptions {
   /**
    * `command` (the default) applies the matching CLI command's policy before an operation runs: `start`, `build` and
    * `run` refuse while a removed or leftover-off setting is present and make sure the home's daemon runs; `gc` and
-   * `collectGarbage` take the same refusals; `doctor` and `repairDoctor` run the in-process passes when no daemon holds
-   * the home. `none` skips it, for a caller that already runs inside a Stim resident process such as stim-server.
+   * `collectGarbage` take the same refusals. The daemon's passes never run in the calling process. `none` skips it, for
+   * a caller that already runs inside a Stim resident process such as stim-server.
    */
   admission?: 'command' | 'none';
 }
@@ -168,7 +168,7 @@ export interface StimDoctorOptions extends StimReadOptions {
 }
 
 export interface StimDoctorRepairOptions extends Omit<StimDoctorOptions, 'record'> {
-  /** Called with the canonical project root before repairs and after admission; throwing refuses the operation. */
+  /** Called with the canonical project root before repairs; throwing refuses the operation. */
   beforeRepair?: (workspace: string) => void;
 }
 

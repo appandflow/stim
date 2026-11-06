@@ -26,9 +26,9 @@ process such as stim-server). message is an output chunk. Without onProgress,
 operations write nothing to the caller's stdout or stderr, except a diagnostic
 about an unresolvable stim-daemon claim. With admission 'command', start, build
 and run refuse and start the home's daemon as stim start, ios, android, macos
-and web do; gc and collectGarbage take the same refusals; doctor and
-repairDoctor run the daemon's passes when no daemon holds the home. The home is fixed when the client is created: home, else
-STIM_HOME from env, else the default home. All operations run in the calling
+and web do; gc and collectGarbage take the same refusals. The API never runs
+the daemon's passes in the calling process. The home is fixed when the client
+is created: home, else STIM_HOME from env, else the default home. All operations run in the calling
 process against the client's home and project and call the same lifecycle
 operations as the CLI. None parses CLI arguments or changes the caller's
 cwd/environment.
