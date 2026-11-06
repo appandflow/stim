@@ -57,8 +57,7 @@ describe('git index reader', () => {
     git(root, ...args);
     const index = readFileSync(join(root, '.git/index'));
     expect(index.readUInt32BE(4)).toBe(version);
-    if (version === 3)
-      expect(git(root, 'ls-files', '-v')).toMatch(/^S ios\/App\/Generated\/Sources\/Module1\/File1\.swift$/m);
+    expect(/^S /m.test(git(root, 'ls-files', '-v'))).toBe(version === 3);
     expect(parseGitIndex(index)).not.toBeNull();
     expect(await trackedPaths(root)).toEqual(lsFiles(root));
   });
