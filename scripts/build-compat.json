@@ -30,6 +30,8 @@
     "packages/stim-cli/src/fingerprint/",
     "packages/stim-cli/src/injected/expo-metro-config.cjs",
     "packages/stim-cli/src/integrations/",
+    "packages/stim-cli/src/job/offload/host.ts",
+    "packages/stim-cli/src/job/offload/worker.ts",
     "packages/stim-cli/src/macos/stage.ts",
     "packages/stim-cli/src/offload/build-artifact-cache.ts",
     "packages/stim-cli/src/offload/manifest.ts",
@@ -37,9 +39,8 @@
     "packages/stim-cli/src/offload/react-native-artifact.ts",
     "packages/stim-cli/src/offload/swiftpm-artifact.ts",
     "packages/stim-cli/src/offload/toolchain.ts",
-    "packages/stim-cli/src/offload/worker.ts",
     "packages/stim-cli/src/optimizations.ts",
     "packages/stim-cli/src/stimd/metro/project-node.ts"
   ],
-  "digest": "0eb23561d5e8aeb1d7471f24254765925d00e64820c0b6c374bd098128bfc3c1"
+  "digest": "5a81933e464f4b0edaa3b830f4d48e65a4fa6394f07f5cfa76be665b866ff9a6"
 }

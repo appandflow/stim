@@ -1,23 +1,177 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { stimBuildId } from '@stim-cli/core/state';
+import { machineCopy } from '../../stim-cli/src/__tests__/fixtures/machine-copy.ts';
 import { packWorkspace, workspacePackages } from '../src/machine-update.ts';
-import { EngineUpdates } from '../src/server-update.ts';
+import { EngineUpdates, type EngineUpdateOptions } from '../src/server-update.ts';
 import { serviceRoot } from '../src/service-manager.ts';
 
-it('authorizes a package update, verifies uploaded bytes and drains until the detached updater exits', async () => {
+it.each([
+  {
+    target: '1.42.0',
+    pinned: false,
+    name: 'mini',
+    message: '1.42.0 is marked bad (crash loop); the engine stays on 1.40.0',
+  },
+  {
+    target: '1.39.0',
+    pinned: false,
+    name: 'mini',
+    message: '1.39.0 is marked bad (crash loop); the engine stays on 1.40.0',
+  },
+  {
+    target: '1.43.0',
+    pinned: true,
+    name: 'mini',
+    message: 'the engine is pinned at 1.40.0 (rolled back); on mini run stim engine update to resume updates',
+  },
+  {
+    target: '1.43.0',
+    pinned: true,
+    name: undefined,
+    message: 'the engine is pinned at 1.40.0 (rolled back); on this machine run stim engine update to resume updates',
+  },
+])(
+  'refuses $target before launching engine-select (pinned: $pinned, name: $name)',
+  async ({ target, pinned, name, message }) => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-engine-refusal-'));
+    vi.stubEnv('STIM_HOME', home);
+    vi.stubEnv('HOME', home);
+    const root = join(home, 'engine');
+    const script = join(root, '0123456789ab', 'dist', 'cli.mjs');
+    mkdirSync(dirname(script), { recursive: true });
+    writeFileSync(script, '');
+    writeFileSync(
+      join(root, 'current.json'),
+      JSON.stringify({ format: 1, version: '1.40.0', pinned, pinReason: 'rolled back' }),
+    );
+    writeFileSync(
+      join(root, 'state.json'),
+      JSON.stringify({
+        format: 1,
+        installed: [],
+        bad: [
+          { build: 'bbbbbbbbbbbb', version: '1.42.0', at: '2026-11-06T00:00:00Z' },
+          { build: 'cccccccccccc', version: '1.41.0', at: '2026-11-06T00:00:00Z' },
+        ],
+      }),
+    );
+    const select = join(home, 'select.mjs');
+    const called = join(home, 'called');
+    writeFileSync(
+      select,
+      `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(called)}, 'called');`,
+    );
+    const detached = vi.fn<(file: string) => { file: string; args: string[] }>((file) => ({ file, args: [select] }));
+    const updates = new EngineUpdates({
+      name,
+      label: 'dev.stim.test',
+      port: 7787,
+      build: { version: '1.40.0', stimBuild: null },
+      node: process.execPath,
+      script,
+      env: { ...process.env, STIM_ENGINE_ROOT: root },
+      acceptsClientBuilds: () => false,
+      runsAsService: async () => true,
+      detached,
+      drain: vi.fn<EngineUpdateOptions['drain']>(),
+      audit: vi.fn<EngineUpdateOptions['audit']>(),
+    });
+    try {
+      expect(await updates.start({ id: 'approved-client', name: 'Laptop' }, { version: target })).toEqual({
+        error: { code: 'bad-request', message },
+      });
+      expect(detached).not.toHaveBeenCalled();
+      expect(existsSync(called)).toBe(false);
+    } finally {
+      updates.close();
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
+
+it('an exact engine.update prerelease passes promotion without changing the worker channel', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-engine-prerelease-'));
+  const root = join(home, 'engine');
+  const source = fileURLToPath(new URL('../../stim-cli', import.meta.url));
+  try {
+    const copy = machineCopy(source, join(home, 'copy'));
+    const build = stimBuildId(join(copy, 'dist'));
+    assert(build);
+    const version = '99.0.0-next.1';
+    const pkg = JSON.parse(readFileSync(join(copy, 'package.json'), 'utf8'));
+    writeFileSync(join(copy, 'package.json'), JSON.stringify({ ...pkg, version }));
+    mkdirSync(root);
+    const tree = join(root, build);
+    renameSync(copy, tree);
+    writeFileSync(
+      join(tree, '.stim-manifest.json'),
+      JSON.stringify({ format: 1, build, version, engines: '>=22.12.0', schema: 1 }),
+    );
+    writeFileSync(
+      join(root, 'current.json'),
+      JSON.stringify({
+        format: 1,
+        version: '1.40.0',
+        dir: 'aaaaaaaaaaaa',
+        build: 'aaaaaaaaaaaa',
+        node: [{ path: process.execPath, version: process.versions.node }],
+        engines: '>=22.12.0',
+        channel: 'latest',
+        pinned: false,
+        pinReason: null,
+        setBy: 'install',
+        setAt: new Date().toISOString(),
+      }),
+    );
+    const select = (setBy: string) =>
+      JSON.parse(
+        execFileSync(process.execPath, [join(tree, 'dist', 'engine-select.mjs'), '--source', tree, '--set-by', setBy], {
+          env: { ...process.env, HOME: home, USERPROFILE: home, STIM_HOME: home, STIM_ENGINE_ROOT: root },
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }),
+      );
+    expect(select('engine.update')).toEqual({ flipped: build });
+    expect(JSON.parse(readFileSync(join(root, 'current.json'), 'utf8'))).toMatchObject({
+      version,
+      channel: 'latest',
+      pinned: false,
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60_000);
+
+it('authorizes a package update, verifies uploaded bytes and drains until the detached engine-select exits', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-engine-update-'));
   vi.stubEnv('HOME', home);
   vi.stubEnv('USERPROFILE', home);
   vi.stubEnv('LOCALAPPDATA', home);
   vi.stubEnv('STIM_HOME', home);
-  const script = join(home, 'updater.mjs');
+  const root = join(home, 'engine');
+  const script = join(root, '0123456789ab', 'dist', 'cli.mjs');
+  mkdirSync(dirname(script), { recursive: true });
+  writeFileSync(script, '');
+  const select = join(home, 'select.mjs');
   const output = join(home, 'received.json');
   writeFileSync(
-    script,
+    select,
     `
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -26,6 +180,7 @@ const from = args[args.indexOf('--from') + 1];
 writeFileSync(process.env.UPDATE_OUTPUT, JSON.stringify({
   args, files: Object.fromEntries(readdirSync(from).map(name => [name, readFileSync(join(from, name)).toString('base64')]))
 }));
+console.log(JSON.stringify({ staged: 'ba9876543210' }));
 `,
   );
   const drains: (string | null)[] = [];
@@ -34,22 +189,28 @@ writeFileSync(process.env.UPDATE_OUTPUT, JSON.stringify({
     finish = resolve;
   });
   let accepts = false;
-  const updates = new EngineUpdates({
-    label: 'dev.stim.test',
-    port: 7787,
-    build: { version: '1.40.0', stimBuild: 'aaaaaaaaaaaaaaaa' },
-    node: process.execPath,
-    script,
-    env: { ...process.env, UPDATE_OUTPUT: output },
-    acceptsClientBuilds: () => accepts,
-    runsAsService: async () => true,
-    detached: (file, args) => ({ file, args }),
-    drain: (reason) => drains.push(reason),
-    audit: ({ phase, ok }) => {
-      if (phase === 'ended' && drains.length) finish(ok);
-    },
-  });
+  const updater = (fields: { script: string }) =>
+    new EngineUpdates({
+      label: 'dev.stim.test',
+      port: 7787,
+      build: { version: '1.40.0', stimBuild: 'aaaaaaaaaaaaaaaa' },
+      node: process.execPath,
+      env: { ...process.env, UPDATE_OUTPUT: output, STIM_ENGINE_ROOT: root },
+      acceptsClientBuilds: () => accepts,
+      runsAsService: async () => true,
+      detached: (file, args) => ({ file, args: [select, ...args] }),
+      drain: (reason) => drains.push(reason),
+      audit: ({ phase, ok }) => {
+        if (phase === 'ended' && drains.length) finish(ok);
+      },
+      ...fields,
+    });
+  const updates = updater({ script });
   try {
+    const outside = updater({ script: join(home, 'stim.mjs') });
+    expect(await outside.start({ id: 'a', name: 'A' }, { version: '9.0.0' })).toMatchObject({
+      error: { code: 'forbidden', message: expect.stringContaining('does not run the Stim engine') },
+    });
     const by = { id: 'approved-build-client', name: 'Laptop' };
     const source = join(home, 'source');
     mkdirSync(join(source, 'bin'), { recursive: true });
@@ -80,19 +241,26 @@ writeFileSync(process.env.UPDATE_OUTPUT, JSON.stringify({
     expect(updates.chunk(by.id, { ...chunk, offset: 1 })).toMatchObject({ error: { code: 'bad-request' } });
     expect(updates.chunk(by.id, chunk)).toMatchObject({ result: { state: 'installing', missing: [] } });
     expect(await ended).toBe(true);
-    expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual({
+    const received = JSON.parse(readFileSync(output, 'utf8'));
+    expect(received.args[0]).toMatch(/[\\/]dist[\\/]engine-select\.mjs$/);
+    expect(received).toEqual({
       args: [
-        'service',
-        'update',
-        '--label',
-        'dev.stim.test',
+        received.args[0],
         '--from',
         join(serviceRoot('dev.stim.test'), 'incoming', started.result.id),
+        '--set-by',
+        'engine.update',
       ],
       files: { [name]: bytes.toString('base64') },
     });
     expect(drains).toEqual(['stim-server is updating to packages from Laptop', null]);
-    expect((await updates.status()).running).toBeNull();
+    const status = await updates.status();
+    expect(status.running).toBeNull();
+    expect(status.last).toMatchObject({
+      ok: true,
+      message: 'Build ba9876543210 is staged; the engine switches once running work drains.',
+    });
+    expect((await updater({ script }).status()).last?.message).toBe(status.last?.message);
   } finally {
     updates.close();
     vi.unstubAllEnvs();

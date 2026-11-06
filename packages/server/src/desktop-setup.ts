@@ -75,7 +75,7 @@ export function startDesktopSetup(
     desktop: true,
     display: undefined,
     install: unreachable,
-    update: unreachable,
+    select: unreachable,
     installJob: unreachable,
     installHost: unreachable,
     recordRoute: unreachable,

@@ -17,7 +17,7 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 ```
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
-`ios`, `android`, `web`, `reload`, `revive`, `agent-device`, `share [stop|list]`, `ports [get|stop|release|reverse]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove`, `settings [get|set|unset]`,
+`ios`, `android`, `web`, `reload`, `revive`, `agent-device`, `share [stop|list]`, `ports [get|stop|release|reverse]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove|update`, `settings [get|set|unset]`,
 `status`, `stats`, `gc`, `guide`, `serve`, `pair`, `pairings`, `service`, `setup`, `ci`, and `engine status|use|install|update|rollback|uninstall`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 
@@ -88,17 +88,23 @@ for selection and timing commands.
 
 The macOS app lives in `apps/desktop`, a Swift package outside the pnpm
 workspace; see its README. It reads state and runs Stim operations through the
-matching-home local stim-server. It never reads or writes `$STIM_HOME` or falls
-back to an external Stim CLI. The bundled child proves its private Desktop
-authority for mutations; read-only or adopted connections retain their existing
-capability limits. A separately installed CLI is optional for coding agents and
-terminal use. External bootstrap tools run through `ProcessStream`.
-It connects to stim-server over the server's Unix socket, normally
-`$STIM_HOME/server/local.sock`. When that path exceeds macOS's 103-byte limit,
-core and Desktop use
-`/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`. Its directory
-is mode 0700 and owned by the server's user; the socket serves only that user
-without pairing or Noise. It may also pair, as a client, with another machine's
+matching-home stim-server, the net thread inside that home's stimd. It never
+reads or writes `$STIM_HOME` beyond `run/stimd.json` and `run/desktop.key`, and
+never falls back to an external Stim CLI. It proves the key in `run/desktop.key`
+(0600, written by stimd when it starts) with `desktop.authenticate` for its
+Desktop-only methods; a local connection without that proof keeps the local
+read and control capabilities only. A separately installed CLI is optional for
+coding agents and terminal use. External bootstrap tools run through
+`ProcessStream`.
+It connects through stimd's CLI socket, whose path `run/stimd.json` names
+(normally `$STIM_HOME/run/stimd.sock`; when that path exceeds macOS's 103-byte
+limit, `/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`). The
+first frame is `{"kind":"desktop"}`; `net.ensure` starts the net thread and
+answers `{port, listening: true}` or why it cannot start, and `net.connect`
+hands the rest of that connection to the net thread, where it speaks the
+WebSocket protocol as a local client. The socket's directory is mode 0700 and
+owned by stimd's user; the socket serves only that user without pairing or
+Noise. stim-server binds no Unix socket of its own. It may also pair, as a client, with another machine's
 stim-server, as the phone app does: it spends a `stim pair` token in
 protocol 2's Noise handshake, requires the payload's server-key fingerprint, and
 keeps its per-pairing client private key and pinned server key in the macOS
@@ -389,10 +395,10 @@ outside it moves to its own issue and pull request.
   `server/secrets.json` and never writes them to setup journals, which are named
   by the derived `journal`. Clients of this machine's own user use the Unix
   socket, never a TCP connection. A Stim Desktop paired with another machine's
-  server is an ordinary paired device there. The Desktop-only methods work only there; on a
-  server Desktop started, only for the connection that proved the private
-  bootstrap key Desktop passed to its bundled server on a pipe; the key never appears in arguments, environment or
-  output, and is never passed to an external executable.
+  server is an ordinary paired device there. The Desktop-only methods work only
+  on a connection through stimd's CLI socket that proved the key stimd writes to
+  `run/desktop.key` (0600) when it starts; the key never crosses the socket and
+  never appears in arguments, environment or output.
 - **Build access.** stim-server's `build` capability lets another machine on the
   tailnet run its project code on this machine to build. The requesting machine
   makes a setup ticket (Stim Desktop's Add Machine flow, or `stim remote add`
@@ -430,12 +436,21 @@ outside it moves to its own issue and pull request.
   `*.p8`, `*.p12`, `*.mobileprovision` and `*.provisionprofile` that no Xcode build file names. A release variant's worker
   builds any other signing config unsigned
   (`packages/stim-cli/shim/android-worker-release.gradle`) and the client signs it
-  with its `zipalign` then `apksigner` path, or refuses. Two machines build for each other, and reuse each other's
-  completed React Native and SwiftPM artifacts, when their bundled Stim
-  reports the same `STIM_BUILD_COMPAT`
-  (`packages/stim-cli/src/engine/toolchain.ts`, in the `stim` package because
-  `@stim-cli/core` is a ranged dependency); a machine that reports none is
-  refused and must be updated. Bump it when a machine with the same value but
+  with its `zipalign` then `apksigner` path, or refuses. An offloaded build runs
+  the client's exact Stim build on the worker: the worker's stimd answers
+  `job.start` by running that build's `dist/cli.mjs __job offload-build` (or
+  `offload-probe` for an offer) from its engine store with a Node that meets the
+  build's `engines`, fetching a published release from npm, or taking a build
+  from a checkout or `stim engine use <path>`, which the client packs, only while
+  `server.acceptClientBuilds` is `true`. stimd passes each Noise message of the
+  connection to the job as one frame (a 4-byte big-endian length, then the
+  message's type byte and body) and each frame the job writes back as one
+  message, and parses neither; a closed connection ends the job's stdin, a
+  dropped one keeps the job for `job.start {attach}`, and SIGTERM cancels it.
+  This spawn and framing are frozen. Two machines reuse each other's completed
+  React Native and SwiftPM artifacts when their builds report the same
+  `STIM_BUILD_COMPAT` (`packages/stim-cli/src/engine/toolchain.ts`, in the
+  `stim` package because `@stim-cli/core` is a ranged dependency). Bump it when a machine with the same value but
   the other version of a file listed in `scripts/build-compat.json` would
   build a different artifact or read a build or artifact message
   differently; a fix that makes a failing worker build succeed, or a field
@@ -476,17 +491,15 @@ outside it moves to its own issue and pull request.
   Stim's supervisor because Task Scheduler does not restart an exited process,
   and, only when asked, a tailnet-only serve
   route; it never enables Funnel, never runs sudo or elevates, and never touches pairings,
-  `$STIM_HOME/server` or settings. `stim service update` and
-  `rollback` install a server version beside the running one under
-  `~/Library/Application Support/Stim/services/<label>/versions/` on macOS or
-  `~/.local/share/stim/services/<label>/versions/` on Linux or
-  `%LOCALAPPDATA%\Stim\services\<label>\versions\` on Windows, keeping the
-  running and the previous version, and repoint only the service's server
-  script; a failed health check switches back. A Linux or Windows worker takes Android
+  `$STIM_HOME/server` or settings. With the Stim engine installed, a launchd
+  unit names the engine's `bin/stimd` shim and follows the engine: `stim engine
+update` and `rollback` move it, through the engine store's drain and switch,
+  and a crash-looping build is rolled back to `previous` by its own next boot. A Linux or Windows worker takes Android
   builds only; setup there approves `build` and refuses `device-host`, and off macOS
   stim-server refuses device-host requests and grants. A client approved for `build` or
-  `device-host` can run the same update on this machine over the tailnet, and no
-  other connection can. An exact npm release needs no setting; a client's own
+  `device-host` can update this machine's engine over the tailnet
+  (`engine.update`, which runs this build's `engine-select` as an unattended
+  promotion), and no other connection can. An exact npm release needs no setting; a client's own
   packages are taken only while `server.acceptClientBuilds` is `true`, its
   default being `false`.
 - **Shared state reads.** `@stim-cli/core/state` owns the `$STIM_HOME` path
@@ -580,8 +593,8 @@ outside it moves to its own issue and pull request.
   `tailscale funnel`: the share listener binds `127.0.0.1` on the machine
   setting `share.port` for the user's own reverse proxy, links print under
   `share.publicUrl`, and the frame socket accepts exactly that URL's origin,
-  never Host or `X-Forwarded-*`. The CLI asks this Stim home's stim-server over its Unix socket
-  (`share.start|stop|list`, refused on every network connection); a share
+  never Host or `X-Forwarded-*`. The CLI asks this Stim home's stim-server through stimd's CLI socket
+  (`net.connect`, then `share.start|stop|list`, refused on every network connection); a share
   lives only in that server's memory and always expires. Each share started
   through `share.start`, by the CLI or by Stim Desktop, is saved by stim-server
   as soon as it starts (the CLI saves it itself only when the server's reply
@@ -597,7 +610,7 @@ outside it moves to its own issue and pull request.
   through the saving path, so it never rewrites the expiry. Each saved entry has a `state`:
   `live` from when `share` starts or reuses it, `stopped` after a deliberate
   `share stop`, `stim stop` or reclaim of its workspace. A restart or crash
-  leaves `live`, and a full stim-server (not the CLI's `--share` server) starts
+  leaves `live`, and a full stim-server (not a net thread `stim share` started) starts
   every live, unexpired entry of its home again when it starts, through
   `share.start`'s own path with the saved token or slug, passwords and expiry
   (`@stim-cli/core/state`'s `readLiveShareLinks`); one whose device is not there
@@ -637,7 +650,7 @@ outside it moves to its own issue and pull request.
   `share.publicUrl` set, a stim-server installed with `stim service`
   keeps the listener bound with no share and answers every request that is not
   a live share's with the fixed not-found page (404, no share data, nothing
-  kept about an ended share); the on-demand `--share` server and tailscale
+  kept about an ended share); a net thread `stim share` started and tailscale
   exposure never keep a listener. A workspace whose
   device is a hosted session is shared through this client's own device-host
   connection (one host frame subscription per codec for all viewers, control through
@@ -652,9 +665,11 @@ outside it moves to its own issue and pull request.
   holds is refused, never taken over;
   `--view-password` refuses without `--control`, with `--no-password` and when
   it equals `--password`. When no
-  stim-server answers, `stim share` starts `stim serve --share` (loopback
-  only, version-matched) and stops only a server holding the
-  `server/share-server` claim; that server exits after its last share.
+  net thread answers, `stim share` asks this home's stimd, started when none
+  runs, to start one for shares (`net.ensure` with `share`: loopback only); that
+  net thread ends after its last share unless Desktop, `stim pair` or
+  `stim serve` asked for it meanwhile. stimd stays running while its net
+  thread runs.
 
 ## Comment policy
 
@@ -866,22 +881,17 @@ redirect. Remove every directory a test creates in `afterEach`, `afterAll` or
 `onTestFinished`.
 
 The EAS session ledger and project lock under `~/.stim/machine/eas` ignore
-`STIM_HOME` so every Stim home finds billable sessions. A test that reaches
-them passes a temporary `ledgerRoot`, `machineRoot`, or `easLedgerRoot`, or
-points `HOME` (and `USERPROFILE` on Windows) at a temporary directory.
-`vitest.setup.ts` records the real root in `STIM_TEST_GUARD_REAL_EAS_ROOT`
-before any test can redirect `HOME`, and the ledger and project-lock writers
-throw when they would write that root while the marker is set. Attribution is
-per process, so a real `stim` run elsewhere on the machine, which carries no
-marker, is unaffected.
+`STIM_HOME` so every Stim home finds billable sessions. `vitest.setup.ts`
+points `HOME` and `USERPROFILE` at a directory in the run's private `TMPDIR`,
+so no test reaches the developer's `~/.stim/machine`; a test that needs its
+own passes a temporary `ledgerRoot`, `machineRoot`, or `easLedgerRoot`, or
+points `HOME` at another temporary directory.
 
 The machine list of Stim homes, `~/.stim/machine/homes/homes.json`, follows the
 same rules. A home other than `~/.stim` lists itself there when it creates a
 workspace or a device; registration is best-effort bookkeeping and never fails
-the command. Tests pass a temporary `root` or point `HOME` at a temporary
-directory, `vitest.setup.ts` records the real root in
-`STIM_TEST_GUARD_REAL_HOMES_ROOT`, and its writers throw when they would write
-that root while the marker is set.
+the command. Tests reach it under the redirected `HOME`, or pass a temporary
+`root`.
 
 ### 6. Compare canonical paths
 

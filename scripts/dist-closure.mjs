@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -25,12 +25,22 @@ const deny = {
   cli: [...shared, ownFingerprint],
   ios: shared,
   android: shared,
-  status: [...shared, fingerprint, ownFingerprint],
+  status: [
+    ...shared,
+    fingerprint,
+    ownFingerprint,
+    ['commander', /^commander(\/|$)/],
+    ['the status command', /^stim\/src\/(commands\/status|status-read)\.ts$/],
+  ],
+  'status-command': [...shared, fingerprint, ownFingerprint],
   'agent-device': [...shared, fingerprint, ownFingerprint],
   api: shared,
   tiers: pluginRules,
   daemon: [ownFingerprint, ...pluginRules],
 };
+
+/** The most dist files and bytes an entry's static closure may load. */
+const bounds = { status: { files: 5, bytes: 30_000 } };
 
 const staticImport = /^(?:import|export)\s(?:[^'";]*?\sfrom\s*)?["']([^"']+)["']/gm;
 const region = /^\/\/#region (\S+)/gm;
@@ -106,6 +116,22 @@ export function staticClosure(entries, workspace) {
   return modules;
 }
 
+/** The dist files a static closure from `entries` loads, as `staticClosure` walks them. */
+export function closureFiles(entries, workspace) {
+  const files = new Set();
+  const queue = [...entries];
+  while (queue.length > 0) {
+    const file = queue.shift();
+    if (files.has(file)) continue;
+    files.add(file);
+    for (const [, specifier] of readFileSync(file, 'utf8').matchAll(staticImport)) {
+      const next = specifier.startsWith('.') ? resolve(dirname(file), specifier) : resolveBare(specifier, workspace);
+      if (next) queue.push(next);
+    }
+  }
+  return [...files];
+}
+
 export function forbidden(modules, rules) {
   const hits = [];
   for (const [module, path] of modules) {
@@ -125,11 +151,14 @@ export function entryFiles(dist) {
   for (const name of ['ios', 'android', 'status', 'agent-device']) {
     const chunk = new RegExp(`\\["${name}", \\(\\) => import\\("(\\./[^"]+\\.mjs)"\\)\\]`).exec(commands);
     if (!chunk) throw new Error(`${base[1]} loads no chunk for the ${name} command`);
-    entries[name] = [...base, join(dist, chunk[1])];
+    entries[name === 'status' ? 'status-command' : name] = [...base, join(dist, chunk[1])];
   }
+  entries.status = [join(dist, 'status.mjs')];
   entries.api = [join(dist, 'api.mjs')];
   entries.tiers = [join(dist, '../../cache/dist/tiers.mjs')];
-  entries.daemon = [join(dist, 'daemon-run.mjs')];
+  const stimd = /"__stimd"\)[^]{0,80}?import\("(\.\/[^"]+\.mjs)"\)/.exec(commands);
+  if (!stimd) throw new Error(`${base[1]} loads no chunk for __stimd`);
+  entries.daemon = [...base, join(dist, stimd[1]), join(dist, 'stimd-thread.mjs')];
   return entries;
 }
 
@@ -146,13 +175,20 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const modules = staticClosure(files, workspace);
     const hits = forbidden(modules, deny[name]);
     const mode = enforce.includes(name) ? 'enforced' : 'report';
-    console.log(`${name} (${mode}): ${modules.size} modules, ${hits.length} forbidden`);
+    const loaded = closureFiles(files, workspace);
+    const bytes = loaded.reduce((sum, file) => sum + statSync(file).size, 0);
+    const bound = bounds[name];
+    const over = bound && (loaded.length > bound.files || bytes > bound.bytes);
+    console.log(
+      `${name} (${mode}): ${modules.size} modules in ${loaded.length} files, ${Math.round(bytes / 1000)} KB, ${hits.length} forbidden`,
+    );
     for (const hit of hits) console.log(`  ${hit.rule}: ${hit.module} via ${hit.path.map(short).join(' > ')}`);
-    if (hits.length > 0 && mode === 'enforced') failed = true;
+    if (over) console.log(`  over the bound of ${bound.files} files and ${bound.bytes / 1000} KB`);
+    if ((hits.length > 0 || over) && mode === 'enforced') failed = true;
   }
   if (failed) {
     console.error(
-      'An enforced closure loads a forbidden module. Load it with await import() in the branch that needs it.',
+      'An enforced closure loads a forbidden module or exceeds its bound. Load it with await import() in the branch that needs it.',
     );
     process.exit(1);
   }

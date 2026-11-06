@@ -93,6 +93,7 @@ import { diskFloorGate } from '../daemon/floor.ts';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { groupExitBudgetMs, waitForGroupExit } from '../process-group-exit.ts';
 import { ambientContext, ambientEnv } from '@stim-cli/core';
+import { ownStoreEngine } from '../daemon/engine-switch.ts';
 
 const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;
@@ -1232,6 +1233,7 @@ export async function startDevServer(
                   port,
                   mode: serverMode,
                   startedAt: new Date(spawnedTs ?? Date.now()).toISOString(),
+                  ...(ownStoreEngine() ? { engineDir: ownStoreEngine()?.build } : {}),
                 };
                 try {
                   await d.writeSupervisorRecord(root, { supervisor: handoffRecord });

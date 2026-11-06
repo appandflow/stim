@@ -209,3 +209,6 @@ function buildCommand({ run, home, buildCache }: CIOptions, projectRoot: string)
 export type { CommandResult } from './command.ts';
 
 export { buildCI, type CIBuildOptions, type CIBuildResult } from './build.ts';
+
+/** F3's per-op entry, the same function `stim` exports: runs one operation of `createStim(ctx)` in this build. */
+export { runOp } from 'stim';

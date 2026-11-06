@@ -27,6 +27,7 @@ import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { connect as connectNet, createServer as createNetServer, type Socket } from 'node:net';
 import { homedir, networkInterfaces, tmpdir, totalmem } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
+import { duplexPair } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
@@ -50,16 +51,16 @@ import {
   isJsonObject,
   loadConfig,
   settingsJsonSchema,
-  serverLocalSocket,
   workspaceMetadataFile,
   workspaceShareLinksFile,
   workspaceStateFile,
   readSetupJournal,
+  stimBuildId,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
 import { ShareHub, type StartedShare } from '../src/share.ts';
 import * as stim from 'stim';
-import { BuildHost } from '../src/build.ts';
+import { BuildHost } from '../../stim-cli/src/job/offload/host.ts';
 import { DesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import { HostedAgentHost } from '../src/agent-driver.ts';
 import { DeviceHost } from '../src/device-host.ts';
@@ -175,6 +176,15 @@ setInterval(() => {
 const FAKE_STIM = `
 import { appendFileSync, existsSync, mkdirSync, statSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
+if (process.argv[2] === '__job') {
+  const { serveOffloadJob } = await import(process.env.FAKE_JOB_SERVE);
+  const stop = new AbortController();
+  process.on('SIGTERM', () => stop.abort());
+  const worker = [join(dirname(process.argv[1]), 'offload-worker.mjs')];
+  const code = await serveOffloadJob(process.argv[3], JSON.parse(process.env.STIM_JOB_SPEC), process.stdin, process.stdout, stop.signal, worker);
+  await new Promise((resolve) => process.stdout.write('', resolve));
+  process.exit(code);
+}
 const args = process.argv.slice(2);
 const env = process.env;
 const pidFile = join(env.FAKE_STIM_PIDS, String(process.pid));
@@ -533,6 +543,7 @@ async function start(
     env: {
       ...process.env,
       FAKE_STIM_PIDS: pids,
+      FAKE_JOB_SERVE: fileURLToPath(new URL('../../stim-cli/src/job/offload/serve.ts', import.meta.url)),
       FAKE_STIM_CALLS: calls,
       FAKE_STIM_PAYLOADS: JSON.stringify(PAYLOADS),
       FAKE_STIM_RECORDS: JSON.stringify(RECORDS),
@@ -628,7 +639,7 @@ function desktopProof(nonce: string, key = DESKTOP_KEY): string {
 
 /** Stim Desktop on this machine: the Unix socket, after hello and the private bootstrap proof. */
 async function desktop(): Promise<Client> {
-  const client = await localConnect(server!.localSocket!);
+  const client = await localConnect(server!);
   const reply = await client.request('hello', { client: CLIENT, desktopBootstrap: true });
   const offered = 'result' in reply ? (reply.result as HelloResult).desktopBootstrap : undefined;
   if (!offered) throw new Error(`no Desktop bootstrap challenge: ${JSON.stringify(reply)}`);
@@ -1279,7 +1290,7 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
 
   /** A local-socket client that asks for the challenge, as Stim Desktop does, without answering it yet. */
   async function asking(client: Record<string, unknown> = CLIENT) {
-    const socket = await localConnect(server!.localSocket!);
+    const socket = await localConnect(server!);
     const reply = await socket.request('hello', { client, desktopBootstrap: true });
     assert('result' in reply && isHello(reply.result));
     return { client: socket, hello: reply.result };
@@ -1301,7 +1312,7 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     });
     expect(await client.request('device-host.sessions')).toHaveProperty('result');
 
-    const cli = await localConnect(server!.localSocket!);
+    const cli = await localConnect(server!);
     const plain = await cli.request('hello', { client: { name: 'stim', version: '1' } });
     expect(plain).toMatchObject({ result: { capabilities: ['read', 'control'] } });
     expect(plain).not.toHaveProperty('result.desktopBootstrap');
@@ -1357,7 +1368,7 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
 
   it('a server Desktop did not start offers no challenge and grants its local socket, not its network clients, the Desktop methods', async () => {
     await start({ desktopBootstrap: null });
-    const client = await localConnect(server!.localSocket!);
+    const client = await localConnect(server!);
     const hello = await client.request('hello', { client: CLIENT, desktopBootstrap: true });
     expect(hello).toMatchObject({ result: { capabilities: ['read', 'control'] } });
     expect(hello).not.toHaveProperty('result.desktopBootstrap');
@@ -1389,8 +1400,8 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     const { client } = await asking();
     const write = { cwd: root, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
     expect(await client.request('desktop.settings.write', write)).toHaveProperty('error.code', 'forbidden');
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     expect(await plain.request('desktop.settings.write', write)).toHaveProperty('error.code', 'forbidden');
     expect(loadConfig()?.concurrency?.maxBuilds).toBeUndefined();
@@ -1398,7 +1409,7 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
 
   it('tells a local client the TCP port of the server behind the socket, and network clients nothing', async () => {
     const port = await start();
-    const local = await localConnect(server!.localSocket!);
+    const local = await localConnect(server!);
     expect(await local.request('hello', { client: CLIENT })).toHaveProperty('result.server.port', port);
     const { keyPair } = await pair(port, undefined, true);
     const network = await connect(port, undefined, { keyPair });
@@ -1480,13 +1491,12 @@ describe('pairing', () => {
     const worker = setupClient(['build']);
     const cli = await connect(port, undefined, { keyPair: worker.keyPair });
     expect(
-      await cli.request('hello', { client: { name: 'stim', version: '1', runId: 'old' }, access: 'build' }),
+      await cli.request('hello', { client: { name: 'stim', version: '1', runId: 'old', peer: 1 }, access: 'build' }),
     ).toEqual({
       id: expect.any(Number),
       error: {
         code: 'protocol-unsupported',
-        message:
-          'peer-too-old: Test Mac runs stim 9.9.9 (peer 1); this stim sends no peer; update this Mac: npm i -g stim@9.9.9, then stim service install if it runs Stim as a service',
+        message: 'peer-too-old: Test Mac runs stim 9.9.9 (peer 2); update this Mac: npm i -g stim@9.9.9',
       },
     });
     expect(await cli.closedWith).toEqual({ code: 4401, reason: 'protocol-unsupported' });
@@ -1509,7 +1519,7 @@ describe('pairing', () => {
         error: { code: 'protocol-unsupported', message: expect.stringContaining(remedy) },
       });
     }
-    const local = await localConnect(server!.localSocket!);
+    const local = await localConnect(server!);
     expect(await local.request('hello', { client: { name: 'stim', version: '1' } })).toHaveProperty(
       'result.peer',
       PEER,
@@ -1789,8 +1799,8 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     const { token } = createPairingToken(Date.now(), capabilitiesFor(true));
     const remote = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
     await remote.request('hello', { client: CLIENT });
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     for (const client of [remote, plain]) {
       for (const report of ['gc-history', 'builds'])
@@ -2395,117 +2405,6 @@ require('node:net').createServer().listen(0, '127.0.0.1');
   });
 });
 
-describe.skipIf(process.platform === 'win32')('local socket', () => {
-  const another = (name: string, localSocket?: string) =>
-    startServer({
-      hosts: ['127.0.0.1'],
-      port: 0,
-      stimCli: join(root, 'fake-stim.mjs'),
-      name,
-      localSocket,
-      stimVersion: '9.9.9',
-      serverVersion: '1.2.3',
-      tailscaleState: { state: 'not-running', backendState: 'Stopped' },
-      env: process.env,
-      frameHelper: null,
-      record: false,
-      history: false,
-      statusAtBoot: false,
-      pullRequests: async () => new Map(),
-    });
-
-  test('a long hosted home serves a private socket and removes it on close', async () => {
-    process.env.STIM_HOME = join(root, 'device-host', 'sessions', 'x'.repeat(80), 'home');
-    expect(Buffer.byteLength(join(process.env.STIM_HOME, 'server', 'local.sock'))).toBeGreaterThan(107);
-    mkdirSync(process.env.STIM_HOME, { recursive: true });
-    await start();
-    const socket = serverLocalSocket();
-    expect(Buffer.byteLength(socket)).toBeLessThanOrEqual(103);
-    expect(server!.localSocket).toBe(socket);
-    expect(statSync(socket).mode & 0o777).toBe(0o600);
-    expect(statSync(dirname(socket)).mode & 0o777).toBe(0o700);
-    const client = await localConnect(socket);
-    expect(await client.request('hello', { client: CLIENT })).toHaveProperty('result.device.id', 'local');
-    await server!.close();
-    server = null;
-    expect(existsSync(socket)).toBe(false);
-    expect(existsSync(`${socket}.claims`)).toBe(false);
-  });
-
-  test('two servers starting on one home over a stale socket leave exactly one serving it', async () => {
-    const socketPath = serverLocalSocket();
-    mkdirSync(dirname(socketPath), { recursive: true, mode: 0o700 });
-    writeFileSync(socketPath, 'stale');
-    writeFileSync(join(root, 'fake-stim.mjs'), FAKE_STIM);
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const servers = await Promise.all([another('A'), another('B')]);
-    try {
-      await Promise.all(servers.map((each) => each.ready));
-      expect(servers.filter((each) => each.localSocket === socketPath)).toHaveLength(1);
-      const client = await localConnect(socketPath);
-      expect(await client.request('hello', { client: CLIENT })).toHaveProperty('result.device.id', 'local');
-    } finally {
-      await Promise.all(servers.map((each) => each.close()));
-      error.mockRestore();
-    }
-  });
-
-  test('does not put its socket in a server directory that is a symbolic link', async () => {
-    const elsewhere = join(root, 'elsewhere');
-    mkdirSync(elsewhere, { mode: 0o755 });
-    symlinkSync(elsewhere, join(process.env.STIM_HOME!, 'server'));
-    writeFileSync(join(root, 'fake-stim.mjs'), FAKE_STIM);
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const linked = await another('Linked', join(process.env.STIM_HOME!, 'server', 'local.sock'));
-    try {
-      await linked.ready;
-      expect(linked.localSocket).toBeNull();
-      expect(statSync(elsewhere).mode & 0o777).toBe(0o755);
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('not a directory this user owns'));
-    } finally {
-      await linked.close();
-      error.mockRestore();
-    }
-  });
-
-  test('is private to this user, replaces a stale file and refuses a second server', async () => {
-    const socketPath = serverLocalSocket();
-    mkdirSync(dirname(socketPath), { recursive: true, mode: 0o755 });
-    writeFileSync(socketPath, 'stale');
-    await start();
-    expect(server!.localSocket).toBe(socketPath);
-    expect(statSync(socketPath).mode & 0o777).toBe(0o600);
-    expect(statSync(dirname(socketPath)).mode & 0o777).toBe(0o700);
-    expect(await (await desktop()).request('stats.get')).toHaveProperty('result');
-
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const second = await startServer({
-      hosts: ['127.0.0.1'],
-      port: 0,
-      stimCli: join(root, 'fake-stim.mjs'),
-      name: 'Second',
-      stimVersion: '9.9.9',
-      serverVersion: '1.2.3',
-      tailscaleState: { state: 'not-running', backendState: 'Stopped' },
-      env: process.env,
-      frameHelper: null,
-      record: false,
-      history: false,
-      statusAtBoot: false,
-      pullRequests: async () => new Map(),
-    });
-    try {
-      expect((await second.ready).state).toBe('ready');
-      expect(second.localSocket).toBeNull();
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('another stim-server answers'));
-    } finally {
-      await second.close();
-      error.mockRestore();
-    }
-    expect(await (await desktop()).request('stats.get')).toHaveProperty('result');
-  });
-});
-
 describe('setup approval', () => {
   test('a setup ticket records build and device-host access for one key, once', async () => {
     const port = await start();
@@ -2617,7 +2516,7 @@ describe('setup approval in Stim Desktop on this machine', () => {
     },
     build: () => ({ version: '1.2.3', stimBuild: 'digest' }),
     install: never,
-    update: never,
+    select: never,
     installHost: async () => ({
       app: '/Stim Host.app',
       executable: '/Stim Host.app/Contents/MacOS/stim-host',
@@ -2709,8 +2608,8 @@ describe('setup approval in Stim Desktop on this machine', () => {
     const remote = await returning(port, peer.keyPair, '100.64.0.2');
     const loopbackPairing = await authed(port, true);
     const build = await returning(port, setupClient(['build']).keyPair, '100.64.0.3', 'build');
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     for (const client of [remote, loopbackPairing, build, plain]) {
       expect(await client.request('desktop.setup.subscribe', asked.params)).toHaveProperty('error.code', 'forbidden');
@@ -2728,8 +2627,8 @@ describe('setup approval in Stim Desktop on this machine', () => {
 
   it('is not offered on a server Desktop did not start', async () => {
     await start({ setupDeps, desktopBootstrap: null });
-    assert(server?.localSocket);
-    const client = await localConnect(server.localSocket);
+    assert(server);
+    const client = await localConnect(server);
     await client.request('hello', { client: CLIENT });
     const asked = request();
     expect(await client.request('desktop.setup.subscribe', asked.params)).toHaveProperty('error.code', 'forbidden');
@@ -3339,11 +3238,11 @@ describe('hosted device sessions', () => {
   );
 });
 
-test('build.start rejects escaping or oversized macOS resources before probing the toolchain', async () => {
+test('build.start rejects escaping or oversized macOS resources before starting the worker', async () => {
   const host = new BuildHost({ worker: 'unused-worker', env: process.env });
-  const toolchain = vi.spyOn(host, 'toolchain').mockResolvedValue(null);
+  const toolchain = vi.spyOn(host, 'launch').mockReturnValue({ error: { code: 'build-refused', message: 'launched' } });
   const session = host.session('client', {} as WebSocket, () => {});
-  const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'digest', stimBuild: 'b1' };
+  const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'digest', stimBuild: 'b1', compat: 3 };
   const macos = { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' };
   const validate = new Ajv2020({ strict: false }).compile({ ...protocolJsonSchema(), $ref: '#/$defs/ClientRequest' });
   try {
@@ -3372,9 +3271,7 @@ test('build.start rejects escaping or oversized macOS resources before probing t
     expect(validate({ id: 'request', method: 'build.start', params: { ...valid, jdk: '17' } })).toBe(true);
     for (const jdk of ['17.0.1', '', '17; id', 17])
       expect(validate({ id: 'request', method: 'build.start', params: { ...valid, jdk } })).toBe(false);
-    expect(await session.start(valid)).toMatchObject({
-      error: { code: 'build-refused', message: 'This machine runs Stim build unknown.' },
-    });
+    expect(await session.start(valid)).toMatchObject({ error: { code: 'build-refused', message: 'launched' } });
     expect(toolchain).toHaveBeenCalledOnce();
     expect(
       validate({
@@ -3395,7 +3292,7 @@ test('build.start rejects escaping or oversized macOS resources before probing t
   }
 });
 
-test('build.start requires matching build compatibility versions', async () => {
+test('build.start needs the build compatibility version and passes it and the JDK to the worker job', async () => {
   const host = new BuildHost({ worker: 'unused-worker', env: process.env });
   const worker = {
     stimBuild: 'b1',
@@ -3423,10 +3320,8 @@ test('build.start requires matching build compatibility versions', async () => {
     session.sync({ repo: 'app-1', files: [], done: true });
     expect(await message({ stimBuild: 'b2', compat: 3 })).toBe('launched');
     expect(launch.mock.calls.at(-1)?.[0].job).toMatchObject({ stimBuild: 'b2', compat: 3 });
-    expect(await message({ stimBuild: 'b1', compat: 4 })).toBe(
-      'This machine runs Stim build b1 with build compatibility 3, not 4.',
-    );
     expect(launch.mock.calls.at(-1)?.[0].job).not.toHaveProperty('jdk');
+    expect(await message({ stimBuild: 'b1' })).toBe('build.start needs params.compat.');
     expect(await message({ stimBuild: 'b2', compat: 3, jdk: '17' })).toBe('launched');
     expect(launch.mock.calls.at(-1)?.[0].job).toMatchObject({ jdk: '17' });
     expect(launch).toHaveBeenCalledTimes(2);
@@ -3438,7 +3333,7 @@ test('build.start requires matching build compatibility versions', async () => {
 
 test('native Gradle requires declared source scope and a null artifact identity before worker admission', async () => {
   const host = new BuildHost({ worker: 'unused-worker', env: process.env });
-  const toolchain = vi.spyOn(host, 'toolchain').mockResolvedValue(null);
+  const toolchain = vi.spyOn(host, 'launch').mockReturnValue({ error: { code: 'build-refused', message: 'launched' } });
   const session = host.session('client', {} as WebSocket, () => {});
   const android = { variant: 'freeRelease', abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'none' };
   const inputs = { complete: true, ignored: [], outputs: ['app/build'] };
@@ -3455,6 +3350,7 @@ test('native Gradle requires declared source scope and a null artifact identity 
     platform: 'android',
     fingerprint: null,
     stimBuild: 'b1',
+    compat: 3,
     android,
     native,
   };
@@ -3487,10 +3383,8 @@ test('native Gradle requires declared source scope and a null artifact identity 
       { ...valid, fingerprint: 'fake-reusable-identity' },
     ])
       expect(validate({ id: 'request', method: 'build.start', params })).toBe(false);
-    expect(await session.start(valid)).toMatchObject({
-      error: { code: 'build-refused', message: 'This machine runs Stim build unknown.' },
-    });
-    expect(toolchain).toHaveBeenCalledExactlyOnceWith(null, 'gradle');
+    expect(await session.start(valid)).toMatchObject({ error: { code: 'build-refused', message: 'launched' } });
+    expect(toolchain).toHaveBeenCalledOnce();
   } finally {
     toolchain.mockRestore();
     await host.close();
@@ -3607,9 +3501,10 @@ test('native build admission rejects invalid provider identity before toolchain 
     expect(toolchain).toHaveBeenLastCalledWith(null, 'xcode');
     toolchain.mockClear();
     expect(validate({ id: 'request', method: 'build.start', params: base })).toBe(true);
+    const launch = vi.spyOn(host, 'launch').mockReturnValue({ error: { code: 'build-refused', message: 'launched' } });
     expect(await session.start(base)).toHaveProperty('error.code', 'build-refused');
-    expect(toolchain).toHaveBeenCalledOnce();
-    expect(toolchain).toHaveBeenCalledWith(null, 'xcode');
+    expect(toolchain).not.toHaveBeenCalled();
+    expect(launch).toHaveBeenCalledOnce();
   } finally {
     toolchain.mockRestore();
     await host.close();
@@ -3642,13 +3537,20 @@ describe('offloaded builds', () => {
 
   beforeEach(() => configure({ server: { maxLoadPerCore: 100_000 } }));
 
+  const startJob = (client: Client) =>
+    client.request('job.start', { kind: 'offload-build', stim: '9.9.9', build: stimBuildId(root), repo: 'app-1' });
+
   async function buildClient(
     port: number,
     peer = '100.64.0.2',
     machine = setupClient(['build'], 'Laptop'),
-  ): Promise<{ client: Client; id: string; keyPair: NoiseKeyPair }> {
+    job = true,
+  ): Promise<{ client: Client; id: string; keyPair: NoiseKeyPair; spliced: string }> {
     const client = await returning(port, machine.keyPair, peer, 'build');
-    return { client, id: machine.records.build!.id, keyPair: machine.keyPair };
+    const started = job ? await startJob(client) : { result: { job: '' } };
+    expect(started).toHaveProperty('result.job');
+    const spliced = (started as { result: { job: string } }).result.job;
+    return { client, id: machine.records.build!.id, keyPair: machine.keyPair, spliced };
   }
 
   async function eventually(check: () => boolean): Promise<void> {
@@ -3791,13 +3693,8 @@ describe('offloaded builds', () => {
       expect(readAudit()).toMatchObject([{ action: 'build', workspace: 'app-1', ok: true }]);
 
       const viewer = await authed(port);
-      expect(await viewer.request('build.offer', { repo: 'app-1' })).toMatchObject({ error: { code: 'forbidden' } });
-      expect(
-        await viewer.request('build.cached-artifact', {
-          repo: 'app-1',
-          artifact: { fingerprint: 'f00d', cacheKey: 'complete-key' },
-        }),
-      ).toHaveProperty('error.code', 'forbidden');
+      expect(await startJob(viewer)).toMatchObject({ error: { code: 'forbidden' } });
+      expect(await viewer.request('build.offer', { repo: 'app-1' })).toHaveProperty('error.code', 'unknown-method');
       expect(await viewer.request('device-host.offer', { platform: 'ios' })).toHaveProperty('error.code', 'forbidden');
     },
   );
@@ -3831,6 +3728,7 @@ describe('offloaded builds', () => {
       const area = join(root, 'home', 'build-worker', id, 'repos', 'app-1');
       rmSync(join(area, 'out'), { recursive: true, force: true });
       const again = await returning(port, keyPair, '100.64.0.2', 'build');
+      expect(await startJob(again)).toHaveProperty('result.job');
       expect(await again.request('build.offer', { repo: 'app-1', native: 'xcode', artifact: identity })).toHaveProperty(
         'result.artifact',
         {
@@ -3865,7 +3763,7 @@ describe('offloaded builds', () => {
           runsAsService: async () => true,
         },
       });
-      const { client } = await buildClient(port);
+      const { client } = await buildClient(port, undefined, undefined, false);
       expect(await client.request('engine.update.status')).toMatchObject({
         result: {
           server: { version: '1.2.3' },
@@ -3892,33 +3790,48 @@ describe('offloaded builds', () => {
 
   test.skipIf(!fakeTailscale)('declines offloaded builds while an update of this server runs', async () => {
     const home = process.env.HOME;
+    const engineRoot = process.env.STIM_ENGINE_ROOT;
     process.env.HOME = root;
     try {
       const updater = join(root, 'updater.mjs');
       const release = join(root, 'release-updater');
       writeFileSync(
         updater,
-        `const { existsSync } = await import('node:fs'); const wait = setInterval(() => { if (existsSync(${JSON.stringify(release)})) { clearInterval(wait); console.log('Another update is running.'); process.exit(1); } }, 50);`,
+        `const { existsSync } = await import('node:fs'); const wait = setInterval(() => { if (existsSync(${JSON.stringify(release)})) { clearInterval(wait); console.log(JSON.stringify({ refused: 'another update is running' })); process.exit(1); } }, 50);`,
       );
+      const script = join(root, 'engine', '0123456789ab', 'dist', 'cli.mjs');
+      mkdirSync(dirname(script), { recursive: true });
+      writeFileSync(script, '');
+      process.env.STIM_ENGINE_ROOT = join(root, 'engine');
       const port = await start({
-        service: { label: 'dev.stim.drain', node: process.execPath, script: updater, runsAsService: async () => true },
+        service: {
+          label: 'dev.stim.drain',
+          node: process.execPath,
+          script,
+          runsAsService: async () => true,
+          detached: (node, args) => ({ file: node, args: [updater, ...args] }),
+        },
       });
-      const { client } = await buildClient(port);
+      const { client } = await buildClient(port, undefined, undefined, false);
       expect(await client.request('engine.update', { version: '1.15.0' })).toMatchObject({
         result: { state: 'installing' },
       });
-      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
-        result: { capacity: { declined: 'stim-server is updating to release 1.15.0' } },
+      expect(await startJob(client)).toMatchObject({
+        error: { code: 'build-busy', message: 'stim-server is updating to release 1.15.0' },
       });
       writeFileSync(release, '');
       await eventually(() => readAudit().some((record) => record.action === 'engine.update.ended'));
-      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+      const { client: building } = await buildClient(port);
+      expect(await building.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: { capacity: { declined: null } },
       });
       expect(await client.request('engine.update.status')).toMatchObject({
         result: {
           running: null,
-          last: { ok: false, message: expect.stringContaining(': Another update is running.;') },
+          last: {
+            ok: false,
+            message: expect.stringContaining('exited with code 1: The engine refused it: another update is running.'),
+          },
         },
       });
       const later = {
@@ -3930,6 +3843,7 @@ describe('offloaded builds', () => {
       writeFileSync(join(serviceRoot('dev.stim.drain'), 'last-update.json'), JSON.stringify(later));
       expect(await client.request('engine.update.status')).toMatchObject({ result: { last: later } });
     } finally {
+      process.env.STIM_ENGINE_ROOT = engineRoot;
       if (home === undefined) delete process.env.HOME;
       else process.env.HOME = home;
     }
@@ -4224,7 +4138,7 @@ describe('offloaded builds', () => {
   );
 
   test.skipIf(!fakeTailscale)('deletes a fetched macOS build nobody takes once its handoff lapses', async () => {
-    const port = await start({ buildLimits: { handoffMs: 50 } });
+    const port = await start({ buildLimits: { handoffMs: 50, daemonSweepMs: 50 } });
     const { out } = await nativeBuild(port, '100.64.0.2');
     await eventually(() => !existsSync(out));
   });
@@ -4328,7 +4242,7 @@ describe('offloaded builds', () => {
     async () => {
       const gate = join(root, 'gate');
       const port = await start({ env: { FAKE_WORKER_GATE: gate } });
-      const { client, keyPair } = await buildClient(port);
+      const { client, keyPair, spliced } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       const job = ((await client.request('build.start', START)) as { result: { job: string } }).result.job;
@@ -4336,18 +4250,21 @@ describe('offloaded builds', () => {
       client.socket.terminate();
       expect(await client.closed).toBe(1006);
 
-      const other = await buildClient(port, '100.64.0.3');
-      expect(await other.client.request('build.attach', { job })).toMatchObject({ error: { code: 'bad-request' } });
+      const other = await buildClient(port, '100.64.0.3', undefined, false);
+      expect(await other.client.request('job.start', { attach: spliced })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
 
       const again = await returning(port, keyPair, '100.64.0.2', 'build');
-      expect(await again.request('build.attach', { job })).toEqual({ id: 2, result: { outcome: null } });
+      expect(await again.request('job.start', { attach: spliced })).toMatchObject({ result: { job: spliced } });
+      expect(await again.request('build.attach', { job })).toEqual({ id: 3, result: { outcome: null } });
       writeFileSync(gate, '');
       expect((await progress(again)).at(-1)).toMatchObject({ job, outcome: { ok: true } });
-      again.socket.send(JSON.stringify({ id: 3, method: 'build.artifact', params: { job } }));
+      again.socket.send(JSON.stringify({ id: 4, method: 'build.artifact', params: { job } }));
       expect(((await again.next()) as unknown as { binary: Buffer }).binary.subarray(32).toString()).toBe(
         'app archive bytes',
       );
-      expect(await again.next()).toMatchObject({ id: 3, result: { name: 'App.app' } });
+      expect(await again.next()).toMatchObject({ id: 4, result: { name: 'App.app' } });
     },
   );
 
@@ -4356,13 +4273,14 @@ describe('offloaded builds', () => {
     async () => {
       const gate = join(root, 'gate');
       const port = await start({ env: { FAKE_WORKER_GATE: gate } });
-      const { client, keyPair } = await buildClient(port);
+      const { client, keyPair, spliced } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       const job = ((await client.request('build.start', START)) as { result: { job: string } }).result.job;
 
       const again = await returning(port, keyPair, '100.64.0.2', 'build');
-      expect(await again.request('build.attach', { job })).toEqual({ id: 2, result: { outcome: null } });
+      expect(await again.request('job.start', { attach: spliced })).toMatchObject({ result: { job: spliced } });
+      expect(await again.request('build.attach', { job })).toEqual({ id: 3, result: { outcome: null } });
       client.socket.close(1000);
       expect(await client.closed).toBe(1000);
       writeFileSync(gate, '');
@@ -5029,8 +4947,8 @@ describe('unauthenticated connections', () => {
 
   it('survives a peer that resets the connection after a refused upgrade', async () => {
     const port = await start({ loopbackOnly: true });
-    const localSocket = server?.localSocket;
-    assert(localSocket);
+    assert(server);
+    const running = server;
     const upgradeRequest = (headers: string) =>
       `GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n${headers}\r\n`;
     const resetAfterRefusal = (headers: string) =>
@@ -5044,13 +4962,12 @@ describe('unauthenticated connections', () => {
       });
     const closeBeforeRefusal = (headers: string) =>
       new Promise<void>((resolve) => {
-        const refused = connectNet({ path: localSocket });
-        refused.once('connect', () =>
-          refused.write(upgradeRequest(headers), () => {
-            refused.destroy();
-            resolve();
-          }),
-        );
+        const [inside, refused] = duplexPair();
+        running.acceptLocal(inside);
+        refused.write(upgradeRequest(headers), () => {
+          refused.destroy();
+          resolve();
+        });
       });
     const uncaught: Error[] = [];
     const record = (error: Error) => uncaught.push(error);
@@ -6262,8 +6179,8 @@ describe.skipIf(process.platform === 'win32')('Desktop build logs', () => {
     expect(await remote.request('desktop.logs.subscribe', { workspace })).toMatchObject({
       error: { code: 'forbidden' },
     });
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     expect(await plain.request('desktop.logs.subscribe', { workspace })).toMatchObject({
       error: { code: 'forbidden' },
@@ -6516,9 +6433,8 @@ describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
     const port = await start();
     const remote = await authed(port);
     expect(await remote.request('desktop.settings.schema')).toHaveProperty('error.code', 'forbidden');
-    const socket = server?.localSocket;
-    assert(socket);
-    const plain = await localConnect(socket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     expect(await plain.request('desktop.settings.schema')).toHaveProperty('error.code', 'forbidden');
     const client = await desktop();
@@ -6555,9 +6471,8 @@ describe.skipIf(process.platform === 'win32')('Desktop settings', () => {
       'error.code',
       'unknown-workspace',
     );
-    const socket = server?.localSocket;
-    assert(socket);
-    const plain = await localConnect(socket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     expect(await plain.request('desktop.settings.get', { cwd: selected })).toHaveProperty('error.code', 'forbidden');
     const client = await desktop();
@@ -7255,8 +7170,8 @@ describe('build.plan', () => {
     async () => {
       const port = await start();
       const phone = await authed(port);
-      assert(server?.localSocket);
-      const plain = await localConnect(server.localSocket);
+      assert(server);
+      const plain = await localConnect(server);
       await plain.request('hello', { client: CLIENT });
       for (const client of [phone, plain])
         expect(await client.request('desktop.plan.get', { cwd: workspace, platform: 'ios' })).toHaveProperty(
@@ -7377,8 +7292,8 @@ describe.skipIf(process.platform === 'win32')('Desktop settings writes', () => {
   it('requires the proved local Desktop and refuses malformed requests without mutation', async () => {
     const port = await start();
     const remote = await authed(port, true);
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     const request = { cwd: workspace, action: 'set', key: 'concurrency.maxBuilds', value: '3' };
     for (const client of [remote, plain]) {
@@ -7643,8 +7558,8 @@ describe.skipIf(process.platform === 'win32')('Desktop stop', () => {
   it('requires the proved local Desktop and rejects invalid targets before starting work', async () => {
     const port = await start();
     const remote = await authed(port, true);
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     for (const client of [remote, plain]) {
       expect(await client.request('desktop.stop.subscribe', { cwd: workspace })).toHaveProperty(
@@ -8131,8 +8046,8 @@ describe.skipIf(process.platform === 'win32')('Desktop start', () => {
     const peer = await pair(port, undefined, true);
     const remote = await connect(port, undefined, { keyPair: peer.keyPair });
     await remote.request('hello', { client: CLIENT });
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     for (const client of [plain, remote])
       expect(await client.request('desktop.start.subscribe', { cwd: workspace })).toHaveProperty(
@@ -8295,8 +8210,8 @@ describe.skipIf(process.platform === 'win32')('Desktop reload', () => {
     const browser = await reloadBrowser();
     const port = await start();
     const remote = await authed(port, true);
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     for (const client of [remote, plain])
       expect(await client.request('desktop.reload.subscribe', { cwd: workspace })).toHaveProperty(
@@ -12546,8 +12461,8 @@ describe.skipIf(process.platform === 'win32').each(['run', 'build'] as const)('D
     const peer = await pair(port, undefined, true);
     const remote = await connect(port, undefined, { keyPair: peer.keyPair });
     await remote.request('hello', { client: CLIENT });
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     for (const client of [plain, remote]) {
       expect(
@@ -12785,11 +12700,11 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
 
   it.each(['plain local', 'phone control'])('denies warming from %s', async (mode) => {
     const port = await start();
-    assert(server?.localSocket);
+    assert(server);
     const client =
       mode === 'phone control'
         ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
-        : await localConnect(server.localSocket);
+        : await localConnect(server);
     await client.request('hello', { client: CLIENT });
     expect(await client.request('desktop.worktree.warm.subscribe', { cwd: workspace })).toHaveProperty(
       'error.code',
@@ -13169,11 +13084,11 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
   it.each(['plain local', 'phone control'])('denies removal from %s without deleting the target', async (mode) => {
     const fixture = removalFixture();
     const port = await start({ env: fixture.env });
-    assert(server?.localSocket);
+    assert(server);
     const client =
       mode === 'phone control'
         ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
-        : await localConnect(server.localSocket);
+        : await localConnect(server);
     await client.request('hello', { client: CLIENT });
     expect(
       await client.request('desktop.worktree.remove.subscribe', { cwd: workspace, target: fixture.linked }),
@@ -13269,8 +13184,8 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
     const port = await start({ env: fixture.env });
     const paired = await pair(port, undefined, true);
     const peer = await connect(port, undefined, { keyPair: paired.keyPair });
-    assert(server?.localSocket);
-    const plain = await localConnect(server.localSocket);
+    assert(server);
+    const plain = await localConnect(server);
     await plain.request('hello', { client: CLIENT });
     await peer.request('hello', { client: CLIENT });
     for (const client of [plain, peer]) {
@@ -13448,11 +13363,11 @@ describe.skipIf(process.platform === 'win32')('Desktop machine access requests',
 
   it.each(['plain local', 'phone control'])('denies access requests from %s', async (mode) => {
     const port = await start();
-    assert(server?.localSocket);
+    assert(server);
     const client =
       mode === 'phone control'
         ? await connect(port, undefined, { keyPair: (await pair(port, undefined, true)).keyPair })
-        : await localConnect(server.localSocket);
+        : await localConnect(server);
     await client.request('hello', { client: CLIENT });
     expect(await client.request('desktop.machine-access.subscribe', { cwd: workspace })).toHaveProperty(
       'error.code',

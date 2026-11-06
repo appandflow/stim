@@ -66,7 +66,7 @@ final class CrashScrubberTests: XCTestCase {
   func testKeepsTheFieldsOfAHandledFailureEventAndHangReadable() {
     let failures: [DiagnosticFailure] = [
       .decode(source: .server, type: "ProjectStats", path: "machines.<key>.sizes.[]", reason: "type-mismatch"),
-      .server(.adoptionHomeMismatch),
+      .server(.engineUnavailable),
     ]
     for report in failures.map(\.report) {
       let texts = [report.message] + report.tags.flatMap { [$0.key, $0.value] } + report.fingerprint

@@ -286,8 +286,8 @@ its reported load:
   "machine": "janics-mac-mini",
   "state": "approved",
   "offloadable": false,
-  "reasons": ["Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"],
-  "problems": [{ "code": "stim-build", "reason": "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here" }],
+  "reasons": ["x86_64 there, arm64 here"],
+  "problems": [{ "code": "arch", "reason": "x86_64 there, arm64 here" }],
   "capacity": {
     "running": 0,
     "max": 1,
@@ -1510,6 +1510,7 @@ and the setting's entry after the write.
 stim remote add <machine> [--json]
 stim remote list [--json]
 stim remote remove <machine> [--json]
+stim remote update <machine> [--channel next]
 ```
 
 Manages [`remote.machines`](./settings.md#machine-settings), the remote
@@ -1532,6 +1533,7 @@ optional stim-server port (default 7787).
 - `remove` drops the entry and forgets this machine's credentials for it. The
   remote machine keeps its approval until a person there runs the
   `stim pairings revoke <id>` command `remove` prints.
+- `update` installs the newest release compatible with this caller's peer on the worker's channel; `--channel next` selects prereleases for this update without changing its channel. Pins and builds marked bad refuse it.
 
 ```bash
 stim remote add janics-mac-mini

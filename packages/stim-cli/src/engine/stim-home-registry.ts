@@ -5,21 +5,12 @@ import { configDir } from '@stim-cli/core';
 import { readStimHomes, stimHomesFile, stimHomesLock, stimHomesRoot, type StimHomeEntry } from '@stim-cli/core/state';
 import { debugLog } from '../debug-log.ts';
 import { withDirLock } from '../dir-lock.ts';
-import { STIM_HOMES_TEST_GUARD_ROOT_ENV } from './eas-machine-root-guard-env.ts';
 
 export { stimHomesRoot } from '@stim-cli/core/state';
 
 const LAST_SEEN_REFRESH_MS = 10 * 60_000;
 
 type HomeDevices = StimHomeEntry['devices'];
-
-function assertStimHomesRootWritable(root: string): void {
-  const guardedRoot = process.env[STIM_HOMES_TEST_GUARD_ROOT_ENV];
-  if (!guardedRoot || resolve(root) !== resolve(guardedRoot)) return;
-  throw new Error(
-    `Refusing to write the real machine list of Stim homes ${root} from a test process. Pass a temporary root, or point HOME (and USERPROFILE on Windows) at a temporary directory.`,
-  );
-}
 
 function canonical(path: string): string {
   try {
@@ -59,7 +50,6 @@ export function recordStimHome(
   home: string,
   { devices, now = Date.now(), root = stimHomesRoot() }: { devices?: HomeDevices; now?: number; root?: string } = {},
 ): void {
-  assertStimHomesRootWritable(root);
   withDirLock(
     stimHomesLock(root),
     () => {
@@ -84,7 +74,6 @@ export function forgetStimHomes(
   when: (entry: StimHomeEntry) => boolean,
   root: string = stimHomesRoot(),
 ): string[] {
-  assertStimHomesRootWritable(root);
   return withDirLock(stimHomesLock(root), () => {
     const current = readStimHomes(root);
     if (!current.safe) return [];

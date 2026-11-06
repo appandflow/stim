@@ -1,13 +1,12 @@
-// usage: node noise-responder.mjs <server runtime directory> <pairing token> [hold]
+// usage: node noise-responder.mjs <built stim package directory> <pairing token> [hold]
 // With "hold" the socket stays open after message 3, so no reply to hello ever comes.
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { generateNoiseKeyPair } from '../../../../../packages/core/dist/noise.mjs';
 import { acceptNoise, keyFingerprint, secretValues } from '../../../../../packages/core/dist/noise-session.mjs';
 
-const [runtime, token, mode] = process.argv.slice(2);
-const modules = join(runtime, 'node_modules');
-const { WebSocketServer } = createRequire(join(modules, 'index.js'))('ws');
+const [stim, token, mode] = process.argv.slice(2);
+const { WebSocketServer } = createRequire(join(stim, 'package.json'))('ws');
 
 const keyPair = generateNoiseKeyPair();
 const values = secretValues(Buffer.from(token, 'base64url'));

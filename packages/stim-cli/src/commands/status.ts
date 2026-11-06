@@ -13,6 +13,7 @@ import {
 } from '../status-watch.ts';
 import type { StatusSources } from '../status-watch.ts';
 import { watchStdoutReader } from '../stdout-reader.ts';
+import { endStreamOnSwitch } from '../daemon/engine-switch.ts';
 import { iosStatusName, liveProbes, readStatus, refreshLightFacts, type StatusSnapshot } from '../status-read.ts';
 import chalk from 'chalk';
 import { statSync } from 'fs';
@@ -145,6 +146,7 @@ export default function statusCommand(program: Command): void {
     )
     .option('--json', 'print the state as JSON')
     .option('--watch', 'keep running and print the state again each time it changes')
+    .option('--fresh', "with --json, read the state now instead of answering from stimd's last snapshot")
     .action(async (opts: StatusOptions) => {
       if (opts.watch) return watchStatus(Boolean(opts.json));
       const json = Boolean(opts.json);
@@ -184,7 +186,7 @@ function stageLine(state: EnvironmentState, snapshot: DaemonSnapshot | null, now
   return `  stage: running${activity}${kept}`;
 }
 
-function renderStatus(
+export function renderStatus(
   {
     archived,
     archivedUsage: usage,
@@ -202,7 +204,7 @@ function renderStatus(
   }: StatusSnapshot,
   json: boolean,
   settle: (payload: StatusPayload) => StatusPayload = (payload) => payload,
-  cwd = process.cwd(),
+  cwd: string = process.cwd(),
 ): string[] {
   const out: string[] = [];
   const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
@@ -543,6 +545,7 @@ async function watchStatus(json: boolean): Promise<void> {
     failed: (message) => console.error(chalk.red(message)),
   });
   const stopReader = watchStdoutReader(finish);
+  endStreamOnSwitch();
   await new Promise<never>(() => {});
 }
 

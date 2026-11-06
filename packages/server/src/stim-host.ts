@@ -51,15 +51,17 @@ function alive(pid: number): boolean {
   }
 }
 
-function bundleIdOf(app: string): string | null {
+function infoValue(app: string, key: string): string | null {
   try {
-    return /<key>CFBundleIdentifier<\/key>\s*<string>([^<]*)<\/string>/.exec(
+    return new RegExp(`<key>${key}<\\/key>\\s*<string>([^<]*)<\\/string>`).exec(
       readFileSync(join(app, 'Contents', 'Info.plist'), 'utf8'),
     )![1]!;
   } catch {
     return null;
   }
 }
+
+const bundleIdOf = (app: string): string | null => infoValue(app, 'CFBundleIdentifier');
 
 interface HostRelease {
   version: string;
@@ -162,8 +164,8 @@ async function downloadRelease(release: HostRelease, dir: string): Promise<strin
 
 /**
  * Installs the host app in `~/Applications`: the pinned signed `release`, or Stim Host Dev built from `sources` when
- * `release` is null. An installed bundle with the same bytes stays untouched, so the grants macOS keyed to its signature
- * still match.
+ * `release` is null. An installed release whose version is `release`'s stays untouched without a download, and so does
+ * an installed bundle with the same bytes, so the grants macOS keyed to its signature still match.
  */
 export async function installHostApp(
   sources: string = SOURCES,
@@ -178,6 +180,8 @@ export async function installHostApp(
       `${app} is not a ${flavor.name} bundle (${flavor.bundleId}); not replacing it. Move it away, then run install again.`,
     );
   }
+  if (release && existsSync(executable) && infoValue(app, 'CFBundleShortVersionString') === release.version)
+    return { app, executable, ...flavor, adHoc: false, replaced: false };
   mkdirSync(applications, { recursive: true });
   for (const entry of readdirSync(applications)) {
     const owner = STALE_TEMPORARY.exec(entry)?.[1];

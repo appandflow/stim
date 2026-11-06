@@ -67,31 +67,12 @@ export function queuePlan(
   });
 }
 
-async function buildMethod(
-  ctx: ConnectionContext,
-  id: RequestId,
-  method: string,
-  params: unknown,
-  session: PairedDevice,
-): Promise<void> {
+async function jobMethod(ctx: ConnectionContext, id: RequestId, params: unknown, session: PairedDevice): Promise<void> {
   if (!ctx.buildAllowed(session)) {
-    return ctx.error(id, 'forbidden', `${method} needs build access, which this machine has not granted this device.`);
+    return ctx.error(id, 'forbidden', 'job.start needs build access, which this machine has not granted this device.');
   }
-  ctx.buildSession ??= ctx.builds.session(session.id, ctx.socket, (event) => send(ctx.socket, event));
-  const answer =
-    method === 'build.offer'
-      ? await ctx.builds.offer(session.id, params, ctx.buildSession.signal)
-      : method === 'build.sync'
-        ? ctx.buildSession.sync(params)
-        : method === 'build.start'
-          ? await ctx.buildSession.start(params)
-          : method === 'build.cancel'
-            ? ctx.buildSession.cancel(params)
-            : method === 'build.attach'
-              ? ctx.buildSession.attach(params)
-              : method === 'build.cached-artifact'
-                ? await ctx.buildSession.cachedArtifact(params)
-                : await ctx.buildSession.artifact(params);
+  ctx.builds.serve(session.id);
+  const answer = await ctx.jobs.start({ id: session.id, name: session.name }, ctx.socket, params);
   send(ctx.socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
 }
 
@@ -102,7 +83,7 @@ export function machineMethod(
   params: unknown,
   session: PairedDevice,
 ): Promise<void> | null {
-  if ((BUILD_METHODS as readonly string[]).includes(method)) return buildMethod(ctx, id, method, params, session);
+  if ((BUILD_METHODS as readonly string[]).includes(method)) return jobMethod(ctx, id, params, session);
   if ((ENGINE_UPDATE_METHODS as readonly string[]).includes(method))
     return updateMethod(ctx, id, method, params, session);
   return null;

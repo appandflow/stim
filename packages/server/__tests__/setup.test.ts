@@ -137,10 +137,10 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
       actions.push('install');
       return { script: '/server.mjs', build: { version: '1.16.0', stimBuild: 'digest' }, dir: '/versions' };
     },
-    update: async () => {
-      actions.push('update');
+    select: async () => {
+      actions.push('select');
       version = '1.16.0';
-      return ['Updated'];
+      return 'Updated';
     },
     installHost: async () => {
       actions.push('host');
@@ -428,7 +428,7 @@ test('a newer managed server stays installed and a different Stim build produces
   expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'tools.Stim build')?.state).toBe('pending');
 });
 
-test.each([false, true])('an older managed server upgrades with the selected idle wait (noWait=%s)', async (noWait) => {
+test('an older managed server moves the engine to the setup version', async () => {
   let upgraded = false;
   const f = fixture({
     health: async () => ({
@@ -438,14 +438,13 @@ test.each([false, true])('an older managed server upgrades with the selected idl
       protocol: 2,
       stimBuild: 'digest',
     }),
-    update: async (_label, _installed, source, _log, waitForWork) => {
-      expect(source).toEqual({ release: '1.16.0' });
-      expect(waitForWork).toBe(!noWait);
+    select: async (version) => {
+      expect(version).toBe('1.16.0');
       upgraded = true;
-      return [];
+      return 'The engine now runs build 0123456789ab.';
     },
   });
-  expect(await runSetup([...args, '--yes', ...(noWait ? ['--no-wait'] : [])], '1.16.0', f.deps)).toBe(0);
+  expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(0);
   expect(upgraded).toBe(true);
   expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'server')?.title).toBe('stim-server 1.16.0');
 });

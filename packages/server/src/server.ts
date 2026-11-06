@@ -15,7 +15,6 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir, type MetroLink } from '@stim-cli/core';
 import {
   archiveDir,
-  serverLocalSocket,
   deviceHostArea,
   deviceHostAreas,
   readArchive,
@@ -44,7 +43,8 @@ import { HostedPresence } from './hosted-presence.ts';
 import { HostedPresenceBridge } from './hosted-presence-bridge.ts';
 import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay } from './hosted-relay.ts';
-import { BuildHost, type BuildSession } from './build.ts';
+import { BuildWorkerRoot } from './build.ts';
+import { OffloadJobs } from './offload-jobs.ts';
 import type { WorkerRootUsage } from './worker-areas.ts';
 import { ControlHub, type Controller } from './control.ts';
 import { Recorder } from './recorder.ts';
@@ -96,7 +96,6 @@ import { EXPO_PUSH_API, PushNotifier } from './push.ts';
 import {
   buildClientsReadable,
   dropPushToken,
-  readBuildClients,
   readRegistries,
   recordsForKey,
   RegistryUnavailable,
@@ -136,7 +135,6 @@ import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
 import { createKeepAwake, type KeepAwakeStatus } from './keep-awake.ts';
 import { runsAsService } from './service.ts';
 import { ShareRoute, tailscaleFunnel } from './share-route.ts';
-import { listenLocal, type LocalListenerContext } from './local-listener.ts';
 import { serverTransports } from './server-transports.ts';
 import {
   type RequestLimits,
@@ -166,7 +164,7 @@ import {
   listArchived,
   statusRead,
 } from './handlers/status.ts';
-import { publishPresence } from './handlers/presence.ts';
+import { publishPresence, recordPresence } from './handlers/presence.ts';
 import { hostedMethod } from './handlers/device-host.ts';
 import { machineMethod, planBuild } from './handlers/build.ts';
 import { subscribeLogs, queryLogs } from './handlers/logs.ts';
@@ -227,8 +225,13 @@ function localHealthRequest(request: IncomingMessage): boolean {
 
 export interface RunningServer {
   addresses: { host: string; port: number }[];
-  /** The Unix socket this machine's own user connects on without Noise, or null when there is none. */
-  localSocket: string | null;
+  /**
+   * Serves one connection from this machine's own user, such as Stim Desktop, without Noise: stimd hands over the
+   * connections its CLI socket admits, where the kernel's check on the 0600 socket stands in for a peer uid.
+   */
+  acceptLocal: (stream: Duplex) => void;
+  /** Shows one agent action's presence, as `presence.publish` from a local client does. */
+  publishPresence: (params: unknown) => string | null;
   /** Settles once the first read of the Stim home finished: `ready`, or `degraded` while a read does not return. */
   ready: Promise<StartupState>;
   close: () => Promise<void>;
@@ -239,7 +242,6 @@ const CLOSE_AUTH_TIMEOUT = 4408;
 const AGENT_PATH = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/;
 
 const METRO_END_MS = 30_000;
-const CLOSE_ABNORMAL = 1006;
 const MAX_PAYLOAD = 64 * 1024;
 
 const MAX_SUBSCRIPTIONS = 32;
@@ -806,23 +808,24 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       .writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
       .end(JSON.stringify(setupJournalForClient(journal)));
   }
-  const builds = new BuildHost({
-    worker: join(dirname(options.stimCli), 'offload-worker.mjs'),
-    env: options.env,
-    currentEnv: options.currentEnv,
+  const builds: BuildWorkerRoot = new BuildWorkerRoot({
     limits: options.buildLimits,
     ready: () => startup.state === 'ready',
-    finished: ({ client, repo, ok, error, durationMs }) =>
-      auditSafely({
-        at: new Date().toISOString(),
-        device: { id: client, name: readBuildClients().find((each) => each.id === client)?.name ?? client },
-        action: 'build',
-        workspace: repo,
-        ok,
-        ...(error ? { error } : {}),
-        durationMs,
-      }),
     allowed: (client) => buildAllowed({ id: client }),
+    jobs: () => jobs.live(),
+    stopJobs: (client) => jobs.stop(client),
+  });
+  const jobs: OffloadJobs = new OffloadJobs({
+    stimCli: options.stimCli,
+    machine: options.name,
+    env: () => options.currentEnv?.() ?? options.env,
+    limits: builds.limits,
+    admit: (client) => {
+      builds.maintainAreas();
+      if (!buildAllowed({ id: client })) return 'This machine no longer grants this device build access.';
+      return builds.drained ?? (builds.removing(client) ? 'This machine is removing this build client.' : null);
+    },
+    idle: (client) => builds.pruneBlobs(client),
   });
   const presence = new PresenceHub();
   const localAgents = new LocalAgentPresence({
@@ -943,6 +946,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     endpoint: options.hostedRelay?.endpoint,
   });
   const updates = new EngineUpdates({
+    name: options.name,
     label: options.service?.label ?? null,
     port: options.port,
     build: { version: options.serverVersion, stimBuild: ownStimBuild },
@@ -950,6 +954,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     script: options.service?.script ?? '',
     env: process.env,
     runsAsService: options.service?.runsAsService,
+    ...(options.service?.detached ? { detached: options.service.detached } : {}),
     acceptsClientBuilds: () => loadConfig()?.server?.acceptClientBuilds === true,
     drain: (reason) => {
       builds.drain(reason);
@@ -1034,6 +1039,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (device.id !== LOCAL_DEVICE_ID && !paired.has(device.id)) socket.close(CLOSE_REFUSED, 'unauthorized');
     }
     hostedDevices.revoke();
+    for (const { client } of jobs.live())
+      if (!paired.get(client)?.capabilities.includes('build')) void jobs.stop(client);
     builds.abandonDetached(
       (client) => paired.get(client)?.capabilities.includes('build') ?? false,
       buildClientsReadable(),
@@ -1149,7 +1156,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const tracker = requestLog.track();
     trackers.set(socket, tracker);
     let runId: string | null = null;
-    let buildSession: BuildSession | null = null;
     let metroLink: MetroLink | null = null;
     let metroStream: Duplex | null = null;
     let metroPing: NodeJS.Timeout | undefined;
@@ -1264,6 +1270,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       agentStreams,
       agentHttp,
       builds,
+      jobs,
       presence,
       localAgents,
       control,
@@ -1319,12 +1326,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       },
       set runId(value) {
         runId = value;
-      },
-      get buildSession() {
-        return buildSession;
-      },
-      set buildSession(value) {
-        buildSession = value;
       },
       get metroLink() {
         return metroLink;
@@ -1525,11 +1526,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         });
       }
       if (socket.readyState !== socket.OPEN) return;
-      if (!device || !buildSession) {
-        return void socket.close(CLOSE_BAD_REQUEST, 'unexpected binary frame');
-      }
-      const refused = buildSession.blob(frame);
-      if (refused) socket.close(CLOSE_BAD_REQUEST, refused.slice(0, 120));
+      const received = device ? jobs.receive(socket, frame) : false;
+      if (received === false) return void socket.close(CLOSE_BAD_REQUEST, 'unexpected binary frame');
+      if (typeof received === 'string') socket.close(CLOSE_BAD_REQUEST, received.slice(0, 120));
     }
 
     async function unsubscribeRequest(id: RequestId, name: unknown): Promise<void> {
@@ -1700,6 +1699,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
 
     socket.on('message', (data, isBinary) => {
+      if (jobs.owns(socket)) {
+        const frame = Buffer.isBuffer(data) ? data : Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)]);
+        return jobs.deliver(socket, frame, isBinary);
+      }
       if (isBinary) {
         const frame = Buffer.isBuffer(data) ? data : Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)]);
         queue = queue.then(() => handleBinary(frame)).catch(() => socket.close(1011, 'internal error'));
@@ -1734,7 +1737,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       relay.close();
       relays.delete(socket);
       clearTimeout(timer);
-      buildSession?.close(code === CLOSE_ABNORMAL && device !== null && buildAllowed(device));
+      jobs.disconnected(socket, code);
       sessions.delete(socket);
       desktopSessions.delete(socket);
       listeners.delete(socket);
@@ -1923,7 +1926,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       startup,
       ...(options.host ? { host: await hostHealth() } : {}),
       busy: {
-        builds: builds.running(),
+        builds: jobs.running(),
         hostedSessions: hostedDevices.active(),
         hostedWork: hostedDevices.working(),
         resumes: true,
@@ -1968,6 +1971,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (revocationPoll) clearInterval(revocationPoll);
     if (hostedIdleSweep) clearInterval(hostedIdleSweep);
     if (revocationCheck) clearTimeout(revocationCheck);
+    await settle(jobs.close());
     await settle(builds.close());
     for (const client of [...wss.clients, ...localWss.clients]) client.terminate();
     hostConnections.close();
@@ -1995,11 +1999,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     wss.close();
     localWss.close();
-    await Promise.all(
-      [...servers.values(), ...(localListener ? [localListener] : [])].map((listener) =>
-        settle(closeListener(listener)),
-      ),
-    );
+    await Promise.all([...servers.values()].map((listener) => settle(closeListener(listener))));
     if (failures.length) throw new AggregateError(failures, 'Server resources did not close cleanly.');
   };
   async function listenOn(host: string): Promise<void> {
@@ -2091,27 +2091,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     servers.set(host, { server, sockets });
     addresses.push({ host, port: (server.address() as AddressInfo).port });
   }
-  let localSocket: string | null = null;
-  let localListener: { server: Server; sockets: Set<Socket> } | null = null;
-  const listenerContext: LocalListenerContext = {
-    get closing() {
-      return closing;
-    },
-    answerHealth,
-    upgradeLocal,
-    get localListener() {
-      return localListener;
-    },
-    set localListener(value) {
-      localListener = value;
-    },
-    get localSocket() {
-      return localSocket;
-    },
-    set localSocket(value) {
-      localSocket = value;
-    },
-  };
   try {
     for (const host of options.hosts) await listenOn(host);
   } catch (error) {
@@ -2189,19 +2168,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     if (reason === null) {
       if (startup.state === 'degraded') console.error('stim-server: the Stim home answers again; serving clients.');
-      const local = options.localSocket === undefined ? serverLocalSocket() : options.localSocket;
-      if (!localListener && local !== null && process.platform !== 'win32') {
-        try {
-          await listenLocal(listenerContext, local);
-        } catch (error) {
-          console.error(`stim-server: no local socket, so Stim Desktop cannot connect: ${(error as Error).message}`);
-        }
-        if (closing) {
-          if (localListener) await closeListener(localListener);
-          localListener = null;
-          return settle(startup);
-        }
-      }
       startup = { state: 'ready' };
       pruneSetup();
       if (options.shareServer && !shareServerGrace) {
@@ -2232,11 +2198,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     startupRetry = setTimeout(() => void checkHome(), options.startupRetryMs ?? STARTUP_RETRY_MS);
   };
   void checkHome();
+  const localHttp = createServer((request, response) => {
+    if (request.method === 'GET' && request.url === '/health') return void answerHealth(response);
+    response.writeHead(426, { 'content-type': 'text/plain' }).end('stim-server speaks WebSocket only.\n');
+  });
+  localHttp.on('upgrade', upgradeLocal);
   return {
     addresses,
-    get localSocket() {
-      return localSocket;
+    acceptLocal: (stream) => {
+      if (closing) return void stream.destroy();
+      localHttp.emit('connection', stream);
     },
+    publishPresence: (params) => recordPresence(localAgents, params)?.message ?? null,
     ready,
     close: async () => {
       for (const stop of stopWatching) stop();

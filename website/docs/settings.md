@@ -589,8 +589,7 @@ builds can use a separate `--remote-build`, targeting the hosting Mac's
 architecture and runtime.
 
 In `auto`, an offloaded iOS/Android build runs prebuild (and `pod install` for iOS) here, then asks
-every paired machine what it can build. Stim picks one whose Stim build
-compatibility version matches and, for iOS and macOS, whose CPU architecture matches the target simulator, with at least 10 GB free, that does
+every paired machine what it can build. Stim picks one that, for iOS and macOS, has a CPU architecture matching the target simulator, with at least 10 GB free, that does
 not decline, taking the first in `remote.machines` order. When a machine that offered fails the sync or refuses to start
 the build, for example because it got busy meanwhile, Stim tries the next one
 in that order:
@@ -606,7 +605,7 @@ in that order:
   and installs the pinned gems itself on the first build. This machine's side of
   the comparison runs `pod --version` in the directory `pod install` runs in. The comparison uses
   `.ruby-version` when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the login shell's `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries (unless the caller already sets `GEM_HOME`), and the same UTF-8 locale defaults as `pod install`, which runs in the same environment, including the Bundler run.
-- For macOS, its Xcode and macOS SDK must match, unless `--remote-build` and `--remote` name the same Mac, which builds and runs the app and then needs only the same Stim build compatibility version (see [macOS development](./macos.md#run-it-on-another-mac)). The worker needs network
+- For macOS, its Xcode and macOS SDK must match, unless `--remote-build` and `--remote` name the same Mac, which builds and runs the app and then needs only its own Xcode and macOS SDK (see [macOS development](./macos.md#run-it-on-another-mac)). The worker needs network
   access to fetch SwiftPM dependencies the first time and keeps a dependency
   cache per client. The returned app is verified and launched locally. Completed
   caching requires `macos.artifactInputs` and a locally verified compile; remote
@@ -710,29 +709,28 @@ reports the process, its health, the route, Stim Host's permissions and
 whether its Stim build matches the `stim` on PATH. Doctor points to this
 command when a named machine does not answer.
 
-Offload needs Stim releases with the same build compatibility version on both
-machines. It changes only in a release that changes what a worker builds, how it
-builds, or the build messages, so two machines on different Stim builds usually
-offload to each other. To move the remote machine's
-service to another build, run one of these there:
+Offload runs this machine's exact Stim build on the worker, so the two machines
+can run different Stim releases. A service installed while the Stim engine is
+installed (`stim engine install`) runs the engine's `bin/stimd`, so it follows
+the engine. To move the remote machine to another build, run one of these there:
 
 ```bash
-stim service update --release 1.14.0   # an exact release from npm
-stim service update --from ./packed     # pnpm pack output of a checkout
-stim service rollback                   # back to the previous server
+stim engine update          # the newest release on the engine's channel
+stim engine use 1.14.0      # an exact release from npm, pinned until stim engine update
+stim engine rollback        # back to the previous build, pinned until stim engine update
 ```
 
-`--release` installs that exact version from the public npm registry, and
-the update stops unless npm verifies each package's integrity and registry
-signature. `--from` installs the `.tgz` packages in the directory, checks the
-registry signature of every dependency they bring from npm, and does not look up
-Stim's own packages on the registry, so an unpublished version installs. Either way
-the new server is installed beside the running one and must start before the
-switch. The update waits up to 30 minutes for offloaded builds and hosted
-native steps to finish (a server that resumes its hosted sessions leaves the others running), restarts the job, and switches back to the previous server
-when the new job exits or does not answer within 90 seconds. It never changes pairings,
+The engine fetches a release from the public npm registry, runs its self-test,
+and switches once running builds and hosted native steps have drained; the
+service's stimd restarts on the new build. It never changes pairings,
 approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
-serve route.
+serve route. A client approved for builds or device hosting can ask for the
+same update from its machine with `stim remote update <mac>`. A build whose
+stimd exits abnormally three times within 10 minutes is marked bad and the
+engine goes back to the previous build on its own; `stim engine status` then
+shows `crash loop in <version>`, and the next newer release resumes updates.
+`engine.autoUpdate` decides whether the engine checks for updates by itself
+(on for an engine Stim Desktop installed or a service runs).
 
 A client machine this machine approved for builds or device hosting can request
 the same update over its tailnet connection, so the remote machine keeps up
@@ -1024,8 +1022,8 @@ override `STIM_DAEMON`. It governs every pass Stim runs on its own: the idle
 and dormant stages, the [pressure ladder](./build-caches.md#disk-pressure), the
 reclaim for a run waiting to boot, and
 [automatic maintenance](#automatic-maintenance). `start`, `ios`, `android`,
-`web`, `macos` and `revive` start one `stim-daemon` process per Stim home,
-scoped homes included. It ticks each minute while anything runs there or the
+`web`, `macos` and `revive` start one `stimd` process per Stim home, scoped
+homes included, on Windows too. It ticks each minute while anything runs there or the
 pressure level is above normal, and every 5 minutes otherwise. It exits two
 ticks after nothing runs, no maintenance pass runs and no workspace waits for
 its dormant stage, so the stage fires in a quiet home. A workspace waits until its `idle.dormantDays`
@@ -1046,31 +1044,21 @@ one pass at a time, so a slow `git fetch`, pull request lookup or size scan
 never delays a tick or a waiting run. The same lane records the
 [fingerprint](./build-caches.md) of a running workspace whose git HEAD,
 lockfile or install stamp changed. It also wakes the oldest
-run waiting for a build slot as soon as one is released. When one of those
-commands runs from an installed Stim (a global install or a `node_modules`
-dependency) with a newer version than the running daemon, for example after
-an upgrade, or the daemon runs a development build, that daemon keeps serving
-the command and one new daemon from the installed build takes over once the
-current tick finishes. A maintenance pass the old daemon has running finishes
-in its process, which starts no other. The same or an older version never
-replaces it, so
-alternating a global `stim` with `npx stim` or a project's copy does not
-restart the daemon. A development build (a checkout's `dist`, `npm link` or
-`pnpm link --global`) never replaces a daemon. Runs waiting for a build slot or
-a boot keep their queue positions across the handover. `report` logs what
+run waiting for a build slot as soon as one is released. A command from another
+Stim build than the running `stimd` does not use it and says so; `stimd` keeps
+serving until nothing runs in the home, and the next command starts its own
+build's `stimd`. `stimd` stops a `stim-daemon` from Stim 1.40 to 1.42 when it
+starts. `report` logs what
 each pass would do and acts on nothing. `off` runs no daemon and no pass: each
 dev server supervisor stops its own dev server and devices after
 `idle.minutes`, and nothing times a device with no dev server. It is `off` in
 CI unless `STIM_DAEMON` is set.
 
-While no daemon runs (on Windows, which has none, or when one could not start),
-`stim doctor`, `stim start`, `stim ios` and `stim android` run automatic
-maintenance, the idle stage for owned devices whose workspace has no running dev
-server, and the pressure ladder in their own process, never for the command's own
-workspace, acting in `on` and only logging in `report`. On Windows every other
-top-level command except `stim guide`, `stim settings`, `stim help`, `stim gc` and
-`stim agent-device` starts the same passes in a detached background process, which
-the command does not wait for and which prints nothing, at most once a minute. `stim gc --delete` runs the ladder in its own process
+While no `stimd` runs (when one could not start), `stim doctor`, `stim start`,
+`stim ios` and `stim android` run automatic maintenance, the idle stage for owned
+devices whose workspace has no running dev server, and the pressure ladder in
+their own process, never for the command's own workspace, acting in `on` and only
+logging in `report`. `stim gc --delete` runs the ladder in its own process
 whether or not a daemon runs. A command starts the daemon in the mode it resolves, `STIM_DAEMON` included; a
 later change to the machine setting can make a running daemon stricter, never
 laxer. The daemon also keeps the starting command's `CI` and the environment
@@ -1081,8 +1069,9 @@ once it exits and a command starts a new one. Its log is
 tick's measurement and decisions, with its last 20 actions, are in
 `$STIM_HOME/daemon/snapshot.json`.
 
-On Linux the daemon starts as a transient user service,
-`stim-daemon-<home hash>-<id>.service`, when `systemd-run` is on `PATH`,
+`stimd` starts as a transient launchd job on macOS, under Stim Host where it is
+installed. On Linux it starts as a transient user service,
+`stimd-<home hash>-<id>.service`, when `systemd-run` is on `PATH`,
 `XDG_RUNTIME_DIR` is set and a user systemd manager answers. A command runner
 that adopts and kills everything a call started, such as an agent harness that
 sets `PR_SET_CHILD_SUBREAPER`, cannot reach a service, so the daemon keeps
@@ -1098,9 +1087,7 @@ a slot, and a stage line for every workspace: running with its last activity,
 idle or dormant with the time in it, or stopped. `stim status --json` carries
 the last 20 actions as `daemon.recent`. `stim doctor` prints the daemon line, its
 last action or snapshot file and its log, and reports a daemon that stopped
-ticking or a claim it cannot resolve. On Windows, which has no daemon yet, the
-line says that `start`, `ios`, `android` and `doctor` run the passes in their own
-process and other top-level commands start them in the background.
+ticking or a claim it cannot resolve.
 
 `idle.minutes` takes machine and project layers; `0` turns the idle and dormant
 stages off. `idle.dormantDays` is a machine setting.

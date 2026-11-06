@@ -14,12 +14,13 @@ import { send, type ConnectionContext } from './context.ts';
 import { isJsonObject, validRunId } from '@stim-cli/core/state';
 import { CLOSE_REFUSED, HOME_UNAVAILABLE_MESSAGE } from '@stim-cli/core/noise-session';
 import { homedir } from 'node:os';
+import { engineRoot, readRecords } from 'stim/engine-state';
 
 export const CLOSE_BAD_REQUEST = 4400;
 
 export const LOCAL_DEVICE_ID = 'local';
 
-/** A connection on the Unix socket: this server's own user, such as Stim Desktop, with every local capability. */
+/** A connection stimd's CLI socket handed over: this server's own user, such as Stim Desktop, with every local capability. */
 const LOCAL_DEVICE: PairedDevice = {
   id: LOCAL_DEVICE_ID,
   name: 'Stim Desktop',
@@ -40,9 +41,9 @@ function helloRefusal(client: JsonObject, access: unknown, machine: string, stim
   // compat C12 permanent
   if (access !== undefined || client.peer !== undefined) {
     const peer = wireInteger(client.peer);
-    if (peer >= PEER) return null;
-    const sent = peer ? `speaks peer ${peer}` : 'sends no peer';
-    return `peer-too-old: ${machine} runs stim ${stim} (peer ${PEER}); this stim ${sent}; update this Mac: npm i -g stim@${stim}, then stim service install if it runs Stim as a service`;
+    return peer >= PEER
+      ? null
+      : `peer-too-old: ${machine} runs stim ${stim} (peer ${PEER}); update this Mac: npm i -g stim@${stim}`;
   }
   // compat end
   // compat C7 permanent
@@ -96,6 +97,10 @@ export async function hello(ctx: ConnectionContext, id: RequestId, params: unkno
     );
   }
   const tooOld = ctx.local ? null : helloRefusal(params.client, access, ctx.options.name, ctx.options.stimVersion);
+  // compat C9 permanent
+  if (!ctx.local && wireInteger(params.client.phoneApi) > PHONE_API)
+    ctx.options.requestUpdate?.(`a phone speaks phoneApi ${wireInteger(params.client.phoneApi)}`);
+  // compat end
   if (tooOld) return ctx.refuse(id, 'protocol-unsupported', tooOld, CLOSE_REFUSED);
   ctx.device = chosen;
   if (!ctx.local) touchDevice(ctx.device.id, params.client);
@@ -126,7 +131,7 @@ export async function hello(ctx: ConnectionContext, id: RequestId, params: unkno
   if (ctx.options.host) ctx.tracker.step(id, 'probe', Date.now() - probeWaited);
   const result: HelloResult = {
     host: {
-      owner: ctx.options.desktopBootstrap ? 'desktop' : ctx.options.service?.label ? 'service' : 'cli',
+      owner: ctx.options.owner ?? (ctx.options.service?.label ? 'service' : 'cli'),
       capabilities: ctx.hostsDevices ? [...HOST_CAPABILITIES] : ['physical-android'],
       app: host ?? null,
     },
@@ -138,6 +143,7 @@ export async function hello(ctx: ConnectionContext, id: RequestId, params: unkno
       name: ctx.options.name,
       version: ctx.options.serverVersion,
       stim: ctx.options.stimVersion,
+      channel: readRecords(engineRoot(process.env)).current?.channel ?? 'latest',
       home: homedir(),
       id: ctx.homeId,
       ...(ctx.local && ctx.addresses[0] ? { port: ctx.addresses[0].port } : {}),

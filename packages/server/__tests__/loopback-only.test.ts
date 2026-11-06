@@ -45,7 +45,18 @@ async function serve(...flags: string[]): Promise<Record<string, unknown>> {
   try {
     vi.resetModules();
     const { serve: serveServer } = await import('../src/cli.ts');
-    await serveServer(7787, [], [], flags.includes('--loopback-only'));
+    await serveServer(
+      {
+        port: 7787,
+        extraEnv: [],
+        pathPrepend: [],
+        loopbackOnly: flags.includes('--loopback-only'),
+        shareOnly: false,
+        desktopKey: Buffer.alloc(32, 7).toString('base64url'),
+        script: 'unused',
+      },
+      () => {},
+    );
     await vi.waitFor(() => expect(fixture.options).toHaveLength(1));
     return fixture.options[0]!;
   } finally {

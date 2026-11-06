@@ -3,7 +3,7 @@ import { protocolJsonSchema } from '../src/protocol.ts';
 import type * as Mobile from '../../../apps/mobile/src/protocol/types.ts';
 import type * as Server from '../src/protocol.ts';
 
-type BuildMethod = (typeof Server.BUILD_METHODS)[number];
+type BuildMethod = (typeof Server.BUILD_METHODS)[number] | (typeof Server.OFFLOAD_JOB_METHODS)[number];
 
 type DeviceHostMethod = (typeof Server.DEVICE_HOST_METHODS)[number];
 type EngineUpdateMethod = (typeof Server.ENGINE_UPDATE_METHODS)[number];

@@ -1,30 +1,45 @@
-import { mkdirSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import type { SpawnOptions } from 'node:child_process';
 import { connect, type Socket } from 'node:net';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { PresencePublishParams } from '@stim-cli/core/protocol';
 import {
   daemonClaimRoot,
-  daemonDir,
-  daemonHandoverClaimRoot,
-  daemonSocket,
   isJsonObject,
   SETTINGS,
+  stimBuildId,
+  readJsonObject,
+  stimdClaimRoot,
+  stimdRecordFile,
+  stimdRunDir,
+  stimdSocket,
+  userHome,
   type DaemonMode,
 } from '@stim-cli/core/state';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { cancellableSleep } from '../cancellation.ts';
+import { windowsLauncherArgs } from '../detached-entry.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
+import { endForSwitch, engineShim, ownStoreEngine, switchedEngine } from './engine-switch.ts';
 import { getExecutor } from '../exec.ts';
-import { compareStimVersions } from '../diagnostics/stim-installations.ts';
-import { spawnEntry, stimBuild } from '../spawn-entry.ts';
-import { daemonMode, platformHasDaemon, spawnsDaemon } from './mode.ts';
+import { spawnEntry } from '../spawn-entry.ts';
+import { daemonMode, spawnsDaemon } from './mode.ts';
 import { systemdDaemonArgs } from './systemd-launch.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
 const CLAIM_WAIT_MS = 5000;
 const CLAIM_POLL_MS = 50;
-const SYSTEMD_RUN_TIMEOUT_MS = 5000;
+const LAUNCH_TIMEOUT_MS = 5000;
+const OP_BEGIN_TIMEOUT_MS = 30_000;
+/** The label of the launchd job that runs a stimd, which it removes as it exits. */
+export const LAUNCHD_LABEL_ENV = 'STIMD_LAUNCHD_LABEL';
+
 /**
- * Whether a stim-daemon holds this home's claim. A claim Stim cannot resolve counts as held, so nothing else takes
- * an idle decision while it stands; `stim doctor` names the command that removes it.
+ * Whether a stimd, or a stim-daemon from Stim 1.40 to 1.42, holds this home's daemon claim. A claim Stim cannot resolve
+ * counts as held, so nothing else takes an idle decision while it stands; `stim doctor` names the command that removes
+ * it.
  */
 export function daemonClaimHeld(): boolean {
   try {
@@ -35,68 +50,125 @@ export function daemonClaimHeld(): boolean {
   }
 }
 
-function daemonLive(): boolean {
+/** Whether this home's stimd runs. */
+export function stimdLive(): boolean {
   try {
-    return readClaimSet(daemonClaimRoot()).live.length > 0;
+    return readClaimSet(stimdClaimRoot()).live.length > 0;
   } catch {
     return false;
   }
 }
 
-/** Whether a starting daemon is taking over this home from a running daemon of another build. */
-function handoverInProgress(): boolean {
-  try {
-    return readClaimSet(daemonHandoverClaimRoot()).live.length > 0;
-  } catch {
-    return false;
-  }
+let ownBuild: string | undefined;
+
+/** This build's id: its dist's {@link stimBuildId}, or for a run from source, the source directory's hash. */
+export function stimdBuildId(): string {
+  const dir = dirname(fileURLToPath(import.meta.url));
+  return (ownBuild ??= stimBuildId(dir) ?? `src-${createHash('sha256').update(dir).digest('hex').slice(0, 12)}`);
+}
+
+let refusedBuild: string | null = null;
+let opSocket: Socket | null = null;
+let following: Promise<never> | null = null;
+let admitting = false;
+
+/** Whether a stimd of another build refused this process's connection. */
+export function stimdRefused(): boolean {
+  return refusedBuild !== null;
 }
 
 /**
- * Sends one op to this home's daemon and resolves with its first reply line, `{}` when that line is not a JSON
- * object, or null when the daemon closes, fails or stays silent for `timeoutMs`.
+ * Follows the engine to `version` once stimd says it switched: a CLI admitting its command (`op.begin`) runs it again,
+ * once, through the root's `bin/stim`, and resolves only by exiting with that run's code; a waiter ends with the rerun
+ * line. Null otherwise, and in a process that is not a CLI, which then treats stimd as unreachable.
  */
-export function askDaemon(
+function followSwitch(version: string, waiter: boolean): Promise<never> | null {
+  // compat C26 permanent
+  const engine = ownStoreEngine();
+  if (!engine || !Reflect.get(globalThis, Symbol.for('stim.cli'))) return null;
+  if (waiter || (admitting && process.env.STIM_REEXEC)) endForSwitch(version);
+  if (!admitting) return null;
+  console.error(`Stim updated to ${version}; running this command on it`);
+  const options: SpawnOptions = { stdio: 'inherit', env: { ...process.env, STIM_REEXEC: '1' } };
+  const child = getExecutor().spawn(engineShim(engine), process.argv.slice(2), options);
+  return new Promise(() => child.once('exit', (code) => process.exit(code ?? 1)));
+  // compat end
+}
+
+/**
+ * Opens a connection to this home's stimd and sends `messages` after the first frame; `onMessage` gets every line
+ * after stimd's answer to that frame. A stimd of another build answers `engine-changed` and closes the connection, as
+ * does a stimd that relaunches on a new build; a `waiter` connection then ends the command (`followSwitch`).
+ */
+function openStimd(
+  messages: Record<string, unknown>[],
+  onMessage: (message: Record<string, unknown>) => void,
+  waiter = false,
+): Socket {
+  const socket = connect(stimdSocket());
+  let buffer = '';
+  let answered = false;
+  socket.setEncoding('utf8');
+  socket.once('connect', () => {
+    // compat C26 permanent
+    const lines = [{ kind: 'cli', build: stimdBuildId() }, ...messages];
+    // compat end
+    socket.write(lines.map((line) => `${JSON.stringify(line)}\n`).join(''));
+  });
+  socket.on('data', (chunk: string) => {
+    buffer += chunk;
+    for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+      let message: unknown;
+      try {
+        message = JSON.parse(buffer.slice(0, end));
+      } catch {
+        message = {};
+      }
+      buffer = buffer.slice(end + 1);
+      if (!isJsonObject(message)) continue;
+      // compat C26 permanent
+      if (message.op === 'engine-changed') {
+        refusedBuild ??= String(message.build);
+        const next = switchedEngine();
+        if (next && next.build === message.build) following ??= followSwitch(next.version, waiter);
+      }
+      // compat end
+      if (answered) onMessage(message);
+      else answered = true;
+    }
+  });
+  socket.once('error', () => {});
+  return socket;
+}
+
+/**
+ * Sends one op to this home's stimd and resolves with its reply, or null when no stimd answers within `timeoutMs`.
+ */
+function askStimd(
   op: string,
   timeoutMs: number,
   fields: Record<string, unknown> = {},
 ): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
-    const socket = connect(daemonSocket());
-    let done = false;
-    let buffer = '';
+    let socket: Socket | null = null;
     const finish = (reply: Record<string, unknown> | null) => {
-      if (done) return;
-      done = true;
       clearTimeout(timer);
-      socket.destroy();
-      resolve(reply);
+      socket?.destroy();
+      if (!following) resolve(reply);
     };
     const timer = setTimeout(() => finish(null), timeoutMs);
-    socket.setEncoding('utf8');
-    socket.once('error', () => finish(null));
-    socket.once('connect', () => socket.write(`${JSON.stringify({ ...fields, op })}\n`));
-    socket.on('data', (chunk: string) => {
-      buffer += chunk;
-      const end = buffer.indexOf('\n');
-      if (end < 0) return;
-      try {
-        const reply: unknown = JSON.parse(buffer.slice(0, end));
-        finish(isJsonObject(reply) ? reply : {});
-      } catch {
-        finish({});
-      }
-    });
+    socket = openStimd([{ ...fields, op }], (reply) => finish(reply));
     socket.once('close', () => finish(null));
   });
 }
 
 /**
- * What the daemon inherits from the command that starts it: where things are, `CI`, and the environment override of
- * every setting that is not sensitive, which then holds for the daemon's lifetime. Nothing else, so one command's
- * credentials and unrelated environment do not live on in it and its children.
+ * What stimd inherits from the command that starts it: where things are, `CI`, and the environment override of every
+ * setting that is not sensitive, which then holds for its lifetime. Nothing else, so one command's credentials and
+ * unrelated environment do not live on in it and its children.
  */
-const DAEMON_ENV = new Set<string>([
+/** The environment variables stimd keeps from the command that starts it. */
+export const STIMD_ENV: ReadonlySet<string> = new Set<string>([
   'PATH',
   'HOME',
   'USERPROFILE',
@@ -118,37 +190,81 @@ const DAEMON_ENV = new Set<string>([
   'AGENT_DEVICE_CLAIMS_DIR',
   'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR',
   'STIM_HOME',
+  'STIM_ENGINE_ROOT',
   'STIM_BUILD_CACHE',
   'STIM_METRO_CACHE',
   'STIM_TMPDIR',
+  'SYSTEMROOT',
+  'LOCALAPPDATA',
+  'APPDATA',
   ...SETTINGS.flatMap((setting) => (setting.env && !setting.sensitive ? [setting.env] : [])),
 ]);
 
-function daemonEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const kept: NodeJS.ProcessEnv = {};
-  for (const [name, value] of Object.entries(env)) if (value !== undefined && DAEMON_ENV.has(name)) kept[name] = value;
+/** Windows environment names are case-insensitive, and `Path` and `SystemRoot` are their usual spelling there. */
+function stimdEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env))
+    if (value !== undefined && STIMD_ENV.has(platform === 'win32' ? name.toUpperCase() : name)) kept[name] = value;
   return kept;
 }
 
+const xml = (value: string) =>
+  value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/** The prefix of the labels of this home's stimd launchd jobs. */
+export function launchdLabelPrefix(): string {
+  return `dev.stim.stimd.${createHash('sha256').update(stimdRunDir()).digest('hex').slice(0, 12)}.`;
+}
+
 /**
- * Asks the user's systemd manager to run the daemon as a transient service, which a runner that kills everything a
- * command started cannot reach (#5084). False where that cannot be asked: not Linux, no `systemd-run`, no user
- * runtime directory, or `systemd-run` fails because no user manager answers.
+ * Starts stimd as a transient job of the user's launchd domain, which a command runner that kills what a call started
+ * cannot reach. launchd reads the job file only at bootstrap and keeps a job loaded after its process exits, so each
+ * job has its own label, which stimd removes as it exits. `AbandonProcessGroup` leaves children such as an adb server
+ * running when stimd exits, as they do outside launchd.
  */
-function startDaemonService(
+function startLaunchdJob(command: readonly string[], env: Record<string, string>): boolean {
+  const uid = process.getuid?.();
+  if (uid === undefined) return false;
+  const label = `${launchdLabelPrefix()}${randomBytes(3).toString('hex')}`;
+  const plist = join(stimdRunDir(), `${label}.plist`);
+  const strings = (values: readonly string[]) => values.map((value) => `<string>${xml(value)}</string>`).join('');
+  const environment = Object.entries({ ...env, [LAUNCHD_LABEL_ENV]: label })
+    .map(([name, value]) => `<key>${xml(name)}</key><string>${xml(value)}</string>`)
+    .join('');
+  const log = xml(join(stimdRunDir(), 'stimd.log'));
+  writeFileSync(
+    plist,
+    `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${label}</string><key>ProgramArguments</key><array>${strings(command)}</array><key>EnvironmentVariables</key><dict>${environment}</dict><key>WorkingDirectory</key><string>${xml(stimdRunDir())}</string><key>StandardOutPath</key><string>${log}</string><key>StandardErrorPath</key><string>${log}</string><key>RunAtLoad</key><true/><key>KeepAlive</key><false/><key>AbandonProcessGroup</key><true/></dict></plist>\n`,
+    { mode: 0o600 },
+  );
+  try {
+    getExecutor().runFile('launchctl', ['bootstrap', `gui/${uid}`, plist], { timeoutMs: LAUNCH_TIMEOUT_MS });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(plist, { force: true });
+  }
+}
+
+/**
+ * Asks the user's systemd manager to run stimd as a transient service, which a runner that kills everything a command
+ * started cannot reach (#5084). False where that cannot be asked: no `systemd-run`, no user runtime directory, or
+ * `systemd-run` fails because no user manager answers.
+ */
+function startSystemdService(
   env: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
   command: readonly string[],
-  daemonEnvironment: NodeJS.ProcessEnv,
+  kept: Record<string, string>,
 ): boolean {
-  if (platform !== 'linux' || !env.XDG_RUNTIME_DIR) return false;
+  if (!env.XDG_RUNTIME_DIR) return false;
   const executor = getExecutor();
   const systemdRun = executor.findExecutable('systemd-run', { env });
   if (!systemdRun) return false;
   try {
-    executor.runFile(systemdRun, systemdDaemonArgs(daemonDir(), daemonEnvironment, command), {
-      timeoutMs: SYSTEMD_RUN_TIMEOUT_MS,
-      cwd: daemonDir(),
+    executor.runFile(systemdRun, systemdDaemonArgs(stimdRunDir(), kept, command), {
+      timeoutMs: LAUNCH_TIMEOUT_MS,
+      cwd: stimdRunDir(),
     });
     return true;
   } catch {
@@ -156,34 +272,57 @@ function startDaemonService(
   }
 }
 
+/** Stim Host's launcher, when it is installed, so it becomes the macOS privacy-responsible process of stimd. */
+function stimHost(env: NodeJS.ProcessEnv): string | null {
+  for (const name of ['Stim Host', 'Stim Host Dev']) {
+    const executable = join(userHome(env), 'Applications', `${name}.app`, 'Contents', 'MacOS', 'stim-host');
+    if (existsSync(executable)) return executable;
+  }
+  return null;
+}
+
 /**
- * Starts a daemon; `settled` resolves once it has exited or failed to spawn. With `replace`, the daemon first asks
- * the running daemon with that pid to hand over after its current tick. Where a user systemd manager answers, the
- * daemon runs as its service and `settled` never resolves: `systemd-run` returns once the service starts, which says
- * nothing about the daemon, so the caller keeps polling for its claim.
+ * Starts this build's stimd, `<node> <dist>/cli.mjs __stimd --mode <mode>`: through a transient launchd job on macOS
+ * (under `stim-host run` where Stim Host is installed) and a transient systemd user service on Linux where a user
+ * manager answers, else as a detached process. `settled` resolves once a detached stimd exits; a job or service never
+ * settles, so the caller polls for its claim.
  */
-function spawnDaemon(
+export function launchStimd(
   env: NodeJS.ProcessEnv,
   mode: DaemonMode,
-  replace: number | undefined,
-  platform: NodeJS.Platform,
+  platform: NodeJS.Platform = process.platform,
+  entry: string = spawnEntry('cli'),
+  extra: readonly string[] = [],
 ): { settled: Promise<void>; exited: () => boolean } {
-  mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
-  const args = [
-    spawnEntry('daemon-run'),
-    '--mode',
-    mode,
-    ...(replace === undefined ? [] : ['--replace', String(replace)]),
-  ];
-  const kept = daemonEnv(env);
-  if (startDaemonService(env, platform, [process.execPath, ...args], kept))
-    return { settled: new Promise<void>(() => {}), exited: () => false };
-  const child = getExecutor().spawn(process.execPath, args, {
-    cwd: daemonDir(),
-    detached: true,
+  mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
+  const args = [entry, '__stimd', '--mode', mode, ...extra];
+  const kept = stimdEnv(env, platform);
+  const never = { settled: new Promise<void>(() => {}), exited: () => false };
+  if (platform === 'darwin') {
+    const host = stimHost(env);
+    if (startLaunchdJob([...(host ? [host, 'run'] : []), process.execPath, ...args], kept)) return never;
+  }
+  if (platform === 'linux' && startSystemdService(env, [process.execPath, ...args], kept)) return never;
+  const launcher =
+    platform === 'win32'
+      ? windowsLauncherArgs({
+          entry,
+          args: args.slice(1),
+          cwd: stimdRunDir(),
+          logFile: join(stimdRunDir(), 'stimd.log'),
+        })
+      : null;
+  const child = getExecutor().spawn(launcher?.file ?? process.execPath, launcher?.args ?? args, {
+    cwd: stimdRunDir(),
+    detached: !launcher,
     stdio: 'ignore',
-    env: kept,
+    env: { ...kept, ...launcher?.env },
+    ...(launcher ? { windowsHide: true } : {}),
   });
+  if (launcher) {
+    child.on?.('error', () => {});
+    return never;
+  }
   let exited = false;
   const settled = new Promise<void>((done) => {
     const end = () => {
@@ -197,136 +336,248 @@ function spawnDaemon(
   return { settled, exited: () => exited };
 }
 
-/** Whether a live daemon claim shows up within `CLAIM_WAIT_MS`, checking again as soon as the started daemon exits. */
-async function claimTaken({ settled, exited }: ReturnType<typeof spawnDaemon>): Promise<boolean> {
+/** Whether a live stimd claim shows up within `CLAIM_WAIT_MS`, checking again as soon as the started stimd exits. */
+async function claimTaken({ settled, exited }: ReturnType<typeof launchStimd>): Promise<boolean> {
   const deadline = Date.now() + CLAIM_WAIT_MS;
   for (;;) {
-    if (daemonLive()) return true;
-    if (exited() || Date.now() >= deadline) return daemonLive();
+    if (stimdLive()) return true;
+    if (exited() || Date.now() >= deadline) return stimdLive();
     await Promise.race([new Promise((done) => setTimeout(done, CLAIM_POLL_MS)), settled]);
   }
 }
 
 /**
- * Waits up to `CLAIM_WAIT_MS` for the daemon taking over this home to take its claim. True once it does, and also
- * while the takeover still runs, so no command starts a daemon or runs the passes in its place meanwhile; false when
- * the takeover ended without a daemon.
+ * Makes sure this home's stimd runs before a command creates running state: tells a live one about the contact so it
+ * does not exit under the command, or starts one in the mode this command resolves, `STIM_DAEMON` included, and waits
+ * up to five seconds for it to take its claim. Returns whether a stimd holds the home; an unresolvable daemon claim is
+ * reported and counts as held.
  */
-async function handoverSettled(): Promise<boolean> {
-  const deadline = Date.now() + CLAIM_WAIT_MS;
-  while (!daemonLive() && handoverInProgress() && Date.now() < deadline)
-    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
-  return daemonLive() || handoverInProgress();
-}
-
-/**
- * Makes sure this home's daemon runs before a command creates running state: tells a live one about the contact so
- * it does not exit under the command, or starts one in the mode this command resolves, `STIM_DAEMON` included, and
- * waits up to five seconds for it to take the claim. An installed build replaces a live daemon that reports no installed
- * build or an older Stim version: the daemon keeps serving the command while a new one from this build waits to take
- * over after its current tick. A development build never replaces a daemon, and no command starts a daemon while
- * one takes over. Returns whether a daemon holds the home; a claim Stim cannot resolve is reported
- * and counts as held.
- */
-export async function ensureDaemon(
+export async function ensureStimd(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
+  pin = false,
+  held?: Socket[],
 ): Promise<boolean> {
-  if (!spawnsDaemon(env, platform)) return false;
-  const mode = daemonMode(env);
+  if (!spawnsDaemon(env)) return false;
   try {
-    const survey = readClaimSet(daemonClaimRoot());
-    const [claim] = survey.unresolved;
+    const [claim] = [...readClaimSet(daemonClaimRoot()).unresolved, ...readClaimSet(stimdClaimRoot()).unresolved];
     if (claim) {
       console.error(
-        `Stim: the stim-daemon claim at ${claim.path} cannot be resolved (${claim.reason}), so no daemon decides idle in this Stim home. If no stim-daemon process runs, remove it with \`${claimRemoveCommand(claim.path)}\`.`,
+        `Stim: the claim at ${claim.path} cannot be resolved (${claim.reason}), so no stimd decides idle in this Stim home. If no stimd or stim-daemon process runs, remove it with \`${claimRemoveCommand(claim.path)}\`.`,
       );
       return true;
     }
-    const running = survey.live.length ? await askDaemon('hello', CONTACT_TIMEOUT_MS) : null;
-    if (running) {
-      const own = stimBuild();
-      const older =
-        typeof running.build !== 'string' ||
-        (typeof running.version === 'string' && (compareStimVersions(own.version, running.version) ?? 0) > 0);
-      if (own.installed && older && typeof running.pid === 'number' && !handoverInProgress())
-        spawnDaemon(env, mode, running.pid, platform);
+    admitting = pin && !held;
+    if (stimdLive()) {
+      if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
+      else if (!(await beginOp(held)) && stimdRefused() && (await successorBound())) await beginOp(held);
       return true;
     }
-    if (handoverInProgress() && (await handoverSettled())) return true;
-    return await claimTaken(spawnDaemon(env, mode, undefined, platform));
+    const taken = await claimTaken(launchStimd(env, daemonMode(env), platform));
+    if (taken && pin) await beginOp(held);
+    return taken;
   } catch {
     return false;
+  } finally {
+    admitting = false;
+    delete process.env.STIM_REEXEC;
   }
+}
+
+/**
+ * Sends `op.begin` and keeps the connection open until this process exits, which is the op's `op.end`: until then
+ * stimd counts the command's work as pinned, except while it waits at a build slot (`opWaiting`). With `held`, an API
+ * operation's, the connection goes into it instead, and closing it ends the op. stimd answers at once, or after a
+ * switch already under way, with `engine-changed`. False when it does not answer.
+ */
+function beginOp(held?: Socket[]): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (begun: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (following) return;
+      if (begun) {
+        if (held) held.push(socket);
+        else opSocket = socket;
+        socket.unref();
+      } else socket.destroy();
+      resolve(begun);
+    };
+    const timer = setTimeout(() => finish(false), OP_BEGIN_TIMEOUT_MS);
+    const socket = openStimd([{ op: 'op.begin' }], (reply) => finish(reply.op === 'op.begun'));
+    socket.once('close', () => {
+      if (opSocket === socket) opSocket = null;
+      finish(false);
+    });
+  });
+}
+
+/** Whether a stimd of this build replaced, within `CLAIM_WAIT_MS`, the one of an older build that refused it. */
+async function successorBound(): Promise<boolean> {
+  for (const deadline = Date.now() + CLAIM_WAIT_MS; Date.now() < deadline;) {
+    if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
+      refusedBuild = null;
+      return true;
+    }
+    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
+  }
+  return false;
+}
+
+/** Tells stimd that this command's op waits at a build slot (`true`), so its work is not pinned, or runs again. */
+export function opWaiting(waiting: boolean): void {
+  opSocket?.write(`${JSON.stringify({ op: waiting ? 'op.wait' : 'op.resume' })}\n`);
 }
 
 const DAEMON_COMMANDS = ['start', 'ios', 'android', 'web', 'macos', 'revive'];
 const INLINE_COMMANDS = ['doctor', 'start', 'ios', 'android'];
-/** Commands that never run the passes: `gc` runs its own, `agent-device` runs once per UI action, `engine` manages the store. */
-const PASSLESS_COMMANDS = ['guide', 'settings', 'help', 'gc', 'agent-device', 'engine'];
-
-export type PassPlacement = 'inline' | 'background' | 'none';
-
-/**
- * Where a top-level command runs the in-process passes when no daemon holds the home. `doctor`, `start`, `ios` and
- * `android` run them before the command; on a platform with no daemon every other command but `guide`, `settings`,
- * `help`, `gc` and `agent-device` starts them in a detached child, at most once a minute.
- */
-export function passPlacement(name: string, platform: NodeJS.Platform = process.platform): PassPlacement {
-  if (INLINE_COMMANDS.includes(name)) return 'inline';
-  return !platformHasDaemon(platform) && !PASSLESS_COMMANDS.includes(name) ? 'background' : 'none';
-}
 
 /**
  * Before a top-level command runs: commands that create running state record the use of their workspace (unless
- * `recordUse` is false, for an operation that records it itself) and make sure the home's daemon runs; unless `passes`
- * is false, the commands `passPlacement` names run the in-process passes (maintenance, the activity pass over
- * workspaces with no dev server, the pressure ladder), never taking the command's own workspace, the registered
- * workspace containing `cwd`.
+ * `recordUse` is false, for an operation that records it itself) and make sure the home's stimd runs; unless `passes`
+ * is false, `doctor`, `start`, `ios` and `android` run the in-process passes (maintenance, the activity pass over
+ * workspaces with no dev server, the pressure ladder) when no stimd holds the home, never taking the command's own
+ * workspace, the registered workspace containing `cwd`.
  */
 export async function beforeCommand(
   name: string,
   env: NodeJS.ProcessEnv = process.env,
-  { cwd, recordUse, passes }: { cwd: string; recordUse: boolean; passes: boolean } = {
+  {
+    cwd,
+    recordUse,
+    passes,
+    pin = false,
+    held,
+  }: { cwd: string; recordUse: boolean; passes: boolean; pin?: boolean; held?: Socket[] } = {
     cwd: process.cwd(),
     recordUse: true,
     passes: true,
   },
 ): Promise<void> {
   const creates = DAEMON_COMMANDS.includes(name);
-  const placement = passes ? passPlacement(name) : 'none';
-  if (!creates && placement === 'none') return;
+  const inline = passes && INLINE_COMMANDS.includes(name);
+  if (!creates && !inline) return;
   const { commandWorkspace } = await import('./command-workspace.ts');
   const root = commandWorkspace(creates && recordUse, env, cwd);
-  const held = creates && (await ensureDaemon(env));
-  if (held || placement === 'none') return;
-  if (placement === 'background') {
-    const { spawnBackgroundPasses } = await import('./background.ts');
-    spawnBackgroundPasses(name, env);
-    return;
-  }
+  const taken = creates && (await ensureStimd(env, process.platform, pin, held));
+  if (taken || !inline) return;
   const { runPassesInProcess } = await import('./passes.ts');
   await runPassesInProcess(name, env, root);
 }
 
-function send(op: string): void {
-  if (!daemonLive()) return;
-  const socket = connect(daemonSocket());
+function send(message: Record<string, unknown>): void {
+  if (!stimdLive()) return;
+  const socket = openStimd([message], () => socket.end());
   socket.setTimeout(CONTACT_TIMEOUT_MS, () => socket.destroy());
-  socket.once('error', () => {});
-  socket.once('connect', () => socket.end(`${JSON.stringify({ op })}\n`));
+}
+
+/**
+ * Hands one agent action's presence to this home's stimd, which forwards it to the clients that show presence. Never
+ * starts a stimd and never fails the action.
+ */
+export async function publishPresence(params: PresencePublishParams, timeoutMs: number): Promise<void> {
+  if (stimdLive()) await askStimd('presence.publish', timeoutMs, { params });
+}
+
+/** Whether the net thread serves, on which port, or why it does not. */
+export type NetAnswer = { listening: true; port: number } | { listening: false; message: string };
+
+const NET_START_MS = 60_000;
+
+function netAnswer(reply: Record<string, unknown> | null): NetAnswer | null {
+  if (reply?.op !== 'net') return null;
+  return reply.listening === true && typeof reply.port === 'number'
+    ? { listening: true, port: reply.port }
+    : { listening: false, message: String(reply.message) };
+}
+
+/**
+ * Asks this home's stimd to start its net thread, for a web share (`share`: loopback only, ending with its last share)
+ * or a pairing. A web share starts a stimd first when none runs, whatever `daemon.mode` says; a pairing only where
+ * `daemon.mode` lets commands start one. Null when no stimd answers.
+ */
+export async function ensureNet(share: boolean, env: NodeJS.ProcessEnv = process.env): Promise<NetAnswer | null> {
+  if (!stimdLive() && (!(share || spawnsDaemon(env)) || !(await claimTaken(launchStimd(env, daemonMode(env))))))
+    return null;
+  return netAnswer(await askStimd('net.ensure', NET_START_MS, share ? { params: { share: true } } : {}));
+}
+
+/**
+ * Asks the stimd that holds this home to start its net thread on `port`, for a `stim serve` that found one running, and
+ * resolves once that stimd closes the connection. A net thread that already runs keeps its own port and options.
+ */
+export function serveThroughStimd(
+  params: { port: number; loopbackOnly: boolean; extraEnv: string[]; pathPrepend: string[] },
+  onAnswer: (answer: NetAnswer | null) => void,
+): Promise<void> {
+  return new Promise((done) => {
+    const socket = openStimd([{ op: 'net.ensure', params }], (reply) => onAnswer(netAnswer(reply)));
+    socket.once('close', () => done());
+  });
+}
+
+/**
+ * A connection to this home's net thread through stimd's CLI socket, past its `net.connected` answer, on which the
+ * caller speaks stim-server's WebSocket protocol as a local client. Null when no stimd or no net thread answers.
+ */
+export function connectNet(timeoutMs: number): Promise<Socket | null> {
+  if (!stimdLive()) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const socket = connect(stimdSocket());
+    let buffer = Buffer.alloc(0);
+    let lines = 0;
+    const finish = (connected: boolean) => {
+      clearTimeout(timer);
+      socket.off('data', data);
+      if (!connected) socket.destroy();
+      resolve(connected ? socket : null);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const data = (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      for (let end = buffer.indexOf(10); end >= 0; end = buffer.indexOf(10)) {
+        let message: unknown;
+        try {
+          message = JSON.parse(buffer.subarray(0, end).toString('utf8'));
+        } catch {}
+        buffer = buffer.subarray(end + 1);
+        if (++lines === 2) return finish(isJsonObject(message) && message.op === 'net.connected');
+      }
+    };
+    socket.on('data', data);
+    socket.once('error', () => finish(false));
+    socket.once('close', () => finish(false));
+    socket.once('connect', () => {
+      // compat C26 permanent
+      const first = { kind: 'cli', build: stimdBuildId() };
+      // compat end
+      socket.write(`${JSON.stringify(first)}\n${JSON.stringify({ op: 'net.connect' })}\n`);
+    });
+  });
 }
 
 export type DaemonResource = 'build' | 'boot';
 
 const OPS: Record<DaemonResource, { wait: string; released: string; changed: string; what: string }> = {
-  build: { wait: 'slot.wait', released: 'slot.released', changed: 'slot.changed', what: 'build slot' },
-  boot: { wait: 'boot.wait', released: 'boot.released', changed: 'boot.changed', what: 'device boot' },
+  build: {
+    wait: 'slot.wait',
+    released: 'slot.released',
+    changed: 'slot.changed',
+    what: 'build slot',
+  },
+  boot: {
+    wait: 'boot.wait',
+    released: 'boot.released',
+    changed: 'boot.changed',
+    what: 'device boot',
+  },
 };
 
-/** Tells a live daemon that this process released a build slot or finished a boot, so it wakes the oldest waiter. */
+/** Tells a live stimd that this process released a build slot or finished a boot, so it wakes the oldest waiter. */
 export function notifyReleased(resource: DaemonResource): void {
-  send(OPS[resource].released);
+  send({ op: OPS[resource].released });
 }
 
 export interface DaemonWaiter {
@@ -335,9 +586,9 @@ export interface DaemonWaiter {
 }
 
 /**
- * Subscribes once to the daemon's releases of `resource` for one acquisition, so the oldest waiting run retries as
- * soon as one frees instead of on its next poll; a release that arrives while it is trying counts for its next wait.
- * Without a reachable daemon each wait is a plain sleep.
+ * Subscribes once to stimd's releases of `resource` for one acquisition, so the oldest waiting run retries as soon as
+ * one frees instead of on its next poll; a release that arrives while it is trying counts for its next wait. Without a
+ * reachable stimd each wait is a plain sleep.
  */
 export function daemonWaiter(resource: DaemonResource): DaemonWaiter {
   const ops = OPS[resource];
@@ -345,17 +596,17 @@ export function daemonWaiter(resource: DaemonResource): DaemonWaiter {
   let released = false;
   let wake: (() => void) | null = null;
   const subscribe = () => {
-    if (socket || !daemonLive()) return;
-    const opened = connect(daemonSocket());
+    if (socket || !stimdLive()) return;
+    const opened = openStimd(
+      [{ op: ops.wait }],
+      (message) => {
+        if (message.op !== ops.changed) return;
+        released = true;
+        wake?.();
+      },
+      true,
+    );
     socket = opened;
-    opened.setEncoding('utf8');
-    opened.once('connect', () => opened.write(`${JSON.stringify({ op: ops.wait })}\n`));
-    opened.on('data', (chunk: string) => {
-      if (!chunk.includes(`"${ops.changed}"`)) return;
-      released = true;
-      wake?.();
-    });
-    opened.once('error', () => {});
     opened.once('close', () => {
       if (socket === opened) socket = null;
     });
@@ -372,7 +623,10 @@ export function daemonWaiter(resource: DaemonResource): DaemonWaiter {
       signal?.addEventListener('abort', abort, { once: true });
       wake = abort;
       try {
-        await cancellableSleep(ms, { signal: controller.signal, what: ops.what });
+        await cancellableSleep(ms, {
+          signal: controller.signal,
+          what: ops.what,
+        });
       } catch (error) {
         if (signal?.aborted || !released) throw error;
       } finally {
@@ -391,10 +645,9 @@ export function daemonWaiter(resource: DaemonResource): DaemonWaiter {
 const TICK_REPLY_TIMEOUT_MS = 10 * 60_000;
 const START_WAIT_MS = 3000;
 
-/** Asks the daemon for one tick; false when it closes or fails without answering. */
+/** Asks stimd for one tick; false when it closes or fails without answering. */
 function tickOnce(timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
   return new Promise((resolve) => {
-    const socket = connect(daemonSocket());
     let answered = false;
     const finish = (ticked: boolean) => {
       if (answered) return;
@@ -407,36 +660,22 @@ function tickOnce(timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
     const abort = () => finish(true);
     const timer = setTimeout(() => finish(true), timeoutMs);
     signal?.addEventListener('abort', abort, { once: true });
-    socket.setEncoding('utf8');
-    socket.once('error', () => finish(false));
-    socket.once('close', () => finish(answered));
-    socket.once('connect', () => socket.write(`${JSON.stringify({ op: 'tick' })}\n`));
-    socket.on('data', (chunk: string) => {
-      if (chunk.includes('"ticked"')) finish(true);
+    const socket = openStimd([{ op: 'tick' }], (message) => {
+      if (message.op === 'ticked') finish(true);
     });
+    socket.once('close', () => finish(false));
   });
 }
 
 /**
- * Asks this home's daemon for a tick now and waits for it to finish, waiting briefly for a daemon this command just
- * started. A daemon that exits without answering, as one handing over to another build does, passes the request to
- * the daemon that holds or takes the claim next. False when no daemon runs, so the caller runs the passes itself.
+ * Asks this home's stimd for a tick now and waits for it to finish, waiting briefly for a stimd this command just
+ * started. False when no stimd runs or it closes without answering, so the caller runs the passes itself.
  */
 export async function requestDaemonTick(env: NodeJS.ProcessEnv = process.env, signal?: AbortSignal): Promise<boolean> {
   if (!spawnsDaemon(env)) return false;
-  const coming = () => daemonLive() || handoverInProgress();
-  for (let waited = 0; !coming(); waited += 100) {
+  for (let waited = 0; !stimdLive(); waited += 100) {
     if (waited >= START_WAIT_MS) return false;
-    await cancellableSleep(100, { signal, what: 'stim-daemon' });
+    await cancellableSleep(100, { signal, what: 'stimd' });
   }
-  const deadline = Date.now() + TICK_REPLY_TIMEOUT_MS;
-  for (;;) {
-    if (await tickOnce(deadline - Date.now(), signal)) return true;
-    if (!coming()) return false;
-    try {
-      await cancellableSleep(100, { signal, what: 'stim-daemon' });
-    } catch {
-      return true;
-    }
-  }
+  return tickOnce(TICK_REPLY_TIMEOUT_MS, signal);
 }

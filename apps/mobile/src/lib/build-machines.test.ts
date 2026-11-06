@@ -82,7 +82,7 @@ describe('machineReadiness', () => {
       'outdated',
       'Server is outdated',
       'warning',
-      'on mini, run stim service update --release <version>, then run stim remote add mini on the computer this phone is paired with',
+      'on mini, run stim remote update mini from the paired computer (or stim engine update on mini)',
     ],
     ['not-on-tailnet', 'Not on the tailnet', 'warning', null],
     ['tailscale-off', 'Tailscale is off', 'warning', null],

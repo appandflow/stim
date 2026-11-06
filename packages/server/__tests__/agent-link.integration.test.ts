@@ -113,7 +113,6 @@ async function start(extra: Partial<Parameters<typeof startServer>[0]> = {}): Pr
   server = await startServer({
     hosts: ['127.0.0.1'],
     port: 0,
-    localSocket: null,
     stimCli,
     name: 'Worker',
     stimVersion: '9.9.9',

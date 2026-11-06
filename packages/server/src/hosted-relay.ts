@@ -39,7 +39,7 @@ const RECONNECT_WINDOW_MS = 3 * 60_000;
 const FATAL_HOST_ERRORS = new Set<string>(['forbidden', 'unauthorized', 'unknown-session', 'protocol-unsupported']);
 
 /** A host answer a retry cannot change: the approval ended, or the session is gone. */
-class FatalHostError extends Error {}
+export class FatalHostError extends Error {}
 
 const hostError = (error: ProtocolError): Error =>
   FATAL_HOST_ERRORS.has(error.code) ? new FatalHostError(error.message) : new Error(error.message);
@@ -83,6 +83,7 @@ export class Upstream {
   /** The host's `peer`, 0 when its `hello` sends none, and the version of the `stim` it runs. */
   peer = 0;
   stim = 'an older stim';
+  channel: 'latest' | 'next' = 'latest';
   onClose: (() => void) | null = null;
   connectMs = 0;
   helloMs = 0;
@@ -204,6 +205,7 @@ export class Upstream {
     if (typeof reply.result.peer === 'number') this.peer = reply.result.peer;
     if (isJsonObject(reply.result.server) && typeof reply.result.server.stim === 'string')
       this.stim = reply.result.server.stim;
+    if (isJsonObject(reply.result.server) && reply.result.server.channel === 'next') this.channel = 'next';
   }
 
   request(method: string, params: unknown): Promise<Reply> {

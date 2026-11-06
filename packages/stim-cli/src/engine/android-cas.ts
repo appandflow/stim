@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   accessSync,
   constants,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -10,7 +11,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { quotedPath } from '@stim-cli/core';
 import { register } from '../cache/cache-manifest.ts';
@@ -164,13 +165,20 @@ export function resolveAndroidCas(
   const context = join(state, 'context.json');
   mkdirSync(state, { recursive: true });
   mkdirSync(dir, { recursive: true });
+  const copies = scripts.map((path) => join(state, basename(path)));
   withDirLock(join(state, 'setup.lock'), () => {
+    for (const path of scripts) {
+      const copy = join(state, basename(path));
+      const temporary = `${copy}.${randomUUID()}.tmp`;
+      copyFileSync(path, temporary);
+      renameSync(temporary, copy);
+    }
     for (const name of ['clang', 'clang++']) {
       const path = join(state, name);
       const temporary = `${path}.${randomUUID()}.tmp`;
       writeFileSync(
         temporary,
-        `#!/bin/sh\nexec ${quotedPath(process.execPath)} --input-type=module --eval ${quotedPath(`import ${JSON.stringify(pathToFileURL(scripts[3]!).href)}`)} "$0" "$@"\n`,
+        `#!/bin/sh\nexec ${quotedPath(process.execPath)} --input-type=module --eval ${quotedPath(`import ${JSON.stringify(pathToFileURL(copies[3]!).href)}`)} "$0" "$@"\n`,
         { mode: 0o755 },
       );
       renameSync(temporary, path);
@@ -189,7 +197,7 @@ export function resolveAndroidCas(
   return {
     id,
     dir,
-    initScript: scripts[0]!,
+    initScript: copies[0]!,
     env: {
       STIM_ANDROID_CAS_CONTEXT: context,
       STIM_ANDROID_CAS_SOURCE_ROOT: realpathSync(casSourceRoot(root, layout)),
@@ -198,8 +206,8 @@ export function resolveAndroidCas(
       STIM_ANDROID_CAS_NDK_VERSION: ndkVersion,
       STIM_ANDROID_CAS_AR: toolchain.ar,
       STIM_ANDROID_CAS_RANLIB: toolchain.ranlib,
-      STIM_ANDROID_CAS_CMAKE_TOOLCHAIN: scripts[1]!,
-      STIM_ANDROID_CAS_CMAKE_PCH: scripts[2]!,
+      STIM_ANDROID_CAS_CMAKE_TOOLCHAIN: copies[1]!,
+      STIM_ANDROID_CAS_CMAKE_PCH: copies[2]!,
       CMAKE_C_COMPILER_LAUNCHER: '',
       CMAKE_CXX_COMPILER_LAUNCHER: '',
       CCACHE_DISABLE: '1',

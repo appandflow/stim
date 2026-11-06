@@ -13,7 +13,7 @@ import {
 import { existsSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTreeAsync, pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../stimd/metro/stop-cause.ts';
-import { ensureDaemon } from '../daemon/client.ts';
+import { ensureStimd } from '../daemon/client.ts';
 import { readBootedParkDeadline } from './booted-park.ts';
 import {
   teardownOwnedBrowser,
@@ -296,7 +296,7 @@ async function reclaimOwnedDevices(
       if (r.parked) {
         parkedDevices.push(r.parked);
         evictedDevices.push(...(r.evicted ?? []));
-        if (bootedUntil) await ensureDaemon();
+        if (bootedUntil) await ensureStimd();
       } else if (r.status === 'torn-down') deletedDevices.push(r.label as string);
       if (!r.parked && (r.status === 'torn-down' || r.status === 'missing')) {
         await withConfigLockAsync(() => clearDevice(projectPath, 'ios', slot, udid));

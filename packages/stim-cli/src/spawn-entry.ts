@@ -10,8 +10,9 @@ export type SpawnEntryName =
   | 'collector-run'
   | 'web-run'
   | 'macos-run'
-  | 'daemon-run'
-  | 'passes-run'
+  | 'stimd-thread'
+  | 'stimd-status'
+  | 'net-thread'
   | 'engine-select'
   | '__self-test';
 
@@ -21,8 +22,9 @@ const DEV_ENTRIES: Record<SpawnEntryName, string> = {
   'collector-run': './collector/run.ts',
   'web-run': './web/run.ts',
   'macos-run': './macos/run.ts',
-  'daemon-run': './daemon/run.ts',
-  'passes-run': './daemon/passes-run.ts',
+  'stimd-thread': './stimd/threads.ts',
+  'stimd-status': './stimd/status-thread.ts',
+  'net-thread': '../../server/src/net-thread.ts',
   'engine-select': '../bin/engine-select.ts',
   '__self-test': '../bin/self-test.ts',
 };

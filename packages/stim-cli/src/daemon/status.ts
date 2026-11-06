@@ -59,16 +59,10 @@ function clock(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
-export function daemonLine(
-  status: DaemonStatus,
-  now: number = Date.now(),
-  platform: NodeJS.Platform = process.platform,
-): string {
+export function daemonLine(status: DaemonStatus, now: number = Date.now()): string {
   const claim = status.claim ? `; unresolved claim ${status.claim.unresolved}; ${status.claim.removeCommand}` : '';
   if (status.mode === 'off' && !status.running)
     return `Daemon: off (daemon.mode); each dev server supervisor times its own idle stop${claim}`;
-  if (platform === 'win32' && !status.running)
-    return `Daemon: none on Windows; start, ios, android and doctor run the passes in their own process and other commands in the background (daemon.mode ${status.mode})${claim}`;
   const tickAt = Date.parse(status.lastTickAt ?? '');
   const tick = Number.isFinite(tickAt)
     ? `last tick ${formatLongDuration(Math.max(0, now - tickAt))} ago`
@@ -118,11 +112,7 @@ function servingWorkspaces(): string[] {
 /** A stuck daemon claim, a daemon that stopped ticking, or no daemon while a dev server runs. */
 export function daemonFindings(
   status: DaemonStatus,
-  {
-    now = Date.now(),
-    serving = servingWorkspaces,
-    platform = process.platform,
-  }: { now?: number; serving?: () => string[]; platform?: NodeJS.Platform } = {},
+  { now = Date.now(), serving = servingWorkspaces }: { now?: number; serving?: () => string[] } = {},
 ): Finding[] {
   const findings: Finding[] = [];
   if (status.claim)
@@ -145,7 +135,7 @@ export function daemonFindings(
       detail: `stim-daemon pid ${status.running.pid} holds its claim, but its last tick was ${Number.isFinite(tickAt) ? `${formatLongDuration(now - tickAt)} ago` : 'never written'}, so idle workspaces are not stopped and dev server supervisors stand down. Its log is ${daemonNdjsonFile()}.`,
       fix: `Stop it with \`kill ${status.running.pid}\`; the next stim start, ios or android starts a new one.`,
     });
-  if (!status.running && !status.claim && platform !== 'win32') {
+  if (!status.running && !status.claim) {
     const running = serving();
     if (running.length)
       findings.push({

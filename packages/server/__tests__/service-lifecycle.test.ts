@@ -17,10 +17,9 @@ import {
   installJob,
   installService,
   recordServiceRoute,
-  rollbackService,
+  rewriteUnitToShim,
   serviceStatus,
   uninstallService,
-  updateService,
 } from '../src/service.ts';
 import { serverBuild } from '../src/release-install.ts';
 import { parseInstalledPlist, renderPlist } from '../src/service-plist.ts';
@@ -35,7 +34,6 @@ const launchd = vi.hoisted(() => ({
   exitAfterHealth: false,
   startup: 'ready',
   healthUnavailable: false,
-  staleHealth: false,
   unrelatedPort: null as number | null,
   listenerOutput: '456\n',
   replaceListener: false,
@@ -43,10 +41,6 @@ const launchd = vi.hoisted(() => ({
   spawnUntil: 0,
   failRestore: false,
   failBootout: false,
-  busyWork: false,
-  hostedSessions: 0,
-  hostedWork: 0,
-  resumes: false,
   bootstraps: [] as { plist: string; portBusy: boolean }[],
 }));
 
@@ -181,7 +175,6 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
       exitAfterHealth: false,
       startup: 'ready',
       healthUnavailable: false,
-      staleHealth: false,
       unrelatedPort: null,
       listenerOutput: '456\n',
       replaceListener: false,
@@ -189,10 +182,6 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
       spawnUntil: 0,
       failRestore: false,
       failBootout: false,
-      busyWork: false,
-      hostedSessions: 0,
-      hostedWork: 0,
-      resumes: false,
       bootstraps: [],
     });
     launchd.original = renderPlist({
@@ -215,7 +204,7 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
         const port = Number(new URL(url).port);
         if (!launchd.job && (port !== 7787 || Date.now() >= launchd.busyUntil)) throw new Error('connection refused');
         if (launchd.job === 'new' && Date.now() < launchd.spawnUntil) throw new Error('connection refused');
-        if (launchd.job === 'new' && ((launchd.failNew && !launchd.staleHealth) || launchd.healthUnavailable)) {
+        if (launchd.job === 'new' && (launchd.failNew || launchd.healthUnavailable)) {
           throw new Error('connection refused');
         }
         if (launchd.job === 'new' && launchd.exitAfterHealth) launchd.failNew = true;
@@ -223,11 +212,6 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
           JSON.stringify({
             server: 'stim-server',
             version: '1.0.0',
-            busy: {
-              builds: launchd.job === 'old' && launchd.busyWork ? 1 : 0,
-              hostedSessions: launchd.job === 'old' ? (launchd.busyWork ? 1 : launchd.hostedSessions) : 0,
-              ...(launchd.resumes ? { hostedWork: launchd.hostedWork, resumes: true } : {}),
-            },
             startup: { state: launchd.startup, reason: 'Stim home unavailable' },
           }),
         );
@@ -315,6 +299,74 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
         JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' })),
       )?.env,
     ).toEqual(['ANDROID_HOME=/sdk']);
+  });
+
+  const installedPlist = () =>
+    parseInstalledPlist(
+      JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' })),
+    );
+
+  const engineShim = () => {
+    const shim = join(home, 'engine', 'bin', 'stimd');
+    mkdirSync(dirname(shim), { recursive: true });
+    writeFileSync(shim, '#!/bin/sh\n', { mode: 0o755 });
+    vi.stubEnv('STIM_ENGINE_ROOT', join(home, 'engine'));
+    return shim;
+  };
+
+  it("names the engine store's stimd shim with the server's options when the store has one", async () => {
+    const shim = engineShim();
+    const host = {
+      app: '/tmp/Stim Host.app',
+      executable: '/tmp/Stim Host.app/Contents/MacOS/stim-host',
+      name: 'Stim Host',
+      bundleId: 'dev.stim.host',
+      replaced: false,
+      adHoc: false,
+    };
+    await finish(
+      installJob(
+        { label, port: launchd.port, env: ['ANDROID_HOME=/sdk'], pathPrepend: ['/jdk/bin'], serve: false },
+        { script: process.argv[1] ?? '', host, requestPermissions: false },
+      ),
+    );
+    expect(installedPlist()).toMatchObject({
+      host: host.executable,
+      node: null,
+      script: shim,
+      port: launchd.port,
+      env: ['ANDROID_HOME=/sdk'],
+      pathPrepend: ['/jdk/bin'],
+      programArguments: [
+        host.executable,
+        'run',
+        shim,
+        '--service',
+        '--port',
+        String(launchd.port),
+        '--env',
+        'ANDROID_HOME',
+        '--path-prepend',
+        '/jdk/bin',
+      ],
+    });
+  });
+
+  it('rewrites a LaunchAgent that names node and a script to the shim once, keeping its options and environment', async () => {
+    const shim = engineShim();
+    const before = installedPlist();
+    expect(before?.node).toBe(process.execPath);
+    expect(await rewriteUnitToShim(label)).toBe(true);
+    expect(installedPlist()).toMatchObject({
+      host: before?.host,
+      node: null,
+      script: shim,
+      port: before?.port,
+      stimHome: before?.stimHome,
+      programArguments: [before?.host, 'run', shim, '--service', '--port', String(before?.port)],
+    });
+    expect(launchd.bootstraps).toEqual([]);
+    expect(await rewriteUnitToShim(label)).toBe(false);
   });
 
   it('waits for the old child listener to release the port before bootstrapping', async () => {
@@ -456,85 +508,5 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
           : 'readiness is unavailable',
     );
     expect(launchd.job).toBe('new');
-  });
-
-  it.each([undefined, false])(
-    'updates with active work only when idle waiting is disabled (wait=%s)',
-    async (waitForWork) => {
-      const wait = waitForWork !== false;
-      launchd.busyWork = true;
-      const lines: string[] = [];
-      const updating = updateService(label, { release: '1.0.0' }, (line) => lines.push(line), waitForWork);
-      await vi.advanceTimersByTimeAsync(1000);
-      expect(launchd.job).toBe(wait ? 'old' : 'new');
-      expect(lines.some((line) => line.startsWith('Waiting for'))).toBe(wait);
-      launchd.busyWork = false;
-      await finish(updating);
-      expect(launchd.job).toBe('new');
-      const updated = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' }));
-      expect(parseInstalledPlist(updated)?.previousScript).toBe(join(home, 'old-server.mjs'));
-    },
-  );
-
-  it.each([
-    [
-      'a server that resumes its sessions does not wait for them',
-      { resumes: true, hostedSessions: 2, hostedWork: 0 },
-      false,
-    ],
-    [
-      'a server that resumes still waits for a native step in flight',
-      { resumes: true, hostedSessions: 2, hostedWork: 1 },
-      true,
-    ],
-    [
-      'an older server that stops its sessions at shutdown is waited for',
-      { resumes: false, hostedSessions: 2, hostedWork: 0 },
-      true,
-    ],
-  ])('%s', async (_name, state, waits) => {
-    Object.assign(launchd, state);
-    const lines: string[] = [];
-    const updating = updateService(label, { release: '1.0.0' }, (line) => lines.push(line));
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(launchd.job).toBe(waits ? 'old' : 'new');
-    expect(lines.some((line) => line.startsWith('Waiting for'))).toBe(waits);
-    Object.assign(launchd, { hostedSessions: 0, hostedWork: 0 });
-    await finish(updating);
-    expect(launchd.job).toBe('new');
-  });
-
-  it('a rollback still waits for hosted sessions a resuming server would leave running', async () => {
-    const target = join(home, 'previous', 'dist', 'stim-server.mjs');
-    mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(target, '');
-    writeFileSync(join(dirname(target), '..', 'package.json'), JSON.stringify({ version: '1.0.0' }));
-    execFileSync('plutil', ['-replace', 'StimService.PreviousScript', '-string', target, plist]);
-    Object.assign(launchd, { resumes: true, hostedSessions: 1, hostedWork: 0 });
-    const lines: string[] = [];
-    const rolling = rollbackService(label, (line) => lines.push(line));
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(launchd.job).toBe('old');
-    expect(lines.some((line) => line.startsWith('Waiting for'))).toBe(true);
-    Object.assign(launchd, { hostedSessions: 0 });
-    await finish(rolling);
-    expect(launchd.job).toBe('new');
-  });
-
-  it('restores the current service when the rollback job exits despite matching stale health', async () => {
-    const target = join(home, 'previous', 'dist', 'stim-server.mjs');
-    mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(target, '');
-    writeFileSync(join(dirname(target), '..', 'package.json'), JSON.stringify({ version: '1.0.0' }));
-    execFileSync('plutil', ['-replace', 'StimService.PreviousScript', '-string', target, plist]);
-    launchd.original = readFileSync(plist, 'utf8');
-    launchd.failNew = true;
-    launchd.staleHealth = true;
-    await Promise.all([
-      expect(rollbackService(label, () => {})).rejects.toThrow('Switched back to stim-server 1.0.0'),
-      vi.runAllTimersAsync(),
-    ]);
-    expect(readFileSync(plist, 'utf8')).toBe(launchd.original);
-    expect(launchd.job).toBe('old');
   });
 });

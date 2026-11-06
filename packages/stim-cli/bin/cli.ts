@@ -5,6 +5,17 @@ import { runId, trace } from '@stim-cli/core/state';
 import { debugLog } from '../src/debug-log.ts';
 import { refuseRelativeStimPaths } from '../src/workspace/config.ts';
 
+if (process.argv[2] === '__stimd') {
+  await (await import('../src/stimd/main.ts')).runStimdEntry(process.argv.slice(3));
+  process.exit();
+}
+
+if (process.argv[2] === '__job') {
+  const code = await (await import('../src/job/main.ts')).runJobEntry(process.argv.slice(3));
+  await new Promise((resolve) => process.stdout.write('', resolve));
+  process.exit(code);
+}
+
 type CommandModule = { default: (program: Command, version: string) => void };
 
 const commands = new Map<string, () => Promise<CommandModule>>([
@@ -49,6 +60,7 @@ export interface MainContext {
 
 /** Runs the CLI for `argv`, in `process.argv`'s shape. */
 export async function main(argv: string[], ctx: MainContext = {}): Promise<void> {
+  Reflect.set(globalThis, Symbol.for('stim.cli'), true);
   const program = new Command();
   program.name('stim').description('Isolated React Native dev environments per project/worktree').version(pkg.version);
 

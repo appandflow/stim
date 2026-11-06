@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Ajv2020 from 'ajv/dist/2020.js';
-import { BuildHost } from '../src/build.ts';
+import { BuildHost } from '../../stim-cli/src/job/offload/host.ts';
 import { protocolJsonSchema } from '../src/protocol.ts';
 
 let root: string;

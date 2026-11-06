@@ -22,7 +22,8 @@ import { type CommandLimits, Pending } from '../stim-command.ts';
 import { type FrameLimits, FramePool } from '../frames.ts';
 import { type RecordLimits, Recorder } from '../recorder.ts';
 import { type PushLimits, type PushNotifierOptions, PushNotifier } from '../push.ts';
-import { type BuildLimits, BuildHost, type BuildSession } from '../build.ts';
+import type { BuildLimits, BuildWorkerRoot } from '../build.ts';
+import type { OffloadJobs } from '../offload-jobs.ts';
 import { type HostedRelayOptions, HostedRelay } from '../hosted-relay.ts';
 import type { WebSocket } from 'ws';
 import { NoiseSocket } from '@stim-cli/core/noise-session';
@@ -96,8 +97,12 @@ function hostedPlacement(dir: string, platform: string, slot = 'default') {
 }
 
 export interface ServerOptions {
-  /** Private bootstrap received from the Desktop parent; never a persisted pairing capability. */
+  /** The key in stimd's `run/desktop.key` that admits a local connection to the Desktop-only methods. */
   desktopBootstrap?: DesktopBootstrap;
+  /** Asks stimd to check for a newer engine, as when a phone needs a newer one. */
+  requestUpdate?: (why: string) => void;
+  /** Who asked for this server, as `hello` reports it in `host.owner`; `service` with a service label, else `cli`. */
+  owner?: 'desktop';
   /** What `stim setup` runs with when Stim Desktop approves a request here; `defaultSetupDeps` by default. */
   setupDeps?: () => SetupDeps;
   host?: { executable: string; name: string };
@@ -121,8 +126,6 @@ export interface ServerOptions {
    * `graceMs` (two minutes by default) of the server being ready.
    */
   shareServer?: { idle: () => void; graceMs?: number };
-  /** The Unix socket for this machine's own user; defaults to core's serverLocalSocket(), null for none. */
-  localSocket?: string | null;
   stimCli: string;
   stimVersion: string;
   serverVersion: string;
@@ -200,6 +203,8 @@ export interface ServerOptions {
     node: string;
     script: string;
     runsAsService?: (label: string, port: number) => Promise<boolean>;
+    /** How an `engine.update` starts its detached `engine-select`; the service manager's way by default. */
+    detached?: (node: string, args: string[]) => { file: string; args: string[] };
   };
   /** Looks up the worktrees' pull requests; tests replace GitHub. */
   pullRequests?: PushNotifierOptions['pullRequests'];
@@ -320,7 +325,8 @@ export interface ConnectionContext {
   readonly agentLinks: WeakMap<object, AgentLink>;
   readonly agentStreams: Map<string, Set<Duplex>>;
   readonly agentHttp: Server<typeof IncomingMessage, typeof ServerResponse>;
-  readonly builds: BuildHost;
+  readonly builds: BuildWorkerRoot;
+  readonly jobs: OffloadJobs;
   readonly presence: PresenceHub;
   readonly localAgents: LocalAgentPresence;
   readonly control: ControlHub;
@@ -352,7 +358,6 @@ export interface ConnectionContext {
   desktopChallenge: { nonce: string; proof: string } | null;
   readonly tracker: RequestTracker;
   runId: string | null;
-  buildSession: BuildSession | null;
   metroLink: MetroLink | null;
   metroStream: Duplex | null;
   metroPing: NodeJS.Timeout | undefined;

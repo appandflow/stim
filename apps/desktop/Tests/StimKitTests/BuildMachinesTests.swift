@@ -247,7 +247,7 @@ import Testing
     }
     let unconfirmed = BuildMachineStatus(machine: "mini", state: .keyUnconfirmed)
     #expect(unconfirmed.detail.contains("stim remote list") && unconfirmed.detail.contains("on mini"))
-    #expect(BuildMachineStatus(machine: "mini", state: .outdated).detail.contains("stim service install"))
+    #expect(BuildMachineStatus(machine: "mini", state: .outdated).detail.contains("stim remote update mini"))
     for (state, title) in [("credentials-unavailable", "Credentials unreadable"), ("busy", "Check in progress")] {
       let host = try JSONDecoder().decode(
         BuildMachineStatus.self, from: Data(#"{"machine":"mini","state":"\#(state)"}"#.utf8))

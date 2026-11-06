@@ -2342,8 +2342,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   freed slot only when every run ahead of it has one, and the stim-daemon
   wakes the oldest waiter as soon as a build or boot finishes; without a
   daemon each waiter polls (1s for builds, 2s for boots). A waiter keeps its
-  position when the daemon hands over to one from an installed upgrade: the
-  order lives in those directories, and it reconnects on its next poll. Runs
+  position when stimd exits and another starts: the order lives in those
+  directories, and it reconnects on its next poll. Runs
   behind the head of the boot queue reuse the last device listing while it
   is under 10s old instead of listing again, and a boot starts only on a
   listing taken under the admission lock. A waiting boot reads the device caps
@@ -2494,7 +2494,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
      while free disk on the workspace's or $STIM_HOME's volume is under
      disk.hardFloorGb (5 GB) after the ladder ran: they ask the daemon
      for a tick first, or run the ladder themselves when no daemon holds the
-     home. With no daemon holding the home (always on Windows), they run
+     home. With no daemon holding the home, they run
      automatic maintenance and the ladder from rung 2 in the command before
      building, unless daemon.mode is off; the idle stage of rung 1 is the
      daemon's, and a command with no daemon runs it only for owned devices
@@ -2537,9 +2537,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   or while no daemon runs, the workspace's supervisor checks once a minute and
   shuts its own devices down after idle.minutes. A device whose workspace has
   no running dev server is shut down by the idle stage that the next command
-  runs in its own process (stim doctor, start, ios and android; on Windows also
-  a background process that every other top-level command but guide, settings,
-  help, gc and agent-device starts, at most once a minute), never for that
+  runs in its own process (stim doctor, start, ios and android), never for that
   command's own workspace; with no daemon nothing times it between commands. Change the clock with
   \`stim settings set idle.minutes <minutes> --scope machine\`; 0 turns idle
   and dormant off, and an explicit 0 stays 0.

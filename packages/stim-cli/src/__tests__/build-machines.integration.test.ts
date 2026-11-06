@@ -1,3 +1,4 @@
+import { PEER } from '@stim-cli/core/protocol';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -63,7 +64,12 @@ function fakeIo(replies: HelloReply[], os = 'macOS') {
 
 const notYet: HelloReply = { error: { code: 'unknown-secret', message: 'The machine does not know this ticket yet.' } };
 const approved = (host?: { name: string; screenRecording: boolean; accessibility: boolean }): HelloReply => ({
-  result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' }, ...(host ? { host: { app: host } } : {}) },
+  result: {
+    capabilities: ['build'],
+    peer: PEER,
+    device: { id: 'ab12', name: 'laptop' },
+    ...(host ? { host: { app: host } } : {}),
+  },
   serverKey: SERVER_KEY,
 });
 const refused: HelloReply = { error: { code: 'unauthorized', message: 'Pair again.' } };
@@ -304,13 +310,28 @@ describe('inspectBuildMachines', () => {
       expect(machines).toEqual([expect.objectContaining({ state: 'outdated' })]);
       expect(findings).toEqual([
         expect.objectContaining({
-          fix: expect.stringMatching(
-            /^On mini, run `stim service update --release 9\.9\.9` \(add `--label <name>` for a custom service label; .*\), then run `stim remote add mini` on laptop\.$/,
-          ),
+          fix: expect.stringMatching(/stim remote update mini.*stim engine update/),
         }),
       ]);
       expect(readBuildMachines()).toEqual(before);
     });
+  });
+
+  it('reports a worker on peer 1 outdated with the peer-too-old remedy', async () => {
+    await approvedCredential();
+    const older: HelloReply = {
+      result: { capabilities: ['build'], peer: 1, server: { stim: '1.42.0' }, device: { id: 'ab12', name: 'laptop' } },
+      serverKey: SERVER_KEY,
+    };
+    const { machines } = await inspectBuildMachines({ fix: false, version: '9.9.9' }, fakeIo([older]).io, ['mini']);
+    expect(machines).toEqual([
+      expect.objectContaining({
+        state: 'outdated',
+        diagnosis: expect.objectContaining({
+          message: `peer-too-old: mini runs stim 1.42.0 (peer 1), this Mac needs peer ${PEER}; run stim remote update mini, or on mini run: npm i -g stim@9.9.9 && stim service install`,
+        }),
+      }),
+    ]);
   });
 
   describe('naming the layer an unreachable machine stopped at', () => {
@@ -409,7 +430,7 @@ describe('inspectBuildMachines', () => {
           return Promise.resolve({
             capacity: { running: 0, max: 1, loadPerCore: 8.2, builds: 2 },
             problems: [
-              { code: 'stim-build', reason: 'Stim build 6bbe there, e774 here' },
+              { code: 'arch', reason: 'x86_64 there, arm64 here' },
               { code: 'busy', reason: 'busy (load at or above 2/core; load 8.2/core, 2 builds)' },
             ],
           });
@@ -424,15 +445,15 @@ describe('inspectBuildMachines', () => {
         state: 'approved',
         host,
         offloadable: false,
-        reasons: ['Stim build 6bbe there, e774 here', 'busy (load at or above 2/core; load 8.2/core, 2 builds)'],
+        reasons: ['x86_64 there, arm64 here', 'busy (load at or above 2/core; load 8.2/core, 2 builds)'],
         capacity: { running: 0, max: 1, loadPerCore: 8.2, builds: 2 },
       }),
     ]);
     expect(findings.map(({ code, level }) => ({ code, level }))).toEqual([
-      { code: 'build-machine-stim-build', level: 'cost' },
+      { code: 'build-machine-arch', level: 'cost' },
       { code: 'build-machine-busy', level: 'note' },
     ]);
-    expect(findings[0]!.fix).toContain('stim service update --release <version>');
+    expect(findings[0]!.fix).toContain('same CPU architecture');
   });
 
   it('reports a package Gradle downloads as a note that does not stop the build, and a blocker with commands otherwise', async () => {

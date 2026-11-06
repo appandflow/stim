@@ -111,7 +111,6 @@ describe('pickOffer', () => {
   it('refuses any toolchain difference, a missing runtime, a busy machine and a full disk in either mode', () => {
     for (const selected of ['auto', 'remote'] as const) {
       for (const refused of [
-        offer({ toolchain: { compat: 2 } }),
         offer({ toolchain: { xcode: 'Xcode 26.4' } }),
         offer({ toolchain: { simulatorSdk: '27.1' } }),
         offer({ toolchain: { arch: 'x64' } }),
@@ -124,10 +123,6 @@ describe('pickOffer', () => {
         expect(pick([refused], { selected }).order).toEqual([]);
       }
     }
-    for (const compat of [undefined, 1])
-      expect(
-        pick([offer({ toolchain: { compat } })], {}, { ...IOS, local: { ...LOCAL, stimBuild: null } }).order,
-      ).toEqual([]);
   });
 
   it('needs Bundler there when the Gemfile.lock pins CocoaPods, and compares the global CocoaPods otherwise', () => {
@@ -381,10 +376,7 @@ describe('macOS build compatibility', () => {
       );
     });
 
-    it('still needs the same build compatibility, a Mac, and a worker with Xcode and a macOS SDK', () => {
-      expect(toolchainMismatches(onWorker, offer({ toolchain: { compat: 2 } }).toolchain)).toEqual([
-        { code: 'stim-build', reason: expect.any(String) },
-      ]);
+    it('still needs a Mac and a worker with Xcode and a macOS SDK', () => {
       expect(toolchainMismatches(onWorker, offer({ toolchain: { os: 'linux' } }).toolchain)).toEqual([
         { code: 'platform', reason: expect.stringContaining('macOS') },
       ]);
@@ -403,9 +395,8 @@ describe('a client without Xcode', () => {
   };
   const hosted: BuildTarget = { ...noXcode, local: { ...noXcode.local, arch: 'arm64' } };
 
-  it('still refuses a different Stim build, CPU, a missing runtime and a worker without Xcode', () => {
+  it('still refuses a different CPU, a missing runtime and a worker without Xcode', () => {
     expect(toolchainMismatches(noXcode, offer({ toolchain: { compat: 9 } }).toolchain).map((p) => p.code)).toEqual([
-      'stim-build',
       'arch',
     ]);
     expect(toolchainMismatches(hosted, offer({ toolchain: { runtimes: [] } }).toolchain).map((p) => p.code)).toEqual([
@@ -524,6 +515,7 @@ describe('strict client routing', () => {
     'strict %s failure closes the chosen worker without trying another',
     async (failedMethod) => {
       const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method) => {
+        if (method === 'job.start') return { result: { job: 'job-1' } };
         if (method === 'build.offer') return { result: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) };
         if (method === `build.${failedMethod}`) return { error: { code: 'busy', message: 'cannot take this build' } };
         return { result: {} };
@@ -574,6 +566,7 @@ describe('strict client routing', () => {
     });
     const synced: string[] = [];
     const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method, params) => {
+      if (method === 'job.start') return { result: { job: 'job-1' } };
       if (method === 'build.offer') return { result: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) };
       if (method === 'build.sync') {
         synced.push(...(params as { files: { path: string }[] }).files.map((file) => file.path));
@@ -628,6 +621,7 @@ describe('strict client routing', () => {
     });
     const synced: string[] = [];
     const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method, params) => {
+      if (method === 'job.start') return { result: { job: 'job-1' } };
       if (method === 'build.offer') return { result: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) };
       if (method === 'build.sync') {
         synced.push(...(params as { files: { path: string }[] }).files.map((file) => file.path));
@@ -669,6 +663,7 @@ describe('strict client routing', () => {
 
   it('a sync plan refusal stops the build before any file list or byte reaches the worker', async () => {
     const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method) => {
+      if (method === 'job.start') return { result: { job: 'job-1' } };
       if (method === 'build.offer') return { result: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) };
       return { result: {} };
     });
@@ -706,7 +701,7 @@ describe('strict client routing', () => {
     });
     expect(outcome).toEqual({ ok: false, machine: 'mini', reason: 'release.jks holds a signing key' });
     expect(syncPlan).toHaveBeenCalledTimes(1);
-    expect(request.mock.calls.map(([method]) => method)).toEqual(['build.offer']);
+    expect(request.mock.calls.map(([method]) => method)).toEqual(['job.start', 'build.offer']);
   });
 });
 

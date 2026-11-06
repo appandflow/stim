@@ -65,7 +65,7 @@ export async function cloneTree(source: string, scratch: string, ctx: StimContex
  */
 export async function fetchTree(
   root: string,
-  source: { release: string } | { pack: string },
+  source: { release: string } | { pack: string } | { from: string },
   scratch: string,
   log: (line: string) => void,
 ): Promise<void> {

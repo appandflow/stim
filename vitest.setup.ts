@@ -1,11 +1,7 @@
-import { realpathSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, vi } from 'vitest';
-import {
-  EAS_TEST_GUARD_ROOT_ENV,
-  STIM_HOMES_TEST_GUARD_ROOT_ENV,
-} from './packages/stim-cli/src/engine/eas-machine-root-guard-env.ts';
 import { TEMP_LEFTOVERS_TEST_GUARD_ENV } from './packages/stim-cli/src/commands/gc/temp-leftovers-guard-env.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from './packages/stim-cli/src/daemon/passes-guard-env.ts';
 
@@ -19,11 +15,17 @@ for (const key of Object.keys(process.env)) {
 
 process.env.STIM_DAEMON = 'off';
 process.env[HOME_PASSES_TEST_GUARD_ENV] = '1';
+// A test never reads or writes this machine's engine store or its bin/stimd shim.
+process.env.STIM_ENGINE_ROOT = join(tmpdir(), 'stim-test-engine-absent');
 
-// Must run before a test can redirect HOME, so this captures the real root
-// (see assertEasMachineRootWritable in eas-session-ledger.ts).
-process.env[EAS_TEST_GUARD_ROOT_ENV] = join(homedir(), '.stim', 'machine', 'eas');
-process.env[STIM_HOMES_TEST_GUARD_ROOT_ENV] = join(homedir(), '.stim', 'machine', 'homes');
+// A test never reads or writes the developer's home: ~/.stim/machine (the EAS ledger, the list of Stim homes) and
+// every other HOME-derived path resolve under the run's private TMPDIR (vitest.global-tmpdir.ts).
+// npm keeps its package cache under HOME; the tests that pack and install Stim run offline and need the real one.
+process.env.npm_config_cache ??= join(homedir(), '.npm');
+const home = join(tmpdir(), 'home');
+mkdirSync(home, { recursive: true });
+process.env.HOME = home;
+process.env.USERPROFILE = home;
 
 // gc never sweeps the real TMPDIR from a test, even one that mocks the STIM_HOME scope away.
 process.env[TEMP_LEFTOVERS_TEST_GUARD_ENV] = realpathSync(tmpdir());

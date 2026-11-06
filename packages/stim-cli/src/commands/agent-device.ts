@@ -36,8 +36,8 @@ import { hostedAgentSessionName } from '../hosted-names.ts';
 import { resolveOwnedAvdSerialAsync } from '../devices/android.ts';
 import { deviceSlotKey, parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import { deviceLeasePath, leaseIsExpired, parseLease, parseWorkspaceLeases } from '../engine/device-lease.ts';
+import { publishPresence } from '../daemon/client.ts';
 import { getExecutor } from '../exec.ts';
-import { requestLocalServer } from '../local-server.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { readWorkspaceLaunches } from '../stimd/metro/state.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
@@ -548,18 +548,15 @@ function refuse(found: AgentDeviceRefusal, json: boolean): void {
   process.exitCode = 1;
 }
 
-function publish(version: string, params: PresencePublishParams): Promise<void> {
-  return requestLocalServer('presence.publish', params, { version, timeoutMs: PUBLISH_TIMEOUT_MS }).then(
-    () => undefined,
-    () => undefined,
-  );
+function publish(params: PresencePublishParams): Promise<void> {
+  return publishPresence(params, PUBLISH_TIMEOUT_MS).catch(() => undefined);
 }
 
 /** The terminal already sends SIGINT to agent-device, in the same foreground process group; Stim only outlives it. */
 const FORWARDED_SIGNALS = ['SIGTERM', 'SIGHUP'] as const;
 const COMMAND_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 
-async function runAgentDevice(argv: string[], version: string): Promise<void> {
+async function runAgentDevice(argv: string[]): Promise<void> {
   const json = argv.includes('--json');
   const { resolveAgentDevice } = await import('@stim-cli/core');
   let invocation: { command: string; args: string[] };
@@ -586,11 +583,11 @@ async function runAgentDevice(argv: string[], version: string): Promise<void> {
       json,
     );
   }
-  if (needsNoWorkspace(argv)) return execute(invocation, argv, null, null, version);
+  if (needsNoWorkspace(argv)) return execute(invocation, argv, null, null);
   const root = await findCommandWorkspaceAsync(process.cwd(), repoRootAsync, (line) => console.error(line));
   if (!root) return refuseNoProject({ json });
   const unselected = unselectedArgs(argv);
-  if (unselected) return execute(invocation, unselected, null, root, version);
+  if (unselected) return execute(invocation, unselected, null, root);
   let project = getProject(root);
   let state = readWorkspaceState(root);
   let plan = planAgentDevice(await resolveDevices(root, project, state), argv);
@@ -605,7 +602,7 @@ async function runAgentDevice(argv: string[], version: string): Promise<void> {
   }
   const built = agentDeviceArgs(plan, root);
   if ('refusal' in built) return refuse(built.refusal, json);
-  await execute(invocation, argv, { plan, ...built }, root, version);
+  await execute(invocation, argv, { plan, ...built }, root);
 }
 
 async function revive(root: string, device: WorkspaceDevice): Promise<AgentDeviceRefusal | null> {
@@ -726,7 +723,6 @@ async function execute(
   argv: string[],
   run: Run | null,
   root: string | null,
-  version: string,
 ): Promise<void> {
   const local = root !== null && run?.plan.device.kind !== 'hosted';
   const env = { ...process.env, ...(local ? { AGENT_DEVICE_STATE_DIR: workspaceAgentDeviceDir(root) } : {}) };
@@ -750,7 +746,7 @@ async function execute(
         ...(shown.device.kind === 'physical' ? { physical: true } : {}),
       }
     : null;
-  const started = target && command ? publish(version, { ...target, command, phase: 'start' }) : null;
+  const started = target && command ? publish({ ...target, command, phase: 'start' }) : null;
   const tee = Boolean(tracked) && command === 'snapshot' && argv.includes('--json') && !process.stdout.isTTY;
   const args = run?.args ?? argv;
   const reopen = run && hosted ? hostedReopen(hosted.root, run.plan, args) : null;
@@ -793,7 +789,7 @@ async function execute(
       writer.close();
     }
     await started;
-    return publish(version, { ...target, command: hosted.command, phase: 'end' });
+    return publish({ ...target, command: hosted.command, phase: 'end' });
   }
   if (!tracked || !target || !run) return;
   if (tee && bytes <= MAX_SNAPSHOT_BYTES)
@@ -814,12 +810,12 @@ async function execute(
     return gesture ? [{ command: recorded, gesture }] : [];
   });
   await started;
-  if (!ended.length) await publish(version, { ...target, command: tracked.command, phase: 'end' });
+  if (!ended.length) await publish({ ...target, command: tracked.command, phase: 'end' });
   for (const { command: recorded, gesture } of ended)
-    await publish(version, { ...target, command: recorded, phase: 'end', gesture });
+    await publish({ ...target, command: recorded, phase: 'end', gesture });
 }
 
-export default function agentDeviceCommand(program: Command, version: string): void {
+export default function agentDeviceCommand(program: Command): void {
   program.enablePositionalOptions();
   program
     .command('agent-device')
@@ -833,6 +829,6 @@ export default function agentDeviceCommand(program: Command, version: string): v
     .argument('[args...]')
     .action(async () => {
       const index = process.argv.indexOf('agent-device');
-      await runAgentDevice(process.argv.slice(index + 1), version);
+      await runAgentDevice(process.argv.slice(index + 1));
     });
 }

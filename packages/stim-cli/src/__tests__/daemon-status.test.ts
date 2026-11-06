@@ -14,8 +14,8 @@ const status = (over: Partial<DaemonStatus>): DaemonStatus => ({
   intervalMs: 60_000,
   ...over,
 });
-const titles = (value: DaemonStatus, serving: string[] = [], platform: NodeJS.Platform = 'darwin') =>
-  daemonFindings(value, { now: NOW, serving: () => serving, platform }).map((finding) => finding.title);
+const titles = (value: DaemonStatus, serving: string[] = []) =>
+  daemonFindings(value, { now: NOW, serving: () => serving }).map((finding) => finding.title);
 
 test.each<[string, DaemonStatus, string[], string[]]>([
   ['a daemon that ticked a minute ago', status({ running, lastTickAt: '2026-11-02T11:59:00.000Z' }), ['/app'], []],
@@ -54,18 +54,11 @@ test.each<[string, DaemonStatus, string[], string[]]>([
 });
 
 test('the status line says whether the daemon runs and when it last ticked', () => {
-  expect(daemonLine(status({ running, lastTickAt: '2026-11-02T11:59:30.000Z' }), NOW, 'darwin')).toMatch(
+  expect(daemonLine(status({ running, lastTickAt: '2026-11-02T11:59:30.000Z' }), NOW)).toMatch(
     /^Daemon \(on\): running since \d\d:\d\d \(pid 4242\), last tick 30s ago$/,
   );
-  expect(daemonLine(status({}), NOW, 'darwin')).toMatch(/^Daemon \(on\): not running, no tick yet;/);
-  expect(daemonLine(status({ mode: 'off' }), NOW, 'darwin')).toMatch(/^Daemon: off \(daemon\.mode\)/);
-});
-
-test('on Windows, which has no daemon, status and doctor say the commands run the passes themselves', () => {
-  expect(daemonLine(status({}), NOW, 'win32')).toBe(
-    'Daemon: none on Windows; start, ios, android and doctor run the passes in their own process and other commands in the background (daemon.mode on)',
-  );
-  expect(titles(status({}), ['/app'], 'win32')).toEqual([]);
+  expect(daemonLine(status({}), NOW)).toMatch(/^Daemon \(on\): not running, no tick yet;/);
+  expect(daemonLine(status({ mode: 'off' }), NOW)).toMatch(/^Daemon: off \(daemon\.mode\)/);
 });
 
 test('the last daemon action line names the newest action, its age and what it freed', () => {

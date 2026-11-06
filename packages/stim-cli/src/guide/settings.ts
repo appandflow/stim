@@ -659,13 +659,27 @@ generation, and nothing is sent anywhere. Keys named like a secret are redacted.
   stim settings set debug.logs true --scope machine
 See \`guide logs\` for reading the files.
 
+ENGINE UPDATES ARE MACHINE-LEVEL
+engine.autoUpdate  default auto. Whether stimd moves the machine engine (stim
+engine install) to the newest version on its channel by itself: once a day,
+when Stim Desktop connects, when a phone needs a newer engine, and at most
+once an hour while a crash-looping build is held. auto turns it on for an
+engine Stim Desktop installed or a service runs and off for any other, such as
+a global npm install; on and off decide for every engine. A person's
+stim engine use or rollback pins the engine and stops it until stim engine
+update, and it never moves to a build at or below one that crash-looped.
+Three abnormal stimd exits of a build within 10 minutes mark the build bad
+and point the engine back at its previous build (stim engine status shows
+"crash loop in <version>"); the next newer build resumes updates.
+  stim settings set engine.autoUpdate off --scope machine
+
 THE STIM DAEMON IS MACHINE-LEVEL AND ON BY DEFAULT
 daemon.mode STIM_DAEMON  default on. One setting governs every pass Stim runs
 on its own: the idle and dormant stages, the pressure ladder, the reclaim for a
 run waiting to boot, and automatic maintenance.
 
-  on      start, ios, android, web, macos and revive start one stim-daemon per
-          Stim home, scoped homes included. It ticks each minute while
+  on      start, ios, android, web, macos and revive start one stimd per Stim
+          home, scoped homes included, on Windows too. It ticks each minute while
           anything runs there or the pressure level is above normal, and
           every 5 minutes otherwise. It exits two ticks after nothing runs,
           no maintenance pass runs and no workspace waits for its dormant
@@ -686,23 +700,18 @@ run waiting to boot, and automatic maintenance.
           the ticks, one pass at a time, so a slow git fetch, pull request
           lookup or size scan never delays a tick or a waiting run. The same
           lane records the fingerprint of a running workspace whose git HEAD,
-          lockfile or install stamp changed (stim guide lifecycle). When one
-          of those commands runs from an installed
-          Stim (a global install or a node_modules dependency) with a newer
-          version than the running daemon, or the daemon runs a development
-          build, the daemon keeps serving the command and one new daemon
-          from the installed build takes over once its current tick
-          finishes, so an upgrade reaches the daemon with the next such
-          command. A maintenance pass the old daemon has running finishes
-          in its process, which starts no other. The same or an older
-          version never replaces it. A development build (a checkout's
-          dist, npm link or pnpm link --global) never replaces a daemon.
+          lockfile or install stamp changed (stim guide lifecycle). A command
+          from another Stim build than the running stimd does not use it and
+          says so; stimd keeps serving until nothing runs in the home, and
+          the next command starts its own build's stimd. stimd stops a
+          stim-daemon from Stim 1.40 to 1.42 when it starts.
   report  the same passes log what they would do and act on nothing.
   off     no daemon and no pass: each dev server supervisor stops its own dev
           server and devices after idle.minutes, and nothing times a device
           with no dev server.
 
-On Linux the daemon starts as a transient user service, stim-daemon-<home
+stimd starts as a transient launchd job on macOS, under Stim Host where it is
+installed. On Linux it starts as a transient user service, stimd-<home
 hash>-<id>.service, when systemd-run is on PATH, XDG_RUNTIME_DIR is set and a
 user systemd manager answers. A command runner that adopts and kills everything
 a call started (a subreaper) cannot reach a service, so the daemon keeps ticking
@@ -715,14 +724,11 @@ runner; the passes then run in each command's own process. The dev server
 supervisor is not a service; see guide metro, LINUX RUNNERS THAT REAP
 BACKGROUND PROCESSES.
 
-Without a running daemon -- on Windows, which has none, or when one could not
-start -- stim doctor, start, ios and android run automatic maintenance, the idle
-stage for owned devices whose workspace has no running dev server, and the
-pressure ladder in their own process, acting in on and only logging in report,
-never taking the command's own workspace. On Windows every other top-level
-command except guide, settings, help, gc and agent-device starts the same passes
-in a detached background process, at most once a minute; the command does not
-wait for it and it prints nothing. stim gc runs the same passes in its
+Without a running stimd -- when one could not start -- stim doctor, start, ios
+and android run automatic maintenance, the idle stage for owned devices whose
+workspace has no running dev server, and the pressure ladder in their own
+process, acting in on and only logging in report, never taking the command's
+own workspace. stim gc runs the same passes in its
 own process. It is off in CI unless STIM_DAEMON is set.
 A command starts the daemon in the mode it resolves, STIM_DAEMON included; a
 later change to the machine setting can make a running daemon stricter, never
@@ -922,6 +928,7 @@ simulator sessions on, by MagicDNS name with an optional serve port (default
   stim remote add janics-mac-mini
   stim remote list
   stim remote remove janics-mac-mini
+  stim remote update janics-mac-mini [--channel next]
 
 \`stim remote add\` appends the machine to the machine-scope list, keeping the
 entries already there, asks it for build and device-host approval and prints
@@ -935,6 +942,15 @@ serverKeyFingerprint (the pinned stim-server key, or null before the first
 answer), reachability (reachable, unreachable, key-changed or unknown, from
 this run's contact) and revoke, the \`stim pairings revoke <id>\` commands
 a person on that machine runs to withdraw its approvals.
+
+\`stim remote update <machine>\` updates an approved machine to the newest
+release on its channel whose peer is at least this caller's. --channel next
+includes prereleases for this request without changing the worker's channel.
+The worker refuses a pin, a downgrade, or a target at or below its newest build
+marked bad after a crash loop. Run \`stim engine update\` on a pinned worker to
+resume updates. If the chosen channel cannot carry this peer, select next or
+build locally. The command prints the version and the worker's staged, switched
+or refused answer.
 
 The order of \`remote.machines\` is the priority order for every workload: the
 build, simulator, emulator and macOS app each go to the first listed machine that
@@ -1152,10 +1168,11 @@ regenerating on a Mac and committing.
 Any other difference, such as the app config, fails with fingerprint-mismatch.
 A client with an Xcode still needs the same one, and there a worker pod install
 that changes the fingerprint fails with fingerprint-mismatch.
-Two machines build for each other when their Stim releases share a build
-compatibility version, which changes only when what a worker builds, how it
-builds, or the build messages change; their Stim builds can differ. A
-stim-server too old to report one needs the same Stim build as this machine.
+The worker runs this machine's exact Stim build for the job, so the two can run
+different releases: it installs a published release from npm the first time,
+and takes a build from a checkout or stim engine use <path> only while its
+server.acceptClientBuilds is true. A worker on an older peer is refused with
+peer-too-old and stim remote update <mac>.
 
 \`remote.build\` (machine scope, default auto) selects placement for
 \`ios\`, \`android\` and \`macos\`. \`--remote-build <local|auto|remote|remote-only|name>\`
@@ -1444,18 +1461,17 @@ running as a login LaunchAgent on macOS, a systemd user service on Linux
 prints that command and never runs it), or a logon scheduled task on Windows; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
 pin a PATH entry or variable, such as a private CocoaPods, that stim-server's
 toolchain discovery does not find.
-\`stim service update --release <version>\` there moves the service to
-that exact stim release from the public npm registry once npm verifies
-its integrity and registry signatures; \`--from <dir>\` installs the packed
-packages of a checkout instead, with the same signature check on each npm
-dependency but none for Stim's own packages. It waits for offloaded builds and for hosted
-sessions with a native step in flight (an install, for example) to finish, restarts the job, which
-(on a server that reports it resumes sessions) leaves every other ready hosted iOS or Android session running for the new server to resume, and switches back when the new server
-exits or does not answer within 90 seconds; \`stim service rollback\` returns
-to the previous server. A client machine approved for builds or device hosting
-there can ask for the same update over its tailnet connection: an npm release
-always, and its own packed build only while \`server.acceptClientBuilds\` is
-true on that machine (default false).
+A service installed while the Stim engine is installed runs the engine's
+\`bin/stimd\`, so it follows the engine: \`stim engine update\` there moves it
+to the newest release on the engine's channel and \`stim engine rollback\`
+back to the previous build, each switching once running builds and hosted
+native steps have drained. A client machine approved for builds or device
+hosting there can ask for an update over its tailnet connection
+(\`stim remote update <mac>\`): an npm release always, and its own packed
+build only while \`server.acceptClientBuilds\` is true on that machine
+(default false). That update is refused while a person's \`stim engine
+rollback\` or \`use\` pins the engine, for a version at or below a build that
+crash-looped, and for a service that does not run the engine.
 Replacing a loaded service waits up to 45 seconds for its existing listeners to
 release the port. Uninstall does not wait for the port. If stopping the old job
 or starting the new one fails, install restores the previous plist or unit and attempts
@@ -1476,25 +1492,25 @@ STIM-SERVER SETUP CHECKS (stim doctor)
 reports problems as findings with the exact command or step; it never stops,
 starts, updates or reconfigures a server. It reads the installed service (the
 LaunchAgent on macOS, the systemd user unit on Linux), the process list, each
-server's \`/health\` on 127.0.0.1 (1.5 seconds at most) and the Stim home's
-local socket, and does nothing beyond the process list when no service, server
-process or socket exists. Findings carry a code that starts with \`server-\`;
+server's \`/health\` on 127.0.0.1 (1.5 seconds at most) and the net thread
+through stimd's socket, and does nothing beyond the process list when no
+service, server process or stimd socket exists. Findings carry a code that starts with \`server-\`;
 a \`cost\` finding is shown as a problem and reaches Stim Desktop's needs-attention
 list, a \`note\` finding only the doctor report:
   server-multiple        cost: several servers serve one Stim home (the service,
                          Stim Desktop's bundled server, a server started by hand);
-                         it names the one to keep (the service, else the one holding
-                         the local socket) and how to stop each other
+                         it names the one to keep (the service, else the one inside
+                         stimd) and how to stop each other
   server-service-crash   cost: the service is installed but not running, or keeps
                          exiting (run count and last exit code, the log path and
-                         \`stim service rollback\` when a previous server
-                         exists); note: it restarted but runs now
-  server-desktop-authority  cost: the server on the local socket (not Desktop's own)
+                         \`stim engine rollback\` when the engine has a
+                         previous build); note: it restarted but runs now
+  server-desktop-authority  cost: the server stimd's socket reaches (not Desktop's own)
                          sends no desktopApi or a lower one than this stim's, so
                          Desktop cannot run actions through it; update it
   server-version         note: a server's stim version differs from this stim; the
-                         service updates with \`stim service update --release
-                         <version>\`, Desktop's bundled server with the app
+                         service updates with \`stim engine update\`, or from a
+                         client with \`stim remote update <mac>\`
   server-home            note: a server serves another Stim home than this stim's
   server-leftover        note: servers started by hand, with pid, home and port
   server-keep-awake      note: this Mac serves approved build or device-host clients
@@ -1511,9 +1527,9 @@ list, a \`note\` finding only the doctor report:
                          advice to set 16384, never changed by doctor
   server-service-paths   cost/note: the service file names a launcher, node, server script or
                          directory that no longer exists
-  server-socket-permissions  cost: the Stim home's local.sock is not mode 600 or its directory
-                         is not mode 700 and owned by this user (Desktop's write authority
-                         on a server without Desktop's key depends on it)
+  server-socket-permissions  cost: stimd's socket (run/stimd.sock) is not mode 600 or its
+                         directory is not mode 700 and owned by this user (it answers
+                         without pairing or a key)
   server-macos-permission  cost/note: the server's host app lacks Screen Recording or device
                          control, or macOS blocks the Android SDK or AVDs on an external
                          volume (Files & Folders > Removable Volumes); read from /health,

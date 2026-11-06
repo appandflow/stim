@@ -41,6 +41,11 @@ import Testing
 
   @Test func installsOnlyWhenTheRemoteIsOlderOrSameAndWouldAcceptIt() throws {
     #expect(stimInstall(for: try machine(), remote: try remote(version: "1.24.0"), local: release) == .install)
+    let outdated = try machine(nil, state: "outdated")
+    #expect(stimInstall(for: outdated, remote: try remote(version: "1.24.0"), local: release) == .install)
+    #expect(stimInstall(for: outdated, remote: try remote(version: "1.26.0"), local: release)?.block?.remoteIsNewer == true)
+    #expect(
+      stimInstall(for: try machine(nil, state: "unreachable"), remote: try remote(version: "1.24.0"), local: release) == nil)
     #expect(stimInstall(for: try machine(), remote: try remote(version: "1.25.0"), local: release) == .install)
     let candidate = LocalStim(version: "1.25.0-rc.1", isRelease: true)
     let result = stimInstall(for: try machine(), remote: try remote(version: "1.25.0"), local: candidate)
@@ -101,20 +106,17 @@ import Testing
     #expect(commandToRun(in: "No backticks at all.") == nil)
   }
 
-  @Test func tellsAnInstalledReleaseFromACheckoutThroughSymlinks() throws {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("stim-install-\(UUID().uuidString)")
-    defer { try? FileManager.default.removeItem(at: root) }
-    let installed = root.appendingPathComponent("lib/node_modules/stim/bin")
-    let checkout = root.appendingPathComponent("checkout/packages/stim-cli/bin")
-    for directory in [installed, checkout] {
-      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-      FileManager.default.createFile(atPath: directory.appendingPathComponent("stim.mjs").path, contents: Data())
+  @Test func tellsAnEngineReleaseFromAPinnedCheckout() throws {
+    func engine(pinned: Bool, reason: String?) throws -> EnginePointer {
+      let reason = reason.map { "\"\($0)\"" } ?? "null"
+      return try JSONDecoder().decode(
+        EnginePointer.self,
+        from: Data(
+          #"{"format":1,"version":"1.43.0","build":"3f9a1c0d22e8","dir":"3f9a1c0d22e8","node":[],"channel":"latest","pinned":\#(pinned),"pinReason":\#(reason),"setBy":"use"}"#
+            .utf8))
     }
-    let bin = root.appendingPathComponent("bin")
-    try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
-    try FileManager.default.createSymbolicLink(
-      at: bin.appendingPathComponent("stim"), withDestinationURL: installed.appendingPathComponent("stim.mjs"))
-    #expect(LocalStim.isInstalledPackage(bin.appendingPathComponent("stim").path))
-    #expect(!LocalStim.isInstalledPackage(checkout.appendingPathComponent("stim.mjs").path))
+    #expect(LocalStim.isRelease(try engine(pinned: false, reason: nil)))
+    #expect(LocalStim.isRelease(try engine(pinned: true, reason: "set by stim engine use 1.42.0")))
+    #expect(!LocalStim.isRelease(try engine(pinned: true, reason: "set by stim engine use /Users/me/stim/packages/stim-cli")))
   }
 }

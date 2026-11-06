@@ -258,16 +258,17 @@ last measured, about every 6 hours, and the local `/health` answer carries it as
 
 ### Stim versions
 
-Each Stim release carries a build compatibility version. Two machines build for
-each other when the versions are equal, whatever their Stim releases or builds.
-The version changes only in a release that changes what a worker builds, how it
-builds it, or the build and artifact messages, so a release on one machine and a
-checkout build on the other usually still offload. Completed artifacts on a
-worker are reused under the same rule. When the versions differ, doctor reports `stim-build` and builds stay on this
-machine until the worker runs a compatible release; see [Tools](#tools).
-Hosted simulators and emulators do not compare versions. Every connection
-between two machines also compares one wire integer, `peer`: a machine whose
-Stim is older than this one's is refused with `peer-too-old` and the
+An offloaded build runs this machine's exact Stim build on the worker, so the
+two machines can run different Stim releases. The worker installs a published
+release from npm the first time it sees it, which takes a few seconds; until
+then it answers that it is installing and `auto` builds here. A build from a
+checkout or from `stim engine use <path>` is sent to the worker, which takes it
+only while its `server.acceptClientBuilds` is `true`; otherwise it refuses
+with `This machine takes only published Stim builds.` and the setting to
+change. Completed artifacts on a worker are reused when both Stim builds carry
+the same build compatibility version. Every connection between two machines
+also compares one wire integer, `peer`: a worker whose Stim is older than this
+one's is refused with `peer-too-old`, `stim remote update <mac>`, and the
 `npm i -g stim@<version> && stim service install` to run there.
 
 Stim Desktop's **Install This Mac's Build** only moves a worker forward. It reads
@@ -405,12 +406,6 @@ A worker whose stim-server predates protocol 2 cannot authenticate this machine.
 `stim service update --release <version>` there with this machine's
 Stim version, then `stim remote add <machine>` here.
 
-If active builds or a hosted native step (an install, for example) prevent that
-update, add `--no-wait` to the service update command. This interrupts that work
-during restart instead of waiting for it to finish; a server that resumes its hosted
-sessions leaves its other ready simulators and emulators running through the restart; shutdown, health checks and rollback
-still apply. Setup also accepts `--no-wait` for its managed-service update.
-
 ### Linux worker
 
 An x86_64 Linux machine can take this machine's offloaded Android debug
@@ -515,9 +510,9 @@ as step 4 of the manual path below.
    ```
 
    The unit is `~/.config/systemd/user/dev.stim.server.service` and the log
-   `~/.local/state/stim/dev.stim.server.log`. `service update` and
-   `service rollback` work as on a Mac, and an approved client can update the
-   server remotely.
+   `~/.local/state/stim/dev.stim.server.log`. `stim engine update` and
+   `stim engine rollback` work as on a Mac, and an approved client can update the
+   engine remotely.
 
 4. On your main machine, add the machine to `remote.machines`:
 
@@ -681,9 +676,9 @@ the Windows machine:
    ```
 
    The task starts at your logon and keeps running after you sign out; the
-   log is `%LOCALAPPDATA%\Stim\Logs\dev.stim.server.log`. `service update`
-   and `service rollback` work as on macOS and Linux, and an approved client can update
-   the server remotely.
+   log is `%LOCALAPPDATA%\Stim\Logs\dev.stim.server.log`. `stim engine update`
+   and `stim engine rollback` work as on macOS and Linux, and an approved client can update
+   the engine remotely.
    `--path-prepend` puts the real Node first on the server's `PATH`. A version
    manager's `node.exe` shim, such as pnpm's, breaks the Node IPC that Expo's
    config loader uses, and the build then fails with `fingerprint-mismatch`;

@@ -1,5 +1,6 @@
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { engineShim, ownStoreEngine, type StoreEngine } from '../daemon/engine-switch.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { workspaceAgentDeviceDir, workspaceDir } from '../workspace/paths.ts';
 import { sanitizeDeviceLabel } from '../devices/ios.ts';
@@ -146,10 +147,15 @@ export async function readRemoteSimulatorArch(
   }
 }
 
-export function writeAgentDeviceBootHook(root: string): void {
+/**
+ * Writes the command agent-device runs to revive the workspace: the engine root's `bin/stim` when this build runs from
+ * the engine store, so the hook outlives the store entry, else this copy's own entry.
+ */
+export function writeAgentDeviceBootHook(root: string, engine: StoreEngine | null = ownStoreEngine()): void {
   const dir = workspaceAgentDeviceDir(root);
   const file = join(dir, 'boot-hook.json');
-  const hook = { command: [process.execPath, spawnEntry('cli'), 'revive', '--json'], cwd: root };
+  const stim = engine ? [engineShim(engine)] : [process.execPath, spawnEntry('cli')];
+  const hook = { command: [...stim, 'revive', '--json'], cwd: root };
   mkdirSync(dir, { recursive: true });
   const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   try {

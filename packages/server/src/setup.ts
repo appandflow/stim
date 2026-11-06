@@ -11,7 +11,7 @@ import {
   type SetupJournal,
 } from '@stim-cli/core/state';
 import type { BuildToolchain, ServeRoute } from '@stim-cli/core/protocol';
-import { BuildHost } from './build.ts';
+import { probeToolchain } from './build.ts';
 import { discoverToolchain } from '@stim-cli/core/toolchain';
 import { bundledStim } from './environment.ts';
 import { decodeSecret, keyFingerprint, secretValues } from '@stim-cli/core/noise-session';
@@ -28,14 +28,14 @@ import {
 } from './registry.ts';
 import {
   fetchHealth,
-  holdingUpdateClaim,
+  holdingServiceClaim,
   installJob,
   prepareRoute,
   recordServiceRoute,
   requireManaged,
   stableNode,
-  updateInstalledService,
 } from './service.ts';
+import { selectEngine } from './engine-select.ts';
 import { installServer, serverBuild } from './release-install.ts';
 import {
   applyServeEnvironment,
@@ -255,7 +255,8 @@ export interface SetupDeps {
   health: typeof fetchHealth;
   build: typeof serverBuild;
   install: typeof installServer;
-  update: typeof updateInstalledService;
+  /** Moves the machine engine to `version` through this build's `engine-select`, as the person running setup asked. */
+  select(version: string): Promise<string>;
   installHost: typeof installHostApp;
   installJob: typeof installJob;
   route(port: number): Promise<ServeRoute>;
@@ -416,12 +417,12 @@ export function defaultSetupDeps(): SetupDeps {
     claim: setupClaim,
     write: writeSetupJournal,
     prune: pruneSetupJournals,
-    withInstallClaim: holdingUpdateClaim,
+    withInstallClaim: holdingServiceClaim,
     installed: requireManaged,
     health: fetchHealth,
     build: serverBuild,
     install: installServer,
-    update: updateInstalledService,
+    select: (version) => selectEngine({ release: version }, 'setup', true),
     installHost: installHostApp,
     installJob,
     async route(port) {
@@ -450,16 +451,7 @@ export function defaultSetupDeps(): SetupDeps {
     },
     async toolchain(options) {
       const env = applyServeEnvironment(discoverToolchain(process.env).env, options.env, options.pathPrepend);
-      const host = new BuildHost({
-        worker: join(stimDist, 'offload-worker.mjs'),
-        env,
-        ready: () => false,
-      });
-      try {
-        return await host.toolchain();
-      } finally {
-        await host.close();
-      }
+      return probeToolchain([join(stimDist, 'cli.mjs'), '__job', 'offload-worker', 'offer'], env);
     },
     node: stableNode(process.env.PATH),
     versions: (label) => join(serviceRoot(label), 'versions'),
@@ -902,7 +894,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       );
       const fix = desktop
         ? `If Stim Desktop runs this server, update Stim Desktop with Check for Updates in its app menu. Otherwise run npm install --global stim@${version} and restart the server.`
-        : `stim service update --label ${opts.label} --release ${version}${opts.noWait ? ' --no-wait' : ''}`;
+        : `stim engine update`;
       if (decision === 'too-old')
         throw new SetupRefusal(
           `This server predates setup support (${current?.version} speaks protocol ${health?.protocol ?? 1}; setup needs protocol ${SETUP_PROTOCOL}). ${desktop ? "Update and restart the app's server, then rerun setup." : 'Update the service, then rerun setup.'}`,
@@ -910,22 +902,12 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           fix,
         );
       if (decision === 'update') {
-        if (!installed?.script || !installed.node || installed.port === null)
-          throw new SetupRefusal('The managed service has no usable server invocation.');
-        for (const note of await wait(
-          deps.update(
-            opts.label,
-            { ...installed, script: installed.script, node: installed.node, port: installed.port },
-            { release: version },
-            chatter,
-            !opts.noWait,
-          ),
-        ))
-          chatter(note);
-        installed = await wait(deps.installed(opts.label));
+        chatter(await wait(deps.select(version)));
         const updated = await wait(deps.health(opts.port));
-        if (!updated) throw new SetupRefusal('The updated server is not answering.');
-        output.server = { version: updated.version, stimBuild: updated.stimBuild ?? null };
+        output.server = {
+          version: updated?.version ?? current?.version ?? version,
+          stimBuild: updated?.stimBuild ?? null,
+        };
         script = installed?.script ?? '';
       } else if (decision === 'install') {
         const target = await wait(deps.install(deps.versions(opts.label), { release: version }, deps.node, chatter));

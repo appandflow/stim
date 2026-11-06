@@ -1,12 +1,18 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { createServer } from 'node:http';
-import { WebSocketServer } from 'ws';
+import { createServer } from 'node:net';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { workspaceId, workspaceStateDir } from '@stim-cli/core';
-import { readAgentSnapshot, serverLocalSocket, workspaceAgentDeviceDir, workspaceLogsDir } from '@stim-cli/core/state';
+import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import {
+  readAgentSnapshot,
+  stimdClaimRoot,
+  stimdSocket,
+  workspaceAgentDeviceDir,
+  workspaceLogsDir,
+} from '@stim-cli/core/state';
 
 const cli = fileURLToPath(new URL('../../bin/cli.ts', import.meta.url));
 
@@ -137,7 +143,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'a hosted session shows the agent to stim-server at once and ends it with no gesture, which its host sends',
+  'a hosted session hands the agent to stimd at once and ends it with no gesture, which its host sends',
   async () => {
     const session = '4f88400a-48eb-4a07-ba6a-734c42768b2a';
     const config = join(home, 'hosted', 'agent.json');
@@ -154,18 +160,20 @@ test.skipIf(process.platform === 'win32')(
         },
       }),
     );
-    const socket = serverLocalSocket();
+    const socket = stimdSocket();
     mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
+    const claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'stimd' }).acquired;
     const published: unknown[] = [];
-    const listener = createServer();
-    const sockets = new WebSocketServer({ server: listener });
-    sockets.on('connection', (peer) =>
-      peer.on('message', (data) => {
-        const { id, method, params } = JSON.parse(data.toString());
-        if (method === 'presence.publish') published.push(params);
-        peer.send(JSON.stringify({ id, result: {} }));
-      }),
-    );
+    const listener = createServer((peer) => {
+      peer.setEncoding('utf8');
+      peer.on('data', (data: string) => {
+        for (const line of data.split('\n').filter(Boolean)) {
+          const { op, params } = JSON.parse(line);
+          if (op === 'presence.publish') published.push(params);
+          peer.write(`${JSON.stringify({ op: op ?? 'hello' })}\n`);
+        }
+      });
+    });
     await new Promise<void>((resolve) => listener.listen(socket, resolve));
     try {
       const child = spawn(process.execPath, [cli, 'agent-device', 'press', '@e1', '--json'], {
@@ -189,7 +197,7 @@ test.skipIf(process.platform === 'win32')(
         { workspace: app, platform: 'ios', command: 'press', phase: 'end' },
       ]);
     } finally {
-      sockets.close();
+      releaseClaim(claim);
       await new Promise((resolve) => listener.close(resolve));
     }
   },

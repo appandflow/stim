@@ -81,7 +81,7 @@ struct SidebarFooter: View {
       .help((reasons + ["click to open Machine"]).joined(separator: " \u{2014} "))
     case .normal(let version):
       let help: String =
-        version.map { "Optional agent CLI stim \($0) is installed" } ?? "Stim Desktop uses its bundled server"
+        version.map { "Optional agent CLI stim \($0) is installed" } ?? "Stim Desktop uses the Stim engine"
       statusLabel(dot: Palette.success, text: version.map { "Stim \($0)" } ?? "Stim")
         .help(help)
     }

@@ -49,8 +49,8 @@ Branch on the code, never on the message.`,
   reason codes), stim logs --source build (remote_connect_failed, remote_request_failed),
   and the host's stim service log, searched for the run id (stim guide logs).
   A failed build handoff uses upload instead. A host on an older Stim is refused
-  with peer-too-old, naming the npm i -g stim@<version> && stim service install
-  to run on it.
+  with peer-too-old, naming stim remote update <mac>, or the
+  npm i -g stim@<version> && stim service install to run on it.
   A name outside remote.machines is STIM_BAD_ARG. Missing or pending hosting
   approval keeps the stim remote add and stim setup remedies.`,
     },
@@ -1172,16 +1172,16 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   with a Debug configuration or variant first.`,
     },
     STIM_SERVER_NOT_RUNNING: {
-      summary: 'stim share found no stim-server and could not start one, or share list|stop found none',
+      summary:
+        'stim share found no stim-server and stimd could not start its net thread, or share list|stop found none',
       body: () => `STIM_SERVER_NOT_RUNNING
-  Web shares live inside this Stim home's stim-server. stim share ios|android
-  starts one when none answers on the local socket. This code means that
-  failed: the bundled server could not start or did not answer. Reinstall
-  with npm install --global stim@<version>, or open Stim Desktop.
-  The message names its log,
-  $STIM_HOME/server/share-server.log; read it, fix what it names, then run
-  stim share again. From share list or share stop it only means that no
-  server runs, so nothing is shared.`,
+  Web shares live inside this Stim home's stim-server, the net thread of its
+  stimd. stim share ios|android asks stimd, started when none runs, to start
+  the net thread when none answers. This code means that failed; the message
+  says why, such as an older stim-server holding the port. Fix what it names,
+  or read $STIM_HOME/daemon/daemon.ndjson, then run stim share again. From
+  share list or share stop it only means that no net thread runs, so nothing
+  is shared.`,
     },
     STIM_SHARE_REFUSED: {
       summary: 'stim-server, or stim on Windows, would not start, stop or list a web share; the message names why',
@@ -1931,6 +1931,25 @@ not on any remote"  (worktree remove)
   no previous build, a development tree, a build that predates the engine
   store) and the command that gets past it, such as stim engine install or
   stim engine use <version>.`,
+    },
+    STIM_ENGINE_UNAVAILABLE: {
+      summary: 'the machine engine cannot load, so this copy of stim ran instead and refuses to start work',
+      body: () => `STIM_ENGINE_UNAVAILABLE  ("the engine <version> cannot load ...")
+  The router could not load the engine's build (the line above names the
+  error) and ran the copy you invoked. start, ios, android, web, macos, revive
+  and gc refuse there, since they would run beside the engine's stimd on
+  another build; other commands run. Repair the pointer with this copy, as
+  the remedy names: npx stim@<this version> engine rollback, or
+  npx stim@<this version> engine use <this version>.`,
+    },
+    STIM_ENGINE_SWITCHED: {
+      summary: 'the machine engine switched to a newer build while this run waited',
+      body: () => `STIM_ENGINE_SWITCHED  ("Stim updated to <version>; rerun")
+  A build waiting at its build slot, stim logs --follow and stim status
+  --watch end when the engine switches builds under them; the CLI prints the
+  quoted line and exits 75. While a newer build is staged, a cache miss waits
+  at its build slot for up to 10 minutes so running builds can finish.
+  Rerun the same command: it runs the new build.`,
     },
     STIM_ROUTER_TOO_OLD: {
       summary: 'this copy of stim cannot read the engine pointer a newer stim wrote',

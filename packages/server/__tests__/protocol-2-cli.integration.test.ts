@@ -2,9 +2,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { generateNoiseKeyPair } from '@stim-cli/core/noise';
 import { decodeSecret, initiateNoise, newSecret } from '@stim-cli/core/noise-session';
-import { clientIdentity, isJsonObject } from '@stim-cli/core/state';
+import { clientIdentity, isJsonObject, stimBuildId } from '@stim-cli/core/state';
 import { WebSocket } from 'ws';
 import type { Endpoint, MachineCredential } from '@stim-cli/core/state';
 import { startServer, type RunningServer } from '../src/server.ts';
@@ -30,11 +31,21 @@ afterEach(async () => {
 
 async function start(): Promise<Endpoint> {
   const stimCli = join(home, 'fake-stim.mjs');
-  writeFileSync(stimCli, '');
+  writeFileSync(
+    stimCli,
+    `import { dirname, join } from 'node:path';
+const { serveOffloadJob } = await import(${JSON.stringify(fileURLToPath(new URL('../../stim-cli/src/job/offload/serve.ts', import.meta.url)))});
+const stop = new AbortController();
+process.on('SIGTERM', () => stop.abort());
+const worker = [join(dirname(process.argv[1]), 'offload-worker.mjs')];
+const code = await serveOffloadJob(process.argv[3], JSON.parse(process.env.STIM_JOB_SPEC), process.stdin, process.stdout, stop.signal, worker);
+await new Promise((resolve) => process.stdout.write('', resolve));
+process.exit(code);
+`,
+  );
   server = await startServer({
     hosts: ['127.0.0.1'],
     port: 0,
-    localSocket: null,
     stimCli,
     name: 'Worker',
     stimVersion: '9.9.9',
@@ -162,6 +173,8 @@ if (process.argv[2] === 'offer-native-gradle') {
   if (paired.state !== 'approved') throw new Error(`Pairing failed: ${paired.state}`);
   const connection = await BuildConnection.open(endpoint, paired.credential.serverKey!, 5000);
   if (!(connection instanceof BuildConnection)) throw new Error(connection.failure);
+  const job = { kind: 'offload-build', stim: '9.9.9', build: stimBuildId(home), repo: 'app-1' };
+  expect(await connection.request('job.start', job, 5000)).toHaveProperty('result.job');
   try {
     const query = {
       project: '',

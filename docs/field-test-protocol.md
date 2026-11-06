@@ -45,6 +45,8 @@ build step:
 
 ```bash
 candidate_cli="$PWD/packages/stim-cli/dist/cli.mjs"
+export STIM_ENGINE_ROOT="$(mktemp -d)/engine"
+export STIM_BUILD_CACHE="$STIM_ENGINE_ROOT/build-cache" STIM_METRO_CACHE="$STIM_ENGINE_ROOT/metro-cache"
 stim() { node "$candidate_cli" "$@"; }
 stim --version
 stim guide agent
@@ -53,7 +55,9 @@ stim guide settings
 ```
 
 The candidate path is absolute so the function still uses that build after you
-change into an app or worktree.
+change into an app or worktree. The scratch `STIM_ENGINE_ROOT` and the two
+cache variables under it keep the candidate off this machine's engine store and
+caches: it never promotes itself onto the engine every other copy of `stim` runs.
 
 For a standalone field pass of the published release:
 
