@@ -3,7 +3,7 @@ import { platform } from 'node:os';
 import { join, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import chalk from 'chalk';
-import { readVolumeSpaceAsync, type BudgetRefusal, type ReclaimObserver } from '../budget.ts';
+import { readVolumeSpaceAsync, type BudgetRefusal, type ReclaimObserver } from '../stimd/passes/budget.ts';
 import { phaseLine } from '../command-output.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';

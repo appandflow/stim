@@ -9,7 +9,7 @@ import {
 } from '@stim-cli/core/state';
 import { daemonFindings, daemonLine, daemonStatus, lastActionLine } from '../daemon/status.ts';
 import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
-import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
+import { maintenanceStatus, maintenanceLine } from '../stimd/passes/status.ts';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { runProcessOperation } from '../cli-operation.ts';

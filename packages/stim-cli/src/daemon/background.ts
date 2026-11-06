@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { daemonDir, maintenanceChildLogFile, readJsonObject } from '@stim-cli/core/state';
 import { windowsLauncherArgs } from '../detached-entry.ts';
 import { getExecutor } from '../exec.ts';
-import { capChildLog } from '../maintenance/attempt.ts';
+import { capChildLog } from '../stimd/passes/attempt.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { daemonMode } from './mode.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from './passes-guard-env.ts';

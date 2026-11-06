@@ -2,44 +2,44 @@ import type { StimContext } from '@stim-cli/core';
 import { existsSync } from 'node:fs';
 import { isAbsolute, sep } from 'node:path';
 import type { MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
-import { cacheLabel, trimmableCaches } from '../budget.ts';
-import { readManifest } from '../cache/cache-manifest.ts';
+import { cacheLabel, trimmableCaches } from './budget.ts';
+import { readManifest } from '../../cache/cache-manifest.ts';
 import {
   collectOrphanedWorkspaces,
   collectWorkspaceOutputs,
   isInsideWorkspaces,
   keptByLock,
-} from '../commands/gc/workspaces.ts';
+} from '../../commands/gc/workspaces.ts';
 import {
   collectWorktreeSweep,
   worktreeRemovalReason,
   type WorktreeSkipCode,
   type WorktreeSweep,
-} from '../commands/gc/worktrees.ts';
-import { canonicalPath } from '../commands/gc/paths.ts';
-import { formatBytes, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
-import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
-import { readParked } from '../devices/sim-pool.ts';
-import { loadConfig } from '../workspace/config.ts';
-import { collectGradleVersions } from '../commands/gc/gradle-versions.ts';
+} from '../../commands/gc/worktrees.ts';
+import { canonicalPath } from '../../commands/gc/paths.ts';
+import { formatBytes, isOnMountedVolume, listMountedVolumes } from '../../fs-util.ts';
+import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
+import { readParked } from '../../devices/sim-pool.ts';
+import { loadConfig } from '../../workspace/config.ts';
+import { collectGradleVersions } from '../../commands/gc/gradle-versions.ts';
 import {
   collectMemoryReport,
   memorySweepIsScoped,
   planWatchmanStop,
   runningBuild,
   watchmanStopBytes,
-} from '../commands/gc/memory.ts';
-import { collectTempLeftovers } from '../commands/gc/temp-leftovers.ts';
-import { collectTrash } from '../commands/gc/trash.ts';
-import { listBuildLocks } from '../engine/build-lock.ts';
-import { listBuildSlots } from '../engine/build-slots.ts';
-import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
+} from '../../commands/gc/memory.ts';
+import { collectTempLeftovers } from '../../commands/gc/temp-leftovers.ts';
+import { collectTrash } from '../../commands/gc/trash.ts';
+import { listBuildLocks } from '../../engine/build-lock.ts';
+import { listBuildSlots } from '../../engine/build-slots.ts';
+import type { OwnedDeviceActivity } from '../../commands/gc/idle.ts';
 import { finishedWorkspaces, planDeviceDeletion, planDeviceDeletionAsync } from './devices.ts';
 import type { MaintenancePlan } from './plan.ts';
 import { planPrune } from './prune.ts';
 import type { MaintenanceSettings } from './settings.ts';
-import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import { endedPullRequest } from '../workspace/pull-request.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
+import { endedPullRequest } from '../../workspace/pull-request.ts';
 
 export async function planSweep({
   settings,

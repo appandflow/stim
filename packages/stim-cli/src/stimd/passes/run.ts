@@ -15,14 +15,14 @@ import {
   type MaintenanceRecord,
 } from '@stim-cli/core/state';
 import { tryAcquireClaim, releaseClaim, type ClaimHandle, type ClaimHolder } from '@stim-cli/core/ownership-claim';
-import { tickListsSims, type TickMeasurement } from '../daemon/measure.ts';
-import { listAvdsAsync } from '../devices/android.ts';
-import { listAllIosSimsAsync } from '../devices/ios.ts';
-import { loadConfig } from '../workspace/config.ts';
-import { formatBytes } from '../fs-util.ts';
-import { memoryCulpritsUnderAsync } from '../host-memory.ts';
-import { memoryCulpritAdvice } from '../memory-culprits.ts';
-import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../commands/gc/devices.ts';
+import { tickListsSims, type TickMeasurement } from '../../daemon/measure.ts';
+import { listAvdsAsync } from '../../devices/android.ts';
+import { listAllIosSimsAsync } from '../../devices/ios.ts';
+import { loadConfig } from '../../workspace/config.ts';
+import { formatBytes } from '../../fs-util.ts';
+import { memoryCulpritsUnderAsync } from '../../host-memory.ts';
+import { memoryCulpritAdvice } from '../../memory-culprits.ts';
+import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../../commands/gc/devices.ts';
 import { measureOwnedDevices, type OwnedDeviceReads } from './devices.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 import { due } from './due.ts';
@@ -32,7 +32,7 @@ import { measurePressure, measureSizes, pressureFromMeasurement, sizeScanDeferre
 import { executeAction, type ActionOutcome } from './act.ts';
 import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
-import { maintenanceItem, openGcLog, type GcLog } from '../commands/gc/log.ts';
+import { maintenanceItem, openGcLog, type GcLog } from '../../commands/gc/log.ts';
 
 function writeState(state: MaintenanceState): void {
   mkdirSync(maintenanceDir(), { recursive: true });

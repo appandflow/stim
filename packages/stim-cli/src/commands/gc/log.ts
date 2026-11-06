@@ -9,9 +9,9 @@ import {
 } from '@stim-cli/core/state';
 import { loadConfig } from '../../workspace/config.ts';
 import { formatBytes } from '../../fs-util.ts';
-import { openRetainedLog } from '../../maintenance/log.ts';
-import { resolveMaintenanceSettings } from '../../maintenance/settings.ts';
-import type { ActionOutcome } from '../../maintenance/act.ts';
+import { openRetainedLog } from '../../stimd/passes/log.ts';
+import { resolveMaintenanceSettings } from '../../stimd/passes/settings.ts';
+import type { ActionOutcome } from '../../stimd/passes/act.ts';
 import type { GcResult } from './results.ts';
 
 type GcLogItem = Omit<GcResult, 'kind'> & { kind: string };

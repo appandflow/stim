@@ -30,7 +30,7 @@ import {
 } from '@stim-cli/core/ownership-claim';
 import { processContext } from '../cli-operation.ts';
 import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
-import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
+import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';

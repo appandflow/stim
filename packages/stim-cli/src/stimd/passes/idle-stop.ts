@@ -16,40 +16,40 @@ import {
   type DeviceActivity,
   type MaintenanceAction,
 } from '@stim-cli/core/state';
-import { formatLongDuration } from '../command-output.ts';
-import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
-import { workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
-import { canonicalPath } from '../commands/gc/paths.ts';
-import { runStop } from '../commands/stop.ts';
+import { formatLongDuration } from '../../command-output.ts';
+import { deviceSweepIsScoped } from '../../commands/gc/devices.ts';
+import { workspaceBuildInProgress, type OwnedDeviceActivity } from '../../commands/gc/idle.ts';
+import { canonicalPath } from '../../commands/gc/paths.ts';
+import { runStop } from '../../commands/stop.ts';
 import {
   getAvdNameForSerial,
   getAvdNameForSerialAsync,
   listAdbDevices,
   listAdbDevicesAsync,
-} from '../devices/android.ts';
-import { projectDeviceSlots } from '../devices/device-slots.ts';
-import { leaseIsExpired, listLeaseFiles } from '../engine/device-lease.ts';
-import { liveShareKeepReason } from '../local-server.ts';
+} from '../../devices/android.ts';
+import { projectDeviceSlots } from '../../devices/device-slots.ts';
+import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
+import { liveShareKeepReason } from '../../local-server.ts';
 import {
   WorkspaceProcessCleanupError,
   withWorkspaceProcessLock,
   workspaceProcessLockError,
-} from '../engine/workspace-process-lock.ts';
-import { pidExists } from '../metro.ts';
-import { decideIdleStop, type IdleStopEvidence } from '../policy/idle.ts';
-import { inspectProcessIdentity } from '../process-identity.ts';
-import { METRO_REQUEST_EVENTS } from '../supervisor/idle-stop.ts';
-import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
-import { MODE_COMMAND, readRemoteSession } from '../supervisor/state.ts';
-import { loadConfig } from '../workspace/config.ts';
-import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../workspace/in-use.ts';
-import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
-import { resolveProjectSettings, resolveProjectSettingsAsync, settingValueAt } from '../workspace/settings.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { readWebRecord, webFacts } from '../web/state.ts';
+} from '../../engine/workspace-process-lock.ts';
+import { pidExists } from '../../metro.ts';
+import { decideIdleStop, type IdleStopEvidence } from '../../policy/idle.ts';
+import { inspectProcessIdentity } from '../../process-identity.ts';
+import { METRO_REQUEST_EVENTS } from '../../supervisor/idle-stop.ts';
+import { resolveSupervisorTarget } from '../../supervisor/ownership.ts';
+import { MODE_COMMAND, readRemoteSession } from '../../supervisor/state.ts';
+import { loadConfig } from '../../workspace/config.ts';
+import { withIdleWorkspace, workspaceInUse, workspaceInUseAsync } from '../../workspace/in-use.ts';
+import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
+import { resolveProjectSettings, resolveProjectSettingsAsync, settingValueAt } from '../../workspace/settings.ts';
+import { readWorkspaceState } from '../../workspace/workspace-state.ts';
+import { readWebRecord, webFacts } from '../../web/state.ts';
 import type { MaintenancePlan } from './plan.ts';
 
-export { decideIdleStop, type IdleStopDecision, type IdleStopEvidence } from '../policy/idle.ts';
+export { decideIdleStop, type IdleStopDecision, type IdleStopEvidence } from '../../policy/idle.ts';
 
 const HOUR_MS = 3_600_000;
 const SETTING = 'maintenance.idleStopHours';
@@ -113,7 +113,7 @@ async function hostedKeepReasons(facts: ReturnType<typeof hostedFacts>): Promise
   const keep = [...facts.unreadable];
   if (keep.length) return keep;
   for (const { label, machine, session, platform } of facts.placements) {
-    const { probeHostedSession } = await import('../device-host/hosted-client.ts');
+    const { probeHostedSession } = await import('../../device-host/hosted-client.ts');
     const probe = await probeHostedSession({ machine, session, platform }, { ttlMs: 0 });
     if (probe.state === 'ready' || probe.state === 'stopped') continue;
     const why =
