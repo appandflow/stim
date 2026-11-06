@@ -280,6 +280,9 @@ jobs:
           done < <(node scripts/ci-darwin-unit-test-files.mjs)
           pnpm run test "${unit_files[@]}" --testTimeout=60000 --reporter=default --reporter=json --outputFile.json=test-results/unit-macos.json
 
+      - name: Benchmark harness tests (vitest)
+        run: pnpm run test:bench --testTimeout=60000
+
       - name: Retain unit-test timings
         if: always()
         uses: actions/upload-artifact@v4

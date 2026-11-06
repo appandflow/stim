@@ -284,7 +284,9 @@ PATH).
   without a workflow edit. Both it and the focused PR selector use
   `scripts/ci-unit-test-pattern.mjs` to match root test files and exclude
   compatibility, browser and agent-benchmark tests. It runs each selected file in full, with a 60 second
-  test timeout, and uploads `unit-test-timings-macos`. Like every `ci.yml` job
+  test timeout, and uploads `unit-test-timings-macos`. The macOS lane also runs
+  `pnpm run test:bench` with a 60 second test timeout, including the real
+  sandbox-exec and Metro listener tests that skip other platforms. Like every `ci.yml` job
   it is part of the `merge gate` poll on a pull request and does not run in the
   merge queue.
 

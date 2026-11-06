@@ -273,7 +273,9 @@ describe('benchmark runner filesystem isolation', () => {
       nested: 'sandbox-exec: sandbox_apply: Operation not permitted',
       ps: '/bin/sh: /bin/ps: Operation not permitted',
     };
+    const calls = [];
     const execute = (denied) => (file, args) => {
+      calls.push({ file, args });
       const command = args.slice(2).join(' ');
       const key = command.includes('/usr/bin/true') ? 'nested' : command.includes('/bin/ps') ? 'ps' : 'unknown';
       if (!denied.includes(key)) return '';
@@ -307,6 +309,15 @@ describe('benchmark runner filesystem isolation', () => {
       nestedSandbox: { permitted: true },
       processIdentity: { permitted: true },
     });
+    for (const { file, args } of calls) {
+      expect([file, ...args.slice(0, 2)]).toEqual(['/usr/bin/sandbox-exec', '-p', paths.policy]);
+    }
+    const nested = calls.find(({ args }) => args.includes('/usr/bin/true'));
+    expect(nested?.args.slice(2, 5)).toEqual([
+      '/usr/bin/sandbox-exec',
+      '-p',
+      expect.stringContaining('(deny default)'),
+    ]);
   });
 
   it.skipIf(process.platform !== 'darwin')(
