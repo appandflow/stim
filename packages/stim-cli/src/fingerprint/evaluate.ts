@@ -420,6 +420,8 @@ const scriptNames = async (paths: string[]) =>
  * The env names the native build scripts read: the tracked native directory's or the prebuild template's, React
  * Native's, autolinking's and the Gradle plugin's, and every package `scan` adds. An installed package's names are
  * kept in the index under its `package.json`. Scans run in the background; `settle` waits for every one started.
+ * Without an index, the app's own dependencies are walked ahead, since autolinking names most native packages only
+ * when its child exits; a walked package adds names only once `scan` names it.
  */
 function buildEnvNames(
   root: string,
@@ -433,6 +435,12 @@ function buildEnvNames(
   const names: string[] = [];
   const pending: Promise<unknown>[] = [];
   let failure: unknown = null;
+  const walked = new Map<string, Promise<string[]>>();
+  const walkScripts = (dir: string) => {
+    let found = walked.get(dir);
+    if (!found) walked.set(dir, (found = buildScripts(dir).then(scriptNames)));
+    return found;
+  };
   const track = (found: Promise<string[]>, entry?: PackageEntry) =>
     pending.push(
       found.then(
@@ -461,9 +469,22 @@ function buildEnvNames(
       scanned.add(dir);
       const entry = installedPackage(dir) ? session?.pkg(dir) : undefined;
       const known = entry?.provenance?.mode === 'identity' ? entry.scan : undefined;
-      track(known ? Promise.resolve(known) : buildScripts(dir).then(scriptNames), entry);
+      track(known ? Promise.resolve(known) : walkScripts(dir), entry);
     }
   };
+  if (!session) {
+    let app: Record<string, unknown> = {};
+    try {
+      app = record(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')));
+    } catch {}
+    for (const name of new Set([
+      ...Object.keys(record(app.dependencies)),
+      ...Object.keys(record(app.devDependencies)),
+    ])) {
+      const dir = findPackage(root, name);
+      if (dir) walkScripts(dir).catch(() => {});
+    }
+  }
   const settle = async () => {
     await Promise.all(pending);
     if (failure) throw failure;
