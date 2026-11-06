@@ -15,7 +15,7 @@ see [Each release](./apps/mobile/README.md#each-release) and
 ```
 packages/core                @stim-cli/core                shared primitives (cache roots, cache key, registration)
 packages/stim-cli            stim                          the CLI
-packages/ci                  @stim-cli/ci                  CI lifecycle and stim-ci executable
+packages/ci                  @stim-cli/ci                  CI lifecycle used by stim ci
 packages/cache               @stim-cli/cache               cache provider contract and tier coordination
 packages/cache-s3            @stim-cli/cache-s3            optional S3-compatible cache provider
 packages/metro               @stim-cli/metro               shared Metro transform cache + log reporter
@@ -488,7 +488,7 @@ and repeat the affected gate rather than waiving it.
    that already exists, computes the dist-tag (section 1) and publishes every
    package to it. Its `smoke` job then waits, up to 15 minutes per check, for
    the registry to serve each version, its tarball and the dist-tag, and runs
-   `npx stim@X.Y.Z --version`, `stim-ci --version` from `@stim-cli/ci@X.Y.Z`
+   `npx stim@X.Y.Z --version`, `npx stim@X.Y.Z ci --version`
    and `stim-server --version` from `@stim-cli/server@X.Y.Z` in a scratch
    directory.
 
@@ -514,7 +514,7 @@ and repeat the affected gate rather than waiving it.
    npm view "@stim-cli/core@$version" version
    npm view "@stim-cli/cache@$version" version
    npm view "@stim-cli/metro@$version" version
-   cd /tmp && npx -p "@stim-cli/ci@$version" stim-ci --version
+   cd /tmp && npx --yes "stim@$version" ci --version
    cd /tmp && npx -p "@stim-cli/server@$version" stim-server --version
    ```
    Keep the `cd /tmp`. Inside this repository, `npx "stim@$version"` with the

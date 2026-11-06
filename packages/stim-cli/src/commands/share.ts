@@ -1,6 +1,5 @@
 import chalk from 'chalk';
-// oxlint-disable-next-line stim/package-fence -- @stim-cli/server has no public entry for this module until the one-package fold merges the two packages.
-import { bundledStim } from '../../../server/src/environment.ts';
+import { bundledStim } from '@stim-cli/server/environment';
 import type { Command } from 'commander';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { RESERVED_SHARE_SLUGS, SHARE_SLUG_PATTERN, type Methods, type WebShareRow } from '@stim-cli/core/protocol';

@@ -203,7 +203,7 @@ function buildCommand({ run, home, buildCache }: CIOptions, projectRoot: string)
   } else if (run.platform === 'android' && run.variant !== undefined) {
     flags.push(`--variant ${JSON.stringify(run.variant)}`);
   }
-  return `stim-ci build ${flags.join(' ')}`;
+  return `stim ci build ${flags.join(' ')}`;
 }
 
 export type { CommandResult } from './command.ts';

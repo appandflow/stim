@@ -21,12 +21,14 @@ test('the router reports its package version and serving retains the service pro
       env,
     });
     expect(printed.stdout.trim()).toBe(version);
-    const served = await execute(
-      process.execPath,
-      [join(root, 'packages/stim-cli/bin/stim.mjs'), 'serve', '--version'],
-      { env },
-    );
-    expect(served.stdout.trim()).toBe(version);
+    for (const command of ['serve', 'ci']) {
+      const reported = await execute(
+        process.execPath,
+        [join(root, 'packages/stim-cli/bin/stim.mjs'), command, '--version'],
+        { env },
+      );
+      expect(reported.stdout.trim()).toBe(version);
+    }
     for (const args of [['--help'], ['serve', '--help']]) {
       await execute(process.execPath, [join(root, 'packages/stim-cli/bin/stim.mjs'), ...args], { env });
     }

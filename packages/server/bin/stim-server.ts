@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const floor = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).engines.node.slice(2);
 
@@ -12,7 +15,6 @@ if (encode(process.versions.node) < encode(floor)) {
   );
   process.exitCode = 1;
 } else {
-  // oxlint-disable-next-line stim/package-fence -- the stim-server shim runs stim serve from the CLI source until the one-package fold merges the two packages.
-  const { legacyMain } = await import('../../stim-cli/src/commands/serve.ts');
-  await legacyMain();
+  const manifest = createRequire(import.meta.url).resolve('stim/package.json');
+  await import(pathToFileURL(join(dirname(manifest), 'dist/stim-server.mjs')).href);
 }

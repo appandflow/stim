@@ -97521,7 +97521,7 @@ If the error persists, please check whether Actions and API requests are operati
 };
 new DefaultArtifactClient();
 //#endregion
-//#region ../../../packages/ci/dist/artifacts.mjs
+//#region ../../../packages/ci/dist/artifacts-uz0iNJt9.mjs
 async function regularFiles(directory, resolveDirectory = false) {
 	try {
 		if (resolveDirectory) directory = await realpath$1(directory);

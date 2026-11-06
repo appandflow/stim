@@ -322,7 +322,7 @@ jobs:
           }
 
           ci_runs() {
-            (cd "$scratch" && npx --yes -p "@stim-cli/ci@$version" stim-ci --version) > "$scratch/ci-version.txt" 2>&1 || { cat "$scratch/ci-version.txt"; return 1; }
+            (cd "$scratch" && npx --yes "stim@$version" ci --version) > "$scratch/ci-version.txt" 2>&1 || { cat "$scratch/ci-version.txt"; return 1; }
             tail -1 "$scratch/ci-version.txt" | VERSION="$version" node --input-type=module -e 'let output = ""; for await (const chunk of process.stdin) output += chunk; process.exitCode = output.trim() === process.env.VERSION ? 0 : 1;'
           }
 
@@ -333,7 +333,7 @@ jobs:
             wait_for "$p dist-tag $DIST_TAG -> $version" dist_tag_set "$p"
           done
           wait_for "npx stim@$version --version" cli_runs
-          wait_for "npx -p @stim-cli/ci@$version stim-ci --version" ci_runs
+          wait_for "npx stim@$version ci --version" ci_runs
           wait_for "npx -p @stim-cli/server@$version stim-server --version" server_runs
 
   next-publish:
