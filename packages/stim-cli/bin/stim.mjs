@@ -18,7 +18,7 @@ const entry = (dist) =>
   process.argv[2] === 'status' && existsSync(join(dist, 'status.mjs')) ? 'status.mjs' : 'cli.mjs';
 
 if (current === null) {
-  import(`../dist/${entry(join(import.meta.dirname, '..', 'dist'))}`);
+  import(`../dist/${entry(fileURLToPath(new URL('../dist', import.meta.url)))}`);
 } else {
   const { installKind, route } = await import('./route.mjs');
   const self = dirname(dirname(realpathSync(fileURLToPath(import.meta.url))));

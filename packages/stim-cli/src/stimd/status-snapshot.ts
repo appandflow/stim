@@ -6,7 +6,8 @@ import { spawnEntry } from '../spawn-entry.ts';
 
 const IDLE_MS = 2 * 60_000;
 const BOOTING_WAIT_MS = 1000;
-const KEPT = 4;
+const KEPT = 16;
+const READ_AT_BOOT = 4;
 
 const failed = (error: unknown): string =>
   JSON.stringify({ op: 'status', error: error instanceof Error ? error.message : String(error) });
@@ -27,7 +28,7 @@ export interface StatusSnapshots {
  * that status answers at once. Each answer reads that directory again behind it on the `status` thread, which a probe
  * starts and two idle minutes end; `fresh` waits for that read first. With no snapshot yet, the answer waits up to
  * {@link BOOTING_WAIT_MS} for the first read, then says `booting`. The directories are kept in `file`, and a new stimd
- * reads them again at boot.
+ * reads the last {@link READ_AT_BOOT} again at boot.
  */
 export function createStatusSnapshots(log: Log, file: string): StatusSnapshots {
   const snapshots = new Map<string, { json: string; at: number }>();
@@ -37,31 +38,46 @@ export function createStatusSnapshots(log: Log, file: string): StatusSnapshots {
   let queue = Promise.resolve();
   let closed = false;
 
-  const read = (cwd: string) =>
-    new Promise<{ json: string; at: number }>((resolve, reject) => {
-      if (idle) clearTimeout(idle);
-      const thread = (worker ??= new Worker(spawnEntry('stimd-status')));
-      const at = Date.now();
-      const done = () => {
-        thread.off('message', onMessage).off('error', onGone).off('exit', onGone);
-        idle = setTimeout(() => {
-          if (worker === thread) worker = null;
-          void thread.terminate();
-        }, IDLE_MS).unref();
-      };
-      const onMessage = (message: { json?: string; failed?: string }) => {
-        done();
-        if (typeof message.json === 'string') resolve({ json: message.json, at });
-        else reject(new Error(message.failed ?? 'the status thread answered nothing'));
-      };
-      const onGone = (error: unknown) => {
-        done();
-        if (worker === thread) worker = null;
-        reject(error instanceof Error ? error : new Error(`the status thread exited with code ${String(error)}`));
-      };
-      thread.on('message', onMessage).once('error', onGone).once('exit', onGone);
-      thread.postMessage({ cwd });
+  let pending: { resolve: (json: string) => void; reject: (error: Error) => void } | null = null;
+  const start = () => {
+    const thread = new Worker(spawnEntry('stimd-status'));
+    thread.unref();
+    const gone = (error: Error) => {
+      if (worker === thread) worker = null;
+      pending?.reject(error);
+      pending = null;
+    };
+    thread.on('message', (message: { json?: string; failed?: string }) => {
+      const answered = pending;
+      pending = null;
+      if (typeof message.json === 'string') answered?.resolve(message.json);
+      else answered?.reject(new Error(message.failed ?? 'the status thread answered nothing'));
     });
+    thread.on('error', (error: unknown) => {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      log('warn', 'status_thread_failed', failure.message);
+      gone(failure);
+    });
+    thread.on('exit', (code) => gone(new Error(`the status thread exited with code ${code}`)));
+    return thread;
+  };
+  const read = async (cwd: string): Promise<{ json: string; at: number }> => {
+    if (idle) clearTimeout(idle);
+    const thread = (worker ??= start());
+    const at = Date.now();
+    try {
+      const json = await new Promise<string>((resolve, reject) => {
+        pending = { resolve, reject };
+        thread.postMessage({ cwd });
+      });
+      return { json, at };
+    } finally {
+      idle = setTimeout(() => {
+        if (worker === thread) worker = null;
+        void thread.terminate();
+      }, IDLE_MS).unref();
+    }
+  };
 
   const probe = (cwd: string): Promise<void> => {
     const running = probes.get(cwd);
@@ -87,7 +103,7 @@ export function createStatusSnapshots(log: Log, file: string): StatusSnapshots {
 
   try {
     const saved: unknown = JSON.parse(readFileSync(file, 'utf8'));
-    if (Array.isArray(saved)) for (const cwd of saved.slice(-KEPT)) if (typeof cwd === 'string') behind(cwd);
+    if (Array.isArray(saved)) for (const cwd of saved.slice(-READ_AT_BOOT)) if (typeof cwd === 'string') behind(cwd);
   } catch {}
 
   return {

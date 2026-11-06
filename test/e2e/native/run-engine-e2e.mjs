@@ -338,6 +338,7 @@ test('(s) stim status --json answers from stimd with ageMs, without the CLI', { 
     times.push(performance.now() - started);
     assert.equal(run.status, 0, run.stderr);
     last = JSON.parse(run.stdout);
+    if (n > 0) assert.equal(typeof last.ageMs, 'number', `call ${n} was not answered from the snapshot`);
   }
   assert.ok(Array.isArray(last.environments), 'the payload is the status payload');
   assert.equal(typeof last.ageMs, 'number', 'answered from the snapshot, which carries its age');

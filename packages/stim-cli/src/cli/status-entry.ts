@@ -24,15 +24,19 @@ function buildId(dir: string): string {
 
 /** stimd's answer to `status`, or null when no stimd of this build answers in time. */
 function askStimd(fresh: boolean): Promise<Record<string, unknown> | null> {
-  const home = isAbsolute(process.env.STIM_HOME ?? '') ? String(process.env.STIM_HOME) : join(homedir(), '.stim');
+  const configured = process.env.STIM_HOME;
+  if (configured && !isAbsolute(configured)) return Promise.resolve(null);
   let socketPath: unknown;
+  let build: string;
   try {
-    socketPath = JSON.parse(readFileSync(join(home, 'run', 'stimd.json'), 'utf8')).socket;
+    socketPath = JSON.parse(
+      readFileSync(join(configured || join(homedir(), '.stim'), 'run', 'stimd.json'), 'utf8'),
+    ).socket;
+    build = buildId(dirname(fileURLToPath(import.meta.url)));
   } catch {
     return Promise.resolve(null);
   }
   if (typeof socketPath !== 'string') return Promise.resolve(null);
-  const build = buildId(dirname(fileURLToPath(import.meta.url)));
   return new Promise((resolve) => {
     const socket = connect(socketPath);
     const lines: Record<string, unknown>[] = [];
@@ -90,7 +94,14 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
     return;
   }
   Reflect.set(globalThis, Symbol.for('stim.main'), true);
-  const cli = await import('../../bin/node-check.ts');
+  let cli: typeof import('../../bin/node-check.ts');
+  try {
+    cli = await import('../../bin/node-check.ts');
+  } catch (error) {
+    if (!ctx.onLoadError) throw error;
+    await ctx.onLoadError(error);
+    return;
+  }
   await cli.main(argv, ctx);
 }
 

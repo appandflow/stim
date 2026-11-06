@@ -86,6 +86,14 @@ test.each([
   expect(cli.main).toHaveBeenCalledWith(['node', 'stim', ...args], {});
 });
 
+test('--json runs the CLI, which refuses it, when STIM_HOME is relative', async () => {
+  await stimd({ op: 'status', ageMs: 1, status: {} });
+  process.env.STIM_HOME = 'relative/home';
+  await main(['node', 'stim', 'status', '--json']);
+  expect(requests).toEqual([]);
+  expect(cli.main).toHaveBeenCalledTimes(1);
+});
+
 test('--json runs the CLI when no stimd runs or a stimd of another build refuses this one', async () => {
   await main(['node', 'stim', 'status', '--json']);
   expect(cli.main).toHaveBeenCalledTimes(1);
