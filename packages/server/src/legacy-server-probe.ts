@@ -10,11 +10,8 @@ const PROBE_MS = 1500;
 function below(a: string, b: string): boolean {
   const [coreA = '', preA] = a.split('-', 2);
   const [coreB = '', preB] = b.split('-', 2);
-  const parts = coreB.split('.').map(Number);
-  const diff = coreA
-    .split('.')
-    .map((part, index) => Number(part) - (parts[index] ?? 0))
-    .find(Boolean);
+  const [parts, floor] = [coreA, coreB].map((core) => core.split('.').map(Number));
+  const diff = parts?.map((part, index) => part - (floor?.[index] ?? 0)).find(Boolean);
   return diff ? diff < 0 : preA !== undefined && preB === undefined;
 }
 
@@ -39,10 +36,10 @@ export async function legacyServerRefusal(port: number, floor: string | null): P
   } catch {
     return null;
   }
-  if (!isJsonObject(health) || health.server !== 'stim-server' || typeof health.version !== 'string') return null;
-  if (!below(health.version, floor)) return null;
+  const version = isJsonObject(health) && health.server === 'stim-server' ? health.version : undefined;
+  if (typeof version !== 'string' || !below(version, floor)) return null;
   const home = configDir().replace(homedir(), '~');
   const pid = process.platform === 'win32' ? 'unknown' : await listener(port);
-  return `stim-server ${health.version} (Stim Desktop bundle, pid ${pid}) holds port ${port}; update Stim Desktop (Stim > Check for Updates) or quit it. Phone, shares and remote builds for ${home} wait until then.`;
+  return `stim-server ${version} (Stim Desktop bundle, pid ${pid}) holds port ${port}; update Stim Desktop (Stim > Check for Updates) or quit it. Phone, shares and remote builds for ${home} wait until then.`;
 }
 // compat end
