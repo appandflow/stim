@@ -13,6 +13,7 @@ export default defineConfig({
     'stim-server': 'bin/stim-server.ts',
     cli: 'src/cli.ts',
     environment: 'src/environment.ts',
+    'release-install': 'src/release-install.ts',
     'service-plist': 'src/service-plist.ts',
     'stim-service-runner': 'src/service-runner.ts',
     protocol: 'src/protocol.ts',

@@ -27,6 +27,7 @@
   },
   "files": [
     "bin/stim.mjs",
+    "bin/route.mjs",
     "dist",
     "shim",
     "skill",

@@ -6,7 +6,8 @@ import { isJsonObject } from '@stim-cli/core/state';
 import type { ProtocolError, EngineUpdatePackage, EngineUpdateProgress, EngineUpdateStatus } from './protocol.ts';
 import { compareVersions, validateRelease, type ServerBuild } from './service-plist.ts';
 import { serviceManagerOrNull, serviceRoot } from './service-manager.ts';
-import { describeSource, readLastUpdate, runsAsService, type UpdateOutcome, type UpdateSource } from './service.ts';
+import { describeSource, readLastUpdate, runsAsService, type UpdateOutcome } from './service.ts';
+import type { UpdateSource } from './release-install.ts';
 
 const UPDATE_CHUNK_CHARS = 32 * 1024;
 const MAX_PACKAGES = 16;

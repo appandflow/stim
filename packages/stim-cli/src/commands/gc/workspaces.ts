@@ -99,7 +99,7 @@ function inspectWorkspaceResidue(dir: string, held: readonly string[] = []): Wor
     return blocked(`it holds ${entry}`);
   }
   for (const lock of locks) {
-    const survey = readClaimSet(join(dir, lock));
+    const survey = readClaimSet(join(dir, `${lock}.claims`));
     if (survey.live.length) return blocked(`${lock} is held`);
     if (survey.unresolved[0]) return blocked(`${lock} cannot be resolved: ${survey.unresolved[0].reason}`);
   }

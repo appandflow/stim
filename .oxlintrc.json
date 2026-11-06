@@ -307,6 +307,7 @@
         "packages/stim-cli/src/daemon/**",
         "packages/stim-cli/src/device-host/run.ts",
         "packages/stim-cli/src/offload/worker.ts",
+        "packages/stim-cli/src/commands/engine.ts",
         "packages/stim-cli/src/commands/gc.ts",
         "packages/stim-cli/src/commands/gc/**",
         "packages/stim-cli/src/commands/doctor.ts",
