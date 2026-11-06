@@ -33,6 +33,13 @@ describe('release QA matrix', () => {
     });
   });
 
+  it('keeps retired expo-build-cache paths mapped to cache QA for release diffs spanning the deletion', () => {
+    const result = computeQaMatrix([{ path: 'packages/expo-build-cache/index.ts', added: 0, removed: 100 }]);
+
+    expect(result.unclassified).toEqual([]);
+    expect(requiredIds(result)).toEqual(['caches']);
+  });
+
   it('narrows at file level and falls back to every row for an unmapped file', () => {
     const specific = computeQaMatrix([{ path: 'packages/stim-cli/src/engine/tunnel.ts', added: 1, removed: 1 }]);
     const fallback = computeQaMatrix([{ path: 'packages/stim-cli/src/engine/new-thing.ts', added: 1, removed: 1 }]);
