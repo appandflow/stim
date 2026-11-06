@@ -436,7 +436,7 @@ export async function runLadderNow(
 
 /**
  * Automatic maintenance, the activity pass over workspaces with no running dev server, and the pressure ladder at
- * command time, for a command that found no daemon holding the home: Windows, which has none, or a daemon that could
+ * command time, for a command that found no daemon holding the home: a stimd that could
  * not start. Nothing runs while `daemon.mode` is off, and report acts on nothing. Each dev server supervisor times
  * its own idle stop. No pass takes `protectedRoot`, the command's own workspace.
  */
