@@ -294,7 +294,7 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
     expect(full).toBe(1);
   });
 
-  test('a record written by one Stim version is read by another', async () => {
+  test("the Stim version is not part of a record's key", async () => {
     app = fixture('npm');
     await lookup(app);
     vi.resetModules();
