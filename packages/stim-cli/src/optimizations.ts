@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
-import { ANDROID_COMPILER_CACHE_CHOICES, ANDROID_PCH_CHOICES, type SettingsObject } from '@stim-cli/core/state';
+import { machineSettingValue, type SettingsObject } from '@stim-cli/core/state';
 
 export interface Optimizations {
   buildCache: boolean;
@@ -60,15 +60,7 @@ export function resolveOptimizations(
   settings: SettingsObject = {},
   env: NodeJS.ProcessEnv = process.env,
 ): Optimizations {
-  function choice<T extends string>(path: string, choices: readonly T[], fallback: T): T {
-    const raw = optimizationValue(settings, path);
-    if (raw === undefined) return fallback;
-    if (typeof raw !== 'string' || !choices.includes(raw as T)) {
-      throw new Error(`Invalid optimizations.${path}. Expected ${choices.join(', ')}.`);
-    }
-    return raw as T;
-  }
-  const compiler = choice('android.compilerCache', ANDROID_COMPILER_CACHE_CHOICES, 'auto');
+  const compiler = optimizationValue(settings, 'android.compilerCache');
   const fromEnvironment = Boolean(env.STIM_ANDROID_CAS_TOOLCHAIN);
   const manifest = env.STIM_ANDROID_CAS_TOOLCHAIN || optimizationValue(settings, 'android.casToolchain');
   let fallback: CompilerCacheFallback | null = null;
@@ -111,10 +103,10 @@ export function resolveOptimizations(
       prefixMapping: optimizationBoolean(settings, 'ios.prefixMapping'),
     },
     android: {
-      compilerCache,
+      compilerCache: compilerCache as 'ccache' | 'cas' | 'none',
       casToolchain: toolchain,
       compilerCacheFallback: fallback,
-      pch: choice('android.pch', ANDROID_PCH_CHOICES, 'auto'),
+      pch: optimizationValue(settings, 'android.pch') as 'auto' | 'on' | 'off',
       gradleBuildCache: optimizationBoolean(settings, 'android.gradleBuildCache'),
       targetAbiOnly: optimizationBoolean(settings, 'android.targetAbiOnly'),
     },
@@ -134,21 +126,15 @@ export function artifactCachePolicy(
 }
 
 function optimizationValue(settings: SettingsObject, path: string): unknown {
-  let node: unknown = settings;
-  for (const key of ['optimizations', ...path.split('.')]) {
-    if (node === undefined) return undefined;
-    if (!node || typeof node !== 'object' || Array.isArray(node))
-      throw new Error('Invalid optimizations setting. Expected nested objects.');
-    node = (node as SettingsObject)[key];
-  }
-  return node;
+  const { value, error } = machineSettingValue(`optimizations.${path}`, { config: settings, env: {} });
+  if (error?.endsWith('in the config is not an object'))
+    throw new Error('Invalid optimizations setting. Expected nested objects.');
+  if (error && path !== 'android.casToolchain') throw new Error(error);
+  return value;
 }
 
-function optimizationBoolean(settings: SettingsObject, path: string, fallback = true): boolean {
-  const raw = optimizationValue(settings, path);
-  if (raw === undefined) return fallback;
-  if (typeof raw !== 'boolean') throw new Error(`Invalid optimizations.${path}. Expected true or false.`);
-  return raw;
+function optimizationBoolean(settings: SettingsObject, path: string): boolean {
+  return optimizationValue(settings, path) as boolean;
 }
 
 export function resolveMetroSharedCache(settings: SettingsObject): boolean {

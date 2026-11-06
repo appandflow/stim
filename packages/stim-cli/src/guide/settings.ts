@@ -1,5 +1,5 @@
 import { ANDROID_AVD_CONFIG_HELP } from '../workspace/settings.ts';
-import { REPLACED_SETTINGS, SETTINGS, SETTINGS_SCHEMA_URL } from '@stim-cli/core/state';
+import { REMOVED_SETTINGS, SETTINGS, SETTINGS_SCHEMA_URL } from '@stim-cli/core/state';
 
 export default {
   summary: 'Settings Stim reads, and where they can live',
@@ -1668,8 +1668,7 @@ The example shows the defaults. Full setting names and behavior:
     it never installs an old embedded bundle. Fresh artifacts can still store.
   optimizations.metroSharedCache
     false stops Stim appending its shared Metro store on both dev servers.
-    Project-configured stores remain the project's choice. Replace the removed
-    machine setting caches.injectMetroStore=false with this setting set false.
+    Project-configured stores remain the project's choice.
   optimizations.metroWarmup
     true by default. false skips background development bundle requests during
     ios/android, including any metro.warmupUrl override. Metro verification and
@@ -1830,24 +1829,16 @@ temporary directory, the Stim config directory or a filesystem root, and gc
 never prunes or empties such a directory.
 
 REMOVED SETTINGS
-Stim no longer reads these. \`stim settings set\` and \`settings get\` refuse
-each with STIM_BAD_ARG naming what replaced it, and the command that sets the
-replacement to the old value when there is one. \`stim doctor\` and \`stim
-settings\` report any left in a config file or the environment. start, ios,
-android, web, macos, revive and gc refuse with STIM_BAD_ARG while a variable
-marked "refused" is set; unset it, or set its replacement. They also refuse
-while a config layer they read holds a removed setting's old value that turned
-something off: maintenance.mode off or report, or metro.idleStopMinutes or
-devices.idleShutdownMinutes 0. The refusal names the set and unset commands
-that keep the old behavior, or only the unset when a layer already sets the
-replacement, and doctor rates it a cost. maintenance.idleStopHours 0 is still
-read, for hosted sessions, so it never refuses; doctor rates it a cost until
-idle.dormantDays is set, since it no longer keeps workspaces from going
-dormant. \`stim settings unset
-<key>\` removes a leftover key from every layer that has it (--scope limits it
-to one).
+Removed keys and environment variables are listed below with their replacements.
+Get and set refuse removed keys with STIM_BAD_ARG; unset removes them from every
+layer, or just --scope. Doctor reports them. start, ios, android, web, macos,
+revive and gc refuse old environment variables marked "refused" and removed
+config values that turned a mechanism off. Their remedies name the set and
+unset commands that preserve that behavior. maintenance.idleStopHours remains
+read for hosted sessions; doctor reports 0 until idle.dormantDays is set.
 
-${Object.entries(REPLACED_SETTINGS)
+${[...REMOVED_SETTINGS]
+  .filter(([, entry]) => !entry.kept)
   .map(
     ([key, removed]) =>
       `  \`${key}\`${removed.env ? ` (${removed.env}${removed.refuses ? ', refused' : ''})` : ''}\n    ${removed.key ? `replaced by ${removed.replacement}` : removed.replacement}; stim settings unset ${key}`,

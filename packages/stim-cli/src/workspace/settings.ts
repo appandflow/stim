@@ -11,19 +11,20 @@ import {
   gitCommonDirAsync,
   repoRootAsync,
 } from './worktree.ts';
-import { TUNNEL_MODES, type TunnelMode } from '../engine/metro-reach.ts';
+import type { TunnelMode } from '../engine/metro-reach.ts';
 import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
 import {
-  acceptsShape,
-  expectedShape,
   isLayeredSetting,
+  isJsonObject as isPlainObject,
+  settingValueAt,
+  setSettingValueAt,
   coerceSettingText,
   placementWord,
   replacementAdvice,
   settingDefinition,
   settingValueError,
   REMOTE_DEVICE_BACKENDS,
-  REPLACED_SETTINGS,
+  REMOVED_SETTINGS,
   SETTING_GROUPS,
   SETTINGS,
   WEB_VIEWPORTS,
@@ -33,10 +34,6 @@ import {
   type WebViewport,
 } from '@stim-cli/core/state';
 export type { SettingsObject };
-
-function isPlainObject(v: unknown): v is SettingsObject {
-  return v !== null && typeof v === 'object' && !Array.isArray(v);
-}
 
 export function mergeSettingsLayers(layers: Array<SettingsObject | null | undefined>): SettingsObject {
   const out: SettingsObject = {};
@@ -68,14 +65,7 @@ export const PATH_SETTINGS: readonly string[] = Object.freeze(
   LAYERED_SETTINGS.filter((setting) => setting.type.kind === 'path').map((setting) => setting.key),
 );
 
-export function settingValueAt(settings: unknown, path: string): unknown {
-  let node: unknown = settings;
-  for (const segment of path.split('.')) {
-    if (!isPlainObject(node)) return undefined;
-    node = node[segment];
-  }
-  return node;
-}
+export { settingValueAt } from '@stim-cli/core/state';
 
 export function settingShapeErrors(settings: unknown): string[] {
   const errors: string[] = [];
@@ -86,56 +76,36 @@ export function settingShapeErrors(settings: unknown): string[] {
   }
   for (const setting of LAYERED_SETTINGS) {
     if (SETTINGS_WITH_RESOLVE_TIME_FALLBACK.has(setting.key)) continue;
-    const value = settingValueAt(settings, setting.key);
-    if (value === undefined) continue;
+    const raw = settingValueAt(settings, setting.key);
+    if (raw === undefined || (setting.key === 'cache.provider' && typeof raw === 'string')) continue;
+    const value =
+      typeof raw === 'string' && (setting.key === 'ios.signingIdentitySha1' || setting.key === 'ios.lanHost')
+        ? raw.trim()
+        : raw;
     const expected =
-      setting.key === 'ios.remote' ||
-      setting.key === 'android.remote' ||
-      setting.key === 'macos.remote' ||
-      setting.key === 'android.deviceProfile' ||
-      (setting.type.kind === 'number' && !BOUNDS_CHECKED_WHEN_USED.has(setting.key))
-        ? settingValueError(setting, value)
-        : acceptsShape(setting, value)
-          ? null
-          : expectedShape(setting.type);
-    if (expected) errors.push(`Invalid ${setting.key} setting ${JSON.stringify(value)}. Expected ${expected}.`);
+      BOUNDS_CHECKED_WHEN_USED.has(setting.key) && typeof value === 'number' ? null : settingValueError(setting, value);
+    if (expected) errors.push(`Invalid ${setting.key} setting ${JSON.stringify(raw)}. Expected ${expected}.`);
   }
   return errors;
 }
 
 export const SETTING_SHAPE_REMEDY = 'Run `stim guide settings` for the shape each setting takes.';
 
-const MIN_ANDROID_DATA_PARTITION_SIZE_GB: number = 6;
-const DEFAULT_ANDROID_DATA_PARTITION_SIZE_GB: number = 8;
-const MAX_ANDROID_DATA_PARTITION_SIZE_GB: number = 16 * 1024;
-
 function validateAndroidDataPartitionSizeGb(raw: unknown): number {
-  if (
-    typeof raw !== 'number' ||
-    !Number.isSafeInteger(raw) ||
-    raw < MIN_ANDROID_DATA_PARTITION_SIZE_GB ||
-    raw > MAX_ANDROID_DATA_PARTITION_SIZE_GB
-  ) {
-    throw new Error(
-      `Invalid android.dataPartitionSizeGb setting ${JSON.stringify(raw)}. Expected an integer from ${MIN_ANDROID_DATA_PARTITION_SIZE_GB} through ${MAX_ANDROID_DATA_PARTITION_SIZE_GB} GiB.`,
-    );
-  }
-  return raw;
+  const error = settingValueError('android.dataPartitionSizeGb', raw);
+  if (error) throw new Error(`Invalid android.dataPartitionSizeGb setting ${JSON.stringify(raw)}. Expected ${error}.`);
+  return raw as number;
 }
 
 export function androidDataPartitionSizeBytes(sizeGb: unknown): number {
   return validateAndroidDataPartitionSizeGb(sizeGb) * 1024 ** 3;
 }
 
-function androidDataPartitionSizeGbRaw(settings: unknown): unknown {
-  if (!isPlainObject(settings) || !isPlainObject(settings.android)) return undefined;
-  return settings.android.dataPartitionSizeGb;
-}
-
 export function androidDataPartitionSizeGbSetting(settings: unknown): number {
-  const raw = androidDataPartitionSizeGbRaw(settings);
-  if (raw === undefined) return DEFAULT_ANDROID_DATA_PARTITION_SIZE_GB;
-  return validateAndroidDataPartitionSizeGb(raw);
+  const raw = settingValueAt(settings, 'android.dataPartitionSizeGb');
+  return raw === undefined
+    ? Number(settingDefinition('android.dataPartitionSizeGb')!.default)
+    : validateAndroidDataPartitionSizeGb(raw);
 }
 
 export function androidDataPartitionSizeGbSettingError(settings: unknown): string | null {
@@ -297,15 +267,9 @@ export function androidAvdConfigSetting(settings: unknown, settingsRoot: string)
   const android = settings.android;
   let entries: Record<string, string> = {};
   if ('avdConfigFile' in android) {
-    if (
-      typeof android.avdConfigFile !== 'string' ||
-      !android.avdConfigFile.trim() ||
-      android.avdConfigFile !== android.avdConfigFile.trim() ||
-      /[\r\n\0]/.test(android.avdConfigFile) ||
-      isAbsolute(android.avdConfigFile)
-    ) {
-      throw new Error('Invalid android.avdConfigFile setting. Expected a relative file path inside the app directory.');
-    }
+    const pathError = settingValueError('android.avdConfigFile', android.avdConfigFile);
+    if (typeof android.avdConfigFile !== 'string' || pathError)
+      throw new Error(`Invalid android.avdConfigFile setting. Expected ${pathError}.`);
     try {
       const root = realpathSync(settingsRoot);
       const candidate = resolve(root, android.avdConfigFile);
@@ -326,10 +290,10 @@ export function androidAvdConfigSetting(settings: unknown, settingsRoot: string)
     }
   }
   if ('avdConfig' in android) {
-    if (!isPlainObject(android.avdConfig)) {
+    if (settingValueError('android.avdConfig', android.avdConfig)) {
       throw new Error('Invalid android.avdConfig setting. Expected an object of native AVD key/value pairs.');
     }
-    for (const [key, value] of Object.entries(android.avdConfig)) {
+    for (const [key, value] of Object.entries(android.avdConfig as SettingsObject)) {
       const [normalizedKey, normalizedValue] = normalizedAndroidAvdConfigEntry(key, value);
       entries[normalizedKey] = normalizedValue;
     }
@@ -355,22 +319,16 @@ export interface IosProjectDir {
 }
 
 export function iosProjectDirSetting(settings: unknown, appRoot: string): IosProjectDir {
-  const value = iosString(settings, 'projectPath');
+  const value = settingValueAt(settings, 'ios.projectPath');
   if (
     value === undefined ||
     (typeof value === 'string' && normalize(value).replace(/[\\/]+$/, '') === DEFAULT_IOS_PROJECT_PATH)
   ) {
     return { dir: join(appRoot, DEFAULT_IOS_PROJECT_PATH), relative: DEFAULT_IOS_PROJECT_PATH, custom: false };
   }
-  if (
-    typeof value !== 'string' ||
-    !value.trim() ||
-    value !== value.trim() ||
-    /[\r\n\0]/.test(value) ||
-    isAbsolute(value)
-  ) {
-    throw new Error('Invalid ios.projectPath setting. Expected a directory path relative to the app directory.');
-  }
+  const pathError = settingValueError('ios.projectPath', value);
+  if (typeof value !== 'string' || pathError)
+    throw new Error(`Invalid ios.projectPath setting. Expected ${pathError}.`);
   try {
     const root = realpathSync(appRoot);
     const candidate = resolve(root, value);
@@ -402,7 +360,6 @@ const INVALID_IOS_PROJECT_DIR = '\0invalid ios.projectPath';
 
 export const DEFAULT_ANDROID_GRADLE_ROOT = 'android';
 export const DEFAULT_ANDROID_MODULE = ':app';
-const ANDROID_MODULE = /^(:(?!\.\.?(?::|$))[A-Za-z0-9._-]+)+$/;
 
 export interface AndroidLayout {
   gradleRoot: string;
@@ -412,18 +369,13 @@ export interface AndroidLayout {
   custom: boolean;
 }
 
-function androidString(settings: unknown, key: string): unknown {
-  if (!isPlainObject(settings) || !isPlainObject(settings.android)) return undefined;
-  return settings.android[key];
-}
-
 function hasGradleScript(dir: string, name: string): boolean {
   return existsSync(join(dir, `${name}.gradle`)) || existsSync(join(dir, `${name}.gradle.kts`));
 }
 
 export function androidLayoutSetting(settings: unknown, appRoot: string, bound: string): AndroidLayout {
-  const rootValue = androidString(settings, 'gradleRoot');
-  const moduleValue = androidString(settings, 'module');
+  const rootValue = settingValueAt(settings, 'android.gradleRoot');
+  const moduleValue = settingValueAt(settings, 'android.module');
   const custom =
     (rootValue !== undefined && rootValue !== DEFAULT_ANDROID_GRADLE_ROOT) ||
     (moduleValue !== undefined && moduleValue !== DEFAULT_ANDROID_MODULE);
@@ -438,17 +390,12 @@ export function androidLayoutSetting(settings: unknown, appRoot: string, bound: 
     };
   }
   const rawRoot = rootValue ?? DEFAULT_ANDROID_GRADLE_ROOT;
-  if (
-    typeof rawRoot !== 'string' ||
-    !rawRoot.trim() ||
-    rawRoot !== rawRoot.trim() ||
-    /[\r\n\0]/.test(rawRoot) ||
-    isAbsolute(rawRoot)
-  ) {
-    throw new Error('Invalid android.gradleRoot setting. Expected a directory path relative to the app directory.');
-  }
+  const pathError = settingValueError('android.gradleRoot', rawRoot);
+  if (typeof rawRoot !== 'string' || pathError)
+    throw new Error(`Invalid android.gradleRoot setting. Expected ${pathError}.`);
   const module = moduleValue ?? DEFAULT_ANDROID_MODULE;
-  if (typeof module !== 'string' || !ANDROID_MODULE.test(module)) {
+  const moduleError = settingValueError('android.module', module);
+  if (typeof module !== 'string' || moduleError) {
     throw new Error(
       `Invalid android.module setting ${JSON.stringify(module)}. Expected a Gradle project path such as :app.`,
     );
@@ -525,15 +472,9 @@ export function resolveIosProjectDir(settings: SettingsObject | null, root: stri
 export function iosSimSlimProfileSetting(settings: unknown, settingsRoot: string): string | null {
   if (!isPlainObject(settings) || !isPlainObject(settings.ios) || !('simslimProfile' in settings.ios)) return null;
   const value = settings.ios.simslimProfile;
-  if (
-    typeof value !== 'string' ||
-    !value.trim() ||
-    value !== value.trim() ||
-    /[\r\n\0]/.test(value) ||
-    isAbsolute(value)
-  ) {
-    throw new Error('Invalid ios.simslimProfile setting. Expected a relative JSON file path inside the app directory.');
-  }
+  const pathError = settingValueError('ios.simslimProfile', value);
+  if (typeof value !== 'string' || pathError)
+    throw new Error(`Invalid ios.simslimProfile setting. Expected ${pathError}.`);
   try {
     const root = realpathSync(settingsRoot);
     const candidate = resolve(root, value);
@@ -555,58 +496,40 @@ export function iosSimSlimDefaultSetting(settings: unknown): boolean {
   return isPlainObject(settings) && isPlainObject(settings.ios) && settings.ios.simslim === 'on';
 }
 
-function iosString(settings: unknown, key: string): unknown {
-  if (!isPlainObject(settings) || !isPlainObject(settings.ios)) return undefined;
-  return settings.ios[key];
+function settingError(settings: unknown, key: string): string | null {
+  const raw = settingValueAt(settings, key);
+  const value = typeof raw === 'string' && key !== 'ios.signingIdentity' ? raw.trim() : raw;
+  const error = value === undefined ? null : settingValueError(key, value);
+  return error ? `Invalid ${key} setting ${JSON.stringify(raw)}. Expected ${error}.` : null;
 }
 
 export function iosSigningIdentitySetting(settings: unknown): string | null {
-  const raw = iosString(settings, 'signingIdentity');
+  const raw = settingValueAt(settings, 'ios.signingIdentity');
   return typeof raw === 'string' && raw.trim() !== '' ? raw.trim() : null;
 }
 
 export function iosSigningIdentitySettingError(settings: unknown): string | null {
-  const raw = iosString(settings, 'signingIdentity');
-  if (raw === undefined) return null;
-  if (typeof raw !== 'string' || raw.trim() === '' || /[\r\n\0]/.test(raw)) {
-    return `Invalid ios.signingIdentity setting ${JSON.stringify(raw)}. Expected the identity name \`security find-identity -v -p codesigning\` prints, such as "Apple Development: Jane (TEAMID5678)".`;
-  }
-  return null;
+  return settingError(settings, 'ios.signingIdentity');
 }
 
-const SIGNING_IDENTITY_SHA1 = /^[0-9A-Fa-f]{40}$/;
-
 export function iosSigningIdentitySha1Setting(settings: unknown): string | null {
-  const raw = iosString(settings, 'signingIdentitySha1');
-  return typeof raw === 'string' && SIGNING_IDENTITY_SHA1.test(raw.trim()) ? raw.trim().toUpperCase() : null;
+  const raw = settingValueAt(settings, 'ios.signingIdentitySha1');
+  return typeof raw === 'string' && !settingError(settings, 'ios.signingIdentitySha1')
+    ? raw.trim().toUpperCase()
+    : null;
 }
 
 export function iosSigningIdentitySha1SettingError(settings: unknown): string | null {
-  const raw = iosString(settings, 'signingIdentitySha1');
-  if (raw === undefined) return null;
-  if (typeof raw !== 'string' || !SIGNING_IDENTITY_SHA1.test(raw.trim())) {
-    return `Invalid ios.signingIdentitySha1 setting ${JSON.stringify(raw)}. Expected the 40-character hex SHA-1 hash \`security find-identity -v -p codesigning\` prints beside the identity name.`;
-  }
-  return null;
+  return settingError(settings, 'ios.signingIdentitySha1');
 }
 
-// RCTBundleURLProvider.mm:70 serverRootWithHostPort prefixes the scheme itself
-// and appends the compiled default port when the value carries no colon, so
-// this setting holds a bare host and never a URL.
-const LAN_HOST = /^(?!-)[A-Za-z0-9-]+(?:\.(?!-)[A-Za-z0-9-]+)*$/;
-
 export function iosLanHostSetting(settings: unknown): string | null {
-  const raw = iosString(settings, 'lanHost');
-  return typeof raw === 'string' && LAN_HOST.test(raw.trim()) ? raw.trim() : null;
+  const raw = settingValueAt(settings, 'ios.lanHost');
+  return typeof raw === 'string' && !settingError(settings, 'ios.lanHost') ? raw.trim() : null;
 }
 
 export function iosLanHostSettingError(settings: unknown): string | null {
-  const raw = iosString(settings, 'lanHost');
-  if (raw === undefined) return null;
-  if (typeof raw !== 'string' || !LAN_HOST.test(raw.trim())) {
-    return `Invalid ios.lanHost setting ${JSON.stringify(raw)}. Expected a bare address or hostname the phone can reach, such as "192.168.1.42" -- never a URL, a scheme, or a port.`;
-  }
-  return null;
+  return settingError(settings, 'ios.lanHost');
 }
 
 export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
@@ -620,10 +543,7 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
       (!isPlainObject(value) || ![...KNOWN_SETTINGS].some((k) => k.startsWith(`${path}.`)))
     )
       continue;
-    if (
-      isPlainObject(value) &&
-      [...KNOWN_SETTINGS, ...Object.keys(REPLACED_SETTINGS)].some((k) => k.startsWith(`${path}.`))
-    ) {
+    if (isPlainObject(value) && [...KNOWN_SETTINGS, ...REMOVED_SETTINGS.keys()].some((k) => k.startsWith(`${path}.`))) {
       unknown.push(...unknownSettingKeys(value, path));
       continue;
     }
@@ -656,17 +576,6 @@ export function readCommittedSettings(directory?: string | null): SettingsObject
   }
 }
 
-function setSettingValueAt(settings: SettingsObject, path: string, value: unknown): void {
-  const segments = path.split('.');
-  let node = settings;
-  for (const segment of segments.slice(0, -1)) {
-    const next = node[segment];
-    if (!isPlainObject(next)) node[segment] = {};
-    node = node[segment] as SettingsObject;
-  }
-  node[segments[segments.length - 1]!] = value;
-}
-
 const MACHINE_READABLE_SETTINGS = SETTINGS.filter(
   (setting) =>
     isLayeredSetting(setting) && setting.scopes.includes('machine') && !setting.key.startsWith('optimizations.'),
@@ -674,7 +583,7 @@ const MACHINE_READABLE_SETTINGS = SETTINGS.filter(
 
 export function removedMachineSettings(machine: unknown): SettingsObject {
   const settings: SettingsObject = {};
-  for (const key of Object.keys(REPLACED_SETTINGS)) {
+  for (const key of REMOVED_SETTINGS.keys()) {
     const value = settingValueAt(machine, key);
     if (value !== undefined) setSettingValueAt(settings, key, value);
   }
@@ -683,9 +592,6 @@ export function removedMachineSettings(machine: unknown): SettingsObject {
 
 function machineLayerSettings(machine: unknown): SettingsObject | null {
   const settings: SettingsObject = removedMachineSettings(machine);
-  // Copied whole, not key by key, so an unknown or malformed key under machine
-  // optimizations still reaches settingShapeErrors and doctor's inert-key check
-  // instead of silently disappearing.
   const optimizations = settingValueAt(machine, 'optimizations');
   if (optimizations !== undefined) settings.optimizations = optimizations;
   for (const setting of MACHINE_READABLE_SETTINGS) {
@@ -911,13 +817,7 @@ export function cacheProviderSettingError(settings: SettingsObject): string | nu
       ? null
       : `Invalid cache setting ${JSON.stringify(block)}. Expected an object with provider and options.`;
   }
-  if ('provider' in block && (typeof block.provider !== 'string' || block.provider.trim() === '')) {
-    return `Invalid cache.provider setting ${JSON.stringify(block.provider)}. Expected a module path or package name.`;
-  }
-  if ('options' in block && !isPlainObject(block.options)) {
-    return `Invalid cache.options setting ${JSON.stringify(block.options)}. Expected an object.`;
-  }
-  return null;
+  return settingError(settings, 'cache.provider') ?? settingError(settings, 'cache.options');
 }
 
 export type IosRemoteTarget =
@@ -971,10 +871,8 @@ export function workspaceHiddenSetting(settings: SettingsObject | undefined): bo
 }
 
 export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {
-  const block = settings.metro;
-  if (typeof block !== 'object' || block === null) return null;
-  const mode = (block as { tunnel?: unknown }).tunnel;
-  return typeof mode === 'string' && (TUNNEL_MODES as readonly string[]).includes(mode) ? (mode as TunnelMode) : null;
+  const mode = settingValueAt(settings, 'metro.tunnel');
+  return typeof mode === 'string' && !settingError(settings, 'metro.tunnel') ? (mode as TunnelMode) : null;
 }
 
 export function metroTunnelSettingError(settings: SettingsObject): string | null {
@@ -1046,4 +944,62 @@ export function webSettings(settings: SettingsObject): {
     ignoreCertificateErrors: settingValueAt(settings, 'web.ignoreCertificateErrors') === true,
     viewport: WEB_VIEWPORTS.includes(viewport as WebViewport) ? (viewport as WebViewport) : 'desktop',
   };
+}
+
+export function removedSettingFindings(
+  layers: readonly SettingsLayer[],
+  machine: unknown,
+  env: NodeJS.ProcessEnv,
+): Array<{
+  key: string;
+  file: string;
+  refuses: boolean;
+  set: string | null;
+  unset: string;
+  title: string;
+  message: string;
+  remedy: string;
+}> {
+  return [...REMOVED_SETTINGS].flatMap(([key, rule]) => {
+    if (!rule.off || !rule.key) return [];
+    const target = settingDefinition(rule.key)!;
+    const variable = target.env;
+    const holder = layers.find((layer) => settingValueAt(layer.settings, rule.key!) !== undefined);
+    const configured = holder ? settingValueAt(holder.settings, rule.key) : settingValueAt(machine, rule.key);
+    const fromEnv = variable && env[variable]?.trim();
+    const applied = fromEnv || configured !== undefined;
+    if (rule.kept && applied) return [];
+    return layers.flatMap((layer) => {
+      if (!rule.scopes?.includes(layer.scope)) return [];
+      const value = settingValueAt(layer.settings, key);
+      const off = rule.off!(value);
+      if (off === null) return [];
+      const scope = target.scopes.length > 1 && target.scopes.includes(layer.scope) ? ` --scope ${layer.scope}` : '';
+      const shown = `${key} ${JSON.stringify(value)} in ${layer.file}`;
+      const fallback = String(target.default);
+      const unset = `stim settings unset ${key}${rule.kept ? ` --scope ${layer.scope}` : ''}`;
+      const set = applied || rule.kept ? null : `stim settings set ${rule.key} ${off}${scope}`;
+      const where = fromEnv ? `from ${variable}` : `in ${holder?.file ?? getConfigPath()}`;
+      return [
+        {
+          key,
+          file: layer.file,
+          refuses: !rule.kept,
+          set,
+          unset,
+          title: rule.kept ? `${key} ${rule.kept}` : `${key} in the config turned off what Stim now does by default`,
+          message: rule.kept
+            ? `${shown} ${rule.kept}, so ${rule.key} applies at its default (${fallback}).`
+            : applied
+              ? `${shown} is no longer read by Stim; ${rule.key} is ${JSON.stringify(fromEnv || configured)} ${where}.`
+              : `${shown} is no longer read by Stim, so ${rule.key} would apply at its default (${fallback}); ${rule.key} ${off} keeps what it did.`,
+          remedy: rule.kept
+            ? `Run \`stim settings set ${rule.key} ${off}${scope}\` to turn ${rule.key} off too, \`stim settings set ${rule.key} ${fallback}${scope}\` to keep ${rule.key} at its default and ${key} at ${JSON.stringify(value)}, or \`${unset}\` to put ${key} back to its default.`
+            : set
+              ? `Run \`${set}\`, then \`${unset}\`.`
+              : `Run \`${unset}\`.`,
+        },
+      ];
+    });
+  });
 }

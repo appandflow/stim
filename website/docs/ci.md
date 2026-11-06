@@ -156,7 +156,7 @@ reason yet to bypass the remaining coordination.
 ## GitHub Actions
 
 The repository includes a thin [Stim CI action](https://github.com/appandflow/stim/tree/main/.github/actions/stim-ci).
-It maps workflow inputs to `stim ci`, runs `build` and then `run` in one step
+It maps workflow inputs to `stim ci`, runs `ci build` and then `ci run` in one step
 (iOS and Android always build; macOS only with `export`; web never), forwards
 cancellation, and writes the job summary. It installs the pinned `stim`
 once per runner and version and reuses it for both commands. Native tools and app dependencies must be installed first.

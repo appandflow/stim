@@ -16,8 +16,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { DefaultArtifactClient } from '@actions/artifact';
 import * as core from '@actions/core';
-import { diagnosticArtifactFiles } from '@stim-cli/ci/artifacts';
-import type { CIBuildResult, CIResult } from '@stim-cli/ci';
+import { diagnosticArtifactFiles } from 'stim/ci/artifacts';
+import type { CIBuildResult, CIResult } from 'stim/ci';
+import { refuseCiBelowFloor } from './ci-floor.ts';
 
 interface Inputs {
   platform: 'ios' | 'android' | 'macos' | 'web';
@@ -64,6 +65,7 @@ export function readInputs(input: (name: string) => string, root: string, host: 
   if (!cli && !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?$/.test(version)) {
     throw new Error('version must be an exact published version when cli-path is absent.');
   }
+  refuseCiBelowFloor(version, cli);
   const timeout = input('timeout') || '1800';
   if (!/^\d+$/.test(timeout) || !Number.isSafeInteger(Number(timeout) * 1000) || Number(timeout) <= 0) {
     throw new Error('timeout must be a positive whole number of seconds.');
@@ -200,13 +202,13 @@ function setResultOutputs(
 
 async function installCli(version: string, root: string): Promise<{ cli: string; code: number }> {
   const base = join(process.env.RUNNER_TOOL_CACHE ?? process.env.RUNNER_TEMP ?? tmpdir(), 'stim-ci-action', version);
-  const cli = join(base, 'node_modules', '@stim-cli', 'ci', 'dist', 'stim-ci.mjs');
+  const cli = join(base, 'node_modules', 'stim', 'bin', 'stim.mjs');
   if (existsSync(cli)) return { cli, code: 0 };
   const staging = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), 'stim-ci-install-'));
   try {
     const code = await execute(
       'npm',
-      ['install', '--prefix', staging, '--ignore-scripts', '--no-audit', '--no-fund', `@stim-cli/ci@${version}`],
+      ['install', '--prefix', staging, '--ignore-scripts', '--no-audit', '--no-fund', `stim@${version}`],
       root,
     );
     if (code !== 0) return { cli, code };
@@ -256,7 +258,7 @@ export async function runAction(): Promise<number> {
   const built =
     options.onlyBuild || options.platform === 'ios' || options.platform === 'android' || Boolean(options.exportPath);
   if (built && options.platform !== 'web') {
-    const buildArgs = [cli, 'build', ...common, ...options.selectors, ...options.buildOnly];
+    const buildArgs = [cli, 'ci', 'build', ...common, ...options.selectors, ...options.buildOnly];
     if (options.exportPath) buildArgs.push('--export', options.exportPath);
     if (options.onlyBuild && options.artifacts) buildArgs.push('--artifacts', options.artifacts);
     code = await execute(process.execPath, buildArgs, root, buildOutput);
@@ -267,7 +269,7 @@ export async function runAction(): Promise<number> {
     }
   }
   if (!options.onlyBuild) {
-    const args = [cli, 'run', ...common, ...options.selectors];
+    const args = [cli, 'ci', 'run', ...common, ...options.selectors];
     if (options.artifacts) args.push('--artifacts', options.artifacts);
     if (options.command) args.push('--', 'bash', '-e', '-o', 'pipefail', '-c', options.command);
     started = Date.now();

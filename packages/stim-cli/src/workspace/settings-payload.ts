@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { isScopedHome } from '@stim-cli/core';
 import {
   coerceSettingText,
-  isJsonObject,
+  settingValueAt,
   replacementAdvice,
   SETTING_SCOPES,
   SETTINGS,
@@ -79,15 +79,6 @@ export async function readSettingsContext(
     env,
     desktopInstalled: () => (installed ??= stimDesktopInstalled(process.platform, env)),
   };
-}
-
-function valueAt(settings: unknown, key: string): unknown {
-  let node = settings;
-  for (const segment of key.split('.')) {
-    if (!isJsonObject(node)) return undefined;
-    node = node[segment];
-  }
-  return node;
 }
 
 export function committedDirectory(context: SettingsContext, setting: SettingDefinition | null): string | null {
@@ -198,7 +189,7 @@ export function settingEntry(context: SettingsContext, setting: SettingDefinitio
   const layers: Partial<Record<SettingScope, unknown>> = {};
   for (const scope of PRECEDENCE) {
     if (!setting.scopes.includes(scope) || layerFile(context, scope, setting) === null) continue;
-    const value = valueAt(layerSettings(context, scope, setting), setting.key);
+    const value = settingValueAt(layerSettings(context, scope, setting), setting.key);
     if (value !== undefined) layers[scope] = masked(setting, value);
   }
   const envValue = setting.env ? context.env[setting.env] : undefined;
@@ -275,7 +266,7 @@ export function unknownEntries(context: SettingsContext): SettingsPayload['unkno
     file === null
       ? []
       : unknownSettingKeys(settings).map((key) => {
-          const value = valueAt(settings, key);
+          const value = settingValueAt(settings, key);
           const command = replacementAdvice(key, value, scope)?.command;
           const entry = { key, scope, file, value };
           return command ? Object.assign(entry, { replacement: command }) : entry;
