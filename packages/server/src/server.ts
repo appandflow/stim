@@ -198,6 +198,7 @@ import {
   runAction,
 } from './handlers/lifecycle.ts';
 import { subscribeLogs, queryLogs } from './handlers/logs.ts';
+import { updateMethod } from './handlers/engine.ts';
 import { input, beginControl } from './handlers/control.ts';
 import { publishPresence } from './handlers/presence.ts';
 import { replayRange, archiveDetail, replayKeyframe, setRecording } from './handlers/replay.ts';
@@ -1285,6 +1286,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         startup = value;
       },
       readApprovals,
+      approved,
       running,
       cancelling,
       logLimits,
@@ -1318,6 +1320,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       control,
       hostedViews,
       shares,
+      updates,
       push,
       hostedBridge,
       socket,
@@ -2138,29 +2141,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     ): Promise<void> | null {
       if ((BUILD_METHODS as readonly string[]).includes(method)) return buildMethod(id, method, params, session);
       if ((ENGINE_UPDATE_METHODS as readonly string[]).includes(method))
-        return updateMethod(id, method, params, session);
+        return updateMethod(ctx, id, method, params, session);
       return null;
-    }
-
-    async function updateMethod(id: RequestId, method: string, params: unknown, session: PairedDevice): Promise<void> {
-      const registries = approved();
-      const machine =
-        !local &&
-        (registries.build.some((entry) => entry.id === session.id && entry.capabilities.includes('build')) ||
-          registries.deviceHost.some((entry) => entry.id === session.id && entry.capabilities.includes('device-host')));
-      if (!machine) {
-        return error(
-          id,
-          'forbidden',
-          `${method} needs this machine's build or device-host approval of the requesting machine.`,
-        );
-      }
-      if (method === 'engine.update.status') return send(socket, { id, result: await updates.status() });
-      const answer =
-        method === 'engine.update'
-          ? await updates.start({ id: session.id, name: session.name }, params)
-          : updates.chunk(session.id, params);
-      send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
     function handleBinary(frame: Buffer): Promise<void> | void {

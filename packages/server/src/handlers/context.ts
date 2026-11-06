@@ -52,6 +52,7 @@ import { PresenceHub } from '../presence.ts';
 import { LocalAgentPresence } from '../local-agent-presence.ts';
 import { HostedViews } from '../hosted-view.ts';
 import { ShareHub } from '../share.ts';
+import { EngineUpdates } from '../server-update.ts';
 import { HostedPresenceBridge } from '../hosted-presence-bridge.ts';
 
 export const INPUT_METHODS = [
@@ -278,6 +279,7 @@ export interface ConnectionContext {
   recorder: Recorder | null;
   startup: StartupState;
   readonly readApprovals: () => Registries | null;
+  readonly approved: () => Registries;
   readonly running: Set<() => Promise<void>>;
   readonly cancelling: Pending;
   readonly logLimits: LogLimits;
@@ -301,6 +303,7 @@ export interface ConnectionContext {
   readonly control: ControlHub;
   readonly hostedViews: HostedViews;
   readonly shares: ShareHub;
+  readonly updates: EngineUpdates;
   readonly push: PushNotifier;
   readonly hostedBridge: HostedPresenceBridge;
   readonly socket: ServerSocket;
