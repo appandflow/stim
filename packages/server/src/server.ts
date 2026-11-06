@@ -115,7 +115,7 @@ import {
   type Frame,
   type FrameLimits,
 } from './frames.ts';
-import { archivedLogs, archivedTimeline, LogBatcher, parseLogFilter, readTargetError, type LogLimits } from './logs.ts';
+import { archivedTimeline, readTargetError, type LogLimits } from './logs.ts';
 import { readDiskVolumes, readMachineUsage, readMemoryPressure, UsageSampler } from './machine.ts';
 import {
   BuildMachinesCache,
@@ -242,6 +242,7 @@ import { ShareRoute, tailscaleFunnel } from './share-route.ts';
 import {
   type RequestLimits,
   type ControlLimits,
+  readFailure,
   type ServerOptions,
   type ServerSocket,
   send,
@@ -257,6 +258,7 @@ import {
   listArchived,
   statusRead,
 } from './handlers/status.ts';
+import { subscribeLogs, queryLogs } from './handlers/logs.ts';
 export type { ServerOptions } from './handlers/context.ts';
 
 const SHARE_SERVER_GRACE_MS = 2 * 60_000;
@@ -401,11 +403,6 @@ const PLAN_TIMEOUT_MS = 150_000;
 const DETAILS_TIMEOUT_MS = 150_000;
 const AUDIT_FIELD_CHARS = 256;
 const ACTION_LIMITS: CommandLimits = { timeoutMs: 120_000, maxOutputBytes: 1024 * 1024 };
-
-function readFailure(cause: unknown): string {
-  if (!(cause instanceof StimError)) return cause instanceof Error ? cause.message : String(cause);
-  return `${cause.code}: ${cause.message}${cause.remedy ? ` ${cause.remedy}` : ''}`;
-}
 
 type StopOutcome =
   | { ok: true; stdout: string; summary: string }
@@ -2070,6 +2067,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         startup = value;
       },
       readApprovals,
+      running,
+      logLimits,
+      commandLimits,
       sessions,
       sampler,
       usage,
@@ -2108,7 +2108,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       refuse,
       timer,
       error,
+      readDir,
       openSubscription,
+      inProcessRead,
       addresses,
     };
 
@@ -2267,106 +2269,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       'maintenance.get': (id) =>
         statusRead<'maintenance.get'>(ctx, id, (payload) => ({ result: { maintenance: payload.maintenance ?? null } })),
     };
-
-    function subscribeLogs(id: RequestId, params: unknown, fullBackfill = false): void | Promise<void> {
-      const parsed = parseLogFilter(params);
-      if ('error' in parsed) return error(id, 'bad-request', parsed.error);
-      const cwd = readDir(id, parsed.filter);
-      if (!cwd) return;
-      const subscription = openSubscription(id);
-      if (!subscription) return;
-      const end = () => {
-        subscriptions.get(subscription)?.();
-        subscriptions.delete(subscription);
-      };
-      const batcher = new LogBatcher(
-        {
-          send: (records) => send(socket, { event: 'logs', subscription, records }),
-          bufferedBytes: () => socket.bufferedAmount,
-          ended: () => {
-            end();
-            send(socket, { event: 'logs-ended', subscription });
-          },
-          overflow: () => {
-            end();
-            send(socket, {
-              event: 'error',
-              subscription,
-              error: { code: 'slow-client', message: 'This client fell behind the log stream. Subscribe again.' },
-            });
-          },
-        },
-        logLimits,
-      );
-      if (parsed.filter.archive !== undefined) {
-        subscriptions.set(subscription, () => batcher.stop());
-        return agentActionReaders().then((actions) => {
-          for (const record of archivedLogs(cwd, parsed.filter, actions)) batcher.push(record);
-          return batcher.finish();
-        });
-      }
-      const abort = new AbortController();
-      let stop: (() => void) | undefined;
-      const deadline = setTimeout(() => {
-        abort.abort();
-        batcher.stop();
-        subscriptions.delete(subscription);
-        send(socket, {
-          event: 'error',
-          subscription,
-          error: {
-            code: 'logs-failed',
-            message: `stim logs did not finish within ${commandLimits.timeoutMs / 1000} s.`,
-          },
-        });
-      }, commandLimits.timeoutMs);
-      subscriptions.set(subscription, () => {
-        clearTimeout(deadline);
-        abort.abort();
-        batcher.stop();
-        stop?.();
-      });
-      const task = Promise.resolve()
-        .then(() =>
-          createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).followLogs(
-            {
-              sources: parsed.filter.sources,
-              minLevel: parsed.filter.level,
-              slot: parsed.filter.slot,
-              grep: parsed.filter.grep,
-              errorsOnly: parsed.filter.errors,
-              tail: fullBackfill ? undefined : parsed.filter.tail,
-              signal: abort.signal,
-            },
-            (record) => {
-              if (!abort.signal.aborted) batcher.push(record);
-            },
-            fullBackfill ? (records) => batcher.backfill(records, abort.signal) : undefined,
-          ),
-        )
-        .then(
-          (unsubscribe) => {
-            clearTimeout(deadline);
-            stop = unsubscribe;
-            if (abort.signal.aborted) stop();
-            return undefined;
-          },
-          (cause: unknown) => {
-            clearTimeout(deadline);
-            if (abort.signal.aborted) return;
-            batcher.flush(true);
-            batcher.stop();
-            subscriptions.delete(subscription);
-            send(socket, { event: 'error', subscription, error: { code: 'logs-failed', message: readFailure(cause) } });
-          },
-        )
-        .finally(() => running.delete(cancel));
-      const cancel = async () => {
-        abort.abort();
-        await task;
-      };
-      running.add(cancel);
-    }
 
     /** Presence for a relayed hosted subscription that asked for it: the host's, and this machine's own. */
     function hostedPresenceFor(
@@ -2701,29 +2603,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           running.delete(cancel);
         });
       archiveReads = task.catch(() => socket.close(1011, 'internal error'));
-    }
-
-    function queryLogs(id: RequestId, params: unknown): void | Promise<void> {
-      const parsed = parseLogFilter(params);
-      if ('error' in parsed) return error(id, 'bad-request', parsed.error);
-      const cwd = readDir(id, parsed.filter);
-      if (!cwd) return;
-      if (parsed.filter.archive !== undefined) {
-        return agentActionReaders().then((actions) =>
-          send(socket, { id, result: { records: archivedLogs(cwd, parsed.filter, actions) } }),
-        );
-      }
-      inProcessRead<'logs.query'>(id, 'stim logs', async (signal) => ({
-        records: await createStim({ projectRoot: cwd, env: options.env, admission: 'none' }).logs({
-          sources: parsed.filter.sources,
-          minLevel: parsed.filter.level,
-          slot: parsed.filter.slot,
-          grep: parsed.filter.grep,
-          errorsOnly: parsed.filter.errors,
-          tail: parsed.filter.tail,
-          signal,
-        }),
-      }));
     }
 
     function workspaceChanges(id: RequestId, method: 'workspace.files' | 'workspace.diff', params: unknown): void {
@@ -4211,7 +4090,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           error(id, 'bad-request', 'Choose a workspace and optional sources, level, grep or errors filter.');
           return Promise.resolve();
         }
-        return Promise.resolve(subscribeLogs(id, params, true));
+        return Promise.resolve(subscribeLogs(ctx, id, params, true));
       }
       if (method.startsWith('desktop.reports.')) {
         desktopReport(id, method, params);
@@ -4834,8 +4713,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (isJsonObject(message.params) && typeof message.params.archive === 'string') {
         const params = message.params;
         const reads: Partial<Record<string, (id: RequestId, params: unknown) => void | Promise<void>>> = {
-          'logs.subscribe': subscribeLogs,
-          'logs.query': queryLogs,
+          'logs.subscribe': (...args) => subscribeLogs(ctx, ...args),
+          'logs.query': (...args) => queryLogs(ctx, ...args),
           'frames.subscribe': subscribeFrames,
           'replay.range': replayRange,
           'archive.detail': archiveDetail,
@@ -4846,8 +4725,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const statusMethod = statusMethods[message.method];
       if (statusMethod) return void statusMethod(id, message.params);
-      if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
-      if (message.method === 'logs.query') return queryLogs(id, message.params);
+      if (message.method === 'logs.subscribe') return subscribeLogs(ctx, id, message.params);
+      if (message.method === 'logs.query') return queryLogs(ctx, id, message.params);
       if (message.method === 'frames.subscribe') return subscribeFrames(id, message.params);
       if (message.method === 'frames.keyframe') {
         const name = isJsonObject(message.params) ? message.params.subscription : undefined;

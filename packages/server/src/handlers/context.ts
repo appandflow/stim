@@ -14,7 +14,16 @@ import type { DeviceHostLimits, StatusViews, StatusPayload } from '@stim-cli/cor
 import type { HostedRelayOptions } from '../hosted-relay.ts';
 import type { WebSocket } from 'ws';
 import { NoiseSocket } from '@stim-cli/core/noise-session';
-import type { ServerMessage, HelloHost, ProtocolError, RequestId, ErrorCode, VideoCodec } from '../protocol.ts';
+import { StimError } from 'stim';
+import type {
+  ServerMessage,
+  HelloHost,
+  ProtocolError,
+  RequestId,
+  ErrorCode,
+  VideoCodec,
+  Methods,
+} from '../protocol.ts';
 import { StatusFeed } from '../status-feed.ts';
 import type { JsonObject } from '../feed.ts';
 import type { StartupState } from '../startup.ts';
@@ -152,6 +161,11 @@ export interface RequestLimits {
   device: number;
 }
 
+export function readFailure(cause: unknown): string {
+  if (!(cause instanceof StimError)) return cause instanceof Error ? cause.message : String(cause);
+  return `${cause.code}: ${cause.message}${cause.remedy ? ` ${cause.remedy}` : ''}`;
+}
+
 export const trackers: WeakMap<ServerSocket, RequestTracker> = new WeakMap<ServerSocket, RequestTracker>();
 
 export function send(socket: ServerSocket, message: ServerMessage | string): void {
@@ -170,6 +184,9 @@ export interface ConnectionContext {
   readonly hostsDevices: boolean;
   startup: StartupState;
   readonly readApprovals: () => Registries | null;
+  readonly running: Set<() => Promise<void>>;
+  readonly logLimits: LogLimits;
+  readonly commandLimits: CommandLimits;
   readonly sessions: Map<ServerSocket, PairedDevice>;
   readonly sampler: UsageSampler;
   readonly usage: UsageRecorder;
@@ -188,6 +205,25 @@ export interface ConnectionContext {
   readonly refuse: (id: RequestId | null, code: ErrorCode, message: string, closeCode: number) => void;
   readonly timer: NodeJS.Timeout;
   readonly error: (id: RequestId, code: ErrorCode, message: string) => void;
+  readonly readDir: (id: RequestId, target: { workspace?: string; archive?: string }) => string | null;
   readonly openSubscription: (id: RequestId, result?: { video?: VideoCodec }) => string | null;
+  readonly inProcessRead: <
+    M extends
+      | 'settings.get'
+      | 'stats.get'
+      | 'logs.query'
+      | 'desktop.reports.get'
+      | 'desktop.settings.get'
+      | 'desktop.doctor.run'
+      | 'build.plan'
+      | 'desktop.plan.get',
+  >(
+    id: RequestId,
+    label: string,
+    read: (signal: AbortSignal) => Promise<Methods[M]['result']>,
+    timeoutMs?: number,
+    turn?: Promise<void> | null,
+    report?: boolean,
+  ) => { done: Promise<void>; cancel: () => Promise<void> } | null;
   readonly addresses: { host: string; port: number }[];
 }
