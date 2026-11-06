@@ -679,7 +679,7 @@ async function evaluate(
         : spawn('rnConfig', [bin, 'react-native-config', '--json', '--platform', platform]),
     );
     const constants = findPackage(root, 'expo-constants');
-    if (constants) {
+    if (constants && embedLoader(constants) === 'env') {
       early = { constants, part: embed(constants, opts.signal ? AbortSignal.any([opts.signal, settled]) : settled) };
       early.part.catch(() => {});
     }
