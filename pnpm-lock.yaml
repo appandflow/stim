@@ -161,9 +161,9 @@ importers:
       '@actions/core':
         specifier: 3.0.1
         version: 3.0.1
-      '@stim-cli/ci':
+      stim:
         specifier: workspace:*
-        version: link:../../../packages/ci
+        version: link:../../../packages/stim-cli
 
   apps/demo-server:
     dependencies:

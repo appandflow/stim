@@ -1,22 +1,22 @@
 # Stim CI action
 
-This bundled TypeScript action installs and invokes `@stim-cli/ci`. It runs
-`stim-ci build` and then `stim-ci run` in one step: build is the only step that
+This bundled TypeScript action installs and invokes `stim`. It runs
+`stim ci build` and then `stim ci run` in one step: build is the only step that
 compiles, and run installs and launches the app that build recorded, then runs the
 test when `command` is set. The package owns the build, the test process, cancellation and cleanup. The
 action maps inputs, outputs and the GitHub job summary, and uploads diagnostic
 evidence with the official GitHub artifact toolkit when `artifacts` is set. iOS and
 Android always build first. macOS builds first only with `export`, and web never
-builds; `stim-ci run` builds a macOS app itself.
+builds; `stim ci run` builds a macOS app itself.
 
-Set `build-only: 'true'` to invoke only `stim-ci build` on iOS, Android or macOS,
+Set `build-only: 'true'` to invoke only `stim ci build` on iOS, Android or macOS,
 including macOS without `export`. This needs no test command, runtime target or
 Metro. `command` and web are refused in this mode. For example:
 
 ```yaml
 - uses: ./.github/actions/stim-ci
   with:
-    cli-path: packages/ci/dist/stim-ci.mjs
+    cli-path: packages/stim-cli/bin/stim.mjs
     platform: android
     project: apps/mobile
     build-only: 'true'
@@ -27,7 +27,7 @@ Metro. `command` and web are refused in this mode. For example:
 The default remains build then run. Build-only records the app in this job's
 workspace/home and optionally exports it; an export alone is not a supported
 cross-job import into a fresh home.
-Use a package version supporting `stim-ci build --artifacts`, or a matching built
+Use a package version supporting `stim ci build --artifacts`, or a matching built
 checkout; older releases may not support build diagnostics.
 
 Use a macOS or Linux runner with Bash. Windows runners are refused. The Action
@@ -44,7 +44,7 @@ When testing this repository, use the built checkout:
 - uses: ./.github/actions/setup-stim
 - uses: ./.github/actions/stim-ci
   with:
-    cli-path: packages/ci/dist/stim-ci.mjs
+    cli-path: packages/stim-cli/bin/stim.mjs
     platform: ios
     project: apps/mobile
     command: node ../../scripts/ci/app-smoke.mjs
@@ -65,8 +65,7 @@ runner reuses it without another `npm install`. `cli-path` skips the install.
 
 `command` is optional. Without it the action builds, installs and launches the app
 from clean state, then stops it and succeeds, setting the same outputs, so a later step
-can drive a Release app. Cleanup also stops Metro, so a Debug app has no bundler then. That needs a `@stim-cli/ci` version newer than 1.37.0; 1.37.0 and
-earlier refuse with `Separate the test command with --.`
+can drive a Release app. Cleanup also stops Metro, so a Debug app has no bundler then.
 
 `command` is Bash source, executed in the app directory with `-e` and
 `pipefail`. Treat it like a workflow `run:` step: keep untrusted PR titles,
@@ -83,9 +82,9 @@ iOS and macOS; without it build only records the app for run. Export is never up
 to both build and run, so run installs the build that build recorded. `arch`, `abi` and
 `eas-profile` go to build only, and the action refuses them when it does not build (web, or
 macOS without `export` or `build-only`). Empty inputs keep the project's normal build settings, and
-`stim-ci` refuses a selector that does not apply to the platform.
+`stim ci` refuses a selector that does not apply to the platform.
 
-Whether or not `artifacts` is set, the action reads the results `stim-ci` prints and sets
+Whether or not `artifacts` is set, the action reads the results `stim ci` prints and sets
 `app-id`, `app-path`, `export-path`, `cache-hit`, `device-id`, `device-name` and `exit-code`
 as step outputs, leaving out any that do not apply. A later step can then use the app or the
 device without parsing the job log. The device is shut down, not deleted, when the step ends: a
@@ -96,8 +95,7 @@ With `artifacts`, the `result` and `artifacts` outputs are absolute paths availa
 The Action uploads `result.json`, `run.json`, test stdout/stderr,
 `diagnostics.json`, and copied diagnostic/compiler logs on success and failure.
 It never uploads app bundles, APKs, caches, arbitrary test files, symlinks, or
-files referenced by log records. Raw log collection requires a `@stim-cli/ci`
-version containing that feature.
+files referenced by log records.
 Build-only also writes `build.json` locally; the uploaded `result.json` already contains
 the build facts, so `build.json` is not uploaded separately.
 
@@ -128,7 +126,7 @@ homes cannot coordinate concurrent writes to one shared filesystem cache.
 
 Leave at least 70 seconds for cleanup after the Action timeout, plus time for
 artifact upload before the job timeout.
-The action forwards cancellation to `stim-ci`; the provider can still kill
+The action forwards cancellation to `stim ci`; the provider can still kill
 the job before cleanup or upload completes. There is no post-job cleanup hook
 or retained session.
 

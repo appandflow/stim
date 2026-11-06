@@ -87,7 +87,7 @@ jobs:
       - name: Build once, then install, launch, probe and stop
         uses: ./.github/actions/stim-ci
         with:
-          cli-path: packages/ci/dist/stim-ci.mjs
+          cli-path: packages/stim-cli/bin/stim.mjs
           platform: ${{ matrix.platform }}
           project: ${{ matrix.project }}
           command: node ../../scripts/ci/app-smoke.mjs
@@ -99,7 +99,7 @@ jobs:
       - name: Repeat with the job's warm build state
         uses: ./.github/actions/stim-ci
         with:
-          cli-path: packages/ci/dist/stim-ci.mjs
+          cli-path: packages/stim-cli/bin/stim.mjs
           platform: ${{ matrix.platform }}
           project: ${{ matrix.project }}
           command: node ../../scripts/ci/app-smoke.mjs
