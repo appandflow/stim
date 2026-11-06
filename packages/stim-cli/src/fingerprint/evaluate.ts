@@ -486,8 +486,8 @@ function packageIdentities(
   dirs: Iterable<string>,
   roots: Roots,
   session: IndexSession | null,
+  classify: () => Classifier,
 ): Uncertain | { name: string; version: string; provenance: Provenance; content?: string }[] {
-  let lockfile: Classifier | null = null;
   const identities: { name: string; version: string; provenance: Provenance; content?: string }[] = [];
   for (const dir of new Set(dirs)) {
     const entry: PackageEntry = session?.pkg(dir) ?? { read: { path: dir, kind: 'package' } };
@@ -498,7 +498,7 @@ function packageIdentities(
     }
     if (entry.name === null) continue;
     const identity = { name: entry.name, version: entry.version ?? '' };
-    entry.provenance ??= (lockfile ??= lockfileClassifier(roots.install).classify)(realOr(dir), identity);
+    entry.provenance ??= classify()(realOr(dir), identity);
     if (entry.provenance.mode === 'identity') {
       identities.push({ ...identity, provenance: entry.provenance });
       continue;
@@ -658,6 +658,10 @@ async function evaluate(
       early = { constants, part: embed(constants, opts.signal ? AbortSignal.any([opts.signal, settled]) : settled) };
   } else parts.push(spawn('rnConfig', [evaluator, 'rn', root, platform]));
   const { names: buildNames, scanned, scan, settle } = buildEnvNames(root, native, nativeDir, expo, session);
+  let lockfile: Classifier | null = null;
+  const classify = () => (lockfile ??= lockfileClassifier(roots.install).classify);
+  const closure = session ? session.closure(() => entryPoints(root, expo)) : entryPoints(root, expo);
+  const closureIdentities = packageIdentities(closure.dirs, roots, session, classify);
   const linkedPackages = (part: Part): string[] => {
     const output = record(part.wrapped ? record(part.output).config : part.output);
     const paths =
@@ -811,10 +815,20 @@ async function evaluate(
     return { uncertain: `stim cannot read a file the build env or config names: ${String(error)}` };
   }
   if (isUncertain(pathRows)) return pathRows;
-  const closure = session ? session.closure(() => entryPoints(root, expo)) : entryPoints(root, expo);
-  const identities = packageIdentities([...packages, ...closure.dirs], roots, session);
+  if (isUncertain(closureIdentities)) return closureIdentities;
+  const closureDirs = new Set(closure.dirs);
+  const identities = packageIdentities(
+    [...packages].filter((dir) => !closureDirs.has(dir)),
+    roots,
+    session,
+    classify,
+  );
   if (isUncertain(identities)) return identities;
-  rows.push(...buildEnv.rows, ...pathRows.inputs, ...packageRows(identities, closure.missing));
+  rows.push(
+    ...buildEnv.rows,
+    ...pathRows.inputs,
+    ...packageRows([...closureIdentities, ...identities], closure.missing),
+  );
   const { home, username } = { home: homedir(), username: userInfo().username };
   const configText = keyedConfig(output.config, roots);
   return {
