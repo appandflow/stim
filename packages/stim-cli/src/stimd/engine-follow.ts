@@ -16,6 +16,7 @@ import { getExecutor } from '../exec.ts';
 
 const FLIP_TIMEOUT_MS = 10 * 60_000;
 const FLIP_LOCK_POLL_MS = 50;
+const ADMIT_WAIT_MS = 10_000;
 
 type Log = (
   level: 'debug' | 'info' | 'warn' | 'error',
@@ -74,6 +75,8 @@ export function followEngine(log: Log): EngineFollower | null {
     if (!claim || JSON.stringify(details) === JSON.stringify(claim.details)) return;
     const was = claim.details.drained;
     claim = updateClaimDetails(claim, details);
+    if (!claim)
+      log('warn', 'engine_claim_lost', `the claim under ${root} is gone; the engine no longer waits for this stimd`);
     if (was !== details.drained) log('debug', pinned ? 'engine_pinned' : 'engine_drained', `drained: ${!pinned}`);
   };
   const flip = async (pinned: () => boolean) => {
@@ -110,7 +113,7 @@ export function followEngine(log: Log): EngineFollower | null {
     record,
     async admit() {
       record(true, dirs);
-      for (;;) {
+      for (const deadline = Date.now() + ADMIT_WAIT_MS; Date.now() < deadline;) {
         const probe = await takeLock(engine.root, '.flip.sock');
         if (probe) {
           await probe.release();
@@ -118,6 +121,7 @@ export function followEngine(log: Log): EngineFollower | null {
         }
         await new Promise((done) => setTimeout(done, FLIP_LOCK_POLL_MS));
       }
+      return switchedEngine(engine);
     },
     async check(pinned) {
       const switched = switchedEngine(engine);

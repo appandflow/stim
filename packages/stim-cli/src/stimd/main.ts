@@ -346,6 +346,7 @@ export async function runStimd({
   let engineDirs: string[] = [];
   let switchedTo: { build: string; version: string } | null = null;
   let foreignLeft = afterSwitch;
+  let heldSwitch = false;
   const pinned = (): boolean =>
     [...ops.values()].includes('pinned') ||
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
@@ -354,7 +355,16 @@ export async function runStimd({
     if (!follower || switchedTo || closing) return;
     follower.record(pinned(), engineDirs);
     const next = await follower.check(pinned);
-    if (next && !switchedTo && !closing) await relaunch(next, follower.engine.root);
+    if (!next || switchedTo || closing) return;
+    if (!pinned()) await relaunch(next, follower.engine.root);
+    else if (!heldSwitch) {
+      heldSwitch = true;
+      log(
+        'warn',
+        'engine_switch_pinned',
+        `the engine switched to ${next.version} under pinned work; relaunching after it`,
+      );
+    }
   };
   const relaunch = async (next: { build: string; version: string }, root: string) => {
     switchedTo = next;
@@ -453,11 +463,14 @@ export async function runStimd({
           socket.off('data', onData);
           const head = buffer;
           buffer = Buffer.alloc(0);
-          if (net.connect(socket, head)) reply({ op: 'net.connected' });
-          else
+          if (net.connect(socket, head)) {
+            open.delete(socket);
+            reply({ op: 'net.connected' });
+          } else
             socket.end(`${JSON.stringify({ op: 'error', code: 'net-off', message: 'the net thread does not run' })}\n`);
           return;
         } else if (op === 'op.begin') {
+          hasten?.();
           ops.set(socket, 'pinned');
           void (follower?.admit() ?? Promise.resolve(null)).then((next) =>
             reply(next ? { op: 'engine-changed', ...next, pid: process.pid } : { op: 'op.begun' }),
