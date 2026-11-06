@@ -1,7 +1,40 @@
+import { fileURLToPath } from 'node:url';
 import { RuleTester } from 'oxlint/plugins-dev';
 import plugin from './stim.mjs';
 
 const tester = new RuleTester();
+
+tester.run('package-fence', plugin.rules['package-fence'], {
+  valid: [
+    {
+      code: "import '../state/index.js';",
+      filename: fileURLToPath(new URL('../../packages/core/src/example.ts', import.meta.url)),
+    },
+    {
+      code: "import '@stim-cli/core';",
+      filename: fileURLToPath(new URL('../../packages/cache/index.ts', import.meta.url)),
+    },
+    {
+      code: "new URL('../../other/asset.bin', location.url);",
+      filename: fileURLToPath(new URL('../../packages/core/src/example.ts', import.meta.url)),
+    },
+  ],
+  invalid: [
+    "import '../../cache/index.js';",
+    "export { value } from '../../cache/index.js';",
+    "export * from '../../cache/index.js';",
+    "import('../../cache/index.js');",
+    "require('../../cache/index.js');",
+    "require.resolve('../../cache/index.js');",
+    "new URL('../../cache/asset.bin', import.meta.url);",
+    "import '../../../scripts/example.mjs';",
+    "import '../../core-other/index.js';",
+  ].map((code) => ({
+    code,
+    filename: fileURLToPath(new URL('../../packages/core/src/example.ts', import.meta.url)),
+    errors: 1,
+  })),
+});
 
 tester.run('directive-reason', plugin.rules['directive-reason'], {
   valid: [
