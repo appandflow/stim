@@ -1,8 +1,6 @@
 import { endWorkspaceShares } from '../local-server.ts';
 import type { StimContext } from '@stim-cli/core';
 import { debugLog } from '../debug-log.ts';
-import { stopHostedAndroid } from '../device-host/hosted-android.ts';
-import { stopHostedIos } from '../device-host/hosted-ios.ts';
 import {
   isJsonObject,
   hostedIosRecords,
@@ -85,7 +83,6 @@ import { removeOwnedEmulatorMetroReverses } from '../devices/android.ts';
 import { removePhoneReverses } from '../devices/phone-reverses.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { fileLeaseIo, releaseWorkspaceLeasesAsync, type ReleasedLease } from '../engine/device-lease.ts';
-import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel } from '../engine/tunnel.ts';
 import {
   inspectProcessIdentity,
@@ -290,6 +287,7 @@ async function defaultTeardownRemoteSession(
   sessionId: string,
   operation?: StimContext,
 ): Promise<{ status: 'torn-down' | 'failed'; reason?: string }> {
+  const { resolveEasCliBin } = await import('../engine/remote-cache.ts');
   return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null, operation });
 }
 
@@ -455,7 +453,11 @@ async function stopWorkspaceHostedNative(
         ? `${placement.device ? ('udid' in placement.device ? placement.device.name : hostedAndroidDeviceName(placement.device)) : `${platform} device`} on ${placement.machine}`
         : `hosted ${platform === 'ios' ? 'iOS simulator' : 'Android emulator'} for slot ${name}`;
       try {
-        await (platform === 'ios' ? stopHostedIos : stopHostedAndroid)(root, name, signal);
+        await (
+          platform === 'ios'
+            ? (await import('../device-host/hosted-ios.ts')).stopHostedIos
+            : (await import('../device-host/hosted-android.ts')).stopHostedAndroid
+        )(root, name, signal);
         devices[`${platform}:host:${name}`] = { status: 'shut-down', label };
         report(chalk.dim(phaseLine('device', `stopped ${label}`)));
       } catch (error) {

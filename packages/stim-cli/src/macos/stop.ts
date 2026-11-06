@@ -1,5 +1,4 @@
 import { readMacosRecord, type MacosProcess } from '@stim-cli/core/state';
-import { stopHostedMacos } from '../device-host/hosted-macos.ts';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { workspaceDir } from '../workspace/paths.ts';
@@ -94,6 +93,7 @@ export function stopMacosApp(root: string, operation?: StimContext): Promise<boo
     operation?.signal.throwIfAborted();
     const record = requiredMacosRecord(root);
     if (!record?.host) return stopMacosAppHeld(root, operation);
+    const { stopHostedMacos } = await import('../device-host/hosted-macos.ts');
     await stopHostedMacos(root, record.host, operation?.signal);
     operation?.signal.throwIfAborted();
     const { host: _host, hostLaunched: _launched, ...stopped } = record;

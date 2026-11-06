@@ -116,7 +116,7 @@ jobs:
         run: pnpm run build
 
       - name: Hot-path closures of the built CLI
-        run: pnpm run dist:closure
+        run: node scripts/dist-closure.mjs --enforce cli,ios,android,status,agent-device
 
       - name: Committed Action bundle matches source
         id: action-bundle

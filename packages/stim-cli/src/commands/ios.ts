@@ -3,7 +3,6 @@ import type { IosArtifactContext, IosProject } from '../integrations/ios-project
 import type { RuntimePreparationError, RuntimePreparationResult } from '../engine/runtime-plan.ts';
 import { writeDevicePlacementAsync, hostedMetroSettings } from '../workspace/placement-state.ts';
 import type { DevicePlacement } from '@stim-cli/core/state';
-import { devClientPortBusy } from '../device-host/hosted-native.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
 import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
 import { acquireIosArtifact, acquireIosArtifactOrRecorded, type PreparedIosArtifact } from './ios/artifact.ts';
@@ -954,12 +953,14 @@ async function runIos(
 
     async function prepareMetro(): Promise<RuntimePreparationResult<MobileRuntimePreparation>> {
       if (metroCheck) {
+        const hostedNative =
+          hostedTarget && isExpo && d.hasDevClient(root) ? await import('../device-host/hosted-native.ts') : null;
         const hostedPorts =
-          hostedTarget && isExpo && d.hasDevClient(root)
+          hostedTarget && hostedNative
             ? {
                 machine: hostedTarget.host.machine,
-                free: d.hostedMetroPortProbe(hostedTarget.host.machine, note),
-                busy: (port: number) => devClientPortBusy(hostedTarget.host.machine, port),
+                free: await d.hostedMetroPortProbe(hostedTarget.host.machine, note),
+                busy: (port: number) => hostedNative.devClientPortBusy(hostedTarget.host.machine, port),
               }
             : undefined;
         const gate = await ensureDevServer({
@@ -991,7 +992,7 @@ async function runIos(
         metroPort = gate.port;
         devServer = gate.devServer;
         if (hostedPorts && !(await hostedPorts.free(gate.port)))
-          return { ok: false, error: devClientPortBusy(hostedPorts.machine, gate.port) };
+          return { ok: false, error: hostedPorts.busy(gate.port) };
       } else {
         const pin = metroPortSetting(settings, context.env);
         if (pin.error) {

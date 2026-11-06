@@ -1,10 +1,10 @@
-import { automaticDevicePlacement, devicePlacementLine } from '../../device-host/auto-placement.ts';
+import type { automaticDevicePlacement } from '../../device-host/auto-placement.ts';
 import { diskFloorGate } from '../../daemon/floor.ts';
 import { devicePlacementRecord, type PlacementRecord } from '../../placement-log.ts';
 import type { AndroidRunPlan } from './plan.ts';
 import type { DevicePlacement, HostedDeviceSelectors, HostedAppOffer } from '@stim-cli/core/state';
 import type { EasFallbackCheck } from '../../device-host/placement.ts';
-import { prepareHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
+import type { prepareHostedAndroid, HostedAndroidTarget } from '../../device-host/hosted-android.ts';
 import { readHostedAndroid } from '../../workspace/placement-state.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import { avdStorageExists, isEmulatorToolAbsent, resolveOwnedAvdSerialAsync } from '../../devices/android.ts';
@@ -20,7 +20,7 @@ export async function connectAndroidHosting({
   selectors,
   read = readHostedAndroid,
   resolveSerial = resolveOwnedAvdSerialAsync,
-  prepare = prepareHostedAndroid,
+  prepare,
 }: {
   root: string;
   slot: string;
@@ -79,7 +79,14 @@ export async function connectAndroidHosting({
       };
   }
   try {
-    return { target: await prepare(machine, selectors, recorded, appMode === 'process' ? appMode : undefined) };
+    return {
+      target: await (prepare ?? (await import('../../device-host/hosted-android.ts')).prepareHostedAndroid)(
+        machine,
+        selectors,
+        recorded,
+        appMode === 'process' ? appMode : undefined,
+      ),
+    };
   } catch (error) {
     return {
       failure: {
@@ -95,7 +102,7 @@ export async function connectAndroidHosting({
 
 export async function selectAndroidPlacement({
   target: selected,
-  automatic = automaticDevicePlacement,
+  automatic,
   checkBudget = diskFloorGate,
   note,
   phase,
@@ -163,6 +170,7 @@ export async function selectAndroidPlacement({
       ? { decision: selected.kind === 'remote' ? 'eas' : 'hosted', machine, reason: 'selected explicitly' }
       : undefined;
     if (devicePlacement) {
+      const { devicePlacementLine } = await import('../../device-host/auto-placement.ts');
       phase('placement:', devicePlacementLine(devicePlacement, []));
       log?.(
         devicePlacementRecord({
@@ -184,7 +192,8 @@ export async function selectAndroidPlacement({
   const refusal = await localSelectors(selected);
   if (refusal) return { failure: refusal };
   try {
-    const placed = await automatic({
+    const { devicePlacementLine, automaticDevicePlacement } = await import('../../device-host/auto-placement.ts');
+    const placed = await (automatic ?? automaticDevicePlacement)({
       root: args.root,
       slot: args.slot,
       platform: 'android',
