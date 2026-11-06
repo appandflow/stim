@@ -36,6 +36,8 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
       ],
     },
     'packages/stim-cli': {
+      // The own fingerprint module lands before any command calls it; its tests are its only importers.
+      entry: production ? ['src/fingerprint/*.ts'] : [],
       // supervisor/server-bare.ts loads @stim-cli/metro with createRequire at runtime.
       ignoreDependencies: production ? ['@stim-cli/metro'] : [],
     },
