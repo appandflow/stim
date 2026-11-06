@@ -40,7 +40,7 @@ the full JSON report. It requires `desktop-doctor-run` support and has no CLI
 fallback; cached doctor report reads remain read-only.
 
 Add Machine and reconnect access requests use `desktop.machine-access.subscribe`
-on the matching-home bundled server with private Desktop authority and
+on the Stim home's stimd with private Desktop authority and
 `desktop-machine-access` support. The optional setup ticket stays in the private
 request, never CLI arguments or progress. The server requests build and device-host
 access without applying project repairs; a person still approves each capability on
@@ -48,15 +48,15 @@ the worker. Cancellation waits for owned cleanup, and an unresolved cleanup refu
 another action in that workspace. Reconnecting never repeats the request automatically.
 
 Device tools use a typed `device-tool` request on `desktop.remedy.subscribe`,
-requiring `desktop-device-tools` support and private authority on the matching-home
-bundled server. The existing tool operations validate the workspace's owned local
+requiring `desktop-device-tools` support and private authority on the Stim home's
+stimd. The existing tool operations validate the workspace's owned local
 simulator or emulator and preserve their refusal messages. Cancellation before
 admission prevents a change; an admitted change finishes within the 60-second
 execution and 35-second cleanup budgets, including after the popover closes.
 Reconnecting never repeats it, and there is no external CLI fallback.
 
 Whole-workspace and named-slot stops, including tutorial and sample cleanup, use
-`desktop.stop.subscribe` on the matching-home bundled server with private Desktop
+`desktop.stop.subscribe` on the Stim home's stimd with private Desktop
 authority and `desktop-stop` support. Activity retains ordered progress and the
 terminal result. A connection failure ends the local action without replaying it
 on reconnect; cancellation unsubscribes while server-owned teardown already started
@@ -79,7 +79,7 @@ an error, and reconnect does not replay a start. The supervisor continues runnin
 after a successful handoff to its workspace.
 
 Worktree warming from the menus and setup-before-run flow uses
-`desktop.worktree.warm.subscribe` on the matching-home bundled server, requiring
+`desktop.worktree.warm.subscribe` on the Stim home's stimd, requiring
 private Desktop authority and `desktop-worktree-warm` support. It copies missing
 ignored entries and preserves existing files. Activity keeps ordered progress and
 failure diagnostics; cancellation waits for cleanup acknowledgement. Reconnect
@@ -443,7 +443,7 @@ It holds the workspace's details, in this order:
   phase or build tool step with counts, elapsed time over the estimate, a phase
   bar, the remote host, the wait holder, compile output and the cache miss summary.
   Otherwise it separates **Last Build**, with compiler errors, from **Next Build**,
-  predicted by the bundled server's next-build read. Plans check automatically while
+  predicted by stimd's next-build read. Plans check automatically while
   visible, reusing a completed build or check for 60 seconds and skipping running
   builds; there is no manual Check button. **Run** starts the app. The next-build prediction keeps **Cache miss details**.
   **Details** opens a build sheet with a platform switch and recent runs.
@@ -666,7 +666,7 @@ fingerprint sources. **Recent builds** under it discloses the platform's last
 remote cache, compiled, failed, cancelled or interrupted), its duration, miss reason, age and
 slot. Clicking a run shows its configuration, fingerprint, phase times,
 compiler errors and miss reason popover. When the section opens, it requests
-`desktop.plan.get` from the same-home bundled server for each platform with a last
+`desktop.plan.get` from the Stim home's stimd for each platform with a last
 build or a device, and shows the result on the platform's row: "Next build:
 cache hit (local)", "cache hit (remote)" or "cold build, ~5m 40s", or the
 refusal with its remedy. A predicted cold build also shows why from the
@@ -1172,32 +1172,23 @@ so Desktop sends no `id` and each row's **Stop All** says it ends them all. An o
 message instead. The methods work only on
 the local Unix socket and need no Desktop authority.
 
-Quitting Desktop asks first when Desktop started the stim-server it runs and
-`share.list` shows live shares: an alert lists each (workspace, platform, control,
-viewers, time left) with **Cancel** (the default) and **Quit**. It shows nothing for
-an adopted server (a background service or an auto-started `stim share` server),
-which keeps running, or when the list does not answer within 2 seconds.
-
-The quit closes an open share sheet first, so a generated password still on screen is gone
-even if you then choose Cancel; stop the share and make a new one to get a new password.
+Quitting Desktop leaves stimd and its shares running. The quit closes an open share
+sheet first, so a generated password still on screen is gone; stop the share and make a
+new one to get a new password.
 A quit from `stim stop` or SIGTERM shows the alert for at most 3 seconds and then quits.
 
 ## Replay
 
-While Desktop's stim-server runs (see [stim-server](#stim-server)),
+While the Stim home's stimd runs (see [stim-server](#stim-server)),
 each simulator, emulator and web page's device viewer offers a replay bar
-once the server has recorded it,
-like the phone app's device viewer. Stim Desktop connects to that server over
-its Unix socket with a WebSocket that carries the protocol's JSON in the clear.
-The socket is normally `server/local.sock` under the Stim home `/health` reports.
-Paths longer than macOS's 103-byte limit use
-`/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock` instead. The socket is mode
-0600 in a 0700 directory, so only your user can connect, and the server gives
+once stimd has recorded it,
+like the phone app's device viewer. Stim Desktop connects to stimd over
+the Unix socket `run/stimd.json` names, with a WebSocket that carries the protocol's JSON in the clear.
+stimd chooses the path and writes it there; Desktop never computes it. The socket is mode
+0600 in a 0700 directory, so only your user can connect, and stimd gives
 that connection every local capability without pairing or a token. The app names
 itself "Stim Desktop", or "Stim Dev" for a Stim Dev build (see
-[Build the app](#build-the-app)), and is not listed in `stim pairings`. A
-stim-server older than protocol 2 has no socket; the app does not connect to it
-and says to update it.
+[Build the app](#build-the-app)), and is not listed in `stim pairings`.
 
 The app polls `replay.range` every 10 seconds while the viewer shows. The bar has
 **Live**, play and pause, a 1x or 2x speed, and a track of the recorded spans
@@ -1226,7 +1217,7 @@ The bar shows **Recording** while the server records the device, and **Replay
 off** when `stim status --json` reports `recording.enabled` false for the
 workspace. Physical and remote devices have no replay. **Record device screens
 for replay** in **Stim > Settings > Advanced** changes the machine's
-`recording.enabled` through the bundled server; turning it off asks first,
+`recording.enabled` through stimd; turning it off asks first,
 because it deletes the recordings.
 
 ## Remote sessions
@@ -1265,8 +1256,7 @@ Instead of a screen, the tile says:
 - **Connecting to stim-server** while it starts, or why the server is
   unreachable.
 - **The stim-server on this port is older than Stim Desktop** when the server's
-  hello lacks `physical-ios` or `physical-android` for the device: Desktop adopted
-  a server it did not start. Update that server, or stop it and reopen Stim Desktop so Desktop starts its own.
+  hello lacks `physical-ios` or `physical-android` for the device. Run `stim engine update`.
 - **Disconnected** when `stim status` reads the device as disconnected.
 - **The workspace's lease on this device ended**, with the `--device` command
   that leases it again, once the lease's end time passes, before `stim status`
@@ -1278,102 +1268,55 @@ ended), Control turns off and the tile says why.
 
 ## stim-server
 
-Desktop runs a local `stim-server` while it is open; there is no switch. The app
-bundles it: `Contents/Resources/stim-server` holds a pinned official Node.js LTS
-(universal, `strip -x`, signed with the hardened runtime) and the bundled `stim` engine, so the server always matches the app and needs no global install,
-Node version manager or login shell to start. A Mac that serves without Desktop, such
-as a build worker, still installs `stim` from npm. Replay, the diff viewer, archived logs, hosted app and simulator
-views and device recordings all read from it. At launch the app checks
-`http://127.0.0.1:7787/health`. When a server answers, the app uses it if
-Desktop uses the default home or the server serves Desktop's resolved
-home. When a different explicit Stim home needs its own loopback-only server,
-Desktop lets the OS choose a free port instead; hosted test copies use this path.
-An explicit `-stimServerPort <port>` or serving phones keeps the selected port
-and reports a home mismatch. A server the app did not start, such as the
-`stim service` LaunchAgent on a Mac that hosts for others, is never stopped
-or reconfigured and keeps running after the app quits. If no server answers, the app runs
-`stim serve --port 7787 --loopback-only`, which listens on `127.0.0.1` and never on
-a Tailscale address, and stops it with SIGTERM when the app quits, followed by SIGKILL
-if it has not exited after 3 seconds. A
-killed server leaves its `stim status --watch` child running until that child's
-next write fails. A stim-server older than the `--loopback-only` flag exits at once,
-and the sidebar footer shows a warning icon that says to update it. A failure of any
-other kind, such as a server for another Stim home, shows the same icon with the reason
-in its tooltip; click it to retry now. A port that something holds without answering
-`/health`, such as a stim-server too busy to reply, is neither adopted nor replaced:
-Desktop starts no second server onto it and shows it as degraded until it answers or the
-port is free. The icon also shows while the server runs but refuses Desktop's connection,
-such as when another stim-server for the same Stim home owns its local socket; the reason
-is the server's refusal, repeated under the server's version in **Settings > Advanced** and
-on the Phones page, and the click connects again. The warning stays until the connection
-is open again. Desktop also retries a failed start every 30 seconds or more, except for an outdated server. No dialog
-interrupts. `--loopback-only` removes the server's own Tailscale listeners and makes it refuse any
-request that a `tailscale serve --https` route forwards to the port, so paired phones and other
-Macs cannot reach it; Desktop never removes or edits the route. Turning **Allow connections** off restarts the
-server Desktop started in loopback-only mode, which disconnects paired phones and machines until
-connections are allowed again. Desktop runs the server from its bundled `stim` engine. When
-no server answers, Desktop starts the bundled server at once with the launch environment,
-the Stim home and the environment overrides from **Settings > Advanced > Environment**
-(see [Environment](#environment)); the server discovers the toolchain for the commands it
-runs itself. The bundled server keeps V8's compile cache for its own
-scripts in `~/Library/Caches/<bundle id>/node-compile-cache`; it removes
-`NODE_COMPILE_CACHE` from its environment before it starts anything, so commands it
-runs, such as Metro or Gradle, never write there. A test copy can move the port from 7787 with
-`defaults write <bundle id> stimServerPort -int <port>`, so it never adopts
-the Mac's own server. While a server runs, **Settings > Connections > Using this machine** re-checks it every 5
-seconds and the app every 10 seconds while it is active, otherwise every 60
-seconds. When a server the app adopted misses two checks in a row, the app shows it as
-degraded and keeps checking: it never starts its own server onto that port while the adopted
-server is gone, so a `stim service` LaunchAgent that restarts, updates or crashes keeps
-its port. The message names the `dev.stim.server` LaunchAgent when its plist is installed for this
-user. The app starts its own server only when it adopted none, no server answers on the port and nothing holds it:
-at launch, or later once a port a program that is not a stim-server held at launch is free. To use Desktop's own server instead, stop the adopted one and reopen Stim
-Desktop. With **Allow connections** on, whatever the Phone app flag says, Desktop starts its server without
-`--loopback-only`, so it also listens on this Mac's Tailscale addresses, and restarts the
-server it started when the setting changes. The pairing and device commands use the
-`STIM_HOME` its health reports, so they act on that server's pairing state. When that `STIM_HOME` is
-not `~/.stim`, the Connections tab names it and warns that phones paired now are stored
-there. This warning appears when Desktop uses the default home and
-has adopted a server started with another home. Those phones stop working once Stim Desktop
-serves `~/.stim` again.
+Desktop uses the Stim engine, the one Stim build the Mac runs (`~/.stim/engine`, or
+`STIM_ENGINE_ROOT`), and the Stim home's one resident process, `stimd`. It carries no
+server and no Node. Replay, the diff viewer, archived logs, hosted app and simulator views
+and device recordings all read from stimd.
 
-A stim-server that already answers on the port with a matching Stim home, such as
-the LaunchAgent that `stim setup` or `stim service install` creates, is
-adopted as not started by the app, whatever **Allow connections** says, so build and
-device-host requests from other Macs reach the Allow / Deny dialog. If Desktop's own
-server fails and a LaunchAgent server comes up, the next retry (every 30 seconds or
-more) adopts it. Desktop's own actions, such as cleanup, settings changes and app runs,
-work on an adopted server too, with no approval step. Desktop reaches it through the Stim
-home's local socket (`server/local.sock`, mode 0600 in a directory only this user can enter), and a
-stim-server without a private key grants that socket's clients the same actions; a server reached only
-over TCP gets none (a network connection never receives them). Only the bundled server Desktop started demands its private key on that socket. A
-server older than Desktop, or one another Stim Desktop started, offers no actions: each of them
-refuses with that reason. Approving another machine's build or device-host request in Desktop still
-needs the bundled server's private key, so against an adopted server that sheet refuses and
-points to `stim setup` in Terminal. A server with another Stim
-home is not adopted: the sidebar footer
-shows the mismatch and Desktop keeps retrying. Before its environment is ready, Desktop
-adopts a ready server provisionally when the Stim home it runs with would adopt it, so the
-sidebar shows its status feed right away. A provisional adoption only reads: Desktop
-connects with a stored token, and does not pair, grant, save or delete a token, run
-`stim-server` commands or send control requests. Once the environment is ready, Desktop
-checks the server again and keeps it only when it still serves the same home and version;
-otherwise it drops the server and looks for one again. Turning **Allow connections** off restarts a
-server the app started in loopback-only mode and never touches one it did not start;
-turning it on after a failed start tries again.
+At launch, Desktop reads `$STIM_HOME/run/stimd.json`, which stimd writes after binding its
+socket and removes on exit. When it names a live process, Desktop connects to the socket it
+names. Otherwise Desktop starts the engine's `bin/stimd` with the launch environment, the
+Stim home and the environment overrides from **Settings > Advanced > Environment** (see
+[Environment](#environment)); stimd discovers the toolchain for the commands it runs itself.
+Its output goes to `~/Library/Logs/Stim/stimd.log` (`stimd-<suffix>.log` for another bundle
+id, as the debug log names its file). Desktop checks for the record every 250 milliseconds
+for 15 seconds; a stimd that exits early because another one won the home's claim is fine,
+since Desktop then uses that one. Desktop never stops stimd: it serves the CLI and agents
+too, and exits on its own idle clock. A second Desktop, such as a `stim macos` copy with
+its own `-stimHome`, finds its home's own stimd and socket, so it needs no port of its own.
 
-A server answering health with HTTP 503 appears as **Starting** or
-**Degraded** with its reason in **Settings > Connections** and **Settings > Advanced**. Desktop keeps
-checking it without starting another server or terminating one it launched.
-For a server it launches, Desktop checks every 250 milliseconds until it is
-ready or the 15-second startup deadline passes, then uses its regular poller.
-The server retries reading its Stim home every 30 seconds. Desktop applies the
-usual home checks to an external server whenever health reports its Stim home,
-including while it is not ready. Until health is ready, Desktop does not connect
-a session, issue pairing codes or run route setup, and its poller does not list paired
-devices, because that read of the Stim home can hang while it is degraded.
-Listing, approving and revoking paired devices work as before while the server is
-off, failed or running.
+The connection's first frame declares `kind: desktop`. Desktop then proves the private key
+stimd writes to `$STIM_HOME/run/desktop.key` (mode 0600; Desktop refuses a file another user
+owns, a link, or one others can read) with `desktop.authenticate`'s HMAC challenge, so the
+key itself never crosses the socket, a log or another process. Desktop never writes the key.
+
+stimd starts its network listener on demand. Desktop asks for it with `net.ensure` when
+**Allow connections** is on, before pairing a phone and before route setup, and then reads
+`/health` on the listener's loopback port for Tailscale and route state. Without a listener
+the Connections page shows the engine as running, with Tailscale unknown.
+
+Native reads of `current.json` and `run/stimd.json` check `format`. A format this Desktop
+does not know shows `Partial report: update Stim Desktop (Stim > Check for Updates)` in the
+sidebar footer and is not retried.
+
+On a Mac without an engine, Desktop installs the version its build names
+(`StimEngineVersion` in its Info.plist; a development build installs `next`) with
+`npx --yes stim@<version> engine install`, using the user's Node when it is 22.12 or later
+and otherwise a managed Node.js it downloads into `~/.stim/runtime` (beside the engine root)
+from nodejs.org, checked against both the SHA-256 Desktop pins and the release's
+`SHASUMS256.txt`. A Desktop update that pins a newer Node installs it at the next engine
+install and removes managed releases no engine points at. When the engine is older than the
+version Desktop names, Desktop runs `stim engine update` at launch if it installed the engine
+itself; otherwise the footer and **Settings > Advanced** say so with an **Update Engine**
+button. A pinned engine shows its pin, for example `The Stim engine is pinned at 1.50.0
+(rolled back from 1.51.0). This Stim Desktop needs 1.51.0: run stim engine update, or Update
+Engine (clears the pin).` A failed start or install shows the reason in the footer and is
+retried every 30 seconds or more, or at once from **Try Again**.
+
+A network listener answering health with HTTP 503 appears as **Starting** or
+**Degraded** with its reason in **Settings > Connections** and **Settings > Advanced**, and
+Desktop keeps checking it. Listing, approving and revoking paired devices run the engine's
+`stim pairings` and work while stimd is off, failed or running.
 
 A read-only phone sees workspaces, devices and logs. With workspace diff support,
 it can also read changed and untracked text files in registered workspaces,
@@ -1995,40 +1938,26 @@ next minute, its card replaces that one. Another link to the same workspace
 replaces its card. With the main window closed, the link reopens it.
 
 - macOS 14 or later and Xcode 27, selected with `xcode-select` or `DEVELOPER_DIR`. Stim Desktop falls back to `/Applications/Xcode.app` when the selected developer directory has no simulator support.
-- The bundled local stim-server supplies Desktop operations. A separately installed `stim` CLI is optional, for agents and terminal commands.
+- The Stim engine's stimd supplies Desktop operations; Desktop installs the engine when the Mac has none (see [stim-server](#stim-server)). A separately installed `stim` CLI on `PATH` is optional, for agents and terminal commands.
 
-  <a id="environment"></a>Stim Desktop runs no login shell. At launch it runs Stim's
-  toolchain discovery, the one stim-server and `stim doctor`'s **Toolchain** section
-  use, once with the bundled Node (about 50 ms), and starts its server and external bootstrap tools with the
-  result: the launch environment with the default Node of nvm, fnm, Volta, mise or asdf,
-  Homebrew, `~/.local/bin`, pnpm's and bun's global directories and the Android SDK
-  tools appended to `PATH`, `ANDROID_HOME` when `~/Library/Android/sdk` exists, and
-  `JAVA_HOME` set to a Homebrew `openjdk`, else Android Studio's runtime, when no JDK is
-  installed under `/Library/Java/JavaVirtualMachines`. A shell profile's variables do not reach it:
+  <a id="environment"></a>At launch Stim Desktop reads `zsh -lic` once, in the background, and
+  runs external bootstrap tools and the engine's commands with that environment; the
+  `login-environment` launch milestone marks it. stimd itself starts with the launch
+  environment and discovers the toolchain for the commands it runs, as `stim doctor`'s
+  **Toolchain** section reports it. A shell profile's `STIM_HOME` does not reach Desktop:
   **Settings > Advanced > Environment** holds the Stim home, which replaces a profile's
   `STIM_HOME`, and `KEY=VALUE` lines, such as `STIM_*` settings or
   `NODE_USE_SYSTEM_CA=0`, that Desktop adds to the environment of every `stim` command
-  and of the server it starts; both apply when Desktop restarts. The first launch of
+  and of the stimd it starts; both apply when Desktop restarts. The first launch of
   this version moves a non-default Stim home that the previous version saw in the login
   shell into that setting. A launch `STIM_HOME` wins over the setting, and Desktop never
   exports `~/.stim`, because an explicit `STIM_HOME` turns on the scoped-home defaults.
-  A build without the bundled server, such as a `stim macos` copy or `swift run`, reads
-  `zsh -lic` once instead and logs that it did; the `login-environment` launch milestone
-  marks it, where a bundled build reaches `toolchain-environment`.
   **Settings > App > Stim** shows the resolved home, and the sidebar shows non-default homes.
-  Homes whose local socket path exceeds macOS's 103-byte limit use the private
-  per-user socket directory described in [Replay](#replay).
   It adds `STIM_DESKTOP_APP`, set to the app's bundle path, which
   tells `stim` that Stim Desktop is installed without a Launch Services lookup.
-  Desktop's operational server is bundled with the app and uses its bundled Node.
-  Optional agent CLI version checks and an external server override use the home
-  directory's Node launcher, so a project's Node pin cannot select an older
-  runtime. Known version-manager shims resolve their global installation; other
-  wrappers run as supplied. An external server launcher rechecks a missing Node
-  or unresolved script rather than silently using the project's Node.
 
-Desktop loads workspaces, settings, reports, tutorial steps and actions through its
-matching-home local server. It does not resolve an operational `stim` executable,
+Desktop loads workspaces, settings, reports, tutorial steps and actions through the
+Stim home's stimd. It does not resolve an operational `stim` executable,
 use `STIM_BIN`, or keep an executable override. A missing or older agent CLI does
 not block Desktop or trigger an install banner. External bootstrap commands such
 as npm and git run through the shared streaming process runner, with output,
@@ -2039,7 +1968,6 @@ The setup guide still checks `stim --version` on its discovered PATH to offer
 optional agent CLI installation and updates. It resolves package ownership through
 symbolic links and pnpm shims, then uses that package manager's global install
 command. An installation outside those global directories gets no update button.
-`stim serve` ships inside the app and updates with Stim Desktop.
 
 Once a day, and at launch, the app also reads the
 `latest` version of `stim` from `registry.npmjs.org/stim/latest`; it skips the
@@ -2118,8 +2046,9 @@ Later**.
 
 1. **Welcome**.
 2. **Install the CLI**: `node` from Stim Desktop's `PATH`, run in the home folder,
-   must report 22.12.0 or later; an older one is shown with its path. Without it, the step offers `brew install node` when
-   `brew` is on the `PATH`, else a link to nodejs.org. Then it
+   must report 22.12.0 or later, else the managed Node.js in `~/.stim/runtime` counts; an older one is shown with its
+   path. Without either, **Install Node.js** downloads the managed Node.js the way engine installs do (see
+   [stim-server](#stim-server)). Then it
    shows tabs for npm, pnpm and bun, only for the managers on the `PATH`
    (the default is pnpm or bun when its global bin directory is on the `PATH`,
    else npm), and runs `npm install --global stim`, `pnpm add --global stim`
@@ -2243,9 +2172,8 @@ release app: bundle id `dev.stim.desktop.dev`, `build/Stim Dev.app`, the phone
 app's orange Stim Dev icon (`Support/AppIcon-Dev.icns`), and no update feed,
 Sentry DSN or `stim-desktop` URL scheme. It has its own `UserDefaults`, login
 item, notification permission and notification history, and pairs with
-stim-server under its own name (see [Replay](#replay)). Both apps use port
-7787, so the one that starts second uses the other's server instead of starting
-one; when that app quits, the remaining one shows the server it adopted as unavailable and waits for it, and reopening it starts its own. Paired phones and the `tailscale serve` route keep working
+stimd under its own name (see [Replay](#replay)). Both apps use the Stim home's one
+stimd, whichever started it, and quitting either leaves it running. Paired phones and the `tailscale serve` route keep working
 because they belong to the Stim home, not to either app. Both apps check disk
 pressure. `stim ios` and `stim android` open device links with `open -a Stim`,
 which reaches the release app, never Stim Dev.
@@ -2255,34 +2183,13 @@ id `dev.stim.desktop`, which `scripts/release.sh` and the release workflow use.
 
 The bundle copies Inter, JetBrains Mono, and the brand artwork, including the animated jar's and the build animation's Lottie files, from `website/`, and embeds `Lottie.framework` from the `lottie-spm` package and `Sparkle.framework` from the `Sparkle` package in `Contents/Frameworks`. Sentry is linked into the executable. Resolving the `sentry-cocoa` package downloads every xcframework it declares, about 450 MB, and extracts about 3 GB into `.build/artifacts` ([getsentry/sentry-cocoa#9146](https://github.com/getsentry/sentry-cocoa/issues/9146)).
 
-`bundle.sh` needs the repository's pnpm workspace installed (`pnpm install`).
-`scripts/server-runtime.mjs` stages the bundled server into
-`Contents/Resources/stim-server`: it downloads the Node.js release it pins
-(`NODE_VERSION`) from nodejs.org once into `.build/node`, checks the tarball
-against the SHA-256 the script pins and against that release's `SHASUMS256.txt`,
-keeps `bin/node` and its `LICENSE`, strips local symbols, and joins the arm64 and
-x64 binaries with `lipo` for `--universal`. It builds `stim` and the
-workspace packages it imports, packs them with `pnpm pack`, and lays out their
-third-party dependencies at the versions `pnpm-lock.yaml` resolves, without
-symbolic links, keeping only the darwin `unique-pid` prebuilds. It refuses a
-layout in which any package would load a dependency other than the one the
-lockfile names, and a staged server whose `--version` does not match
-`packages/server`. `bundle.sh --server <dir>` copies a server staged earlier
-instead; the release workflow stages it before any secret is loaded and
-`release.sh` reuses it through `DESKTOP_SERVER_RUNTIME`. To move to a
-newer Node, change `NODE_VERSION` and both hashes from that release's
-`SHASUMS256.txt`. Universal costs about 199 MB on disk (98 MB arm64 + 101 MB
-x86_64); the app and its Sparkle feed are universal, so it ships both.
-
-`release.sh` signs each `unique-pid` addon and then `bin/node` with the
-hardened runtime and `Support/Node/node.entitlements`:
-`com.apple.security.cs.allow-jit`, which V8 needs, and
-`com.apple.security.cs.disable-library-validation`, because the `stim`
-commands the server runs on this Node can load a project's own native addons,
-signed by another team or not at all. Both are in the set Node.js signs its own
-macOS release with. The Desktop workflow's full run stages the server and signs
-it the same way ad hoc and checks that it answers `/health` under an empty
-environment.
+The app carries no Node and no Stim. `STIM_ENGINE_VERSION` in `bundle.sh`'s environment
+becomes `StimEngineVersion` in its Info.plist, the published `stim` the app installs or
+moves the engine to; the release workflows set it (see [RELEASING.md](./RELEASING.md)). A
+build without it, such as Stim Dev or a `stim macos` copy, accepts any engine and installs
+`next` on a Mac with none. The managed Node.js release and its archive hashes are pinned
+in `ManagedNode` (`Sources/StimKit/EngineInstall.swift`); to move to a newer Node, change
+the version and both hashes from that release's `SHASUMS256.txt`.
 
 ## Updates
 
@@ -2333,7 +2240,7 @@ Besides the standard Sentry fields (SDK and release, the OS version and kernel, 
 | App hang                   | The main thread is blocked for 2 seconds or more.                | `App hanging for at least 2000 ms.`, the stack traces of all threads, scrubbed.                                                                                                                                           |
 | `stim command failed`      | A one-shot `stim` call (`status`, `stats`, `doctor`, ...) fails. | Tags `command` (a command of the CLI's command surface, else `other`), `outcome` (`exited`, `timed-out` or `not-found`), `exit_code`, and `stim_code` when the output names a bare `STIM_*` code. No arguments or output. |
 | `payload decode failed`    | JSON from `stim` or `stim-server` does not decode.               | Tags `source` (`cli` or `server`), `type` (the Swift type), `coding_path` (field names the type declares, with `<key>` for a dictionary key and `[]` for an array index) and `reason`. No values.                         |
-| `stim-server start failed` | Desktop cannot start or adopt `stim-server`.                     | Tag `kind`: `adoption-home-mismatch`, `launch-failed`, `no-answer`, `exited` or `too-old`. No message, path, port or output.                                                                                              |
+| `stim-server start failed` | Desktop cannot install the engine or start or reach `stimd`.     | Tag `kind`: `engine-unavailable`, `launch-failed`, `no-answer`, `exited` or `unknown-format`. No message, path, port or output.                                                                                           |
 
 The three handled events are warnings with a fixed message. Each distinct failure is sent once per launch, and a launch sends at most 20. A command that streams output, such as `stim ios`, and a failed `stim-server` command send no event, because a failing build is not a Desktop fault.
 
@@ -2532,30 +2439,21 @@ Grant access to the signed Stim app that started the server, then reconnect the 
 viewer. A server started elsewhere uses that host's permissions; this app's status
 alone does not prove that server has access.
 
-The checked-in `.stim.json` does not include a server runtime. To test an
-unreleased server and private Desktop actions, stage it from `apps/desktop`:
-
-```bash
-node scripts/server-runtime.mjs .build/stim-server
-```
-
-In your worktree's `.stim.json`, add `"stim-server": ".build/stim-server"` to
-`macos.resources`, keeping the other resources. Add `"-stimHome", "<private-home>"`
-and `"-stimServerPort", "<unused-port>"` to `macos.arguments`, using a fresh
-private directory and an unused port so the test copy starts its own bundled
-server. Run `stim settings set iosSimulatorApp stim-desktop` and
+A `stim macos` copy uses the Stim home's stimd like the release app. To test an
+unreleased engine and private Desktop actions, run `pnpm run build` at the repository
+root, then in your worktree's `.stim.json` add `"-stimHome", "<private-home>"` and
+`"-stimEngine", "<absolute path of the worktree>/packages/stim-cli"` to `macos.arguments`,
+using a fresh private directory. With `stimEngine` set to a built `stim` package
+directory, Desktop runs `node <dir>/bin/stim.mjs serve` as the home's stimd and
+`node <dir>/bin/stim.mjs` for its other commands, with the first `node` on `PATH`, and
+installs no engine. Stim homes are separate, so the copy starts its own stimd and socket
+next to the Mac's own Desktop and needs no port of its own. Run
+`stim settings set iosSimulatorApp stim-desktop` and
 `stim settings set androidEmulatorApp stim-desktop` with `STIM_HOME` set to that
-directory before launching. Then run `stim macos --remote-build local` from
-`apps/desktop`. Re-stage after server changes, stop the test copy with
-`stim stop`, and restore those local `.stim.json` edits before committing.
-
-For an unreleased CLI too, first run `pnpm run build` at the repository root,
-then use `node ../../packages/stim-cli/dist/cli.mjs macos --remote-build local`
-from `apps/desktop` after the same staging and resource setup. This leaves the
-installed app's preferences unchanged. See [the macOS guide](../../website/docs/macos.md)
-for settings and limits.
-
-For `--remote-build <mac>`, copy the staged runtime to `Support/ServerRuntime`
-and put `!**/` and `!**` on separate lines in that copy's `.gitignore`. Use
-`Support/ServerRuntime` as the resource path so the remote inputs include its
-nested `node_modules`. Remove the copy after stopping the test app.
+directory before launching. Then run `node ../../packages/stim-cli/bin/stim.mjs macos`
+from `apps/desktop`. To test the engine install instead, leave out `-stimEngine` and set
+`STIM_ENGINE_ROOT` to a fresh directory in the environment of `stim macos`, which passes it
+to the app, so the copy installs its engine and managed Node there instead of
+`~/.stim/engine`. Stop the test copy with `stim stop`, run `STIM_HOME=<private-home> stim stop`
+for its stimd, and restore those local `.stim.json` edits before committing. See
+[the macOS guide](../../website/docs/macos.md) for settings and limits.
