@@ -181,68 +181,22 @@ checks before starting the clock and records the policy digest. This is a
 macOS benchmark-data boundary, not a security sandbox for hostile code or
 already-running native services. Unsupported hosts fail closed.
 
-### iOS sandbox compatibility
+### iOS sandbox probes
 
-For the pinned agent-device 0.20.10 / ExpoModulesJSI fixture affected by
-sandboxed process inspection and nested SwiftPM sandboxes, prepare an explicit
-local compatibility copy with `prepareNativeCompatibility` from
-`native-compat.mjs`. Supply a new destination, the installed package, an exact
-reviewed native-helper source commit and SHA-256, and a dedicated fixture copy.
-The adapter refuses unknown base bytes. It does not update a global install.
-It patches the copied package and the selected fixture's ignored JSI build
-script; prepare fresh golden state afterward because native inputs changed.
-
-Set `STIM_BENCH_AGENT_DEVICE_BIN` to the copied `bin/agent-device.mjs`,
-`STIM_BENCH_NATIVE_COMPAT_MANIFEST` to the generated manifest, and pin its digest
-as `NATIVE_COMPAT_SHA256` in the new campaign's `pins.env`. Both arms receive
-the same package and Xcode wrapper. Do not retrofit frozen campaign pins.
-The package tree, native helper source, bridge, and Xcode/JSI changes are
-hash-bound, including executable permissions and internal symlinks. The bridge
-adds a Node process for each process query in both arms. Preflight repeats the
-process-identity and Xcode-resolution smoke inside the run's exact isolation
-profile before starting the clock; collection rejects changed compatibility
-bytes. This does not replace a real untimed build, recording, and cleanup test
-before accepting a new toolchain combination.
-
-When the adapter is configured, both arms receive the same additional proof
-command after copying the recording and before closing the session. This
-awaited read-only command hashes live compatibility and the saved media. Its
-exact Node/helper bytes, literal arguments, run/worktree identities and
-successful recorded output bind the receipt. Collection rechecks immutable
-tools and media, and rejects a recorded native build overlapping or following
-the receipt. This recorded-command check is not arbitrary shell analysis.
-Deleting the task-owned dependency link afterward does not erase that evidence;
-changed compatibility bytes that remain present still fail. Leave the app,
-device and worktree available for coordinator teardown.
-
-The receipt records compatibility when its command runs, after recording-copy;
-it does not attest earlier frames. Existing source, command, screen and recording
-audits remain required. The screenshot remains the readiness endpoint; the
-extra command and its token/total-run overhead are retained. Use a new cohort
-identity and requalify both profiles after changing the protocol; do not revise
-completed verdicts.
-
-Dispatch also runs two untimed compatibility probes under the run's exact
-policy and refuses an iOS run without the adapter when either fails: a nested
-`sandbox-exec` applying
+Dispatch runs two untimed probes under the run's exact policy and refuses an
+iOS run when either fails: a nested `sandbox-exec` applying
 `(deny default)(import "system.sb")(allow file-read*)(allow process*)`, the
 head of the profile SwiftPM applies to manifests and plugins, and `/bin/ps -p
-<pid> -o lstart=`, the process identity agent-device reads for `simctl
-recordVideo`. The macOS kernel refuses a nested
-`sandbox_apply` unless the inner profile compiles to the same sandbox the
-process already runs under (identical, reordered, duplicated, or redundant
-rules all nest, at any depth); any other profile is refused in both
-directions, even one that only adds a rule with no effect. SwiftPM generates
-its profile per invocation from `(deny default)` with its own write grants, so
-no runner policy compiles to the same sandbox, and `(with no-sandbox)` on `process-exec*` permits
-nesting only by letting the child escape the boundary, which exposes protected
-data. No `sandbox-exec` policy hosts SwiftPM's sandbox, so the adapter's
-`-IDEPackageSupportDisableManifestSandbox=1`,
-`-IDEPackageSupportDisablePluginExecutionSandbox=1`, and `-disable-sandbox`
-flags remain the compensation. Both probe results are recorded in the run's
-`preflight.isolationCompatibility`; a refused run has no `meta.json`, so
-dispatch writes them to `isolation-compatibility.json` in the run directory
-before failing.
+<pid> -o lstart=` for process identity. These checks remain separate from the
+filesystem isolation probes.
+
+The macOS kernel refuses a nested `sandbox_apply` when the inner profile
+compiles to a different sandbox. SwiftPM generates its profile per invocation,
+so its manifest and plugin sandboxes cannot run under the benchmark policy.
+Dispatch retains both results in `preflight.isolationCompatibility`; a refused
+run has no `meta.json`, so it writes `isolation-compatibility.json` in the run
+directory before failing. Requalify the toolchain with a real untimed build,
+recording, and cleanup test before accepting a campaign.
 
 Android launch-error control preparation carries dependencies and native outputs
 but leaves out the root `android/build` directory. Its generated autolinking cache

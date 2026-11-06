@@ -25,14 +25,11 @@ node scripts/agent-benchmark/native-driver.mjs collect ios /absolute/run-directo
 Repeat with `control`, `android`, and `macos`. Preparation refuses partial or
 existing goldens so failed native tool calls can be inspected before recovery.
 Dispatch requires two load samples at or below 3, version-matched preparation,
-isolated runner skills, a verified filesystem boundary, and a current process
-identity adapter. Both arms receive the same SwiftPM sandbox compensation under
-the outer benchmark sandbox. The adapter and wrapper hashes are retained. The macOS runner uses a narrow
-process-list adapter because macOS denies the system `ps` binary inside this
-sandbox. It reads same-user executable paths with native APIs and checks
-process identity before and after each read; the real-tool test covers paths
-with spaces under the sandbox. Each frozen coordinator gets its own tools
-directory, and collection rejects changed adapter bytes.
+isolated runner skills, and a verified filesystem boundary. Both arms receive
+the same SwiftPM sandbox flags under the outer benchmark sandbox. Each frozen
+coordinator gets its own tools directory, and collection verifies the Swift
+wrapper's hash. Process continuity evidence remains required; capture the
+native process start time without relying on a benchmark-provided helper.
 
 ## Android emulator lifetime
 
@@ -51,7 +48,7 @@ uses the exact retained run-owned device identity, never a device selected only
 by its serial or a broad emulator shutdown.
 
 Collection rejects failed or timed-out runners, missing evidence, incorrect
-source changes, and changed coordinator or compatibility-tool hashes. A run
+source changes, and changed coordinator or Swift-wrapper hashes. A run
 that passes those checks remains `pending-independent-ui-and-command-audit`;
 an agent's success message does not certify it. Before accepting a
 result, inspect the complete command evidence, verify the exact source change,

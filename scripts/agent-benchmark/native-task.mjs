@@ -9,7 +9,6 @@ export function nativeTaskPrompt({
   proofDirectory,
   session,
   stateDirectory,
-  processIdentityTool,
 }) {
   if (!['stim', 'control'].includes(arm) || !['ios', 'android', 'macos'].includes(platform)) {
     throw new Error('Unsupported native benchmark arm or platform');
@@ -31,7 +30,7 @@ export function nativeTaskPrompt({
         ]
       : []),
     `Use this exact agent-device environment prefix for every app interaction: ${prefix}`,
-    `Before the final verification sequence and before pressing Increment, capture the launched app's PID and start identity. ${platform === 'android' ? 'Use the selected emulator to read its boot ID and the process start ticks from /proc/<pid>/stat; save process: {pid, bootId, startTicks}.' : `Read the actual app PID from the selected simulator or macOS launch, then run ${JSON.stringify(processIdentityTool)} <pid> and save process: {pid, startSeconds, startMicros} from its JSON output.`} Preserve the exact command and output in the transcript. Earlier failed attempts may be retried, including relaunches, within this same timed run. If the process is replaced during verification, restart the complete verification sequence and retain the earlier attempt. The identity used for the final Count: 1 screenshot must remain unchanged through independent verification.`,
+    `Before the final verification sequence and before pressing Increment, capture the launched app's PID and start identity. ${platform === 'android' ? 'Use the selected emulator to read its boot ID and the process start ticks from /proc/<pid>/stat; save process: {pid, bootId, startTicks}.' : 'Read the actual app PID from the selected simulator or macOS launch, capture its native process start time in seconds and microseconds and save process: {pid, startSeconds, startMicros}.'} Preserve the exact command and output in the transcript. Earlier failed attempts may be retried, including relaunches, within this same timed run. If the process is replaced during verification, restart the complete verification sequence and retain the earlier attempt. The identity used for the final Count: 1 screenshot must remain unchanged through independent verification.`,
     `Open only the app and device created for this run. After verifying both texts, save a screenshot to ${JSON.stringify(proofDirectory + '/screen.png')} and an interactive snapshot to ${JSON.stringify(proofDirectory + '/snapshot.txt')}.`,
     `Write ${JSON.stringify(proofDirectory + '/target.json')} with the exact bundleId, appPath (macOS only), deviceId (simulator UDID or emulator serial; null for macOS), and the process identity captured before that final verification sequence.`,
     'Leave the app, device, worktree and agent-device session running for independent coordinator verification. Do not stop or remove them.',

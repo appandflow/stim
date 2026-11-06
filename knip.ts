@@ -10,7 +10,6 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
     'packages/core/receive-validators.d.mts',
     'packages/stim-cli/shim/**',
     'packages/stim-cli/src/injected/*.d.cts',
-    'scripts/agent-benchmark/compat/ps-bridge.mjs',
     'scripts/agent-benchmark/stamp.mjs',
     'scripts/agent-benchmark/watch-app.mjs',
     ...(production ? ['**/__tests__/**', 'scripts/**', 'test/**', 'vitest.*.ts', 'apps/mobile/mock-server/**'] : []),
