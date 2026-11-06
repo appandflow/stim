@@ -38,9 +38,9 @@ import {
   worktreeSkipReason,
   type WorktreeFacts,
 } from '../commands/gc/worktrees.ts';
-import { planWorktrees } from '../maintenance/sweep.ts';
-import * as maintenanceMeasure from '../maintenance/measure.ts';
-import { runMaintenance } from '../maintenance/run.ts';
+import { planWorktrees } from '../stimd/passes/sweep.ts';
+import * as maintenanceMeasure from '../stimd/passes/measure.ts';
+import { runMaintenance } from '../stimd/passes/run.ts';
 import { mergeState, type MergeState } from '../workspace/merge-state.ts';
 import {
   parseRemoteRepo,
@@ -59,7 +59,7 @@ import {
   collectArtifactsAsync,
   artifactWorktrees,
   artifactWorktreesAsync,
-} from '../maintenance/artifacts.ts';
+} from '../stimd/passes/artifacts.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';

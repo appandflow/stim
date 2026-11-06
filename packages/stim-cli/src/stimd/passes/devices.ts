@@ -1,18 +1,18 @@
 import type { MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
 import type { StimContext } from '@stim-cli/core';
-import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../commands/gc/devices.ts';
-import { canonicalPath } from '../commands/gc/paths.ts';
-import { worktreeRemovalReason, type WorktreeSweep } from '../commands/gc/worktrees.ts';
-import { listAvds, ownedAvdDirectory } from '../devices/android.ts';
-import { projectDeviceSlots } from '../devices/device-slots.ts';
-import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
-import { readParked } from '../devices/sim-pool.ts';
-import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
-import { measuredDirectorySizeAsync } from '../fs-util.ts';
-import { loadConfig } from '../workspace/config.ts';
-import { workspaceInUse, workspaceInUseAsync } from '../workspace/in-use.ts';
-import { workspaceLastUsed } from '../workspace/workspace-state.ts';
-import { endedPullRequest } from '../workspace/pull-request.ts';
+import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../../commands/gc/devices.ts';
+import { canonicalPath } from '../../commands/gc/paths.ts';
+import { worktreeRemovalReason, type WorktreeSweep } from '../../commands/gc/worktrees.ts';
+import { listAvds, ownedAvdDirectory } from '../../devices/android.ts';
+import { projectDeviceSlots } from '../../devices/device-slots.ts';
+import { listAllIosSims, type IosSimRecord } from '../../devices/ios.ts';
+import { readParked } from '../../devices/sim-pool.ts';
+import type { OwnedDeviceActivity } from '../../commands/gc/idle.ts';
+import { measuredDirectorySizeAsync } from '../../fs-util.ts';
+import { loadConfig } from '../../workspace/config.ts';
+import { workspaceInUse, workspaceInUseAsync } from '../../workspace/in-use.ts';
+import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
+import { endedPullRequest } from '../../workspace/pull-request.ts';
 import {
   cachedDeviceActivity,
   cachedDeviceActivityAsync,

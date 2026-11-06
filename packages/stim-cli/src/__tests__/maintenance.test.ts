@@ -12,10 +12,10 @@ import {
   type MaintenanceState,
   type MaintenanceSize,
 } from '@stim-cli/core/state';
-import { plan } from '../maintenance/plan.ts';
-import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
-import { maintenanceLogger } from '../maintenance/log.ts';
-import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
+import { plan } from '../stimd/passes/plan.ts';
+import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
+import { maintenanceLogger } from '../stimd/passes/log.ts';
+import { maintenanceStatus, maintenanceLine } from '../stimd/passes/status.ts';
 import { tryAcquireClaim, releaseClaim } from '../ownership-claim.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 

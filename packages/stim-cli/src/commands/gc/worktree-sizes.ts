@@ -5,7 +5,7 @@ import { plural } from '../../command-output.ts';
 import type { DiskMeasure } from '@stim-cli/core/state';
 import { freshMeasure, isDependencyTree, refreshMeasure } from '../../disk-usage.ts';
 import { measuredDirectorySizeAsync } from '../../fs-util.ts';
-import { appRoots } from '../../maintenance/artifacts.ts';
+import { appRoots } from '../../stimd/passes/artifacts.ts';
 import { ARTIFACT_DIRS, discoveredBuildDirs, xcodebuildOutputDirs } from '../../workspace/regenerable-dirs.ts';
 import { listWorktreesAsync, matchWorktreeEntry, resolveSourceCheckoutAsync } from '../../workspace/worktree.ts';
 import { canonicalPath } from './paths.ts';

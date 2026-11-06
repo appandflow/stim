@@ -13,11 +13,11 @@ import { testContext } from './_context.ts';
 import { childEnvironment } from '../workspace/git-read.ts';
 import { pullRequestLookups } from '../workspace/pull-request.ts';
 import { runOperationFile } from '../engine/operation-exec.ts';
-import { maintenancePinnedAsync } from '../maintenance/protect.ts';
-import { collectArtifactsAsync } from '../maintenance/artifacts.ts';
-import { cachedDeviceActivityAsync, workspaceActiveReasonAsync } from '../maintenance/activity.ts';
-import { previewMaintenance } from '../maintenance/preview.ts';
-import * as maintenanceMeasure from '../maintenance/measure.ts';
+import { maintenancePinnedAsync } from '../stimd/passes/protect.ts';
+import { collectArtifactsAsync } from '../stimd/passes/artifacts.ts';
+import { cachedDeviceActivityAsync, workspaceActiveReasonAsync } from '../stimd/passes/activity.ts';
+import { previewMaintenance } from '../stimd/passes/preview.ts';
+import * as maintenanceMeasure from '../stimd/passes/measure.ts';
 
 let dir: string;
 let path: string | undefined;

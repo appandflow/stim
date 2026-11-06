@@ -8,7 +8,7 @@ import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { runFingerprintPrecompute, type FingerprintPrecomputeRequest } from '../fingerprint-precompute.ts';
 import type { FingerprintPrecompute } from '../cache/fingerprint-memo.ts';
 import { projectRegistry } from '../integrations/projects.ts';
-import { sizeScanDeferred } from '../maintenance/measure.ts';
+import { sizeScanDeferred } from '../stimd/passes/measure.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { gitAsync } from '../workspace/git.ts';
 import { resolveAndroidLayout, resolveIosProjectDir, resolveProjectSettingsAsync } from '../workspace/settings.ts';

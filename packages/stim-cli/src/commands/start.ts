@@ -88,7 +88,7 @@ import {
   type TerminableChild,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
-import type { ReclaimObserver } from '../budget.ts';
+import type { ReclaimObserver } from '../stimd/passes/budget.ts';
 import { diskFloorGate } from '../daemon/floor.ts';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { groupExitBudgetMs, waitForGroupExit } from '../process-group-exit.ts';

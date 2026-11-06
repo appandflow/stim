@@ -1,4 +1,4 @@
-import type { ReclaimObserver } from '../budget.ts';
+import type { ReclaimObserver } from '../stimd/passes/budget.ts';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { formatElapsed, plural } from '../command-output.ts';

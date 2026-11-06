@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { daemonClaimRoot, daemonNdjsonFile, readDormantStage } from '@stim-cli/core/state';
-import * as budget from '../budget.ts';
+import * as budget from '../stimd/passes/budget.ts';
 import * as client from '../daemon/client.ts';
 import { beforeCommand } from '../daemon/client.ts';
 import { diskFloorGate } from '../daemon/floor.ts';

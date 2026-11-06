@@ -8,21 +8,21 @@ import {
   type MaintenanceSize,
   type MaintenanceMode,
 } from '@stim-cli/core/state';
-import { findProjectRoot } from '../workspace/project.ts';
-import { canonicalPath } from '../commands/gc/paths.ts';
-import { collectWorkspaceOutputs, workspaceDirRemoved } from '../commands/gc/workspaces.ts';
+import { findProjectRoot } from '../../workspace/project.ts';
+import { canonicalPath } from '../../commands/gc/paths.ts';
+import { collectWorkspaceOutputs, workspaceDirRemoved } from '../../commands/gc/workspaces.ts';
 import { cacheBlocked, measurePressure, measurePressureAsync } from './measure.ts';
-import { discoverCachesAsync } from '../cache/caches.ts';
-import { candidateRootsAsync, type WorktreeSweep } from '../commands/gc/worktrees.ts';
-import { listWorktreesAsync } from '../workspace/worktree.ts';
+import { discoverCachesAsync } from '../../cache/caches.ts';
+import { candidateRootsAsync, type WorktreeSweep } from '../../commands/gc/worktrees.ts';
+import { listWorktreesAsync } from '../../workspace/worktree.ts';
 import { plan, type MaintenancePlan } from './plan.ts';
 import { maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { planSweep, planWorktrees } from './sweep.ts';
 import { cachedDeviceActivity, cachedDeviceActivityAsync } from './activity.ts';
 import { planIdleStop } from './idle-stop.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
-import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
+import type { OwnedDeviceActivity } from '../../commands/gc/idle.ts';
 
 export function triggeringRoot(operation?: StimContext): string {
   return canonicalPath(

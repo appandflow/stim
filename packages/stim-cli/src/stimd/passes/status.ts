@@ -1,6 +1,6 @@
 import { maintenanceRunClaims, readMaintenanceState, type MaintenanceStatus } from '@stim-cli/core/state';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
-import { formatBytes } from '../fs-util.ts';
+import { formatBytes } from '../../fs-util.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
 
 export function maintenanceStatus(env: NodeJS.ProcessEnv = process.env): MaintenanceStatus {

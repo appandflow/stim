@@ -23,11 +23,11 @@ import {
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { listMountedVolumes } from '../fs-util.ts';
 import { deviceLeasePath, LEASE_VERSION } from '../engine/device-lease.ts';
-import { executeAction, type ActContext } from '../maintenance/act.ts';
-import * as measurements from '../maintenance/measure.ts';
-import { planPrune } from '../maintenance/prune.ts';
-import { runMaintenance } from '../maintenance/run.ts';
-import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
+import { executeAction, type ActContext } from '../stimd/passes/act.ts';
+import * as measurements from '../stimd/passes/measure.ts';
+import { planPrune } from '../stimd/passes/prune.ts';
+import { runMaintenance } from '../stimd/passes/run.ts';
+import { resolveMaintenanceSettings } from '../stimd/passes/settings.ts';
 import { saveConfig } from '../workspace/config.ts';
 import * as inUse from '../workspace/in-use.ts';
 import { liveClaimOwner, plantClaim } from './_factories.ts';

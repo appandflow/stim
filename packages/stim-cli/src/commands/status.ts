@@ -1,4 +1,4 @@
-import { maintenanceStatus, maintenanceLines } from '../maintenance/status.ts';
+import { maintenanceStatus, maintenanceLines } from '../stimd/passes/status.ts';
 import { daemonLine, daemonStatus, lastActionLine, waitingLines } from '../daemon/status.ts';
 import {
   createRefreshScheduler,

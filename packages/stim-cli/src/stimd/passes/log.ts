@@ -8,7 +8,7 @@ import {
   workspaceMetadataFile,
   type MaintenanceRecord,
 } from '@stim-cli/core/state';
-import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
+import { createNdjsonWriter, type NdjsonWriter } from '../../ndjson.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
 interface MaintenanceLogger {
