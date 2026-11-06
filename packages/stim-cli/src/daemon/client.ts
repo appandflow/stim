@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -174,41 +174,39 @@ function stimdEnv(env: NodeJS.ProcessEnv): Record<string, string> {
 const xml = (value: string) =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+/** The prefix of the labels of this home's stimd launchd jobs. */
+export function launchdLabelPrefix(): string {
+  return `dev.stim.stimd.${createHash('sha256').update(stimdRunDir()).digest('hex').slice(0, 12)}.`;
+}
+
 /**
  * Starts stimd as a transient job of the user's launchd domain, which a command runner that kills what a call started
- * cannot reach. launchd keeps a job loaded after its process exits and refuses a second bootstrap of a loaded label, so
- * stimd removes its job as it exits, and a job left by one that could not is booted out first. `AbandonProcessGroup` leaves children such as an adb server
+ * cannot reach. launchd reads the job file only at bootstrap and keeps a job loaded after its process exits, so each
+ * job has its own label, which stimd removes as it exits. `AbandonProcessGroup` leaves children such as an adb server
  * running when stimd exits, as they do outside launchd.
  */
 function startLaunchdJob(command: readonly string[], env: Record<string, string>): boolean {
   const uid = process.getuid?.();
   if (uid === undefined) return false;
-  const executor = getExecutor();
-  const label = `dev.stim.stimd.${createHash('sha256').update(stimdRunDir()).digest('hex').slice(0, 12)}`;
-  const plist = join(stimdRunDir(), 'stimd.plist');
+  const label = `${launchdLabelPrefix()}${randomBytes(3).toString('hex')}`;
+  const plist = join(stimdRunDir(), `${label}.plist`);
   const strings = (values: readonly string[]) => values.map((value) => `<string>${xml(value)}</string>`).join('');
   const environment = Object.entries({ ...env, [LAUNCHD_LABEL_ENV]: label })
     .map(([name, value]) => `<key>${xml(name)}</key><string>${xml(value)}</string>`)
     .join('');
-  const tmp = `${plist}.${process.pid}.tmp`;
+  const log = xml(join(stimdRunDir(), 'stimd.log'));
   writeFileSync(
-    tmp,
-    `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${label}</string><key>ProgramArguments</key><array>${strings(command)}</array><key>EnvironmentVariables</key><dict>${environment}</dict><key>WorkingDirectory</key><string>${xml(stimdRunDir())}</string><key>RunAtLoad</key><true/><key>KeepAlive</key><false/><key>AbandonProcessGroup</key><true/><key>ProcessType</key><string>Background</string></dict></plist>\n`,
+    plist,
+    `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${label}</string><key>ProgramArguments</key><array>${strings(command)}</array><key>EnvironmentVariables</key><dict>${environment}</dict><key>WorkingDirectory</key><string>${xml(stimdRunDir())}</string><key>StandardOutPath</key><string>${log}</string><key>StandardErrorPath</key><string>${log}</string><key>RunAtLoad</key><true/><key>KeepAlive</key><false/><key>AbandonProcessGroup</key><true/></dict></plist>\n`,
     { mode: 0o600 },
   );
-  renameSync(tmp, plist);
   try {
-    executor.runFile('launchctl', ['bootout', `gui/${uid}/${label}`], {
-      timeoutMs: LAUNCH_TIMEOUT_MS,
-    });
-  } catch {}
-  try {
-    executor.runFile('launchctl', ['bootstrap', `gui/${uid}`, plist], {
-      timeoutMs: LAUNCH_TIMEOUT_MS,
-    });
+    getExecutor().runFile('launchctl', ['bootstrap', `gui/${uid}`, plist], { timeoutMs: LAUNCH_TIMEOUT_MS });
     return true;
   } catch {
     return false;
+  } finally {
+    rmSync(plist, { force: true });
   }
 }
 

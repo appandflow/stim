@@ -178,7 +178,7 @@ function release(resource: 'slot' | 'boot' = 'slot'): void {
   socket.once('connect', () => socket.end(`${frame()}${JSON.stringify({ op: `${resource}.released` })}\n`));
 }
 
-describe.skipIf(process.platform === 'win32')('stimd', () => {
+describe('stimd on every platform', () => {
   test('one stimd per home: a second one exits and leaves the first one holding both claims and the socket', async () => {
     const first = startDaemonProcess();
     await listening();
@@ -189,44 +189,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     expect(readClaimSet(daemonClaimRoot()).live.map((holder) => [holder.owner.pid, holder.mode])).toEqual([
       [first.child.pid, 'shared'],
     ]);
-    expect(existsSync(stimdSocket())).toBe(true);
-  }, 20_000);
-
-  test('the built stimd answers a first frame of its own build, refuses another build, holds the daemon claim shared and removes its record on SIGTERM', async () => {
-    const dist = fileURLToPath(new URL('../../dist/', import.meta.url));
-    const build = stimBuildId(dist);
-    assert(build);
-    const child = getExecutor().spawn(process.execPath, [join(dist, 'cli.mjs'), '__stimd', '--mode', 'report'], {
-      env: { ...process.env },
-      stdio: 'ignore',
-    });
-    const exited = new Promise<number | null>((done) => child.once('exit', (code) => done(code)));
-    daemons.push({ child, exited });
-    await listening();
-    const record = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
-    expect(record).toEqual({ format: 1, pid: child.pid, socket: stimdSocket(), build, version: expect.any(String) });
-    expect(fs.statSync(stimdSocket()).mode & 0o777).toBe(0o600);
-    const ask = (first: Record<string, unknown>) =>
-      new Promise<string[]>((done) => {
-        const socket = connect(record.socket);
-        const received = lines(socket);
-        socket.once('connect', () => socket.write(`${JSON.stringify(first)}\n${JSON.stringify({ op: 'hello' })}\n`));
-        socket.once('close', () => done(received.map((line) => JSON.parse(line).op)));
-      });
-    expect(await ask({ kind: 'cli', build })).toEqual(['hello', 'hello']);
-    expect(await ask({ kind: 'cli', build: 'f'.repeat(12) })).toEqual(['engine-changed']);
-    expect(await ask({ op: 'hello' })).toEqual(['error']);
-    const taker = tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive', label: 'stim-daemon' });
-    if (taker.pending) releaseClaim(taker.pending);
-    expect(taker.acquired).toBeUndefined();
-    expect(taker.waitingFor?.map((holder) => [holder.owner.pid, holder.mode]) ?? taker.held?.owner.pid).toEqual([
-      [child.pid, 'shared'],
-    ]);
-    child.kill('SIGTERM');
-    expect(await exited).toBe(0);
-    expect(existsSync(stimdRecordFile())).toBe(false);
-    expect(existsSync(stimdSocket())).toBe(false);
-    expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
+    expect(existsSync(stimdRecordFile())).toBe(true);
   }, 20_000);
 
   test('a released build slot wakes the oldest waiter at once, and the next release the one after it', async () => {
@@ -269,6 +232,45 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       timeout: 10_000,
       interval: 20,
     });
+  }, 20_000);
+});
+
+describe.skipIf(process.platform === 'win32')('stimd', () => {
+  test('the built stimd answers a first frame of its own build, refuses another build, holds the daemon claim shared and removes its record on SIGTERM', async () => {
+    const dist = fileURLToPath(new URL('../../dist/', import.meta.url));
+    const build = stimBuildId(dist);
+    assert(build);
+    const child = getExecutor().spawn(process.execPath, [join(dist, 'cli.mjs'), '__stimd', '--mode', 'report'], {
+      env: { ...process.env },
+      stdio: 'ignore',
+    });
+    const exited = new Promise<number | null>((done) => child.once('exit', (code) => done(code)));
+    daemons.push({ child, exited });
+    await listening();
+    const record = JSON.parse(readFileSync(stimdRecordFile(), 'utf8'));
+    expect(record).toEqual({ format: 1, pid: child.pid, socket: stimdSocket(), build, version: expect.any(String) });
+    expect(fs.statSync(stimdSocket()).mode & 0o777).toBe(0o600);
+    const ask = (first: Record<string, unknown>) =>
+      new Promise<string[]>((done) => {
+        const socket = connect(record.socket);
+        const received = lines(socket);
+        socket.once('connect', () => socket.write(`${JSON.stringify(first)}\n${JSON.stringify({ op: 'hello' })}\n`));
+        socket.once('close', () => done(received.map((line) => JSON.parse(line).op)));
+      });
+    expect(await ask({ kind: 'cli', build })).toEqual(['hello', 'hello']);
+    expect(await ask({ kind: 'cli', build: 'f'.repeat(12) })).toEqual(['engine-changed']);
+    expect(await ask({ op: 'hello' })).toEqual(['error']);
+    const taker = tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive', label: 'stim-daemon' });
+    if (taker.pending) releaseClaim(taker.pending);
+    expect(taker.acquired).toBeUndefined();
+    expect(taker.waitingFor?.map((holder) => [holder.owner.pid, holder.mode]) ?? taker.held?.owner.pid).toEqual([
+      [child.pid, 'shared'],
+    ]);
+    child.kill('SIGTERM');
+    expect(await exited).toBe(0);
+    expect(existsSync(stimdRecordFile())).toBe(false);
+    expect(existsSync(stimdSocket())).toBe(false);
+    expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
   }, 20_000);
 
   test('a tick request is answered when a tick finishes, and the snapshot carries the pressure level', async () => {

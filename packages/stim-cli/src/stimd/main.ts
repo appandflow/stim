@@ -40,7 +40,7 @@ import { readWebRecord, webFacts } from '../web/state.ts';
 import type { Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { relaunchWithLogFile } from '../detached-entry.ts';
-import { LAUNCHD_LABEL_ENV, stimdBuildId } from '../daemon/client.ts';
+import { LAUNCHD_LABEL_ENV, launchdLabelPrefix, stimdBuildId } from '../daemon/client.ts';
 import { getExecutor } from '../exec.ts';
 import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from '../daemon/mode.ts';
 import { ownedHere } from '../daemon/idle.ts';
@@ -65,6 +65,7 @@ const EMPTY_TICKS_BEFORE_EXIT = 2;
 const RECENT_ACTIONS = 20;
 const WAKE_GRACE_MS = 2000;
 const RECORD_FORMAT = 1;
+const LAUNCHCTL_TIMEOUT_MS = 5000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
@@ -575,6 +576,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
   process.title = 'stimd';
   const label = process.env[LAUNCHD_LABEL_ENV];
   delete process.env[LAUNCHD_LABEL_ENV];
+  if (label) removeExitedJobs(label);
   const at = argv.indexOf('--mode');
   try {
     await runStimd({ mode: parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ?? daemonMode({}) });
@@ -594,6 +596,18 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
   }
   if (label)
     try {
-      getExecutor().runFile('launchctl', ['remove', label], { timeoutMs: 5000 });
+      getExecutor().runFile('launchctl', ['remove', label], { timeoutMs: LAUNCHCTL_TIMEOUT_MS });
     } catch {}
+}
+
+/** Removes the jobs of this home's earlier stimds that exited without removing their own, such as after a crash. */
+function removeExitedJobs(own: string): void {
+  try {
+    const executor = getExecutor();
+    for (const line of executor.runFile('launchctl', ['list'], { timeoutMs: LAUNCHCTL_TIMEOUT_MS }).split('\n')) {
+      const [pid, , label] = line.split('\t');
+      if (pid === '-' && label?.startsWith(launchdLabelPrefix()) && label !== own)
+        executor.runFile('launchctl', ['remove', label], { timeoutMs: LAUNCHCTL_TIMEOUT_MS });
+    }
+  } catch {}
 }
