@@ -21,12 +21,7 @@ describe('socket permissions', () => {
   });
 
   it.each([
-    [
-      'a world-readable directory',
-      { dir: { ...DIR_OK, mode: 0o40755 } },
-      'mode 755',
-      'chmod 700 /Users/me/.stim/run',
-    ],
+    ['a world-readable directory', { dir: { ...DIR_OK, mode: 0o40755 } }, 'mode 755', 'chmod 700 /Users/me/.stim/run'],
     [
       'a group-writable socket',
       { socket: { ...SOCKET_OK, mode: 0o140660 } },
