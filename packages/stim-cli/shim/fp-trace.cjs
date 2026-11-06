@@ -20,7 +20,6 @@ const opaque = new Set();
 let active = true;
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
-const originalReaddirSync = fs.readdirSync;
 const originalStatSync = fs.statSync;
 const exists = (file, directory) => {
   const info = originalStatSync(file, { throwIfNoEntry: false });
@@ -37,20 +36,7 @@ function toPath(target) {
 function record(kind, target) {
   const file = active && kind ? toPath(target) : null;
   if (!file || reads.has(`${kind}\0${file}`)) return;
-  const entry = { path: file, kind };
-  if (kind === 'dir' || kind === 'tree' || kind === 'resolve') {
-    try {
-      entry.hash = sha256(
-        JSON.stringify(
-          originalReaddirSync(file, { recursive: kind === 'tree' })
-            .map(String)
-            .filter((name) => path.basename(name) !== '.DS_Store')
-            .toSorted(),
-        ),
-      );
-    } catch {}
-  }
-  reads.set(`${kind}\0${file}`, entry);
+  reads.set(`${kind}\0${file}`, { path: file, kind });
 }
 
 const missing = (error) => error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
@@ -156,7 +142,7 @@ function callerSite() {
 // reads are the enumeration, recorded once with the enumerating file, not as reads of each name.
 const realEnv = process.env;
 const read = (key) => {
-  if (active && typeof key === 'string' && !enumerationSites.has(callerSite()?.site)) env.add(key);
+  if (active && typeof key === 'string' && !env.has(key) && !enumerationSites.has(callerSite()?.site)) env.add(key);
 };
 const traced = new Proxy(realEnv, {
   get(target, key) {
@@ -250,17 +236,29 @@ function resolving(specifier, parent, resolve) {
   return resolved;
 }
 
+// Node's default resolve step for a CommonJS require calls Module._resolveFilename inside the hook, so the inner call
+// for the same request and parent is the one resolution the hook already records.
+let hooked = null;
 const resolveFilename = Module._resolveFilename;
 Module._resolveFilename = function (request, parent, ...rest) {
   const from = typeof parent?.filename === 'string' ? parent.filename : null;
-  return resolving(request, from, () => resolveFilename.call(this, request, parent, ...rest));
+  const resolve = () => resolveFilename.call(this, request, parent, ...rest);
+  return hooked?.specifier === request && hooked.parent === from ? resolve() : resolving(request, from, resolve);
 };
 
 if (hooks)
   Module.registerHooks({
     resolve(specifier, context, nextResolve) {
       const parent = context.parentURL?.startsWith('file:') ? fileURLToPath(context.parentURL) : null;
-      return resolving(specifier, parent, () => nextResolve(specifier, context));
+      return resolving(specifier, parent, () => {
+        const outer = hooked;
+        hooked = { specifier, parent };
+        try {
+          return nextResolve(specifier, context);
+        } finally {
+          hooked = outer;
+        }
+      });
     },
     load(url, context, nextLoad) {
       const result = nextLoad(url, context);

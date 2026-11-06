@@ -164,7 +164,8 @@ function locateValue(value: unknown, roots: Roots): unknown {
 /**
  * The record of one path as it is now, or null when it changed during the computation that started at `since`, or is
  * gone although the computation read it. A module with no file (one a loader compiled in memory) is recorded absent
- * when its directory did not change during the computation.
+ * when its directory did not change during the computation. A listing not given is taken before the stat, so a change
+ * after the evaluation read it fails the racy guard instead of being recorded.
  */
 export function takeRead(path: string, kind: ReadKind, roots: Roots, since: bigint, hash?: string | null): Read | null {
   if (kind === 'absent') return { path: relocate(path, roots), kind };
@@ -173,13 +174,14 @@ export function takeRead(path: string, kind: ReadKind, roots: Roots, since: bigi
     const real = realOf(path);
     return type && real ? { path: relocate(path, roots), kind, hash: type, real: relocate(real, roots) } : null;
   }
+  const listed = (kind === 'dir' || kind === 'tree') && hash === undefined ? listing(path, kind === 'tree') : hash;
   const target = kind === 'package' ? join(path, 'package.json') : path;
   const stat = statKey(target);
   const parent = stat ? null : statKey(join(target, '..'));
   if (!stat && kind !== 'package' && (kind !== 'module' || !parent)) return null;
   if ([stat, parent].some((info) => info && (racy(info.mtime, since) || racy(info.ctime, since)))) return null;
   const read: Read = { path: relocate(path, roots), kind, stat: stat?.key ?? null };
-  if (kind === 'dir' || kind === 'tree') read.hash = hash ?? null;
+  if (kind === 'dir' || kind === 'tree') read.hash = listed ?? null;
   else if (stat) read.hash = kind === 'module' ? (hash ?? null) : readHash(target);
   const real = stat ? realOf(target) : null;
   if (real) read.real = relocate(real, roots);
@@ -197,7 +199,7 @@ function listNames(path: string, recursive = false): string[] | null {
   }
 }
 
-const listing = (path: string, recursive = false): string | null => {
+export const listing = (path: string, recursive = false): string | null => {
   const names = listNames(path, recursive);
   return names && sha256(JSON.stringify(names));
 };

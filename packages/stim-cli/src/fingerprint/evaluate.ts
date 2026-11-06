@@ -23,6 +23,7 @@ import { gitLocation, trackedPaths } from './git-index.ts';
 import {
   IndexSession,
   indexDir,
+  listing,
   relocate,
   startedAt,
   traceReads,
@@ -85,8 +86,8 @@ export interface Fingerprint {
 interface Trace {
   env: string[];
   enumerators: string[];
-  /** `resolve` is the listing of a directory module resolution searched; `tree` a recursive listing. */
-  reads: { path: string; kind: ReadKind | 'resolve'; hash?: string }[];
+  /** `resolve` is a directory module resolution searched; `tree` a recursive listing. Listings are hashed here. */
+  reads: { path: string; kind: ReadKind | 'resolve' }[];
   modules: { path: string; hash: string }[];
   opaque: string[];
 }
@@ -317,14 +318,14 @@ function traceRows(
   }
   const compiled = new Set(trace.modules.map((module) => module.path));
   const configPart = name === 'config' || name === 'configEmbedded';
-  for (const { path, kind, hash } of trace.reads) {
+  for (const { path, kind } of trace.reads) {
     if (ours(path) || packageRoot(path)) continue;
     if (kind === 'resolve') continue;
     if (kind !== 'file') {
       if (inApp(path) && (name === 'config' || name === 'configEmbedded'))
         rows.push(
           kind === 'dir' || kind === 'tree'
-            ? { name: `${kind}:${realForm(path, roots)}`, kind: 'file', hash: hash ?? ABSENT }
+            ? { name: `${kind}:${realForm(path, roots)}`, kind: 'file', hash: listing(path, kind === 'tree') ?? ABSENT }
             : { name: `exists:${realForm(path, roots)}`, kind: 'file', hash: sha256(kind) },
         );
       continue;
