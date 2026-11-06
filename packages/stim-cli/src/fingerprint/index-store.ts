@@ -315,11 +315,14 @@ export function newRecord(key: RecordKey, checkout: string, stamps: Read[]): Eva
  * platform. Records hold the evaluated config, which can carry values derived from secrets. A failure to write
  * leaves the key unaffected.
  */
+let lastWritten = 0n;
+
 export function writeRecord(dir: string, record: EvalRecord, tag: string): void {
   try {
     const created = statSync(dir, { throwIfNoEntry: false }) === undefined;
     ensurePrivateDir(dir);
-    const writtenAtNs = String(nowNs() + BigInt(process.hrtime()[1] % 1_000_000));
+    lastWritten = nowNs() > lastWritten ? nowNs() : lastWritten + 1n;
+    const writtenAtNs = String(lastWritten);
     writePrivate(join(dir, `r-${writtenAtNs}-${tag}.json`), JSON.stringify({ ...record, writtenAtNs }));
     for (const file of recordFiles(dir).slice(RECORDS_PER_DIR)) rmSync(file, { force: true });
     if (created) evictDirs(join(dir, '..'));
@@ -422,9 +425,9 @@ const mtime = (path: string) => statSync(path, { throwIfNoEntry: false })?.mtime
  */
 export function newerThanInstall(roots: Roots): string | null {
   const dirs = [...new Set([roots.project, roots.install])];
-  const stamps = dirs.flatMap((dir) => INSTALL_STAMPS.map((name) => mtime(join(dir, 'node_modules', name)) ?? []));
+  const stamps = dirs.flatMap((dir) => INSTALL_STAMPS.flatMap((name) => mtime(join(dir, 'node_modules', name)) ?? []));
   if (stamps.length === 0) return null;
-  const installed = Math.max(...stamps.flat());
+  const installed = Math.max(...stamps);
   const inputs = [
     ...LOCKFILES.map((name) => join(roots.install, name)),
     ...dirs.flatMap((dir) =>
