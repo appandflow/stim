@@ -18,6 +18,8 @@ export interface Roots {
   project: string;
   /** Real path of the nearest directory at or above the app that holds a lockfile; the app when none does. */
   install: string;
+  /** Real path of the git work tree top above the app, when the app is in one. */
+  top?: string;
 }
 
 interface Pattern {

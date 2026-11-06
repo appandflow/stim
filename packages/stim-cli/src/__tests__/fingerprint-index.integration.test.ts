@@ -230,28 +230,40 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))(
       expect(indexed.hash).toBe((await key(root, 'skip')).hash);
     });
 
-    test('a sibling worktree reuses the first checkout record by content', SLOW, async () => {
-      const repo = join(base, 'repo');
-      const app = expoApp('repo/app');
-      await settled();
-      write(join(repo, '.gitignore'), 'node_modules\n');
-      const git = (...args: string[]) =>
-        getExecutor().runFile('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args], {
-          timeoutMs: 20_000,
+    test(
+      'a sibling worktree reuses the first checkout autolinking by content and re-runs a config reading its own files',
+      SLOW,
+      async () => {
+        const repo = join(base, 'repo');
+        const app = expoApp('repo/app', {
+          'app.config.js':
+            "module.exports = ({ config }) => ({ ...config, extra: { shared: require('../shared/value.js') } });\n",
         });
-      await git('init', '--quiet');
-      await git('add', '.');
-      await git('commit', '--quiet', '-m', 'init');
-      await git('worktree', 'add', '--quiet', join(base, 'sibling'));
-      const sibling = realpathSync(join(base, 'sibling', 'app'));
-      symlinkSync(MOBILE_MODULES, join(sibling, 'node_modules'));
-      await key(app);
-      ran();
-      const reused = await key(sibling);
-      expect(reused.from).toBe('index');
-      expect(ran()).toEqual([]);
-      expect(reused.hash).toBe((await key(sibling, 'skip')).hash);
-    });
+        write(join(repo, 'shared', 'value.js'), "module.exports = 'one';\n");
+        write(join(repo, '.gitignore'), 'node_modules\n');
+        const git = (...args: string[]) =>
+          getExecutor().runFile('git', ['-C', repo, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args], {
+            timeoutMs: 20_000,
+          });
+        await git('init', '--quiet');
+        await git('add', '.');
+        await git('commit', '--quiet', '-m', 'init');
+        await git('worktree', 'add', '--quiet', join(base, 'sibling'));
+        const sibling = realpathSync(join(base, 'sibling', 'app'));
+        symlinkSync(MOBILE_MODULES, join(sibling, 'node_modules'));
+        await settled();
+        const first = await key(app);
+        ran();
+        const reused = await key(sibling);
+        expect(reused.from).toBe('index');
+        expect(ran()).toEqual(['config', 'embed']);
+        expect(reused.hash).toBe((await key(sibling, 'skip')).hash);
+        write(join(base, 'sibling', 'shared', 'value.js'), "module.exports = 'two';\n");
+        const moved = await key(sibling);
+        expect(moved.hash).not.toBe(first.hash);
+        expect(moved.hash).toBe((await key(sibling, 'skip')).hash);
+      },
+    );
   },
 );
 
@@ -282,19 +294,27 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))('ve
     expect(verifyHit(request(root), hit, { env: env(), passes: true })).toBeNull();
   });
 
-  test('the passes verify a pending hit, unless the workspace env changed since', SLOW, async () => {
-    const root = expoApp('app');
-    await settled();
-    await key(root);
-    const hit = await key(root);
-    verifyHit(request(root), hit, { env: env(), passes: true });
-    const signal = new AbortController().signal;
-    expect(await verifyPending({ perPass: 1, signal })).toBe(1);
-    verifyHit(request(root), hit, { env: env(), passes: true });
-    await key(root, 'use', { APP_FLAG: 'other' });
-    expect(await verifyPending({ perPass: 1, signal })).toBe(0);
-    expect(readdirSync(fingerprintPendingVerifyDir())).toEqual([]);
-  });
+  test(
+    'the passes verify a pending hit, count no disagreement for a tree edited since, and drop one whose env changed',
+    SLOW,
+    async () => {
+      const root = expoApp('app');
+      await settled();
+      await key(root);
+      const hit = await key(root);
+      verifyHit(request(root), hit, { env: env(), passes: true });
+      const signal = new AbortController().signal;
+      expect(await verifyPending({ perPass: 1, signal })).toBe(1);
+      verifyHit(request(root), hit, { env: env(), passes: true });
+      write(join(root, 'app.json'), JSON.stringify({ expo: { name: 'edited', slug: 'fp' } }));
+      expect(await verifyPending({ perPass: 1, signal })).toBe(1);
+      expect(disagreementCount()).toBe(0);
+      verifyHit(request(root), hit, { env: env(), passes: true });
+      await key(root, 'use', { APP_FLAG: 'other' });
+      expect(await verifyPending({ perPass: 1, signal })).toBe(0);
+      expect(readdirSync(fingerprintPendingVerifyDir())).toEqual([]);
+    },
+  );
 
   test('the local gate refuses an unapplied patch and an input changed during the build', SLOW, async () => {
     const root = expoApp('app');

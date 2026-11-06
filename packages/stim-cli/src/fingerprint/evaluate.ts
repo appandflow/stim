@@ -17,7 +17,7 @@ import {
   scriptEnvNames,
   templateScripts,
 } from './env.ts';
-import { trackedPaths } from './git-index.ts';
+import { gitLocation, trackedPaths } from './git-index.ts';
 import {
   IndexSession,
   indexDir,
@@ -104,6 +104,8 @@ const STARTUP_ENV = ['NODE_OPTIONS', 'NODE_PATH', 'NODE_PRESERVE_SYMLINKS', 'NOD
 const TIMEOUT_MS = 60_000;
 const ABSENT = sha256(canonicalJson(['absent']));
 const SCRIPT = /\.(?:[cm]?js|[cm]?ts)$/;
+/** The static app config, whose evaluated form is the `config` row, version fields removed. */
+const APP_CONFIG_FILES = ['app.json', 'app.config.json'];
 const SKIPPED_READS = new Set(['package.json', 'Podfile.lock', 'pnpm-lock.yaml', 'yarn.lock', 'package-lock.json']);
 const VERSION_FIELDS = [
   ['version'],
@@ -308,6 +310,7 @@ function traceRows(
     } else rows.push({ name: `virtual:${pathForm(path, roots)}`, kind: 'file', hash });
   }
   const compiled = new Set(trace.modules.map((module) => module.path));
+  const configPart = name === 'config' || name === 'configEmbedded';
   for (const { path, kind, hash } of trace.reads) {
     if (ours(path) || packageRoot(path)) continue;
     if (kind !== 'file') {
@@ -320,6 +323,7 @@ function traceRows(
       continue;
     }
     if (SKIPPED_READS.has(basename(path))) continue;
+    if (configPart && APP_CONFIG_FILES.some((file) => path === join(roots.project, file))) continue;
     if (
       trace.opaque.includes('module.registerHooks missing') &&
       SCRIPT.test(path) &&
@@ -371,12 +375,16 @@ const evaluatorKey = (): string =>
     ['fp-eval.cjs', 'fp-trace.cjs'].map((name) => readFileSync(join(SHIMS, name))).join('\0'),
   ));
 
-/** The env digest a part is checked against: a value's hash in its relocated form, or the enumeration's. */
+/**
+ * The env digest a part is checked against: a value's hash, a path's in its relocated form, or for `*` (project code
+ * enumerated the env) every name and value the part ran with.
+ */
 function envDigest(env: Record<string, string>, roots: Roots): (name: string) => string | null {
   return (name) => {
-    if (name === '*') return enumerationRow(env).hash;
+    if (name === '*') return sha256(canonicalJson(Object.entries(env).toSorted(([a], [b]) => byCodeUnit(a, b))));
     const value = env[name];
-    return value === undefined ? null : sha256(isAbsolute(value) ? relocate(resolve(value), roots) : value);
+    if (value === undefined) return null;
+    return sha256(canonicalJson(isAbsolute(value) ? ['path', relocate(resolve(value), roots)] : ['value', value]));
   };
 }
 
@@ -504,7 +512,8 @@ async function evaluate(
   ): Promise<Part | EvalUncertain> => {
     const wrapped = args[0] === evaluator;
     const digest = envDigest(partEnv, roots);
-    const cached = session?.part(slot, digest);
+    const variant = name === 'rnConfig' && wrapped ? 'rnConfig:rn' : slot;
+    const cached = session?.part(variant, digest);
     if (cached)
       return {
         name,
@@ -543,6 +552,7 @@ async function evaluate(
         since,
         session.stamped,
         packageRoot,
+        (dir) => owner(join(dir, 'package.json')) !== null,
       );
       const names = [...new Set([...done.trace.env, ...STARTUP_ENV])];
       if (derived.enumerated) names.push('*');
@@ -556,7 +566,7 @@ async function evaluate(
           wrapped,
           derived,
         };
-        session.keep(slot, recorded);
+        session.keep(variant, recorded);
       }
     }
     return { name, output, wrapped, envNames: done.trace.env, derived, env: partEnv, fromIndex: false };
@@ -763,7 +773,7 @@ export async function fingerprint(
 ): Promise<Fingerprint | EvalUncertain> {
   const since = startedAt();
   const project = realpathSync.native(root);
-  const roots: Roots = { project, install: installRoot(project) };
+  const roots: Roots = { project, install: installRoot(project), top: gitLocation(project)?.top };
   const session =
     opts.index === 'skip' || !existsSync(join(SHIMS, 'fp-trace.cjs'))
       ? null

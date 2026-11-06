@@ -16,6 +16,8 @@ const CONTENT: Provenance = { mode: 'content' };
 const isUrl = (value: unknown): value is string => typeof value === 'string' && /^https?:\/\//.test(value);
 const unquote = (value: string) => value.trim().replace(/^(['"])(.*)\1$/, '$2');
 const toPosix = (path: string) => path.split(sep).join('/');
+/** A linked copy (`yarn link`, `link:`, a workspace) resolves outside `node_modules` and is never a registry copy. */
+const installed = (dir: string) => dir.split(sep).includes('node_modules');
 
 function readText(path: string): string | null {
   try {
@@ -205,7 +207,8 @@ export function lockfileClassifier(install: string): { classify: Classifier; loc
               : name === 'bun.lock'
                 ? bun(text, install)
                 : null;
-      if (classify) return { classify, lockfile: path };
+      if (classify)
+        return { classify: (dir, identity) => (installed(dir) ? classify(dir, identity) : CONTENT), lockfile: path };
     } catch {}
   }
   return { classify: () => CONTENT, lockfile: null };

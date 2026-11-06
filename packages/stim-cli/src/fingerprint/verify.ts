@@ -1,11 +1,18 @@
 import { readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { ensurePrivateDir } from '@stim-cli/core';
-import { fingerprintIndexDir, fingerprintIndexLock, fingerprintPendingVerifyDir } from '@stim-cli/core/state';
+import { fingerprintIndexDir, fingerprintPendingVerifyDir } from '@stim-cli/core/state';
 import { debugLog } from '../debug-log.ts';
-import { withDirLock } from '../dir-lock.ts';
 import { fingerprint, type Fingerprint } from './evaluate.ts';
-import { dropRecords, indexDir, newerThanInstall, nowNs, readWorkspaceEnv, writePrivate } from './index-store.ts';
+import {
+  withIndexLock,
+  dropRecords,
+  indexDir,
+  newerThanInstall,
+  nowNs,
+  readWorkspaceEnv,
+  writePrivate,
+} from './index-store.ts';
 import { installRoot, targetLayout, type StaticTarget } from './inputs.ts';
 import { field } from './walk.ts';
 import { diffInputs, isUncertain, sha256, type InputChange, type Platform, type Uncertain } from './key.ts';
@@ -80,7 +87,7 @@ function readTrust(dir: string): Trust | null {
 
 /** Counts one index hit and says whether the directory is past its trust bound (3 hits or 10 minutes unverified). */
 function countHit(dir: string, now: bigint): boolean {
-  return withDirLock(fingerprintIndexLock(), () => {
+  return withIndexLock(() => {
     const trust = readTrust(dir) ?? { verifiedAtNs: null, firstHitNs: String(now), hits: 0 };
     trust.hits += 1;
     try {
@@ -91,7 +98,7 @@ function countHit(dir: string, now: bigint): boolean {
 }
 
 function markVerified(dir: string, now: bigint): void {
-  withDirLock(fingerprintIndexLock(), () => {
+  withIndexLock(() => {
     if (statSync(dir, { throwIfNoEntry: false }) === undefined) return;
     try {
       writeJson(trustFile(dir), { verifiedAtNs: String(now), firstHitNs: String(now), hits: 0 });
@@ -122,9 +129,9 @@ const isDisagreement = (value: unknown): value is Disagreements['unreported'][nu
 
 /** Drops a directory whose recorded parts gave another key than a full computation, and counts it. */
 function disagree(dir: string, platform: Platform, recorded: string, current: string, changes: InputChange[]): void {
-  dropRecords(dir);
   debugLog.log('fingerprint.index_disagreement', { platform, recorded, current, changes });
-  withDirLock(fingerprintIndexLock(), () => {
+  withIndexLock(() => {
+    dropRecords(dir);
     const known = readDisagreements();
     try {
       writeJson(disagreementsFile(), {
@@ -140,7 +147,7 @@ export const disagreementCount = (): number => readDisagreements().count;
 
 /** Disagreements no run has warned about yet, cleared as they are returned, and the total ever counted. */
 export function takeDisagreements(): Disagreements {
-  return withDirLock(fingerprintIndexLock(), () => {
+  return withIndexLock(() => {
     const known = readDisagreements();
     if (known.unreported.length > 0)
       try {
@@ -158,21 +165,30 @@ async function recompute(
   signal: AbortSignal,
 ): Promise<CheckResult> {
   const { dir } = requestDir(request);
-  const current = await fingerprint(request.root, request.target, {
-    env,
-    embedMode: request.embedMode,
-    index: 'skip',
-    signal,
-  }).catch((error: unknown): Uncertain => ({ uncertain: String(error) }));
+  const compute = (index: 'use' | 'skip') =>
+    fingerprint(request.root, request.target, { env, embedMode: request.embedMode, index, signal }).catch(
+      (error: unknown): Uncertain => ({ uncertain: String(error) }),
+    );
+  const current = await compute('skip');
   if (signal.aborted) return { status: 'abandoned', recorded: hit.hash, current: null };
   if (isUncertain(current)) return { status: 'failed', recorded: hit.hash, current: null };
   if (current.hash === hit.hash) {
-    markVerified(dir, nowNs());
+    locked(() => markVerified(dir, nowNs()));
     return { status: 'confirmed', recorded: hit.hash, current: current.hash };
   }
+  const indexed = await compute('use');
+  if (signal.aborted || isUncertain(indexed) || indexed.hash !== hit.hash)
+    return { status: 'abandoned', recorded: hit.hash, current: current.hash };
   const changes = diffInputs(hit.inputs, current.inputs);
-  disagree(dir, request.target.platform, hit.hash, current.hash, changes);
+  locked(() => disagree(dir, request.target.platform, hit.hash, current.hash, changes));
   return { status: 'disagreed', recorded: hit.hash, current: current.hash, changes };
+}
+
+/** Runs a bookkeeping step whose lock may time out; a lost count or mark only delays the next check. */
+function locked(step: () => void): void {
+  try {
+    step();
+  } catch {}
 }
 
 /**
@@ -188,7 +204,10 @@ export function verifyHit(
   if (hit.from !== 'index') return null;
   const { project, dir } = requestDir(request);
   const now = nowNs();
-  const pastBound = countHit(dir, now);
+  let pastBound = true;
+  locked(() => {
+    pastBound = countHit(dir, now);
+  });
   if (passes && !pastBound) {
     const envRef = readWorkspaceEnv(project);
     if (envRef) {
@@ -209,7 +228,9 @@ export function verifyHit(
   const controller = new AbortController();
   const both = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   let settled: CheckResult | null = null;
-  const result = recompute(request, env, hit, both).then((outcome) => (settled = outcome));
+  const result = recompute(request, env, hit, both)
+    .catch((): CheckResult => ({ status: 'failed', recorded: hit.hash, current: null }))
+    .then((outcome) => (settled = outcome));
   return {
     settle: async (graceMs = FINGERPRINT_CHECK_GRACE_MS) => {
       if (settled) return settled;

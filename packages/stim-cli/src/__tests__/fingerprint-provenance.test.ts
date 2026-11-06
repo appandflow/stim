@@ -278,6 +278,14 @@ describe('package provenance from the lockfile', () => {
       '2.0.0',
       { mode: 'identity', integrity: 'sha512-reg2' },
     ],
+    [
+      'yarn link of a registry name and version',
+      { 'yarn.lock': yarnClassicLock },
+      'packages/reg',
+      'reg',
+      '1.0.0',
+      { mode: 'content' },
+    ],
     ['bun github tuple', { 'bun.lock': bunLock }, 'node_modules/gh', 'gh', '1.0.0', { mode: 'content' }],
     [
       'binary bun.lockb',

@@ -66,10 +66,23 @@ export function evaluatorEnv(requester: Env, root: string, platform: Platform): 
   return { EXPO_NO_TELEMETRY: '1', ...env, ...PINS, PWD: root };
 }
 
-/** What a workspace's fingerprint env file keeps: the requester's env without diagnostic and Stim machine names. */
+/** Stim's own secrets, which no app config or build script reads. */
+const STIM_SECRET = /^STIM_(?:KEYSTORE_PASSWORD|SETUP_TICKET|ASC_KEY_.*)$/;
+
+/**
+ * What a workspace's fingerprint env file keeps: the requester's env without diagnostic, shell-session and Stim
+ * machine or secret names, so precompute and verification can reproduce every part.
+ */
 export function workspaceEnv(requester: Env): Record<string, string> {
   const env = defined(requester);
-  for (const name of Object.keys(env)) if (isDenied(name) || STIM_MACHINE_LOCAL.test(name)) delete env[name];
+  for (const name of Object.keys(env))
+    if (
+      isDenied(name) ||
+      STIM_MACHINE_LOCAL.test(name) ||
+      STIM_SECRET.test(name) ||
+      (VOLATILE.test(name) && !name.startsWith('STIM_') && name !== 'TMPDIR')
+    )
+      delete env[name];
   return env;
 }
 

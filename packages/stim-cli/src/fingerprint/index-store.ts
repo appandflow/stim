@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { ensurePrivateDir } from '@stim-cli/core';
-import { fingerprintEnvDir, fingerprintIndexDir, LOCKFILES } from '@stim-cli/core/state';
+import { fingerprintEnvDir, fingerprintIndexDir, fingerprintIndexLock, LOCKFILES } from '@stim-cli/core/state';
+import { withDirLock } from '../dir-lock.ts';
 import { gitLocation } from './git-index.ts';
 import { canonicalJson, FINGERPRINT_SCHEMA, sha256, type Input, type Layout, type Platform } from './key.ts';
 import { field, within, type Roots } from './walk.ts';
@@ -115,28 +116,37 @@ function realOf(path: string): string | null {
   }
 }
 
-/** A path relative to the app (`p:`) or the install root (`i:`), else absolute (`a:`). */
+/** A path relative to the app (`p:`), the install root (`i:`) or the git work tree (`t:`), else absolute (`a:`). */
 export function relocate(path: string, roots: Roots): string {
   if (within(path, roots.project)) return `p:${relative(roots.project, path)}`;
   if (within(path, roots.install)) return `i:${relative(roots.install, path)}`;
+  if (roots.top && within(path, roots.top)) return `t:${relative(roots.top, path)}`;
   return `a:${path}`;
 }
+
+const placed = (path: string, roots: Roots) =>
+  within(path, roots.project) || within(path, roots.install) || (roots.top !== undefined && within(path, roots.top));
 
 function locate(form: string, roots: Roots): string {
   const rest = form.slice(2);
   if (form.startsWith('p:')) return join(roots.project, rest);
   if (form.startsWith('i:')) return join(roots.install, rest);
+  if (form.startsWith('t:')) return roots.top ? join(roots.top, rest) : `${PLACED}unplaced`;
   return rest;
 }
 
 const PLACED = '\u0000';
 
+/** What a probe saw at a path: a file, a directory, something else, or nothing. */
+function entryType(path: string): string | null {
+  const info = statSync(path, { throwIfNoEntry: false });
+  return info ? (info.isFile() ? 'file' : info.isDirectory() ? 'dir' : 'other') : null;
+}
+
 /** A JSON value with every absolute path inside the app or install root relocated, and back. */
 function relocateValue(value: unknown, roots: Roots): unknown {
   if (typeof value === 'string')
-    return isAbsolute(value) && (within(value, roots.project) || within(value, roots.install))
-      ? PLACED + relocate(value, roots)
-      : value;
+    return isAbsolute(value) && placed(value, roots) ? PLACED + relocate(value, roots) : value;
   if (Array.isArray(value)) return value.map((item) => relocateValue(item, roots));
   if (value && typeof value === 'object')
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, relocateValue(item, roots)]));
@@ -157,7 +167,11 @@ function locateValue(value: unknown, roots: Roots): unknown {
  * when its directory did not change during the computation.
  */
 export function takeRead(path: string, kind: ReadKind, roots: Roots, since: bigint, hash?: string | null): Read | null {
-  if (kind === 'present' || kind === 'absent') return { path: relocate(path, roots), kind };
+  if (kind === 'absent') return { path: relocate(path, roots), kind };
+  if (kind === 'present') {
+    const type = entryType(path);
+    return type ? { path: relocate(path, roots), kind, hash: type } : null;
+  }
   const target = kind === 'package' ? join(path, 'package.json') : path;
   const stat = statKey(target);
   const parent = stat ? null : statKey(join(target, '..'));
@@ -197,7 +211,7 @@ export type Validity = 'stat' | 'content' | false;
  */
 export function checkRead(read: Read, roots: Roots): Validity {
   const path = locate(read.path, roots);
-  if (read.kind === 'present') return statSync(path, { throwIfNoEntry: false }) ? 'stat' : false;
+  if (read.kind === 'present') return entryType(path) === read.hash ? 'stat' : false;
   if (read.kind === 'absent') return statSync(path, { throwIfNoEntry: false }) ? false : 'stat';
   const target = read.kind === 'package' ? join(path, 'package.json') : path;
   const stat = statKey(target);
@@ -315,13 +329,17 @@ export function newRecord(key: RecordKey, checkout: string, stamps: Read[]): Eva
   };
 }
 
+/** Runs a short read-modify-write of the index's shared files under `fingerprint.lock`. */
+export const withIndexLock = <T>(fn: () => T): T =>
+  withDirLock(fingerprintIndexLock(), fn, { ensureParent: () => ensurePrivateDir(dirname(fingerprintIndexLock())) });
+
+let lastWritten = 0n;
+
 /**
  * Writes a record owner-only, keeps the newest records of the directory and the newest directories of the
  * platform. Records hold the evaluated config, which can carry values derived from secrets. A failure to write
  * leaves the key unaffected.
  */
-let lastWritten = 0n;
-
 export function writeRecord(dir: string, record: EvalRecord, tag: string): void {
   try {
     const created = statSync(dir, { throwIfNoEntry: false }) === undefined;
@@ -460,7 +478,8 @@ function installStamped(roots: Roots): boolean {
  * The reads of one evaluator part from its trace. A read inside an install tree (a path through `node_modules` in the
  * app or install root whose nearest existing real path stays under `node_modules`) is left to the install stamps
  * when the package manager writes one, else collapses to its package's `package.json`; a hand edit inside an
- * installed package is out of the key. A workspace link resolves outside `node_modules` and keeps its own reads.
+ * installed package is out of the key. A workspace link resolves outside `node_modules` and keeps its own reads, and
+ * so does a module of an unnamed directory there (generated code, which the key hashes by content).
  * Null when a read changed during the computation.
  */
 export function traceReads(
@@ -469,6 +488,7 @@ export function traceReads(
   since: bigint,
   stamped: boolean,
   packageRoot: (path: string) => string | null,
+  named: (dir: string) => boolean,
 ): Read[] | null {
   const reads = new Map<string, Read>();
   const reals = new Map<string, string | null>();
@@ -482,16 +502,21 @@ export function traceReads(
   };
   for (const { path, kind, hash } of entries) {
     const inside = within(path, roots.project) || within(path, roots.install);
-    const anchor = packageRoot(path) ?? path;
+    const root = packageRoot(path);
     const installed =
       inside &&
       path.split(sep).includes('node_modules') &&
-      (real(anchor)?.split(sep).includes('node_modules') ?? false);
+      (real(root ?? path)
+        ?.split(sep)
+        .includes('node_modules') ??
+        false) &&
+      !(kind === 'module' && root !== null && !named(root));
     if (installed && stamped) continue;
-    const [target, as]: [string, ReadKind] = installed ? [anchor, realOf(anchor) ? 'package' : 'absent'] : [path, kind];
+    const [target, as]: [string, ReadKind] =
+      installed && root ? [root, realOf(root) ? 'package' : 'absent'] : [path, kind];
     const id = `${as}\0${target}`;
     if (reads.has(id)) continue;
-    const read = takeRead(target, as, roots, since, installed ? undefined : hash);
+    const read = takeRead(target, as, roots, since, installed && root ? undefined : hash);
     if (!read) return null;
     reads.set(id, read);
   }
@@ -504,7 +529,8 @@ export function traceReads(
  */
 export class IndexSession {
   readonly hashes: FileHashes;
-  private readonly loaded: { record: EvalRecord; stamps: boolean }[] = [];
+  private readonly loaded: { record: EvalRecord; stamps: boolean; file: string }[] = [];
+  private readonly used = new Set<string>();
   private files: string[] | null = null;
   private readonly parts: Record<string, PartRecord> = {};
   private readonly packages: Record<string, PackageEntry> = {};
@@ -527,7 +553,7 @@ export class IndexSession {
     this.hashes = new FileHashes(dir, roots, since);
   }
 
-  private record(index: number): { record: EvalRecord; stamps: boolean } | null {
+  private record(index: number): { record: EvalRecord; stamps: boolean; file: string } | null {
     this.files ??= recordFiles(this.dir).toSorted((a, b) => {
       const own = `-${checkoutTag(this.roots.project)}.json`;
       return Number(b.endsWith(own)) - Number(a.endsWith(own));
@@ -535,7 +561,10 @@ export class IndexSession {
     while (this.loaded.length <= index && this.loaded.length < this.files.length) {
       const record = loadRecord(this.files[this.loaded.length] ?? '', this.key);
       const stamps = record !== null && record.stamps.every((read) => checkRead(read, this.roots) !== false);
-      this.loaded.push(record ? { record, stamps } : { record: newRecord(this.key, '', []), stamps: false });
+      const file = this.files[this.loaded.length] ?? '';
+      this.loaded.push(
+        record ? { record, stamps, file } : { record: newRecord(this.key, '', []), stamps: false, file },
+      );
     }
     return this.loaded[index] ?? null;
   }
@@ -544,7 +573,10 @@ export class IndexSession {
   private base(): EvalRecord | null {
     for (let index = 0; this.record(index); index++) {
       const loaded = this.record(index);
-      if (loaded?.stamps) return loaded.record;
+      if (loaded?.stamps) {
+        this.used.add(loaded.file);
+        return loaded.record;
+      }
     }
     return null;
   }
@@ -563,16 +595,23 @@ export class IndexSession {
     return true;
   }
 
-  /** A recorded part whose env digests and reads all hold, with its paths placed in this checkout. */
+  /**
+   * A recorded part whose env digests and reads all hold, with its paths placed in this checkout. Another checkout's
+   * part that read files of its work tree outside the app and install root is not reused: their rows name the path.
+   */
   part(slot: string, envDigest: (name: string) => string | null): PartRecord | null {
     for (let index = 0; this.record(index); index++) {
       const loaded = this.record(index);
       const recorded = loaded?.stamps ? loaded.record.parts[slot] : undefined;
       if (!recorded) continue;
+      const own = loaded?.record.checkout === this.roots.project;
+      if (!own && recorded.reads.some((read) => read.path.startsWith('t:') && /^(?:file|module)$/.test(read.kind)))
+        continue;
       if (!recorded.env.every(([name, hash]) => envDigest(name) === hash)) continue;
       if (!this.holds(recorded.reads)) continue;
-      if (loaded?.record.checkout !== this.roots.project) this.sibling = true;
+      if (!own) this.sibling = true;
       this.parts[slot] = recorded;
+      this.used.add(loaded?.file ?? '');
       return {
         ...recorded,
         output: locateValue(recorded.output, this.roots),
@@ -625,7 +664,10 @@ export class IndexSession {
     return computed;
   }
 
-  /** Writes the record when this computation added or refreshed anything, and the file-hash cache. */
+  /**
+   * Writes the record when this computation added or refreshed anything, and the file-hash cache. A record a
+   * verification dropped meanwhile is not written back.
+   */
   save(): void {
     this.hashes.save(this.dir);
     if (!this.fresh && !this.sibling) return;
@@ -637,6 +679,11 @@ export class IndexSession {
     record.parts = { ...base?.parts, ...this.parts };
     record.packages = this.packages;
     record.closure = this.closureEntry;
-    writeRecord(this.dir, record, checkoutTag(this.roots.project));
+    try {
+      withIndexLock(() => {
+        if ([...this.used].every((file) => statSync(file, { throwIfNoEntry: false })))
+          writeRecord(this.dir, record, checkoutTag(this.roots.project));
+      });
+    } catch {}
   }
 }
