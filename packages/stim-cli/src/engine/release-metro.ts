@@ -13,7 +13,7 @@ export async function withReleaseMetroCache<T>(
   const sdk = release ? expoSdkMajor(root) : null;
   if (sdk === null || sdk < 54 || sdk >= 58) return build(env);
   const adapter = expoMetroConfigPath();
-  if (!adapter) throw new Error('Stim installation is missing shim/expo-metro-config.cjs.');
+  if (!adapter) throw new Error('Stim installation is missing dist/injected/expo-metro-config.cjs.');
   // https://github.com/appandflow/stim/issues/4600: Expo ignores resetCache in CI before SDK 58.
   const store = await fs.mkdtemp(join(tmpdir(), 'stim-release-metro-'));
   try {

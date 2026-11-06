@@ -1,119 +1,79 @@
-import fs from 'node:fs';
-import { createRequire } from 'node:module';
-import path from 'node:path';
-import {
-  LOG_ROTATE_BYTES,
-  metroCacheRoot,
-  METRO_NAMED_CACHE_LAYOUT,
-  registerCache,
-  rotateLog,
-  tagSharedStore,
-  workspaceLogDir,
-} from '@stim-cli/core';
+'use strict';
 
-type FileStoreCtor = new (options: { root: string }) => object;
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { createHash } = require('node:crypto');
 
-export interface SharedCacheStoresOptions {
-  FileStore?: FileStoreCtor;
+function absoluteEnvPath(name) {
+  const value = process.env[name];
+  if (!value) return null;
+  if (path.isAbsolute(value)) return value;
+  return null;
 }
 
-const requireFromHere = createRequire(import.meta.url);
-
-// A Metro reporter event. Metro's event union is large and version-dependent, so
-// only the fields this reporter reads are named; the rest ride along untyped.
-interface MetroEvent {
-  type?: string;
-  level?: unknown;
-  data?: unknown;
-  error?: unknown;
-  stack?: unknown;
-  codeFrame?: unknown;
-  buildID?: string;
-  bundleDetails?: { platform?: string | null };
+function configDir() {
+  return absoluteEnvPath('STIM_HOME') || path.join(os.homedir(), '.stim');
 }
 
-interface LogRecord {
-  ts: number;
-  src: 'metro' | 'client';
-  level: string;
-  msg: string;
-  event?: string;
-  stack?: unknown;
-  marker?: boolean;
-  buildID?: string;
-  platform?: string;
+function workspaceSlug(projectRoot) {
+  const name = path
+    .basename(path.resolve(projectRoot))
+    .normalize('NFKD')
+    .replace(/[^A-Za-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase()
+    .slice(0, 48);
+  return name || 'workspace';
 }
 
-export interface NdjsonReporter {
-  dir: string;
-  update(event: MetroEvent): void;
-  readonly drops: number;
+function workspaceId(projectRoot) {
+  return createHash('sha256').update(path.resolve(projectRoot)).digest('hex').slice(0, 16);
 }
 
-export function cacheRoot(name?: string | null): string {
-  return metroCacheRoot(name);
+function workspaceName(projectRoot) {
+  return `${workspaceSlug(projectRoot)}--${workspaceId(projectRoot)}`;
 }
 
-function registerOnce(
-  dir: string,
-  replaces: Array<{
-    dir: string;
-    name: string;
-    prune: string;
-    entriesDepth: number;
-    layout: null;
-  }> = [],
-): void {
-  registerCache({
-    dir,
-    name: 'Metro transform cache',
-    prune: 'entries',
-    entriesDepth: 2,
-    layout: METRO_NAMED_CACHE_LAYOUT,
-    note: 'shared Metro transforms; no eviction of its own',
-    replaces,
-  });
+function workspaceStateDir(projectRoot) {
+  return path.join(configDir(), 'workspaces', workspaceName(projectRoot));
+}
+
+function workspaceLogDir(projectRoot) {
+  return path.join(workspaceStateDir(projectRoot), 'logs');
+}
+
+const LOG_ROTATE_BYTES = 8 * 1024 * 1024;
+function rotateLog(file, maxBytes) {
+  if (logSize(file) < maxBytes) return;
+  // No cross-process lock: concurrent rotation can drop one rotated generation, acceptable for a debug log.
+  try {
+    fs.renameSync(file, file + '.1');
+  } catch {}
+}
+
+function logSize(file) {
+  try {
+    return fs.statSync(file).size;
+  } catch {
+    return 0;
+  }
 }
 
 const ANSI_ESCAPE = new RegExp(
   [String.raw`\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)`, String.raw`\u001b\[[0-?]*[ -/]*[@-~]`].join('|'),
   'g',
 );
-
-function stripAnsi(text: string): string {
+function stripAnsi(text) {
   return text.replace(ANSI_ESCAPE, '');
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-export function sharedCacheStores(name = 'app', { FileStore }: SharedCacheStoresOptions = {}): object[] {
-  // metro-cache is a peer dependency that resolves at call time.
-  const Store: FileStoreCtor = FileStore || (requireFromHere('metro-cache') as { FileStore: FileStoreCtor }).FileStore;
-  const parent = cacheRoot();
-  const root = cacheRoot(name);
-  registerOnce(
-    root,
-    root === parent
-      ? []
-      : [
-          {
-            dir: parent,
-            name: 'Metro transform cache',
-            prune: 'entries',
-            entriesDepth: 2,
-            layout: null,
-          },
-        ],
-  );
-  const local = tagSharedStore(new Store({ root }), root);
-  return [local];
-}
-
 const NDJSON_LEVELS = new Set(['debug', 'info', 'warn', 'error', 'fatal']);
-
-function ndjsonLevel(level: unknown, fallback: string): string {
+function ndjsonLevel(level, fallback) {
   const value = String(level === undefined || level === null ? '' : level).toLowerCase();
   if (NDJSON_LEVELS.has(value)) return value;
   switch (value) {
@@ -133,7 +93,7 @@ function ndjsonLevel(level: unknown, fallback: string): string {
   }
 }
 
-function formatValue(value: unknown): string {
+function formatValue(value) {
   if (typeof value === 'string') return value;
   if (value instanceof Error) return value.message || String(value);
   try {
@@ -147,22 +107,22 @@ function formatValue(value: unknown): string {
   }
 }
 
-function formatData(data: unknown): string {
+function formatData(data) {
   if (data === undefined || data === null) return '';
   if (Array.isArray(data)) return data.map(formatValue).join(' ');
   return formatValue(data);
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage(error) {
   if (error === undefined || error === null) return 'unknown error';
   if (typeof error === 'string') return error;
-  if (typeof (error as { message?: unknown }).message === 'string' && (error as { message: string }).message) {
-    return (error as { message: string }).message;
+  if (typeof error.message === 'string' && error.message) {
+    return error.message;
   }
   return formatValue(error);
 }
 
-function symbolicationMessage(codeFrame: unknown): string {
+function symbolicationMessage(codeFrame) {
   if (!isPlainObject(codeFrame) || typeof codeFrame.content !== 'string') return 'Call Stack';
   const fileName = typeof codeFrame.fileName === 'string' ? codeFrame.fileName : 'unknown source';
   const location = isPlainObject(codeFrame.location) ? codeFrame.location : null;
@@ -171,12 +131,12 @@ function symbolicationMessage(codeFrame: unknown): string {
   return `Code: ${fileName}${row}${column}\n${codeFrame.content}\nCall Stack`;
 }
 
-function symbolicationStack(stack: unknown): Array<Record<string, unknown>> {
+function symbolicationStack(stack) {
   if (!Array.isArray(stack)) return [];
   return stack
     .filter((frame) => isPlainObject(frame) && frame.collapse !== true)
     .map((frame) => {
-      const normalized: Record<string, unknown> = {};
+      const normalized = {};
       if (typeof frame.file === 'string') normalized.file = frame.file;
       if (typeof frame.lineNumber === 'number') normalized.line = frame.lineNumber;
       if (typeof frame.column === 'number') normalized.column = frame.column;
@@ -186,15 +146,14 @@ function symbolicationStack(stack: unknown): Array<Record<string, unknown>> {
     .filter((frame) => Object.keys(frame).length > 0);
 }
 
-export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
+function ndjsonReporter({ dir } = {}) {
   const logDir = dir || workspaceLogDir(process.cwd());
   let ensured = false;
   let drops = 0;
-  const builds = new Map<string, string | null>();
-  let failedBuild: { buildID: string; platform: string | null } | null = null;
-  const uncheckedBytes = new Map<string, number>();
-
-  function write(file: string, record: LogRecord): void {
+  const builds = new Map();
+  let failedBuild = null;
+  const uncheckedBytes = new Map();
+  function write(file, record) {
     try {
       if (!ensured) {
         fs.mkdirSync(logDir, { recursive: true });
@@ -216,15 +175,12 @@ export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
       ensured = false;
     }
   }
-
-  function update(event: MetroEvent): void {
+  function update(event) {
     try {
       const type = event && typeof event.type === 'string' ? event.type : '';
-      const record: LogRecord = { ts: Date.now(), src: 'metro', level: 'debug', msg: '' };
+      const record = { ts: Date.now(), src: 'metro', level: 'debug', msg: '' };
       if (type) record.event = type;
-
       if (type !== 'bundling_error') failedBuild = null;
-
       if (type === 'bundle_build_started' && event.buildID) {
         const platform = event.bundleDetails?.platform || null;
         builds.set(event.buildID, platform);
@@ -241,7 +197,6 @@ export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
         if (failedBuild.platform) record.platform = failedBuild.platform;
         failedBuild = null;
       }
-
       if (type === 'client_log') {
         record.src = 'client';
         record.level = ndjsonLevel(event.level, 'info');
@@ -250,7 +205,6 @@ export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
         write('client.ndjson', record);
         return;
       }
-
       if (type === 'client_symbolication') {
         const stack = symbolicationStack(event.stack);
         const hasCodeFrame = isPlainObject(event.codeFrame) && typeof event.codeFrame.content === 'string';
@@ -262,7 +216,6 @@ export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
         write('client.ndjson', record);
         return;
       }
-
       if (type === 'bundling_error' || type === 'transformer_error') {
         record.level = 'error';
         record.msg = errorMessage(event.error);
@@ -277,13 +230,11 @@ export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
       } else {
         record.msg = formatData(event && event.data) || type || 'metro event';
       }
-
       write('metro.ndjson', record);
     } catch {
       drops += 1;
     }
   }
-
   return {
     dir: logDir,
     update,
@@ -292,3 +243,5 @@ export function ndjsonReporter({ dir }: { dir?: string } = {}): NdjsonReporter {
     },
   };
 }
+
+module.exports = { ndjsonReporter };

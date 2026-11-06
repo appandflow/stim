@@ -1,12 +1,14 @@
 import { createRequire } from 'node:module';
-import { ndjsonReporter } from '@stim-cli/metro';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import type { ndjsonReporter } from '../injected/metro-reporter.cjs';
+import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from 'node:path';
 import { resolveMetroSharedCache } from '../optimizations.ts';
 import { resolveProjectSettings, type SettingsObject } from '../workspace/settings.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { appendCacheStore, metroStoreRoot, registerMetroStore } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
-import { bundleResponseMiddleware } from '../../shim/bundle-response.cjs';
+import { bundleResponseMiddleware } from '../injected/bundle-response.cjs';
 import { getExecutor } from '../exec.ts';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Metro and the dev middleware load from the project at runtime, and Stim has no types for them
@@ -23,6 +25,16 @@ const REQUIRED_EXPORTS: Record<string, string[]> = {
   '@react-native/dev-middleware': ['createDevMiddleware'],
   '@react-native-community/cli-server-api': ['createDevServerMiddleware'],
 };
+
+function loadNdjsonReporter(): typeof ndjsonReporter | null {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const requireFromHere = createRequire(import.meta.url);
+  for (const rel of ['./injected', '../injected']) {
+    const candidate = resolvePath(here, rel, 'metro-reporter.cjs');
+    if (existsSync(candidate)) return requireFromHere(candidate).ndjsonReporter;
+  }
+  return null;
+}
 
 export function projectRequire(root: string): NodeJS.Require {
   return createRequire(join(root, 'package.json'));
@@ -291,7 +303,7 @@ export async function startBareServer({
   settings?: SettingsObject;
 }): Promise<BareServerHandle> {
   const { metro, devMiddleware, serverApi } = deps || resolveBareDeps(root);
-  const makeReporter = reporterFactory === undefined ? ndjsonReporter : reporterFactory;
+  const makeReporter = reporterFactory === undefined ? loadNdjsonReporter() : reporterFactory;
 
   const config = await metro.loadConfig({ cwd: root, port, resetCache });
   const sharedStoreInstalled = installSharedCacheStore({
