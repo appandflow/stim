@@ -13,29 +13,21 @@ export interface DirLockOptions {
   ensureParent?: () => void;
 }
 
-interface HeldDirLock {
-  claim: ClaimHandle;
-}
-
 function prepareDirLock(lockPath: string, ensureParent: DirLockOptions['ensureParent']): void {
   ensureParent?.();
   statSync(dirname(lockPath));
 }
 
-function attemptDirLock(lockPath: string, pending: { claim?: ClaimHandle }): HeldDirLock | null {
-  if (!pending.claim) {
-    const attempt = tryAcquireClaim({ root: `${lockPath}.claims`, mode: 'exclusive', label: 'directory lock' });
-    pending.claim = attempt.acquired;
-    if (attempt.pending) releaseClaim(attempt.pending);
-  }
-  if (!pending.claim) return null;
-  return { claim: pending.claim };
+function attemptDirLock(lockPath: string): ClaimHandle | null {
+  const attempt = tryAcquireClaim({ root: `${lockPath}.claims`, mode: 'exclusive', label: 'directory lock' });
+  if (attempt.pending) releaseClaim(attempt.pending);
+  return attempt.acquired ?? null;
 }
 
-function dirLockTimeout(lockPath: string, claim: ClaimHandle | undefined): Error {
+function dirLockTimeout(lockPath: string): Error {
   const error = new Error(
     `Timed out waiting for the lock at ${lockPath}.` +
-      (claim ? '' : ' Another Stim process is holding it; wait for that command to finish and run the command again.'),
+      ' Another Stim process is holding it; wait for that command to finish and run the command again.',
   );
   (error as Error & { code?: string; lockPath?: string }).code = 'STIM_LOCK_TIMEOUT';
   (error as Error & { code?: string; lockPath?: string }).lockPath = lockPath;
@@ -51,7 +43,7 @@ function nestedDirLock<T>(lockPath: string, fn: () => T): T {
   }
 }
 
-function holdDirLock<T>(lockPath: string, { claim }: HeldDirLock, fn: () => T): T {
+function holdDirLock<T>(lockPath: string, claim: ClaimHandle, fn: () => T): T {
   lockDepths.set(lockPath, 1);
   try {
     return fn();
@@ -69,16 +61,10 @@ export function withDirLock<T>(
   if ((lockDepths.get(lockPath) || 0) > 0) return nestedDirLock(lockPath, fn);
   prepareDirLock(lockPath, ensureParent);
   const deadline = Date.now() + waitMs;
-  const pending: { claim?: ClaimHandle } = {};
-  let held: HeldDirLock | null;
-  try {
-    while (!(held = attemptDirLock(lockPath, pending))) {
-      if (Date.now() >= deadline) throw dirLockTimeout(lockPath, pending.claim);
-      sleepSync(pollMs);
-    }
-  } catch (error) {
-    releaseClaim(pending.claim);
-    throw error;
+  let held: ClaimHandle | null;
+  while (!(held = attemptDirLock(lockPath))) {
+    if (Date.now() >= deadline) throw dirLockTimeout(lockPath);
+    sleepSync(pollMs);
   }
   return holdDirLock(lockPath, held, fn);
 }
@@ -112,23 +98,15 @@ async function acquireDirLockAsync<T>(
     ensureParent,
     signal,
   }: DirLockOptions & { signal?: AbortSignal },
-  fn: (held: HeldDirLock) => T | Promise<T>,
+  fn: (held: ClaimHandle) => T | Promise<T>,
 ): Promise<T> {
   signal?.throwIfAborted();
   prepareDirLock(lockPath, ensureParent);
   const deadline = Date.now() + waitMs;
-  const pending: { claim?: ClaimHandle } = {};
-  let held: HeldDirLock | null;
-  try {
-    while (!(held = attemptDirLock(lockPath, pending))) {
-      if (Date.now() >= deadline) throw dirLockTimeout(lockPath, pending.claim);
-      releaseClaim(pending.claim);
-      pending.claim = undefined;
-      await delay(pollMs, undefined, { signal });
-    }
-  } catch (error) {
-    releaseClaim(pending.claim);
-    throw error;
+  let held: ClaimHandle | null;
+  while (!(held = attemptDirLock(lockPath))) {
+    if (Date.now() >= deadline) throw dirLockTimeout(lockPath);
+    await delay(pollMs, undefined, { signal });
   }
   return fn(held);
 }
@@ -142,7 +120,7 @@ export async function withDirLockTransaction<T>(
   fn: () => T | Promise<T>,
   options: DirLockOptions & { signal?: AbortSignal } = {},
 ): Promise<T> {
-  return acquireDirLockAsync<T>(lockPath, options, async ({ claim }) => {
+  return acquireDirLockAsync<T>(lockPath, options, async (claim) => {
     try {
       options.signal?.throwIfAborted();
       return await fn();
