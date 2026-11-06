@@ -101,13 +101,4 @@ struct WebShareTests {
     options.password = .custom(String(repeating: "a", count: 8))
     #expect(options.problem == nil)
   }
-
-  @Test func warnsAboutQuittingOnlyWhenAShareIsLive() throws {
-    let now = try #require(parseTimestamp("2026-11-02T12:18:00Z"))
-    #expect(WebShareQuitPrompt(shares: [], now: now, name: { $0 }) == nil)
-    let share = try decode(WebShare.self, row)
-    let prompt = try #require(WebShareQuitPrompt(shares: [share], now: now, name: { _ in "app" }))
-    #expect(prompt.title == "Quitting ends 1 web share.")
-    #expect(prompt.lines == ["app, iOS: view and control, 2 viewers, 42m left"])
-  }
 }

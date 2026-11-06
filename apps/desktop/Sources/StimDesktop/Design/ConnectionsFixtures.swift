@@ -71,7 +71,7 @@
          {"machine":"studio","state":"outdated","dnsName":"studio.tail1234.ts.net","deviceId":"e5f6a7b8",
           "diagnosis":{"layer":"compat","code":"server-outdated","title":"Server is outdated",
             "message":"studio runs a stim-server older than this machine's Stim.",
-            "remedy":"On studio, run stim service update --release 1.40.0."}}]
+            "remedy":"Run stim remote update studio on this machine."}}]
         """
       return (try? JSONDecoder().decode([BuildMachineStatus].self, from: Data(json.utf8))) ?? []
     }

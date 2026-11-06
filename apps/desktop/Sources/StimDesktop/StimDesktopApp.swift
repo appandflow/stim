@@ -121,15 +121,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     if !LaunchActivation.isBackgroundLaunch(ProcessInfo.processInfo.environment) {
       NSApp.activate(ignoringOtherApps: true)
     }
-    // AppKit exits on SIGTERM without posting willTerminateNotification, which would orphan stim-server
-    // and the stim children the stores stop from that notification.
+    // AppKit exits on SIGTERM without posting willTerminateNotification, which would orphan the stim children the
+    // stores stop from that notification.
     signal(SIGTERM, SIG_IGN)
     let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
     source.setEventHandler {
       MainActor.assumeIsolated { NSApp.terminate(nil) }
       DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
         LogFollower.stopAll()
-        MainActor.assumeIsolated { ServerController.shared.stopForQuit() }
         exit(0)
       }
     }
@@ -145,38 +144,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     NSApp.terminate(nil)
   }
 
-  private var confirmingQuit = false
-
-  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    guard MainActor.assumeIsolated({ ServerController.shared.runsOwnedServer }) else { return .terminateNow }
-    guard !confirmingQuit else { return .terminateCancel }
-    confirmingQuit = true
-    Task { @MainActor in
-      let shares = await WebSharesModel.shared.liveShares(within: .seconds(2))
-      let prompt = WebShareQuitPrompt(shares: shares) { PathNames(path: $0).title }
-      let quits = prompt.map(Self.confirmQuit) ?? true
-      confirmingQuit = false
-      NSApp.reply(toApplicationShouldTerminate: quits)
-    }
-    return .terminateLater
-  }
-
-  /// A modal alert: `StimApplication.terminate` has already dismissed every sheet by the time this runs.
-  @MainActor private static func confirmQuit(_ prompt: WebShareQuitPrompt) -> Bool {
-    let alert = NSAlert()
-    alert.alertStyle = .warning
-    alert.messageText = prompt.title
-    alert.informativeText = (prompt.lines + ["", WebShareQuitPrompt.detail]).joined(separator: "\n")
-    alert.addButton(withTitle: "Cancel")
-    alert.addButton(withTitle: "Quit")
-    alert.buttons[1].hasDestructiveAction = true
-    NSApp.activate(ignoringOtherApps: true)
-    return alert.runModal() == .alertSecondButtonReturn
-  }
-
   func applicationWillTerminate(_ notification: Notification) {
     LogFollower.stopAll()
-    MainActor.assumeIsolated { ServerController.shared.stopForQuit() }
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

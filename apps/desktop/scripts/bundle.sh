@@ -5,17 +5,12 @@ website=../../website
 
 universal=
 release=
-server=
 while [ $# -gt 0 ]; do
   case $1 in
   --universal) universal=1 ;;
   --release) release=1 ;;
-  --server)
-    server=${2:?--server takes the directory scripts/server-runtime.mjs staged}
-    shift
-    ;;
   *)
-    echo "usage: scripts/bundle.sh [--universal] [--release] [--server <staged server>]" >&2
+    echo "usage: scripts/bundle.sh [--universal] [--release]" >&2
     exit 1
     ;;
   esac
@@ -50,6 +45,9 @@ ditto "$bin/Lottie.framework" "$app/Contents/Frameworks/Lottie.framework"
 codesign --force --sign - "$app/Contents/Frameworks/Lottie.framework"
 ditto "$bin/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 cp Support/Info.plist "$app/Contents/Info.plist"
+if [ -n "${STIM_ENGINE_VERSION:-}" ]; then
+  /usr/libexec/PlistBuddy -c "Add :StimEngineVersion string $STIM_ENGINE_VERSION" "$app/Contents/Info.plist"
+fi
 if [ -n "$release" ]; then
   /usr/libexec/PlistBuddy -c "Set :SUPublicEDKey ${SPARKLE_PUBLIC_ED_KEY:-}" "$app/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c "Set :StimSentryDSN ${STIM_DESKTOP_SENTRY_DSN:-}" "$app/Contents/Info.plist"
@@ -76,11 +74,6 @@ xcrun -sdk iphonesimulator clang -fobjc-arc -arch arm64 -arch x86_64 -mios-simul
   -framework Foundation Support/SimFold/main.m -o "$app/Contents/Resources/sim-fold" \
   -Wl,-sectcreate,__TEXT,__entitlements,Support/SimFold/entitlements.plist
 codesign --force --sign - "$app/Contents/Resources/sim-fold"
-if [ -n "$server" ]; then
-  ditto "$server" "$app/Contents/Resources/stim-server"
-else
-  node scripts/server-runtime.mjs "$app/Contents/Resources/stim-server" ${universal:+--universal} >/dev/null
-fi
 codesign --force --sign - "$app"
 if [ -z "$release" ]; then
   :

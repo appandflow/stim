@@ -148,6 +148,10 @@ public enum NoiseCredential: Sendable {
       finished = true
       cancelTimeout?()
       onEvent(Self.closeEvent(description: description, code: code, reason: reason))
+    case .refused(let text):
+      finished = true
+      cancelTimeout?()
+      onEvent(.closed(text))
     }
   }
 

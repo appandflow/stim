@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       full:
-        description: Also run swift test, the Release compile, the frames helper, the hardened-runtime server start and an ad-hoc release package
+        description: Also run swift test, the Release compile, the frames helper and an ad-hoc release package
         type: boolean
         default: true
   workflow_call:
@@ -97,17 +97,16 @@ jobs:
         with:
           cache: false
           install: false
-      - name: Install the bundled server's workspace packages
+      - name: Build the stim package the interop tests run
         if: inputs.full
-        run: pnpm install --frozen-lockfile --filter 'stim...' --filter stim-monorepo
-      - name: Stage the bundled stim-server
-        if: inputs.full
-        run: node scripts/server-runtime.mjs "$RUNNER_TEMP/stim-server"
+        run: |
+          pnpm install --frozen-lockfile --filter 'stim...' --filter stim-monorepo
+          pnpm --filter 'stim...' run build
       - run: swift test -Xswiftc -warnings-as-errors
         if: inputs.full
         env:
           STIM_BUILD_MACHINES_SHOTS: ${{ runner.temp }}/build-machines-screenshots
-          STIM_TEST_SERVER_RUNTIME: ${{ runner.temp }}/stim-server
+          STIM_TEST_STIM_PACKAGE: ${{ github.workspace }}/packages/stim-cli
       - name: Upload build machine screenshots
         if: always() && inputs.full
         uses: actions/upload-artifact@v4
@@ -127,25 +126,6 @@ jobs:
               ../../packages/server/helper/PhoneSource.swift ../../packages/server/helper/MacosSource.swift \
               ../../packages/server/helper/FrameArtwork.swift ../../packages/server/helper/DuoFrameRenderer.swift \
               ../../packages/server/helper/DuoHingeMonitor.swift ../../packages/server/helper/DuoCaptureSource.swift
-      - name: Start the bundled stim-server under the hardened runtime
-        if: inputs.full
-        run: |
-          runtime="$RUNNER_TEMP/stim-server"
-          codesign --force --options runtime --sign - --entitlements Support/Node/node.entitlements "$runtime/bin/node"
-          home=$(mktemp -d)
-          env -i HOME="$home" "$runtime/bin/node" --input-type=module \
-            -e "const { capture } = await import('$runtime/node_modules/unique-pid/index.mjs'); if (!capture(process.pid).ok) process.exit(1);"
-          env -i HOME="$home" STIM_HOME="$home/.stim" SHELL=/bin/sh "$runtime/bin/node" \
-            "$runtime/node_modules/stim/bin/stim.mjs" serve --port 7999 --loopback-only &
-          for _ in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:7999/health; then
-              kill %1
-              exit 0
-            fi
-            sleep 0.5
-          done
-          echo "The bundled stim-server did not answer /health within 30 s." >&2
-          exit 1
       - name: Package an ad-hoc release build
         if: inputs.full
         run: scripts/release.sh 0.0.0

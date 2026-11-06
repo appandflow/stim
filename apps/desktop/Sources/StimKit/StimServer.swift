@@ -58,6 +58,18 @@ public struct ServerHealth: Decodable, Equatable, Sendable {
     case protocolVersion = "protocol"
   }
 
+  /// What Desktop knows of the home's stimd before its network listener answers `/health`.
+  public init(record: StimdRecord, stimHome: String) {
+    server = "stimd"
+    name = Host.current().localizedName ?? ""
+    version = record.version
+    stim = record.version
+    protocolVersion = 2
+    self.stimHome = stimHome
+    tailscale = TailscaleState(state: "unavailable", reason: "the network listener is not running")
+    loopbackOnly = true
+  }
+
   /// Whether `stimHome` is `~/.stim`, compared after resolving symlinks.
   public func servesDefaultHome(home: String = NSHomeDirectory()) -> Bool {
     StimHome.isDefault(stimHome, home: home)
@@ -133,48 +145,19 @@ struct PairedDeviceList: Decodable {
   var devices: [PairedDevice]
 }
 
-/// The Node runtime and stim-server that Stim.app carries in `Contents/Resources/stim-server`.
-public struct BundledServer: Equatable, Sendable {
-  public let node: String
-  public let script: String
-
-  public init(node: String, script: String) {
-    self.node = node
-    self.script = script
-  }
-
-  /// The directory holding `bin/node` and `node_modules`.
-  public var root: String {
-    ((node as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent
-  }
-
-  /// The runtime inside `bundle`, or nil in a build that does not carry one, such as `swift run` or `stim macos`.
-  public static func inApp(_ bundle: Bundle = .main) -> BundledServer? {
-    guard let root = bundle.resourceURL?.appendingPathComponent("stim-server") else { return nil }
-    let server = BundledServer(
-      node: root.appendingPathComponent("bin/node").path,
-      script: root.appendingPathComponent("node_modules/stim/bin/stim.mjs").path)
-    guard FileManager.default.isExecutableFile(atPath: server.node), FileManager.default.fileExists(atPath: server.script)
-    else { return nil }
-    return server
-  }
-}
-
-/// Runs `stim-server`, which serves Stim state to paired phones over Tailscale.
+/// Runs this Mac's Stim engine for the pairing commands Desktop has no request for.
 public struct StimServerCLI: Sendable {
-  public static let defaultPort = 7787
-
   public let environment: [String: String]
-  public let bundled: BundledServer?
+  public let engine: EngineLaunch?
 
-  public init(environment: [String: String], bundled: BundledServer? = BundledServer.inApp()) {
+  public init(environment: [String: String], engine: EngineLaunch?) {
     self.environment = environment
-    self.bundled = bundled
+    self.engine = engine
   }
 
   private func command(_ arguments: [String]) throws -> (program: String, arguments: [String]) {
-    guard let bundled else { throw Failure.notFound }
-    return (bundled.node, [bundled.script] + arguments)
+    guard let engine else { throw Failure.notFound }
+    return engine.stim(arguments)
   }
 
   public enum Failure: LocalizedError {
@@ -184,10 +167,9 @@ public struct StimServerCLI: Sendable {
     public var errorDescription: String? {
       switch self {
       case .notFound:
-        return
-          "This build of Stim Desktop does not include Stim. Update Stim Desktop (Stim > Check for Updates)."
+        return "No Stim engine is installed on this Mac. Stim Desktop installs one when it starts; try again."
       case .exited(let code, let stderr):
-        return stderr.isEmpty ? "stim-server exited with status \(code)." : stderr
+        return stderr.isEmpty ? "stim exited with status \(code)." : stderr
       }
     }
   }
@@ -202,14 +184,12 @@ public struct StimServerCLI: Sendable {
     return decoder
   }()
 
-  public static let minimumVersion = SemanticVersion("1.21.0")!
-
-  /// What `stim-server --version` printed, or nil when it is missing, fails to start, or exits non-zero.
+  /// What the engine's `stim --version` printed, or nil when it is missing, fails to start, or exits non-zero.
   public func versionOutput() async -> String? {
     (try? await run(["--version"])).map { String(decoding: $0, as: UTF8.self) }
   }
 
-  public func pair(port: Int = defaultPort, control: Bool) async throws -> PairingCode {
+  public func pair(port: Int, control: Bool) async throws -> PairingCode {
     try decodeReporting(
       PairingCode.self, from: await run(["pair", "--json", "--port", String(port)] + (control ? ["--control"] : [])),
       source: .cli, decoder: Self.decoder)
@@ -232,101 +212,14 @@ public struct StimServerCLI: Sendable {
     _ = try await run(["pairings", "rename", id, name])
   }
 
-  /// Starts the server on `port`; it runs until terminated.
-  public func serve(
-    port: Int = defaultPort,
-    loopbackOnly: Bool = false,
-    bootstrap: DesktopBootstrapKey? = nil,
-    onLine: @escaping @Sendable (OutputLine) -> Void,
-    onExit: @escaping @Sendable (Int32) -> Void
-  ) throws -> Process {
-    let arguments = ["serve", "--port", String(port)] + (loopbackOnly ? ["--loopback-only"] : [])
-    let command = try command(arguments)
-    let run = DebugLog.CLIRun(tool: "stim-server", arguments: arguments, cwd: NSHomeDirectory())
-    var environment = environment
-    environment.removeValue(forKey: "STIM_DESKTOP_BOOTSTRAP_FD")
-    environment.removeValue(forKey: "STIM_DESKTOP_LIFETIME_FD")
-    let input = Pipe()
-    if let bootstrap {
-      try input.fileHandleForWriting.write(contentsOf: bootstrap.input)
-      environment["STIM_DESKTOP_BOOTSTRAP_FD"] = "0"
-    } else {
-      environment["STIM_DESKTOP_LIFETIME_FD"] = "0"
-    }
-    defer { try? input.fileHandleForReading.close() }
-    environment["STIM_RUN_ID"] = run.runID
-    if let cache = Self.compileCache { environment["NODE_COMPILE_CACHE"] = cache }
-    let tail = LockedValue([String]())
-    let lifetime = input.fileHandleForWriting
-    do {
-      return try ProcessStream.start(
-        executable: command.program, arguments: command.arguments, cwd: NSHomeDirectory(),
-        environment: environment,
-        standardInput: input.fileHandleForReading,
-        onLine: { line in
-          if line.channel == .stderr { tail.withLock { $0 = Array(($0 + [line.text]).suffix(3)) } }
-          onLine(line)
-        },
-        onExit: { status in
-          try? lifetime.close()
-          DebugLog.info(
-            .server,
-            "stim-server process exited status=\(status) run=\(run.runID) stderr: \(tail.withLock { $0.joined(separator: " | ") })"
-          )
-          onExit(status)
-        })
-    } catch {
-      try? lifetime.close()
-      throw error
-    }
-  }
-
-  /// Where the bundled Node keeps V8's compile cache, which it keys by Node version and script contents.
-  static var compileCache: String? {
-    FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-      .appendingPathComponent(Bundle.main.bundleIdentifier ?? "dev.stim.desktop")
-      .appendingPathComponent("node-compile-cache").path
-  }
-
   /// The server answering on `port` of this Mac, or nil when none does.
-  public static func health(port: Int = defaultPort) async -> ServerHealthProbe? {
+  public static func health(port: Int) async -> ServerHealthProbe? {
     var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/health")!)
     request.timeoutInterval = 2
     guard let (data, response) = try? await URLSession.shared.data(for: request),
       let response = response as? HTTPURLResponse
     else { return nil }
     return decodeHealth(data, statusCode: response.statusCode)
-  }
-
-  /// Whether something accepts a connection on `port` of this Mac's loopback, such as a stim-server too busy to answer
-  /// `/health`. A connection that is neither accepted nor refused within half a second counts as held.
-  public static func portIsHeld(_ port: Int) async -> Bool {
-    await Task.detached { () -> Bool in
-      let descriptor = socket(AF_INET, SOCK_STREAM, 0)
-      guard descriptor >= 0 else { return false }
-      defer { close(descriptor) }
-      _ = fcntl(descriptor, F_SETFL, fcntl(descriptor, F_GETFL) | O_NONBLOCK)
-      var address = sockaddr_in()
-      address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-      address.sin_family = sa_family_t(AF_INET)
-      address.sin_port = in_port_t(UInt16(truncatingIfNeeded: port)).bigEndian
-      address.sin_addr.s_addr = inet_addr("127.0.0.1")
-      let result = withUnsafePointer(to: &address) { pointer in
-        pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-          connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-        }
-      }
-      if result == 0 { return true }
-      guard errno == EINPROGRESS else { return false }
-      var wait = pollfd(fd: descriptor, events: Int16(POLLOUT), revents: 0)
-      let ready = poll(&wait, 1, 500)
-      if ready == 0 { return true }
-      guard ready > 0 else { return false }
-      var failure: Int32 = 0
-      var length = socklen_t(MemoryLayout<Int32>.size)
-      getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &failure, &length)
-      return failure == 0
-    }.value
   }
 
   static func decodeHealth(_ data: Data, statusCode: Int) -> ServerHealthProbe? {
@@ -359,7 +252,7 @@ public struct StimServerCLI: Sendable {
 
   private func run(_ args: [String]) async throws -> Data {
     let command = try command(args)
-    let log = DebugLog.CLIRun(tool: "stim-server", arguments: args, cwd: nil)
+    let log = DebugLog.CLIRun(tool: "stim", arguments: args, cwd: nil)
     var environment = environment
     environment["STIM_RUN_ID"] = log.runID
     var request = ProcessRequest(command.program, command.arguments, environment: environment)

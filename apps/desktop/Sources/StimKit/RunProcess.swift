@@ -214,7 +214,7 @@ public enum CommandFailure: LocalizedError {
 }
 
 /// The last three non-empty lines of `text`.
-func stderrTail(_ text: String) -> String {
+public func stderrTail(_ text: String) -> String {
   text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     .suffix(3).joined(separator: "\n")
 }

@@ -2,11 +2,10 @@ import Combine
 import Foundation
 import StimKit
 
-/// A connection to the stim-server that owns what a view shows. `shared` is Stim Desktop's own connection to the
-/// stim-server `ServerController` runs or found on this Mac, over that server's Unix socket under its Stim home, where
-/// the server gives this user every local capability without pairing. While `ServerController` holds a provisional
-/// adoption, it serves only the status feed. A paired server's session connects over the pairing's Noise transport
-/// and offers none of the connections that name this Mac's Stim home.
+/// A connection to the stim-server that owns what a view shows. `shared` is Stim Desktop's own connection to the Stim
+/// home's stimd, which `ServerController` found or started, over the socket `run/stimd.json` names, where stimd gives
+/// this user every local capability without pairing. A paired server's session connects over the pairing's Noise
+/// transport and offers none of the connections that name this Mac's Stim home.
 @MainActor final class ServerSession: ObservableObject {
   static let shared = ServerSession(controller: .shared)
 
@@ -29,10 +28,8 @@ import StimKit
 
   /// The name the server shows for this connection: the release app, as `scripts/release.sh` bundles it, or Stim Dev.
   static let clientName = Bundle.main.bundleIdentifier == "dev.stim.desktop" ? "Stim Desktop" : "Stim Dev"
-  /// The first protocol served on the Unix socket.
-  static let protocolVersion = 2
 
-  /// The connection, once the adoption it was made for is verified.
+  /// The open connection.
   @Published private(set) var client: ServerClient?
   @Published private(set) var state = ServerClient.State.idle
   let owner: ServerOwner
@@ -42,7 +39,6 @@ import StimKit
   @Published private(set) var offlineSince: Date?
   private var connection: ServerClient?
   private var watch: AnyCancellable?
-  private var adoptionWatch: AnyCancellable?
   private var key: String?
 
   init(controller: ServerController) {
@@ -50,9 +46,6 @@ import StimKit
     name = "stim-server"
     self.controller = controller
     watch = controller.$state.sink { [weak self] _ in
-      DispatchQueue.main.async { MainActor.assumeIsolated { self?.follow(controller.state) } }
-    }
-    adoptionWatch = controller.$provisional.sink { [weak self] _ in
       DispatchQueue.main.async { MainActor.assumeIsolated { self?.follow(controller.state) } }
     }
     controller.reconnect = { [weak self] in
@@ -107,13 +100,15 @@ import StimKit
     return feed
   }
 
-  /// The connection for the status feed, which reads only, so it is offered while the adoption is provisional.
+  /// The connection for the status feed.
   var feedConnection: (client: ServerClient, home: String)? {
-    guard let controller, let connection, case .running(let health, _) = controller.state,
-      key == "\(controller.port) \(health.stimHome) \(health.version)"
+    guard let controller, let connection, case .running = controller.state, let record = controller.record,
+      key == Self.key(record)
     else { return nil }
-    return (connection, health.stimHome)
+    return (connection, controller.stimHome)
   }
+
+  private static func key(_ record: StimdRecord) -> String { "\(record.pid) \(record.socket) \(record.build)" }
 
   var link: ServerLink {
     guard let controller else {
@@ -123,11 +118,6 @@ import StimKit
       case .waiting(_, let reason): return .unavailable("Can't reach \(name): \(reason) Retrying.")
       case .refused(let error): return .unavailable(error.message)
       }
-    }
-    if case .running(let health, _) = controller.state, health.protocolVersion < Self.protocolVersion {
-      return .unavailable(
-        "stim-server \(health.version) on port \(controller.port) is older than Stim Desktop; run npm i -g stim@1.42.0 && stim service install, or quit it"
-      )
     }
     guard client != nil else {
       switch controller.state {
@@ -140,27 +130,24 @@ import StimKit
     switch state {
     case .idle, .connecting: return .connecting
     case .open(let hello): return .open(desktopApi: hello.desktopApi, capabilities: hello.capabilities)
-    case .waiting(_, let reason): return .unavailable("stim-server is unreachable: \(reason) Retrying.")
+    case .waiting(_, let reason): return .unavailable("stimd is unreachable: \(reason) Retrying.")
     case .refused(let error): return .unavailable(error.message)
     }
   }
 
   private func follow(_ state: ServerController.State) {
     guard let controller else { return }
-    guard case .running(let health, _) = state else {
-      replace(key: nil, health: nil)
+    guard case .running = state, let record = controller.record else {
+      replace(key: nil, record: nil)
       return
     }
-    let key = "\(controller.port) \(health.stimHome) \(health.version)"
-    let verified = controller.adoption.allowsWrites(home: health.stimHome)
-    if key != self.key || (verified && client == nil && connection?.isOpen != true) {
-      replace(key: key, health: health)
-    } else if verified, client !== connection {
-      client = connection
+    let key = Self.key(record)
+    if key != self.key || (client == nil && connection?.isOpen != true) {
+      replace(key: key, record: record)
     }
   }
 
-  private func replace(key: String?, health: ServerHealth?) {
+  private func replace(key: String?, record: StimdRecord?) {
     guard let controller else { return }
     connection?.stop()
     connection = nil
@@ -168,14 +155,19 @@ import StimKit
     let replacesServer = self.key != nil
     self.key = key
     self.state = .idle
-    if health == nil || replacesServer { controller.connectionRefused(nil) }
-    guard let health, health.protocolVersion >= Self.protocolVersion else { return }
-    let home = health.stimHome
-    let socket = StimHome.localSocket(home: home)
+    if record == nil || replacesServer { controller.connectionRefused(nil) }
+    guard let record else { return }
+    let home = controller.stimHome
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
     let client = ServerClient(
-      endpoint: socket, clientName: Self.clientName, clientVersion: version, serverPort: controller.port,
-      bootstrap: { [controller] in controller.desktopBootstrap })
+      endpoint: URL(fileURLWithPath: record.socket), clientName: Self.clientName, clientVersion: version,
+      bootstrap: { DesktopBootstrapKey.read(stimHome: home) },
+      transport: { [weak controller] socket, onEvent in
+        let loopbackOnly = !UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones)
+        return UnixSocketTransport(
+          path: socket.path, loopbackOnly: loopbackOnly, port: loopbackOnly && !StimHome.isDefault(home) ? 0 : nil,
+          onListening: { controller?.netListening($0) }, onEvent: onEvent)
+      })
     client.onState = { [weak self, weak client] state in
       guard let self, let client, client === self.connection else { return }
       self.state = state
@@ -186,7 +178,7 @@ import StimKit
       }
     }
     connection = client
-    if controller.adoption.allowsWrites(home: home) { self.client = client }
+    self.client = client
     client.start()
   }
 }

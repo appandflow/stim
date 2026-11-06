@@ -1,33 +1,7 @@
-import CryptoKit
 import Darwin
 import Foundation
 
 public enum StimHome {
-  /// The local socket for the Stim home reported by the server. macOS sun_path has
-  /// 103 usable UTF-8 bytes; longer paths use the socket path's SHA-256 under /tmp.
-  public static func localSocket(home: String) -> URL {
-    var components: [String] = []
-    for bytes in (home + "/server/local.sock").utf8.split(separator: 0x2f) {
-      let component = String(decoding: bytes, as: UTF8.self)
-      if component == "." { continue }
-      if component == ".." {
-        if !components.isEmpty { components.removeLast() }
-      } else {
-        components.append(component)
-      }
-    }
-    let path = "/" + components.joined(separator: "/")
-    if path.utf8.count <= 103 {
-      var socket = URLComponents()
-      socket.scheme = "file"
-      socket.host = ""
-      socket.path = path
-      return socket.url!
-    }
-    let digest = SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
-    return URL(fileURLWithPath: "/tmp/stim-sockets-\(getuid())/\(digest).sock")
-  }
-
   static func isPrivateLocalSocket(directory: stat, socket: stat) -> Bool {
     directory.st_mode & S_IFMT == S_IFDIR && socket.st_mode & S_IFMT == S_IFSOCK
       && directory.st_uid == getuid() && socket.st_uid == getuid()
@@ -46,18 +20,6 @@ public enum StimHome {
 
   public static func isDefault(_ path: String, home: String = NSHomeDirectory()) -> Bool {
     canonical(path) == canonical("\(home)/.stim")
-  }
-
-  public static func adopts(serverHome: String, resolved: String, home: String = NSHomeDirectory()) -> Bool {
-    isDefault(resolved, home: home) || canonical(serverHome) == canonical(resolved)
-  }
-
-  public static func adoptionFailure(
-    serverHome: String, resolved: String, port: Int, home: String = NSHomeDirectory()
-  ) -> String? {
-    guard !adopts(serverHome: serverHome, resolved: resolved, home: home) else { return nil }
-    return
-      "stim-server on port \(port) uses \(abbreviatingHome(serverHome, home: home)), but this Desktop uses \(abbreviatingHome(resolved, home: home)). Stop that server, run it with the same STIM_HOME, or start Stim Desktop with -stimServerPort <port> to use a different port."
   }
 
   private static func absolute(_ path: String?) -> String? {

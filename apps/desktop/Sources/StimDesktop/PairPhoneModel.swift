@@ -8,7 +8,7 @@ final class PairPhoneModel {
     var server: PhoneServer
     var route: ServeRoute? = nil
     var dnsName: String? = nil
-    var port = StimServerCLI.defaultPort
+    var port = 0
     var stimHome: String? = nil
     var connectionError: String? = nil
   }
@@ -70,7 +70,7 @@ final class PairPhoneModel {
           }.value
         },
         snapshot: {
-          var snapshot = Snapshot(server: .off, port: server.port, connectionError: server.connectionError)
+          var snapshot = Snapshot(server: .off, port: server.netPort ?? 0, connectionError: server.connectionError)
           switch server.state {
           case .off: break
           case .starting, .notReady(.pending, _): snapshot.server = .starting

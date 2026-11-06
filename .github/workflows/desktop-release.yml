@@ -91,10 +91,20 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=workflow_dispatch&status=success&per_page=100" |
             node scripts/full-suite-gate.mjs "$GITHUB_SHA"
 
+      - name: Resolve the engine version the app installs
+        run: |
+          channel=latest
+          if [ "$PRERELEASE" = true ]; then channel=next; fi
+          engine=$(npm view "stim@$channel" version)
+          [ -n "$engine" ] || { echo "::error::could not read stim@$channel"; exit 1; }
+          echo "ENGINE_VERSION=$engine" >> "$GITHUB_ENV"
+          echo "engine: stim@$channel is $engine"
+
       - name: Build, sign and notarize
         uses: ./.github/actions/desktop-build
         with:
           version: ${{ env.VERSION }}
+          engine-version: ${{ env.ENGINE_VERSION }}
           tag: ${{ github.event_name == 'push' && github.ref_name || format('desktop-v{0}', env.VERSION) }}
           appcast-url: ${{ env.APPCAST_URL }}
           sparkle-public-ed-key: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}

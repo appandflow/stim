@@ -32,11 +32,11 @@ public enum DecodeSource: String, Sendable {
 }
 
 public enum ServerFailureKind: String, Sendable {
-  case adoptionHomeMismatch = "adoption-home-mismatch"
+  case engineUnavailable = "engine-unavailable"
   case launchFailed = "launch-failed"
   case noAnswer = "no-answer"
   case exited
-  case tooOld = "too-old"
+  case unknownFormat = "unknown-format"
 }
 
 /// A handled failure Stim Desktop may report. Each case carries only fixed words, numbers, type names, coding

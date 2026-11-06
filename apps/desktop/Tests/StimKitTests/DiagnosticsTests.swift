@@ -111,11 +111,11 @@ struct DiagnosticsTests {
     diagnostics.report(.server(.noAnswer))
     diagnostics.report(.server(.noAnswer))
     diagnostics.report(.server(.exited))
-    diagnostics.report(.server(.tooOld))
+    diagnostics.report(.server(.unknownFormat))
     diagnostics.report(.server(.launchFailed))
     #expect(
       recorder.reports.map(\.tags) == [
-        ["kind": "no-answer"], ["kind": "exited"], ["kind": "too-old"],
+        ["kind": "no-answer"], ["kind": "exited"], ["kind": "unknown-format"],
       ])
   }
 
@@ -139,7 +139,7 @@ struct DiagnosticsTests {
   }
 
   @Test func reportsEveryServerFailureKindAsAFixedMessage() {
-    for kind in [ServerFailureKind.adoptionHomeMismatch, .launchFailed, .noAnswer, .exited, .tooOld] {
+    for kind in [ServerFailureKind.engineUnavailable, .launchFailed, .noAnswer, .exited, .unknownFormat] {
       let report = DiagnosticFailure.server(kind).report
       #expect(report.message == "stim-server start failed")
       #expect(report.tags == ["kind": kind.rawValue])

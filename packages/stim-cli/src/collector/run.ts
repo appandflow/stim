@@ -140,6 +140,7 @@ export function parseArgs(argv: string[]): ParsedCollectorArgs {
 
 import { readCollectors, registerCollector, unregisterCollector } from '../stimd/logs/state.ts';
 import { captureProcessToken } from '../process-identity.ts';
+import { ownStoreEngine } from '../daemon/engine-switch.ts';
 export { readCollectors, registerCollector, unregisterCollector };
 
 export interface RunCollectorOptions {
@@ -309,7 +310,13 @@ export async function runCollector({
   }
 
   try {
-    registerCollector(root, key, { ...attribution, pid: process.pid, processToken, startedAt });
+    registerCollector(root, key, {
+      ...attribution,
+      pid: process.pid,
+      processToken,
+      startedAt,
+      ...(ownStoreEngine() ? { engineDir: ownStoreEngine()?.build } : {}),
+    });
   } catch (err) {
     stderr(`Stim collector: could not record the collector in ${root}: ${describe(err)}`);
     finish(1, 'error', 'Could not persist collector identity', 'collector_failed');

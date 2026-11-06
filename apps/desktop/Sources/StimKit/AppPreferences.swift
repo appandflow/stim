@@ -34,8 +34,12 @@ public enum AppPreferences {
     public static let notifiesDiskPressure = "notify.diskPressure"
     public static let servesPhones = "servesPhones"
     public static let updatesBuildMachines = "updatesBuildMachines"
-    /// The loopback port Stim Desktop runs or looks for stim-server on; unset means 7787. Set only with `defaults write`.
-    public static let stimServerPort = "stimServerPort"
+    /// A built `stim` package directory a development copy runs instead of the engine. Set only with a launch argument or
+    /// `defaults write`.
+    public static let stimEngine = "stimEngine"
+    /// Set once Desktop installed the Stim engine, which then moves forward to the version a Desktop update needs
+    /// without asking.
+    public static let engineInstalledByDesktop = "engineInstalledByDesktop"
     /// The Stim home before Settings held one; `migrate` moves it into `stimHome` once.
     static let lastLoginStimHome = "lastLoginStimHome"
     /// The Stim home Desktop runs Stim with. Empty or unset means `~/.stim`; a launch `STIM_HOME` wins.

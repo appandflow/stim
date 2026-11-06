@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { expoSdkMajor } from '../stimd/metro/server-expo.ts';
 import { expoMetroConfigPath } from '../stimd/metro/metro-store.ts';
 
@@ -16,10 +16,13 @@ export async function withReleaseMetroCache<T>(
   if (!adapter) throw new Error('Stim installation is missing dist/injected/expo-metro-config.cjs.');
   // https://github.com/appandflow/stim/issues/4600: Expo ignores resetCache in CI before SDK 58.
   const store = await fs.mkdtemp(join(tmpdir(), 'stim-release-metro-'));
+  const injected = await fs.mkdtemp(join(tmpdir(), 'stim-release-adapter-'));
   try {
+    for (const name of (await fs.readdir(dirname(adapter))).filter((entry) => entry.endsWith('.cjs')))
+      await fs.copyFile(join(dirname(adapter), name), join(injected, name));
     return await build({
       ...env,
-      EXPO_OVERRIDE_METRO_CONFIG: adapter,
+      EXPO_OVERRIDE_METRO_CONFIG: join(injected, basename(adapter)),
       STIM_PROJECT_ROOT: root,
       STIM_METRO_STORE: store,
       STIM_METRO_ISOLATED: '1',
@@ -27,5 +30,6 @@ export async function withReleaseMetroCache<T>(
     });
   } finally {
     await fs.rm(store, { recursive: true, force: true });
+    await fs.rm(injected, { recursive: true, force: true });
   }
 }

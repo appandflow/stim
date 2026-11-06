@@ -803,3 +803,22 @@ function writeChild(handle: ClaimHandle, body: { record: ClaimOwner | null }): v
     throw err;
   }
 }
+
+/**
+ * Replaces the details of a claim this process holds, in place: the claim keeps its id, owner and start, so no reader
+ * ever sees the set without it. Returns the handle with the new details, or null when the claim is no longer this one.
+ */
+export function updateClaimDetails(handle: ClaimHandle, details: ClaimDetails): ClaimHandle | null {
+  const current = readClaim(handle.path, handle.mode);
+  if (current === null || current instanceof Unreadable || current.claimId !== handle.claimId) return null;
+  const staging = join(handle.root, `${STAGING_PREFIX}details-${handle.claimId}`);
+  const payload = { claimId: handle.claimId, mode: handle.mode, owner: handle.owner, startedAt: handle.startedAt };
+  try {
+    writeFileSync(staging, JSON.stringify({ ...payload, details }));
+    renameSync(staging, handle.path);
+  } catch (err) {
+    rmSync(staging, { force: true });
+    throw err;
+  }
+  return { ...handle, details };
+}

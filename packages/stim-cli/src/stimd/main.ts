@@ -1,6 +1,6 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
@@ -19,6 +19,9 @@ import {
   readMacosRecord,
   readDaemonSnapshot,
   readMaintenanceState,
+  readHostedSessions,
+  readHostedAppMetadata,
+  type HostedDeviceSession,
   type DaemonMode,
   type DaemonRecentAction,
   type DaemonSnapshot,
@@ -38,11 +41,12 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { stimBuild } from '../spawn-entry.ts';
 import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
-import type { Config } from '../workspace/config.ts';
+import { loadConfig, type Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { relaunchWithLogFile } from '../detached-entry.ts';
 import {
   LAUNCHD_LABEL_ENV,
+  launchStimd,
   launchdLabelPrefix,
   serveThroughStimd,
   stimdBuildId,
@@ -65,6 +69,10 @@ import { listenPipe } from './pipe-win32.ts';
 import { createPassesLane, createThreadTable } from './threads.ts';
 import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
+import { followEngine } from './engine-follow.ts';
+// compat C25 until removal-minor
+import { stopForeignSupervisors } from './foreign-supervisors.ts';
+// compat end
 
 const TICK_MS = 60_000;
 const DEPENDENCY_SCAN_MS = 10 * 60_000;
@@ -76,6 +84,7 @@ const RECENT_ACTIONS = 20;
 const WAKE_GRACE_MS = 2000;
 const RECORD_FORMAT = 1;
 const LAUNCHCTL_TIMEOUT_MS = 5000;
+const SUCCESSOR_BIND_MS = 10_000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
@@ -232,6 +241,7 @@ export async function runStimd({
   serve,
   desktopKey,
   onNet,
+  afterSwitch = false,
 }: {
   tickMs?: number;
   /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
@@ -244,6 +254,8 @@ export async function runStimd({
   desktopKey?: string;
   /** Gets the net thread's first answer to `serve`. */
   onNet?: (answer: Awaited<ReturnType<ReturnType<typeof createNetThread>['ensure']>>) => void;
+  /** Started by a stimd of the previous build after an engine switch: stops that build's supervisors when idle. */
+  afterSwitch?: boolean;
 } = {}): Promise<boolean> {
   const identity = stimBuild();
   const build = stimdBuildId();
@@ -279,6 +291,7 @@ export async function runStimd({
     writer.close();
     return false;
   }
+  const follower = followEngine(log);
   const key = writeDesktopKey(desktopKey);
   const script = realpathSync(process.argv[1] ?? '');
   const net = createNetThread(log, () => {
@@ -331,14 +344,72 @@ export async function runStimd({
     next.write(`${JSON.stringify({ op: OPS[resource].changed })}\n`);
   };
   const open = new Set<Socket>();
+  const ops = new Map<Socket, 'pinned' | 'waiting'>();
+  let engineDirs: string[] = [];
+  try {
+    if (follower) engineDirs = workspaceEngineDirs(loadConfig());
+  } catch {}
+  let netServes: ServeOptions | null = serve ?? null;
+  let switchedTo: { build: string; version: string } | null = null;
+  let foreignLeft = afterSwitch;
+  let heldSwitch = false;
+  const pinned = (): boolean =>
+    [...ops.values()].includes('pinned') ||
+    listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
+    (net.running() !== null && readHostedSessions().some(hostedNativeWork));
+  const checkEngine = async (): Promise<void> => {
+    if (!follower || switchedTo || closing) return;
+    let next: Awaited<ReturnType<typeof follower.check>>;
+    try {
+      follower.record(pinned(), engineDirs);
+      next = await follower.check(pinned);
+    } catch (error) {
+      log('warn', 'engine_check_failed', error instanceof Error ? error.message : String(error));
+      return;
+    }
+    if (!next || switchedTo || closing) return;
+    if (!pinned()) await relaunch(next, follower.engine.root);
+    else if (!heldSwitch) {
+      heldSwitch = true;
+      log(
+        'warn',
+        'engine_switch_pinned',
+        `the engine switched to ${next.version} under pinned work; relaunching after it`,
+      );
+    }
+  };
+  const relaunch = async (next: { build: string; version: string }, root: string) => {
+    switchedTo = next;
+    const changed = `${JSON.stringify({ op: 'engine-changed', ...next, pid: process.pid })}\n`;
+    for (const list of [waiters.build, waiters.boot, tickReplies]) list.length = 0;
+    for (const socket of open) socket.end(changed);
+    const running = net.running();
+    const carried = running && netServes ? { ...netServes, shareOnly: running.shareOnly } : null;
+    const why = `the engine switched to ${next.version} (${next.build})`;
+    shutdown(why);
+    await net.close();
+    launchStimd(process.env, startMode, process.platform, join(root, next.build, 'dist', 'cli.mjs'), [
+      '--after-switch',
+      ...serveArgs(carried),
+    ]);
+    for (const deadline = Date.now() + SUCCESSOR_BIND_MS; Date.now() < deadline;) {
+      const record = readJsonObject(stimdRecordFile());
+      if (record?.build === next.build && record.pid !== process.pid) return;
+      await new Promise((done) => setTimeout(done, 20));
+    }
+  };
   const server = createServer((socket) => {
     open.add(socket);
+    void checkEngine();
     socket.once('close', () => open.delete(socket));
     let buffer = Buffer.alloc(0);
     let framed = false;
     let kind: unknown;
     socket.on('error', () => drop(socket));
-    socket.on('close', () => drop(socket));
+    socket.on('close', () => {
+      drop(socket);
+      if (ops.delete(socket)) void checkEngine();
+    });
     const onData = (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
       for (let end = buffer.indexOf(10); end >= 0; end = buffer.indexOf(10)) {
@@ -364,8 +435,8 @@ export async function runStimd({
             socket.end();
             return;
           }
-          if (message.kind !== 'desktop' && message.build !== build) {
-            reply({ op: 'engine-changed', build, version: identity.version, pid: process.pid });
+          if (switchedTo || (message.kind !== 'desktop' && message.build !== build)) {
+            reply({ op: 'engine-changed', build, version: identity.version, pid: process.pid, ...switchedTo });
             socket.end();
             return;
           }
@@ -387,29 +458,49 @@ export async function runStimd({
           const params = isJsonObject(message.params) ? message.params : {};
           const share = params.share === true;
           const port = Number.isInteger(params.port) ? Number(params.port) : undefined;
-          void net
-            .ensure(
-              netOptions({
-                ...(port !== undefined && port >= 0 && port <= 65535 ? { port } : share ? { port: 0 } : {}),
-                loopbackOnly: share || params.loopbackOnly === true,
-                extraEnv: strings(params.extraEnv),
-                pathPrepend: strings(params.pathPrepend),
-                shareOnly: share,
-                ...(kind === 'desktop' ? { owner: 'desktop' } : {}),
-              }),
-            )
-            .then((answer) => {
-              lastContact = Date.now();
-              return reply({ op: 'net', ...answer });
-            });
+          const options = netOptions({
+            ...(port !== undefined && port >= 0 && port <= 65535 ? { port } : share ? { port: 0 } : {}),
+            loopbackOnly: share || params.loopbackOnly === true,
+            extraEnv: strings(params.extraEnv),
+            pathPrepend: strings(params.pathPrepend),
+            shareOnly: share,
+            ...(kind === 'desktop' ? { owner: 'desktop' } : {}),
+          });
+          if (!net.running()) netServes = options;
+          void net.ensure(options).then((answer) => {
+            lastContact = Date.now();
+            return reply({ op: 'net', ...answer });
+          });
         } else if (op === 'net.connect') {
           socket.off('data', onData);
           const head = buffer;
           buffer = Buffer.alloc(0);
-          if (net.connect(socket, head)) reply({ op: 'net.connected' });
-          else
+          if (net.connect(socket, head)) {
+            open.delete(socket);
+            reply({ op: 'net.connected' });
+          } else
             socket.end(`${JSON.stringify({ op: 'error', code: 'net-off', message: 'the net thread does not run' })}\n`);
           return;
+        } else if (op === 'op.begin') {
+          hasten?.();
+          ops.set(socket, 'pinned');
+          void (follower?.admit() ?? Promise.resolve(null))
+            .catch((error: unknown) => {
+              log('warn', 'engine_admit_failed', error instanceof Error ? error.message : String(error));
+              return null;
+            })
+            .then((next) => {
+              if (!next) {
+                reply({ op: 'op.begun' });
+                return undefined;
+              }
+              ops.delete(socket);
+              socket.end(`${JSON.stringify({ op: 'engine-changed', ...next, pid: process.pid })}\n`);
+              return checkEngine();
+            });
+        } else if (op === 'op.wait' || op === 'op.resume') {
+          if (ops.has(socket)) ops.set(socket, op === 'op.wait' ? 'waiting' : 'pinned');
+          void checkEngine();
         } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'tick') {
           if (!tickReplies.includes(socket)) tickReplies.push(socket);
@@ -448,6 +539,7 @@ export async function runStimd({
     for (const socket of open) socket.end().unref();
     if (bound && process.platform !== 'win32') rmSync(path, { force: true });
     if (readJsonObject(stimdRecordFile())?.pid === process.pid) rmSync(stimdRecordFile(), { force: true });
+    follower?.release();
     releaseClaim(claim);
     releaseClaim(own);
     for (const signal of SIGNALS) process.off(signal, onSignal);
@@ -615,6 +707,11 @@ export async function runStimd({
       writeAtomic(daemonSnapshotFile(), lastSnapshot);
       for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);
       ticked = passes;
+      engineDirs = workspaceEngineDirs(config);
+      // compat C25 until removal-minor
+      if (foreignLeft && follower) foreignLeft = (await stopForeignSupervisors(follower.engine.build)) > 0;
+      // compat end
+      await checkEngine();
     } catch (error) {
       for (const socket of replying) socket.destroy();
       shutdown(
@@ -643,6 +740,7 @@ export async function runStimd({
     );
     loopDelay.reset();
     if (emptyTicks >= EMPTY_TICKS_BEFORE_EXIT) {
+      await checkEngine();
       shutdown('nothing runs in this Stim home');
       break;
     }
@@ -651,6 +749,46 @@ export async function runStimd({
   await Promise.all([lane.settled(), dependencyWork, net.close()]);
   await threads.close();
   return true;
+}
+
+/** The builds this home's dev server supervisors and device log collectors run, from their recorded `engineDir`. */
+function workspaceEngineDirs(config: Config | null): string[] {
+  return Object.keys(config?.projects ?? {}).flatMap((path) => {
+    const state = readWorkspaceState(path);
+    return [state?.supervisor, ...Object.values(state?.collectors ?? {})].flatMap((record) => {
+      return isJsonObject(record) && typeof record.engineDir === 'string' ? [record.engineDir] : [];
+    });
+  });
+}
+
+/**
+ * Whether a hosted session has native work in flight: it is being prepared, or an app is being received or installed
+ * into it. A receipt that cannot be read counts as none.
+ */
+function hostedNativeWork(session: HostedDeviceSession): boolean {
+  if (session.state === 'preparing') return true;
+  if (!session.appAttempt) return false;
+  try {
+    return ['receiving', 'installing'].includes(readHostedAppMetadata(session.id, session.appAttempt).state);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `serviceArguments`' inverse: the arguments a successor stimd takes to serve as this one's net thread did. A net thread
+ * that only serves `stim share` is not carried over.
+ */
+function serveArgs(serve: ServeOptions | null): string[] {
+  if (!serve || serve.shareOnly) return [];
+  return [
+    '--service',
+    ...(serve.loopbackOnly ? ['--loopback-only'] : []),
+    '--port',
+    String(serve.port),
+    ...serve.extraEnv.flatMap((entry) => ['--env', entry]),
+    ...serve.pathPrepend.flatMap((dir) => ['--path-prepend', dir]),
+  ];
 }
 
 /**
@@ -669,6 +807,7 @@ export function serviceArguments(argv: readonly string[]): ServeOptions | undefi
   for (let index = 0; index < argv.length; index++) {
     const value = argv[index + 1];
     if (value === undefined) break;
+    if (argv[index] === '--loopback-only') serve.loopbackOnly = true;
     if (argv[index] === '--port') serve.port = /^\d+$/.test(value) ? Number(value) : serve.port;
     else if (argv[index] === '--env') serve.extraEnv.push(value);
     else if (argv[index] === '--path-prepend') serve.pathPrepend.push(value);
@@ -694,6 +833,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
       mode: parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ?? daemonMode({}),
       serve,
       onNet: reportNet,
+      afterSwitch: argv.includes('--after-switch'),
     });
     if (serve && !served && stimdLive()) await serveThroughStimd(serve, reportNet);
   } catch (error) {

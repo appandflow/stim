@@ -32,13 +32,13 @@ notarize in parallel and take turns only for the few seconds that each `publish`
 job writes the `desktop-latest` appcast (see [Appcast publish](#appcast-publish)),
 so a next build in progress never delays or overwrites a release.
 
-The app bundles the `stim` and `stim-server` packages packed from the tagged
-commit, and `scripts/server-runtime.mjs` only checks that the bundled
-`stim-server --version` equals `packages/server/package.json`. Tagging the
-npm release's commit makes the bundled CLI and server exactly the published npm
-version. A Desktop release is never tagged on a later `main` commit: a Desktop
-change that cannot wait for the next npm release needs a patch npm release
-first, then a Desktop release at that release's commit.
+The app carries no server or Node. It embeds `StimEngineVersion`, the published
+`stim` it installs or moves the Stim engine to: `stim@latest` for a stable tag,
+`stim@next` for a prerelease tag, read when the workflow runs. Tag after the npm
+release the Desktop needs is published. A `Desktop next` build embeds `stim@next`
+and publishes only once that version is built from the Desktop commit or a later
+one (its version names the commit); until then the hourly run skips it, and a
+`next` publish that changes `desktopApi` dispatches it.
 
 The workflow, `.github/workflows/desktop-release.yml`:
 
@@ -121,9 +121,9 @@ composite action `.github/actions/desktop-build`.
   installed prerelease until a newer stable release. A prerelease is a candidate only for a build with a
   lower commit count, so a stable release tagged at a commit older than the newest next build is not offered
   to builds on the channel until a newer item appears.
-- **Bundled server.** A next build bundles the `stim-server` of the commit it builds, as a stable release
-  does. That server reports the version `packages/server` carries on `main`, such as `1.39.0`, although its
-  code can be newer than that npm release; the npm `next` dist-tag carries the unreleased packages.
+- **Engine version.** A next build embeds `stim@next` as `StimEngineVersion` and is built only once that
+  version names the Desktop commit or a later one. While `next` carries a release candidate, whose version
+  names no commit, the workflow skips with a notice.
 - **Pause.** `gh variable set DESKTOP_NEXT_PAUSED --body true` skips the workflow until
   `gh variable delete DESKTOP_NEXT_PAUSED`.
 - **Dry run.** Dispatching the workflow on `main` with `publish` off builds the head with the `release`
@@ -198,13 +198,9 @@ history (the workflow checks out with `fetch-depth: 0`).
 `Lottie.framework`; Sparkle's `Installer.xpc`, `Downloader.xpc` (keeping its
 entitlements), `Autoupdate`, `Updater.app` and `Sparkle.framework`, in the
 order [Sparkle documents](https://sparkle-project.org/documentation/sandboxing/#code-signing);
-`sim-fold`; the bundled server's `unique-pid` addons and its `node`, with
-`Support/Node/node.entitlements` (`com.apple.security.cs.allow-jit`, which V8
-needs under the hardened runtime, and
-`com.apple.security.cs.disable-library-validation`, so `stim` commands can load a
-project's native addons); the app; then the DMG. Notarization covers
-`node` and the addons with the rest of the app, so a rejected nested binary
-fails `release.sh`'s `notarytool` step and the log names it.
+`sim-fold`; the app; then the DMG. Notarization covers the nested binaries with
+the rest of the app, so a rejected one fails `release.sh`'s `notarytool` step and
+the log names it.
 
 A Developer ID build signs the app with `Support/app.entitlements`, including
 `applinks:stim.appandflow.com` and the application identifier

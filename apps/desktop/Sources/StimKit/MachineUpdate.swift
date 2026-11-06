@@ -117,12 +117,15 @@ public func stimBuildHere(_ status: BuildMachineStatus) -> String? {
   return String(match.1)
 }
 
-/// Whether `status` says the remote Mac runs another Stim build than this Mac, the case an update fixes.
+/// Whether `status` says the remote Mac runs another Stim build than this Mac, the case an update fixes: an
+/// `outdated` worker below this Mac's peer level, or, from an older CLI, an approved worker with a `stim-build`
+/// problem.
 public func needsStimUpdate(_ status: BuildMachineStatus) -> Bool {
-  status.state == .approved && status.problems?.contains { $0.code == "stim-build" } == true
+  status.state == .outdated
+    || (status.state == .approved && status.problems?.contains { $0.code == "stim-build" } == true)
 }
 
-/// This Mac's stim-server, whose build an install sends to a remote Mac.
+/// This Mac's Stim engine, whose build an install sends to a remote Mac.
 public struct LocalStim: Equatable, Sendable {
   public var version: String
   /// Whether it runs from an installed npm release. A remote Mac installs a release without
@@ -134,10 +137,10 @@ public struct LocalStim: Equatable, Sendable {
     self.isRelease = isRelease
   }
 
-  /// Whether `path`, a stim-server script, sits in an installed package, as stim-server tells a release from a
-  /// checkout.
-  public static func isInstalledPackage(_ path: String) -> Bool {
-    URL(fileURLWithPath: path).resolvingSymlinksInPath().pathComponents.contains("node_modules")
+  /// Whether the engine runs a published release: `stim engine use <path>` pins a checkout's build with a reason
+  /// naming its path.
+  public static func isRelease(_ engine: EnginePointer) -> Bool {
+    !(engine.pinned && engine.pinReason?.contains("/") == true)
   }
 }
 

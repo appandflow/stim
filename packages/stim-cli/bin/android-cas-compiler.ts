@@ -2,7 +2,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { getExecutor } from '../src/exec.ts';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 
 const context = process.env.STIM_ANDROID_CAS_CONTEXT;
@@ -65,7 +65,7 @@ if (args.includes('-c')) {
   );
 }
 const started = performance.now();
-const child = getExecutor().spawn(compiler, [...extra, ...args], { stdio: ['inherit', 'pipe', 'pipe'] });
+const child = spawn(compiler, [...extra, ...args], { stdio: ['inherit', 'pipe', 'pipe'] });
 let stderr = '';
 child.stdout!.on('data', (chunk: Buffer) => process.stdout.write(chunk));
 child.stderr!.on('data', (chunk: Buffer) => {

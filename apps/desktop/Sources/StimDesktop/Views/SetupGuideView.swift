@@ -161,23 +161,27 @@ struct SetupGuideView: View {
     VStack(alignment: .leading, spacing: Space.lg) {
       heading("Install the stim CLI")
       Text(
-        "Optional. Install the stim command-line tool for your coding agents and terminal. Desktop uses its bundled server and works without this installation. The CLI needs Node.js 22.12 or later."
+        "Optional. Install the stim command-line tool for your coding agents and terminal. Desktop runs the Stim engine and works without this installation. The CLI needs Node.js 22.12 or later."
       )
       .foregroundStyle(Palette.secondary)
       nodeStatus
       stimStatus
       if setup.state(of: .cli) == .blocked {
-        if setup.brewPath != nil {
-          CommandBlock(
-            command: onboarding.installNodeCommand, run: onboarding.guideRuns[onboarding.installNodeCommand], busy: busy,
-            isDefault: true, caption: "Installs Node.js with Homebrew."
-          ) { onboarding.runGuide("Install Node.js", onboarding.installNodeCommand) }
-        } else {
-          HStack(spacing: Space.md) {
-            Link("Download Node.js", destination: URL(string: "https://nodejs.org/en/download")!)
-              .buttonStyle(.stim(.primary))
-            Button("Check Again") { onboarding.check() }.buttonStyle(.stim())
+        HStack(spacing: Space.md) {
+          Button(onboarding.installingNode ? "Installing Node.js\u{2026}" : "Install Node.js") {
+            onboarding.installManagedNode()
           }
+          .buttonStyle(.stim(.primary))
+          .keyboardShortcut(busy || onboarding.installingNode ? nil : .defaultAction)
+          .disabled(busy || onboarding.installingNode)
+          Button("Check Again") { onboarding.check() }.buttonStyle(.stim())
+        }
+        Text(
+          "Downloads Node.js \(ManagedNode.version) from nodejs.org into ~/.stim/runtime, checked against the release's SHASUMS256.txt. Stim Desktop also runs the Stim engine with it."
+        )
+        .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+        if let error = onboarding.nodeInstallError {
+          Text(error).foregroundStyle(Palette.error).textSelection(.enabled)
         }
       } else if let command = onboarding.installCLICommand {
         if setup.stim == .missing { installerTabs }
@@ -219,7 +223,7 @@ struct SetupGuideView: View {
       statusLine("Node.js \(version)", tone: .success, icon: "checkmark.circle.fill")
     case .missing?:
       statusLine(
-        "Stim Desktop found no Node.js." + (setup.brewPath == nil ? " Install it, then check again." : ""),
+        "Stim Desktop found no Node.js.",
         tone: .warning, icon: "exclamationmark.triangle.fill")
     case .outdated(let found)?:
       statusLine(
@@ -242,10 +246,6 @@ struct SetupGuideView: View {
             Spacer(minLength: 0)
           }
         }
-      case .outdated where report.nodeBlocksStim:
-        statusLine(
-          "\(abbreviatingHome(report.stimPath ?? "stim")) runs once Node.js is \(SetupChecks.nodeMinimum) or later.",
-          tone: .warning, icon: "exclamationmark.triangle.fill")
       case .outdated(let found):
         statusLine(
           "\(abbreviatingHome(report.stimPath ?? "stim")) reports \(found ?? "no version"); the agent CLI needs \(SetupChecks.stimMinimum) or later.",
@@ -387,7 +387,7 @@ struct SetupGuideView: View {
       .disabled(!canCheckProject)
       if !canCheckProject {
         statusLine(
-          "Connect the bundled local server to check projects.",
+          "Connect the Stim engine to check projects.",
           tone: .neutral, icon: "info.circle")
       } else if let folder = onboarding.projectFolder {
         let command = Onboarding.doctorCommand(in: folder)
@@ -467,7 +467,7 @@ struct SetupGuideView: View {
     switch step {
     case .cli:
       let state = setup.state(of: .cli)
-      return state == .pending || (state == .blocked && setup.brewPath != nil)
+      return state == .pending || state == .blocked
     case .skill: return setup.state(of: .skill) == .pending
     case .notifications: return setup.notifications == .notDetermined
     case .phone: return false

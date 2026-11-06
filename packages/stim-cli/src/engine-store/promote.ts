@@ -5,7 +5,8 @@ import type { StimContext } from '@stim-cli/core';
 import { stimBuildId } from '@stim-cli/core/state';
 import { installKind } from '../../bin/route.mjs';
 import { getExecutor } from '../exec.ts';
-import { collectStore, liveEngineDirs } from './gc.ts';
+import { claimsHeld, readBuildClaims } from './claims.ts';
+import { collectStore } from './gc.ts';
 import { takeLock } from './locks.ts';
 import { machineRoot, migrateSchema, readSchema, restoreSchema, schemaRefusal } from './schema.ts';
 import { promotionRefusal } from './select.ts';
@@ -27,6 +28,11 @@ export interface Promotion {
   restoreState?: boolean;
   /** Set by a parent `engine-select` that holds the promotion lock for this process. */
   locked?: boolean;
+  /**
+   * Set by the stimd that saw every claim of the running build drained and holds both store locks: flips this build,
+   * which must be the staged one, without reading any claim.
+   */
+  flip?: boolean;
   ctx: StimContext;
 }
 
@@ -40,9 +46,10 @@ export type PromotionResult = { flipped: string } | { staged: string } | { refus
  */
 export async function promote(promotion: Promotion): Promise<PromotionResult> {
   const { root, source, ctx } = promotion;
-  const lock = promotion.locked ? { release: async () => {} } : await takeLock(root, '.lock.sock');
+  const lock = promotion.locked || promotion.flip ? { release: async () => {} } : await takeLock(root, '.lock.sock');
   if (!lock) return { busy: true };
   try {
+    if (promotion.flip) return await flipStaged(promotion);
     let build = 'dir' in source && relative(realpathSync(root), realpathSync(source.dir)).match(BUILD_DIR)?.[0];
     if (!build) {
       const scratch = join(root, scratchName());
@@ -54,7 +61,7 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
       build = seal(root, scratch);
     }
     const manifest = readManifest(join(root, build)) ?? fail(`${join(root, build)} has no store manifest.`);
-    const refuse = (refused: string) => (collectStore(root, liveEngineDirs()), { refused });
+    const refuse = (refused: string) => (collectStore(root), { refused });
     if (!existsSync(join(root, build, 'dist', 'engine-select.mjs')))
       return refuse(`stim ${manifest.version} predates the engine store; choose a later version`);
     const own = stimBuildId(dirname(fileURLToPath(import.meta.url)));
@@ -67,26 +74,58 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
         (promotion.restoreState ? null : homes.map((home) => schemaRefusal(home, manifest.schema)).find(Boolean));
       if (refusal) return refuse(refusal);
       await selfTest(root, build).catch((error: unknown) => {
-        collectStore(root, liveEngineDirs());
+        collectStore(root);
         throw error;
       });
       const entry = { dir: build, version: manifest.version, installedAt: new Date().toISOString() };
       writeState(root, { ...state, installed: [...state.installed.filter((each) => each.dir !== build), entry] });
-      const claimed = liveEngineDirs();
-      if (claimed.length > 0) {
-        const staged: Staged = { format: FORMAT, dir: build, version: manifest.version, stagedAt: entry.installedAt };
+      if (claimsHeld(readBuildClaims(root))) {
+        const staged: Staged = {
+          format: FORMAT,
+          dir: build,
+          version: manifest.version,
+          stagedAt: entry.installedAt,
+          setBy: promotion.setBy,
+          pinReason: promotion.pinReason ?? null,
+          ...(promotion.channel ? { channel: promotion.channel } : {}),
+          ...(promotion.restoreState ? { restoreState: true } : {}),
+        };
         writeRecord(join(root, 'staged.json'), staged);
+        collectStore(root);
         return { staged: build };
       }
       for (const home of promotion.restoreState ? homes : []) restoreSchema(home, manifest.schema, manifest.version);
-      await flip(root, build, manifest, current, promotion);
+      await flip(root, build, manifest, current, promotion, false);
       for (const home of homes) migrateSchema(home, manifest.version);
-      collectStore(root, claimed);
+      collectStore(root);
       return { flipped: build };
     }
   } finally {
     await lock.release();
   }
+}
+
+/** The drained running build's handover: points the engine at this build, staged with its pin, channel and setter. */
+async function flipStaged(promotion: Promotion): Promise<PromotionResult> {
+  const { root, ctx } = promotion;
+  const { current, staged } = readRecords(root);
+  const own = stimBuildId(dirname(fileURLToPath(import.meta.url)));
+  if (!staged || staged.dir !== own) return { refused: `${own ?? 'this build'} is not the staged build` };
+  const manifest = readManifest(join(root, own)) ?? fail(`${join(root, own)} has no store manifest.`);
+  const homes = [ctx.home, machineRoot()].filter((home) => readSchema(home));
+  if (staged.restoreState) for (const home of homes) restoreSchema(home, manifest.schema, manifest.version);
+  else {
+    const refusal = homes.map((home) => schemaRefusal(home, manifest.schema)).find(Boolean);
+    if (refusal) {
+      removeRecord(join(root, 'staged.json'));
+      return { refused: refusal };
+    }
+  }
+  const from = { ...promotion, setBy: staged.setBy ?? promotion.setBy, pinReason: staged.pinReason ?? null };
+  await flip(root, own, manifest, current, { ...from, channel: staged.channel ?? promotion.channel }, true);
+  for (const home of homes) migrateSchema(home, manifest.version);
+  collectStore(root);
+  return { flipped: own };
 }
 
 /** Runs `build`'s own `engine-select` on its tree while this process keeps holding the promotion lock for it. */
@@ -102,9 +141,18 @@ async function handOver(promotion: Promotion, build: string): Promise<PromotionR
   return JSON.parse(await getExecutor().runFileAsync(process.execPath, [select, ...args], { timeoutMs: 600_000, env }));
 }
 
-async function flip(root: string, build: string, manifest: Manifest, current: Current | null, promotion: Promotion) {
+async function flip(
+  root: string,
+  build: string,
+  manifest: Manifest,
+  current: Current | null,
+  promotion: Promotion,
+  flipLocked: boolean,
+) {
   const node = { path: process.execPath, version: process.versions.node };
-  const flipLock = (await takeLock(root, '.flip.sock')) ?? fail(`Another process holds ${join(root, '.flip.sock')}.`);
+  const flipLock = flipLocked
+    ? { release: async () => {} }
+    : ((await takeLock(root, '.flip.sock')) ?? fail(`Another process holds ${join(root, '.flip.sock')}.`));
   try {
     if (current && current.dir !== build) writeRecord(join(root, 'previous'), current.dir);
     writeRecord(join(root, 'current.json'), {
