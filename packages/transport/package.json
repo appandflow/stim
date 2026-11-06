@@ -1,6 +1,7 @@
 {
   "name": "@stim-cli/transport",
   "version": "1.40.0",
+  "private": true,
   "description": "Transport contract for stim-server: how phones and other machines reach it.",
   "license": "MIT",
   "repository": {
