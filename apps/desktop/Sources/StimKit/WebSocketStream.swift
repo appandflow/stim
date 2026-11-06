@@ -9,25 +9,38 @@ import Network
     case message(WebSocketFraming.Opcode, Data)
     /// The connection ended. `code` and `reason` are the peer's close frame, nil when the connection ended without one.
     case closed(description: String, code: UInt16?, reason: String?)
+    /// A prelude reply refused the connection with this text.
+    case refused(String)
+  }
+
+  /// A newline-terminated line written before the upgrade, and what its one-line reply must say: `accept` returns nil
+  /// to go on, or the text the connection is refused with.
+  struct PreludeStep {
+    var line: Data
+    var accept: @MainActor ([String: JSONValue]) -> String?
   }
 
   private let connection: NWConnection
   private let key = WebSocketFraming.newKey()
   private var reader: WebSocketFraming.Reader
   private var handshake: Data? = Data()
+  private var prelude: [PreludeStep]
+  private var preludeBuffer = Data()
   private var queued: [Data] = []
   private var closed = false
   private var heard = true
   private var keepalive: Task<Void, Never>?
   private let keepaliveInterval: TimeInterval?
   private let onEvent: @MainActor (Event) -> Void
+  private var upgrade = Data()
 
   /// `host` is the upgrade request's `Host` header and `path` its request target.
   init(
     to endpoint: NWEndpoint, using parameters: NWParameters, host: String, path: String, maximumMessageSize: Int,
-    keepalive: TimeInterval? = nil, onEvent: @escaping @MainActor (Event) -> Void
+    keepalive: TimeInterval? = nil, prelude: [PreludeStep] = [], onEvent: @escaping @MainActor (Event) -> Void
   ) {
     keepaliveInterval = keepalive
+    self.prelude = prelude
     connection = NWConnection(to: endpoint, using: parameters)
     reader = WebSocketFraming.Reader(maximumMessageSize: maximumMessageSize)
     self.onEvent = onEvent
@@ -35,7 +48,9 @@ import Network
       MainActor.assumeIsolated {
         guard let self else { return }
         switch state {
-        case .ready: self.write(WebSocketFraming.upgradeRequest(key: self.key, host: host, path: path))
+        case .ready:
+          self.upgrade = WebSocketFraming.upgradeRequest(key: self.key, host: host, path: path)
+          self.write(self.prelude.first?.line ?? self.upgrade)
         case .failed(let error), .waiting(let error): self.end(error.localizedDescription)
         case .cancelled: self.end("Connection closed.")
         default: break
@@ -93,6 +108,21 @@ import Network
   private func read(_ data: Data) throws {
     heard = true
     var frames = data
+    while let step = prelude.first {
+      preludeBuffer.append(frames)
+      frames = Data()
+      guard let end = preludeBuffer.firstIndex(of: 10) else { return }
+      let line = preludeBuffer[preludeBuffer.startIndex..<end]
+      frames = Data(preludeBuffer[preludeBuffer.index(after: end)...])
+      preludeBuffer = Data()
+      guard case .object(let reply)? = try? JSONDecoder().decode(JSONValue.self, from: Data(line)) else {
+        return refuse("stimd sent a malformed answer.")
+      }
+      if let refusal = step.accept(reply) { return refuse(refusal) }
+      prelude.removeFirst()
+      write(prelude.first?.line ?? upgrade)
+      if frames.isEmpty { return }
+    }
     if var head = handshake {
       head.append(data)
       guard let rest = try WebSocketFraming.readUpgrade(head, key: key) else {
@@ -141,6 +171,13 @@ import Network
     let code = bytes.count >= 2 ? UInt16(bytes[0]) << 8 | UInt16(bytes[1]) : nil
     let reason = bytes.count > 2 ? String(decoding: bytes[2...], as: UTF8.self) : nil
     onEvent(.closed(description: "stim-server closed the connection.", code: code, reason: reason))
+  }
+
+  private func refuse(_ text: String) {
+    guard !closed else { return }
+    closed = true
+    connection.cancel()
+    onEvent(.refused(text))
   }
 
   private func end(_ reason: String) {

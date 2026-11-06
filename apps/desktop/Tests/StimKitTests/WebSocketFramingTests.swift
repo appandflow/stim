@@ -191,3 +191,101 @@ struct WebSocketFramingTests {
     #expect(closed == nil)
   }
 }
+
+/// A stimd CLI socket on loopback TCP that answers each prelude line with the next scripted reply and records the lines
+/// and upgrade request it receives.
+@MainActor private final class StimdPeer {
+  private let listener: NWListener
+  private var connections: [NWConnection] = []
+  private var replies: [String]
+  private(set) var received = ""
+
+  init(replies: [String]) throws {
+    self.replies = replies
+    listener = try NWListener(using: .tcp, on: .any)
+    listener.newConnectionHandler = { [weak self] connection in
+      MainActor.assumeIsolated {
+        guard let self else { return }
+        self.connections.append(connection)
+        connection.start(queue: .main)
+        self.read(connection)
+      }
+    }
+    listener.start(queue: .main)
+  }
+
+  func port() async -> UInt16? {
+    for _ in 0..<200 {
+      if let port = listener.port?.rawValue, port != 0 { return port }
+      try? await Task.sleep(for: .milliseconds(10))
+    }
+    return nil
+  }
+
+  func stop() {
+    listener.cancel()
+    for connection in connections { connection.cancel() }
+  }
+
+  private func read(_ connection: NWConnection) {
+    connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, done, error in
+      MainActor.assumeIsolated {
+        guard let self, let data, error == nil, !done else { return }
+        self.received += String(decoding: data, as: UTF8.self)
+        if !self.replies.isEmpty, data.last == 10 {
+          connection.send(content: Data((self.replies.removeFirst() + "\n").utf8), completion: .idempotent)
+        }
+        self.read(connection)
+      }
+    }
+  }
+}
+
+@MainActor struct StimdPreludeTests {
+  private func run(_ replies: [String]) async throws -> (StimdPeer, [WebSocketStream.Event], Int?) {
+    let peer = try StimdPeer(replies: replies)
+    let port = try #require(await peer.port())
+    var events: [WebSocketStream.Event] = []
+    var listening: Int?
+    let stream = WebSocketStream(
+      to: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!), using: .tcp, host: "localhost",
+      path: "/", maximumMessageSize: 1024, prelude: UnixSocketTransport.stimdPrelude(loopbackOnly: true) { listening = $0 }
+    ) { events.append($0) }
+    for _ in 0..<100 where events.isEmpty && !peer.received.contains("\r\n\r\n") {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    stream.close()
+    peer.stop()
+    return (peer, events, listening)
+  }
+
+  @Test func declaresDesktopStartsTheListenerAndUpgradesOnlyAfterStimdHandsTheConnectionOver() async throws {
+    let (peer, events, listening) = try await run([
+      #"{"op":"hello","kind":"stimd","pid":1,"build":"3f9a1c0d22e8","version":"1.43.0"}"#,
+      #"{"op":"net","listening":true,"port":7801}"#, #"{"op":"net.connected"}"#,
+    ])
+    let lines = peer.received.split(separator: "\n", maxSplits: 3).map(String.init)
+    #expect(
+      lines.prefix(3) == [
+        #"{"kind":"desktop"}"#, #"{"op":"net.ensure","params":{"loopbackOnly":true}}"#, #"{"op":"net.connect"}"#,
+      ])
+    #expect(lines.count == 4 && lines[3].hasPrefix("GET / HTTP/1.1"))
+    #expect(listening == 7801)
+    #expect(events.isEmpty)
+  }
+
+  @Test func aListenerStimdCannotStartRefusesWithItsTextBeforeTheUpgrade() async throws {
+    let refusal = "stim-server 1.42.0 (Stim Desktop bundle, pid 42) holds port 7787; update Stim Desktop or quit it."
+    let (peer, events, listening) = try await run([
+      #"{"op":"hello","kind":"stimd","pid":1,"build":"3f9a1c0d22e8","version":"1.43.0"}"#,
+      #"{"op":"net","listening":false,"message":"\#(refusal)"}"#,
+    ])
+    #expect(!peer.received.contains("net.connect") && !peer.received.contains("GET /"))
+    #expect(listening == nil)
+    guard case .refused(let text)? = events.first else {
+      Issue.record("expected a refusal, got \(events)")
+      return
+    }
+    #expect(text == refusal)
+  }
+}

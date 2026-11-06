@@ -260,7 +260,7 @@ struct NoiseInteropTests {
     #expect(await Self.code { try await controller.request("action", stop) } == "forbidden")
   }
 
-  @Test func aStimDesktopHelloWithoutDesktopApiIsRefusedOverNoiseAndAnsweredOnTheLocalSocket() async throws {
+  @Test func aStimDesktopHelloWithoutDesktopApiIsRefusedOverNoiseAndAnsweredOnStimdsSocket() async throws {
     let server = try await RunningServer()
     defer { server.stop() }
     let payload = try await server.payload()
@@ -287,7 +287,8 @@ struct NoiseInteropTests {
     #expect(refusal.code == "protocol-unsupported")
 
     var local: [ServerTransportEvent] = []
-    let socket = UnixSocketTransport(path: server.stimHome + "/server/local.sock") { local.append($0) }
+    let record = try #require(EngineFiles.stimd(stimHome: server.stimHome).value)
+    let socket = UnixSocketTransport(path: record.socket, onListening: { _ in }) { local.append($0) }
     defer { socket.close() }
     socket.send(hello)
     for _ in 0..<400 where local.isEmpty { try await Task.sleep(for: .milliseconds(25)) }

@@ -646,7 +646,9 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   }
 }
 
-/// A WebSocket over the Unix socket stimd names in `$STIM_HOME/run/stimd.json`, reporting on the main actor.
+/// A WebSocket over the Unix socket stimd names in `$STIM_HOME/run/stimd.json`, reporting on the main actor. Before the
+/// upgrade it declares `kind: desktop`, asks stimd to start its network listener (`net.ensure`, whose port goes to
+/// `onListening`) and hands the connection to it (`net.connect`); a listener stimd cannot start refuses the connection.
 /// URLSession cannot reach a Unix socket, and Network.framework's WebSocket protocol aborts on a Unix endpoint before
 /// it sends the upgrade, so this frames a plain stream connection with `WebSocketFraming`.
 @MainActor public final class UnixSocketTransport: ServerTransport {
@@ -659,18 +661,24 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   public static func make(_ socket: URL, _ onEvent: @escaping @MainActor (ServerTransportEvent) -> Void)
     -> ServerTransport
   {
-    UnixSocketTransport(path: socket.path, onEvent: onEvent)
+    UnixSocketTransport(path: socket.path, onListening: { _ in }, onEvent: onEvent)
   }
 
-  init(path: String, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void) {
+  /// `loopbackOnly` asks for a listener that serves this Mac only, while Allow connections is off.
+  public init(
+    path: String, loopbackOnly: Bool = true, onListening: @escaping @MainActor (Int) -> Void,
+    onEvent: @escaping @MainActor (ServerTransportEvent) -> Void
+  ) {
     socket = WebSocketStream(
-      to: .unix(path: path), using: .tcp, host: "localhost", path: "/", maximumMessageSize: Self.maximumMessageSize
+      to: .unix(path: path), using: .tcp, host: "localhost", path: "/", maximumMessageSize: Self.maximumMessageSize,
+      prelude: Self.stimdPrelude(loopbackOnly: loopbackOnly, onListening: onListening)
     ) { event in
       switch event {
       case .message(.text, let payload): onEvent(.text(String(decoding: payload, as: UTF8.self)))
       case .message(.binary, let payload): onEvent(.data(payload))
       case .message: break
       case .closed(let description, _, _): onEvent(.closed(description))
+      case .refused(let text): onEvent(.refused(ServerError(code: "net-refused", message: text)))
       }
     }
   }
@@ -678,4 +686,32 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   public func send(_ text: String) { socket.send(.text, Data(text.utf8)) }
 
   public func close() { socket.close() }
+
+  /// The lines stimd's CLI socket reads before it hands the connection to its network listener.
+  static func stimdPrelude(loopbackOnly: Bool, onListening: @escaping @MainActor (Int) -> Void)
+    -> [WebSocketStream.PreludeStep]
+  {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = .sortedKeys
+    let line = { (fields: [String: JSONValue]) in
+      (try? encoder.encode(JSONValue.object(fields))).map { $0 + Data([10]) } ?? Data()
+    }
+    return [
+      // compat C7 permanent
+      .init(line: line(["kind": .string("desktop")])) { reply in
+        reply["op"] == .string("hello") ? nil : reply["message"]?.string ?? "stimd refused Stim Desktop."
+      },
+      // compat end
+      .init(line: line(["op": .string("net.ensure"), "params": .object(["loopbackOnly": .bool(loopbackOnly)])])) { reply in
+        guard reply["op"] == .string("net"), reply["listening"] == .bool(true),
+          let port = reply["port"]?.number.flatMap(ServerProtocol.exactInteger)
+        else { return reply["message"]?.string ?? "stimd did not start its network listener." }
+        onListening(port)
+        return nil
+      },
+      .init(line: line(["op": .string("net.connect")])) { reply in
+        reply["op"] == .string("net.connected") ? nil : reply["message"]?.string ?? "stimd's network listener stopped."
+      },
+    ]
+  }
 }

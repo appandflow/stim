@@ -109,7 +109,6 @@ final class ServerController: ObservableObject {
   private var failedAt: Date?
   private var failureKind: ServerFailureKind?
   private var retriesFailure = true
-  private var ensuringNet = false
   static let retryAfter: TimeInterval = 30
 
   static let devicesInterval: Duration = .seconds(10)
@@ -189,26 +188,11 @@ final class ServerController: ObservableObject {
     if connectionRefusal != message { connectionRefusal = message }
   }
 
-  /// Asks stimd for its network listener when the session opens and phones may connect.
-  func connectionOpened() {
-    if UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) { Task { _ = await ensureNet() } }
-  }
-
   func configure(environment: Task<[String: String], Never>, settingsEnvironment: [String: String]) {
     self.environment = environment
     self.settingsEnvironment = settingsEnvironment
     start()
     devicesPoller.start()
-    NotificationCenter.default.addObserver(
-      forName: UserDefaults.didChangeNotification, object: nil, queue: .main
-    ) { [weak self] _ in
-      MainActor.assumeIsolated {
-        guard let self, UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones), self.netPort == nil,
-          ServerSession.shared.isOpen
-        else { return }
-        Task { _ = await self.ensureNet() }
-      }
-    }
     NotificationCenter.default.addObserver(
       forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
     ) { [weak self] _ in
@@ -389,25 +373,12 @@ final class ServerController: ObservableObject {
     state = .off
   }
 
-  /// Asks stimd to start its network listener, which pairing, phones, shares and other machines need, and reads its
-  /// health. Returns the listener's port, or nil when stimd refused or Desktop has no open connection.
-  func ensureNet() async -> Int? {
-    if let netPort { return netPort }
-    guard !ensuringNet, let client = ServerSession.shared.client, client.isOpen else { return nil }
-    ensuringNet = true
-    defer { ensuringNet = false }
-    do {
-      let result = try await client.request("net.ensure", [:])
-      guard case .object(let fields) = result, case .number(let port)? = fields["port"], (1...65535).contains(Int(port))
-      else { return nil }
-      netPort = Int(port)
-      connectionError = nil
-      refresh()
-      return netPort
-    } catch {
-      connectionError = error.localizedDescription
-      return nil
-    }
+  /// stimd's network listener answered `net.ensure` on `port` for Desktop's connection; its `/health` gives Tailscale
+  /// and route state.
+  func netListening(_ port: Int) {
+    guard netPort != port else { return }
+    netPort = port
+    refresh()
   }
 
   func setUpConnection() async -> String? {
@@ -419,9 +390,6 @@ final class ServerController: ObservableObject {
     guard let client = ServerSession.shared.client, client.isOpen else {
       connectionError = "The local Desktop connection is not ready. Try again."
       return connectionError
-    }
-    guard await ensureNet() != nil else {
-      return connectionError ?? "The Stim engine did not start its network listener. Try again."
     }
     do {
       _ = try await client.request("route.setup", [:])
@@ -437,7 +405,7 @@ final class ServerController: ObservableObject {
       throw ServerError(code: "not-connected", message: "Turn on Allow connections to pair a phone.")
     }
     let cli = await cli()
-    guard isRunning, let port = await ensureNet(), case .ready(let before) = await StimServerCLI.health(port: port) else {
+    guard isRunning, let port = netPort, case .ready(let before) = await StimServerCLI.health(port: port) else {
       throw ServerError(code: "not-connected", message: "Could not verify the phone connection. Try again.")
     }
     if before.loopbackOnly == true {

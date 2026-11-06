@@ -161,15 +161,18 @@ import StimKit
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: record.socket), clientName: Self.clientName, clientVersion: version,
-      bootstrap: { DesktopBootstrapKey.read(stimHome: home) })
+      bootstrap: { DesktopBootstrapKey.read(stimHome: home) },
+      transport: { [weak controller] socket, onEvent in
+        UnixSocketTransport(
+          path: socket.path, loopbackOnly: !UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones),
+          onListening: { controller?.netListening($0) }, onEvent: onEvent)
+      })
     client.onState = { [weak self, weak client] state in
       guard let self, let client, client === self.connection else { return }
       self.state = state
       switch state {
       case .refused(let refusal): controller.connectionRefused(refusal.message)
-      case .open:
-        controller.connectionRefused(nil)
-        controller.connectionOpened()
+      case .open: controller.connectionRefused(nil)
       case .idle, .connecting, .waiting: break
       }
     }
