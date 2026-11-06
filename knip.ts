@@ -39,6 +39,10 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
       // supervisor/server-bare.ts loads @stim-cli/metro with createRequire at runtime.
       ignoreDependencies: production ? ['@stim-cli/metro'] : [],
     },
+    'packages/agent-driver': {
+      // The source imports @stim-cli/core types only, but the published declarations need the package installed.
+      ignoreDependencies: production ? ['@stim-cli/core'] : [],
+    },
     'packages/metro': {
       // index.ts loads the metro-cache peer dependency with createRequire at runtime.
       ignoreDependencies: production ? ['metro-cache'] : [],
