@@ -1,6 +1,6 @@
 import { archivedDeviceRoute, archiveError, newestArchive, removedByWords, workspaceArchiveDecision } from './archived';
 import { RequestError } from './connection';
-import { receiveStatus } from '../../mock-server/receive-fixtures';
+import { receiveStatus } from '../../../../packages/core/__tests__/fixtures/receive-fixtures';
 import captured from '../../mock-server/fixtures/status.json';
 import type { StatusPayload } from '@/protocol/types';
 

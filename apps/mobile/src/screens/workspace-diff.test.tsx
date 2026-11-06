@@ -3,7 +3,7 @@ import 'react-native-unistyles/mocks';
 import { act, render } from '@testing-library/react-native';
 import { i18n } from '@lingui/core';
 import { I18nProvider } from '@lingui/react';
-import { resultEnumCases, replaceReceivedField } from '../../mock-server/receive-fixtures';
+import { resultEnumCases, replaceReceivedField } from '../../../../packages/core/__tests__/fixtures/receive-fixtures';
 import type { BuildPlan } from '@/protocol/types';
 import '@/design/unistyles';
 import { WorkspaceDiff } from './workspace-diff';

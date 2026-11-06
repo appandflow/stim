@@ -1,5 +1,9 @@
 import capturedStatus from '../../mock-server/fixtures/status.json';
-import { receiveStatus, replaceReceivedField, statusEnumPaths } from '../../mock-server/receive-fixtures';
+import {
+  receiveStatus,
+  replaceReceivedField,
+  statusEnumPaths,
+} from '../../../../packages/core/__tests__/fixtures/receive-fixtures';
 import { deviceTileState } from '@/lib/device-tile';
 import { agentLabel } from '@/lib/agents';
 import {

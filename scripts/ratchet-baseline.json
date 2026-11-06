@@ -24,7 +24,7 @@
   "apps/mobile": {
     "src": {
       "as": 66,
-      "nonNull": 81,
+      "nonNull": 77,
       "refusalRemedy": 0
     },
     "test": {
@@ -95,7 +95,7 @@
     },
     "test": {
       "as": 21,
-      "nonNull": 19
+      "nonNull": 23
     }
   },
   "packages/server": {
