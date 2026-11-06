@@ -305,7 +305,7 @@ describe('inspectBuildMachines', () => {
       expect(findings).toEqual([
         expect.objectContaining({
           fix: expect.stringMatching(
-            /^On mini, run `stim-server service update --release 9\.9\.9` \(add `--label <name>` for a custom service label; .*\), then run `stim remote add mini` on laptop\.$/,
+            /^On mini, run `stim service update --release 9\.9\.9` \(add `--label <name>` for a custom service label; .*\), then run `stim remote add mini` on laptop\.$/,
           ),
         }),
       ]);
@@ -432,7 +432,7 @@ describe('inspectBuildMachines', () => {
       { code: 'build-machine-stim-build', level: 'cost' },
       { code: 'build-machine-busy', level: 'note' },
     ]);
-    expect(findings[0]!.fix).toContain('run `stim-server service update --release <version>`');
+    expect(findings[0]!.fix).toContain('run `stim service update --release <version>`');
   });
 
   it('reports a package Gradle downloads as a note that does not stop the build, and a blocker with commands otherwise', async () => {

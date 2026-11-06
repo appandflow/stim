@@ -351,7 +351,7 @@ ON ANOTHER MAC
 stim macos --remote <machine> or macos.remote builds the Debug app on this Mac and runs it on an
 approved remote Mac over the tailnet, without SSH. The Mac must be listed
 in remote.machines and approved: stim remote add <machine> adds it and makes a
-setup ticket, a person on that Mac runs stim-server setup with that ticket and
+setup ticket, a person on that Mac runs stim setup with that ticket and
 expiry (guide settings), and stim remote list then pins that Mac's stim-server key. Stim goes ahead
 only with the stim-server that proves it holds that key.
 A refusal or an unreachable host fails the command; with a named Mac it never launches here
@@ -429,10 +429,10 @@ the placement stays recorded; restore the connection and run stim stop again.
 Viewing and controlling the hosted app from a phone needs Screen & System Audio
 Recording and Device Control and Data Access (Accessibility on macOS 26 and
 earlier), granted once on the host to the app that runs stim-server, not to the
-hosted app. stim-server service install runs the server under the signed Stim
+hosted app. stim service install runs the server under the signed Stim
 Host app (dev.stim.host, installed in ~/Applications) and shows
 macOS's own requests on that Mac's screen; a person there approves them.
-stim-server service status shows the grants, and stim doctor here reports an
+stim service status shows the grants, and stim doctor here reports an
 approved host that lacks them. A server started by Stim Desktop uses Desktop's
 grants.
 

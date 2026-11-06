@@ -914,7 +914,7 @@ export class BuildHost {
         entry.settled = result.settled;
         if (!result.settled)
           throw new Error(
-            "Native artifact lookup cleanup is unresolved; inspect this machine's stim-server logs before retrying.",
+            "Native artifact lookup cleanup is unresolved; inspect this machine's server logs before retrying.",
           );
         if (!result.identity || signal.aborted || this.closed || !(this.options.allowed?.(client) ?? true)) return null;
         const artifact = await cache.lookup(result.identity, signal);
@@ -931,7 +931,7 @@ export class BuildHost {
     } catch (error) {
       console.error(`stim-server: Completed artifact lookup failed for ${client}/${repo}: ${String(error)}`);
       throw new Error(
-        'This machine could not verify the completed artifact inputs or their cleanup; inspect its stim-server logs before retrying.',
+        'This machine could not verify the completed artifact inputs or their cleanup; inspect its server logs before retrying.',
         { cause: error },
       );
     }

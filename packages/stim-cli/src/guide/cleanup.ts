@@ -592,7 +592,7 @@ IN USE
   own workspace's native-run.lock; gc lists it with the command that removes
   it. \`worktree remove\` re-checks uncommitted and unpushed work under its
   removal locks, just before it reclaims anything. It refuses, even with
-  --force, a worktree that an installed stim-server service runs from
+  --force, a worktree that an installed stim service runs from
   (STIM_WORKTREE_SERVICE; see guide errors). A project root whose
   existence cannot be read (a permission error) is never treated as deleted.
 
@@ -664,7 +664,7 @@ SWEEPING FINISHED WORKTREES
   down. A simulator that \`stim stop\` left booted for its grace period
   (\`guide lifecycle pool\`) does not keep it. A worktree that holds the running stim or the realpath of
   the \`stim\` on PATH is in use too, and \`stim worktree remove\` refuses it
-  even with --force, as it refuses an installed stim-server service's checkout.
+  even with --force, as it refuses an installed stim service's checkout.
 
   RECENT ACTIVITY keeps a worktree gc would otherwise remove until
   gc.worktreeGraceMinutes (120 by default, \`guide settings\`) have passed
@@ -1386,7 +1386,7 @@ WORKTREE DEPENDENCIES
   stays runnable. Otherwise a worktree keeps them while it is in use (its
   dev server runs, a native run or build holds it), while it was used in
   the last 2 minutes (a git index, HEAD or reflog write, a Stim state or
-  log write, or a write at the top of the directory), while git tracks a file in them, while a stim-server service
+  log write, or a write at the top of the directory), while git tracks a file in them, while a stim service
   or the stim on PATH runs from it, while a live process has its command
   line or working directory in it, and when the running processes cannot be
   listed (always on Windows). It also keeps them when \`stim worktree warm\`

@@ -79,7 +79,7 @@ async function buildDev(candidate: string, sources: string): Promise<void> {
     await run('/usr/bin/xcode-select', ['-p'], 5000);
   } catch {
     throw new ServiceError(
-      `${FLAVORS.dev.name} is built with Xcode Command Line Tools. Install them with \`xcode-select --install\`, then run \`stim-server service install\` again.`,
+      `${FLAVORS.dev.name} is built with Xcode Command Line Tools. Install them with \`xcode-select --install\`, then run \`stim service install\` again.`,
     );
   }
   const contents = join(candidate, 'Contents');

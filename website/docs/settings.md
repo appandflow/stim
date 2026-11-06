@@ -136,9 +136,7 @@ higher-precedence layers that name no provider, and lower-precedence layers
 that name the same provider resolved from the same directory. A machine layer can therefore override one option
 of a committed provider, but options written for a different provider, or added
 by a lower layer that names no provider, are ignored. Stim reads
-the module for `stim ios` and `stim android`; Metro uses it only when the
-project's own `metro.config.js` calls `sharedCacheStores()` from
-`@stim-cli/metro`.
+the module for `stim ios` and `stim android`. Metro keeps its local cache.
 
 `metro.warmupUrl.ios` and `metro.warmupUrl.android` replace the bundle URL that
 `ios` and `android` prefetch while the native build runs. Unset, Stim uses the
@@ -454,14 +452,14 @@ forgets its credentials. `stim settings set remote.machines` replaces the whole
 list. Build and device-host approvals are
 separate, and a remote machine is used only for what it approved; a listed machine that
 never granted one is not used for it, and `stim remote list` reports it. `stim remote add` makes a setup
-ticket and prints the `stim-server setup` command a person runs on the remote
+ticket and prints the `stim setup` command a person runs on the remote
 machine to approve this one; one ticket covers builds and hosting. Hosting approval grants no
 read, control or build access. [`stim macos --remote <placement>`](./macos.md#run-it-on-another-mac)
 or `macos.remote` runs a macOS app on an approved machine. [iOS placement](./owned-devices.md#run-ios-on-another-mac) uses
 `stim ios|android --remote <placement>` or `ios.remote` / `android.remote` and the same approval. `auto` places on an approved Mac when this machine is full or busy; `remote` and `remote-only` try the approved Macs first. To view or control a hosted macOS app, a person on
 that Mac approves Screen & System Audio Recording and Device Control and Data Access
 (Accessibility on macOS 26 and earlier) for Stim Host, the app
-`stim-server service install` runs the server under.
+`stim service install` runs the server under.
 
 Credentials stay private in `$STIM_HOME/device-host-machines.json`. Doctor
 reports approval under `deviceHosts` in JSON. The first connection after
@@ -489,7 +487,7 @@ For builds, the same `remote.machines` list names the machines on your tailnet
 that may build for this one, optionally with the port of their
 `tailscale serve` route (`janics-mac-mini:7444`; default 7443).
 `stim remote add <machine>`, from any directory, makes a setup ticket for that
-machine and prints the `stim-server setup` command a person runs there to
+machine and prints the `stim setup` command a person runs there to
 approve this one; `stim doctor --fix` in an app directory does the same for every
 named machine. The next `stim remote list` or doctor run pins that machine's stim-server key, and
 Stim connects only to a server that proves it holds that key. Doctor reports each remote machine's build pairing state under `remoteMachines`.
@@ -535,7 +533,7 @@ low disk, busy workers, sync/build failures, artifact fetch/store failures and
 a checkout changing during the build fail with `STIM_OFFLOAD_REFUSED`. The
 message names the worker and the concrete reason. Run `stim remote add <machine>` to
 ask for build access if not approved. Check `stim remote list`;
-a person on the worker approves this machine by running the `stim-server setup`
+a person on the worker approves this machine by running the `stim setup`
 command it printed. To change placement,
 rerun with `--remote-build auto`, `remote` or `local`.
 
@@ -699,7 +697,7 @@ machine has less than 2 GB of memory available. Deleting the
 client's directory under the worker root stops it too.
 
 To keep stim-server running on a remote machine across logins, run
-`stim-server service install --serve` there. It installs a per-user LaunchAgent
+`stim service install --serve` there. It installs a per-user LaunchAgent
 that starts at login on macOS, a systemd user service on Linux (with
 `sudo loginctl enable-linger $USER` so it starts at boot), or a scheduled task
 on Windows that starts at logon, and restarts the server if it exits. `--serve` adds the
@@ -707,7 +705,7 @@ tailnet-only `tailscale serve` route (port 7443, or the next free one). `--path-
 `--env KEY=VALUE` pin a PATH entry or a variable, such as a private CocoaPods
 install, that stim-server's toolchain discovery does not find.
 The service runs under the Stim Host app, which install builds in
-`~/Applications` with Xcode Command Line Tools. `stim-server service status`
+`~/Applications` with Xcode Command Line Tools. `stim service status`
 reports the process, its health, the route, Stim Host's permissions and
 whether its Stim build matches the `stim` on PATH. Doctor points to this
 command when a named machine does not answer.
@@ -715,14 +713,13 @@ command when a named machine does not answer.
 Offload needs Stim releases with the same build compatibility version on both
 machines. It changes only in a release that changes what a worker builds, how it
 builds, or the build messages, so two machines on different Stim builds usually
-offload to each other. A stim-server too old to report its compatibility version
-needs the same Stim build as this machine. To move the remote machine's
+offload to each other. To move the remote machine's
 service to another build, run one of these there:
 
 ```bash
-stim-server service update --release 1.14.0   # an exact release from npm
-stim-server service update --from ./packed     # pnpm pack output of a checkout
-stim-server service rollback                   # back to the previous server
+stim service update --release 1.14.0   # an exact release from npm
+stim service update --from ./packed     # pnpm pack output of a checkout
+stim service rollback                   # back to the previous server
 ```
 
 `--release` installs that exact version from the public npm registry, and
@@ -752,12 +749,12 @@ release the port. Uninstall does not wait for the port. If stopping the old job
 or starting the new one fails, install restores the previous plist and attempts
 to restart a previously loaded LaunchAgent; if it cannot, it prints the
 launchctl bootout/bootstrap remedy. A running LaunchAgent does not prove server readiness: check its health in
-`stim-server service status` and the reported log when readiness is unavailable.
+`stim service status` and the reported log when readiness is unavailable.
 The server listens before it touches the Stim home. A read-only child process
 reads the Stim home, server and recording directories; until it returns,
 `/health` answers 503 with `startup.state` `pending`. A read that does not
 return within 10 seconds, plus up to one second to stop the child, leaves the
-server listening and `degraded`: `/health` and `stim-server service status` name
+server listening and `degraded`: `/health` and `stim service status` name
 the reason, and no status followers, watchers, native helpers or recorder start.
 The server reads again every 30 seconds and serves as soon as a read returns,
 without changing ownership claims or recordings. It does not restore an

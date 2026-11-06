@@ -292,7 +292,7 @@ function hostedPlacement(dir: string, platform: string, slot = 'default') {
 export interface ServerOptions {
   /** Private bootstrap received from the Desktop parent; never a persisted pairing capability. */
   desktopBootstrap?: DesktopBootstrap;
-  /** What `stim-server setup` runs with when Stim Desktop approves a request here; `defaultSetupDeps` by default. */
+  /** What `stim setup` runs with when Stim Desktop approves a request here; `defaultSetupDeps` by default. */
   setupDeps?: () => SetupDeps;
   host?: { executable: string; name: string };
   name: string;
@@ -2248,7 +2248,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           access === undefined ? 'unauthorized' : 'forbidden',
           access === undefined
             ? 'This machine has no pairing for this client. Pair again.'
-            : `This machine has not approved this client for ${access}. Approve it with \`stim-server setup\` there.`,
+            : `This machine has not approved this client for ${access}. Approve it with \`stim setup\` there.`,
           CLOSE_REFUSED,
         );
       }
@@ -2348,7 +2348,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!canControl(session)) {
         return refuseControl(
           'forbidden',
-          `This device can only read. On the machine, run \`stim-server devices grant ${session.id} --control\` to let it control devices.`,
+          `This device can only read. On the machine, run \`stim pairings grant ${session.id} --control\` to let it control devices.`,
         );
       }
       const parsed = parseControlBegin(params);
@@ -3237,7 +3237,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!canControl(session)) {
         return refuseAction(
           'forbidden',
-          `This device can only read. On the machine, run \`stim-server devices grant ${session.id} --control\` to let it run actions.`,
+          `This device can only read. On the machine, run \`stim pairings grant ${session.id} --control\` to let it run actions.`,
         );
       }
       const parsed = parseAction(params);
@@ -4200,7 +4200,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!canControl(session)) {
         return refuseSetting(
           'forbidden',
-          `This device can only read. On the machine, run \`stim-server devices grant ${session.id} --control\` to let it change settings.`,
+          `This device can only read. On the machine, run \`stim pairings grant ${session.id} --control\` to let it change settings.`,
         );
       }
       if (typeof enabled !== 'boolean') return refuseSetting('bad-request', 'params.enabled must be true or false.');
@@ -5401,7 +5401,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   ): Promise<void> {
     const limitKey = peer ?? 'local';
     /**
-     * `unknown-secret` is not a failure: a requester polls with its setup ticket until `stim-server setup` stores it,
+     * `unknown-secret` is not a failure: a requester polls with its setup ticket until `stim setup` stores it,
      * and a 16-byte lookup reveals nothing without the PSK. It has its own, far higher, limit per address.
      */
     const refuse = (code: string) => {

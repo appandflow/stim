@@ -91,14 +91,14 @@ function stimOnPath(): string | null {
 }
 
 /**
- * Why something installed in or running from `folder` still needs it, or null: an installed stim-server service, the
+ * Why something installed in or running from `folder` still needs it, or null: an installed stim service, the
  * `stim` on PATH, or a live process whose command line or working directory is inside it.
  */
 export function runningFromReason(folder: string, running: RunningProcesses | null): string | null {
   const root = canonicalPath(folder);
   const inside = (path: string) => path === root || path.startsWith(`${root}${sep}`);
   const service = serviceRunningFrom(root, canonicalPath);
-  if (service) return `the stim-server service ${service.label} runs from it`;
+  if (service) return `the stim service ${service.label} runs from it`;
   const stim = stimOnPath();
   if (stim && inside(stim)) return `the stim on PATH runs from it (${stim})`;
   if (!running) return 'the running processes cannot be listed to prove nothing runs from it';

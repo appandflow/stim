@@ -330,7 +330,7 @@ export async function startBareServer({
       src: 'metro',
       level: 'warn',
       event: 'reporter_missing',
-      msg: '@stim-cli/metro is not installed in this project or beside Stim, so bundler and client logs will not be captured. Install it as a devDependency to get them.',
+      msg: 'The bundled Metro reporter is unavailable, so bundler and client logs will not be captured. Reinstall stim with npm i -g stim.',
     });
     reporter = { update() {} };
   }

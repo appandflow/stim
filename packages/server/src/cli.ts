@@ -382,7 +382,7 @@ export function rename(id: string, name: string): void {
   const outcome = renameDevice(id, name);
   if (outcome === 'unknown') {
     refuseUnreadable(id);
-    fail(`no paired device or approved client ${id}. Run \`stim-server devices\` to list them.`);
+    fail(`no paired device or approved client ${id}. Run \`stim pairings\` to list them.`);
   }
   if (outcome === 'invalid-name') fail('the name must be 1 to 64 characters of printable text on one line.');
   console.log(`Renamed ${id}.`);
@@ -484,11 +484,11 @@ export function grant(id: string, values: { read?: boolean; control?: boolean })
   const outcome = grantDevice(id, [...capabilities]);
   if (outcome === 'unknown') {
     refuseUnreadable(id);
-    fail(`no paired device or approved client ${id}. Run \`stim-server devices\` to list them.`);
+    fail(`no paired device or approved client ${id}. Run \`stim pairings\` to list them.`);
   }
   if (outcome === 'build-mismatch' || outcome === 'device-host-mismatch') {
     const requested = outcome === 'build-mismatch' ? 'build' : 'device-host';
-    fail(`${id} is a ${requested} client, approved by setup; revoke it with \`stim-server devices revoke ${id}\`.`);
+    fail(`${id} is a ${requested} client, approved by setup; revoke it with \`stim pairings revoke ${id}\`.`);
   }
   console.log(`${id} can now ${SCOPE_TEXT[scope]}.`);
 }
@@ -534,7 +534,7 @@ export function listPairings(json: boolean): void {
 export function revoke(id: string): void {
   if (!revokeDevice(id)) {
     refuseUnreadable(id);
-    fail(`no paired device ${id}. Run \`stim-server devices\` to list them.`);
+    fail(`no paired device ${id}. Run \`stim pairings\` to list them.`);
   }
   console.log(`Revoked ${id}.`);
 }

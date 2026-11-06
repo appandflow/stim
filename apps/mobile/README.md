@@ -1,7 +1,7 @@
 # Stim Mobile
 
 An Expo app for watching Stim workspaces from a phone. It pairs with
-the Stim server on a machine (`stim-server`, from the `@stim-cli/server` package)
+the Stim server on a machine (`stim-server`, from the `stim` package)
 and shows what Stim Desktop shows. A phone the machine grants control can also
 reload and stop a workspace:
 
@@ -131,10 +131,10 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   with **Rename** and **Remove** on each row and **Pair** in the header. While
   connected, a row also shows the machine's own name when this phone labels it
   differently, and this phone's record on that machine (the name and id
-  `stim-server devices` lists, from `hello`'s `device`). **Rename** changes only
+  `stim pairings` lists, from `hello`'s `device`). **Rename** changes only
   the name this phone shows; renaming this phone's record on the machine needs
-  `stim-server devices rename <id> <name>` there. **Remove** forgets the pairing
-  on this phone; its confirmation first shows the `stim-server devices revoke <id>`
+  `stim pairings rename <id> <name>` there. **Remove** forgets the pairing
+  on this phone; its confirmation first shows the `stim pairings revoke <id>`
   command that revokes this phone on the machine, which keeps listing it until then. A
   connected machine's row shows the pairing's scope, **Can control** or
   **Read-only** (see [Read-only pairings](#read-only-pairings)).
@@ -799,7 +799,7 @@ its sheet. Wherever the app
 would offer a control action, a read-only pairing shows it disabled with a
 short reason, and **Allow Control** explains the upgrade: in Stim Desktop on
 the machine, **Settings**, **Phones**, turn on **Allow Control** for this phone,
-or run `stim-server devices grant <id> --control` with this phone's id. A
+or run `stim pairings grant <id> --control` with this phone's id. A
 connection learns its scope only from `hello`, so **Reconnect** opens a new
 connection to pick up the grant. When the server refuses control or an action
 with `forbidden`, or ends a control session for that reason, the app
@@ -1207,7 +1207,7 @@ stim start
 stim ios
 ```
 
-`pnpm run dev:pair` runs `stim-server pair --json` against the server running on
+`pnpm run dev:pair` runs `stim pair --json` against the server running on
 this machine and writes its pairing code to `.env.local`:
 
 ```bash
@@ -1227,13 +1227,13 @@ Metro picks up a rewritten `.env.local`; reload the app after `dev:pair`.
 - `--control` pairs with control, so the app can run actions. Without it the
   pairing is read-only. The mock server ignores it.
 - `--port <n>` targets a server on another port than 7787, such as a
-  `stim-server --port <n>` running with a scratch `STIM_HOME`.
+  `stim serve --port <n>` running with a scratch `STIM_HOME`.
 - `--endpoint <url>` sets the endpoint the app connects to, such as the
   tailnet endpoint `stim-server` prints. The default, `ws://127.0.0.1:<port>`,
   reaches the machine from the iOS Simulator but not from an Android emulator.
   The endpoint must be one the device can reach.
 
-Revoke the development pairing when you are done; `stim-server devices` lists it.
+Revoke the development pairing when you are done; `stim pairings` lists it.
 
 ## Variants
 

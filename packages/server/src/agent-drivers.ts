@@ -47,7 +47,7 @@ export async function configuredAgentDriver(
   if ('unavailable' in loaded) {
     process.stderr.write(`The ${name} agent driver could not load: ${loaded.unavailable}\n`);
     throw new AgentDriverUnavailable(
-      `The ${name} agent driver could not load on the hosting Mac. Check its stim-server log.`,
+      `The ${name} agent driver could not load on the hosting Mac. Check its server log.`,
     );
   }
   return loaded.driver;

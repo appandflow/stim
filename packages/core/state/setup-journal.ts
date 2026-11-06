@@ -4,7 +4,7 @@ import { setupJournalFile } from './paths.ts';
 export type SetupCapability = 'build' | 'device-host';
 
 /**
- * A `stim-server setup` run's progress, named by the `journal` value derived from its ticket. It holds no secret, so it
+ * A `stim setup` run's progress, named by the `journal` value derived from its ticket. It holds no secret, so it
  * is served to whoever names it.
  */
 export interface SetupJournal {
