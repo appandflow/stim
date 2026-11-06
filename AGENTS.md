@@ -342,13 +342,9 @@ outside it moves to its own issue and pull request.
   `STIM_CLAIM_UNAVAILABLE`; it never runs the guarded operation unprotected.
   Short synchronous transactions use core `withDirLock`, which shares that
   claim protocol at `<lock>.claims` and retains reentrant nesting and bounded
-  waiting. It holds that claim while acquiring, using, and releasing the
-  legacy-visible lock directory. Recover a recognized compatibility marker
-  only under that exclusive claim, and remove a visible directory only after
-  successfully unlinking the matching marker. Keep
-  subprocess work outside short locks and protect it with a child-aware claim.
-  An empty or legacy lock directory has no verifiable owner and stays blocked;
-  only a complete claim whose owner is proven gone is automatically recovered.
+  waiting. The claim is the only lock state. Keep subprocess work outside short
+  locks and protect it with a child-aware claim. Only a complete claim whose
+  owner is proven gone is automatically recovered.
   Core owns the `unique-pid` dependency and process-identity implementation;
   cache packages remain usable without the CLI.
   Removing a claim set is `clearFreeClaimSet`, which takes the set's own claim

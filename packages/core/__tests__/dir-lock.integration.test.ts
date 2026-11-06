@@ -11,55 +11,9 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { withDirLock, withDirLockAsync, withDirLockTransaction } from '../index.ts';
-import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
-
-const faults = vi.hoisted(() => ({
-  created: null as null | ((path: string) => void),
-  creating: null as null | ((path: string) => void),
-  listing: null as null | ((path: string) => void),
-  renaming: null as null | ((from: string, to: string) => void),
-  removing: null as null | ((path: string) => void),
-  removed: null as null | ((path: string) => void),
-  writing: null as null | ((path: string) => void),
-}));
-
-vi.mock('node:fs', async (importOriginal) => {
-  const fs = await importOriginal<typeof import('node:fs')>();
-  return {
-    ...fs,
-    mkdirSync: (...args: Parameters<typeof fs.mkdirSync>) => {
-      faults.creating?.(String(args[0]));
-      const result = fs.mkdirSync(...args);
-      faults.created?.(String(args[0]));
-      return result;
-    },
-    readdirSync: (...args: Parameters<typeof fs.readdirSync>) => {
-      faults.listing?.(String(args[0]));
-      return fs.readdirSync(...args);
-    },
-    renameSync: (...args: Parameters<typeof fs.renameSync>) => {
-      faults.renaming?.(String(args[0]), String(args[1]));
-      return fs.renameSync(...args);
-    },
-    rmSync: (...args: Parameters<typeof fs.rmSync>) => {
-      faults.removing?.(String(args[0]));
-      fs.rmSync(...args);
-      faults.removed?.(String(args[0]));
-    },
-    writeFileSync: (...args: Parameters<typeof fs.writeFileSync>) => {
-      faults.writing?.(String(args[0]));
-      return fs.writeFileSync(...args);
-    },
-    unlinkSync: (...args: Parameters<typeof fs.unlinkSync>) => {
-      fs.unlinkSync(...args);
-      faults.removed?.(String(args[0]));
-    },
-  };
-});
-
-const KILLED_EXIT = process.platform === 'win32' ? [1, null] : [null, 'SIGKILL'];
+import { readClaimSet } from '../ownership-claim.ts';
 
 const CORE_URL = new URL('../index.ts', import.meta.url).href;
 const CHILD_SCRIPT = `
@@ -82,22 +36,17 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  faults.created = null;
-  faults.creating = null;
-  faults.listing = null;
-  faults.renaming = null;
-  faults.removing = null;
-  faults.removed = null;
-  faults.writing = null;
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
 });
 
 test('a competing process cannot take an aged lock while its holder is inside', () => {
   withDirLock(lock, () => {
-    const ownerFiles = readdirSync(lock);
+    const [owner] = readClaimSet(`${lock}.claims`).live;
+    expect(owner).toBeDefined();
+    expect(existsSync(lock)).toBe(false);
     const old = new Date(Date.now() - 60_000);
-    utimesSync(lock, old, old);
+    utimesSync(owner!.path, old, old);
     const output = execFileSync(process.execPath, ['--input-type=module', '-e', CHILD_SCRIPT, CORE_URL, lock], {
       env: process.env,
       encoding: 'utf8',
@@ -105,77 +54,23 @@ test('a competing process cannot take an aged lock while its holder is inside', 
     });
 
     expect(JSON.parse(output)).toEqual({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock });
-    expect(readdirSync(lock)).toEqual(ownerFiles);
+    expect(readClaimSet(`${lock}.claims`).live).toEqual([owner]);
   });
 
-  expect(existsSync(lock)).toBe(false);
   expect(withDirLock(lock, () => 'released')).toBe('released');
 });
 
-test.each(['empty', 'legacy'])('an unidentified %s directory needs explicit removal even when it is old', (kind) => {
+test('an existing directory does not participate in locking and is left untouched', () => {
   mkdirSync(lock);
-  if (kind === 'legacy') writeFileSync(join(lock, 'old-owner-token'), '');
-  const old = new Date(Date.now() - 60_000);
-  utimesSync(lock, old, old);
-  const body = vi.fn<() => void>();
-
-  let refusal: (Error & { code?: string; lockPath?: string }) | undefined;
-  try {
-    withDirLock(lock, body, { waitMs: 0 });
-  } catch (error) {
-    refusal = error as Error & { code?: string; lockPath?: string };
-  }
-  expect(refusal).toMatchObject({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock });
-  expect(body).not.toHaveBeenCalled();
-  expect(existsSync(lock)).toBe(true);
-
-  const remedy = refusal!.message.split('\n  ').at(-1)!;
-  expect(remedy).toMatch(/^rm -rf /);
-  if (process.platform === 'win32') rmSync(lock, { recursive: true });
-  else execFileSync('sh', ['-c', remedy]);
-  expect(withDirLock(lock, () => 'recovered')).toBe('recovered');
-});
-
-test.each(['before', 'after'])(
-  'a marker write that fails %s creating the file leaves no lock directory behind',
-  (when) => {
-    faults.writing = (path) => {
-      if (dirname(path) !== lock) return;
-      faults.writing = null;
-      if (when === 'after') writeFileSync(path, '');
-      throw Object.assign(new Error(`ENOSPC: no space left on device, open '${path}'`), { code: 'ENOSPC' });
-    };
-    const body = vi.fn<() => void>();
-
-    expect(() => withDirLock(lock, body)).toThrow(expect.objectContaining({ code: 'ENOSPC' }));
-    expect(body).not.toHaveBeenCalled();
-    expect(existsSync(lock)).toBe(false);
-    expect(withDirLock(lock, () => 'next', { waitMs: 0 })).toBe('next');
-  },
-);
-
-describe.skipIf(process.platform !== 'win32')('a lock directory removed by hand while a waiter polls', () => {
-  const accessDenied = (syscall: string, path: string): never => {
-    throw Object.assign(new Error(`EPERM: operation not permitted, ${syscall} '${path}'`), { code: 'EPERM', syscall });
-  };
-
-  test.each(['mkdir', 'scandir'])(
-    'answers %s with access denied once and the waiter takes the lock next',
-    (syscall) => {
-      mkdirSync(lock);
-      const deny = (path: string) => {
-        if (path !== lock) return;
-        faults.creating = null;
-        faults.listing = null;
-        rmSync(lock, { recursive: true });
-        accessDenied(syscall, path);
-      };
-      if (syscall === 'mkdir') faults.creating = deny;
-      else faults.listing = deny;
-      expect(withDirLock(lock, () => 'taken', { pollMs: 1 })).toBe('taken');
-      expect(existsSync(lock)).toBe(false);
-    },
-  );
+  writeFileSync(join(lock, 'old-owner-token'), 'keep');
+  const entries = readdirSync(lock);
+  withDirLock(lock, () => {
+    expect(contender()).toEqual({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock });
+    expect(readdirSync(lock)).toEqual(entries);
+  });
+  expect(readdirSync(lock)).toEqual(entries);
+  expect(readFileSync(join(lock, 'old-owner-token'), 'utf8')).toBe('keep');
+  expect(withDirLock(lock, () => 'released', { waitMs: 0 })).toBe('released');
 });
 
 function contender(): unknown {
@@ -188,49 +83,6 @@ function contender(): unknown {
   );
 }
 
-test('a contender cannot enter the empty root before the first owner publishes its claim', () => {
-  faults.created = (path) => {
-    if (path !== lock) return;
-    faults.created = null;
-    expect(contender()).toEqual({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock });
-    expect(readdirSync(lock)).toEqual([]);
-  };
-  expect(withDirLock(lock, () => 'published')).toBe('published');
-  expect(existsSync(lock)).toBe(false);
-});
-
-test('a contender cannot enter the empty root between claim removal and directory removal', () => {
-  faults.removed = (path) => {
-    if (!path.startsWith(join(lock, '.stim-claim-'))) return;
-    faults.removed = null;
-    expect(contender()).toEqual({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock });
-  };
-  withDirLock(lock, () => {});
-  expect(existsSync(lock)).toBe(false);
-  expect(withDirLock(lock, () => 'released')).toBe('released');
-});
-
-test('a losing publisher does not strand an empty lock after the winning owner releases', () => {
-  let winner: ClaimHandle | undefined;
-  let losingStaging: string | undefined;
-  faults.renaming = (from, to) => {
-    if (basename(to) !== 'exclusive') return;
-    faults.renaming = null;
-    losingStaging = from;
-    winner = tryAcquireClaim({ root: dirname(to), mode: 'exclusive' }).acquired;
-    expect(winner).toBeDefined();
-  };
-  faults.removing = (path) => {
-    if (path !== losingStaging) return;
-    faults.removing = null;
-    releaseClaim(winner);
-  };
-
-  expect(withDirLock(lock, () => 'acquired', { waitMs: 0 })).toBe('acquired');
-  expect(winner).toBeDefined();
-  expect(existsSync(lock)).toBe(false);
-});
-
 test('nested calls retain the outer claim when the inner body throws', () => {
   withDirLock(lock, () => {
     expect(() =>
@@ -240,7 +92,6 @@ test('nested calls retain the outer claim when the inner body throws', () => {
     ).toThrow('inner');
     expect(contender()).toEqual({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock });
   });
-  expect(existsSync(lock)).toBe(false);
 });
 
 async function killHolder(): Promise<void> {
@@ -273,78 +124,8 @@ async function killHolder(): Promise<void> {
 
 test('a killed owner with a published identity is recovered without waiting', async () => {
   await killHolder();
-  expect(existsSync(lock)).toBe(true);
+  expect(readClaimSet(`${lock}.claims`).dead).toHaveLength(1);
   expect(withDirLock(lock, () => 'recovered', { waitMs: 0 })).toBe('recovered');
-  expect(existsSync(lock)).toBe(false);
-});
-
-test.each(['publication', 'removal'])(
-  'a killed owner in the marker %s gap keeps an unidentified directory',
-  async (gap) => {
-    const child = spawn(
-      process.execPath,
-      [
-        '--input-type=module',
-        '-e',
-        `
-      import fs from 'node:fs';
-      import { syncBuiltinESMExports } from 'node:module';
-      import { join } from 'node:path';
-      const lock = process.argv[2];
-      const mkdir = fs.mkdirSync;
-      const unlink = fs.unlinkSync;
-      fs.mkdirSync = (path, ...args) => {
-        const result = mkdir(path, ...args);
-        if (process.argv[3] === 'publication' && String(path) === lock) process.kill(process.pid, 'SIGKILL');
-        return result;
-      };
-      fs.unlinkSync = (path) => {
-        unlink(path);
-        if (process.argv[3] === 'removal' && String(path).startsWith(join(lock, '.stim-claim-'))) process.kill(process.pid, 'SIGKILL');
-      };
-      syncBuiltinESMExports();
-      const { withDirLock } = await import(process.argv[1]);
-      withDirLock(lock, () => {});
-    `,
-        CORE_URL,
-        lock,
-        gap,
-      ],
-      { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-    expect(await once(child, 'exit')).toEqual(KILLED_EXIT);
-    const body = vi.fn<() => void>();
-    expect(() => withDirLock(lock, body, { waitMs: 0 })).toThrow(
-      expect.objectContaining({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock }),
-    );
-    expect(body).not.toHaveBeenCalled();
-    expect(readdirSync(lock)).toEqual([]);
-  },
-);
-
-test('a second interrupted recovery does not strand the original visible marker', async () => {
-  await killHolder();
-  const original = readdirSync(lock);
-  const recovery = spawn(
-    process.execPath,
-    [
-      '--input-type=module',
-      '-e',
-      `
-      const { tryAcquireClaim } = await import(process.argv[1]);
-      const attempt = tryAcquireClaim({ root: process.argv[2], mode: 'exclusive' });
-      if (!attempt.acquired || attempt.reaped.length !== 1) throw new Error('did not reap the original owner');
-      process.kill(process.pid, 'SIGKILL');
-    `,
-      new URL('../ownership-claim.ts', import.meta.url).href,
-      `${lock}.claims`,
-    ],
-    { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] },
-  );
-  expect(await once(recovery, 'exit')).toEqual(KILLED_EXIT);
-  expect(readdirSync(lock)).toEqual(original);
-  expect(withDirLock(lock, () => 'recovered', { waitMs: 0 })).toBe('recovered');
-  expect(existsSync(lock)).toBe(false);
 });
 
 test('concurrent dead-owner reapers preserve each replacement owner and serialize updates', async () => {
@@ -379,20 +160,9 @@ test('concurrent dead-owner reapers preserve each replacement owner and serializ
     const exits = await Promise.all(workers.map((child) => once(child, 'exit')));
     expect(exits).toEqual(workers.map(() => [0, null]));
     expect(readFileSync(counter, 'utf8')).toBe('40');
-    expect(existsSync(lock)).toBe(false);
   } finally {
     for (const child of workers) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
   }
-});
-
-test.each([false, true])('release keeps a replacement legacy directory (owner published: %s)', (published) => {
-  withDirLock(lock, () => {
-    rmSync(lock, { recursive: true });
-    mkdirSync(lock);
-    if (published) writeFileSync(join(lock, 'replacement-owner'), '');
-  });
-
-  expect(readdirSync(lock)).toEqual(published ? ['replacement-owner'] : []);
 });
 
 test('a missing parent retains its filesystem error and never enters the body', () => {
@@ -412,18 +182,6 @@ test('a malformed published record refuses with its claim path and keeps the rec
   expect(() => withDirLock(lock, body)).toThrow(expect.objectContaining({ code: 'STIM_CLAIM_REFUSED', claimPath }));
   expect(body).not.toHaveBeenCalled();
   expect(readFileSync(claimPath, 'utf8')).toBe('partial');
-});
-
-test('a malformed compatibility marker refuses without removing the visible lock', () => {
-  mkdirSync(lock);
-  const marker = join(lock, '.stim-claim-00000000-0000-0000-0000-000000000000');
-  writeFileSync(marker, 'partial');
-  const body = vi.fn<() => void>();
-  expect(() => withDirLock(lock, body)).toThrow(
-    expect.objectContaining({ code: 'STIM_CLAIM_REFUSED', claimPath: lock }),
-  );
-  expect(body).not.toHaveBeenCalled();
-  expect(readFileSync(marker, 'utf8')).toBe('partial');
 });
 
 function holdInChild(holdMs: number) {
@@ -472,7 +230,6 @@ test.each(['resolve', 'reject'])('an asynchronous transaction holds its claim un
   );
   try {
     await entered;
-    expect(existsSync(lock)).toBe(true);
     await expect(withDirLockTransaction(lock, () => 'overlapped', { waitMs: 0 })).rejects.toMatchObject({
       code: 'STIM_LOCK_TIMEOUT',
     });
@@ -487,7 +244,6 @@ test.each(['resolve', 'reject'])('an asynchronous transaction holds its claim un
     await completion;
   }
   expect(await completion).toEqual(outcome === 'reject' ? { error: failure } : { value: 'finished' });
-  expect(existsSync(lock)).toBe(false);
   expect(await withDirLockTransaction(lock, () => 'released', { waitMs: 0 })).toBe('released');
 });
 
@@ -501,13 +257,11 @@ test('an async acquisition waits for another process without blocking the event 
     try {
       await withDirLockAsync(lock, () => {
         ticksWhenEntered = ticks;
-        expect(readdirSync(lock)).toHaveLength(1);
       });
     } finally {
       clearInterval(timer);
     }
     expect(ticksWhenEntered).toBeGreaterThan(5);
-    expect(existsSync(lock)).toBe(false);
   } finally {
     holder.child.kill('SIGKILL');
     await holder.exited;
@@ -522,6 +276,7 @@ test('an async acquisition that times out reports the same lock error as the syn
     await expect(withDirLockAsync(lock, entered, { waitMs: 100, pollMs: 10 })).rejects.toMatchObject({
       code: 'STIM_LOCK_TIMEOUT',
       lockPath: lock,
+      message: expect.stringContaining('Another Stim process is holding it'),
     });
     expect(entered).not.toHaveBeenCalled();
   } finally {
@@ -537,7 +292,6 @@ test('an async acquisition inside a held lock runs its body before the outer bod
     order.push('outer');
   });
   expect(order).toEqual(['inner', 'outer']);
-  expect(existsSync(lock)).toBe(false);
 });
 
 test('cancelling a waiting async acquisition keeps the holder and skips the transaction', async () => {
@@ -552,7 +306,7 @@ test('cancelling a waiting async acquisition keeps the holder and skips the tran
       name: 'AbortError',
     });
     expect(entered).not.toHaveBeenCalled();
-    expect(existsSync(lock)).toBe(true);
+    expect(contender()).toEqual({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock });
   } finally {
     clearTimeout(timer);
     holder.child.kill('SIGKILL');
@@ -561,10 +315,23 @@ test('cancelling a waiting async acquisition keeps the holder and skips the tran
 });
 
 test('a waiting async acquisition does not keep the claim that a sync call in the same process needs', async () => {
-  mkdirSync(lock);
+  let release = () => {};
+  const held = withDirLockTransaction(
+    lock,
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
   const waiting = withDirLockAsync(lock, () => 'entered', { waitMs: 2000, pollMs: 10 });
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(() => withDirLock(lock, () => 'sync', { waitMs: 0 })).toThrow('No current Stim holds it');
-  rmSync(lock, { recursive: true });
-  await expect(waiting).resolves.toBe('entered');
+  try {
+    release();
+    await held;
+    expect(withDirLock(lock, () => 'sync', { waitMs: 0 })).toBe('sync');
+    await expect(waiting).resolves.toBe('entered');
+  } finally {
+    release();
+    await held;
+    await waiting;
+  }
 });

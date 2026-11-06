@@ -31,6 +31,8 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
         'scripts/resource-model-e2e/run.mjs',
         'scripts/resource-model-e2e/sampler.mjs',
         'scripts/build-android-audio.mjs',
+        'scripts/fingerprint-parity.mjs',
+        'scripts/fingerprint-drift.mjs',
         'scripts/agent-benchmark/native-driver.mjs',
         'scripts/agent-benchmark/native-fixtures.mjs',
       ],

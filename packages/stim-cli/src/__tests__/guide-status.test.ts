@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { checkForUpdate, doctorDueReason, guideStatus, recordDoctorCheck, updateCacheFile } from '../guide-status.ts';
 
@@ -42,7 +43,8 @@ test('doctorDueReason: never run, stale, other version, or fresh', () => {
 test('explicit doctor recording keeps lock contention cancellable without changing state', async () => {
   const root = appRoot();
   const lock = join(home, 'config.lock');
-  mkdirSync(lock);
+  const held = tryAcquireClaim({ root: `${lock}.claims`, mode: 'exclusive' }).acquired;
+  if (!held) throw new Error('Could not acquire fixture claim.');
   const controller = new AbortController();
   let ticked = false;
   const timer = setTimeout(() => {
@@ -60,10 +62,11 @@ test('explicit doctor recording keeps lock contention cancellable without changi
     });
     expect(ticked).toBe(true);
     expect(existsSync(join(home, 'config.json'))).toBe(false);
-    expect(existsSync(lock)).toBe(true);
+    expect(readClaimSet(`${lock}.claims`).live).toHaveLength(1);
   } finally {
     clearTimeout(timer);
     controller.abort();
+    releaseClaim(held);
   }
 }, 20_000);
 
