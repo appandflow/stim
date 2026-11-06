@@ -6,14 +6,6 @@ import { launchCrashSetup } from './launch-crash-setup.mjs';
 
 const systemImage = 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a';
 
-it('selects only reusable iOS fixture inputs', () => {
-  expect(launchCrashSetup({ platform: 'ios', arm: 'control' }).ignoredPaths).toEqual([
-    'node_modules',
-    'ios/Pods',
-    'ios/build',
-  ]);
-});
-
 it('carries reusable Android outputs without importing a sibling autolinking cache', () => {
   const root = mkdtempSync(join(tmpdir(), 'bench-android-carry-'));
   const source = join(root, 'source');

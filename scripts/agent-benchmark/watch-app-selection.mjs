@@ -1,8 +1,3 @@
-export function readinessProofKind(platform, variant) {
-  if (variant === 'native' && platform === 'android') return 'android-native';
-  return null;
-}
-
 export function iosDevicesFromSimctl(payload) {
   return Object.entries(payload.devices ?? {}).flatMap(([runtimeIdentifier, devices]) =>
     devices.map((device) => ({ ...device, runtimeIdentifier })),

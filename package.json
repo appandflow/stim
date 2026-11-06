@@ -14,6 +14,7 @@
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "test": "vitest run",
+    "test:bench": "vitest run --config vitest.bench.config.ts",
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:compat": "vitest run --config vitest.compat.config.ts",

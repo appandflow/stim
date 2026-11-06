@@ -1,10 +1,10 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 import { isUncertain, type Input, type NativeMode } from '../fingerprint/key.ts';
 import { staticInputs, type StaticContext, type StaticTarget } from '../fingerprint/inputs.ts';
-import { compileIgnore, nativeSubset, walk, type WalkOptions } from '../fingerprint/walk.ts';
+import { compileIgnore, nativeSubset, walk, within, type WalkOptions } from '../fingerprint/walk.ts';
 
 const temps: string[] = [];
 afterEach(() => {
@@ -381,4 +381,29 @@ describe('native subsets and static inputs', () => {
       ),
     ).toBe(true);
   });
+});
+
+test('within agrees with path.relative containment for normalized and unnormalized paths', () => {
+  const contains = (path: string, dir: string) => {
+    const rel = relative(dir, path);
+    return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+  };
+  const paths = [
+    '/',
+    '/a',
+    '/a/b',
+    '/ab',
+    '/a/b/',
+    '/a//b',
+    '/a/./b',
+    '/a/../b',
+    '/a/..b',
+    '/a/.b',
+    '/a/b/..',
+    '/a/...',
+  ];
+  const disagreements = paths.flatMap((path) =>
+    paths.flatMap((dir) => (within(path, dir) === contains(path, dir) ? [] : [`${path} in ${dir}`])),
+  );
+  expect(disagreements).toEqual([]);
 });

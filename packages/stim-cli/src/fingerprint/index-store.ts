@@ -164,7 +164,8 @@ function locateValue(value: unknown, roots: Roots): unknown {
 /**
  * The record of one path as it is now, or null when it changed during the computation that started at `since`, or is
  * gone although the computation read it. A module with no file (one a loader compiled in memory) is recorded absent
- * when its directory did not change during the computation.
+ * when its directory did not change during the computation. A directory listing not given is taken before the stat,
+ * so a change after the evaluation read it fails the racy guard instead of being recorded.
  */
 export function takeRead(path: string, kind: ReadKind, roots: Roots, since: bigint, hash?: string | null): Read | null {
   if (kind === 'absent') return { path: relocate(path, roots), kind };
@@ -173,13 +174,14 @@ export function takeRead(path: string, kind: ReadKind, roots: Roots, since: bigi
     const real = realOf(path);
     return type && real ? { path: relocate(path, roots), kind, hash: type, real: relocate(real, roots) } : null;
   }
+  const listed = kind === 'dir' && hash === undefined ? listing(path) : hash;
   const target = kind === 'package' ? join(path, 'package.json') : path;
   const stat = statKey(target);
   const parent = stat ? null : statKey(join(target, '..'));
   if (!stat && kind !== 'package' && (kind !== 'module' || !parent)) return null;
   if ([stat, parent].some((info) => info && (racy(info.mtime, since) || racy(info.ctime, since)))) return null;
   const read: Read = { path: relocate(path, roots), kind, stat: stat?.key ?? null };
-  if (kind === 'dir' || kind === 'tree') read.hash = hash ?? null;
+  if (kind === 'dir' || kind === 'tree') read.hash = listed ?? null;
   else if (stat) read.hash = kind === 'module' ? (hash ?? null) : readHash(target);
   const real = stat ? realOf(target) : null;
   if (real) read.real = relocate(real, roots);
@@ -197,7 +199,7 @@ function listNames(path: string, recursive = false): string[] | null {
   }
 }
 
-const listing = (path: string, recursive = false): string | null => {
+export const listing = (path: string, recursive = false): string | null => {
   const names = listNames(path, recursive);
   return names && sha256(JSON.stringify(names));
 };
@@ -500,6 +502,8 @@ function installStamped(roots: Roots): boolean {
   );
 }
 
+const modulesSegment = (path: string) => `${sep}${path}${sep}`.includes(`${sep}node_modules${sep}`);
+
 /**
  * The reads of one evaluator part from its trace. A read inside an install tree (a path through `node_modules` in the
  * app or install root whose nearest existing real path stays under `node_modules`) is left to the install stamps
@@ -515,9 +519,9 @@ export function traceReads(
   stamped: boolean,
   packageRoot: (path: string) => string | null,
   named: (dir: string) => boolean,
+  reals: Map<string, string | null>,
 ): Read[] | null {
   const reads = new Map<string, Read>();
-  const reals = new Map<string, string | null>();
   const real = (path: string): string | null => {
     if (!reals.has(path)) {
       const found = realOf(path);
@@ -526,18 +530,18 @@ export function traceReads(
     }
     return reals.get(path) ?? null;
   };
+  const realInModules = new Map<string, boolean>();
+  const linkables = new Map<string, boolean>();
   for (const { path, kind, hash } of entries) {
-    const inside = within(path, roots.project) || within(path, roots.install);
+    const inside = within(path, roots.install) || within(path, roots.project);
     const root = packageRoot(path);
+    const owner = root ?? path;
+    const throughModules = inside && modulesSegment(path);
+    if (throughModules && !realInModules.has(owner)) realInModules.set(owner, modulesSegment(real(owner) ?? ''));
     const installed =
-      inside &&
-      path.split(sep).includes('node_modules') &&
-      (real(root ?? path)
-        ?.split(sep)
-        .includes('node_modules') ??
-        false) &&
-      !(kind === 'module' && root !== null && !named(root));
-    const linkable = root !== null && topLevel(root, roots);
+      throughModules && realInModules.get(owner) === true && !(kind === 'module' && root !== null && !named(root));
+    if (root !== null && !linkables.has(root)) linkables.set(root, topLevel(root, roots));
+    const linkable = root !== null && linkables.get(root) === true;
     if (installed && stamped && !linkable) continue;
     const [target, as]: [string, ReadKind] =
       installed && root ? [root, realOf(root) ? 'package' : 'absent'] : [path, kind];
@@ -556,6 +560,8 @@ export function traceReads(
  */
 export class IndexSession {
   readonly hashes: FileHashes;
+  /** Real paths `traceReads` resolved during this computation, shared by its parts. */
+  readonly reals: Map<string, string | null> = new Map();
   private readonly loaded: { record: EvalRecord; stamps: boolean; file: string }[] = [];
   private readonly used = new Set<string>();
   private files: string[] | null = null;
