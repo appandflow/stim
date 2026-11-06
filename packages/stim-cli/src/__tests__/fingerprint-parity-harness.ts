@@ -83,7 +83,7 @@ export async function hashes(
   env: NodeJS.ProcessEnv = baseEnv,
 ): Promise<Measurement> {
   const started = performance.now();
-  const result = await fingerprint(root, { platform }, { env, embedMode: 'development' });
+  const result = await fingerprint(root, { platform }, { env, embedMode: 'development', index: 'skip' });
   const ms = Math.round(performance.now() - started);
   if (isUncertain(result)) throw new Error(`Uncertain (${ms} ms): ${JSON.stringify(result)}`);
   let expo: string | undefined;
