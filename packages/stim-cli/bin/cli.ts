@@ -20,6 +20,7 @@ const commands = new Map<string, () => Promise<CommandModule>>([
   ['reload', () => import('../src/commands/reload.ts')],
   ['revive', () => import('../src/commands/revive.ts')],
   ['agent-device', () => import('../src/commands/agent-device.ts')],
+  ['ci', () => import('../src/commands/ci.ts')],
   ['serve', () => import('../src/commands/serve.ts')],
   ['pair', () => import('../src/commands/pair.ts')],
   ['pairings', () => import('../src/commands/pairings.ts')],

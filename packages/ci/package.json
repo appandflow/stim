@@ -8,9 +8,6 @@
     "url": "git+https://github.com/appandflow/stim.git",
     "directory": "packages/ci"
   },
-  "bin": {
-    "stim-ci": "dist/stim-ci.mjs"
-  },
   "files": [
     "dist",
     "README.md",
@@ -29,6 +26,11 @@
       "types": "./dist/artifacts.d.mts",
       "module-sync": "./dist/artifacts.mjs",
       "default": "./dist/artifacts.mjs"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.mts",
+      "module-sync": "./dist/cli.mjs",
+      "default": "./dist/cli.mjs"
     }
   },
   "scripts": {

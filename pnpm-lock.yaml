@@ -500,6 +500,9 @@ importers:
       '@stim-cli/cache':
         specifier: workspace:*
         version: link:../cache
+      '@stim-cli/ci':
+        specifier: workspace:*
+        version: link:../ci
       '@stim-cli/core':
         specifier: workspace:*
         version: link:../core

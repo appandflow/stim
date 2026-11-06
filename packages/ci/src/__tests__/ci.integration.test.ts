@@ -225,7 +225,7 @@ it('uses the same job-local home and cache for native work and commands across h
   expect(process.env.STIM_BUILD_CACHE).toBeUndefined();
 });
 
-it('names the stim-ci build command when no build is recorded', async () => {
+it('names the stim ci build command when no build is recorded', async () => {
   options.run = { platform: 'android', variant: 'productionRelease' };
   lifecycle.run.mockRejectedValue(
     Object.assign(new Error('No recorded android build exists.'), { code: 'STIM_NO_RECORDED_BUILD' }),
@@ -236,7 +236,7 @@ it('names the stim-ci build command when no build is recorded', async () => {
   expect(result.failure).toMatchObject({
     code: 'STIM_NO_RECORDED_BUILD',
     remedy: expect.stringMatching(
-      /^Run stim-ci build --platform android --project ".+" --variant "productionRelease" first\.$/,
+      /^Run stim ci build --platform android --project ".+" --variant "productionRelease" first\.$/,
     ),
   });
 });

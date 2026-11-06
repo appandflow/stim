@@ -60,6 +60,16 @@
       "types": "./dist/build-artifact-cache.d.mts",
       "module-sync": "./dist/build-artifact-cache.mjs",
       "default": "./dist/build-artifact-cache.mjs"
+    },
+    "./ci": {
+      "types": "./dist/ci.d.mts",
+      "module-sync": "./dist/ci.mjs",
+      "default": "./dist/ci.mjs"
+    },
+    "./ci/artifacts": {
+      "types": "./dist/ci/artifacts.d.mts",
+      "module-sync": "./dist/ci/artifacts.mjs",
+      "default": "./dist/ci/artifacts.mjs"
     }
   },
   "scripts": {
@@ -70,6 +80,7 @@
     "@stim-cli/agent-driver": "workspace:*",
     "@stim-cli/agent-driver-agent-device": "workspace:*",
     "@stim-cli/cache": "workspace:*",
+    "@stim-cli/ci": "workspace:*",
     "@stim-cli/core": "workspace:*",
     "@stim-cli/metro": "workspace:*",
     "@stim-cli/server": "workspace:*",
