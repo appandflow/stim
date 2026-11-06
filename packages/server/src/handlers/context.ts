@@ -1,3 +1,15 @@
+import {
+  readMacosRecord,
+  hostedIosPlacements,
+  readWorkspaceState,
+  hostedAndroidPlacements,
+  type DeviceHostLimits,
+  type StatusViews,
+  type StatusPayload,
+  type HostedAndroidPlacement,
+  type HostedIosPlacement,
+  type HostedMacosPlacement,
+} from '@stim-cli/core/state';
 import type { DesktopBootstrap } from '../desktop-bootstrap.ts';
 import type { SetupDeps } from '../setup.ts';
 import type { KeepAwakeOptions } from '../keep-awake.ts';
@@ -6,17 +18,17 @@ import type { TailscaleState, TailscaleMonitor } from '@stim-cli/transport-tails
 import type { RequestLog, RequestTracker } from '../request-log.ts';
 import type { LogLimits } from '../logs.ts';
 import type { CommandLimits } from '../stim-command.ts';
-import type { FrameLimits } from '../frames.ts';
-import type { RecordLimits } from '../recorder.ts';
+import { type FrameLimits, FramePool } from '../frames.ts';
+import { type RecordLimits, Recorder } from '../recorder.ts';
 import type { PushLimits, PushNotifierOptions } from '../push.ts';
 import type { BuildLimits } from '../build.ts';
-import type { DeviceHostLimits, StatusViews, StatusPayload } from '@stim-cli/core/state';
-import type { HostedRelayOptions } from '../hosted-relay.ts';
+import { type HostedRelayOptions, HostedRelay } from '../hosted-relay.ts';
 import type { WebSocket } from 'ws';
 import { NoiseSocket } from '@stim-cli/core/noise-session';
 import { StimError } from 'stim';
 import type {
   ServerMessage,
+  FramesSeekParams,
   HelloHost,
   ProtocolError,
   RequestId,
@@ -31,7 +43,29 @@ import type { Registries, PairedDevice } from '../registry.ts';
 import { UsageSampler } from '../machine.ts';
 import { UsageRecorder } from '../usage-history.ts';
 import { DeviceHost } from '../device-host.ts';
+import { PresenceHub } from '../presence.ts';
+import { LocalAgentPresence } from '../local-agent-presence.ts';
 import { ControlHub } from '../control.ts';
+import { HostedViews } from '../hosted-view.ts';
+import { HostedPresenceBridge } from '../hosted-presence-bridge.ts';
+
+export function viewHostedPlacement(
+  dir: string,
+  platform: string,
+  slot: string | undefined,
+  physical: unknown,
+): HostedMacosPlacement | HostedIosPlacement | HostedAndroidPlacement | undefined {
+  return (platform === 'ios' || platform === 'android') && physical === true
+    ? undefined
+    : hostedPlacement(dir, platform, slot);
+}
+
+function hostedPlacement(dir: string, platform: string, slot = 'default') {
+  if (platform === 'macos') return readMacosRecord(dir)?.host;
+  if (platform === 'ios') return hostedIosPlacements(readWorkspaceState(dir))[slot];
+  if (platform === 'android') return hostedAndroidPlacements(readWorkspaceState(dir))[slot];
+  return undefined;
+}
 
 export interface ServerOptions {
   /** Private bootstrap received from the Desktop parent; never a persisted pairing capability. */
@@ -173,6 +207,12 @@ export function send(socket: ServerSocket, message: ServerMessage | string): voi
   if (socket.readyState === socket.OPEN) socket.send(typeof message === 'string' ? message : JSON.stringify(message));
 }
 
+export interface Replayable {
+  seek: (at: number, rate: FramesSeekParams['rate']) => number | null;
+  /** Returns why the subscription cannot go live, or null once it is live. */
+  live: () => string | null;
+}
+
 /** The state the handlers of one connection share: the closure variables of `startServer` and `connection`. */
 export interface ConnectionContext {
   readonly options: ServerOptions;
@@ -182,6 +222,10 @@ export interface ConnectionContext {
   readonly viewsOf: (payload: JsonObject) => StatusViews;
   readonly currentStatus: () => Promise<{ payload: StatusPayload } | { failed: string }>;
   readonly hostsDevices: boolean;
+  readonly frameHelper: () => string | null;
+  nativeViewerOpened: boolean;
+  readonly frames: FramePool;
+  recorder: Recorder | null;
   startup: StartupState;
   readonly readApprovals: () => Registries | null;
   readonly running: Set<() => Promise<void>>;
@@ -191,17 +235,26 @@ export interface ConnectionContext {
   readonly sampler: UsageSampler;
   readonly usage: UsageRecorder;
   readonly recordUsage: () => () => void;
+  readonly adbEmulators: boolean;
   readonly hostedDevices: DeviceHost;
+  readonly presence: PresenceHub;
+  readonly localAgents: LocalAgentPresence;
   readonly control: ControlHub;
+  readonly hostedViews: HostedViews;
+  readonly hostedBridge: HostedPresenceBridge;
   readonly socket: ServerSocket;
   readonly local: boolean;
   readonly clientKey: string | null;
   readonly subscriptions: Map<string, () => void | Promise<void | ProtocolError>>;
+  readonly keyframes: Map<string, () => void>;
+  readonly congestion: Map<string, () => void>;
+  readonly replays: Map<string, Replayable>;
   device: PairedDevice | null;
   desktopChallenge: { nonce: string; proof: string } | null;
   readonly tracker: RequestTracker;
   runId: string | null;
   clientPing: NodeJS.Timeout | undefined;
+  readonly relay: HostedRelay;
   readonly refuse: (id: RequestId | null, code: ErrorCode, message: string, closeCode: number) => void;
   readonly timer: NodeJS.Timeout;
   readonly error: (id: RequestId, code: ErrorCode, message: string) => void;

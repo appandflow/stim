@@ -34,12 +34,8 @@ import {
   listSegments,
   listRecordedDevices,
   loadConfig,
-  readMacosRecord,
   readAgentSnapshot,
   type AgentSnapshotTree,
-  readWorkspaceState,
-  hostedIosPlacements,
-  hostedAndroidPlacements,
   RECORDING_PLATFORMS,
   stimBuildDigest,
   type RecordingPlatform,
@@ -70,7 +66,6 @@ import { HostedPresence } from './hosted-presence.ts';
 import { HostedPresenceBridge } from './hosted-presence-bridge.ts';
 import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay } from './hosted-relay.ts';
-import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { BuildHost, type BuildSession } from './build.ts';
 import type { WorkerRootUsage } from './worker-areas.ts';
 import {
@@ -102,19 +97,11 @@ import {
   sharedClaimDir,
   tryAcquireClaim,
 } from '@stim-cli/core/ownership-claim';
-import { Player, recordedSpans, recordingDir, segmentKeyframe, timelineMarkers } from './replay.ts';
+import { recordedSpans, recordingDir, segmentKeyframe, timelineMarkers } from './replay.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { StatusFeed } from './status-feed.ts';
-import { buildFoldHelper, buildFrameHelper, type FrameHint } from './frame-helper.ts';
-import {
-  DEFAULT_FRAME_LIMITS,
-  deviceKey,
-  FramePool,
-  ownedDevice,
-  type Device,
-  type Frame,
-  type FrameLimits,
-} from './frames.ts';
+import { buildFoldHelper, buildFrameHelper } from './frame-helper.ts';
+import { DEFAULT_FRAME_LIMITS, FramePool, type FrameLimits } from './frames.ts';
 import { archivedTimeline, readTargetError, type LogLimits } from './logs.ts';
 import { readDiskVolumes, readMachineUsage, readMemoryPressure, UsageSampler } from './machine.ts';
 import {
@@ -131,14 +118,10 @@ import {
   BUILD_METHODS,
   DEVICE_HOST_METHODS,
   MAX_INPUT_TEXT,
-  FRAME_EDGE,
-  FRAME_FPS,
   NOTIFICATION_LEVELS,
-  PLATFORMS,
   PROTOCOL_VERSION,
   PUSH_EVENTS,
   PUSH_TOKEN_PATTERN,
-  REPLAY_RATES,
   RELOAD_PLATFORMS,
   RESERVED_SHARE_SLUGS,
   SHARE_SLUG_PATTERN,
@@ -146,14 +129,9 @@ import {
   type DesktopReportTarget,
   type DeviceToolRequest,
   type ArchiveDetailResult,
-  type DeviceFrameArtwork,
-  type MacosWindow,
-  type FramesSeekParams,
   type ErrorCode,
   type ProtocolError,
-  type FrameTarget,
   type HelloHost,
-  type Platform,
   type PlatformRunOptions,
   type PlatformBuildOptions,
   type Methods,
@@ -228,7 +206,6 @@ import {
   type TailscaleTransport,
 } from '@stim-cli/transport-tailscale';
 import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
-import { DEFAULT_VIDEO_LIMITS, HOSTED_MAX_BITRATE, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
 import { HostedShareSource } from './share-hosted.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest, type StartedShare } from './share.ts';
@@ -246,10 +223,13 @@ import {
   type ServerOptions,
   type ServerSocket,
   send,
+  type Replayable,
   trackers,
+  viewHostedPlacement,
   type ConnectionContext,
 } from './handlers/context.ts';
 import { LOCAL_DEVICE_ID, CLOSE_BAD_REQUEST, hello } from './handlers/hello.ts';
+import { parseReplay, subscribeFrames } from './handlers/frames.ts';
 import {
   subscribeWorkspaces,
   subscribeWorkspace,
@@ -276,19 +256,6 @@ const INPUT_METHODS = [
   'input.clipboard.set',
   'input.clipboard.get',
 ] as const;
-
-function viewHostedPlacement(dir: string, platform: string, slot: string | undefined, physical: unknown) {
-  return (platform === 'ios' || platform === 'android') && physical === true
-    ? undefined
-    : hostedPlacement(dir, platform, slot);
-}
-
-function hostedPlacement(dir: string, platform: string, slot = 'default') {
-  if (platform === 'macos') return readMacosRecord(dir)?.host;
-  if (platform === 'ios') return hostedIosPlacements(readWorkspaceState(dir))[slot];
-  if (platform === 'android') return hostedAndroidPlacements(readWorkspaceState(dir))[slot];
-  return undefined;
-}
 
 interface ServerHealth {
   host?: HelloHost['app'];
@@ -1222,51 +1189,6 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
   };
 }
 
-interface Replayable {
-  seek: (at: number, rate: FramesSeekParams['rate']) => number | null;
-  /** Returns why the subscription cannot go live, or null once it is live. */
-  live: () => string | null;
-}
-
-/** `at` and `rate` of a seek, null when neither is given, or why they are refused. */
-function parseReplay(at: unknown, rate: unknown): { at: number; rate: FramesSeekParams['rate'] } | string | null {
-  if (at === undefined && rate === undefined) return null;
-  if (typeof at !== 'number' || !Number.isFinite(at)) return 'at must be epoch milliseconds.';
-  const parsed = rate === undefined ? 0 : rate;
-  if (!REPLAY_RATES.includes(parsed as FramesSeekParams['rate'])) {
-    return `rate must be one of ${REPLAY_RATES.join(', ')}.`;
-  }
-  return { at, rate: parsed as FramesSeekParams['rate'] };
-}
-
-function frameTargetError(target: JsonObject, hosted: boolean): string | null {
-  const error = readTargetError(target);
-  if (error) return error;
-  const { archive, platform, slot, physical, at, deviceFrame, duoFrame } = target;
-  if (archive !== undefined && (at === undefined || physical)) {
-    return 'Archived frames require params.at and cannot be physical.';
-  }
-  if (!PLATFORMS.includes(platform as Platform)) {
-    return 'frames.subscribe needs params.workspace or params.archive and params.platform (ios, android, web or macos).';
-  }
-  if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
-    return 'slot must be 1-64 letters, digits, underscores or hyphens.';
-  }
-  if (physical !== undefined && typeof physical !== 'boolean') return 'physical must be true or false.';
-  if (deviceFrame !== undefined && typeof deviceFrame !== 'boolean') return 'deviceFrame must be true or false.';
-  if (
-    duoFrame !== undefined &&
-    (typeof duoFrame !== 'boolean' || (duoFrame && (platform !== 'ios' || physical || hosted)))
-  ) {
-    return 'duoFrame needs a local owned iOS simulator.';
-  }
-  return null;
-}
-
-function hasFootage(dir: string, closedOnly = false): boolean {
-  return listSegments(dir, closedOnly).length > 0;
-}
-
 function doctorTarget(): DoctorTarget {
   try {
     return doctorWorkspace(loadConfig(), existsSync);
@@ -2060,6 +1982,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       viewsOf,
       currentStatus,
       hostsDevices,
+      frameHelper,
+      get nativeViewerOpened() {
+        return nativeViewerOpened;
+      },
+      set nativeViewerOpened(value) {
+        nativeViewerOpened = value;
+      },
+      frames,
+      get recorder() {
+        return recorder;
+      },
+      set recorder(value) {
+        recorder = value;
+      },
       get startup() {
         return startup;
       },
@@ -2074,12 +2010,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       sampler,
       usage,
       recordUsage,
+      adbEmulators,
       hostedDevices,
+      presence,
+      localAgents,
       control,
+      hostedViews,
+      hostedBridge,
       socket,
       local,
       clientKey,
       subscriptions,
+      keyframes,
+      congestion,
+      replays,
       get device() {
         return device;
       },
@@ -2105,6 +2049,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       set clientPing(value) {
         clientPing = value;
       },
+      relay,
       refuse,
       timer,
       error,
@@ -2269,317 +2214,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       'maintenance.get': (id) =>
         statusRead<'maintenance.get'>(ctx, id, (payload) => ({ result: { maintenance: payload.maintenance ?? null } })),
     };
-
-    /** Presence for a relayed hosted subscription that asked for it: the host's, and this machine's own. */
-    function hostedPresenceFor(
-      target: JsonObject,
-      host: { machine: string; session: string },
-      dir: string | null,
-    ): ((subscription: string) => () => void) | undefined {
-      const { platform, slot } = target;
-      if (target.presence !== true || (platform !== 'ios' && platform !== 'android') || !dir) return undefined;
-      const key = presenceKey(dir, platform, typeof slot === 'string' ? slot : 'default', false);
-      return (subscription) => {
-        const unfollow = hostedBridge.follow(key, host);
-        const unsubscribe = presence.subscribe(key, (participants) =>
-          send(socket, { event: 'presence', subscription, participants }),
-        );
-        return () => {
-          unsubscribe();
-          unfollow();
-        };
-      };
-    }
-
-    function subscribeFrames(
-      id: RequestId,
-      params: unknown,
-      hosted?: { client: string; session: string; view: ReturnType<HostedViews['target']> },
-    ): void {
-      const framePool = hosted?.view.frames ?? frames;
-      const target = isJsonObject(params) ? params : {};
-      const { platform, fps, maxEdge, video, at, rate, deviceFrame, duoFrame } = target;
-      const targetError = frameTargetError(target, hosted !== undefined);
-      if (targetError) return error(id, 'bad-request', targetError);
-      const slot = target.slot as string | undefined;
-      const physical = target.physical as boolean | undefined;
-      const workspace = target.workspace as string | undefined;
-      const archive = target.archive as string | undefined;
-      const wantsDuo = duoFrame === true && at === undefined;
-      const wantsArtwork = deviceFrame === true && !physical && platform !== 'web';
-      if (video !== undefined && (!Array.isArray(video) || !video.every((codec) => typeof codec === 'string'))) {
-        return error(id, 'bad-request', 'video must be a list of codec names.');
-      }
-      const wantsVideo = (video as string[] | undefined)?.includes('h264') === true;
-      const maxFps = wantsVideo ? FRAME_FPS.video : FRAME_FPS.max;
-      if (fps !== undefined && (typeof fps !== 'number' || !Number.isInteger(fps) || fps < 1 || fps > maxFps)) {
-        return error(id, 'bad-request', `fps must be a whole number from 1 to ${maxFps}.`);
-      }
-      if (
-        maxEdge !== undefined &&
-        (typeof maxEdge !== 'number' ||
-          !Number.isInteger(maxEdge) ||
-          maxEdge < FRAME_EDGE.min ||
-          maxEdge > FRAME_EDGE.max)
-      ) {
-        return error(
-          id,
-          'bad-request',
-          `maxEdge must be a whole number of pixels from ${FRAME_EDGE.min} to ${FRAME_EDGE.max}.`,
-        );
-      }
-      const resolvedDir = hosted ? null : readDir(id, { workspace, archive });
-      if (!hosted && !resolvedDir) return;
-      const host =
-        archive || hosted || !resolvedDir
-          ? undefined
-          : viewHostedPlacement(resolvedDir, platform as Platform, slot as string | undefined, physical);
-      if (host) {
-        if (
-          (platform === 'macos' && slot !== undefined && slot !== 'default') ||
-          physical ||
-          duoFrame ||
-          at !== undefined ||
-          rate !== undefined
-        ) {
-          return error(
-            id,
-            'bad-request',
-            platform === 'ios'
-              ? 'Hosted iOS frames require a non-physical target without replay or duoFrame.'
-              : platform === 'android'
-                ? 'Hosted Android frames require a non-physical target without replay or duoFrame.'
-                : 'Hosted macOS frames require the default, non-physical target without replay.',
-          );
-        }
-        return void relay.subscribe(
-          id,
-          host,
-          target,
-          (subscription, stop) => subscriptions.set(subscription, stop),
-          hostedPresenceFor(target, host, resolvedDir),
-        );
-      }
-      const offersVideo = wantsVideo && !wantsDuo && (archive !== undefined || frameHelper() !== null);
-      const replayAt = parseReplay(at, rate);
-      if (typeof replayAt === 'string') return error(id, 'bad-request', replayAt);
-      if (replayAt && !offersVideo) {
-        return error(id, 'bad-request', 'Replay needs a video subscription: pass video: ["h264"].');
-      }
-      const hint: FrameHint = {
-        fps: Math.min(fps ?? FRAME_FPS.default, offersVideo ? FRAME_FPS.video : FRAME_FPS.max),
-        maxEdge: maxEdge ?? FRAME_EDGE.default,
-        ...(hosted ? { maxBitrate: HOSTED_MAX_BITRATE } : {}),
-      };
-      const replayDir =
-        platform === 'macos'
-          ? null
-          : recordingDir(
-              workspace,
-              platform as RecordingPlatform,
-              typeof slot === 'string' ? slot : 'default',
-              archive,
-            );
-      if (replayAt && (physical || replayDir === null || !hasFootage(replayDir, archive !== undefined))) {
-        return error(
-          id,
-          'no-recording',
-          `Nothing was recorded for ${physical ? 'a physical ' : ''}${platform} in ${archive ?? workspace}.`,
-        );
-      }
-      const subscription = openSubscription(id, offersVideo ? { video: 'h264' } : {});
-      if (!subscription) return;
-      const frameTarget: FrameTarget = {
-        ...(archive === undefined ? { workspace } : { archive }),
-        platform: platform as Platform,
-        ...(slot ? { slot } : {}),
-        ...(physical ? { physical } : {}),
-      };
-      const gate = new VideoGate(DEFAULT_VIDEO_LIMITS.congestedBytes);
-      let sequence = 0;
-      let streamed: Device | null = null;
-      let draining: NodeJS.Timeout | null = null;
-      const drain = () => {
-        draining = null;
-        if (ended || !streamed) return;
-        if (socket.bufferedAmount <= DEFAULT_VIDEO_LIMITS.congestedBytes) return framePool.keyframe(streamed);
-        framePool.congested(streamed);
-        draining = setTimeout(drain, FRAME_RETRY_MS);
-      };
-      let attached: string | null = null;
-      let detach: (() => void) | null = null;
-      let ended = false;
-      const delivery = new LatestFrames<Frame>(
-        hint.fps,
-        () => socket.bufferedAmount,
-        (frame) => {
-          send(socket, {
-            event: 'frame',
-            subscription,
-            platform: frameTarget.platform,
-            slot: slot ?? 'default',
-            mime: 'image/jpeg',
-            ...frame,
-          });
-        },
-      );
-      const cleanup = () => {
-        ended = true;
-        stopPresence?.();
-        player?.stop();
-        replays.delete(subscription);
-        stopViewing?.();
-        keyframes.delete(subscription);
-        congestion.delete(subscription);
-        delivery.stop();
-        if (draining) clearTimeout(draining);
-        detach?.();
-        detach = null;
-        unsubscribeStatus?.();
-      };
-      const end = (message: string) => {
-        if (ended) return;
-        cleanup();
-        subscriptions.delete(subscription);
-        send(socket, { event: 'error', subscription, error: { code: 'frames-failed', message } });
-      };
-      const listener = {
-        frame: (frame: Frame) => delivery.push(frame),
-        delayed: (delayed: boolean, reason?: string) => {
-          if (!ended) send(socket, { event: 'frame-delayed', subscription, delayed, ...(reason ? { reason } : {}) });
-        },
-        failed: end,
-        ...(frameTarget.platform === 'macos'
-          ? {
-              windows: ({
-                current,
-                windows,
-                pinned,
-              }: {
-                current: MacosWindow | null;
-                windows: MacosWindow[];
-                pinned: boolean;
-              }) => {
-                if (!ended) send(socket, { event: 'macos-windows', subscription, current, windows, pinned });
-              },
-            }
-          : {}),
-        ...(wantsDuo ? { duo: (frame: Frame) => delivery.push(frame) } : {}),
-        ...(wantsArtwork
-          ? {
-              artwork: (artwork: DeviceFrameArtwork | null) => {
-                if (!ended && !player) send(socket, { event: 'device-frame', subscription, artwork });
-              },
-            }
-          : {}),
-        ...(offersVideo
-          ? {
-              video: (unit: AccessUnit) => {
-                if (ended || player || socket.readyState !== socket.OPEN) return;
-                const verdict = gate.admit(unit, socket.bufferedAmount);
-                if (verdict === 'send') socket.send(videoPacket(subscription, sequence++, unit));
-                else if (verdict === 'congested' && !draining) drain();
-              },
-            }
-          : {}),
-      };
-      let player: Player | null = null;
-      let latest: StatusPayload | null = null;
-      const attach = (resolved: Device) => {
-        if (wantsArtwork) send(socket, { event: 'device-frame', subscription, artwork: null });
-        if (!hosted && resolved.platform === 'macos') nativeViewerOpened = true;
-        detach?.();
-        gate.reset();
-        streamed = resolved;
-        attached = deviceKey(resolved);
-        detach = hosted
-          ? hostedViews.subscribe(hosted.client, hosted.session, listener, hint)
-          : framePool.subscribe(resolved, listener, hint);
-      };
-      const replay = (): Player => {
-        if (player) return player;
-        if (wantsArtwork) send(socket, { event: 'device-frame', subscription, artwork: null });
-        detach?.();
-        detach = null;
-        attached = null;
-        player = new Player(
-          replayDir!,
-          {
-            unit: (unit) => {
-              if (!ended && socket.readyState === socket.OPEN) socket.send(videoPacket(subscription, sequence++, unit));
-            },
-            bufferedBytes: () => socket.bufferedAmount,
-            ended: (position) =>
-              queueMicrotask(() => {
-                if (!ended) send(socket, { event: 'replay-ended', subscription, at: position });
-              }),
-          },
-          DEFAULT_VIDEO_LIMITS.congestedBytes,
-          archive !== undefined,
-        );
-        return player;
-      };
-      const goLive = (): string | null => {
-        if (archive !== undefined) return `Archive ${archive} cannot go live.`;
-        const resolved = latest
-          ? ownedDevice(latest, frameTarget, null, { adbEmulators })
-          : 'The device status is not known yet.';
-        if (typeof resolved === 'string') return resolved;
-        player?.stop();
-        player = null;
-        attach(resolved);
-        return null;
-      };
-      if (offersVideo) {
-        congestion.set(subscription, () => {
-          if (streamed && !player) framePool.congested(streamed);
-        });
-        keyframes.set(subscription, () => {
-          if (player) return player.resend();
-          gate.reset();
-          if (streamed) framePool.keyframe(streamed);
-        });
-        replays.set(subscription, {
-          seek: (seekAt, seekRate) => {
-            if (physical || replayDir === null || !hasFootage(replayDir, archive !== undefined)) return null;
-            const wasLive = player === null;
-            const shown = replay().seek(seekAt, seekRate);
-            if (shown === null && wasLive) goLive();
-            return shown;
-          },
-          live: goLive,
-        });
-      }
-      if (replayAt && replay().seek(replayAt.at, replayAt.rate) === null) {
-        send(socket, { event: 'replay-ended', subscription, at: replayAt.at });
-      }
-      const stopPresence =
-        target.presence === true && archive === undefined && !hosted && resolvedDir
-          ? localAgents.subscribe(
-              presenceKey(resolvedDir, frameTarget.platform, slot ?? 'default', physical === true),
-              (participants) => {
-                if (!ended) send(socket, { event: 'presence', subscription, participants });
-              },
-            )
-          : undefined;
-      const stopViewing = archive !== undefined || physical || hosted ? undefined : recorder?.viewing(frameTarget);
-      let unsubscribeStatus: (() => void) | null = null;
-      if (hosted) attach(hosted.view.device);
-      else if (archive === undefined)
-        unsubscribeStatus = statusFeed.subscribe({
-          item: (payload) => {
-            if (ended) return;
-            latest = payload as unknown as StatusPayload;
-            if (player) return;
-            const resolved = ownedDevice(latest, frameTarget, attached, { adbEmulators });
-            if (typeof resolved === 'string') return queueMicrotask(() => end(resolved));
-            if (deviceKey(resolved) === attached) return;
-            attach(resolved);
-          },
-          failed: (message) => queueMicrotask(() => end(message)),
-        });
-      subscriptions.set(subscription, cleanup);
-    }
 
     function archiveRead(id: RequestId, read: () => void | Promise<void>): void {
       if (slotsFull()) {
@@ -4461,6 +4095,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           if (method === 'device-host.frames.subscribe') {
             const view = hostedViews.target(session.id, hostedSession);
             return subscribeFrames(
+              ctx,
               id,
               { ...params, workspace: view.workspace, platform: view.device.platform, slot: view.slot },
               { client: session.id, session: hostedSession, view },
@@ -4715,7 +4350,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const reads: Partial<Record<string, (id: RequestId, params: unknown) => void | Promise<void>>> = {
           'logs.subscribe': (...args) => subscribeLogs(ctx, ...args),
           'logs.query': (...args) => queryLogs(ctx, ...args),
-          'frames.subscribe': subscribeFrames,
+          'frames.subscribe': (...args) => subscribeFrames(ctx, ...args),
           'replay.range': replayRange,
           'archive.detail': archiveDetail,
           'replay.keyframe': replayKeyframe,
@@ -4727,7 +4362,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (statusMethod) return void statusMethod(id, message.params);
       if (message.method === 'logs.subscribe') return subscribeLogs(ctx, id, message.params);
       if (message.method === 'logs.query') return queryLogs(ctx, id, message.params);
-      if (message.method === 'frames.subscribe') return subscribeFrames(id, message.params);
+      if (message.method === 'frames.subscribe') return subscribeFrames(ctx, id, message.params);
       if (message.method === 'frames.keyframe') {
         const name = isJsonObject(message.params) ? message.params.subscription : undefined;
         if (typeof name === 'string' && relay.keyframe(id, name)) return;
