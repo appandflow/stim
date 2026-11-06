@@ -425,3 +425,29 @@ test.skipIf(process.platform === 'win32')('stops before run when the build fails
   expect(await runAction()).toBe(0);
   expect(seen.calls().map((call) => call.slice(0, 2))).toEqual([['ci', 'run']]);
 });
+
+test.skipIf(process.platform === 'win32')('installs stim@version and runs its bin with ci', async () => {
+  const seen = recorder();
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, 'npm'),
+    `#!/bin/sh
+printf '%s\\n' "$*" > "${join(root, 'npm.txt')}"
+mkdir -p "$3/node_modules/stim/bin"
+cp "${join(root, 'fixture.mjs')}" "$3/node_modules/stim/bin/stim.mjs"
+`,
+    { mode: 0o755 },
+  );
+  vi.stubEnv('PATH', `${bin}:${process.env.PATH}`);
+  vi.stubEnv('RUNNER_TOOL_CACHE', join(root, 'cache'));
+  vi.stubEnv('RUNNER_TEMP', root);
+  delete github.inputs['cli-path'];
+  github.inputs.version = '1.42.0';
+  delete github.inputs.artifacts;
+  expect(await runAction()).toBe(0);
+  const npm = readFileSync(join(root, 'npm.txt'), 'utf8');
+  expect(npm).toContain('stim@1.42.0');
+  expect(npm).not.toContain('@stim-cli/ci');
+  expect(seen.calls().map((call) => call.slice(0, 2))).toEqual([['ci', 'run']]);
+});

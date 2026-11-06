@@ -156,9 +156,9 @@ reason yet to bypass the remaining coordination.
 ## GitHub Actions
 
 The repository includes a thin [Stim CI action](https://github.com/appandflow/stim/tree/main/.github/actions/stim-ci).
-It maps workflow inputs to `stim-ci`, runs `build` and then `run` in one step
+It maps workflow inputs to `stim ci`, runs `ci build` and then `ci run` in one step
 (iOS and Android always build; macOS only with `export`; web never), forwards
-cancellation, and writes the job summary. It installs the pinned `@stim-cli/ci`
+cancellation, and writes the job summary. It installs the pinned `stim`
 once per runner and version and reuses it for both commands. Native tools and app dependencies must be installed first.
 The bundled TypeScript action uses GitHub's Node.js 24 runtime and supports
 macOS and Linux runners with Bash. Windows is refused; self-hosted runners
@@ -169,7 +169,7 @@ For dogfood against a built Stim checkout:
 ```yaml
 - uses: ./.github/actions/stim-ci
   with:
-    cli-path: packages/ci/dist/stim-ci.mjs
+    cli-path: packages/stim-cli/bin/stim.mjs
     platform: ios
     project: apps/mobile
     command: node ../../scripts/ci/app-smoke.mjs
@@ -181,7 +181,7 @@ For dogfood against a built Stim checkout:
 ```
 
 Once released, consumers can pin the action to a commit and supply `version`
-with an exact published `@stim-cli/ci` version instead of `cli-path`. The
+with an exact published `stim` version instead of `cli-path`. The
 command input is Bash source, like a workflow `run:` step. Pass untrusted
 event values through environment variables, not interpolation into `command`.
 
@@ -192,7 +192,7 @@ launching, starting Metro or running a test command. macOS builds even without
 ```yaml
 - uses: ./.github/actions/stim-ci
   with:
-    cli-path: packages/ci/dist/stim-ci.mjs
+    cli-path: packages/stim-cli/bin/stim.mjs
     platform: android
     project: apps/mobile
     build-only: 'true'
