@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -155,7 +156,11 @@ describe.skipIf(!existsSync(MOBILE_MODULES))('fingerprint evaluators on the inst
       const nodeEnvRelease = await key(root, baseEnv({ NODE_ENV: 'production' }), 'production');
       write(join(root, '.env.production'), 'API=two\n');
       expect((await key(root, baseEnv({ API: 'p1' }))).hash).toBe(debug.hash);
-      expect((await key(root, baseEnv(), 'production')).hash).toBe(release.hash);
+      const byMode = readFileSync(
+        join(MOBILE_MODULES, 'expo-constants', 'scripts', 'getAppConfig.js'),
+        'utf8',
+      ).includes('loadProjectEnv');
+      expect((await key(root, baseEnv(), 'production')).hash === release.hash).toBe(!byMode);
       expect((await key(root, baseEnv({ NODE_ENV: 'production' }), 'production')).hash).not.toBe(nodeEnvRelease.hash);
     },
   );
@@ -249,6 +254,15 @@ describe.skipIf(!existsSync(MOBILE_MODULES))('fingerprint evaluators on the inst
       );
     },
   );
+
+  test('a file the config only probes for is keyed', SLOW, async () => {
+    const root = expoApp({
+      'app.config.js': "require('node:fs').existsSync('./flag');\nmodule.exports = ({ config }) => config;\n",
+    });
+    const before = await key(root, baseEnv());
+    write(join(root, 'flag'), '');
+    expect((await key(root, baseEnv())).hash).not.toBe(before.hash);
+  });
 
   test('a config that throws yields no key, naming the evaluator and its stderr', SLOW, async () => {
     const root = expoApp({ 'app.config.js': "throw new Error('config exploded');\n" });

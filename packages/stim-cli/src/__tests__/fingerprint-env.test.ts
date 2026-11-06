@@ -23,7 +23,7 @@ const LEFT_OUT = new Set([
   'RCT_SKIP_CACHES',
 ]);
 const quotedNames = (text: string) =>
-  [...text.matchAll(/['"]([A-Z][A-Z0-9_]+)['"]|\bENV\{(\w+)\}/g)].map((m) => m[1] ?? m[2] ?? '');
+  [...text.matchAll(/['"]([A-Z][A-Z0-9_]{3,})['"]|\bENV\{(\w+)\}/g)].map((m) => m[1] ?? m[2] ?? '');
 const keyed = (texts: string[]) =>
   new Set(buildEnvRows(texts, {}, 'ios', (path) => path).rows.map((row) => row.name.slice('env:'.length)));
 
@@ -128,14 +128,21 @@ test.each([
   ['FLAGS = "RCT_A"\nENV[FLAGS]', ['RCT_A']],
   ['def flag(n) { System.getenv().get(n) }\nflag("EX_DEBUG")\nflag("HERMES")', ['EX_DEBUG', 'HERMES']],
   ["%w[A B].each { |k| puts ENV[k] }\nx = 'EXPO_FLAG'", ['EXPO_FLAG']],
+  ["x = BUILD_ENV['ABC_D']\ny = ENV[name]\nz = 'SECRET_B'", ['ABC_D', 'SECRET_B']],
 ])('a build script read %j keys %j', (text, names) => {
   expect([...keyed([text])].toSorted()).toEqual(names.toSorted());
 });
 
 test("a worker's job env takes the client's value of every keyed name and drops the ones the client lacked", () => {
   const env = jobEnv(
-    { PATH: '/worker/bin', APP_VARIANT: 'production', USE_FRAMEWORKS: 'dynamic', DEBUG: 'x', HOME: '/worker' },
+    {
+      PATH: '/worker/bin',
+      APP_VARIANT: 'production',
+      USE_FRAMEWORKS: 'dynamic',
+      DEBUG: 'x',
+      STIM_HOME: '/worker/.stim',
+    },
     { set: { APP_VARIANT: 'staging' }, absent: ['USE_FRAMEWORKS'] },
   );
-  expect(env).toEqual({ PATH: '/worker/bin', APP_VARIANT: 'staging', HOME: '/worker' });
+  expect(env).toEqual({ PATH: '/worker/bin', APP_VARIANT: 'staging', STIM_HOME: '/worker/.stim' });
 });

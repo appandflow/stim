@@ -8,7 +8,7 @@ const path = require('node:path');
 const { createRequire } = require('node:module');
 
 const RESULT_FD = 3;
-const [kind, root, platform, embedMode] = process.argv.slice(2);
+const [kind, root, platform, embedMode, constantsDir] = process.argv.slice(2);
 const fromRoot = createRequire(path.join(root, 'package.json'));
 const requireFrom = (dir, id) => require(createRequire(path.join(dir, 'package.json')).resolve(id));
 const packageDir = (from, name) => path.dirname(from.resolve(`${name}/package.json`));
@@ -89,7 +89,7 @@ async function expo() {
 // NODE_ENV. `embedMode` is `env` for the second kind.
 function embed() {
   const { expoEnv, getConfig } = loadExpo();
-  if (embedMode === 'env') requireFrom(packageDir(fromRoot, 'expo-constants'), '@expo/env').load(root);
+  if (embedMode === 'env') requireFrom(constantsDir, '@expo/env').load(root);
   else applyMode(expoEnv, embedMode);
   return { config: getConfig(root, { isPublicConfig: true, skipSDKVersionRequirement: true }).exp };
 }

@@ -11,7 +11,7 @@ type Env = NodeJS.ProcessEnv;
  */
 const DENIED =
   /^(?:DEBUG.*|NODE_DEBUG|NODE_V8_COVERAGE|NO_COLOR|NODE_DISABLE_COLORS|COLORTERM|TERM.*|TRACE_DEPRECATION|NO_DEPRECATION|__IS_WSL_TEST__|TEST_GRACEFUL_FS_GLOBAL_PATCH|COLUMNS|LINES|TRAVIS|CIRCLECI|APPVEYOR|GITLAB_CI|GITHUB_ACTIONS|BUILDKITE|DRONE|CI_NAME|TEAMCITY_VERSION|GITEA_ACTIONS|TF_BUILD|AGENT_NAME)$/;
-const VOLATILE = /^(?:PWD|OLDPWD|SHLVL|_|TMPDIR|SSH_.*|__CF.*|ITERM_.*|TMUX.*|VSCODE_.*|WINDOWID)$/;
+const VOLATILE = /^(?:PWD|OLDPWD|SHLVL|_|TMPDIR|SSH_.*|__CF.*|ITERM_.*|TMUX.*|VSCODE_.*|WINDOWID|STIM_.*)$/;
 const PINS = { CI: '1', FORCE_COLOR: '0', LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', TZ: 'UTC' };
 const PINNED = new Set([...Object.keys(PINS), 'PWD', 'EXPO_NO_TELEMETRY']);
 /** Toolchain, user and machine locations: out of the key and never sent to a build worker. */
@@ -24,6 +24,9 @@ const MACHINE_LOCAL = new Set([
   'TEMP',
   'TMP',
   'SystemRoot',
+  'STIM_HOME',
+  'STIM_RUN_ID',
+  'STIM_ACCESS_TICKET',
   'JAVA_HOME',
   'ANDROID_HOME',
   'ANDROID_SDK_ROOT',
@@ -36,7 +39,7 @@ const SCANNED = /(?:\.podspec|\.rb|\.gradle|\.gradle\.kts|^Podfile|^CMakeLists\.
 const PRUNED = new Set(['node_modules', 'Pods', '.gradle', '.git']);
 const BUILD_SIBLINGS = /^(?:Podfile|build\.gradle(?:\.kts)?|settings\.gradle(?:\.kts)?|.*\.xcodeproj)$/;
 const NAME = '([A-Za-z_][A-Za-z0-9_]*)';
-const RUBY_READ = String.raw`ENV(?:\[\s*|\.(?:fetch|key\?|include\?|has_key\?)\(\s*)`;
+const RUBY_READ = String.raw`(?<![A-Za-z0-9_])ENV(?:\[\s*|\.(?:fetch|key\?|include\?|has_key\?)\(\s*)`;
 const LITERAL_READS = [
   new RegExp(String.raw`${RUBY_READ}(['"])${NAME}\1`, 'g'),
   new RegExp(String.raw`(?:System\.getenv|environmentVariable)\(\s*(['"])${NAME}\1`, 'g'),
@@ -45,7 +48,7 @@ const LITERAL_READS = [
 ];
 const CONSTANT_READ = new RegExp(String.raw`${RUBY_READ}()([A-Z][A-Z0-9_]*)\s*[\],)]`, 'g');
 const MENTION = /\bENV\b|\bgetenv\b|\benvironmentVariable|\bSystem\.env\b/g;
-const NAME_LITERAL = /['"]([A-Z][A-Z0-9_]+)['"]/g;
+const NAME_LITERAL = /['"]([A-Z][A-Z0-9_]{3,})['"]/g;
 const RUBY_CONSTANT = new RegExp(String.raw`^\s*([A-Z][A-Z0-9_]*)\s*=\s*['"]${NAME}['"]`, 'gm');
 
 export const isDenied = (name: string): boolean => DENIED.test(name);

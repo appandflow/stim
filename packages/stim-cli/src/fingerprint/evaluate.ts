@@ -251,9 +251,10 @@ function traceRows(
   excluded: readonly string[],
   prefix: string,
   pinned: boolean,
+  form: (path: string) => string,
 ): Uncertain | { rows: Input[]; packages: string[]; modules: string[]; opaque: string[] } {
   const { trace } = part;
-  const rows = envRows(prefix, trace.env, part.env, pinned, (path) => realForm(path, roots));
+  const rows = envRows(prefix, trace.env, part.env, pinned, form);
   const inApp = (path: string) =>
     (within(path, roots.project) || within(path, roots.install)) && !path.split(sep).includes('node_modules');
   if (trace.enumerators.some(inApp)) rows.push({ ...enumerationRow(part.env), name: `${prefix}*` });
@@ -274,7 +275,7 @@ function traceRows(
   for (const { path, kind, hash } of trace.reads) {
     if (ours(path) || packageRoot(path)) continue;
     if (kind !== 'file') {
-      if (inApp(path))
+      if (inApp(path) && (part.name === 'config' || part.name === 'configEmbedded'))
         rows.push(
           kind === 'dir'
             ? { name: `dir:${realForm(path, roots)}`, kind: 'file', hash: hash ?? ABSENT }
@@ -334,6 +335,12 @@ async function evaluate(
   opts: FingerprintOptions,
 ) {
   const root = roots.project;
+  let outsideValue = false;
+  const form = (path: string) => {
+    const keyed = realForm(path, roots);
+    if (keyed.startsWith('outside:')) outsideValue = true;
+    return keyed;
+  };
   const env = evaluatorEnv(opts.env, root, platform);
   const pinned = projectNodeBin(root, opts.env);
   const node = pinned ? join(pinned.bin, process.platform === 'win32' ? 'node.exe' : 'node') : process.execPath;
@@ -350,7 +357,7 @@ async function evaluate(
   const parts: Promise<Part | EvalUncertain>[] = [];
   const rows: Input[] = [];
   if (expo) {
-    rows.push(...envRows('env:', ['EXPO_USE_COMMUNITY_AUTOLINKING'], env, true, (path) => realForm(path, roots)));
+    rows.push(...envRows('env:', ['EXPO_USE_COMMUNITY_AUTOLINKING'], env, true, form));
     const autolinking = findPackage(expo, 'expo-modules-autolinking') ?? findPackage(root, 'expo-modules-autolinking');
     const manifest = autolinking ? record(JSON.parse(readFileSync(join(autolinking, 'package.json'), 'utf8'))) : {};
     if (!autolinking || !versionAtLeast(manifest.version, 1, 12))
@@ -431,7 +438,7 @@ async function evaluate(
   const configModules: string[] = [];
   const opaque: string[] = [];
   const collect = (part: Part, prefix: string, pin: boolean): Uncertain | null => {
-    const traced = traceRows(part, roots, excluded, prefix, pin);
+    const traced = traceRows(part, roots, excluded, prefix, pin, form);
     if (isUncertain(traced)) return traced;
     rows.push(...traced.rows);
     traced.packages.forEach((dir) => packages.add(dir));
@@ -454,7 +461,8 @@ async function evaluate(
     if (nativePackages.has('expo-constants')) {
       const embeddedName: PartName = 'configEmbedded';
       const embedded = embedEnv(opts.env);
-      const constants = findPackage(root, 'expo-constants');
+      const constants = (expo && findPackage(expo, 'expo-constants')) ?? findPackage(root, 'expo-constants');
+      if (!constants) return failed('configEmbedded', 'found no expo-constants package to read its loader from');
       const script = constants ? join(constants, 'scripts', 'getAppConfig.js') : '';
       const byMode = existsSync(script) && readFileSync(script, 'utf8').includes('loadProjectEnv');
       const reuse =
@@ -465,14 +473,13 @@ async function evaluate(
         ? { ...config, name: embeddedName, env: embedded }
         : await spawn(
             'configEmbedded',
-            [evaluator, 'embed', root, platform, byMode ? opts.embedMode : 'env'],
+            [evaluator, 'embed', root, platform, byMode ? opts.embedMode : 'env', constants],
             embedded,
           );
       if (isUncertain(part)) return part;
       const problem = reuse ? null : collect(part, 'env@embed:', false);
       if (problem) return problem;
-      if (reuse)
-        rows.push(...envRows('env@embed:', config.trace.env, embedded, false, (path) => realForm(path, roots)));
+      if (reuse) rows.push(...envRows('env@embed:', config.trace.env, embedded, false, form));
       const envFiles = byMode
         ? envCandidates(root, opts.embedMode)
         : embedded.NODE_ENV
@@ -484,7 +491,18 @@ async function evaluate(
   }
 
   const reactNative = findPackage(root, 'react-native');
-  const scripts = [
+  const scanned = new Set<string>();
+  const texts = native === 'tracked' ? buildScripts(nativeDir).map((path) => readFileSync(path, 'utf8')) : [];
+  if (native === 'generated' && expo && existsSync(join(expo, 'template.tgz')))
+    texts.push(...templateScripts(join(expo, 'template.tgz')));
+  const scan = (dirs: Iterable<string>) => {
+    for (const dir of dirs) {
+      if (scanned.has(dir)) continue;
+      scanned.add(dir);
+      texts.push(...buildScripts(dir).map((path) => readFileSync(path, 'utf8')));
+    }
+  };
+  scan([
     ...packages,
     ...contentPackages,
     ...[
@@ -492,15 +510,14 @@ async function evaluate(
       expo && findPackage(expo, 'expo-modules-autolinking'),
       reactNative && findPackage(reactNative, '@react-native/gradle-plugin'),
     ].filter((dir): dir is string => Boolean(dir)),
-  ];
-  const texts = [
-    ...(native === 'tracked' ? buildScripts(nativeDir) : []),
-    ...[...new Set(scripts)].flatMap((dir) => buildScripts(dir)),
-  ].map((path) => readFileSync(path, 'utf8'));
-  if (native === 'generated' && expo && existsSync(join(expo, 'template.tgz')))
-    texts.push(...templateScripts(join(expo, 'template.tgz')));
-  const buildEnv = buildEnvRows(texts, opts.env, platform, (path) => realForm(path, roots));
-  for (const owner of buildEnv.paths.map(packageRoot)) if (owner) packages.add(owner);
+  ]);
+  let buildEnv = buildEnvRows(texts, opts.env, platform, form);
+  for (let owners = buildEnv.paths.map(packageRoot); owners.some((dir) => dir && !scanned.has(dir));) {
+    owners.forEach((dir) => dir && packages.add(dir));
+    scan(owners.filter((dir): dir is string => Boolean(dir)));
+    buildEnv = buildEnvRows(texts, opts.env, platform, form);
+    owners = buildEnv.paths.map(packageRoot);
+  }
   const pathRows = walk({ roots, trees: buildEnv.paths.filter((path) => !packageRoot(path)), tracked: null });
   if (isUncertain(pathRows)) return pathRows;
   const closure = entryPoints(root, expo);
@@ -516,7 +533,10 @@ async function evaluate(
     configModules: [...new Set(configModules)].toSorted(byCodeUnit),
     opaque,
     portable:
-      pathRows.portable && !configText.includes(home) && !(username.length > 2 && configText.includes(username)),
+      pathRows.portable &&
+      !outsideValue &&
+      !configText.includes(home) &&
+      !(username.length > 2 && configText.includes(username)),
   };
 }
 
