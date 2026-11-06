@@ -3,7 +3,6 @@ import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import {
   cleanupWorktrees,
-  hashes,
   mutation,
   temporaryWorktree,
 } from '../packages/stim-cli/src/__tests__/fingerprint-parity-harness.ts';
@@ -46,20 +45,7 @@ export async function run(projects, oracle) {
       console.log(
         `Expo ${sdk}, RN ${rn}, ${git(source, 'ls-files', '--', 'ios', 'android') ? 'tracked native' : 'no tracked native'}`,
       );
-      const fixture = temporaryWorktree(source);
-      const baselines = [];
       for (const platform of oracle ? ['ios'] : ['ios', 'android']) {
-        try {
-          const baseline = await hashes(fixture.root, platform, oracle);
-          console.log(`${platform}: key (${baseline.ms} ms)`);
-          baselines.push({ platform, baseline });
-        } catch (error) {
-          console.error(`${platform}: ${error.message}`);
-          process.exitCode = 1;
-        }
-      }
-      fixture.cleanup();
-      for (const { platform, baseline } of baselines) {
         const output = [];
         for (const row of rows) {
           let checkout;
@@ -75,7 +61,7 @@ export async function run(projects, oracle) {
             if (row.platform && row.platform !== platform) continue;
             checkout = temporaryWorktree(source);
             if (!row.applies(checkout.root)) continue;
-            const result = await mutation(row, checkout.root, baseline, platform, oracle);
+            const result = await mutation(row, checkout.root, undefined, platform, oracle);
             const outcome = verdict(row, result);
             Object.assign(cells, {
               'expo moved': oracle ? result.expoMoved : '-',

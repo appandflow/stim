@@ -17,17 +17,27 @@ export function temporaryWorktree(project: string): { root: string; cleanup(): v
   const temp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-parity-')));
   const checkout = join(temp, 'tree');
   const root = join(checkout, relative(repo, source));
+  let added = false;
   const cleanup = () => {
+    let failure: unknown;
     try {
       git(repo, 'worktree', 'remove', '--force', checkout);
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      if (failure || !added) git(repo, 'worktree', 'prune');
+    } catch (error) {
+      failure ??= error;
     } finally {
       rmSync(temp, { recursive: true, force: true });
       active.delete(cleanup);
-      git(repo, 'worktree', 'prune');
     }
+    if (failure) throw failure;
   };
   try {
     git(repo, 'worktree', 'add', '--quiet', '--detach', checkout, 'HEAD');
+    added = true;
     active.add(cleanup);
     for (let dir = source; ; dir = dirname(dir)) {
       const modules = join(dir, 'node_modules');
@@ -40,8 +50,11 @@ export function temporaryWorktree(project: string): { root: string; cleanup(): v
     }
     return { root, cleanup };
   } catch (error) {
-    if (active.has(cleanup)) cleanup();
-    else rmSync(temp, { recursive: true, force: true });
+    try {
+      cleanup();
+    } catch {
+      throw error;
+    }
     throw error;
   }
 }
@@ -96,7 +109,7 @@ export async function hashes(
 export async function mutation(
   row: MutationRow,
   root: string,
-  baseline: Measurement,
+  baseline: Measurement | undefined,
   platform: 'ios' | 'android',
   oracle: boolean,
 ): Promise<{ expoMoved?: boolean; stimMoved: boolean; ms: number }> {
@@ -114,7 +127,10 @@ export async function mutation(
       });
       before = await hashes(pair.before, platform, oracle);
       afterRoot = pair.after;
-    } else row.apply?.(root);
+    } else {
+      before ??= await hashes(root, platform, oracle);
+      row.apply?.(root);
+    }
     const after = await hashes(afterRoot, platform, oracle, { ...baseEnv, ...row.env?.(root) });
     return {
       expoMoved: oracle ? after.expo !== before.expo : undefined,

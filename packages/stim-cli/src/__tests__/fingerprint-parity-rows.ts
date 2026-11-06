@@ -16,7 +16,7 @@ export interface MutationRow {
   platform?: 'ios';
   applies(root: string): boolean;
   apply?: (root: string) => void;
-  env?: (root: string) => NodeJS.ProcessEnv;
+  env?: (root: string) => NodeJS.ProcessEnv | undefined;
   measure?: (root: string, ctx: MutationContext) => { before: string; after: string };
 }
 
@@ -36,7 +36,7 @@ export function git(root: string, ...args: string[]): string {
     ],
     {
       encoding: 'utf8',
-      timeout: 20_000,
+      timeout: args[0] === 'worktree' && args[1] === 'add' ? 120_000 : 20_000,
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   ).trim();
@@ -74,9 +74,27 @@ const plugin = (root: string) => {
 };
 const configFile = (root: string) =>
   ['app.config.js', 'app.config.ts', 'app.config.cjs'].find((name) => existsSync(join(root, name)));
-const envName = (root: string) => {
-  const name = configFile(root);
-  return name ? (/process\.env\.([A-Z_][A-Z_0-9]*)/.exec(readFileSync(join(root, name), 'utf8'))?.[1] ?? '') : '';
+const configEnv = (root: string): NodeJS.ProcessEnv | undefined => {
+  const file = configFile(root);
+  if (!file) return;
+  const source = readFileSync(join(root, file), 'utf8');
+  const name = /process\.env\.([A-Z_][A-Z_0-9]*)/.exec(source)?.[1];
+  if (!name) return;
+  const read = `process\\.env\\.${name}\\b`;
+  const alias = new RegExp(`(?:const|let|var)\\s+([\\w$]+)\\s*=\\s*${read}`).exec(source)?.[1];
+  const reference = alias ? `(?:${read}|\\b${alias.replaceAll('$', '\\$')}\\b)` : read;
+  const current = new RegExp(`${read}\\s*(?:\\?\\?|\\|\\|)\\s*(['"])(.*?)\\1`).exec(source)?.[2];
+  const values = [
+    ...source.matchAll(new RegExp(`${reference}\\s*(?:===?|!==?)\\s*(['"])(.*?)\\1`, 'g')),
+    ...source.matchAll(new RegExp(`(['"])(.*?)\\1\\s*(?:===?|!==?)\\s*${reference}`, 'g')),
+  ].map((match) => match[2]);
+  for (const [, list = ''] of source.matchAll(
+    new RegExp(`\\[([^\\]]*)\\]\\s*\\.includes\\(\\s*${reference}\\s*\\)`, 'g'),
+  )) {
+    values.push(...[...list.matchAll(/(['"])(.*?)\1/g)].map((match) => match[2]));
+  }
+  const value = values.find((candidate) => candidate !== current);
+  return value === undefined ? undefined : { [name]: value };
 };
 const podspec = (root: string) =>
   existsSync(join(root, 'modules'))
@@ -111,7 +129,7 @@ export const rows: MutationRow[] = [
     id: 'config-plugin-input',
     class: 'must-move',
     platform: 'ios',
-    description: 'a native config field consumed by an iOS config plugin',
+    description: 'a native config field under ios.infoPlist',
     applies: appJson,
     apply: (root) =>
       edit(root, 'app.json', ({ expo }) => {
@@ -153,8 +171,8 @@ export const rows: MutationRow[] = [
     id: 'config-env',
     class: 'must-move',
     description: 'an environment variable read by app config',
-    applies: (root) => !!envName(root),
-    env: (root) => ({ [envName(root)]: `${process.env[envName(root)] ?? ''}parity-changed` }),
+    applies: (root) => !!configEnv(root),
+    env: configEnv,
   },
   {
     id: 'manifest-native',

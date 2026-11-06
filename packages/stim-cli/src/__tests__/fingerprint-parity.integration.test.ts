@@ -1,14 +1,21 @@
+import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { cleanupWorktrees, hashes, mutation, type Measurement } from './fingerprint-parity-harness.ts';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import {
+  cleanupWorktrees,
+  hashes,
+  mutation,
+  temporaryWorktree,
+  type Measurement,
+} from './fingerprint-parity-harness.ts';
 import { git, rows, verdict, write } from './fingerprint-parity-rows.ts';
 
 const MODULES = fileURLToPath(new URL('../../../../apps/mobile/node_modules', import.meta.url));
 const SLOW = 120_000;
-let fixtures: Record<'generated' | 'tracked', { root: string; baseline: Measurement }>;
+let fixtures: Record<'generated' | 'tracked', { root: string; baseline: Measurement; commit: string }>;
 const temps: string[] = [];
 
 function fixture(native: boolean): string {
@@ -40,7 +47,10 @@ function fixture(native: boolean): string {
   );
   write(
     join(root, 'app.config.js'),
-    'module.exports = ({ config }) => ({ ...config, extra: { native: process.env.PARITY_NATIVE ?? "initial" } });\n',
+    `const variant = process.env.PARITY_NATIVE ?? 'production';
+if (variant !== 'production' && variant !== 'development') throw new Error('Invalid PARITY_NATIVE');
+module.exports = ({ config }) => ({ ...config, extra: { native: variant } });
+`,
   );
   write(
     join(root, 'parity-input.cjs'),
@@ -88,14 +98,22 @@ describe.skipIf(!existsSync(MODULES))('fingerprint change-detection parity', () 
     const generated = fixture(false);
     const tracked = fixture(true);
     fixtures = {
-      generated: { root: generated, baseline: await hashes(generated, 'ios', true) },
-      tracked: { root: tracked, baseline: await hashes(tracked, 'ios', true) },
+      generated: {
+        root: generated,
+        baseline: await hashes(generated, 'ios', true),
+        commit: git(generated, 'rev-parse', 'HEAD'),
+      },
+      tracked: {
+        root: tracked,
+        baseline: await hashes(tracked, 'ios', true),
+        commit: git(tracked, 'rev-parse', 'HEAD'),
+      },
     };
   }, SLOW);
   afterEach(() => {
     cleanupWorktrees();
-    for (const { root } of Object.values(fixtures ?? {})) {
-      git(root, 'checkout', '--', '.');
+    for (const { root, commit } of Object.values(fixtures ?? {})) {
+      git(root, 'reset', '--hard', commit);
       git(root, 'clean', '-ffdx', '-e', 'node_modules');
     }
   });
@@ -107,7 +125,8 @@ describe.skipIf(!existsSync(MODULES))('fingerprint change-detection parity', () 
     '$id [$class]: $description',
     async (row) => {
       const tracked = ['swift', 'xcuserdata', 'worktree', 'pod-install-in-worktree'].includes(row.id);
-      const { root, baseline } = fixtures[tracked ? 'tracked' : 'generated'];
+      const { root, baseline, commit } = fixtures[tracked ? 'tracked' : 'generated'];
+      expect(git(root, 'rev-parse', 'HEAD')).toBe(commit);
       expect(row.applies(root), `${row.id} must be exercised by the fixture`).toBe(true);
       const result = await mutation(row, root, baseline, 'ios', true);
       const outcome = verdict(row, result);
@@ -116,4 +135,75 @@ describe.skipIf(!existsSync(MODULES))('fingerprint change-detection parity', () 
     },
     SLOW,
   );
+
+  it(
+    'measures a mutation against its own checkout',
+    async () => {
+      const checkout = temporaryWorktree(fixtures.generated.root);
+      try {
+        const row = rows.find((candidate) => candidate.id === 'js');
+        assert(row);
+        expect(await mutation(row, checkout.root, undefined, 'ios', true)).toMatchObject({
+          expoMoved: false,
+          stimMoved: false,
+        });
+      } finally {
+        checkout.cleanup();
+      }
+    },
+    SLOW,
+  );
+
+  it.each([
+    { expression: `process.env.PARITY_NATIVE === 'development'`, applies: true },
+    { expression: `['production', 'development'].includes(variant)`, applies: true },
+    { expression: 'variant', applies: false },
+  ])('derives a config environment alternative from $expression', ({ expression, applies }) => {
+    const { root } = fixtures.generated;
+    write(
+      join(root, 'app.config.js'),
+      `const variant = process.env.PARITY_NATIVE ?? 'production';\nmodule.exports = ${expression};\n`,
+    );
+    const row = rows.find((candidate) => candidate.id === 'config-env');
+    assert(row);
+    expect(row.applies(root)).toBe(applies);
+    expect(row.env?.(root)).toEqual(applies ? { PARITY_NATIVE: 'development' } : undefined);
+  });
+
+  it.each(['success', 'remove', 'add'])('cleans up a temporary worktree after %s', async (stage) => {
+    const failure = new Error(`${stage} failed`);
+    const calls: string[] = [];
+    let path = '';
+    const command = vi
+      .spyOn(await import('./fingerprint-parity-rows.ts'), 'git')
+      .mockImplementation((root, ...args) => {
+        if (args[0] === 'rev-parse') return root;
+        calls.push(args[1] ?? '');
+        if (args[1] === 'add') {
+          path = args[4] ?? '';
+          write(join(path, 'partial'), 'checkout');
+          if (stage === 'add') throw failure;
+        }
+        if (args[1] === 'remove' && stage !== 'success') {
+          throw stage === 'remove' ? failure : new Error('remove failed');
+        }
+        if (args[1] === 'prune') throw new Error('prune failed');
+        return '';
+      });
+    try {
+      let caught: unknown;
+      try {
+        const checkout = temporaryWorktree(fixtures.generated.root);
+        checkout.cleanup();
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBe(stage === 'success' ? undefined : failure);
+      expect(calls).toEqual(stage === 'success' ? ['add', 'remove'] : ['add', 'remove', 'prune']);
+      expect(existsSync(dirname(path))).toBe(false);
+      cleanupWorktrees();
+    } finally {
+      command.mockRestore();
+    }
+  });
 });
