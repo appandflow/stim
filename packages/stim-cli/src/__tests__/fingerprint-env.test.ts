@@ -2,8 +2,8 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
-import { entryPoints, findPackage, packageRows } from '../fingerprint/closure.ts';
-import { buildEnvRows, buildScripts, jobEnv, templateScripts } from '../fingerprint/env.ts';
+import { entryPoints, findPackage, packageIdentity, packageRows } from '../fingerprint/closure.ts';
+import { buildEnvRows, buildScripts, jobEnv, scriptEnvNames, templateScripts } from '../fingerprint/env.ts';
 
 const MOBILE = fileURLToPath(new URL('../../../../apps/mobile', import.meta.url));
 const SCRIPT = /(?:\.podspec|\.rb|\.gradle|\.gradle\.kts|^Podfile|^CMakeLists\.txt)$/;
@@ -25,7 +25,11 @@ const LEFT_OUT = new Set([
 const quotedNames = (text: string) =>
   [...text.matchAll(/['"]([A-Z][A-Z0-9_]{3,})['"]|\bENV\{(\w+)\}/g)].map((m) => m[1] ?? m[2] ?? '');
 const keyed = (texts: string[]) =>
-  new Set(buildEnvRows(texts, {}, 'ios', (path) => path).rows.map((row) => row.name.slice('env:'.length)));
+  new Set(
+    buildEnvRows(texts.flatMap(scriptEnvNames), {}, 'ios', (path) => path).rows.map((row) =>
+      row.name.slice('env:'.length),
+    ),
+  );
 
 function listScripts(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -94,7 +98,7 @@ describe.skipIf(!existsSync(join(MOBILE, 'node_modules')))('build env scan over 
 
   test('keys the prebuild and codegen entry points with their direct dependencies', () => {
     const { dirs } = entryPoints(MOBILE, findPackage(MOBILE, 'expo'));
-    const names = packageRows(dirs).map((row) => row.name);
+    const names = packageRows(dirs.flatMap((dir) => packageIdentity(dir) ?? [])).map((row) => row.name);
     expect(names).toEqual(
       expect.arrayContaining([
         'package:@expo/cli',
@@ -110,16 +114,23 @@ test('a build env path is keyed in its path form, and Gradle project properties 
   const env = { HERMES_ENGINE_TARBALL_PATH: '/abs/hermes.tar.gz', ORG_GRADLE_PROJECT_newArchEnabled: 'false' };
   const texts = ["tarball = ENV['HERMES_ENGINE_TARBALL_PATH']"];
   const form = (path: string) => `form:${path}`;
-  const ios = buildEnvRows(texts, env, 'ios', form);
-  const android = buildEnvRows(texts, env, 'android', form);
+  const ios = buildEnvRows(texts.flatMap(scriptEnvNames), env, 'ios', form);
+  const android = buildEnvRows(texts.flatMap(scriptEnvNames), env, 'android', form);
   expect(ios.paths).toEqual(['/abs/hermes.tar.gz']);
   expect(ios.rows.map((row) => row.name)).toEqual(['env:HERMES_ENGINE_TARBALL_PATH']);
   expect(android.rows.map((row) => row.name)).toEqual([
     'env:HERMES_ENGINE_TARBALL_PATH',
     'env:ORG_GRADLE_PROJECT_newArchEnabled',
   ]);
-  const moved = buildEnvRows(texts, { HERMES_ENGINE_TARBALL_PATH: '/other/hermes.tar.gz' }, 'ios', () => 'form:same');
-  expect(moved.rows[0]?.hash).toBe(buildEnvRows(texts, env, 'ios', () => 'form:same').rows[0]?.hash);
+  const moved = buildEnvRows(
+    texts.flatMap(scriptEnvNames),
+    { HERMES_ENGINE_TARBALL_PATH: '/other/hermes.tar.gz' },
+    'ios',
+    () => 'form:same',
+  );
+  expect(moved.rows[0]?.hash).toBe(
+    buildEnvRows(texts.flatMap(scriptEnvNames), env, 'ios', () => 'form:same').rows[0]?.hash,
+  );
 });
 
 test.each([

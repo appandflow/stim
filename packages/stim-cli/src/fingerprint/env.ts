@@ -66,6 +66,13 @@ export function evaluatorEnv(requester: Env, root: string, platform: Platform): 
   return { EXPO_NO_TELEMETRY: '1', ...env, ...PINS, PWD: root };
 }
 
+/** What a workspace's fingerprint env file keeps: the requester's env without diagnostic and Stim machine names. */
+export function workspaceEnv(requester: Env): Record<string, string> {
+  const env = defined(requester);
+  for (const name of Object.keys(env)) if (isDenied(name) || STIM_MACHINE_LOCAL.test(name)) delete env[name];
+  return env;
+}
+
 /**
  * The env `expo-constants` evaluates the embedded config in: the native build's own, minus the deny list.
  * `FORCE_COLOR=0`, which Stim's Xcode builds set, keeps color detection from reading `CI` on both platforms.
@@ -137,7 +144,7 @@ export function buildScripts(dir: string): string[] {
  * constant the same file assigns. A file that mentions the env more often than it reads a parsed name, such as
  * `ENV[name]` or `System.env.X`, contributes every quoted upper-case literal it contains as well.
  */
-function scriptEnvNames(text: string): string[] {
+export function scriptEnvNames(text: string): string[] {
   const constants = new Map([...text.matchAll(RUBY_CONSTANT)].map((match) => [match[1], match[2]]));
   const literal = LITERAL_READS.flatMap((form) => [...text.matchAll(form)].map((match) => match[2] ?? ''));
   const viaConstants = [...text.matchAll(CONSTANT_READ)].map((match) => constants.get(match[2] ?? ''));
@@ -173,17 +180,17 @@ export function templateScripts(tgz: string): string[] {
 }
 
 /**
- * Row 24: every env name the native build scripts read, valued from the env the native build runs under, plus every
+ * Row 24: every env name the native build scripts read (`scriptEnvNames` of each script), valued from the env the native build runs under, plus every
  * `ORG_GRADLE_PROJECT_*` on Android, which Gradle reads as project properties. An absolute path value is keyed in
  * its `pathForm`, and returned so its file or tree can be hashed too.
  */
 export function buildEnvRows(
-  texts: readonly string[],
+  scanned: Iterable<string>,
   env: Env,
   platform: Platform,
   pathForm: (path: string) => string,
 ): { rows: Input[]; paths: string[] } {
-  const names = new Set(texts.flatMap(scriptEnvNames).filter((name) => keyable(name) && !BUILD_DENIED.has(name)));
+  const names = new Set([...scanned].filter((name) => keyable(name) && !BUILD_DENIED.has(name)));
   if (platform === 'android')
     for (const name of Object.keys(env)) if (name.startsWith('ORG_GRADLE_PROJECT_')) names.add(name);
   const paths = [...names]

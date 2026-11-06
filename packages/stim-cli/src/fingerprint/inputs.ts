@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { LOCKFILES } from '@stim-cli/core/state';
 import {
   DEFAULT_ANDROID_GRADLE_ROOT,
   DEFAULT_ANDROID_MODULE,
@@ -18,9 +19,8 @@ import {
   type Uncertain,
 } from './key.ts';
 import { canonicalPodfileLock } from './podfile-lock.ts';
-import { compileIgnore, field, nativeSubset, pathForm, walk, within, type Roots } from './walk.ts';
+import { compileIgnore, field, nativeSubset, pathForm, walk, within, type Roots, type WalkOptions } from './walk.ts';
 
-const LOCKFILES = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json', 'bun.lock', 'bun.lockb'];
 const PATCH_DIRS = ['patches', 'cng-patches', '.yarn/patches'];
 const APP_ROOT_SKIPPED = new Set(['node_modules', 'Pods', 'build', 'android', '.git', '.DS_Store', '.stim.json']);
 const ANDROID_ROOT_SOURCES = [
@@ -62,6 +62,7 @@ export interface StaticContext {
   fingerprintConfig?: unknown;
   /** Roots of native packages hashed by content: workspace links, `file:`, git and unclassified origins. */
   contentPackages?: readonly string[];
+  hashes?: WalkOptions['hashes'];
 }
 
 export interface StaticInputs {
@@ -256,6 +257,15 @@ function nativeTrees(project: string, nativeDir: string, target: StaticTarget): 
   return [...ANDROID_ROOT_SOURCES.map((name) => join(nativeDir, name)), layout.moduleDir];
 }
 
+export function targetLayout(target: StaticTarget): Layout {
+  const ios = target.platform === 'ios';
+  return {
+    projectPath: ios ? (target.iosProjectPath ?? DEFAULT_IOS_PROJECT_PATH) : null,
+    gradleRoot: ios ? null : (target.androidLayout?.gradleRootRelative ?? DEFAULT_ANDROID_GRADLE_ROOT),
+    module: ios ? null : (target.androidLayout?.module ?? DEFAULT_ANDROID_MODULE),
+  };
+}
+
 /** The real path of the platform's native directory, or its declared path while it does not exist. */
 export function nativeDirectory(project: string, target: StaticTarget): string {
   const declared =
@@ -279,12 +289,7 @@ export function staticInputs(context: StaticContext, target: StaticTarget): Stat
       remedy: 'Set nodeLinker: node-modules.',
     };
   const ios = target.platform === 'ios';
-  const projectPath = target.iosProjectPath ?? DEFAULT_IOS_PROJECT_PATH;
-  const layout: Layout = {
-    projectPath: ios ? projectPath : null,
-    gradleRoot: ios ? null : (target.androidLayout?.gradleRootRelative ?? DEFAULT_ANDROID_GRADLE_ROOT),
-    module: ios ? null : (target.androidLayout?.module ?? DEFAULT_ANDROID_MODULE),
-  };
+  const layout = targetLayout(target);
   const nativeDir = nativeDirectory(project, target);
   const native = nativeMode(context, nativeDir);
   if (isUncertain(native)) return native;
@@ -327,6 +332,7 @@ export function staticInputs(context: StaticContext, target: StaticTarget): Stat
     skip: ios && nativeDir === project ? [...APP_ROOT_SKIPPED].map((name) => join(project, name)) : [],
     trackedOnly: ios && native === 'tracked' ? [join(nativeDir, 'main.jsbundle'), join(nativeDir, 'assets')] : [],
     keepSigningFiles: target.keepSigningFiles,
+    hashes: context.hashes,
     transforms: new Map(
       ios
         ? [

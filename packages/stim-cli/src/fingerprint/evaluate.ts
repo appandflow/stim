@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { projectNodeBin } from '@stim-cli/core/toolchain';
 import { getExecutor } from '../exec.ts';
-import { entryPoints, findPackage, installedPackage, packageRoot, packageRows } from './closure.ts';
+import { entryPoints, findPackage, installedPackage, packageIdentity, packageRoot, packageRows } from './closure.ts';
 import {
   buildEnvRows,
   buildScripts,
@@ -13,10 +13,23 @@ import {
   envRows,
   evaluatorEnv,
   isDenied,
+  workspaceEnv,
+  scriptEnvNames,
   templateScripts,
 } from './env.ts';
 import { trackedPaths } from './git-index.ts';
-import { installRoot, nativeDirectory, nativeMode, staticInputs, type StaticTarget } from './inputs.ts';
+import {
+  IndexSession,
+  indexDir,
+  relocate,
+  startedAt,
+  traceReads,
+  writeWorkspaceEnv,
+  type Derived,
+  type PartRecord,
+  type ReadKind,
+} from './index-store.ts';
+import { installRoot, nativeDirectory, nativeMode, staticInputs, targetLayout, type StaticTarget } from './inputs.ts';
 import {
   byCodeUnit,
   canonicalJson,
@@ -44,6 +57,8 @@ export interface FingerprintOptions {
   /** The config mode `expo-constants` embeds with: `development` for a Debug configuration or variant. */
   embedMode: 'development' | 'production';
   signal?: AbortSignal;
+  /** `skip` computes every part and writes no index record, as verification does. Default `use`. */
+  index?: 'use' | 'skip';
 }
 export interface Fingerprint {
   schema: number;
@@ -57,6 +72,8 @@ export interface Fingerprint {
   portable: boolean;
   /** Parts whose result came from code that spawned, connected or loaded native code, or ran without ESM capture. */
   opaque: string[];
+  /** `index` when any evaluator part came from the validation index instead of a child. */
+  from: 'evaluated' | 'index';
 }
 interface Trace {
   env: string[];
@@ -70,9 +87,14 @@ interface Part {
   output: unknown;
   /** Whether fp-eval.cjs produced the output, which then wraps what it evaluated. */
   wrapped: boolean;
-  trace: Trace;
+  envNames: string[];
+  derived: Derived;
   env: Record<string, string>;
+  fromIndex: boolean;
 }
+
+/** Env names Node reads at startup, before the trace exists; a part is reused only while they hold. */
+const STARTUP_ENV = ['NODE_OPTIONS', 'NODE_PATH', 'NODE_PRESERVE_SYMLINKS', 'NODE_ICU_DATA'];
 
 const TIMEOUT_MS = 60_000;
 const ABSENT = sha256(canonicalJson(['absent']));
@@ -231,12 +253,13 @@ const configRow = (name: string, config: unknown, roots: Roots): Input => ({
   hash: sha256(keyedConfig(config, roots)),
 });
 
-function fileRow(path: string, roots: Roots): Input {
+function fileRow(path: string, roots: Roots, session?: IndexSession | null): Input {
   let real = path;
   let hash = ABSENT;
   try {
     real = realpathSync.native(path);
-    hash = sha256(readFileSync(real));
+    const content = () => sha256(readFileSync(real));
+    hash = session ? session.hashes.hash(real, content) : content();
   } catch {}
   return { name: pathForm(real, roots), kind: 'file', hash };
 }
@@ -244,27 +267,27 @@ function fileRow(path: string, roots: Roots): Input {
 const envCandidates = (root: string, mode: string) =>
   [`.env.${mode}.local`, '.env.local', `.env.${mode}`, '.env'].map((name) => join(root, name));
 
-/** Rows for what one part read: env names, files and modules inside the app, and the packages it loaded code from. */
+/**
+ * What one part read, as rows: files and modules inside the app, probes of the config parts, and the packages it
+ * loaded code from. Env rows are left to the caller, which values them from the env the part ran under.
+ */
 function traceRows(
-  part: Part,
+  name: PartName,
+  trace: Trace,
   roots: Roots,
   excluded: readonly string[],
-  prefix: string,
-  pinned: boolean,
-  form: (path: string) => string,
-): Uncertain | { rows: Input[]; packages: string[]; modules: string[]; opaque: string[] } {
-  const { trace } = part;
-  const rows = envRows(prefix, trace.env, part.env, pinned, form);
+  owner: (path: string) => string | null,
+): Uncertain | Omit<Derived, 'autolinking'> {
+  const rows: Input[] = [];
   const inApp = (path: string) =>
     (within(path, roots.project) || within(path, roots.install)) && !path.split(sep).includes('node_modules');
-  if (trace.enumerators.some(inApp)) rows.push({ ...enumerationRow(part.env), name: `${prefix}*` });
-  const packages: string[] = [];
+  const packages = new Set<string>();
   const modules: string[] = [];
   const ours = (path: string) => within(path, SHIMS) || excluded.some((dir) => within(path, dir));
   for (const { path, hash } of trace.modules) {
     if (ours(path) || SKIPPED_READS.has(basename(path))) continue;
-    const owner = installedPackage(path);
-    if (owner) packages.push(owner);
+    const dir = owner(path);
+    if (dir) packages.add(dir);
     else if (existsSync(path)) {
       const row = fileRow(path, roots);
       modules.push(row.name);
@@ -275,7 +298,7 @@ function traceRows(
   for (const { path, kind, hash } of trace.reads) {
     if (ours(path) || packageRoot(path)) continue;
     if (kind !== 'file') {
-      if (inApp(path) && (part.name === 'config' || part.name === 'configEmbedded'))
+      if (inApp(path) && (name === 'config' || name === 'configEmbedded'))
         rows.push(
           kind === 'dir'
             ? { name: `dir:${realForm(path, roots)}`, kind: 'file', hash: hash ?? ABSENT }
@@ -293,7 +316,13 @@ function traceRows(
       return { uncertain: `${path} was read as a module this Node cannot capture; use Node 22.15 or later` };
     rows.push(fileRow(path, roots));
   }
-  return { rows, packages, modules, opaque: trace.opaque.map((call) => `${part.name}: ${call}`) };
+  return {
+    rows,
+    packages: [...packages],
+    modules,
+    opaque: trace.opaque.map((call) => `${name}: ${call}`),
+    enumerated: trace.enumerators.some(inApp),
+  };
 }
 
 const strings = (value: unknown): string[] =>
@@ -322,12 +351,83 @@ function versionAtLeast(version: unknown, major: number, minor: number): boolean
   return a > major || (a === major && b >= minor);
 }
 
+let evaluatorDigest: string | null = null;
+/** The evaluator shims' digest: a record is reused only by the shims that produced it. */
+const evaluatorKey = (): string =>
+  (evaluatorDigest ??= sha256(
+    ['fp-eval.cjs', 'fp-trace.cjs'].map((name) => readFileSync(join(SHIMS, name))).join('\0'),
+  ));
+
+/** The env digest a part is checked against: a value's hash in its relocated form, or the enumeration's. */
+function envDigest(env: Record<string, string>, roots: Roots): (name: string) => string | null {
+  return (name) => {
+    if (name === '*') return enumerationRow(env).hash;
+    const value = env[name];
+    return value === undefined ? null : sha256(isAbsolute(value) ? relocate(resolve(value), roots) : value);
+  };
+}
+
+/** Normalized autolinking output: `resolve`'s whole output, or the `dependencies` of the React Native config. */
+function autolinkingHash(name: PartName, output: unknown, wrapped: boolean, roots: Roots): string | null {
+  if (name === 'expoAutolinking') return sha256(canonicalJson(normalize(output, roots, true)));
+  if (name !== 'rnConfig') return null;
+  const dependencies = record(wrapped ? record(output).config : output).dependencies;
+  return typeof dependencies === 'object' && dependencies !== null
+    ? sha256(canonicalJson(normalize(dependencies, roots, true)))
+    : null;
+}
+
+const scriptNames = (paths: string[]) => paths.flatMap((path) => scriptEnvNames(readFileSync(path, 'utf8')));
+
+/**
+ * The env names the native build scripts read: the tracked native directory's or the prebuild template's, React
+ * Native's, autolinking's and the Gradle plugin's, and every package `scan` adds. An installed package's names are
+ * kept in the index under its `package.json`.
+ */
+function buildEnvNames(
+  root: string,
+  native: NativeMode,
+  nativeDir: string,
+  expo: string | null,
+  session: IndexSession | null,
+): { names: string[]; scanned: Set<string>; scan: (dirs: Iterable<string>) => void } {
+  const reactNative = findPackage(root, 'react-native');
+  const scanned = new Set<string>();
+  const names: string[] = [];
+  if (native === 'tracked') names.push(...scriptNames(buildScripts(nativeDir)));
+  if (native === 'generated' && expo && existsSync(join(expo, 'template.tgz'))) {
+    const entry = session?.pkg(expo);
+    const template = entry?.template ?? templateScripts(join(expo, 'template.tgz')).flatMap(scriptEnvNames);
+    if (entry) entry.template = template;
+    names.push(...template);
+  }
+  const scan = (dirs: Iterable<string>) => {
+    for (const dir of dirs) {
+      if (scanned.has(dir)) continue;
+      scanned.add(dir);
+      const entry = installedPackage(dir) ? session?.pkg(dir) : undefined;
+      const found = entry?.scan ?? scriptNames(buildScripts(dir));
+      if (entry) entry.scan = found;
+      names.push(...found);
+    }
+  };
+  scan(
+    [
+      reactNative,
+      expo && findPackage(expo, 'expo-modules-autolinking'),
+      reactNative && findPackage(reactNative, '@react-native/gradle-plugin'),
+    ].filter((dir): dir is string => Boolean(dir)),
+  );
+  return { names, scanned, scan };
+}
+
 async function evaluate(
   roots: Roots,
   platform: Platform,
   native: NativeMode,
   nativeDir: string,
   opts: FingerprintOptions,
+  session: IndexSession | null,
 ) {
   const root = roots.project;
   let outsideValue = false;
@@ -342,12 +442,75 @@ async function evaluate(
   const evaluator = join(SHIMS, 'fp-eval.cjs');
   if (!existsSync(evaluator)) return { uncertain: 'the Stim installation is missing shim/fp-eval.cjs' };
   const expo = findPackage(root, 'expo');
-  const spawn = async (name: PartName, args: string[], partEnv = env): Promise<Part | EvalUncertain> => {
+  const excluded = [nativeDir, join(root, 'ios'), join(root, 'android')];
+  const owners = new Map<string, string | null>();
+  const owner = (path: string) => {
+    const dir = packageRoot(path);
+    if (!dir) return null;
+    if (!owners.has(dir)) owners.set(dir, installedPackage(path));
+    return owners.get(dir) ?? null;
+  };
+  const spawn = async (
+    name: PartName,
+    args: string[],
+    partEnv = env,
+    slot: string = name,
+  ): Promise<Part | EvalUncertain> => {
+    const wrapped = args[0] === evaluator;
+    const digest = envDigest(partEnv, roots);
+    const cached = session?.part(slot, digest);
+    if (cached)
+      return {
+        name,
+        output: cached.output,
+        wrapped,
+        envNames: cached.envNames,
+        derived: cached.derived,
+        env: partEnv,
+        fromIndex: true,
+      };
+    const since = session?.since ?? 0n;
     const done = await run(name, node, args, root, partEnv, opts.signal);
     if (isUncertain(done)) return done;
-    const wrapped = args[0] === evaluator;
     const output = parse(name, wrapped ? done.result : done.stdout);
-    return isUncertain(output) ? output : { name, output, wrapped, trace: done.trace, env: partEnv };
+    if (isUncertain(output)) return output;
+    const traced = traceRows(name, done.trace, roots, excluded, owner);
+    if (isUncertain(traced)) return traced;
+    const derived: Derived = { ...traced, autolinking: autolinkingHash(name, output, wrapped, roots) };
+    if (session && done.trace.opaque.length === 0) {
+      const modes = [record(output).mode, partEnv.NODE_ENV, 'development', 'production'];
+      const candidates = new Set(
+        name === 'config' || name === 'configEmbedded'
+          ? modes.flatMap((mode) => (typeof mode === 'string' ? envCandidates(root, mode) : []))
+          : [],
+      );
+      const reads = traceReads(
+        [
+          ...done.trace.reads.map((read) => ({ ...read, kind: read.kind as ReadKind })),
+          ...done.trace.modules.map((module) => ({ ...module, kind: 'module' as const })),
+          ...[...candidates].map((path) => ({ path, kind: (existsSync(path) ? 'file' : 'absent') as ReadKind })),
+        ].filter(({ path }) => !within(path, SHIMS)),
+        roots,
+        since,
+        session.stamped,
+        packageRoot,
+      );
+      const names = [...new Set([...done.trace.env, ...STARTUP_ENV])];
+      if (derived.enumerated) names.push('*');
+      if (reads) {
+        const recorded: PartRecord = {
+          startedAtNs: String(since),
+          env: names.map((envName) => [envName, digest(envName)]),
+          envNames: done.trace.env,
+          reads,
+          output,
+          wrapped,
+          derived,
+        };
+        session.keep(slot, recorded);
+      }
+    }
+    return { name, output, wrapped, envNames: done.trace.env, derived, env: partEnv, fromIndex: false };
   };
   const parts: Promise<Part | EvalUncertain>[] = [];
   const rows: Input[] = [];
@@ -390,66 +553,52 @@ async function evaluate(
     if (!names.includes('expo'))
       return failed('expoAutolinking', 'listed no expo module, so it did not run in an Expo project');
     names.forEach((name) => typeof name === 'string' && nativePackages.add(name));
-    rows.push({
-      name: 'autolinking:expo',
-      kind: 'autolinking',
-      hash: sha256(canonicalJson(normalize(resolved.output, roots, true))),
-    });
+    rows.push({ name: 'autolinking:expo', kind: 'autolinking', hash: resolved.derived.autolinking ?? '' });
   }
   const rn = byName.get('rnConfig');
   const rnOutput = record(rn?.wrapped ? record(rn.output).config : rn?.output);
-  if (typeof rnOutput.dependencies !== 'object' || rnOutput.dependencies === null)
+  if (typeof rnOutput.dependencies !== 'object' || rnOutput.dependencies === null || !rn?.derived.autolinking)
     return failed('rnConfig', `has no dependencies for ${platform}`);
   for (const [name, dependency] of Object.entries(record(rnOutput.dependencies))) {
     if (typeof record(dependency).root === 'string') autolinked.add(String(record(dependency).root));
     nativePackages.add(name);
   }
-  rows.push({
-    name: 'autolinking:rn',
-    kind: 'autolinking',
-    hash: sha256(canonicalJson(normalize(rnOutput.dependencies, roots, true))),
-  });
+  rows.push({ name: 'autolinking:rn', kind: 'autolinking', hash: rn.derived.autolinking });
   for (const path of pathStrings(resolved?.output)) autolinked.add(path);
 
   const contentPackages = new Set<string>();
   const packages = new Set<string>();
   for (const path of autolinked) {
-    const owner = packageRoot(path);
-    if (owner) {
-      packages.add(owner);
+    const dir = packageRoot(path);
+    if (dir) {
+      packages.add(dir);
       continue;
     }
-    let dir = path;
-    while (dir !== root && dir !== roots.install && dirname(dir) !== dir && !existsSync(join(dir, 'package.json')))
-      dir = dirname(dir);
-    if (existsSync(join(dir, 'package.json')) && dir !== root && dir !== roots.install) contentPackages.add(dir);
+    let dir2 = path;
+    while (dir2 !== root && dir2 !== roots.install && dirname(dir2) !== dir2 && !existsSync(join(dir2, 'package.json')))
+      dir2 = dirname(dir2);
+    if (existsSync(join(dir2, 'package.json')) && dir2 !== root && dir2 !== roots.install) contentPackages.add(dir2);
     else if (!within(path, roots.project) && !within(path, roots.install))
       return { uncertain: `autolinking names ${path}, which belongs to no package stim can hash` };
   }
 
   const config = byName.get('config');
   const output = record(config?.output ?? (rn?.wrapped ? rn.output : null));
-  const excluded = [nativeDir, join(root, 'ios'), join(root, 'android')];
   const configModules: string[] = [];
   const opaque: string[] = [];
-  const collect = (part: Part, prefix: string, pin: boolean): Uncertain | null => {
-    const traced = traceRows(part, roots, excluded, prefix, pin, form);
-    if (isUncertain(traced)) return traced;
-    rows.push(...traced.rows);
-    traced.packages.forEach((dir) => packages.add(dir));
-    if (part.name === 'config' || part.name === 'configEmbedded') configModules.push(...traced.modules);
-    opaque.push(...traced.opaque);
-    return null;
+  const collect = (part: Part, prefix: string, pin: boolean) => {
+    rows.push(...envRows(prefix, part.envNames, part.env, pin, form), ...part.derived.rows);
+    if (part.derived.enumerated) rows.push({ ...enumerationRow(part.env), name: `${prefix}*` });
+    part.derived.packages.forEach((dir) => packages.add(dir));
+    if (part.name === 'config' || part.name === 'configEmbedded') configModules.push(...part.derived.modules);
+    opaque.push(...part.derived.opaque);
   };
-  for (const part of evaluated) {
-    const problem = collect(part, 'env:', true);
-    if (problem) return problem;
-  }
+  for (const part of evaluated) collect(part, 'env:', true);
   if (config) {
     const mode = String(output.mode);
     rows.push(
       configRow('config', output.config, roots),
-      ...envCandidates(root, mode).map((path) => fileRow(path, roots)),
+      ...envCandidates(root, mode).map((path) => fileRow(path, roots, session)),
     );
     if (nativePackages.has('expo-updates'))
       rows.push({ name: 'runtimeVersion', kind: 'config', hash: sha256(canonicalJson(output.runtimeVersion ?? null)) });
@@ -468,64 +617,49 @@ async function evaluate(
       const reuse =
         byMode &&
         opts.embedMode === mode &&
-        config.trace.env.every((name) => isDenied(name) || env[name] === embedded[name]);
+        config.envNames.every((name) => isDenied(name) || env[name] === embedded[name]);
+      const embedMode = byMode ? opts.embedMode : 'env';
       const part = reuse
         ? { ...config, name: embeddedName, env: embedded }
         : await spawn(
             'configEmbedded',
-            [evaluator, 'embed', root, platform, byMode ? opts.embedMode : 'env', constants],
+            [evaluator, 'embed', root, platform, embedMode, constants],
             embedded,
+            `configEmbedded:${embedMode}`,
           );
       if (isUncertain(part)) return part;
-      const problem = reuse ? null : collect(part, 'env@embed:', false);
-      if (problem) return problem;
-      if (reuse) rows.push(...envRows('env@embed:', config.trace.env, embedded, false, form));
+      if (reuse) rows.push(...envRows('env@embed:', config.envNames, embedded, false, form));
+      else {
+        evaluated.push(part);
+        collect(part, 'env@embed:', false);
+      }
       const envFiles = byMode
         ? envCandidates(root, opts.embedMode)
         : embedded.NODE_ENV
           ? envCandidates(root, embedded.NODE_ENV)
           : ['.env.local', '.env'].map((name) => join(root, name));
-      rows.push(...envFiles.map((path) => fileRow(path, roots)));
+      rows.push(...envFiles.map((path) => fileRow(path, roots, session)));
       rows.push(configRow('config@embed', record(part.output).config, roots));
     }
   }
 
-  const reactNative = findPackage(root, 'react-native');
-  const scanned = new Set<string>();
-  const texts = native === 'tracked' ? buildScripts(nativeDir).map((path) => readFileSync(path, 'utf8')) : [];
-  if (native === 'generated' && expo && existsSync(join(expo, 'template.tgz')))
-    texts.push(...templateScripts(join(expo, 'template.tgz')));
-  const scan = (dirs: Iterable<string>) => {
-    for (const dir of dirs) {
-      if (scanned.has(dir)) continue;
-      scanned.add(dir);
-      texts.push(...buildScripts(dir).map((path) => readFileSync(path, 'utf8')));
-    }
-  };
-  scan([
-    ...packages,
-    ...contentPackages,
-    ...[
-      reactNative,
-      expo && findPackage(expo, 'expo-modules-autolinking'),
-      reactNative && findPackage(reactNative, '@react-native/gradle-plugin'),
-    ].filter((dir): dir is string => Boolean(dir)),
-  ]);
-  let buildEnv = buildEnvRows(texts, opts.env, platform, form);
-  for (let owners = buildEnv.paths.map(installedPackage); owners.some((dir) => dir && !scanned.has(dir));) {
-    owners.forEach((dir) => dir && packages.add(dir));
-    scan(owners.filter((dir): dir is string => Boolean(dir)));
-    buildEnv = buildEnvRows(texts, opts.env, platform, form);
-    owners = buildEnv.paths.map(installedPackage);
+  const { names, scanned, scan } = buildEnvNames(root, native, nativeDir, expo, session);
+  scan([...packages, ...contentPackages]);
+  let buildEnv = buildEnvRows(names, opts.env, platform, form);
+  for (let owned = buildEnv.paths.map(installedPackage); owned.some((dir) => dir && !scanned.has(dir));) {
+    owned.forEach((dir) => dir && packages.add(dir));
+    scan(owned.filter((dir): dir is string => Boolean(dir)));
+    buildEnv = buildEnvRows(names, opts.env, platform, form);
+    owned = buildEnv.paths.map(installedPackage);
   }
   const { _internal: _, ...configValues } = record(output.config);
   const configFiles = strings(configValues).flatMap((value) => {
     if (!value || value.length >= 1024 || /[\0\n]/.test(value)) return [];
     try {
       const real = realpathSync.native(resolve(root, value));
-      const owner = installedPackage(real);
-      if (owner) packages.add(owner);
-      if (owner || within(real, roots.project) || within(real, roots.install)) return [];
+      const dir = installedPackage(real);
+      if (dir) packages.add(dir);
+      if (dir || within(real, roots.project) || within(real, roots.install)) return [];
       if (statSync(real).isFile()) return [real];
       if (/^\.\.?(?:[\\/]|$)/.test(value) || (within(real, homedir()) && real !== homedir())) outsideValue = true;
       return [];
@@ -539,13 +673,22 @@ async function evaluate(
       roots,
       trees: [...buildEnv.paths.filter((path) => !installedPackage(path)), ...configFiles],
       tracked: null,
+      hashes: session?.hashes,
     });
   } catch (error) {
     return { uncertain: `stim cannot read a file the build env or config names: ${String(error)}` };
   }
   if (isUncertain(pathRows)) return pathRows;
-  const closure = entryPoints(root, expo);
-  rows.push(...buildEnv.rows, ...pathRows.inputs, ...packageRows([...packages, ...closure.dirs], closure.missing));
+  const closure = session ? session.closure(() => entryPoints(root, expo)) : entryPoints(root, expo);
+  const identities = [...new Set([...packages, ...closure.dirs])].flatMap((dir) => {
+    const entry = session?.pkg(dir);
+    if (entry && entry.name !== undefined)
+      return entry.name === null ? [] : [{ name: entry.name, version: entry.version ?? '' }];
+    const identity = packageIdentity(dir);
+    if (entry) Object.assign(entry, { name: identity?.name ?? null, version: identity?.version ?? '' });
+    return identity ? [identity] : [];
+  });
+  rows.push(...buildEnv.rows, ...pathRows.inputs, ...packageRows(identities, closure.missing));
   const { home, username } = { home: homedir(), username: userInfo().username };
   const configText = keyedConfig(output.config, roots);
   return {
@@ -556,6 +699,7 @@ async function evaluate(
     nativePackages: [...nativePackages].toSorted(byCodeUnit),
     configModules: [...new Set(configModules)].toSorted(byCodeUnit),
     opaque,
+    fromIndex: evaluated.some((part) => part.fromIndex),
     portable:
       pathRows.portable &&
       !outsideValue &&
@@ -566,21 +710,32 @@ async function evaluate(
 
 /**
  * Stim's build-cache key for a platform: the static rows, the evaluated app config and autolinking, and the env the
- * native build reads. Any evaluator failure is `Uncertain`, never a key with fewer inputs.
+ * native build reads. Any evaluator failure is `Uncertain`, never a key with fewer inputs. With the index, a part
+ * whose recorded env, stamps and reads all still hold is reused instead of re-run.
  */
 export async function fingerprint(
   root: string,
   target: StaticTarget,
   opts: FingerprintOptions,
 ): Promise<Fingerprint | EvalUncertain> {
+  const since = startedAt();
   const project = realpathSync.native(root);
   const roots: Roots = { project, install: installRoot(project) };
+  const session =
+    opts.index === 'skip'
+      ? null
+      : new IndexSession(
+          indexDir(target.platform, project, targetLayout(target)),
+          roots,
+          { evaluator: evaluatorKey(), runtime: projectNodeBin(project, opts.env)?.version ?? process.version },
+          since,
+        );
   const tracked = await trackedPaths(project, opts.signal);
   const expoResolves = findPackage(project, 'expo') !== null;
   const nativeDir = nativeDirectory(project, target);
   const native = nativeMode({ expoResolves, tracked }, nativeDir);
   if (isUncertain(native)) return native;
-  const evaluated = await evaluate(roots, target.platform, native, nativeDir, opts);
+  const evaluated = await evaluate(roots, target.platform, native, nativeDir, opts, session);
   if (isUncertain(evaluated)) return evaluated;
   const statics = staticInputs(
     {
@@ -590,6 +745,7 @@ export async function fingerprint(
       config: evaluated.config,
       fingerprintConfig: evaluated.fingerprintConfig,
       contentPackages: evaluated.contentPackages,
+      hashes: session?.hashes,
     },
     target,
   );
@@ -599,6 +755,10 @@ export async function fingerprint(
     inputs = mergeInputs([...statics.inputs, ...evaluated.rows]);
   } catch (error) {
     return { uncertain: error instanceof Error ? error.message : String(error) };
+  }
+  if (session) {
+    session.save();
+    writeWorkspaceEnv(project, workspaceEnv(opts.env));
   }
   const portable = statics.portable && evaluated.portable && !inputs.some((input) => input.name.startsWith('outside:'));
   return {
@@ -612,5 +772,6 @@ export async function fingerprint(
     config: evaluated.config,
     portable,
     opaque: evaluated.opaque,
+    from: evaluated.fromIndex ? 'index' : 'evaluated',
   };
 }

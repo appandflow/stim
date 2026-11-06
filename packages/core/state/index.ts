@@ -16,6 +16,7 @@ export * from './json-file.ts';
 export * from './ledgers.ts';
 export * from './error-entries.ts';
 export * from './fingerprint-memo.ts';
+export * from './fingerprint-index.ts';
 export * from './log-reader.ts';
 export * from './logs-query.ts';
 export * from './ndjson.ts';

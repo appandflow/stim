@@ -66,18 +66,25 @@ export function entryPoints(root: string, expo: string | null): { dirs: string[]
   return { dirs: [...dirs], missing: [...missing] };
 }
 
+/** A package's `name` and `version` from its `package.json`, or null when it names none. */
+export function packageIdentity(dir: string): { name: string; version: string } | null {
+  const { name, version } = manifest(dir);
+  return typeof name === 'string' ? { name, version: typeof version === 'string' ? version : '' } : null;
+}
+
 /**
  * One identity row per package name. Two installed versions of one name hash their sorted versions together; a name
  * that does not resolve hashes an empty list.
  */
-export function packageRows(dirs: Iterable<string>, missing: Iterable<string> = []): Input[] {
+export function packageRows(
+  identities: Iterable<{ name: string; version: string }>,
+  missing: Iterable<string> = [],
+): Input[] {
   const versions = new Map<string, Set<string>>();
   for (const name of missing) versions.set(name, versions.get(name) ?? new Set());
-  for (const dir of new Set(dirs)) {
-    const { name, version } = manifest(dir);
-    if (typeof name !== 'string') continue;
+  for (const { name, version } of identities) {
     const known = versions.get(name) ?? new Set();
-    known.add(typeof version === 'string' ? version : '');
+    known.add(version);
     versions.set(name, known);
   }
   return [...versions].map(([name, set]) => {

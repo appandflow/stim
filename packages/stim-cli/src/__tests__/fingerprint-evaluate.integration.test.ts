@@ -13,7 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { fingerprint, type EvalUncertain, type Fingerprint } from '../fingerprint/evaluate.ts';
 import { isUncertain } from '../fingerprint/key.ts';
@@ -23,7 +23,14 @@ const SLOW = { timeout: 120_000 };
 const temps: string[] = [];
 let spawned: string[][] = [];
 
+beforeEach(() => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-eval-home-')));
+  temps.push(home);
+  process.env.STIM_HOME = home;
+});
+
 afterEach(() => {
+  delete process.env.STIM_HOME;
   resetExecutor();
   spawned = [];
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });

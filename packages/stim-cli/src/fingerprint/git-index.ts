@@ -91,11 +91,8 @@ function readText(path: string): string {
   }
 }
 
-/**
- * The real paths git tracks in the work tree that holds `root`, or null when no work tree does. Reads
- * the index file in process, and runs `git ls-files` only for an index this reader does not handle.
- */
-export async function trackedPaths(root: string, signal?: AbortSignal): Promise<Set<string> | null> {
+/** The work tree top above `root`, its git dir and the common dir its worktrees share, or null outside git. */
+export function gitLocation(root: string): { top: string; gitDir: string; commonDir: string } | null {
   let top = realpathSync.native(root);
   while (statSync(join(top, '.git'), { throwIfNoEntry: false }) === undefined) {
     if (dirname(top) === top) return null;
@@ -104,7 +101,18 @@ export async function trackedPaths(root: string, signal?: AbortSignal): Promise<
   const gitDir = gitDirOf(join(top, '.git'));
   if (!gitDir) return null;
   const common = readText(join(gitDir, 'commondir')).trim();
-  const config = readText(join(common ? resolve(gitDir, common) : gitDir, 'config'));
+  return { top, gitDir, commonDir: common ? resolve(gitDir, common) : gitDir };
+}
+
+/**
+ * The real paths git tracks in the work tree that holds `root`, or null when no work tree does. Reads
+ * the index file in process, and runs `git ls-files` only for an index this reader does not handle.
+ */
+export async function trackedPaths(root: string, signal?: AbortSignal): Promise<Set<string> | null> {
+  const location = gitLocation(root);
+  if (!location) return null;
+  const { top, gitDir, commonDir } = location;
+  const config = readText(join(commonDir, 'config'));
   let paths: string[] | null = null;
   if (!/^\s*objectformat\s*=\s*sha256\s*$/im.test(config)) {
     let data: Buffer | null = null;
