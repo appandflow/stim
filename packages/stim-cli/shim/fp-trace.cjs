@@ -107,21 +107,30 @@ promise('open', opened);
 for (const name of ['readdir', 'opendir']) promise(name, 'dir');
 for (const name of ['stat', 'lstat', 'access', 'realpath']) promise(name, 'present');
 
-/** The first caller frame that is neither this file nor Node's own code, as `file:line:column`. */
+/**
+ * The first caller frame outside this file and Node's own code, as `file:line:column`, and whether a frame of Node's
+ * own code (a child process copying the env) came first.
+ */
 function callerSite() {
   const prepare = Error.prepareStackTrace;
   const limit = Error.stackTraceLimit;
   Error.prepareStackTrace = (_, frames) => frames;
-  Error.stackTraceLimit = 12;
+  Error.stackTraceLimit = 16;
   const holder = {};
   Error.captureStackTrace(holder, callerSite);
   const frames = holder.stack;
   Error.prepareStackTrace = prepare;
   Error.stackTraceLimit = limit;
+  let internal = false;
   for (const frame of Array.isArray(frames) ? frames : []) {
     const file = frame.getFileName();
-    if (!file || file === __filename || file.startsWith('node:')) continue;
+    if (!file || file === __filename) continue;
+    if (file.startsWith('node:')) {
+      internal = true;
+      continue;
+    }
     return {
+      internal,
       file: file.startsWith('file:') ? fileURLToPath(file) : file,
       site: `${file}:${frame.getLineNumber()}:${frame.getColumnNumber()}`,
     };
@@ -129,17 +138,24 @@ function callerSite() {
   return null;
 }
 
-// A spread or Object.assign of process.env reads every name from the site that enumerated it; those reads are the
-// enumeration, recorded once with the enumerating file, not as reads of each name.
+// A spread, Object.assign or Object.entries of process.env reads every name from the site that enumerated it; those
+// reads are the enumeration, recorded once with the enumerating file, not as reads of each name.
 const realEnv = process.env;
+const read = (key) => {
+  if (active && typeof key === 'string' && !enumerationSites.has(callerSite()?.site)) env.add(key);
+};
 const traced = new Proxy(realEnv, {
   get(target, key) {
-    if (active && typeof key === 'string' && !enumerationSites.has(callerSite()?.site)) env.add(key);
+    read(key);
     return Reflect.get(target, key);
   },
   has(target, key) {
-    if (active && typeof key === 'string') env.add(key);
+    read(key);
     return Reflect.has(target, key);
+  },
+  getOwnPropertyDescriptor(target, key) {
+    read(key);
+    return Reflect.getOwnPropertyDescriptor(target, key);
   },
   set(target, key, value) {
     return Reflect.set(target, key, value);
@@ -148,7 +164,7 @@ const traced = new Proxy(realEnv, {
     const caller = active ? callerSite() : null;
     if (caller) {
       enumerationSites.add(caller.site);
-      enumerators.add(caller.file);
+      if (!caller.internal) enumerators.add(caller.file);
     }
     return Reflect.ownKeys(target);
   },

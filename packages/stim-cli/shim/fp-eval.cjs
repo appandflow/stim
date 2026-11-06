@@ -84,10 +84,14 @@ async function expo() {
   };
 }
 
+// expo-constants' getAppConfig.js evaluates the config embedded in the binary. Versions that call loadProjectEnv
+// take the mode from the build configuration; earlier ones call @expo/env's load(), which follows the build env's
+// NODE_ENV. `embedMode` is `env` for the second kind.
 function embed() {
   const { expoEnv, getConfig } = loadExpo();
-  applyMode(expoEnv, embedMode);
-  return { mode: embedMode, config: getConfig(root, { isPublicConfig: true, skipSDKVersionRequirement: true }).exp };
+  if (embedMode === 'env') requireFrom(packageDir(fromRoot, 'expo-constants'), '@expo/env').load(root);
+  else applyMode(expoEnv, embedMode);
+  return { config: getConfig(root, { isPublicConfig: true, skipSDKVersionRequirement: true }).exp };
 }
 
 // cli-config's lazy getters run platform code only when serialized, so the result goes through JSON.stringify.

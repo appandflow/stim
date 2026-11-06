@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -137,23 +138,65 @@ describe.skipIf(!existsSync(MOBILE_MODULES))('fingerprint evaluators on the inst
   });
 
   test(
-    '.env.production moves the Release key and not the Debug key; a Debug embed reuses the config run',
+    "the embedded config follows the build env's NODE_ENV, as the installed expo-constants loads .env",
     SLOW,
     async () => {
       const root = expoApp({
         'app.config.js':
-          'module.exports = ({ config }) => ({ ...config, extra: { label: process.env.LABEL ?? null } });\n',
-        '.env.production': 'LABEL=one\n',
+          "module.exports = ({ config }) => ({ ...config, extra: { api: process.env.NODE_ENV === 'development' ? process.env.DEV_API : process.env.API } });\n",
+        '.env.production': 'API=one\n',
       });
       recordSpawns();
-      const debug = await key(root, baseEnv());
-      expect(embedSpawns()).toBe(0);
-      const release = await key(root, baseEnv(), 'production');
+      const debug = await key(root, baseEnv({ API: 'p1' }));
       expect(embedSpawns()).toBe(1);
-      expect(release.hash).not.toBe(debug.hash);
-      write(join(root, '.env.production'), 'LABEL=two\n');
-      expect((await key(root, baseEnv())).hash).toBe(debug.hash);
-      expect((await key(root, baseEnv(), 'production')).hash).not.toBe(release.hash);
+      expect((await key(root, baseEnv({ API: 'p2' }))).hash).not.toBe(debug.hash);
+      const release = await key(root, baseEnv(), 'production');
+      const nodeEnvRelease = await key(root, baseEnv({ NODE_ENV: 'production' }), 'production');
+      write(join(root, '.env.production'), 'API=two\n');
+      expect((await key(root, baseEnv({ API: 'p1' }))).hash).toBe(debug.hash);
+      expect((await key(root, baseEnv(), 'production')).hash).toBe(release.hash);
+      expect((await key(root, baseEnv({ NODE_ENV: 'production' }), 'production')).hash).not.toBe(nodeEnvRelease.hash);
+    },
+  );
+
+  test(
+    'package.json read by the config moves no key, and a workspace native package is keyed by content',
+    SLOW,
+    async () => {
+      const mono = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-mono-')));
+      temps.push(mono);
+      const root = join(mono, 'apps', 'app');
+      write(join(mono, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n');
+      write(join(root, 'app.json'), JSON.stringify({ expo: { name: 'fp', slug: 'fp' } }));
+      write(
+        join(root, 'app.config.js'),
+        "module.exports = ({ config }) => ({ ...config, extra: { name: require('./package.json').name } });\n",
+      );
+      const manifest = (version: string) =>
+        JSON.stringify({
+          name: 'fp-app',
+          version,
+          dependencies: { expo: '*', 'expo-constants': '*', 'react-native': '*', 'native-lib': '*' },
+        });
+      write(join(root, 'package.json'), manifest('1.0.0'));
+      const lib = join(mono, 'packages', 'native-lib');
+      write(join(lib, 'package.json'), JSON.stringify({ name: 'native-lib', version: '1.0.0' }));
+      write(
+        join(lib, 'expo-module.config.json'),
+        JSON.stringify({ platforms: ['apple'], apple: { modules: ['NativeLibModule'] } }),
+      );
+      write(join(lib, 'ios', 'NativeLib.podspec'), "Pod::Spec.new do |s|\n  s.name = 'NativeLib'\nend\n");
+      write(join(lib, 'ios', 'NativeLibModule.swift'), '// one\n');
+      const modules = join(root, 'node_modules');
+      mkdirSync(modules);
+      for (const name of readdirSync(MOBILE_MODULES)) symlinkSync(join(MOBILE_MODULES, name), join(modules, name));
+      symlinkSync(lib, join(modules, 'native-lib'));
+      const before = await key(root, baseEnv());
+      expect(before.nativePackages).toContain('native-lib');
+      write(join(root, 'package.json'), manifest('2.0.0'));
+      expect((await key(root, baseEnv())).hash).toBe(before.hash);
+      write(join(lib, 'ios', 'NativeLibModule.swift'), '// two\n');
+      expect((await key(root, baseEnv())).hash).not.toBe(before.hash);
     },
   );
 
@@ -181,6 +224,28 @@ describe.skipIf(!existsSync(MOBILE_MODULES))('fingerprint evaluators on the inst
       const local = await key(root, baseEnv(), 'production');
       const ci = await key(root, baseEnv({ CI: '1' }), 'production');
       expect(ci.hash).not.toBe(local.hash);
+    },
+  );
+
+  test(
+    'a config that spawns a child keys no unrelated env, and one reading a build script path name keys it once',
+    SLOW,
+    async () => {
+      const root = expoApp({
+        'app.config.js': [
+          "const { execFileSync } = require('node:child_process');",
+          "execFileSync(process.execPath, ['-e', '0']);",
+          'module.exports = ({ config }) => ({ ...config, extra: { hermes: process.env.HERMES_ENGINE_TARBALL_PATH ?? null } });',
+          '',
+        ].join('\n'),
+      });
+      const tarball = join(root, 'hermes.tar.gz');
+      write(tarball, 'tarball');
+      const first = await key(root, baseEnv({ HERMES_ENGINE_TARBALL_PATH: tarball, ITERM_SESSION_ID: 'w0t0' }));
+      expect(first.opaque).toEqual(expect.arrayContaining([expect.stringContaining('child_process')]));
+      expect((await key(root, baseEnv({ HERMES_ENGINE_TARBALL_PATH: tarball, SOME_TAB: 'w1t3' }))).hash).toBe(
+        first.hash,
+      );
     },
   );
 

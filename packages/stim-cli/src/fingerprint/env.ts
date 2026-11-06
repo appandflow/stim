@@ -10,14 +10,20 @@ type Env = NodeJS.ProcessEnv;
  * config loads it), which is pinned. They never become rows and are removed from the evaluator env.
  */
 const DENIED =
-  /^(?:DEBUG.*|NODE_DEBUG|NODE_V8_COVERAGE|NO_COLOR|NODE_DISABLE_COLORS|COLORTERM|TERM.*|TRACE_DEPRECATION|NO_DEPRECATION|__IS_WSL_TEST__|TEST_GRACEFUL_FS_GLOBAL_PATCH|COLUMNS|LINES|STIM_.*|TRAVIS|CIRCLECI|APPVEYOR|GITLAB_CI|GITHUB_ACTIONS|BUILDKITE|DRONE|CI_NAME|TEAMCITY_VERSION)$/;
-const VOLATILE = /^(?:PWD|OLDPWD|SHLVL|_|TMPDIR|SSH_.*|__CF.*)$/;
+  /^(?:DEBUG.*|NODE_DEBUG|NODE_V8_COVERAGE|NO_COLOR|NODE_DISABLE_COLORS|COLORTERM|TERM.*|TRACE_DEPRECATION|NO_DEPRECATION|__IS_WSL_TEST__|TEST_GRACEFUL_FS_GLOBAL_PATCH|COLUMNS|LINES|STIM_.*|TRAVIS|CIRCLECI|APPVEYOR|GITLAB_CI|GITHUB_ACTIONS|BUILDKITE|DRONE|CI_NAME|TEAMCITY_VERSION|GITEA_ACTIONS|TF_BUILD|AGENT_NAME)$/;
+const VOLATILE = /^(?:PWD|OLDPWD|SHLVL|_|TMPDIR|SSH_.*|__CF.*|ITERM_.*|TMUX.*|VSCODE_.*|WINDOWID)$/;
 const PINS = { CI: '1', FORCE_COLOR: '0', LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', TZ: 'UTC' };
 const PINNED = new Set([...Object.keys(PINS), 'PWD', 'EXPO_NO_TELEMETRY']);
-/** Toolchain and machine locations: out of the key and never sent to a build worker. */
+/** Toolchain, user and machine locations: out of the key and never sent to a build worker. */
 const MACHINE_LOCAL = new Set([
   'PATH',
   'HOME',
+  'USERPROFILE',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'TEMP',
+  'TMP',
+  'SystemRoot',
   'JAVA_HOME',
   'ANDROID_HOME',
   'ANDROID_SDK_ROOT',
@@ -34,11 +40,12 @@ const RUBY_READ = String.raw`ENV(?:\[\s*|\.(?:fetch|key\?|include\?|has_key\?)\(
 const LITERAL_READS = [
   new RegExp(String.raw`${RUBY_READ}(['"])${NAME}\1`, 'g'),
   new RegExp(String.raw`(?:System\.getenv|environmentVariable)\(\s*(['"])${NAME}\1`, 'g'),
-  new RegExp(String.raw`\$ENV\{()${NAME}\}`, 'g'),
+  new RegExp(String.raw`\bENV\{()${NAME}\}`, 'g'),
+  new RegExp(String.raw`System\.env(?:\.|\[\s*['"])()${NAME}`, 'g'),
 ];
 const CONSTANT_READ = new RegExp(String.raw`${RUBY_READ}()([A-Z][A-Z0-9_]*)\s*[\],)]`, 'g');
-const DYNAMIC_READ = new RegExp(String.raw`${RUBY_READ}[a-z_]|(?:getenv|environmentVariable)\(\s*[A-Za-z_]`);
-const NAME_LITERAL = /['"]([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)['"]/g;
+const MENTION = /\bENV\b|\bgetenv\b|\benvironmentVariable|\bSystem\.env\b/g;
+const NAME_LITERAL = /['"]([A-Z][A-Z0-9_]+)['"]/g;
 const RUBY_CONSTANT = new RegExp(String.raw`^\s*([A-Z][A-Z0-9_]*)\s*=\s*['"]${NAME}['"]`, 'gm');
 
 export const isDenied = (name: string): boolean => DENIED.test(name);
@@ -53,25 +60,38 @@ const defined = (env: Env) =>
 export function evaluatorEnv(requester: Env, root: string, platform: Platform): Record<string, string> {
   const env = defined(requester);
   for (const name of Object.keys(env))
-    if (isDenied(name) || (platform === 'ios' && name === 'ANDROID_HOME')) delete env[name];
+    if (isDenied(name) || (platform === 'ios' && /^ANDROID_(?:HOME|SDK_ROOT)$/.test(name))) delete env[name];
   return { EXPO_NO_TELEMETRY: '1', ...env, ...PINS, PWD: root };
 }
 
-/** The env `expo-constants` evaluates the embedded config in: the native build's own, minus the deny list. */
-export function embedEnv(requester: Env, platform: Platform): Record<string, string> {
+/**
+ * The env `expo-constants` evaluates the embedded config in: the native build's own, minus the deny list.
+ * `FORCE_COLOR=0`, which Stim's Xcode builds set, keeps color detection from reading `CI` on both platforms.
+ */
+export function embedEnv(requester: Env): Record<string, string> {
   const env = defined(requester);
   for (const name of Object.keys(env)) if (isDenied(name)) delete env[name];
-  return platform === 'ios' ? { ...env, FORCE_COLOR: '0' } : env;
+  return { ...env, FORCE_COLOR: '0' };
 }
 
 /**
- * Rows for env names a part read, valued from the env the part ran under. Pinned names are rows only when the part
- * ran without the pins.
+ * Rows for env names a part read, valued from the env the part ran under, an absolute path in its `pathForm`. Pinned
+ * names are rows only when the part ran without the pins.
  */
-export function envRows(prefix: string, names: Iterable<string>, env: Env, pinned: boolean): Input[] {
+export function envRows(
+  prefix: string,
+  names: Iterable<string>,
+  env: Env,
+  pinned: boolean,
+  pathForm: (path: string) => string,
+): Input[] {
   return [...new Set(names)]
     .filter((name) => keyable(name) && !(pinned && PINNED.has(name)))
-    .map((name) => ({ name: `${prefix}${name}`, kind: 'env', hash: sha256(canonicalJson(env[name] ?? null)) }));
+    .map((name) => {
+      const value = env[name];
+      const keyed = value !== undefined && isAbsolute(value) ? pathForm(value) : (value ?? null);
+      return { name: `${prefix}${name}`, kind: 'env', hash: sha256(canonicalJson(keyed)) };
+    });
 }
 
 /** `env:*`: what project code that enumerates `process.env` can see. */
@@ -112,15 +132,17 @@ export function buildScripts(dir: string): string[] {
 
 /**
  * Env names a build script reads by a literal name, in the forms of Ruby, Gradle, Kotlin and CMake, or through a Ruby
- * constant the same file assigns. A file that also reads a name held in a variable contributes every quoted
- * `UPPER_SNAKE` literal it contains, since any of them can reach that read.
+ * constant the same file assigns. A file that mentions the env more often than it reads a parsed name, such as
+ * `ENV[name]` or `System.env.X`, contributes every quoted upper-case literal it contains as well.
  */
 function scriptEnvNames(text: string): string[] {
   const constants = new Map([...text.matchAll(RUBY_CONSTANT)].map((match) => [match[1], match[2]]));
+  const literal = LITERAL_READS.flatMap((form) => [...text.matchAll(form)].map((match) => match[2] ?? ''));
   const viaConstants = [...text.matchAll(CONSTANT_READ)].map((match) => constants.get(match[2] ?? ''));
-  const dynamic = DYNAMIC_READ.test(text) || viaConstants.includes(undefined);
+  const parsed = literal.length + viaConstants.filter((name) => name !== undefined).length;
+  const dynamic = (text.match(MENTION)?.length ?? 0) > parsed;
   return [
-    ...LITERAL_READS.flatMap((form) => [...text.matchAll(form)].map((match) => match[2] ?? '')),
+    ...literal,
     ...viaConstants.filter((name) => name !== undefined),
     ...(dynamic ? [...text.matchAll(NAME_LITERAL)].map((match) => match[1] ?? '') : []),
   ];
@@ -162,13 +184,8 @@ export function buildEnvRows(
   const names = new Set(texts.flatMap(scriptEnvNames).filter((name) => keyable(name) && !BUILD_DENIED.has(name)));
   if (platform === 'android')
     for (const name of Object.keys(env)) if (name.startsWith('ORG_GRADLE_PROJECT_')) names.add(name);
-  const paths: string[] = [];
-  const valued: Env = {};
-  for (const name of names) {
-    const value = env[name];
-    const path = typeof value === 'string' && isAbsolute(value);
-    if (path) paths.push(value);
-    valued[name] = path ? pathForm(value) : value;
-  }
-  return { rows: envRows('env:', names, valued, false), paths };
+  const paths = [...names]
+    .map((name) => env[name])
+    .filter((value): value is string => value !== undefined && isAbsolute(value));
+  return { rows: envRows('env:', names, env, false, pathForm), paths };
 }

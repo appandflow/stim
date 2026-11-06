@@ -119,8 +119,14 @@ function run(
   env: Record<string, string>,
   signal?: AbortSignal,
 ) {
-  return new Promise<{ result: string; stdout: string; trace: Trace } | EvalUncertain>((done) => {
+  return new Promise<{ result: string; stdout: string; trace: Trace } | EvalUncertain>((resolved) => {
+    if (signal?.aborted) return resolved(failed(part, 'was cancelled'));
     const started = Date.now();
+    let settled = false;
+    const done = (value: { result: string; stdout: string; trace: Trace } | EvalUncertain) => {
+      if (!settled) resolved(value);
+      settled = true;
+    };
     const child = getExecutor().spawn(node, ['--require', join(SHIMS, 'fp-trace.cjs'), ...args], {
       cwd: root,
       env,
@@ -128,9 +134,11 @@ function run(
     });
     const chunks: Buffer[][] = [[], [], [], [], []];
     child.stdio.forEach((stream, fd) => stream?.on('data', (chunk: Buffer) => chunks[fd]?.push(chunk)));
-    let timedOut = false;
     const stop = () => child.kill('SIGKILL');
-    const timer = setTimeout(() => ((timedOut = true), stop()), TIMEOUT_MS);
+    const timer = setTimeout(() => {
+      stop();
+      finish('timed out');
+    }, TIMEOUT_MS);
     signal?.addEventListener('abort', stop, { once: true });
     const text = (fd: number) => Buffer.concat(chunks[fd] ?? []).toString('utf8');
     const finish = (why: string | null) => {
@@ -146,12 +154,16 @@ function run(
       }
       done({
         ...failed(part, `${why} after ${Date.now() - started} ms`),
-        stderrTail: text(2).trimEnd().split('\n').slice(-20),
+        stderrTail: text(2)
+          .trimEnd()
+          .split('\n')
+          .filter((line) => !/^\s+at /.test(line))
+          .slice(-20),
       });
     };
     child.on('error', (error) => finish(`could not start: ${error.message}`));
     child.on('close', (code, killed) =>
-      finish(timedOut ? 'timed out' : code === 0 ? null : killed ? `was stopped by ${killed}` : `exited ${code}`),
+      finish(code === 0 ? null : killed ? `was stopped by ${killed}` : `exited ${code}`),
     );
   });
 }
@@ -205,6 +217,14 @@ function keyedConfig(config: unknown, roots: Roots): string {
   return canonicalJson(normalize(copy, roots, false));
 }
 
+function realForm(path: string, roots: Roots): string {
+  try {
+    return pathForm(realpathSync.native(path), roots);
+  } catch {
+    return pathForm(resolve(path), roots);
+  }
+}
+
 const configRow = (name: string, config: unknown, roots: Roots): Input => ({
   name,
   kind: 'config',
@@ -233,7 +253,7 @@ function traceRows(
   pinned: boolean,
 ): Uncertain | { rows: Input[]; packages: string[]; modules: string[]; opaque: string[] } {
   const { trace } = part;
-  const rows = envRows(prefix, trace.env, part.env, pinned);
+  const rows = envRows(prefix, trace.env, part.env, pinned, (path) => realForm(path, roots));
   const inApp = (path: string) =>
     (within(path, roots.project) || within(path, roots.install)) && !path.split(sep).includes('node_modules');
   if (trace.enumerators.some(inApp)) rows.push({ ...enumerationRow(part.env), name: `${prefix}*` });
@@ -241,7 +261,7 @@ function traceRows(
   const modules: string[] = [];
   const ours = (path: string) => within(path, SHIMS) || excluded.some((dir) => within(path, dir));
   for (const { path, hash } of trace.modules) {
-    if (ours(path)) continue;
+    if (ours(path) || SKIPPED_READS.has(basename(path))) continue;
     const owner = packageRoot(path);
     if (owner) packages.push(owner);
     else if (existsSync(path)) {
@@ -320,7 +340,7 @@ async function evaluate(
   const parts: Promise<Part | EvalUncertain>[] = [];
   const rows: Input[] = [];
   if (expo) {
-    rows.push(...envRows('env:', ['EXPO_USE_COMMUNITY_AUTOLINKING'], env, true));
+    rows.push(...envRows('env:', ['EXPO_USE_COMMUNITY_AUTOLINKING'], env, true, (path) => realForm(path, roots)));
     const autolinking = findPackage(expo, 'expo-modules-autolinking') ?? findPackage(root, 'expo-modules-autolinking');
     const manifest = autolinking ? record(JSON.parse(readFileSync(join(autolinking, 'package.json'), 'utf8'))) : {};
     if (!autolinking || !versionAtLeast(manifest.version, 1, 12))
@@ -385,7 +405,7 @@ async function evaluate(
     const owner = packageRoot(path);
     if (owner) packages.add(owner);
     else
-      for (let dir = path; within(dir, root) && dir !== root; dir = dirname(dir))
+      for (let dir = path; within(dir, roots.install) && dir !== root && dir !== roots.install; dir = dirname(dir))
         if (existsSync(join(dir, 'package.json'))) {
           contentPackages.add(dir);
           break;
@@ -420,19 +440,33 @@ async function evaluate(
       rows.push({ name: 'runtimeVersion', kind: 'config', hash: sha256(canonicalJson(output.runtimeVersion ?? null)) });
     if (nativePackages.has('expo-constants')) {
       const embeddedName: PartName = 'configEmbedded';
-      const embedded = embedEnv(opts.env, platform);
-      const modes = new Set([opts.embedMode, ...(embedded.NODE_ENV ? [embedded.NODE_ENV] : [])]);
+      const embedded = embedEnv(opts.env);
+      const constants = findPackage(root, 'expo-constants');
+      const script = constants ? join(constants, 'scripts', 'getAppConfig.js') : '';
+      const byMode = existsSync(script) && readFileSync(script, 'utf8').includes('loadProjectEnv');
       const reuse =
-        opts.embedMode === mode && config.trace.env.every((name) => isDenied(name) || env[name] === embedded[name]);
+        byMode &&
+        opts.embedMode === mode &&
+        config.trace.env.every((name) => isDenied(name) || env[name] === embedded[name]);
       const part = reuse
         ? { ...config, name: embeddedName, env: embedded }
-        : await spawn('configEmbedded', [evaluator, 'embed', root, platform, opts.embedMode], embedded);
+        : await spawn(
+            'configEmbedded',
+            [evaluator, 'embed', root, platform, byMode ? opts.embedMode : 'env'],
+            embedded,
+          );
       if (isUncertain(part)) return part;
       const problem = reuse ? null : collect(part, 'env@embed:', false);
       if (problem) return problem;
-      if (reuse) rows.push(...envRows('env@embed:', config.trace.env, embedded, false));
+      if (reuse)
+        rows.push(...envRows('env@embed:', config.trace.env, embedded, false, (path) => realForm(path, roots)));
+      const envFiles = byMode
+        ? envCandidates(root, opts.embedMode)
+        : embedded.NODE_ENV
+          ? envCandidates(root, embedded.NODE_ENV)
+          : ['.env.local', '.env'].map((name) => join(root, name));
+      rows.push(...envFiles.map((path) => fileRow(path, roots)));
       rows.push(configRow('config@embed', record(part.output).config, roots));
-      for (const embedMode of modes) rows.push(...envCandidates(root, embedMode).map((path) => fileRow(path, roots)));
     }
   }
 
@@ -452,13 +486,7 @@ async function evaluate(
   ].map((path) => readFileSync(path, 'utf8'));
   if (native === 'generated' && expo && existsSync(join(expo, 'template.tgz')))
     texts.push(...templateScripts(join(expo, 'template.tgz')));
-  const buildEnv = buildEnvRows(texts, opts.env, platform, (path) => {
-    try {
-      return pathForm(realpathSync.native(path), roots);
-    } catch {
-      return path;
-    }
-  });
+  const buildEnv = buildEnvRows(texts, opts.env, platform, (path) => realForm(path, roots));
   const pathRows = walk({ roots, trees: buildEnv.paths.filter((path) => !packageRoot(path)), tracked: null });
   if (isUncertain(pathRows)) return pathRows;
   const closure = entryPoints(root, expo);

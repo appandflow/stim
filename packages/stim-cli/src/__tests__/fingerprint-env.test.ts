@@ -7,8 +7,7 @@ import { buildEnvRows, buildScripts, jobEnv, templateScripts } from '../fingerpr
 
 const MOBILE = fileURLToPath(new URL('../../../../apps/mobile', import.meta.url));
 const SCRIPT = /(?:\.podspec|\.rb|\.gradle|\.gradle\.kts|^Podfile|^CMakeLists\.txt)$/;
-const MENTIONS_ENV = /\bENV\s*[[.]|\$ENV\{|getenv\s*\(|environmentVariable\s*\(/;
-const DYNAMIC = /ENV(?:\[|\.\w+\??\()\s*[A-Za-z_]|(?:getenv|environmentVariable)\(\s*[A-Za-z_]/;
+const MENTIONS_ENV = /\bENV\s*[[.{]|getenv\s*\(|environmentVariable|System\.env\b/;
 /** Names stim leaves out on purpose: machine locations and names that cannot change the build. */
 const LEFT_OUT = new Set([
   'PATH',
@@ -24,7 +23,7 @@ const LEFT_OUT = new Set([
   'RCT_SKIP_CACHES',
 ]);
 const quotedNames = (text: string) =>
-  [...text.matchAll(/['"]([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)['"]|\$ENV\{(\w+)\}/g)].map((m) => m[1] ?? m[2] ?? '');
+  [...text.matchAll(/['"]([A-Z][A-Z0-9_]+)['"]|\bENV\{(\w+)\}/g)].map((m) => m[1] ?? m[2] ?? '');
 const keyed = (texts: string[]) =>
   new Set(buildEnvRows(texts, {}, 'ios', (path) => path).rows.map((row) => row.name.slice('env:'.length)));
 
@@ -79,8 +78,7 @@ describe.skipIf(!existsSync(join(MOBILE, 'node_modules')))('build env scan over 
           (lineNames.length > 0 && lineNames.every((n) => LEFT_OUT.has(n)))
         )
           continue;
-        const dynamicCovered =
-          DYNAMIC.test(line) && quotedNames(text).every((name) => LEFT_OUT.has(name) || fileKeyed.has(name));
+        const dynamicCovered = quotedNames(text).every((name) => LEFT_OUT.has(name) || fileKeyed.has(name));
         if (!dynamicCovered) unparsed.push(`${file}: ${line.trim()}`);
       }
     }
@@ -122,6 +120,16 @@ test('a build env path is keyed in its path form, and Gradle project properties 
   ]);
   const moved = buildEnvRows(texts, { HERMES_ENGINE_TARBALL_PATH: '/other/hermes.tar.gz' }, 'ios', () => 'form:same');
   expect(moved.rows[0]?.hash).toBe(buildEnvRows(texts, env, 'ios', () => 'form:same').rows[0]?.hash);
+});
+
+test.each([
+  ['System.env.HERMES_TARBALL', ['HERMES_TARBALL']],
+  ['if(DEFINED ENV{CMAKE_FLAG})', ['CMAKE_FLAG']],
+  ['FLAGS = "RCT_A"\nENV[FLAGS]', ['RCT_A']],
+  ['def flag(n) { System.getenv().get(n) }\nflag("EX_DEBUG")\nflag("HERMES")', ['EX_DEBUG', 'HERMES']],
+  ["%w[A B].each { |k| puts ENV[k] }\nx = 'EXPO_FLAG'", ['EXPO_FLAG']],
+])('a build script read %j keys %j', (text, names) => {
+  expect([...keyed([text])].toSorted()).toEqual(names.toSorted());
 });
 
 test("a worker's job env takes the client's value of every keyed name and drops the ones the client lacked", () => {
