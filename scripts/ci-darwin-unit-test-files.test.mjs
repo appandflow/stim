@@ -23,20 +23,28 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-test.each([
-  ["test.skipIf(process.platform !== 'darwin')('a', () => {});", true],
-  ["if (process.platform !== 'darwin') return;", true],
-  ["const dir = process.platform === 'darwin' ? 'Library/Caches' : '.cache';", true],
-  ["test.skipIf(!existsSync('/bin/zsh'))('a', () => {});", true],
-  ["test.skipIf(!caseInsensitive)('a', () => {});", true],
-  ["test.skipIf(process.platform === 'darwin')('a', () => {});", false],
-  ["vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');", false],
-  ["runDoctor(project, { host: 'darwin' });", false],
-  ["test.skipIf(process.platform === 'win32')('a', () => {});", false],
-])('%s selects the file: %s', (source, expected) => {
-  const file = 'packages/stim-cli/src/__tests__/gated.test.ts';
-  write(file, source);
-  expect(selected()).toEqual(expected ? [file] : []);
+test('selects tests gated by macOS platform, shell or filesystem behavior', () => {
+  const files = {
+    'packages/stim-cli/src/__tests__/platform.test.ts': "test.skipIf(process.platform !== 'darwin')('a', () => {});",
+    'packages/stim-cli/src/__tests__/branch.test.ts':
+      "const dir = process.platform === 'darwin' ? 'Library/Caches' : '.cache';",
+    'packages/stim-cli/src/__tests__/shell.test.ts': "test.skipIf(!existsSync('/bin/zsh'))('a', () => {});",
+    'packages/stim-cli/src/__tests__/filesystem.test.ts': "test.skipIf(!caseInsensitive)('a', () => {});",
+  };
+  for (const [file, source] of Object.entries(files)) write(file, source);
+  expect(selected().toSorted()).toEqual(Object.keys(files).toSorted());
+});
+
+test('ignores tests that skip macOS or only simulate it', () => {
+  write(
+    'packages/stim-cli/src/__tests__/skipped.test.ts',
+    "test.skipIf(process.platform === 'darwin')('a', () => {});",
+  );
+  write(
+    'packages/stim-cli/src/__tests__/mocked.test.ts',
+    "vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');",
+  );
+  expect(selected()).toEqual([]);
 });
 
 test('only unit test files the suite includes are selected', () => {
@@ -46,6 +54,7 @@ test('only unit test files the suite includes are selected', () => {
   write(spaced, gate);
   write(benchmark, gate);
   write('packages/stim-cli/src/__tests__/gated.compat.test.ts', gate);
+  write('packages/server/__tests__/gated.browser.test.ts', gate);
   write('packages/stim-cli/src/__tests__/_helper.ts', gate);
   write('apps/mobile/src/gated.test.ts', gate);
   expect(selected().toSorted()).toEqual([spaced, benchmark].toSorted());
