@@ -64,7 +64,7 @@ export function dormantAction(path: string, thresholdMs: number, why: string): M
   };
 }
 
-/** The idle threshold in milliseconds that a dormant-stage action carries. */
-export function dormantThresholdMs(action: Pick<MaintenanceAction, 'olderThanDays'>): number {
-  return Math.round((action.olderThanDays ?? 0) * DAY_MS);
+/** The idle threshold in milliseconds that a dormant-stage action carries; null when it carries none. */
+export function dormantThresholdMs(action: Pick<MaintenanceAction, 'olderThanDays'>): number | null {
+  return action.olderThanDays === undefined ? null : Math.round(action.olderThanDays * DAY_MS);
 }

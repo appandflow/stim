@@ -347,13 +347,15 @@ type DormantOutcome = {
  */
 export async function enterDormantStage(action: MaintenanceAction, operation?: StimContext): Promise<DormantOutcome> {
   const path = action.target;
+  const thresholdMs = dormantThresholdMs(action);
+  if (thresholdMs === null) return { status: 'kept', bytes: 0, detail: 'the action names no idle threshold' };
   const config = loadConfig();
   const project = config?.projects[path];
   if (!config || !project) return { status: 'kept', bytes: 0, detail: 'it is no longer a registered workspace' };
   const run = await withIdleWorkspace(
     path,
     async (): Promise<DormantOutcome> => {
-      const idleMs = await idleFor(path, dormantThresholdMs(action), 'idle.dormantDays', { locked: true, operation });
+      const idleMs = await idleFor(path, thresholdMs, 'idle.dormantDays', { locked: true, operation });
       if (idleMs === null) return { status: 'kept', bytes: 0, detail: 'it is no longer idle' };
       const owns = (kind: 'ios' | 'android') =>
         projectDeviceSlots(project).some(({ platforms }) => platforms[kind]?.owned === true);
