@@ -41,6 +41,9 @@ public enum Toolchain {
     for (name, value) in parseOverrides(overrides ?? "") { environment[name] = value }
     if launch["STIM_HOME"] != nil || !(stimHome ?? "").isEmpty { environment["STIM_HOME"] = base["STIM_HOME"] }
     if let root = base["STIM_ENGINE_ROOT"] { environment["STIM_ENGINE_ROOT"] = root }
+    if let managed = ManagedNode.installed(EngineRoot(environment: environment)) {
+      environment["PATH"] = "\(environment["PATH"] ?? "/usr/bin:/bin"):\((managed.path as NSString).deletingLastPathComponent)"
+    }
     return environment
   }
 }

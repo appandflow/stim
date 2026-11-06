@@ -147,6 +147,10 @@ final class ServerController: ObservableObject {
   var engineNotice: String? {
     switch engine {
     case .pinned(_, let text): return text
+    case .moveForward(let engine, automatic: _)
+    where engine.channel == "latest" && EngineInstall.wanted?.prerelease.isEmpty == false:
+      return
+        "The Stim engine \(engine.version) follows latest, and this Stim Desktop needs \(EngineInstall.wanted?.description ?? "") from next: run stim engine use --channel next."
     case .moveForward(let engine, automatic: false):
       return
         "The Stim engine \(engine.version) is older than this Stim Desktop needs (\(EngineInstall.wanted?.description ?? "")): run stim engine update, or Update Engine."
@@ -193,6 +197,17 @@ final class ServerController: ObservableObject {
     self.settingsEnvironment = settingsEnvironment
     start()
     devicesPoller.start()
+    var servesPhones = UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones)
+    NotificationCenter.default.addObserver(
+      forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated {
+        let now = UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones)
+        guard now != servesPhones else { return }
+        servesPhones = now
+        self?.reconnect?()
+      }
+    }
     NotificationCenter.default.addObserver(
       forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
     ) { [weak self] _ in
@@ -380,6 +395,11 @@ final class ServerController: ObservableObject {
   private func use(_ record: StimdRecord, owned: Bool) {
     self.record = record
     state = .running(ServerHealth(record: record, stimHome: stimHome), owned: owned)
+    guard !owned, !(EngineLaunch.resolve(environment: settingsEnvironment)?.isDevelopment ?? false) else { return }
+    engine = EngineNeed.decide(
+      pointer: EngineFiles.pointer(engineRoot), wanted: EngineInstall.wanted,
+      installedByDesktop: UserDefaults.standard.bool(forKey: AppPreferences.Key.engineInstalledByDesktop))
+    if case .moveForward(_, automatic: true) = engine { Task { await updateEngine() } }
   }
 
   func stop() {
