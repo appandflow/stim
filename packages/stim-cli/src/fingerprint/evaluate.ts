@@ -527,7 +527,7 @@ async function evaluate(
       if (owner) packages.add(owner);
       if (owner || within(real, roots.project) || within(real, roots.install)) return [];
       if (statSync(real).isFile()) return [real];
-      if (dirname(real) !== real) outsideValue = true;
+      if (/^\.\.?[\\/]/.test(value)) outsideValue = true;
       return [];
     } catch {
       return [];

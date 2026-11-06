@@ -91,7 +91,9 @@ const embedSpawns = () => spawned.filter((argv) => argv.includes('embed')).lengt
 
 describe.skipIf(!existsSync(MOBILE_MODULES))('fingerprint evaluators on the installed Expo SDK', () => {
   test('a Terminal-shaped and a CI-shaped shell give one key, and no evaluator reaches npx', SLOW, async () => {
-    const root = expoApp({ 'app.config.js': 'module.exports = ({ config }) => config;\n' });
+    const root = expoApp({
+      'app.config.js': "module.exports = ({ config }) => ({ ...config, extra: { route: '/tmp' } });\n",
+    });
     const trap = join(root, 'trap');
     write(join(trap, 'npx'), `#!/bin/sh\ntouch "${join(trap, 'ran')}"\nexit 1\n`);
     chmodSync(join(trap, 'npx'), 0o755);
@@ -129,6 +131,7 @@ describe.skipIf(!existsSync(MOBILE_MODULES))('fingerprint evaluators on the inst
     );
     expect(ci.hash).toBe(terminal.hash);
     expect(terminal.native).toBe('generated');
+    expect(terminal.portable).toBe(true);
     expect(terminal.nativePackages).toEqual(expect.arrayContaining(['expo', 'expo-constants']));
     expect(existsSync(join(trap, 'ran'))).toBe(false);
     expect(spawned.length).toBeGreaterThan(0);
