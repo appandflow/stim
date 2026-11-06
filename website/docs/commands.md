@@ -226,7 +226,7 @@ doctor reports their separate device-host approval in `deviceHosts`. Only
 `--fix` requests approval, retries a revoked or lapsed request, and forgets
 names removed from the setting; [`stim remote add`](#remote) also requests and
 retries approval, outside an app. It makes a setup ticket and prints the
-`stim-server setup` command a person on the hosting Mac runs. Setup tickets stay
+`stim setup` command a person on the hosting Mac runs. Setup tickets stay
 private. The first connection after approval pins the Mac's stim-server key,
 and a Mac that cannot prove that key is refused; unreadable credentials and
 uncertain replies preserve the pin. Invalid hosting
@@ -240,11 +240,11 @@ the request expired before approval. Hosting approval does not yet change
 
 When the [`remote.machines`](./settings.md#machine-settings) setting names
 remote machines, doctor reports each one this machine is not approved on: not on the
-tailnet, not asked yet, waiting for approval (with the `stim-server setup`
+tailnet, not asked yet, waiting for approval (with the `stim setup`
 command to run there), revoked, lapsed, answering with a different
 stim-server key than the one this machine pinned at approval, or running a
 stim-server too old to speak protocol 2 (`outdated`, with the
-`stim-server service update --release <version>` command to run there). A listed machine
+`stim service update --release <version>` command to run there). A listed machine
 that never granted an approval is not used for it. `--fix` makes one setup
 ticket for each named machine without a pairing, covering build and device-host
 access, asks again one that revoked or let the request lapse, and forgets the
@@ -411,7 +411,7 @@ can compile on a paired remote machine instead: see `remote.build` in
   contacts no worker. Prebuild and pod install run on this machine before
   a named offload, after a check of the worker's toolchain. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
   Run `stim remote add <machine>` to ask for build access if not approved; a person on
-  the worker approves it by running the `stim-server setup` command it
+  the worker approves it by running the `stim setup` command it
   printed, with its ticket and expiry.
   See [machine settings](./settings.md#machine-settings) for supported builds and remedies.
 - `--scheme <name>` selects an exact shared Xcode scheme when the automatic
@@ -708,7 +708,7 @@ can compile on a paired remote machine instead: see `remote.build` in
   contacts no worker. Prebuild and pod install still run on this machine before
   a named offload. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
   Run `stim remote add <machine>` to ask for build access if not approved; a person on
-  the worker approves it by running the `stim-server setup` command it
+  the worker approves it by running the `stim setup` command it
   printed, with its ticket and expiry.
   See [machine settings](./settings.md#machine-settings) for supported builds and remedies.
 - `--variant <name>` selects a Gradle variant. The default is `debug`.
@@ -1520,7 +1520,7 @@ optional stim-server port (default 7787).
 
 - `add` appends the machine to the machine-scope list, keeping the entries
   already there, and asks it for build and device-host approval. It prints the
-  `stim-server setup` command, with a setup ticket, that a person runs on that
+  `stim setup` command, with a setup ticket, that a person runs on that
   machine to approve this one. Adding a machine already in the list asks it
   again when its request lapsed or was revoked, and otherwise reports its state.
   A name that is not a tailnet name or `local:` address refuses with
@@ -1531,7 +1531,7 @@ optional stim-server port (default 7787).
   `local:` machine, run it in a terminal to confirm the server key fingerprint.
 - `remove` drops the entry and forgets this machine's credentials for it. The
   remote machine keeps its approval until a person there runs the
-  `stim-server devices revoke <id>` command `remove` prints.
+  `stim pairings revoke <id>` command `remove` prints.
 
 ```bash
 stim remote add janics-mac-mini
@@ -1545,7 +1545,7 @@ The states are the ones `stim doctor --json` reports under `remoteMachines`
 where `serverKeyFingerprint` is the fingerprint of the stim-server key this
 machine pinned for it (`null` before it answered), `reachability` is
 `reachable`, `unreachable`, `key-changed` or `unknown` from this run's contact,
-and `revoke` lists the `stim-server devices revoke <id>` commands a person on
+and `revoke` lists the `stim pairings revoke <id>` commands a person on
 that machine runs to withdraw its approvals; `add
 --json` prints `{ machine, added, machines, build, deviceHost, findings }`,
 where `machines` is the list after the change; `remove --json` prints
@@ -2810,9 +2810,9 @@ staging and keeps live or unresolved claims, naming the claim removal command.
 `status --json` adds `archived` and `archivedUsage`, and `stats` prints an
 archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces).
 
-## stim-server setup
+## stim setup
 
-A person on the worker machine runs `stim-server setup` to set it up and approve
+A person on the worker machine runs `stim setup` to set it up and approve
 build and/or device-host access for the machine holding one setup ticket, until
 one expiry. The requesting machine makes the ticket: Stim Desktop's Add Machine
 flow shows the command, and `stim remote add <machine>` or `stim doctor --fix`
@@ -2832,19 +2832,19 @@ details and the long summary. `--json` is unchanged.
 <TabItem value="global" label="Global">
 
 ```bash
-STIM_SETUP_TICKET=<ticket> stim-server setup --expires <ISO-time> --build --device-host
+STIM_SETUP_TICKET=<ticket> stim setup --expires <ISO-time> --build --device-host
 ```
 
 </TabItem>
 <TabItem value="npx" label="npx">
 
 ```bash
-STIM_SETUP_TICKET=<ticket> npx --yes --package @stim-cli/server@<version> stim-server setup --expires <ISO-time> --build --device-host
+STIM_SETUP_TICKET=<ticket> npx --yes stim setup --expires <ISO-time> --build --device-host
 ```
 
 </TabItem>
 </Tabs>
 
-See the [server command reference](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-machine)
+See the [server command reference](./remote-machines.md#cli-equivalent)
 for flags, permissions, journals, exit codes and undo commands.
 The [remote machines guide](./remote-machines.md) walks through Desktop and manual setup.

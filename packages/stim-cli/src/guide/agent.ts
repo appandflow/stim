@@ -175,7 +175,7 @@ To learn whether the next build is a cache hit and how long it should take,
 without building, run stim ios --plan (or stim android --plan); see stim guide
 lifecycle builds.
 
-Agents never set STIM_ACCESS_TICKET, run stim-server setup, edit remote.*,
+Agents never set STIM_ACCESS_TICKET, run stim setup, edit remote.*,
 server.* or hosting.* for the user, or approve requests. Read stim guide settings for
 Desktop access tickets and person-owned approval.
 Read stim guide settings to select a remote machine. Keep a requested named
@@ -206,7 +206,7 @@ waiting times out.
 
 RULES DURING THE LOOP
 
-- Agents never run stim-server setup and never approve access requests.
+- Agents never run stim setup and never approve access requests.
   A person on the worker approves builds and device hosting (guide settings).
 - Run Stim from the app directory: the one whose package.json depends on
   react-native or expo. Anywhere else -- a monorepo root, a tools package --

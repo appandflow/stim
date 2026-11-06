@@ -188,11 +188,11 @@ function problemFix(problem: OffloadProblem, entry: string): string {
   if (problem.followsFrom) return `Fix the ${problem.followsFrom} problem on ${entry} first; this follows from it.`;
   switch (code) {
     case 'unreachable':
-      return `Check that stim-server runs on ${entry} and that its tailscale serve route answers, then run \`stim doctor\` again. To keep it running there, run \`stim-server service install --serve\` on ${entry}.`;
+      return `Check that stim-server runs on ${entry} and that its tailscale serve route answers, then run \`stim doctor\` again. To keep it running there, run \`stim service install --serve\` on ${entry}.`;
     case 'checkout':
       return 'Offload syncs the files git lists; run Stim from a git checkout of the app.';
     case 'stim-build':
-      return `Update stim-server on ${entry} to a Stim release with the same build compatibility version as this machine (an older stim-server needs the same Stim build): there, run \`stim-server service update --release <version>\` for this machine's release, or \`--from <dir>\` with the packed packages of this machine's checkout.`;
+      return `Update stim-server on ${entry} to a Stim release with the same build compatibility version as this machine (an older stim-server needs the same Stim build): there, run \`stim service update --release <version>\` for this machine's release, or \`--from <dir>\` with the packed packages of this machine's checkout.`;
     case 'arch':
       return 'Use a remote machine with the same CPU architecture as this machine.';
     case 'xcode':
@@ -217,7 +217,7 @@ function problemFix(problem: OffloadProblem, entry: string): string {
     case 'jdk':
       return (
         commandFix(problem, entry) ??
-        `Start stim-server on ${entry} with JAVA_HOME at a JDK of the same major version as this machine's.`
+        `Start stim serve on ${entry} with JAVA_HOME at a JDK of the same major version as this machine's.`
       );
     case 'android-sdk':
     case 'ndk':

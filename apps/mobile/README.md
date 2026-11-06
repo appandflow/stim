@@ -1,7 +1,7 @@
 # Stim Mobile
 
 An Expo app for watching Stim workspaces from a phone. It pairs with
-the Stim server on a machine (`stim-server`, from the `@stim-cli/server` package)
+the Stim server on a machine (`stim-server`, from the `stim` package)
 and shows what Stim Desktop shows. A phone the machine grants control can also
 reload and stop a workspace:
 
@@ -1204,7 +1204,7 @@ stim start
 stim ios
 ```
 
-`pnpm run dev:pair` runs `stim-server pair --json` against the server running on
+`pnpm run dev:pair` runs `stim pair --json` against the server running on
 this machine and writes its pairing code to `.env.local`:
 
 ```bash
@@ -1224,7 +1224,7 @@ Metro picks up a rewritten `.env.local`; reload the app after `dev:pair`.
 - `--control` pairs with control, so the app can run actions. Without it the
   pairing is read-only. The mock server ignores it.
 - `--port <n>` targets a server on another port than 7787, such as a
-  `stim-server --port <n>` running with a scratch `STIM_HOME`.
+  `stim serve --port <n>` running with a scratch `STIM_HOME`.
 - `--endpoint <url>` sets the endpoint the app connects to, such as the
   tailnet endpoint `stim-server` prints. The default, `ws://127.0.0.1:<port>`,
   reaches the machine from the iOS Simulator but not from an Android emulator.

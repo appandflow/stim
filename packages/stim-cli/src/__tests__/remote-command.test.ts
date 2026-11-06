@@ -83,7 +83,7 @@ test('add appends to remote.machines outside an app and keeps the other machines
   ]);
   const ticket = readBuildMachines().find((each) => each.machine === 'studio')?.ticket;
   expect(out).toContain(`STIM_SETUP_TICKET=${ticket} `);
-  expect(out).toContain('stim-server setup');
+  expect(out).toContain('stim@9.9.9 setup');
   expect(process.exitCode).toBeUndefined();
 });
 
@@ -119,7 +119,7 @@ test('list --json gives each machine its server key fingerprint, reachability an
       machine: 'mini',
       serverKeyFingerprint: keyFingerprint(Buffer.from(SERVER_KEY, 'base64url')),
       reachability: 'reachable',
-      revoke: ['stim-server devices revoke dev-mini'],
+      revoke: ['stim pairings revoke dev-mini'],
     },
     { machine: 'studio', serverKeyFingerprint: null, reachability: 'unreachable', revoke: [] },
     { machine: 'local:127.0.0.1:1', serverKeyFingerprint: null, reachability: 'unknown', revoke: [] },
@@ -157,7 +157,7 @@ test('list --json still prints one payload when the device-host credentials cann
   expect(mini).toMatchObject({
     deviceHost: { state: 'credentials-unavailable' },
     serverKeyFingerprint: keyFingerprint(Buffer.from(SERVER_KEY, 'base64url')),
-    revoke: ['stim-server devices revoke dev-mini'],
+    revoke: ['stim pairings revoke dev-mini'],
   });
 });
 
@@ -169,7 +169,7 @@ test('remove drops the entry and its credentials, keeps the others, and prints t
   expect(loadConfig()?.remote?.machines).toEqual(['studio']);
   expect(readBuildMachines().map((each) => each.machine)).toEqual(['studio']);
   expect(readDeviceHostMachines().map((each) => each.machine)).toEqual(['studio']);
-  expect(out).toContain('stim-server devices revoke dev-mini');
+  expect(out).toContain('stim pairings revoke dev-mini');
 });
 
 test('remove --json names an unreadable hosting store and preserves the machine and credentials', async () => {

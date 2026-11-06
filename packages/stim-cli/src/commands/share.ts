@@ -67,7 +67,7 @@ const MIN_PASSWORD = 8;
 const MAX_PASSWORD = 128;
 
 const serverRemedy = (version: string) =>
-  `Web shares run inside stim-server, and no stim-server ${version} is installed for stim share to start. Install it with \`npm install --global @stim-cli/server@${version}\`, or open Stim Desktop, then run stim share again.`;
+  `Web shares run inside stim-server, and the server bundled with stim ${version} could not start. Reinstall stim with \`npm install --global stim@${version}\`, or open Stim Desktop, then run stim share again.`;
 
 function failure(code: string, message: string, remedy: string | null): ShareFailure {
   return { code, message, remedy };
@@ -132,14 +132,14 @@ async function ask<M extends ShareMethod>(
       answer.error.code === 'unknown-method'
         ? 'The running stim-server does not serve web shares.'
         : 'The running stim-server does not take --slug.',
-      'Update stim-server to the version of this stim (`stim-server service update`), then run stim share again.',
+      'Update stim-server to the version of this stim (`stim service update`), then run stim share again.',
     );
   }
   if (method === 'share.start' && /does not take (token|expiresAt)/.test(answer.error.message)) {
     return failure(
       'STIM_SHARE_REFUSED',
       'The running stim-server cannot start a saved share again.',
-      'Update stim-server to the version of this stim (`stim-server service update`), then run stim share --reuse again.',
+      'Update stim-server to the version of this stim (`stim service update`), then run stim share --reuse again.',
     );
   }
   return failure(

@@ -35,7 +35,7 @@ function serviceUseOf(
   return { label: typeof job.Label === 'string' ? job.Label : file, plist: file, argument };
 }
 
-/** The launch argument inside `folder` of a unit `stim-server service install` wrote, or null when it has none. */
+/** The launch argument inside `folder` of a unit `stim service install` wrote, or null when it has none. */
 function unitArgument(text: string, folder: string, canonical: (path: string) => string): string | null | undefined {
   const lines = unitLines(text);
   if (!lines.some((line) => line.section === 'X-Stim' && line.key === 'Managed' && line.value === 'true')) return null;
@@ -72,7 +72,7 @@ function unitRunningFrom(folder: string, canonical: (path: string) => string, un
 }
 
 /**
- * The first installed stim-server service that runs from inside `folder`, or null: a LaunchAgent on macOS, a systemd
+ * The first installed stim service that runs from inside `folder`, or null: a LaunchAgent on macOS, a systemd
  * user unit on Linux. A service file that cannot be read counts as one, with a null `argument`.
  */
 export function serviceRunningFrom(

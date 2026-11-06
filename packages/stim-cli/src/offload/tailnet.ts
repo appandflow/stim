@@ -56,14 +56,13 @@ import { PEER, type RemoteDiagnosis } from '@stim-cli/core/protocol';
 
 const HELLO_TIMEOUT_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 3000;
-/** How long a setup ticket `stim doctor --fix` generates stays valid; `stim-server setup` takes at most 2 hours. */
 const GENERATED_TICKET_MS = 2 * 60 * 60_000 - 60_000;
 
 export type Access = 'build' | 'device-host';
 
 /**
  * How this machine proves itself to a remote stim-server: as a returning client that pins `serverKey`, or on first
- * contact with the setup ticket the worker's `stim-server setup` approved. Both use this machine's client key.
+ * contact with the setup ticket the worker's `stim setup` approved. Both use this machine's client key.
  */
 export type MachineAuth =
   | { access: Access; serverKey: string }
@@ -157,7 +156,7 @@ export function outdatedServer(
   host: string = localMachineName(),
 ): { title: string; detail: string; fix: string } {
   const update =
-    `On ${entry}, run \`stim-server service update --release ${version}\`` +
+    `On ${entry}, run \`stim service update --release ${version}\`` +
     ' (add `--label <name>` for a custom service label; a server Stim Desktop runs updates with Stim Desktop)';
   return {
     title: `Remote machine ${entry} runs an older stim-server`,
@@ -503,7 +502,7 @@ export interface AccessInput {
   tickets: GeneratedTickets;
   /**
    * For a machine on the local network, which no transport pins: asks a person to compare the server key's fingerprint
-   * with the one `stim-server setup` printed there, after the ticket's handshake. The key is pinned only on true; a
+   * with the one `stim setup` printed there, after the ticket's handshake. The key is pinned only on true; a
    * key this machine already pinned for the same entry is not asked again.
    */
   confirmKey?: (serverKey: string) => Promise<boolean>;
@@ -517,7 +516,7 @@ export type KeyConfirmer = (machine: string, serverKey: string) => Promise<boole
 
 /**
  * Shows a local network machine's server key fingerprint and asks a person whether it matches the one
- * `stim-server setup` printed there. Questions go one at a time, and each machine and key is asked once per doctor
+ * `stim setup` printed there. Questions go one at a time, and each machine and key is asked once per doctor
  * run, so its build and device-host checks share the answer. Without a terminal every answer is no.
  */
 export function keyConfirmer(ask: ((question: string) => Promise<boolean>) | null): KeyConfirmer {
@@ -531,7 +530,7 @@ export function keyConfirmer(ask: ((question: string) => Promise<boolean>) | nul
       const fingerprint = keyFingerprint(Buffer.from(serverKey, 'base64url'));
       answer = queue.then(() =>
         ask(
-          `${machine} answered with this stim-server key fingerprint:\n  ${fingerprint}\nDoes it match the fingerprint \`stim-server setup\` printed on ${machine}? Only then does Stim trust it. [y/N] `,
+          `${machine} answered with this stim-server key fingerprint:\n  ${fingerprint}\nDoes it match the fingerprint \`stim setup\` printed on ${machine}? Only then does Stim trust it. [y/N] `,
         ),
       );
       queue = answer.catch(() => false);
@@ -545,13 +544,13 @@ export function keyConfirmer(ask: ((question: string) => Promise<boolean>) | nul
 export function setupRemedy(entry: string, command: string | null): string {
   return command
     ? `A person on ${entry} runs this there to approve this machine: ${command}\nAfter approving, run \`stim remote list\` on this machine to reconnect.`
-    : `A person on ${entry} runs the \`stim-server setup\` command Stim Desktop showed for this machine.`;
+    : `A person on ${entry} runs the \`stim setup\` command Stim Desktop showed for this machine.`;
 }
 
 function setupCommand(machine: string, ticket: string, expiresAt: string, flags: Access[], version: string): string {
   const parsed = parseMachine(machine);
   const port = parsed?.transport === 'local' && parsed.port !== DEFAULT_SERVER_PORT ? ` --port ${parsed.port}` : '';
-  return `STIM_SETUP_TICKET=${ticket} STIM_SETUP_ORIGIN=doctor npx --yes --package @stim-cli/server@${version} stim-server setup --expires ${expiresAt} ${flags.map((flag) => `--${flag}`).join(' ')}${port}`;
+  return `STIM_SETUP_TICKET=${ticket} STIM_SETUP_ORIGIN=doctor npx --yes stim@${version} setup --expires ${expiresAt} ${flags.map((flag) => `--${flag}`).join(' ')}${port}`;
 }
 
 function transportOf(machine: string): MachineTransport {
@@ -595,7 +594,7 @@ function approved(
 
 /**
  * Connects to one remote machine for one access and says what changed. A returning client pins the stored server key.
- * A pending client spends its setup ticket in first contact until the worker's `stim-server setup` approves it; the
+ * A pending client spends its setup ticket in first contact until the worker's `stim setup` approves it; the
  * worker answers `unknown-secret` before that. With `fix`, a machine with no credential, or a revoked or lapsed one,
  * gets a new setup ticket: `STIM_ACCESS_TICKET` when set (Stim Desktop's Add Machine flow), else one this machine
  * generates, with the command to run on the worker. A pending credential is replaced when `STIM_ACCESS_TICKET` names

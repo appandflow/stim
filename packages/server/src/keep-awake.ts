@@ -87,7 +87,7 @@ export function createKeepAwake(
       console.error('stim-server: server.keepAwake is on, but only macOS supports it; nothing is held.');
     if (now === 'failed')
       console.error(
-        'stim-server: could not hold the keep-awake assertion; caffeinate did not start or stopped. Restart stim-server to retry.',
+        'stim-server: could not hold the keep-awake assertion; caffeinate did not start or stopped. Restart stim serve to retry.',
       );
   };
 

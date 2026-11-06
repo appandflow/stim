@@ -239,7 +239,7 @@ export async function requireManaged(label: string): Promise<InstalledService | 
   }
   if (installed && !installed.managed) {
     throw new ServiceError(
-      `${plistPath(label)} was not written by \`stim-server service install\`; not touching it. Use another --label.`,
+      `${plistPath(label)} was not written by \`stim service install\`; not touching it. Use another --label.`,
     );
   }
   if (!installed && (await loaded(label))) {
@@ -386,7 +386,7 @@ export async function installJob(
   }
 
   const notes = [`Installed ${options.label}: ${path}`, `Log: ${spec.logPath}`];
-  const follow = `Run \`stim-server service status --label ${options.label}\` and check ${spec.logPath}.`;
+  const follow = `Run \`stim service status --label ${options.label}\` and check ${spec.logPath}.`;
   const noun =
     manager.name === 'launchd' ? 'LaunchAgent' : manager.name === 'taskscheduler' ? 'Scheduled task' : 'Service';
   notes.push(
@@ -590,7 +590,7 @@ const KEEP_AWAKE_REASONS: Record<KeepAwakeReason, string> = {
   unsupported: 'not held, only macOS supports it',
   'loopback-only': 'not held, this server accepts only this machine',
   'not-listening': 'not held, no tailnet or local network listener is up',
-  failed: 'not held, caffeinate did not start or stopped (restart stim-server to retry)',
+  failed: 'not held, caffeinate did not start or stopped (restart stim serve to retry)',
 };
 
 function keepAwakeText(keepAwake: KeepAwakeStatus): string {
@@ -662,7 +662,7 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
     }
   } else if (status.manager === 'launchd') {
     lines.push(
-      `  macOS attributes ${panes.screen} and ${panes.control} to node. Run \`stim-server service install\` again to use Stim Host.`,
+      `  macOS attributes ${panes.screen} and ${panes.control} to node. Run \`stim service install\` again to use Stim Host.`,
     );
   }
   lines.push(`  node: ${status.node}`, `  server: ${status.script}`);
@@ -1176,7 +1176,7 @@ function withUpdateClaim<T>(
   return holdingUpdateClaim(label, async () => {
     const installed = await requireManaged(label);
     if (!installed?.script || !installed.node || installed.port === null) {
-      throw new ServiceError(`${label} is not installed. Run \`stim-server service install\` first.`);
+      throw new ServiceError(`${label} is not installed. Run \`stim service install\` first.`);
     }
     return work({ ...installed, script: installed.script, node: installed.node, port: installed.port });
   });
@@ -1237,7 +1237,7 @@ async function switchToSource(
   const flag = label === DEFAULT_LABEL ? '' : ` --label ${label}`;
   return [
     `${label} now runs ${describeBuild(target.build)} from ${target.dir}.`,
-    `The previous server stays installed: ${installed.script}. \`stim-server service rollback${flag}\` switches back to it.`,
+    `The previous server stays installed: ${installed.script}. \`stim service rollback${flag}\` switches back to it.`,
   ];
 }
 

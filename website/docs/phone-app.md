@@ -43,7 +43,7 @@ flow is iOS TestFlight. Contributors can build the app from
 ## What you need
 
 - A Mac running [Stim Desktop](./desktop.md), or the server from
-  `@stim-cli/server`.
+  `stim`.
 - Tailscale running on the Mac and phone, signed in to the same tailnet.
 - **Allow connections** enabled in Desktop, with a verified private route.
   A standalone server needs the equivalent Tailscale Serve route.
@@ -76,7 +76,7 @@ through Funnel refuses setup and pairing: remove that Funnel handler before
 using a tailnet-only route.
 
 For a standalone server, use the
-[server's Tailscale instructions](https://github.com/appandflow/stim/blob/main/packages/server/README.md#tailscale)
+[server's Tailscale instructions](./remote-machines.md#cli-equivalent)
 to configure the route. Keeping the Mac's server running is required for live
 viewing and server-delivered notifications.
 
@@ -105,14 +105,14 @@ A standalone server can print the same pairing payload:
 <TabItem value="global" label="Global">
 
 ```bash
-stim-server pair --json
+stim pair --json
 ```
 
 </TabItem>
 <TabItem value="npx" label="npx">
 
 ```bash
-npx --yes --package @stim-cli/server@1.21.0 stim-server pair --json
+npx --yes stim pair --json
 ```
 
 </TabItem>
@@ -136,7 +136,7 @@ replay. With workspace diff support, it can also read changed and untracked
 text files in registered workspaces, including non-ignored `.env` files.
 
 To allow input, choose **Control** under **Change Access** in the phone's menu in Desktop's
-**Settings > Connections**, or run `stim-server devices grant <id> --control` on
+**Settings > Connections**, or run `stim pairings grant <id> --control` on
 the Mac. Use `--read` to take control away while retaining viewing access.
 The server's npx prefix is shown above. The phone's **Allow Control** action
 explains this Mac-side change; it cannot grant itself access. **Reconnect**
@@ -170,22 +170,22 @@ servers that support it.
 ## Revoke access
 
 In Desktop's **Settings > Connections**, choose **Revoke Access...** on the phone's row, or run
-`stim-server devices revoke <id>` on the Mac. Revocation closes its active
+`stim pairings revoke <id>` on the Mac. Revocation closes its active
 connections; the server checks registrations on changes and once a second.
 The phone must pair again to reconnect.
 
-To rename a paired phone on the Mac, run `stim-server devices rename <id> <name>`
+To rename a paired phone on the Mac, run `stim pairings rename <id> <name>`
 there; the phone gets the new name the next time it connects.
 
-`stim-server devices --json` reports each pairing's `kind`: `desktop` for Stim
-Desktop on another machine, which also pairs with `stim-server pair`, and `phone`
+`stim pairings --json` reports each pairing's `kind`: `desktop` for Stim
+Desktop on another machine, which also pairs with `stim pair`, and `phone`
 for any other app. Each pairing records the app and version it names when it
 connects, so `kind` and the `clientApp` and `clientVersion` fields appear after
 a pairing's next connection. They are labels only and never change what it may do.
 
 An entry in the server's registry files that this version of `stim-server` cannot
 read, such as a malformed one or one a newer Stim wrote, is never dropped: writes
-keep it as it was and it grants nothing. `stim-server devices --json` lists each
+keep it as it was and it grants nothing. `stim pairings --json` lists each
 one in `unreadable` as `{ "file", "index", "id" }` (`id` only when the entry has
 one). A registry file written by a newer Stim as a whole is listed as
 `{ "file", "version" }`, and `stim-server` refuses every write to it, including

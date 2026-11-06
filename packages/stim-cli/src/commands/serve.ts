@@ -50,7 +50,7 @@ export async function legacyMain(): Promise<void> {
       const scope = /unknown option '(--(?:build|device-host))'/.exec(message);
       write(
         scope
-          ? `stim-server: ${scope[1]} applies only to \`stim-server setup\`, which a person runs on this machine with the requesting machine's setup ticket.\n`
+          ? `stim-server: ${scope[1]} applies only to \`stim setup\`, which a person runs on this machine with the requesting machine's setup ticket.\n`
           : message,
       );
     },

@@ -3,7 +3,7 @@ const demoEndpoint = 'wss://stim-demo.appandflow.workers.dev';
 const description = [
   'Stim Mobile shows the development work running on your Mac. It is the phone companion for Stim, an open-source tool that gives each React Native or Expo workspace its own Metro port and its own simulator or emulator.',
   '',
-  'This app does not compile or run your projects. It needs a Mac running Stim Desktop or stim-server, paired with this phone. Without a paired Mac there is nothing to show.',
+  'This app does not compile or run your projects. It needs a Mac running Stim Desktop or stim serve, paired with this phone. Without a paired Mac there is nothing to show.',
   '',
   'WHAT YOU CAN SEE',
   '- Workspaces on every paired Mac, grouped by repository, with their state (warming, building, running, idle), error counts, pull request state and git status.',
@@ -20,17 +20,17 @@ const description = [
   "When the Mac grants this phone Control, you can tap, type, rotate and use the device's other controls, and reload or stop a workspace. Pairings made from Stim Desktop are read-only until you allow Control for that phone on the Mac.",
   '',
   'NOTIFICATIONS',
-  "Notifications are off until you turn them on. On iPhone, a Mac whose stim-server sends push notifications can reach you through Expo's push service and Apple while the app is closed. Otherwise notifications appear while the app is open.",
+  "Notifications are off until you turn them on. On iPhone, a Mac running stim serve can send push notifications to you through Expo's push service and Apple while the app is closed. Otherwise notifications appear while the app is open.",
   '',
   'SETUP',
   "In Stim Desktop, open Pair a Phone, then scan the QR code or type the endpoint and pairing token. The camera is used only to read that code. The phone connects to your Mac over wss://. The app's own pairing prompt says the phone and the Mac both need Tailscale. The app has no accounts.",
   '',
   'REQUIREMENTS',
-  'A Mac running Stim Desktop or stim-server with the stim command-line tools. Local iOS work needs Xcode and local Android work needs the Android SDK. Stim is MIT licensed, and its source is at github.com/appandflow/stim.',
+  'A Mac running Stim Desktop or stim serve with the stim command-line tools. Local iOS work needs Xcode and local Android work needs the Android SDK. Stim is MIT licensed, and its source is at github.com/appandflow/stim.',
 ].join('\n');
 
 const reviewNotes = [
-  'Stim Mobile (home-screen name: Stim) is a monitor for React Native and Expo development work. It shows workspaces, builds, logs and simulator screens that run on a Mac. The phone app does not compile or run projects. It connects to Stim Desktop or stim-server on a Mac that the user owns, so it has no content until it is paired with one. The app has no accounts and no sign-in.',
+  'Stim Mobile (home-screen name: Stim) is a monitor for React Native and Expo development work. It shows workspaces, builds, logs and simulator screens that run on a Mac. The phone app does not compile or run projects. It connects to Stim Desktop or stim serve on a Mac that the user owns, so it has no content until it is paired with one. The app has no accounts and no sign-in.',
   '',
   'HOW TO REVIEW WITHOUT A MAC',
   'A demonstration server with sample data is running for review. Its address and token are in the "Demo access" lines at the end of these notes.',
@@ -46,7 +46,7 @@ const reviewNotes = [
   'Stim Desktop > Settings > Phones > turn on Serve to phones > Pair a Phone shows a QR code and an endpoint with a pairing token. The phone scans the code or takes the endpoint and token by hand. A token is single use and lasts five minutes. Pairings made this way are read-only: the phone can view workspaces, logs and device screens. The user can later allow Control for that phone on the Mac, which lets the phone tap and type on a simulator and reload or stop a workspace. The phone connects over wss://. Plain ws:// is accepted only for a loopback address on the phone itself.',
   '',
   'PERMISSIONS AND DATA',
-  'Camera: used only to scan the pairing QR code, nothing is uploaded. Notifications: off until the user turns them on in Settings, and the app asks for permission at that time. On iPhone, push notifications need a Mac whose stim-server sends them through Expo and Apple; the demo server does not send push. Diagnostics: crash reports go to Sentry; the app also checks Expo Updates for app updates. The privacy policy is under About > Privacy policy in the app and in App Store Connect.',
+  'Camera: used only to scan the pairing QR code, nothing is uploaded. Notifications: off until the user turns them on in Settings, and the app asks for permission at that time. On iPhone, push notifications need a Mac running stim serve to send them through Expo and Apple; the demo server does not send push. Diagnostics: crash reports go to Sentry; the app also checks Expo Updates for app updates. The privacy policy is under About > Privacy policy in the app and in App Store Connect.',
   '',
   'OTHER NOTES',
   "The device viewer can show a web page that the user's own Mac runs; the app has no address bar and no in-app browser. Links to GitHub and other sites open in the system browser. The app contains no in-app purchases and no advertising.",
