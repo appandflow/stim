@@ -6,7 +6,7 @@ import type { IosSimRecord } from '../devices/ios.ts';
 import { isBootedParked, readParked, type ParkedSim } from '../devices/sim-pool.ts';
 import { shutDownBootedParkedIosSim, teardownOwnedIosSim, type TeardownOutcome } from '../devices/teardown.ts';
 import type { HostMemoryPressure } from '../host-memory.ts';
-import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { getProject, loadConfig, type Config } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';

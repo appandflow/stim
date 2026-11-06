@@ -32,7 +32,7 @@ import {
 } from '../../command-output.ts';
 import { localNetworkPending, iosDeviceBounds, isWirelessIosDevice } from '../../engine/ios-device.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
-import { workspaceDevServerMode, type LaunchedArtifact } from '../../supervisor/state.ts';
+import { workspaceDevServerMode, type LaunchedArtifact } from '../../stimd/metro/state.ts';
 import type { VerifyLaunchResultLike, DeviceLike, IosBootLike, FailArgs } from './types.ts';
 import { PLATFORM, deviceLabel, deviceShortName, appNameFromPath } from './support.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';

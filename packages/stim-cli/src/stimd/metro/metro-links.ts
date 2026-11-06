@@ -1,6 +1,6 @@
 import { connect as connectSocket, type Socket } from 'node:net';
-import type { BuildConnection } from '../offload/client.ts';
-import { hostConnector } from '../device-host/hosted-client.ts';
+import type { BuildConnection } from '../../offload/client.ts';
+import { hostConnector } from '../../device-host/hosted-client.ts';
 
 const IDLE_LINKS = 4;
 const FRAME_BYTES = 32 * 1024;

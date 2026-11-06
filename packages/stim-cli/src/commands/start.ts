@@ -8,13 +8,13 @@ import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync } from 'no
 import { dirname } from 'node:path';
 import type { Command } from 'commander';
 import { phaseLine, stepTimer } from '../command-output.ts';
-import type { StartError, StartFacts } from '../supervisor/start-facts.ts';
+import type { StartError, StartFacts } from '../stimd/metro/start-facts.ts';
 import { type WorkspaceLinks, workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import { getProject, releaseMetroPort, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { listeningPidsAsync, pidExists, processCwds, resolveProjectMetro, signalProcessTree } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
-import { resolveSupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
+import { resolveSupervisorTarget, type SupervisorStateRecord } from '../stimd/metro/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
 import { IDLE_STOP_KEY, queryLogs, trace } from '@stim-cli/core/state';
 import { levelRank } from '../ndjson.ts';
@@ -30,7 +30,7 @@ import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } fro
 import { detectAppIds } from '../workspace/app-id.ts';
 import { remoteCliInvocation } from '../engine/node-cli.ts';
 import { writeAgentDeviceBootHook } from '../engine/agent-device.ts';
-import { MODE_BARE, MODE_COMMAND, MODE_EXPO, clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
+import { MODE_BARE, MODE_COMMAND, MODE_EXPO, clearManagedMetroTunnel, readMetroTunnel } from '../stimd/metro/state.ts';
 import {
   clearWorkspaceStateKeys,
   readWorkspaceState,
@@ -51,7 +51,7 @@ import {
   setClaimChild,
   type ClaimHandle,
 } from '../ownership-claim.ts';
-import { stopOwnedMetroForReset } from '../supervisor/cache-reset.ts';
+import { stopOwnedMetroForReset } from '../stimd/metro/cache-reset.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
 import {

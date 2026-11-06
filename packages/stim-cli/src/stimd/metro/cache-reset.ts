@@ -1,11 +1,11 @@
-import { getProject, clearSupervisor, withConfigLockAsync } from '../workspace/config.ts';
-import { killMetroTreeAsync, listeningPidsAsync, processCwds, resolveProjectMetro } from '../metro.ts';
-import { isMetroRunning } from '../ports.ts';
-import { throwIfCancelled } from '../cancellation.ts';
-import { waitForProcessExit } from '../process-identity.ts';
+import { getProject, clearSupervisor, withConfigLockAsync } from '../../workspace/config.ts';
+import { killMetroTreeAsync, listeningPidsAsync, processCwds, resolveProjectMetro } from '../../metro.ts';
+import { isMetroRunning } from '../../ports.ts';
+import { throwIfCancelled } from '../../cancellation.ts';
+import { waitForProcessExit } from '../../process-identity.ts';
 import { resolveSupervisorTarget } from './ownership.ts';
 import { clearWorkspaceSupervisor } from './state.ts';
-import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, withWorkspaceStateLockAsync } from '../../workspace/workspace-state.ts';
 import { supervisorError } from './errors.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from './stop-cause.ts';
 

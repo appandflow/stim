@@ -23,7 +23,7 @@ import {
   physicalDeviceStates,
 } from '../physical-devices.ts';
 import { makeEnvironmentState } from './_factories.ts';
-import { metroLastStop } from '../supervisor/stop-cause.ts';
+import { metroLastStop } from '../stimd/metro/stop-cause.ts';
 
 const BOOTED = { udid: 'U1', name: 'stim-app', state: 'Booted' };
 const SHUTDOWN = { udid: 'U1', name: 'stim-app', state: 'Shutdown' };

@@ -9,10 +9,10 @@ import {
 } from '@stim-cli/core/state';
 import { join } from 'node:path';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
-import { createNdjsonWriter } from '../ndjson.ts';
-import { inspectProcessIdentity } from '../process-identity.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
-import { clearWorkspaceStateKey, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { createNdjsonWriter } from '../../ndjson.ts';
+import { inspectProcessIdentity } from '../../process-identity.ts';
+import { workspaceLogsDir } from '../../workspace/paths.ts';
+import { clearWorkspaceStateKey, writeWorkspaceState } from '../../workspace/workspace-state.ts';
 
 export interface StopRequester {
   by: string;

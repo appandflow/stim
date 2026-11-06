@@ -73,7 +73,7 @@ import {
 } from '../ownership-claim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { recordDeferredShutdown } from '../devices/deferred-shutdown.ts';
-import { registerCollector } from '../collector/state.ts';
+import { registerCollector } from '../stimd/logs/state.ts';
 import { LOG_ROTATE_BYTES, buildCacheRoot, withAmbientContext, withDirLock } from '@stim-cli/core';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import * as identities from '../process-identity.ts';

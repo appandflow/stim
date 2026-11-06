@@ -1,6 +1,6 @@
 import { once } from 'node:events';
 import { createServer } from 'node:net';
-import { openAgentRelay } from '../supervisor/agent-relay.ts';
+import { openAgentRelay } from '../stimd/metro/agent-relay.ts';
 
 const machine = 'local:10.0.0.92';
 const session = '12345678-1234-4234-8234-123456789abc';

@@ -6,7 +6,7 @@ import {
   resolveNodePinSpec,
   satisfiesNodePin,
 } from '@stim-cli/core/toolchain';
-import { getExecutor } from '../exec.ts';
+import { getExecutor } from '../../exec.ts';
 
 /** The version of the `node` that `env`'s `PATH` runs. */
 export function pathNodeVersion(env: NodeJS.ProcessEnv): string | null {

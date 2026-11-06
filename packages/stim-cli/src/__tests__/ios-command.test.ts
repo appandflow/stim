@@ -6,7 +6,7 @@ import * as iosOperation from '../commands/ios.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { nativeIosFixture } from './_native-ios-project.ts';
 import { writeNativeXcodeProject } from './_native-xcode-project.ts';
-import { readWorkspaceLaunches } from '../supervisor/state.ts';
+import { readWorkspaceLaunches } from '../stimd/metro/state.ts';
 import { runReload } from '../commands/reload.ts';
 import { createProjectRegistry } from '../integrations/project-registry.ts';
 import { projectIntegrations } from '../integrations/projects.ts';
@@ -49,7 +49,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { collectorProcessTitle } from '../collector/ownership.ts';
+import { collectorProcessTitle } from '../stimd/logs/ownership.ts';
 import { getProject, setDevice, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { prepareHostedIos } from '../device-host/hosted-ios.ts';
 import { writeHostedNative } from '../workspace/placement-state.ts';

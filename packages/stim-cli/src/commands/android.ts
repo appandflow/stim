@@ -63,7 +63,7 @@ import {
   leaseExpiryText,
   type RunLease,
 } from '../engine/device-lease-run.ts';
-import { verifyCollectorOwnership } from '../collector/ownership.ts';
+import { verifyCollectorOwnership } from '../stimd/logs/ownership.ts';
 import {
   admissionLimits,
   getConcurrencyLimits,
@@ -89,7 +89,7 @@ import {
   statsProjectKey,
   type RunEstimates,
 } from '../engine/stats.ts';
-import { writeWorkspaceLaunchAsync } from '../supervisor/state.ts';
+import { writeWorkspaceLaunchAsync } from '../stimd/metro/state.ts';
 import { readWorkspaceState, recordWorkspaceUseAsync, writeWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { printLightenedFailure, restoreLightenedDependencies } from '../workspace/lightened.ts';
 import {

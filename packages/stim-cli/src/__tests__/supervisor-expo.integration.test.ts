@@ -5,14 +5,14 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { type NdjsonWriter, parseNdjsonText } from '../ndjson.ts';
-import { expoSdkMajor, inferLevel, recordFromLine, startExpoServer } from '../supervisor/server-expo.ts';
+import { expoSdkMajor, inferLevel, recordFromLine, startExpoServer } from '../stimd/metro/server-expo.ts';
 import {
   expoMetroConfigPath,
   expoMetroStoreEnv,
   metroStoreConfirmedRoot,
   metroStoreRoot,
-} from '../supervisor/metro-store.ts';
-import { trackDevServerActivity } from '../supervisor/idle-stop.ts';
+} from '../stimd/metro/metro-store.ts';
+import { trackDevServerActivity } from '../stimd/metro/idle-stop.ts';
 import { IMPOSSIBLE_PID, makeChildProcess } from './_factories.ts';
 
 type ExpoExitInfo = { code: number | null; signal: NodeJS.Signals | null; error?: Error };

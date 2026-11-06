@@ -1,10 +1,10 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { join } from 'node:path';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
-import { getExecutor } from '../exec.ts';
-import { signalProcessTree } from '../metro.ts';
-import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
-import { METRO_COMMAND_PORT } from '../workspace/settings.ts';
+import { getExecutor } from '../../exec.ts';
+import { signalProcessTree } from '../../metro.ts';
+import { type NdjsonWriter, createNdjsonWriter } from '../../ndjson.ts';
+import { METRO_COMMAND_PORT } from '../../workspace/settings.ts';
 import { type ChildServerHandle, superviseChildServer } from './child-server.ts';
 import { recordFromLine, repositoryRoot } from './server-expo.ts';
 import { MODE_COMMAND } from './state.ts';

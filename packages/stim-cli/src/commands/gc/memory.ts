@@ -16,7 +16,7 @@ import { getExecutor } from '../../exec.ts';
 import { readFootprints } from '../../footprint.ts';
 import { formatBytes, isOnMountedVolume } from '../../fs-util.ts';
 import { STIM_SERVER_COMMAND } from '../../machine-usage.ts';
-import { readPidFile } from '../../supervisor/state.ts';
+import { readPidFile } from '../../stimd/metro/state.ts';
 import {
   parseSubscriberNames,
   parseTriggerCount,

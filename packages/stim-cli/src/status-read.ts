@@ -22,8 +22,8 @@ import {
   processCwds,
   resolveProjectMetro,
 } from './metro.ts';
-import { resolveSupervisorTarget } from './supervisor/ownership.ts';
-import { metroLastStop } from './supervisor/stop-cause.ts';
+import { resolveSupervisorTarget } from './stimd/metro/ownership.ts';
+import { metroLastStop } from './stimd/metro/stop-cause.ts';
 import type { MetroResolution } from './metro.ts';
 import { countErrorsSinceMarker } from './diagnostics/error-index.ts';
 import { workspaceLogErrorIndex, workspaceLogsDir } from './workspace/paths.ts';
@@ -66,7 +66,7 @@ import { resolveSettings, workspaceHiddenSetting } from './workspace/settings.ts
 import { listLeaseFiles, parseWorkspaceLeases } from './engine/device-lease.ts';
 import { readIosDevices, type IosDeviceEntry } from './engine/ios-device.ts';
 import { readEasSessionLedger } from './engine/eas-session-ledger.ts';
-import { readMetroTunnel, readRemoteSession, readWorkspaceLaunches } from './supervisor/state.ts';
+import { readMetroTunnel, readRemoteSession, readWorkspaceLaunches } from './stimd/metro/state.ts';
 import {
   hostedIosPlacements,
   hostedAndroidRecords,

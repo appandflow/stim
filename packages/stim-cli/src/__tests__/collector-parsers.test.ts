@@ -1,9 +1,9 @@
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { levelForEvent, logStreamArgs, parseLogStreamLine } from '../collector/ios.ts';
-import { androidClockOffset, waitForAppPid, watchAppPid, parseLogcatLine } from '../collector/android.ts';
-import { deviceConsoleArgs, parseDeviceConsoleLine, CONSOLE_ENV } from '../collector/ios-device.ts';
+import { levelForEvent, logStreamArgs, parseLogStreamLine } from '../stimd/logs/ios.ts';
+import { androidClockOffset, waitForAppPid, watchAppPid, parseLogcatLine } from '../stimd/logs/android.ts';
+import { deviceConsoleArgs, parseDeviceConsoleLine, CONSOLE_ENV } from '../stimd/logs/ios-device.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import { makeChildProcess, makeExecutor } from './_factories.ts';
 

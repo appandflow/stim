@@ -12,7 +12,7 @@ import { iosAppProcess, androidAppProcess } from '../../../packages/stim-cli/src
 import { launchSlotScope, siblingPlatformSlots } from '../../../packages/stim-cli/src/engine/slot-launch.ts';
 import { captureNativeCrashes } from '../../../packages/stim-cli/src/diagnostics/native-crash.ts';
 import { deviceSlotKey } from '../../../packages/stim-cli/src/devices/device-slots.ts';
-import { readWorkspaceLaunches } from '../../../packages/stim-cli/src/supervisor/state.ts';
+import { readWorkspaceLaunches } from '../../../packages/stim-cli/src/stimd/metro/state.ts';
 
 const startedAt = Date.now();
 const observationDeadline = startedAt + 180_000;

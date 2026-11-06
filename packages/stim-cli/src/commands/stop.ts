@@ -56,7 +56,7 @@ import {
   requestDevServerStop,
   withdrawDevServerStopRequest,
   type StopRequester,
-} from '../supervisor/stop-cause.ts';
+} from '../stimd/metro/stop-cause.ts';
 import {
   MODE_COMMAND,
   clearManagedMetroTunnel,
@@ -65,7 +65,7 @@ import {
   readRemoteSession,
   clearWorkspaceLaunches,
   clearWorkspaceSupervisor,
-} from '../supervisor/state.ts';
+} from '../stimd/metro/state.ts';
 import {
   clearWorkspaceStateKeys,
   readWorkspaceState,
@@ -74,7 +74,7 @@ import {
   writeWorkspaceState,
   updateWorkspaceStateAsync,
 } from '../workspace/workspace-state.ts';
-import { verifyCollectorOwnership } from '../collector/ownership.ts';
+import { verifyCollectorOwnership } from '../stimd/logs/ownership.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { readBootedParkDeadline } from '../devices/booted-park.ts';
 import { clearDeferredShutdown } from '../devices/deferred-shutdown.ts';
@@ -90,8 +90,12 @@ import {
   waitForProcessExit,
   type ProcessRecord,
 } from '../process-identity.ts';
-import { resolveSupervisorTarget, type SupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
-export { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import {
+  resolveSupervisorTarget,
+  type SupervisorTarget,
+  type SupervisorStateRecord,
+} from '../stimd/metro/ownership.ts';
+export { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 
 const DEFAULT_WAIT_MS = 10_000;
 

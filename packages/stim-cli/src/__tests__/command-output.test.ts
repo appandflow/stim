@@ -1,6 +1,6 @@
 import { launchErrorReport } from '../command-output.ts';
-import { parseLogcatLine } from '../collector/android.ts';
-import { parseLogStreamLine } from '../collector/ios.ts';
+import { parseLogcatLine } from '../stimd/logs/android.ts';
+import { parseLogStreamLine } from '../stimd/logs/ios.ts';
 
 test('device JavaScript failures remain visible without a client or Metro copy', () => {
   const android = parseLogcatLine('09-08 15:00:00.000 E/ReactNativeJS( 123): startup failed');

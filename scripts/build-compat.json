@@ -39,7 +39,7 @@
     "packages/stim-cli/src/offload/toolchain.ts",
     "packages/stim-cli/src/offload/worker.ts",
     "packages/stim-cli/src/optimizations.ts",
-    "packages/stim-cli/src/supervisor/project-node.ts"
+    "packages/stim-cli/src/stimd/metro/project-node.ts"
   ],
-  "digest": "bb2af194dc8c46f26f9f6cf5315b2a18a055f2d329f3457957c7ce5aef51c6c1"
+  "digest": "ed628f90522e3e0ae6e53001e2639ee5fbf08cc058e246c7379710228b77715a"
 }

@@ -9,7 +9,7 @@ import { deviceHostMachinesFile } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { BuildConnection } from '../offload/client.ts';
 import type { ConnectFailure } from '../offload/tailnet.ts';
-import { openMetroLinks, type MetroLinkPool } from '../supervisor/metro-links.ts';
+import { openMetroLinks, type MetroLinkPool } from '../stimd/metro/metro-links.ts';
 import { getConfigPath } from '../workspace/config.ts';
 import { FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 

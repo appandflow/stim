@@ -1,7 +1,7 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import { type ExecOptions, type Executor, getExecutor } from '../exec.ts';
-import { androidToolCwd } from '../devices/android.ts';
-import type { NdjsonRecord } from '../ndjson.ts';
+import { type ExecOptions, type Executor, getExecutor } from '../../exec.ts';
+import { androidToolCwd } from '../../devices/android.ts';
+import type { NdjsonRecord } from '../../ndjson.ts';
 
 const LEVEL_BY_LETTER: Record<string, string> = {
   V: 'debug',

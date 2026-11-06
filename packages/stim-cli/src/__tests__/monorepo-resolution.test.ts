@@ -12,7 +12,7 @@ import { workspaceStateFile } from '../workspace/paths.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { detectIsExpo, findServerWorkspace } from '../workspace/project.ts';
 import { MODE_BARE, MODE_EXPO, runSupervisor } from '../supervisor/run.ts';
-import { expoBinPath } from '../supervisor/server-expo.ts';
+import { expoBinPath } from '../stimd/metro/server-expo.ts';
 
 vi.mock('../engine/ios-signing.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../engine/ios-signing.ts')>()),

@@ -1,5 +1,5 @@
-import { pidExists } from '../metro.ts';
-import { inspectProcessIdentity, sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
+import { pidExists } from '../../metro.ts';
+import { inspectProcessIdentity, sameProcessRecord, type ProcessRecord } from '../../process-identity.ts';
 import { readCollectors } from './state.ts';
 
 export function collectorProcessTitle(platform: string, root: string): string {

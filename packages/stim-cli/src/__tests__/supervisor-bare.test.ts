@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { appendCacheStore, hasStoreAt, metroStoreRoot } from '../supervisor/metro-store.ts';
+import { appendCacheStore, hasStoreAt, metroStoreRoot } from '../stimd/metro/metro-store.ts';
 import {
   normalizeMetroTransformerPaths,
   resolveBareDeps,

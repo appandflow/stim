@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseNdjsonText } from '../ndjson.ts';
-import { startCommandServer } from '../supervisor/server-command.ts';
+import { startCommandServer } from '../stimd/metro/server-command.ts';
 import { makeChildProcess } from './_factories.ts';
 
 let root: string;

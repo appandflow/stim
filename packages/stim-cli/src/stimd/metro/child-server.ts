@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
-import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
-import { createLineReader } from '../process-output.ts';
-import { cancellableSleep } from '../cancellation.ts';
+import type { NdjsonRecord, NdjsonWriter } from '../../ndjson.ts';
+import { createLineReader } from '../../process-output.ts';
+import { cancellableSleep } from '../../cancellation.ts';
 
 interface ChildExitInfo {
   code: number | null;

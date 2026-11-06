@@ -1,14 +1,14 @@
 import { hostedNativeRecords, parseHostedNativePlacement } from '@stim-cli/core/state';
 import { readFileSync } from 'node:fs';
-import { createActivityReader, workspaceDeviceLastUseAt, type ActivityTarget } from '../devices/activity.ts';
-import { ownedAvdSerialResolver } from '../devices/android.ts';
-import { parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
-import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
-import { deviceLeasePath, leaseIsExpired, parseLease, parseWorkspaceLeases } from '../engine/device-lease.ts';
-import { liveShareKeepReason } from '../local-server.ts';
-import { decideIdleStop, IDLE_SETTING, type IdleStopEvidence } from '../policy/idle.ts';
-import { getProject } from '../workspace/config.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { createActivityReader, workspaceDeviceLastUseAt, type ActivityTarget } from '../../devices/activity.ts';
+import { ownedAvdSerialResolver } from '../../devices/android.ts';
+import { parseDeviceSlotKey, projectDeviceSlots } from '../../devices/device-slots.ts';
+import { workspaceBuildInProgress } from '../../commands/gc/idle.ts';
+import { deviceLeasePath, leaseIsExpired, parseLease, parseWorkspaceLeases } from '../../engine/device-lease.ts';
+import { liveShareKeepReason } from '../../local-server.ts';
+import { decideIdleStop, IDLE_SETTING, type IdleStopEvidence } from '../../policy/idle.ts';
+import { getProject } from '../../workspace/config.ts';
+import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import { describeError } from './errors.ts';
 
 const IDLE_CHECK_MS = 60_000;

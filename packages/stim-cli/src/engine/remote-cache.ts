@@ -10,7 +10,7 @@ import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { stripAnsi } from '../process-output.ts';
 import { resolvePackageJson } from '../workspace/project.ts';
-import { expoBinFromPackage, expoBinPath, expoTelemetryEnv, findBinUpward } from '../supervisor/server-expo.ts';
+import { expoBinFromPackage, expoBinPath, expoTelemetryEnv, findBinUpward } from '../stimd/metro/server-expo.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
 import { expoConfigContents } from '../cache/build-cache.ts';
 import { remoteCommand } from './node-cli.ts';

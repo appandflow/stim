@@ -1,6 +1,6 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import { getExecutor } from '../exec.ts';
-import type { NdjsonRecord } from '../ndjson.ts';
+import { getExecutor } from '../../exec.ts';
+import type { NdjsonRecord } from '../../ndjson.ts';
 
 // os_log only reaches a process's stderr when OS_ACTIVITY_DT_MODE is set in its
 // environment; without it `devicectl --console` carries plain stdout/stderr

@@ -1,4 +1,4 @@
-import { watchHostedMetro } from './hosted-metro.ts';
+import { watchHostedMetro } from '../stimd/metro/hosted-metro.ts';
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,12 +10,18 @@ import { captureProcessToken } from '../process-identity.ts';
 import { detectIsExpo } from '../workspace/project.ts';
 import { nativeProjectIntegration } from '../integrations/projects.ts';
 import { resolveProjectSettings, runnableMetroCommand, type SettingsObject } from '../workspace/settings.ts';
-import type { ServerHandle, ServerStarter } from './types.ts';
+import type { ServerHandle, ServerStarter } from '../stimd/metro/types.ts';
 
-export type { ServerExitInfo } from './types.ts';
-import { describeError } from './errors.ts';
+export type { ServerExitInfo } from '../stimd/metro/types.ts';
+import { describeError } from '../stimd/metro/errors.ts';
 import { relaunchWithLogFile } from '../detached-entry.ts';
-import { MODE_COMMAND, MODE_EXPO, clearExpoMetroTunnel, clearWorkspaceSupervisor, writePidFile } from './state.ts';
+import {
+  MODE_COMMAND,
+  MODE_EXPO,
+  clearExpoMetroTunnel,
+  clearWorkspaceSupervisor,
+  writePidFile,
+} from '../stimd/metro/state.ts';
 import {
   clearWorkspaceStateKeys,
   writeWorkspaceState,
@@ -36,7 +42,7 @@ import {
   watchIdleDevServer,
   workspaceIdleProbe,
   type IdleProbe,
-} from './idle-stop.ts';
+} from '../stimd/metro/idle-stop.ts';
 import { workspaceDeviceLastUseAt } from '../devices/activity.ts';
 import { dueIdleDevices, shutDownIdleDevices as shutDownWorkspaceIdleDevices } from '../devices/idle-shutdown.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
@@ -46,8 +52,8 @@ import {
   devServerStopRecord,
   vanishedSupervisorMessage,
   type SupervisorExitTrigger,
-} from './stop-cause.ts';
-import { trackMetroWatchRoots } from './watchman-roots.ts';
+} from '../stimd/metro/stop-cause.ts';
+import { trackMetroWatchRoots } from '../stimd/metro/watchman-roots.ts';
 import { daemonClaimHeld } from '../daemon/client.ts';
 import { liveShareKeepReason } from '../local-server.ts';
 import { runWatchman, type WatchmanCommand } from '../watchman.ts';
@@ -59,7 +65,7 @@ export {
   clearWorkspaceSupervisor,
   readPidFile,
   writePidFile,
-} from './state.ts';
+} from '../stimd/metro/state.ts';
 
 interface ParsedSupervisorArgs {
   root?: string;
@@ -325,7 +331,7 @@ export async function runSupervisor({
   try {
     let start: ServerStarter;
     if (command) {
-      const startServer = startCommand ?? (await import('./server-command.ts')).startCommandServer;
+      const startServer = startCommand ?? (await import('../stimd/metro/server-command.ts')).startCommandServer;
       start = (opts) => startServer({ ...opts, command });
     } else {
       start = (mode === MODE_EXPO ? startExpo : startBare) ?? (await integration.loadDevServer());
