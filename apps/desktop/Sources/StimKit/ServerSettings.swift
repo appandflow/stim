@@ -14,7 +14,7 @@ public struct ServerSettingWrite: Sendable {
 ) async throws -> ServerSettingWrite {
   try Task.checkCancellation()
   let client = try desktopActionServer(connection, stimHome: stimHome, action: "change settings for this Stim home")
-  guard case .open(let hello) = client.state, hello.features?.contains("desktop-settings-write") == true else {
+  guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
     throw ServerError(code: "unsupported", message: "Update stim-server to change settings from Desktop.")
   }
   var params: [String: JSONValue] = [
@@ -42,7 +42,7 @@ public struct ServerSettingWrite: Sendable {
   guard let client = readCapableServer(connection, stimHome: stimHome) else {
     throw ServerError(code: "not-connected", message: "The local stim-server is not ready to read settings for this Stim home.")
   }
-  guard case .open(let hello) = client.state, hello.features?.contains("desktop-settings") == true else {
+  guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
     throw ServerError(code: "unsupported", message: "Update the local stim-server to read settings for selected folders.")
   }
   let result = try await client.read("desktop.settings.get", ["cwd": .string(cwd)])
@@ -58,7 +58,7 @@ public struct ServerSettingWrite: Sendable {
     throw ServerError(
       code: "not-connected", message: "The local stim-server is not ready to describe settings for this Stim home.")
   }
-  guard case .open(let hello) = client.state, hello.features?.contains("desktop-settings-schema") == true else {
+  guard case .open(let hello) = client.state, hello.desktopApi == ServerProtocol.desktopApi else {
     throw ServerError(code: "unsupported", message: "Update the local stim-server to describe settings from Desktop.")
   }
   let schema = try await client.request("desktop.settings.schema", [:])

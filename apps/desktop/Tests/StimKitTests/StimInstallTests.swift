@@ -69,12 +69,12 @@ import Testing
 
   @Test func blocksARemoteMacThatCannotBeReadAndCarriesTheCommandItsRefusalNames() throws {
     let refusal =
-      "stim-server on mini cannot be updated from here yet. Update it once there with `stim-server service update`."
+      "stim-server on mini cannot be updated from here yet. Update it once there with `stim service update`."
     let missing = try JSONDecoder().decode(
       MachineUpdateStatus.self, from: Data(#"{"remote":null,"unreachable":"\#(refusal)","upload":null}"#.utf8))
     #expect(
       stimInstall(for: try machine(), remote: missing, local: release)
-        == .blocked(StimInstallBlock(reason: refusal, action: .runOnRemote("stim-server service update"))))
+        == .blocked(StimInstallBlock(reason: refusal, action: .runOnRemote("stim service update"))))
     let silent = try JSONDecoder().decode(
       MachineUpdateStatus.self, from: Data(#"{"remote":null,"unreachable":null,"upload":null}"#.utf8))
     #expect(stimInstall(for: try machine(), remote: silent, local: release)?.block?.reason == "mini did not answer.")
@@ -95,8 +95,8 @@ import Testing
 
   @Test func readsTheCommandInAMessageOnlyWhenItIsAStimCommand() {
     #expect(
-      commandToRun(in: "To downgrade it, run `stim-server service update --release 1.24.0` on the machine it runs on.")
-        == "stim-server service update --release 1.24.0")
+      commandToRun(in: "To downgrade it, run `stim service update --release 1.24.0` on the machine it runs on.")
+        == "stim service update --release 1.24.0")
     #expect(commandToRun(in: "Could not write `/tmp/x`: ENOSPC") == nil)
     #expect(commandToRun(in: "No backticks at all.") == nil)
   }
@@ -104,17 +104,17 @@ import Testing
   @Test func tellsAnInstalledReleaseFromACheckoutThroughSymlinks() throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("stim-install-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: root) }
-    let installed = root.appendingPathComponent("lib/node_modules/@stim-cli/server/dist")
-    let checkout = root.appendingPathComponent("checkout/packages/server/dist")
+    let installed = root.appendingPathComponent("lib/node_modules/stim/bin")
+    let checkout = root.appendingPathComponent("checkout/packages/stim-cli/bin")
     for directory in [installed, checkout] {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-      FileManager.default.createFile(atPath: directory.appendingPathComponent("stim-server.mjs").path, contents: Data())
+      FileManager.default.createFile(atPath: directory.appendingPathComponent("stim.mjs").path, contents: Data())
     }
     let bin = root.appendingPathComponent("bin")
     try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
     try FileManager.default.createSymbolicLink(
-      at: bin.appendingPathComponent("stim-server"), withDestinationURL: installed.appendingPathComponent("stim-server.mjs"))
-    #expect(LocalStim.isInstalledPackage(bin.appendingPathComponent("stim-server").path))
-    #expect(!LocalStim.isInstalledPackage(checkout.appendingPathComponent("stim-server.mjs").path))
+      at: bin.appendingPathComponent("stim"), withDestinationURL: installed.appendingPathComponent("stim.mjs"))
+    #expect(LocalStim.isInstalledPackage(bin.appendingPathComponent("stim").path))
+    #expect(!LocalStim.isInstalledPackage(checkout.appendingPathComponent("stim.mjs").path))
   }
 }

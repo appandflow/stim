@@ -30,19 +30,19 @@ public enum PairedServerWording {
       return PairedServerNotice(
         tone: .error, title: "This pairing code expired or was already used",
         detail: "A code works once and for 5 minutes. Run this on \(machine) for a new one, then paste its output.",
-        command: "stim-server pair")
+        command: "stim pair")
     case "unauthorized":
       switch context {
       case .pairing:
         return PairedServerNotice(
           tone: .error, title: "\(machine) did not accept this machine",
-          detail: "It refused to record this machine, so nothing was saved. Run stim-server pair on it for a new code.",
-          command: "stim-server pair")
+          detail: "It refused to record this machine, so nothing was saved. Run stim pair on it for a new code.",
+          command: "stim pair")
       case .connection:
         return PairedServerNotice(
           tone: .error, title: "\(machine) no longer knows this machine",
           detail: "Its record for this machine was revoked. Remove this pairing, then pair again with a new code.",
-          command: "stim-server pair")
+          command: "stim pair")
       }
     case "server-key-mismatch":
       switch context {
@@ -94,7 +94,7 @@ public enum PairedServerWording {
         tone: .warning, title: "\(machine.capitalizedFirst) did not confirm the pairing",
         detail:
           "\(error.message.sentence) The code may be used up and \(machine) may have recorded this machine, so Stim Desktop kept the pairing. It finishes when \(machine) answers. To undo it, remove it here, then find this machine in the list on \(machine) and revoke it.",
-        command: "stim-server devices")
+        command: "stim pairings")
     case "own-server":
       return PairedServerNotice(
         tone: .warning, title: "That is this machine's own server",
@@ -141,7 +141,7 @@ public enum PairedServerWording {
 
   /// The command that removes this machine's record on the server, which Remove does not do.
   public static func revokeCommand(deviceID: String?) -> String {
-    plainDeviceID(deviceID).map { "stim-server devices revoke \($0)" } ?? "stim-server devices"
+    plainDeviceID(deviceID).map { "stim pairings revoke \($0)" } ?? "stim pairings"
   }
 
   /// A device id the server reported, when it is safe to put in a command Stim Desktop shows.

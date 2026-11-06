@@ -38,8 +38,8 @@ struct ServerOwnerTests {
 
   @Test func aPairedServersOwnSimulatorOffersControlOnlyWhenThatServerGrantsIt() throws {
     let reported = try workspace(path: "/Users/me/app", udid: "1A2B")
-    let control = ServerLink.open(features: [], capabilities: ["read", "control"])
-    let readOnly = ServerLink.open(features: [], capabilities: ["read"])
+    let control = ServerLink.open(desktopApi: 1, capabilities: ["read", "control"])
+    let readOnly = ServerLink.open(desktopApi: 1, capabilities: ["read"])
     let local = OwnedWorkspace(owner: .local, workspace: reported).devices[0]
     let paired = OwnedWorkspace(owner: .paired("SHA256:floco"), workspace: reported).devices[0]
 
@@ -57,7 +57,7 @@ struct ServerOwnerTests {
               "viewport":"1280x800"}}
       """#
     let reported = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
-    let control = ServerLink.open(features: [], capabilities: ["read", "control"])
+    let control = ServerLink.open(desktopApi: 1, capabilities: ["read", "control"])
     let local = try #require(OwnedWorkspace(owner: .local, workspace: reported).devices.first)
     let paired = try #require(OwnedWorkspace(owner: .paired("SHA256:floco"), workspace: reported).devices.first)
 

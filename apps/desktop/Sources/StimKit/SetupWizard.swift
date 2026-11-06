@@ -99,7 +99,7 @@ extension SetupJournal {
 }
 
 extension SetupJournal.Step {
-  /// The approval step while `stim-server setup` waits for the requesting machine to spend the ticket.
+  /// The approval step while `stim setup` waits for the requesting machine to spend the ticket.
   public var waitsForConnection: Bool {
     id == "approve" && state == .running && detail?.hasPrefix("Waiting for the requesting machine") == true
   }
@@ -140,21 +140,20 @@ public let setupTicketVariableVersion = SemanticVersion("1.21.0")!
 /// removes it afterwards, since `$env:` lasts for the session. On Linux, `tailscale serve` needs the user as Tailscale's
 /// operator and the systemd user service needs linger to outlive the login, and both need sudo, which setup never
 /// runs itself. On Windows it is PowerShell: `npx.cmd`, because PowerShell otherwise runs npm's `npx.ps1`, which the
-/// default script execution policy of Windows desktops blocks; a backtick continues a line; and the package is quoted
-/// because a bare leading `@` is PowerShell's splatting operator.
+/// default script execution policy of Windows desktops blocks; a backtick continues a line.
 public func setupCommand(
   version: String, ticket: SetupTicket, capabilities: Set<SetupCapability>, known: SetupKnown,
   os: TailnetOS = .macOS
 ) -> String {
   let flags = SetupCapability.allCases.filter { capabilities.contains($0) && known.needsApproval($0) }
     .map { "--\($0.rawValue)" }
-  let package = os == .windows ? "\"@stim-cli/server@\(version)\"" : "@stim-cli/server@\(version)"
+  let package = os == .windows ? "\"stim@\(version)\"" : "stim@\(version)"
   let ticketVariable =
     os == .windows
     ? "& { $env:STIM_SETUP_TICKET='\(ticket.value)'; try { " : "STIM_SETUP_TICKET=\(ticket.value) "
   let setup =
     ([
-      "\(ticketVariable)\(os == .windows ? "npx.cmd" : "npx") --yes --package \(package) stim-server setup",
+      "\(ticketVariable)\(os == .windows ? "npx.cmd" : "npx") --yes \(package) setup",
       "--expires \(ticket.isoExpires)",
     ] + flags).joined(separator: os == .windows ? " `\n  " : " \\\n  ")
   if os == .windows {
@@ -170,7 +169,7 @@ public func previewLines(
   func check(_ title: String, done: Bool = false) -> TerminalLine {
     TerminalLine(text: title + (done ? " (already done)" : ""), kind: .ok)
   }
-  var lines = [TerminalLine(text: "$ stim-server setup", kind: .command)]
+  var lines = [TerminalLine(text: "$ stim setup", kind: .command)]
   guard !capabilities.isEmpty else { return lines }
   lines.append(
     check("stim-server \(known.serverVersion ?? version ?? "<version>") installed", done: known.serverVersion != nil))
@@ -185,7 +184,7 @@ public func previewLines(
   return lines
 }
 
-/// What `stim-server setup` installs to keep the server running, in setup's own words.
+/// What `stim setup` installs to keep the server running, in setup's own words.
 public func serviceNoun(_ os: TailnetOS) -> String {
   switch os {
   case .macOS: return "LaunchAgent"
@@ -196,7 +195,7 @@ public func serviceNoun(_ os: TailnetOS) -> String {
 
 /// The setup journal as short lines in the preview's wording: no node or request ids, no tool details.
 public func journalLines(_ journal: SetupJournal, clientName: String, os: TailnetOS = .macOS) -> [TerminalLine] {
-  [TerminalLine(text: "$ stim-server setup", kind: .command)]
+  [TerminalLine(text: "$ stim setup", kind: .command)]
     + journal.steps.compactMap { setupStepLine($0, clientName: clientName, os: os) }
 }
 

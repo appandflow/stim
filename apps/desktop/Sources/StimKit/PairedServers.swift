@@ -195,7 +195,7 @@ public final class PairedServers {
     pairingState = .idle
   }
 
-  /// Pairs from the text of `stim-server pair`. A pairing while another runs is ignored; the caller cancels the task
+  /// Pairs from the text of `stim pair`. A pairing while another runs is ignored; the caller cancels the task
   /// running the first.
   public func pair(_ text: String) async {
     guard !isPairing else { return }

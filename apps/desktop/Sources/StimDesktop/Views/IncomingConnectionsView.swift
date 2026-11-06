@@ -4,7 +4,7 @@ import StimStores
 import SwiftUI
 
 /// The "Using this machine" side of Settings > Connections: whether other devices may connect, then the phones and
-/// machines that use this machine from `stim-server devices --json`, its share links and the hosted sessions running
+/// machines that use this machine from `stim pairings --json`, its share links and the hosted sessions running
 /// here.
 struct IncomingConnectionsView: View {
   @ObservedObject var server: ServerController

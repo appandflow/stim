@@ -131,7 +131,6 @@ final class ServerController: ObservableObject {
   private var failureKind: ServerFailureKind?
   private var retriesFailure = true
   static let retryAfter: TimeInterval = 30
-  private var serverLauncher: (executable: String?, launcher: NodeLauncher?, resolved: Date)?
   private var bootstrap: DesktopBootstrapKey?
   private var automaticPort: Int?
 
@@ -193,7 +192,7 @@ final class ServerController: ObservableObject {
       : "The stim-server on port \(port), which Stim Desktop did not start,"
     let remedy =
       serviceInstalled
-      ? "Check it with `stim-server service status`."
+      ? "Check it with `stim service status`."
       : "Start it again."
     return
       "\(server) is not answering. Stim Desktop waits for it and does not start its own server on that port. \(remedy) To use Desktop's own server instead, stop it and reopen Stim Desktop"
@@ -287,16 +286,7 @@ final class ServerController: ObservableObject {
     if case .running(let health, _) = state, adoption.allowsWrites(home: health.stimHome) {
       environment["STIM_HOME"] = health.stimHome
     }
-    let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable)
-    let plain = StimServerCLI(environment: environment, override: override)
-    guard plain.bundled == nil else { return plain }
-    let stale = serverLauncher.map { $0.launcher?.script == nil && Date().timeIntervalSince($0.resolved) > 60 } ?? true
-    if stale || serverLauncher?.executable != plain.executable {
-      let launcher = await NodeLauncher.resolve(
-        executable: plain.executable, name: "stim-server", environment: plain.environment)
-      serverLauncher = (plain.executable, launcher, Date())
-    }
-    return StimServerCLI(environment: environment, override: override, launcher: serverLauncher?.launcher)
+    return StimServerCLI(environment: environment)
   }
 
   func start() {
@@ -410,10 +400,9 @@ final class ServerController: ObservableObject {
   }
 
   /// The bundled server, started with the launch environment and the Stim home and overrides from Settings, so it
-  /// waits for nothing. It discovers the toolchain for the commands it runs itself. Nil with an override.
+  /// waits for nothing. It discovers the toolchain for the commands it runs itself.
   private func bundledCLI() -> StimServerCLI? {
-    guard UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable)?.isEmpty ?? true,
-      let bundled = BundledServer.inApp()
+    guard let bundled = BundledServer.inApp()
     else { return nil }
     var environment = settingsEnvironment
     if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
@@ -696,7 +685,7 @@ final class ServerController: ObservableObject {
     if !retriesFailure {
       failureKind = .tooOld
       state = .failed(
-        "This stim-server is too old to run on loopback only. Update it, or clear the stim-server override in Settings.")
+        "This bundled Stim is too old to run on loopback only. Update Stim Desktop (Stim > Check for Updates).")
       return
     }
     failureKind = .exited

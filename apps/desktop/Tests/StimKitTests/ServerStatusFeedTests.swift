@@ -5,7 +5,8 @@ import Testing
 
 @Suite @MainActor struct ServerStatusFeedTests {
   private let hello: JSONValue = .object([
-    "protocol": .number(1), "server": .object(["name": .string("Mac"), "version": .string("1.20.0"), "stim": .string("1.20.0")]),
+    "protocol": .number(1), "desktopApi": .number(1),
+    "server": .object(["name": .string("Mac"), "version": .string("1.20.0"), "stim": .string("1.20.0")]),
     "capabilities": .array([.string("read")]), "device": .object(["id": .string("d1"), "name": .string("Stim Desktop")]),
   ])
 
