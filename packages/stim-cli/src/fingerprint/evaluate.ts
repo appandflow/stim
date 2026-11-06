@@ -86,8 +86,8 @@ export interface Fingerprint {
 interface Trace {
   env: string[];
   enumerators: string[];
-  /** `resolve` is a directory module resolution searched; `tree` a recursive listing. Listings are hashed here. */
-  reads: { path: string; kind: ReadKind | 'resolve' }[];
+  /** `resolve` is a directory module resolution searched; `tree` a recursive listing, the only listing hashed. */
+  reads: { path: string; kind: ReadKind | 'resolve'; hash?: string }[];
   modules: { path: string; hash: string }[];
   opaque: string[];
 }
@@ -318,14 +318,18 @@ function traceRows(
   }
   const compiled = new Set(trace.modules.map((module) => module.path));
   const configPart = name === 'config' || name === 'configEmbedded';
-  for (const { path, kind } of trace.reads) {
+  for (const { path, kind, hash } of trace.reads) {
     if (packageRoot(path) || ours(path)) continue;
     if (kind === 'resolve') continue;
     if (kind !== 'file') {
       if (inApp(path) && (name === 'config' || name === 'configEmbedded'))
         rows.push(
           kind === 'dir' || kind === 'tree'
-            ? { name: `${kind}:${realForm(path, roots)}`, kind: 'file', hash: listing(path, kind === 'tree') ?? ABSENT }
+            ? {
+                name: `${kind}:${realForm(path, roots)}`,
+                kind: 'file',
+                hash: (kind === 'tree' ? hash : listing(path)) ?? ABSENT,
+              }
             : { name: `exists:${realForm(path, roots)}`, kind: 'file', hash: sha256(kind) },
         );
       continue;
@@ -675,8 +679,10 @@ async function evaluate(
         : spawn('rnConfig', [bin, 'react-native-config', '--json', '--platform', platform]),
     );
     const constants = findPackage(root, 'expo-constants');
-    if (constants)
+    if (constants) {
       early = { constants, part: embed(constants, opts.signal ? AbortSignal.any([opts.signal, settled]) : settled) };
+      early.part.catch(() => {});
+    }
   } else parts.push(spawn('rnConfig', [evaluator, 'rn', root, platform]));
   const { names: buildNames, scanned, scan, settle } = buildEnvNames(root, native, nativeDir, expo, session);
   let lockfile: Classifier | null = null;

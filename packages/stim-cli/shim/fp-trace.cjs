@@ -20,6 +20,7 @@ const opaque = new Set();
 let active = true;
 
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+const originalReaddirSync = fs.readdirSync;
 const originalStatSync = fs.statSync;
 const exists = (file, directory) => {
   const info = originalStatSync(file, { throwIfNoEntry: false });
@@ -33,10 +34,24 @@ function toPath(target) {
   return null;
 }
 
+// A recursive listing is hashed as it is read: a later change deep in the tree leaves the root's stat as it was, so
+// the parent could not tell its own listing from the one the evaluation saw. A single directory is listed by the parent.
 function record(kind, target) {
   const file = active && kind ? toPath(target) : null;
   if (!file || reads.has(`${kind}\0${file}`)) return;
-  reads.set(`${kind}\0${file}`, { path: file, kind });
+  const entry = { path: file, kind };
+  if (kind === 'tree')
+    try {
+      entry.hash = sha256(
+        JSON.stringify(
+          originalReaddirSync(file, { recursive: true })
+            .map(String)
+            .filter((name) => path.basename(name) !== '.DS_Store')
+            .toSorted(),
+        ),
+      );
+    } catch {}
+  reads.set(`${kind}\0${file}`, entry);
 }
 
 const missing = (error) => error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');

@@ -164,8 +164,8 @@ function locateValue(value: unknown, roots: Roots): unknown {
 /**
  * The record of one path as it is now, or null when it changed during the computation that started at `since`, or is
  * gone although the computation read it. A module with no file (one a loader compiled in memory) is recorded absent
- * when its directory did not change during the computation. A listing not given is taken before the stat, so a change
- * after the evaluation read it fails the racy guard instead of being recorded.
+ * when its directory did not change during the computation. A directory listing not given is taken before the stat,
+ * so a change after the evaluation read it fails the racy guard instead of being recorded.
  */
 export function takeRead(path: string, kind: ReadKind, roots: Roots, since: bigint, hash?: string | null): Read | null {
   if (kind === 'absent') return { path: relocate(path, roots), kind };
@@ -174,7 +174,7 @@ export function takeRead(path: string, kind: ReadKind, roots: Roots, since: bigi
     const real = realOf(path);
     return type && real ? { path: relocate(path, roots), kind, hash: type, real: relocate(real, roots) } : null;
   }
-  const listed = (kind === 'dir' || kind === 'tree') && hash === undefined ? listing(path, kind === 'tree') : hash;
+  const listed = kind === 'dir' && hash === undefined ? listing(path) : hash;
   const target = kind === 'package' ? join(path, 'package.json') : path;
   const stat = statKey(target);
   const parent = stat ? null : statKey(join(target, '..'));
