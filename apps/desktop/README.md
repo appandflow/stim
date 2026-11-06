@@ -2455,9 +2455,13 @@ next to the Mac's own Desktop and needs no port of its own. Run
 `stim settings set iosSimulatorApp stim-desktop` and
 `stim settings set androidEmulatorApp stim-desktop` with `STIM_HOME` set to that
 directory before launching. Then run `node ../../packages/stim-cli/bin/stim.mjs macos`
-from `apps/desktop`. To test the engine install instead, leave out `-stimEngine` and set
+from `apps/desktop`. A hosted copy (`--remote <mac>`) takes only launch arguments and
+runs under the host's private session home: `pnpm pack` the package, install it with
+`npm install --prefix <dir>` on that Mac, and point `-stimEngine` at
+`<dir>/node_modules/stim` there. To test the engine install instead, leave out `-stimEngine` and set
 `STIM_ENGINE_ROOT` to a fresh directory in the environment of `stim macos`, which passes it
 to the app, so the copy installs its engine and managed Node there instead of
-`~/.stim/engine`. Stop the test copy with `stim stop`, run `STIM_HOME=<private-home> stim stop`
-for its stimd, and restore those local `.stim.json` edits before committing. See
+`~/.stim/engine`. Stop the test copy with `stim stop`; its stimd exits on its own idle clock, or at once
+with `kill <pid>`, the pid in `<private-home>/run/stimd.json`. Restore those local
+`.stim.json` edits before committing. See
 [the macOS guide](../../website/docs/macos.md) for settings and limits.
