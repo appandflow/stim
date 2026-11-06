@@ -571,7 +571,7 @@ export async function runStimd({
           const running = net.running();
           const restart =
             kind === 'desktop' &&
-            !serve &&
+            !service &&
             !pinned() &&
             running !== null &&
             (running.loopbackOnly !== options.loopbackOnly ||

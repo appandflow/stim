@@ -99,7 +99,7 @@ beforeAll(() => {
   root = join(tmp, 'engine');
   work = join(tmp, 'work');
   mkdirSync(work);
-  env = { ...process.env, STIM_HOME: home, STIM_ENGINE_ROOT: root, STIM_DAEMON: 'on' };
+  env = { ...process.env, HOME: tmp, STIM_HOME: home, STIM_ENGINE_ROOT: root, STIM_DAEMON: 'on' };
   process.env.STIM_HOME = home;
   process.env.STIM_ENGINE_ROOT = root;
   const installed = (name: string) => join(tmp, name, 'lib', 'node_modules', 'stim');

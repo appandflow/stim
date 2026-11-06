@@ -1,5 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 const manifest = (dir: string): { version: string; files?: string[]; dependencies?: Record<string, string> } =>
   JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
@@ -16,7 +16,8 @@ function resolvePackage(from: string, name: string): string | null {
 /**
  * A global npm install of the built package at `source`, without npm: its published files at
  * `<prefix>/lib/node_modules/stim` and its runtime dependencies copied as real directories, hoisted where one version
- * serves every dependent and nested where it does not. The test suite runs npm offline, so a fresh `npm pack` cannot
+ * serves every dependent and nested where it does not, placed breadth-first so each package's own dependencies win
+ * the top level over deeper ones. The test suite runs npm offline, so a fresh `npm pack` cannot
  * be installed there.
  */
 export function machineCopy(source: string, prefix: string): string {
@@ -27,7 +28,9 @@ export function machineCopy(source: string, prefix: string): string {
     if (existsSync(join(source, entry)))
       cpSync(join(source, entry), join(target, entry), { recursive: true, dereference: true });
   const hoisted = new Map<string, string>();
-  const place = (from: string, into: string) => {
+  const queue: { from: string; into: string }[] = [{ from: source, into: target }];
+  for (let next = queue.shift(); next; next = queue.shift()) {
+    const { from, into } = next;
     for (const name of Object.keys(manifest(from).dependencies ?? {})) {
       const real = resolvePackage(from, name);
       if (!real) continue;
@@ -39,11 +42,10 @@ export function machineCopy(source: string, prefix: string): string {
       cpSync(real, destination, {
         recursive: true,
         dereference: true,
-        filter: (path) => !path.endsWith('/node_modules') || path === real,
+        filter: (path) => basename(path) !== 'node_modules' || path === real,
       });
-      place(real, destination);
+      queue.push({ from: real, into: destination });
     }
-  };
-  place(source, target);
+  }
   return target;
 }

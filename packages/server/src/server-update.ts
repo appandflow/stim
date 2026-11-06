@@ -71,6 +71,8 @@ const describeSource = (source: UpdateSource): string =>
   'release' in source ? `release ${source.release}` : `packages in ${source.from}`;
 
 const RUNNING = 'The update is running.';
+/** How long `update.log` may stay unchanged with no result before the update counts as ended without one. */
+const SELECT_LOG_QUIET_MS = 15 * 60_000;
 const outcomeFile = (root: string) => join(root, 'last-update.json');
 
 function recordOutcome(root: string, outcome: EngineUpdateOutcome): void {
@@ -100,8 +102,9 @@ function readLastUpdate(root: string): EngineUpdateOutcome | null {
   try {
     const log = join(root, 'update.log');
     const ended = engineSelectOutcome(readFileSync(log, 'utf8'));
-    if (!ended.result) return recorded;
-    return { ...recorded, ok: ended.ok, message: ended.message, at: statSync(log).mtime.toISOString() };
+    const at = statSync(log).mtime;
+    if (!ended.result && Date.now() - at.getTime() < SELECT_LOG_QUIET_MS) return recorded;
+    return { ...recorded, ok: ended.ok, message: ended.message, at: at.toISOString() };
   } catch {
     return recorded;
   }

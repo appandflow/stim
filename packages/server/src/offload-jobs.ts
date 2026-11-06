@@ -180,6 +180,7 @@ export class OffloadJobs {
     const { stim, build, repo } = params;
     const why = this.refusal(client);
     if (why) return refused('build-busy', why);
+    this.recordUse(build, stim);
     let entry = this.entry(build);
     if (!entry) {
       const upload = this.uploads.get(socket);
@@ -221,7 +222,6 @@ export class OffloadJobs {
     const late = this.refusal(client);
     if (late) return refused('build-busy', late);
     if (socket.readyState !== socket.OPEN) return refused('build-refused', 'The connection closed.');
-    this.recordUse(build, stim);
     const job = this.spawn(kind, client, repo, entry);
     this.attachSocket(job, socket);
     return { result: { job: job.id } };
