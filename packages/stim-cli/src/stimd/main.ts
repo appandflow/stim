@@ -72,6 +72,7 @@ import { createPassesLane, createThreadTable } from './threads.ts';
 import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
 import { followEngine } from './engine-follow.ts';
+import { createStatusSnapshots } from './status-snapshot.ts';
 import { crashLooping, holdCrashLoop, keptBoots, parseBoots, type Boot } from './crash-hold.ts';
 import { ASKED_MS, autoUpdateOn, checkForUpdate, DAILY_MS, lastUpdateCheck, updateDue } from './auto-update.ts';
 import { ownStoreEngine } from '../daemon/engine-switch.ts';
@@ -412,6 +413,7 @@ export async function runStimd({
   });
   const threads = createThreadTable(log);
   const lane = createPassesLane(threads, log);
+  const statuses = createStatusSnapshots(log, join(daemonDir(), 'status-cwds.json'));
   let dependencyScanAt = -Infinity;
   let dependencyWork: Promise<void> | undefined;
   const loopDelay = monitorEventLoopDelay();
@@ -622,6 +624,7 @@ export async function runStimd({
           if (ops.has(socket)) ops.set(socket, op === 'op.wait' ? 'waiting' : 'pinned');
           void checkEngine();
         } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
+        else if (op === 'status') void statuses.answer(message.params).then((answer) => socket.end(`${answer}\n`));
         else if (op === 'tick') {
           if (!tickReplies.includes(socket)) tickReplies.push(socket);
           requestTick();
@@ -653,6 +656,7 @@ export async function runStimd({
     if (level === 'error') markAbnormal?.();
     if (dependencyWork) log('debug', 'daemon_dependency_scan_cancelled', 'stopping the dependency size scan');
     threads.abort('measure');
+    statuses.close();
     loopDelay.disable();
     interrupt?.();
     server.close();

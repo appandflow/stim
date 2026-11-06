@@ -65,6 +65,9 @@ if (
   process.exit(2);
 }
 const scratch = mkdtempSync(join(tmpdir(), 'stim-perf-'));
+process.env.STIM_ENGINE_ROOT = join(scratch, 'engine');
+process.env.STIM_BUILD_CACHE = join(scratch, 'engine', 'build-cache');
+process.env.STIM_METRO_CACHE = join(scratch, 'engine', 'metro-cache');
 const log = (line) => process.stderr.write(`${line}\n`);
 
 function run(command, args, options = {}) {

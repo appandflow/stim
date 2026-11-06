@@ -298,6 +298,7 @@
         "packages/stim-cli/src/api.ts",
         "packages/stim-cli/src/cli-operation.ts",
         "packages/stim-cli/src/status-worker.ts",
+        "packages/stim-cli/src/cli/status-entry.ts",
         "packages/stim-cli/src/detached-entry.ts",
         "packages/stim-cli/src/supervisor/**",
         "packages/stim-cli/src/stimd/metro/**",

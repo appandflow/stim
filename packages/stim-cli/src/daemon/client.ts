@@ -167,7 +167,8 @@ function askStimd(
  * setting that is not sensitive, which then holds for its lifetime. Nothing else, so one command's credentials and
  * unrelated environment do not live on in it and its children.
  */
-const STIMD_ENV = new Set<string>([
+/** The environment variables stimd keeps from the command that starts it. */
+export const STIMD_ENV: ReadonlySet<string> = new Set<string>([
   'PATH',
   'HOME',
   'USERPROFILE',

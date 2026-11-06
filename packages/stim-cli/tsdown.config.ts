@@ -13,6 +13,7 @@ const viewer = (name: string) => readFileSync(`../server/share-viewer/${name}`, 
 export default defineConfig({
   entry: {
     cli: 'bin/node-check.ts',
+    status: 'src/cli/status-entry.ts',
     api: 'src/api.ts',
     plugin: 'src/plugin.ts',
     ci: '../ci/src/index.ts',
@@ -26,6 +27,7 @@ export default defineConfig({
     'share-links': 'src/workspace/share-links.ts',
     'build-artifact-cache': 'src/offload/build-artifact-cache.ts',
     'stimd-thread': 'src/stimd/threads.ts',
+    'stimd-status': 'src/stimd/status-thread.ts',
     'net-thread': '../server/src/net-thread.ts',
     'supervisor-run': 'src/supervisor/run.ts',
     'collector-run': 'src/collector/run.ts',

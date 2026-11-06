@@ -7,6 +7,7 @@ describe('native e2e plan', () => {
       ios: ['smoke'],
       android: ['smoke'],
       windows: ['smoke'],
+      engine: [],
     });
   });
 
@@ -19,6 +20,7 @@ describe('native e2e plan', () => {
       ios: ['loop'],
       android: ['loop'],
       windows: ['loop'],
+      engine: [],
     });
   });
 
@@ -27,11 +29,13 @@ describe('native e2e plan', () => {
       ios: ['pool'],
       android: [],
       windows: [],
+      engine: [],
     });
     expect(planSuites({ eventName: 'workflow_dispatch', labels: [], suite: 'all' })).toEqual({
       ios: ['loop', 'caches', 'pool'],
       android: ['loop', 'caches'],
       windows: ['loop'],
+      engine: [],
     });
   });
 
@@ -46,6 +50,7 @@ describe('native e2e plan', () => {
       ios: [],
       android: [],
       windows: [],
+      engine: [],
     });
   });
 
@@ -58,6 +63,7 @@ describe('native e2e plan', () => {
         ios: [],
         android: [],
         windows: [],
+        engine: [],
       });
     },
   );
@@ -77,6 +83,7 @@ describe('native e2e plan', () => {
       ios: ['caches', 'pool'],
       android: ['caches'],
       windows: [],
+      engine: [],
     });
   });
 
@@ -85,11 +92,13 @@ describe('native e2e plan', () => {
       ios: ['smoke'],
       android: ['smoke'],
       windows: ['smoke'],
+      engine: [],
     });
     expect(planSuites({ eventName: 'pull_request', labels: ['e2e-pool', 'e2e-caches', 'e2e-smoke'] })).toEqual({
       ios: ['smoke', 'caches', 'pool'],
       android: ['smoke', 'caches'],
       windows: ['smoke'],
+      engine: [],
     });
     expect(
       planSuites({
@@ -102,7 +111,16 @@ describe('native e2e plan', () => {
       ios: ['loop', 'caches', 'pool'],
       android: ['loop', 'caches'],
       windows: ['loop'],
+      engine: [],
     });
+  });
+
+  it('the e2e-engine label and an engine dispatch run only the engine suite, on its own lane', () => {
+    const engine = { ios: [], android: [], windows: [], engine: ['engine'] };
+    expect(
+      planSuites({ eventName: 'pull_request', action: 'labeled', changedLabel: 'e2e-engine', labels: ['e2e-engine'] }),
+    ).toEqual(engine);
+    expect(planSuites({ eventName: 'workflow_dispatch', labels: [], suite: 'engine' })).toEqual(engine);
   });
 
   it('refuses an event it has no rule for', () => {

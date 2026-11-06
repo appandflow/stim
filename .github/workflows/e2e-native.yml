@@ -18,6 +18,11 @@
 #   pool    test/e2e/native/run-pool-e2e.mjs -- iOS only: park, evict, adopt,
 #           and empty the simulator pool on real CoreSimulator devices.
 #   all     loop, caches and pool, as separate parallel matrix jobs.
+#   engine  test/e2e/native/run-engine-e2e.mjs -- the engine store and stimd on
+#           the packed build, on macOS, Linux and Windows, no native build:
+#           repeated stagings, a switch under load, `stim status --json` from
+#           stimd's snapshot, cold start and idle restart times. ON DEMAND ONLY
+#           (label `e2e-engine` or a dispatch); `all` does not include it.
 #
 # Per platform: iOS runs smoke, loop, caches and pool; Linux Android smoke,
 # loop and caches; Windows Android smoke and loop (one emulator at a time, no named slots).
@@ -52,7 +57,7 @@
 # GitHub PREVIEW image (actions/runner-images#14404): capacity and stability are
 # weaker than a GA image, which is the price of covering the on-path at all.
 name: Native E2E
-run-name: ${{ github.event.action == 'labeled' && !contains(fromJSON('["e2e-smoke","e2e-loop","e2e-caches","e2e-pool","e2e-all"]'), github.event.label.name) && 'Native E2E (unrelated label)' || 'Native E2E' }}
+run-name: ${{ github.event.action == 'labeled' && !contains(fromJSON('["e2e-smoke","e2e-loop","e2e-caches","e2e-pool","e2e-engine","e2e-all"]'), github.event.label.name) && 'Native E2E (unrelated label)' || 'Native E2E' }}
 
 on:
   workflow_call:
@@ -94,7 +99,7 @@ on:
         description: 'Which suite to run on the framework x platform matrix'
         type: choice
         default: loop
-        options: [smoke, loop, caches, pool, all]
+        options: [smoke, loop, caches, pool, engine, all]
   pull_request:
     # `labeled` is what makes "add the label to run it" work; the others let a
     # push to an already-labeled PR re-run. The `plan` job is the actual gate
@@ -110,7 +115,7 @@ on:
       ]
 
 concurrency:
-  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ github.event.action == 'labeled' && !contains(fromJSON('["e2e-smoke","e2e-loop","e2e-caches","e2e-pool","e2e-all"]'), github.event.label.name) && '-unrelated-label' || '' }}${{ inputs.native_gradle && '-gradle' || '' }}${{ inputs.hosted_native_android && '-hosted-android' || '' }}
+  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ github.event.action == 'labeled' && !contains(fromJSON('["e2e-smoke","e2e-loop","e2e-caches","e2e-pool","e2e-engine","e2e-all"]'), github.event.label.name) && '-unrelated-label' || '' }}${{ inputs.native_gradle && '-gradle' || '' }}${{ inputs.hosted_native_android && '-hosted-android' || '' }}
   cancel-in-progress: ${{ !inputs.hosted_native_android }}
 
 permissions:
@@ -129,6 +134,7 @@ jobs:
       ios: ${{ steps.plan.outputs.ios }}
       android: ${{ steps.plan.outputs.android }}
       windows: ${{ steps.plan.outputs.windows }}
+      engine: ${{ steps.plan.outputs.engine }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -624,6 +630,22 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
+
+  engine:
+    name: engine (${{ matrix.os }})
+    needs: plan
+    if: needs.plan.outputs.engine != '[]'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+      - name: Engine suite
+        run: node test/e2e/native/run-engine-e2e.mjs
 
   native-xcode:
     name: native Xcode acceptance
