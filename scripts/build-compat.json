@@ -41,5 +41,5 @@
     "packages/stim-cli/src/optimizations.ts",
     "packages/stim-cli/src/supervisor/project-node.ts"
   ],
-  "digest": "782f475b762ec0adcf79f14b461ea860d21746f3f28c664458de8f55c47b655b"
+  "digest": "ae206e1f3a0f5e5bcd65371617983dccd70e5f206e8a3d90d53b95e520b65a2f"
 }

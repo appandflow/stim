@@ -366,7 +366,7 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
       code: 'stim-build',
       reason:
         worker.compat === undefined
-          ? 'The worker reports no build compatibility version; update the worker: npm i -g @stim-cli/server@latest && stim-server service update; update an old client: npm i -g stim@latest; Stim Desktop 0.2.5 or older: Stim > Check for Updates'
+          ? 'The worker reports no build compatibility version; update the worker: stim-server service update --release <version> --release <version>; update an old client: npm i -g stim@latest; Stim Desktop 0.2.5 or older: Stim > Check for Updates'
           : `Stim build ${worker.stimBuild ?? 'unknown'} there, ${local.stimBuild ?? 'unknown'} here`,
     });
   }

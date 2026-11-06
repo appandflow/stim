@@ -339,7 +339,7 @@ test('a worker without build compatibility is refused even with the same Stim bu
     machines: [credential('old')],
   });
   expect(result).toContain(
-    'update the worker: npm i -g @stim-cli/server@latest && stim-server service update; update an old client: npm i -g stim@latest; Stim Desktop 0.2.5 or older: Stim > Check for Updates',
+    'update the worker: stim-server service update --release <version> --release <version>; update an old client: npm i -g stim@latest; Stim Desktop 0.2.5 or older: Stim > Check for Updates',
   );
   expect(machine.methods).toEqual(['hello', 'build.offer']);
 });
