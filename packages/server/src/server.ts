@@ -8,7 +8,7 @@ import {
   type ServerResponse,
 } from 'node:http';
 import { connect as connectSocket, isIP, Socket, type AddressInfo } from 'node:net';
-import { duplexPair, type Duplex } from 'node:stream';
+import { type Duplex } from 'node:stream';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -95,7 +95,6 @@ import {
   type HelloHost,
   type Methods,
   type RequestId,
-  type MetroLinkOpenEvent,
   type VideoCodec,
 } from './protocol.ts';
 import { createStim, StimError, type StimPlanOptions } from 'stim';
@@ -149,7 +148,7 @@ import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DeviceViewers } from './viewers.ts';
 import { HostedShareSource } from './share-hosted.ts';
 import { ShareHub } from './share.ts';
-import { androidScreen, simulatorScreen, type ScreenSize } from './device-screen.ts';
+import { androidScreen, simulatorScreen } from './device-screen.ts';
 import { LocalAgentPresence } from './local-agent-presence.ts';
 import { PresenceHub, presenceKey } from './presence.ts';
 import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
@@ -162,6 +161,7 @@ import {
   type ServerOptions,
   readFailure,
   type ServerSocket,
+  type AgentLink,
   auditSafely,
   registeredWorkspace,
   AUDIT_FIELD_CHARS,
@@ -197,10 +197,11 @@ import {
 } from './handlers/lifecycle.ts';
 import { queuePlan, machineMethod, planBuild } from './handlers/build.ts';
 import { subscribeLogs, queryLogs } from './handlers/logs.ts';
-import { input, beginControl } from './handlers/control.ts';
 import { publishPresence } from './handlers/presence.ts';
+import { hostedMethod } from './handlers/device-host.ts';
 import { replayRange, archiveDetail, replayKeyframe, setRecording } from './handlers/replay.ts';
 import { workspaceChanges, workspaceCommand } from './handlers/workspace.ts';
+import { beginControl, input } from './handlers/control.ts';
 import { registerPush } from './handlers/push.ts';
 export type { ServerOptions } from './handlers/context.ts';
 
@@ -264,21 +265,13 @@ export interface RunningServer {
 const LOCAL_SOCKET_CLAIM_TRIES = 50;
 
 const CLOSE_AUTH_TIMEOUT = 4408;
-const CLOSE_METRO_RESET = 4410;
-interface AgentLink {
-  client: string;
-  session: string;
-  busy: number;
-}
-const AGENT_PATH = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/;
-const METRO_LINK_PING_MS = 15_000;
 
-const MAX_AGENT_LINKS = 16;
-const AGENT_LINK_IDLE_MS = 5 * 60_000;
+const AGENT_PATH = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/;
+
 const METRO_END_MS = 30_000;
 const CLOSE_ABNORMAL = 1006;
 const MAX_PAYLOAD = 64 * 1024;
-const METRO_LINK_BUFFERED_BYTES = 1024 * 1024;
+
 const MAX_SUBSCRIPTIONS = 32;
 
 const STATUS_READ_WAIT_MS = 30_000;
@@ -1313,7 +1306,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       controllers,
       controlLimits,
       adbEmulators,
+      hostedPresence,
+      agentDrivers,
       hostedDevices,
+      agentLinks,
+      agentStreams,
+      agentHttp,
       builds,
       presence,
       localAgents,
@@ -1367,6 +1365,24 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       set buildSession(value) {
         buildSession = value;
       },
+      get metroLink() {
+        return metroLink;
+      },
+      set metroLink(value) {
+        metroLink = value;
+      },
+      get metroStream() {
+        return metroStream;
+      },
+      set metroStream(value) {
+        metroStream = value;
+      },
+      get metroPing() {
+        return metroPing;
+      },
+      set metroPing(value) {
+        metroPing = value;
+      },
       get clientPing() {
         return clientPing;
       },
@@ -1386,6 +1402,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       readDir,
       openSubscription,
       inProcessRead,
+      unsubscribeRequest,
       addresses,
     };
 
@@ -2094,215 +2111,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (refused) socket.close(CLOSE_BAD_REQUEST, refused.slice(0, 120));
     }
 
-    function carry(stream: Duplex): void {
-      clearInterval(metroPing);
-      metroLink = null;
-      metroStream = stream;
-      stream.once('close', (hadError) => socket.close(hadError ? CLOSE_METRO_RESET : 1000));
-      stream.on('data', (chunk: Buffer) => {
-        socket.send(chunk, { binary: true }, () => {
-          if (stream.isPaused() && socket.bufferedAmount < METRO_LINK_BUFFERED_BYTES) stream.resume();
-        });
-        if (socket.bufferedAmount >= METRO_LINK_BUFFERED_BYTES) stream.pause();
-      });
-    }
-
-    function linkMetro(id: RequestId, raw: unknown, session: PairedDevice): void {
-      if (metroLink || metroStream) return error(id, 'bad-request', 'This connection already links Metro.');
-      const link: MetroLink = {
-        open: (stream) => {
-          if (socket.readyState !== socket.OPEN) return false;
-          carry(stream);
-          send(socket, JSON.stringify({ event: 'device-host.metro.link.open' } satisfies MetroLinkOpenEvent));
-          stream.resume();
-          return true;
-        },
-        close: () => socket.close(1000),
-      };
-      const answer = hostedDevices.metroLink(session.id, raw, link);
-      if ('error' in answer) return send(socket, { id, error: answer.error });
-      send(socket, { id, result: answer.result });
-      if (metroStream) return;
-      metroLink = link;
-      let heard = true;
-      socket.on('pong', () => (heard = true));
-      metroPing = setInterval(() => {
-        if (!heard) return void socket.terminate();
-        heard = false;
-        socket.ping();
-      }, METRO_LINK_PING_MS);
-      metroPing.unref();
-    }
-
-    function linkAgent(id: RequestId, raw: unknown, session: PairedDevice): void {
-      if (metroLink || metroStream) return error(id, 'bad-request', 'This connection already carries a link.');
-      const hosted = isJsonObject(raw) && typeof raw.session === 'string' ? raw.session : null;
-      if (hosted === null) return error(id, 'bad-request', 'An agent link needs a session.');
-      if (agentDrivers.holder(hosted) !== session.id)
-        return error(id, 'unknown-session', 'This client has no hosted session with agent control by that id.');
-      const [inside, outside] = duplexPair();
-      const link: AgentLink = { client: session.id, session: hosted, busy: 0 };
-      agentLinks.set(inside, link);
-      const streams = agentStreams.get(hosted) ?? new Set<Duplex>();
-      agentStreams.set(hosted, streams.add(outside));
-      outside.once('close', () => {
-        streams.delete(outside);
-        if (streams.size === 0 && agentStreams.get(hosted) === streams) agentStreams.delete(hosted);
-      });
-      let excess = [...streams].filter((stream) => !stream.destroyed).length - MAX_AGENT_LINKS;
-      for (const oldest of streams) if (!oldest.destroyed && excess-- > 0) oldest.destroy();
-      let heard = true;
-      socket.on('pong', () => (heard = true));
-      const idle = setTimeout(() => {
-        if (link.busy === 0 || !heard) return void outside.destroy();
-        heard = false;
-        socket.ping();
-        idle.refresh();
-      }, AGENT_LINK_IDLE_MS);
-      idle.unref();
-      const active = () => idle.refresh();
-      socket.on('message', active);
-      outside.on('data', active);
-      outside.once('close', () => clearTimeout(idle));
-      outside.once('end', () => outside.end());
-      outside.once('close', () => inside.destroy());
-      inside.once('close', () => {
-        outside.push(null);
-        outside.end();
-      });
-      send(socket, { id, result: {} });
-      carry(outside);
-      agentHttp.emit('connection', inside);
-    }
-
-    async function hostedMethod(id: RequestId, method: string, raw: unknown, session: PairedDevice): Promise<void> {
-      if (method === 'device-host.metro.link') return linkMetro(id, raw, session);
-      if (method === 'device-host.agent.link') return linkAgent(id, raw, session);
-      const params = isJsonObject(raw) ? raw : {};
-      if (method === 'device-host.frames.subscribe' || method === 'device-host.control.begin') {
-        if (typeof params.session !== 'string') return error(id, 'bad-request', 'A hosted session is required.');
-        if (
-          method === 'device-host.control.begin' &&
-          params.takeOver !== undefined &&
-          typeof params.takeOver !== 'boolean'
-        )
-          return error(id, 'bad-request', 'takeOver must be true or false.');
-        if (method === 'device-host.frames.subscribe' && (params.at !== undefined || params.rate !== undefined))
-          return error(id, 'bad-request', 'Hosted recorded replay is not supported.');
-        try {
-          const hostedSession = params.session;
-          if (method === 'device-host.frames.subscribe') {
-            const view = hostedViews.target(session.id, hostedSession);
-            return subscribeFrames(
-              ctx,
-              id,
-              { ...params, workspace: view.workspace, platform: view.device.platform, slot: view.slot },
-              { client: session.id, session: hostedSession, view },
-            );
-          }
-          const owner = controller(session);
-          const outcome = await hostedViews.begin(
-            session.id,
-            hostedSession,
-            owner,
-            params.takeOver === true,
-            () => socket.readyState === socket.OPEN && controllers.get(socket) === owner,
-          );
-          return 'code' in outcome ? error(id, outcome.code, outcome.message) : send(socket, { id, result: outcome });
-        } catch (cause) {
-          return error(id, 'action-failed', (cause as Error).message);
-        }
-      }
-      if (method === 'device-host.presence.subscribe') {
-        const hostedSession = params.session;
-        if (typeof hostedSession !== 'string' || !hostedDevices.owns(session.id, hostedSession))
-          return error(id, 'unknown-session', 'This client has no such ready hosted session.');
-        const subscription = openSubscription(id);
-        if (!subscription) return;
-        subscriptions.set(
-          subscription,
-          hostedPresence.subscribe(
-            hostedSession,
-            (participants) => send(socket, { event: 'presence', subscription, participants }),
-            async (): Promise<ScreenSize | null> => {
-              const target = hostedDevices.viewTarget(session.id, hostedSession);
-              if (target.platform === 'ios') return simulatorScreen(target.session.device.udid, options.env);
-              if (target.platform === 'android') return androidScreen(target.session.device.serial, options.env);
-              return null;
-            },
-          ),
-        );
-        return;
-      }
-      if (method === 'device-host.frames.keyframe') {
-        const name = params.subscription;
-        const keyframe = typeof name === 'string' ? keyframes.get(name) : undefined;
-        if (!keyframe) return error(id, 'unknown-subscription', `No video subscription ${String(name)}.`);
-        keyframe();
-        return send(socket, { id, result: {} });
-      }
-      if (method === 'device-host.frames.congested') {
-        const name = params.subscription;
-        const congested = typeof name === 'string' ? congestion.get(name) : undefined;
-        if (!congested) return error(id, 'unknown-subscription', `No video subscription ${String(name)}.`);
-        congested();
-        return send(socket, { id, result: {} });
-      }
-      if (method === 'device-host.unsubscribe') return unsubscribeRequest(id, params.subscription);
-      if (method === 'device-host.control.end') {
-        const name = params.session;
-        if (typeof name !== 'string' || !control.endById(controller(session), name))
-          return error(id, 'unknown-session', `No control session ${String(name)} on this connection.`);
-        return send(socket, { id, result: {} });
-      }
-      if (method.startsWith('device-host.input.')) {
-        const inputMethod = method.slice('device-host.'.length) as (typeof INPUT_METHODS)[number];
-        return input(ctx, id, inputMethod, raw, session);
-      }
-      if (method === 'device-host.runtime.install') {
-        const cancellation = new AbortController();
-        const cancel = () => cancellation.abort();
-        socket.once('close', cancel);
-        try {
-          const answer = await hostedDevices.installRuntime(session.id, raw, cancellation.signal);
-          return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
-        } finally {
-          socket.off('close', cancel);
-        }
-      }
-      const answer =
-        method === 'device-host.offer'
-          ? await hostedDevices.offer(session.id, raw)
-          : method === 'device-host.reserve'
-            ? await hostedDevices.reserve(session.id, raw)
-            : method === 'device-host.attach'
-              ? hostedDevices.attach(session.id, raw)
-              : method === 'device-host.stop'
-                ? hostedDevices.stop(session.id, raw)
-                : method === 'device-host.app.offer'
-                  ? hostedDevices.appOffer(session.id, raw)
-                  : method === 'device-host.app.chunk'
-                    ? await hostedDevices.appChunk(session.id, raw)
-                    : method === 'device-host.app.handoff'
-                      ? await hostedDevices.appHandoff(session.id, raw)
-                      : method === 'device-host.app.launch'
-                        ? hostedDevices.appLaunch(session.id, raw)
-                        : method === 'device-host.app.attach'
-                          ? hostedDevices.appAttach(session.id, raw)
-                          : method === 'device-host.app.state'
-                            ? await hostedDevices.appState(session.id, raw)
-                            : method === 'device-host.logs.query'
-                              ? await hostedDevices.logsQuery(session.id, raw)
-                              : method === 'device-host.metro.open'
-                                ? await hostedDevices.metroOpen(session.id, raw)
-                                : method === 'device-host.metro.ports'
-                                  ? await hostedDevices.metroPorts(session.id, raw)
-                                  : method === 'device-host.reverse.set'
-                                    ? await hostedDevices.reverseSet(session.id, raw)
-                                    : await hostedDevices.metroClose(session.id, raw);
-      return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
-    }
-
     /**
      * Admits this local-socket connection to the Desktop-only methods when it proves the bundled Desktop's private key
      * against this connection's challenge. The challenge answers one attempt, so a replayed or late proof cannot win.
@@ -2361,7 +2169,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if ((DEVICE_HOST_METHODS as readonly string[]).includes(message.method)) {
         if (!device.capabilities.includes('device-host'))
           return error(id, 'forbidden', 'Explicit device-host approval is required.');
-        return hostedMethod(id, message.method, message.params, device);
+        return hostedMethod(ctx, id, message.method, message.params, device);
       }
       const approvedMachine = machineMethod(ctx, id, message.method, message.params, device);
       if (approvedMachine) return approvedMachine;

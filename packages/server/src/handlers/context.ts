@@ -47,7 +47,11 @@ import { DesktopReports } from '../desktop-reports.ts';
 import { UsageSampler } from '../machine.ts';
 import { UsageRecorder } from '../usage-history.ts';
 import { type Controller, ControlHub } from '../control.ts';
+import { HostedPresence } from '../hosted-presence.ts';
+import { HostedAgentHost } from '../agent-driver.ts';
 import { DeviceHost } from '../device-host.ts';
+import type { Duplex } from 'node:stream';
+import type { Server, IncomingMessage, ServerResponse } from 'node:http';
 import { PresenceHub } from '../presence.ts';
 import { LocalAgentPresence } from '../local-agent-presence.ts';
 import { HostedViews } from '../hosted-view.ts';
@@ -55,6 +59,7 @@ import { ShareHub } from '../share.ts';
 import { EngineUpdates } from '../server-update.ts';
 import { HostedPresenceBridge } from '../hosted-presence-bridge.ts';
 import type { DesktopPlanRefusal } from '@stim-cli/core/protocol';
+import type { MetroLink } from '@stim-cli/core';
 
 export const INPUT_METHODS = [
   'input.touch',
@@ -211,6 +216,12 @@ export interface ControlLimits {
 
 export type ServerSocket = WebSocket | NoiseSocket;
 
+export interface AgentLink {
+  client: string;
+  session: string;
+  busy: number;
+}
+
 export interface RequestLimits {
   connection: number;
   device: number;
@@ -300,7 +311,12 @@ export interface ConnectionContext {
   readonly controllers: Map<ServerSocket, Controller>;
   readonly controlLimits: ControlLimits;
   readonly adbEmulators: boolean;
+  readonly hostedPresence: HostedPresence;
+  readonly agentDrivers: HostedAgentHost;
   readonly hostedDevices: DeviceHost;
+  readonly agentLinks: WeakMap<object, AgentLink>;
+  readonly agentStreams: Map<string, Set<Duplex>>;
+  readonly agentHttp: Server<typeof IncomingMessage, typeof ServerResponse>;
   readonly builds: BuildHost;
   readonly presence: PresenceHub;
   readonly localAgents: LocalAgentPresence;
@@ -329,6 +345,9 @@ export interface ConnectionContext {
   readonly tracker: RequestTracker;
   runId: string | null;
   buildSession: BuildSession | null;
+  metroLink: MetroLink | null;
+  metroStream: Duplex | null;
+  metroPing: NodeJS.Timeout | undefined;
   clientPing: NodeJS.Timeout | undefined;
   readonly relay: HostedRelay;
   readonly refuse: (id: RequestId | null, code: ErrorCode, message: string, closeCode: number) => void;
@@ -360,5 +379,6 @@ export interface ConnectionContext {
     turn?: Promise<void> | null,
     report?: boolean,
   ) => { done: Promise<void>; cancel: () => Promise<void> } | null;
+  readonly unsubscribeRequest: (id: RequestId, name: unknown) => Promise<void>;
   readonly addresses: { host: string; port: number }[];
 }
