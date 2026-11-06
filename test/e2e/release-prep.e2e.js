@@ -16,7 +16,6 @@ const PACKAGE_DIRS = [
   'agent-driver',
   'agent-driver-agent-device',
   'metro',
-  'expo-build-cache',
   'stim-cli',
   'ci',
   'transport',
@@ -172,7 +171,6 @@ test('pnpm pack ships the CLI internal dependencies as exact versions', () => {
     for (const name of ['@stim-cli/cache', '@stim-cli/core', '@stim-cli/metro']) {
       assert.equal(shipped.dependencies[name], version);
     }
-    assert.equal(shipped.devDependencies['@stim-cli/expo-build-cache'], version);
     assert.equal(JSON.stringify(shipped).includes('workspace:'), false, 'a workspace: range reached the tarball');
   } finally {
     rmSync(out, { recursive: true, force: true });

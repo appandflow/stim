@@ -64,7 +64,7 @@ jobs:
     outputs:
       dist_tag: ${{ steps.dist-tag.outputs.dist_tag }}
     env:
-      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server
+      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro stim-cli ci transport transport-tailscale transport-local server
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -201,14 +201,6 @@ jobs:
           else
             npm publish "$RUNNER_TEMP/tarballs/metro.tgz" --provenance --access public --tag "$DIST_TAG"
           fi
-      - name: Publish @stim-cli/expo-build-cache
-        run: |
-          version=$(node -p "require('$RUNNER_TEMP/tarballs/expo-build-cache.package.json').version")
-          if npm view "@stim-cli/expo-build-cache@$version" version >/dev/null 2>&1; then
-            echo "@stim-cli/expo-build-cache@$version is already published"
-          else
-            npm publish "$RUNNER_TEMP/tarballs/expo-build-cache.tgz" --provenance --access public --tag "$DIST_TAG"
-          fi
       - name: Publish stim
         run: |
           version=$(node -p "require('$RUNNER_TEMP/tarballs/stim-cli.package.json').version")
@@ -270,7 +262,7 @@ jobs:
     permissions:
       contents: read
     env:
-      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server
+      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro stim-cli ci transport transport-tailscale transport-local server
       DIST_TAG: ${{ needs.publish.outputs.dist_tag }}
       npm_config_prefer_online: 'true'
     steps:
@@ -359,7 +351,7 @@ jobs:
       checks: read
       id-token: write
     env:
-      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server
+      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro stim-cli ci transport transport-tailscale transport-local server
     steps:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
@@ -570,7 +562,7 @@ jobs:
             done
             return "$failed"
           }
-          wave core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache transport transport-tailscale transport-local
+          wave core cache cache-s3 agent-driver agent-driver-agent-device metro transport transport-tailscale transport-local
           wave stim-cli
           wave ci server
 

@@ -89,16 +89,6 @@
       "nonNull": 20
     }
   },
-  "packages/expo-build-cache": {
-    "src": {
-      "as": 1,
-      "nonNull": 4
-    },
-    "test": {
-      "as": 0,
-      "nonNull": 0
-    }
-  },
   "packages/metro": {
     "src": {
       "as": 5,
@@ -125,7 +115,7 @@
       "nonNull": 338
     },
     "test": {
-      "as": 444,
+      "as": 443,
       "nonNull": 612
     }
   },

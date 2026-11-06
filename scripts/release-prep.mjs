@@ -10,7 +10,6 @@ const packageDirs = [
   'agent-driver',
   'agent-driver-agent-device',
   'metro',
-  'expo-build-cache',
   'stim-cli',
   'ci',
   'transport',

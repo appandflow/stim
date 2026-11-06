@@ -442,12 +442,6 @@ importers:
         specifier: 0.1.1
         version: 0.1.1
 
-  packages/expo-build-cache:
-    dependencies:
-      '@stim-cli/core':
-        specifier: workspace:*
-        version: link:../core
-
   packages/metro:
     dependencies:
       '@stim-cli/cache':
@@ -530,9 +524,6 @@ importers:
         specifier: ^8.21.3
         version: 8.21.3
     devDependencies:
-      '@stim-cli/expo-build-cache':
-        specifier: workspace:*
-        version: link:../expo-build-cache
       '@types/cross-spawn':
         specifier: ^6.0.6
         version: 6.0.6
