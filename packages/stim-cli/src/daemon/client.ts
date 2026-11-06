@@ -32,7 +32,7 @@ const CONTACT_TIMEOUT_MS = 250;
 const CLAIM_WAIT_MS = 5000;
 const CLAIM_POLL_MS = 50;
 const LAUNCH_TIMEOUT_MS = 5000;
-const OP_BEGIN_TIMEOUT_MS = 10_000;
+const OP_BEGIN_TIMEOUT_MS = 30_000;
 /** The label of the launchd job that runs a stimd, which it removes as it exits. */
 export const LAUNCHD_LABEL_ENV = 'STIMD_LAUNCHD_LABEL';
 
@@ -70,6 +70,7 @@ export function stimdBuildId(): string {
 let refusedBuild: string | null = null;
 let opSocket: Socket | null = null;
 let following: Promise<never> | null = null;
+let admitting = false;
 
 /** Whether a stimd of another build refused this process's connection. */
 export function stimdRefused(): boolean {
@@ -77,15 +78,16 @@ export function stimdRefused(): boolean {
 }
 
 /**
- * Follows the engine to `version` once stimd says it switched: a CLI before `op.begin` runs again, once, through the
- * root's `bin/stim`, and resolves only by exiting with that run's code; a waiter or a CLI past `op.begin` ends with the
- * rerun line. Null in a process that is not a CLI, which treats stimd as unreachable instead.
+ * Follows the engine to `version` once stimd says it switched: a CLI admitting its command (`op.begin`) runs it again,
+ * once, through the root's `bin/stim`, and resolves only by exiting with that run's code; a waiter ends with the rerun
+ * line. Null otherwise, and in a process that is not a CLI, which then treats stimd as unreachable.
  */
 function followSwitch(version: string, waiter: boolean): Promise<never> | null {
   // compat C26 permanent
   const engine = ownStoreEngine();
   if (!engine || !Reflect.get(globalThis, Symbol.for('stim.cli'))) return null;
-  if (waiter || opSocket || process.env.STIM_REEXEC) endForSwitch(version);
+  if (waiter || (admitting && process.env.STIM_REEXEC)) endForSwitch(version);
+  if (!admitting) return null;
   console.error(`Stim updated to ${version}; running this command on it`);
   const options: SpawnOptions = { stdio: 'inherit', env: { ...process.env, STIM_REEXEC: '1' } };
   const child = getExecutor().spawn(engineShim(engine), process.argv.slice(2), options);
@@ -363,6 +365,7 @@ export async function ensureStimd(
       );
       return true;
     }
+    admitting = pin;
     if (stimdLive()) {
       if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
       else if (!(await beginOp()) && stimdRefused() && (await successorBound())) await beginOp();
@@ -373,6 +376,9 @@ export async function ensureStimd(
     return taken;
   } catch {
     return false;
+  } finally {
+    admitting = false;
+    delete process.env.STIM_REEXEC;
   }
 }
 

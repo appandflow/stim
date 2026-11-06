@@ -88,6 +88,7 @@ export async function promote(promotion: Promotion): Promise<PromotionResult> {
           setBy: promotion.setBy,
           pinReason: promotion.pinReason ?? null,
           ...(promotion.channel ? { channel: promotion.channel } : {}),
+          ...(promotion.restoreState ? { restoreState: true } : {}),
         };
         writeRecord(join(root, 'staged.json'), staged);
         collectStore(root);
@@ -111,10 +112,15 @@ async function flipStaged(promotion: Promotion): Promise<PromotionResult> {
   const own = stimBuildId(dirname(fileURLToPath(import.meta.url)));
   if (!staged || staged.dir !== own) return { refused: `${own ?? 'this build'} is not the staged build` };
   const manifest = readManifest(join(root, own)) ?? fail(`${join(root, own)} has no store manifest.`);
+  const homes = [ctx.home, machineRoot()].filter((home) => readSchema(home));
+  if (staged.restoreState) for (const home of homes) restoreSchema(home, manifest.schema, manifest.version);
+  else {
+    const refusal = homes.map((home) => schemaRefusal(home, manifest.schema)).find(Boolean);
+    if (refusal) return { refused: refusal };
+  }
   const from = { ...promotion, setBy: staged.setBy ?? promotion.setBy, pinReason: staged.pinReason ?? null };
   await flip(root, own, manifest, current, { ...from, channel: staged.channel ?? promotion.channel }, true);
-  for (const home of [ctx.home, machineRoot()].filter((each) => readSchema(each)))
-    migrateSchema(home, manifest.version);
+  for (const home of homes) migrateSchema(home, manifest.version);
   collectStore(root);
   return { flipped: own };
 }

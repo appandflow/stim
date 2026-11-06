@@ -26,6 +26,7 @@ export type Staged = { format: number; dir: string; version: string; stagedAt: s
   setBy?: string;
   pinReason?: string | null;
   channel?: Channel;
+  restoreState?: boolean;
 };
 export type Manifest = { format: number; build: string; version: string; engines: string; schema: number };
 type Installed = { dir: string; version: string; installedAt: string };

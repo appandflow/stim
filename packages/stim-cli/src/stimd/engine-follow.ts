@@ -16,7 +16,7 @@ import { getExecutor } from '../exec.ts';
 
 const FLIP_TIMEOUT_MS = 10 * 60_000;
 const FLIP_LOCK_POLL_MS = 50;
-const ADMIT_WAIT_MS = 10_000;
+const ADMIT_WAIT_MS = 25_000;
 
 type Log = (
   level: 'debug' | 'info' | 'warn' | 'error',

@@ -353,8 +353,14 @@ export async function runStimd({
     (net.running() !== null && readHostedSessions().some((session) => session.state === 'preparing'));
   const checkEngine = async (): Promise<void> => {
     if (!follower || switchedTo || closing) return;
-    follower.record(pinned(), engineDirs);
-    const next = await follower.check(pinned);
+    let next: Awaited<ReturnType<typeof follower.check>>;
+    try {
+      follower.record(pinned(), engineDirs);
+      next = await follower.check(pinned);
+    } catch (error) {
+      log('warn', 'engine_check_failed', error instanceof Error ? error.message : String(error));
+      return;
+    }
     if (!next || switchedTo || closing) return;
     if (!pinned()) await relaunch(next, follower.engine.root);
     else if (!heldSwitch) {
@@ -472,9 +478,20 @@ export async function runStimd({
         } else if (op === 'op.begin') {
           hasten?.();
           ops.set(socket, 'pinned');
-          void (follower?.admit() ?? Promise.resolve(null)).then((next) =>
-            reply(next ? { op: 'engine-changed', ...next, pid: process.pid } : { op: 'op.begun' }),
-          );
+          void (follower?.admit() ?? Promise.resolve(null))
+            .catch((error: unknown) => {
+              log('warn', 'engine_admit_failed', error instanceof Error ? error.message : String(error));
+              return null;
+            })
+            .then((next) => {
+              if (!next) {
+                reply({ op: 'op.begun' });
+                return undefined;
+              }
+              ops.delete(socket);
+              socket.end(`${JSON.stringify({ op: 'engine-changed', ...next, pid: process.pid })}\n`);
+              return checkEngine();
+            });
         } else if (op === 'op.wait' || op === 'op.resume') {
           if (ops.has(socket)) ops.set(socket, op === 'op.wait' ? 'waiting' : 'pinned');
           void checkEngine();
