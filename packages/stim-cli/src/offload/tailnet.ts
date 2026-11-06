@@ -30,7 +30,15 @@ import {
   type TailnetPeer,
 } from '@stim-cli/core/state';
 export { parseMachine, findPeer, endpoint, type Endpoint, type TailnetPeer } from '@stim-cli/core/state';
-import { getExecutor } from '../exec.ts';
+import {
+  parseJson,
+  rawTailscaleStatus,
+  tailscaleStatus,
+  tailscaleStatusAsync,
+  pingPeer,
+  rawTailscaleStatusAsync,
+} from '../tailscale-status.ts';
+export { tailscaleStatusAsync } from '../tailscale-status.ts';
 import { readAccessTicket } from './access-ticket.ts';
 import {
   classifyTransport,
@@ -46,7 +54,6 @@ import {
 } from './diagnosis.ts';
 import type { RemoteDiagnosis } from '@stim-cli/core/protocol';
 
-const MAC_APP_TAILSCALE = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
 const HELLO_TIMEOUT_MS = 10_000;
 const HEALTH_TIMEOUT_MS = 3000;
 /** How long a setup ticket `stim doctor --fix` generates stays valid; `stim-server setup` takes at most 2 hours. */
@@ -94,27 +101,6 @@ export interface TailnetMachineIo {
   ping?: (address: string) => Promise<boolean>;
 }
 
-function parseJson(output: string): unknown {
-  try {
-    return JSON.parse(output) as unknown;
-  } catch {
-    return null;
-  }
-}
-
-function parseTailscaleStatus(output: string): unknown {
-  const status = parseJson(output);
-  return isJsonObject(status) && status.BackendState === 'Running' ? status : null;
-}
-
-function rawTailscaleStatus(): unknown {
-  for (const binary of ['tailscale', MAC_APP_TAILSCALE]) {
-    const output = getExecutor().runFileQuiet(binary, ['status', '--json'], { timeoutMs: 5000 });
-    if (output !== null) return parseJson(output);
-  }
-  return null;
-}
-
 /** Reads the `startup` of a peer's `/health`, which stim-server answers with 503 while it is not serving clients. */
 function peerStartup({ url, servername, host }: Endpoint): Promise<PeerStartup | null> {
   return new Promise((resolve) => {
@@ -145,58 +131,6 @@ function peerStartup({ url, servername, host }: Endpoint): Promise<PeerStartup |
     request.on('error', () => resolve(null));
     request.end();
   });
-}
-
-function tailscaleStatus(): unknown {
-  for (const binary of ['tailscale', MAC_APP_TAILSCALE]) {
-    const output = getExecutor().runFileQuiet(binary, ['status', '--json'], { timeoutMs: 5000 });
-    if (output !== null) return parseTailscaleStatus(output);
-  }
-  return null;
-}
-
-async function tailscaleOutputAsync(signal?: AbortSignal): Promise<string | null> {
-  for (const binary of ['tailscale', MAC_APP_TAILSCALE]) {
-    signal?.throwIfAborted();
-    let output: string;
-    try {
-      output = await getExecutor().runFileAsync(binary, ['status', '--json'], { timeoutMs: 5000, signal });
-    } catch {
-      signal?.throwIfAborted();
-      continue;
-    }
-    signal?.throwIfAborted();
-    return output;
-  }
-  return null;
-}
-
-export async function tailscaleStatusAsync(signal?: AbortSignal): Promise<unknown> {
-  const output = await tailscaleOutputAsync(signal);
-  return output === null ? null : parseTailscaleStatus(output);
-}
-
-async function pingPeer(address: string, signal?: AbortSignal): Promise<boolean> {
-  for (const binary of ['tailscale', MAC_APP_TAILSCALE]) {
-    signal?.throwIfAborted();
-    try {
-      await getExecutor().runFileAsync(
-        binary,
-        ['ping', '--c', '1', '--until-direct=false', '--timeout', '4s', address],
-        { timeoutMs: 6000, signal },
-      );
-      return true;
-    } catch (error) {
-      signal?.throwIfAborted();
-      if (!/ENOENT|not found/i.test(String(error))) return false;
-    }
-  }
-  return false;
-}
-
-async function rawTailscaleStatusAsync(signal?: AbortSignal): Promise<unknown> {
-  const output = await tailscaleOutputAsync(signal);
-  return output === null ? null : parseJson(output);
 }
 
 /** Why a connection did not authenticate. `refused` when the machine answered and turned this machine away. */

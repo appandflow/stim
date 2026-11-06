@@ -6,8 +6,9 @@ import {
   createPrivateKey,
   createPublicKey,
   diffieHellman,
-  generateKeyPairSync,
 } from 'node:crypto';
+import { KEY_BYTES, PKCS8_X25519, generateNoiseKeyPair, type NoiseKeyPair } from './x25519-key.ts';
+export { generateNoiseKeyPair, noiseKeyPairFromPrivateKey, type NoiseKeyPair } from './x25519-key.ts';
 
 export const NOISE_XX = 'Noise_XX_25519_ChaChaPoly_SHA256';
 export const NOISE_XX_PSK2 = 'Noise_XXpsk2_25519_ChaChaPoly_SHA256';
@@ -16,7 +17,6 @@ export type NoiseProtocolName = typeof NOISE_XX | typeof NOISE_XX_PSK2;
 /** Largest handshake message either side writes or reads, payload included. */
 export const MAX_HANDSHAKE_MESSAGE_BYTES = 1024;
 
-const KEY_BYTES = 32;
 const HASH_BYTES = 32;
 const TAG_BYTES = 16;
 // Noise revision 34, section 5.1: nonce 2^64-1 is reserved and must never encrypt a message.
@@ -26,32 +26,11 @@ const TEXT = 0x01;
 const BINARY = 0x02;
 
 // RFC 8410 DER wrappers; node:crypto on Node 22.12 has no raw X25519 key import.
-const PKCS8_X25519 = Buffer.from('302e020100300506032b656e04220420', 'hex');
 const SPKI_X25519 = Buffer.from('302a300506032b656e032100', 'hex');
 
 /** Thrown for any handshake or transport failure; the handshake or transport is unusable afterwards. */
 export class NoiseError extends Error {
   override name = 'NoiseError';
-}
-
-/** A raw 32-byte X25519 key pair. */
-export interface NoiseKeyPair {
-  readonly publicKey: Buffer;
-  readonly privateKey: Buffer;
-}
-
-export function generateNoiseKeyPair(): NoiseKeyPair {
-  const { privateKey } = generateKeyPairSync('x25519');
-  return noiseKeyPairFromPrivateKey(privateKey.export({ format: 'der', type: 'pkcs8' }).subarray(-KEY_BYTES));
-}
-
-export function noiseKeyPairFromPrivateKey(privateKey: Uint8Array): NoiseKeyPair {
-  if (privateKey.length !== KEY_BYTES) throw new RangeError('An X25519 private key is 32 bytes');
-  const key = createPrivateKey({ key: Buffer.concat([PKCS8_X25519, privateKey]), format: 'der', type: 'pkcs8' });
-  return {
-    publicKey: createPublicKey(key).export({ format: 'der', type: 'spki' }).subarray(-KEY_BYTES),
-    privateKey: Buffer.from(privateKey),
-  };
 }
 
 /** X25519 of a raw 32-byte private key and a peer's raw 32-byte public key; it throws for a low-order key. */
