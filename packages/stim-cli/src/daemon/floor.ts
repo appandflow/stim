@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { homedir, platform } from 'node:os';
+import { platform } from 'node:os';
 import { join, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import chalk from 'chalk';
@@ -12,6 +12,7 @@ import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import { sharedBuildCache } from '../workspace/paths.ts';
 import { runLadderNow } from './passes.ts';
 import { diskThresholds } from './pressure.ts';
+import { userHome } from '@stim-cli/core/state';
 
 const USAGE_TIMEOUT_MS = 10_000;
 
@@ -23,7 +24,7 @@ async function spaceUsers(
   signal?: AbortSignal,
   operation?: StimContext,
 ): Promise<string[]> {
-  const home = env.HOME || env.USERPROFILE || homedir();
+  const home = userHome(env);
   const candidates: [string, string][] = [
     ['Stim state', getConfigDir()],
     ['shared build cache', sharedBuildCache()],

@@ -1,12 +1,12 @@
 import { readdirSync, statSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { configDir } from '../index.ts';
 import { ambientEnv } from '../context.ts';
+import { userHome } from './paths.ts';
 
 export function agentDeviceStateDirs(
-  home: string = ambientEnv().HOME || ambientEnv().USERPROFILE || homedir(),
+  home: string = userHome(ambientEnv()),
   env: NodeJS.ProcessEnv = ambientEnv(),
 ): string[] {
   const override = env.AGENT_DEVICE_STATE_DIR?.trim();
@@ -24,7 +24,7 @@ export function agentDeviceStateDirs(
 }
 
 export async function agentDeviceStateDirsAsync(
-  home: string = ambientEnv().HOME || ambientEnv().USERPROFILE || homedir(),
+  home: string = userHome(ambientEnv()),
   env: NodeJS.ProcessEnv = ambientEnv(),
 ): Promise<string[]> {
   const override = env.AGENT_DEVICE_STATE_DIR?.trim();

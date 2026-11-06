@@ -613,8 +613,9 @@ async function revive(root: string, device: WorkspaceDevice): Promise<AgentDevic
     `stim agent-device: reviving this workspace's ${device.platform === 'ios' ? 'simulator' : 'emulator'} after its idle stop.`,
   );
   try {
-    const { beforeCommand } = await import('../daemon/client.ts');
-    await beforeCommand('revive');
+    const { runOperation } = await import('../run-operation.ts');
+    const entered = await runOperation({ caller: 'cli', command: 'revive', plan: false, cwd: root, env: process.env });
+    if ('refusal' in entered) return entered.refusal;
   } catch {}
   const { runRevive, reviveDeps, reviveLines } = await import('./revive.ts');
   const { value: result, interrupted } = await runProcessOperation(root, (context) =>
