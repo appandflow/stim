@@ -265,7 +265,7 @@ describe.skipIf(!existsSync(MOBILE_MODULES))('fingerprint evaluators on the inst
   });
 
   test(
-    'a file outside the app that the config names by a relative path is hashed and makes the key non-portable',
+    'a file outside the app that the config names by a relative path is hashed, and an installed one keys its package',
     SLOW,
     async () => {
       const outside = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fp-outside-')));
@@ -275,10 +275,11 @@ describe.skipIf(!existsSync(MOBILE_MODULES))('fingerprint evaluators on the inst
       const root = expoApp({});
       write(
         join(root, 'app.config.js'),
-        `module.exports = ({ config }) => ({ ...config, ios: { ...config.ios, googleServicesFile: ${JSON.stringify(relative(root, plist))} } });\n`,
+        `module.exports = ({ config }) => ({ ...config, ios: { ...config.ios, googleServicesFile: ${JSON.stringify(relative(root, plist))} }, extra: { messages: require.resolve('@lingui/core/package.json') } });\n`,
       );
       const before = await key(root, baseEnv());
       expect(before.portable).toBe(false);
+      expect(before.inputs.map((input) => input.name)).toContain('package:@lingui/core');
       write(plist, 'two');
       expect((await key(root, baseEnv())).hash).not.toBe(before.hash);
     },

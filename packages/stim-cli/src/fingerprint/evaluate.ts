@@ -263,7 +263,7 @@ function traceRows(
   const ours = (path: string) => within(path, SHIMS) || excluded.some((dir) => within(path, dir));
   for (const { path, hash } of trace.modules) {
     if (ours(path) || SKIPPED_READS.has(basename(path))) continue;
-    const owner = packageRoot(path);
+    const owner = installedPackage(path);
     if (owner) packages.push(owner);
     else if (existsSync(path)) {
       const row = fileRow(path, roots);
@@ -523,8 +523,12 @@ async function evaluate(
     if (!value || value.length >= 1024 || /[\0\n]/.test(value)) return [];
     try {
       const real = realpathSync.native(resolve(root, value));
-      const outside = !within(real, roots.project) && !within(real, roots.install) && !packageRoot(real);
-      return outside && statSync(real).isFile() ? [real] : [];
+      const owner = installedPackage(real);
+      if (owner) packages.add(owner);
+      if (owner || within(real, roots.project) || within(real, roots.install)) return [];
+      if (statSync(real).isFile()) return [real];
+      if (dirname(real) !== real) outsideValue = true;
+      return [];
     } catch {
       return [];
     }
