@@ -77,6 +77,11 @@
       "types": "./dist/workspace-link.d.mts",
       "module-sync": "./dist/workspace-link.mjs",
       "default": "./dist/workspace-link.mjs"
+    },
+    "./plugin-loader": {
+      "types": "./dist/plugin-loader.d.mts",
+      "module-sync": "./dist/plugin-loader.mjs",
+      "default": "./dist/plugin-loader.mjs"
     }
   },
   "scripts": {

@@ -14,6 +14,7 @@ export default defineConfig({
   entry: {
     cli: 'bin/node-check.ts',
     api: 'src/api.ts',
+    plugin: 'src/plugin.ts',
     ci: '../ci/src/index.ts',
     'ci/artifacts': '../ci/src/artifacts.ts',
     'stim-server': 'bin/stim-server.ts',

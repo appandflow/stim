@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCacheProvider, createS3FileCache, type S3FileCacheOptions } from '../index.ts';
-import { runCacheProviderContract, loadCacheProvider } from '@stim-cli/cache';
+import { runCacheProviderContract, loadCacheProvider } from 'stim/plugin';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { scopedClientContext } from '../credentials.ts';
 
@@ -294,7 +294,7 @@ test('aborting a download closes the transfer and removes its partial file', asy
 });
 
 test.each(['ios', 'android'] as const)(
-  'the real S3 transport passes the existing %s and Metro contracts',
+  'the real S3 transport passes the existing %s build contracts',
   async (platform) => {
     const loaded = await loadCacheProvider({
       projectRoot: directory,

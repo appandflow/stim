@@ -1,10 +1,6 @@
-import { isRecord, reason } from './internal.ts';
+import { reason } from './internal.ts';
 
 export const CACHE_PROVIDER_API_VERSION = 1 as const;
-
-export const CACHE_PROVIDER_ENV = 'STIM_CACHE_PROVIDER_CONFIG';
-
-export const CACHE_PROVIDER_ENV_NONE = 'none';
 
 export const PROVIDER_LOAD_TIMEOUT_MS = 10_000;
 
@@ -121,13 +117,13 @@ export interface FileCacheCapability {
 
 export interface CacheProvider {
   files?: FileCacheCapability;
+  /** Ignored by Stim; Metro uses its local filesystem store. */
   metro?: MetroCacheCapability;
   builds?: BuildCacheCapability;
 }
 
 /**
- * The module shape a provider author exports. The loader rejects any other
- * `apiVersion`.
+ * The module shape a provider author exports. `stimPlugin.kinds` declares the supported contract.
  */
 export interface CacheProviderModule {
   apiVersion: typeof CACHE_PROVIDER_API_VERSION;
@@ -200,36 +196,4 @@ export function createWarnOnce(emit: (message: string) => void): WarnOnce {
     seen.add(code);
     emit(message);
   };
-}
-
-export function cacheProviderEnv(config: CacheProviderConfig | null): string {
-  if (!config) return CACHE_PROVIDER_ENV_NONE;
-  return JSON.stringify({ provider: config.provider, options: config.options ?? {}, baseDir: config.baseDir });
-}
-
-/**
- * True when a parent process decided the provider selection, including the
- * `none` sentinel. A child must not run its own search once this is set.
- */
-export function cacheProviderEnvIsSet(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = env[CACHE_PROVIDER_ENV];
-  return typeof raw === 'string' && raw.trim() !== '';
-}
-
-export function cacheProviderConfigFromEnv(env: NodeJS.ProcessEnv = process.env): CacheProviderConfig | null {
-  const raw = env[CACHE_PROVIDER_ENV];
-  if (typeof raw !== 'string' || raw.trim() === '' || raw.trim() === CACHE_PROVIDER_ENV_NONE) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (!isRecord(parsed)) return null;
-  const provider = parsed.provider;
-  const baseDir = parsed.baseDir;
-  if (typeof provider !== 'string' || provider.trim() === '' || typeof baseDir !== 'string' || baseDir === '') {
-    return null;
-  }
-  return { provider, options: isRecord(parsed.options) ? parsed.options : {}, baseDir };
 }

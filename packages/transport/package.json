@@ -27,6 +27,9 @@
   "scripts": {
     "build": "tsdown"
   },
+  "dependencies": {
+    "@stim-cli/core": "workspace:*"
+  },
   "engines": {
     "node": ">=22.12.0"
   }

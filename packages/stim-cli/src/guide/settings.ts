@@ -568,10 +568,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         you review a build script.
                         \`stim ios\` and \`stim android\` use it unless
                         artifact or remote artifact caching is disabled. Metro
-                        uses it only when the project's own metro.config.js
-                        calls \`sharedCacheStores()\` from @stim-cli/metro: the
-                        store Stim injects for you (bare in-process, or the
-                        Expo config override) stays local-only.
+                        uses its local filesystem store.
   cache.options         free-form object handed to that module's factory. It
                         merges key by key from the layer that names the
                         provider, higher layers that name none, and lower

@@ -1,3 +1,4 @@
+import { loadKind, type PluginSource } from '@stim-cli/core/plugin-loader';
 import type { IncomingMessage } from 'node:http';
 
 export const TRANSPORT_API_VERSION = 1 as const;
@@ -54,16 +55,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function reason(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error)).split('\n')[0] ?? '';
-}
-
-function hasFactory(
-  value: Record<string, unknown>,
-): value is Record<string, unknown> & Pick<TransportModule, 'createTransport'> {
-  return typeof value.createTransport === 'function';
-}
-
 const CAPABILITIES = ['bindAddresses', 'watch', 'identify', 'close'] as const;
 
 function isTransport(value: unknown): value is Transport {
@@ -75,71 +66,31 @@ function isTransport(value: unknown): value is Transport {
   );
 }
 
-function moduleCandidate(namespace: unknown): unknown {
-  if (!isRecord(namespace)) return namespace;
-  return 'apiVersion' in namespace ? namespace : namespace.default;
-}
-
-async function importTransport(
-  reference: string,
-  load: () => Promise<unknown>,
-  input: TransportInput,
-): Promise<LoadTransportResult> {
-  let namespace: unknown;
-  try {
-    namespace = await load();
-  } catch (error) {
-    return { unavailable: `${reference} is not installed: ${reason(error)}` };
-  }
-  const candidate = moduleCandidate(namespace);
-  if (!isRecord(candidate) || candidate.apiVersion !== TRANSPORT_API_VERSION) {
-    const found = isRecord(candidate) ? candidate.apiVersion : candidate;
-    return {
-      unavailable: `${reference}: expected apiVersion ${TRANSPORT_API_VERSION}, found ${JSON.stringify(found)}`,
-    };
-  }
-  if (!hasFactory(candidate)) {
-    return { unavailable: `${reference} does not export createTransport()` };
-  }
-  let transport: unknown;
-  try {
-    transport = await candidate.createTransport(input);
-  } catch (error) {
-    return { unavailable: `${reference}: createTransport() failed: ${reason(error)}` };
-  }
-  if (!isTransport(transport)) {
-    return { unavailable: `${reference}: createTransport() did not return a transport` };
-  }
-  return { transport };
-}
-
-/**
- * Imports the transport module `reference` with `load` and creates its transport. Never throws: a missing module, a
- * wrong `apiVersion`, a failing factory, or a load that takes longer than `timeoutMs` comes back as `unavailable`
- * with the reason.
- */
+/** Loads a manifest-compatible transport, awaiting its factory. Failures resolve to `unavailable`. */
 export async function loadTransport({
   reference,
   load,
+  manifest,
   input,
   timeoutMs = LOAD_TIMEOUT_MS,
-}: {
+}: PluginSource & {
   reference: string;
-  load: () => Promise<unknown>;
   input: TransportInput;
   timeoutMs?: number;
 }): Promise<LoadTransportResult> {
-  let timer: NodeJS.Timeout | undefined;
-  const expired = new Promise<'timeout'>((resolve) => {
-    timer = setTimeout(() => resolve('timeout'), timeoutMs);
+  const loaded = await loadKind<Transport>({
+    reference,
+    kind: 'transport',
+    version: TRANSPORT_API_VERSION,
+    source: { load, manifest },
+    factory: 'createTransport',
+    input,
+    accept(value) {
+      if (!isTransport(value)) throw new Error('createTransport() did not return a transport');
+      return value;
+    },
+    dispose: (value) => value.close?.(),
+    timeoutMs,
   });
-  const loading = importTransport(reference, load, input).catch((error: unknown) => ({ unavailable: reason(error) }));
-  try {
-    const result = await Promise.race([loading, expired]);
-    if (result !== 'timeout') return result;
-    void loading.then((late) => ('transport' in late ? late.transport.close?.() : undefined));
-    return { unavailable: `${reference} did not load within ${timeoutMs}ms` };
-  } finally {
-    clearTimeout(timer);
-  }
+  return 'value' in loaded ? { transport: loaded.value } : loaded;
 }

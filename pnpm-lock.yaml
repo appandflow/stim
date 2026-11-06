@@ -410,19 +410,24 @@ importers:
         specifier: workspace:*
         version: link:../core
 
-  packages/cache: {}
+  packages/cache:
+    dependencies:
+      '@stim-cli/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/cache-s3:
     dependencies:
       '@aws-sdk/client-s3':
         specifier: ^3.1149.0
         version: 3.1149.0
-      '@stim-cli/cache':
-        specifier: workspace:*
-        version: link:../cache
       tar:
         specifier: ^7.5.22
         version: 7.5.22
+    devDependencies:
+      stim:
+        specifier: workspace:*
+        version: link:../stim-cli
 
   packages/ci:
     dependencies:
@@ -445,9 +450,6 @@ importers:
 
   packages/metro:
     dependencies:
-      '@stim-cli/cache':
-        specifier: workspace:*
-        version: link:../cache
       '@stim-cli/core':
         specifier: workspace:*
         version: link:../core
@@ -548,7 +550,11 @@ importers:
         specifier: 0.33.6
         version: 0.33.6
 
-  packages/transport: {}
+  packages/transport:
+    dependencies:
+      '@stim-cli/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/transport-local:
     dependencies:

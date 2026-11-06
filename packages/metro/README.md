@@ -17,7 +17,7 @@ Set `cacheStores` on the final merged Metro config:
 const { sharedCacheStores } = require('@stim-cli/metro');
 const { name } = require('./package.json');
 
-config.cacheStores = sharedCacheStores(name, { cwd: __dirname });
+config.cacheStores = sharedCacheStores(name);
 ```
 
 For bare React Native under Stim, this explicitly selects one shared transform
@@ -27,28 +27,6 @@ Using the package name lets Stim recognize the shared store without adding anoth
 
 Set `STIM_METRO_CACHE` to an absolute path to override the shared cache location.
 A relative value is ignored with a warning.
-
-## Optional second tier
-
-The filesystem cache above is always the first tier. When the project selects a
-cache provider, the exported store reads it after a local miss, writes provider
-hits back to the filesystem, and queues new transforms for the provider without
-blocking Metro. Provider failures are misses.
-
-```json
-{
-  "cache": {
-    "provider": "./tools/cache-provider.cjs",
-    "options": { "bucket": "mobile-cache" }
-  }
-}
-```
-
-Under `stim start` the supervisor passes the resolved selection to Metro. A
-Metro process outside Stim reads `.stim.json` only from its app working directory;
-it does not inherit a monorepo-root provider. See
-[`@stim-cli/cache`](https://www.npmjs.com/package/@stim-cli/cache) for the
-provider contract. `clear()` only clears the local tier.
 
 ## Log reporter
 

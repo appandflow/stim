@@ -2,6 +2,7 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
+import { BUILD_RESOLVE_TIMEOUT_MS, BUILD_UPLOAD_TIMEOUT_MS } from '@stim-cli/cache/tiers';
 import { easCache } from './eas-cache.ts';
 import { operationState } from './operation-state.ts';
 import { WorkspaceProcessCleanupError } from './workspace-process-lock.ts';
@@ -18,8 +19,8 @@ const EAS_PROVIDER_PACKAGE = 'eas-build-cache-provider';
 
 const LOCAL_PROVIDER_PACKAGE = '@stim-cli/expo-build-cache';
 
-export const RESOLVE_TIMEOUT_MS = 30_000;
-export const UPLOAD_TIMEOUT_MS = 60_000;
+export const RESOLVE_TIMEOUT_MS: number = BUILD_RESOLVE_TIMEOUT_MS;
+export const UPLOAD_TIMEOUT_MS: number = BUILD_UPLOAD_TIMEOUT_MS;
 const CONFIG_TIMEOUT_MS = 30_000;
 
 const DYNAMIC_CONFIG_FILES = ['app.config.ts', 'app.config.js', 'app.config.mjs', 'app.config.cjs'];
