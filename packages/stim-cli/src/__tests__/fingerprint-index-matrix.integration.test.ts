@@ -213,6 +213,16 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))(
         ['a local plugin app.json names', () => appendFileSync(join(app, 'plugins/native.js'), '\n// edit')],
         ['a patch added', () => write(join(app, 'patches/native-lib+1.0.0.patch'), '--- a/ios/Lib.m')],
         [
+          'a native package linked to a copy outside node_modules',
+          () => {
+            const copy = join(base, 'linked', 'native-lib');
+            nativePackage(copy, 'native-lib', '1.0.0');
+            appendFileSync(join(copy, 'ios', 'Lib.m'), '\n// linked');
+            rmSync(join(app, 'node_modules', 'native-lib'), { recursive: true });
+            symlinkSync(copy, join(app, 'node_modules', 'native-lib'));
+          },
+        ],
+        [
           'an integrity change of a native package in the lockfile',
           () => {
             const lock = join(base, 'repo', 'pnpm-lock.yaml');

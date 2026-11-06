@@ -228,7 +228,17 @@ if (hooks)
         record('resolve', path.dirname(target));
         if (exists(target, true)) record('resolve', target);
       }
-      const resolved = nextResolve(specifier, context);
+      let resolved;
+      try {
+        resolved = nextResolve(specifier, context);
+      } catch (error) {
+        if (!target && parent && !specifier.startsWith('node:'))
+          for (let dir = path.dirname(parent); ; dir = path.dirname(dir)) {
+            if (exists(path.join(dir, 'node_modules'), true)) record('resolve', path.join(dir, 'node_modules'));
+            if (path.dirname(dir) === dir) break;
+          }
+        throw error;
+      }
       if (active && resolved.url?.startsWith('file:'))
         for (let dir = path.dirname(fileURLToPath(resolved.url)); ; dir = path.dirname(dir)) {
           if (exists(path.join(dir, 'package.json'), false)) {

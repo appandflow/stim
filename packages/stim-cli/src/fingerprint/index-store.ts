@@ -181,7 +181,7 @@ export function takeRead(path: string, kind: ReadKind, roots: Roots, since: bigi
   const read: Read = { path: relocate(path, roots), kind, stat: stat?.key ?? null };
   if (kind === 'dir' || kind === 'tree') read.hash = hash ?? null;
   else if (stat) read.hash = kind === 'module' ? (hash ?? null) : readHash(target);
-  const real = stat && kind !== 'package' ? realOf(target) : null;
+  const real = stat ? realOf(target) : null;
   if (real) read.real = relocate(real, roots);
   return read;
 }
@@ -206,18 +206,20 @@ export type Validity = 'stat' | 'content' | false;
 
 /**
  * Whether a recorded read still holds: by its stat (size, mtime, ctime, inode), else by content, listing or
- * resolved path. A probe of a file holds only by its stat while `metadata` counts, since code may have read its size
- * or times. A recursive listing is always listed again. A read that cannot be checked is invalid.
+ * resolved path. A probe or a listing holds only by its stat while `metadata` counts, since code may have read a
+ * file's size or times or a listing's entry types. A recursive listing is always listed again. A read that cannot be
+ * checked is invalid.
  */
 export function checkRead(read: Read, roots: Roots, metadata = true): Validity {
   const path = locate(read.path, roots);
   if (read.kind === 'absent') return statSync(path, { throwIfNoEntry: false }) ? false : 'stat';
   const target = read.kind === 'package' ? join(path, 'package.json') : path;
-  const resolved = read.real === undefined || relocate(realOf(target) ?? '', roots) === read.real;
-  if (read.kind === 'present' && read.stat === undefined) return resolved && entryType(path) === read.hash && 'stat';
+  const resolved = () => read.real === undefined || relocate(realOf(target) ?? '', roots) === read.real;
+  if (read.kind === 'present' && read.stat === undefined) return resolved() && entryType(path) === read.hash && 'stat';
   const stat = statKey(target);
   if ((stat?.key ?? null) === read.stat && read.kind !== 'tree') return 'stat';
-  if (!stat || read.stat === null || !read.hash || !resolved || (metadata && read.kind === 'present')) return false;
+  if (!stat || read.stat === null || !read.hash || !resolved()) return false;
+  if (metadata && (read.kind === 'present' || read.kind === 'dir')) return false;
   if (read.kind === 'dir' || read.kind === 'tree')
     return listing(path, read.kind === 'tree') === read.hash ? 'content' : false;
   return readHash(target) === read.hash ? 'content' : false;
@@ -481,6 +483,16 @@ export function newerThanInstall(roots: Roots): string | null {
   return inputs.find((path) => (mtime(path) ?? 0) > installed) ?? null;
 }
 
+/**
+ * Whether a package root is an entry of the app's or the install root's own `node_modules`, where `yarn link`,
+ * `npm link` or a workspace swaps a symlink without an install.
+ */
+function topLevel(root: string, roots: Roots): boolean {
+  const parent = dirname(root);
+  const modules = basename(parent).startsWith('@') ? dirname(parent) : parent;
+  return [roots.project, roots.install].some((dir) => modules === join(dir, 'node_modules'));
+}
+
 /** Whether any package manager's install stamp exists for the app, so it covers what an install writes. */
 function installStamped(roots: Roots): boolean {
   return [roots.project, roots.install].some((dir) =>
@@ -525,7 +537,8 @@ export function traceReads(
         .includes('node_modules') ??
         false) &&
       !(kind === 'module' && root !== null && !named(root));
-    if (installed && stamped) continue;
+    const linkable = root !== null && topLevel(root, roots);
+    if (installed && stamped && !linkable) continue;
     const [target, as]: [string, ReadKind] =
       installed && root ? [root, realOf(root) ? 'package' : 'absent'] : [path, kind];
     const id = `${as}\0${target}`;
@@ -574,7 +587,13 @@ export class IndexSession {
     });
     while (this.loaded.length <= index && this.loaded.length < this.files.length) {
       const record = loadRecord(this.files[this.loaded.length] ?? '', this.key);
-      const stamps = record !== null && record.stamps.every((read) => checkRead(read, this.roots) !== false);
+      const own = record?.checkout === this.roots.project;
+      const stamps =
+        record !== null &&
+        record.stamps.every((read) => {
+          const validity = checkRead(read, this.roots);
+          return own ? validity === 'stat' : validity !== false;
+        });
       const file = this.files[this.loaded.length] ?? '';
       this.loaded.push(
         record ? { record, stamps, file } : { record: newRecord(this.key, '', []), stamps: false, file },
