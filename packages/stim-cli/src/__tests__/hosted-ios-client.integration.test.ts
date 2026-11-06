@@ -64,6 +64,11 @@ vi.mock('node:fs', async (importOriginal) => {
     },
   };
 });
+vi.mock('../tailscale-status.ts', async (original) => ({
+  ...(await original<typeof import('../tailscale-status.ts')>()),
+  tailscaleStatus: () => null,
+  tailscaleStatusAsync: async () => null,
+}));
 vi.mock('../offload/tailnet.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../offload/tailnet.ts')>()),
   realIo: { ...(await importOriginal<typeof import('../offload/tailnet.ts')>()).realIo, status: () => null },

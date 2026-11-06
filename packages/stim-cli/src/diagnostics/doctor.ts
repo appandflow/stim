@@ -22,7 +22,7 @@ import {
   type WorkspaceState,
 } from '@stim-cli/core/state';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { realIo } from '../offload/tailnet.ts';
+import { tailscaleStatus } from '../tailscale-status.ts';
 import { makeTemporaryDirectory } from '../temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
 import { appProjectProblem, detectIsExpo, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
@@ -1245,7 +1245,7 @@ export async function reactNativeDoctorFindings({
     lookupAgentDevice = null,
     lookupEasCli = null,
     lookupCcache = null,
-    tailnetStatus = realIo.status,
+    tailnetStatus = tailscaleStatus,
     now = Date.now,
     platform,
     host = process.platform,

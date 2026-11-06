@@ -21,6 +21,11 @@ import { runReload } from '../commands/reload.ts';
 const writeHostedAndroid = (root: string, slot: string, host: HostedAndroidPlacement | null): void =>
   writeHostedNative(root, slot, host, 'android');
 
+vi.mock('../tailscale-status.ts', async (original) => ({
+  ...(await original<typeof import('../tailscale-status.ts')>()),
+  tailscaleStatus: () => null,
+  tailscaleStatusAsync: async () => null,
+}));
 vi.mock('../offload/tailnet.ts', async (original) => ({
   ...(await original<typeof import('../offload/tailnet.ts')>()),
   realIo: { ...(await original<typeof import('../offload/tailnet.ts')>()).realIo, status: () => null },

@@ -10,11 +10,11 @@ import {
   type HostedMetroRequest,
   type HostedMetroLinks,
   reversePorts,
+  parseMachine,
 } from '@stim-cli/core/state';
 import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { clearHostedMetro } from '../device-host/metro-request.ts';
-import { parseMachine } from '../offload/tailnet.ts';
 import { openAgentRelay } from './agent-relay.ts';
 import { openMetroLinks, type MetroLinkPool } from './metro-links.ts';
 import { watchWorkspaceState } from '../workspace/workspace-state-watch.ts';
