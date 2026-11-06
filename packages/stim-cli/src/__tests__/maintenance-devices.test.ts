@@ -7,8 +7,8 @@ import { collectFinishedDevices, deleteFinishedDevices } from '../commands/gc/fi
 import type { WorktreeSkipCode, WorktreeSweep } from '../commands/gc/worktrees.ts';
 import * as ios from '../devices/ios.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { planDeviceDeletion, planDeviceDeletionAsync } from '../maintenance/devices.ts';
-import { maintenanceLine } from '../maintenance/status.ts';
+import { planDeviceDeletion, planDeviceDeletionAsync } from '../stimd/passes/devices.ts';
+import { maintenanceLine } from '../stimd/passes/status.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';

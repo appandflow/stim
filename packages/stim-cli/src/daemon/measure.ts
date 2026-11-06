@@ -1,7 +1,7 @@
 import { cpus, freemem, loadavg, totalmem } from 'node:os';
 import { configDir } from '@stim-cli/core';
 import { INTERACTIONS_KEY, buildWorkerRoot, readInteractions, type DaemonMeasurement } from '@stim-cli/core/state';
-import { readVolumeSpaceAsync } from '../budget.ts';
+import { readVolumeSpaceAsync } from '../stimd/passes/budget.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { deviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';

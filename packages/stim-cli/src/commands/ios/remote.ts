@@ -1,4 +1,4 @@
-import type { ReclaimObserver } from '../../budget.ts';
+import type { ReclaimObserver } from '../../stimd/passes/budget.ts';
 import type { StimContext } from '@stim-cli/core';
 import type { IosSimSnapshot } from '../../devices/ios.ts';
 import { runCancellationSignal } from '../../engine/native-run.ts';

@@ -1,19 +1,19 @@
 import type { StimContext } from '@stim-cli/core';
-import { DEVICE_LIST_TIMEOUT_MS } from '../commands/gc/devices.ts';
-import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { DEVICE_LIST_TIMEOUT_MS } from '../../commands/gc/devices.ts';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import {
   collectOwnedDeviceActivity,
   collectOwnedDeviceActivityAsync,
   workspaceBuildInProgress,
   type OwnedDeviceActivity,
-} from '../commands/gc/idle.ts';
-import { canonicalPath } from '../commands/gc/paths.ts';
-import { workspaceActivity } from '../devices/activity.ts';
-import { projectDeviceSlots } from '../devices/device-slots.ts';
-import { listAllIosSims, listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';
-import { leaseIsExpired, listLeaseFiles } from '../engine/device-lease.ts';
-import { loadConfig } from '../workspace/config.ts';
-import { workspaceLastUsed } from '../workspace/workspace-state.ts';
+} from '../../commands/gc/idle.ts';
+import { canonicalPath } from '../../commands/gc/paths.ts';
+import { workspaceActivity } from '../../devices/activity.ts';
+import { projectDeviceSlots } from '../../devices/device-slots.ts';
+import { listAllIosSims, listAllIosSimsAsync, type IosSimRecord } from '../../devices/ios.ts';
+import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
+import { loadConfig } from '../../workspace/config.ts';
+import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
 
 /** The activity of every owned device, read with or without a simulator listing; it throws when that listing fails. */
 type DeviceActivityReader = (withSims: boolean) => OwnedDeviceActivity[];

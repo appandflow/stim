@@ -16,7 +16,7 @@ import { MAINTENANCE_LOG_NAME, settingDefinition } from '@stim-cli/core/state';
 import { getProject, loadConfig } from '../../workspace/config.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
 import { workspaceInUseAsync } from '../../workspace/in-use.ts';
-import { maintenancePinnedReader } from '../../maintenance/protect.ts';
+import { maintenancePinnedReader } from '../../stimd/passes/protect.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
 import { holdsDeferredShutdown } from '../../devices/deferred-shutdown.ts';
 import { agentKey, attributeAgentSessions, discoverAgentSessions } from '../../agent-sessions.ts';

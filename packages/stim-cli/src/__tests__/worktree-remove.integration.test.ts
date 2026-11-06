@@ -30,7 +30,7 @@ import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject, getProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
-import * as measurements from '../maintenance/measure.ts';
+import * as measurements from '../stimd/passes/measure.ts';
 
 type ActionFn = (target: string | undefined, opts: Record<string, unknown>) => void | Promise<void>;
 

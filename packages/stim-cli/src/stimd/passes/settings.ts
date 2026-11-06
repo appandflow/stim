@@ -1,5 +1,5 @@
 import { SETTINGS, machineSettingValue, loadConfig, type Config, type MaintenanceMode } from '@stim-cli/core/state';
-import { daemonMode } from '../daemon/mode.ts';
+import { daemonMode } from '../../daemon/mode.ts';
 
 const PER_WORKSPACE = new Set(['maintenance.keep', 'maintenance.idleStopHours']);
 

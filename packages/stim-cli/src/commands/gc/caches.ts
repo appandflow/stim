@@ -3,7 +3,7 @@ import { isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
 import { cacheDirRefusal, isScopedHome, type StimContext } from '@stim-cli/core';
 import { sharedCompilationCache } from '@stim-cli/core/state';
-import { resolveMaintenanceSettings } from '../../maintenance/settings.ts';
+import { resolveMaintenanceSettings } from '../../stimd/passes/settings.ts';
 import { getConfigDir } from '../../workspace/config.ts';
 import { formatBytes } from '../../fs-util.ts';
 import { pruneCacheAsync, type CacheDescriptor } from '../../cache/caches.ts';

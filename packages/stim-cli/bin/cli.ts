@@ -70,7 +70,7 @@ try {
       process.on('exit', (code) => debugLog.log('run_end', { exit: code, ms: Date.now() - started }));
     }
     try {
-      const { warnCriticalDisk } = await import('../src/maintenance/trigger.ts');
+      const { warnCriticalDisk } = await import('../src/stimd/passes/trigger.ts');
       warnCriticalDisk();
     } catch {}
     const { runOperation } = await import('../src/run-operation.ts');

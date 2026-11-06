@@ -5,7 +5,7 @@ import { configDir, isScopedHome, type StimContext } from '@stim-cli/core';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
 import { maintenanceRunClaims } from '@stim-cli/core/state';
-import { previewMaintenance, type MaintenancePreview } from '../maintenance/preview.ts';
+import { previewMaintenance, type MaintenancePreview } from '../stimd/passes/preview.ts';
 import { gcLadderLevel, previewGcLadder, runGcLadder, type GcLadder } from './gc/ladder.ts';
 import { collectArchives, deleteArchives, archiveRefusal, archiveWorkPending } from './gc/archives.ts';
 import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
@@ -127,7 +127,7 @@ import { collectInventory, type GcInventory } from './gc/inventory.ts';
 import { collectParkedHostedDevices, deleteParkedHostedDevices } from './gc/hosted-devices.ts';
 import { collectHostedAppStorage } from './gc/hosted-apps.ts';
 import { collectFinishedDevices, deleteFinishedDevices, ownedDeviceDisk } from './gc/finished-devices.ts';
-import { ownedDeviceUsage } from '../maintenance/devices.ts';
+import { ownedDeviceUsage } from '../stimd/passes/devices.ts';
 import {
   collectGcMemory,
   GRADLE_DAEMONS_KIND,

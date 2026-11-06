@@ -49,7 +49,7 @@ import {
   type WorktreeArchive,
 } from '../workspace/worktree-archive.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
-import { measureDisk, measureDiskAsync } from '../maintenance/measure.ts';
+import { measureDisk, measureDiskAsync } from '../stimd/passes/measure.ts';
 import { diskPressure, diskThresholds } from '../daemon/pressure.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
