@@ -129,7 +129,7 @@ export function entryFiles(dist) {
   }
   entries.api = [join(dist, 'api.mjs')];
   entries.tiers = [join(dist, '../../cache/dist/tiers.mjs')];
-  const stimd = /"__stimd"\) await \(await import\("(\.\/[^"]+\.mjs)"\)\)/.exec(commands);
+  const stimd = /"__stimd"\)[^]{0,80}?import\("(\.\/[^"]+\.mjs)"\)/.exec(commands);
   if (!stimd) throw new Error(`${base[1]} loads no chunk for __stimd`);
   entries.daemon = [...base, join(dist, stimd[1]), join(dist, 'stimd-thread.mjs')];
   return entries;
