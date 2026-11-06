@@ -84,7 +84,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `native-gradle-peer-jdk` accepts an exact JDK major on native Gradle artifact queries.
  * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
  * `build-dependency-cache` checks dependency warmth against the requested project and install selection.
- * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
+ * `server-update` is `engine.update.status`, `engine.update` and `engine.update.chunk`.
  * `build-compat` accepts `compat` on `build.start`, and in place of `stimBuild` in React Native and SwiftPM artifact
  * queries.
  * `build-reuse-artifact` accepts `reuseArtifact` with `podsOnWorker` on `build.start`.
@@ -320,9 +320,9 @@ export const METHODS = [
   'device-host.input.window',
   'device-host.input.clipboard.set',
   'device-host.input.clipboard.get',
-  'server.update.status',
-  'server.update.start',
-  'server.update.chunk',
+  'engine.update.status',
+  'engine.update',
+  'engine.update.chunk',
   'machines.update.start',
   'machines.update.status',
   'device-host.sessions',
@@ -337,7 +337,7 @@ export const METHODS = [
  * The methods that update this server's `stim-server service`. A machine this one approved for `build` or
  * `device-host` may call them; they need neither `read` nor `control`.
  */
-export const SERVER_UPDATE_METHODS = ['server.update.status', 'server.update.start', 'server.update.chunk'] as const;
+export const ENGINE_UPDATE_METHODS = ['engine.update.status', 'engine.update', 'engine.update.chunk'] as const;
 
 /** The methods a connection with the `build` capability may call; they need `build`, not `read`. */
 export const BUILD_METHODS = [
@@ -1682,25 +1682,25 @@ export interface WorkspaceDiff {
   patches: WorkspacePatch[];
 }
 
-/** A `.tgz` package of a client-supplied stim-server build: its file name, size in bytes and sha256. */
-export interface ServerUpdatePackage {
+/** A `.tgz` package of a client-supplied Stim build: its file name, size in bytes and sha256. */
+export interface EngineUpdatePackage {
   name: string;
   size: number;
   sha256: string;
 }
 
 /**
- * What `server.update.start` installs: an exact stim-server `release` from the public npm registry, or the
+ * What `engine.update` installs: an exact stim `version` from the public npm registry, or the
  * `packages` of a client's own build, which the machine takes only while its `server.acceptClientBuilds` is true.
  */
-export type ServerUpdateStartParams = { release: string } | { packages: ServerUpdatePackage[] };
+export type EngineUpdateParams = { version: string } | { packages: EngineUpdatePackage[] };
 
 /**
  * An update this server runs. `uploading` waits for the rest of the packages; `installing` runs
- * `stim-server service update`, whose last `log` lines say how far it got. The connection closes when the job
- * restarts; the new server's `hello` and `server.update.status` then tell how it ended.
+ * `stim service update`, whose last `log` lines say how far it got. The connection closes when the job
+ * restarts; the new server's `hello` and `engine.update.status` then tell how it ended.
  */
-export interface ServerUpdateProgress {
+export interface EngineUpdateProgress {
   id: string;
   by: { id: string; name: string };
   target: string;
@@ -1710,7 +1710,7 @@ export interface ServerUpdateProgress {
   log: string[];
 }
 
-export interface ServerUpdateOutcome {
+export interface EngineUpdateOutcome {
   at: string;
   target: string;
   ok: boolean;
@@ -1718,24 +1718,24 @@ export interface ServerUpdateOutcome {
 }
 
 /**
- * Whether this server can update itself, and how. `service` is the `stim-server service` label it runs under, or
+ * Whether this server can update itself, and how. `service` is the `stim service` label it runs under, or
  * null when it does not run as a service and so cannot update itself. `last` is how the last `service update`
  * of that label ended, whoever ran it.
  */
-export interface ServerUpdateStatus {
+export interface EngineUpdateStatus {
   server: { version: string; stimBuild: string | null };
   service: string | null;
   acceptsClientBuilds: boolean;
-  running: ServerUpdateProgress | null;
-  last: ServerUpdateOutcome | null;
+  running: EngineUpdateProgress | null;
+  last: EngineUpdateOutcome | null;
 }
 
 /**
- * Where an update this machine asked `machine` for stands: the host's own `server.update.status`, or why it could not be
+ * Where an update this machine asked `machine` for stands: the host's own `engine.update.status`, or why it could not be
  * read (`unreachable`, also while the host restarts), and how much of this machine's build it has sent.
  */
 export interface MachineUpdateStatus {
-  remote: ServerUpdateStatus | null;
+  remote: EngineUpdateStatus | null;
   unreachable: string | null;
   upload: { sent: number; total: number; error: string | null } | null;
 }
@@ -1814,13 +1814,13 @@ export interface Methods {
   'presence.publish': { params: PresencePublishParams; result: Record<string, never> };
   'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };
   'device-host.sessions.stop': { params: { session: string }; result: { id: string; state: 'stopping' | 'stopped' } };
-  'machines.update.start': { params: { machine: string }; result: ServerUpdateProgress };
+  'machines.update.start': { params: { machine: string }; result: EngineUpdateProgress };
   'machines.update.status': { params: { machine: string }; result: MachineUpdateStatus };
-  'server.update.status': { params?: Record<string, never>; result: ServerUpdateStatus };
-  'server.update.start': { params: ServerUpdateStartParams; result: ServerUpdateProgress };
-  'server.update.chunk': {
+  'engine.update.status': { params?: Record<string, never>; result: EngineUpdateStatus };
+  'engine.update': { params: EngineUpdateParams; result: EngineUpdateProgress };
+  'engine.update.chunk': {
     params: { id: string; name: string; offset: number; data: string };
-    result: ServerUpdateProgress;
+    result: EngineUpdateProgress;
   };
   'workspace.files': { params: { workspace: string; group: 'changed' | 'untracked' }; result: WorkspaceFiles };
   'workspace.diff': { params: { workspace: string; path: string }; result: WorkspaceDiff };

@@ -65,12 +65,16 @@ vi.mock('node:child_process', async (importOriginal) => {
         if (args[0] === 'install') {
           for (const [name, manifest, entry] of [
             ['@stim-cli/server', { version: '1.0.0' }, 'stim-server.mjs'],
-            ['stim', { bin: { stim: 'dist/cli.mjs' } }, 'cli.mjs'],
+            ['stim', { version: '1.0.0', bin: { stim: 'bin/stim.mjs' } }, 'cli.mjs'],
           ] as const) {
             const pkg = join(staging, 'node_modules', name);
             mkdirSync(join(pkg, 'dist'), { recursive: true });
             writeFileSync(join(pkg, 'package.json'), JSON.stringify(manifest));
             writeFileSync(join(pkg, 'dist', entry), 'console.log("1.0.0");');
+            if (name === 'stim') {
+              mkdirSync(join(pkg, 'bin'));
+              writeFileSync(join(pkg, 'bin', 'stim.mjs'), "import '../dist/cli.mjs';");
+            }
           }
         }
         return callback(null, args[0] === 'audit' ? '{"invalid":[],"missing":[]}' : '', '');
@@ -297,7 +301,7 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     );
     expect(installed?.env).toEqual(['ANDROID_HOME=/sdk']);
     expect(installed?.pathPrepend).toEqual(['/jdk/bin']);
-    expect(installed?.script).toBe(realpathSync(process.argv[1]!));
+    expect(installed?.script).toBe(realpathSync(join(import.meta.dirname, '../../stim-cli/bin/stim.mjs')));
     const bootstraps = launchd.bootstraps.length;
     await finish(
       installJob(

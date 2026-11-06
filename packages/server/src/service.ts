@@ -21,6 +21,8 @@ import type { WorkerRootUsage } from './worker-areas.ts';
 import {
   answersAs,
   DEFAULT_LABEL,
+  DEFAULT_PORT,
+  validateLabel,
   planServe,
   normalizeEnv,
   ServiceError,
@@ -56,6 +58,7 @@ export interface ServiceOptions {
   env: string[];
   pathPrepend: string[];
   serve: boolean;
+  stimHome?: string;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -247,8 +250,33 @@ export async function requireManaged(label: string): Promise<InstalledService | 
   return installed;
 }
 
-export async function installService(options: ServiceOptions): Promise<string[]> {
-  serviceManager();
+export async function installService(options?: ServiceOptions): Promise<string[]> {
+  const manager = serviceManager();
+  // compat C12 permanent
+  if (!options) {
+    const root = dirname(manager.root(DEFAULT_LABEL));
+    const notes: string[] = [];
+    for (const entry of existsSync(root) ? readdirSync(root, { withFileTypes: true }) : []) {
+      if (!entry.isDirectory() || validateLabel(entry.name)) continue;
+      notes.push(
+        ...(await holdingUpdateClaim(entry.name, async () => {
+          const installed = await manager.read(entry.name);
+          if (!installed?.managed || installed.port === null) return [];
+          return installJob({
+            label: installed.label,
+            port: installed.port,
+            env: installed.env,
+            pathPrepend: installed.pathPrepend,
+            stimHome: installed.stimHome ?? undefined,
+            serve: false,
+          });
+        })),
+      );
+    }
+    if (notes.length) return notes;
+    options = { label: DEFAULT_LABEL, port: DEFAULT_PORT, env: [], pathPrepend: [], serve: false };
+  }
+  // compat end
   return holdingUpdateClaim(options.label, () => installJob(options));
 }
 
@@ -256,7 +284,9 @@ export async function installJob(
   options: ServiceOptions,
   setup?: { script: string; host: HostApp | null; requestPermissions: false },
 ): Promise<string[]> {
-  const script = realpathSync(setup?.script ?? process.argv[1] ?? '');
+  const script = realpathSync(
+    join(dirname(createRequire(import.meta.url).resolve('stim/package.json')), 'bin', 'stim.mjs'),
+  );
   const previous = await requireManaged(options.label);
   if (previous?.serve?.created && previous.port !== options.port) {
     throw new ServiceError(
@@ -271,7 +301,8 @@ export async function installJob(
     createRoute = prepared.create;
   }
   const environment: Record<string, string> = {};
-  if (process.env.STIM_HOME) environment.STIM_HOME = process.env.STIM_HOME;
+  const stimHome = options.stimHome ?? process.env.STIM_HOME;
+  if (stimHome) environment.STIM_HOME = stimHome;
   if (process.env.SHELL) environment.SHELL = process.env.SHELL;
   const manager = serviceManager();
   const host = setup ? setup.host : await manager.host();
@@ -717,8 +748,8 @@ const IDLE_WAIT_MS = 30 * 60_000;
 const IDLE_POLL_MS = 5000;
 const NPM_TIMEOUT_MS = 10 * 60_000;
 const REGISTRY = 'https://registry.npmjs.org/';
-const SERVER_PACKAGE = '@stim-cli/server';
-const SERVER_SCRIPT = ['node_modules', '@stim-cli', 'server', 'dist', 'stim-server.mjs'];
+const SERVER_PACKAGE = 'stim';
+const SERVER_SCRIPT = ['node_modules', 'stim', 'bin', 'stim.mjs'];
 
 export type UpdateSource = { release: string } | { from: string };
 
@@ -929,7 +960,7 @@ export async function installServer(
     if (problem) throw new ServiceError(`${problem}. Not switching to it.`);
     const script = join(staging, ...SERVER_SCRIPT);
     const build = existsSync(script) ? serverBuild(script) : null;
-    const serverDigest = existsSync(script) ? stimBuildDigest(dirname(script)) : null;
+    const serverDigest = existsSync(script) ? stimBuildDigest(join(dirname(script), '..', 'dist')) : null;
     if (!build?.stimBuild || !serverDigest) {
       throw new ServiceError(`The install has no ${SERVER_PACKAGE} with its stim build.`);
     }

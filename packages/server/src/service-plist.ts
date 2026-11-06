@@ -134,6 +134,8 @@ export function normalizeEnv(env: string[]): string[] {
 
 export function serverArguments(spec: Pick<ServiceSpec, 'port' | 'env' | 'pathPrepend'>): string[] {
   return [
+    'serve',
+    '--service',
     '--port',
     String(spec.port),
     ...[...environmentValues(spec.env).keys()].flatMap((name) => ['--env', name]),

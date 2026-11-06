@@ -4,38 +4,28 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { packWorkspace, workspacePackages } from '../src/machine-update.ts';
+import { packStim } from '../src/machine-update.ts';
 import { installServer } from '../src/service.ts';
 
 const UNPUBLISHED = '99.0.0';
-const SERVER_DIR = fileURLToPath(new URL('..', import.meta.url));
+const SERVER_DIR = fileURLToPath(new URL('../../stim-cli', import.meta.url));
 
 let root: string;
 
 async function packAtUnpublishedVersion(out: string, change?: string): Promise<void> {
-  const packages = workspacePackages(SERVER_DIR);
-  if (!packages) throw new Error('This test runs from a Stim checkout.');
-  const names = new Set(packages.keys());
-  for (const file of await packWorkspace(packages)) {
-    const work = mkdtempSync(join(root, 'pack-'));
-    const tarball = join(work, file.name);
-    writeFileSync(tarball, file.bytes);
-    execFileSync('/usr/bin/tar', ['-xzf', tarball, '-C', work]);
-    const manifestPath = join(work, 'package', 'package.json');
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
-    manifest.version = UNPUBLISHED;
-    for (const field of ['dependencies', 'peerDependencies', 'optionalDependencies']) {
-      const ranges = manifest[field] as Record<string, string> | undefined;
-      for (const [name, range] of Object.entries(ranges ?? {})) {
-        if (names.has(name)) ranges![name] = range.startsWith('^') ? `^${UNPUBLISHED}` : UNPUBLISHED;
-      }
-    }
-    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-    if (manifest.name === change) writeFileSync(join(work, 'package', 'README.md'), 'changed\n');
-    execFileSync('/usr/bin/tar', ['-czf', join(out, file.name), '-C', work, 'package'], {
-      env: { ...process.env, COPYFILE_DISABLE: '1' },
-    });
-  }
+  const file = await packStim(SERVER_DIR);
+  const work = mkdtempSync(join(root, 'pack-'));
+  const tarball = join(work, file.name);
+  writeFileSync(tarball, file.bytes);
+  execFileSync('/usr/bin/tar', ['-xzf', tarball, '-C', work]);
+  const manifestPath = join(work, 'package', 'package.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+  manifest.version = UNPUBLISHED;
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  if (manifest.name === change) writeFileSync(join(work, 'package', 'README.md'), 'changed\n');
+  execFileSync('/usr/bin/tar', ['-czf', join(out, file.name), '-C', work, 'package'], {
+    env: { ...process.env, COPYFILE_DISABLE: '1' },
+  });
 }
 
 beforeAll(() => {
@@ -46,7 +36,7 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-describe('stim-server service update --from against real npm', () => {
+describe('stim service update --from against real npm', () => {
   it('installs packed Stim packages at an unpublished version and still audits registry packages', async () => {
     const from = join(root, 'incoming');
     const versions = join(root, 'versions');
@@ -71,7 +61,7 @@ describe('stim-server service update --from against real npm', () => {
 
     const changed = join(root, 'changed');
     mkdirSync(changed);
-    await packAtUnpublishedVersion(changed, '@stim-cli/transport-tailscale');
+    await packAtUnpublishedVersion(changed, 'stim');
     const reinstalled = await installServer(versions, { from: changed }, process.execPath, () => {});
     expect(reinstalled.dir).not.toBe(installed.dir);
   }, 600_000);

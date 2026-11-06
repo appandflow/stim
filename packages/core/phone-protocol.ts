@@ -471,7 +471,7 @@ export type PhoneMethods = Omit<
   Wire.Methods,
   | (typeof Wire.BUILD_METHODS)[number]
   | (typeof Wire.DEVICE_HOST_METHODS)[number]
-  | (typeof Wire.SERVER_UPDATE_METHODS)[number]
+  | (typeof Wire.ENGINE_UPDATE_METHODS)[number]
   | 'desktop.authenticate'
   | 'desktop.reports.get'
   | 'desktop.reports.subscribe'

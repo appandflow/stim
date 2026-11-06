@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync, closeSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
-import type { ProtocolError, ServerUpdatePackage, ServerUpdateProgress, ServerUpdateStatus } from './protocol.ts';
+import type { ProtocolError, EngineUpdatePackage, EngineUpdateProgress, EngineUpdateStatus } from './protocol.ts';
 import { compareVersions, validateRelease, type ServerBuild } from './service-plist.ts';
 import { serviceManagerOrNull, serviceRoot } from './service-manager.ts';
 import { describeSource, readLastUpdate, runsAsService, type UpdateOutcome, type UpdateSource } from './service.ts';
@@ -18,9 +18,9 @@ const LOG_LINES = 20;
 const PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.tgz$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 
-type Answer = { result: ServerUpdateProgress } | { error: ProtocolError };
+type Answer = { result: EngineUpdateProgress } | { error: ProtocolError };
 
-export interface ServerUpdateOptions {
+export interface EngineUpdateOptions {
   label: string | null;
   port: number;
   build: ServerBuild;
@@ -30,7 +30,7 @@ export interface ServerUpdateOptions {
   acceptsClientBuilds: () => boolean;
   drain: (reason: string | null) => void;
   audit: (record: {
-    by: ServerUpdateProgress['by'];
+    by: EngineUpdateProgress['by'];
     target: string;
     phase: 'started' | 'ended';
     ok: boolean;
@@ -42,7 +42,7 @@ export interface ServerUpdateOptions {
 }
 
 interface Upload {
-  packages: (ServerUpdatePackage & { received: number; hash: ReturnType<typeof createHash> })[];
+  packages: (EngineUpdatePackage & { received: number; hash: ReturnType<typeof createHash> })[];
   dir: string;
 }
 
@@ -50,16 +50,15 @@ const refused = (code: ProtocolError['code'], message: string): { error: Protoco
   error: { code, message },
 });
 
-/** Parses `server.update.start` params, or says why they are refused. */
-export function parseUpdateStart(params: unknown): { release: string } | { packages: ServerUpdatePackage[] } | string {
-  if (!isJsonObject(params)) return 'server.update.start takes release or packages.';
-  if ('release' in params === 'packages' in params)
-    return 'server.update.start takes exactly one of release or packages.';
-  if (typeof params.release === 'string') return validateRelease(params.release) ?? { release: params.release };
+/** Parses `engine.update` params, or says why they are refused. */
+function parseUpdateStart(params: unknown): { version: string } | { packages: EngineUpdatePackage[] } | string {
+  if (!isJsonObject(params)) return 'engine.update takes version or packages.';
+  if ('version' in params === 'packages' in params) return 'engine.update takes exactly one of version or packages.';
+  if (typeof params.version === 'string') return validateRelease(params.version) ?? { version: params.version };
   if (!Array.isArray(params.packages) || params.packages.length === 0 || params.packages.length > MAX_PACKAGES) {
     return `packages lists 1 to ${MAX_PACKAGES} .tgz files.`;
   }
-  const packages: ServerUpdatePackage[] = [];
+  const packages: EngineUpdatePackage[] = [];
   for (const entry of params.packages) {
     if (
       !isJsonObject(entry) ||
@@ -85,18 +84,18 @@ export function parseUpdateStart(params: unknown): { release: string } | { packa
 }
 
 /**
- * Runs `stim-server service update` for a client this machine approved for builds or device hosting. The update runs
+ * Runs `stim service update` for a client this machine approved for builds or device hosting. The update runs
  * as a detached process with this server's own node and script, so it survives the restart it causes; its output
  * goes to a log file rather than a pipe, which would break when this server exits.
  */
-export class ServerUpdates {
-  private readonly options: ServerUpdateOptions;
-  private running: ServerUpdateProgress | null = null;
+export class EngineUpdates {
+  private readonly options: EngineUpdateOptions;
+  private running: EngineUpdateProgress | null = null;
   private upload: Upload | null = null;
   private idle: NodeJS.Timeout | null = null;
   private ended: UpdateOutcome | null = null;
 
-  constructor(options: ServerUpdateOptions) {
+  constructor(options: EngineUpdateOptions) {
     this.options = options;
     this.sweepIncoming();
   }
@@ -130,7 +129,7 @@ export class ServerUpdates {
     return join(this.root()!, 'update.log');
   }
 
-  private progress(): ServerUpdateProgress | null {
+  private progress(): EngineUpdateProgress | null {
     if (!this.running) return null;
     let log: string[] = [];
     if (this.running.state === 'installing') {
@@ -144,7 +143,7 @@ export class ServerUpdates {
     return { ...this.running, missing, log };
   }
 
-  async status(): Promise<ServerUpdateStatus> {
+  async status(): Promise<EngineUpdateStatus> {
     const label = this.options.label;
     const service = label && (await (this.options.runsAsService ?? runsAsService)(label, this.options.port));
     return {
@@ -162,35 +161,35 @@ export class ServerUpdates {
     return Date.parse(recorded.at) >= Date.parse(this.ended.at) ? recorded : this.ended;
   }
 
-  async start(by: ServerUpdateProgress['by'], params: unknown): Promise<Answer> {
+  async start(by: EngineUpdateProgress['by'], params: unknown): Promise<Answer> {
     const parsed = parseUpdateStart(params);
     if (typeof parsed === 'string') return refused('bad-request', parsed);
-    if ('release' in parsed && compareVersions(parsed.release, this.options.build.version) < 0) {
+    if ('version' in parsed && compareVersions(parsed.version, this.options.build.version) < 0) {
       return refused(
         'bad-request',
-        `This server runs ${this.options.build.version}; it does not install the older release ${parsed.release} on a client's request. To downgrade it, run \`stim-server service update --release ${parsed.release}\` on the machine it runs on.`,
+        `This server runs ${this.options.build.version}; it does not install the older release ${parsed.version} on a client's request. To downgrade it, run \`stim service update --release ${parsed.version}\` on the machine it runs on.`,
       );
     }
     const label = this.options.label;
     if (!label || !(await (this.options.runsAsService ?? runsAsService)(label, this.options.port))) {
       return refused(
         'forbidden',
-        'This stim-server was not started by `stim-server service install`, so it cannot update itself. Update it where it runs.',
+        'This stim-server was not started by `stim service install`, so it cannot update itself. Update it where it runs.',
       );
     }
     if ('packages' in parsed && !this.options.acceptsClientBuilds()) {
       return refused(
         'forbidden',
-        'This machine installs only stim-server releases from npm. To take this build, run `stim settings set server.acceptClientBuilds true` on it.',
+        'This machine installs only stim releases from npm. To take this build, run `stim settings set server.acceptClientBuilds true` on it.',
       );
     }
     if (this.running)
       return refused('action-busy', `An update of this server is already running (${this.running.target}).`);
     const id = randomUUID();
     const base = { id, by, startedAt: new Date().toISOString() };
-    if ('release' in parsed) {
-      this.running = { ...base, target: `release ${parsed.release}`, state: 'installing', missing: [], log: [] };
-      return this.launch(parsed) ?? { result: this.progress()! };
+    if ('version' in parsed) {
+      this.running = { ...base, target: `release ${parsed.version}`, state: 'installing', missing: [], log: [] };
+      return this.launch({ release: parsed.version }) ?? { result: this.progress()! };
     }
     const incoming = join(this.root()!, 'incoming');
     const dir = join(incoming, id);
@@ -218,7 +217,7 @@ export class ServerUpdates {
   chunk(client: string, params: unknown): Answer {
     const upload = this.upload;
     if (!upload || !this.running || this.running.by.id !== client) {
-      return refused('bad-request', 'No package upload from this machine is running; call server.update.start first.');
+      return refused('bad-request', 'No package upload from this machine is running; call engine.update first.');
     }
     if (this.running.state !== 'uploading') {
       return refused('action-busy', 'Every package arrived; the update is installing them.');
@@ -233,7 +232,7 @@ export class ServerUpdates {
     ) {
       return refused(
         'bad-request',
-        `server.update.chunk takes id, name, offset and at most ${UPDATE_CHUNK_CHARS} characters of base64 data.`,
+        `engine.update.chunk takes id, name, offset and at most ${UPDATE_CHUNK_CHARS} characters of base64 data.`,
       );
     }
     const entry = upload.packages.find((each) => each.name === params.name);

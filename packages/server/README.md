@@ -759,7 +759,7 @@ reports for remote machines.
 
 Every method other than `hello` needs `read`, except the methods with their own
 approval: `build.*` needs `build`, the `device-host.*` methods that run a hosted
-session need `device-host`, and `server.update.*` needs the build or device-host
+session need `device-host`, and `engine.update.*` needs the build or device-host
 approval of the requesting machine (see [Remote update](#remote-update)). A device
 with only `build` gets `forbidden` for every other method.
 
@@ -1964,7 +1964,7 @@ connection, so the remote machine keeps up with the client without ssh. A
 server that offers it lists `server-update` in its `hello` features. A paired
 phone, a `read` or `control` device and the local socket connection cannot. The methods need that approval, not `read`:
 
-- `server.update.status` returns `server` (`version` and `stimBuild`),
+- `engine.update.status` returns `server` (`version` and `stimBuild`),
   `service` (the label of the service this server runs under, or `null` when
   it does not run as a `stim-server service` and so cannot update itself),
   `acceptsClientBuilds`, `running` (the update in progress, with its `state`,
@@ -1972,7 +1972,7 @@ phone, a `read` or `control` device and the local socket connection cannot. The 
   label's last `service update` ended, whoever ran it, or how the update this
   server started ended when that is newer, such as one the update lock refused,
   with the last line of its log).
-- `server.update.start` takes `{ "release": "<version>" }`, an exact version
+- `engine.update` takes `{ "version": "<version>" }`, an exact version
   that `stim-server service update --release` installs, or
   `{ "packages": [{ "name", "size", "sha256" }] }`, at most 8 `.tgz` packages
   of the client's own build. A `release` older than the version this server
@@ -1980,7 +1980,7 @@ phone, a `read` or `control` device and the local socket connection cannot. The 
   on this machine to downgrade it. Packages need `server.acceptClientBuilds` set to
   `true` on this machine (`stim settings set server.acceptClientBuilds true`); a
   release needs no setting. One update runs at a time.
-- `server.update.chunk` takes `{ id, name, offset, data }`, at most 32 KiB of
+- `engine.update.chunk` takes `{ id, name, offset, data }`, at most 32 KiB of
   base64 at the package's next offset. A package whose bytes do not match its
   `sha256` ends the update. The upload lapses after 10 minutes without a chunk.
 
@@ -1990,10 +1990,10 @@ new offloaded builds and hosted sessions, and runs
 node and script as a detached process, which outlives the restart it causes
 and writes to `~/Library/Application Support/Stim/services/<label>/update.log`.
 The connection closes when the job restarts. The client reconnects and reads the
-outcome from `hello` and `server.update.status`. An update that ends while this
+outcome from `hello` and `engine.update.status`. An update that ends while this
 server still runs (a refused upload, a failed install) takes new work again.
-The action log records each update as `server.update.started`, and as
-`server.update.ended` when it ends while this server still runs. A chunk that
+The action log records each update as `engine.updateed`, and as
+`engine.update.ended` when it ends while this server still runs. A chunk that
 arrives once every package is in gets `action-busy`, and a retried reservation
 of an existing hosted session still answers during the drain.
 
@@ -2005,7 +2005,7 @@ with the stim-server that proves the key pinned at approval, and asks it for thi
 server runs from a Stim checkout, it instead packs the checkout's workspace
 packages as `npm pack` would and sends them. `machines.update.status` takes
 the same `{ "machine" }` and returns `remote` (the machine's
-`server.update.status`), `unreachable` (why it could not be read, also while it
+`engine.update.status`), `unreachable` (why it could not be read, also while it
 restarts) and `upload` (`sent`, `total` and `error` of the packages).
 
 ## Offloaded builds
