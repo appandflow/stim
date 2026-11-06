@@ -35,15 +35,14 @@ import Testing
   @Test func distinguishesStoppedConnectingUnavailableAndReadOnlyHostedScreens() throws {
     let now = Date()
     let hosted = DeviceRef.ios(slot: "tablet", try device())
-    let open = ServerLink.open(features: ["ios-hosted"], capabilities: ["read", "control"])
+    let open = ServerLink.open(desktopApi: 1, capabilities: ["read", "control"])
     #expect(PhysicalScreen(device: hosted, link: open, now: now).canControl)
     #expect(PhysicalScreen(device: hosted, link: .connecting, now: now) == .message("Connecting to stim-server"))
     #expect(PhysicalScreen(device: hosted, link: .unavailable("offline"), now: now) == .message("offline"))
-    let readOnly = ServerLink.open(features: ["ios-hosted"], capabilities: ["read"])
+    let readOnly = ServerLink.open(desktopApi: 1, capabilities: ["read"])
     #expect(
       PhysicalScreen(device: hosted, link: readOnly, now: now)
         == .stream(control: "Stim Desktop's stim-server pairing is read only."))
-    #expect(!PhysicalScreen(device: hosted, link: .open(features: [], capabilities: ["control"]), now: now).canControl)
     let stopped = DeviceRef.ios(slot: "tablet", try device("stopped"))
     #expect(!stopped.isRunning)
     #expect(

@@ -1,4 +1,3 @@
-import AppKit
 import StimKit
 import SwiftUI
 
@@ -7,7 +6,6 @@ struct AdvancedSettingsView: View {
   @ObservedObject var server: ServerController
   var settings: MachineSettingsStore
   let stimHome: String
-  @AppStorage(AppPreferences.Key.stimServerExecutable) private var executable = ""
   @AppStorage(AppPreferences.Key.stimHome) private var homeSetting = ""
   @AppStorage(AppPreferences.Key.environmentOverrides) private var overrides = ""
 
@@ -57,11 +55,7 @@ struct AdvancedSettingsView: View {
       }
       Section {
         ServerStatusRows(server: server, stimHome: stimHome)
-        HStack {
-          TextField("stim-server executable", text: $executable, prompt: Text("the stim-server bundled with Stim Desktop"))
-          Button("Choose\u{2026}", action: chooseExecutable).buttonStyle(.stim())
-        }
-        .help("Overrides the bundled stim-server the next time the server starts.")
+
       } header: {
         Text("stim-server")
       } footer: {
@@ -76,11 +70,4 @@ struct AdvancedSettingsView: View {
     .background(Palette.background)
   }
 
-  private func chooseExecutable() {
-    let panel = NSOpenPanel()
-    panel.canChooseFiles = true
-    panel.canChooseDirectories = false
-    panel.prompt = "Choose"
-    if panel.runModal() == .OK, let url = panel.url { executable = url.path }
-  }
 }

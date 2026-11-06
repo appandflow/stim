@@ -23,7 +23,7 @@ struct SetupGuideView: View {
   }
   private var canCheckProject: Bool {
     guard let connection = server.statsConnection, case .open(let hello) = connection.client.state else { return false }
-    return hello.features?.contains("desktop-doctor-run") == true
+    return hello.desktopApi == ServerProtocol.desktopApi
   }
   private var busy: Bool { actions.active(for: Onboarding.actionKey) != nil }
 

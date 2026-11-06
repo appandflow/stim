@@ -1,6 +1,6 @@
 import Foundation
 
-/// A checked `stim-server pair` payload: a tailnet or local network endpoint, the single-use token's 32 bytes and the
+/// A checked `stim pair` payload: a tailnet or local network endpoint, the single-use token's 32 bytes and the
 /// server key's fingerprint, which Desktop always requires.
 public struct PairingPayload: Equatable, Sendable {
   public enum Problem: Error, Equatable, LocalizedError {
@@ -13,7 +13,7 @@ public struct PairingPayload: Equatable, Sendable {
 
     public var errorDescription: String? {
       switch self {
-      case .notAPairingCode: return "This is not a Stim pairing code. Paste the output of stim-server pair."
+      case .notAPairingCode: return "This is not a Stim pairing code. Paste the output of stim pair."
       case .serverOutdated: return "This pairing code is from an older stim-server. Update stim-server on that machine."
       case .desktopOutdated: return "This pairing code needs a newer Stim Desktop."
       case .missingFingerprint: return "The pairing code has no server fingerprint, so Stim Desktop cannot check the server."
@@ -31,7 +31,7 @@ public struct PairingPayload: Equatable, Sendable {
   public var fingerprint: String
   public var network: Network
 
-  /// Reads the bare JSON `stim-server pair` prints or the `{ qr, expiresAt }` wrapper of `pair --json`.
+  /// Reads the bare JSON `stim pair` prints or the `{ qr, expiresAt }` wrapper of `pair --json`.
   public static func parse(_ text: String) throws -> PairingPayload {
     let data = Data(text.utf8)
     guard case .object(let outer)? = try? JSONDecoder().decode(JSONValue.self, from: data) else {

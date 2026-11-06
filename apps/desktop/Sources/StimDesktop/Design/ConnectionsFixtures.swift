@@ -71,16 +71,16 @@
          {"machine":"studio","state":"outdated","dnsName":"studio.tail1234.ts.net","deviceId":"e5f6a7b8",
           "diagnosis":{"layer":"compat","code":"server-outdated","title":"Server is outdated",
             "message":"studio runs a stim-server older than this machine's Stim.",
-            "remedy":"On studio, run stim-server service update --release 1.40.0."}}]
+            "remedy":"On studio, run stim service update --release 1.40.0."}}]
         """
       return (try? JSONDecoder().decode([BuildMachineStatus].self, from: Data(json.utf8))) ?? []
     }
 
     private var listing: RemoteMachineListing? {
       let json = """
-        {"machines":[{"machine":"mini","serverKeyFingerprint":"\(Self.mini.id)","revoke":["stim-server devices revoke a1b2c3d4"]},
+        {"machines":[{"machine":"mini","serverKeyFingerprint":"\(Self.mini.id)","revoke":["stim pairings revoke a1b2c3d4"]},
                      {"machine":"build-box","serverKeyFingerprint":null,"revoke":[]},
-                     {"machine":"studio","serverKeyFingerprint":"other","revoke":["stim-server devices revoke e5f6a7b8"]}]}
+                     {"machine":"studio","serverKeyFingerprint":"other","revoke":["stim pairings revoke e5f6a7b8"]}]}
         """
       return try? JSONDecoder().decode(RemoteMachineListing.self, from: Data(json.utf8))
     }

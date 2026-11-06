@@ -24,7 +24,8 @@ import XCTest
     transport.answer(
       try await transport.take("hello"),
       .object([
-        "protocol": .number(1), "server": .object(["name": .string("Mac"), "version": .string("1"), "stim": .string("1")]),
+        "protocol": .number(1), "desktopApi": .number(1),
+        "server": .object(["name": .string("Mac"), "version": .string("1"), "stim": .string("1")]),
         "capabilities": .array([.string("read")]),
       ]))
     await settle()

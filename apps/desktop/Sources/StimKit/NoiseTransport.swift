@@ -24,7 +24,6 @@ public enum NoiseCredential: Sendable {
   private var cipher: NoiseTransportCipher?
   private var queued: [String] = []
   private var finished = false
-  private var serverAnswered = false
   private var cancelTimeout: (() -> Void)?
   private let credential: NoiseCredential
   private let onVerified: @MainActor (Data) throws -> Void
@@ -148,13 +147,12 @@ public enum NoiseCredential: Sendable {
     case .closed(let description, let code, let reason):
       finished = true
       cancelTimeout?()
-      onEvent(Self.closeEvent(description: description, code: code, reason: reason, serverAnswered: serverAnswered))
+      onEvent(Self.closeEvent(description: description, code: code, reason: reason))
     }
   }
 
   private func readHandshake(_ data: Data) {
     guard var handshake else { return }
-    serverAnswered = true
     let payload: Data
     do {
       payload = try handshake.readMessage(data)
@@ -230,14 +228,9 @@ public enum NoiseCredential: Sendable {
     onEvent(event)
   }
 
-  /// A close is a refusal when its reason is one of the phone's refusal codes, or when a protocol 1 server closes
-  /// with 4400 "unexpected binary frame" before answering the handshake.
-  static func closeEvent(description: String, code: UInt16?, reason: String?, serverAnswered: Bool)
+  static func closeEvent(description: String, code: UInt16?, reason: String?)
     -> ServerTransportEvent
   {
-    if !serverAnswered, code == closeBadRequest, reason == "unexpected binary frame" {
-      return .refused(refusal("server-outdated"))
-    }
     if code == closeRefused || code == closeBadRequest, let reason, ServerProtocol.refusalCodes.contains(reason) {
       return .refused(refusal(reason))
     }
@@ -248,7 +241,6 @@ public enum NoiseCredential: Sendable {
   static func refusal(_ code: String) -> ServerError {
     let message: String
     switch code {
-    case "server-outdated": message = "Update stim-server on this machine. It speaks an older protocol than Stim Desktop."
     case "server-key-mismatch":
       message = "This machine's key does not match the pairing code or the key Stim Desktop paired with."
     case "unknown-secret": message = "This pairing code expired or was already used. Show a new one on the machine."
@@ -292,7 +284,7 @@ public enum NoiseCredential: Sendable {
   }
 }
 
-/// Pairs with another machine's stim-server from a `stim-server pair` payload, as the phone does: a fresh client key for
+/// Pairs with another machine's stim-server from a `stim pair` payload, as the phone does: a fresh client key for
 /// this pairing, protocol 2's first-contact handshake with the payload's token, then `hello`.
 @MainActor public enum NoisePairing {
   private static var active: Set<String> = []

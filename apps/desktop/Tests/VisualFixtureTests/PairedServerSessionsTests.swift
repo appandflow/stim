@@ -18,7 +18,7 @@ import XCTest
       let id = request["id"], request["method"]?.string == "hello"
     else { return }
     let result: JSONValue = .object([
-      "protocol": .number(2),
+      "protocol": .number(2), "desktopApi": .number(1),
       "server": .object([
         "id": .string(serverID), "name": .string("floco"), "version": .string("1"), "stim": .string("1"),
       ]),

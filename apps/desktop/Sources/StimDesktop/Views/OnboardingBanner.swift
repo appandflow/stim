@@ -7,7 +7,6 @@ import SwiftUI
 struct OnboardingBanner: View {
   @ObservedObject var onboarding: Onboarding
   @EnvironmentObject private var actions: ActionCenter
-  @ObservedObject private var flags = FeatureFlagStore.shared
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var showsCommand = false
 
@@ -24,12 +23,6 @@ struct OnboardingBanner: View {
 
   private func currentKind(_ report: Onboarding.Report) -> Onboarding.PopupKind? {
     if onboarding.showsGuide { return nil }
-    if report.nodeBlocksServer, !onboarding.dismissedPopups.contains(.node) { return .node }
-    if let server = report.server, !server.isCompatible, !report.nodeBlocksServer,
-      !onboarding.dismissedPopups.contains(.server)
-    {
-      return .server
-    }
     if !report.viewerKeys.isEmpty,
       !onboarding.dismissedPopups.contains(.viewer)
     {
@@ -41,44 +34,8 @@ struct OnboardingBanner: View {
   @ViewBuilder
   private func popup(_ kind: Onboarding.PopupKind, _ report: Onboarding.Report) -> some View {
     switch kind {
-    case .node: nodePopup(report)
-    case .server: serverPopup(report)
     case .viewer: viewerPopup(report.viewerKeys)
     }
-  }
-
-  private func nodePopup(_ report: Onboarding.Report) -> some View {
-    let runtime = report.nodeBlockingServer
-    return popupCard(kind: .node, icon: "exclamationmark.triangle", tone: .warning) {
-      Text("Update Node.js to Use Stim Desktop").font(.stim(.headline))
-      Text(
-        "stim-server needs Node.js \(SetupChecks.nodeMinimum.description) or later. Make a newer Node your version manager's default, or reinstall the CLI under one when an older Node sits beside it, then check again."
-      )
-      .foregroundStyle(Palette.secondary)
-      if let runtime {
-        disclosure { Text("\(abbreviatingHome(runtime.path)) is \(runtime.version).") }
-      }
-    } buttons: {
-      Button("Check Again", action: onboarding.check).buttonStyle(.stim(.primary))
-    }
-  }
-
-  private func serverPopup(_ report: Onboarding.Report) -> some View {
-    guard let server = report.server else { return AnyView(EmptyView()) }
-    let missing = server == .missing
-    return AnyView(
-      popupCard(kind: .server, icon: flags.phoneApp ? "iphone.gen3.radiowaves.left.and.right" : "server.rack", tone: .warning) {
-        Text(PhoneApp.Copy.serverPopupTitle(missing: missing, phoneApp: flags.phoneApp))
-          .font(.stim(.headline))
-        Text(PhoneApp.Copy.serverPopupDetail(minimum: StimServerCLI.minimumVersion.description, phoneApp: flags.phoneApp))
-          .foregroundStyle(Palette.secondary)
-        disclosure { Text(detail(server, name: "stim-server", path: report.serverPath, manager: .npm)) }
-      } buttons: {
-        runButton(
-          missing ? "Install stim-server" : "Update stim-server", variant: .primary, key: .server,
-          action: onboarding.installServer)
-        Button("Choose stim-server Executable\u{2026}", action: onboarding.chooseServer).buttonStyle(.stim())
-      })
   }
 
   private func viewerPopup(_ keys: [String]) -> some View {
@@ -108,22 +65,6 @@ struct OnboardingBanner: View {
     "androidEmulatorApp":
       "Android: Stim boots owned emulators without a window and shows them here. One already running keeps its window until it next boots.",
   ]
-
-  private func detail(_ compatibility: CLICompatibility, name: String, path: String?, manager: PackageManager)
-    -> String
-  {
-    switch compatibility {
-    case .missing:
-      return
-        "Stim Desktop found no \(name). Installing runs \(manager.rawValue) \(manager == .npm ? "install" : "add") --global and needs Node.js 22.12 or later."
-    case .outdated(let found?):
-      return "\(abbreviatingHome(path ?? name)) reports \(found)."
-    case .outdated(nil):
-      return "\(abbreviatingHome(path ?? name)) did not report a version."
-    case .compatible(let version):
-      return "\(abbreviatingHome(path ?? name)) \(version)"
-    }
-  }
 
   @ViewBuilder
   private func disclosure<Content: View>(@ViewBuilder content: @escaping () -> Content) -> some View {

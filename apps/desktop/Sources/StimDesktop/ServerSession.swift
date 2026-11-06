@@ -119,14 +119,14 @@ import StimKit
     guard let controller else {
       switch state {
       case .idle, .connecting: return .connecting
-      case .open(let hello): return .open(features: hello.features, capabilities: hello.capabilities)
+      case .open(let hello): return .open(desktopApi: hello.desktopApi, capabilities: hello.capabilities)
       case .waiting(_, let reason): return .unavailable("Can't reach \(name): \(reason) Retrying.")
       case .refused(let error): return .unavailable(error.message)
       }
     }
     if case .running(let health, _) = controller.state, health.protocolVersion < Self.protocolVersion {
       return .unavailable(
-        "This stim-server \(health.version) is too old for this Stim Desktop. Update it, or clear the stim-server override in Settings."
+        "stim-server \(health.version) on port \(controller.port) is older than Stim Desktop; run npm i -g stim@1.42.0 && stim service install, or quit it"
       )
     }
     guard client != nil else {
@@ -139,7 +139,7 @@ import StimKit
     }
     switch state {
     case .idle, .connecting: return .connecting
-    case .open(let hello): return .open(features: hello.features, capabilities: hello.capabilities)
+    case .open(let hello): return .open(desktopApi: hello.desktopApi, capabilities: hello.capabilities)
     case .waiting(_, let reason): return .unavailable("stim-server is unreachable: \(reason) Retrying.")
     case .refused(let error): return .unavailable(error.message)
     }
