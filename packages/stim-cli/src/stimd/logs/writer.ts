@@ -7,6 +7,7 @@ import { workspaceLogsDir } from '../../workspace/paths.ts';
 export interface LogSink {
   writer: NdjsonWriter;
   line(line: string, clockOffsetMs: number | null, generation?: number): void;
+  sync(): Promise<void>;
   beginBackfill(since: number): Promise<void>;
   backfillLine(line: string, clockOffsetMs: number | null): void;
   endBackfill(): Promise<void>;
@@ -36,6 +37,7 @@ export function createLogWriters(
   onFailure: (error: Error) => void,
   onChange: (streamId: string) => void = () => {},
   onObserved: (streamId: string, generation: number) => void = () => {},
+  onWriteFailure: (streamId: string, generation: number) => void = () => {},
 ): LogWriters {
   const worker = new Worker(spawnEntry('stimd-thread'), { workerData: { stimdThread: 'logs' } });
   let next = 0;
@@ -71,6 +73,10 @@ export function createLogWriters(
       }
       if (message.event === 'observed' && message.streamId && message.generation !== undefined) {
         onObserved(message.streamId, message.generation);
+        return;
+      }
+      if (message.event === 'write-failed' && message.streamId && message.generation !== undefined) {
+        onWriteFailure(message.streamId, message.generation);
         return;
       }
       if (message.event === 'drained' && message.streamId) {
@@ -155,6 +161,7 @@ export function createLogWriters(
       return {
         writer,
         line: (line, clockOffsetMs, generation) => sendLine('line', line, clockOffsetMs, generation),
+        sync: () => request({ op: 'sync', streamId: input.streamId }),
         beginBackfill: (since) => request({ op: 'backfill.begin', streamId: input.streamId, since }),
         backfillLine: (line, clockOffsetMs) => sendLine('backfill.line', line, clockOffsetMs),
         endBackfill: () => request({ op: 'backfill.end', streamId: input.streamId }),

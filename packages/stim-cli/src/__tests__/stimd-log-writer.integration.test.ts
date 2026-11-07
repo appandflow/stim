@@ -101,10 +101,16 @@ test('a failed live write does not suppress a successful historical copy', async
   const home = mkdtempSync(join(tmpdir(), 'stim-log-writer-home-'));
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-log-writer-app-')));
   vi.stubEnv('STIM_HOME', home);
-  const writers = createLogWriters(() => {});
+  const writeFailure = vi.fn<(streamId: string, generation: number) => void>();
+  const observed = vi.fn<(streamId: string, generation: number) => void>();
+  const writers = createLogWriters(
+    () => {},
+    () => {},
+    observed,
+    writeFailure,
+  );
   try {
     const path = join(workspaceLogsDir(root), 'device.ndjson');
-    mkdirSync(path, { recursive: true });
     const sink = await writers.open(
       { streamId: 'one', slotKey: 'ios', root, platform: 'ios', physical: false, attribution: {} },
       () => {},
@@ -114,14 +120,45 @@ test('a failed live write does not suppress a successful historical copy', async
       timestamp: '2026-11-07T00:00:00.000Z',
       eventMessage: 'retry',
     });
-    sink.line(line, null);
+    sink.line(JSON.stringify({ eventType: 'logEvent', eventMessage: 'x'.repeat(1024 * 1024) }), null, 1);
+    await sink.sync();
+    expect(observed).toHaveBeenCalledWith('one', 1);
+    rmSync(path, { force: true });
+    mkdirSync(path, { recursive: true });
+    sink.line(line, null, 1);
     await sink.beginBackfill(Date.parse('2026-11-06T23:59:59.000Z'));
+    expect(writeFailure).toHaveBeenCalledWith('one', 1);
     rmSync(path, { recursive: true });
     sink.backfillLine(line, null);
     await sink.endBackfill();
     sink.writer.close();
     await expect(sink.closed()).rejects.toThrow('device log dropped 1 record');
     expect(parseNdjsonText(readFileSync(path, 'utf8')).filter((record) => record.msg === 'retry')).toHaveLength(1);
+  } finally {
+    await writers.close();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a failed historical write rejects coverage', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-log-writer-home-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-log-writer-app-')));
+  vi.stubEnv('STIM_HOME', home);
+  const writers = createLogWriters(() => {});
+  try {
+    const path = join(workspaceLogsDir(root), 'device.ndjson');
+    mkdirSync(path, { recursive: true });
+    const sink = await writers.open(
+      { streamId: 'one', slotKey: 'ios', root, platform: 'ios', physical: false, attribution: {} },
+      () => {},
+    );
+    await sink.beginBackfill(0);
+    sink.backfillLine(JSON.stringify({ eventType: 'logEvent', eventMessage: 'lost evidence' }), null);
+    await expect(sink.endBackfill()).rejects.toThrow('could not persist');
+    rmSync(path, { recursive: true });
+    await expect(sink.closed()).rejects.toThrow('device log dropped');
   } finally {
     await writers.close();
     vi.unstubAllEnvs();

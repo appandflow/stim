@@ -96,6 +96,14 @@ export interface StreamTable {
   close(): Promise<void>;
 }
 
+type HistoryCoverage = {
+  status: 'pending' | 'covered' | 'failed';
+  generation?: number;
+  startedAt?: number;
+  warm?: boolean;
+  failureVersion?: number;
+};
+
 type Stream = {
   id: string;
   key: string;
@@ -111,17 +119,16 @@ type Stream = {
   childClosed: Promise<void> | null;
   spawnedPid: number | null;
   identity: { pid: number; processToken: string } | null;
+  lastStop: { pid: number | null; identity: string; signalled?: boolean; error?: string } | null;
   pending: boolean;
   paused: boolean;
   generation: number;
   activePid: number | null;
   observedAt: number | null;
+  writeFailures: number;
   revision: number;
   waiters: Set<(gone: boolean) => void>;
-  historySeen: WeakMap<
-    AbortSignal,
-    { status: 'pending' | 'covered' | 'failed'; generation?: number; startedAt?: number; warm?: boolean }
-  >;
+  historySeen: WeakMap<AbortSignal, HistoryCoverage>;
   histories: Set<Promise<void>>;
   historyQueue: Promise<void>;
   started: Promise<RunCollectorHandle | null>;
@@ -141,10 +148,18 @@ function alive(stream: Stream): boolean {
 
 function signalChild(stream: Stream): void {
   const child = stream.identity;
-  if (!child || inspectProcessIdentity(child) !== 'same') return;
+  if (!child) {
+    stream.lastStop = { pid: stream.spawnedPid, identity: 'unavailable' };
+    return;
+  }
+  const identity = inspectProcessIdentity(child);
+  stream.lastStop = { pid: child.pid, identity };
+  if (identity !== 'same') return;
   try {
-    signalProcessTree(child.pid, 'SIGTERM', { group: process.platform !== 'win32' });
-  } catch {}
+    stream.lastStop.signalled = signalProcessTree(child.pid, 'SIGTERM', { group: process.platform !== 'win32' });
+  } catch (error) {
+    stream.lastStop.error = error instanceof Error ? error.message : String(error);
+  }
 }
 
 async function waitChild(stream: Stream): Promise<void> {
@@ -179,7 +194,7 @@ async function waitChild(stream: Stream): Promise<void> {
       throw new Error(
         `the device log stream pipes did not close (exit=${String(child?.exitCode)}, signal=${String(child?.signalCode)}, ` +
           `stdoutEnded=${String(child?.stdout?.readableEnded)}, stdoutFlowing=${String(child?.stdout?.readableFlowing)}, ` +
-          `stderrEnded=${String(child?.stderr?.readableEnded)}, stderrFlowing=${String(child?.stderr?.readableFlowing)}, backpressure=${stream.paused})`,
+          `stderrEnded=${String(child?.stderr?.readableEnded)}, stderrFlowing=${String(child?.stderr?.readableFlowing)}, backpressure=${stream.paused}, stop=${JSON.stringify(stream.lastStop)})`,
       );
     }
   }
@@ -241,6 +256,7 @@ function spawnChild(
 }
 
 const noop = () => {};
+class AndroidPidChanged extends Error {}
 
 function environmentHash(env: Record<string, string>): string {
   const values = new Map<string, string>();
@@ -335,6 +351,14 @@ export function createStreams(log: (message: string) => void): StreamTable {
         const stream = [...streams.values()].find((entry) => entry.id === streamId);
         if (stream && stream.generation === generation && stream.observedAt === null) stream.observedAt = Date.now();
       },
+      (streamId, generation) => {
+        const stream = [...streams.values()].find((entry) => entry.id === streamId);
+        if (stream && stream.generation === generation) {
+          stream.writeFailures++;
+          stream.observedAt = null;
+          for (const wake of stream.waiters) wake(false);
+        }
+      },
     );
     return writers;
   };
@@ -356,13 +380,20 @@ export function createStreams(log: (message: string) => void): StreamTable {
     signal: AbortSignal,
     env: Record<string, string>,
     through: number,
-  ) => {
-    if (stream.spec.physical) return { status: 'covered' as const, warm: true, startedAt: Infinity };
+  ): HistoryCoverage => {
+    if (stream.spec.physical)
+      return {
+        status: stream.writeFailures ? ('failed' as const) : ('covered' as const),
+        warm: true,
+        startedAt: Infinity,
+      };
     const existing = stream.historySeen.get(signal);
     if (existing) {
       if (
+        existing.status === 'covered' &&
         existing.generation !== undefined &&
         (existing.generation !== stream.generation ||
+          existing.failureVersion !== stream.writeFailures ||
           !stream.child ||
           stream.child.exitCode !== null ||
           stream.child.signalCode !== null)
@@ -370,12 +401,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
         existing.status = 'failed';
       if (existing.status !== 'covered' || existing.warm || (existing.startedAt ?? 0) >= through) return existing;
     }
-    const coverage: {
-      status: 'pending' | 'covered' | 'failed';
-      generation?: number;
-      startedAt?: number;
-      warm?: boolean;
-    } = { status: 'pending' };
+    const coverage: HistoryCoverage = { status: 'pending' };
     stream.historySeen.set(signal, coverage);
     const cancelled = AbortSignal.any([signal, stream.controller.signal]);
     const task = stream.historyQueue.then(async () => {
@@ -407,36 +433,71 @@ export function createStreams(log: (message: string) => void): StreamTable {
         );
         if (cancelled.aborted) abort();
       });
-      const generation = stream.generation;
-      const activePid = stream.activePid;
-      coverage.generation = generation;
-      coverage.startedAt = Date.now();
-      await backfillDeviceLog({
-        root: stream.root,
-        streamId: stream.id,
-        spec: stream.spec,
-        since,
-        env,
-        signal: cancelled,
-        warm: (pid) => {
-          if (stream.generation !== generation || (stream.spec.platform === 'android' && activePid !== pid))
-            throw new Error('the device log source changed during history replay');
-          const warm =
-            stream.observedAt !== null &&
-            stream.observedAt <= since &&
-            (stream.spec.platform !== 'android' || stream.activePid === pid);
-          coverage.warm = warm;
-          return warm;
-        },
-        sink: stream.sink,
-      });
-      if (
-        stream.generation !== generation ||
-        !stream.child ||
-        stream.child.exitCode !== null ||
-        stream.child.signalCode !== null
-      )
-        throw new Error('the device log source changed during history replay');
+      while (!cancelled.aborted) {
+        const generation = stream.generation;
+        const activePid = stream.activePid;
+        coverage.generation = generation;
+        coverage.startedAt = Date.now();
+        const retry = await backfillDeviceLog({
+          root: stream.root,
+          streamId: stream.id,
+          spec: stream.spec,
+          since,
+          env,
+          signal: cancelled,
+          onBegin: () => {
+            coverage.failureVersion = stream.writeFailures;
+          },
+          warm: (pid) => {
+            if (stream.spec.platform === 'android' && (stream.generation !== generation || activePid !== pid))
+              throw new AndroidPidChanged();
+            if (stream.generation !== generation)
+              throw new Error('the device log source changed during history replay');
+            const warm =
+              stream.observedAt !== null &&
+              stream.observedAt <= since &&
+              (stream.spec.platform !== 'android' || stream.activePid === pid);
+            coverage.warm = warm;
+            return warm;
+          },
+          sink: stream.sink,
+        })
+          .then(() => false)
+          .catch(async (error: unknown) => {
+            if (!(error instanceof AndroidPidChanged)) throw error;
+            await new Promise<void>((resolve, reject) => {
+              const cleanup = () => {
+                stream.waiters.delete(check);
+                cancelled.removeEventListener('abort', abort);
+              };
+              const abort = () => {
+                cleanup();
+                reject(cancelled.reason);
+              };
+              const check = () => {
+                if (stream.generation <= generation || stream.activePid === null || !stream.child) return;
+                cleanup();
+                resolve();
+              };
+              stream.waiters.add(check);
+              cancelled.addEventListener('abort', abort, { once: true });
+              if (cancelled.aborted) abort();
+              else check();
+            });
+            return true;
+          });
+        if (retry) continue;
+        if (
+          stream.generation !== generation ||
+          coverage.failureVersion !== stream.writeFailures ||
+          !stream.child ||
+          stream.child.exitCode !== null ||
+          stream.child.signalCode !== null
+        )
+          throw new Error('the device log source changed during history replay');
+        return undefined;
+      }
+      cancelled.throwIfAborted();
       return undefined;
     });
     stream.histories.add(task);
@@ -565,11 +626,13 @@ export function createStreams(log: (message: string) => void): StreamTable {
           childClosed: null,
           spawnedPid: null,
           identity: null,
+          lastStop: null,
           pending: false,
           paused: false,
           generation: 0,
           activePid: null,
           observedAt: null,
+          writeFailures: 0,
           revision: 0,
           waiters: new Set(),
           historySeen: new WeakMap(),
@@ -664,6 +727,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
               });
             }
             generations.set(child, stream.generation);
+            for (const wake of stream.waiters) wake(false);
             return child;
           },
           stopStream: async () => {
@@ -728,11 +792,62 @@ export function createStreams(log: (message: string) => void): StreamTable {
       const key = `${realpathSync(root)}\0${deviceSlotKey(platform, validateDeviceSlot(slot))}`;
       const stream = streams.get(key);
       if (!stream || stream.id !== streamId) return { revision: after, gone: true };
+      const deadline = Date.now() + timeoutMs;
+      if (checkCoverage && (stream.spec.physical || (signal && stream.historySeen.get(signal)?.status === 'covered'))) {
+        const synced = await new Promise<boolean>((resolve, reject) => {
+          let settled = false;
+          const cleanup = () => {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', abort);
+          };
+          const finish = (result: boolean) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(result);
+          };
+          const abort = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(signal?.reason);
+          };
+          const timer = setTimeout(() => finish(false), timeoutMs);
+          signal?.addEventListener('abort', abort, { once: true });
+          void stream.sink.sync().then(
+            () => {
+              finish(true);
+              return undefined;
+            },
+            (error: unknown) => {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              reject(error);
+            },
+          );
+          if (signal?.aborted) abort();
+        });
+        if (!synced) return { revision: stream.revision, coverage: 'pending' as const };
+        if (streams.get(key) !== stream) return { revision: after, gone: true };
+      }
       const coverage = signal && env ? scheduleBackfill(stream, since, signal, env, through) : undefined;
-      const coverageStatus = () =>
-        coverage?.status === 'covered' && !coverage.warm && (coverage.startedAt ?? 0) < through
+      const coverageStatus = () => {
+        if (stream.spec.physical && stream.writeFailures) return 'failed' as const;
+        if (
+          !stream.spec.physical &&
+          coverage?.status === 'covered' &&
+          (coverage.generation !== stream.generation ||
+            coverage.failureVersion !== stream.writeFailures ||
+            !stream.child ||
+            stream.child.exitCode !== null ||
+            stream.child.signalCode !== null)
+        )
+          return 'failed' as const;
+        return coverage?.status === 'covered' && !coverage.warm && (coverage.startedAt ?? 0) < through
           ? ('pending' as const)
           : coverage?.status;
+      };
       if (stream.revision > after || (checkCoverage && coverageStatus() !== 'pending'))
         return { revision: stream.revision, ...(coverage ? { coverage: coverageStatus() } : {}) };
       signal?.throwIfAborted();
@@ -753,7 +868,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
           stream.waiters.delete(finish);
           reject(signal?.reason);
         };
-        const timer = setTimeout(() => finish(false), timeoutMs);
+        const timer = setTimeout(() => finish(false), Math.max(0, deadline - Date.now()));
         stream.waiters.add(finish);
         signal?.addEventListener('abort', abort, { once: true });
         if (signal?.aborted) abort();

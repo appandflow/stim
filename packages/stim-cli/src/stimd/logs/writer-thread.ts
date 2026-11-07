@@ -22,7 +22,7 @@ type Entry = {
   recent: Map<string, number>;
   recentEvictedAt: number;
   pendingHistory: Map<string, number>;
-  backfill: { since: number; live: Map<string, number>; warned: boolean } | null;
+  backfill: { since: number; live: Map<string, number>; warned: boolean; failed: boolean } | null;
 };
 const streams = new Map<string, Entry>();
 
@@ -51,6 +51,7 @@ type Message =
     }
   | { op: 'backfill.begin'; requestId: number; streamId: string; since: number }
   | { op: 'backfill.end'; requestId: number; streamId: string }
+  | { op: 'sync'; requestId: number; streamId: string }
   | { op: 'before-finish'; streamId: string; signalled: boolean }
   | { op: 'close'; requestId: number; streamId: string };
 
@@ -139,9 +140,11 @@ port.on('message', (message: Message) => {
       port.postMessage({ requestId: message.requestId });
     } else if (message.op === 'record') {
       if (write(message.record)) port.postMessage({ event: 'changed', streamId: message.streamId });
+    } else if (message.op === 'sync') {
+      port.postMessage({ requestId: message.requestId });
     } else if (message.op === 'backfill.begin') {
       if (stream.backfill) throw new Error('a device log backfill is already running');
-      stream.backfill = { since: message.since, live: new Map(stream.recent), warned: false };
+      stream.backfill = { since: message.since, live: new Map(stream.recent), warned: false, failed: false };
       if (stream.recentEvictedAt >= message.since) warnLimited();
       for (const [key, count] of stream.pendingHistory) {
         if (!add(stream.backfill.live, key)) warnLimited();
@@ -149,8 +152,12 @@ port.on('message', (message: Message) => {
       }
       port.postMessage({ requestId: message.requestId });
     } else if (message.op === 'backfill.end') {
+      const failed = stream.backfill?.failed;
       stream.backfill = null;
-      port.postMessage({ requestId: message.requestId });
+      port.postMessage({
+        requestId: message.requestId,
+        ...(failed ? { error: 'device log backfill could not persist its records' } : {}),
+      });
     } else if (message.op === 'line' || message.op === 'backfill.line') {
       const parse =
         stream.platform === 'ios' ? (stream.physical ? parseDeviceConsoleLine : parseLogStreamLine) : parseLogcatLine;
@@ -176,6 +183,13 @@ port.on('message', (message: Message) => {
           if (write({ ...record, platform: stream.platform }))
             port.postMessage({ event: 'changed', streamId: message.streamId });
           persisted = complete;
+          if (!complete) {
+            if (history && stream.backfill) stream.backfill.failed = true;
+            if (!history && message.generation !== undefined) {
+              stream.observedGeneration = null;
+              port.postMessage({ event: 'write-failed', streamId: message.streamId, generation: message.generation });
+            }
+          }
           if (history && stream.backfill && complete) {
             if (!add(stream.pendingHistory, key)) warnLimited();
           } else if (!history && complete) {

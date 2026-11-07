@@ -474,7 +474,7 @@ interface FinishAndroidRunArgs {
   runtime: AndroidRuntimePlan;
   runtimePreparation: MobileRuntimePreparation;
   lease: RunLease | null;
-  releaseLease: () => void;
+  releaseLease: () => void | Promise<void>;
   root: string;
   slot?: string;
   json: boolean;
@@ -1124,7 +1124,7 @@ export async function finishAndroidRun({
   );
 
   const leaseFacts = lease?.facts() ?? null;
-  releaseLease();
+  await releaseLease();
 
   const facts = reportAndroidResult({
     root,

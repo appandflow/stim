@@ -156,7 +156,8 @@ test(
       timeout: 30_000,
     });
     assert.equal(switched.status, 1, switched.stderr);
-    assert.match(switched.stderr, /STIM_NO_PROJECT/);
+    assert.match(switched.stderr, /STIM_DAEMON_UNAVAILABLE/);
+    assert.match(switched.stderr, /separate STIM_HOME/);
     assert.ok(alive(host.pid), 'a command of the new build leaves the attached stimd serving');
 
     writeFileSync(release, '');
@@ -391,7 +392,7 @@ test(
     const held = tryAcquireClaim({ root: join(home, 'run', 'stimd'), mode: 'exclusive', label: 'stimd' }).acquired;
     assert.ok(held);
     try {
-      assert.equal(await hostStimd(env, { handover: false }), null);
+      assert.equal((await hostStimd(env, { handover: false }))?.refusal?.code, 'STIM_DAEMON_UNAVAILABLE');
       const module = pathToFileURL(join(PACKAGE, 'dist', 'attached-stimd.mjs')).href;
       const denied = spawnSync(
         process.execPath,
@@ -672,3 +673,66 @@ test('host end reports an attached daemon killed before shutdown', { timeout: 30
     rmSync(scratch, { recursive: true, force: true });
   }
 });
+
+test(
+  'store lock contention past attached startup refuses admission',
+  { timeout: 25_000, skip: process.platform === 'win32' },
+  async () => {
+    const scratch = realpathSync(mkdtempSync('/tmp/stim-lock-'));
+    const engineRoot = join(scratch, 'engines');
+    const selected = join(engineRoot, 'bbbbbbbbbbbb');
+    mkdirSync(join(selected, 'dist'), { recursive: true });
+    cpSync(join(PACKAGE, 'dist'), join(selected, 'dist'), { recursive: true });
+    cpSync(join(PACKAGE, 'package.json'), join(selected, 'package.json'));
+    symlinkSync(join(PACKAGE, 'node_modules'), join(selected, 'node_modules'), 'junction');
+    writeFileSync(
+      join(engineRoot, 'current.json'),
+      JSON.stringify({ format: 1, dir: 'bbbbbbbbbbbb', version: 'test' }),
+    );
+    const lock = createServer();
+    await new Promise((done, fail) =>
+      lock.once('error', fail).listen(join(realpathSync(engineRoot), '.lock.sock'), done),
+    );
+    const previousRoot = process.env.STIM_ENGINE_ROOT;
+    process.env.STIM_ENGINE_ROOT = engineRoot;
+    try {
+      const engine = await import(pathToFileURL(join(selected, 'dist', 'attached-stimd.mjs')).href);
+      const sharedHome = join(scratch, 'home');
+      const host = engine.hostStimd({ ...env, STIM_HOME: sharedHome, STIM_ENGINE_ROOT: engineRoot });
+      const exclusive = join(sharedHome, 'run', 'stimd', 'exclusive');
+      await until('attached claim publication', () => {
+        try {
+          return readdirSync(exclusive).some(
+            (name) =>
+              name.endsWith('.claim') &&
+              JSON.parse(readFileSync(join(exclusive, name), 'utf8')).details.attached === true,
+          );
+        } catch {
+          return false;
+        }
+      });
+      const on = agent(join(selected, 'dist', 'cli.mjs'), ['revive'], {
+        STIM_HOME: sharedHome,
+        STIM_ENGINE_ROOT: engineRoot,
+        STIM_DAEMON: 'on',
+      });
+      const off = agent(join(selected, 'dist', 'cli.mjs'), ['revive'], {
+        STIM_HOME: sharedHome,
+        STIM_ENGINE_ROOT: engineRoot,
+        STIM_DAEMON: 'off',
+      });
+      assert.notEqual(await on.closed, 0);
+      assert.notEqual(await off.closed, 0);
+      assert.match(on.stderr(), /STIM_DAEMON_UNAVAILABLE/);
+      assert.match(off.stderr(), /STIM_DAEMON_UNAVAILABLE/);
+      const result = await host;
+      assert.equal(result?.refusal?.code, 'STIM_DAEMON_UNAVAILABLE');
+      assert.equal(existsSync(join(sharedHome, 'run', 'stimd.json')), false);
+    } finally {
+      await new Promise((done) => lock.close(done));
+      if (previousRoot === undefined) delete process.env.STIM_ENGINE_ROOT;
+      else process.env.STIM_ENGINE_ROOT = previousRoot;
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);

@@ -64,6 +64,21 @@ export function stimdLive(): boolean {
   }
 }
 
+async function admitExisting(
+  held: Socket[] | undefined,
+  command: string | undefined,
+  knownAttached = false,
+  invocation?: Invocation & { workspace?: string | null },
+): Promise<void> {
+  const attached =
+    knownAttached || readClaimSet(stimdClaimRoot()).live.some((claim) => claim.details.attached === true);
+  if (!(await admit(held, command, invocation)) && attached)
+    throw Object.assign(new Error('The attached Stim daemon could not admit this command.'), {
+      code: 'STIM_DAEMON_UNAVAILABLE',
+      remedy: 'Wait for the command hosting stimd to finish and retry, or use a separate STIM_HOME.',
+    });
+}
+
 let ownBuild: string | undefined;
 
 /** This build's id: its dist's {@link stimBuildId}, or for a run from source, the source directory's hash. */
@@ -410,7 +425,7 @@ export async function ensureStimd(
   requireForLogs = false,
 ): Promise<boolean> {
   if (!spawnsDaemon(env) && !requireForLogs) {
-    if (pin && stimdLive()) await admit(held, command, invocation);
+    if (pin && stimdLive()) await admitExisting(held, command, false, invocation);
     return false;
   }
   try {
@@ -424,7 +439,7 @@ export async function ensureStimd(
     admitting = pin && !held;
     if (stimdLive()) {
       if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
-      else await admit(held, command, invocation);
+      else await admitExisting(held, command, false, invocation);
       return true;
     }
     let launched: ReturnType<typeof launchStimd>;
@@ -436,7 +451,9 @@ export async function ensureStimd(
       launched = { settled: Promise.resolve(), exited: () => true };
     }
     let taken = await claimTaken(launched, ATTACH_AFTER_MS);
+    let attachedAttempt = false;
     if (!taken && !held && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
+      attachedAttempt = true;
       const { hostStimd } = await import('../stimd/attached.ts');
       const host = await hostStimd(env);
       if (host && typeof host === 'object' && 'refusal' in host)
@@ -461,14 +478,20 @@ export async function ensureStimd(
       }
     }
     taken ||= await claimTaken(launched, CLAIM_WAIT_MS - ATTACH_AFTER_MS);
-    if (taken && pin) await admit(held, command, invocation);
+    if (attachedAttempt && !taken)
+      throw Object.assign(new Error('The attached Stim daemon could not take this home.'), {
+        code: 'STIM_DAEMON_UNAVAILABLE',
+        remedy: 'Retry the command; if the daemon still cannot start, run stim doctor.',
+      });
+    if (taken && pin) await admitExisting(held, command, attachedAttempt, invocation);
     return taken;
   } catch (error) {
     if (
       isSandboxBlocked(error) ||
       (error instanceof Error &&
         'code' in error &&
-        (error.code === 'STIM_ENGINE_UNAVAILABLE' ||
+        (error.code === 'STIM_DAEMON_UNAVAILABLE' ||
+          error.code === 'STIM_ENGINE_UNAVAILABLE' ||
           error.code === 'STIM_CLAIM_UNAVAILABLE' ||
           error.code === 'STIM_CLAIM_REFUSED'))
     )
@@ -509,16 +532,16 @@ async function admit(
   held: Socket[] | undefined,
   command: string | undefined,
   invocation?: Invocation & { workspace?: string | null },
-): Promise<void> {
+): Promise<boolean> {
   for (const until = Date.now() + CLAIM_WAIT_MS; ;) {
     socketError = null;
-    if (await beginOp(held, command, invocation)) return;
+    if (await beginOp(held, command, invocation)) return true;
     if (socketError === 'EPERM' || socketError === 'EACCES') throw sandboxBlocked();
     if (stimdRefused()) {
-      if (!refusedByAttached && (await successorBound())) await beginOp(held, command, invocation);
-      return;
+      if (!refusedByAttached && (await successorBound())) return beginOp(held, command, invocation);
+      return false;
     }
-    if ((socketError !== 'ENOENT' && socketError !== 'ECONNREFUSED') || Date.now() >= until) return;
+    if ((socketError !== 'ENOENT' && socketError !== 'ECONNREFUSED') || Date.now() >= until) return false;
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }
 }
@@ -635,7 +658,11 @@ export async function acquireDeviceTicket(
 
 export async function releaseDeviceTicket(ticket: string, operation: StimContext): Promise<void> {
   const opToken = operationToken(operation);
-  if (opToken) await askStimd('lease.release', 10_000, { opToken, params: { ticket } });
+  if (!opToken) throw new Error('device lease operation is no longer admitted');
+  const reply = await askStimd('lease.release', 10_000, { opToken, params: { ticket } });
+  if (reply?.op !== 'lease.released') {
+    throw new Error(typeof reply?.message === 'string' ? reply.message : 'stimd did not release the device lease');
+  }
 }
 
 export async function checkPhysicalIosLog(operation?: StimContext): Promise<{ error: string; remedy: string } | null> {
@@ -694,8 +721,11 @@ export function deviceLogReadinessWait(
   let revision = 0;
   let through = 0;
   let coverage: 'pending' | 'covered' | 'failed' = 'pending';
+  let sequence = 0;
   const wait = async (ms: number) => {
     const started = Date.now();
+    const requestSequence = ++sequence;
+    const requestThrough = through;
     const opToken = operationToken(operation);
     const timeoutMs = Math.min(30_000, Math.max(0, Math.ceil(ms)));
     const reply = opToken
@@ -710,7 +740,7 @@ export function deviceLogReadinessWait(
               slot,
               streamId,
               since,
-              through,
+              through: requestThrough,
               checkCoverage: coverage === 'pending',
               after: revision,
               timeoutMs,
@@ -721,12 +751,16 @@ export function deviceLogReadinessWait(
       : null;
     throwIfCancelled(operation?.signal, 'launch readiness check');
     if (reply?.op === 'readiness.changed' && typeof reply.revision === 'number') {
-      revision = reply.revision;
-      if (reply.coverage === 'pending' || reply.coverage === 'covered' || reply.coverage === 'failed')
+      revision = Math.max(revision, reply.revision);
+      if (
+        requestSequence === sequence &&
+        requestThrough === through &&
+        (reply.coverage === 'pending' || reply.coverage === 'covered' || reply.coverage === 'failed')
+      )
         coverage = reply.coverage;
       if (reply.gone !== true) return;
     }
-    coverage = 'failed';
+    if (requestSequence === sequence && requestThrough === through) coverage = 'failed';
     await cancellableSleep(Math.max(0, ms - (Date.now() - started)), {
       signal: operation?.signal,
       what: 'launch readiness check',

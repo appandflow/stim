@@ -332,3 +332,20 @@ test.skipIf(process.platform === 'win32')(
     }
   },
 );
+
+test.skipIf(process.platform === 'win32')(
+  'allows writes to the hashed stimd socket directory with a short store',
+  () => {
+    const root = scratch();
+    try {
+      const dir = join('/tmp', `stim-sockets-${process.getuid?.()}`);
+      const socket = join(dir, 'not-yet-created.sock');
+      const allowance = sandboxAllowance(join(root, 'long-home'), socket, { STIM_ENGINE_ROOT: join(root, 'engine') });
+      expect(allowance.allowWrite).toEqual(
+        expect.arrayContaining([dir, join(realpathSync('/tmp'), `stim-sockets-${process.getuid?.()}`)]),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

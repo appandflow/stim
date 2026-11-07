@@ -87,10 +87,15 @@ export async function runOperation(
     if (
       error instanceof Error &&
       'code' in error &&
-      (error.code === 'STIM_ENGINE_UNAVAILABLE' ||
+      (error.code === 'STIM_DAEMON_UNAVAILABLE' ||
+        error.code === 'STIM_ENGINE_UNAVAILABLE' ||
         error.code === 'STIM_CLAIM_UNAVAILABLE' ||
         error.code === 'STIM_CLAIM_REFUSED')
-    )
+    ) {
+      if (entry.caller === 'cli')
+        await client
+          .attachedHostEnd()?.()
+          .catch(() => {});
       return {
         refusal: {
           code: error.code,
@@ -98,7 +103,12 @@ export async function runOperation(
           remedy: 'remedy' in error && typeof error.remedy === 'string' ? error.remedy : 'Run stim engine update.',
         },
       };
-    if (client.isSandboxBlocked(error))
+    }
+    if (client.isSandboxBlocked(error)) {
+      if (entry.caller === 'cli')
+        await client
+          .attachedHostEnd()?.()
+          .catch(() => {});
       return {
         refusal: {
           code: client.SANDBOX_BLOCKED,
@@ -106,6 +116,7 @@ export async function runOperation(
           remedy: 'Outside the sandbox the command runs as is; `stim guide errors STIM_SANDBOX_BLOCKED` explains it.',
         },
       };
+    }
   }
   if (entry.caller === 'cli') return { admitted: command, end: endCli };
   const opToken = held.length ? client.admittedOpToken(held) : undefined;

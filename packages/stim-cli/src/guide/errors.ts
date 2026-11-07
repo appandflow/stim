@@ -1963,6 +1963,13 @@ not on any remote"  (worktree remove)
   the remedy names: npx stim@<this version> engine rollback, or
   npx stim@<this version> engine use <this version>.`,
     },
+    STIM_DAEMON_UNAVAILABLE: {
+      summary: 'an attached Stim daemon could not start or admit the command',
+      body: () => `STIM_DAEMON_UNAVAILABLE
+  An attached daemon may still be starting, ending, or serving a different
+  build. Wait for its owning command to finish and retry, or use a separate
+  STIM_HOME. If startup still fails, run stim doctor or run outside the sandbox.`,
+    },
     STIM_CI_ATTACHED_HOME: {
       summary: 'another command owns this home’s attached daemon',
       body: () => `STIM_CI_ATTACHED_HOME
@@ -1989,7 +1996,8 @@ not on any remote"  (worktree remove)
   only when the sandbox itself denies the socket (EPERM or EACCES): a stimd
   started outside the sandbox holds the home and this command may not
   connect, the attached stimd may not bind, or its engine store lock is denied.
-  A slow start is never refused.
+  If the attached daemon cannot start or admit the command, it refuses with
+  STIM_DAEMON_UNAVAILABLE instead.
   On macOS, run stim doctor --fix inside Claude Code, then restart the session.
   On Linux, a path-specific socket allowance is unsupported; run the command
   outside the sandbox. status, logs, reload, doctor and other read commands

@@ -148,3 +148,52 @@ test.skipIf(process.platform === 'win32')(
     }
   },
 );
+
+test.skipIf(process.platform === 'win32')('history drains the final record after a large dump', async () => {
+  const { backfillDeviceLog } = await import('../stimd/logs/backfill.ts');
+  const { createLogWriters } = await import('../stimd/logs/writer.ts');
+  const { workspaceLogsDir } = await import('../workspace/paths.ts');
+  const { parseNdjsonText } = await import('../ndjson.ts');
+  const home = mkdtempSync(join(tmpdir(), 'stim-fast-exit-home-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fast-exit-app-')));
+  const bin = join(home, 'bin');
+  mkdirSync(bin);
+  vi.stubEnv('STIM_HOME', home);
+  const xcrun = join(bin, 'xcrun');
+  const line = JSON.stringify({
+    eventType: 'logEvent',
+    timestamp: new Date().toISOString(),
+    eventMessage: 'last record',
+  });
+  writeFileSync(
+    xcrun,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} -e 'const fs = require("node:fs"); const record = ${line}; record.eventMessage = "x".repeat(256 * 1024); fs.writeSync(1, JSON.stringify(record) + "\\n"); fs.writeSync(1, ${JSON.stringify(`${line}\n`)});'\n`,
+  );
+  chmodSync(xcrun, 0o755);
+  const env = { ...process.env, STIM_HOME: home, PATH: [bin, process.env.PATH].join(delimiter) };
+  const writers = createLogWriters(() => {});
+  try {
+    const sink = await writers.open(
+      { streamId: 'ios', slotKey: 'ios', root, platform: 'ios', physical: false, attribution: {} },
+      () => {},
+    );
+    await backfillDeviceLog({
+      root,
+      streamId: 'ios',
+      spec: { root, platform: 'ios', udid: 'U1', appName: 'Test' },
+      since: Date.now() - 1000,
+      env,
+      signal: new AbortController().signal,
+      warm: () => false,
+      sink,
+    });
+    await sink.closed();
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8'));
+    expect(records.some((record) => record.msg === 'last record')).toBe(true);
+  } finally {
+    await writers.close();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -403,6 +403,54 @@ describe('a run cut short by an abort', () => {
   });
 });
 
+describe('ticket release', () => {
+  test('does not send a release for an aborted operation, and waits for a normal acknowledgement', async () => {
+    const client = await import('../daemon/client.ts');
+    let acknowledge!: () => void;
+    const reply = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const release = vi.spyOn(client, 'releaseDeviceTicket').mockReturnValue(reply);
+    try {
+      const controller = new AbortController();
+      const context = testContext({ signal: controller.signal });
+      const lease = runLease({
+        root: ROOT,
+        platform: 'ios',
+        kind: 'run',
+        expiresAt: null,
+        ticket: 'ticket',
+        operation: context,
+      });
+      controller.abort();
+      await lease.release();
+      expect(release).not.toHaveBeenCalled();
+
+      const liveContext = testContext();
+      const liveLease = runLease({
+        root: ROOT,
+        platform: 'ios',
+        kind: 'run',
+        expiresAt: null,
+        ticket: 'live',
+        operation: liveContext,
+      });
+      let finished = false;
+      const pending = Promise.resolve(liveLease.release()).then(() => {
+        finished = true;
+        return undefined;
+      });
+      await vi.waitFor(() => expect(release).toHaveBeenCalledWith('live', liveContext));
+      expect(finished).toBe(false);
+      acknowledge();
+      await pending;
+      expect(finished).toBe(true);
+    } finally {
+      release.mockRestore();
+    }
+  });
+});
+
 describe('the per-step raise', () => {
   async function leased(h: Harness) {
     const result = await acquire(h);
