@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { expect, test } from 'vitest';
@@ -109,7 +109,7 @@ test('applyClaudeAllowance adds the stimd socket to an allowance written without
 
     expect(applyClaudeAllowance(path, sandboxAllowance('~/.stim', socket)).status).toBe('updated');
     expect(JSON.parse(readFileSync(path, 'utf-8'))).toMatchObject({
-      sandbox: { network: { allowUnixSockets: ['/var/run/docker.sock', socket] } },
+      sandbox: { network: { allowUnixSockets: expect.arrayContaining(['/var/run/docker.sock', socket]) } },
     });
     expect(missingAllowance([path], '~/.stim', root, socket)).toEqual([]);
   } finally {
@@ -255,6 +255,27 @@ test('Linux socket denial does not write a path-specific Claude allowance', () =
     expect(existsSync(claudeLocalSettingsPath(root))).toBe(false);
     expect(notes.join(' ')).toContain('outside the sandbox');
     expect(sandboxFinding(root, { env, socketBlocked: true, platform: 'linux' })?.fix).toContain('outside the sandbox');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.platform === 'win32')('socket allowance includes both the given and resolved paths', () => {
+  const root = scratch();
+  try {
+    const real = join(root, 'real');
+    const alias = join(root, 'alias');
+    mkdirSync(real);
+    symlinkSync(real, alias);
+    const socket = join(alias, 'missing', 'run', 'stimd.sock');
+    const resolved = join(realpathSync(real), 'missing', 'run', 'stimd.sock');
+    const settings = join(root, 'settings.json');
+    const write = (sockets: string[]) =>
+      writeFileSync(settings, JSON.stringify({ sandbox: { network: { allowUnixSockets: sockets } } }));
+    write([socket]);
+    expect(missingAllowance([settings], root, root, socket)).toContain('sandbox.network.allowUnixSockets');
+    write([socket, resolved]);
+    expect(missingAllowance([settings], root, root, socket)).not.toContain('sandbox.network.allowUnixSockets');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

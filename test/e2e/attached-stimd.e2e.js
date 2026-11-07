@@ -434,9 +434,12 @@ test(
       execFileSync('ps', ['-o', 'ppid=', '-p', String(host.pid)], { encoding: 'utf8' }).trim(),
       String(first.child.pid),
     );
+    const other = await holdOp(host.build);
     writeFileSync(release, '');
     assert.equal(await first.closed, 1);
+    other.destroy();
     assert.match(first.stderr(), /STIM_NO_PROJECT/);
     assert.equal(alive(host.pid), false);
+    assert.match(daemonLog(), /"event":"attached_handover_blocked"/);
   },
 );
