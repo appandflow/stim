@@ -8,10 +8,12 @@ import assert from 'node:assert';
 import * as chromeLookup from '../web/chrome.ts';
 import * as browserCdp from '../web/cdp.ts';
 import type { CdpEvent } from '../web/cdp.ts';
-import { resetExecutor, setExecutor, type Executor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor, type Executor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
+import { detachedHelper } from './_detached-helper.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { once } from 'node:events';
 import {
   existsSync,
   lstatSync,
@@ -60,6 +62,7 @@ import { workspaceInUse } from '../workspace/in-use.ts';
 import { staleBrowserProfiles } from '../commands/gc/ledger.ts';
 import { testContext } from './_context.ts';
 import { withAmbientContext } from '@stim-cli/core';
+import * as webState from '../web/state.ts';
 
 let home: string;
 let root: string;
@@ -778,6 +781,67 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     const child = children.at(-1);
     assert(child);
     expect(readWebRecord(root)).toBeNull();
+  });
+
+  test('a failed browser record retains the declaration while a detached helper survives', async () => {
+    const helperFile = join(home, 'helper.pid');
+    const gate = await detachedHelper(helperFile);
+    let leader: ChildProcess | undefined;
+    let helper: { pid: number; processToken: string } | undefined;
+    let leaderOwner: { pid: number; processToken: string } | undefined;
+    let failure: unknown;
+    try {
+      leader = spawn(
+        process.execPath,
+        [
+          '-e',
+          `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e',${JSON.stringify(gate.script)}],{detached:true,stdio:'ignore'}); child.unref(); setInterval(() => {}, 1000);`,
+        ],
+        { detached: true, stdio: 'ignore' },
+      );
+      await vi.waitFor(() => expect(existsSync(helperFile)).toBe(true));
+      const pid = Number(readFileSync(helperFile, 'utf8'));
+      const processToken = captureProcessToken(pid);
+      assert(processToken);
+      helper = { pid, processToken };
+      assert(leader.pid);
+      const leaderToken = captureProcessToken(leader.pid);
+      assert(leaderToken);
+      leaderOwner = { pid: leader.pid, processToken: leaderToken };
+      const executor = getExecutor();
+      const launched = leader;
+      setExecutor({ ...executor, spawn: () => launched });
+      vi.spyOn(webState, 'writeWebRecord').mockImplementation(() => {
+        throw new Error('record write failed');
+      });
+      failure = await launchOwnedBrowser(
+        {
+          url: 'http://localhost:8901/',
+          config: { chrome: '/fixture/chrome', headless: true, viewport: 'desktop', ignoreCertificateErrors: false },
+        },
+        { root, note: () => {} },
+      ).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(workspaceLocks.WorkspaceProcessCleanupError);
+      assert(failure instanceof workspaceLocks.WorkspaceProcessCleanupError);
+      expect(failure.cause).toMatchObject({ message: 'record write failed' });
+      expect(readClaimSet(join(workspaceDir(root), 'web.lock')).live).toMatchObject([
+        { childDeclared: true, childPending: true },
+      ]);
+      expect(tryAcquireClaim({ root: join(workspaceDir(root), 'web.lock'), mode: 'exclusive' }).held).toBeDefined();
+      expect(inspectProcessIdentity(helper)).toBe('same');
+      expect(readWebRecord(root)).toBeNull();
+    } finally {
+      await gate.close();
+      if (leaderOwner && inspectProcessIdentity(leaderOwner) === 'same') process.kill(-leaderOwner.pid, 'SIGKILL');
+      else if (!leaderOwner && leader && leader.exitCode === null && leader.signalCode === null) {
+        leader.kill('SIGKILL');
+        await once(leader, 'exit');
+      }
+      if (leaderOwner) assert(await waitForProcessExit(leaderOwner, 5000));
+      if (helper) assert(await waitForProcessExit(helper, 5000));
+      if (failure instanceof workspaceLocks.WorkspaceProcessCleanupError)
+        for (const claim of failure.claims) releaseClaim(claim);
+    }
   });
 
   test('a launch cancelled while stimd attaches drains the Chrome it started', async () => {

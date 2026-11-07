@@ -1,6 +1,7 @@
 import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
+import { detachedHelper } from './_detached-helper.ts';
 import { writeConfigSetting, loadConfig, saveConfig, upsertProject, getConfigDir } from '../workspace/config.ts';
 import { EventEmitter, once } from 'node:events';
 import { PassThrough } from 'node:stream';
@@ -325,29 +326,34 @@ test.skipIf(process.platform === 'win32')('a failed pending declaration sends no
 });
 
 test.skipIf(process.platform === 'win32')('a refused runtime claim retains an unverified separate helper', async () => {
-  const declaration = tryAcquireClaim({ root: join(dir, 'launch.lock'), mode: 'exclusive', label: 'launch' }).acquired;
-  assert(declaration);
-  const runtime = join(dir, 'runtime');
-  const held = tryAcquireClaim({ root: runtime, mode: 'exclusive', label: 'held' }).acquired;
-  assert(held);
   const helperFile = join(dir, 'helper.pid');
+  const gate = await detachedHelper(helperFile);
+  let declaration: ReturnType<typeof tryAcquireClaim>['acquired'];
+  let held: ReturnType<typeof tryAcquireClaim>['acquired'];
+  const runtime = join(dir, 'runtime');
   const executor = getExecutor();
-  const leader = executor.spawn(
-    process.execPath,
-    [
-      '-e',
-      `const {spawn}=require('node:child_process'); const fs=require('node:fs'); const child=spawn(process.execPath,['-e','setInterval(() => {}, 1000)'],{detached:true,stdio:'ignore'}); child.unref(); fs.writeFileSync(${JSON.stringify(helperFile)},String(child.pid)); setInterval(() => {}, 1000);`,
-    ],
-    { cwd: root, env: process.env, detached: true, stdio: 'ignore' },
-  );
+  let leader: ChildProcess | undefined;
   let helper: { pid: number; processToken: string } | undefined;
   try {
+    declaration = tryAcquireClaim({ root: join(dir, 'launch.lock'), mode: 'exclusive', label: 'launch' }).acquired;
+    assert(declaration);
+    held = tryAcquireClaim({ root: runtime, mode: 'exclusive', label: 'held' }).acquired;
+    assert(held);
+    leader = executor.spawn(
+      process.execPath,
+      [
+        '-e',
+        `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e',${JSON.stringify(gate.script)}],{detached:true,stdio:'ignore'}); child.unref(); setInterval(() => {}, 1000);`,
+      ],
+      { cwd: root, env: process.env, detached: true, stdio: 'ignore' },
+    );
     await vi.waitFor(() => expect(existsSync(helperFile)).toBe(true));
     const pid = Number(readFileSync(helperFile, 'utf8'));
     const token = captureProcessToken(pid);
     assert(token);
     helper = { pid, processToken: token };
-    setExecutor({ ...executor, spawn: () => leader });
+    const launched = leader;
+    setExecutor({ ...executor, spawn: () => launched });
     const failure = await owning
       .spawnOwned({
         file: process.execPath,
@@ -364,43 +370,61 @@ test.skipIf(process.platform === 'win32')('a refused runtime claim retains an un
     assert(failure instanceof WorkspaceProcessCleanupError);
     expect(failure.cause).toBeInstanceOf(Error);
     expect(inspectProcessIdentity(helper)).toBe('same');
-    expect(readClaimSet(declaration.root).live.find((entry) => entry.claimId === declaration.claimId)).toMatchObject({
+    const declarationId = declaration.claimId;
+    expect(readClaimSet(declaration.root).live.find((entry) => entry.claimId === declarationId)).toMatchObject({
       childDeclared: true,
       child: null,
     });
   } finally {
     resetExecutor();
-    if (helper && inspectProcessIdentity(helper) === 'same') process.kill(-helper.pid, 'SIGKILL');
-    if (leader.pid && leader.exitCode === null && leader.signalCode === null) {
-      try {
-        process.kill(-leader.pid, 'SIGKILL');
-      } catch {}
+    await gate.close();
+    if (leader && leader.exitCode === null && leader.signalCode === null) {
+      leader.kill('SIGKILL');
+      await once(leader, 'exit');
     }
-    releaseClaim(held);
-    releaseClaim(declaration);
+    if (helper) assert(await waitForProcessExit(helper, 5000));
+    if (held) releaseClaim(held);
+    if (declaration) releaseClaim(declaration);
+  }
+});
+
+test('a detached helper exits when its listener closes before it connects', async () => {
+  const gate = await detachedHelper(join(dir, 'helper.pid'));
+  await gate.close();
+  const child = getExecutor().spawn(process.execPath, ['-e', gate.script], { stdio: 'ignore' });
+  try {
+    const [code] = await once(child, 'exit');
+    expect(code).toBe(0);
+    expect(existsSync(join(dir, 'helper.pid'))).toBe(false);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
   }
 });
 
 test.skipIf(process.platform === 'win32')('a launcher lost before handoff leaves its declaration pending', async () => {
-  const launcher = await ownedProcess();
-  const declaration = tryAcquireClaim({ root: join(dir, 'launch.lock'), mode: 'exclusive', owner: launcher }).acquired;
-  assert(declaration);
+  const gate = await detachedHelper(join(dir, 'helper.pid'));
   const helperFile = join(dir, 'helper.pid');
+  let launcher: MacosProcess | undefined;
+  let declaration: ReturnType<typeof tryAcquireClaim>['acquired'];
+  let owned: Awaited<ReturnType<typeof owning.spawnOwned>> | undefined;
   let helper: { pid: number; processToken: string } | undefined;
-  const owned = await owning.spawnOwned({
-    file: process.execPath,
-    args: [
-      '-e',
-      `const {spawn}=require('node:child_process'); const fs=require('node:fs'); const child=spawn(process.execPath,['-e','setInterval(() => {}, 1000)'],{detached:true,stdio:'ignore'}); child.unref(); fs.writeFileSync(${JSON.stringify(helperFile)},String(child.pid)); setInterval(() => {}, 1000);`,
-    ],
-    cwd: root,
-    env: process.env,
-    stdout: join(dir, 'out'),
-    stderr: join(dir, 'err'),
-    claim: { root: join(dir, 'runtime'), label: 'app' },
-    declare: [declaration],
-  });
   try {
+    launcher = await ownedProcess();
+    declaration = tryAcquireClaim({ root: join(dir, 'launch.lock'), mode: 'exclusive', owner: launcher }).acquired;
+    assert(declaration);
+    owned = await owning.spawnOwned({
+      file: process.execPath,
+      args: [
+        '-e',
+        `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e',${JSON.stringify(gate.script)}],{detached:true,stdio:'ignore'}); child.unref(); setInterval(() => {}, 1000);`,
+      ],
+      cwd: root,
+      env: process.env,
+      stdout: join(dir, 'out'),
+      stderr: join(dir, 'err'),
+      claim: { root: join(dir, 'runtime'), label: 'app' },
+      declare: [declaration],
+    });
     await vi.waitFor(() => expect(existsSync(helperFile)).toBe(true));
     const pid = Number(readFileSync(helperFile, 'utf8'));
     const token = captureProcessToken(pid);
@@ -412,16 +436,17 @@ test.skipIf(process.platform === 'win32')('a launcher lost before handoff leaves
     expect(await waitForProcessExit(owned, 5000)).toBe(true);
     expect(inspectProcessIdentity(helper)).toBe('same');
     expect(readClaimSet(declaration.root).unresolved).toMatchObject([{ path: declaration.path }]);
-    expect(() => tryAcquireClaim({ root: declaration.root, mode: 'exclusive' })).toThrow(/ownership/i);
+    const declarationRoot = declaration.root;
+    expect(() => tryAcquireClaim({ root: declarationRoot, mode: 'exclusive' })).toThrow(/ownership/i);
   } finally {
-    if (helper && inspectProcessIdentity(helper) === 'same') process.kill(-helper.pid, 'SIGKILL');
-    if (inspectProcessIdentity(owned) === 'same') process.kill(-owned.pid, 'SIGKILL');
-    if (inspectProcessIdentity(launcher) === 'same') process.kill(launcher.pid, 'SIGKILL');
+    await gate.close();
+    if (owned && inspectProcessIdentity(owned) === 'same') process.kill(-owned.pid, 'SIGKILL');
+    if (launcher && inspectProcessIdentity(launcher) === 'same') process.kill(launcher.pid, 'SIGKILL');
     if (helper) assert(await waitForProcessExit(helper, 5000));
-    assert(await waitForProcessExit(owned, 5000));
-    assert(await waitForProcessExit(launcher, 5000));
-    releaseClaim(owned.claim);
-    releaseClaim(declaration);
+    if (owned) assert(await waitForProcessExit(owned, 5000));
+    if (launcher) assert(await waitForProcessExit(launcher, 5000));
+    if (owned) releaseClaim(owned.claim);
+    if (declaration) releaseClaim(declaration);
   }
 });
 

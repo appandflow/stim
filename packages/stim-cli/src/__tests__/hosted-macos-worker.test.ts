@@ -22,9 +22,12 @@ import {
   type HostedMacosDevice,
 } from '@stim-cli/core/state';
 import { runHostedMacosApp } from '../device-host/macos.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { macosAppStderr, macosAppStdout, macosRuntimeClaim } from '../macos/state.ts';
 import { makeChildProcess } from './_factories.ts';
+import * as macosState from '../macos/state.ts';
+import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 
 const native = vi.hoisted(() => ({
   runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>(),
@@ -253,6 +256,29 @@ test('stamps and signs verified bytes, launches with an isolated home, and delet
   }
   expect(existsSync(join(previous, 'manifest.json'))).toBe(true);
   expect(readFileSync(log, 'utf8')).toBe('app output');
+});
+
+test('an unpublished hosted app retains its launch declaration after best-effort cleanup', async () => {
+  receipt();
+  const update = vi.spyOn(macosState, 'updateMacosRecord').mockImplementation(() => {
+    throw new Error('record write failed');
+  });
+  const runRoot = join(home, 'macos-app');
+  let claimRoot: string | undefined;
+  try {
+    expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({
+      state: 'unknown',
+      notice: expect.stringContaining('unrecorded hosted macOS app'),
+    });
+    claimRoot = workspaceProcessLockPath(workspaceDir(realpathSync(runRoot)), 'macos-launch', true);
+    expect(readMacosRecord(runRoot)?.app).toBeUndefined();
+    expect(readClaimSet(claimRoot).live).toMatchObject([{ childDeclared: true, childPending: true }]);
+    expect(tryAcquireClaim({ root: claimRoot, mode: 'exclusive' }).held).toBeDefined();
+  } finally {
+    update.mockRestore();
+    if (claimRoot)
+      for (const holder of readClaimSet(claimRoot).live) releaseClaim({ ...holder, root: claimRoot, label: 'fixture' });
+  }
 });
 
 test('replacement validation leaves the previous app alone on invalid input and rematerializes valid input', async () => {

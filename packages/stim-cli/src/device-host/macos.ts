@@ -265,9 +265,21 @@ export async function runHostedMacosApp(
               [claim],
               'Could not stop the unrecorded hosted macOS app.',
               'Verify that the app has stopped before retrying.',
-              cleanupError instanceof Error ? cleanupError : undefined,
+              new AggregateError([error, cleanupError], 'The hosted macOS launch and its cleanup failed.'),
             );
           }
+          let published = false;
+          try {
+            const current = requiredMacosRecord(canonicalRunRoot);
+            published = current?.launchId === launch.launchId && current.app?.processToken === owned.processToken;
+          } catch {}
+          if (!published)
+            throw new WorkspaceProcessCleanupError(
+              [claim],
+              'Could not verify all children of the unrecorded hosted macOS app stopped.',
+              'Verify that the app and its children have stopped before retrying.',
+              error instanceof Error ? error : undefined,
+            );
           throw error;
         }
       },

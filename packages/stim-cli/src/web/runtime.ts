@@ -123,14 +123,15 @@ export async function launchOwnedBrowser(
           }),
         );
       } catch (error) {
-        if (!(await stopOwnedProcess(owner)))
-          throw new WorkspaceProcessCleanupError(
-            [claim],
-            'Could not stop the unrecorded browser.',
-            'Verify that Chrome has stopped before retrying.',
-            error instanceof Error ? error : undefined,
-          );
-        throw error;
+        const terminated = await stopOwnedProcess(owner);
+        throw new WorkspaceProcessCleanupError(
+          [claim],
+          terminated
+            ? 'Could not verify that all children of the unrecorded browser stopped.'
+            : 'Could not stop the unrecorded browser.',
+          'Verify that Chrome and its children have stopped before retrying.',
+          error instanceof Error ? error : undefined,
+        );
       }
       clearClaimChild(claim);
       const unobserved = await observeOwned(root, ambientEnv());
