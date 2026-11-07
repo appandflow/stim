@@ -103,55 +103,57 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test.skipIf(process.platform === 'win32').each(['throw', 'no-pid'])(
-  'a %s spawn failure preserves the marker while a query remains active',
-  async (failure) => {
-    const { createStreams } = await import('../stimd/logs/streams.ts');
-    const home = mkdtempSync(join(tmpdir(), 'stim-query-guard-home-'));
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-query-guard-root-')));
-    vi.stubEnv('STIM_HOME', home);
-    Reflect.set(state, 'options', null);
-    const streams = createStreams(() => {});
-    const spawn = vi.spyOn(getExecutor(), 'spawn').mockImplementation(() => {
-      state.child = makeChildProcess({ pid: 100000001 });
-      return state.child;
-    });
-    let release = () => {};
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    try {
-      const { streamId } = await streams.start(
-        { root, platform: 'android', serial: 'emulator', packageName: 'com.test' },
-        {},
-      );
-      await vi.waitFor(() => expect(state.options).not.toBeNull());
-      if (!state.options?.guardQuery || !state.options.stopStream) throw new Error('collector seam unavailable');
-      const query = state.options.guardQuery(() => held);
-      state.child?.emit('close');
-      await state.options.stopStream(state.child);
-      spawn.mockImplementation(() => {
-        if (failure === 'throw') throw new Error('spawn failed');
-        return makeChildProcess({ pid: undefined });
+describe.skipIf(process.platform === 'win32')('spawn failures with a pending query', () => {
+  test.each(['throw', 'no-pid'])(
+    'a %s spawn failure preserves the marker while a query remains active',
+    async (failure) => {
+      const { createStreams } = await import('../stimd/logs/streams.ts');
+      const home = mkdtempSync(join(tmpdir(), 'stim-query-guard-home-'));
+      const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-query-guard-root-')));
+      vi.stubEnv('STIM_HOME', home);
+      Reflect.set(state, 'options', null);
+      const streams = createStreams(() => {});
+      const spawn = vi.spyOn(getExecutor(), 'spawn').mockImplementation(() => {
+        state.child = makeChildProcess({ pid: 100000001 });
+        return state.child;
       });
-      expect(() => state.options?.startStream({ platform: 'android', serial: 'emulator', pid: 200 })).toThrow(
-        failure === 'throw' ? 'spawn failed' : 'could not start',
-      );
-      const claimRoot = join(
-        workspaceDir(root),
-        'log-streams',
-        `stream-${createHash('sha256').update(streamId).digest('hex')}.claim`,
-      );
-      expect(readClaimSet(claimRoot).live[0]?.childPending).toBe(true);
-      release();
-      await query;
-    } finally {
-      release();
-      await state.workers.at(-1)?.terminate();
-      vi.restoreAllMocks();
-      vi.unstubAllEnvs();
-      rmSync(home, { recursive: true, force: true });
-      rmSync(root, { recursive: true, force: true });
-    }
-  },
-);
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      try {
+        const { streamId } = await streams.start(
+          { root, platform: 'android', serial: 'emulator', packageName: 'com.test' },
+          {},
+        );
+        await vi.waitFor(() => expect(state.options).not.toBeNull());
+        if (!state.options?.guardQuery || !state.options.stopStream) throw new Error('collector seam unavailable');
+        const query = state.options.guardQuery(() => held);
+        state.child?.emit('close');
+        await state.options.stopStream(state.child);
+        spawn.mockImplementation(() => {
+          if (failure === 'throw') throw new Error('spawn failed');
+          return makeChildProcess({ pid: undefined });
+        });
+        expect(() => state.options?.startStream({ platform: 'android', serial: 'emulator', pid: 200 })).toThrow(
+          failure === 'throw' ? 'spawn failed' : 'could not start',
+        );
+        const claimRoot = join(
+          workspaceDir(root),
+          'log-streams',
+          `stream-${createHash('sha256').update(streamId).digest('hex')}.claim`,
+        );
+        expect(readClaimSet(claimRoot).live[0]?.childPending).toBe(true);
+        release();
+        await query;
+      } finally {
+        release();
+        await state.workers.at(-1)?.terminate();
+        vi.restoreAllMocks();
+        vi.unstubAllEnvs();
+        rmSync(home, { recursive: true, force: true });
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+});

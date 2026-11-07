@@ -5,7 +5,6 @@ import type { ChildProcess } from 'node:child_process';
 import type { Worker } from 'node:worker_threads';
 import type { RunCollectorOptions } from '../stimd/logs/collector.ts';
 import { getExecutor } from '../exec.ts';
-import * as ownership from '../ownership-claim.ts';
 import { makeChildProcess } from './_factories.ts';
 
 const state = vi.hoisted<{
@@ -47,18 +46,14 @@ test.skipIf(process.platform === 'win32')('a previous tree stop does not verify 
   const root = mkdtempSync(join(tmpdir(), 'stim-reattach-root-'));
   vi.stubEnv('STIM_HOME', home);
   const realProcess = process;
-  const originalMark = ownership.markClaimChildPending;
   const messages: string[] = [];
   const streams = createStreams((message) => messages.push(message));
   let pid = 1000;
   try {
-    vi.spyOn(ownership, 'markClaimChildPending').mockImplementation((claim) => {
-      originalMark(claim);
-      state.windows = true;
-      vi.stubGlobal('process', Object.create(realProcess, { platform: { value: 'win32' } }));
-    });
     vi.spyOn(getExecutor(), 'findExecutable').mockReturnValue('C:\\adb.exe');
     vi.spyOn(getExecutor(), 'spawn').mockImplementation(() => {
+      state.windows = true;
+      vi.stubGlobal('process', Object.create(realProcess, { platform: { value: 'win32' } }));
       state.alive = true;
       state.child = makeChildProcess({ pid: ++pid });
       return state.child;
