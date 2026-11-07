@@ -397,7 +397,15 @@ export async function runStimd({
     bootAt,
   );
   const updateCheckedAt = Math.max(0, ...leftover.map((holder) => Number(holder.details.updateCheckedAt) || 0));
-  const details = { socket: path, mode: startMode, build, version: identity.version, boots, updateCheckedAt };
+  const details = {
+    socket: path,
+    mode: startMode,
+    build,
+    version: identity.version,
+    boots,
+    updateCheckedAt,
+    ...attachedReply(attached !== undefined),
+  };
   const lifetime = stimdLifetime(attached !== undefined, identity.version);
   const instance = randomUUID();
   let own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details, undefined, lifetime.retries(CLAIM_TRIES));

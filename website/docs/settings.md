@@ -1104,7 +1104,9 @@ commands still using it for up to `daemon.attachedExitWaitSeconds`
 (`STIM_DAEMON_ATTACHED_EXIT_WAIT_SECONDS`, a machine setting, default `120`;
 `0` exits at once), names them on stderr, then exits; the next command starts
 or hosts the next stimd. If the attached daemon cannot start or admit the
-command, it stops with `STIM_DAEMON_UNAVAILABLE`. If the sandbox denies stimd's socket itself, the
+command, including a command from a different build, it stops with
+`STIM_DAEMON_UNAVAILABLE`. Wait for the owning command to finish and retry, or
+use a separate `STIM_HOME`. If the sandbox denies stimd's socket itself, the
 command stops with `STIM_SANDBOX_BLOCKED`. On macOS, `stim doctor --fix` adds
 the socket to Claude Code's `sandbox.network.allowUnixSockets`. On Linux, run
 Stim outside the sandbox because Claude Code cannot allow a single socket path.

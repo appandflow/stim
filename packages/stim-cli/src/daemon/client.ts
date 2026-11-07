@@ -60,6 +60,20 @@ export function stimdLive(): boolean {
   }
 }
 
+async function admitExisting(
+  held: Socket[] | undefined,
+  command: string | undefined,
+  knownAttached = false,
+): Promise<void> {
+  const attached =
+    knownAttached || readClaimSet(stimdClaimRoot()).live.some((claim) => claim.details.attached === true);
+  if (!(await admit(held, command)) && attached)
+    throw Object.assign(new Error('The attached Stim daemon could not admit this command.'), {
+      code: 'STIM_DAEMON_UNAVAILABLE',
+      remedy: 'Wait for the command hosting stimd to finish and retry, or use a separate STIM_HOME.',
+    });
+}
+
 let ownBuild: string | undefined;
 
 /** This build's id: its dist's {@link stimBuildId}, or for a run from source, the source directory's hash. */
@@ -391,7 +405,7 @@ export async function ensureStimd(
   allowAttached = true,
 ): Promise<boolean> {
   if (!spawnsDaemon(env)) {
-    if (pin && stimdLive()) await admit(held, command);
+    if (pin && stimdLive()) await admitExisting(held, command);
     return false;
   }
   try {
@@ -405,7 +419,7 @@ export async function ensureStimd(
     admitting = pin && !held;
     if (stimdLive()) {
       if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
-      else await admit(held, command);
+      else await admitExisting(held, command);
       return true;
     }
     let launched: ReturnType<typeof launchStimd>;
@@ -449,14 +463,7 @@ export async function ensureStimd(
         code: 'STIM_DAEMON_UNAVAILABLE',
         remedy: 'Retry the command; if the daemon still cannot start, run stim doctor.',
       });
-    if (taken && pin) {
-      const admitted = await admit(held, command);
-      if (attachedAttempt && !admitted)
-        throw Object.assign(new Error('The attached Stim daemon could not admit this command.'), {
-          code: 'STIM_DAEMON_UNAVAILABLE',
-          remedy: 'Retry the command; if admission still fails, run stim doctor.',
-        });
-    }
+    if (taken && pin) await admitExisting(held, command, attachedAttempt);
     return taken;
   } catch (error) {
     if (
