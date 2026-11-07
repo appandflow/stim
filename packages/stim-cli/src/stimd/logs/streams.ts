@@ -78,7 +78,12 @@ export function parseStreamSpec(value: unknown): StreamSpec | null {
 }
 
 export interface StreamTable {
-  start(input: StreamSpec, env: Record<string, string>, signal?: AbortSignal): Promise<{ streamId: string }>;
+  start(
+    input: StreamSpec,
+    env: Record<string, string>,
+    signal?: AbortSignal,
+    runId?: string,
+  ): Promise<{ streamId: string }>;
   stop(root: string, platform: string, slot: string, streamId: string): Promise<boolean>;
   wait(
     root: string,
@@ -601,7 +606,12 @@ export function createStreams(log: (message: string) => void): StreamTable {
     return coverage;
   };
   return {
-    async start(input: StreamSpec, env: Record<string, string>, signal?: AbortSignal): Promise<{ streamId: string }> {
+    async start(
+      input: StreamSpec,
+      env: Record<string, string>,
+      signal?: AbortSignal,
+      runId?: string,
+    ): Promise<{ streamId: string }> {
       const root = realpathSync(input.root);
       const envHash = environmentHash(env);
       const slot = validateDeviceSlot(input.slot ?? 'default');
@@ -661,6 +671,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
               platform: input.platform,
               physical: input.physical === true,
               bundleId: input.bundleId,
+              runId,
               attribution: attribution(slot, input),
             },
             (paused) => {

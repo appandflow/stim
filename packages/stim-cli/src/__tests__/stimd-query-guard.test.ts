@@ -1,13 +1,16 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import type { Worker } from 'node:worker_threads';
+import { Socket } from 'node:net';
+import { isJsonObject } from '@stim-cli/core/state';
 import type { RunCollectorOptions } from '../stimd/logs/collector.ts';
 import { getExecutor } from '../exec.ts';
 import { readClaimSet } from '../ownership-claim.ts';
-import { workspaceDir } from '../workspace/paths.ts';
+import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { parseNdjsonText } from '../ndjson.ts';
 import { makeChildProcess } from './_factories.ts';
 
 const state = vi.hoisted<{ options: RunCollectorOptions | null; child: ChildProcess | null; workers: Worker[] }>(
@@ -38,6 +41,70 @@ vi.mock('../stimd/logs/collector.ts', () => ({
     return { child, writer: options.writer, finish: () => {}, settled: async () => {}, startedAt: '', pid: 100 };
   },
 }));
+
+test('stream admission forwards each initiating context ID and retains it on reuse', async () => {
+  const { createStreams } = await import('../stimd/logs/streams.ts');
+  const { handleLogRequest } = await import('../stimd/logs/protocol.ts');
+  const home = mkdtempSync(join(tmpdir(), 'stim-query-guard-home-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-query-guard-root-')));
+  vi.stubEnv('STIM_HOME', home);
+  const streams = createStreams(() => {});
+  vi.spyOn(getExecutor(), 'spawn').mockImplementation(() => makeChildProcess({ pid: 100000001 }));
+  const run = (runId: string, serial: string, slot: string) =>
+    new Promise<{ streamId: string }>((resolve, reject) => {
+      const socket = new Socket();
+      vi.spyOn(socket, 'write').mockImplementation((data) => {
+        const reply: unknown = JSON.parse(String(data));
+        if (isJsonObject(reply) && reply.op === 'logs.started' && typeof reply.streamId === 'string')
+          resolve({ streamId: reply.streamId });
+        else reject(new Error('log stream request failed'));
+        return true;
+      });
+      handleLogRequest({
+        message: { op: 'logs.start', params: { root, platform: 'android', serial, packageName: 'app', slot } },
+        socket,
+        streams,
+        operations: new Map([
+          [
+            socket,
+            {
+              workspace: root,
+              forwarded: { cwd: root, env: {} },
+              overrides: { STIM_RUN_ID: { value: runId, raw: runId } },
+            },
+          ],
+        ]),
+        controllers: new Map([[socket, new AbortController()]]),
+        tokens: new Map(),
+        attached: false,
+      });
+    });
+  try {
+    const first = await run('run-one', 'one', 'one');
+    const reused = await run('run-other', 'one', 'alias');
+    expect(reused.streamId).toBe(first.streamId);
+    await vi.waitFor(() => expect(state.options).not.toBeNull());
+    state.options?.writer?.write({ src: 'device', msg: 'first' });
+    Reflect.set(state, 'options', null);
+    await run('run-two', 'two', 'two');
+    await vi.waitFor(() => expect(state.options).not.toBeNull());
+    state.options?.writer?.write({ src: 'device', msg: 'second' });
+    await vi.waitFor(() => {
+      const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8'));
+      expect(records.filter((record) => record.msg === 'first').map((record) => record.runId)).toEqual([
+        'run-one',
+        'run-one',
+      ]);
+      expect(records.find((record) => record.msg === 'second')?.runId).toBe('run-two');
+    });
+  } finally {
+    await state.workers.at(-1)?.terminate();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test.skipIf(process.platform === 'win32')(
   'overlapping queries keep the marker through log exit, replacement and late cleanup failure',

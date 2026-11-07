@@ -134,7 +134,9 @@ async function idleFor(
   try {
     const { settings } = await projectSettings(path, operation);
     if (maintenanceKeepSetting(settings) || idleMinutesSetting(settings) === 0) return null;
-  } catch {
+  } catch (error) {
+    if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
+    operation?.signal.throwIfAborted();
     return null;
   }
   return decision.idleMs;
@@ -157,7 +159,10 @@ async function idleWorkspaces(
         ? null
         : await idleFor(path, thresholdMs, setting, { operation: reading.operation });
       readings.push({ path, project, idleMs });
-    } catch {}
+    } catch (error) {
+      if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
+      reading.operation?.signal.throwIfAborted();
+    }
   }
   return longestIdleFirst(readings);
 }
@@ -285,7 +290,7 @@ function recordedActivityAt(path: string): number {
 export async function pendingDormant(
   config: Config | null,
   reading: Pick<DeviceReading, 'simsFailed'>,
-  { now = Date.now(), graceMs }: { now?: number; graceMs: number },
+  { now = Date.now(), graceMs, operation }: { now?: number; graceMs: number; operation?: StimContext },
 ): Promise<string | null> {
   const afterMs = dormantAfterMs(config);
   if (!config || afterMs <= 0) return null;
@@ -296,9 +301,20 @@ export async function pendingDormant(
     const hosted = hostedFacts(path);
     if (hosted.placements.length || hosted.unreadable.length) continue;
     try {
-      const { settings } = await resolveProjectSettingsAsync(path);
+      const { settings } = await resolveProjectSettingsAsync(
+        path,
+        operation
+          ? {
+              env: operation.env,
+              signal: operation.signal,
+              declareFor: operation,
+            }
+          : {},
+      );
       if (maintenanceKeepSetting(settings) || idleMinutesSetting(settings) === 0) continue;
-    } catch {
+    } catch (error) {
+      if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
+      operation?.signal.throwIfAborted();
       continue;
     }
     const activityAt = recordedActivityAt(path);

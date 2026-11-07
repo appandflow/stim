@@ -136,8 +136,8 @@ export function createNetThread(
             answer({ listening: false, message: message.message });
             void thread.terminate();
           } else if (message.type === 'closed') {
-            clean = !message.error;
-            if (message.error) unverified(message.error);
+            clean = message.error === undefined;
+            if (message.error !== undefined) unverified(message.error);
           } else if (message.type === 'idle') {
             if (!shareOnly) return;
             log('info', 'net_idle', 'no web share is left; stopping the net thread');

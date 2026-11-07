@@ -27,7 +27,7 @@ type Entry = {
 const streams = new Map<string, Entry>();
 
 function nativeTimestamp(stream: Entry, line: string): unknown {
-  // https://github.com/appandflow/stim/issues/5387: different native timestamp spellings may preserve duplicate evidence.
+  // https://github.com/appandflow/stim/issues/5387. Different native timestamp spellings may preserve duplicate evidence.
   if (stream.platform === 'ios' && !stream.physical) return (JSON.parse(line) as { timestamp?: unknown }).timestamp;
   return /^\s*(\d+\.\d{3,6})\s/.exec(line)?.[1];
 }
@@ -41,6 +41,7 @@ type Message =
       platform: 'ios' | 'android';
       physical: boolean;
       bundleId?: string;
+      runId?: string;
       slotKey: string;
       attribution: Record<string, unknown>;
     }
@@ -85,7 +86,7 @@ port.on('message', (message: Message) => {
     if (message.op === 'open') {
       const writer = createNdjsonWriter(join(workspaceLogsDir(message.root), 'device.ndjson'), {
         maxBytes: LOG_ROTATE_BYTES,
-        fields: { streamId: message.streamId },
+        fields: { streamId: message.streamId, ...(message.runId ? { runId: message.runId } : {}) },
       });
       streams.set(message.streamId, {
         writer,

@@ -55,6 +55,66 @@ test('the logs worker decodes, attributes and flushes lines before closing a str
   }
 });
 
+test('each stream keeps its initiating run ID through aliases and backfill', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-log-writer-home-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-log-writer-app-')));
+  vi.stubEnv('STIM_HOME', home);
+  const writers = createLogWriters(() => {});
+  const line = (message: string) => JSON.stringify({ eventMessage: message, timestamp: '2026-11-07T00:00:00Z' });
+  try {
+    const first = await writers.open(
+      {
+        streamId: 'one',
+        slotKey: 'ios:one',
+        root,
+        platform: 'ios',
+        physical: false,
+        runId: 'run-one',
+        attribution: {},
+      },
+      () => {},
+    );
+    const second = await writers.open(
+      {
+        streamId: 'two',
+        slotKey: 'ios:two',
+        root,
+        platform: 'ios',
+        physical: false,
+        runId: 'run-two',
+        attribution: {},
+      },
+      () => {},
+    );
+    const fallback = await writers.open(
+      { streamId: 'fallback', slotKey: 'ios:three', root, platform: 'ios', physical: false, attribution: {} },
+      () => {},
+    );
+    await first.addAlias('ios:alias', {});
+    first.line(line('first'), null);
+    second.line(line('second'), null);
+    fallback.line(line('fallback'), null);
+    await first.beginBackfill(0);
+    first.backfillLine(line('history'), null);
+    await first.endBackfill();
+    for (const sink of [first, second, fallback]) {
+      sink.writer.close();
+      await sink.closed();
+    }
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8'));
+    expect(
+      records.filter((record) => record.msg === 'first' || record.msg === 'history').map((record) => record.runId),
+    ).toEqual(['run-one', 'run-one', 'run-one', 'run-one']);
+    expect(records.find((record) => record.msg === 'second')?.runId).toBe('run-two');
+    expect(records.find((record) => record.msg === 'fallback')?.runId).toMatch(/^[A-Za-z0-9._-]{1,64}$/);
+  } finally {
+    await writers.close();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('backfill deduplicates only live overlap and keeps repeated live records', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-log-writer-home-'));
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-log-writer-app-')));

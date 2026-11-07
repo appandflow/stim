@@ -1,6 +1,7 @@
 import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
 import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
 import { randomUUID } from 'node:crypto';
+import type { StimContext } from '@stim-cli/core';
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -262,8 +263,13 @@ async function pendingWork(
   measured: TickMeasurement,
   slowTickMs: number,
   act: boolean,
+  operation: StimContext,
 ): Promise<string | null> {
-  const dormant = await pendingDormant(config, { simsFailed: measured.sims === null }, { graceMs: slowTickMs });
+  const dormant = await pendingDormant(
+    config,
+    { simsFailed: measured.sims === null },
+    { graceMs: slowTickMs, operation },
+  );
   if (dormant) return `${dormant} is not dormant yet`;
   const settings = resolveMaintenanceSettings(config);
   const removal =
@@ -1469,7 +1475,7 @@ async function runStimdInner(
           ? 'automatic maintenance runs'
           : updating
             ? 'an engine update check runs'
-            : await pendingWork(config, measured, slowTickMs, mode === 'on');
+            : await pendingWork(config, measured, slowTickMs, mode === 'on', operation);
       wentDormant = actions.some((action) => action.kind === 'dormant-stage' && action.outcome === 'done');
       interval = alive || pressure.level !== 'normal' ? tickMs : slowTickMs;
       for (const { path: workspace, outcome, detail } of workspaces) {

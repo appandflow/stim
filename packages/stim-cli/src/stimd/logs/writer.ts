@@ -25,6 +25,7 @@ export interface LogWriters {
       platform: 'ios' | 'android';
       physical: boolean;
       bundleId?: string;
+      runId?: string;
       slotKey: string;
       attribution: Record<string, unknown>;
     },
