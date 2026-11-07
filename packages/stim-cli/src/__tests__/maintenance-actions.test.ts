@@ -33,6 +33,9 @@ import { register, readManifest } from '../cache/cache-manifest.ts';
 import { pruneCache } from '../cache/caches.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { executeAction, type ActContext } from '../stimd/passes/act.ts';
+import * as maintenanceActions from '../stimd/passes/act.ts';
+import * as maintenancePreview from '../stimd/passes/preview.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import * as measurements from '../stimd/passes/measure.ts';
 import { cacheEntryProtection } from '../stimd/passes/protect.ts';
 import { runMaintenance } from '../stimd/passes/run.ts';
@@ -173,6 +176,28 @@ function capFixture() {
   process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES = 'false';
   return { entries, spaces };
 }
+
+test.each<'measure' | 'plan' | 'action'>(['measure', 'plan', 'action'])(
+  'maintenance propagates unverified %s cleanup',
+  async (stage) => {
+    capFixture();
+    const failure = new WorkspaceProcessCleanupError([], `${stage} child cleanup is unverified`, 'Inspect the child.');
+    const measure = vi.spyOn(measurements, 'measureSizes').mockResolvedValue([]);
+    const plan = vi.spyOn(maintenancePreview, 'plannedMaintenance').mockResolvedValue({
+      actions: [{ kind: 'would-clear-outputs', target: '/x', bytes: 0, reason: 'test' }],
+      blocked: [],
+      skips: [],
+      byCheck: {},
+    });
+    const action = vi
+      .spyOn(maintenanceActions, 'executeAction')
+      .mockResolvedValue({ status: 'kept', bytes: 0, detail: '' });
+    const selected = { measure, plan, action }[stage];
+    selected.mockRejectedValue(failure);
+    await expect(runMaintenance('test')).rejects.toBe(failure);
+    expect(selected).toHaveBeenCalled();
+  },
+);
 
 test('on mode trims over-cap caches oldest first and clears only idle, unpinned, unlocked workspaces', async () => {
   const { entries, spaces } = capFixture();

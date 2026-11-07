@@ -72,7 +72,11 @@ async function lockfileSignature(root: string): Promise<string> {
 }
 
 export async function treeSignature(root: string, signal: AbortSignal): Promise<string> {
-  const head = await gitAsync(root, ['rev-parse', 'HEAD'], { signal }).catch(() => 'no-head');
+  const head = await gitAsync(root, ['rev-parse', 'HEAD'], { signal }).catch((error: unknown) => {
+    if (error instanceof Error && 'reportCleanup' in error) throw error;
+    signal.throwIfAborted();
+    return 'no-head';
+  });
   return `${head}|${await lockfileSignature(root)}`;
 }
 
@@ -150,6 +154,7 @@ export function createFingerprintPrecompute(log: Log, overrides: Partial<Precomp
         try {
           signature = await d.signature(where, operation.signal);
         } catch (error) {
+          if (error instanceof Error && 'reportCleanup' in error) throw error;
           operation.signal.throwIfAborted();
           failed(path, error);
           continue;
@@ -159,6 +164,7 @@ export function createFingerprintPrecompute(log: Log, overrides: Partial<Precomp
         try {
           requests = await d.requests(path, project, operation);
         } catch (error) {
+          if (error instanceof Error && 'reportCleanup' in error) throw error;
           operation.signal.throwIfAborted();
           failed(path, error);
           seen.set(path, signature);
@@ -182,6 +188,7 @@ export function createFingerprintPrecompute(log: Log, overrides: Partial<Precomp
             outcome = result.outcome;
             if (result.outcome === 'skipped') reason = result.reason;
           } catch (error) {
+            if (error instanceof Error && 'reportCleanup' in error) throw error;
             operation.signal.throwIfAborted();
             outcome = 'failed';
             reason = error instanceof Error ? error.message : String(error);

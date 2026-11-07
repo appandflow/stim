@@ -16,6 +16,7 @@ const POLL_MS = 25;
 
 export class WorkspaceProcessCleanupError extends Error {
   readonly code = 'STIM_CLAIM_UNAVAILABLE';
+  readonly reportCleanup = true;
   readonly claims: readonly ClaimHandle[];
   readonly remedy: string;
   readonly reportResourceSettled?: () => boolean;
