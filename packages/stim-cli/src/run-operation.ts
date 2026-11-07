@@ -31,6 +31,8 @@ function apiCommand(operation: ApiOperation, platform: string | undefined): stri
   return API_COMMANDS[operation] ?? null;
 }
 
+const endCli = async () => (await import('./daemon/client.ts')).attachedHostEnd()?.();
+
 /**
  * The one entry every CLI command and API operation passes before it runs. A command the daemon governs is refused
  * while the environment sets a removed setting's variable or a leftover setting turns a mechanism off; otherwise the
@@ -39,37 +41,54 @@ function apiCommand(operation: ApiOperation, platform: string | undefined): stri
  * (`admission: 'none'`) take no admission. API callers never run the passes in process: maintenance reads its
  * machine-global scope guards from `process.env`, not the client's environment. API `start` records its workspace's
  * use itself, after the caller's `beforeStart`, so its admission does not. Returns the refusal, or the command
- * admitted (null when none was).
+ * admitted (null when none was) and, for a CLI command that hosts stimd, `end`, which the CLI awaits once the command
+ * finished so that stimd ends with it.
  */
 export async function runOperation(
   entry: OperationEntry,
-): Promise<{ refusal: OperationRefusal } | { admitted: string | null; end?: () => void }> {
+): Promise<{ refusal: OperationRefusal } | { admitted: string | null; end?: () => unknown; opToken?: string }> {
   const command =
     entry.caller === 'cli'
       ? entry.command || null
       : entry.admission === 'command' && entry.operation
         ? apiCommand(entry.operation, entry.platform)
         : null;
-  if (!command) return { admitted: null };
+  if (!command) return entry.caller === 'cli' ? { admitted: null, end: endCli } : { admitted: null };
   const refusal =
     fallbackRefusal(command, entry.env) ??
     removedEnvironmentRefusal(command, entry.env) ??
     removedConfigRefusal(command, entry.cwd, entry.env);
   if (refusal) return { refusal };
-  if (entry.caller === 'cli' && entry.plan) return { admitted: null };
+  if (entry.caller === 'cli' && entry.plan) return { admitted: null, end: endCli };
+  const creates = ['start', 'ios', 'android', 'web', 'macos', 'revive'].includes(command);
+  const context = creates ? (await import('./stimd/forwarded.ts')).invocation(entry.cwd, entry.env) : undefined;
+  if (context && 'code' in context) return { refusal: context };
   const held: import('node:net').Socket[] = [];
+  const client = await import('./daemon/client.ts');
   try {
-    const { beforeCommand } = await import('./daemon/client.ts');
-    await beforeCommand(command, entry.env, {
+    await client.beforeCommand(command, entry.env, {
       cwd: entry.cwd,
       recordUse: entry.caller === 'cli' || entry.operation !== 'start',
       passes: entry.caller === 'cli',
       pin: true,
+      invocation: context,
+      deviceLogs: entry.caller === 'cli' || entry.operation === 'run',
       ...(entry.caller === 'api' ? { held } : {}),
     });
-  } catch {}
+  } catch (error) {
+    if (client.isSandboxBlocked(error))
+      return {
+        refusal: {
+          code: client.SANDBOX_BLOCKED,
+          message: error.message,
+          remedy: 'Outside the sandbox the command runs as is; `stim guide errors STIM_SANDBOX_BLOCKED` explains it.',
+        },
+      };
+  }
+  if (entry.caller === 'cli') return { admitted: command, end: endCli };
+  const opToken = held.length ? client.admittedOpToken(held) : undefined;
   return held.length
-    ? { admitted: command, end: () => held.forEach((socket) => socket.destroy()) }
+    ? { admitted: command, end: () => held.forEach((socket) => socket.destroy()), ...(opToken ? { opToken } : {}) }
     : { admitted: command };
 }
 

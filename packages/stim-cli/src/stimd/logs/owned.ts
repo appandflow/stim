@@ -71,15 +71,17 @@ function legacy(owner: { pid: number; processToken: string } | undefined, pid: n
 }
 // compat end
 
-export function createOwnedStreams(log: Log): OwnedStreams {
+export function createOwnedStreams(log: Log, changed: (running: boolean) => void = () => {}): OwnedStreams {
   const streams = new Map<string, Stream>();
   const ended = new Map<string, string>();
   let closed = false;
   const keep = (key: string, stream: Stream) => {
     streams.set(key, stream);
+    changed(true);
     void stream.ended.then(() => {
       if (streams.get(key) !== stream) return undefined;
       streams.delete(key);
+      changed(streams.size > 0);
       if (!closed) ended.set(key, stream.token);
       return undefined;
     });
@@ -175,6 +177,7 @@ export function createOwnedStreams(log: Log): OwnedStreams {
         if (stream) {
           ended.set(key, stream.token);
           streams.delete(key);
+          changed(streams.size > 0);
           stream.close();
           await stream.ended;
         }
@@ -195,6 +198,7 @@ export function createOwnedStreams(log: Log): OwnedStreams {
             return 'the macOS app output could not be drained or its process group could not be verified stopped';
           ended.set(key, stream.token);
           streams.delete(key);
+          changed(streams.size > 0);
           stream.close();
           await stream.ended;
         }

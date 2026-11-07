@@ -4,7 +4,7 @@ import type { RuntimePreparationError, RuntimePreparationResult } from '../engin
 import { writeDevicePlacementAsync, hostedMetroSettings } from '../workspace/placement-state.ts';
 import type { DevicePlacement } from '@stim-cli/core/state';
 import { type StimContext, workspaceId } from '@stim-cli/core';
-import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
+import { exitCli, runProcessOperation } from '../cli-operation.ts';
 import { acquireIosArtifact, acquireIosArtifactOrRecorded, type PreparedIosArtifact } from './ios/artifact.ts';
 import { lookupRecordedBuild, type RecordedBuildRefusal } from '../engine/recorded-build.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
@@ -107,7 +107,7 @@ export { lastBuildRecord, iosFacts, writeLastBuild, cacheDescription } from './i
 
 export { devClientScheme, schemesFromInfoPlist, pickDevClientScheme } from './dev-client.ts';
 
-export { collectorEntry, replaceCollector } from './ios/collector.ts';
+export { replaceCollector } from './ios/collector.ts';
 
 export { ensureWorkspaceStorageSafely } from './native-runtime.ts';
 
@@ -221,8 +221,8 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       const { value: completion, interrupted } = await runProcessOperation(root ?? process.cwd(), (context) =>
         runIosOperation(context, root, { ...opts, waitConflict: waitFlagConflict(process.argv) }, deps),
       );
-      if (!completion) process.exit(interrupted ?? 1);
-      else if (completion.uploadsAbandoned) exitAfterFlush(0);
+      if (!completion) exitCli(interrupted ?? 1);
+      else if (completion.uploadsAbandoned) exitCli(0);
     });
 }
 
@@ -1301,6 +1301,8 @@ async function runIos(
           waitSeconds,
           noWait,
           installBoundMs: iosDeviceBounds(wireless).installMs,
+          signal: context.signal,
+          operation: context,
           appId: artifact.bundleId ?? proj?.bundleId ?? null,
           holderAppId: (holder: string) => d.getProject(holder)?.bundleId ?? null,
           now: d.now,
@@ -1317,8 +1319,10 @@ async function runIos(
         leaseHandle = d.runLease({
           root,
           platform: PLATFORM,
-          kind: acquired.status === 'leased' ? acquired.kind : null,
-          expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
+          ...(acquired.status === 'leased'
+            ? { kind: acquired.kind, expiresAt: acquired.expiresAt, token: acquired.token, ticket: acquired.ticket }
+            : { kind: null, expiresAt: null }),
+          operation: context,
         });
         if (acquired.status === 'leased') {
           stopLeaseSignals = d.releaseLeaseOnAbort(context, releaseLease);

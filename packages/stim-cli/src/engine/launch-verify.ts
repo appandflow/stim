@@ -297,6 +297,7 @@ export async function verifyLaunch({
   pollMs = VERIFY_POLL_MS,
   readRecords = null,
   readDeviceRecords = null,
+  deviceStreamId,
   readClientRecords = null,
   readNativeCrashes = null,
   processAlive = null,
@@ -321,6 +322,7 @@ export async function verifyLaunch({
   pollMs?: number;
   readRecords?: (() => NdjsonRecord[]) | null;
   readDeviceRecords?: (() => NdjsonRecord[]) | null;
+  deviceStreamId?: string | null;
   readClientRecords?: (() => NdjsonRecord[]) | null;
   readNativeCrashes?: (() => NdjsonRecord[] | Promise<NdjsonRecord[]>) | null;
   processAlive?: (() => boolean | null | Promise<boolean | null>) | null;
@@ -383,7 +385,10 @@ export async function verifyLaunch({
           (!requireBundleResponse || String(record.event).startsWith('bundle_response_')) && delivered(record),
       );
       const deviceRecords = readDevice().filter(
-        (record) => after(record, since) && (slot === undefined || (record.slot ?? 'default') === slot),
+        (record) =>
+          after(record, since) &&
+          (slot === undefined || (record.slot ?? 'default') === slot) &&
+          (deviceStreamId === undefined || (deviceStreamId !== null && record.streamId === deviceStreamId)),
       );
       const clientRecords = readClient().filter((record) => after(record, since) && !platformShared);
       bundleDeadline = manifestDeadline(

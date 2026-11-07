@@ -24,7 +24,13 @@ import * as clonefile from '../clonefile.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { takeWaitTicket } from '../engine/wait-queue.ts';
-import { beforeCommand, ensureStimd, requestDaemonTick, stimdBuildId } from '../daemon/client.ts';
+import {
+  beforeCommand,
+  ensurePersistentStimd,
+  ensureStimd,
+  requestDaemonTick,
+  stimdBuildId,
+} from '../daemon/client.ts';
 import { runOperation } from '../run-operation.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
@@ -271,6 +277,61 @@ describe('stimd on every platform', () => {
 });
 
 describe.skipIf(process.platform === 'win32')('stimd', () => {
+  test('only a persistent daemon can enforce deferred simulator shutdown', async () => {
+    const attached = getExecutor().spawn(
+      process.execPath,
+      ['--experimental-strip-types', entry, '__stimd', '--attached'],
+      {
+        env: { ...process.env, STIM_DAEMON: 'on' },
+        stdio: ['pipe', 'ignore', 'ignore'],
+      },
+    );
+    const attachedExited = new Promise<number | null>((done) => attached.once('exit', (code) => done(code)));
+    daemons.push({ child: attached, exited: attachedExited });
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(stimdRecordFile(), 'utf8')).pid).toBe(attached.pid), {
+      timeout: 10_000,
+      interval: 20,
+    });
+    expect(await ensurePersistentStimd({ ...process.env, STIM_DAEMON: 'on' })).toBe(false);
+    attached.stdin?.end();
+    await attachedExited;
+
+    const persistent = getExecutor().spawn(
+      process.execPath,
+      ['--experimental-strip-types', entry, '__stimd', '--mode', 'report'],
+      {
+        env: { ...process.env, STIM_DAEMON: 'on' },
+        stdio: 'ignore',
+      },
+    );
+    const persistentExited = new Promise<number | null>((done) => persistent.once('exit', (code) => done(code)));
+    daemons.push({ child: persistent, exited: persistentExited });
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(stimdRecordFile(), 'utf8')).pid).toBe(persistent.pid), {
+      timeout: 10_000,
+      interval: 20,
+    });
+    expect(await ensurePersistentStimd({ ...process.env, STIM_DAEMON: 'on' })).toBe(false);
+    persistent.kill('SIGTERM');
+    await persistentExited;
+
+    const acting = getExecutor().spawn(
+      process.execPath,
+      ['--experimental-strip-types', entry, '__stimd', '--mode', 'on'],
+      {
+        env: { ...process.env, STIM_DAEMON: 'on' },
+        stdio: 'ignore',
+      },
+    );
+    const actingExited = new Promise<number | null>((done) => acting.once('exit', (code) => done(code)));
+    daemons.push({ child: acting, exited: actingExited });
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(stimdRecordFile(), 'utf8')).pid).toBe(acting.pid), {
+      timeout: 10_000,
+      interval: 20,
+    });
+    expect(JSON.parse(readFileSync(stimdRecordFile(), 'utf8')).build).toBe(stimdBuildId());
+    expect(await ensurePersistentStimd({ ...process.env, STIM_DAEMON: 'on' })).toBe(true);
+  }, 30_000);
+
   test('the built stimd answers a first frame of its own build, refuses another build, holds the daemon claim shared and removes its record on SIGTERM', async () => {
     const dist = fileURLToPath(new URL('../../dist/', import.meta.url));
     const build = stimBuildId(dist);

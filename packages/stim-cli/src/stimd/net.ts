@@ -11,6 +11,7 @@ export interface NetOptions {
   pathPrepend: string[];
   loopbackOnly: boolean;
   shareOnly: boolean;
+  attached?: boolean;
   desktopKey: string;
   owner?: 'desktop';
   script: string;

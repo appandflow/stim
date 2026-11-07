@@ -482,6 +482,7 @@ async function start(
     loopbackOnly?: boolean;
     keepAwake?: ServerOptions['keepAwake'];
     hostsDevices?: boolean;
+    attached?: boolean;
     exit?: boolean;
     whoisDelayMs?: number;
     authTimeoutMs?: number;
@@ -533,6 +534,7 @@ async function start(
     drainHosted: async () => null,
     host: overrides.host,
     hostsDevices: overrides.hostsDevices ?? true,
+    attached: overrides.attached,
     hosts: ['127.0.0.1'],
     port: 0,
     stimCli,
@@ -2829,6 +2831,37 @@ describe('setup approval in Stim Desktop on this machine', () => {
 });
 
 describe('hosted device sessions', () => {
+  test('an attached server refuses hosted work before starting a worker while allowing session queries', async () => {
+    const port = await start({ attached: true });
+    const pending = setupClient(['device-host'], 'Client');
+    const client = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
+    const session = '12345678-1234-1234-1234-123456789abc';
+    const attempt = 'test-attempt';
+    const hash = 'a'.repeat(64);
+    const requests: [string, unknown][] = [
+      ['device-host.runtime.install', { runtime: '17.2' }],
+      ['device-host.offer', { platform: 'ios' }],
+      ['device-host.reserve', { workspace: '/client/app', slot: 'default', platform: 'ios', attempt }],
+      [
+        'device-host.app.offer',
+        { session, attempt, bundleId: 'dev.test.app', mode: 'development', manifest: { sha256: hash, size: 1 } },
+      ],
+      ['device-host.app.chunk', { session, attempt, sha256: hash, offset: 0, data: 'YQ==' }],
+      ['device-host.app.handoff', { session, attempt, build: { handoff: 'test', sha256: hash } }],
+      ['device-host.app.launch', { session, attempt }],
+    ];
+    for (const [method, params] of requests)
+      expect(await client.request(method, params)).toMatchObject({
+        error: { code: 'device-busy', message: expect.stringContaining('stim serve') },
+      });
+    expect(await client.request('device-host.attach', { session })).not.toMatchObject({
+      error: { code: 'device-busy' },
+    });
+    expect(await client.request('device-host.stop', { session })).not.toMatchObject({ error: { code: 'device-busy' } });
+    expect(readHostedSessions()).toEqual([]);
+    client.socket.close();
+  });
+
   test.skipIf(!fakeTailscale)(
     'reserves through the socket, reconnects to the same session and stops it on revocation',
     async () => {

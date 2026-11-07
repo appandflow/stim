@@ -101,6 +101,8 @@ export interface NetOptions {
   loopbackOnly: boolean;
   /** Serves web shares only, and ends once the last one has, unless `keep` runs first. */
   shareOnly: boolean;
+  /** Whether the serving stimd is bound to a command. */
+  attached?: boolean;
   /** The key in stimd's `run/desktop.key`. */
   desktopKey: string;
   owner?: 'desktop';
@@ -169,6 +171,7 @@ export async function serve(
     server = await startServer({
       drainHosted,
       desktopBootstrap: new DesktopBootstrap(options.desktopKey),
+      attached: options.attached,
       requestUpdate,
       ...(options.owner ? { owner: options.owner } : {}),
       name: macName(tailscale),

@@ -98,6 +98,8 @@ function hostedPlacement(dir: string, platform: string, slot = 'default') {
 
 export interface ServerOptions {
   drainHosted?: (session: string) => Promise<string | null>;
+  /** Refuses offloaded jobs when the serving stimd is bound to a command. */
+  attached?: boolean;
   /** The key in stimd's `run/desktop.key` that admits a local connection to the Desktop-only methods. */
   desktopBootstrap?: DesktopBootstrap;
   /** Asks stimd to check for a newer engine, as when a phone needs a newer one. */

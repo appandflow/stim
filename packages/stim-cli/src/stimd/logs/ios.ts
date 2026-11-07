@@ -155,8 +155,12 @@ export function parseLogStreamLine(line: string, { now = Date.now }: { now?: () 
   return recordFromLogEvent(event, { now });
 }
 
-export function logStreamArgs(udid: string, appName: string, executableName?: string | null): string[] {
+function appPredicate(appName: string, executableName?: string | null): string {
   const exe = executableName && executableName.trim() !== '' ? executableName.trim() : appName;
+  return `processImagePath ENDSWITH "/${appName}.app/${exe}"`;
+}
+
+export function logStreamArgs(udid: string, appName: string, executableName?: string | null): string[] {
   return [
     'simctl',
     'spawn',
@@ -166,9 +170,32 @@ export function logStreamArgs(udid: string, appName: string, executableName?: st
     '--style',
     'ndjson',
     '--predicate',
-    `processImagePath ENDSWITH "/${appName}.app/${exe}"`,
+    appPredicate(appName, executableName),
     '--level',
     'info',
+  ];
+}
+
+export function logShowArgs(
+  udid: string,
+  appName: string,
+  executableName: string | null | undefined,
+  since: number,
+): string[] {
+  return [
+    'simctl',
+    'spawn',
+    udid,
+    'log',
+    'show',
+    '--style',
+    'ndjson',
+    '--start',
+    `@${Math.floor(since / 1000)}`,
+    '--predicate',
+    appPredicate(appName, executableName),
+    '--info',
+    '--no-pager',
   ];
 }
 

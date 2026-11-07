@@ -1398,6 +1398,12 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Stim home (\`stim ci build\`, or the API build), then run again. \`stim guide ci\`
   has the flow. \`stim ios\` and \`stim android\` never use it.`,
     },
+    STIM_ENV_TOO_LARGE: {
+      summary: 'the invocation environment exceeds the forwarding limit',
+      body: () => `STIM_ENV_TOO_LARGE
+  The environment forwarded to stimd exceeds 512 KB. The refusal names the
+  five largest variables. Reduce or unset them, then rerun the command.`,
+    },
     STIM_BAD_ARG: {
       summary: 'an argument, setting, directory, flavor, or device name refused before anything starts',
       aliases: ['STIM_NO_PROJECT'],
@@ -1845,15 +1851,20 @@ not on any remote"  (worktree remove)
   Stim knows about; the rest is other software.`,
     },
     sandbox: {
-      summary: 'running under a sandboxing harness: EPERM under STIM_HOME, CoreSimulatorService, adb',
+      summary: 'running under a sandboxing harness: EPERM under STIM_HOME, the stimd socket, CoreSimulatorService, adb',
       body: () => `RUNNING UNDER A SANDBOX
 
   An agent harness that sandboxes shell commands typically permits writes
-  inside the project and blocks the rest. Three things Stim needs sit outside
-  that boundary, and none of the failures names the sandbox:
+  inside the project and blocks the rest. Four things Stim needs sit outside
+  that boundary, and only the second failure names the sandbox:
 
     EPERM: operation not permitted, mkdir '<STIM_HOME>/workspaces/...'
       writes to STIM_HOME (~/.stim unless set)
+
+    STIM_SANDBOX_BLOCKED: <STIM_HOME>/run/stimd.sock is outside this
+    sandbox's allowance; run Stim outside the sandbox or see stim guide errors sandbox
+      stimd's socket, which start, ios, android, web, macos and revive
+      connect to or bind (see that code's entry)
 
     CoreSimulatorService connection became invalid   (macOS)
     Unable to locate device set: ... Code=61 "Connection refused"
@@ -1863,14 +1874,15 @@ not on any remote"  (worktree remove)
     could not install *smartsocket* listener: Operation not permitted
       the adb server socket on tcp:5037
 
-  Measured on Claude Code and on Codex: the three fail the same way in both,
+  Measured on Claude Code and on Codex: the first, third and fourth fail the same way in both,
   so this is the shape of the problem, not one harness's quirk. Codex also
   blocks network egress by default, which breaks a cache lookup and a fetch.
 
-  \`stim doctor\` names this when a write to STIM_HOME actually fails, not
-  merely when a harness that can sandbox is present. \`stim doctor --fix\`
+  \`stim doctor\` names this when a write to STIM_HOME or a connection to
+  stimd's socket actually fails, not merely when a harness that can sandbox
+  is present. \`stim doctor --fix\`
   writes only when the report shows that finding, and only what the finding
-  names: the three keys, into .claude/settings.local.json, the per-user file,
+  names: the four keys, into .claude/settings.local.json, the per-user file,
   merging with what is there. A report without the finding, with or without
   --platform, leaves that file alone. It refuses under Codex, which
   has no per-path allowance to add, and refuses any settings file it cannot
@@ -1881,12 +1893,21 @@ not on any remote"  (worktree remove)
   does.
 
   Two ways out, and choosing at the start of a session beats discovering it
-  three failures in. Either run Stim with the harness's sandbox disabled, or
-  allow the three. In Claude Code that is settings.json:
+  four failures in. Either run Stim with the harness's sandbox disabled, or
+  allow the four. In Claude Code that is settings.json:
 
     sandbox.filesystem.allowWrite     ["~/.stim"]
     sandbox.network.allowMachLookup   ["com.apple.coresimulator.*"]
+    sandbox.network.allowUnixSockets  ["<STIM_HOME>/run/stimd.sock"]
     sandbox.network.allowLocalBinding true
+
+  The socket entry is the absolute path stim doctor prints; when that path is
+  longer than the platform's socket limit (103 bytes on macOS) stimd uses
+  /tmp/stim-sockets-<uid>/<hash>.sock instead, and doctor writes that one.
+
+  On Linux, Claude Code cannot allow individual Unix sockets through seccomp.
+  If the socket is denied, run Stim outside the sandbox; doctor does not
+  automatically enable access to every Unix socket.
 
   In Codex the sandbox is one flag, \`codex -s\`, with no per-path allowance:
   workspace-write still refuses STIM_HOME.
@@ -1941,6 +1962,25 @@ not on any remote"  (worktree remove)
   another build; other commands run. Repair the pointer with this copy, as
   the remedy names: npx stim@<this version> engine rollback, or
   npx stim@<this version> engine use <this version>.`,
+    },
+    STIM_SANDBOX_BLOCKED: {
+      summary: "a sandbox denies stimd's socket, so the command can neither reach nor host stimd",
+      body: () => `STIM_SANDBOX_BLOCKED  ("<STIM_HOME>/run/stimd.sock is outside this sandbox's
+                       allowance; run Stim outside the sandbox or see stim guide errors sandbox")
+  start, ios, android, web, macos and revive run under this home's stimd.
+  They start it detached; when a detached start has not bound within 2 s
+  (a harness that blocks launchd, systemd-run or detached children), the
+  command runs stimd as its own child for its lifetime instead, and after the
+  command ends that stimd waits up to daemon.attachedExitWaitSeconds (120)
+  for other commands still using it, then writes run/stimd-journal.json and
+  exits; the next command starts or hosts the next one. The refusal comes
+  only when the sandbox itself denies the socket (EPERM or EACCES): a stimd
+  started outside the sandbox holds the home and this command may not
+  connect, or the attached stimd may not bind. A slow start is never refused.
+  On macOS, run stim doctor --fix inside Claude Code, then restart the session.
+  On Linux, a path-specific socket allowance is unsupported; run the command
+  outside the sandbox. status, logs, reload, doctor and other read commands
+  keep working inside the sandbox.`,
     },
     STIM_ENGINE_SWITCHED: {
       summary: 'the machine engine switched to a newer build while this run waited',

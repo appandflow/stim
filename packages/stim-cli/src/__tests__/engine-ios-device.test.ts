@@ -615,6 +615,11 @@ test('collectorRecordsFor ignores the predecessor a fresh run just signalled', (
   expect(collectorRecordsFor(records, 99).map((r) => r.ts)).toEqual([2, 3]);
   expect(collectorRecordsFor(records, 12)).toEqual([]);
   expect(collectorRecordsFor(records, null)).toEqual([]);
+  const streams = [
+    { ts: 1, streamId: 'old', event: 'collector_stopped' },
+    { ts: 2, streamId: 'new', event: 'collector_started' },
+  ];
+  expect(collectorRecordsFor(streams, null, 'new')).toEqual([streams[1]]);
 });
 
 function timedOut(): Error {

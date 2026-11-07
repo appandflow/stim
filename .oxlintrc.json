@@ -294,6 +294,22 @@
       }
     },
     {
+      "files": ["packages/stim-cli/src/stimd/forwarded.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              { "name": "node:child_process", "allowTypeImports": true },
+              { "name": "child_process", "allowTypeImports": true },
+              { "name": "cross-spawn" },
+              { "name": "@stim-cli/core", "importNames": ["ambientContext", "ambientEnv", "ambientWrite"] }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": [
         "packages/stim-cli/src/api.ts",
         "packages/stim-cli/src/cli-operation.ts",
@@ -302,7 +318,6 @@
         "packages/stim-cli/src/detached-entry.ts",
         "packages/stim-cli/src/supervisor/**",
         "packages/stim-cli/src/stimd/metro/**",
-        "packages/stim-cli/src/collector/**",
         "packages/stim-cli/src/stimd/logs/**",
         "packages/stim-cli/src/stimd/**",
         "packages/stim-cli/src/daemon/**",

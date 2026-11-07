@@ -250,6 +250,17 @@ describe('waiting for a device another workspace holds', () => {
     return taken.lease;
   }
 
+  test('cancelling a pending lease wait leaves the holder untouched', async () => {
+    const h = harness();
+    const lease = held(h, 60_000);
+    const controller = new AbortController();
+    const pending = acquire(h, { signal: controller.signal, sleep: undefined });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(h.read()?.token).toBe(lease.token);
+    expect(h.holders.get(ROOT)).toBeUndefined();
+  });
+
   test('a lease that frees mid-wait is taken by the waiter', async () => {
     const h = harness();
     held(h, 6_000);

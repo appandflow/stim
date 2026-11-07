@@ -6,14 +6,19 @@ import { runOperation, type ApiOperation } from '../run-operation.ts';
 
 let dir: string;
 let env: NodeJS.ProcessEnv;
+let restoreAdmission: () => void;
 
-beforeEach(() => {
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'stim-run-operation-'));
   process.env.STIM_HOME = join(dir, 'home');
   env = { ...process.env, STIM_DAEMON: 'off' };
+  const client = await import('../daemon/client.ts');
+  const admission = vi.spyOn(client, 'beforeCommand').mockResolvedValue();
+  restoreAdmission = () => admission.mockRestore();
 });
 
 afterEach(() => {
+  restoreAdmission();
   delete process.env.STIM_HOME;
   rmSync(dir, { recursive: true, force: true });
 });
@@ -44,9 +49,17 @@ describe('runOperation', () => {
   });
 
   it('admits a top-level CLI command, but not a subcommand or --plan', async () => {
-    await expect(cli('ios')).resolves.toEqual({ admitted: 'ios' });
-    await expect(cli('')).resolves.toEqual({ admitted: null });
-    await expect(cli('ios', true)).resolves.toEqual({ admitted: null });
+    await expect(cli('ios')).resolves.toMatchObject({ admitted: 'ios', end: expect.any(Function) });
+    await expect(cli('')).resolves.toMatchObject({ admitted: null, end: expect.any(Function) });
+    await expect(cli('ios', true)).resolves.toMatchObject({ admitted: null, end: expect.any(Function) });
+  });
+
+  it('refuses an oversized environment before admitting either caller', async () => {
+    env.LARGE = 'x'.repeat(512 * 1024);
+    for (const entered of [await cli('ios'), await api('start')])
+      expect(entered).toMatchObject({
+        refusal: { code: 'STIM_ENV_TOO_LARGE', message: expect.stringContaining('LARGE') },
+      });
   });
 
   it('refuses a governed command while a removed variable is set, for both callers and with --plan', async () => {
@@ -55,7 +68,22 @@ describe('runOperation', () => {
       expect(entered).toMatchObject({
         refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('STIM_MAINTENANCE') },
       });
-    await expect(cli('doctor')).resolves.toEqual({ admitted: 'doctor' });
+    await expect(cli('doctor')).resolves.toMatchObject({ admitted: 'doctor', end: expect.any(Function) });
     await expect(api('build', 'android', 'none')).resolves.toEqual({ admitted: null });
   });
+});
+
+it('collects an attached host created after CLI admission', async () => {
+  const client = await import('../daemon/client.ts');
+  const end = vi.fn<() => void>();
+  const lookup = vi.spyOn(client, 'attachedHostEnd').mockReturnValue(async () => end());
+  try {
+    const entered = await cli('stop');
+    expect(lookup).not.toHaveBeenCalled();
+    if ('refusal' in entered) throw new Error('unexpected refusal');
+    await entered.end?.();
+    expect(end).toHaveBeenCalledOnce();
+  } finally {
+    lookup.mockRestore();
+  }
 });

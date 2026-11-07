@@ -43,6 +43,7 @@ import {
   detectHarness,
   missingAllowance,
   sandboxAllowance,
+  sandboxBlocksSocket,
   sandboxFinding,
 } from '../diagnostics/sandbox.ts';
 import { androidImageDecision, runDoctor } from '../diagnostics/doctor.ts';
@@ -309,13 +310,19 @@ export function applySandboxFix(
   settingsRoot: string,
   env: NodeJS.ProcessEnv = process.env,
   note: (message: string) => void = console.error,
+  socketBlocked = false,
+  platform: NodeJS.Platform = process.platform,
 ): 0 | 1 {
   const harness = detectHarness(env);
+  if (harness === 'claude-code' && platform === 'linux' && socketBlocked) {
+    note(chalk.yellow('Claude Code on Linux cannot allow a single Unix socket path. Run Stim outside the sandbox.'));
+    return 1;
+  }
   if (harness === 'codex') {
     note(chalk.yellow('Nothing to apply under Codex.'));
     note(
       chalk.dim(
-        'Its sandbox is one setting, `sandbox_mode`, with no per-path allowance: the only value that clears Stim is `danger-full-access`, which turns the sandbox off rather than allowing these three. Run Stim with the sandbox off instead, or set it yourself.',
+        'Its sandbox is one setting, `sandbox_mode`, with no per-path allowance: the only value that clears Stim is `danger-full-access`, which turns the sandbox off rather than allowing these four. Run Stim with the sandbox off instead, or set it yourself.',
       ),
     );
     return 1;
@@ -342,7 +349,7 @@ export function applySandboxFix(
   note(chalk.green(`${result.status === 'created' ? 'Wrote' : 'Updated'} ${target}`));
   note(
     chalk.dim(
-      "Added writes to Stim's state directory, the simulator XPC service, and local port binding. Claude Code reads project settings from the directory a session starts in, so this file only counts for sessions rooted there. Restart the session for it to take effect.",
+      "Added writes to Stim's state directory, the simulator XPC service, stimd's socket, and local port binding. Claude Code reads project settings from the directory a session starts in, so this file only counts for sessions rooted there. Restart the session for it to take effect.",
     ),
   );
   return 0;
@@ -404,8 +411,17 @@ async function repairDoctorProject(
   const settingsRoot = settingsContext.repoRoot ?? root;
   let exitCode: 0 | 1 = 0;
   signal?.throwIfAborted();
-  if (sandboxFinding(settingsRoot, { env, home: env.HOME ?? env.USERPROFILE, stimHome: env.STIM_HOME })) {
-    exitCode = applySandboxFix(settingsRoot, env, note);
+  const socketBlocked = detectHarness(env) !== null && (await sandboxBlocksSocket());
+  if (
+    sandboxFinding(settingsRoot, {
+      env,
+      home: env.HOME ?? env.USERPROFILE,
+      stimHome: env.STIM_HOME,
+      socketBlocked,
+      platform: source.host,
+    })
+  ) {
+    exitCode = applySandboxFix(settingsRoot, env, note, socketBlocked, source.host);
   }
   for (const doctor of doctors) {
     signal?.throwIfAborted();
@@ -624,6 +640,7 @@ async function assembleDoctorReport(
       env,
       home: env.HOME ?? env.USERPROFILE,
       stimHome: operation?.home ?? env.STIM_HOME,
+      socketBlocked: await sandboxBlocksSocket(),
     });
     if (sandbox) findings.push(sandbox);
   }
