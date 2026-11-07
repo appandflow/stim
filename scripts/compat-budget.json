@@ -99,6 +99,11 @@
       "loc": 25,
       "end": "permanent",
       "mechanism": "the first CLI socket frame declares its kind and build id"
+    },
+    "C27": {
+      "loc": 10,
+      "end": "removal minor",
+      "mechanism": "stimd's owned-app observers leave a Chrome or macOS app to the web-run or macos-run supervisor an older Stim started"
     }
   },
   "words": {

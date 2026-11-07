@@ -51,10 +51,12 @@ export interface OwnedStreams {
   close(): void;
 }
 
+// compat C27 until removal-minor
 /** Whether a live supervisor an older Stim started still owns the process `pid`, and observes it itself. */
 function legacy(owner: { pid: number; processToken: string } | undefined, pid: number): boolean {
   return owner !== undefined && owner.pid !== pid && inspectProcessIdentity(owner) === 'same';
 }
+// compat end
 
 export function createOwnedStreams(log: Log): OwnedStreams {
   const streams = new Map<string, Stream>();
@@ -77,7 +79,9 @@ export function createOwnedStreams(log: Log): OwnedStreams {
   };
   const macos = (dir: string | null, record: MacosAppRecord | null) => {
     if (!dir || !record?.app || inspectProcessIdentity(record.app) !== 'same') return;
+    // compat C27 until removal-minor
     if (legacy(record.supervisor, record.app.pid)) return;
+    // compat end
     const key = `macos:${dir}`;
     if (current(key, record.app.processToken) || ended.get(key) === record.app.processToken) return;
     keep(key, tailMacosApp(dir, record.app, record.product));
@@ -87,7 +91,9 @@ export function createOwnedStreams(log: Log): OwnedStreams {
     if (!record?.host) macos(workspaceLogsDir(root), record);
     const web = readWebRecord(root);
     if (!web?.chromeProcess || inspectProcessIdentity(web.chromeProcess) !== 'same') return null;
+    // compat C27 until removal-minor
     if (legacy(web, web.chromeProcess.pid)) return null;
+    // compat end
     const key = `web:${root}`;
     if (current(key, web.chromeProcess.processToken)) return streams.get(key)?.attached ?? null;
     if (!asked && ended.get(key) === web.chromeProcess.processToken) return null;
