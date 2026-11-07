@@ -23,7 +23,7 @@ vi.mock('node:http', async (original) => {
   };
 });
 
-test('a cleanup failure does not replace the original listen error', async () => {
+test('a cleanup failure preserves both the listen error and cleanup failure', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-server-listen-'));
   process.env.STIM_HOME = home;
   const close = vi.spyOn(BuildWorkerRoot.prototype, 'close').mockRejectedValue(new Error('claim was kept'));
@@ -40,7 +40,12 @@ test('a cleanup failure does not replace the original listen error', async () =>
         env: process.env,
         tailscaleState: { state: 'not-running', backendState: 'Stopped' },
       }),
-    ).rejects.toBe(fixture.error);
+    ).rejects.toMatchObject({
+      errors: [
+        fixture.error,
+        expect.objectContaining({ errors: [expect.objectContaining({ message: 'claim was kept' })] }),
+      ],
+    });
     expect(close).toHaveBeenCalledOnce();
   } finally {
     vi.restoreAllMocks();

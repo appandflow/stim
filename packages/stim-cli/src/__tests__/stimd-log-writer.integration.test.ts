@@ -97,6 +97,54 @@ test('backfill deduplicates only live overlap and keeps repeated live records', 
   }
 });
 
+test.each(['ios', 'android'] as const)(
+  'backfill preserves distinct %s events in the same millisecond',
+  async (platform) => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-log-writer-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-log-writer-app-')));
+    vi.stubEnv('STIM_HOME', home);
+    const writers = createLogWriters(() => {});
+    const ios = (timestamp: string, messageType: string, subsystem: string, category: string) =>
+      JSON.stringify({ eventType: 'logEvent', timestamp, messageType, subsystem, category, eventMessage: 'same' });
+    const lines =
+      platform === 'ios'
+        ? [
+            ios('2026-11-07T00:00:00.123001Z', 'Info', 'one', 'one'),
+            ios('2026-11-07T00:00:00.123001Z', 'Error', 'one', 'one'),
+            ios('2026-11-07T00:00:00.123001Z', 'Info', 'two', 'one'),
+            ios('2026-11-07T00:00:00.123001Z', 'Info', 'one', 'two'),
+            ios('2026-11-07T00:00:00.123002Z', 'Info', 'one', 'one'),
+          ]
+        : [
+            '1794009600.123001 100 100 I app: same',
+            '1794009600.123001 100 100 E app: same',
+            '1794009600.123002 100 100 I app: same',
+          ];
+    try {
+      const sink = await writers.open(
+        { streamId: 'one', slotKey: platform, root, platform, physical: false, attribution: {} },
+        () => {},
+      );
+      const first = lines[0];
+      if (!first) throw new Error('missing test event');
+      sink.line(first, null);
+      await sink.beginBackfill(0);
+      for (const line of lines) sink.backfillLine(line, null);
+      await sink.endBackfill();
+      sink.writer.close();
+      await sink.closed();
+      const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8'));
+      expect(records.filter((record) => record.msg === 'same')).toHaveLength(lines.length);
+      expect(records.filter((record) => record.level === 'error')).toHaveLength(1);
+    } finally {
+      await writers.close();
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
 test('a failed live write does not suppress a successful historical copy', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-log-writer-home-'));
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-log-writer-app-')));

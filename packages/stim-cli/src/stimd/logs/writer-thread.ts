@@ -26,6 +26,12 @@ type Entry = {
 };
 const streams = new Map<string, Entry>();
 
+function nativeTimestamp(stream: Entry, line: string): unknown {
+  // https://github.com/appandflow/stim/issues/5387: different native timestamp spellings may preserve duplicate evidence.
+  if (stream.platform === 'ios' && !stream.physical) return (JSON.parse(line) as { timestamp?: unknown }).timestamp;
+  return /^\s*(\d+\.\d{3,6})\s/.exec(line)?.[1];
+}
+
 type Message =
   | {
       op: 'open';
@@ -164,9 +170,17 @@ port.on('message', (message: Message) => {
       const record = parse(message.line, { now: Date.now, clockOffsetMs: message.clockOffsetMs });
       if (record) {
         if (message.op === 'backfill.line' && stream.backfill && (record.ts ?? 0) < stream.backfill.since) return;
-        const key = `${record.deviceTs ?? record.ts}:${record.proc ?? ''}:${createHash('sha256')
-          .update(record.msg ?? '')
-          .digest('hex')}`;
+        const nativeTime = nativeTimestamp(stream, message.line);
+        const key = JSON.stringify([
+          typeof nativeTime === 'string' ? nativeTime : (record.deviceTs ?? record.ts),
+          record.proc,
+          record.level,
+          record.subsystem,
+          record.category,
+          createHash('sha256')
+            .update(record.msg ?? '')
+            .digest('hex'),
+        ]);
         const history = message.op === 'backfill.line';
         const duplicate = history
           ? stream.backfill

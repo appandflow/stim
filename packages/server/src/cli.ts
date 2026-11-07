@@ -252,6 +252,7 @@ export async function serve(
       await server.close().catch((error: unknown) => {
         reportShutdownFailure(error);
         process.exitCode = 1;
+        throw error;
       });
     })());
   if (shareOnly) {

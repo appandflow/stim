@@ -50,7 +50,9 @@ export const LAUNCHD_LABEL_ENV = 'STIMD_LAUNCHD_LABEL';
 export function daemonClaimHeld(): boolean {
   try {
     const survey = readClaimSet(daemonClaimRoot());
-    return survey.live.length > 0 || survey.unresolved.length > 0;
+    if (survey.live.length > 0 || survey.unresolved.length > 0) return true;
+    const home = readClaimSet(stimdClaimRoot());
+    return home.unresolved.length > 0 || home.live.some((holder) => holder.childDeclared);
   } catch {
     return true;
   }

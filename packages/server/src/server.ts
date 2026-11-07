@@ -2099,7 +2099,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   try {
     for (const host of options.hosts) await listenOn(host);
   } catch (error) {
-    await close().catch(() => undefined);
+    try {
+      await close();
+    } catch (cleanup) {
+      throw new AggregateError([error, cleanup], 'server startup cleanup could not be verified', { cause: cleanup });
+    }
     throw error;
   }
   const binding = transports.filter((transport) => transport.bindAddresses);

@@ -54,6 +54,7 @@ import * as ndjson from '../ndjson.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { goneClaimOwner, plantClaim } from './_factories.ts';
 
 vi.mock('../stimd/threads.ts', () => import('./fixtures/inline-stimd-threads.ts'));
 
@@ -407,6 +408,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
         remedy: expect.stringContaining(engineClaim.path),
       });
       expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: true }]);
+      expect(readClaimSet(daemonClaimRoot()).live).toMatchObject([{ childDeclared: true }]);
       expect(readClaimSet(engineClaim.root).live).toMatchObject([{ childDeclared: true }]);
       expect(releaseEngine).not.toHaveBeenCalled();
     } finally {
@@ -1344,3 +1346,23 @@ test.skipIf(process.platform === 'win32')(
     expect(ran).not.toHaveBeenCalled();
   },
 );
+
+test('doctor skips in-process passes while an unverified home claim remains', async () => {
+  const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
+  onTestFinished(() => ran.mockRestore());
+  const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: 'on' };
+  delete env[HOME_PASSES_TEST_GUARD_ENV];
+  const live = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'stimd' }).acquired;
+  assert(live);
+  markClaimChildPending(live);
+  try {
+    await daemonPasses.runPassesInProcess('doctor', env);
+    expect(ran).not.toHaveBeenCalled();
+  } finally {
+    releaseClaim(live);
+  }
+  plantClaim(stimdClaimRoot(), 'exclusive', goneClaimOwner(), { child: { record: null } });
+  expect(readClaimSet(stimdClaimRoot()).unresolved).not.toEqual([]);
+  await daemonPasses.runPassesInProcess('doctor', env);
+  expect(ran).not.toHaveBeenCalled();
+});
