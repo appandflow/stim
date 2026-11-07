@@ -32,6 +32,12 @@ async function recover(path: string, expected?: string, beforeRelease?: () => vo
     );
   for (const holder of survey.dead) {
     if (expected && holder.details.streamId !== expected) throw new Error(`The device log stream at ${path} changed.`);
+    if (process.platform === 'win32' && holder.childDeclared) {
+      markClaimChildPending({ ...holder, root: path, label: 'device log stream' });
+      throw new Error(
+        `The device log tree at ${path} cannot be verified stopped; inspect it before running ${claimRemoveCommand(path)}.`,
+      );
+    }
   }
   for (const holder of survey.live) {
     if (expected && holder.details.streamId !== expected) throw new Error(`The device log stream at ${path} changed.`);

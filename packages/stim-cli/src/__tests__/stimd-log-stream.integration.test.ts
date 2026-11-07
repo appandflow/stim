@@ -235,6 +235,43 @@ describe.skipIf(process.platform === 'win32')('native device streams', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+  test('a warm stream still queries history through the readiness boundary', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    vi.stubEnv('STIM_HOME', home);
+    const queries = join(home, 'queries');
+    const line = JSON.stringify({ eventType: 'logEvent', eventMessage: 'warm' });
+    const xcrun = join(bin, 'xcrun');
+    writeFileSync(
+      xcrun,
+      `#!/bin/sh\ncase "$*" in *"log show"*) echo query >> "$QUERIES";; *) echo '${line}'; exec sleep 600;; esac\n`,
+    );
+    chmodSync(xcrun, 0o755);
+    const env = { ...process.env, QUERIES: queries, PATH: [bin, process.env.PATH].join(delimiter) };
+    const streams = createStreams(() => {});
+    try {
+      const { streamId } = await streams.start(
+        { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
+        env,
+      );
+      const path = join(workspaceLogsDir(root), 'device.ndjson');
+      await vi.waitFor(() => expect(readFileSync(path, 'utf8')).toContain('warm'));
+      const since = Date.now();
+      const signal = new AbortController().signal;
+      let reply = await streams.wait(root, 'ios', 'default', streamId, since, 0, 0, signal, env, since);
+      while (reply.coverage === 'pending')
+        reply = await streams.wait(root, 'ios', 'default', streamId, since, reply.revision, 1000, signal, env, since);
+      expect(reply.coverage).toBe('covered');
+      expect(readFileSync(queries, 'utf8')).toContain('query');
+    } finally {
+      await streams.close().catch(() => {});
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   test('a live write failure during replay invalidates coverage', async () => {
     const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
@@ -336,7 +373,7 @@ describe.skipIf(process.platform === 'win32')('native device streams', () => {
         let initial = await streams.wait(root, 'ios', 'default', streamId, since, 0, 0, signal, env);
         while (initial.coverage === 'pending')
           initial = await streams.wait(root, 'ios', 'default', streamId, since, initial.revision, 1000, signal, env);
-        expect(initial.coverage).toBe('covered');
+        expect(initial.coverage).toBe(physical ? 'failed' : 'covered');
         const before = statSync(path).size;
         writeFileSync(fillGo, '');
         await vi.waitFor(() => expect(statSync(path).size).toBeGreaterThan(before + 1024 * 1024));

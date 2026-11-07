@@ -278,9 +278,9 @@ then rerun `stim android`, which force-stops that process before launching.
 Confirmed app-crash reports are included in default `stim logs --errors` without
 including general OS error noise. Use `stim logs --source device --json` for full
 captured reports. A missing report is not proof that the app did not crash: OS
-reports can be delayed, physical iPhone capture is console-only, and stripped or
+reports can be delayed, physical iPhone capture is console-only with no historical backfill, and stripped or
 remote builds may not have matching local debug symbols. This does not download
-symbols or replace Xcode/Android Studio's full crash-analysis tooling.
+symbols or replace Xcode/Android Studio's full crash-analysis tooling. Physical iPhone launches remain unverified because console output cannot prove complete readiness coverage.
 
 For delayed reports, rerun `stim logs --errors` before stopping or releasing the
 device. Collection requires the workspace's current launch and device ownership

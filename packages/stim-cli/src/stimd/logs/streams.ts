@@ -432,7 +432,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
   ): HistoryCoverage => {
     if (stream.spec.physical)
       return {
-        status: stream.writeFailures ? ('failed' as const) : ('covered' as const),
+        status: 'failed' as const,
         warm: true,
         startedAt: Infinity,
       };
@@ -502,12 +502,8 @@ export function createStreams(log: (message: string) => void): StreamTable {
               throw new AndroidPidChanged();
             if (stream.generation !== generation)
               throw new Error('the device log source changed during history replay');
-            const warm =
-              stream.observedAt !== null &&
-              stream.observedAt <= since &&
-              (stream.spec.platform !== 'android' || stream.activePid === pid);
-            coverage.warm = warm;
-            return warm;
+            coverage.warm = false;
+            return false;
           },
           sink: stream.sink,
         })
