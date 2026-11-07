@@ -44,6 +44,8 @@ interface Stream {
   attached?: Promise<void>;
   ended: Promise<void>;
   close(): void;
+  live?(): boolean;
+  ready?(): string | null;
   drain?(): boolean;
 }
 
@@ -61,6 +63,9 @@ export interface OwnedStreams {
   sync(root?: string): Promise<string | null>;
   running(): boolean;
   drain(root: string, macosOnly?: boolean): Promise<string | null>;
+  observeWeb(root: string, pid: number, token: string): Promise<string | null>;
+  observeMacos(root: string, pid: number, token: string, launchId: string): Promise<string | null>;
+  observeHosted(session: string, pid: number, token: string, launchId: string): Promise<string | null>;
   drainHosted(session: string): Promise<string | null>;
   close(): void;
 }
@@ -108,9 +113,35 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
     if (current(key, record.app.processToken) || ended.get(key) === record.app.processToken) return;
     keep(key, tailMacosApp(dir, record.app, record.product, record.launchId, record.runId));
   };
-  const workspace = (root: string, asked: boolean): Promise<void> | null => {
-    const record = readMacosRecord(root);
-    if (!record?.host) macos(workspaceLogsDir(root), record);
+  const observeMacos = (
+    dir: string | null,
+    record: MacosAppRecord | null,
+    pid: number,
+    token: string,
+    launchId: string,
+  ) => {
+    if (
+      !dir ||
+      !record?.app ||
+      record.launchId !== launchId ||
+      record.app.pid !== pid ||
+      record.app.processToken !== token ||
+      record.supervisor?.pid !== pid
+    )
+      return 'the macOS app record changed';
+    const identity = inspectProcessIdentity(record.app);
+    if (identity === 'unknown') return 'the macOS app identity is unavailable';
+    if (identity !== 'same' && drained(dir, record.app)) return null;
+    macos(dir, record);
+    const stream = streams.get(`macos:${dir}`);
+    if (stream?.token !== token || !stream.ready) return 'the macOS observer is unavailable';
+    return stream.ready();
+  };
+  const workspace = (root: string, asked: boolean, webOnly = false): Promise<void> | null => {
+    if (!webOnly) {
+      const record = readMacosRecord(root);
+      if (!record?.host) macos(workspaceLogsDir(root), record);
+    }
     const web = readWebRecord(root);
     if (!web?.chromeProcess || inspectProcessIdentity(web.chromeProcess) !== 'same') return null;
     // compat C27 until removal-minor
@@ -186,6 +217,47 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
       return null;
     },
     running,
+    async observeWeb(root, pid, token) {
+      if (closed) return 'stimd is stopping';
+      try {
+        const record = readWebRecord(root);
+        if (record?.chromeProcess?.pid !== pid || record.chromeProcess.processToken !== token)
+          return 'the browser record changed';
+        if (inspectProcessIdentity(record.chromeProcess) !== 'same') return 'the browser identity is unavailable';
+        // compat C27 until removal-minor
+        if (legacy(record, pid)) return null;
+        // compat end
+        const attached = workspace(root, true, true);
+        if (!attached) return 'the browser observer is unavailable';
+        await attached;
+        const latest = readWebRecord(root)?.chromeProcess;
+        const stream = streams.get(`web:${root}`);
+        if (latest?.pid !== pid || latest.processToken !== token || stream?.token !== token || !stream.live?.())
+          return 'the browser observer changed';
+        return null;
+      } catch (error) {
+        return (error instanceof Error ? error.message : String(error)) || 'the browser observer failed';
+      }
+    },
+    async observeMacos(root, pid, token, launchId) {
+      if (closed) return 'stimd is stopping';
+      try {
+        const record = readMacosRecord(root);
+        if (record?.host) return 'the macOS app is hosted elsewhere';
+        return observeMacos(workspaceLogsDir(root), record, pid, token, launchId);
+      } catch (error) {
+        return (error instanceof Error ? error.message : String(error)) || 'the macOS observer failed';
+      }
+    },
+    async observeHosted(session, pid, token, launchId) {
+      if (closed) return 'stimd is stopping';
+      try {
+        const home = join(deviceHostArea(session), 'home');
+        return observeMacos(hostedMacosLogsDir(home), readHostedMacosApp(home), pid, token, launchId);
+      } catch (error) {
+        return (error instanceof Error ? error.message : String(error)) || 'the hosted observer failed';
+      }
+    },
     async drainHosted(session) {
       if (closed) return 'stimd is stopping';
       try {
@@ -445,6 +517,7 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId:
     end = resolve;
   });
   let done = false;
+  let observationWritten = false;
   const stop = () => {
     done = true;
     clearInterval(timer);
@@ -479,6 +552,24 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId:
     token: app.processToken,
     ended,
     drain: finish,
+    ready() {
+      try {
+        for (const file of files) {
+          const raw = openSync(file.path, 'r+');
+          closeSync(raw);
+        }
+        if (!read()) return 'the macOS output could not be read or recorded';
+        if (!observationWritten) {
+          if (!writer.write({ src: 'client', platform: 'macos', level: 'info', msg: `Observing ${product} output.` }))
+            return 'the macOS output could not be recorded';
+          observationWritten = true;
+        }
+        checkpoint(recovering ?? undefined);
+        return null;
+      } catch (error) {
+        return `the macOS output is unavailable: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    },
     close() {
       if (!done && !finish()) stop();
     },

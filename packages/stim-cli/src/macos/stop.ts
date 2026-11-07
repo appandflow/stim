@@ -166,6 +166,6 @@ export async function drainMacosOutput(
   ) {
     const failure = await drainOwnedMacos(root, env);
     operation?.signal.throwIfAborted();
-    if (failure) throw new Error(`Could not drain macOS app output: ${failure}`);
+    if (failure !== null) throw new Error(`Could not drain macOS app output: ${failure}`);
   }
 }

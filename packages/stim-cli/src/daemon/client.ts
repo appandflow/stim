@@ -925,13 +925,15 @@ const OBSERVE_MS = 30_000;
  * records that output. Resolves to null once stimd observes it, or to why it does not.
  */
 async function ownedRequest(
-  op: 'logs.observe' | 'logs.drain',
+  op: 'logs.observe' | 'logs.observe-macos' | 'logs.observe-web' | 'logs.drain',
   root: string,
   env: NodeJS.ProcessEnv,
   macosOnly = false,
+  target?: { pid: number; token: string; launchId?: string },
 ): Promise<string | null> {
   if (!stimdLive() && !(await claimTaken(launchStimd(env, daemonMode(env))))) return 'no stimd runs in this Stim home';
-  const ask = () => askStimd(op, OBSERVE_MS, { params: { root, ...(macosOnly ? { platform: 'macos' } : {}) } });
+  const ask = () =>
+    askStimd(op, OBSERVE_MS, { params: { root, ...(macosOnly ? { platform: 'macos' } : {}), ...target } });
   let reply = await ask();
   const deadline = Date.now() + CLAIM_WAIT_MS;
   while (!reply && !stimdRefused() && Date.now() < deadline) {
@@ -939,7 +941,15 @@ async function ownedRequest(
     reply = await ask();
   }
   if (!reply && stimdRefused() && (await successorBound())) reply = await ask();
-  if (reply?.op !== (op === 'logs.observe' ? 'logs.observed' : 'logs.drained'))
+  const expected =
+    op === 'logs.observe'
+      ? 'logs.observed'
+      : op === 'logs.observe-macos'
+        ? 'logs.macos-observed'
+        : op === 'logs.observe-web'
+          ? 'logs.web-observed'
+          : 'logs.drained';
+  if (reply?.op !== expected)
     return stimdRefused()
       ? `this Stim home's stimd runs another Stim build (${refusedBuild}); run the command with that build`
       : 'stimd did not answer';
@@ -948,6 +958,25 @@ async function ownedRequest(
 
 export function observeOwned(root: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
   return ownedRequest('logs.observe', root, env);
+}
+
+export function observeOwnedWeb(
+  root: string,
+  pid: number,
+  token: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  return ownedRequest('logs.observe-web', root, env, false, { pid, token });
+}
+
+export function observeOwnedMacos(
+  root: string,
+  pid: number,
+  token: string,
+  launchId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+  return ownedRequest('logs.observe-macos', root, env, false, { pid, token, launchId });
 }
 
 export function drainOwned(root: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {

@@ -60,6 +60,7 @@ export interface BrowserStream {
   attached: Promise<void>;
   /** Resolves when the stream ends: Chrome exited, its page closed, or `close` was called. */
   ended: Promise<void>;
+  live(): boolean;
   /** Detaches without touching Chrome, which keeps running. */
   close(): void;
 }
@@ -80,6 +81,8 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
     writer.write({ src: 'device', platform: 'web', level, event, msg, ...extra });
   let cdp: CdpConnection | null = null;
   let closed = false;
+  let attachedLive = false;
+  let disconnected = false;
   let stopping = false;
   let end!: () => void;
   const ended = new Promise<void>((resolve) => {
@@ -87,6 +90,7 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
   });
   const chromeGone = () => chromeProcessState(chrome, record.profile) === 'gone';
   const finish = (level: string, event: string, msg: string) => {
+    attachedLive = false;
     if (closed) return;
     closed = true;
     cdp?.close();
@@ -304,6 +308,8 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
       }
     });
     connection.onClose(() => {
+      disconnected = true;
+      attachedLive = false;
       if (stopping || closed) return;
       void (async () => {
         const until = Date.now() + 2000;
@@ -351,12 +357,14 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
     } else if (!record.targetId) {
       await fitDesktopPage(connection, targetId, sessionId);
     }
+    if (closed || disconnected) throw new Error('the browser observer disconnected during setup');
     if (!updateWebRecord(root, owner, { targetId, version })) throw new Error('the browser record changed');
     log(
       'info',
       record.targetId ? 'web_browser_observed' : 'web_browser_started',
       `stimd pid ${process.pid} observes ${version} (pid ${chrome.pid}) on ${record.profile}`,
     );
+    attachedLive = true;
   })();
   attached.catch((error: unknown) => {
     finish('error', 'web_browser_failed', `could not observe the owned Chrome: ${describe(error)}`);
@@ -364,9 +372,11 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
   return {
     attached,
     ended,
+    live: () => attachedLive && !closed,
     close() {
       if (closed) return;
       closed = true;
+      attachedLive = false;
       cdp?.close();
       writer.close();
       end();

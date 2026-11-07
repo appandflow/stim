@@ -4,7 +4,7 @@ import chalk from 'chalk';
 import { ambientEnv } from '@stim-cli/core';
 import { runId, validRunId } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
-import { observeOwned } from '../daemon/client.ts';
+import { observeOwnedWeb } from '../daemon/client.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { BROWSER_LOCK, teardownBrowserHeld } from '../devices/teardown.ts';
 import { spawnOwned, stopOwnedProcess } from '../engine/spawn-owned.ts';
@@ -58,11 +58,16 @@ export async function launchOwnedBrowser(
     ): Promise<{ ok: true; record: WebRecord; since: number; reused: boolean } | { ok: false; error: WebFailure }> => {
       throwIfCancelled(signal, 'browser launch');
       const live = liveWebRecord(readWebRecord(root));
-      if (live && sameLaunch(live, config)) {
+      if (live?.chromeProcess && sameLaunch(live, config)) {
         const since = Date.now();
         try {
-          const unobserved = await observeOwned(root, ambientEnv());
-          if (unobserved) throw new Error(unobserved);
+          const unobserved = await observeOwnedWeb(
+            root,
+            live.chromeProcess.pid,
+            live.chromeProcess.processToken,
+            ambientEnv(),
+          );
+          if (unobserved !== null) throw new Error(unobserved);
           await sendToOwnedPage(live, 'Page.navigate', { url }, signal);
           await withWorkspaceStateLockAsync(root, () => updateWebRecord(root, live, { url }));
           note(chalk.dim(phaseLine('device', `reusing the owned Chrome (pid ${live.chromeProcess?.pid})`)));
@@ -134,7 +139,7 @@ export async function launchOwnedBrowser(
         );
       }
       clearClaimChild(claim);
-      const unobserved = await observeOwned(root, ambientEnv());
+      const unobserved = await observeOwnedWeb(root, chrome.pid, chrome.processToken, ambientEnv());
       const record = liveWebRecord(readWebRecord(root));
       if (signal?.aborted || unobserved !== null || !record || record.chromeProcess?.pid !== chrome.pid) {
         const cleanup = await teardownBrowserHeld(root);

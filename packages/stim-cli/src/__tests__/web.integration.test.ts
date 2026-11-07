@@ -32,7 +32,9 @@ import { BROWSER_LOCK, teardownOwnedBrowser } from '../devices/teardown.ts';
 import * as teardown from '../devices/teardown.ts';
 import { getNamedPort, clearNamedPorts, reserveBrowserPort } from '../named-ports.ts';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
+import * as processIdentity from '../process-identity.ts';
 import { observeBrowser } from '../stimd/logs/web.ts';
+import * as webObserver from '../stimd/logs/web.ts';
 import { createOwnedStreams } from '../stimd/logs/owned.ts';
 import { environmentState, withWebFacts } from '../status.ts';
 import { runWeb } from '../commands/web.ts';
@@ -571,7 +573,7 @@ async function ownedBrowser(): Promise<WebRecord> {
 
 describe.skipIf(process.platform === 'win32')('selected configured-URL runtime', () => {
   beforeEach(() => {
-    vi.spyOn(stimdClient, 'observeOwned').mockResolvedValue(null);
+    vi.spyOn(stimdClient, 'observeOwnedWeb').mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -598,7 +600,7 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     vi.stubEnv('STIM_TEST_CALLER', 'caller');
     const seen: { env?: NodeJS.ProcessEnv; detached?: boolean } = {};
     setExecutor(fakeChrome(seen));
-    vi.spyOn(stimdClient, 'observeOwned').mockImplementation(async (workspace) => {
+    vi.spyOn(stimdClient, 'observeOwnedWeb').mockImplementation(async (workspace) => {
       const record = readWebRecord(workspace);
       assert(record);
       writeWebRecord(workspace, { ...record, targetId: 'owned-page', version: 'Chrome/1' });
@@ -667,6 +669,191 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     expect((await teardownOwnedBrowser(root)).status).toBe('torn-down');
     expect(inspectProcessIdentity(chrome)).not.toBe('same');
     expect(readClaimSet(webClaimRoot(root)).live).toEqual([]);
+  });
+
+  test('does not navigate a reused page when its targeted observer cannot be verified', async () => {
+    const record = { ...(await ownedBrowser()), targetId: 'owned-page' };
+    writeWebRecord(root, record);
+    const chrome = record.chromeProcess;
+    assert(chrome);
+    const observe = vi.spyOn(stimdClient, 'observeOwnedWeb').mockResolvedValue('browser identity unavailable');
+    const connect = vi.spyOn(browserCdp, 'connectOwnedBrowser');
+    vi.spyOn(teardown, 'teardownBrowserHeld').mockResolvedValue({ status: 'failed', reason: 'owner unverified' });
+    const result = await launchOwnedBrowser(
+      {
+        url: 'http://localhost:8901/reused',
+        config: {
+          chrome: record.chrome,
+          headless: record.headless,
+          viewport: record.viewport,
+          ignoreCertificateErrors: record.ignoreCertificateErrors,
+        },
+      },
+      { root, note: () => {} },
+    );
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_WEB_BROWSER_HELD' } });
+    expect(observe).toHaveBeenCalledWith(root, chrome.pid, chrome.processToken, expect.any(Object));
+    expect(connect).not.toHaveBeenCalled();
+    expect(readWebRecord(root)?.chromeProcess).toEqual(chrome);
+  });
+
+  test('a fresh launch does not navigate after its observer disconnects before acknowledgement', async () => {
+    setExecutor(fakeChrome({}));
+    const streams = createOwnedStreams(() => {});
+    const navigations: string[] = [];
+    let closeConnection = () => {};
+    let chrome: WebRecord['chromeProcess'];
+    vi.spyOn(browserCdp, 'connectOwnedBrowser').mockResolvedValue({
+      async send(method) {
+        if (method === 'Browser.getVersion') return { product: 'Chrome/1' };
+        if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'owned-page', type: 'page' }] };
+        if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
+        if (method === 'Browser.getWindowForTarget') return { windowId: 1, bounds: { width: 1280, height: 720 } };
+        if (method === 'Runtime.evaluate') return { result: { value: [1280, 720] } };
+        if (method === 'Page.navigate') navigations.push(method);
+        return {};
+      },
+      onEvent: () => {},
+      onClose: (listener) => {
+        closeConnection = listener;
+      },
+      close: () => {},
+    });
+    vi.spyOn(stimdClient, 'observeOwnedWeb').mockImplementation(async (workspace, pid, token) => {
+      chrome = { pid, processToken: token };
+      const first = await streams.observeWeb(workspace, pid, token);
+      assert.equal(first, null);
+      closeConnection();
+      return streams.observeWeb(workspace, pid, token);
+    });
+    try {
+      const result = await launchOwnedBrowser(
+        {
+          url: 'http://localhost:8901/',
+          config: {
+            chrome: '/fixture/chrome',
+            headless: true,
+            viewport: 'desktop',
+            ignoreCertificateErrors: false,
+          },
+        },
+        { root, note: () => {} },
+      );
+      expect(result).toMatchObject({ ok: false, error: { code: 'STIM_WEB_LAUNCH_FAILED' } });
+      expect(navigations).toEqual([]);
+      assert(chrome);
+      expect(inspectProcessIdentity(chrome)).not.toBe('same');
+    } finally {
+      streams.close();
+      if (chrome && inspectProcessIdentity(chrome) === 'same') {
+        process.kill(-chrome.pid, 'SIGKILL');
+        assert(await waitForProcessExit(chrome, 5000));
+      }
+    }
+  });
+
+  test('targeted web observation requires the matching live Chrome and attached stream', async () => {
+    const initial = await ownedBrowser();
+    const chrome = initial.chromeProcess;
+    assert(chrome);
+    const record = { ...initial, pid: chrome.pid, processToken: chrome.processToken, targetId: 'owned-page' };
+    writeWebRecord(root, record);
+    const streams = createOwnedStreams(() => {});
+    const identity = vi.spyOn(processIdentity, 'inspectProcessIdentity').mockReturnValue('unknown');
+    let closeConnection = () => {};
+    try {
+      expect(await streams.observeWeb(root, chrome.pid, 'wrong')).toContain('record changed');
+      expect(await streams.observeWeb(root, chrome.pid, chrome.processToken)).toContain('identity');
+      identity.mockRestore();
+      vi.spyOn(browserCdp, 'connectOwnedBrowser').mockResolvedValue({
+        async send(method) {
+          if (method === 'Browser.getVersion') return { product: 'Chrome/1' };
+          if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'owned-page', type: 'page' }] };
+          if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
+          if (method === 'Target.getTargetInfo') return { targetInfo: { url: record.url } };
+          return {};
+        },
+        onEvent: () => {},
+        onClose: (listener) => {
+          closeConnection = listener;
+        },
+        close: () => {},
+      });
+      expect(await streams.observeWeb(root, chrome.pid, chrome.processToken)).toBeNull();
+      closeConnection();
+      expect(await streams.observeWeb(root, chrome.pid, chrome.processToken)).toContain('observer changed');
+    } finally {
+      identity.mockRestore();
+      streams.close();
+    }
+  });
+
+  test('targeted web observation accepts a live legacy supervisor', async () => {
+    const record = await ownedBrowser();
+    assert(record.chromeProcess);
+    const connect = vi.spyOn(browserCdp, 'connectOwnedBrowser');
+    const streams = createOwnedStreams(() => {});
+    try {
+      expect(await streams.observeWeb(root, record.chromeProcess.pid, record.chromeProcess.processToken)).toBeNull();
+      expect(connect).not.toHaveBeenCalled();
+    } finally {
+      streams.close();
+    }
+  });
+
+  test('targeted web observation refuses a connection closed during setup', async () => {
+    const initial = await ownedBrowser();
+    const chrome = initial.chromeProcess;
+    assert(chrome);
+    const record = { ...initial, pid: chrome.pid, processToken: chrome.processToken, targetId: 'owned-page' };
+    writeWebRecord(root, record);
+    vi.spyOn(browserCdp, 'connectOwnedBrowser').mockResolvedValue({
+      async send(method) {
+        if (method === 'Browser.getVersion') return { product: 'Chrome/1' };
+        if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'owned-page', type: 'page' }] };
+        if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
+        if (method === 'Target.getTargetInfo') return { targetInfo: { url: record.url } };
+        return {};
+      },
+      onEvent: () => {},
+      onClose: (listener) => listener(),
+      close: () => {},
+    });
+    const streams = createOwnedStreams(() => {});
+    try {
+      expect(await streams.observeWeb(root, chrome.pid, chrome.processToken)).toContain('disconnected during setup');
+    } finally {
+      streams.close();
+    }
+  });
+
+  test('targeted web observation refuses a detached stream that cannot reattach', async () => {
+    const initial = await ownedBrowser();
+    const chrome = initial.chromeProcess;
+    assert(chrome);
+    writeWebRecord(root, { ...initial, pid: chrome.pid, processToken: chrome.processToken, targetId: 'owned-page' });
+    let end!: () => void;
+    const ended = new Promise<void>((done) => {
+      end = done;
+    });
+    vi.spyOn(webObserver, 'observeBrowser')
+      .mockReturnValueOnce({ attached: Promise.resolve(), ended, live: () => true, close: () => {} })
+      .mockImplementationOnce(() => ({
+        attached: Promise.reject(new Error('reattach failed')),
+        ended: Promise.resolve(),
+        live: () => false,
+        close: () => {},
+      }));
+    const streams = createOwnedStreams(() => {});
+    try {
+      expect(await streams.observeWeb(root, chrome.pid, chrome.processToken)).toBeNull();
+      end();
+      await Promise.resolve();
+      expect(await streams.observeWeb(root, chrome.pid, chrome.processToken)).toContain('reattach failed');
+    } finally {
+      end();
+      streams.close();
+    }
   });
 
   test.each(['lock', 'connect', 'verify'])(
@@ -851,7 +1038,7 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     const seen: { env?: NodeJS.ProcessEnv } = {};
     setExecutor(fakeChrome(seen));
     let chrome: WebRecord['chromeProcess'];
-    vi.spyOn(stimdClient, 'observeOwned').mockImplementation(async (workspace) => {
+    vi.spyOn(stimdClient, 'observeOwnedWeb').mockImplementation(async (workspace) => {
       chrome = readWebRecord(workspace)?.chromeProcess;
       controller.abort();
       return null;
@@ -882,7 +1069,7 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
       }),
     );
     let chrome: WebRecord['chromeProcess'];
-    vi.spyOn(stimdClient, 'observeOwned').mockImplementation(async (workspace) => {
+    vi.spyOn(stimdClient, 'observeOwnedWeb').mockImplementation(async (workspace) => {
       await vi.waitFor(() => expect(existsSync(ready)).toBe(true));
       const record = readWebRecord(workspace);
       assert(record);
@@ -910,7 +1097,7 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
   test('failed cancellation cleanup retains the browser record and blocks another launch', async () => {
     setExecutor(fakeChrome({}));
     const controller = new AbortController();
-    vi.spyOn(stimdClient, 'observeOwned').mockImplementation(async (workspace) => {
+    vi.spyOn(stimdClient, 'observeOwnedWeb').mockImplementation(async (workspace) => {
       const record = readWebRecord(workspace);
       assert(record);
       writeWebRecord(workspace, { ...record, targetId: 'owned-page' });

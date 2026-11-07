@@ -27,7 +27,7 @@ import { errorRemedy } from '../engine/build-ledger.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { spawnOwned, stopOwnedProcess, type OwnedProcess } from '../engine/spawn-owned.ts';
 import { clearClaimChild, markClaimChildPending } from '../ownership-claim.ts';
-import { observeOwned } from '../daemon/client.ts';
+import { observeOwnedMacos } from '../daemon/client.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { getExecutor } from '../exec.ts';
@@ -172,7 +172,7 @@ export async function runMacos(
           if (!remote) {
             // https://github.com/appandflow/stim/issues/4483: capacity can fill during compilation; builds stay parallel without an app reservation.
             const { record: here, deadline } = await withLocalMacosAdmission(root, context, () =>
-              launchHere(context, root, record, note),
+              launchHere(context, root, record),
             );
             if ((await waitForLaunchServices(here, deadline)) === 'timeout')
               note(
@@ -383,7 +383,6 @@ async function launchHere(
   context: StimContext,
   root: string,
   record: MacosAppRecord,
-  note: (line: string) => void,
 ): Promise<{ record: MacosAppRecord; deadline: number }> {
   await stopBundleInstances(root);
   const launcher = record.supervisor;
@@ -425,9 +424,9 @@ async function launchHere(
       msg: `Started ${record.product} (pid ${app.pid}).`,
     });
     writer.close();
-    const unobserved = await observeOwned(root, ambientEnv());
+    const unobserved = await observeOwnedMacos(root, app.pid, app.processToken, record.launchId, ambientEnv());
     checkCancelled();
-    if (unobserved) note(`The macOS app's output is not recorded in stim logs: ${unobserved}.`);
+    if (unobserved !== null) throw new Error(`The macOS app's output could not be observed: ${unobserved}.`);
     return { record: { ...record, supervisor: app, app }, deadline: Date.now() + 20_000 };
   } catch (error) {
     if (!owned && error instanceof WorkspaceProcessCleanupError) throw error;

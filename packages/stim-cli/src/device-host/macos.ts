@@ -35,7 +35,7 @@ import {
   requiredMacosRecord,
   updateMacosRecord,
 } from '../macos/state.ts';
-import { stopHostedBundleInstances, stopMacosApp, stopMacosChildren } from '../macos/stop.ts';
+import { stopHostedBundleInstances, stopMacosApp, stopMacosAppHeld, stopMacosChildren } from '../macos/stop.ts';
 import { spawnOwned, stopOwnedProcess } from '../engine/spawn-owned.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
@@ -111,8 +111,8 @@ function removeAppData(root: string, path: string): void {
 }
 
 export async function runHostedMacosApp(
-  mode: 'prepare' | 'stop' | 'stop-app' | 'install',
-  request: { session: string; appSlot: number },
+  mode: 'prepare' | 'stop' | 'stop-app' | 'stop-current' | 'install',
+  request: { session: string; appSlot: number; expectedApp?: { pid: number; token: string; launchId: string } },
   app?: { attempt: string },
 ): Promise<HostedWorkerResult> {
   const home = process.env.STIM_HOME;
@@ -158,6 +158,27 @@ export async function runHostedMacosApp(
         }
       }
       removeAppData(area, join(home, '..', 'blobs'));
+      return { state: 'stopped', device };
+    }
+    if (mode === 'stop-current') {
+      const expected = request.expectedApp;
+      if (!expected) throw new Error('The hosted macOS app identity is unavailable.');
+      await withWorkspaceProcessLock(
+        workspaceDir(runRoot),
+        'macos-launch',
+        async () => {
+          const current = requiredMacosRecord(runRoot);
+          if (
+            current?.launchId !== expected.launchId ||
+            current.app?.pid !== expected.pid ||
+            current.app.processToken !== expected.token
+          )
+            throw new Error('The hosted macOS app record changed.');
+          await stopMacosAppHeld(runRoot);
+          await stopHostedBundleInstances(area);
+        },
+        { external: true, ownerPurpose: 'stop hosted macOS app' },
+      );
       return { state: 'stopped', device };
     }
     if (!app) throw new Error('Hosted macOS installation needs its admitted app attempt.');

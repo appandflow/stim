@@ -80,6 +80,9 @@ export function parseStreamSpec(value: unknown): StreamSpec | null {
 export interface StreamTable {
   ownedSync(root?: string): Promise<string | null>;
   ownedDrain(root: string, macosOnly?: boolean): Promise<string | null>;
+  ownedObserveWeb(root: string, pid: number, token: string): Promise<string | null>;
+  ownedObserveMacos(root: string, pid: number, token: string, launchId: string): Promise<string | null>;
+  ownedObserveHosted(session: string, pid: number, token: string, launchId: string): Promise<string | null>;
   ownedDrainHosted(session: string): Promise<string | null>;
   ownedRunning(): boolean;
   start(
@@ -638,12 +641,36 @@ export function createStreams(
         return error instanceof Error ? error.message : String(error);
       }
     },
+    async ownedObserveWeb(root, pid, token) {
+      try {
+        await (await getWriters()).ownedObserveWeb(root, pid, token);
+        return null;
+      } catch (error) {
+        return (error instanceof Error ? error.message : String(error)) || 'the browser observer failed';
+      }
+    },
+    async ownedObserveMacos(root, pid, token, launchId) {
+      try {
+        await (await getWriters()).ownedObserveMacos(root, pid, token, launchId);
+        return null;
+      } catch (error) {
+        return (error instanceof Error ? error.message : String(error)) || 'the macOS observer failed';
+      }
+    },
+    async ownedObserveHosted(session, pid, token, launchId) {
+      try {
+        await (await getWriters()).ownedObserveHosted(session, pid, token, launchId);
+        return null;
+      } catch (error) {
+        return (error instanceof Error ? error.message : String(error)) || 'the hosted observer failed';
+      }
+    },
     async ownedDrainHosted(session) {
       try {
         await (await getWriters()).ownedDrainHosted(session);
         return null;
       } catch (error) {
-        return error instanceof Error ? error.message : String(error);
+        return (error instanceof Error ? error.message : String(error)) || 'the hosted drain failed';
       }
     },
     ownedRunning: () => ownedRunning,

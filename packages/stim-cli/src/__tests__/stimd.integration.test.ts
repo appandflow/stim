@@ -1,9 +1,9 @@
 import assert from 'node:assert';
 import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { connect, type Socket } from 'node:net';
+import { connect, createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn as spawnChild, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import {
@@ -33,6 +33,8 @@ import {
   beforeCommand,
   ensurePersistentStimd,
   ensureStimd,
+  observeOwnedMacos,
+  observeOwnedWeb,
   requestDaemonTick,
   stimdBuildId,
 } from '../daemon/client.ts';
@@ -168,6 +170,38 @@ function lines(socket: Socket): string[] {
 }
 
 const frame = () => `${JSON.stringify({ kind: 'cli', build: stimdBuildId() })}\n`;
+
+test.skipIf(process.platform === 'win32')(
+  'targeted observers reject a generic old-daemon acknowledgement',
+  async () => {
+    const claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'fixture' }).acquired;
+    assert(claim);
+    mkdirSync(dirname(stimdSocket()), { recursive: true });
+    const requests: string[] = [];
+    const server = createServer((socket) => {
+      let data = '';
+      socket.on('data', (chunk) => {
+        data += chunk.toString();
+        const frames = data.split('\n');
+        if (frames.length < 3) return;
+        const requestFrame = frames[1];
+        if (requestFrame === undefined) return;
+        const request = JSON.parse(requestFrame);
+        requests.push(request.op);
+        socket.end(`${JSON.stringify({ op: 'hello' })}\n${JSON.stringify({ op: 'logs.observed', error: null })}\n`);
+      });
+    });
+    await new Promise<void>((done) => server.listen(stimdSocket(), done));
+    try {
+      expect(await observeOwnedMacos('/fixture', 123, 'token', 'launch')).toContain('did not answer');
+      expect(await observeOwnedWeb('/fixture', 123, 'token')).toContain('did not answer');
+      expect(requests).toEqual(['logs.observe-macos', 'logs.observe-web']);
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()));
+      releaseClaim(claim);
+    }
+  },
+);
 
 test('shutdown retains the daemon claim until the net thread and observers close', async () => {
   let finish: () => void = () => {};

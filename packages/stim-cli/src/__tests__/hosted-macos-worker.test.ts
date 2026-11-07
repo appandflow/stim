@@ -1,4 +1,5 @@
 import type { Executor } from '../exec.ts';
+import assert from 'node:assert';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -69,6 +70,7 @@ vi.mock('../engine/spawn-owned.ts', () => ({
 }));
 vi.mock('../macos/stop.ts', () => ({
   stopMacosApp: (root: string) => native.stop(root),
+  stopMacosAppHeld: (root: string) => native.stop(root),
   stopHostedBundleInstances: (area: string) => native.stopApps(area),
   stopMacosChildren: async () => {},
 }));
@@ -291,6 +293,44 @@ test('replacement validation leaves the previous app alone on invalid input and 
   expect(await runHostedMacosApp('stop-app', request, { attempt: 'app' })).toMatchObject({ state: 'stopped' });
   expect(native.stopApps).toHaveBeenCalledOnce();
   expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({ state: 'installed' });
+});
+
+test('stops the matching unobserved app without rematerializing a broken bundle', async () => {
+  receipt();
+  expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({ state: 'installed' });
+  const runRoot = join(realpathSync(home), 'macos-app');
+  const record = readMacosRecord(runRoot);
+  assert(record?.app);
+  rmSync(join(home, '..', 'blobs'), { recursive: true, force: true });
+  native.runFile.mockClear();
+  native.stop.mockClear();
+  native.stopApps.mockClear();
+  expect(
+    await runHostedMacosApp('stop-current', {
+      ...request,
+      expectedApp: { pid: record.app.pid, token: record.app.processToken, launchId: record.launchId },
+    }),
+  ).toMatchObject({ state: 'stopped' });
+  expect(native.stop).toHaveBeenCalledWith(runRoot);
+  expect(native.stopApps).toHaveBeenCalledExactlyOnceWith(realpathSync(join(home, '..')));
+  expect(native.runFile.mock.calls.some(([file]) => file === 'codesign' || file === 'plutil')).toBe(false);
+  native.stop.mockClear();
+  native.stopApps.mockClear();
+  expect(
+    await runHostedMacosApp('stop-current', {
+      ...request,
+      expectedApp: { pid: record.app.pid, token: 'wrong', launchId: record.launchId },
+    }),
+  ).toMatchObject({ state: 'unknown', notice: expect.stringContaining('record changed') });
+  expect(native.stop).not.toHaveBeenCalled();
+  expect(native.stopApps).not.toHaveBeenCalled();
+  native.stopApps.mockRejectedValueOnce(new Error('bundle stop failed'));
+  expect(
+    await runHostedMacosApp('stop-current', {
+      ...request,
+      expectedApp: { pid: record.app.pid, token: record.app.processToken, launchId: record.launchId },
+    }),
+  ).toMatchObject({ state: 'unknown', notice: 'bundle stop failed' });
 });
 
 test('replacing an app identity removes the stopped identity preferences before recording the new launch', async () => {

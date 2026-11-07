@@ -107,6 +107,7 @@ interface OwnedSession {
   data?: Promise<void>;
   logs?: { started: number; more: boolean; run?: WorkerRun; pending?: Promise<void> };
   stopping?: Promise<void>;
+  stopGeneration?: number;
   installing?: { attempt: string; done: Promise<void> };
   app?: HostedAppRecord;
   installedAttempt?: string;
@@ -130,6 +131,7 @@ interface ReverseBridge {
 }
 
 export interface DeviceHostOptions {
+  observeHosted?: (session: string, pid: number, token: string, launchId: string) => Promise<string | null>;
   drainHosted?: (session: string) => Promise<string | null>;
   worker: string;
   env: NodeJS.ProcessEnv;
@@ -1641,9 +1643,11 @@ export class DeviceHost {
         throw new Error(
           'Only a ready session attached to this server can install an app. Explicit stop must reconcile a lost owner.',
         );
-      const owned = this.acquire(record);
       const app = readHostedAppMetadata(record.id, (params as { attempt: string }).attempt);
       if (app.state !== 'receiving') return this.appAttach(client, params);
+      if (record.platform === 'macos' && (!this.options.observeHosted || !this.options.drainHosted))
+        throw new Error('The hosted macOS observer is unavailable.');
+      const owned = this.acquire(record);
       if (owned.stopping || owned.data || owned.installing)
         throw new Error('This hosted session already has a native operation in progress.');
       if (owned.metro && (!owned.metro.port || owned.metro.closing))
@@ -1669,8 +1673,23 @@ export class DeviceHost {
     }
   }
 
+  // eslint-disable-next-line complexity -- the existing install path coordinates the hosted session lifecycle.
   private async install(record: HostedDeviceSession, owned: OwnedSession, attempt: string): Promise<void> {
+    const generation = owned.stopGeneration ?? 0;
+    const observeHosted = this.options.observeHosted;
+    const drainHosted = this.options.drainHosted;
+    const interrupted = () => {
+      const current = readHostedSessions().find((entry) => entry.id === record.id);
+      return (
+        (owned.stopGeneration ?? 0) !== generation ||
+        this.owned.get(record.id) !== owned ||
+        current?.state !== 'ready' ||
+        current.appAttempt !== attempt
+      );
+    };
     try {
+      if (record.platform === 'macos' && (!observeHosted || !drainHosted))
+        throw new Error('The hosted macOS observer is unavailable.');
       if (record.platform !== 'macos' || this.options.agents.access(record.id))
         await this.stopAgent(
           record.id,
@@ -1684,9 +1703,11 @@ export class DeviceHost {
                 }
               : undefined,
         );
+      if (interrupted()) return;
       await this.closeView(owned);
+      if (interrupted()) return;
       await this.settleLogs(owned);
-      if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
+      if (interrupted() || this.closed || !this.options.allowed(record.client)) return;
       releaseClaim(takeHostedInputClaim(owned.claim));
       const previousApp =
         record.platform === 'macos' ? readHostedMacosApp(join(deviceHostArea(record.id), 'home')) : null;
@@ -1694,6 +1715,7 @@ export class DeviceHost {
         const previous = this.run(record, owned, 'stop-app', attempt);
         owned.run = previous;
         const outcome = await previous.done;
+        if (interrupted()) return;
         const stoppedDevice = isJsonObject(outcome.value) && parseHostedPlatformDevice(outcome.value.device, 'macos');
         const stopped =
           isJsonObject(outcome.value) &&
@@ -1709,13 +1731,16 @@ export class DeviceHost {
           const error = this.options.drainHosted
             ? await this.options.drainHosted(record.id)
             : 'the hosted macOS observer is unavailable';
-          if (error) throw new Error(`Could not drain the previous macOS app output: ${error}`);
+          if (interrupted()) return;
+          if (error !== null) throw new Error(`Could not drain the previous macOS app output: ${error}`);
         }
-        if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
+        if (interrupted() || this.closed || !this.options.allowed(record.client)) return;
       }
+      if (interrupted()) return;
       const run = this.run(record, owned, 'install', attempt);
       owned.run = run;
       const outcome = await run.done;
+      if (interrupted()) return;
       const value = outcome.value;
       const installed =
         !owned.stopping &&
@@ -1728,6 +1753,57 @@ export class DeviceHost {
         record.device !== null &&
         hostedDeviceId(parseHostedPlatformDevice(value.device, record.platform)!) === hostedDeviceId(record.device) &&
         (value.launched === true || value.launched === 'unverified');
+      if (installed && record.platform === 'macos' && observeHosted && drainHosted && isJsonObject(value)) {
+        const observed = readHostedMacosApp(join(deviceHostArea(record.id), 'home'));
+        if (
+          typeof value.pid !== 'number' ||
+          !Number.isSafeInteger(value.pid) ||
+          value.pid <= 0 ||
+          !observed?.app ||
+          observed.app.pid !== value.pid ||
+          observed.supervisor?.pid !== value.pid
+        )
+          throw new Error('The hosted macOS app record changed; the reservation was retained.');
+        let error: string | null;
+        try {
+          error = await observeHosted(record.id, value.pid, observed.app.processToken, observed.launchId);
+        } catch (failure) {
+          error = (failure instanceof Error ? failure.message : String(failure)) || 'the hosted observer failed';
+        }
+        if (interrupted()) return;
+        if (this.closed || !this.options.allowed(record.client) || !this.attached(record.id))
+          error ??= 'the hosted session is no longer available';
+        if (error !== null) {
+          const current = readHostedMacosApp(join(deviceHostArea(record.id), 'home'));
+          if (
+            current?.launchId !== observed.launchId ||
+            current.app?.pid !== value.pid ||
+            current.app.processToken !== observed.app.processToken
+          )
+            throw new Error('The hosted macOS app record changed; the reservation was retained.');
+          const cleanup = this.run(record, owned, 'stop-current', attempt, owned.claim, false, {
+            expectedApp: { pid: value.pid, token: observed.app.processToken, launchId: observed.launchId },
+          });
+          owned.run = cleanup;
+          const stopped = await cleanup.done;
+          const stoppedDevice = isJsonObject(stopped.value) && parseHostedPlatformDevice(stopped.value.device, 'macos');
+          if (interrupted()) return;
+          if (
+            !stopped.settled ||
+            stopped.notice ||
+            !isJsonObject(stopped.value) ||
+            stopped.value.state !== 'stopped' ||
+            !stoppedDevice ||
+            !record.device ||
+            hostedDeviceId(stoppedDevice) !== hostedDeviceId(record.device)
+          )
+            throw new Error(`Could not stop the unobserved hosted macOS app: ${stopped.notice ?? error}`);
+          const drain = await drainHosted(record.id);
+          if (interrupted()) return;
+          if (drain !== null) throw new Error(`Could not drain the unobserved hosted macOS app: ${drain}`);
+          throw new Error(`Could not observe the hosted macOS app: ${error}`);
+        }
+      }
       if (installed) owned.installedAttempt = attempt;
       if (
         installed &&
@@ -1735,6 +1811,7 @@ export class DeviceHost {
           (typeof value.pid === 'number' && Number.isSafeInteger(value.pid) && value.pid > 0))
       )
         await this.startAgent(record, attempt, value.pid as number);
+      if (interrupted() || this.closed || !this.options.allowed(record.client)) return;
       const app = changeHostedApp(record.id, attempt, (current) => {
         current.state = installed ? 'installed' : 'unknown';
         current.launched = installed ? (value as { launched: HostedAppDelivery['launched'] }).launched : null;
@@ -1903,6 +1980,7 @@ export class DeviceHost {
     if (record.state === 'stopped') return;
     const owned = this.acquire(record);
     if (owned.stopping) return;
+    owned.stopGeneration = (owned.stopGeneration ?? 0) + 1;
     const agentStop = this.stopAgent(
       record.id,
       record.platform !== 'macos',
@@ -2049,7 +2127,7 @@ export class DeviceHost {
       drainError = this.options.drainHosted
         ? await this.options.drainHosted(record.id)
         : 'the hosted macOS observer is unavailable';
-      if (drainError) stopped = false;
+      if (drainError !== null) stopped = false;
     }
     this.change(record.id, (current) => {
       current.state = stopped ? 'stopped' : 'unknown';
@@ -2638,6 +2716,7 @@ export class DeviceHost {
       | 'prepare'
       | 'stop'
       | 'stop-app'
+      | 'stop-current'
       | 'install'
       | 'app-state'
       | 'logs'
@@ -2675,7 +2754,7 @@ export class DeviceHost {
       },
       claim,
       timeoutMs:
-        mode === 'stop' || mode === 'stop-app' || mode === 'park'
+        mode === 'stop' || mode === 'stop-app' || mode === 'stop-current' || mode === 'park'
           ? this.limits.stopMs
           : mode === 'logs' || mode === 'app-state'
             ? this.limits.logsMs

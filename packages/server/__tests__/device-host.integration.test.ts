@@ -189,9 +189,11 @@ if(input.mode === 'inspect') {
   const app=JSON.parse(readFileSync(join(home,'..','apps',input.attempt,'receipt.json'),'utf8'));
   if(input.deviceType === 'install-hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
   else {
-    if(input.platform === 'macos' && process.platform === 'darwin') {
+    let launchedPid=4242;
+    if(input.platform === 'macos' && process.platform !== 'win32') {
       const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});
       child.unref();
+      launchedPid=child.pid;
       writeFileSync(join(home,'fake-app-pid'),String(child.pid));
       const processToken=captureProcessToken(child.pid);
       const start=processStartMicros(child.pid);
@@ -208,13 +210,13 @@ if(input.mode === 'inspect') {
       writeFileSync(join(workspace,'state.json'),JSON.stringify({macos}));
       writeFileSync(join(home,'hosted-macos-app.json'),JSON.stringify({bundleId}));
     }
-    out({state:'installed',device:stored,launched:app.mode !== 'development' ? true : 'unverified',...(input.platform === 'macos' ? {pid:4242} : {})});
+    out({state:'installed',device:stored,launched:app.mode !== 'development' ? true : 'unverified',...(input.platform === 'macos' ? {pid:launchedPid} : {})});
   }
 } else {
   writeFileSync(join(home,'stopped'),String(process.pid));
   const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
   if(input.deviceType === 'delayed-stop') while(!existsSync(join(home,'release-stop'))) await new Promise(resolve=>setTimeout(resolve,20));
-  if(input.deviceType === 'fail-stop') throw new Error('retirement failed');
+  if(input.deviceType === 'fail-stop' || existsSync(join(home,'fail-stop'))) throw new Error('retirement failed');
   if(input.platform !== 'macos' && input.deviceType !== 'uncertain-stop' && input.deviceType !== 'wrong-stop') writeFileSync(join(home,'created-devices.json'),JSON.stringify({version:1,ios:[],android:[],web:[]}));
   out({state:input.deviceType === 'uncertain-stop'?'unknown':'stopped',device:input.deviceType === 'wrong-stop'?{...stored,udid:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'}:stored});
 }
@@ -263,6 +265,7 @@ beforeEach(() => {
   hostEnv = { ...process.env, STIM_MAX_DEVICES: '1' };
   host = new DeviceHost({
     worker,
+    observeHosted: async () => null,
     drainHosted: async () => null,
     env: hostEnv,
     agents,
@@ -2175,14 +2178,315 @@ test.each([
 });
 
 describe.skipIf(process.platform === 'win32')('hosted macOS replacement drain', () => {
+  async function readyApp() {
+    const session = await reserve({ platform: 'macos' });
+    await state(session.id, 'ready');
+    const app = appOffer(session.id, 'observer-test', 'macos');
+    host.appOffer('client', app.params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      ...app.params,
+      sha256: app.sha256,
+      offset: 0,
+      data: app.content.toString('base64'),
+    });
+    return { session, app };
+  }
+
+  test.each(['observe', 'drain'])('refuses macOS launch before spawning if %s is unavailable', async (missing) => {
+    await host.close();
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents,
+      ...(missing === 'observe' ? { drainHosted: async () => null } : { observeHosted: async () => null }),
+      allowed: (client) => allowed.has(client),
+    });
+    const { session, app } = await readyApp();
+    const sessionHome = join(deviceHostArea(session.id), 'home');
+    const appRoot = join(sessionHome, 'macos-app');
+    mkdirSync(appRoot, { recursive: true });
+    const workspace = join(sessionHome, 'workspaces', workspaceName(realpathSync(appRoot)));
+    mkdirSync(workspace, { recursive: true });
+    const previous = { pid: 123, processToken: 'previous', startedAtMicros: 1 };
+    writeFileSync(
+      join(workspace, 'state.json'),
+      JSON.stringify({
+        macos: {
+          launchId: 'previous',
+          product: 'Fixture',
+          arguments: [],
+          bundle: appRoot,
+          bundleId: 'fixture',
+          executable: '/fixture',
+          build: { state: 'ok', startedAt: new Date().toISOString() },
+          app: previous,
+          supervisor: { ...previous, pid: 456 },
+        },
+      }),
+    );
+    expect(host.appLaunch('client', app.params)).toHaveProperty(
+      'error.message',
+      'The hosted macOS observer is unavailable.',
+    );
+    expect(existsSync(join(sessionHome, 'installed'))).toBe(false);
+    expect(readFileSync(join(workspace, 'state.json'), 'utf8')).toContain('previous');
+    expect(readFileSync(join(sessionHome, 'modes'), 'utf8')).not.toMatch(/stop-app|stop-current/);
+  });
+
+  test('does not stop a changed app record after an observer failure', async () => {
+    await host.close();
+    let finish: (error: string | null) => void = () => {};
+    const observeHosted = vi.fn<
+      (session: string, pid: number, token: string, launchId: string) => Promise<string | null>
+    >(
+      () =>
+        new Promise<string | null>((done) => {
+          finish = done;
+        }),
+    );
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents,
+      observeHosted,
+      drainHosted: async () => null,
+      allowed: (client) => allowed.has(client),
+    });
+    const { session, app } = await readyApp();
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(observeHosted).toHaveBeenCalledOnce());
+    const sessionHome = join(deviceHostArea(session.id), 'home');
+    const appRoot = join(sessionHome, 'macos-app');
+    const stateFile = join(sessionHome, 'workspaces', workspaceName(realpathSync(appRoot)), 'state.json');
+    const storedState = JSON.parse(readFileSync(stateFile, 'utf8'));
+    storedState.macos.launchId = 'changed-launch';
+    writeFileSync(stateFile, JSON.stringify(storedState));
+    finish('observer unavailable');
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'unknown'));
+    expect(readFileSync(join(sessionHome, 'modes'), 'utf8')).not.toContain('stop-current');
+    expect(readFileSync(stateFile, 'utf8')).toContain('changed-launch');
+  });
+
+  test('waits for the matching app observer before reporting installation', async () => {
+    await host.close();
+    let finish: (error: string | null) => void = () => {};
+    const observeHosted = vi.fn<
+      (session: string, pid: number, token: string, launchId: string) => Promise<string | null>
+    >(
+      () =>
+        new Promise<string | null>((done) => {
+          finish = done;
+        }),
+    );
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents,
+      observeHosted,
+      drainHosted: async () => null,
+      allowed: (client) => allowed.has(client),
+    });
+    const { session, app } = await readyApp();
+    expect(host.appLaunch('client', app.params)).toHaveProperty('result.state', 'installing');
+    await vi.waitFor(() => expect(observeHosted).toHaveBeenCalledOnce());
+    const recorded = readHostedMacosApp(join(deviceHostArea(session.id), 'home'));
+    assert(recorded?.app);
+    expect(observeHosted).toHaveBeenCalledWith(
+      session.id,
+      recorded.app.pid,
+      recorded.app.processToken,
+      recorded.launchId,
+    );
+    expect(agentCalls.filter(([kind]) => kind === 'running')).toHaveLength(0);
+    expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installing');
+    finish(null);
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+    expect(agentCalls.filter(([kind]) => kind === 'running')).toHaveLength(1);
+  });
+
+  test.each(['stop', 'revoke', 'close'])(
+    'does not report installation if %s occurs during the observer ACK',
+    async (action) => {
+      await host.close();
+      let finish: (error: string | null) => void = () => {};
+      const observeHosted = vi.fn<
+        (session: string, pid: number, token: string, launchId: string) => Promise<string | null>
+      >(
+        () =>
+          new Promise<string | null>((done) => {
+            finish = done;
+          }),
+      );
+      host = new DeviceHost({
+        worker: join(home, 'worker.mjs'),
+        env: hostEnv,
+        agents,
+        observeHosted,
+        drainHosted: async () => null,
+        allowed: (client) => allowed.has(client),
+      });
+      const { session, app } = await readyApp();
+      host.appLaunch('client', app.params);
+      await vi.waitFor(() => expect(observeHosted).toHaveBeenCalledOnce());
+      let closing: Promise<void> | undefined;
+      if (action === 'stop') host.stop('client', { session: session.id });
+      else if (action === 'revoke') {
+        allowed.delete('client');
+        host.revoke();
+      } else closing = host.close();
+      finish(null);
+      if (closing) await closing;
+      await vi.waitFor(() =>
+        expect(readHostedSessions().find((entry) => entry.id === session.id)?.state).not.toBe('ready'),
+      );
+      expect(agentCalls.filter(([kind]) => kind === 'running')).toHaveLength(0);
+      expect(readHostedAppMetadata(session.id, app.params.attempt).state).not.toBe('installed');
+    },
+  );
+
+  test('a late observer ACK cannot revive an install after stop fails', async () => {
+    await host.close();
+    let finish: (error: string | null) => void = () => {};
+    const observeHosted = vi.fn<
+      (session: string, pid: number, token: string, launchId: string) => Promise<string | null>
+    >(
+      () =>
+        new Promise((done) => {
+          finish = done;
+        }),
+    );
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents,
+      observeHosted,
+      drainHosted: async () => null,
+      allowed: (client) => allowed.has(client),
+    });
+    const { session, app } = await readyApp();
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(observeHosted).toHaveBeenCalledOnce());
+    const stopFailure = join(deviceHostArea(session.id), 'home', 'fail-stop');
+    writeFileSync(stopFailure, 'fail');
+    try {
+      host.stop('client', { session: session.id });
+      await state(session.id, 'unknown');
+      finish(null);
+      await new Promise<void>((done) => setImmediate(done));
+      expect(readHostedAppMetadata(session.id, app.params.attempt).state).not.toBe('installed');
+      expect(agentCalls.filter(([kind]) => kind === 'running')).toHaveLength(0);
+      expect(readHostedSessions().find((entry) => entry.id === session.id)?.state).toBe('unknown');
+    } finally {
+      finish(null);
+      rmSync(stopFailure, { force: true });
+    }
+  });
+
+  test('a replacement drain cannot spawn an app after a concurrent stop fails', async () => {
+    await host.close();
+    let finish: (error: string | null) => void = () => {};
+    const drainHosted = vi
+      .fn<(session: string) => Promise<string | null>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            finish = done;
+          }),
+      )
+      .mockResolvedValue(null);
+    const observeHosted = vi
+      .fn<(session: string, pid: number, token: string, launchId: string) => Promise<string | null>>()
+      .mockResolvedValue(null);
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents,
+      observeHosted,
+      drainHosted,
+      allowed: (client) => allowed.has(client),
+    });
+    const { session, app } = await readyApp();
+    const sessionHome = join(deviceHostArea(session.id), 'home');
+    const appRoot = join(sessionHome, 'macos-app');
+    mkdirSync(appRoot, { recursive: true });
+    const workspace = join(sessionHome, 'workspaces', workspaceName(realpathSync(appRoot)));
+    mkdirSync(workspace, { recursive: true });
+    const previous = { pid: 123, processToken: 'previous', startedAtMicros: 1 };
+    writeFileSync(
+      join(workspace, 'state.json'),
+      JSON.stringify({
+        macos: {
+          launchId: 'previous',
+          product: 'Fixture',
+          arguments: [],
+          bundle: appRoot,
+          bundleId: 'fixture',
+          executable: '/fixture',
+          build: { state: 'ok', startedAt: new Date().toISOString() },
+          app: previous,
+          supervisor: previous,
+        },
+      }),
+    );
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(drainHosted).toHaveBeenCalledOnce());
+    const stopFailure = join(sessionHome, 'fail-stop');
+    writeFileSync(stopFailure, 'fail');
+    try {
+      host.stop('client', { session: session.id });
+      await state(session.id, 'unknown');
+      finish(null);
+      await new Promise<void>((done) => setImmediate(done));
+      expect(existsSync(join(sessionHome, 'installed'))).toBe(false);
+      expect(observeHosted).not.toHaveBeenCalled();
+      expect(agentCalls.filter(([kind]) => kind === 'running')).toHaveLength(0);
+      expect(readHostedAppMetadata(session.id, app.params.attempt).state).not.toBe('installed');
+      expect(readFileSync(join(workspace, 'state.json'), 'utf8')).toContain('previous');
+      expect(readHostedSessions().find((entry) => entry.id === session.id)?.state).toBe('unknown');
+    } finally {
+      finish(null);
+      rmSync(stopFailure, { force: true });
+    }
+  });
+
+  test.each([
+    ['observer unavailable', null],
+    ['', null],
+    ['throw', null],
+    ['observer unavailable', 'drain unavailable'],
+  ])('stops an unobserved app and requires drain acknowledgement (%s, %s)', async (observeError, drainError) => {
+    await host.close();
+    const drainHosted = vi.fn<(session: string) => Promise<string | null>>(async () => drainError);
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents,
+      observeHosted: async () => {
+        if (observeError === 'throw') throw new Error('');
+        return observeError;
+      },
+      drainHosted,
+      allowed: (client) => allowed.has(client),
+    });
+    const { session, app } = await readyApp();
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'unknown'));
+    expect(readFileSync(join(deviceHostArea(session.id), 'home', 'modes'), 'utf8')).toContain('stop-current');
+    expect(drainHosted).toHaveBeenCalledWith(session.id);
+    expect(agentCalls.filter(([kind]) => kind === 'running')).toHaveLength(0);
+    expect(readHostedMacosApp(join(deviceHostArea(session.id), 'home'))?.app).toBeDefined();
+  });
+
   test.each(['stop', 'replacement'])(
-    'a stale legacy supervisor permits hosted %s without an observer',
+    'a stale legacy supervisor permits hosted %s without a legacy drain',
     async (action) => {
       await host.close();
       host = new DeviceHost({
         worker: join(home, 'worker.mjs'),
         env: hostEnv,
         agents,
+        ...(action === 'replacement' ? { observeHosted: async () => null, drainHosted: async () => null } : {}),
         allowed: (client) => allowed.has(client),
         limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
       });
@@ -2230,7 +2534,7 @@ describe.skipIf(process.platform === 'win32')('hosted macOS replacement drain', 
     },
   );
 
-  test.each([null, 'write failed'])(
+  test.each([null, '', 'write failed'])(
     'hosted macOS replacement waits for the previous drain (error: %s)',
     async (drainError) => {
       await host.close();
@@ -2248,6 +2552,7 @@ describe.skipIf(process.platform === 'win32')('hosted macOS replacement drain', 
         worker: join(home, 'worker.mjs'),
         env: hostEnv,
         agents,
+        observeHosted: async () => null,
         drainHosted,
         allowed: (client) => allowed.has(client),
         limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
@@ -2294,10 +2599,10 @@ describe.skipIf(process.platform === 'win32')('hosted macOS replacement drain', 
       await vi.waitFor(() =>
         expect(host.appAttach('client', app.params)).toHaveProperty(
           'result.state',
-          drainError ? 'unknown' : 'installed',
+          drainError !== null ? 'unknown' : 'installed',
         ),
       );
-      if (drainError) {
+      if (drainError !== null) {
         assert.match(readFileSync(join(workspace, 'state.json'), 'utf8'), /previous/);
         assert.equal(existsSync(join(sessionHome, 'installed')), false);
       }
@@ -2305,17 +2610,19 @@ describe.skipIf(process.platform === 'win32')('hosted macOS replacement drain', 
   );
 });
 
-test.skipIf(process.platform === 'win32')(
-  'hosted macOS stop waits for final output before reporting stopped',
-  async () => {
+describe.skipIf(process.platform === 'win32')('hosted macOS stop drain', () => {
+  test.each([null, ''])('waits for final output and retains ownership on error %s', async (drainError) => {
     await host.close();
     let finish: (error: string | null) => void = () => {};
-    const drainHosted = vi.fn<(session: string) => Promise<string | null>>(
-      () =>
-        new Promise<string | null>((done) => {
-          finish = done;
-        }),
-    );
+    const drainHosted = vi
+      .fn<(session: string) => Promise<string | null>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            finish = done;
+          }),
+      )
+      .mockResolvedValue(null);
     host = new DeviceHost({
       worker: join(home, 'worker.mjs'),
       env: hostEnv,
@@ -2355,14 +2662,12 @@ test.skipIf(process.platform === 'win32')(
       join(workspace, 'logs', 'macos.ndjson'),
       JSON.stringify({ src: 'client', msg: 'final output' }) + '\n',
     );
-    finish(null);
-    await state(macos.id, 'stopped');
-    expect(await host.logsQuery('client', { session: macos.id })).toHaveProperty(
-      'result.records.0.msg',
-      'final output',
-    );
-  },
-);
+    finish(drainError);
+    await state(macos.id, drainError === null ? 'stopped' : 'unknown');
+    if (drainError !== null) assert.equal(readClaimSet(join(deviceHostRoot(), `${macos.id}.claims`)).live.length, 1);
+    else assert.match(JSON.stringify(await host.logsQuery('client', { session: macos.id })), /final output/);
+  });
+});
 
 test.skipIf(process.platform === 'win32')(
   'returns the hosted macOS app logs to its own client only, in pages, also after the session stopped',

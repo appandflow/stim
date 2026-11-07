@@ -164,6 +164,9 @@ files until workspace cleanup without replaying them into stim logs.
 If a reset checkpoint cannot be written and stimd crashes before the warning is
 recorded, the warning can be lost. A raw file that cannot be inspected or
 truncated can grow.
+An app launch requires its output observer. If the observer cannot start, Stim
+stops the app and drains its output before releasing ownership. If cleanup or
+drain cannot be verified, the app record and ownership remain for reconciliation.
 
 BUILD OFFLOAD
 

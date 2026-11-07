@@ -18,19 +18,27 @@ vi.mock('node:worker_threads', async () => {
           this.emit('exit', 0);
         });
     }
+    terminate() {
+      return Promise.resolve(0);
+    }
   }
   return { Worker };
 });
 
 import { createNetThread } from '../stimd/net.ts';
+import { createLogWriters } from '../stimd/logs/writer.ts';
 
 test('hosted drain requests reach the observer and return their acknowledgement', async () => {
   const drain = vi.fn<(session: string) => Promise<string | null>>().mockResolvedValue(null);
+  const observe = vi
+    .fn<(session: string, pid: number, token: string, launchId: string) => Promise<string | null>>()
+    .mockResolvedValue(null);
   const net = createNetThread(
     () => {},
     () => {},
     () => {},
     drain,
+    observe,
   );
   await net.ensure({
     port: 0,
@@ -46,5 +54,29 @@ test('hosted drain requests reach the observer and return their acknowledgement'
   worker.emit('message', { type: 'hosted-drain', id: 7, session: 'session' });
   await vi.waitFor(() => expect(worker.sent).toContainEqual({ type: 'hosted-drained', id: 7, error: null }));
   expect(drain).toHaveBeenCalledWith('session');
+  worker.emit('message', {
+    type: 'hosted-observe',
+    id: 8,
+    session: 'session',
+    pid: 42,
+    token: 'token',
+    launchId: 'launch',
+  });
+  await vi.waitFor(() => expect(worker.sent).toContainEqual({ type: 'hosted-observed', id: 8, error: null }));
+  expect(observe).toHaveBeenCalledWith('session', 42, 'token', 'launch');
   await net.close();
+});
+
+test('an empty worker error rejects a hosted drain request', async () => {
+  const writers = createLogWriters(() => {});
+  try {
+    const pending = writers.ownedDrainHosted('session');
+    const worker = state.worker;
+    if (!worker) throw new Error('the logs worker did not start');
+    const request = worker.sent[0] as { requestId: number };
+    worker.emit('message', { requestId: request.requestId, error: '' });
+    await expect(pending).rejects.toBeInstanceOf(Error);
+  } finally {
+    await writers.close();
+  }
 });
