@@ -421,6 +421,7 @@ async function launchHere(
     });
     writer.close();
     const unobserved = await observeOwned(root, ambientEnv());
+    checkCancelled();
     if (unobserved) note(`The macOS app's output is not recorded in stim logs: ${unobserved}.`);
     return { record: { ...record, supervisor: app, app }, deadline: Date.now() + 20_000 };
   } catch (error) {

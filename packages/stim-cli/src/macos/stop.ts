@@ -67,7 +67,8 @@ export async function stopMacosAppHeld(root: string, operation?: StimContext): P
     [record?.supervisor, record?.app].filter((each) => each !== undefined),
     operation,
   );
-  if (record?.supervisor) await stopProcesses([record.supervisor], SUPERVISOR_EXIT_MS, operation);
+  if (record?.supervisor && record.supervisor.pid !== record.app?.pid)
+    await stopProcesses([record.supervisor], SUPERVISOR_EXIT_MS, operation);
   const app = readMacosRecord(root)?.app ?? record?.app;
   if (app) await stopProcesses([app], undefined, operation);
   await stopProcesses(started, undefined, operation);

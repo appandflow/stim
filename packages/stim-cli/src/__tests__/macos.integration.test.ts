@@ -25,6 +25,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import {
   macosAppState,
+  deviceHostArea,
   parseMacosRecord,
   readMacosRecord,
   readBuildHistory,
@@ -188,6 +189,41 @@ test('a dead build owner does not remain a running build in status', async () =>
     state: 'failed',
     error: expect.stringContaining('before reporting a result'),
   });
+});
+
+test('an indeterminate Windows launch keeps its pending declaration', async () => {
+  const declaration = tryAcquireClaim({ root: join(dir, 'launch.lock'), mode: 'exclusive', label: 'launch' }).acquired;
+  assert(declaration);
+  const original = process;
+  const executor = getExecutor();
+  setExecutor({
+    ...executor,
+    runFile: () => {
+      throw new Error('launcher timed out');
+    },
+  });
+  vi.stubGlobal('process', Object.create(original, { platform: { value: 'win32' } }));
+  try {
+    await expect(
+      owning.spawnOwned({
+        file: 'fixture.exe',
+        args: [],
+        cwd: root,
+        env: original.env,
+        stdout: join(dir, 'out'),
+        stderr: join(dir, 'err'),
+        claim: { root: join(dir, 'runtime'), label: 'app' },
+        declare: [declaration],
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', claims: [declaration] });
+    expect(JSON.parse(readFileSync(declaration.path.replace(/\.claim$/, '.child'), 'utf8'))).toMatchObject({
+      record: null,
+    });
+  } finally {
+    vi.unstubAllGlobals();
+    resetExecutor();
+    releaseClaim(declaration);
+  }
 });
 
 test.skipIf(process.platform === 'win32')(
@@ -366,6 +402,40 @@ test.skipIf(process.platform === 'win32')(
       expect(existsSync(logs)).toBe(false);
     } finally {
       streams.close();
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'hosted drain records final output even before observer discovery',
+  async () => {
+    const app = await ownedProcess();
+    const serverHome = process.env.STIM_HOME;
+    assert(serverHome);
+    const session = '12345678-1234-1234-1234-123456789abc';
+    const home = join(deviceHostArea(session), 'home');
+    const hostedRoot = join(home, 'macos-app');
+    mkdirSync(hostedRoot, { recursive: true });
+    process.env.STIM_HOME = home;
+    try {
+      writeWorkspaceState(hostedRoot, { macos: record({ app, supervisor: app }) });
+      const logs = workspaceLogsDir(hostedRoot);
+      mkdirSync(logs, { recursive: true });
+      writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'final hosted output\n');
+      const child = children.at(-1);
+      assert(child);
+      child.kill('SIGKILL');
+      expect(await waitForProcessExit(app, 5000)).toBe(true);
+      process.env.STIM_HOME = serverHome;
+      const streams = createOwnedStreams(() => {});
+      try {
+        expect(await streams.drainHosted(session)).toBeNull();
+        expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('final hosted output');
+      } finally {
+        streams.close();
+      }
+    } finally {
+      process.env.STIM_HOME = serverHome;
     }
   },
 );
@@ -1114,6 +1184,50 @@ describe('macOS build placement and promotion', () => {
       });
       const stop = vi.spyOn(owning, 'stopOwnedProcess').mockResolvedValue(true);
       await expect(runMacos(context, root, () => {}, undefined, 'local')).rejects.toThrow('cancelled during spawn');
+      expect(stop).toHaveBeenCalledWith(owned);
+    },
+    20_000,
+  );
+
+  test.skipIf(process.platform !== 'darwin')(
+    'a cancelled native run drains an app when observer attachment finishes',
+    async () => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+        async ({ bundle: targetBundle, bundleId: targetId }) => {
+          mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+          writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+          return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+        },
+      );
+      vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+      const context = testContext();
+      const mocked = getExecutor();
+      resetExecutor();
+      const app = await ownedProcess();
+      setExecutor(mocked);
+      const owned = {
+        pid: app.pid,
+        processToken: app.processToken,
+        claim: {
+          root: 'fixture',
+          path: 'fixture',
+          claimId: 'fixture',
+          mode: 'exclusive' as const,
+          owner: app,
+          startedAt: new Date().toISOString(),
+          details: {},
+          label: 'fixture',
+        },
+      };
+      vi.spyOn(owning, 'spawnOwned').mockResolvedValue(owned);
+      vi.spyOn(stimdClient, 'observeOwned').mockImplementation(async () => {
+        refuseDeclaredSpawns(context, 'cancelled during observe');
+        return null;
+      });
+      const stop = vi.spyOn(owning, 'stopOwnedProcess').mockResolvedValue(true);
+      await expect(runMacos(context, root, () => {}, undefined, 'local')).rejects.toThrow('cancelled during observe');
       expect(stop).toHaveBeenCalledWith(owned);
     },
     20_000,

@@ -97,6 +97,7 @@ function hostedPlacement(dir: string, platform: string, slot = 'default') {
 }
 
 export interface ServerOptions {
+  drainHosted?: (session: string) => Promise<string | null>;
   /** The key in stimd's `run/desktop.key` that admits a local connection to the Desktop-only methods. */
   desktopBootstrap?: DesktopBootstrap;
   /** Asks stimd to check for a newer engine, as when a phone needs a newer one. */

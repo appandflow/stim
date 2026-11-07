@@ -383,6 +383,7 @@ export async function runStimd({
       else requestTick();
     },
     (why) => maybeUpdate(why, ASKED_MS),
+    (session) => owned.drainHosted(session),
   );
   let restartingNet = false;
   const keepRunning = () => net.running() || restartingNet || owned.running() || metroChildrenRun();
@@ -689,7 +690,6 @@ export async function runStimd({
     if (dependencyWork) log('debug', 'daemon_dependency_scan_cancelled', 'stopping the dependency size scan');
     threads.abort('measure');
     statuses.close();
-    owned.close();
     loopDelay.disable();
     interrupt?.();
     server.close();
@@ -698,12 +698,19 @@ export async function runStimd({
     if (bound && process.platform !== 'win32') rmSync(path, { force: true });
     if (readJsonObject(stimdRecordFile())?.pid === process.pid) rmSync(stimdRecordFile(), { force: true });
     follower?.release();
-    releaseClaim(claim);
-    if (!keepOwn) releaseClaim(own);
     markAbnormal = null;
     for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
-    void Promise.all([lane.settled(), dependencyWork, net.close(), closeMetroChildren()])
+    void Promise.all([
+      lane.settled(),
+      dependencyWork,
+      net.close().finally(() => {
+        owned.close();
+        releaseClaim(claim);
+        if (!keepOwn) releaseClaim(own);
+      }),
+      closeMetroChildren(),
+    ])
       .then(() => threads.close())
       .then(() => writer.close());
   };

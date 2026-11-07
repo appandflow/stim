@@ -34,6 +34,7 @@ import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
 import { createMaintenanceLane, runHomePasses } from '../daemon/passes.ts';
 import { macosDir } from '../macos/state.ts';
 import { runStimd } from '../stimd/main.ts';
+import * as netThread from '../stimd/net.ts';
 import * as maintenanceMeasure from '../stimd/passes/measure.ts';
 import * as maintenanceRun from '../stimd/passes/run.ts';
 import * as spawnEntry from '../spawn-entry.ts';
@@ -153,6 +154,40 @@ function lines(socket: Socket): string[] {
 }
 
 const frame = () => `${JSON.stringify({ kind: 'cli', build: stimdBuildId() })}\n`;
+
+test('shutdown retains the daemon claim until the net thread and observers close', async () => {
+  let finish: () => void = () => {};
+  const closing = new Promise<void>((done) => {
+    finish = done;
+  });
+  const close = vi.fn<() => Promise<void>>(() => closing);
+  const net = vi.spyOn(netThread, 'createNetThread').mockReturnValue({
+    ensure: async () => ({ listening: false, message: 'unused' }),
+    running: () => null,
+    connect: () => false,
+    presence: () => false,
+    close,
+  });
+  const before = new Set(process.listeners('SIGTERM'));
+  const run = runStimd({ tickMs: 60_000, mode: 'on' });
+  try {
+    await listening();
+    const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+    assert(handler);
+    handler('SIGTERM');
+    expect(close).toHaveBeenCalledOnce();
+    const attempt = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'successor' });
+    expect(attempt.acquired).toBeUndefined();
+    if (attempt.pending) releaseClaim(attempt.pending);
+    finish();
+    await run;
+    expect(readClaimSet(stimdClaimRoot()).live).toEqual([]);
+  } finally {
+    finish();
+    await run;
+    net.mockRestore();
+  }
+});
 
 async function stopStimd(): Promise<void> {
   saveConfig({ version: 2, projects: {}, repos: {}, daemon: { mode: 'off' } });

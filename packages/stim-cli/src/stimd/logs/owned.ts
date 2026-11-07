@@ -60,6 +60,7 @@ export interface OwnedStreams {
   sync(root?: string): Promise<string | null>;
   running(): boolean;
   drain(root: string): Promise<string | null>;
+  drainHosted(session: string): Promise<string | null>;
   close(): void;
 }
 
@@ -160,6 +161,28 @@ export function createOwnedStreams(log: Log): OwnedStreams {
       return null;
     },
     running: () => streams.size > 0,
+    async drainHosted(session) {
+      if (closed) return 'stimd is stopping';
+      try {
+        const home = join(deviceHostArea(session), 'home');
+        const dir = hostedMacosLogsDir(home);
+        const record = readHostedMacosApp(home);
+        if (!dir || !record?.app) return 'the hosted macOS app record is unavailable';
+        macos(dir, record);
+        const key = `macos:${dir}`;
+        const stream = streams.get(key);
+        if (stream?.drain && !stream.drain()) return 'the hosted macOS output could not be drained';
+        if (stream) {
+          ended.set(key, stream.token);
+          streams.delete(key);
+          stream.close();
+          await stream.ended;
+        }
+        return drained(dir, record.app) ? null : 'the hosted macOS output could not be drained';
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
     async drain(root) {
       if (closed) return 'stimd is stopping';
       try {
@@ -218,6 +241,7 @@ function lineSplitter(write: (line: string) => boolean, saved: unknown) {
       } else if (pending.length > LINE_BYTES) {
         let end = LINE_BYTES;
         while (end > 0 && (pending.readUInt8(end) & 0xc0) === 0x80) end--;
+        if (end === 0) end = LINE_BYTES;
         if (!write(pending.subarray(0, end).toString('utf8'))) return false;
         pending = pending.subarray(end);
       } else return true;

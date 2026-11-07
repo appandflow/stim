@@ -19,6 +19,8 @@ import { fileURLToPath } from 'node:url';
 import { processGroupAlive } from '@stim-cli/core/ownership-claim';
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { macosAppLogName, macosProcess } from '../macos/state.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 const cli = join(repo, 'packages/stim-cli/dist/cli.mjs');
@@ -178,6 +180,36 @@ afterEach(async () => {
 });
 
 describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel children', () => {
+  test('invalid UTF-8 in app output does not block the daemon', async () => {
+    const root = bareProject();
+    const app = macosProcess(process.pid);
+    writeWorkspaceState(root, {
+      macos: {
+        launchId: 'invalid-utf8',
+        product: 'Fixture',
+        arguments: [],
+        bundle: root,
+        bundleId: 'fixture',
+        executable: process.execPath,
+        build: { state: 'ok', startedAt: new Date().toISOString() },
+        app,
+        supervisor: app,
+      },
+    });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('invalid-utf8', 'out')), Buffer.alloc(65_537, 0x80));
+    await startStimd();
+    try {
+      const response = await Promise.race([
+        ask('logs.observe', { root }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('stimd did not answer')), 3000)),
+      ]);
+      expect(response.op).toBe('logs.observed');
+    } finally {
+      if (stimd && stimd.exitCode === null) stimd.kill('SIGKILL');
+    }
+  });
   test("metro.ensure starts Metro through metro-host.cjs on the project's Node, and a warm child answers at once", async () => {
     const root = bareProject();
     const port = await freePort();

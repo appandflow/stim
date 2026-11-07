@@ -57,10 +57,23 @@ export async function spawnOwned(launch: OwnedLaunch): Promise<OwnedProcess> {
       pid = child.pid;
     }
   } catch (error) {
+    if (process.platform === 'win32')
+      throw new WorkspaceProcessCleanupError(
+        declared,
+        `Could not verify whether the ${launch.claim.label} process started.`,
+        'Verify that the launched process and its children have stopped before retrying.',
+        error instanceof Error ? error : undefined,
+      );
     for (const claim of declared) clearClaimChild(claim);
     throw error;
   }
   if (pid === undefined) {
+    if (process.platform === 'win32')
+      throw new WorkspaceProcessCleanupError(
+        declared,
+        `Could not verify whether the ${launch.claim.label} process started.`,
+        'Verify that the launched process and its children have stopped before retrying.',
+      );
     for (const claim of declared) clearClaimChild(claim);
     throw new Error(`Could not start ${launch.file}.`);
   }

@@ -126,6 +126,7 @@ export async function serve(
   options: NetOptions,
   idle: () => void,
   requestUpdate: (why: string) => void = () => {},
+  drainHosted?: (session: string) => Promise<string | null>,
 ): Promise<NetThread> {
   const { port, extraEnv, pathPrepend, loopbackOnly, shareOnly } = options;
   delete process.env.NODE_COMPILE_CACHE;
@@ -166,6 +167,7 @@ export async function serve(
   let server: RunningServer;
   try {
     server = await startServer({
+      drainHosted,
       desktopBootstrap: new DesktopBootstrap(options.desktopKey),
       requestUpdate,
       ...(options.owner ? { owner: options.owner } : {}),
