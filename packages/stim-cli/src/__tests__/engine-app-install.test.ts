@@ -630,7 +630,10 @@ describe('verifyLaunch: the stability window ends on evidence that the app JavaS
     const records = { device: [old, current] };
     expect((await run('android', records, { deviceStreamId: 'current' })).jsRunning).toBe(true);
     expect((await run('android', { device: [old] }, { deviceStreamId: 'current' })).jsRunning).not.toBe(true);
-    expect((await run('android', records, { deviceStreamId: null })).jsRunning).not.toBe(true);
+    const missing = await run('android', records, { deviceStreamId: null });
+    expect(missing).toMatchObject({ verified: false, record: { event: 'bundle_response_finished' } });
+    expect(missing.jsRunning).not.toBe(true);
+    expect((await run('android', records)).verified).toBe(true);
   });
 
   test('waits for cold history and reads its evidence before reporting success', async () => {
@@ -672,7 +675,7 @@ describe('verifyLaunch: the stability window ends on evidence that the app JavaS
       readClientRecords: () => [],
       processAlive: () => true,
     });
-    expect(result.verified).toBe(false);
+    expect(result).toMatchObject({ verified: false, record: { event: 'bundle_response_finished' } });
     expect(clock.at()).toBeLessThanOrEqual(since + 6000);
   });
 

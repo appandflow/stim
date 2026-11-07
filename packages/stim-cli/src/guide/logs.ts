@@ -245,6 +245,8 @@ THE RECORD
     collector_backfill_failed warns when historical launch logs could not be read.
              Launch verification remains unverified without that coverage.
              On Android, check that adb shell date works and retry the launch.
+             If local device logs cannot start, the app keeps running and its
+             launch remains unverified.
     collector_backfill_dedup_limited warns that a busy overlap exceeded the
              bounded deduplication window; duplicate records may remain.
     raw      true when the level was inferred from a line of text rather than

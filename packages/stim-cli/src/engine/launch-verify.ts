@@ -549,9 +549,14 @@ export async function verifyLaunch({
           }
           const coverage = sleep.coverage?.();
           const coverageDeadline = pendingAt !== null ? readinessDeadline : bundleDeadline;
-          if (coverage === 'failed' || (coverage === 'pending' && now() >= coverageDeadline)) {
+          if (
+            deviceStreamId === null ||
+            coverage === 'failed' ||
+            (coverage === 'pending' && now() >= coverageDeadline)
+          ) {
             return {
               verified: false,
+              record: proof,
               errors: actionableErrors,
               processAlive: alive,
               mode,
