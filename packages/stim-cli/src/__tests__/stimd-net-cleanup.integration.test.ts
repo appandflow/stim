@@ -70,10 +70,10 @@ test('close requires a successful cleanup acknowledgement and worker exit', asyn
   expect(onExit).toHaveBeenCalledWith();
 });
 
-test('failed cleanup stays sticky after the worker exits', async () => {
+test.each(['child still running', ''])('failed cleanup stays sticky after the worker exits: %s', async (message) => {
   const { net, onExit } = await listening();
   const closing = net.close();
-  current().emit('message', { type: 'closed', error: 'child still running' });
+  current().emit('message', { type: 'closed', error: message });
   expect(onExit).toHaveBeenCalledWith(expect.objectContaining({ reportCleanup: true }));
   current().emit('exit', 0);
   await expect(closing).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
