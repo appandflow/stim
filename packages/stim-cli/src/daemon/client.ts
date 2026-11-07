@@ -72,7 +72,8 @@ let refusedBuild: string | null = null;
 let opSocket: Socket | null = null;
 let following: Promise<never> | null = null;
 let admitting = false;
-let socketDenied = false;
+let socketError: string | null = null;
+let refusedByAttached = false;
 let attachedHost: import('../stimd/attached.ts').AttachedHost | null = null;
 
 /** The code of the refusal of a command that can neither reach this home's stimd nor host one in its own process. */
@@ -147,6 +148,7 @@ function openStimd(
       // compat C26 permanent
       if (message.op === 'engine-changed') {
         refusedBuild ??= String(message.build);
+        refusedByAttached = message.attached === true;
         const next = switchedEngine();
         if (next && next.build === message.build) following ??= followSwitch(next.version, waiter);
       }
@@ -156,7 +158,7 @@ function openStimd(
     }
   });
   socket.once('error', (error: NodeJS.ErrnoException) => {
-    if (error.code === 'EPERM' || error.code === 'EACCES') socketDenied = true;
+    socketError = error.code ?? null;
   });
   return socket;
 }
@@ -408,9 +410,9 @@ export async function ensureStimd(
     if (!taken && !held && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
       const { hostStimd } = await import('../stimd/attached.ts');
       const host = await hostStimd(env);
-      if (host === 'blocked') throw sandboxBlocked();
-      if (host !== 'held' && host !== null) attachedHost = host;
-      taken = stimdLive();
+      if (host !== 'held' && host !== 'blocked' && host !== null) attachedHost = host;
+      taken = stimdLive() || (await claimTaken(launched, CLAIM_WAIT_MS - ATTACH_AFTER_MS));
+      if (host === 'blocked' && !taken) throw sandboxBlocked();
     }
     taken ||= await claimTaken(launched, CLAIM_WAIT_MS - ATTACH_AFTER_MS);
     if (taken && pin) await admit(held, command);
@@ -425,13 +427,22 @@ export async function ensureStimd(
 }
 
 /**
- * Begins this command's op with the live stimd, once more after a stimd of this build replaced one of an older build
- * that refused it. Throws {@link SANDBOX_BLOCKED} when the sandbox denied the connection.
+ * Begins this command's op with the live stimd: again while it has its claim but does not listen yet (up to five
+ * seconds), and once more after a stimd of this build replaced one of an older build that refused it, which an
+ * attached stimd never does. Throws {@link SANDBOX_BLOCKED} when the sandbox denied the connection.
  */
 async function admit(held: Socket[] | undefined, command: string | undefined): Promise<void> {
-  if (await beginOp(held, command)) return;
-  if (socketDenied) throw sandboxBlocked();
-  if (stimdRefused() && (await successorBound())) await beginOp(held, command);
+  for (const until = Date.now() + CLAIM_WAIT_MS; ;) {
+    socketError = null;
+    if (await beginOp(held, command)) return;
+    if (socketError === 'EPERM' || socketError === 'EACCES') throw sandboxBlocked();
+    if (stimdRefused()) {
+      if (!refusedByAttached && (await successorBound())) await beginOp(held, command);
+      return;
+    }
+    if ((socketError !== 'ENOENT' && socketError !== 'ECONNREFUSED') || Date.now() >= until) return;
+    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
+  }
 }
 
 /**

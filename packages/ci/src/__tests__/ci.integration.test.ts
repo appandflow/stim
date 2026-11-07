@@ -11,7 +11,7 @@ const lifecycle = vi.hoisted(() => ({
   diagnostics: vi.fn<() => Promise<unknown>>(),
   stop: vi.fn<(options: { signal: AbortSignal }) => Promise<unknown>>(),
   host: vi.fn<(env: NodeJS.ProcessEnv, options: { handover?: boolean }) => Promise<unknown>>(),
-  steps: [] as string[],
+  steps: new Array<string>(),
 }));
 vi.mock('stim', () => ({
   createStim: (options: StimOptions) => {

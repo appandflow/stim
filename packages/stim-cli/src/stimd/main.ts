@@ -51,6 +51,7 @@ import {
   launchStimd,
   launchdLabelPrefix,
   serveThroughStimd,
+  isSandboxBlocked,
   stimdBuildId,
   stimdLive,
   type NetAnswer,
@@ -58,7 +59,7 @@ import {
 import { getExecutor } from '../exec.ts';
 import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from '../daemon/mode.ts';
 import { ownedHere } from '../daemon/idle.ts';
-import type { TickMeasurement } from '../daemon/measure.ts';
+import { measureTick, type TickMeasurement } from '../daemon/measure.ts';
 import { listWaiting } from '../engine/wait-queue.ts';
 import { runHomePasses, type HomePasses } from '../daemon/passes.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
@@ -372,13 +373,13 @@ export async function runStimd({
   // compat end
   const claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details, takeOver);
   if (stopped !== null) log('info', 'stimd_takeover', `stopped stim-daemon pid ${stopped}, from an older Stim`);
-  readoptJournal(log);
   if (!claim) {
     releaseClaim(own);
     log('warn', 'stimd_claim_held', 'a stim-daemon from an older Stim still holds the daemon claim; exiting');
     writer.close();
     return false;
   }
+  readoptJournal(log);
   const follower = lifetime.detachedOnly(() => followEngine(log));
   const key = writeDesktopKey(desktopKey);
   const script = realpathSync(process.argv[1] ?? '');
@@ -468,7 +469,6 @@ export async function runStimd({
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
   const opCommands = new WeakMap<Socket, string>();
   let ending: string | null = null;
-  let lastAlive: string | null = null;
   let engineDirs: string[] = [];
   try {
     if (follower) engineDirs = workspaceEngineDirs(loadConfig());
@@ -560,7 +560,14 @@ export async function runStimd({
             return;
           }
           if (switchedTo || (message.kind !== 'desktop' && message.build !== build)) {
-            reply({ op: 'engine-changed', build, version: identity.version, pid: process.pid, ...switchedTo });
+            reply({
+              op: 'engine-changed',
+              build,
+              version: identity.version,
+              pid: process.pid,
+              ...(attached ? { attached: true } : {}),
+              ...switchedTo,
+            });
             socket.end();
             return;
           }
@@ -675,7 +682,8 @@ export async function runStimd({
   const finishAttached = () =>
     endAttached({
       inFlight: () => [...ops.keys()].map((socket) => opCommands.get(socket) ?? 'a command'),
-      alive: lastAlive,
+      alive: async () =>
+        net.running() ? 'the net thread serves' : homeAlive(loadConfig(), await measureTick(loadConfig(), Date.now())),
       waitMs,
       handover: attached?.handover ?? false,
       mode: startMode,
@@ -688,7 +696,7 @@ export async function runStimd({
     ending = why;
     void finishAttached();
   };
-  const onSignal = (signal: NodeJS.Signals) => (attached ? requestEnd(signal) : shutdown(signal));
+  const onSignal = (signal: NodeJS.Signals) => (attached ? lifetime.signal(signal, requestEnd) : shutdown(signal));
   const shutdown = (why: string, level: Level = 'info') => {
     if (closing) return;
     closing = true;
@@ -726,7 +734,7 @@ export async function runStimd({
     });
   } catch (error) {
     shutdown(`cannot listen on ${path}: ${error instanceof Error ? error.message : String(error)}`, lifetime.failLevel);
-    throw error;
+    throw lifetime.listenFailed(error);
   }
   if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
   lifetime.serve(requestEnd, waitMs);
@@ -890,7 +898,6 @@ export async function runStimd({
       break;
     }
     if (closing) break;
-    lastAlive = alive;
     const idle = !alive && !pending && !wentDormant && Date.now() - contactSince >= tickMs;
     emptyTicks = idle ? emptyTicks + 1 : 0;
     const tookMs = Math.round(performance.now() - tickStarted);
@@ -1031,8 +1038,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
       writer.write({ src: 'stimd', level: 'error', event: 'daemon_failed', msg: message });
       writer.close();
     } catch {}
-    const denied = error instanceof Error && 'code' in error && (error.code === 'EPERM' || error.code === 'EACCES');
-    process.exitCode = argv.includes(ATTACHED_ARG) && denied ? SANDBOX_EXIT : 1;
+    process.exitCode = isSandboxBlocked(error) ? SANDBOX_EXIT : 1;
   }
   if (label)
     try {

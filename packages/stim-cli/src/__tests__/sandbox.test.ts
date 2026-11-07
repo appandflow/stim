@@ -108,8 +108,9 @@ test('applyClaudeAllowance adds the stimd socket to an allowance written without
     expect(missingAllowance([path], '~/.stim', root, socket)).toEqual(['sandbox.network.allowUnixSockets']);
 
     expect(applyClaudeAllowance(path, sandboxAllowance('~/.stim', socket)).status).toBe('updated');
-    const after = JSON.parse(readFileSync(path, 'utf-8')) as { sandbox: { network: { allowUnixSockets: string[] } } };
-    expect(after.sandbox.network.allowUnixSockets).toEqual(['/var/run/docker.sock', socket]);
+    expect(JSON.parse(readFileSync(path, 'utf-8'))).toMatchObject({
+      sandbox: { network: { allowUnixSockets: ['/var/run/docker.sock', socket] } },
+    });
     expect(missingAllowance([path], '~/.stim', root, socket)).toEqual([]);
   } finally {
     rmSync(root, { recursive: true, force: true });

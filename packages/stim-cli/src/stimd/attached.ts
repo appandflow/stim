@@ -12,7 +12,7 @@ import {
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
-import { launchStimd, stimdEnv, stimdLive } from '../daemon/client.ts';
+import { launchStimd, SANDBOX_BLOCKED, stimdEnv, stimdLive } from '../daemon/client.ts';
 import { daemonMode } from '../daemon/mode.ts';
 
 /** The `__stimd` argument of a stimd bound to the process that started it, which ends it by closing its stdin. */
@@ -122,6 +122,13 @@ export interface StimdLifetime {
   keepsServingWhenOff: boolean;
   /** `make()` for a detached stimd; null attached, which neither follows the engine nor rolls it back. */
   detachedOnly<T>(make: () => T): T | null;
+  /** The error a failed listen ends the boot with: an attached stimd's denied socket is {@link SANDBOX_BLOCKED}. */
+  listenFailed(error: unknown): unknown;
+  /**
+   * An attached stimd's answer to a signal: the terminal's SIGINT reaches the whole process group, so it waits for its
+   * command to end instead; any other signal ends it as its command's end does.
+   */
+  signal(signal: NodeJS.Signals, requestEnd: (why: string) => void): void;
   /** Once bound: an attached stimd tells `hostStimd` it serves and ends at the end of its stdin. */
   serve(requestEnd: (why: string) => void, waitMs: number): void;
 }
@@ -134,6 +141,8 @@ export function stimdLifetime(attached: boolean): StimdLifetime {
       failLevel: 'error',
       keepsServingWhenOff: false,
       detachedOnly: (make) => make(),
+      listenFailed: (error) => error,
+      signal: () => {},
       serve: () => {},
     };
   return {
@@ -142,8 +151,17 @@ export function stimdLifetime(attached: boolean): StimdLifetime {
     failLevel: 'warn',
     keepsServingWhenOff: true,
     detachedOnly: () => null,
+    listenFailed: (error) =>
+      error instanceof Error && 'code' in error && (error.code === 'EPERM' || error.code === 'EACCES')
+        ? Object.assign(new Error(error.message), { code: SANDBOX_BLOCKED })
+        : error,
+    signal: (signal, requestEnd) => {
+      if (signal !== 'SIGINT') requestEnd(signal);
+    },
     serve(requestEnd, waitMs) {
-      process.stderr.on('error', () => {});
+      process.on('SIGINT', () => {});
+      process.on('SIGHUP', () => requestEnd('SIGHUP'));
+      for (const stream of [process.stdout, process.stderr]) stream.on('error', () => {});
       process.stdin.on('end', () => requestEnd('stdin')).on('error', () => {});
       process.stdin.resume();
       process.stdout.write(`${JSON.stringify({ op: 'attached', pid: process.pid, waitMs })}\n`);
@@ -176,12 +194,13 @@ export function readoptJournal(log: Log): void {
 /**
  * How an attached stimd ends once its command ended: it waits up to `waitMs` for the other commands' operations
  * (`inFlight`, their command names) to end, naming them on stderr, writes the journal, releases the home, and then,
- * when `handover` is on and work remains in the home (`alive`), starts a detached stimd and waits 2 s for it to take
- * the home.
+ * when `handover` is on and work remains in the home (`alive`, measured then), starts a detached stimd and waits 2 s for
+ * it to take the home. A command admitted during the wait that still runs at its end loses its op and runs on unpinned;
+ * the next command starts or hosts the next stimd.
  */
 export async function endAttached({
   inFlight,
-  alive,
+  alive: measure,
   waitMs,
   handover,
   mode,
@@ -190,7 +209,7 @@ export async function endAttached({
   log,
 }: {
   inFlight: () => string[];
-  alive: string | null;
+  alive: () => Promise<string | null>;
   waitMs: number;
   handover: boolean;
   mode: DaemonMode;
@@ -211,6 +230,8 @@ export async function endAttached({
     log('info', 'attached_waiting', message);
   }
   const unfinished = inFlight();
+  let alive: string | null = null;
+  if (handover) alive = await measure().catch((error: unknown) => `its home could not be measured: ${String(error)}`);
   if (alive || unfinished.length) {
     try {
       const at = new Date().toISOString();

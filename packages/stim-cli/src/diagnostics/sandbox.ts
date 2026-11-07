@@ -1,7 +1,7 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { connect, createServer } from 'net';
 import { homedir } from 'os';
-import { dirname, join, sep } from 'path';
+import { basename, dirname, join, sep } from 'path';
 import { stimdSocket } from '@stim-cli/core/state';
 import type { Finding } from './doctor.ts';
 
@@ -16,14 +16,19 @@ export interface SandboxAllowance {
 
 /**
  * What a sandboxed harness has to permit for Stim to work: its state
- * directory, the XPC service simctl talks to, stimd's socket, and the port
- * adb's server binds.
+ * directory, the XPC service simctl talks to, stimd's socket (also under its
+ * resolved directory, as /tmp is /private/tmp on macOS), and the port adb's
+ * server binds.
  */
 export function sandboxAllowance(stimHome: string = '~/.stim', socket: string = stimdSocket()): SandboxAllowance {
+  let real = socket;
+  try {
+    real = join(realpathSync(dirname(socket)), basename(socket));
+  } catch {}
   return {
     allowWrite: [stimHome],
     allowMachLookup: ['com.apple.coresimulator.*'],
-    allowUnixSockets: [socket],
+    allowUnixSockets: [...new Set([socket, real])],
     allowLocalBinding: true,
   };
 }

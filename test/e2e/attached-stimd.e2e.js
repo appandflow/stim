@@ -13,18 +13,19 @@ import {
 } from 'node:fs';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
 import { after, test } from 'node:test';
 
 const REPO = resolve(import.meta.dirname, '../..');
 const PACKAGE = join(REPO, 'packages', 'stim-cli');
-const PRELOAD = join(import.meta.dirname, 'fixtures', 'block-detached-stimd.mjs');
+const PRELOAD = pathToFileURL(join(import.meta.dirname, 'fixtures', 'block-detached-stimd.mjs')).href;
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-attached-')));
 const store = mkdtempSync(join(PACKAGE, '.e2e-store-'));
-const home = join(tmp, 'home');
+let home = join(tmp, 'home');
 const project = join(tmp, 'project');
 mkdirSync(project);
-const env = {
+let env = {
   ...process.env,
   HOME: tmp,
   USERPROFILE: tmp,
@@ -71,8 +72,8 @@ const until = async (what, check, ms = 20_000) => {
 const daemonLog = () => readFileSync(join(home, 'daemon', 'daemon.ndjson'), 'utf8');
 
 /** An agent's command with the detached start blocked, as a sandbox that kills detached children does. */
-function agent(cli, args, extra = {}) {
-  const child = spawn(process.execPath, ['--import', PRELOAD, cli, ...args], {
+function agent(cli, args, extra = {}, preload = PRELOAD) {
+  const child = spawn(process.execPath, ['--import', preload, cli, ...args], {
     cwd: project,
     env: { ...env, ...extra },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -169,5 +170,63 @@ test(
     assert.match(daemonLog(), /"event":"stimd_readopted"[^\n]*stim ios still ran/);
     const next = record();
     assert.ok(next === null || !alive(next.pid), 'no stimd outlives the last command');
+  },
+);
+
+/** A fresh scratch home for one test. */
+function useHome(name) {
+  home = join(tmp, name);
+  env = { ...env, STIM_HOME: home };
+}
+
+test(
+  'two agents that host at the same moment end up sharing one stimd, which waits for the other',
+  {
+    skip: process.platform === 'win32' ? 'the blocked start is simulated with POSIX process groups' : false,
+    timeout: 120_000,
+  },
+  async () => {
+    useHome('race-home');
+    const cli = join(PACKAGE, 'dist', 'cli.mjs');
+    const agents = ['a', 'b'].map((name) => ({
+      release: join(tmp, `race-${name}`),
+      ...agent(cli, ['revive'], { STIM_E2E_HOLD_UNTIL: join(tmp, `race-${name}`) }),
+    }));
+    const host = await until('one agent to host stimd', () => record());
+    const parent = execFileSync('ps', ['-o', 'ppid=', '-p', String(host.pid)], { encoding: 'utf8' }).trim();
+    const owner = agents.find(({ child }) => String(child.pid) === parent);
+    const other = agents.find((entry) => entry !== owner);
+    assert.ok(owner && other, "the stimd is one agent's child");
+    await until('both agents to be admitted and in their command', () =>
+      agents.every(({ release }) => existsSync(`${release}.reached`)),
+    );
+    writeFileSync(owner.release, '');
+    await until('the host to wait for the other agent', () =>
+      /waiting up to \d+ s for stim revive/.test(owner.stderr()),
+    );
+    writeFileSync(other.release, '');
+    await Promise.all(agents.map(({ closed }) => closed));
+    assert.ok(!alive(host.pid), 'the stimd exits once both commands ended');
+    assert.ok(
+      !existsSync(join(home, 'run', 'stimd-journal.json')),
+      'nothing was left running, so nothing is journaled',
+    );
+  },
+);
+
+test(
+  'a sandbox that denies the stimd socket refuses with STIM_SANDBOX_BLOCKED and leaves no stimd',
+  { skip: process.platform === 'win32' ? 'stimd uses a named pipe on Windows' : false, timeout: 60_000 },
+  async () => {
+    useHome('denied-home');
+    const started = Date.now();
+    const denied = agent(join(PACKAGE, 'dist', 'cli.mjs'), ['revive'], {}, `${PRELOAD}?deny-socket`);
+    assert.equal(await denied.closed, 1);
+    assert.ok(Date.now() - started < 10_000, 'the refusal does not wait out the slow-start window');
+    assert.match(
+      denied.stderr(),
+      /STIM_SANDBOX_BLOCKED: \S+\.sock is outside this sandbox's allowance; run stim doctor --fix, then rerun/,
+    );
+    assert.equal(record(), null);
   },
 );
