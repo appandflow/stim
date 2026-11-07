@@ -505,6 +505,8 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   also retains the home and engine claims and refuses new work in that home.
   On Windows, the leader's exit alone does not prove its descendants stopped;
   verify the process tree before removing the listed claims.
+  An attached daemon killed unexpectedly can also leave home and engine
+  claims requiring the same check, including during startup or forced shutdown.
   Warm also reports this code for EACCES, EPERM, EROFS and ENOENT while taking a claim.
   The message names the claim path and original filesystem error. Restore write
   access to the existing claim store, checking parent permissions, symlink

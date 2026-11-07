@@ -16,7 +16,7 @@ import { connect, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { processGroupAlive } from '@stim-cli/core/ownership-claim';
+import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 
@@ -237,6 +237,29 @@ exec sleep 600
       writeFileSync(release, '');
       await pending.catch(() => {});
     }
+  }, 30_000);
+
+  test('the attached watchdog leaves home ownership unresolved when tunnel startup outlasts shutdown', async () => {
+    const root = bareProject();
+    const started = join(dir, 'slow-tunnel-started');
+    write(join(dir, 'bin', 'cloudflared'), `#!/bin/sh\ntouch ${JSON.stringify(started)}\nexec sleep 600\n`, 0o755);
+    const child = spawn(process.execPath, [cli, '__stimd', '--attached'], {
+      env: { ...env, STIM_DAEMON_ATTACHED_EXIT_WAIT_SECONDS: '0' },
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    stimd = child;
+    await vi.waitFor(() => expect(record()?.pid).toBe(child.pid), { timeout: 15_000, interval: 50 });
+    void ask('tunnel.ensure', {
+      root,
+      provider: 'cloudflared',
+      port: await freePort(),
+      requireReachable: false,
+    }).catch(() => {});
+    const exited = once(child, 'exit');
+    await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 10_000, interval: 20 });
+    child.stdin?.end();
+    await exited;
+    expect(readClaimSet(join(home, 'run', 'stimd')).unresolved).toHaveLength(1);
   }, 30_000);
 
   test("metro.ensure starts Metro through metro-host.cjs on the project's Node, and a warm child answers at once", async () => {

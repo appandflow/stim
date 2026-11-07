@@ -356,6 +356,19 @@ function isUnverifiedCleanup(error: unknown): boolean {
   return isClaimUnavailable(error) && 'reportCleanup' in error;
 }
 
+function markHomePending(home: ClaimHandle, cleanup: () => void = () => {}, enabled = true): void {
+  if (!enabled) return;
+  try {
+    markClaimChildPending(home);
+  } catch (error) {
+    cleanup();
+    throw Object.assign(
+      new ClaimUnavailableError(`could not guard the Stim home: ${String(error)}`, { claimPath: home.path }),
+      { retentionFailure: true },
+    );
+  }
+}
+
 function retainUnverifiedForeground(
   error: unknown,
   home: ClaimHandle,
@@ -364,7 +377,7 @@ function retainUnverifiedForeground(
   if (!isClaimUnavailable(error)) return undefined;
   if (!('reportCleanup' in error)) return error;
   if ('retentionFailure' in error) return error;
-  markClaimChildPending(home);
+  markHomePending(home);
   const enginePath = retention?.retainUnknown();
   const paths = [home.path, ...(enginePath ? [enginePath] : [])];
   error.message += ` Stimd ownership remains held at ${paths.join(', ')}.`;
@@ -404,16 +417,25 @@ async function retainAttachedEngine(attached: boolean, log: Parameters<typeof fo
       { retentionFailure: true },
     );
   }
+  let retention: ReturnType<typeof followEngine> = null;
   try {
     requireCurrentEngine(engine);
-    const retention = followEngine(log, true);
+    retention = followEngine(log, true);
     if (!retention)
       throw new ClaimUnavailableError('could not retain the attached Stim engine', {
         claimPath: join(engine.root, 'claims', engine.build),
       });
     retention.record(true, workspaceEngineDirs(loadConfig()));
+    try {
+      retention.retainUnknown();
+    } catch (error) {
+      throw new ClaimUnavailableError(`could not guard the attached Stim engine: ${String(error)}`, {
+        claimPath: join(engine.root, 'claims', engine.build),
+      });
+    }
     return retention;
   } catch (error) {
+    retention?.release();
     cleanup();
     if (isClaimRefusal(error) || isClaimUnavailable(error)) Object.assign(error, { retentionFailure: true });
     throw error;
@@ -509,6 +531,14 @@ export async function runStimd({
       );
     return false;
   }
+  markHomePending(
+    own,
+    () => {
+      releaseClaim(own);
+      writer.close();
+    },
+    attached !== undefined,
+  );
   const homeClaim = own;
   let keepOwn = false;
   markAbnormal = () => {
@@ -679,6 +709,7 @@ export async function runStimd({
   let attachedEnding: Promise<void> | undefined;
   let shutdownDone: Promise<void> | undefined;
   let writerDone: Promise<void> | undefined;
+  let relaunchDone: Promise<void> | undefined;
   const foregroundAbort = new AbortController();
   let foregroundDone: Promise<void> | undefined;
   let foregroundFailure: unknown;
@@ -704,7 +735,7 @@ export async function runStimd({
   const failBackground = (error: unknown, why: string) => {
     backgroundFailure = error;
     keepOwn = true;
-    markClaimChildPending(homeClaim);
+    markHomePending(homeClaim);
     try {
       (retention ?? follower)?.record(true, [...engineDirs, ...metroEngineDirs()]);
     } finally {
@@ -724,8 +755,10 @@ export async function runStimd({
       return;
     }
     if (!next || switchedTo || closing) return;
-    if (!pinned()) await relaunch(next, follower.engine.root);
-    else if (!heldSwitch) {
+    if (!pinned()) {
+      relaunchDone = relaunch(next, follower.engine.root);
+      void relaunchDone.catch(() => {});
+    } else if (!heldSwitch) {
       heldSwitch = true;
       log(
         'warn',
@@ -743,7 +776,8 @@ export async function runStimd({
     const carried = running && netServes ? { ...netServes, shareOnly: running.shareOnly } : null;
     const why = `the engine switched to ${next.version} (${next.build})`;
     shutdown(why);
-    await net.close();
+    await shutdownDone;
+    if (keepOwn) return;
     launchStimd(process.env, startMode, process.platform, join(root, next.build, 'dist', 'cli.mjs'), [
       '--after-switch',
       ...serveArgs(carried, service),
@@ -982,6 +1016,7 @@ export async function runStimd({
     if (ending) return;
     ending = why;
     endingLevel = level;
+    retention?.record(true, [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
     attachedWatchdog = setTimeout(() => process.exit(1), waitMs + KILL_GRACE_MS);
     attachedWatchdog.unref();
     foregroundAbort.abort();
@@ -1274,6 +1309,7 @@ export async function runStimd({
     await Promise.allSettled([lane.settled(), dependencyWork, net.close()]);
     await threads.close();
     await shutdownDone;
+    await relaunchDone;
     await writerDone;
     clearTimeout(attachedWatchdog);
   }
