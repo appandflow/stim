@@ -215,6 +215,27 @@ export function desktopMethod(
       ),
     );
   }
+  if (
+    ctx.options.attached &&
+    [
+      'desktop.start.subscribe',
+      'desktop.run.subscribe',
+      'desktop.build.subscribe',
+      'desktop.gc.subscribe',
+      'desktop.worktree.warm.subscribe',
+      'desktop.worktree.remove.subscribe',
+      'desktop.machine-access.subscribe',
+      'desktop.remedy.subscribe',
+      'desktop.setup.subscribe',
+    ].includes(method)
+  ) {
+    ctx.error(
+      id,
+      'action-failed',
+      'This machine is serving from an attached Stim command. After that command ends, run `stim serve` outside the agent command, then retry.',
+    );
+    return Promise.resolve();
+  }
   if (method === 'desktop.setup.subscribe' || method === 'desktop.setup.answer') {
     if (!ctx.desktopSessions.has(ctx.socket)) {
       ctx.error(

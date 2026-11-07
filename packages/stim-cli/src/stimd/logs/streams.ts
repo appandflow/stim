@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { resolve as resolvePath } from 'node:path';
+import { join, resolve as resolvePath } from 'node:path';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { isJsonObject } from '@stim-cli/core/state';
 import { runCollector, type RunCollectorHandle } from './collector.ts';
@@ -119,6 +119,7 @@ type Stream = {
   childClosed: Promise<void> | null;
   spawnedPid: number | null;
   identity: { pid: number; processToken: string } | null;
+  signalling: Promise<void> | null;
   lastStop: { pid: number | null; identity: string; signalled?: boolean; error?: string } | null;
   pending: boolean;
   paused: boolean;
@@ -146,35 +147,49 @@ function alive(stream: Stream): boolean {
     : processGroupAlive(stream.identity.pid);
 }
 
-function signalChild(stream: Stream): void {
+function signalChild(stream: Stream): Promise<void> {
+  if (stream.signalling) return stream.signalling;
   const child = stream.identity;
   if (!child) {
     stream.lastStop = { pid: stream.spawnedPid, identity: 'unavailable' };
-    return;
+    return Promise.resolve();
   }
   const identity = inspectProcessIdentity(child);
   stream.lastStop = { pid: child.pid, identity };
-  if (identity !== 'same') return;
-  try {
-    if (process.platform === 'win32') {
-      getExecutor().runFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { timeoutMs: 30_000 });
-      stream.lastStop.signalled = true;
-    } else {
-      stream.lastStop.signalled = signalProcessTree(child.pid, 'SIGTERM', { group: true });
+  if (identity !== 'same') return Promise.resolve();
+  const lastStop = stream.lastStop;
+  const signalling = (async () => {
+    try {
+      if (process.platform === 'win32') {
+        await getExecutor().runFileAsync(
+          join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'),
+          ['/PID', String(child.pid), '/T', '/F'],
+          { timeoutMs: 30_000 },
+        );
+        lastStop.signalled = true;
+      } else {
+        lastStop.signalled = signalProcessTree(child.pid, 'SIGTERM', { group: true });
+      }
+    } catch (error) {
+      lastStop.signalled = false;
+      const detail = error instanceof Error ? error : new Error(String(error));
+      lastStop.error = JSON.stringify({
+        code: Reflect.get(detail, 'code'),
+        status: Reflect.get(detail, 'status'),
+        stderr: String(Reflect.get(detail, 'stderr') ?? '').slice(0, 2048),
+        message: detail.message.slice(0, 2048),
+      });
     }
-  } catch (error) {
-    stream.lastStop.signalled = false;
-    const detail = error instanceof Error ? error : new Error(String(error));
-    stream.lastStop.error = JSON.stringify({
-      code: Reflect.get(detail, 'code'),
-      status: Reflect.get(detail, 'status'),
-      stderr: String(Reflect.get(detail, 'stderr') ?? '').slice(0, 2048),
-      message: detail.message.slice(0, 2048),
-    });
-  }
+  })();
+  stream.signalling = signalling;
+  void signalling.finally(() => {
+    if (stream.signalling === signalling) stream.signalling = null;
+  });
+  return signalling;
 }
 
 async function waitChild(stream: Stream): Promise<void> {
+  await stream.signalling;
   const running = () =>
     stream.identity
       ? alive(stream)
@@ -256,7 +271,7 @@ function spawnChild(
   try {
     setClaimChild(stream.claim, stream.identity);
   } catch (error) {
-    signalChild(stream);
+    void signalChild(stream);
     throw error;
   }
   stream.pending = false;
@@ -320,7 +335,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
   };
   const stop = async (stream: Stream): Promise<void> => {
     const retry = stream.finalized;
-    signalChild(stream);
+    await signalChild(stream);
     stream.controller.abort();
     await stream.started.catch(() => null);
     await stream.done;
@@ -349,7 +364,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
         writerFailure = error;
         log(`the logs worker failed: ${error.message}`);
         for (const stream of new Set(streams.values())) {
-          signalChild(stream);
+          void signalChild(stream);
           stream.controller.abort();
         }
       },
@@ -638,6 +653,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
           childClosed: null,
           spawnedPid: null,
           identity: null,
+          signalling: null,
           lastStop: null,
           pending: false,
           paused: false,
@@ -747,14 +763,14 @@ export function createStreams(log: (message: string) => void): StreamTable {
             stream.activePid = null;
             stream.observedAt = null;
             for (const wake of stream.waiters) wake(false);
-            signalChild(stream);
+            await signalChild(stream);
             await waitChild(stream);
           },
           onExit: finalize,
         });
         void stream.started.catch((error: unknown) => {
           log(`device log stream ${id} failed: ${String(error)}`);
-          signalChild(stream);
+          void signalChild(stream);
           stream.controller.abort();
           if (!finishing) {
             sink.writer.close();
