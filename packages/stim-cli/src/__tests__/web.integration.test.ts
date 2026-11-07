@@ -39,6 +39,7 @@ import { createNdjsonWriter, type NdjsonRecord } from '../ndjson.ts';
 import { resolveWebUrl, webLaunchRemedy, webLaunchVerdict, webServePlan } from '../web/launch.ts';
 import { NOT_OURS_FOREIGN_CWD } from '../metro.ts';
 import {
+  clearWebRecord,
   latestPageLoad,
   readWebPage,
   readWebRecord,
@@ -562,6 +563,10 @@ async function ownedBrowser(): Promise<WebRecord> {
 }
 
 describe.skipIf(process.platform === 'win32')('selected configured-URL runtime', () => {
+  beforeEach(() => {
+    vi.spyOn(stimdClient, 'observeOwned').mockResolvedValue(null);
+  });
+
   afterEach(() => {
     resetExecutor();
     vi.unstubAllEnvs();
@@ -800,70 +805,78 @@ describe.skipIf(process.platform === 'win32')('stimd browser observer', () => {
     vi.restoreAllMocks();
   });
 
-  test('holds the phone emulation, records page console output, and clears the record once Chrome exits', async () => {
-    const workspace = realpathSync(root);
-    const chromeChild = nodeProcess('setInterval(() => {}, 1000);');
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    const chrome = { pid: chromeChild.pid!, processToken: captureProcessToken(chromeChild.pid!)! };
-    const profile = webProfileDir(workspace);
-    mkdirSync(profile, { recursive: true });
-    const record: WebRecord = {
-      ...chrome,
-      chromeProcess: chrome,
-      chrome: '/fixture/chrome',
-      headless: true,
-      viewport: 'phone',
-      ignoreCertificateErrors: false,
-      cdpPort: 8950,
-      profile,
-      url: 'http://localhost:8900/',
-      startedAt: new Date().toISOString(),
-    };
-    writeWebRecord(workspace, record);
-    const sent: string[] = [];
-    let emit = (_event: CdpEvent) => {};
-    let closed = () => {};
-    vi.spyOn(browserCdp, 'connectOwnedBrowser').mockResolvedValue({
-      async send(method) {
-        sent.push(method);
-        if (method === 'Browser.getVersion') return { product: 'Chrome/1' };
-        if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'owned-page', type: 'page' }] };
-        if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
-        return {};
-      },
-      onEvent: (listener) => {
-        emit = listener;
-      },
-      onClose: (listener) => {
-        closed = listener;
-      },
-      close: () => {},
-    });
-    const stream = observeBrowser(workspace, record, chrome);
-    await stream.attached;
-    expect(readWebRecord(workspace)).toMatchObject({ targetId: 'owned-page', version: 'Chrome/1' });
-    expect(sent).toContain('Emulation.setDeviceMetricsOverride');
-    emit({
-      method: 'Runtime.consoleAPICalled',
-      sessionId: 'owned-session',
-      params: { type: 'log', args: [{ type: 'string', value: 'hello from the page' }] },
-    });
-    process.kill(chrome.pid, 'SIGKILL');
-    await waitForProcessExit(chrome, 2000);
-    closed();
-    await stream.ended;
-    const lines = readFileSync(webLogFile(workspace), 'utf8')
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line));
-    expect(lines).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ msg: 'hello from the page', platform: 'web' }),
-        expect.objectContaining({ level: 'error', event: 'web_browser_exited' }),
-      ]),
-    );
-    expect(readWebRecord(workspace)).toBeNull();
-  });
+  test.each([
+    { ending: 'exits on its own', level: 'error', event: 'web_browser_exited' },
+    { ending: 'is stopped', level: 'info', event: 'web_browser_stopped' },
+  ])(
+    'holds the phone emulation, records page console output, and ends when Chrome $ending',
+    async ({ ending, level, event }) => {
+      const workspace = realpathSync(root);
+      const chromeChild = nodeProcess('setInterval(() => {}, 1000);');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const chrome = { pid: chromeChild.pid!, processToken: captureProcessToken(chromeChild.pid!)! };
+      const profile = webProfileDir(workspace);
+      mkdirSync(profile, { recursive: true });
+      const record: WebRecord = {
+        ...chrome,
+        chromeProcess: chrome,
+        chrome: '/fixture/chrome',
+        headless: true,
+        viewport: 'phone',
+        ignoreCertificateErrors: false,
+        cdpPort: 8950,
+        profile,
+        url: 'http://localhost:8900/',
+        startedAt: new Date().toISOString(),
+      };
+      writeWebRecord(workspace, record);
+      const sent: string[] = [];
+      let emit = (_event: CdpEvent) => {};
+      let closed = () => {};
+      vi.spyOn(browserCdp, 'connectOwnedBrowser').mockResolvedValue({
+        async send(method) {
+          sent.push(method);
+          if (method === 'Browser.getVersion') return { product: 'Chrome/1' };
+          if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'owned-page', type: 'page' }] };
+          if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
+          return {};
+        },
+        onEvent: (listener) => {
+          emit = listener;
+        },
+        onClose: (listener) => {
+          closed = listener;
+        },
+        close: () => {},
+      });
+      const stream = observeBrowser(workspace, record, chrome);
+      await stream.attached;
+      expect(readWebRecord(workspace)).toMatchObject({ targetId: 'owned-page', version: 'Chrome/1' });
+      expect(sent).toContain('Emulation.setDeviceMetricsOverride');
+      emit({
+        method: 'Runtime.consoleAPICalled',
+        sessionId: 'owned-session',
+        params: { type: 'log', args: [{ type: 'string', value: 'hello from the page' }] },
+      });
+      process.kill(chrome.pid, 'SIGKILL');
+      await waitForProcessExit(chrome, 2000);
+      if (ending === 'is stopped') clearWebRecord(workspace, chrome);
+      closed();
+      await stream.ended;
+      const lines = readFileSync(webLogFile(workspace), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      expect(lines).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ msg: 'hello from the page', platform: 'web' }),
+          expect.objectContaining({ level, event }),
+        ]),
+      );
+      expect(readWebRecord(workspace)).toBeNull();
+    },
+    15_000,
+  );
 });
 
 describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process groups; skipped on win32)', () => {

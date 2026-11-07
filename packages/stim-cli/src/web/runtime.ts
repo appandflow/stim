@@ -59,6 +59,8 @@ export async function launchOwnedBrowser(
       if (live && sameLaunch(live, config)) {
         const since = Date.now();
         try {
+          const unobserved = await observeOwned(root, ambientEnv());
+          if (unobserved) throw new Error(unobserved);
           await sendToOwnedPage(live, 'Page.navigate', { url }, signal);
           await withWorkspaceStateLockAsync(root, () => updateWebRecord(root, live, { url }));
           note(chalk.dim(phaseLine('device', `reusing the owned Chrome (pid ${live.chromeProcess?.pid})`)));

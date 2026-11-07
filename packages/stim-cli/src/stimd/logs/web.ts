@@ -18,6 +18,7 @@ import { chromeProcessState, removeSingletonFiles } from '../../web/profile.ts';
 import {
   browserLogFile,
   clearWebRecord,
+  readWebRecord,
   updateWebRecord,
   webLogFile,
   type OwnedProcess,
@@ -28,6 +29,7 @@ const DEVTOOLS_WAIT_MS = 20_000;
 const ROUTE_THROTTLE_MS = 250;
 const CHROME_EXIT_WAIT_MS = 5_000;
 const POLL_MS = 50;
+const STOP_SETTLE_MS = 5_000;
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
@@ -151,6 +153,8 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
     const driver = createDriverProbe(record.cdpPort, [process.pid, chrome.pid]);
     let batchDriver: Promise<ActivityDriver | null> | null = null;
     let reloading = false;
+    // Runtime.enable and Log.enable replay the page's earlier messages before they answer; a re-attach has recorded them.
+    let replaying = Boolean(record.targetId);
     let route: { written: string | null; latest: string | null; at: number; timer: NodeJS.Timeout | null } = {
       written: null,
       latest: null,
@@ -178,14 +182,14 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
       const params = event.params;
       switch (event.method) {
         case 'Runtime.consoleAPICalled':
-          writer.write(consoleRecord(params));
+          if (!replaying) writer.write(consoleRecord(params));
           return;
         case 'Runtime.exceptionThrown':
-          writer.write(exceptionRecord(params));
+          if (!replaying) writer.write(exceptionRecord(params));
           return;
         case 'Log.entryAdded': {
           const entry = logEntryRecord(params);
-          if (entry) writer.write(entry);
+          if (entry && !replaying) writer.write(entry);
           return;
         }
         case 'Runtime.bindingCalled': {
@@ -276,13 +280,18 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
       void (async () => {
         const until = Date.now() + 2000;
         while (!chromeGone() && Date.now() < until) await sleep(POLL_MS);
-        if (chromeGone()) finish('error', 'web_browser_exited', `Chrome exited; see ${browserLogFile(root)}`);
-        else finish('warn', 'web_browser_unobserved', 'Chrome closed its DevTools connection');
+        if (!chromeGone()) return finish('warn', 'web_browser_unobserved', 'Chrome closed its DevTools connection');
+        const recorded = () => readWebRecord(root)?.chromeProcess?.processToken === chrome.processToken;
+        const settle = Date.now() + STOP_SETTLE_MS;
+        while (recorded() && Date.now() < settle) await sleep(POLL_MS);
+        if (recorded()) finish('error', 'web_browser_exited', `Chrome exited; see ${browserLogFile(root)}`);
+        else finish('info', 'web_browser_stopped', 'Chrome was stopped');
       })();
     });
 
     for (const domain of ['Runtime', 'Log', 'Network', 'Page'])
       await connection.send(`${domain}.enable`, {}, sessionId);
+    replaying = false;
     try {
       await connection.send(
         'Runtime.addBinding',
