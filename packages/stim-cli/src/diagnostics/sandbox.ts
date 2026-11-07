@@ -44,9 +44,11 @@ export function sandboxAllowance(
 ): SandboxAllowance {
   const store = engineRoot(env);
   const lock = engineLockSocket(store);
-  const lockWrites = lock.startsWith('/tmp/stim-sockets-') ? allowancePaths(dirname(lock)) : [];
+  const socketWrites = [socket, lock].flatMap((path) =>
+    path.startsWith('/tmp/stim-sockets-') ? allowancePaths(dirname(path)) : [],
+  );
   return {
-    allowWrite: [...new Set([stimHome, ...allowancePaths(store), ...lockWrites])],
+    allowWrite: [...new Set([stimHome, ...allowancePaths(store), ...socketWrites])],
     allowMachLookup: ['com.apple.coresimulator.*'],
     allowUnixSockets: [...new Set([...allowancePaths(socket), ...allowancePaths(lock)])],
     allowLocalBinding: true,

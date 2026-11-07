@@ -154,11 +154,19 @@ export async function holdCIStimd(
   return (await import('../api.ts')).holdCIStimd(env, projectRoot, ownedInstance);
 }
 
+const unavailable = () => ({
+  refusal: {
+    code: 'STIM_DAEMON_UNAVAILABLE',
+    message: 'The attached Stim daemon could not start or admit this command.',
+    remedy: 'Retry the command; if the daemon cannot start, run stim doctor or run outside the sandbox.',
+  },
+});
+
 /**
  * Starts this build's stimd as a child of this process (`__stimd --attached`), with stimd's environment taken from
  * `env`, and waits until it serves. It runs until this process calls `end` or exits, which closes its stdin. Resolves
- * `held` when another stimd took the home first, `blocked` when a sandbox denies its socket, and null when it failed
- * otherwise or did not serve within 10 s.
+ * `held` when another stimd took the home first, `blocked` when a sandbox denies its socket, and a refusal when it
+ * cannot start or admit the command.
  */
 export function hostStimd(
   env: NodeJS.ProcessEnv,
@@ -175,12 +183,17 @@ export function hostStimd(
   | null
 > {
   const args = [spawnEntry('cli'), '__stimd', ATTACHED_ARG];
-  const child = getExecutor().spawn(process.execPath, handover ? args : [...args, NO_HANDOVER_ARG], {
-    cwd: tmpdir(),
-    stdio: ['pipe', 'pipe', 'inherit'],
-    env: stimdEnv(env, process.platform),
-    windowsHide: true,
-  });
+  let child: ReturnType<ReturnType<typeof getExecutor>['spawn']>;
+  try {
+    child = getExecutor().spawn(process.execPath, handover ? args : [...args, NO_HANDOVER_ARG], {
+      cwd: tmpdir(),
+      stdio: ['pipe', 'pipe', 'inherit'],
+      env: stimdEnv(env, process.platform),
+      windowsHide: true,
+    });
+  } catch {
+    return Promise.resolve(unavailable());
+  }
   const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((done) => {
     child.once('exit', (code, signal) => done({ code, signal }));
     child.once('error', () => done({ code: null, signal: null }));
@@ -188,7 +201,7 @@ export function hostStimd(
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      resolve(null);
+      resolve(unavailable());
     }, BIND_MS);
     let buffer = '';
     child.stdout?.setEncoding('utf8');
@@ -263,11 +276,11 @@ export function hostStimd(
     });
     child.once('close', (code) => {
       clearTimeout(timer);
-      resolve(code === SANDBOX_EXIT ? 'blocked' : null);
+      resolve(code === SANDBOX_EXIT ? 'blocked' : unavailable());
     });
     child.once('error', () => {
       clearTimeout(timer);
-      resolve(null);
+      resolve(unavailable());
     });
   });
 }

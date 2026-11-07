@@ -391,7 +391,7 @@ test(
     const held = tryAcquireClaim({ root: join(home, 'run', 'stimd'), mode: 'exclusive', label: 'stimd' }).acquired;
     assert.ok(held);
     try {
-      assert.equal(await hostStimd(env, { handover: false }), null);
+      assert.equal((await hostStimd(env, { handover: false }))?.refusal?.code, 'STIM_DAEMON_UNAVAILABLE');
       const module = pathToFileURL(join(PACKAGE, 'dist', 'attached-stimd.mjs')).href;
       const denied = spawnSync(
         process.execPath,
@@ -672,3 +672,38 @@ test('host end reports an attached daemon killed before shutdown', { timeout: 30
     rmSync(scratch, { recursive: true, force: true });
   }
 });
+
+test(
+  'store lock contention past attached startup refuses admission',
+  { timeout: 25_000, skip: process.platform === 'win32' },
+  async () => {
+    const scratch = realpathSync(mkdtempSync('/tmp/stim-lock-'));
+    const engineRoot = join(scratch, 'engines');
+    const selected = join(engineRoot, 'bbbbbbbbbbbb');
+    mkdirSync(join(selected, 'dist'), { recursive: true });
+    cpSync(join(PACKAGE, 'dist'), join(selected, 'dist'), { recursive: true });
+    cpSync(join(PACKAGE, 'package.json'), join(selected, 'package.json'));
+    symlinkSync(join(PACKAGE, 'node_modules'), join(selected, 'node_modules'), 'junction');
+    writeFileSync(
+      join(engineRoot, 'current.json'),
+      JSON.stringify({ format: 1, dir: 'bbbbbbbbbbbb', version: 'test' }),
+    );
+    const lock = createServer();
+    await new Promise((done, fail) =>
+      lock.once('error', fail).listen(join(realpathSync(engineRoot), '.lock.sock'), done),
+    );
+    const previousRoot = process.env.STIM_ENGINE_ROOT;
+    process.env.STIM_ENGINE_ROOT = engineRoot;
+    try {
+      const engine = await import(pathToFileURL(join(selected, 'dist', 'attached-stimd.mjs')).href);
+      const result = await engine.hostStimd({ ...env, STIM_HOME: join(scratch, 'home'), STIM_ENGINE_ROOT: engineRoot });
+      assert.equal(result?.refusal?.code, 'STIM_DAEMON_UNAVAILABLE');
+      assert.equal(existsSync(join(scratch, 'home', 'run', 'stimd.json')), false);
+    } finally {
+      await new Promise((done) => lock.close(done));
+      if (previousRoot === undefined) delete process.env.STIM_ENGINE_ROOT;
+      else process.env.STIM_ENGINE_ROOT = previousRoot;
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);

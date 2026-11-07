@@ -417,7 +417,9 @@ export async function ensureStimd(
       launched = { settled: Promise.resolve(), exited: () => true };
     }
     let taken = await claimTaken(launched, ATTACH_AFTER_MS);
+    let attachedAttempt = false;
     if (!taken && !held && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
+      attachedAttempt = true;
       const { hostStimd } = await import('../stimd/attached.ts');
       const host = await hostStimd(env);
       if (host && typeof host === 'object' && 'refusal' in host)
@@ -442,14 +444,27 @@ export async function ensureStimd(
       }
     }
     taken ||= await claimTaken(launched, CLAIM_WAIT_MS - ATTACH_AFTER_MS);
-    if (taken && pin) await admit(held, command);
+    if (attachedAttempt && !taken)
+      throw Object.assign(new Error('The attached Stim daemon could not take this home.'), {
+        code: 'STIM_DAEMON_UNAVAILABLE',
+        remedy: 'Retry the command; if the daemon still cannot start, run stim doctor.',
+      });
+    if (taken && pin) {
+      const admitted = await admit(held, command);
+      if (attachedAttempt && !admitted)
+        throw Object.assign(new Error('The attached Stim daemon could not admit this command.'), {
+          code: 'STIM_DAEMON_UNAVAILABLE',
+          remedy: 'Retry the command; if admission still fails, run stim doctor.',
+        });
+    }
     return taken;
   } catch (error) {
     if (
       isSandboxBlocked(error) ||
       (error instanceof Error &&
         'code' in error &&
-        (error.code === 'STIM_ENGINE_UNAVAILABLE' ||
+        (error.code === 'STIM_DAEMON_UNAVAILABLE' ||
+          error.code === 'STIM_ENGINE_UNAVAILABLE' ||
           error.code === 'STIM_CLAIM_UNAVAILABLE' ||
           error.code === 'STIM_CLAIM_REFUSED'))
     )
@@ -486,16 +501,16 @@ export async function ensurePersistentStimd(env: NodeJS.ProcessEnv = process.env
  * seconds), and once more after a stimd of this build replaced one of an older build that refused it, which an
  * attached stimd never does. Throws {@link SANDBOX_BLOCKED} when the sandbox denied the connection.
  */
-async function admit(held: Socket[] | undefined, command: string | undefined): Promise<void> {
+async function admit(held: Socket[] | undefined, command: string | undefined): Promise<boolean> {
   for (const until = Date.now() + CLAIM_WAIT_MS; ;) {
     socketError = null;
-    if (await beginOp(held, command)) return;
+    if (await beginOp(held, command)) return true;
     if (socketError === 'EPERM' || socketError === 'EACCES') throw sandboxBlocked();
     if (stimdRefused()) {
-      if (!refusedByAttached && (await successorBound())) await beginOp(held, command);
-      return;
+      if (!refusedByAttached && (await successorBound())) return beginOp(held, command);
+      return false;
     }
-    if ((socketError !== 'ENOENT' && socketError !== 'ECONNREFUSED') || Date.now() >= until) return;
+    if ((socketError !== 'ENOENT' && socketError !== 'ECONNREFUSED') || Date.now() >= until) return false;
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }
 }
