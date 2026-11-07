@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { runCollector } from '../stimd/logs/collector.ts';
+import { awaitIosDeviceLaunch, iosLaunchRemedy } from '../engine/ios-device.ts';
 
 import { makeChildProcess } from './_factories.ts';
 
@@ -55,6 +56,39 @@ async function until<T>(
 }
 
 describe('runCollector seams', () => {
+  test('a failed physical console drains its final diagnostic before launch readiness resolves', async () => {
+    const child = makeChildProcess({ pid: 4242 });
+    await runCollector({
+      platform: 'ios',
+      root,
+      udid: 'U1',
+      appName: 'MyApp',
+      bundleId: 'com.test.app',
+      physical: true,
+      startStream: () => child,
+      onExit: () => {},
+    });
+    assert(child.stderr);
+    child.stderr.emit('data', 'BSErrorCodeDescription = Locked');
+    child.emit('exit', 1, null);
+    expect(deviceLog().some((record) => record.event === 'collector_failed')).toBe(false);
+    const result = await awaitIosDeviceLaunch({
+      udid: 'U1',
+      bundleId: 'com.test.app',
+      appName: 'MyApp',
+      collectorStreamId: 'one',
+      readRecords: () => deviceLog().map((record) => Object.assign(record, { streamId: 'one' })),
+      probe: () => ({ state: 'stopped' }),
+      sleep: async () => {
+        child.emit('close', 1, null);
+      },
+    });
+    expect(result.remedy).toBe(iosLaunchRemedy('locked', { udid: 'U1', bundleId: 'com.test.app' }));
+    const records = deviceLog();
+    expect(records.findIndex((record) => record.msg === 'BSErrorCodeDescription = Locked')).toBeLessThan(
+      records.findIndex((record) => record.event === 'collector_failed'),
+    );
+  });
   test('stopping a worker-owned stream ends its child and records its end without a collector process record', async () => {
     const controller = new AbortController();
     const child = makeChildProcess({ pid: 4242 });
@@ -161,7 +195,7 @@ describe('runCollector reattach seams', () => {
     });
     const firstStream = started[0];
     assert(firstStream);
-    firstStream.emit('exit', 0, null);
+    firstStream.emit('close', 0, null);
     await until(() => pendingClocks.length === 1, { label: 'the reattach clock read' });
     assert(reportPid);
     void reportPid(4300);
@@ -218,7 +252,7 @@ describe('runCollector reattach seams', () => {
       },
     });
     assert(result?.child);
-    result.child.emit('exit', 0, null);
+    result.child.emit('close', 0, null);
     await until(() => code === 0, { label: 'the collector to finish' });
     expect(code).toBe(0);
     expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
@@ -264,7 +298,7 @@ describe('the collector never signals a pid it does not own', () => {
       pid = 4200;
       const firstStarted = started[0];
       assert(firstStarted);
-      firstStarted.emit('exit', 0, null);
+      firstStarted.emit('close', 0, null);
 
       await until(() => started.length === 2, { label: 'the reattached stream' });
       expect(killedHandles).toEqual(['SIGTERM']);

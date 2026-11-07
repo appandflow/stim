@@ -12,6 +12,7 @@ import { liveWaiters, queuePosition, takeWaitTicket, waitCeiling } from './wait-
 import { throwIfCancelled } from '../cancellation.ts';
 import { admissionLimits } from '../workspace/config.ts';
 import { busySlots, slotTurn } from '../policy/admission.ts';
+import { buildClaimRoot } from '../engine-store/claims.ts';
 
 const SLOT_PREFIX = 'slot-';
 
@@ -153,10 +154,6 @@ function queueState(max: number, waiters: readonly ClaimHolder[]): string {
   return `held: ${holders.join(', ') || 'none'}; queue: ${queue.join(', ') || 'empty'}`;
 }
 
-/**
- * While another build is staged, holds a miss before its slot for at most `SLOT_HOLD_MS` after the staging, its op not
- * pinned, so the running builds can drain; once the engine switches, ends the command with the rerun line.
- */
 async function holdForSwitch(
   engine: StoreEngine | null,
   {
@@ -166,8 +163,24 @@ async function holdForSwitch(
     intervalMs,
   }: { now: () => number; out: (line: string) => void; sleep: (ms: number) => Promise<void>; intervalMs: number },
 ): Promise<void> {
+  const retained = () =>
+    engine &&
+    readClaimSet(buildClaimRoot(engine.root, engine.build)).live.some((claim) => claim.details.retained === true);
+  const checkSwitch = () => {
+    const switched = switchedEngine(engine);
+    if (switched) endForSwitch(switched.version);
+  };
+  if (retained()) {
+    checkSwitch();
+    return;
+  }
   let held = false;
   for (let staged = stagedHold(engine, now()); staged; staged = stagedHold(engine, now())) {
+    if (retained()) {
+      if (held) opWaiting(false);
+      checkSwitch();
+      return;
+    }
     if (!held) {
       held = true;
       opWaiting(true);
@@ -176,8 +189,7 @@ async function holdForSwitch(
     }
     await sleep(intervalMs);
   }
-  const switched = switchedEngine(engine);
-  if (switched) endForSwitch(switched.version);
+  checkSwitch();
   if (held) opWaiting(false);
 }
 

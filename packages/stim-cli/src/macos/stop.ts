@@ -1,10 +1,12 @@
-import { readMacosRecord, type MacosProcess } from '@stim-cli/core/state';
+import { readMacosRecord, stimdClaimRoot, type MacosProcess } from '@stim-cli/core/state';
+import { existsSync } from 'node:fs';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { withWorkspaceStateLockAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { hostedBundleDirs, runningBundleInstancesAsync, runningInstancesInAsync, startedBy } from './instances.ts';
-import { macosRuntimeClaim, requiredMacosRecord } from './state.ts';
+import { macosAppStderr, macosAppStdout, macosRuntimeClaim, requiredMacosRecord } from './state.ts';
+import { drainOwnedMacos } from '../daemon/client.ts';
 import { processGroupAlive, readClaimSet } from '../ownership-claim.ts';
 import type { StimContext } from '@stim-cli/core';
 
@@ -106,11 +108,31 @@ export async function stopMacosAppHeld(root: string, operation?: StimContext): P
 }
 
 /** Stops the workspace's app here, or its session on the hosting Mac, which must confirm the session stopped. */
-export function stopMacosApp(root: string, operation?: StimContext): Promise<boolean> {
+export function stopMacosApp(
+  root: string,
+  operation?: StimContext,
+  options: { drain?: boolean } = {},
+): Promise<boolean> {
   const stop = async () => {
     operation?.signal.throwIfAborted();
     const record = requiredMacosRecord(root);
-    if (!record?.host) return stopMacosAppHeld(root, operation);
+    if (!record?.host) {
+      const stopped = await stopMacosAppHeld(root, operation);
+      if (options.drain !== false && record?.app && record.supervisor?.pid === record.app.pid) {
+        const claims = readClaimSet(stimdClaimRoot());
+        if (
+          claims.live.length ||
+          claims.unresolved.length ||
+          existsSync(macosAppStdout(root, record.launchId)) ||
+          existsSync(macosAppStderr(root, record.launchId))
+        ) {
+          const failure = await drainOwnedMacos(root, operation?.env);
+          operation?.signal.throwIfAborted();
+          if (failure) throw new Error(`Could not drain macOS app output: ${failure}`);
+        }
+      }
+      return stopped;
+    }
     const { stopHostedMacos } = await import('../device-host/hosted-macos.ts');
     await stopHostedMacos(root, record.host, operation?.signal);
     operation?.signal.throwIfAborted();

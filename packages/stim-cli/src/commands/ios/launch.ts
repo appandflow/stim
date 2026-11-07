@@ -598,7 +598,7 @@ interface FinishIosRunArgs {
   startedAt: string;
   closeWriter: () => void;
   lease: RunLease | null;
-  releaseLease: () => void;
+  releaseLease: () => void | Promise<void>;
   recordRun: ReportIosResultArgs['recordRun'];
   devServer: ReportIosResultArgs['devServer'];
   enterPhase: (phase: BuildPhase) => void;
@@ -1349,7 +1349,7 @@ export async function finishIosRun({
   );
 
   const leaseFacts = lease?.facts() ?? null;
-  releaseLease();
+  await releaseLease();
 
   const uploadsAbandoned = await artifact.completeUploads();
   const facts = reportIosResult({

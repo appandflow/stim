@@ -1095,6 +1095,8 @@ THE ONE CASE GC WILL NOT REAP
   so \`stop\` is what stands between a teardown and a log stream that outlives
   the device it was reading. A fresh \`ios\` / \`android\` run replaces the
   previous stream, or shares it when the same device and app use another slot.
+  An automatic engine update waits while any device stream is active. Run
+  \`stim stop\` in that workspace to end its streams and let the update proceed.
 
   A PHYSICAL IPHONE'S COLLECTOR IS THE SAME PROCESS with one difference: on
   hardware the collector IS the launch. \`devicectl\` connects an app's

@@ -1963,6 +1963,19 @@ not on any remote"  (worktree remove)
   the remedy names: npx stim@<this version> engine rollback, or
   npx stim@<this version> engine use <this version>.`,
     },
+    STIM_DAEMON_UNAVAILABLE: {
+      summary: 'an attached Stim daemon could not start or admit the command',
+      body: () => `STIM_DAEMON_UNAVAILABLE
+  An attached daemon may still be starting, ending, or serving a different
+  build. Wait for its owning command to finish and retry, or use a separate
+  STIM_HOME. If startup still fails, run stim doctor or run outside the sandbox.`,
+    },
+    STIM_CI_ATTACHED_HOME: {
+      summary: 'another command owns this home’s attached daemon',
+      body: () => `STIM_CI_ATTACHED_HOME
+  A concurrent CI job cannot share a daemon tied to another command's lifetime.
+  Use a separate STIM_HOME for each concurrent CI job.`,
+    },
     STIM_ENGINE_HOST_UNAVAILABLE: {
       summary: 'the selected engine predates attached CI hosting',
       body: () => `STIM_ENGINE_HOST_UNAVAILABLE
@@ -1982,7 +1995,9 @@ not on any remote"  (worktree remove)
   exits; the next command starts or hosts the next one. The refusal comes
   only when the sandbox itself denies the socket (EPERM or EACCES): a stimd
   started outside the sandbox holds the home and this command may not
-  connect, or the attached stimd may not bind. A slow start is never refused.
+  connect, the attached stimd may not bind, or its engine store lock is denied.
+  If the attached daemon cannot start or admit the command, it refuses with
+  STIM_DAEMON_UNAVAILABLE instead.
   On macOS, run stim doctor --fix inside Claude Code, then restart the session.
   On Linux, a path-specific socket allowance is unsupported; run the command
   outside the sandbox. status, logs, reload, doctor and other read commands
@@ -1994,7 +2009,9 @@ not on any remote"  (worktree remove)
   A build waiting at its build slot, stim logs --follow and stim status
   --watch end when the engine switches builds under them; the CLI prints the
   quoted line and exits 75. While a newer build is staged, a cache miss waits
-  at its build slot for up to 10 minutes so running builds can finish.
+  at its build slot for up to 10 minutes so running builds can finish. When the
+  current engine is retained by an attached host, CI job or active native log
+  stream, builds skip that wait.
   Rerun the same command: it runs the new build.`,
     },
     STIM_ROUTER_TOO_OLD: {

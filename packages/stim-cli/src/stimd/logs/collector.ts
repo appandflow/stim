@@ -75,8 +75,6 @@ export interface RunCollectorHandle {
   pid: number | null;
 }
 
-const noopFlush = () => {};
-
 function startMessage({
   platform,
   physical,
@@ -166,9 +164,7 @@ export async function runCollector({
   };
 
   let child: ChildProcess | null = null;
-  let flushReaders = noopFlush;
   const stop = () => {
-    flushReaders();
     killChild(child);
     finish(0, 'info', 'device log stream stopped', 'collector_stopped', { signalled: true });
   };
@@ -268,18 +264,17 @@ export async function runCollector({
             }
           },
     );
-    flushReaders = () => {
+    spawned.once('close', () => {
       outReader.flush();
       errReader.flush();
-    };
+    });
     spawned.stdout?.setEncoding?.('utf-8');
     spawned.stderr?.setEncoding?.('utf-8');
     spawned.stdout?.on('data', (chunk) => outReader.push(chunk));
     spawned.stderr?.on('data', (chunk) => errReader.push(chunk));
 
-    spawned.on('exit', (code, signal) => {
+    spawned.on('close', (code, signal) => {
       if (spawned !== child) return;
-      flushReaders();
       const settle = (next: number | null) => {
         if (spawned !== child) return;
         if (next && next !== pid) {
@@ -306,7 +301,6 @@ export async function runCollector({
   const reattach = async (nextPid: number, why = 'the app restarted') => {
     if (finished || nextPid === pid) return;
     const previous = pid;
-    flushReaders();
     try {
       if (stopStream) {
         const previousChild = child;

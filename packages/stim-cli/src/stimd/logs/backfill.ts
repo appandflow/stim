@@ -2,6 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 import { getExecutor } from '../../exec.ts';
 import { captureProcessToken } from '../../process-identity.ts';
 import {
+  claimRemoveCommand,
   clearClaimChild,
   markClaimChildPending,
   processGroupAlive,
@@ -25,7 +26,10 @@ function finishHistoryClaim(
     (process.platform === 'win32'
       ? child !== null && child.exitCode === null && child.signalCode === null
       : processGroupAlive(spawned.pid));
-  if (running) throw new Error('the device log backfill child could not be verified stopped');
+  if (running)
+    throw new Error(
+      `The device log backfill child at ${claim.root} cannot be verified stopped; inspect it before running ${claimRemoveCommand(claim.root)}.`,
+    );
   clearClaimChild(claim);
   if (!releaseClaim(claim)) throw new Error('the device log backfill claim changed during cleanup');
 }
@@ -38,6 +42,7 @@ export async function backfillDeviceLog({
   env,
   signal,
   warm,
+  onBegin = () => {},
   sink,
 }: {
   root: string;
@@ -47,6 +52,7 @@ export async function backfillDeviceLog({
   env: Record<string, string>;
   signal: AbortSignal;
   warm: (pid: number | null) => boolean;
+  onBegin?: () => void;
   sink: LogSink;
 }): Promise<void> {
   if (spec.physical) return;
@@ -67,6 +73,8 @@ export async function backfillDeviceLog({
     signal.throwIfAborted();
     if (!resolved.ok || !resolved.pid) throw new Error(resolved.reason ?? 'the Android app PID is unavailable');
     pid = resolved.pid;
+    await sink.sync();
+    onBegin();
     if (warm(pid)) return;
     offset = await androidClockOffset(spec.serial, { signal, env });
     signal.throwIfAborted();
@@ -75,6 +83,8 @@ export async function backfillDeviceLog({
     // https://android.googlesource.com/platform/system/logging/+/refs/heads/main/logcat/logcat.cpp: -T keeps streaming without -d.
     args = logcatBackfillArgs(spec.serial, pid, since, offset);
   } else {
+    await sink.sync();
+    onBegin();
     if (warm(null)) return;
     if (!spec.udid || !spec.appName) throw new Error('the iOS backfill has no device or app');
     command = 'xcrun';
@@ -83,25 +93,26 @@ export async function backfillDeviceLog({
   }
   await sink.beginBackfill(since);
   try {
+    onBegin();
     const claim = await takeHistoryClaim(root, streamId);
     const spawned: { child: ChildProcess | null; pid: number | undefined } = { child: null, pid: undefined };
     try {
       signal.throwIfAborted();
+      await sink.sync();
+      onBegin();
       markClaimChildPending(claim);
       const output = await getExecutor().runFileAsync(command, args, {
         cwd: root,
         env,
         signal,
         timeoutMs: 15_000,
-        cleanupOnExit: true,
         untrimmed: true,
         onSpawn(childProcess) {
           spawned.child = childProcess;
           spawned.pid = childProcess.pid;
           const processToken = spawned.pid ? captureProcessToken(spawned.pid) : null;
-          if (!spawned.pid || !processToken)
-            throw new Error('could not capture the device log backfill child identity');
-          setClaimChild(claim, { pid: spawned.pid, processToken });
+          if (!spawned.pid) throw new Error('could not capture the device log backfill child identity');
+          if (processToken) setClaimChild(claim, { pid: spawned.pid, processToken });
         },
       });
       signal.throwIfAborted();

@@ -31,6 +31,7 @@ import * as teardown from '../devices/teardown.ts';
 import { getNamedPort, clearNamedPorts, reserveBrowserPort } from '../named-ports.ts';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { observeBrowser } from '../stimd/logs/web.ts';
+import { createOwnedStreams } from '../stimd/logs/owned.ts';
 import { environmentState, withWebFacts } from '../status.ts';
 import { runWeb } from '../commands/web.ts';
 import { launchOwnedBrowser } from '../web/runtime.ts';
@@ -915,6 +916,68 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
 describe.skipIf(process.platform === 'win32')('stimd browser observer', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  test('retries a transient DevTools failure while Chrome remains alive', async () => {
+    const original = await ownedBrowser();
+    assert(original.chromeProcess);
+    const record = { ...original, ...original.chromeProcess, targetId: 'owned-page' };
+    writeWebRecord(root, record);
+    let attempts = 0;
+    vi.spyOn(browserCdp, 'connectOwnedBrowser').mockImplementation(async () => {
+      const attempt = ++attempts;
+      return {
+        async send(method) {
+          if (attempt === 1) throw new Error('transient disconnect');
+          if (method === 'Browser.getVersion') return { product: 'Chrome/1' };
+          if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'owned-page', type: 'page' }] };
+          if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
+          return {};
+        },
+        onEvent: () => {},
+        onClose: () => {},
+        close: () => {},
+      };
+    });
+    const streams = createOwnedStreams(() => {});
+    try {
+      expect(await streams.sync(root)).toContain('transient disconnect');
+      expect(streams.running()).toBe(true);
+      expect(await streams.drain(root, true)).toBeNull();
+      expect(streams.running()).toBe(true);
+      await vi.waitFor(() => expect(attempts).toBe(2), { timeout: 8000, interval: 50 });
+      await vi.waitFor(() => expect(readFileSync(webLogFile(root), 'utf8')).toContain('web_browser_observed'));
+    } finally {
+      streams.close();
+    }
+  }, 15_000);
+
+  test('workspace drain cancels a pending browser retry', async () => {
+    const original = await ownedBrowser();
+    assert(original.chromeProcess);
+    const record = { ...original, ...original.chromeProcess, targetId: 'owned-page' };
+    writeWebRecord(root, record);
+    const connect = vi.spyOn(browserCdp, 'connectOwnedBrowser').mockResolvedValue({
+      send: async () => {
+        throw new Error('transient disconnect');
+      },
+      onEvent: () => {},
+      onClose: () => {},
+      close: () => {},
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const streams = createOwnedStreams(() => {});
+    try {
+      expect(await streams.sync(root)).toContain('transient disconnect');
+      expect(streams.running()).toBe(true);
+      expect(await streams.drain(root)).toBeNull();
+      expect(streams.running()).toBe(false);
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(connect).toHaveBeenCalledOnce();
+    } finally {
+      streams.close();
+      vi.useRealTimers();
+    }
   });
 
   test('reattachment preserves new buffered messages without repeating recorded ones', async () => {

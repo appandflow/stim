@@ -407,6 +407,42 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
+  'public stop drains output written during SIGTERM before returning',
+  async () => {
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    const raw = join(logs, macosAppLogName('test-launch', 'out'));
+    writeFileSync(raw, '');
+    const child = getExecutor().spawn(
+      process.execPath,
+      [
+        '-e',
+        `process.on('SIGTERM', () => { require('node:fs').appendFileSync(${JSON.stringify(raw)}, 'final diagnostic\\n'); process.exit(0); }); console.log('ready'); setInterval(() => {}, 1000);`,
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    children.push(child);
+    assert(child.stdout);
+    await once(child.stdout, 'data');
+    if (child.pid === undefined) throw new Error('the app did not start');
+    const app = macosProcess(child.pid);
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const streams = createOwnedStreams(() => {});
+    const drain = vi
+      .spyOn(stimdClient, 'drainOwnedMacos')
+      .mockImplementation((workspace) => streams.drain(workspace, true));
+    try {
+      await streams.sync(root);
+      expect(await stopMacosApp(root)).toBe(true);
+      expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('final diagnostic');
+    } finally {
+      drain.mockRestore();
+      streams.close();
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
   'hosted drain records final output even before observer discovery',
   async () => {
     const app = await ownedProcess();
@@ -479,13 +515,15 @@ test.skipIf(process.platform !== 'darwin')('workspace removal keeps output when 
   mkdirSync(logs, { recursive: true });
   writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'raw output\n');
   writeFileSync(join(logs, 'macos.ndjson'), 'saved output\n');
+  const stopDrain = vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue(null);
   const drain = vi.spyOn(stimdClient, 'drainOwned').mockResolvedValue('fixture refusal');
   try {
     const result = await reclaimProject(root, { deleteOwnedDevices: false });
     expect(result.keptEntry).toBe(true);
-    expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toBe('saved output\n');
+    expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('saved output\n');
     expect(drain).toHaveBeenCalledOnce();
   } finally {
+    stopDrain.mockRestore();
     drain.mockRestore();
   }
 });
@@ -1087,6 +1125,7 @@ describe('macOS build placement and promotion', () => {
       });
       const streams = createOwnedStreams(() => {});
       vi.spyOn(stimdClient, 'observeOwned').mockImplementation((workspace) => streams.sync(workspace));
+      vi.spyOn(stimdClient, 'drainOwnedMacos').mockImplementation((workspace) => streams.drain(workspace, true));
       let launched: MacosAppRecord | undefined;
       try {
         launched = await runMacos(testContext(), root, () => {}, undefined, 'local');

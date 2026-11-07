@@ -12,5 +12,5 @@ export function ensureHomeIdentity(signal?: AbortSignal): Promise<string> {
     config.homeId = id;
     saveConfig(config);
     return id;
-  });
+  }, signal);
 }

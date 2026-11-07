@@ -32,6 +32,7 @@ import { observeBrowser } from './web.ts';
 
 const TAIL_MS = 250;
 const HOSTED_SCAN_MS = 2000;
+const WEB_RETRY_MS = 5000;
 const CHUNK_BYTES = 64 * 1024;
 const LINE_BYTES = 65536;
 const TAIL_MARK = 'macos-app.tail.json';
@@ -59,7 +60,7 @@ export interface OwnedStreams {
    */
   sync(root?: string): Promise<string | null>;
   running(): boolean;
-  drain(root: string): Promise<string | null>;
+  drain(root: string, macosOnly?: boolean): Promise<string | null>;
   drainHosted(session: string): Promise<string | null>;
   close(): void;
 }
@@ -74,15 +75,17 @@ function legacy(owner: { pid: number; processToken: string } | undefined, pid: n
 export function createOwnedStreams(log: Log, changed: (running: boolean) => void = () => {}): OwnedStreams {
   const streams = new Map<string, Stream>();
   const ended = new Map<string, string>();
+  const retries = new Map<string, NodeJS.Timeout>();
+  const running = () => streams.size > 0 || retries.size > 0;
   let closed = false;
-  const keep = (key: string, stream: Stream) => {
+  const keep = (key: string, stream: Stream, retry?: () => boolean) => {
     streams.set(key, stream);
     changed(true);
     void stream.ended.then(() => {
       if (streams.get(key) !== stream) return undefined;
       streams.delete(key);
-      changed(streams.size > 0);
-      if (!closed) ended.set(key, stream.token);
+      if (!closed && !retry?.()) ended.set(key, stream.token);
+      changed(running());
       return undefined;
     });
   };
@@ -116,8 +119,28 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
     const key = `web:${root}`;
     if (current(key, web.chromeProcess.processToken)) return streams.get(key)?.attached ?? null;
     if (!asked && ended.get(key) === web.chromeProcess.processToken) return null;
+    if (!asked && retries.has(key)) return null;
+    clearTimeout(retries.get(key));
+    retries.delete(key);
     const stream = observeBrowser(root, web, web.chromeProcess);
-    keep(key, { token: web.chromeProcess.processToken, ...stream });
+    keep(key, { token: web.chromeProcess.processToken, ...stream }, () => {
+      const latest = readWebRecord(root)?.chromeProcess;
+      if (
+        !latest ||
+        latest.processToken !== web.chromeProcess?.processToken ||
+        inspectProcessIdentity(latest) !== 'same'
+      )
+        return false;
+      clearTimeout(retries.get(key));
+      const timer = setTimeout(() => {
+        retries.delete(key);
+        if (!closed) workspace(root, false)?.catch(() => {});
+        changed(running());
+      }, WEB_RETRY_MS);
+      timer.unref();
+      retries.set(key, timer);
+      return true;
+    });
     return stream.attached;
   };
   const hosted = () => {
@@ -162,7 +185,7 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
       hosted();
       return null;
     },
-    running: () => streams.size > 0,
+    running,
     async drainHosted(session) {
       if (closed) return 'stimd is stopping';
       try {
@@ -177,7 +200,7 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
         if (stream) {
           ended.set(key, stream.token);
           streams.delete(key);
-          changed(streams.size > 0);
+          changed(running());
           stream.close();
           await stream.ended;
         }
@@ -186,11 +209,21 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
         return error instanceof Error ? error.message : String(error);
       }
     },
-    async drain(root) {
+    async drain(root, macosOnly = false) {
       if (closed) return 'stimd is stopping';
       try {
-        workspace(root, false)?.catch(() => {});
-        for (const key of [`macos:${workspaceLogsDir(root)}`, `web:${root}`]) {
+        const webKey = `web:${root}`;
+        if (!macosOnly) {
+          clearTimeout(retries.get(webKey));
+          retries.delete(webKey);
+          const webToken = readWebRecord(root)?.chromeProcess?.processToken;
+          if (webToken) ended.set(webKey, webToken);
+          workspace(root, false)?.catch(() => {});
+        } else {
+          const record = readMacosRecord(root);
+          if (!record?.host) macos(workspaceLogsDir(root), record);
+        }
+        for (const key of [`macos:${workspaceLogsDir(root)}`, ...(macosOnly ? [] : [webKey])]) {
           const stream = streams.get(key);
           if (!stream) continue;
           if (stream.attached) await stream.attached.catch(() => {});
@@ -198,11 +231,12 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
             return 'the macOS app output could not be drained or its process group could not be verified stopped';
           ended.set(key, stream.token);
           streams.delete(key);
-          changed(streams.size > 0);
+          changed(running());
           stream.close();
           await stream.ended;
         }
         const app = readMacosRecord(root);
+        changed(running());
         if (app?.app && !app.host && app.supervisor?.pid === app.app.pid && !drained(workspaceLogsDir(root), app.app))
           return 'the macOS app output could not be drained';
         return null;
@@ -213,6 +247,8 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
     close() {
       closed = true;
       clearInterval(timer);
+      for (const retry of retries.values()) clearTimeout(retry);
+      retries.clear();
       for (const stream of streams.values()) stream.close();
       streams.clear();
     },

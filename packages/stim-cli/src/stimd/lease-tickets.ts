@@ -4,7 +4,14 @@ import { traceInvocation, withInvocation, type Invocation } from './forwarded.ts
 import { randomUUID } from 'node:crypto';
 import type { Socket } from 'node:net';
 import { acquireRunLease, type AcquireRunLeaseResult } from '../engine/device-lease-run.ts';
-import { releaseRunLease, type LeasePlatform } from '../engine/device-lease.ts';
+import {
+  deviceLeasePath,
+  fileLeaseIo,
+  leaseIsExpired,
+  parseLease,
+  releaseRunLease,
+  type LeasePlatform,
+} from '../engine/device-lease.ts';
 import { loadConfig } from '../workspace/config.ts';
 
 type LeaseRequest = {
@@ -26,6 +33,7 @@ type Ticket = {
   cancel: () => void;
   result?: AcquireRunLeaseResult;
   pending?: Promise<AcquireRunLeaseResult>;
+  disconnected?: boolean;
 };
 
 const key = (request: LeaseRequest, token: string) => `${request.root}\0${request.platform}\0${request.slot}\0${token}`;
@@ -38,6 +46,7 @@ export function createLeaseTickets(log: (message: string) => void = () => {}) {
   const references = new Map<string, number>();
   const inflight = new Map<string, number>();
   const deferred = new Map<string, { request: LeaseRequest; token: string }>();
+  const abandoned = new Set<string>();
   const waiters = new Map<string, Set<() => void>>();
   const wake = (request: LeaseRequest) => {
     for (const resume of waiters.get(device(request)) ?? []) resume();
@@ -67,12 +76,25 @@ export function createLeaseTickets(log: (message: string) => void = () => {}) {
       log(`device lease release failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
+  const protectedUntilExpiry = (request: LeaseRequest, token: string): boolean => {
+    const ref = key(request, token);
+    if (!abandoned.has(ref)) return false;
+    try {
+      const lease = parseLease(fileLeaseIo.readLease(deviceLeasePath(request.platform, request.id)));
+      if (lease?.token === token && !leaseIsExpired(lease, Date.now())) return true;
+      if (!lease) return true;
+      abandoned.delete(ref);
+      return false;
+    } catch {
+      return true;
+    }
+  };
   const flush = (request: LeaseRequest) => {
     if (inflight.has(scope(request))) return;
     for (const [ref, item] of deferred) {
       if (scope(item.request) !== scope(request)) continue;
       deferred.delete(ref);
-      if (!references.has(ref)) {
+      if (!references.has(ref) && !protectedUntilExpiry(item.request, item.token)) {
         releaseOwned(item.request, item.token);
       }
     }
@@ -82,12 +104,13 @@ export function createLeaseTickets(log: (message: string) => void = () => {}) {
     ticket.result = undefined;
     if (result?.status !== 'leased' || result.kind !== 'run' || !result.token) return;
     const ref = key(ticket.request, result.token);
+    if (ticket.disconnected) abandoned.add(ref);
     const remaining = (references.get(ref) ?? 1) - 1;
     if (remaining > 0) references.set(ref, remaining);
     else {
       references.delete(ref);
       if (inflight.has(scope(ticket.request))) deferred.set(ref, { request: ticket.request, token: result.token });
-      else {
+      else if (!protectedUntilExpiry(ticket.request, result.token)) {
         releaseOwned(ticket.request, result.token);
       }
     }
@@ -152,6 +175,7 @@ export function createLeaseTickets(log: (message: string) => void = () => {}) {
       for (const [id, ticket] of tickets) {
         if (ticket.owner !== owner) continue;
         tickets.delete(id);
+        ticket.disconnected = true;
         ticket.cancel();
         release(ticket);
       }

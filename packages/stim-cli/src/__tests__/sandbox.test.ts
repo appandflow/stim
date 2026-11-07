@@ -11,6 +11,7 @@ import {
   unmergeableKey,
 } from '../diagnostics/sandbox.ts';
 import { applySandboxFix } from '../commands/doctor.ts';
+import { engineLockSocket } from '../engine-store/locks.ts';
 
 function scratch(): string {
   return mkdtempSync(join(tmpdir(), 'stim-sandbox-'));
@@ -21,7 +22,10 @@ test('missingAllowance accepts the ways a home path is written, including a pare
   const home = '/Users/example';
   const write = (value: unknown): string[] => {
     const path = join(dir, 'settings.local.json');
-    writeFileSync(path, JSON.stringify({ sandbox: { filesystem: { allowWrite: [value] } } }));
+    writeFileSync(
+      path,
+      JSON.stringify({ sandbox: { filesystem: { allowWrite: [value, ...sandboxAllowance().allowWrite.slice(1)] } } }),
+    );
     return missingAllowance([path], '~/.stim', home);
   };
   try {
@@ -45,7 +49,12 @@ test.skipIf(process.platform !== 'win32')(
         'C:\\Users\\example\\.stim\\**',
         'C:\\Users\\example\\.stim\\',
       ]) {
-        writeFileSync(path, JSON.stringify({ sandbox: { filesystem: { allowWrite: [value] } } }));
+        writeFileSync(
+          path,
+          JSON.stringify({
+            sandbox: { filesystem: { allowWrite: [value, ...sandboxAllowance().allowWrite.slice(1)] } },
+          }),
+        );
         expect(missingAllowance([path], '~/.stim', 'C:\\Users\\example')).not.toContain(
           'sandbox.filesystem.allowWrite',
         );
@@ -66,7 +75,7 @@ test('missingAllowance asks for the stimd socket until an allowUnixSockets entry
       path,
       JSON.stringify({
         sandbox: {
-          filesystem: { allowWrite: ['~/.stim'] },
+          filesystem: { allowWrite: sandboxAllowance('~/.stim', socket).allowWrite },
           network: {
             allowMachLookup: ['com.apple.coresimulator.*'],
             allowLocalBinding: true,
@@ -80,7 +89,8 @@ test('missingAllowance asks for the stimd socket until an allowUnixSockets entry
   try {
     expect(missing([])).toEqual(['sandbox.network.allowUnixSockets']);
     expect(missing(['/var/run/docker.sock'])).toEqual(['sandbox.network.allowUnixSockets']);
-    for (const entry of [socket, '~/.stim/run', '~/.stim/run/stimd.sock']) expect(missing([entry])).toEqual([]);
+    const lock = sandboxAllowance('~/.stim', socket).allowUnixSockets.at(-1) ?? '';
+    for (const entry of [socket, '~/.stim/run', '~/.stim/run/stimd.sock']) expect(missing([entry, lock])).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -96,7 +106,7 @@ test('applyClaudeAllowance adds the stimd socket to an allowance written without
       path,
       JSON.stringify({
         sandbox: {
-          filesystem: { allowWrite: ['~/.stim'] },
+          filesystem: { allowWrite: sandboxAllowance('~/.stim', socket).allowWrite },
           network: {
             allowMachLookup: ['com.apple.coresimulator.*'],
             allowLocalBinding: true,
@@ -167,8 +177,9 @@ test('applyClaudeAllowance preserves settings it did not come for', () => {
 test('sandboxFinding asks for a restart once the allowance is written but not yet read', () => {
   const dir = scratch();
   try {
-    applyClaudeAllowance(claudeLocalSettingsPath(dir), sandboxAllowance());
-    const f = sandboxFinding(dir, { env: { CLAUDECODE: '1' }, home: dir, blocked: true });
+    const env = { CLAUDECODE: '1', STIM_ENGINE_ROOT: join(dir, 'engine') };
+    applyClaudeAllowance(claudeLocalSettingsPath(dir), sandboxAllowance(undefined, undefined, env));
+    const f = sandboxFinding(dir, { env, home: dir, blocked: true });
     expect(f?.fix).toContain('Restart the session');
     expect(f?.title).toContain('has not picked it up');
   } finally {
@@ -198,11 +209,11 @@ function captureFix(root: string, env: NodeJS.ProcessEnv): { out: string; exitCo
 test('applySandboxFix writes the allowance, then reports it is already there', () => {
   const root = scratch();
   try {
-    const env = { CLAUDECODE: '1', STIM_HOME: join(root, 'home') };
+    const env = { CLAUDECODE: '1', STIM_HOME: join(root, 'home'), STIM_ENGINE_ROOT: join(root, 'engine') };
     const first = captureFix(root, env);
     expect(first.out).toContain('Wrote');
     expect(first.exitCode).toBe(undefined);
-    expect(missingAllowance([claudeLocalSettingsPath(root)], env.STIM_HOME)).toEqual([]);
+    expect(missingAllowance([claudeLocalSettingsPath(root)], env.STIM_HOME, undefined, undefined, env)).toEqual([]);
 
     const second = captureFix(root, env);
     expect(second.out).toContain('Nothing to apply');
@@ -274,9 +285,67 @@ test.skipIf(process.platform === 'win32')('socket allowance includes both the gi
       writeFileSync(settings, JSON.stringify({ sandbox: { network: { allowUnixSockets: sockets } } }));
     write([socket]);
     expect(missingAllowance([settings], root, root, socket)).toContain('sandbox.network.allowUnixSockets');
-    write([socket, resolved]);
+    const lock = sandboxAllowance(root, socket).allowUnixSockets.at(-1) ?? '';
+    write([socket, resolved, lock]);
     expect(missingAllowance([settings], root, root, socket)).not.toContain('sandbox.network.allowUnixSockets');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('doctor allowance includes a custom engine store and its exact lock socket', () => {
+  const root = scratch();
+  try {
+    const store = join(root, 'custom-engine');
+    const home = join(root, 'custom-home');
+    const env = { STIM_ENGINE_ROOT: store };
+    const allowance = sandboxAllowance(home, join(home, 'run', 'stimd.sock'), env);
+    expect(allowance.allowWrite).toContain(store);
+    expect(allowance.allowUnixSockets).toContain(engineLockSocket(store));
+    const path = join(root, 'settings.json');
+    applyClaudeAllowance(path, allowance);
+    expect(missingAllowance([path], home, root, join(home, 'run', 'stimd.sock'), env)).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.platform === 'win32')(
+  'allows logical and resolved hashed lock paths for a long engine root',
+  () => {
+    const root = scratch();
+    try {
+      const store = join(root, 'long-engine-'.repeat(15));
+      const lock = engineLockSocket(store);
+      const env = { STIM_ENGINE_ROOT: store };
+      const allowance = sandboxAllowance(join(root, 'home'), join(root, 'home', 'stimd.sock'), env);
+      const resolved = join(realpathSync('/tmp'), 'stim-sockets-' + process.getuid?.(), lock.split('/').at(-1) ?? '');
+      expect(allowance.allowUnixSockets).toEqual(expect.arrayContaining([lock, resolved]));
+      expect(allowance.allowWrite).toEqual(
+        expect.arrayContaining([
+          join('/tmp', 'stim-sockets-' + process.getuid?.()),
+          join(realpathSync('/tmp'), 'stim-sockets-' + process.getuid?.()),
+        ]),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'allows writes to the hashed stimd socket directory with a short store',
+  () => {
+    const root = scratch();
+    try {
+      const dir = join('/tmp', `stim-sockets-${process.getuid?.()}`);
+      const socket = join(dir, 'not-yet-created.sock');
+      const allowance = sandboxAllowance(join(root, 'long-home'), socket, { STIM_ENGINE_ROOT: join(root, 'engine') });
+      expect(allowance.allowWrite).toEqual(
+        expect.arrayContaining([dir, join(realpathSync('/tmp'), `stim-sockets-${process.getuid?.()}`)]),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

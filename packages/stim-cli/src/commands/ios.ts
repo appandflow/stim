@@ -457,17 +457,20 @@ async function runIos(
   setRemoteLogSink(context, (record) => logWriter().write(record));
   let leaseHandle: RunLease | null = null;
   let stopLeaseSignals: (() => void) | null = null;
+  let releasingLease: Promise<void> | null = null;
   const releaseLease = () => {
+    if (releasingLease) return releasingLease;
     const held = leaseHandle;
     const stopSignals = stopLeaseSignals;
     leaseHandle = null;
     stopLeaseSignals = null;
     stopSignals?.();
-    try {
-      held?.release();
-    } catch (e) {
-      note(chalk.dim(`Could not release this run's device lease: ${(e as Error)?.message || e}`));
-    }
+    releasingLease = Promise.resolve()
+      .then(() => held?.release())
+      .catch((e) => {
+        note(chalk.dim(`Could not release this run's device lease: ${(e as Error)?.message || e}`));
+      });
+    return releasingLease;
   };
 
   const stats = createRunRecorder({
@@ -1380,7 +1383,7 @@ async function runIos(
           enterActivity: progress.activity,
         });
       } finally {
-        releaseLease();
+        await releaseLease();
       }
     } catch (error) {
       return reportRunFailure(error);

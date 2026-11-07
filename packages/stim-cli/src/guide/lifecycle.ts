@@ -569,6 +569,10 @@ not share a writable filesystem cache because its claims live in the home.
 
 If the selected machine engine predates attached CI hosting, run refuses with
 STIM_ENGINE_HOST_UNAVAILABLE. Run stim engine update to select a capable engine.
+An attached host or CI job retains its engine build until it ends. Work on the
+current engine defers its promotion while the host or job is active.
+
+Concurrent CI jobs must use separate Stim homes when a job owns an attached daemon.
 
 The programmatic API is import { buildCI, runCI } from 'stim/ci'. See its package
 README for result types, cancellation, cache policy, and coordination findings.`,

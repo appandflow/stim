@@ -730,8 +730,52 @@ afterEach(async () => {
   terminateClients();
   await server?.close();
   for (const close of reloadBrowsers.splice(0)) await close();
+  const claims = readClaimSet(join(root, 'home', 'run', 'stimd'));
+  assert.deepEqual(claims.unresolved, []);
+  for (const { owner } of claims.live) {
+    assert.notEqual(owner.pid, process.pid);
+    const status = inspectProcessIdentity(owner);
+    if (status === 'gone' || status === 'different') continue;
+    assert.equal(status, 'same');
+    process.kill(owner.pid, 'SIGTERM');
+    await vi.waitFor(() => assert.match(inspectProcessIdentity(owner), /^(gone|different)$/), { timeout: 10_000 });
+  }
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
+});
+
+test('server close cancels a home identity waiting on the config lock', async () => {
+  const lock = tryAcquireClaim({ root: join(root, 'home', 'config.lock.claims'), mode: 'exclusive' }).acquired;
+  assert(lock);
+  let entered = false;
+  const original = stim.createStim;
+  const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+    const client = original(options);
+    return {
+      ...client,
+      identity: (...args) => {
+        entered = true;
+        return client.identity(...args);
+      },
+    };
+  });
+  try {
+    await start({ settle: false, statusAtBoot: false, record: false });
+    await vi.waitFor(() => expect(entered).toBe(true), { timeout: 5000 });
+    assert(server);
+    await Promise.race([
+      server.close(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('server close waited for the lock')), 1000)),
+    ]);
+    server = null;
+    releaseClaim(lock);
+    rmSync(root, { recursive: true, force: true });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(existsSync(join(root, 'home'))).toBe(false);
+  } finally {
+    api.mockRestore();
+    releaseClaim(lock);
+  }
 });
 
 test('an agent shutdown failure still closes hosted devices, frames, feeds and listeners', async () => {

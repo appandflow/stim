@@ -341,7 +341,10 @@ export async function verifyLaunch({
   now?: () => number;
   /** Rejects the wait with STIM_CANCELLED once aborted. Ignored when `sleep` is passed. */
   signal?: AbortSignal;
-  sleep?: (ms: number) => Promise<unknown>;
+  sleep?: ((ms: number) => Promise<unknown>) & {
+    coverage?: () => 'pending' | 'covered' | 'failed';
+    coverThrough?: (at: number) => void;
+  };
 } = {}): Promise<VerifyLaunchResult> {
   const delivered = (record: NdjsonRecord) => deliveryOwner(record, { slot, appPid, platformShared }) === 'this';
   const read = readRecords || tailNdjson(logsDir, 'metro.ndjson');
@@ -372,12 +375,14 @@ export async function verifyLaunch({
   });
   let bundlingAt: NdjsonRecord | null = null;
   let reported: 'bundling' | 'waiting-ready' | null = null;
+  let coverageCandidate: string | null = null;
   const report = (name: typeof reported, at: number) => {
     if (name === reported) return;
     reported = name;
     onActivity?.(name, at);
   };
   const loop = async (): Promise<VerifyLaunchResult> => {
+    if (sleep.coverage) await sleep(0);
     while (true) {
       const metroRecords = read().filter((record) => after(record, since));
       const bundleRecords = metroRecords.filter(
@@ -458,6 +463,7 @@ export async function verifyLaunch({
       const jsRunningAt = jsRunningSince(signals, completedAt, runtimeWaiting, platform);
       const windowEnd = settledWindowEnd(stabilityDeadline, jsRunningAt);
       const readinessDeadline = completedAt !== null ? completedAt + APP_READINESS_TIMEOUT_MS : bundleDeadline;
+      if (windowEnd !== null && deviceNow() >= windowEnd) sleep.coverThrough?.(windowEnd);
       if (pendingAt === null) {
         const pending = signals.find(
           (record) =>
@@ -536,6 +542,27 @@ export async function verifyLaunch({
         const actionableErrors = errors.filter((record) => !isIosConnectionRefusal(record, platform));
         const appErrors = actionableErrors.some(isAppLaunchError);
         if ((!runtimeWaiting && pendingAt === null) || appErrors || ready || deviceNow() >= readinessDeadline) {
+          const candidate = `${windowEnd}:${pendingAt}:${ready}:${appErrors}:${runtimeWaiting}`;
+          if (candidate !== coverageCandidate) {
+            coverageCandidate = candidate;
+            sleep.coverThrough?.(now());
+          }
+          const coverage = sleep.coverage?.();
+          const coverageDeadline = pendingAt !== null ? readinessDeadline : bundleDeadline;
+          if (coverage === 'failed' || (coverage === 'pending' && now() >= coverageDeadline)) {
+            return {
+              verified: false,
+              errors: actionableErrors,
+              processAlive: alive,
+              mode,
+              waitedMs,
+              timedOut: coverage === 'pending',
+            };
+          }
+          if (coverage === 'pending') {
+            await sleep(Math.min(pollMs, Math.max(0, coverageDeadline - now())));
+            continue;
+          }
           return {
             verified: true,
             record: proof,
@@ -547,6 +574,7 @@ export async function verifyLaunch({
             ...jsRunningFields(jsRunningAt),
           };
         }
+        coverageCandidate = null;
       }
 
       if ((!proof || runtimeWaiting) && now() >= bundleDeadline) {

@@ -1514,17 +1514,20 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     let leaseHandle: RunLease | null = null;
     let stopLeaseSignals: (() => void) | null = null;
+    let releasingLease: Promise<void> | null = null;
     const releaseLease = () => {
+      if (releasingLease) return releasingLease;
       const held = leaseHandle;
       const stopSignals = stopLeaseSignals;
       leaseHandle = null;
       stopLeaseSignals = null;
       stopSignals?.();
-      try {
-        held?.release();
-      } catch (err) {
-        out(phaseLine('lease', chalk.dim(`could not release this run's lease: ${(err as Error)?.message || err}`)));
-      }
+      releasingLease = Promise.resolve()
+        .then(() => held?.release())
+        .catch((err) => {
+          out(phaseLine('lease', chalk.dim(`could not release this run's lease: ${(err as Error)?.message || err}`)));
+        });
+      return releasingLease;
     };
     if (physical) {
       progress.step('device');
@@ -1648,7 +1651,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           ).catch((e) => ({ failed: true as const, reason: String((e as Error)?.message || e) })),
       });
     } finally {
-      releaseLease();
+      await releaseLease();
     }
   };
 

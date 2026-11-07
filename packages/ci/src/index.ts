@@ -61,6 +61,35 @@ function commandEnvironment(result: CIResult, options: CIOptions, ownedHost: boo
   };
 }
 
+function acceptedHost(
+  hosted: Awaited<ReturnType<Awaited<ReturnType<typeof bindCIEngine>>['host']>>,
+): AttachedHost | null {
+  if (hosted === 'blocked' || hosted === 'blocked-lock')
+    throw Object.assign(new Error('The sandbox denied the Stim daemon socket.'), {
+      code: 'STIM_SANDBOX_BLOCKED',
+      remedy: 'Run outside the sandbox; `stim guide errors sandbox` explains the available allowances.',
+    });
+  if (hosted && typeof hosted === 'object' && 'refusal' in hosted)
+    throw Object.assign(new Error(hosted.refusal.message), hosted.refusal);
+  if (hosted && typeof hosted === 'object' && 'switched' in hosted)
+    throw Object.assign(new Error(`Stim updated to ${hosted.switched}; rerun`), {
+      code: 'STIM_ENGINE_SWITCHED',
+      remedy: 'Rerun the CI job with the selected engine.',
+    });
+  if (hosted === 'engine-unavailable')
+    throw Object.assign(new Error('The selected Stim engine cannot be verified.'), {
+      code: 'STIM_ENGINE_UNAVAILABLE',
+      remedy: 'Run stim engine rollback or stim engine use to restore the engine pointer.',
+    });
+  if (hosted === 'held-attached')
+    throw Object.assign(new Error('Another command owns the attached Stim daemon for this home.'), {
+      code: 'STIM_CI_ATTACHED_HOME',
+      remedy: 'Use a separate STIM_HOME for each concurrent CI job.',
+    });
+  if (hosted === null) throw new Error('Could not start the Stim daemon for this CI job.');
+  return typeof hosted === 'object' && 'end' in hosted ? hosted : null;
+}
+
 /**
  * Runs an app and an optional argv-based test command, stops its workspace or explicit slot, and retains diagnostics.
  * Unless a stimd already serves the home, the run hosts one as its own child for the whole job, which the test
@@ -111,21 +140,18 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   });
   let attempted = false;
   let host: AttachedHost | null = null;
+  let releaseEngine: (() => void) | undefined;
+  let releaseDaemon: (() => void) | undefined;
   try {
     signal?.throwIfAborted();
-    const binding = await bindCIEngine(stimEnvironment(options));
+    const binding = await bindCIEngine(stimEnvironment(options), signal);
+    releaseEngine = binding.release;
     const hosted = await binding.host(
       { ...stimEnvironment(options), STIM_POOL_BOOTED_GRACE_MINUTES: '0' },
-      { handover: false },
+      { handover: false, signal },
     );
-    if (hosted === 'blocked')
-      throw Object.assign(new Error('The sandbox denied the Stim daemon socket.'), {
-        code: 'STIM_SANDBOX_BLOCKED',
-        remedy: 'Run outside the sandbox; `stim guide errors sandbox` explains the available allowances.',
-      });
-    if (hosted === null) throw new Error('Could not start the Stim daemon for this CI job.');
-    if (hosted && typeof hosted === 'object') {
-      host = hosted;
+    host = acceptedHost(hosted);
+    if (host) {
       stim = createStim({
         projectRoot,
         home: options.home ? resolve(options.home) : undefined,
@@ -134,6 +160,9 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
         onProgress,
       });
     }
+    signal?.throwIfAborted();
+    releaseDaemon = await binding.hold(stimEnvironment(options), projectRoot, host && host.instance, signal);
+    signal?.throwIfAborted();
     const context = {
       projectRoot,
       home: options.home ? resolve(options.home) : undefined,
@@ -220,7 +249,22 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
         result.failure = result.cleanup.error;
       }
     }
-    await host?.end();
+    releaseDaemon?.();
+    try {
+      await host?.end();
+    } catch (error) {
+      result.cleanup.error ??= failure(error, 'STIM_CI_CLEANUP_FAILED');
+    } finally {
+      try {
+        releaseEngine?.();
+      } catch (error) {
+        result.cleanup.error ??= failure(error, 'STIM_CI_CLEANUP_FAILED');
+      }
+    }
+    if (result.cleanup.error && result.exitCode === 0) {
+      result.exitCode = 1;
+      result.failure = result.cleanup.error;
+    }
     if (options.signal?.aborted && result.exitCode === 0) {
       result.exitCode = 130;
       result.failure = { code: 'STIM_CI_CANCELLED', message: 'CI run was cancelled.' };

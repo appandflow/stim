@@ -18,6 +18,7 @@ export function createMetroTickets(log: Log) {
       const answer = traceInvocation(context, 'stimd.metro', () =>
         withInvocation(context, signal, () => ensureMetro(fields, log, context.forwarded.env, signal)),
       );
+      void answer.catch(() => {});
       tickets.set(id, { owner, answer });
       return id;
     },

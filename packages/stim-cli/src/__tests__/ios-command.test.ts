@@ -7369,6 +7369,33 @@ describe('ios --device: the lease on the phone', () => {
     expect(parseFirst(sim.logs)).not.toHaveProperty('lease');
   });
 
+  test('waits for device lease release before returning', async () => {
+    reserve();
+    let acknowledge!: () => void;
+    let started!: () => void;
+    const releasing = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const releaseStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const { lease } = fakeLease({
+      release: () => {
+        started();
+        return releasing;
+      },
+    });
+    let finished = false;
+    const result = run({ device: true }, leaseDeps(lease)).then((value) => {
+      finished = true;
+      return value;
+    });
+    await releaseStarted;
+    expect(finished).toBe(false);
+    acknowledge();
+    expect((await result).exitCode).toBe(null);
+  });
+
   test('every device step raises the lease to its own bound, in order', async () => {
     reserve();
     const { lease, raises } = fakeLease();

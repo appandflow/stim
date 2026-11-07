@@ -4,6 +4,8 @@ import { homedir } from 'os';
 import { basename, dirname, join, sep } from 'path';
 import { stimdSocket } from '@stim-cli/core/state';
 import type { Finding } from './doctor.ts';
+import { engineRoot } from '../engine-store/store.ts';
+import { engineLockSocket } from '../engine-store/locks.ts';
 
 export type Harness = 'claude-code' | 'codex' | null;
 
@@ -14,29 +16,41 @@ export interface SandboxAllowance {
   allowLocalBinding: boolean;
 }
 
+const allowancePaths = (path: string) => {
+  if (process.platform === 'win32') return [path];
+  const missing: string[] = [];
+  let existing = path;
+  while (!existsSync(existing) && dirname(existing) !== existing) {
+    missing.unshift(basename(existing));
+    existing = dirname(existing);
+  }
+  try {
+    return [...new Set([path, join(realpathSync(existing), ...missing)])];
+  } catch {
+    return [path];
+  }
+};
+
 /**
  * What a sandboxed harness has to permit for Stim to work: its state
  * directory, the XPC service simctl talks to, stimd's socket (also under its
  * resolved directory, as /tmp is /private/tmp on macOS), and the port adb's
  * server binds.
  */
-export function sandboxAllowance(stimHome: string = '~/.stim', socket: string = stimdSocket()): SandboxAllowance {
-  let real = socket;
-  if (process.platform !== 'win32') {
-    const missing: string[] = [];
-    let existing = dirname(socket);
-    while (!existsSync(existing) && dirname(existing) !== existing) {
-      missing.unshift(basename(existing));
-      existing = dirname(existing);
-    }
-    try {
-      real = join(realpathSync(existing), ...missing, basename(socket));
-    } catch {}
-  }
+export function sandboxAllowance(
+  stimHome: string = '~/.stim',
+  socket: string = stimdSocket(),
+  env: NodeJS.ProcessEnv = process.env,
+): SandboxAllowance {
+  const store = engineRoot(env);
+  const lock = engineLockSocket(store);
+  const socketWrites = [socket, lock].flatMap((path) =>
+    path.startsWith('/tmp/stim-sockets-') ? allowancePaths(dirname(path)) : [],
+  );
   return {
-    allowWrite: [stimHome],
+    allowWrite: [...new Set([stimHome, ...allowancePaths(store), ...socketWrites])],
     allowMachLookup: ['com.apple.coresimulator.*'],
-    allowUnixSockets: [...new Set([socket, real])],
+    allowUnixSockets: [...new Set([...allowancePaths(socket), ...allowancePaths(lock)])],
     allowLocalBinding: true,
   };
 }
@@ -55,10 +69,14 @@ const reach = (path: string): Promise<unknown> =>
     probe.once('error', done);
   });
 
-/** Whether connecting to stimd's socket is denied by the sandbox. */
-export async function sandboxBlocksSocket(socket: string = stimdSocket()): Promise<boolean> {
+/** Whether the sandbox denies either stimd's socket or the engine store lock socket. */
+export async function sandboxBlocksSocket(
+  socket: string = stimdSocket(),
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
   if (process.platform === 'win32') return false;
-  return denied(await reach(socket));
+  if (denied(await reach(socket))) return true;
+  return denied(await reach(engineLockSocket(engineRoot(env))));
 }
 
 export function detectHarness(env: NodeJS.ProcessEnv = process.env): Harness {
@@ -162,6 +180,7 @@ export function missingAllowance(
   stimHome: string = '~/.stim',
   home: string = homedir(),
   socket: string = stimdSocket(),
+  env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const files = paths.map((p) => {
     const read = readSettings(p);
@@ -174,7 +193,10 @@ export function missingAllowance(
     });
 
   const missing: string[] = [];
-  if (!list('sandbox', 'filesystem', 'allowWrite').some((w) => covers(w, stimHome, home))) {
+  const writeEntries = list('sandbox', 'filesystem', 'allowWrite');
+  if (
+    !sandboxAllowance(stimHome, socket, env).allowWrite.every((path) => writeEntries.some((w) => covers(w, path, home)))
+  ) {
     missing.push('sandbox.filesystem.allowWrite');
   }
   if (
@@ -184,7 +206,7 @@ export function missingAllowance(
   }
   const socketEntries = list('sandbox', 'network', 'allowUnixSockets');
   if (
-    !sandboxAllowance(stimHome, socket).allowUnixSockets.every((path) =>
+    !sandboxAllowance(stimHome, socket, env).allowUnixSockets.every((path) =>
       socketEntries.some((entry) => covers(entry, path, home)),
     )
   ) {
@@ -315,7 +337,7 @@ export function sandboxFinding(
   }
 
   const paths = allowanceSearchPaths(settingsRoot, home);
-  const missing = missingAllowance(paths, stimHome, home);
+  const missing = missingAllowance(paths, stimHome, home, undefined, env);
   if (missing.length === 0) {
     return {
       level: 'cost',

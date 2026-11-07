@@ -243,6 +243,7 @@ THE RECORD
     clockOffsetMs the offset added to deviceTs; absent if the query failed.
              A collector_clock warning then says timestamps retain device time.
     collector_backfill_failed warns when historical launch logs could not be read.
+             Launch verification remains unverified without that coverage.
              On Android, check that adb shell date works and retry the launch.
     collector_backfill_dedup_limited warns that a busy overlap exceeded the
              bounded deduplication window; duplicate records may remain.

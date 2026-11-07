@@ -7,6 +7,7 @@ import { workspaceLogsDir } from '../../workspace/paths.ts';
 export interface LogSink {
   writer: NdjsonWriter;
   line(line: string, clockOffsetMs: number | null, generation?: number): void;
+  sync(): Promise<void>;
   beginBackfill(since: number): Promise<void>;
   backfillLine(line: string, clockOffsetMs: number | null): void;
   endBackfill(): Promise<void>;
@@ -18,7 +19,7 @@ export interface LogSink {
 
 export interface LogWriters {
   ownedSync(root?: string): Promise<void>;
-  ownedDrain(root: string): Promise<void>;
+  ownedDrain(root: string, macosOnly?: boolean): Promise<void>;
   ownedDrainHosted(session: string): Promise<void>;
   ownedClose(): Promise<void>;
   open(
@@ -42,11 +43,13 @@ export function createLogWriters(
   onOwned: (running: boolean) => void = () => {},
   onOwnedLog: (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void = () => {},
   onObserved: (streamId: string, generation: number) => void = () => {},
+  onWriteFailure: (streamId: string, generation: number) => void = () => {},
 ): LogWriters {
   const worker = new Worker(spawnEntry('stimd-thread'), { workerData: { stimdThread: 'logs' } });
   let next = 0;
   let failed: Error | null = null;
   let closing = false;
+  let terminated: Promise<number> | null = null;
   const flow = new Map<string, { bytes: number; paused: boolean; change: (paused: boolean) => void }>();
   const pending = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
   const fail = (error: Error) => {
@@ -85,6 +88,10 @@ export function createLogWriters(
         onObserved(message.streamId, message.generation);
         return;
       }
+      if (message.event === 'write-failed' && message.streamId && message.generation !== undefined) {
+        onWriteFailure(message.streamId, message.generation);
+        return;
+      }
       if (message.event === 'drained' && message.streamId) {
         const state = flow.get(message.streamId);
         if (state) {
@@ -110,6 +117,7 @@ export function createLogWriters(
   };
   const request = (message: Record<string, unknown>): Promise<void> => {
     if (failed) return Promise.reject(failed);
+    if (closing) return Promise.reject(new Error('the logs worker is closed'));
     const requestId = ++next;
     return new Promise((resolve, reject) => {
       pending.set(requestId, { resolve, reject });
@@ -123,9 +131,9 @@ export function createLogWriters(
   };
   return {
     ownedSync: (root) => request({ op: 'owned-sync', root }),
-    ownedDrain: (root) => request({ op: 'owned-drain', root }),
+    ownedDrain: (root, macosOnly) => request({ op: 'owned-drain', root, macosOnly }),
     ownedDrainHosted: (session) => request({ op: 'owned-drain-hosted', session }),
-    ownedClose: () => request({ op: 'owned-close' }),
+    ownedClose: () => (closing ? Promise.resolve() : request({ op: 'owned-close' })),
     async open(input, onFlow) {
       await request({ op: 'open', ...input });
       const state = { bytes: 0, paused: false, change: onFlow };
@@ -171,6 +179,7 @@ export function createLogWriters(
       return {
         writer,
         line: (line, clockOffsetMs, generation) => sendLine('line', line, clockOffsetMs, generation),
+        sync: () => request({ op: 'sync', streamId: input.streamId }),
         beginBackfill: (since) => request({ op: 'backfill.begin', streamId: input.streamId, since }),
         backfillLine: (line, clockOffsetMs) => sendLine('backfill.line', line, clockOffsetMs),
         endBackfill: () => request({ op: 'backfill.end', streamId: input.streamId }),
@@ -191,8 +200,14 @@ export function createLogWriters(
       };
     },
     async close() {
-      closing = true;
-      await worker.terminate();
+      if (!terminated) {
+        closing = true;
+        const error = new Error('the logs worker is closed');
+        for (const item of pending.values()) item.reject(error);
+        pending.clear();
+        terminated = worker.terminate();
+      }
+      await terminated;
     },
   };
 }

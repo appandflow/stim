@@ -141,7 +141,7 @@ export async function runHostedMacosApp(
     const runRoot = join(realpathSync(home), 'macos-app');
     const area = realpathSync(join(home, '..'));
     if (mode === 'stop') {
-      if (requiredMacosRecord(runRoot)) await stopMacosApp(runRoot);
+      if (requiredMacosRecord(runRoot)) await stopMacosApp(runRoot, undefined, { drain: false });
       await stopHostedBundleInstances(area);
       const bundleId = preferenceIdentity(home, device.appSlot);
       if (bundleId) removePreferences(bundleId);
@@ -199,7 +199,7 @@ export async function runHostedMacosApp(
       }
     }
     exec.runFile('codesign', ['--force', '--sign', '-', bundle], options);
-    if (requiredMacosRecord(runRoot)) await stopMacosApp(runRoot);
+    if (requiredMacosRecord(runRoot)) await stopMacosApp(runRoot, undefined, { drain: false });
     await stopHostedBundleInstances(area);
     const previousId = preferenceIdentity(home, device.appSlot);
     if (previousId && previousId !== bundleId) removePreferences(previousId);

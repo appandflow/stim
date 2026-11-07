@@ -1,7 +1,7 @@
 import { existsSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   isJsonObject,
@@ -34,6 +34,7 @@ type Log = (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: stri
 
 /** A stimd running as this process's child, which serves the home until `end` or until this process exits. */
 export interface AttachedHost {
+  instance: string;
   /** Asks the attached stimd to end and resolves once it exited, at most its exit wait plus 10 s later. */
   end(): Promise<void>;
 }
@@ -48,56 +49,185 @@ export function attachedExitWaitMs(env: NodeJS.ProcessEnv = process.env): number
   }
 }
 
+/** Selects one engine for a CI job's hosting and API operations. */
+export async function bindCIEngine(
+  env: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+): Promise<{
+  host: typeof hostStimd;
+  hold: typeof holdCIStimd;
+  runOp: import('../api/engine-route.ts').RunOp;
+  release: () => void;
+}> {
+  const { selectedEngineDir, loadEngineRunOp } = await import('../api/engine-route.ts');
+  let selected = selectedEngineDir(env);
+  const { ownStoreEngine } = await import('../daemon/engine-switch.ts');
+  const own = ownStoreEngine();
+  let retained = selected ?? (own ? join(own.root, own.build) : null);
+  let claim: import('@stim-cli/core/ownership-claim').ClaimHandle | null = null;
+  if (retained) {
+    const { takeLock } = await import('../engine-store/locks.ts');
+    const { buildClaimRoot } = await import('../engine-store/claims.ts');
+    const { tryAcquireClaim, releaseClaim } = await import('@stim-cli/core/ownership-claim');
+    const root = dirname(retained);
+    let lock: Awaited<ReturnType<typeof takeLock>> = null;
+    for (const until = Date.now() + 10_000; !lock && Date.now() < until;) {
+      signal?.throwIfAborted();
+      try {
+        lock = await takeLock(root, '.lock.sock');
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          'socketPath' in error &&
+          'code' in error &&
+          (error.code === 'EPERM' || error.code === 'EACCES')
+        )
+          throw Object.assign(new Error('The sandbox denied the Stim engine store lock.'), {
+            code: SANDBOX_BLOCKED,
+            remedy: 'Run outside the sandbox; `stim guide errors sandbox` explains the available allowances.',
+          });
+        throw error;
+      }
+      if (!lock) await new Promise((done) => setTimeout(done, 50));
+    }
+    if (!lock) throw new Error('Could not lock the Stim engine store for this CI job.');
+    try {
+      signal?.throwIfAborted();
+      if (selected) selected = selectedEngineDir(env);
+      retained = selected ?? (own ? join(own.root, own.build) : null);
+      if (own) (await import('../daemon/engine-switch.ts')).requireCurrentEngine(own);
+      if (retained && dirname(retained) === root) {
+        const attempt = tryAcquireClaim({
+          root: buildClaimRoot(root, basename(retained)),
+          mode: 'shared',
+          label: 'stim ci engine',
+          details: { drained: false, engineDirs: [], retained: true },
+        });
+        if (attempt.pending) releaseClaim(attempt.pending);
+        claim = attempt.acquired ?? null;
+        if (!claim) throw new Error('Could not retain the selected Stim engine for this CI job.');
+      } else if (retained) throw new Error('The selected Stim engine store changed during CI setup.');
+    } finally {
+      await lock.release();
+    }
+  }
+  const { ClaimUnavailableError, releaseClaim } = await import('@stim-cli/core/ownership-claim');
+  const release = () => {
+    if (!claim) return;
+    if (!releaseClaim(claim))
+      throw new ClaimUnavailableError('could not release the CI engine claim', { claimPath: claim.path });
+    claim = null;
+  };
+  try {
+    signal?.throwIfAborted();
+    const runOp = selected ? await loadEngineRunOp(selected) : null;
+    signal?.throwIfAborted();
+    if (selected && !runOp)
+      throw Object.assign(new Error('The selected Stim engine API cannot load.'), {
+        code: 'STIM_ENGINE_UNAVAILABLE',
+        remedy: 'Run stim engine rollback or stim engine use to restore the engine.',
+      });
+    if (selected && runOp) {
+      const entry = join(selected, 'dist', 'attached-stimd.mjs');
+      const engine: Partial<typeof import('./attached.ts')> = existsSync(entry)
+        ? await import(pathToFileURL(entry).href)
+        : {};
+      if (typeof engine.hostStimd !== 'function' || typeof engine.holdCIStimd !== 'function')
+        throw Object.assign(new Error('The selected Stim engine cannot host a CI daemon.'), {
+          code: 'STIM_ENGINE_HOST_UNAVAILABLE',
+          remedy: 'Run stim engine update to select an engine that supports attached hosting.',
+        });
+      signal?.throwIfAborted();
+      return { host: engine.hostStimd, hold: engine.holdCIStimd, runOp, release };
+    }
+    const local = (await import('../api.ts')).runOp;
+    signal?.throwIfAborted();
+    return {
+      host: hostStimd,
+      hold: holdCIStimd,
+      runOp: (name, args, ctx) => Reflect.apply(local, undefined, [name, args, ctx]),
+      release,
+    };
+  } catch (error) {
+    release();
+    throw error;
+  }
+}
+
+/** Holds the existing daemon for one CI job without changing its lifetime. */
+export async function holdCIStimd(
+  env: NodeJS.ProcessEnv,
+  projectRoot: string,
+  ownedInstance: string | null,
+  signal?: AbortSignal,
+): Promise<() => void> {
+  return (await import('../api.ts')).holdCIStimd(env, projectRoot, ownedInstance, signal);
+}
+
+const unavailable = () => ({
+  refusal: {
+    code: 'STIM_DAEMON_UNAVAILABLE',
+    message: 'The attached Stim daemon could not start or admit this command.',
+    remedy: 'Retry the command; if the daemon cannot start, run stim doctor or run outside the sandbox.',
+  },
+});
+
 /**
  * Starts this build's stimd as a child of this process (`__stimd --attached`), with stimd's environment taken from
  * `env`, and waits until it serves. It runs until this process calls `end` or exits, which closes its stdin. Resolves
- * `held` when another stimd took the home first, `blocked` when a sandbox denies its socket, and null when it failed
- * otherwise or did not serve within 10 s.
+ * `held` when another stimd took the home first, `blocked` when a sandbox denies its socket, and a refusal when it
+ * cannot start or admit the command.
  */
-/** Selects one engine for a CI job's hosting and API operations. */
-export async function bindCIEngine(env: NodeJS.ProcessEnv): Promise<{
-  host: typeof hostStimd;
-  runOp: import('../api/engine-route.ts').RunOp;
-}> {
-  const { selectedEngineDir, loadEngineRunOp } = await import('../api/engine-route.ts');
-  const selected = selectedEngineDir(env);
-  const runOp = selected ? await loadEngineRunOp(selected) : null;
-  if (selected && runOp) {
-    const entry = join(selected, 'dist', 'attached-stimd.mjs');
-    const engine: Partial<typeof import('./attached.ts')> = existsSync(entry)
-      ? await import(pathToFileURL(entry).href)
-      : {};
-    if (typeof engine.hostStimd !== 'function')
-      throw Object.assign(new Error('The selected Stim engine cannot host a CI daemon.'), {
-        code: 'STIM_ENGINE_HOST_UNAVAILABLE',
-        remedy: 'Run stim engine update to select an engine that supports attached hosting.',
-      });
-    return { host: engine.hostStimd, runOp };
-  }
-  const local = (await import('../api.ts')).runOp;
-  return { host: hostStimd, runOp: (name, args, ctx) => Reflect.apply(local, undefined, [name, args, ctx]) };
-}
-
 export function hostStimd(
   env: NodeJS.ProcessEnv,
-  { handover = true }: { handover?: boolean } = {},
-): Promise<AttachedHost | 'held' | 'blocked' | null> {
+  { handover = true, signal }: { handover?: boolean; signal?: AbortSignal } = {},
+): Promise<
+  | AttachedHost
+  | { switched: string }
+  | { refusal: { code: string; message: string; remedy: string } }
+  | 'held'
+  | 'held-attached'
+  | 'blocked'
+  | 'blocked-lock'
+  | 'engine-unavailable'
+  | null
+> {
+  signal?.throwIfAborted();
   const args = [spawnEntry('cli'), '__stimd', ATTACHED_ARG];
-  const child = getExecutor().spawn(process.execPath, handover ? args : [...args, NO_HANDOVER_ARG], {
-    cwd: tmpdir(),
-    stdio: ['pipe', 'pipe', 'inherit'],
-    env: stimdEnv(env, process.platform),
-    windowsHide: true,
+  let child: ReturnType<ReturnType<typeof getExecutor>['spawn']>;
+  try {
+    child = getExecutor().spawn(process.execPath, handover ? args : [...args, NO_HANDOVER_ARG], {
+      cwd: tmpdir(),
+      stdio: ['pipe', 'pipe', 'inherit'],
+      env: stimdEnv(env, process.platform),
+      windowsHide: true,
+    });
+  } catch {
+    return Promise.resolve(unavailable());
+  }
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((done) => {
+    child.once('exit', (code, exitSignal) => done({ code, signal: exitSignal }));
+    child.once('error', () => done({ code: null, signal: null }));
   });
-  const exited = new Promise<number | null>((done) => {
-    child.once('exit', (code) => done(code));
-    child.once('error', () => done(null));
-  });
-  return new Promise((resolve) => {
+  return new Promise((done, reject) => {
+    let aborting = false;
+    const resolve: typeof done = (value) => {
+      if (aborting) return;
+      signal?.removeEventListener('abort', abort);
+      done(value);
+    };
+    const abort = () => {
+      aborting = true;
+      clearTimeout(timer);
+      child.kill('SIGKILL');
+      void exited.then(() => reject(signal?.reason));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      resolve(null);
+      resolve(unavailable());
     }, BIND_MS);
+    if (signal?.aborted) abort();
     let buffer = '';
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
@@ -110,33 +240,72 @@ export function hostStimd(
       } catch {}
       buffer = '';
       if (!isJsonObject(line)) return;
-      if (line.op === 'attached-held' || line.op === 'attached-blocked') {
+      if (
+        line.op === 'attached-claim-refusal' &&
+        isJsonObject(line.refusal) &&
+        typeof line.refusal.code === 'string' &&
+        typeof line.refusal.message === 'string' &&
+        typeof line.refusal.remedy === 'string'
+      ) {
         clearTimeout(timer);
-        resolve(line.op === 'attached-held' ? 'held' : 'blocked');
+        resolve({ refusal: { code: line.refusal.code, message: line.refusal.message, remedy: line.refusal.remedy } });
         return;
       }
-      if (line.op !== 'attached') return;
+      if (line.op === 'attached-engine-unavailable') {
+        clearTimeout(timer);
+        resolve('engine-unavailable');
+        return;
+      }
+      if (line.op === 'attached-switched' && typeof line.version === 'string') {
+        clearTimeout(timer);
+        resolve({ switched: line.version });
+        return;
+      }
+      if (
+        line.op === 'attached-held' ||
+        line.op === 'attached-held-attached' ||
+        line.op === 'attached-blocked' ||
+        line.op === 'attached-blocked-lock'
+      ) {
+        clearTimeout(timer);
+        resolve(
+          line.op === 'attached-held'
+            ? 'held'
+            : line.op === 'attached-held-attached'
+              ? 'held-attached'
+              : line.op === 'attached-blocked-lock'
+                ? 'blocked-lock'
+                : 'blocked',
+        );
+        return;
+      }
+      if (line.op !== 'attached' || typeof line.instance !== 'string') return;
       clearTimeout(timer);
       const waitMs = Number(line.waitMs) || 0;
       child.unref();
       for (const stream of [child.stdout, child.stdin]) if (stream instanceof Socket) stream.unref();
       resolve({
+        instance: line.instance,
         async end() {
           child.ref();
           child.stdin?.end();
           const kill = setTimeout(() => child.kill('SIGKILL'), waitMs + KILL_GRACE_MS);
-          await exited;
+          const result = await exited;
           clearTimeout(kill);
+          if (result.code !== 0)
+            throw new Error(
+              `Attached stimd exited ${result.signal ? `on ${result.signal}` : `with code ${String(result.code)}`}.`,
+            );
         },
       });
     });
     child.once('close', (code) => {
       clearTimeout(timer);
-      resolve(code === SANDBOX_EXIT ? 'blocked' : null);
+      resolve(code === SANDBOX_EXIT ? 'blocked' : unavailable());
     });
     child.once('error', () => {
       clearTimeout(timer);
-      resolve(null);
+      resolve(unavailable());
     });
   });
 }
@@ -166,7 +335,7 @@ export interface StimdLifetime {
    */
   signal(signal: NodeJS.Signals, requestEnd: (why: string) => void): void;
   /** Once bound: an attached stimd tells `hostStimd` it serves and ends at the end of its stdin. */
-  serve(requestEnd: (why: string) => void, waitMs: number): void;
+  serve(requestEnd: (why: string) => void, waitMs: number, instance: string): void;
 }
 
 export function stimdLifetime(attached: boolean, version: string): StimdLifetime {
@@ -196,13 +365,13 @@ export function stimdLifetime(attached: boolean, version: string): StimdLifetime
     signal: (signal, requestEnd) => {
       if (signal !== 'SIGINT') requestEnd(signal);
     },
-    serve(requestEnd, waitMs) {
+    serve(requestEnd, waitMs, instance) {
       process.on('SIGINT', () => {});
       process.on('SIGHUP', () => requestEnd('SIGHUP'));
       for (const stream of [process.stdout, process.stderr]) stream.on('error', () => {});
       process.stdin.on('end', () => requestEnd('stdin')).on('error', () => {});
       process.stdin.resume();
-      process.stdout.write(`${JSON.stringify({ op: 'attached', pid: process.pid, waitMs })}\n`);
+      process.stdout.write(`${JSON.stringify({ op: 'attached', pid: process.pid, waitMs, instance })}\n`);
     },
   };
 }
@@ -250,7 +419,7 @@ export async function endAttached({
 }: {
   inFlight: () => string[];
   admissionRevision: () => number;
-  alive: () => Promise<string | null>;
+  alive: (signal: AbortSignal) => Promise<string | null>;
   waitMs: number;
   handover: boolean;
   mode: () => DaemonMode;
@@ -277,15 +446,20 @@ export async function endAttached({
   let alive: string | null = null;
   const revision = admissionRevision();
   if (handover) {
-    let timer: NodeJS.Timeout | undefined;
-    const late = new Promise<string>((done) => {
-      timer = setTimeout(() => done('its home was not measured in time'), MEASURE_MS);
-    });
-    alive = await Promise.race([
-      measure().catch((error: unknown) => `its home could not be measured: ${String(error)}`),
-      late,
-    ]);
-    clearTimeout(timer);
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, MEASURE_MS);
+    try {
+      alive = await measure(controller.signal);
+    } catch (error) {
+      alive = timedOut ? 'its home was not measured in time' : `its home could not be measured: ${String(error)}`;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (timedOut) alive = 'its home was not measured in time';
     if (inFlight().length && Date.now() < deadline) await drain();
     if (admissionRevision() !== revision) alive ??= 'a command was admitted while measuring its home';
   }

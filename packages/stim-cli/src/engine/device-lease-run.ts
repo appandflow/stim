@@ -190,7 +190,7 @@ export interface RunLease {
   expiresAt: string | null;
   lost: boolean;
   raise: (boundMs: number) => RunLeaseStep;
-  release: () => void;
+  release: () => void | Promise<void>;
   facts: () => { kind: LeaseKind; expiresAt: string } | null;
 }
 
@@ -234,11 +234,14 @@ export function runLease({
     },
     release() {
       if (ticket && operation) {
-        void import('../daemon/client.ts').then(({ releaseDeviceTicket }) => releaseDeviceTicket(ticket, operation));
-        return;
+        if (operation.signal.aborted) return undefined;
+        return import('../daemon/client.ts').then(({ releaseDeviceTicket }) =>
+          operation.signal.aborted ? undefined : releaseDeviceTicket(ticket, operation),
+        );
       }
-      if (handle.kind === null) return;
+      if (handle.kind === null) return undefined;
       releaseRunLease({ root, platform, slot, token }, io);
+      return undefined;
     },
     facts() {
       if (handle.kind === null || handle.lost || handle.expiresAt === null) return null;

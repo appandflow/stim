@@ -17,7 +17,7 @@ const claimPath = (root: string, streamId: string) =>
 const historyPath = (root: string, streamId: string) =>
   join(workspaceDir(root), 'log-backfills', `${createHash('sha256').update(streamId).digest('hex')}.claim`);
 
-async function recover(path: string, expected?: string): Promise<void> {
+async function recover(path: string, expected?: string, beforeRelease?: () => void): Promise<void> {
   const survey = readClaimSet(path);
   if (survey.unresolved.length)
     throw new Error(
@@ -29,8 +29,6 @@ async function recover(path: string, expected?: string): Promise<void> {
     );
   for (const holder of survey.dead) {
     if (expected && holder.details.streamId !== expected) throw new Error(`The device log stream at ${path} changed.`);
-    if (!releaseClaim({ ...holder, root: path, label: 'device log stream' }))
-      throw new Error(`The device log claim at ${path} changed while it was being recovered.`);
   }
   for (const holder of survey.live) {
     if (expected && holder.details.streamId !== expected) throw new Error(`The device log stream at ${path} changed.`);
@@ -50,6 +48,9 @@ async function recover(path: string, expected?: string): Promise<void> {
     for (const deadline = Date.now() + 2000; alive() && Date.now() < deadline;)
       await new Promise((resolve) => setTimeout(resolve, 20));
     if (alive()) throw new Error(`The device log child at ${path} did not stop; inspect it before retrying.`);
+  }
+  beforeRelease?.();
+  for (const holder of [...survey.dead, ...survey.live]) {
     if (!releaseClaim({ ...holder, root: path, label: 'device log stream' }))
       throw new Error(`The device log claim at ${path} changed while it was being recovered.`);
   }
@@ -85,9 +86,9 @@ export async function takeHistoryClaim(root: string, streamId: string): Promise<
   return attempt.acquired;
 }
 
-export async function clearStreamClaim(root: string, streamId: string): Promise<void> {
+export async function clearStreamClaim(root: string, streamId: string, beforeRelease: () => void): Promise<void> {
   await clearHistoryClaim(root, streamId);
-  await recover(claimPath(root, streamId), streamId);
+  await recover(claimPath(root, streamId), streamId, beforeRelease);
 }
 
 export async function takeStreamClaim(root: string, streamId: string): Promise<ClaimHandle> {

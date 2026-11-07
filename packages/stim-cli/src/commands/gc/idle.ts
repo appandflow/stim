@@ -157,5 +157,13 @@ export async function collectOwnedDeviceActivityAsync(
   const devices = findOwnedDeviceActivity(
     await deviceActivityInputsAsync(config, sims, now, env, [], signal, operation),
   );
-  return Promise.all(devices.map(async (device) => Object.assign({}, device, { activity: await device.activity })));
+  const results = await Promise.allSettled(
+    devices.map(async (device) => Object.assign({}, device, { activity: await device.activity })),
+  );
+  const failure = results.find((result) => result.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
+  return results.map((result) => {
+    if (result.status === 'rejected') throw result.reason;
+    return result.value;
+  });
 }

@@ -392,13 +392,87 @@ describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel
         state: 'started',
       });
       expect(readFileSync(join(dir, 'metro-env'), 'utf8').trim()).toBe('second-ticket');
+      const retained = parseLease(readFileSync(leasePath, 'utf8'));
       second.socket.destroy();
-      await vi.waitFor(() => expect(existsSync(leasePath)).toBe(false));
+      await vi.waitFor(async () =>
+        expect(await ask('lease.acquire', { ticket: b.ticket }, second.token)).toMatchObject({ op: 'error' }),
+      );
+      expect(parseLease(readFileSync(leasePath, 'utf8'))).toEqual(retained);
     } finally {
       first.socket.destroy();
       second.socket.destroy();
     }
   }, 30_000);
+
+  test.skipIf(process.platform === 'win32')(
+    'retains a run lease when a killed client leaves its installer alive',
+    async () => {
+      const root = bareProject();
+      const other = join(dir, 'other');
+      mkdirSync(other);
+      await startStimd();
+      const { socket: path, build } = record()!;
+      const script = join(dir, 'lease-client.cjs');
+      write(
+        script,
+        `
+const { connect } = require('node:net');
+const { spawn } = require('node:child_process');
+const [path, build, root] = process.argv.slice(2);
+const socket = connect(path);
+let buffer = '', stage = 0, token = '', ticket = '';
+socket.setEncoding('utf8');
+socket.on('connect', () => socket.write(JSON.stringify({kind:'cli',build})+'\\n'+JSON.stringify({op:'op.begin',params:{workspace:root,forwarded:{cwd:root,env:{}}}})+'\\n'));
+socket.on('data', chunk => {
+  buffer += chunk;
+  for (let end; (end = buffer.indexOf('\\n')) >= 0;) {
+    const msg = JSON.parse(buffer.slice(0,end)); buffer = buffer.slice(end+1);
+    if (msg.op === 'op.begun') { token = msg.opToken; socket.write(JSON.stringify({op:'lease.prepare',params:{root,platform:'ios',slot:'default',id:'phone',deviceName:null,idLabel:'udid',waitSeconds:0,noWait:false,installBoundMs:60000,appId:null}})+'\\n'); }
+    if (msg.op === 'lease.prepared') { ticket = msg.ticket; socket.write(JSON.stringify({op:'lease.acquire',params:{ticket}})+'\\n'); }
+    if (msg.op === 'lease.acquired' && !stage++) {
+      const installer = spawn(process.execPath,['-e','setInterval(() => {}, 1000)'],{detached:true,stdio:'ignore'});
+      process.stdout.write(JSON.stringify({pid:installer.pid,token,ticket})+'\\n');
+    }
+  }
+});
+`,
+      );
+      const client = spawn(process.execPath, [script, path, build, root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let installerPid = 0;
+      try {
+        const [chunk] = await once(client.stdout!, 'data');
+        const { pid, token, ticket } = JSON.parse(String(chunk));
+        installerPid = pid;
+        expect(alive(installerPid)).toBe(true);
+        const exited = once(client, 'exit');
+        client.kill('SIGKILL');
+        await exited;
+        await vi.waitFor(async () =>
+          expect(await ask('lease.acquire', { ticket }, token)).toMatchObject({ op: 'error' }),
+        );
+        const { deviceLeasePath, parseLease } = await import('../engine/device-lease.ts');
+        const leasePath = deviceLeasePath('ios', 'phone');
+        await vi.waitFor(() => expect(parseLease(readFileSync(leasePath, 'utf8'))?.holder).toBe(root));
+        expect(alive(installerPid)).toBe(true);
+        const { acquireRunLease } = await import('../engine/device-lease-run.ts');
+        expect(
+          await acquireRunLease({
+            root: other,
+            platform: 'ios',
+            id: 'phone',
+            idLabel: 'udid',
+            waitSeconds: 0,
+            noWait: false,
+            installBoundMs: 60000,
+          }),
+        ).toMatchObject({ status: 'refused' });
+      } finally {
+        if (client.exitCode === null && client.signalCode === null) client.kill('SIGKILL');
+        if (installerPid && alive(installerPid)) process.kill(-installerPid, 'SIGKILL');
+      }
+    },
+    30_000,
+  );
 
   test('an operation starts a log stream and its token expires when the operation disconnects', async () => {
     const root = bareProject();

@@ -37,24 +37,30 @@ export function parseVmStatAvailable(output: string): number | null {
   return pages * pageSize;
 }
 
-async function availableMemory(): Promise<number | null> {
+async function availableMemory(signal?: AbortSignal): Promise<number | null> {
   if (process.platform !== 'darwin') return freemem();
   try {
-    return parseVmStatAvailable(await getExecutor().runFileAsync('vm_stat', [], { timeoutMs: 5000 }));
+    return parseVmStatAvailable(await getExecutor().runFileAsync('vm_stat', [], { timeoutMs: 5000, signal }));
   } catch {
     return null;
   }
 }
 
 /** Free disk on the config dir's volume, every registered project's volume and the build worker root's. */
-export function measureDisk(config: Config | null): Promise<DaemonMeasurement['disk']> {
-  return readVolumeSpaceAsync([configDir(), ...Object.keys(config?.projects ?? {}), buildWorkerRoot(config)]);
+export function measureDisk(config: Config | null, signal?: AbortSignal): Promise<DaemonMeasurement['disk']> {
+  return readVolumeSpaceAsync([configDir(), ...Object.keys(config?.projects ?? {}), buildWorkerRoot(config)], signal);
 }
 
 /** macOS memory pressure and available memory, or free memory elsewhere. */
-export async function measureMemory(): Promise<DaemonMeasurement['memory']> {
-  const [level, availableBytes] = await Promise.all([readHostMemoryPressureAsync(), availableMemory()]);
-  return { level, availableBytes, totalBytes: totalmem() };
+export async function measureMemory(signal?: AbortSignal): Promise<DaemonMeasurement['memory']> {
+  const results = await Promise.allSettled([
+    readHostMemoryPressureAsync(undefined, undefined, signal),
+    availableMemory(signal),
+  ]);
+  signal?.throwIfAborted();
+  if (results[0].status === 'rejected') throw results[0].reason;
+  if (results[1].status === 'rejected') throw results[1].reason;
+  return { level: results[0].value, availableBytes: results[1].value, totalBytes: totalmem() };
 }
 
 /** Whether `measureTick` lists simulators: on macOS, when a registered workspace owns one. */
@@ -112,20 +118,26 @@ async function recordFocusedUse(slots: ReturnType<typeof focusedSlots>, at: stri
 export async function measureTick(
   config: Config | null,
   now: number,
-  { probe = true }: { probe?: boolean } = {},
+  { probe = true, signal }: { probe?: boolean; signal?: AbortSignal } = {},
 ): Promise<TickMeasurement> {
-  const [disk, memory] = await Promise.all([measureDisk(config), measureMemory()]);
+  const results = await Promise.allSettled([measureDisk(config, signal), measureMemory(signal)]);
+  signal?.throwIfAborted();
+  if (results[0].status === 'rejected') throw results[0].reason;
+  if (results[1].status === 'rejected') throw results[1].reason;
+  const [disk, memory] = [results[0].value, results[1].value];
   let sims: IosSimRecord[] | null = [];
   let simsError: string | null = null;
   if (tickListsSims(config)) {
     try {
-      sims = await listAllIosSimsAsync({ timeoutMs: SIM_LIST_TIMEOUT_MS });
+      sims = await listAllIosSimsAsync({ timeoutMs: SIM_LIST_TIMEOUT_MS, signal });
     } catch (error) {
       sims = null;
       simsError = error instanceof Error ? error.message : String(error);
     }
   }
-  const devices = await collectOwnedDeviceActivityAsync(config, sims ?? [], now);
+  signal?.throwIfAborted();
+  const devices = await collectOwnedDeviceActivityAsync(config, sims ?? [], now, undefined, signal);
+  signal?.throwIfAborted();
   const use = probe ? await probeFocusedDeviceUse() : null;
   const used = use ? focusedSlots(use, config, devices) : [];
   const usedAt = use ? new Date(now - use.idleMs).toISOString() : '';

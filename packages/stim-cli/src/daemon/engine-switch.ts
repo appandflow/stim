@@ -47,6 +47,34 @@ export function switchedEngine(engine: StoreEngine | null = ownStoreEngine()): P
   return current && current.build !== engine.build ? current : null;
 }
 
+/** Confirms a retained store build is still selected while its store lock is held. */
+export function requireCurrentEngine(engine: StoreEngine): void {
+  let current: unknown;
+  try {
+    current = JSON.parse(readFileSync(join(engine.root, 'current.json'), 'utf8'));
+  } catch {}
+  if (
+    !current ||
+    typeof current !== 'object' ||
+    !('format' in current) ||
+    current.format !== FORMAT ||
+    !('dir' in current) ||
+    typeof current.dir !== 'string' ||
+    !('version' in current) ||
+    typeof current.version !== 'string'
+  )
+    throw Object.assign(new Error('The selected Stim engine cannot be verified.'), {
+      code: 'STIM_ENGINE_UNAVAILABLE',
+      remedy: 'Run stim engine rollback or stim engine use to restore the engine pointer.',
+    });
+  if (current.dir !== engine.build)
+    throw Object.assign(new Error(`Stim updated to ${current.version}; rerun`), {
+      code: 'STIM_ENGINE_SWITCHED',
+      version: current.version,
+      remedy: 'Rerun the command with the selected engine.',
+    });
+}
+
 /** The staged build a cache miss of `engine` waits for, until `SLOT_HOLD_MS` after it was staged. */
 export function stagedHold(engine: StoreEngine | null, now: number): Pointer | null {
   if (!engine) return null;

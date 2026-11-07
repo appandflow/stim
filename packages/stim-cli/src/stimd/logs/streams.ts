@@ -1,5 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { isJsonObject } from '@stim-cli/core/state';
 import { runCollector, type RunCollectorHandle } from './collector.ts';
@@ -7,6 +8,7 @@ import { deviceSlotKey, validateDeviceSlot } from '../../devices/device-slots.ts
 import { getExecutor } from '../../exec.ts';
 import { signalProcessTree } from '../../metro.ts';
 import {
+  claimRemoveCommand,
   clearClaimChild,
   markClaimChildPending,
   processGroupAlive,
@@ -76,7 +78,7 @@ export function parseStreamSpec(value: unknown): StreamSpec | null {
 
 export interface StreamTable {
   ownedSync(root?: string): Promise<string | null>;
-  ownedDrain(root: string): Promise<string | null>;
+  ownedDrain(root: string, macosOnly?: boolean): Promise<string | null>;
   ownedDrainHosted(session: string): Promise<string | null>;
   ownedRunning(): boolean;
   start(input: StreamSpec, env: Record<string, string>, signal?: AbortSignal): Promise<{ streamId: string }>;
@@ -91,10 +93,20 @@ export interface StreamTable {
     timeoutMs: number,
     signal?: AbortSignal,
     env?: Record<string, string>,
-  ): Promise<{ revision: number; gone?: true }>;
+    through?: number,
+    checkCoverage?: boolean,
+  ): Promise<{ revision: number; gone?: true; coverage?: 'pending' | 'covered' | 'failed' }>;
   running(): boolean;
   close(): Promise<void>;
 }
+
+type HistoryCoverage = {
+  status: 'pending' | 'covered' | 'failed';
+  generation?: number;
+  startedAt?: number;
+  warm?: boolean;
+  failureVersion?: number;
+};
 
 type Stream = {
   id: string;
@@ -102,26 +114,31 @@ type Stream = {
   root: string;
   slotKey: string;
   spec: StreamSpec;
+  envHash: string;
   aliases: Map<string, string>;
   claim: ClaimHandle;
   controller: AbortController;
   sink: LogSink;
   child: ChildProcess | null;
   childClosed: Promise<void> | null;
+  spawnedPid: number | null;
   identity: { pid: number; processToken: string } | null;
+  lastStop: { pid: number | null; identity: string; signalled?: boolean; error?: string } | null;
   pending: boolean;
   paused: boolean;
   generation: number;
   activePid: number | null;
   observedAt: number | null;
+  writeFailures: number;
   revision: number;
   waiters: Set<(gone: boolean) => void>;
-  historySeen: WeakSet<AbortSignal>;
+  historySeen: WeakMap<AbortSignal, HistoryCoverage>;
   histories: Set<Promise<void>>;
   historyQueue: Promise<void>;
   started: Promise<RunCollectorHandle | null>;
   done: Promise<void>;
   finalized: boolean;
+  cleanupError: string | null;
   cleanup: () => Promise<void>;
   finish: () => void;
 };
@@ -135,17 +152,49 @@ function alive(stream: Stream): boolean {
 
 function signalChild(stream: Stream): void {
   const child = stream.identity;
-  if (!child || inspectProcessIdentity(child) !== 'same') return;
+  if (!child) {
+    stream.lastStop = { pid: stream.spawnedPid, identity: 'unavailable' };
+    return;
+  }
+  const identity = inspectProcessIdentity(child);
+  stream.lastStop = { pid: child.pid, identity };
+  if (identity !== 'same') return;
   try {
-    signalProcessTree(child.pid, 'SIGTERM', { group: process.platform !== 'win32' });
-  } catch {}
+    if (process.platform === 'win32') {
+      getExecutor().runFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { timeoutMs: 30_000 });
+      stream.lastStop.signalled = true;
+    } else {
+      stream.lastStop.signalled = signalProcessTree(child.pid, 'SIGTERM', { group: true });
+    }
+  } catch (error) {
+    stream.lastStop.signalled = false;
+    const detail = error instanceof Error ? error : new Error(String(error));
+    stream.lastStop.error = JSON.stringify({
+      code: Reflect.get(detail, 'code'),
+      status: Reflect.get(detail, 'status'),
+      stderr: String(Reflect.get(detail, 'stderr') ?? '').slice(0, 2048),
+      message: detail.message.slice(0, 2048),
+    });
+  }
 }
 
 async function waitChild(stream: Stream): Promise<void> {
-  if (stream.pending && !stream.identity) throw new Error('the device log stream child identity is unresolved');
-  for (const deadline = Date.now() + 2000; alive(stream) && Date.now() < deadline;)
+  const running = () =>
+    stream.identity
+      ? alive(stream)
+      : stream.spawnedPid !== null &&
+        (process.platform === 'win32'
+          ? stream.child !== null && stream.child.exitCode === null && stream.child.signalCode === null
+          : processGroupAlive(stream.spawnedPid));
+  for (const deadline = Date.now() + 2000; running() && Date.now() < deadline;)
     await new Promise((resolve) => setTimeout(resolve, 20));
-  if (alive(stream)) throw new Error('the device log stream did not stop');
+  if (running()) {
+    if (stream.pending && !stream.identity)
+      throw new Error(
+        `The device log child at ${stream.claim.root} cannot be verified stopped; inspect it before running ${claimRemoveCommand(stream.claim.root)}.`,
+      );
+    throw new Error('the device log stream did not stop');
+  }
   const childClosed = stream.childClosed;
   if (childClosed) {
     const closed = await new Promise<boolean>((resolve) => {
@@ -156,11 +205,19 @@ async function waitChild(stream: Stream): Promise<void> {
         return undefined;
       });
     });
-    if (!closed) throw new Error('the device log stream pipes did not close');
+    if (!closed) {
+      const child = stream.child;
+      throw new Error(
+        `the device log stream pipes did not close (exit=${String(child?.exitCode)}, signal=${String(child?.signalCode)}, ` +
+          `stdoutEnded=${String(child?.stdout?.readableEnded)}, stdoutFlowing=${String(child?.stdout?.readableFlowing)}, ` +
+          `stderrEnded=${String(child?.stderr?.readableEnded)}, stderrFlowing=${String(child?.stderr?.readableFlowing)}, backpressure=${stream.paused}, stop=${JSON.stringify(stream.lastStop)})`,
+      );
+    }
   }
-  if (stream.identity) clearClaimChild(stream.claim);
+  if (stream.identity || stream.pending) clearClaimChild(stream.claim);
   stream.pending = false;
   stream.identity = null;
+  stream.spawnedPid = null;
   stream.child = null;
 }
 
@@ -187,6 +244,7 @@ function spawnChild(
     throw error;
   }
   stream.child = child;
+  stream.spawnedPid = child.pid ?? null;
   stream.childClosed = new Promise((resolve) => child.once('close', () => resolve()));
   child.on('error', () => {});
   if (!child.pid) {
@@ -196,7 +254,6 @@ function spawnChild(
   }
   const token = captureProcessToken(child.pid);
   if (!token) {
-    child.kill('SIGTERM');
     throw new Error('could not capture the device log stream child identity');
   }
   stream.identity = { pid: child.pid, processToken: token };
@@ -215,9 +272,23 @@ function spawnChild(
 }
 
 const noop = () => {};
+class AndroidPidChanged extends Error {}
 
-const matches = (stream: Stream, input: StreamSpec, root: string): boolean =>
+function environmentHash(env: Record<string, string>): string {
+  const values = new Map<string, string>();
+  for (const [name, value] of Object.entries(env).toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const key = process.platform === 'win32' ? name.toUpperCase() : name;
+    if (key === 'STIM_RUN_ID' || key === 'STIM_TRACE' || key === 'STIM_TRACE_OWNER' || values.has(key)) continue;
+    values.set(key, value);
+  }
+  return createHash('sha256')
+    .update(JSON.stringify([...values].toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))))
+    .digest('hex');
+}
+
+const matches = (stream: Stream, input: StreamSpec, root: string, envHash: string): boolean =>
   stream.root === root &&
+  stream.envHash === envHash &&
   !input.physical &&
   !stream.spec.physical &&
   !stream.controller.signal.aborted &&
@@ -262,7 +333,10 @@ export function createStreams(
     await stream.started.catch(() => null);
     await stream.done;
     if (retry && [...streams.values()].includes(stream)) await stream.cleanup();
-    if ([...streams.values()].includes(stream)) throw new Error('the device log stream could not be stopped');
+    if ([...streams.values()].includes(stream))
+      throw new Error(
+        `the device log stream could not be stopped${stream.cleanupError ? `: ${stream.cleanupError}` : ''}`,
+      );
   };
   const getWriters = async (): Promise<LogWriters> => {
     if (writerFailure) {
@@ -301,6 +375,14 @@ export function createStreams(
         const stream = [...streams.values()].find((entry) => entry.id === streamId);
         if (stream && stream.generation === generation && stream.observedAt === null) stream.observedAt = Date.now();
       },
+      (streamId, generation) => {
+        const stream = [...streams.values()].find((entry) => entry.id === streamId);
+        if (stream && stream.generation === generation) {
+          stream.writeFailures++;
+          stream.observedAt = null;
+          for (const wake of stream.waiters) wake(false);
+        }
+      },
     );
     return writers;
   };
@@ -316,29 +398,140 @@ export function createStreams(
     stream.aliases.delete(key);
     streams.delete(key);
   };
-  const scheduleBackfill = (stream: Stream, since: number, signal: AbortSignal, env: Record<string, string>): void => {
-    if (stream.spec.physical || stream.historySeen.has(signal)) return;
-    stream.historySeen.add(signal);
+  const scheduleBackfill = (
+    stream: Stream,
+    since: number,
+    signal: AbortSignal,
+    env: Record<string, string>,
+    through: number,
+  ): HistoryCoverage => {
+    if (stream.spec.physical)
+      return {
+        status: stream.writeFailures ? ('failed' as const) : ('covered' as const),
+        warm: true,
+        startedAt: Infinity,
+      };
+    const existing = stream.historySeen.get(signal);
+    if (existing) {
+      if (
+        existing.status === 'covered' &&
+        existing.generation !== undefined &&
+        (existing.generation !== stream.generation ||
+          existing.failureVersion !== stream.writeFailures ||
+          !stream.child ||
+          stream.child.exitCode !== null ||
+          stream.child.signalCode !== null)
+      )
+        existing.status = 'failed';
+      if (existing.status !== 'covered' || existing.warm || (existing.startedAt ?? 0) >= through) return existing;
+    }
+    const coverage: HistoryCoverage = { status: 'pending' };
+    stream.historySeen.set(signal, coverage);
     const cancelled = AbortSignal.any([signal, stream.controller.signal]);
     const task = stream.historyQueue.then(async () => {
       cancelled.throwIfAborted();
-      return backfillDeviceLog({
-        root: stream.root,
-        streamId: stream.id,
-        spec: stream.spec,
-        since,
-        env,
-        signal: cancelled,
-        warm: (pid) =>
-          stream.observedAt !== null &&
-          stream.observedAt <= since &&
-          (stream.spec.platform !== 'android' || stream.activePid === pid),
-        sink: stream.sink,
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          cancelled.removeEventListener('abort', abort);
+        };
+        const abort = () => {
+          cleanup();
+          reject(cancelled.reason);
+        };
+        cancelled.addEventListener('abort', abort, { once: true });
+        void stream.started.then(
+          (started) => {
+            if (!started) {
+              cleanup();
+              reject(new Error('the device log stream did not attach'));
+            } else {
+              cleanup();
+              resolve();
+            }
+            return undefined;
+          },
+          (error: unknown) => {
+            cleanup();
+            reject(error);
+          },
+        );
+        if (cancelled.aborted) abort();
       });
+      while (!cancelled.aborted) {
+        const generation = stream.generation;
+        const activePid = stream.activePid;
+        coverage.generation = generation;
+        coverage.startedAt = Date.now();
+        const retry = await backfillDeviceLog({
+          root: stream.root,
+          streamId: stream.id,
+          spec: stream.spec,
+          since,
+          env,
+          signal: cancelled,
+          onBegin: () => {
+            coverage.failureVersion = stream.writeFailures;
+          },
+          warm: (pid) => {
+            if (stream.spec.platform === 'android' && (stream.generation !== generation || activePid !== pid))
+              throw new AndroidPidChanged();
+            if (stream.generation !== generation)
+              throw new Error('the device log source changed during history replay');
+            const warm =
+              stream.observedAt !== null &&
+              stream.observedAt <= since &&
+              (stream.spec.platform !== 'android' || stream.activePid === pid);
+            coverage.warm = warm;
+            return warm;
+          },
+          sink: stream.sink,
+        })
+          .then(() => false)
+          .catch(async (error: unknown) => {
+            if (!(error instanceof AndroidPidChanged)) throw error;
+            await new Promise<void>((resolve, reject) => {
+              const cleanup = () => {
+                stream.waiters.delete(check);
+                cancelled.removeEventListener('abort', abort);
+              };
+              const abort = () => {
+                cleanup();
+                reject(cancelled.reason);
+              };
+              const check = () => {
+                if (stream.generation <= generation || stream.activePid === null || !stream.child) return;
+                cleanup();
+                resolve();
+              };
+              stream.waiters.add(check);
+              cancelled.addEventListener('abort', abort, { once: true });
+              if (cancelled.aborted) abort();
+              else check();
+            });
+            return true;
+          });
+        if (retry) continue;
+        if (
+          stream.generation !== generation ||
+          coverage.failureVersion !== stream.writeFailures ||
+          !stream.child ||
+          stream.child.exitCode !== null ||
+          stream.child.signalCode !== null
+        )
+          throw new Error('the device log source changed during history replay');
+        return undefined;
+      }
+      cancelled.throwIfAborted();
+      return undefined;
     });
     stream.histories.add(task);
     stream.historyQueue = task
+      .then(() => {
+        coverage.status = 'covered';
+        return undefined;
+      })
       .catch((error: unknown) => {
+        coverage.status = 'failed';
         if (!cancelled.aborted) {
           const message = error instanceof Error ? error.message : String(error);
           log(`device log backfill ${stream.id} failed: ${message}`);
@@ -353,7 +546,9 @@ export function createStreams(
       })
       .finally(() => {
         stream.histories.delete(task);
+        for (const wake of stream.waiters) wake(false);
       });
+    return coverage;
   };
   return {
     async ownedSync(root) {
@@ -364,9 +559,9 @@ export function createStreams(
         return error instanceof Error ? error.message : String(error);
       }
     },
-    async ownedDrain(root) {
+    async ownedDrain(root, macosOnly) {
       try {
-        await (await getWriters()).ownedDrain(root);
+        await (await getWriters()).ownedDrain(root, macosOnly);
         return null;
       } catch (error) {
         return error instanceof Error ? error.message : String(error);
@@ -383,19 +578,20 @@ export function createStreams(
     ownedRunning: () => ownedRunning,
     async start(input: StreamSpec, env: Record<string, string>, signal?: AbortSignal): Promise<{ streamId: string }> {
       const root = realpathSync(input.root);
+      const envHash = environmentHash(env);
       const slot = validateDeviceSlot(input.slot ?? 'default');
       const slotKey = deviceSlotKey(input.platform, slot);
       const key = `${root}\0${slotKey}`;
       return serialize(root, async () => {
         signal?.throwIfAborted();
         const previous = streams.get(key);
-        if (previous && matches(previous, input, root)) return { streamId: previous.id };
+        if (previous && matches(previous, input, root, envHash)) return { streamId: previous.id };
         if (previous) await removeAlias(previous, key, slotKey);
         signal?.throwIfAborted();
         const recorded = readCollectors(root)[slotKey];
         if (recorded !== undefined && (!isJsonObject(recorded) || recorded.kind !== 'stream'))
           throw new Error('the previous device log collector must be stopped before starting a stream');
-        const shared = [...new Set(streams.values())].find((stream) => matches(stream, input, root));
+        const shared = [...new Set(streams.values())].find((stream) => matches(stream, input, root, envHash));
         if (shared && recorded === undefined) {
           registerCollector(root, slotKey, {
             kind: 'stream',
@@ -416,8 +612,8 @@ export function createStreams(
         }
         if (isJsonObject(recorded)) {
           if (typeof recorded.streamId !== 'string') throw new Error('the previous device log stream has no identity');
-          await clearStreamClaim(root, recorded.streamId);
-          unregisterStreamAll(root, recorded.streamId);
+          const recordedId = recorded.streamId;
+          await clearStreamClaim(root, recordedId, () => unregisterStreamAll(root, recordedId));
         }
         const id = randomUUID();
         const claim = await takeStreamClaim(root, id);
@@ -470,26 +666,31 @@ export function createStreams(
           root,
           slotKey,
           spec: { ...input, root, slot },
+          envHash,
           aliases: new Map([[key, slotKey]]),
           claim,
           controller,
           sink,
           child: null,
           childClosed: null,
+          spawnedPid: null,
           identity: null,
+          lastStop: null,
           pending: false,
           paused: false,
           generation: 0,
           activePid: null,
           observedAt: null,
+          writeFailures: 0,
           revision: 0,
           waiters: new Set(),
-          historySeen: new WeakSet(),
+          historySeen: new WeakMap(),
           histories: new Set(),
           historyQueue: Promise.resolve(),
           started: Promise.resolve(null),
           done,
           finalized: false,
+          cleanupError: null,
           cleanup: async () => {},
           finish,
         };
@@ -515,8 +716,8 @@ export function createStreams(
             .closed()
             .catch((error: unknown) => log(`device log stream ${id} could not flush: ${String(error)}`));
           if ([...streams.values()].includes(stream)) {
-            if (!releaseClaim(claim)) throw new Error('the device log claim changed during cleanup');
             unregisterStreamAll(root, id);
+            if (!releaseClaim(claim)) throw new Error(`the device log claim at ${claim.root} changed during cleanup`);
             for (const alias of stream.aliases.keys()) if (streams.get(alias) === stream) streams.delete(alias);
             for (const wake of stream.waiters) wake(true);
           }
@@ -528,7 +729,8 @@ export function createStreams(
           void stream
             .cleanup()
             .catch((error: unknown) => {
-              log(`device log stream ${id} did not close: ${error instanceof Error ? error.message : String(error)}`);
+              stream.cleanupError = error instanceof Error ? error.message : String(error);
+              log(`device log stream ${id} did not close: ${stream.cleanupError}`);
             })
             .finally(() => {
               stream.finalized = true;
@@ -574,9 +776,14 @@ export function createStreams(
               });
             }
             generations.set(child, stream.generation);
+            for (const wake of stream.waiters) wake(false);
             return child;
           },
           stopStream: async () => {
+            stream.generation++;
+            stream.activePid = null;
+            stream.observedAt = null;
+            for (const wake of stream.waiters) wake(false);
             signalChild(stream);
             await waitChild(stream);
           },
@@ -595,8 +802,14 @@ export function createStreams(
       });
     },
     async stop(root: string, platform: string, slot: string, streamId: string): Promise<boolean> {
-      const key = `${realpathSync(root)}\0${deviceSlotKey(platform, validateDeviceSlot(slot))}`;
-      const canonicalRoot = realpathSync(root);
+      let canonicalRoot: string;
+      try {
+        canonicalRoot = realpathSync(root);
+      } catch (error) {
+        if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') throw error;
+        canonicalRoot = resolvePath(root);
+      }
+      const key = `${canonicalRoot}\0${deviceSlotKey(platform, validateDeviceSlot(slot))}`;
       return serialize(canonicalRoot, async () => {
         const stream = streams.get(key);
         if (!stream) {
@@ -604,8 +817,7 @@ export function createStreams(
           if (recorded === undefined) return false;
           if (!isJsonObject(recorded) || recorded.kind !== 'stream' || recorded.streamId !== streamId)
             throw new Error('the device log stream changed');
-          await clearStreamClaim(root, streamId);
-          unregisterStreamAll(root, streamId);
+          await clearStreamClaim(root, streamId, () => unregisterStreamAll(root, streamId));
           return true;
         }
         if (stream.id !== streamId) throw new Error('the device log stream changed');
@@ -613,19 +825,91 @@ export function createStreams(
         return true;
       });
     },
-    async wait(root, platform, slot, streamId, since, after, timeoutMs, signal, env) {
+    async wait(
+      root,
+      platform,
+      slot,
+      streamId,
+      since,
+      after,
+      timeoutMs,
+      signal,
+      env,
+      through = 0,
+      checkCoverage = false,
+    ) {
       const key = `${realpathSync(root)}\0${deviceSlotKey(platform, validateDeviceSlot(slot))}`;
       const stream = streams.get(key);
       if (!stream || stream.id !== streamId) return { revision: after, gone: true };
-      if (signal && env) scheduleBackfill(stream, since, signal, env);
-      if (stream.revision > after) return { revision: stream.revision };
+      const deadline = Date.now() + timeoutMs;
+      if (checkCoverage && (stream.spec.physical || (signal && stream.historySeen.get(signal)?.status === 'covered'))) {
+        const synced = await new Promise<boolean>((resolve, reject) => {
+          let settled = false;
+          const cleanup = () => {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', abort);
+          };
+          const finish = (result: boolean) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(result);
+          };
+          const abort = () => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(signal?.reason);
+          };
+          const timer = setTimeout(() => finish(false), timeoutMs);
+          signal?.addEventListener('abort', abort, { once: true });
+          void stream.sink.sync().then(
+            () => {
+              finish(true);
+              return undefined;
+            },
+            (error: unknown) => {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              reject(error);
+            },
+          );
+          if (signal?.aborted) abort();
+        });
+        if (!synced) return { revision: stream.revision, coverage: 'pending' as const };
+        if (streams.get(key) !== stream) return { revision: after, gone: true };
+      }
+      const coverage = signal && env ? scheduleBackfill(stream, since, signal, env, through) : undefined;
+      const coverageStatus = () => {
+        if (stream.spec.physical && stream.writeFailures) return 'failed' as const;
+        if (
+          !stream.spec.physical &&
+          coverage?.status === 'covered' &&
+          (coverage.generation !== stream.generation ||
+            coverage.failureVersion !== stream.writeFailures ||
+            !stream.child ||
+            stream.child.exitCode !== null ||
+            stream.child.signalCode !== null)
+        )
+          return 'failed' as const;
+        return coverage?.status === 'covered' && !coverage.warm && (coverage.startedAt ?? 0) < through
+          ? ('pending' as const)
+          : coverage?.status;
+      };
+      if (stream.revision > after || (checkCoverage && coverageStatus() !== 'pending'))
+        return { revision: stream.revision, ...(coverage ? { coverage: coverageStatus() } : {}) };
       signal?.throwIfAborted();
       return new Promise((resolve, reject) => {
         const finish = (gone: boolean) => {
           clearTimeout(timer);
           signal?.removeEventListener('abort', abort);
           stream.waiters.delete(finish);
-          resolve({ revision: stream.revision, ...(gone ? { gone: true as const } : {}) });
+          resolve({
+            revision: stream.revision,
+            ...(gone ? { gone: true as const } : {}),
+            ...(coverage ? { coverage: coverageStatus() } : {}),
+          });
         };
         const abort = () => {
           clearTimeout(timer);
@@ -633,7 +917,7 @@ export function createStreams(
           stream.waiters.delete(finish);
           reject(signal?.reason);
         };
-        const timer = setTimeout(() => finish(false), timeoutMs);
+        const timer = setTimeout(() => finish(false), Math.max(0, deadline - Date.now()));
         stream.waiters.add(finish);
         signal?.addEventListener('abort', abort, { once: true });
         if (signal?.aborted) abort();
@@ -641,16 +925,13 @@ export function createStreams(
     },
     running: () => streams.size > 0,
     async close(): Promise<void> {
-      try {
-        await Promise.all(queues.values());
-        await Promise.all([...new Set(streams.values())].map(stop));
-      } finally {
-        try {
-          await writers?.ownedClose();
-        } finally {
-          await writers?.close();
-        }
-      }
+      await Promise.all(queues.values());
+      const results = await Promise.allSettled([...new Set(streams.values())].map(stop));
+      const owned = await Promise.allSettled([writers?.ownedClose()]);
+      const closed = await Promise.allSettled([writers?.close()]);
+      const failure = results.find((result) => result.status === 'rejected');
+      if (failure?.status === 'rejected') throw failure.reason;
+      for (const result of [...owned, ...closed]) if (result.status === 'rejected') throw result.reason;
     },
   };
 }

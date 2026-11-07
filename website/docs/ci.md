@@ -79,6 +79,10 @@ recorded build, `run` refuses with `STIM_NO_RECORDED_BUILD` before touching a
 device, and the failure's `remedy` names the `stim ci build ...` command to run
 first. macOS and web are unchanged: macOS `run` builds its app itself.
 
+A CI job retains its selected engine until it ends. Work on the current engine
+defers its promotion while the job is active. An engine that predates attached CI
+hosting refuses with `STIM_ENGINE_HOST_UNAVAILABLE`; run `stim engine update`.
+
 Every iOS and Android `run` on this machine starts the app from clean state on
 the workspace's own simulator or emulator, including when the device already
 has this build.
@@ -257,3 +261,5 @@ To try it with an agent:
 > Use stim ci to run this app's existing test command on a dedicated
 > checkout. Use the exact target in STIM_CI_RUN_RESULT, save result.json and
 > diagnostics, and verify cleanup on both success and a deliberate test failure.
+
+Concurrent CI jobs must use separate Stim homes when a job owns an attached daemon.
