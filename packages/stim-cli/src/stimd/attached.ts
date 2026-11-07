@@ -1,7 +1,7 @@
 import { existsSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   isJsonObject,
@@ -48,40 +48,101 @@ export function attachedExitWaitMs(env: NodeJS.ProcessEnv = process.env): number
   }
 }
 
+/** Selects one engine for a CI job's hosting and API operations. */
+export async function bindCIEngine(env: NodeJS.ProcessEnv): Promise<{
+  host: typeof hostStimd;
+  runOp: import('../api/engine-route.ts').RunOp;
+  release: () => void;
+}> {
+  const { selectedEngineDir, loadEngineRunOp } = await import('../api/engine-route.ts');
+  let selected = selectedEngineDir(env);
+  const { ownStoreEngine } = await import('../daemon/engine-switch.ts');
+  const own = ownStoreEngine();
+  let retained = selected ?? (own ? join(own.root, own.build) : null);
+  let claim: import('@stim-cli/core/ownership-claim').ClaimHandle | null = null;
+  if (retained) {
+    const { takeLock } = await import('../engine-store/locks.ts');
+    const { buildClaimRoot } = await import('../engine-store/claims.ts');
+    const { tryAcquireClaim, releaseClaim } = await import('@stim-cli/core/ownership-claim');
+    const root = dirname(retained);
+    let lock: Awaited<ReturnType<typeof takeLock>> = null;
+    for (const until = Date.now() + 10_000; !lock && Date.now() < until;) {
+      try {
+        lock = await takeLock(root, '.lock.sock');
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          'socketPath' in error &&
+          'code' in error &&
+          (error.code === 'EPERM' || error.code === 'EACCES')
+        )
+          throw Object.assign(new Error('The sandbox denied the Stim engine store lock.'), {
+            code: SANDBOX_BLOCKED,
+            remedy: 'Run outside the sandbox; `stim guide errors sandbox` explains the available allowances.',
+          });
+        throw error;
+      }
+      if (!lock) await new Promise((done) => setTimeout(done, 50));
+    }
+    if (!lock) throw new Error('Could not lock the Stim engine store for this CI job.');
+    try {
+      if (selected) selected = selectedEngineDir(env);
+      retained = selected ?? (own ? join(own.root, own.build) : null);
+      if (retained && dirname(retained) === root) {
+        const attempt = tryAcquireClaim({
+          root: buildClaimRoot(root, basename(retained)),
+          mode: 'shared',
+          label: 'stim ci engine',
+          details: { drained: false, engineDirs: [] },
+        });
+        if (attempt.pending) releaseClaim(attempt.pending);
+        claim = attempt.acquired ?? null;
+        if (!claim) throw new Error('Could not retain the selected Stim engine for this CI job.');
+      } else if (retained) throw new Error('The selected Stim engine store changed during CI setup.');
+    } finally {
+      await lock.release();
+    }
+  }
+  const { ClaimUnavailableError, releaseClaim } = await import('@stim-cli/core/ownership-claim');
+  const release = () => {
+    if (!claim) return;
+    if (!releaseClaim(claim))
+      throw new ClaimUnavailableError('could not release the CI engine claim', { claimPath: claim.path });
+    claim = null;
+  };
+  try {
+    const runOp = selected ? await loadEngineRunOp(selected) : null;
+    if (selected && runOp) {
+      const entry = join(selected, 'dist', 'attached-stimd.mjs');
+      const engine: Partial<typeof import('./attached.ts')> = existsSync(entry)
+        ? await import(pathToFileURL(entry).href)
+        : {};
+      if (typeof engine.hostStimd !== 'function')
+        throw Object.assign(new Error('The selected Stim engine cannot host a CI daemon.'), {
+          code: 'STIM_ENGINE_HOST_UNAVAILABLE',
+          remedy: 'Run stim engine update to select an engine that supports attached hosting.',
+        });
+      return { host: engine.hostStimd, runOp, release };
+    }
+    if (selected) release();
+    const local = (await import('../api.ts')).runOp;
+    return { host: hostStimd, runOp: (name, args, ctx) => Reflect.apply(local, undefined, [name, args, ctx]), release };
+  } catch (error) {
+    release();
+    throw error;
+  }
+}
+
 /**
  * Starts this build's stimd as a child of this process (`__stimd --attached`), with stimd's environment taken from
  * `env`, and waits until it serves. It runs until this process calls `end` or exits, which closes its stdin. Resolves
  * `held` when another stimd took the home first, `blocked` when a sandbox denies its socket, and null when it failed
  * otherwise or did not serve within 10 s.
  */
-/** Selects one engine for a CI job's hosting and API operations. */
-export async function bindCIEngine(env: NodeJS.ProcessEnv): Promise<{
-  host: typeof hostStimd;
-  runOp: import('../api/engine-route.ts').RunOp;
-}> {
-  const { selectedEngineDir, loadEngineRunOp } = await import('../api/engine-route.ts');
-  const selected = selectedEngineDir(env);
-  const runOp = selected ? await loadEngineRunOp(selected) : null;
-  if (selected && runOp) {
-    const entry = join(selected, 'dist', 'attached-stimd.mjs');
-    const engine: Partial<typeof import('./attached.ts')> = existsSync(entry)
-      ? await import(pathToFileURL(entry).href)
-      : {};
-    if (typeof engine.hostStimd !== 'function')
-      throw Object.assign(new Error('The selected Stim engine cannot host a CI daemon.'), {
-        code: 'STIM_ENGINE_HOST_UNAVAILABLE',
-        remedy: 'Run stim engine update to select an engine that supports attached hosting.',
-      });
-    return { host: engine.hostStimd, runOp };
-  }
-  const local = (await import('../api.ts')).runOp;
-  return { host: hostStimd, runOp: (name, args, ctx) => Reflect.apply(local, undefined, [name, args, ctx]) };
-}
-
 export function hostStimd(
   env: NodeJS.ProcessEnv,
   { handover = true }: { handover?: boolean } = {},
-): Promise<AttachedHost | 'held' | 'blocked' | null> {
+): Promise<AttachedHost | 'held' | 'blocked' | 'blocked-lock' | null> {
   const args = [spawnEntry('cli'), '__stimd', ATTACHED_ARG];
   const child = getExecutor().spawn(process.execPath, handover ? args : [...args, NO_HANDOVER_ARG], {
     cwd: tmpdir(),
@@ -110,9 +171,11 @@ export function hostStimd(
       } catch {}
       buffer = '';
       if (!isJsonObject(line)) return;
-      if (line.op === 'attached-held' || line.op === 'attached-blocked') {
+      if (line.op === 'attached-held' || line.op === 'attached-blocked' || line.op === 'attached-blocked-lock') {
         clearTimeout(timer);
-        resolve(line.op === 'attached-held' ? 'held' : 'blocked');
+        resolve(
+          line.op === 'attached-held' ? 'held' : line.op === 'attached-blocked-lock' ? 'blocked-lock' : 'blocked',
+        );
         return;
       }
       if (line.op !== 'attached') return;

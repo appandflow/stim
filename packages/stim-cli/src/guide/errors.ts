@@ -1976,7 +1976,8 @@ not on any remote"  (worktree remove)
   exits; the next command starts or hosts the next one. The refusal comes
   only when the sandbox itself denies the socket (EPERM or EACCES): a stimd
   started outside the sandbox holds the home and this command may not
-  connect, or the attached stimd may not bind. A slow start is never refused.
+  connect, the attached stimd may not bind, or its engine store lock is denied.
+  A slow start is never refused.
   On macOS, run stim doctor --fix inside Claude Code, then restart the session.
   On Linux, a path-specific socket allowance is unsupported; run the command
   outside the sandbox. status, logs, reload, doctor and other read commands

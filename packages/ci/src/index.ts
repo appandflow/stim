@@ -111,14 +111,16 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   });
   let attempted = false;
   let host: AttachedHost | null = null;
+  let releaseEngine: (() => void) | undefined;
   try {
     signal?.throwIfAborted();
     const binding = await bindCIEngine(stimEnvironment(options));
+    releaseEngine = binding.release;
     const hosted = await binding.host(
       { ...stimEnvironment(options), STIM_POOL_BOOTED_GRACE_MINUTES: '0' },
       { handover: false },
     );
-    if (hosted === 'blocked')
+    if (hosted === 'blocked' || hosted === 'blocked-lock')
       throw Object.assign(new Error('The sandbox denied the Stim daemon socket.'), {
         code: 'STIM_SANDBOX_BLOCKED',
         remedy: 'Run outside the sandbox; `stim guide errors sandbox` explains the available allowances.',
@@ -220,7 +222,21 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
         result.failure = result.cleanup.error;
       }
     }
-    await host?.end();
+    try {
+      await host?.end();
+    } catch (error) {
+      result.cleanup.error ??= failure(error, 'STIM_CI_CLEANUP_FAILED');
+    } finally {
+      try {
+        releaseEngine?.();
+      } catch (error) {
+        result.cleanup.error ??= failure(error, 'STIM_CI_CLEANUP_FAILED');
+      }
+    }
+    if (result.cleanup.error && result.exitCode === 0) {
+      result.exitCode = 1;
+      result.failure = result.cleanup.error;
+    }
     if (options.signal?.aborted && result.exitCode === 0) {
       result.exitCode = 130;
       result.failure = { code: 'STIM_CI_CANCELLED', message: 'CI run was cancelled.' };

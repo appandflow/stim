@@ -84,10 +84,10 @@ export function isSandboxBlocked(error: unknown): error is Error {
   return error instanceof Error && 'code' in error && error.code === SANDBOX_BLOCKED;
 }
 
-function sandboxBlocked(): Error {
+function sandboxBlocked(path = stimdSocket()): Error {
   return Object.assign(
     new Error(
-      `${stimdSocket()} is outside this sandbox's allowance; run Stim outside the sandbox or see stim guide errors sandbox`,
+      `${path} is outside this sandbox's allowance; run Stim outside the sandbox or see stim guide errors sandbox`,
     ),
     { code: SANDBOX_BLOCKED },
   );
@@ -420,9 +420,17 @@ export async function ensureStimd(
     if (!taken && !held && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
       const { hostStimd } = await import('../stimd/attached.ts');
       const host = await hostStimd(env);
-      if (host !== 'held' && host !== 'blocked' && host !== null) attachedHost = host;
+      if (host !== 'held' && host !== 'blocked' && host !== 'blocked-lock' && host !== null) attachedHost = host;
       taken = stimdLive() || (await claimTaken(launched, CLAIM_WAIT_MS - ATTACH_AFTER_MS));
-      if (host === 'blocked' && !taken) throw sandboxBlocked();
+      if ((host === 'blocked' || host === 'blocked-lock') && !taken) {
+        const path =
+          host === 'blocked-lock'
+            ? (await import('../engine-store/locks.ts')).engineLockSocket(
+                (await import('../engine-store/store.ts')).engineRoot(env),
+              )
+            : undefined;
+        throw sandboxBlocked(path);
+      }
     }
     taken ||= await claimTaken(launched, CLAIM_WAIT_MS - ATTACH_AFTER_MS);
     if (taken && pin) await admit(held, command);

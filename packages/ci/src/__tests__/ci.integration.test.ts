@@ -11,6 +11,7 @@ const lifecycle = vi.hoisted(() => ({
   diagnostics: vi.fn<() => Promise<unknown>>(),
   stop: vi.fn<(options: { signal: AbortSignal }) => Promise<unknown>>(),
   host: vi.fn<(env: NodeJS.ProcessEnv, options: { handover?: boolean }) => Promise<unknown>>(),
+  release: vi.fn<() => void>(),
   steps: new Array<string>(),
 }));
 vi.mock('stim', () => ({
@@ -22,6 +23,7 @@ vi.mock('stim', () => ({
 vi.mock('stim/attached-stimd', () => ({
   bindCIEngine: async () => ({
     host: lifecycle.host,
+    release: lifecycle.release,
     runOp: (name: 'run' | 'stop' | 'diagnostics', args: unknown[]) => Reflect.apply(lifecycle[name], lifecycle, args),
   }),
 }));
@@ -34,6 +36,7 @@ let options: CIOptions;
 beforeEach(() => {
   deviceId = 'owned-device';
   lifecycle.create.mockClear();
+  lifecycle.release.mockReset();
   lifecycle.steps = [];
   lifecycle.host.mockReset().mockImplementation(async () => {
     lifecycle.steps.push('host');
@@ -400,4 +403,20 @@ it('does not time out a passing run while its daemon host ends', async () => {
   const result = await runCI({ ...options, command: undefined, timeoutMs: 100 });
   expect(result.exitCode).toBe(0);
   expect(result.failure).toBeUndefined();
+});
+
+it('reports a failed engine claim release after cleanup', async () => {
+  lifecycle.release.mockImplementationOnce(() => {
+    throw Object.assign(new Error('claim at /scratch/claim could not be released'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy: 'Restore claim store access',
+    });
+  });
+  const result = await runCI({ ...options, command: undefined });
+  expect(result.exitCode).toBe(1);
+  expect(result.failure).toMatchObject({
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    message: expect.stringContaining('/scratch/claim'),
+    remedy: 'Restore claim store access',
+  });
 });

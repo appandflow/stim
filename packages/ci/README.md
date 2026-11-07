@@ -12,6 +12,8 @@ that slot. Do not point CI at a developer's active checkout.
 
 If the selected machine engine predates attached CI hosting, `run` refuses with
 `STIM_ENGINE_HOST_UNAVAILABLE`. Run `stim engine update` to select a capable engine.
+An attached host or CI job retains its engine build until it ends. Work on the
+current engine defers its promotion while the host or job is active.
 
 ## Build, then run
 

@@ -334,13 +334,19 @@ export function applySandboxFix(
 
   const stimHome = env.STIM_HOME || '~/.stim';
   const target = claudeLocalSettingsPath(settingsRoot);
-  const missing = missingAllowance(allowanceSearchPaths(settingsRoot, env.HOME ?? env.USERPROFILE), stimHome);
+  const missing = missingAllowance(
+    allowanceSearchPaths(settingsRoot, env.HOME ?? env.USERPROFILE),
+    stimHome,
+    undefined,
+    undefined,
+    env,
+  );
   if (missing.length === 0) {
     note(chalk.green('Stim is already allowed through this sandbox. Nothing to apply.'));
     return 0;
   }
 
-  const result = applyClaudeAllowance(target, sandboxAllowance(stimHome));
+  const result = applyClaudeAllowance(target, sandboxAllowance(stimHome, undefined, env));
   if (result.status === 'refused') {
     note(chalk.red(result.reason));
     note(chalk.dim(`Nothing was written. Add ${missing.join(', ')} by hand.`));
@@ -411,7 +417,7 @@ async function repairDoctorProject(
   const settingsRoot = settingsContext.repoRoot ?? root;
   let exitCode: 0 | 1 = 0;
   signal?.throwIfAborted();
-  const socketBlocked = detectHarness(env) !== null && (await sandboxBlocksSocket());
+  const socketBlocked = detectHarness(env) !== null && (await sandboxBlocksSocket(undefined, env));
   if (
     sandboxFinding(settingsRoot, {
       env,
@@ -640,7 +646,7 @@ async function assembleDoctorReport(
       env,
       home: env.HOME ?? env.USERPROFILE,
       stimHome: operation?.home ?? env.STIM_HOME,
-      socketBlocked: await sandboxBlocksSocket(),
+      socketBlocked: await sandboxBlocksSocket(undefined, env),
     });
     if (sandbox) findings.push(sandbox);
   }

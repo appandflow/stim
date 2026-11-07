@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bindCIEngine } from '../stimd/attached.ts';
+import { collectStore } from '../engine-store/gc.ts';
 
 const select = vi.hoisted(() => vi.fn<(env: NodeJS.ProcessEnv) => string | null>());
 const load = vi.hoisted(() => vi.fn<(dir: string) => Promise<((name: string) => Promise<string>) | null>>());
@@ -31,6 +32,7 @@ test('hosts through the selected engine with the chosen environment and options'
     const binding = await bindCIEngine(env);
     expect(await binding.host(env, { handover: false })).toEqual({ env, options: { handover: false } });
     expect(select).toHaveBeenCalledWith(env);
+    binding.release();
   } finally {
     rmSync(root, { recursive: true, force: true });
     select.mockReset();
@@ -62,6 +64,27 @@ test.each([true, false])('keeps the selected operations when the pointer changes
     select.mockReturnValue(join(root, 'new-engine'));
     expect(await binding.runOp('run', [], {})).toBe(hasEngine ? root : 'local');
     expect(await binding.runOp('stop', [], {})).toBe(hasEngine ? root : 'local');
+    binding.release();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    select.mockReset();
+  }
+});
+
+test('retains a selected engine across later pointers and collection until released', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-retain-engine-'));
+  const selected = join(root, 'bbbbbbbbbbbb');
+  try {
+    mkdirSync(join(selected, 'dist'), { recursive: true });
+    writeFileSync(join(selected, 'dist', 'attached-stimd.mjs'), 'export function hostStimd() {}');
+    select.mockReturnValue(selected);
+    const binding = await bindCIEngine({});
+    writeFileSync(join(root, 'current.json'), JSON.stringify({ format: 1, dir: 'cccccccccccc' }));
+    writeFileSync(join(root, 'previous'), 'dddddddddddd');
+    expect(collectStore(root)).not.toContain('bbbbbbbbbbbb');
+    expect(await binding.runOp('run', [], {})).toBe(selected);
+    binding.release();
+    expect(collectStore(root)).toContain('bbbbbbbbbbbb');
   } finally {
     rmSync(root, { recursive: true, force: true });
     select.mockReset();
