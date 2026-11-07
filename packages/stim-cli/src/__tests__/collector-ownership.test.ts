@@ -6,7 +6,7 @@ import { decode } from 'unique-pid';
 import { getExecutor } from '../exec.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { verifyCollectorOwnership } from '../stimd/logs/ownership.ts';
-import { registerCollector, unregisterCollector, readCollectors } from '../stimd/logs/state.ts';
+import { registerCollector, removeCollectorIfSame, readCollectors } from '../stimd/logs/state.ts';
 
 let home: string;
 beforeEach(() => {
@@ -48,7 +48,7 @@ test('persisted identity recognizes a live child without argv and refuses other 
       'upid1.' + Buffer.from(JSON.stringify({ ...identity, startTime: start.join(':') })).toString('base64url');
     registerCollector(root, 'ios', { pid, processToken: replacement });
     expect(verifyCollectorOwnership({ pid, root, platform: 'ios' })).toEqual({ status: 'gone' });
-    unregisterCollector(root, 'ios', pid, processToken!);
+    removeCollectorIfSame(root, 'ios', { pid, processToken });
     expect(readCollectors(root).ios).toEqual({ pid, processToken: replacement });
     registerCollector(root, 'ios', { pid, processToken });
     expect(

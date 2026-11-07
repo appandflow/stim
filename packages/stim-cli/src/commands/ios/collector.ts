@@ -1,25 +1,14 @@
-import { deviceSlotFileKey, deviceSlotKey } from '../../devices/device-slots.ts';
-import { join } from 'node:path';
-import type { ChildProcess } from 'node:child_process';
-import { mkdirSync, openSync } from 'node:fs';
+import { deviceSlotKey } from '../../devices/device-slots.ts';
 import chalk from 'chalk';
-import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { PLATFORM } from './support.ts';
-import { spawnEntry } from '../../spawn-entry.ts';
 import { verifyCollectorOwnership } from '../../stimd/logs/ownership.ts';
 import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import { pidExists, signalProcessTree } from '../../metro.ts';
 import { cancellableSleep } from '../../cancellation.ts';
-import { getExecutor } from '../../exec.ts';
-import { ambientEnv } from '@stim-cli/core';
-
-function collectorLogFile(root: string, slot: string): string {
-  return join(workspaceLogsDir(root), `collector-${deviceSlotFileKey(PLATFORM, slot)}.log`);
-}
-
-export function collectorEntry(): string {
-  return spawnEntry('collector-run');
-}
+import type { StimContext } from '@stim-cli/core';
+import { startDeviceLogStream, stopDeviceLogStream } from '../../daemon/client.ts';
+import { appNameFromBundleId } from '../../stimd/logs/ios.ts';
+import { removeCollectorIfSame } from '../../stimd/logs/state.ts';
 
 export const COLLECTOR_EXIT_WAIT_MS = 2000;
 
@@ -34,7 +23,9 @@ interface ReplaceCollectorArgs {
   appExecutable?: string | null;
   physical?: boolean;
   payloadUrl?: string | null;
-  spawn?: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
+  operation?: StimContext;
+  startStream?: typeof startDeviceLogStream;
+  stopStream?: typeof stopDeviceLogStream;
   kill?: (pid: number, signal: NodeJS.Signals) => boolean;
   alive?: (pid: number) => boolean;
   readState?: typeof readWorkspaceState;
@@ -56,6 +47,8 @@ export async function stopPreviousCollector({
   verify = verifyCollectorOwnership,
   waitMs = COLLECTOR_EXIT_WAIT_MS,
   note = (_line: string) => {},
+  operation,
+  stopStream = stopDeviceLogStream,
 }: {
   root: string;
   slot?: string;
@@ -65,10 +58,26 @@ export async function stopPreviousCollector({
   verify?: typeof verifyCollectorOwnership;
   waitMs?: number;
   note?: (line: string) => void;
-}): Promise<{ killed: number | null }> {
+  operation?: StimContext;
+  stopStream?: typeof stopDeviceLogStream;
+}): Promise<{ killed: number | null; error?: string }> {
   const previous =
-    (readState(root)?.collectors as Record<string, { pid?: number }> | undefined)?.[deviceSlotKey(PLATFORM, slot)] ||
-    null;
+    (readState(root)?.collectors as Record<string, { pid?: number; kind?: string; streamId?: string }> | undefined)?.[
+      deviceSlotKey(PLATFORM, slot)
+    ] || null;
+  if (previous?.kind === 'stream') {
+    if (!previous.streamId) {
+      const error = 'the previous log stream has no identity';
+      note(chalk.yellow(error));
+      return { killed: null, error };
+    }
+    const result = await stopStream(root, PLATFORM, slot, previous.streamId, operation);
+    if ('error' in result) {
+      note(chalk.yellow(result.error));
+      return { killed: null, error: result.error };
+    }
+    return { killed: null };
+  }
   const previousPid = Number(previous?.pid) || null;
   let killed: number | null = null;
 
@@ -80,31 +89,28 @@ export async function stopPreviousCollector({
       isAlive: alive,
       expected: previous,
     });
+    if (ownership.status === 'unverified') {
+      const error = `The previous iOS log collector (pid ${previousPid}) cannot be verified: ${ownership.reason}. Verify whether pid ${previousPid} is still running. Once it has stopped, run \`stim stop\` and retry.`;
+      note(chalk.yellow(error));
+      return { killed: null, error };
+    }
     if (ownership.status === 'ours') {
       try {
         kill(previousPid, 'SIGTERM');
         killed = previousPid;
       } catch (err) {
-        if ((err as NodeJS.ErrnoException)?.code !== 'ESRCH') {
-          note(
-            chalk.yellow(
-              `Could not stop the previous ${PLATFORM} log collector (pid ${previousPid}): ${(err as Error)?.message || err}`,
-            ),
-          );
-        }
+        if ((err as NodeJS.ErrnoException)?.code !== 'ESRCH')
+          return { killed: null, error: `Could not stop the previous iOS log collector: ${String(err)}` };
       }
       const deadline = Date.now() + waitMs;
-      while (Date.now() < deadline && alive(previousPid)) {
-        await cancellableSleep(COLLECTOR_POLL_MS);
-      }
-    } else if (ownership.status === 'unverified') {
-      note(
-        chalk.dim(
-          `Previous ${PLATFORM} log collector (pid ${previousPid}): ${ownership.reason}, so it was not signalled -- starting a replacement anyway`,
-        ),
-      );
+      while (Date.now() < deadline && alive(previousPid)) await cancellableSleep(COLLECTOR_POLL_MS);
+      if (alive(previousPid))
+        return { killed, error: 'The previous iOS log collector did not stop; run `stim stop` and retry.' };
     }
+    if (!removeCollectorIfSame(root, deviceSlotKey(PLATFORM, slot), previous))
+      return { killed, error: 'The previous iOS log collector changed during cleanup; retry the command.' };
   }
+
   return { killed };
 }
 
@@ -117,42 +123,52 @@ export async function replaceCollector({
   appExecutable,
   physical = false,
   payloadUrl = null,
-  spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
+  operation,
+  startStream = startDeviceLogStream,
+  stopStream = stopDeviceLogStream,
   kill = (pid, signal) => process.kill(pid, signal),
   alive = pidExists,
   readState = readWorkspaceState,
   verify = verifyCollectorOwnership,
   waitMs = COLLECTOR_EXIT_WAIT_MS,
   note = (_line: string) => {},
-}: ReplaceCollectorArgs): Promise<{ killed: number | null; pid: number | null }> {
-  const { killed } = await stopPreviousCollector({ root, slot, kill, alive, readState, verify, waitMs, note });
+}: ReplaceCollectorArgs): Promise<{ killed: number | null; streamId: string | null; error?: string }> {
+  const existing = readState(root)?.collectors?.[deviceSlotKey(PLATFORM, slot)];
+  const previous =
+    !physical && existing && typeof existing === 'object' && 'kind' in existing && existing.kind === 'stream'
+      ? { killed: null }
+      : await stopPreviousCollector({
+          root,
+          slot,
+          kill,
+          alive,
+          readState,
+          verify,
+          waitMs,
+          note,
+          operation,
+          stopStream,
+        });
+  const { killed } = previous;
+  if (previous.error) return { killed, streamId: null, error: previous.error };
 
-  const args = [collectorEntry(), '--platform', PLATFORM, '--root', root, '--udid', udid, '--bundle', bundleId];
-  if (slot !== 'default') args.push('--slot', slot);
-  if (appName) args.push('--app-name', appName);
-  if (appExecutable) args.push('--app-executable', appExecutable);
-  if (physical) args.push('--physical');
-  if (payloadUrl) args.push('--payload-url', payloadUrl);
-
-  let stdio: 'ignore' | (number | 'ignore')[] = 'ignore';
-  try {
-    mkdirSync(workspaceLogsDir(root), { recursive: true });
-    const fd = openSync(collectorLogFile(root, slot), 'a');
-    stdio = ['ignore', fd, fd];
-  } catch {}
-
-  let child: ChildProcess | undefined;
-  try {
-    child = spawn(process.execPath, args, {
-      cwd: root,
-      detached: true,
-      stdio,
-      env: ambientEnv(),
-    });
-    child?.unref?.();
-  } catch (err) {
-    note(chalk.yellow(`Could not start the ${PLATFORM} log collector: ${(err as Error)?.message || err}`));
-    return { killed, pid: null };
+  const result = await startStream(
+    {
+      root,
+      platform: PLATFORM,
+      slot,
+      udid,
+      bundleId,
+      appName: appName ?? appNameFromBundleId(bundleId),
+      ...(appExecutable ? { appExecutable } : {}),
+      ...(physical ? { physical: true } : {}),
+      ...(payloadUrl ? { payloadUrl } : {}),
+    },
+    operation,
+  );
+  if ('error' in result) {
+    note(chalk.yellow(`Could not start the ${PLATFORM} log stream: ${result.error}`));
+    return { killed, streamId: null, error: result.error };
   }
-  return { killed, pid: child?.pid ?? null };
+  return { killed, streamId: result.streamId };
 }

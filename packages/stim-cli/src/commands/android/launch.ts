@@ -11,7 +11,6 @@ import {
 import { teardownOwnedAvd } from '../../devices/teardown.ts';
 import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import { formatBytes } from '../../fs-util.ts';
-import type { ChildProcess } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { basename } from 'node:path';
 import chalk from 'chalk';
@@ -78,7 +77,7 @@ import { providerUploadOutcome } from '../../cache/build-cache.ts';
 import { settleFingerprintCheck, type FingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { launchOutcomeRecord, type MobileRuntimePreparation, type RuntimeReadiness } from '../native-runtime.ts';
 import type { RuntimePlan } from '../../engine/runtime-plan.ts';
-import { killPreviousCollector, startCollector } from './collector.ts';
+import { stopPreviousDeviceLog, startCollector } from './collector.ts';
 import {
   androidCrashClockOffset,
   captureNativeCrashes,
@@ -86,6 +85,7 @@ import {
 } from '../../diagnostics/native-crash.ts';
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 import type { HostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
+import { deviceLogReadinessWait } from '../../daemon/client.ts';
 
 interface VerifyAndroidRunArgs {
   operation?: StimContext;
@@ -110,6 +110,7 @@ interface VerifyAndroidRunArgs {
   enterActivity?: BuildProgress['activity'];
   hostedLogs?: Omit<HostedLaunchLogs, 'stop'>;
   hostedRunCommand?: string;
+  deviceStreamId?: string | null;
 }
 
 interface AndroidRuntimeLaunchContext {
@@ -267,6 +268,7 @@ export async function verifyAndroidMetroRun({
   enterActivity,
   hostedLogs,
   hostedRunCommand,
+  deviceStreamId,
 }: Omit<VerifyAndroidRunArgs, 'verifyReleaseLaunched' | 'variant'>): Promise<{
   state: boolean | string;
   warning?: string;
@@ -305,6 +307,9 @@ export async function verifyAndroidMetroRun({
     ? await withDrainingCancellation(operation, operation?.signal, () =>
         verifyLaunched({
           signal: operation?.signal,
+          ...(deviceStreamId
+            ? { sleep: deviceLogReadinessWait(root, 'android', slot ?? 'default', deviceStreamId, operation) }
+            : {}),
           timeoutMs,
           requireBundleResponse: true,
           slot: launchSlotScope(root, slot),
@@ -512,7 +517,7 @@ interface FinishAndroidRunArgs {
   resolveDevClientScheme: typeof androidDevClientScheme;
   verifyLaunched: typeof verifyLaunch;
   verifyReleaseLaunched: typeof verifyAndroidReleaseLaunch;
-  spawn: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
+  startLogStream: typeof import('../../daemon/client.ts').startDeviceLogStream;
   kill: (pid: number, signal: NodeJS.Signals) => boolean;
   pidAlive: typeof pidExists;
   verifyCollector: typeof verifyCollectorOwnership;
@@ -758,7 +763,7 @@ export async function finishAndroidRun({
   resolveDevClientScheme,
   verifyLaunched,
   verifyReleaseLaunched,
-  spawn,
+  startLogStream,
   kill,
   pidAlive,
   verifyCollector,
@@ -1027,14 +1032,18 @@ export async function finishAndroidRun({
   persistLastBuild({ recordBuild, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
 
   const remoteRelease = Boolean(remoteDevice && release);
+  let deviceStreamId: string | null = null;
   if (remoteDevice) {
-    killPreviousCollector(root, {
+    const previous = await stopPreviousDeviceLog(root, {
       slot,
       kill,
-      isAlive: pidAlive,
+      alive: pidAlive,
       verify: verifyCollector,
       note: (line) => out(phaseLine('logs', line)),
+      operation,
     });
+    if (previous.error)
+      out(phaseLine('logs', chalk.yellow(`could not stop the previous device log stream: ${previous.error}`)));
     writer.write({
       src: 'build',
       level: 'info',
@@ -1043,18 +1052,19 @@ export async function finishAndroidRun({
     });
   } else {
     if (physical) raiseLeaseFor(0, false);
-    const collectorPid = await startCollector({
+    deviceStreamId = await startCollector({
       root,
       slot,
       serial,
       packageName: androidPackage,
-      spawn,
       kill,
       alive: pidAlive,
       verify: verifyCollector,
       out,
+      operation,
+      startStream: startLogStream,
     });
-    phase('logs', `${displayPath(root, logsDir)}${collectorPid ? ` (collector pid ${collectorPid})` : ''}`);
+    phase('logs', displayPath(root, logsDir));
   }
 
   if (physical) raiseLeaseFor(runtime.verificationWaitMs, false);
@@ -1083,6 +1093,7 @@ export async function finishAndroidRun({
     component: launched.component ?? null,
     phase,
     enterActivity,
+    deviceStreamId,
   });
   if (launchState === LAUNCH_FATAL) {
     return fail(

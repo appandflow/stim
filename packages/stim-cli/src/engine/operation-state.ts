@@ -5,6 +5,7 @@ import type { ClaimHandle } from '../ownership-claim.ts';
 /** What one operation tracks while it runs; kept per context so two operations in one process stay apart. */
 export interface OperationState {
   cancelled: string | null;
+  stimdOpToken: string | undefined;
   runSignal: AbortSignal | undefined;
   declaring: Set<ClaimHandle>;
   running: Set<ChildProcess>;
@@ -29,6 +30,7 @@ let detached: OperationState | undefined;
 function fresh(): OperationState {
   return {
     cancelled: null,
+    stimdOpToken: undefined,
     runSignal: undefined,
     declaring: new Set(),
     running: new Set(),

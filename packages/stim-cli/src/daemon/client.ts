@@ -1,9 +1,13 @@
+import type { Invocation } from '../stimd/forwarded.ts';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import type { SpawnOptions } from 'node:child_process';
 import { connect, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { StimContext } from '@stim-cli/core';
+import type { StreamSpec } from '../stimd/logs/streams.ts';
+import { operationState } from '../engine/operation-state.ts';
 import type { PresencePublishParams } from '@stim-cli/core/protocol';
 import {
   daemonClaimRoot,
@@ -19,7 +23,7 @@ import {
   type DaemonMode,
 } from '@stim-cli/core/state';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
-import { cancellableSleep } from '../cancellation.ts';
+import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { endForSwitch, engineShim, ownStoreEngine, switchedEngine } from './engine-switch.ts';
@@ -69,6 +73,7 @@ export function stimdBuildId(): string {
 
 let refusedBuild: string | null = null;
 let opSocket: Socket | null = null;
+const opTokens = new WeakMap<Socket, string>();
 let following: Promise<never> | null = null;
 let admitting = false;
 
@@ -148,16 +153,28 @@ function askStimd(
   op: string,
   timeoutMs: number,
   fields: Record<string, unknown> = {},
+  signal?: AbortSignal,
+  onProgress?: (line: string) => void,
 ): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
     let socket: Socket | null = null;
     const finish = (reply: Record<string, unknown> | null) => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
       socket?.destroy();
       if (!following) resolve(reply);
     };
+    const cancel = () => finish(null);
     const timer = setTimeout(() => finish(null), timeoutMs);
-    socket = openStimd([{ ...fields, op }], (reply) => finish(reply));
+    signal?.addEventListener('abort', cancel, { once: true });
+    if (signal?.aborted) {
+      finish(null);
+      return;
+    }
+    socket = openStimd([{ ...fields, op }], (reply) => {
+      if (reply.op === 'progress' && typeof reply.line === 'string') onProgress?.(reply.line);
+      else finish(reply);
+    });
     socket.once('close', () => finish(null));
   });
 }
@@ -357,6 +374,7 @@ export async function ensureStimd(
   platform: NodeJS.Platform = process.platform,
   pin = false,
   held?: Socket[],
+  invocation?: Invocation & { workspace?: string | null },
 ): Promise<boolean> {
   if (!spawnsDaemon(env)) return false;
   try {
@@ -370,11 +388,12 @@ export async function ensureStimd(
     admitting = pin && !held;
     if (stimdLive()) {
       if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
-      else if (!(await beginOp(held)) && stimdRefused() && (await successorBound())) await beginOp(held);
+      else if (!(await beginOp(held, invocation)) && stimdRefused() && (await successorBound()))
+        await beginOp(held, invocation);
       return true;
     }
     const taken = await claimTaken(launchStimd(env, daemonMode(env), platform));
-    if (taken && pin) await beginOp(held);
+    if (taken && pin) await beginOp(held, invocation);
     return taken;
   } catch {
     return false;
@@ -390,7 +409,7 @@ export async function ensureStimd(
  * operation's, the connection goes into it instead, and closing it ends the op. stimd answers at once, or after a
  * switch already under way, with `engine-changed`. False when it does not answer.
  */
-function beginOp(held?: Socket[]): Promise<boolean> {
+function beginOp(held?: Socket[], invocation?: Invocation & { workspace?: string | null }): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (begun: boolean) => {
@@ -406,12 +425,132 @@ function beginOp(held?: Socket[]): Promise<boolean> {
       resolve(begun);
     };
     const timer = setTimeout(() => finish(false), OP_BEGIN_TIMEOUT_MS);
-    const socket = openStimd([{ op: 'op.begin' }], (reply) => finish(reply.op === 'op.begun'));
+    const socket = openStimd([{ op: 'op.begin', params: invocation }], (reply) => {
+      if (reply.op === 'op.begun' && typeof reply.opToken === 'string') opTokens.set(socket, reply.opToken);
+      finish(reply.op === 'op.begun');
+    });
     socket.once('close', () => {
       if (opSocket === socket) opSocket = null;
       finish(false);
     });
   });
+}
+
+export function admittedOpToken(held?: Socket[]): string | undefined {
+  const socket = held?.[0] ?? opSocket;
+  return socket ? opTokens.get(socket) : undefined;
+}
+
+export function operationToken(operation?: StimContext): string | undefined {
+  const state = operationState(operation);
+  return state.stimdOpToken ?? (!operation || state.takesSignals ? admittedOpToken() : undefined);
+}
+
+export function cancelCliOp(): void {
+  opSocket?.destroy();
+}
+
+export async function acquireDeviceTicket(
+  params: {
+    root: string;
+    platform: 'ios' | 'android';
+    slot: string;
+    id: string;
+    deviceName: string | null;
+    idLabel: string;
+    waitSeconds: number;
+    noWait: boolean;
+    installBoundMs: number;
+    appId: string | null;
+  },
+  operation: StimContext,
+  warn: (line: string) => void,
+): Promise<import('../engine/device-lease-run.ts').AcquireRunLeaseResult & { ticket?: string }> {
+  const opToken = operationToken(operation);
+  if (!opToken) throw new Error('the operation has no stimd connection');
+  const prepared = await askStimd('lease.prepare', 10_000, { opToken, params }, operation.signal);
+  throwIfCancelled(operation.signal, 'device lease wait');
+  if (prepared?.op !== 'lease.prepared' || typeof prepared.ticket !== 'string')
+    throw new Error(
+      typeof prepared?.message === 'string' ? prepared.message : 'stimd did not prepare the device lease',
+    );
+  const ticket = prepared.ticket;
+  const answer = await askStimd(
+    'lease.acquire',
+    params.waitSeconds * 1000 + 10_000,
+    { opToken, params: { ticket } },
+    operation.signal,
+    warn,
+  );
+  throwIfCancelled(operation.signal, 'device lease wait');
+  if (answer?.op !== 'lease.acquired' || !isJsonObject(answer.result))
+    throw new Error(typeof answer?.message === 'string' ? answer.message : 'stimd did not acquire the device lease');
+  return { ...(answer.result as import('../engine/device-lease-run.ts').AcquireRunLeaseResult), ticket };
+}
+
+export async function releaseDeviceTicket(ticket: string, operation: StimContext): Promise<void> {
+  const opToken = operationToken(operation);
+  if (opToken) await askStimd('lease.release', 10_000, { opToken, params: { ticket } });
+}
+
+export async function startDeviceLogStream(
+  spec: StreamSpec,
+  operation?: StimContext,
+): Promise<{ streamId: string } | { error: string }> {
+  throwIfCancelled(operation?.signal, 'device log startup');
+  const opToken = operationToken(operation);
+  if (!opToken) return { error: 'the operation has no stimd connection' };
+  const reply = await askStimd('logs.start', 10_000, { opToken, params: spec }, operation?.signal);
+  throwIfCancelled(operation?.signal, 'device log startup');
+  if (reply?.op === 'logs.started' && typeof reply.streamId === 'string') return { streamId: reply.streamId };
+  return { error: typeof reply?.message === 'string' ? reply.message : 'stimd did not start the device log stream' };
+}
+
+export async function stopDeviceLogStream(
+  root: string,
+  platform: string,
+  slot: string,
+  streamId: string,
+  operation?: StimContext,
+): Promise<{ stopped: boolean } | { error: string }> {
+  throwIfCancelled(operation?.signal, 'device log cleanup');
+  if (!stimdLive()) await ensureStimd(operation?.env);
+  const reply = await askStimd('logs.stop', 10_000, { params: { root, platform, slot, streamId } }, operation?.signal);
+  throwIfCancelled(operation?.signal, 'device log cleanup');
+  if (reply?.op === 'logs.stopped' && typeof reply.stopped === 'boolean') return { stopped: reply.stopped };
+  return { error: typeof reply?.message === 'string' ? reply.message : 'stimd did not stop the device log stream' };
+}
+
+export function deviceLogReadinessWait(
+  root: string,
+  platform: 'ios' | 'android',
+  slot: string,
+  streamId: string,
+  operation?: StimContext,
+): (ms: number) => Promise<void> {
+  let revision = 0;
+  return async (ms) => {
+    const started = Date.now();
+    const opToken = operationToken(operation);
+    const timeoutMs = Math.min(30_000, Math.max(0, Math.ceil(ms)));
+    const reply = opToken
+      ? await askStimd(
+          'readiness.wait',
+          timeoutMs + 1000,
+          { opToken, params: { root, platform, slot, streamId, after: revision, timeoutMs } },
+          operation?.signal,
+        )
+      : null;
+    throwIfCancelled(operation?.signal, 'launch readiness check');
+    if (reply?.op === 'readiness.changed' && typeof reply.revision === 'number') {
+      revision = reply.revision;
+      if (reply.gone !== true) return;
+    }
+    await cancellableSleep(Math.max(0, ms - (Date.now() - started)), {
+      signal: operation?.signal,
+      what: 'launch readiness check',
+    });
+  };
 }
 
 /** Whether a stimd of this build replaced, within `CLAIM_WAIT_MS`, the one of an older build that refused it. */
@@ -450,7 +589,15 @@ export async function beforeCommand(
     passes,
     pin = false,
     held,
-  }: { cwd: string; recordUse: boolean; passes: boolean; pin?: boolean; held?: Socket[] } = {
+    invocation,
+  }: {
+    cwd: string;
+    recordUse: boolean;
+    passes: boolean;
+    pin?: boolean;
+    held?: Socket[];
+    invocation?: Invocation & { workspace?: string | null };
+  } = {
     cwd: process.cwd(),
     recordUse: true,
     passes: true,
@@ -461,7 +608,8 @@ export async function beforeCommand(
   if (!creates && !inline) return;
   const { commandWorkspace } = await import('./command-workspace.ts');
   const root = commandWorkspace(creates && recordUse, env, cwd);
-  const taken = creates && (await ensureStimd(env, process.platform, pin, held));
+  const taken =
+    creates && (await ensureStimd(env, process.platform, pin, held, invocation && { ...invocation, workspace: root }));
   if (taken || !inline) return;
   const { runPassesInProcess } = await import('./passes.ts');
   await runPassesInProcess(name, env, root);

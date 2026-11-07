@@ -49,6 +49,14 @@ describe('runOperation', () => {
     await expect(cli('ios', true)).resolves.toEqual({ admitted: null });
   });
 
+  it('refuses an oversized environment before admitting either caller', async () => {
+    env.LARGE = 'x'.repeat(512 * 1024);
+    for (const entered of [await cli('ios'), await api('start')])
+      expect(entered).toMatchObject({
+        refusal: { code: 'STIM_ENV_TOO_LARGE', message: expect.stringContaining('LARGE') },
+      });
+  });
+
   it('refuses a governed command while a removed variable is set, for both callers and with --plan', async () => {
     env = { ...env, STIM_MAINTENANCE: 'off' };
     for (const entered of [await cli('start'), await cli('ios', true), await api('build', 'android')])

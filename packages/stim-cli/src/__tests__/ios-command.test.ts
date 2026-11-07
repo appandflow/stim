@@ -49,7 +49,6 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { collectorProcessTitle } from '../stimd/logs/ownership.ts';
 import { getProject, setDevice, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { prepareHostedIos } from '../device-host/hosted-ios.ts';
 import { writeHostedNative } from '../workspace/placement-state.ts';
@@ -72,7 +71,6 @@ import {
   appNameFromPath,
   buildLogFile,
   cacheDescription,
-  collectorEntry,
   devClientScheme,
   iosConfigurationSetting,
   iosFacts,
@@ -91,7 +89,7 @@ import {
   schemesFromInfoPlist,
   writeLastBuild,
 } from '../commands/ios.ts';
-import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeIosSim } from './_factories.ts';
+import { collectorProcessTitle, asProcessExit, makeError, makeExecutor, makeIosSim } from './_factories.ts';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { IosDeviceMismatchError } from '../engine/device-ios.ts';
@@ -436,7 +434,7 @@ function harness(overrides: LooseDeps = {}) {
     },
     replaceCollector: async (args) => {
       record('replaceCollector', args);
-      return { killed: null, pid: 5150 };
+      return { killed: null, streamId: 'stream-5150' };
     },
     stopPreviousCollector: async (args) => {
       record('stopPreviousCollector', args);
@@ -3354,7 +3352,7 @@ describe('the collector', () => {
     verify?: NonNullable<ReplaceCollectorArgs['verify']>;
   } = {}) {
     if (state) writeWorkspaceState(root, state);
-    const spawns: { cmd: string; args: readonly string[]; opts: Record<string, unknown> }[] = [];
+    const starts: unknown[] = [];
     const kills: { pid: number; signal: NodeJS.Signals }[] = [];
     const notes: string[] = [];
     const opts: ReplaceCollectorArgs = {
@@ -3362,9 +3360,9 @@ describe('the collector', () => {
       udid: UDID,
       bundleId: 'com.example.app',
       appName: 'FixtureDev',
-      spawn: (cmd, args, spawnOptions) => {
-        spawns.push({ cmd, args, opts: spawnOptions });
-        return makeChildProcess({ pid: 7001 });
+      startStream: async (spec) => {
+        starts.push(spec);
+        return { streamId: 'stream-1' };
       },
       kill: (pid, signal) => {
         kills.push({ pid, signal });
@@ -3376,7 +3374,7 @@ describe('the collector', () => {
       waitMs: 0,
       note: (line) => notes.push(line),
     };
-    return { spawns, kills, notes, opts };
+    return { starts, kills, notes, opts };
   }
 
   test('a previous collector proven ours is SIGTERMed and replaced, not duplicated', async () => {
@@ -3384,8 +3382,8 @@ describe('the collector', () => {
     const result = await replaceCollector(h.opts);
     expect(h.kills).toEqual([{ pid: 999, signal: 'SIGTERM' }]);
     expect(result.killed).toBe(999);
-    expect(h.spawns.length).toBe(1);
-    expect(result.pid).toBe(7001);
+    expect(h.starts.length).toBe(1);
+    expect(result.streamId).toBe('stream-1');
   });
 
   test('a previous collector that is already gone (ESRCH) is not an error', async () => {
@@ -3397,7 +3395,7 @@ describe('the collector', () => {
     });
     const result = await replaceCollector(h.opts);
     expect(result.killed).toBe(null);
-    expect(h.spawns.length).toBe(1);
+    expect(h.starts.length).toBe(1);
   });
 
   test('a previous collector proven gone is left alone, never signalled, and not noted', async () => {
@@ -3409,11 +3407,11 @@ describe('the collector', () => {
     expect(h.kills).toEqual([]);
     expect(result.killed).toBe(null);
     expect(h.notes).toEqual([]);
-    expect(h.spawns.length).toBe(1);
-    expect(result.pid).toBe(7001);
+    expect(h.starts.length).toBe(1);
+    expect(result.streamId).toBe('stream-1');
   });
 
-  test('a previous collector that cannot be proven ours is left running, noted once, and replaced anyway', async () => {
+  test('a previous collector that cannot be proven ours is retained and blocks replacement', async () => {
     const h = collectorHarness({
       state: { collectors: { ios: { pid: 999 } } },
       verify: () => ({ status: 'unverified', reason: "pid 999 does not run this workspace's ios log collector" }),
@@ -3423,9 +3421,9 @@ describe('the collector', () => {
     expect(result.killed).toBe(null);
     expect(h.notes.length).toBe(1);
     expect(h.notes[0]).toMatch(/pid 999/);
-    expect(h.notes[0]).toMatch(/not signalled/);
-    expect(h.spawns.length).toBe(1);
-    expect(result.pid).toBe(7001);
+    expect(h.notes[0]).toMatch(/cannot be verified/);
+    expect(h.starts.length).toBe(0);
+    expect(result.error).toMatch(/stim stop/);
   });
 
   test('the default ownership check is wired through: a live process with a persisted identity is signalled', async () => {
@@ -3456,59 +3454,12 @@ describe('the collector', () => {
       expect(h.kills).toEqual([]);
       expect(result.killed).toBe(null);
       expect(h.notes.length).toBe(1);
-      expect(h.notes[0]).toMatch(/not signalled/);
+      expect(h.notes[0]).toMatch(/cannot be verified/);
     } finally {
       child.kill('SIGKILL');
       await collectorExits(child);
     }
   }, 20_000);
-
-  test('the collector is spawned detached, unref-ed, with the REAL app name from the .app path', async () => {
-    const h = collectorHarness();
-    await replaceCollector(h.opts);
-    const firstSpawn = h.spawns[0];
-    assert(firstSpawn);
-    const { cmd, args, opts } = firstSpawn;
-    expect(cmd).toBe(process.execPath);
-    expect(args[0]).toBe(collectorEntry());
-    expect(existsSync(collectorEntry())).toBeTruthy();
-    expect(args.slice(1)).toEqual([
-      '--platform',
-      'ios',
-      '--root',
-      root,
-      '--udid',
-      UDID,
-      '--bundle',
-      'com.example.app',
-      '--app-name',
-      'FixtureDev',
-    ]);
-    expect(opts.detached).toBe(true);
-    expect(opts.cwd).toBe(root);
-  });
-
-  test('an --app-executable is appended when the caller supplies CFBundleExecutable', async () => {
-    const h = collectorHarness();
-    h.opts.appExecutable = 'Fixture';
-    await replaceCollector(h.opts);
-    const firstSpawn = h.spawns[0];
-    assert(firstSpawn);
-    expect(firstSpawn.args.slice(1)).toEqual([
-      '--platform',
-      'ios',
-      '--root',
-      root,
-      '--udid',
-      UDID,
-      '--bundle',
-      'com.example.app',
-      '--app-name',
-      'FixtureDev',
-      '--app-executable',
-      'Fixture',
-    ]);
-  });
 
   test('the command hands it the app name derived from the .app basename', async () => {
     reserve();

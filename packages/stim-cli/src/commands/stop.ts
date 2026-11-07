@@ -75,21 +75,17 @@ import {
   updateWorkspaceStateAsync,
 } from '../workspace/workspace-state.ts';
 import { verifyCollectorOwnership } from '../stimd/logs/ownership.ts';
+import { sameCollectorRecord } from '../stimd/logs/state.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { readBootedParkDeadline } from '../devices/booted-park.ts';
 import { clearDeferredShutdown } from '../devices/deferred-shutdown.ts';
-import { ensureStimd } from '../daemon/client.ts';
+import { ensureStimd, stopDeviceLogStream } from '../daemon/client.ts';
 import { removeOwnedEmulatorMetroReverses } from '../devices/android.ts';
 import { removePhoneReverses } from '../devices/phone-reverses.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { fileLeaseIo, releaseWorkspaceLeasesAsync, type ReleasedLease } from '../engine/device-lease.ts';
 import { stopTunnel } from '../engine/tunnel.ts';
-import {
-  inspectProcessIdentity,
-  sameProcessRecord,
-  waitForProcessExit,
-  type ProcessRecord,
-} from '../process-identity.ts';
+import { inspectProcessIdentity, waitForProcessExit, type ProcessRecord } from '../process-identity.ts';
 import {
   resolveSupervisorTarget,
   type SupervisorTarget,
@@ -154,7 +150,7 @@ export function clearCollectorState(root: string, expected?: CollectorStateMap |
       return true;
     }
     for (const [platform, record] of Object.entries(expected ?? {})) {
-      if (sameProcessRecord(current[platform] as ProcessRecord | undefined, record)) delete current[platform];
+      if (sameCollectorRecord(current[platform], record)) delete current[platform];
     }
     if (Object.keys(current).length) writeWorkspaceState(root, { collectors: current });
     else clearWorkspaceStateKeys(root, ['collectors']);
@@ -171,6 +167,7 @@ interface CollectorTarget {
   pid: number | null;
   status: string;
   reason?: string;
+  streamId?: string;
 }
 
 export function resolveCollectorTargets({
@@ -188,6 +185,12 @@ export function resolveCollectorTargets({
 }): CollectorTarget[] {
   const targets: CollectorTarget[] = [];
   for (const [platform, record] of Object.entries(collectors || {})) {
+    if (record?.kind === 'stream') {
+      if (typeof record.streamId === 'string' && parseDeviceSlotKey(platform))
+        targets.push({ platform, pid: null, status: 'stream', streamId: record.streamId });
+      else targets.push({ platform, pid: null, status: 'unverified', reason: 'the stream identity is invalid' });
+      continue;
+    }
     const pid = numberOrNull(Number(record?.pid));
     if (!pid || pid === selfPid) {
       targets.push({ platform, pid: pid ?? null, status: 'invalid' });
@@ -500,6 +503,7 @@ async function stopWorkspace({
   collectors = undefined,
   signalCollector = (pid: number) => signalProcessTreeAsync(pid),
   verifyCollector = verifyCollectorOwnership,
+  stopStream,
   clearCollectors = (projectRoot, expected) =>
     withWorkspaceStateLockAsync(projectRoot, () => clearCollectorState(projectRoot, expected)),
   isAlive = pidExists,
@@ -539,6 +543,7 @@ async function stopWorkspace({
   collectors?: CollectorStateMap | null;
   signalCollector?: (pid: number) => unknown;
   verifyCollector?: typeof verifyCollectorOwnership;
+  stopStream?: typeof stopDeviceLogStream;
   clearCollectors?: (root: string, expected?: CollectorStateMap | null) => boolean | void | Promise<boolean | void>;
   isAlive?: (pid: number) => boolean;
   killGroup?: typeof killMetroTree | typeof killMetroTreeAsync;
@@ -655,6 +660,8 @@ async function stopWorkspace({
     signal: signalCollector,
     report,
     verify: verifyCollector,
+    stopStream,
+    operation,
     waiter,
   });
   const unverifiedCollectors = outcomes.collectors.entries.filter((e) => e.status === 'unverified');
@@ -663,7 +670,7 @@ async function stopWorkspace({
       chalk.dim(
         phaseLine(
           'stop',
-          `keeping the collector records; ${plural(unverifiedCollectors.length, 'pid')} could not be verified, and a later \`ios\` / \`android\` run replaces them`,
+          `keeping the collector records; ${plural(unverifiedCollectors.length, 'identity')} could not be verified`,
         ),
       ),
     );
@@ -872,18 +879,42 @@ async function reapCollectors(
     signal,
     report,
     verify = verifyCollectorOwnership,
+    stopStream = stopDeviceLogStream,
+    operation,
     waiter,
   }: {
     isAlive: (pid: number) => boolean;
     signal: (pid: number) => unknown;
     report: (line: string) => void;
     verify?: typeof verifyCollectorOwnership;
+    stopStream?: typeof stopDeviceLogStream;
+    operation?: StimContext;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
   },
 ): Promise<CollectorsOutcome> {
   const targets = resolveCollectorTargets({ root, collectors, isAlive, verify });
   const entries: CollectorEntry[] = [];
   for (const target of targets) {
+    if (target.status === 'stream') {
+      const parsed = parseDeviceSlotKey(target.platform);
+      if (!parsed || !target.streamId) {
+        entries.push({
+          platform: target.platform,
+          pid: null,
+          status: 'unverified',
+          reason: 'the stream identity is invalid',
+        });
+        continue;
+      }
+      const result = await stopStream(root, parsed.platform, parsed.slot, target.streamId, operation);
+      if ('error' in result) {
+        entries.push({ platform: target.platform, pid: null, status: 'failed', reason: result.error });
+        report(chalk.yellow(phaseLine('stop', `could not stop the ${target.platform} log stream: ${result.error}`)));
+      } else {
+        entries.push({ platform: target.platform, pid: null, status: result.stopped ? 'stopped' : 'already-stopped' });
+      }
+      continue;
+    }
     if (target.status === 'invalid') {
       entries.push({ platform: target.platform, pid: target.pid, status: 'invalid' });
       report(chalk.dim(phaseLine('stop', `ignoring an unusable ${target.platform} collector record`)));

@@ -36,6 +36,7 @@ export async function startCommandServer({
   platform = process.platform,
   output = null,
   extraEnv = {},
+  baseEnv = process.env,
 }: {
   root: string;
   port: number;
@@ -44,6 +45,7 @@ export async function startCommandServer({
   /** File stdio for a child that outlives its parent, instead of pipes. */
   output?: { files: ChildOutput; fds: [number, number] } | null;
   extraEnv?: Record<string, string>;
+  baseEnv?: NodeJS.ProcessEnv;
   writer?: NdjsonWriter | null;
   spawnFn?: ((cmd: string, args: string[], opts: SpawnOptions) => ChildProcess) | null;
   signalTree?: typeof signalProcessTree;
@@ -62,7 +64,7 @@ export async function startCommandServer({
   });
   // A wrapper such as yarn runs Metro in a grandchild, so the command gets its own process group to stop as one.
   const group = platform !== 'win32';
-  const node = withProjectNode(root, process.env, { top: repositoryRoot(root) ?? root });
+  const node = withProjectNode(root, baseEnv, { top: repositoryRoot(root) ?? root });
   if (node.pinned) {
     log.write({
       src: 'metro',

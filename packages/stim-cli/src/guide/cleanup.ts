@@ -1093,16 +1093,15 @@ THE ONE CASE GC WILL NOT REAP
   \`ios\` / \`android\` attach after launch. They are recorded in
   the global workspace state.json, and nothing outside this workspace can name them,
   so \`stop\` is what stands between a teardown and a log stream that outlives
-  the device it was reading. A fresh \`ios\` / \`android\` run also kills the
-  previous collector for that platform before starting its own.
+  the device it was reading. A fresh \`ios\` / \`android\` run replaces the
+  previous stream, or shares it when the same device and app use another slot.
 
   A PHYSICAL IPHONE'S COLLECTOR IS THE SAME PROCESS with one difference: on
   hardware the collector IS the launch. \`devicectl\` connects an app's
   streams only when it is the process that starts the app, so the collector
   runs \`devicectl device process launch --console\` itself rather than
-  attaching after the fact. It registers under the same \`ios\` key, carries
-  the same --root in its title, is proven and replaced by the same pid rules,
-  and is reaped by the same \`stop\`.
+  attaching after the fact. Each physical iPhone launch starts its own console,
+  and \`stop\` ends it.
 
   THE APP'S LIFETIME IS BOUND TO THAT COLLECTOR, and this is the one place a
   phone behaves worse than a simulator. \`devicectl device process launch
@@ -1124,19 +1123,16 @@ THE ONE CASE GC WILL NOT REAP
   a non-zero devicectl exit is the only evidence a launch or console failed.
   See \`guide logs\` for what it can and cannot carry.
 
-  Before signalling a recorded collector pid, \`stop\`, \`gc --delete\`,
-  \`worktree remove\`, and a fresh \`ios\` / \`android\` run each read that
-  persisted process identity and require it to match the exact process
-  registered for this workspace and platform. A pid that cannot be proven is
-  reported and left alone: the
-  kernel reuses pids, and an unreaped record is a smaller problem than a
-  signal delivered to someone else's process. A fresh \`ios\` / \`android\`
-  run starts its replacement anyway, leaving the unproven pid to clear on its
-  own. A collector started by an older Stim has no process identity token, so
-  it reports as unverified until its record clears -- which happens when its
-  own device's log stream ends and it unregisters itself, or when the next
-  \`ios\` / \`android\` run overwrites the record with its own, whichever
-  comes first; the old process itself keeps running until it exits on its own.
+  Stim checks ownership before signalling a recorded collector. If it cannot
+  verify the previous collector, it refuses to replace it: "The previous iOS
+  log collector (pid <pid>) cannot be verified" (or Android). Android and
+  simulator runs can continue with a warning; a physical iPhone cannot launch
+  without its console. Verify whether that pid is still running. Once it has
+  stopped, run \`stim stop\` and retry. Stim keeps the unverified record
+  until it can confirm the collector is gone.
+  A stream whose ownership claim is missing refuses with "The device log stream
+  <id> has no verifiable claim"; inspect the stated claim and confirm the stream
+  is gone before removing its record.
 
   A different exact OS start identity proves PID reuse: the recorded collector
   is gone, and the unrelated process is never signalled. A missing, malformed,

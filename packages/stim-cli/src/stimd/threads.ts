@@ -155,8 +155,9 @@ export function createPassesLane(threads: ThreadTable, log: Log): MaintenanceLan
   };
 }
 
-const thread: ThreadName | undefined = isMainThread ? undefined : workerData?.stimdThread;
-if (thread && parentPort) {
+const thread: ThreadName | 'logs' | undefined = isMainThread ? undefined : workerData?.stimdThread;
+if (thread === 'logs') await import('./logs/writer-thread.ts');
+else if (thread && parentPort) {
   const port = parentPort;
   const log: Log = (level, event, msg, fields = {}) => port.postMessage({ type: 'log', level, event, msg, fields });
   const { processContext } = await import('../cli-operation.ts');

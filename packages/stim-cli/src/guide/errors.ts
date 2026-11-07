@@ -1398,6 +1398,12 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Stim home (\`stim ci build\`, or the API build), then run again. \`stim guide ci\`
   has the flow. \`stim ios\` and \`stim android\` never use it.`,
     },
+    STIM_ENV_TOO_LARGE: {
+      summary: 'the invocation environment exceeds the forwarding limit',
+      body: () => `STIM_ENV_TOO_LARGE
+  The environment forwarded to stimd exceeds 512 KB. The refusal names the
+  five largest variables. Reduce or unset them, then rerun the command.`,
+    },
     STIM_BAD_ARG: {
       summary: 'an argument, setting, directory, flavor, or device name refused before anything starts',
       aliases: ['STIM_NO_PROJECT'],

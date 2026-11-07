@@ -321,11 +321,18 @@ export type RaiseLeaseResult =
   | { status: 'lost'; lease: DeviceLease | null };
 
 export function raiseLease(
-  { root, platform, slot = 'default', minMs }: { root: string; platform: LeasePlatform; slot?: string; minMs: number },
+  {
+    root,
+    platform,
+    slot = 'default',
+    minMs,
+    token,
+  }: { root: string; platform: LeasePlatform; slot?: string; minMs: number; token?: string },
   io: LeaseIo = fileLeaseIo,
 ): RaiseLeaseResult {
   const record = io.readHolder(root)[deviceSlotKey(platform, slot)];
   if (!record) return { status: 'none' };
+  if (token !== undefined && record.token !== token) return { status: 'lost', lease: null };
   const path = deviceLeasePath(platform, record.id);
   return io.withLeaseLock(deviceLeaseLockPath(platform, record.id), (): RaiseLeaseResult => {
     const current = parseLease(io.readLease(path));
@@ -384,12 +391,12 @@ function releaseByRoot(root: string, platform: LeasePlatform, id: string, io: Le
 }
 
 export function releaseRunLease(
-  { root, platform, slot = 'default' }: { root: string; platform: LeasePlatform; slot?: string },
+  { root, platform, slot = 'default', token }: { root: string; platform: LeasePlatform; slot?: string; token?: string },
   io: LeaseIo = fileLeaseIo,
 ): ReleasedLease | null {
   return withHolderLock(io, root, () => {
     const record = io.readHolder(root)[deviceSlotKey(platform, slot)];
-    if (!record || record.kind !== 'run') return null;
+    if (!record || record.kind !== 'run' || (token !== undefined && record.token !== token)) return null;
     const released = releaseHeld(root, platform, record, io, slot);
     return released ? summarize(released) : null;
   });

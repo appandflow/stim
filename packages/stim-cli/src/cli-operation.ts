@@ -69,6 +69,7 @@ export function processOperation(projectRoot: string): ProcessOperation {
       if (received) return exitNow(EXIT_CODES[received]);
       received = interrupt;
       if (!controller.signal.aborted) controller.abort(interrupt);
+      void import('./daemon/client.ts').then(({ cancelCliOp }) => cancelCliOp());
       if (state.draining) return;
       if (state.handled) return exitNow(EXIT_CODES[interrupt]);
       operation.dispose();

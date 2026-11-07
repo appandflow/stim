@@ -107,7 +107,7 @@ export { lastBuildRecord, iosFacts, writeLastBuild, cacheDescription } from './i
 
 export { devClientScheme, schemesFromInfoPlist, pickDevClientScheme } from './dev-client.ts';
 
-export { collectorEntry, replaceCollector } from './ios/collector.ts';
+export { replaceCollector } from './ios/collector.ts';
 
 export { ensureWorkspaceStorageSafely } from './native-runtime.ts';
 
@@ -1301,6 +1301,8 @@ async function runIos(
           waitSeconds,
           noWait,
           installBoundMs: iosDeviceBounds(wireless).installMs,
+          signal: context.signal,
+          operation: context,
           appId: artifact.bundleId ?? proj?.bundleId ?? null,
           holderAppId: (holder: string) => d.getProject(holder)?.bundleId ?? null,
           now: d.now,
@@ -1317,8 +1319,10 @@ async function runIos(
         leaseHandle = d.runLease({
           root,
           platform: PLATFORM,
-          kind: acquired.status === 'leased' ? acquired.kind : null,
-          expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
+          ...(acquired.status === 'leased'
+            ? { kind: acquired.kind, expiresAt: acquired.expiresAt, token: acquired.token, ticket: acquired.ticket }
+            : { kind: null, expiresAt: null }),
+          operation: context,
         });
         if (acquired.status === 'leased') {
           stopLeaseSignals = d.releaseLeaseOnAbort(context, releaseLease);

@@ -2,6 +2,7 @@ import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { type ExecOptions, type Executor, getExecutor } from '../../exec.ts';
 import { androidToolCwd } from '../../devices/android.ts';
 import type { NdjsonRecord } from '../../ndjson.ts';
+import { cancellableSleep } from '../../cancellation.ts';
 
 const LEVEL_BY_LETTER: Record<string, string> = {
   V: 'debug',
@@ -142,7 +143,12 @@ function killOnAbort(signal?: AbortSignal): Pick<ExecOptions, 'onSpawn'> {
 
 export async function androidClockOffset(
   serial: string,
-  { exec = getExecutor(), now = Date.now, signal }: { exec?: Executor; now?: () => number; signal?: AbortSignal } = {},
+  {
+    exec = getExecutor(),
+    now = Date.now,
+    signal,
+    env,
+  }: { exec?: Executor; now?: () => number; signal?: AbortSignal; env?: Record<string, string> } = {},
 ): Promise<number | null> {
   const before = now();
   try {
@@ -150,6 +156,7 @@ export async function androidClockOffset(
       await exec.runFileAsync('adb', ['-s', serial, 'shell', 'date', '+%s%3N'], {
         timeoutMs: 1000,
         cwd: androidToolCwd(),
+        ...(env ? { env } : {}),
         ...killOnAbort(signal),
       })
     ).trim();
@@ -172,13 +179,14 @@ export function parsePidof(text: unknown): number | null {
 async function resolveAppPid(
   serial: string,
   packageName: string,
-  { exec = null, signal }: { exec?: Executor | null; signal?: AbortSignal } = {},
+  { exec = null, signal, env }: { exec?: Executor | null; signal?: AbortSignal; env?: Record<string, string> } = {},
 ): Promise<number | null> {
   const e = exec || getExecutor();
   try {
     return parsePidof(
       await e.runFileAsync('adb', ['-s', serial, 'shell', 'pidof', '-s', packageName], {
         timeoutMs: 10_000,
+        ...(env ? { env } : {}),
         ...killOnAbort(signal),
       }),
     );
@@ -201,8 +209,9 @@ export async function waitForAppPid({
   pollMs = 500,
   exec = null,
   signal,
+  env,
   now = Date.now,
-  sleep = defaultSleep,
+  sleep = (ms: number) => cancellableSleep(ms, { signal, what: 'device log attachment' }),
 }: {
   serial: string;
   packageName: string;
@@ -210,12 +219,14 @@ export async function waitForAppPid({
   pollMs?: number;
   exec?: Executor | null;
   signal?: AbortSignal;
+  env?: Record<string, string>;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }): Promise<PidResolution> {
   const deadline = now() + timeoutMs;
   for (;;) {
-    const pid = await resolveAppPid(serial, packageName, { exec, signal });
+    if (signal?.aborted) return { failed: true, reason: 'device log attachment was cancelled' };
+    const pid = await resolveAppPid(serial, packageName, { exec, signal, env });
     if (pid) return { ok: true, pid };
     if (now() >= deadline) {
       return {
@@ -223,12 +234,13 @@ export async function waitForAppPid({
         reason: `No process for ${packageName} appeared on ${serial} within ${Math.round(timeoutMs / 1000)}s.`,
       };
     }
-    await sleep(pollMs);
+    try {
+      await sleep(pollMs);
+    } catch (error) {
+      if (signal?.aborted) return { failed: true, reason: 'device log attachment was cancelled' };
+      throw error;
+    }
   }
-}
-
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise<void>((r) => setTimeout(r, ms));
 }
 
 export function startAndroidLogcat({
@@ -267,6 +279,7 @@ export function watchAppPid({
   intervalMs = null,
   exec = null,
   signal,
+  env,
   onChange,
   resolve = resolveAppPid,
   setTimer = setTimeout,
@@ -278,11 +291,12 @@ export function watchAppPid({
   intervalMs?: number | null;
   exec?: Executor | null;
   signal?: AbortSignal;
+  env?: Record<string, string>;
   onChange: (nextPid: number) => void | Promise<void>;
   resolve?: (
     serial: string,
     packageName: string,
-    opts: { exec?: Executor | null; signal?: AbortSignal },
+    opts: { exec?: Executor | null; signal?: AbortSignal; env?: Record<string, string> },
   ) => number | null | Promise<number | null>;
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (t: ReturnType<typeof setTimeout>) => void;
@@ -296,7 +310,7 @@ export function watchAppPid({
     if (stopped) return;
     let next: number | null = null;
     try {
-      next = await resolve(serial, packageName, { exec, signal });
+      next = await resolve(serial, packageName, { exec, signal, env });
     } catch {}
     if (next && next !== current) {
       current = next;
@@ -315,7 +329,7 @@ export function watchAppPid({
     },
     async probe() {
       try {
-        return await resolve(serial, packageName, { exec, signal });
+        return await resolve(serial, packageName, { exec, signal, env });
       } catch {
         return null;
       }

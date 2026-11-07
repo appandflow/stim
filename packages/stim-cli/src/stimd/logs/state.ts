@@ -1,4 +1,5 @@
 import { readWorkspaceState, withWorkspaceStateLock, writeWorkspaceState } from '../../workspace/workspace-state.ts';
+import { isJsonObject } from '@stim-cli/core/state';
 import { realpathSync } from 'node:fs';
 
 function collectorRoot(root: string): string {
@@ -22,24 +23,48 @@ export function registerCollector(
   });
 }
 
-export function unregisterCollector(
-  root: string,
-  platform: string,
-  pid: number,
-  processToken: string,
-): Record<string, unknown> {
+export function readCollectors(root: string): Record<string, unknown> {
+  return readWorkspaceState(collectorRoot(root))?.collectors || {};
+}
+
+export function unregisterStream(root: string, platform: string, streamId: string): void {
   root = collectorRoot(root);
-  return withWorkspaceStateLock(root, () => {
-    const state = readWorkspaceState(root);
-    const collectors: Record<string, unknown> = { ...state?.collectors };
-    const record = collectors[platform] as { pid?: unknown; processToken?: unknown } | undefined;
-    if (!(platform in collectors) || record?.pid !== pid || record.processToken !== processToken) return collectors;
+  withWorkspaceStateLock(root, () => {
+    const collectors: Record<string, unknown> = { ...readWorkspaceState(root)?.collectors };
+    const record = collectors[platform] as { streamId?: unknown } | undefined;
+    if (record?.streamId !== streamId) return;
     delete collectors[platform];
     writeWorkspaceState(root, { collectors: Object.keys(collectors).length ? collectors : undefined });
-    return collectors;
   });
 }
 
-export function readCollectors(root: string): Record<string, unknown> {
-  return readWorkspaceState(collectorRoot(root))?.collectors || {};
+export function sameCollectorRecord(a: unknown, b: unknown): boolean {
+  if (!a || !b) return !a && !b;
+  if (!isJsonObject(a) || !isJsonObject(b)) return false;
+  if (a.kind === 'stream' || b.kind === 'stream')
+    return a.kind === 'stream' && b.kind === 'stream' && typeof a.streamId === 'string' && a.streamId === b.streamId;
+  return (
+    (typeof a.pid === 'number' || typeof a.pid === 'string') && a.pid === b.pid && a.processToken === b.processToken
+  );
+}
+
+export function removeCollectorIfSame(root: string, platform: string, expected: unknown): boolean {
+  root = collectorRoot(root);
+  return withWorkspaceStateLock(root, () => {
+    const collectors: Record<string, unknown> = { ...readWorkspaceState(root)?.collectors };
+    if (!sameCollectorRecord(collectors[platform], expected)) return false;
+    delete collectors[platform];
+    writeWorkspaceState(root, { collectors: Object.keys(collectors).length ? collectors : undefined });
+    return true;
+  });
+}
+
+export function unregisterStreamAll(root: string, streamId: string): void {
+  root = collectorRoot(root);
+  withWorkspaceStateLock(root, () => {
+    const collectors: Record<string, unknown> = { ...readWorkspaceState(root)?.collectors };
+    for (const [key, record] of Object.entries(collectors))
+      if (isJsonObject(record) && record.kind === 'stream' && record.streamId === streamId) delete collectors[key];
+    writeWorkspaceState(root, { collectors: Object.keys(collectors).length ? collectors : undefined });
+  });
 }

@@ -287,6 +287,7 @@ export async function startExpoServer({
   settings,
   output = null,
   extraEnv = {},
+  baseEnv = process.env,
 }: {
   root: string;
   port: number;
@@ -302,6 +303,7 @@ export async function startExpoServer({
   /** File stdio and its own process group, for a child that outlives its parent, instead of pipes. */
   output?: { files: ChildOutput; fds: [number, number] } | null;
   extraEnv?: Record<string, string>;
+  baseEnv?: NodeJS.ProcessEnv;
 }): Promise<ChildServerHandle> {
   const resolved = resolveExpoBin(root);
   if (!resolved) {
@@ -316,7 +318,7 @@ export async function startExpoServer({
   const args = ['start', '--port', String(port), ...(tunnel ? ['--tunnel'] : []), ...(resetCache ? ['--clear'] : [])];
   const storeEnv = resolveMetroStoreInjection(root, {
     log,
-    env: process.env,
+    env: baseEnv,
     settings: settings ?? resolveProjectSettings(root).settings,
     port,
   });
@@ -327,7 +329,7 @@ export async function startExpoServer({
   // accepts the recorded serverPid, so the supervisor runs its own node directly.
   const runWithOwnNode = platform === 'win32' && resolved.source === 'package';
   const [command, commandArgs] = runWithOwnNode ? [process.execPath, [bin, ...args]] : [bin, args];
-  const node = withProjectNode(root, process.env, { top: repositoryRoot(root) ?? root });
+  const node = withProjectNode(root, baseEnv, { top: repositoryRoot(root) ?? root });
   if (node.pinned) {
     log.write({
       src: 'metro',
@@ -344,8 +346,8 @@ export async function startExpoServer({
     env: {
       ...node.env,
       FORCE_COLOR: '0',
-      ...expoProxyEnv(process.env),
-      ...expoTelemetryEnv(process.env),
+      ...expoProxyEnv(baseEnv),
+      ...expoTelemetryEnv(baseEnv),
       ...storeEnv,
       // Expo's legacy tunnel uses port 8081; v2 uses this workspace's reserved port.
       ...(tunnel ? { EXPO_UNSTABLE_TUNNEL_V2: '1' } : {}),

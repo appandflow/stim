@@ -43,7 +43,7 @@ function apiCommand(operation: ApiOperation, platform: string | undefined): stri
  */
 export async function runOperation(
   entry: OperationEntry,
-): Promise<{ refusal: OperationRefusal } | { admitted: string | null; end?: () => void }> {
+): Promise<{ refusal: OperationRefusal } | { admitted: string | null; end?: () => void; opToken?: string }> {
   const command =
     entry.caller === 'cli'
       ? entry.command || null
@@ -57,6 +57,9 @@ export async function runOperation(
     removedConfigRefusal(command, entry.cwd, entry.env);
   if (refusal) return { refusal };
   if (entry.caller === 'cli' && entry.plan) return { admitted: null };
+  const creates = ['start', 'ios', 'android', 'web', 'macos', 'revive'].includes(command);
+  const context = creates ? (await import('./stimd/forwarded.ts')).invocation(entry.cwd, entry.env) : undefined;
+  if (context && 'code' in context) return { refusal: context };
   const held: import('node:net').Socket[] = [];
   try {
     const { beforeCommand } = await import('./daemon/client.ts');
@@ -65,11 +68,13 @@ export async function runOperation(
       recordUse: entry.caller === 'cli' || entry.operation !== 'start',
       passes: entry.caller === 'cli',
       pin: true,
+      invocation: context,
       ...(entry.caller === 'api' ? { held } : {}),
     });
   } catch {}
+  const opToken = held.length ? (await import('./daemon/client.ts')).admittedOpToken(held) : undefined;
   return held.length
-    ? { admitted: command, end: () => held.forEach((socket) => socket.destroy()) }
+    ? { admitted: command, end: () => held.forEach((socket) => socket.destroy()), ...(opToken ? { opToken } : {}) }
     : { admitted: command };
 }
 
