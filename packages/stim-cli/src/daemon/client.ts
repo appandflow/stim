@@ -420,7 +420,14 @@ export async function ensureStimd(
     if (!taken && !held && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
       const { hostStimd } = await import('../stimd/attached.ts');
       const host = await hostStimd(env);
-      if (host !== 'held' && host !== 'blocked' && host !== 'blocked-lock' && host !== null) attachedHost = host;
+      if (host === 'engine-unavailable')
+        throw Object.assign(new Error('The selected Stim engine cannot be verified.'), {
+          code: 'STIM_ENGINE_UNAVAILABLE',
+          remedy: 'Run stim engine rollback or stim engine use to restore the engine pointer.',
+        });
+      if (host && typeof host === 'object' && 'switched' in host)
+        (await import('./engine-switch.ts')).endForSwitch(host.switched);
+      if (host && typeof host === 'object' && 'end' in host) attachedHost = host;
       taken = stimdLive() || (await claimTaken(launched, CLAIM_WAIT_MS - ATTACH_AFTER_MS));
       if ((host === 'blocked' || host === 'blocked-lock') && !taken) {
         const path =
@@ -436,7 +443,11 @@ export async function ensureStimd(
     if (taken && pin) await admit(held, command);
     return taken;
   } catch (error) {
-    if (isSandboxBlocked(error)) throw error;
+    if (
+      isSandboxBlocked(error) ||
+      (error instanceof Error && 'code' in error && error.code === 'STIM_ENGINE_UNAVAILABLE')
+    )
+      throw error;
     return false;
   } finally {
     admitting = false;
@@ -445,11 +456,12 @@ export async function ensureStimd(
 }
 
 /** Waits for this build's stimd to acknowledge a socket request or a sandbox to deny it. */
-export async function waitForStimdHello(): Promise<'held' | 'blocked' | null> {
+export async function waitForStimdHello(): Promise<'held' | 'held-attached' | 'blocked' | null> {
   for (const deadline = Date.now() + CLAIM_WAIT_MS; Date.now() < deadline;) {
     socketError = null;
     const reply = await askStimd('hello', CONTACT_TIMEOUT_MS);
-    if (reply?.op === 'hello' && reply.build === stimdBuildId()) return 'held';
+    if (reply?.op === 'hello' && reply.build === stimdBuildId())
+      return reply.attached === true ? 'held-attached' : 'held';
     if (socketError === 'EPERM' || socketError === 'EACCES') return 'blocked';
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }

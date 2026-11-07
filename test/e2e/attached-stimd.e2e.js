@@ -412,7 +412,7 @@ test(
     const first = await hostStimd(env, { handover: false });
     assert.ok(first && typeof first === 'object');
     try {
-      assert.equal(await hostStimd(env, { handover: false }), 'held');
+      assert.equal(await hostStimd(env, { handover: false }), 'held-attached');
     } finally {
       await first.end();
     }
@@ -507,7 +507,7 @@ test('an installed CI caller shares the selected engine daemon of another build'
     cpSync(join(PACKAGE, 'package.json'), join(dir, 'package.json'));
   }
   appendFileSync(join(selected, 'dist', 'cli.mjs'), '\n');
-  writeFileSync(join(engineRoot, 'current.json'), JSON.stringify({ format: 1, dir: 'bbbbbbbbbbbb' }));
+  writeFileSync(join(engineRoot, 'current.json'), JSON.stringify({ format: 1, dir: 'bbbbbbbbbbbb', version: 'test' }));
   const chosenEnv = { ...env, STIM_HOME: join(scratch, 'home'), STIM_ENGINE_ROOT: engineRoot };
   const previousRoot = process.env.STIM_ENGINE_ROOT;
   process.env.STIM_ENGINE_ROOT = engineRoot;
@@ -527,11 +527,27 @@ test('an installed CI caller shares the selected engine daemon of another build'
     const caller = await import(pathToFileURL(join(installed, 'dist', 'attached-stimd.mjs')).href);
     binding = await caller.bindCIEngine(chosenEnv);
     assert.equal(claims(), 3);
-    assert.equal(await binding.host(chosenEnv, { handover: false }), 'held');
+    assert.equal(await binding.host(chosenEnv, { handover: false }), 'held-attached');
     binding.release();
     binding = null;
     direct.release();
     direct = null;
+    assert.equal(claims(), 1);
+    writeFileSync(
+      join(engineRoot, 'current.json'),
+      JSON.stringify({ format: 1, dir: 'cccccccccccc', version: 'next' }),
+    );
+    await assert.rejects(engine.bindCIEngine(chosenEnv), { code: 'STIM_ENGINE_SWITCHED' });
+    assert.deepEqual(await engine.hostStimd({ ...chosenEnv, STIM_HOME: join(scratch, 'stale-home') }), {
+      switched: 'next',
+    });
+    assert.equal(claims(), 1);
+    rmSync(join(engineRoot, 'current.json'));
+    await assert.rejects(engine.bindCIEngine(chosenEnv), { code: 'STIM_ENGINE_UNAVAILABLE' });
+    assert.equal(
+      await engine.hostStimd({ ...chosenEnv, STIM_HOME: join(scratch, 'missing-pointer-home') }),
+      'engine-unavailable',
+    );
     assert.equal(claims(), 1);
   } finally {
     if (owner && typeof owner === 'object') await owner.end();

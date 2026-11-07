@@ -261,3 +261,5 @@ To try it with an agent:
 > Use stim ci to run this app's existing test command on a dedicated
 > checkout. Use the exact target in STIM_CI_RUN_RESULT, save result.json and
 > diagnostics, and verify cleanup on both success and a deliberate test failure.
+
+Concurrent CI jobs must use separate Stim homes when a job owns an attached daemon.

@@ -38,6 +38,7 @@ import * as gcDevices from '../commands/gc/devices.ts';
 import * as measure from '../daemon/measure.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
 import { createMaintenanceLane, runHomePasses } from '../daemon/passes.ts';
+import * as daemonPasses from '../daemon/passes.ts';
 import { macosDir } from '../macos/state.ts';
 import { runStimd } from '../stimd/main.ts';
 import * as maintenanceMeasure from '../stimd/passes/measure.ts';
@@ -242,6 +243,22 @@ describe('stimd on every platform', () => {
 });
 
 describe.skipIf(process.platform === 'win32')('stimd', () => {
+  test('an attached daemon reports a failed tick as an unsuccessful exit', async () => {
+    const oldExit = process.exitCode;
+    const failing = vi.spyOn(daemonPasses, 'runHomePasses').mockRejectedValueOnce(new Error('tick failed in test'));
+    try {
+      process.exitCode = undefined;
+      const running = runStimd({ mode: 'on', tickMs: 60_000, attached: { handover: false } });
+      await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+      await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
+      await running;
+      expect(process.exitCode).toBe(1);
+    } finally {
+      failing.mockRestore();
+      process.exitCode = oldExit;
+    }
+  });
+
   test('only a persistent daemon can enforce deferred simulator shutdown', async () => {
     const attached = getExecutor().spawn(
       process.execPath,

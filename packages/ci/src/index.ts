@@ -125,8 +125,23 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
         code: 'STIM_SANDBOX_BLOCKED',
         remedy: 'Run outside the sandbox; `stim guide errors sandbox` explains the available allowances.',
       });
+    if (hosted && typeof hosted === 'object' && 'switched' in hosted)
+      throw Object.assign(new Error(`Stim updated to ${hosted.switched}; rerun`), {
+        code: 'STIM_ENGINE_SWITCHED',
+        remedy: 'Rerun the CI job with the selected engine.',
+      });
+    if (hosted === 'engine-unavailable')
+      throw Object.assign(new Error('The selected Stim engine cannot be verified.'), {
+        code: 'STIM_ENGINE_UNAVAILABLE',
+        remedy: 'Run stim engine rollback or stim engine use to restore the engine pointer.',
+      });
+    if (hosted === 'held-attached')
+      throw Object.assign(new Error('Another command owns the attached Stim daemon for this home.'), {
+        code: 'STIM_CI_ATTACHED_HOME',
+        remedy: 'Use a separate STIM_HOME for each concurrent CI job.',
+      });
     if (hosted === null) throw new Error('Could not start the Stim daemon for this CI job.');
-    if (hosted && typeof hosted === 'object') {
+    if (hosted && typeof hosted === 'object' && 'end' in hosted) {
       host = hosted;
       stim = createStim({
         projectRoot,

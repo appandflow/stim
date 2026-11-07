@@ -88,7 +88,7 @@ import { takeLock } from '../engine-store/locks.ts';
 import { createStatusSnapshots } from './status-snapshot.ts';
 import { crashLooping, holdCrashLoop, keptBoots, parseBoots, type Boot } from './crash-hold.ts';
 import { ASKED_MS, autoUpdateOn, checkForUpdate, DAILY_MS, lastUpdateCheck, updateDue } from './auto-update.ts';
-import { ownStoreEngine } from '../daemon/engine-switch.ts';
+import { ownStoreEngine, requireCurrentEngine } from '../daemon/engine-switch.ts';
 import { readRecords } from '../engine-store/store.ts';
 // compat C25 until removal-minor
 import { stopForeignSupervisors } from './foreign-supervisors.ts';
@@ -287,6 +287,7 @@ async function retainAttachedEngine(attached: boolean, log: Parameters<typeof fo
     throw new Error('Could not lock the attached Stim engine store.');
   }
   try {
+    requireCurrentEngine(engine);
     const retention = followEngine(log, true);
     if (!retention) throw new Error('Could not retain the attached Stim engine.');
     retention.record(true, []);
@@ -795,7 +796,10 @@ export async function runStimd({
   const shutdown = (why: string, level: Level = 'info') => {
     if (closing) return;
     closing = true;
-    if (level === 'error') markAbnormal?.();
+    if (level === 'error') {
+      markAbnormal?.();
+      if (attached) process.exitCode = 1;
+    }
     if (dependencyWork) log('debug', 'daemon_dependency_scan_cancelled', 'stopping the dependency size scan');
     threads.abort('measure');
     statuses.close();
@@ -1142,6 +1146,25 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
       writer.write({ src: 'stimd', level: 'error', event: 'daemon_failed', msg: message });
       writer.close();
     } catch {}
+    if (
+      argv.includes(ATTACHED_ARG) &&
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'STIM_ENGINE_SWITCHED' &&
+      'version' in error
+    )
+      await new Promise<void>((done) =>
+        process.stdout.write(`${JSON.stringify({ op: 'attached-switched', version: error.version })}\n`, () => done()),
+      );
+    if (
+      argv.includes(ATTACHED_ARG) &&
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'STIM_ENGINE_UNAVAILABLE'
+    )
+      await new Promise<void>((done) =>
+        process.stdout.write(`${JSON.stringify({ op: 'attached-engine-unavailable' })}\n`, () => done()),
+      );
     if (argv.includes(ATTACHED_ARG) && isSandboxBlocked(error) && 'engineLock' in error)
       await new Promise<void>((done) =>
         process.stdout.write(`${JSON.stringify({ op: 'attached-blocked-lock' })}\n`, () => done()),

@@ -88,6 +88,7 @@ export async function bindCIEngine(env: NodeJS.ProcessEnv): Promise<{
     try {
       if (selected) selected = selectedEngineDir(env);
       retained = selected ?? (own ? join(own.root, own.build) : null);
+      if (own) (await import('../daemon/engine-switch.ts')).requireCurrentEngine(own);
       if (retained && dirname(retained) === root) {
         const attempt = tryAcquireClaim({
           root: buildClaimRoot(root, basename(retained)),
@@ -142,7 +143,16 @@ export async function bindCIEngine(env: NodeJS.ProcessEnv): Promise<{
 export function hostStimd(
   env: NodeJS.ProcessEnv,
   { handover = true }: { handover?: boolean } = {},
-): Promise<AttachedHost | 'held' | 'blocked' | 'blocked-lock' | null> {
+): Promise<
+  | AttachedHost
+  | { switched: string }
+  | 'held'
+  | 'held-attached'
+  | 'blocked'
+  | 'blocked-lock'
+  | 'engine-unavailable'
+  | null
+> {
   const args = [spawnEntry('cli'), '__stimd', ATTACHED_ARG];
   const child = getExecutor().spawn(process.execPath, handover ? args : [...args, NO_HANDOVER_ARG], {
     cwd: tmpdir(),
@@ -171,10 +181,31 @@ export function hostStimd(
       } catch {}
       buffer = '';
       if (!isJsonObject(line)) return;
-      if (line.op === 'attached-held' || line.op === 'attached-blocked' || line.op === 'attached-blocked-lock') {
+      if (line.op === 'attached-engine-unavailable') {
+        clearTimeout(timer);
+        resolve('engine-unavailable');
+        return;
+      }
+      if (line.op === 'attached-switched' && typeof line.version === 'string') {
+        clearTimeout(timer);
+        resolve({ switched: line.version });
+        return;
+      }
+      if (
+        line.op === 'attached-held' ||
+        line.op === 'attached-held-attached' ||
+        line.op === 'attached-blocked' ||
+        line.op === 'attached-blocked-lock'
+      ) {
         clearTimeout(timer);
         resolve(
-          line.op === 'attached-held' ? 'held' : line.op === 'attached-blocked-lock' ? 'blocked-lock' : 'blocked',
+          line.op === 'attached-held'
+            ? 'held'
+            : line.op === 'attached-held-attached'
+              ? 'held-attached'
+              : line.op === 'attached-blocked-lock'
+                ? 'blocked-lock'
+                : 'blocked',
         );
         return;
       }

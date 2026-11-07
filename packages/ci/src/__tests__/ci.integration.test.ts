@@ -363,6 +363,7 @@ it('disables booted simulator grace only for work under its own attached host', 
 
 it.each([
   ['blocked', 'STIM_SANDBOX_BLOCKED'],
+  ['held-attached', 'STIM_CI_ATTACHED_HOME'],
   [null, 'STIM_CI_SETUP_FAILED'],
 ])('refuses CI setup when its daemon host returns %s', async (hosted, code) => {
   lifecycle.host.mockResolvedValueOnce(hosted);
