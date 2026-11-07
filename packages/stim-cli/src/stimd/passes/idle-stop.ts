@@ -48,7 +48,6 @@ import { resolveProjectSettings, resolveProjectSettingsAsync, settingValueAt } f
 import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import { readWebRecord, webFacts } from '../../web/state.ts';
 import type { MaintenancePlan } from './plan.ts';
-import { ownBuildRecords } from '../metro/injected.ts';
 
 export { decideIdleStop, type IdleStopDecision, type IdleStopEvidence } from '../../policy/idle.ts';
 
@@ -185,9 +184,7 @@ export function metroRequestAt(root: string, since: number, serving: boolean): n
   const records = [];
   for (const path of [rotated, file]) {
     try {
-      // compat C6 permanent
-      records.push(...ownBuildRecords(parseNdjsonText(readFileSync(path, 'utf8'))));
-      // compat end
+      records.push(...parseNdjsonText(readFileSync(path, 'utf8')));
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
       return `its Metro log cannot be read (${error instanceof Error ? error.message : String(error)})`;

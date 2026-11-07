@@ -34,6 +34,7 @@ import {
   tailChildOutput,
   type ChildOutput,
   type ChildServerHandle,
+  type OutputTail,
 } from './child-server.ts';
 import { workspaceIdleProbe } from './idle-stop.ts';
 import { injectedDigest, injectedDir } from './injected.ts';
@@ -66,7 +67,9 @@ interface MetroChild {
   writer: NdjsonWriter;
   /** The handle of a child this stimd spawned; null for one it adopted from an earlier stimd. */
   handle: ChildServerHandle | null;
-  stopTail: (() => void) | null;
+  tail: OutputTail | null;
+  /** Whether it answered once, after which a fresh heartbeat alone proves it runs. */
+  ready: boolean;
   gone: boolean;
 }
 
@@ -99,7 +102,13 @@ function metroWriter(root: string, digest: string | null): NdjsonWriter {
 function heartbeatFresh(child: MetroChild, now = Date.now()): boolean {
   if (child.mode === MODE_COMMAND) return false;
   const beat = readJsonObject(heartbeatFile(child.root));
-  return beat !== null && beat.port === child.port && now - Number(beat.at) < HEARTBEAT_FRESH_MS;
+  return (
+    child.ready &&
+    beat !== null &&
+    beat.pid === child.pid &&
+    beat.port === child.port &&
+    now - Number(beat.at) < HEARTBEAT_FRESH_MS
+  );
 }
 
 /** Whether the child still runs: its handle's exit state when this stimd spawned it, its identity when adopted. */
@@ -135,7 +144,7 @@ function lastLine(file: string): string {
 function forget(child: MetroChild, msg: string, level: 'info' | 'warn' = 'info'): void {
   if (child.gone) return;
   child.gone = true;
-  child.stopTail?.();
+  child.tail?.stop();
   if (children.get(child.root) === child) children.delete(child.root);
   const identity = { pid: child.pid, processToken: child.processToken };
   try {
@@ -148,21 +157,46 @@ function forget(child: MetroChild, msg: string, level: 'info' | 'warn' = 'info')
   child.writer.close();
 }
 
+async function gone(alive: () => boolean, ms: number): Promise<boolean> {
+  for (const deadline = Date.now() + ms; alive() && Date.now() < deadline;)
+    await new Promise((done) => setTimeout(done, 50));
+  return !alive();
+}
+
 async function stopChild(child: MetroChild, why: string): Promise<void> {
-  if (child.handle) await child.handle.close();
-  else if (running(child)) {
-    const signal = (sig: NodeJS.Signals) => {
-      try {
-        signalProcessTree(child.pid, sig, { group: GROUPS });
-      } catch {}
-    };
-    const alive = () => (GROUPS ? processGroupAlive(child.pid) : running(child));
-    signal('SIGTERM');
-    for (const deadline = Date.now() + STOP_MS; alive() && Date.now() < deadline;)
-      await new Promise((done) => setTimeout(done, 50));
-    if (alive()) signal('SIGKILL');
+  try {
+    if (child.handle) await child.handle.close();
+    else if (running(child)) {
+      const signal = (sig: NodeJS.Signals) => {
+        try {
+          signalProcessTree(child.pid, sig, { group: GROUPS });
+        } catch {}
+      };
+      const alive = () => (GROUPS ? processGroupAlive(child.pid) : running(child));
+      signal('SIGTERM');
+      if (!(await gone(alive, STOP_MS))) {
+        signal('SIGKILL');
+        await gone(alive, 1000);
+      }
+    }
+  } finally {
+    forget(child, `stimd stopped the ${child.mode} dev server: ${why}`);
   }
-  forget(child, `stimd stopped the ${child.mode} dev server: ${why}`);
+}
+
+/** Runs `work` after every earlier piece of work on `key`, so no two ensure, restart or stop of one child overlap. */
+function serialize(key: string, work: () => Promise<Answer>): Promise<Answer> {
+  const run = (busy.get(key) ?? Promise.resolve({}))
+    .catch(() => ({}))
+    .then(work)
+    .catch((error: unknown) => ({
+      op: 'error',
+      code: 'metro',
+      message: error instanceof Error ? error.message : String(error),
+    }));
+  busy.set(key, run);
+  void run.finally(() => busy.get(key) === run && busy.delete(key));
+  return run;
 }
 
 /** Records a running child where `status`, `stop`, the idle stage, Desktop and `machine-usage` look for a dev server. */
@@ -309,7 +343,8 @@ async function start(root: string, port: number, log: Log): Promise<Answer> {
     writer,
     handle,
     startedAt: new Date().toISOString(),
-    stopTail: null,
+    tail: handle.tail ?? null,
+    ready: false,
     gone: false,
   };
   children.set(root, child);
@@ -336,8 +371,10 @@ async function start(root: string, port: number, log: Log): Promise<Answer> {
         code: 'metro-exited',
         message: lastLine(output.files.stderr) || 'the dev server exited before it answered',
       };
-    if (mode === MODE_BARE ? heartbeatFresh(child) : await isMetroRunning(port, AbortSignal.timeout(PROBE_MS)))
+    if (await isMetroRunning(port, AbortSignal.timeout(PROBE_MS))) {
+      child.ready = true;
       return answer(child, 'started');
+    }
     await new Promise((done) => setTimeout(done, 100));
   }
   return answer(child, 'starting');
@@ -350,8 +387,10 @@ async function ensure(root: string, port: number, launch: boolean, log: Log): Pr
     if (launch && child.digest !== injectedDigest())
       await stopChild(child, 'a launch restarts a Metro of other injected files');
     // compat end
-    else if (heartbeatFresh(child) || (await isMetroRunning(port, AbortSignal.timeout(PROBE_MS)))) return answer(child);
-    else await stopChild(child, `no heartbeat for ${HEARTBEAT_FRESH_MS / 1000} s and /status did not answer`);
+    else if (heartbeatFresh(child) || (await isMetroRunning(port, AbortSignal.timeout(PROBE_MS)))) {
+      child.ready = true;
+      return answer(child);
+    } else await stopChild(child, `no heartbeat for ${HEARTBEAT_FRESH_MS / 1000} s and /status did not answer`);
   } else if (child)
     await stopChild(child, child.port === port ? 'it no longer runs' : `the workspace now uses port ${port}`);
   const found = await resolveProjectMetro(port, root);
@@ -390,23 +429,16 @@ export function ensureMetro(params: unknown, log: Log): Promise<Answer> {
     heartbeatFresh(child)
   )
     return Promise.resolve(answer(child));
-  const run = (busy.get(root) ?? Promise.resolve({}))
-    .catch(() => ({}))
-    .then(() => ensure(root, port, fields.launch === true, log))
-    .catch((error: unknown) => ({
-      op: 'error',
-      code: 'metro',
-      message: error instanceof Error ? error.message : String(error),
-    }));
-  busy.set(root, run);
-  void run.finally(() => busy.get(root) === run && busy.delete(root));
-  return run;
+  return serialize(root, () => ensure(root, port, fields.launch === true, log));
 }
 
 /** `op.begin {params: {workspace}}`'s flag: the workspace's Metro loaded other injected files, so it is foreign until a restart. */
 export function metroOpFlags(params: unknown): Answer {
-  const workspace = isJsonObject(params) && typeof params.workspace === 'string' ? params.workspace : null;
-  const child = workspace ? children.get(workspace) : undefined;
+  let child: MetroChild | undefined;
+  try {
+    if (isJsonObject(params) && typeof params.workspace === 'string')
+      child = children.get(realpathSync(params.workspace));
+  } catch {}
   // compat C6 permanent
   return child && child.digest !== injectedDigest() ? { metroForeign: true } : {};
   // compat end
@@ -435,10 +467,16 @@ function retake(holder: ClaimHolder, root: string, label: string): ClaimHandle |
   }
 }
 
+function offsetsOf(value: unknown): Record<'stdout' | 'stderr', number> | undefined {
+  return isJsonObject(value) && typeof value.stdout === 'number' && typeof value.stderr === 'number'
+    ? { stdout: value.stdout, stderr: value.stderr }
+    : undefined;
+}
+
 /**
- * At boot, takes over the Metro and tunnel children an earlier stimd of this home left running, by their claims: a
- * claim whose holder is gone and whose child runs. Windows has no process groups, so there its children stop with
- * their stimd and nothing is adopted.
+ * Takes over the Metro and tunnel children an earlier stimd of this home left running, by their claims: a claim whose
+ * holder is gone and whose child runs. It runs at boot and on every tick, for a predecessor still exiting at boot.
+ * Windows has no process groups, so there its children stop with their stimd and nothing is adopted.
  */
 export function adoptMetroChildren(log: Log): void {
   if (!GROUPS) return;
@@ -454,7 +492,7 @@ export function adoptMetroChildren(log: Log): void {
     return;
   }
   for (const path of paths) {
-    for (const holder of readClaimSet(claimRoot(path, 'metro')).live) {
+    for (const holder of children.has(path) ? [] : readClaimSet(claimRoot(path, 'metro')).live) {
       const claim = retake(holder, claimRoot(path, 'metro'), 'Metro');
       if (!claim || !holder.child) continue;
       const digest = typeof holder.details.digest === 'string' ? holder.details.digest : null;
@@ -473,7 +511,8 @@ export function adoptMetroChildren(log: Log): void {
         claim,
         writer,
         handle: null,
-        stopTail: tailChildOutput(outputFiles(path), records.push),
+        tail: tailChildOutput(outputFiles(path), records.push, offsetsOf(holder.details.offsets)),
+        ready: true,
         gone: false,
       };
       children.set(path, child);
@@ -483,7 +522,7 @@ export function adoptMetroChildren(log: Log): void {
         `${path}: adopted the ${child.mode} dev server pid ${child.pid}${child.digest !== injectedDigest() ? ', of other injected files' : ''}`,
       );
     }
-    for (const holder of readClaimSet(claimRoot(path, 'tunnel')).live) {
+    for (const holder of tunnels.has(path) ? [] : readClaimSet(claimRoot(path, 'tunnel')).live) {
       const claim = retake(holder, claimRoot(path, 'tunnel'), 'tunnel');
       if (claim && holder.child) tunnels.set(path, { claim, ...holder.child, url: String(holder.details.url) });
     }
@@ -504,47 +543,94 @@ async function idlePoint(child: MetroChild, since: number): Promise<boolean> {
  * request and no Stim command for the workspace's `idle.minutes`, as the supervisor's own idle timer did.
  */
 export async function metroTick(act: boolean, log: Log): Promise<void> {
-  for (const child of children.values()) {
-    if (!running(child)) {
-      forget(child, `the ${child.mode} dev server pid ${child.pid} is gone`, 'warn');
-      continue;
+  if (ticking) return;
+  ticking = true;
+  try {
+    adoptMetroChildren(log);
+    for (const child of children.values()) {
+      if (busy.has(child.root)) continue;
+      if (!running(child)) {
+        forget(child, `the ${child.mode} dev server pid ${child.pid} is gone`, 'warn');
+        continue;
+      }
+      // compat C6 permanent
+      if (child.digest !== injectedDigest() && (await idlePoint(child, Date.now() - IDLE_POINT_MS))) {
+        void restartAt(child, 'it loaded other injected files; restarting it at an idle point', log, true);
+        continue;
+      }
+      // compat end
+      if (act || child.mode === MODE_COMMAND) continue;
+      const minutes = idleMinutesSetting(resolveProjectSettings(child.root).settings);
+      if (minutes > 0 && (await idlePoint(child, Date.now() - minutes * 60_000)))
+        void restartAt(child, `no Metro request or Stim command for ${minutes} minutes (idle.minutes)`, log, false, {
+          [IDLE_STOP_KEY]: { reason: 'idle', at: new Date().toISOString(), idleMinutes: minutes },
+        });
     }
-    if (busy.has(child.root)) continue;
-    // compat C6 permanent
-    if (child.digest !== injectedDigest() && (await idlePoint(child, Date.now() - IDLE_POINT_MS))) {
-      await stopChild(child, 'it loaded other injected files; restarting it at an idle point');
-      void ensureMetro({ root: child.root, port: child.port }, log);
-      continue;
-    }
-    // compat end
-    if (act || child.mode === MODE_COMMAND) continue;
-    const minutes = idleMinutesSetting(resolveProjectSettings(child.root).settings);
-    if (minutes > 0 && (await idlePoint(child, Date.now() - minutes * 60_000))) {
-      await stopChild(child, `no Metro request or Stim command for ${minutes} minutes (idle.minutes)`);
-      writeWorkspaceState(child.root, {
-        [IDLE_STOP_KEY]: { reason: 'idle', at: new Date().toISOString(), idleMinutes: minutes },
-      });
-    }
+    for (const [root, tunnel] of tunnels)
+      if (inspectProcessIdentity(tunnel) !== 'same') {
+        tunnels.delete(root);
+        releaseClaim(tunnel.claim);
+      }
+  } finally {
+    ticking = false;
   }
-  for (const [root, tunnel] of tunnels)
-    if (inspectProcessIdentity(tunnel) !== 'same') {
-      tunnels.delete(root);
-      releaseClaim(tunnel.claim);
-    }
+}
+
+let ticking = false;
+
+/** Stops the child, unless an ensure took it over meanwhile, and starts it again when `again`, all in its root's turn. */
+function restartAt(
+  child: MetroChild,
+  why: string,
+  log: Log,
+  again: boolean,
+  state: Record<string, unknown> = {},
+): Promise<Answer> {
+  return serialize(child.root, async () => {
+    if (children.get(child.root) !== child || child.gone) return {};
+    await stopChild(child, why);
+    writeWorkspaceState(child.root, state);
+    if (!again) return {};
+    const answered = await ensure(child.root, child.port, false, log);
+    if (answered.op === 'error') log('warn', 'metro_restart_failed', `${child.root}: ${String(answered.message)}`);
+    return answered;
+  });
 }
 
 /**
  * `tunnel.ensure {root, provider, port, ngrokUrl?, requireReachable?}`: the workspace's tunnel provider as a child of
  * this stimd in its own process group with file stdio, claimed under `tunnel.claim`, answering `{op: 'tunnel', url}`.
  */
-export async function ensureTunnel(params: unknown): Promise<Answer> {
+export function ensureTunnel(params: unknown): Promise<Answer> {
   const fields = isJsonObject(params) ? params : {};
-  const root = realpathSync(String(fields.root));
-  const known = tunnels.get(root);
-  if (known && inspectProcessIdentity(known) === 'same') return { op: 'tunnel', url: known.url, pid: known.pid };
+  let root: string;
+  try {
+    root = realpathSync(String(fields.root));
+  } catch {
+    return Promise.resolve({ op: 'error', code: 'bad-root', message: `no workspace at ${String(fields.root)}` });
+  }
   const provider = PROVIDERS.find((name) => name === fields.provider);
-  if (!provider) return { op: 'error', code: 'bad-provider', message: `no tunnel provider ${String(fields.provider)}` };
-  const port = Number(fields.port);
+  if (!provider)
+    return Promise.resolve({
+      op: 'error',
+      code: 'bad-provider',
+      message: `no tunnel provider ${String(fields.provider)}`,
+    });
+  return serialize(`tunnel:${root}`, () => startTunnelChild(root, provider, Number(fields.port), fields));
+}
+
+async function startTunnelChild(
+  root: string,
+  provider: ManagedProvider,
+  port: number,
+  fields: Record<string, unknown>,
+): Promise<Answer> {
+  const known = tunnels.get(root);
+  if (known && inspectProcessIdentity(known) === 'same') {
+    if (known.claim.details.provider === provider && known.claim.details.port === port)
+      return { op: 'tunnel', url: known.url, pid: known.pid };
+    await stopTunnel(root, known);
+  }
   const attempt = tryAcquireClaim({
     root: claimRoot(root, 'tunnel'),
     mode: 'exclusive',
@@ -573,10 +659,26 @@ export async function ensureTunnel(params: unknown): Promise<Answer> {
   return { op: 'tunnel', url: started.url, pid: started.pid };
 }
 
-/** At stimd's exit: on Windows, where children cannot be re-adopted, stops them; elsewhere only stops following them. */
+async function stopTunnel(root: string, tunnel: TunnelChild): Promise<void> {
+  try {
+    signalProcessTree(tunnel.pid, 'SIGTERM', { group: GROUPS });
+  } catch {}
+  await gone(() => inspectProcessIdentity(tunnel) === 'same', STOP_MS);
+  tunnels.delete(root);
+  releaseClaim(tunnel.claim);
+}
+
+/**
+ * At stimd's exit: on Windows, where children cannot be re-adopted, stops them; elsewhere stops following them and
+ * records how far it read their output in their claims, for the next stimd.
+ */
 export async function closeMetroChildren(): Promise<void> {
   for (const child of children.values()) {
-    if (GROUPS) child.stopTail?.();
-    else await stopChild(child, 'stimd exits');
+    if (!GROUPS) await stopChild(child, 'stimd exits');
+    else if (child.tail) {
+      child.tail.stop();
+      updateClaimDetails(child.claim, { ...child.claim.details, offsets: child.tail.offsets() });
+    }
   }
+  if (!GROUPS) for (const [root, tunnel] of tunnels) await stopTunnel(root, tunnel);
 }

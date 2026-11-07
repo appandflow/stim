@@ -16,6 +16,8 @@ export interface ChildServerHandle {
   serverPid: number | null;
   observesRequests?: boolean;
   child: ChildProcess;
+  /** The follower of the child's output files, when it writes files instead of pipes. */
+  tail?: OutputTail | null;
   onExit(cb: (info: ChildExitInfo | null) => void): void;
   close(): Promise<void>;
 }
@@ -37,18 +39,28 @@ function size(file: string): number {
   }
 }
 
-/** Opens `metro.<stream>.log` in `logsDir` for appending, for a child's stdio. The caller closes the descriptors once spawned. */
+/**
+ * Opens `metro.<stream>.log` in `logsDir`, emptied, for a new child's stdio, so they hold one child's output. The caller
+ * closes the descriptors once spawned.
+ */
 export function openChildOutput(logsDir: string): { files: ChildOutput; fds: [number, number] } {
   const files = { stdout: join(logsDir, 'metro.stdout.log'), stderr: join(logsDir, 'metro.stderr.log') };
-  return { files, fds: [openSync(files.stdout, 'a', 0o600), openSync(files.stderr, 'a', 0o600)] };
+  return { files, fds: [openSync(files.stdout, 'w', 0o600), openSync(files.stderr, 'w', 0o600)] };
 }
 
-/** Feeds what the child appends to its output files from now on to `onChunk`, until the returned stop is called. */
+export interface OutputTail {
+  stop(): void;
+  /** How far each file has been read, for a successor to go on from. */
+  offsets(): Record<'stdout' | 'stderr', number>;
+}
+
+/** Feeds what the child appends to its output files after `from` (by default their current ends) to `onChunk`. */
 export function tailChildOutput(
   files: ChildOutput,
   onChunk: (chunk: string, stream: 'stdout' | 'stderr') => void,
-): () => void {
-  const offsets = { stdout: size(files.stdout), stderr: size(files.stderr) };
+  from: Record<'stdout' | 'stderr', number> = { stdout: size(files.stdout), stderr: size(files.stderr) },
+): OutputTail {
+  const offsets = { ...from };
   const read = () => {
     for (const stream of STREAMS) {
       const end = size(files[stream]);
@@ -71,11 +83,14 @@ export function tailChildOutput(
     } catch {}
   }, TAIL_MS);
   timer.unref();
-  return () => {
-    clearInterval(timer);
-    try {
-      read();
-    } catch {}
+  return {
+    stop() {
+      clearInterval(timer);
+      try {
+        read();
+      } catch {}
+    },
+    offsets: () => ({ ...offsets }),
   };
 }
 
@@ -132,7 +147,7 @@ export function superviseChildServer({
   alive?: (() => boolean) | null;
   killTimeoutMs: number;
   onRecord?: ((record: NdjsonRecord) => void) | null;
-  /** The files the child writes instead of pipes, which are followed instead. */
+  /** The files, emptied by `openChildOutput`, the child writes instead of pipes, which are followed instead. */
   output?: ChildOutput | null;
 }): ChildServerHandle {
   const records = childRecords({ log, toRecord, onRecord });
@@ -140,7 +155,7 @@ export function superviseChildServer({
   child.stderr?.setEncoding?.('utf-8');
   child.stdout?.on('data', (chunk) => records.push(chunk, 'stdout'));
   child.stderr?.on('data', (chunk) => records.push(chunk, 'stderr'));
-  const stopTail = output ? tailChildOutput(output, records.push) : null;
+  const tail = output ? tailChildOutput(output, records.push, { stdout: 0, stderr: 0 }) : null;
 
   let exited = false;
   let exitInfo: ChildExitInfo | null = null;
@@ -148,7 +163,7 @@ export function superviseChildServer({
   child.on('exit', (code, sig) => {
     exited = true;
     exitInfo = { code, signal: sig };
-    stopTail?.();
+    tail?.stop();
     records.flush();
     for (const cb of listeners) cb(exitInfo);
   });
@@ -163,6 +178,7 @@ export function superviseChildServer({
     mode,
     serverPid: child.pid ?? null,
     child,
+    tail,
     onExit(cb) {
       if (exited) {
         cb(exitInfo);

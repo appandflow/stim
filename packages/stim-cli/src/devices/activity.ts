@@ -20,7 +20,6 @@ import {
   type ViewedDevice,
   userHome,
 } from '@stim-cli/core/state';
-import { ownBuildLines } from '../stimd/metro/injected.ts';
 
 export type { DeviceActivity } from '@stim-cli/core/state';
 
@@ -598,9 +597,7 @@ export function createActivityReader({
       const dir = workspaceLogsDir(target.workspace);
       const deviceAt = latestDeviceLogAt(log(join(dir, 'device.ndjson')) ?? [], target);
       if (deviceAt !== null) evidence.recency.push({ basis: 'device-log', at: deviceAt });
-      // compat C6 permanent
-      const bundleAt = latestBundleRequestAt(ownBuildLines(log(join(dir, 'metro.ndjson')) ?? []), target.platform);
-      // compat end
+      const bundleAt = latestBundleRequestAt(log(join(dir, 'metro.ndjson')) ?? [], target.platform);
       if (bundleAt !== null) evidence.recency.push({ basis: 'metro-bundle', at: bundleAt });
       const usedAt = Date.parse(String(readWorkspaceState(target.workspace)?.lastUsedAt ?? ''));
       if (Number.isFinite(usedAt)) evidence.recency.push({ basis: 'workspace-use', at: usedAt });
@@ -620,9 +617,7 @@ export function workspaceActivity(workspace: string, now: number = Date.now()): 
   );
   if (deviceAt !== null) recency.push({ basis: 'device-log', at: deviceAt });
   const bundleAt = latestRecordAt(
-    // compat C6 permanent
-    ownBuildLines(tailLines(join(dir, 'metro.ndjson')) ?? []),
-    // compat end
+    tailLines(join(dir, 'metro.ndjson')) ?? [],
     (record) => record.event === 'bundle_response_started',
   );
   if (bundleAt !== null) recency.push({ basis: 'metro-bundle', at: bundleAt });

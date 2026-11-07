@@ -217,7 +217,7 @@ describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel
     expect(alive(first.pid)).toBe(false);
   }, 30_000);
 
-  test('a restarted stimd re-adopts its Metro and tunnel by claim; a Metro of other injected files is foreign until a launch restarts it', async () => {
+  test('a restarted stimd re-adopts its Metro and tunnel by claim and reads the output it missed; a Metro of other injected files is foreign until a launch restarts it', async () => {
     const root = bareProject();
     const port = await freePort();
     await startStimd();
@@ -227,7 +227,15 @@ describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel
 
     await stopStimd();
     expect([alive(metro.pid), alive(tunnel.pid)]).toEqual([true, true]);
+    appendFileSync(join(workspaceLogsDir(root), 'metro.stderr.log'), 'error: written while no stimd ran\n');
     await startStimd();
+    await vi.waitFor(
+      () =>
+        expect(readFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), 'utf8')).toContain(
+          'written while no stimd ran',
+        ),
+      { timeout: 5000, interval: 100 },
+    );
     await expect(ask('metro.ensure', { root, port })).resolves.toEqual({ ...metro, state: 'running' });
     await expect(ask('tunnel.ensure', { root, provider: 'cloudflared', port })).resolves.toEqual(tunnel);
 

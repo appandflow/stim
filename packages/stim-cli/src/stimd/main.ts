@@ -740,7 +740,7 @@ export async function runStimd({
     tickRequested = false;
     const configured = configuredDaemonMode();
     const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
-    await metroTick(mode === 'on', log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
+    void metroTick(mode === 'on', log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
     if (mode === 'off') {
       if (net.running() || restartingNet || metroChildrenRun()) {
         for (const socket of tickReplies.splice(0)) socket.destroy();
