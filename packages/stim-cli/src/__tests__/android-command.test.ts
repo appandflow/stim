@@ -603,6 +603,7 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
 }
 
 test.each([false, true])('the Android API preserves retained Metro cleanup after cancellation=%s', async (cancel) => {
+  const admission = vi.spyOn(await import('../daemon/client.ts'), 'beforeCommand').mockResolvedValue();
   const controller = new AbortController();
   const retainedClaimRoots = [join(home, 'retained-metro')];
   const adapter = vi.spyOn(androidOperation, 'runAndroidOperation').mockImplementation((context) =>
@@ -633,6 +634,7 @@ test.each([false, true])('the Android API preserves retained Metro cleanup after
     });
   } finally {
     adapter.mockRestore();
+    admission.mockRestore();
   }
 });
 

@@ -103,6 +103,7 @@ type Stream = {
   controller: AbortController;
   sink: LogSink;
   child: ChildProcess | null;
+  childClosed: Promise<void> | null;
   identity: { pid: number; processToken: string } | null;
   pending: boolean;
   paused: boolean;
@@ -141,6 +142,18 @@ async function waitChild(stream: Stream): Promise<void> {
   for (const deadline = Date.now() + 2000; alive(stream) && Date.now() < deadline;)
     await new Promise((resolve) => setTimeout(resolve, 20));
   if (alive(stream)) throw new Error('the device log stream did not stop');
+  const childClosed = stream.childClosed;
+  if (childClosed) {
+    const closed = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), 2000);
+      void childClosed.then(() => {
+        clearTimeout(timer);
+        resolve(true);
+        return undefined;
+      });
+    });
+    if (!closed) throw new Error('the device log stream pipes did not close');
+  }
   if (stream.identity) clearClaimChild(stream.claim);
   stream.pending = false;
   stream.identity = null;
@@ -170,8 +183,15 @@ function spawnChild(
     throw error;
   }
   stream.child = child;
-  const token = child.pid ? captureProcessToken(child.pid) : null;
-  if (!child.pid || !token) {
+  stream.childClosed = new Promise((resolve) => child.once('close', () => resolve()));
+  child.on('error', () => {});
+  if (!child.pid) {
+    clearClaimChild(stream.claim);
+    stream.pending = false;
+    throw new Error('could not start the device log stream child');
+  }
+  const token = captureProcessToken(child.pid);
+  if (!token) {
     child.kill('SIGTERM');
     throw new Error('could not capture the device log stream child identity');
   }
@@ -343,7 +363,6 @@ export function createStreams(log: (message: string) => void): StreamTable {
           registerCollector(root, slotKey, {
             kind: 'stream',
             streamId: shared.id,
-            claimSlot: shared.spec.slot ?? 'default',
             startedAt: new Date().toISOString(),
           });
           try {
@@ -360,12 +379,11 @@ export function createStreams(log: (message: string) => void): StreamTable {
         }
         if (isJsonObject(recorded)) {
           if (typeof recorded.streamId !== 'string') throw new Error('the previous device log stream has no identity');
-          const claimSlot = typeof recorded.claimSlot === 'string' ? recorded.claimSlot : slot;
-          await clearStreamClaim(root, input.platform, claimSlot, recorded.streamId);
+          await clearStreamClaim(root, recorded.streamId);
           unregisterStreamAll(root, recorded.streamId);
         }
         const id = randomUUID();
-        const claim = await takeStreamClaim(root, input.platform, slot, id);
+        const claim = await takeStreamClaim(root, id);
         if (signal?.aborted) {
           releaseClaim(claim);
           signal.throwIfAborted();
@@ -420,6 +438,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
           controller,
           sink,
           child: null,
+          childClosed: null,
           identity: null,
           pending: false,
           paused: false,
@@ -441,7 +460,6 @@ export function createStreams(log: (message: string) => void): StreamTable {
           registerCollector(root, slotKey, {
             kind: 'stream',
             streamId: id,
-            claimSlot: slot,
             startedAt: new Date().toISOString(),
           });
         } catch (error) {
@@ -549,8 +567,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
           if (recorded === undefined) return false;
           if (!isJsonObject(recorded) || recorded.kind !== 'stream' || recorded.streamId !== streamId)
             throw new Error('the device log stream changed');
-          const claimSlot = typeof recorded.claimSlot === 'string' ? recorded.claimSlot : slot;
-          await clearStreamClaim(root, platform, claimSlot, streamId);
+          await clearStreamClaim(root, streamId);
           unregisterStreamAll(root, streamId);
           return true;
         }

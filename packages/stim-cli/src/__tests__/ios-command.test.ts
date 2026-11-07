@@ -602,6 +602,7 @@ function buildRecords() {
 }
 
 test.each([false, true])('the iOS API preserves retained Metro cleanup after cancellation=%s', async (cancel) => {
+  const admission = vi.spyOn(await import('../daemon/client.ts'), 'beforeCommand').mockResolvedValue();
   reserve();
   const controller = new AbortController();
   const retainedClaimRoots = [join(tmpHome, 'retained-metro')];
@@ -645,17 +646,23 @@ test.each([false, true])('the iOS API preserves retained Metro cleanup after can
     });
   } finally {
     adapter.mockRestore();
+    admission.mockRestore();
   }
 });
 
 test('the API refuses recordedBuild and cleanAppState together with a physical device', async () => {
+  const admission = vi.spyOn(await import('../daemon/client.ts'), 'beforeCommand').mockResolvedValue();
   const stim = createStim({ projectRoot: root, home: tmpHome, admission: 'none' });
-  await expect(stim.run({ platform: 'ios', recordedBuild: true, device: true })).rejects.toMatchObject({
-    code: 'STIM_BAD_ARG',
-  });
-  await expect(stim.run({ platform: 'android', cleanAppState: true, device: 'R5CT' })).rejects.toMatchObject({
-    code: 'STIM_BAD_ARG',
-  });
+  try {
+    await expect(stim.run({ platform: 'ios', recordedBuild: true, device: true })).rejects.toMatchObject({
+      code: 'STIM_BAD_ARG',
+    });
+    await expect(stim.run({ platform: 'android', cleanAppState: true, device: 'R5CT' })).rejects.toMatchObject({
+      code: 'STIM_BAD_ARG',
+    });
+  } finally {
+    admission.mockRestore();
+  }
 });
 
 describe('the project gate', () => {

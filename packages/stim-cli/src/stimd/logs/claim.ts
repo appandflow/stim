@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { deviceSlotFileKey } from '../../devices/device-slots.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import {
   claimRemoveCommand,
@@ -13,8 +12,8 @@ import {
 import { inspectProcessIdentity } from '../../process-identity.ts';
 import { signalProcessTree } from '../../metro.ts';
 
-const claimPath = (root: string, platform: string, slot: string) =>
-  join(workspaceDir(root), 'log-streams', `${deviceSlotFileKey(platform, slot)}.claim`);
+const claimPath = (root: string, streamId: string) =>
+  join(workspaceDir(root), 'log-streams', `stream-${createHash('sha256').update(streamId).digest('hex')}.claim`);
 const historyPath = (root: string, streamId: string) =>
   join(workspaceDir(root), 'log-backfills', `${createHash('sha256').update(streamId).digest('hex')}.claim`);
 
@@ -86,18 +85,13 @@ export async function takeHistoryClaim(root: string, streamId: string): Promise<
   return attempt.acquired;
 }
 
-export async function clearStreamClaim(root: string, platform: string, slot: string, streamId: string): Promise<void> {
+export async function clearStreamClaim(root: string, streamId: string): Promise<void> {
   await clearHistoryClaim(root, streamId);
-  await recover(claimPath(root, platform, slot), streamId);
+  await recover(claimPath(root, streamId), streamId);
 }
 
-export async function takeStreamClaim(
-  root: string,
-  platform: string,
-  slot: string,
-  streamId: string,
-): Promise<ClaimHandle> {
-  const path = claimPath(root, platform, slot);
+export async function takeStreamClaim(root: string, streamId: string): Promise<ClaimHandle> {
+  const path = claimPath(root, streamId);
   await recover(path);
   const attempt = tryAcquireClaim({ root: path, mode: 'exclusive', label: 'device log stream', details: { streamId } });
   if (attempt.pending) releaseClaim(attempt.pending);

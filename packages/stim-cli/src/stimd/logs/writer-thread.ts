@@ -97,6 +97,7 @@ port.on('message', (message: Message) => {
       return;
     }
     const stream = streams.get(message.streamId);
+    if (!stream && (message.op === 'line' || message.op === 'backfill.line' || message.op === 'record')) return;
     if (!stream) throw new Error('the device log stream is not open');
     let complete = true;
     const write = (value: unknown): boolean => {

@@ -48,6 +48,22 @@ describe('runOperation', () => {
     await expect(api(null)).resolves.toEqual({ admitted: null });
   });
 
+  it('registers a resident native run without running admission passes', async () => {
+    const client = await import('../daemon/client.ts');
+    await expect(api('run', 'ios', 'none')).resolves.toEqual({ admitted: null });
+    expect(client.beforeCommand).toHaveBeenCalledWith(
+      'ios',
+      env,
+      expect.objectContaining({
+        recordUse: false,
+        passes: false,
+        pin: true,
+        deviceLogs: true,
+        held: expect.any(Array),
+      }),
+    );
+  });
+
   it('admits a top-level CLI command, but not a subcommand or --plan', async () => {
     await expect(cli('ios')).resolves.toMatchObject({ admitted: 'ios', end: expect.any(Function) });
     await expect(cli('')).resolves.toMatchObject({ admitted: null, end: expect.any(Function) });

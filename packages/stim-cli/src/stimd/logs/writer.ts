@@ -115,7 +115,7 @@ export function createLogWriters(
       const state = { bytes: 0, paused: false, change: onFlow };
       flow.set(input.streamId, state);
       const file = join(workspaceLogsDir(input.root), 'device.ndjson');
-      let closed = Promise.resolve();
+      let closed: Promise<void> | null = null;
       const writer: NdjsonWriter = {
         file,
         written: 0,
@@ -131,8 +131,6 @@ export function createLogWriters(
           }
         },
         close() {
-          closed = request({ op: 'close', streamId: input.streamId }).finally(() => flow.delete(input.streamId));
-          void closed.catch(() => {});
           return { file, written: 0, dropped: 0, lastError: null };
         },
       };
@@ -170,7 +168,10 @@ export function createLogWriters(
         addAlias: (slotKey, attribution) =>
           request({ op: 'add-alias', streamId: input.streamId, slotKey, attribution }),
         removeAlias: (slotKey) => request({ op: 'remove-alias', streamId: input.streamId, slotKey }),
-        closed: () => closed,
+        closed: () => {
+          closed ??= request({ op: 'close', streamId: input.streamId }).finally(() => flow.delete(input.streamId));
+          return closed;
+        },
       };
     },
     async close() {

@@ -89,3 +89,43 @@ test.skipIf(process.platform === 'win32')(
     }
   },
 );
+
+test.skipIf(process.platform === 'win32')(
+  'a missing historical executable is handled without an uncaught spawn error',
+  async () => {
+    const { mkdtempSync, realpathSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { backfillDeviceLog } = await import('../stimd/logs/backfill.ts');
+    const { createLogWriters } = await import('../stimd/logs/writer.ts');
+    const home = mkdtempSync(join(tmpdir(), 'stim-history-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-history-app-')));
+    vi.stubEnv('STIM_HOME', home);
+    const writers = createLogWriters(() => {});
+    try {
+      const sink = await writers.open(
+        { streamId: 'ios', slotKey: 'ios', root, platform: 'ios', physical: false, attribution: {} },
+        () => {},
+      );
+      await expect(
+        backfillDeviceLog({
+          root,
+          streamId: 'ios',
+          spec: { root, platform: 'ios', udid: 'U1', appName: 'Test' },
+          since: Date.now(),
+          env: { ...process.env, STIM_HOME: home, PATH: home },
+          signal: new AbortController().signal,
+          warm: () => false,
+          sink,
+        }),
+      ).rejects.toThrow('spawn xcrun ENOENT');
+      sink.writer.close();
+      await sink.closed();
+    } finally {
+      await writers.close();
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
