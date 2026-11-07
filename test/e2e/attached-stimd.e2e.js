@@ -773,7 +773,7 @@ test(
 );
 
 test(
-  'store lock contention past attached startup refuses admission',
+  'store lock contention refuses before startup and the same home can retry',
   { timeout: 25_000, skip: process.platform === 'win32' },
   async () => {
     const scratch = realpathSync(mkdtempSync('/tmp/stim-lock-'));
@@ -793,22 +793,11 @@ test(
     );
     const previousRoot = process.env.STIM_ENGINE_ROOT;
     process.env.STIM_ENGINE_ROOT = engineRoot;
+    let lockClosed = false;
     try {
       const engine = await import(pathToFileURL(join(selected, 'dist', 'attached-stimd.mjs')).href);
       const sharedHome = join(scratch, 'home');
       const host = engine.hostStimd({ ...env, STIM_HOME: sharedHome, STIM_ENGINE_ROOT: engineRoot });
-      const exclusive = join(sharedHome, 'run', 'stimd', 'exclusive');
-      await until('attached claim publication', () => {
-        try {
-          return readdirSync(exclusive).some(
-            (name) =>
-              name.endsWith('.claim') &&
-              JSON.parse(readFileSync(join(exclusive, name), 'utf8')).details.attached === true,
-          );
-        } catch {
-          return false;
-        }
-      });
       const on = agent(join(selected, 'dist', 'cli.mjs'), ['revive'], {
         STIM_HOME: sharedHome,
         STIM_ENGINE_ROOT: engineRoot,
@@ -822,12 +811,20 @@ test(
       assert.notEqual(await on.closed, 0);
       assert.notEqual(await off.closed, 0);
       assert.match(on.stderr(), /STIM_DAEMON_UNAVAILABLE/);
-      assert.match(off.stderr(), /STIM_DAEMON_UNAVAILABLE/);
+      assert.match(off.stderr(), /STIM_NO_PROJECT/);
       const result = await host;
       assert.equal(result?.refusal?.code, 'STIM_DAEMON_UNAVAILABLE');
       assert.equal(existsSync(join(sharedHome, 'run', 'stimd.json')), false);
-    } finally {
+      const { readClaimSet } = await import(pathToFileURL(join(REPO, 'packages/core/dist/ownership-claim.mjs')).href);
+      assert.deepEqual(readClaimSet(join(sharedHome, 'run', 'stimd')).unresolved, []);
       await new Promise((done) => lock.close(done));
+      lockClosed = true;
+      const retry = await engine.hostStimd({ ...env, STIM_HOME: sharedHome, STIM_ENGINE_ROOT: engineRoot });
+      assert.ok(retry && typeof retry === 'object' && 'end' in retry);
+      await retry.end();
+      assert.deepEqual(readClaimSet(join(sharedHome, 'run', 'stimd')).unresolved, []);
+    } finally {
+      if (!lockClosed) await new Promise((done) => lock.close(done));
       if (previousRoot === undefined) delete process.env.STIM_ENGINE_ROOT;
       else process.env.STIM_ENGINE_ROOT = previousRoot;
       rmSync(scratch, { recursive: true, force: true });

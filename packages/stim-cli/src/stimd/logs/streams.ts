@@ -18,7 +18,7 @@ import {
 import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
 import { adbCommand, startAndroidLogcat } from './android.ts';
 import { androidToolCwd } from '../../devices/android.ts';
-import { clearHistoryClaim, clearStreamClaim, deviceClaimRemoveCommand, takeStreamClaim } from './claim.ts';
+import { clearHistoryClaim, clearStreamClaim, pendingChildRemoveCommand, takeStreamClaim } from './claim.ts';
 import { backfillDeviceLog } from './backfill.ts';
 import { startIosDeviceConsole } from './ios-device.ts';
 import { startIosLogStream } from './ios.ts';
@@ -201,7 +201,7 @@ async function waitChild(stream: Stream): Promise<void> {
   if (process.platform === 'win32' && stream.treePending && stream.lastStop?.signalled !== true)
     throw new Error(
       `the device log process tree could not be verified stopped (stop=${JSON.stringify(stream.lastStop)}); ` +
-        `inspect it before running ${deviceClaimRemoveCommand(stream.claim.root)}.`,
+        `verify the prior daemon, child and descendants have stopped, then run ${pendingChildRemoveCommand(stream.claim.path)} and retry.`,
     );
   const running = () =>
     stream.identity
@@ -215,7 +215,7 @@ async function waitChild(stream: Stream): Promise<void> {
   if (running()) {
     if (stream.pending && !stream.identity)
       throw new Error(
-        `The device log child at ${stream.claim.root} cannot be verified stopped; inspect it before running ${deviceClaimRemoveCommand(stream.claim.root)}.`,
+        `The device log child at ${stream.claim.root} cannot be verified stopped; verify the prior daemon, child and descendants have stopped, then run ${pendingChildRemoveCommand(stream.claim.path)} and retry.`,
       );
     throw new Error('the device log stream did not stop');
   }

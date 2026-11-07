@@ -222,7 +222,9 @@ export async function hostStimd(
         await import('../engine-store/flip-drained.ts')
       ).flipDrained(engine.root, env.STIM_HOME || join(userHome(env), '.stim'), signal);
       lock = await takeLock(engine.root, '.lock.sock');
-      if (lock) requireCurrentEngine(engine);
+      signal?.throwIfAborted();
+      if (!lock) return unavailable();
+      requireCurrentEngine(engine);
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'STIM_CLAIM_UNAVAILABLE') throw error;
       signal?.throwIfAborted();
@@ -250,6 +252,7 @@ export async function hostStimd(
   } catch {
     return Promise.resolve(unavailable());
   }
+  child.stdin?.on('error', () => {});
   // Node can signal process group 0 before a failed spawn reports its error: https://github.com/nodejs/node/pull/65054
   const kill = () => {
     if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
@@ -259,24 +262,44 @@ export async function hostStimd(
     child.once('error', () => done({ code: null, signal: null }));
   });
   const stdioClosed = new Promise<void>((done) => child.once('close', () => done()));
+  const waitForOutput = () =>
+    new Promise<void>((finish) => {
+      const closeTimer = setTimeout(finish, 1000);
+      void stdioClosed.then(() => {
+        clearTimeout(closeTimer);
+        return finish();
+      });
+    });
   return new Promise((done, reject) => {
     let terminalRefusal: { code: string; message: string; remedy: string } | undefined;
     let aborting = false;
+    let timedOut = false;
+    let stopping: Promise<void> | undefined;
     const resolve: typeof done = (value) => {
-      if (aborting) return;
+      if (aborting || timedOut) return;
       signal?.removeEventListener('abort', abort);
       done(value);
     };
-    const abort = () => {
+    const stopStartup = () =>
+      (stopping ??= (async () => {
+        child.stdin?.end();
+        const grace = setTimeout(kill, KILL_GRACE_MS);
+        await exited;
+        clearTimeout(grace);
+        await waitForOutput();
+      })());
+    const abort = async () => {
       aborting = true;
       clearTimeout(timer);
-      kill();
-      void exited.then(() => reject(signal?.reason));
+      await stopStartup();
+      reject(terminalRefusal ? Object.assign(new Error(terminalRefusal.message), terminalRefusal) : signal?.reason);
     };
     signal?.addEventListener('abort', abort, { once: true });
-    const timer = setTimeout(() => {
-      kill();
-      resolve(unavailable());
+    const timer = setTimeout(async () => {
+      timedOut = true;
+      await stopStartup();
+      signal?.removeEventListener('abort', abort);
+      if (!aborting) done(terminalRefusal ? { refusal: terminalRefusal } : unavailable());
     }, BIND_MS);
     if (signal?.aborted) abort();
     let buffer = '';
@@ -299,6 +322,7 @@ export async function hostStimd(
         resolve({ refusal: terminalRefusal });
         return;
       }
+      if (aborting || timedOut) return;
       if (line.op === 'attached-engine-unavailable') {
         clearTimeout(timer);
         resolve('engine-unavailable');
@@ -339,13 +363,7 @@ export async function hostStimd(
           child.stdin?.end();
           const killTimer = setTimeout(kill, waitMs + KILL_GRACE_MS);
           const result = await exited;
-          await new Promise<void>((finish) => {
-            const closeTimer = setTimeout(finish, 1000);
-            void stdioClosed.then(() => {
-              clearTimeout(closeTimer);
-              return finish();
-            });
-          });
+          await waitForOutput();
           clearTimeout(killTimer);
           if (terminalRefusal) throw Object.assign(new Error(terminalRefusal.message), terminalRefusal);
           if (result.code !== 0)

@@ -12,7 +12,7 @@ import {
 import { adbCommand, androidClockOffset, logcatBackfillArgs, waitForAppPid } from './android.ts';
 import { androidToolCwd } from '../../devices/android.ts';
 import { logShowArgs } from './ios.ts';
-import { deviceClaimRemoveCommand, takeHistoryClaim } from './claim.ts';
+import { pendingChildRemoveCommand, takeHistoryClaim } from './claim.ts';
 import type { LogSink } from './writer.ts';
 import type { StreamSpec } from './streams.ts';
 
@@ -28,7 +28,7 @@ function finishHistoryClaim(
       : processGroupAlive(spawned.pid));
   if (running)
     throw new Error(
-      `The device log backfill child at ${claim.root} cannot be verified stopped; inspect it before running ${deviceClaimRemoveCommand(claim.root)}.`,
+      `The device log backfill child at ${claim.root} cannot be verified stopped; verify the prior daemon, child and descendants have stopped, then run ${pendingChildRemoveCommand(claim.path)} and retry.`,
     );
   clearClaimChild(claim);
   if (!releaseClaim(claim)) throw new Error('the device log backfill claim changed during cleanup');

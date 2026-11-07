@@ -1123,6 +1123,8 @@ listed in the refusal. On Windows, a naturally exited Metro or tunnel leader doe
 so this can require manual reconciliation.
 An attached daemon killed unexpectedly, including during startup or forced shutdown, also leaves claims for manual
 reconciliation.
+When startup times out or is cancelled, Stim allows up to 10 seconds for the daemon to clean up before forcing it to
+exit.
 
 Stim does not read the settings below. `stim doctor` and `stim settings` report
 any left in a config file or the environment, with the setting that replaces

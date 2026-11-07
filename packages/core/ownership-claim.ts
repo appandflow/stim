@@ -67,6 +67,7 @@ export interface ClaimProblem {
   path: string;
   reason: string;
   engineDirs?: string[];
+  pendingChild?: boolean;
 }
 
 export interface ClaimSurvey {
@@ -414,6 +415,7 @@ function survey(dir: string, mode: ClaimMode, into: ClaimSurvey): void {
     else {
       into.unresolved.push({
         path,
+        ...(holder.childDeclared && !holder.child ? { pendingChild: true } : {}),
         ...(Array.isArray(holder.details.engineDirs)
           ? {
               engineDirs: holder.details.engineDirs.filter(

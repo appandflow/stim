@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { join, sep } from 'node:path';
+import { join } from 'node:path';
 import { workspaceDir } from '../../workspace/paths.ts';
 import {
   claimRemoveCommand,
@@ -15,7 +15,11 @@ import { inspectProcessIdentity } from '../../process-identity.ts';
 import { signalProcessTree } from '../../metro.ts';
 import { getExecutor } from '../../exec.ts';
 
-export const deviceClaimRemoveCommand = (path: string): string => claimRemoveCommand(`${path}${sep}`);
+export const pendingChildRemoveCommand = (holder: string): string =>
+  claimRemoveCommand(`${holder.slice(0, -'.claim'.length)}.child`);
+
+const pendingRemedy = (holder: string): string =>
+  `Verify the prior daemon, child and descendants have stopped, then run ${pendingChildRemoveCommand(holder)} and retry`;
 
 const claimPath = (root: string, streamId: string) =>
   join(workspaceDir(root), 'log-streams', `stream-${createHash('sha256').update(streamId).digest('hex')}.claim`);
@@ -24,10 +28,11 @@ const historyPath = (root: string, streamId: string) =>
 
 async function recover(path: string, expected?: string, beforeRelease?: () => void): Promise<void> {
   const survey = readClaimSet(path);
-  if (survey.unresolved.length)
-    throw new Error(
-      `Device log ownership at ${path} is unresolved; inspect it before running ${deviceClaimRemoveCommand(path)}.`,
-    );
+  if (survey.unresolved.length) {
+    const issue = survey.unresolved[0];
+    const remedy = issue?.pendingChild ? pendingRemedy(issue.path) : `Inspect the ownership at ${path}`;
+    throw new Error(`Device log ownership at ${path} is unresolved. ${remedy}.`);
+  }
   if (expected && ![...survey.live, ...survey.dead].some((holder) => holder.details.streamId === expected))
     throw new Error(
       `The device log stream ${expected} has no verifiable claim at ${path}; inspect it before removing its record.`,
@@ -36,9 +41,7 @@ async function recover(path: string, expected?: string, beforeRelease?: () => vo
     if (expected && holder.details.streamId !== expected) throw new Error(`The device log stream at ${path} changed.`);
     if (process.platform === 'win32' && holder.childDeclared) {
       markClaimChildPending({ ...holder, root: path, label: 'device log stream' });
-      throw new Error(
-        `The device log tree at ${path} cannot be verified stopped; inspect it before running ${deviceClaimRemoveCommand(path)}.`,
-      );
+      throw new Error(`The device log tree at ${path} cannot be verified stopped; ${pendingRemedy(holder.path)}.`);
     }
   }
   for (const holder of survey.live) {
@@ -48,9 +51,7 @@ async function recover(path: string, expected?: string, beforeRelease?: () => vo
       throw new Error(`Another device log stream holds ${path}; stop that stream before replacing it.`);
     const child = holder.child;
     if (inspectProcessIdentity(child) !== 'same')
-      throw new Error(
-        `The device log child at ${path} cannot be verified; inspect it before running ${deviceClaimRemoveCommand(path)}.`,
-      );
+      throw new Error(`The device log child at ${path} cannot be verified; ${pendingRemedy(holder.path)}.`);
     if (process.platform === 'win32') {
       const claim = { ...holder, root: path, label: 'device log stream' };
       markClaimChildPending(claim);
@@ -62,16 +63,14 @@ async function recover(path: string, expected?: string, beforeRelease?: () => vo
         );
       } catch (error) {
         throw new Error(
-          `The device log tree at ${path} could not be stopped: ${String(error)}; inspect it before running ${deviceClaimRemoveCommand(path)}.`,
+          `The device log tree at ${path} could not be stopped: ${String(error)}; ${pendingRemedy(holder.path)}.`,
           { cause: error },
         );
       }
       for (const deadline = Date.now() + 2000; inspectProcessIdentity(child) === 'same' && Date.now() < deadline;)
         await new Promise((resolve) => setTimeout(resolve, 20));
       if (inspectProcessIdentity(child) !== 'gone')
-        throw new Error(
-          `The device log child at ${path} cannot be verified stopped; inspect it before running ${deviceClaimRemoveCommand(path)}.`,
-        );
+        throw new Error(`The device log child at ${path} cannot be verified stopped; ${pendingRemedy(holder.path)}.`);
       clearClaimChild(claim);
     } else {
       try {

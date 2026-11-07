@@ -527,7 +527,7 @@ stim logs --source agent.
 :::
 
 `stim stop` ends the supervisor and log collectors. It also frees the reserved
-port and shuts down the owned local device. On Windows, if the daemon crashes or a log stream exits before its process tree is stopped, Stim retains an unresolved claim. Verify the launcher and descendants are gone, then use the exact removal command in the refusal.
+port and shuts down the owned local device. On Windows, if the daemon crashes or a log stream exits before its process tree is stopped, Stim retains an unresolved claim. Verify the daemon, launcher and descendants are gone, then remove only the pending child marker using the exact command in the refusal and retry.
 
 ## Named server ports
 
