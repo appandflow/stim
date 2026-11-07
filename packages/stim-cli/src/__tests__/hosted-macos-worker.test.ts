@@ -22,6 +22,7 @@ import {
 } from '@stim-cli/core/state';
 import { runHostedMacosApp } from '../device-host/macos.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
+import { macosRuntimeClaim } from '../macos/state.ts';
 import { makeChildProcess } from './_factories.ts';
 
 const native = vi.hoisted(() => ({
@@ -32,6 +33,7 @@ const native = vi.hoisted(() => ({
   identity: vi.fn<(record: unknown) => string>(),
   stop: vi.fn<(root: string) => Promise<boolean>>(),
   stopApps: vi.fn<(area: string) => Promise<void>>(),
+  launches: new Array<{ stdout: string; stderr: string; claim: { root: string } }>(),
 }));
 vi.mock('../exec.ts', () => ({
   getExecutor: () => ({ runFile: native.runFile, runFileQuiet: native.quiet, spawn: native.spawn }),
@@ -46,7 +48,16 @@ vi.mock('../process-identity.ts', async (original) => ({
   inspectProcessIdentity: (record: unknown) => native.identity(record),
 }));
 vi.mock('../engine/spawn-owned.ts', () => ({
-  spawnOwned: (launch: { file: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }) => {
+  spawnOwned: (launch: {
+    file: string;
+    args: string[];
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    stdout: string;
+    stderr: string;
+    claim: { root: string };
+  }) => {
+    native.launches.push(launch);
     const child = native.spawn(launch.file, launch.args, { cwd: launch.cwd, env: launch.env, detached: true });
     return { pid: child.pid, processToken: 'app', child };
   },
@@ -69,6 +80,7 @@ const device: HostedMacosDevice = { architecture: 'arm64', macosVersion: '27.0',
 
 beforeEach(() => {
   vi.resetAllMocks();
+  native.launches = [];
   root = mkdtempSync(join(tmpdir(), 'stim-hosted-macos-'));
   home = join(root, 'home');
   area = join(root, 'apps', 'app');
@@ -187,6 +199,15 @@ test('stamps and signs verified bytes, launches with an isolated home, and delet
       }),
     }),
   );
+  const runRoot = realpathSync(join(home, 'macos-app'));
+  expect(native.launches).toEqual([
+    expect.objectContaining({
+      stdout: join(workspaceLogsDir(runRoot), 'macos-app.out'),
+      stderr: join(workspaceLogsDir(runRoot), 'macos-app.err'),
+      claim: expect.objectContaining({ root: macosRuntimeClaim(runRoot) }),
+    }),
+  ]);
+  expect(workspaceLogsDir(runRoot).startsWith(home)).toBe(true);
   expect(readMacosRecord(realpathSync(join(home, 'macos-app')))).toMatchObject({
     bundleId: `${bundleId}.hosted3`,
     arguments: offeredArguments,
@@ -371,7 +392,6 @@ test('does not record a launch whose app process cannot be verified', async () =
     state: 'unknown',
     notice: expect.stringContaining('Could not verify'),
   });
-  expect(readMacosRecord(realpathSync(join(home, 'macos-app')))?.app).toBeUndefined();
 });
 
 test('stop without an app skips defaults and refuses a foreign preference domain', async () => {

@@ -92,8 +92,8 @@ An app that activates itself at launch or on reopen still takes focus. Hosted la
 (`macos --remote`) do not set it. A failed build keeps the compiler
 output in workspace logs and does not launch an app. Runtime stdout and stderr
 are client logs, and Stim runs the app with `NSUnbufferedIO=YES` so Swift `print`
-output arrives per line instead of when the app exits. The app runs as a detached child of the command, with the
-command's environment; its stdout and stderr go to files in the workspace logs that stimd turns into those records,
+output arrives per line instead of when the app exits. The app runs detached, started by the command (or by stimd
+for a Desktop or phone run) with that caller's environment; its stdout and stderr go to files in the workspace logs that stimd turns into those records,
 and its exit is an info record without an exit code. `macos --json` prints one launch
 record on stdout, with progress on stderr. `status --json` reports
 `environments[].macos`, its build and process state. This command does not

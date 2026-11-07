@@ -490,8 +490,13 @@ const OBSERVE_MS = 30_000;
  */
 export async function observeOwned(root: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
   if (!stimdLive() && !(await claimTaken(launchStimd(env, daemonMode(env))))) return 'no stimd runs in this Stim home';
-  const reply = await askStimd('logs.observe', OBSERVE_MS, { params: { root } });
-  if (reply?.op !== 'logs.observed') return 'stimd did not answer';
+  const ask = () => askStimd('logs.observe', OBSERVE_MS, { params: { root } });
+  let reply = await ask();
+  if (!reply && stimdRefused() && (await successorBound())) reply = await ask();
+  if (reply?.op !== 'logs.observed')
+    return stimdRefused()
+      ? `this Stim home's stimd runs another Stim build (${refusedBuild}); run the command with that build`
+      : 'stimd did not answer';
   return typeof reply.error === 'string' ? reply.error : null;
 }
 

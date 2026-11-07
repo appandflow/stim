@@ -14,6 +14,7 @@ import type {
   WebRuntimeContext,
   WebRuntimePreparation,
 } from '../integrations/web-project.ts';
+import { signalProcessTree } from '../metro.ts';
 import { reserveBrowserPort } from '../named-ports.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { throwIfCancelled } from '../cancellation.ts';
@@ -107,17 +108,24 @@ export async function launchOwnedBrowser(
         declare: [claim],
       });
       const owner = { pid: chrome.pid, processToken: chrome.processToken };
-      await withWorkspaceStateLockAsync(root, () =>
-        writeWebRecord(root, {
-          ...owner,
-          ...launch,
-          chromeProcess: owner,
-          cdpPort: port,
-          profile,
-          url,
-          startedAt: new Date().toISOString(),
-        }),
-      );
+      try {
+        await withWorkspaceStateLockAsync(root, () =>
+          writeWebRecord(root, {
+            ...owner,
+            ...launch,
+            chromeProcess: owner,
+            cdpPort: port,
+            profile,
+            url,
+            startedAt: new Date().toISOString(),
+          }),
+        );
+      } catch (error) {
+        try {
+          signalProcessTree(chrome.pid, 'SIGKILL', { group: true });
+        } catch {}
+        throw error;
+      }
       const unobserved = await observeOwned(root, ambientEnv());
       const record = liveWebRecord(readWebRecord(root));
       if (signal?.aborted || unobserved !== null || !record || record.chromeProcess?.pid !== chrome.pid) {

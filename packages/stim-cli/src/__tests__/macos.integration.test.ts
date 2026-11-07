@@ -709,7 +709,6 @@ describe('macOS build placement and promotion', () => {
       const mocked = getExecutor();
       resetExecutor();
       const app = await ownedProcess();
-      const child = children.at(-1)!;
       let enter!: () => void;
       let release!: () => void;
       const entered = new Promise<void>((resolve) => {
@@ -742,7 +741,6 @@ describe('macOS build placement and promotion', () => {
           details: {},
           label: 'macOS app',
         },
-        child,
       });
       vi.spyOn(stimdClient, 'observeOwned').mockResolvedValue(null);
       setExecutor({

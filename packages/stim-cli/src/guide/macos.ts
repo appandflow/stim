@@ -140,8 +140,9 @@ plannedPhases are null; finished runs and their phase times are in
 environments[].builds.macos, where phases includes launch once the launch step finishes
 and compileSteps is SwiftPM's step total. An offloaded build reports the worker's
 steps the same way.
-The app runs as a detached child of the command, with the command's
-environment. Its stdout and stderr go to logs/macos-app.out and macos-app.err
+The app runs detached, started by the command (or by stimd for a Desktop or
+phone run) with that caller's environment; a hosted app gets the host's
+restricted environment. Its stdout and stderr go to logs/macos-app.out and macos-app.err
 in the workspace, which stimd follows into client records (stdout at info,
 stderr at warn) while the app runs, and its exit becomes an info record
 without an exit code; build output becomes build records, all with platform

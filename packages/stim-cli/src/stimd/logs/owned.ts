@@ -51,13 +51,21 @@ export interface OwnedStreams {
   close(): void;
 }
 
+/** Whether a live supervisor an older Stim started still owns the process `pid`, and observes it itself. */
+function legacy(owner: { pid: number; processToken: string } | undefined, pid: number): boolean {
+  return owner !== undefined && owner.pid !== pid && inspectProcessIdentity(owner) === 'same';
+}
+
 export function createOwnedStreams(log: Log): OwnedStreams {
   const streams = new Map<string, Stream>();
+  const ended = new Map<string, string>();
   let closed = false;
   const keep = (key: string, stream: Stream) => {
     streams.set(key, stream);
     void stream.ended.then(() => {
-      if (streams.get(key) === stream) streams.delete(key);
+      if (streams.get(key) !== stream) return undefined;
+      streams.delete(key);
+      if (!closed) ended.set(key, stream.token);
       return undefined;
     });
   };
@@ -69,17 +77,20 @@ export function createOwnedStreams(log: Log): OwnedStreams {
   };
   const macos = (dir: string | null, record: MacosAppRecord | null) => {
     if (!dir || !record?.app || inspectProcessIdentity(record.app) !== 'same') return;
+    if (legacy(record.supervisor, record.app.pid)) return;
     const key = `macos:${dir}`;
-    if (current(key, record.app.processToken)) return;
+    if (current(key, record.app.processToken) || ended.get(key) === record.app.processToken) return;
     keep(key, tailMacosApp(dir, record.app, record.product));
   };
-  const workspace = (root: string): Promise<void> | null => {
+  const workspace = (root: string, asked: boolean): Promise<void> | null => {
     const record = readMacosRecord(root);
     if (!record?.host) macos(workspaceLogsDir(root), record);
     const web = readWebRecord(root);
     if (!web?.chromeProcess || inspectProcessIdentity(web.chromeProcess) !== 'same') return null;
+    if (legacy(web, web.chromeProcess.pid)) return null;
     const key = `web:${root}`;
     if (current(key, web.chromeProcess.processToken)) return streams.get(key)?.attached ?? null;
+    if (!asked && ended.get(key) === web.chromeProcess.processToken) return null;
     const stream = observeBrowser(root, web, web.chromeProcess);
     keep(key, { token: web.chromeProcess.processToken, ...stream });
     return stream.attached;
@@ -103,7 +114,7 @@ export function createOwnedStreams(log: Log): OwnedStreams {
       if (closed) return 'stimd is stopping';
       if (root !== undefined) {
         try {
-          await workspace(root);
+          await workspace(root, true);
           return null;
         } catch (error) {
           return error instanceof Error ? error.message : String(error);
@@ -118,7 +129,7 @@ export function createOwnedStreams(log: Log): OwnedStreams {
       }
       for (const path of paths) {
         try {
-          workspace(path)?.catch(() => {});
+          workspace(path, false)?.catch(() => {});
         } catch (error) {
           log('warn', 'owned_sync_failed', `${path}: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -185,7 +196,7 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string): Stream {
     for (const file of files) {
       let fd: number;
       try {
-        if (statSync(file.path).size < offsets[file.key]) offsets[file.key] = 0;
+        if (statSync(file.path).size < offsets[file.key]) continue;
         fd = openSync(file.path, 'r');
       } catch {
         continue;
