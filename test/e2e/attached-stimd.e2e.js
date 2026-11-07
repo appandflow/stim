@@ -675,6 +675,51 @@ test('host end reports an attached daemon killed before shutdown', { timeout: 30
 });
 
 test(
+  'a host forced to kill an unresponsive attached daemon leaves home and engine claims unresolved',
+  { timeout: 30_000, skip: process.platform === 'win32' },
+  async () => {
+    const scratch = mkdtempSync(join(tmp, 'stalled-host-'));
+    const engineRoot = join(scratch, 'engines');
+    const build = 'bbbbbbbbbbbb';
+    const selected = join(engineRoot, build);
+    mkdirSync(join(selected, 'dist'), { recursive: true });
+    cpSync(join(PACKAGE, 'dist'), join(selected, 'dist'), { recursive: true });
+    symlinkSync(join(PACKAGE, 'node_modules'), join(selected, 'node_modules'), 'junction');
+    cpSync(join(PACKAGE, 'package.json'), join(selected, 'package.json'));
+    writeFileSync(join(engineRoot, 'current.json'), JSON.stringify({ format: 1, dir: build, version: 'test' }));
+    const selectedHome = join(scratch, 'home');
+    const selectedEnv = {
+      ...env,
+      STIM_HOME: selectedHome,
+      STIM_ENGINE_ROOT: engineRoot,
+      STIM_DAEMON_ATTACHED_EXIT_WAIT_SECONDS: '0',
+    };
+    const previousRoot = process.env.STIM_ENGINE_ROOT;
+    process.env.STIM_ENGINE_ROOT = engineRoot;
+    let host;
+    let pid;
+    try {
+      const engine = await import(pathToFileURL(join(selected, 'dist', 'attached-stimd.mjs')).href);
+      const { readClaimSet } = await import(pathToFileURL(join(REPO, 'packages/core/dist/ownership-claim.mjs')).href);
+      host = await engine.hostStimd(selectedEnv, { handover: false });
+      assert.ok(host && typeof host === 'object' && 'end' in host);
+      pid = JSON.parse(readFileSync(join(selectedHome, 'run', 'stimd.json'), 'utf8')).pid;
+      process.kill(pid, 'SIGSTOP');
+      await assert.rejects(host.end(), /Attached stimd exited/);
+      host = null;
+      assert.equal(readClaimSet(join(selectedHome, 'run', 'stimd')).unresolved.length, 1);
+      assert.equal(readClaimSet(join(engineRoot, 'claims', build)).unresolved.length, 1);
+    } finally {
+      if (pid && alive(pid)) process.kill(pid, 'SIGKILL');
+      if (host && typeof host === 'object' && 'end' in host) await host.end().catch(() => {});
+      if (previousRoot === undefined) delete process.env.STIM_ENGINE_ROOT;
+      else process.env.STIM_ENGINE_ROOT = previousRoot;
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'store lock contention past attached startup refuses admission',
   { timeout: 25_000, skip: process.platform === 'win32' },
   async () => {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { workspaceDir } from '../../workspace/paths.ts';
 import {
   claimRemoveCommand,
@@ -15,6 +15,8 @@ import { inspectProcessIdentity } from '../../process-identity.ts';
 import { signalProcessTree } from '../../metro.ts';
 import { getExecutor } from '../../exec.ts';
 
+export const deviceClaimRemoveCommand = (path: string): string => claimRemoveCommand(`${path}${sep}`);
+
 const claimPath = (root: string, streamId: string) =>
   join(workspaceDir(root), 'log-streams', `stream-${createHash('sha256').update(streamId).digest('hex')}.claim`);
 const historyPath = (root: string, streamId: string) =>
@@ -24,7 +26,7 @@ async function recover(path: string, expected?: string, beforeRelease?: () => vo
   const survey = readClaimSet(path);
   if (survey.unresolved.length)
     throw new Error(
-      `Device log ownership at ${path} is unresolved; inspect it before running ${claimRemoveCommand(path)}.`,
+      `Device log ownership at ${path} is unresolved; inspect it before running ${deviceClaimRemoveCommand(path)}.`,
     );
   if (expected && ![...survey.live, ...survey.dead].some((holder) => holder.details.streamId === expected))
     throw new Error(
@@ -35,7 +37,7 @@ async function recover(path: string, expected?: string, beforeRelease?: () => vo
     if (process.platform === 'win32' && holder.childDeclared) {
       markClaimChildPending({ ...holder, root: path, label: 'device log stream' });
       throw new Error(
-        `The device log tree at ${path} cannot be verified stopped; inspect it before running ${claimRemoveCommand(path)}.`,
+        `The device log tree at ${path} cannot be verified stopped; inspect it before running ${deviceClaimRemoveCommand(path)}.`,
       );
     }
   }
@@ -47,7 +49,7 @@ async function recover(path: string, expected?: string, beforeRelease?: () => vo
     const child = holder.child;
     if (inspectProcessIdentity(child) !== 'same')
       throw new Error(
-        `The device log child at ${path} cannot be verified; inspect it before running ${claimRemoveCommand(path)}.`,
+        `The device log child at ${path} cannot be verified; inspect it before running ${deviceClaimRemoveCommand(path)}.`,
       );
     if (process.platform === 'win32') {
       const claim = { ...holder, root: path, label: 'device log stream' };
@@ -60,7 +62,7 @@ async function recover(path: string, expected?: string, beforeRelease?: () => vo
         );
       } catch (error) {
         throw new Error(
-          `The device log tree at ${path} could not be stopped: ${String(error)}; inspect it before running ${claimRemoveCommand(path)}.`,
+          `The device log tree at ${path} could not be stopped: ${String(error)}; inspect it before running ${deviceClaimRemoveCommand(path)}.`,
           { cause: error },
         );
       }
@@ -68,7 +70,7 @@ async function recover(path: string, expected?: string, beforeRelease?: () => vo
         await new Promise((resolve) => setTimeout(resolve, 20));
       if (inspectProcessIdentity(child) !== 'gone')
         throw new Error(
-          `The device log child at ${path} cannot be verified stopped; inspect it before running ${claimRemoveCommand(path)}.`,
+          `The device log child at ${path} cannot be verified stopped; inspect it before running ${deviceClaimRemoveCommand(path)}.`,
         );
       clearClaimChild(claim);
     } else {

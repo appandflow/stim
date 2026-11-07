@@ -2,7 +2,6 @@ import type { ChildProcess } from 'node:child_process';
 import { getExecutor } from '../../exec.ts';
 import { captureProcessToken } from '../../process-identity.ts';
 import {
-  claimRemoveCommand,
   clearClaimChild,
   markClaimChildPending,
   processGroupAlive,
@@ -13,7 +12,7 @@ import {
 import { adbCommand, androidClockOffset, logcatBackfillArgs, waitForAppPid } from './android.ts';
 import { androidToolCwd } from '../../devices/android.ts';
 import { logShowArgs } from './ios.ts';
-import { takeHistoryClaim } from './claim.ts';
+import { deviceClaimRemoveCommand, takeHistoryClaim } from './claim.ts';
 import type { LogSink } from './writer.ts';
 import type { StreamSpec } from './streams.ts';
 
@@ -29,7 +28,7 @@ function finishHistoryClaim(
       : processGroupAlive(spawned.pid));
   if (running)
     throw new Error(
-      `The device log backfill child at ${claim.root} cannot be verified stopped; inspect it before running ${claimRemoveCommand(claim.root)}.`,
+      `The device log backfill child at ${claim.root} cannot be verified stopped; inspect it before running ${deviceClaimRemoveCommand(claim.root)}.`,
     );
   clearClaimChild(claim);
   if (!releaseClaim(claim)) throw new Error('the device log backfill claim changed during cleanup');

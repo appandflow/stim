@@ -8,7 +8,6 @@ import { deviceSlotKey, validateDeviceSlot } from '../../devices/device-slots.ts
 import { getExecutor } from '../../exec.ts';
 import { signalProcessTree } from '../../metro.ts';
 import {
-  claimRemoveCommand,
   clearClaimChild,
   markClaimChildPending,
   processGroupAlive,
@@ -19,7 +18,7 @@ import {
 import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
 import { adbCommand, startAndroidLogcat } from './android.ts';
 import { androidToolCwd } from '../../devices/android.ts';
-import { clearHistoryClaim, clearStreamClaim, takeStreamClaim } from './claim.ts';
+import { clearHistoryClaim, clearStreamClaim, deviceClaimRemoveCommand, takeStreamClaim } from './claim.ts';
 import { backfillDeviceLog } from './backfill.ts';
 import { startIosDeviceConsole } from './ios-device.ts';
 import { startIosLogStream } from './ios.ts';
@@ -201,7 +200,7 @@ async function waitChild(stream: Stream): Promise<void> {
   if (process.platform === 'win32' && stream.treePending && stream.lastStop?.signalled !== true)
     throw new Error(
       `the device log process tree could not be verified stopped (stop=${JSON.stringify(stream.lastStop)}); ` +
-        `inspect it before running ${claimRemoveCommand(stream.claim.root)}.`,
+        `inspect it before running ${deviceClaimRemoveCommand(stream.claim.root)}.`,
     );
   const running = () =>
     stream.identity
@@ -215,7 +214,7 @@ async function waitChild(stream: Stream): Promise<void> {
   if (running()) {
     if (stream.pending && !stream.identity)
       throw new Error(
-        `The device log child at ${stream.claim.root} cannot be verified stopped; inspect it before running ${claimRemoveCommand(stream.claim.root)}.`,
+        `The device log child at ${stream.claim.root} cannot be verified stopped; inspect it before running ${deviceClaimRemoveCommand(stream.claim.root)}.`,
       );
     throw new Error('the device log stream did not stop');
   }
@@ -253,6 +252,7 @@ function spawnChild(
   args: string[],
   options: SpawnOptions,
 ): ChildProcess {
+  stream.lastStop = null;
   markClaimChildPending(stream.claim);
   stream.pending = true;
   // Windows taskkill /T needs the live launcher PID to find descendants; keep the claim pending until it succeeds.
