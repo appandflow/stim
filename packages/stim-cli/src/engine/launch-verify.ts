@@ -6,6 +6,7 @@ import { createNdjsonTail, readNdjsonGenerations, type NdjsonRecord } from '../n
 import { DEV_MENU_LAUNCH_ARGS } from '../stimd/logs/ios-device.ts';
 import { APP_READINESS_TIMEOUT_MS, appReadinessSignal, type AppReadiness } from './app-readiness.ts';
 import { ANDROID_DISABLE_AUTO_LAUNCH_EXTRA, androidAppProcess, deviceShellArg } from './app-install.ts';
+import { ownBuildRecords } from '../stimd/metro/injected.ts';
 
 export type VerifyLaunchResult = {
   verified: boolean;
@@ -723,11 +724,16 @@ export function readCollectorRecords(logsDir: string | undefined): NdjsonRecord[
 }
 
 function readNdjson(logsDir: string | undefined, name: string): NdjsonRecord[] {
-  return logsDir ? readNdjsonGenerations(join(logsDir, name)) : [];
+  // compat C6 permanent
+  return logsDir ? ownBuildRecords(readNdjsonGenerations(join(logsDir, name))) : [];
+  // compat end
 }
 
 function tailNdjson(logsDir: string | undefined, name: string): () => NdjsonRecord[] {
-  return logsDir ? createNdjsonTail(join(logsDir, name)) : () => [];
+  const tail = logsDir ? createNdjsonTail(join(logsDir, name)) : () => [];
+  // compat C6 permanent
+  return () => ownBuildRecords(tail());
+  // compat end
 }
 
 export function unattributedLaunchLines({

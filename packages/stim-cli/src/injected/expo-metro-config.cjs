@@ -8,6 +8,7 @@ const http = require('node:http');
 const { createRequire } = require('node:module');
 const { pathToFileURL } = require('node:url');
 const { bundleResponseMiddleware } = require('./bundle-response.cjs');
+const { startHeartbeat } = require('./metro-reporter.cjs');
 
 const projectRoot = process.env.STIM_PROJECT_ROOT;
 const storeRoot = process.env.STIM_METRO_STORE;
@@ -216,6 +217,8 @@ function appendStore(config, defaultConfig) {
 if (!projectRoot) {
   module.exports = {};
 } else {
+  if (process.env.STIM_METRO_HEARTBEAT)
+    startHeartbeat(process.env.STIM_METRO_HEARTBEAT, { port: Number(process.env.STIM_METRO_PORT) });
   const projectRequire = createRequire(path.join(projectRoot, 'package.json'));
   const expoMetroConfig = projectRequire('expo/metro-config');
   const defaultConfig = expoMetroConfig.getDefaultConfig(projectRoot);

@@ -68,6 +68,15 @@ import { pendingDormant } from '../daemon/stages.ts';
 import { takeOverLegacyDaemon } from './legacy-daemon-takeover.ts';
 // compat end
 import { listenPipe } from './pipe-win32.ts';
+import {
+  adoptMetroChildren,
+  closeMetroChildren,
+  ensureMetro,
+  ensureTunnel,
+  metroChildrenRun,
+  metroOpFlags,
+  metroTick,
+} from './metro/children.ts';
 import { createPassesLane, createThreadTable } from './threads.ts';
 import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
@@ -613,7 +622,7 @@ export async function runStimd({
             })
             .then((next) => {
               if (!next) {
-                reply({ op: 'op.begun' });
+                reply({ op: 'op.begun', ...metroOpFlags(message.params) });
                 return undefined;
               }
               ops.delete(socket);
@@ -623,6 +632,15 @@ export async function runStimd({
         } else if (op === 'op.wait' || op === 'op.resume') {
           if (ops.has(socket)) ops.set(socket, op === 'op.wait' ? 'waiting' : 'pinned');
           void checkEngine();
+        } else if (op === 'metro.ensure' || op === 'tunnel.ensure') {
+          const ask = op === 'metro.ensure' ? ensureMetro(message.params, log) : ensureTunnel(message.params);
+          void ask
+            .catch((error: unknown) => ({
+              op: 'error',
+              code: op,
+              message: error instanceof Error ? error.message : String(error),
+            }))
+            .then((answer) => socket.end(`${JSON.stringify(answer)}\n`));
         } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'status') void statuses.answer(message.params).then((answer) => socket.end(`${answer}\n`));
         else if (op === 'tick') {
@@ -670,7 +688,7 @@ export async function runStimd({
     markAbnormal = null;
     for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
-    void Promise.all([lane.settled(), dependencyWork, net.close()])
+    void Promise.all([lane.settled(), dependencyWork, net.close(), closeMetroChildren()])
       .then(() => threads.close())
       .then(() => writer.close());
   };
@@ -689,6 +707,7 @@ export async function runStimd({
     shutdown(`cannot listen on ${path}: ${error instanceof Error ? error.message : String(error)}`, 'error');
     throw error;
   }
+  adoptMetroChildren(log);
   if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
   log(
     'info',
@@ -721,8 +740,9 @@ export async function runStimd({
     tickRequested = false;
     const configured = configuredDaemonMode();
     const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
+    void metroTick(mode === 'on', log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
     if (mode === 'off') {
-      if (net.running() || restartingNet) {
+      if (net.running() || restartingNet || metroChildrenRun()) {
         for (const socket of tickReplies.splice(0)) socket.destroy();
         continue;
       }

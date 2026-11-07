@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -8,10 +8,8 @@ import {
   type DoctorInspectionOptions,
   runDoctor as inspectDoctor,
 } from '../diagnostics/doctor.ts';
-import { workspaceStateFile } from '../workspace/paths.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { detectIsExpo, findServerWorkspace } from '../workspace/project.ts';
-import { MODE_BARE, MODE_EXPO, runSupervisor } from '../supervisor/run.ts';
 import { expoBinPath } from '../stimd/metro/server-expo.ts';
 
 vi.mock('../engine/ios-signing.ts', async (importOriginal) => ({
@@ -131,26 +129,8 @@ describe('detectIsExpo on a hoisted workspace', () => {
 });
 
 describe('detectIsExpo is the single source', () => {
-  test('the supervisor picks the expo dev server for the project doctor treats as Expo', async () => {
-    let startedExpo = false;
-    const exited = [];
-    await runSupervisor({
-      root: app,
-      port: 8199,
-      attachSignals: false,
-      watchman: async () => ({ roots: [] }),
-      onExit: (code) => exited.push(code),
-      startExpo: async () => {
-        startedExpo = true;
-        return { mode: MODE_EXPO, serverPid: 4242, onExit() {}, async close() {} };
-      },
-      startBare: async () => {
-        throw new Error('a project detected as Expo must NOT get the bare in-process server');
-      },
-    });
-    expect(startedExpo).toBe(true);
-    expect(JSON.parse(readState()).supervisor.mode).toBe(MODE_EXPO);
-
+  test('the hoisted app is Expo for detectIsExpo, which picks the dev server stimd starts, and for doctor', async () => {
+    expect(detectIsExpo(app)).toBe(true);
     write(
       join(app, 'app.json'),
       JSON.stringify({
@@ -165,26 +145,11 @@ describe('detectIsExpo is the single source', () => {
     expect(titles.some((t) => /build.?cache.?provider/i.test(t))).toBeTruthy();
   });
 
-  test('and a bare project gets the bare server and none of the Expo findings', async () => {
+  test('and a bare project is bare for both, with none of the Expo findings', async () => {
     const bare = realpathSync(mkdtempSync(join(tmpdir(), 'stim-bare-')));
     try {
       write(join(bare, 'package.json'), JSON.stringify({ name: 'bare', dependencies: { 'react-native': '0.81.0' } }));
-      let startedBare = false;
-      await runSupervisor({
-        root: bare,
-        port: 8198,
-        attachSignals: false,
-        watchman: async () => ({ roots: [] }),
-        onExit: () => {},
-        startBare: async () => {
-          startedBare = true;
-          return { mode: MODE_BARE, serverPid: null, onExit() {}, async close() {} };
-        },
-        startExpo: async () => {
-          throw new Error('a bare project must not spawn `expo start`');
-        },
-      });
-      expect(startedBare).toBe(true);
+      expect(detectIsExpo(bare)).toBe(false);
       const titles = (await runDoctor(bare)).map((f) => f.title);
       expect(!titles.some((t) => /build.?cache.?provider|expo-dev-client/i.test(t))).toBeTruthy();
     } finally {
@@ -192,10 +157,6 @@ describe('detectIsExpo is the single source', () => {
     }
   });
 });
-
-function readState() {
-  return readFileSync(workspaceStateFile(app), 'utf-8');
-}
 
 describe('the workspace a monorepo web server belongs to', () => {
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'ignore' });

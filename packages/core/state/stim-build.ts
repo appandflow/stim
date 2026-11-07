@@ -5,13 +5,14 @@ import { join } from 'node:path';
 /**
  * A digest of Stim's built code: the first 16 hex characters of the sha256 over the sorted `*.mjs` names and
  * bytes of a `stim` `dist` directory. A remote machine that reports no build compatibility version offloads only
- * with the same one.
+ * with the same one. With `suffix` `.cjs` over `dist/injected`, it names the files Stim injects into a project's
+ * Metro.
  */
-export function stimBuildDigest(dir: string): string | null {
+export function stimBuildDigest(dir: string, suffix = '.mjs'): string | null {
   try {
     const hash = createHash('sha256');
     const names = readdirSync(dir)
-      .filter((entry) => entry.endsWith('.mjs'))
+      .filter((entry) => entry.endsWith(suffix))
       .toSorted();
     if (names.length === 0) return null;
     for (const name of names) {
