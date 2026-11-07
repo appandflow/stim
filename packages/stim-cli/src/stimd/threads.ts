@@ -75,7 +75,13 @@ export function createThreadTable(log: Log): ThreadTable {
     });
     const gone = (error: Error) => {
       if (threads.get(name) === thread) threads.delete(name);
-      thread.pending?.reject(error);
+      thread.pending?.reject(
+        Object.assign(error, {
+          code: 'STIM_CLAIM_UNAVAILABLE',
+          reportCleanup: true,
+          remedy: `Verify the ${name} thread's child processes and their descendants have stopped.`,
+        }),
+      );
       thread.pending = null;
     };
     worker.on('error', gone);

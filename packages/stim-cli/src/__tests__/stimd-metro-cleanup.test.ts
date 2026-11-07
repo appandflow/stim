@@ -7,10 +7,19 @@ import { workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 const fixtures = vi.hoisted(() => ({
   token: vi.fn<() => string | null>(() => 'test-token'),
   failAfterSpawn: false,
+  groupAlive: true,
   close: vi.fn<() => Promise<void>>(async () => {
     throw new Error('Could not confirm shutdown of dev-server pid 424242.');
   }),
 }));
+
+vi.mock('@stim-cli/core/ownership-claim', async (original) => {
+  const claims = await original<typeof import('@stim-cli/core/ownership-claim')>();
+  return {
+    ...claims,
+    processGroupAlive: (pid: number) => (pid === 424242 ? fixtures.groupAlive : claims.processGroupAlive(pid)),
+  };
+});
 
 vi.mock('../process-identity.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../process-identity.ts')>()),
@@ -36,6 +45,7 @@ vi.mock('../stimd/metro/server-command.ts', () => ({
     }
     return {
       serverPid: 424242,
+      processToken: fixtures.token(),
       child: { exitCode: null, signalCode: null, unref() {} },
       tail: null,
       onExit() {},
@@ -71,6 +81,7 @@ beforeEach(() => {
   process.env.STIM_HOME = join(dir, 'home');
   fixtures.token.mockReturnValue('test-token');
   fixtures.failAfterSpawn = false;
+  fixtures.groupAlive = true;
   fixtures.close.mockClear();
   openMetroChildren();
 });
@@ -131,6 +142,18 @@ test('failed startup with unreadable identity retains the pending claim', async 
   expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toMatchObject([{ childDeclared: true }]);
   await expect(closeMetroChildren()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a missing-token startup with no remaining group releases its claim',
+  async () => {
+    fixtures.token.mockReturnValue(null);
+    fixtures.groupAlive = false;
+    fixtures.close.mockResolvedValueOnce();
+    expect(await ensureMetro({ root, port: 8183 }, log)).toMatchObject({ op: 'error', code: 'metro-start' });
+    expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toEqual([]);
+    await expect(closeMetroChildren()).resolves.toBeUndefined();
+  },
+);
 
 test('startup failure after spawning retains the pending claim', async () => {
   fixtures.failAfterSpawn = true;

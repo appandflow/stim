@@ -18,7 +18,7 @@ import { getExecutor } from '../../exec.ts';
 import { recordForeignMetro, resolveProjectMetro, signalProcessTree, signalProcessTreeAsync } from '../../metro.ts';
 import { createNdjsonWriter, type NdjsonRecord, type NdjsonWriter } from '../../ndjson.ts';
 import { isMetroRunning } from '../../ports.ts';
-import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
+import { inspectProcessIdentity } from '../../process-identity.ts';
 import { resolveMetroSharedCache } from '../../optimizations.ts';
 import { clearSupervisor, loadConfig, setSupervisor } from '../../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
@@ -226,6 +226,8 @@ async function stopChild(child: MetroChild, why: string): Promise<void> {
     } else if (child.handle) await child.handle.close();
     else if (processGroupAlive(child.pid)) {
       const signal = (sig: NodeJS.Signals) => {
+        if (inspectProcessIdentity(child) !== 'same')
+          throw new Error(`Could not verify the dev-server process group for pid ${child.pid}.`);
         try {
           signalProcessTree(child.pid, sig, { group: true });
         } catch {}
@@ -411,10 +413,11 @@ async function start(root: string, port: number, log: Log): Promise<Answer> {
     for (const fd of output.fds) closeSync(fd);
   }
   const pid = handle.serverPid;
-  const processToken = pid ? captureProcessToken(pid) : null;
+  const processToken = handle.processToken;
   if (!pid || !processToken) {
     try {
-      if (pid && !GROUPS) throw new Error('the dev server process identity could not be verified');
+      if (pid && (!GROUPS || processGroupAlive(pid)))
+        throw new Error('the dev server process identity could not be verified');
       await handle.close();
     } catch (error) {
       writer.close();
@@ -867,11 +870,21 @@ async function stopTunnel(root: string, tunnel: TunnelChild): Promise<void> {
     forgetTunnel(root, tunnel);
     return;
   }
+  const alive = () => processGroupAlive(tunnel.pid);
+  const verify = () => {
+    if (inspectProcessIdentity(tunnel) !== 'same')
+      throw unverifiedChild(tunnel.claim, tunnel.pid, 'Could not verify the tunnel process group.');
+  };
+  if (!alive()) {
+    forgetTunnel(root, tunnel);
+    return;
+  }
+  verify();
   try {
     signalProcessTree(tunnel.pid, 'SIGTERM', { group: GROUPS });
   } catch {}
-  const alive = () => (GROUPS ? processGroupAlive(tunnel.pid) : inspectProcessIdentity(tunnel) === 'same');
   if (!(await gone(alive, STOP_MS))) {
+    verify();
     try {
       signalProcessTree(tunnel.pid, 'SIGKILL', { group: GROUPS });
     } catch {}

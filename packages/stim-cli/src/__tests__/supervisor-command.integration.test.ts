@@ -10,6 +10,7 @@ import { parseNdjsonText } from '../ndjson.ts';
 import { startCommandServer } from '../stimd/metro/server-command.ts';
 import { openChildOutput } from '../stimd/metro/child-server.ts';
 import { makeChildProcess } from './_factories.ts';
+import * as identity from '../process-identity.ts';
 
 let root: string;
 beforeEach(() => {
@@ -68,6 +69,11 @@ describe('startCommandServer', () => {
   });
 
   test('close refuses unconfirmed shutdown after signalling the group with SIGTERM and SIGKILL', async () => {
+    vi.spyOn(identity, 'captureProcessToken').mockReturnValue('fixture-token');
+    vi.spyOn(identity, 'inspectProcessIdentity').mockReturnValue('same');
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
     const child = makeChildProcess({ pid: 4242 });
     const signals: [number, NodeJS.Signals, unknown][] = [];
     const server = await startCommandServer({
@@ -130,7 +136,12 @@ describe('startCommandServer', () => {
     );
   });
 
-  test('close still stops the group after the wrapper itself has exited', async () => {
+  test('close refuses to signal a group after the wrapper identity is gone', async () => {
+    vi.spyOn(identity, 'captureProcessToken').mockReturnValue('fixture-token');
+    vi.spyOn(identity, 'inspectProcessIdentity').mockReturnValue('gone');
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
     const child = makeChildProcess({ pid: 4242 });
     let groupRunning = true;
     const signals: NodeJS.Signals[] = [];
@@ -150,8 +161,33 @@ describe('startCommandServer', () => {
       },
     });
     child.emit('exit', 0, null);
-    await server.close();
+    await expect(server.close()).rejects.toThrow('Could not verify the dev-server process group');
 
+    expect(signals).toEqual([]);
+  });
+
+  test('close checks identity again before escalating to SIGKILL', async () => {
+    vi.spyOn(identity, 'captureProcessToken').mockReturnValue('fixture-token');
+    vi.spyOn(identity, 'inspectProcessIdentity').mockReturnValueOnce('same').mockReturnValue('different');
+    onTestFinished(() => {
+      vi.restoreAllMocks();
+    });
+    const signals: NodeJS.Signals[] = [];
+    const server = await startCommandServer({
+      root,
+      port: 8098,
+      logsDir: join(root, 'logs'),
+      command,
+      spawnFn: () => makeChildProcess({ pid: 4242 }),
+      platform: 'darwin',
+      killTimeoutMs: 1,
+      groupAlive: () => true,
+      signalTree: (_pid, sig) => {
+        if (sig) signals.push(sig);
+        return true;
+      },
+    });
+    await expect(server.close()).rejects.toThrow('Could not verify the dev-server process group');
     expect(signals).toEqual(['SIGTERM']);
   });
 });
