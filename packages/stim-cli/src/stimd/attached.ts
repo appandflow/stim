@@ -205,6 +205,10 @@ export function hostStimd(
   } catch {
     return Promise.resolve(unavailable());
   }
+  // Node can signal process group 0 before a failed spawn reports its error: https://github.com/nodejs/node/pull/65054
+  const kill = () => {
+    if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  };
   const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((done) => {
     child.once('exit', (code, exitSignal) => done({ code, signal: exitSignal }));
     child.once('error', () => done({ code: null, signal: null }));
@@ -219,12 +223,12 @@ export function hostStimd(
     const abort = () => {
       aborting = true;
       clearTimeout(timer);
-      child.kill('SIGKILL');
+      kill();
       void exited.then(() => reject(signal?.reason));
     };
     signal?.addEventListener('abort', abort, { once: true });
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      kill();
       resolve(unavailable());
     }, BIND_MS);
     if (signal?.aborted) abort();
@@ -289,9 +293,9 @@ export function hostStimd(
         async end() {
           child.ref();
           child.stdin?.end();
-          const kill = setTimeout(() => child.kill('SIGKILL'), waitMs + KILL_GRACE_MS);
+          const killTimer = setTimeout(kill, waitMs + KILL_GRACE_MS);
           const result = await exited;
-          clearTimeout(kill);
+          clearTimeout(killTimer);
           if (result.code !== 0)
             throw new Error(
               `Attached stimd exited ${result.signal ? `on ${result.signal}` : `with code ${String(result.code)}`}.`,
