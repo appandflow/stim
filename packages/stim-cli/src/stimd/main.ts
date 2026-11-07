@@ -54,6 +54,7 @@ import {
   isSandboxBlocked,
   stimdBuildId,
   stimdLive,
+  waitForStimdHello,
   type NetAnswer,
 } from '../daemon/client.ts';
 import { getExecutor } from '../exec.ts';
@@ -328,6 +329,11 @@ export async function runStimd({
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
     writer.close();
+    const answer = attached ? await waitForStimdHello() : null;
+    if (answer)
+      await new Promise<void>((done) =>
+        process.stdout.write(`${JSON.stringify({ op: `attached-${answer}` })}\n`, () => done()),
+      );
     return false;
   }
   let keepOwn = false;
@@ -595,7 +601,9 @@ export async function runStimd({
         const { op } = message;
         if (op === 'hello') {
           hasten?.();
-          socket.end(`${JSON.stringify({ op: 'hello', pid: process.pid, build, version: identity.version })}\n`);
+          socket.end(
+            `${JSON.stringify({ op: 'hello', pid: process.pid, build, version: identity.version, mode: effectiveMode(), ...(attached ? { attached: true } : {}) })}\n`,
+          );
         } else if (op === 'presence.publish') {
           socket.end(`${JSON.stringify({ op: 'presence', forwarded: net.presence(message.params) })}\n`);
         } else if (op === 'net.ensure') {

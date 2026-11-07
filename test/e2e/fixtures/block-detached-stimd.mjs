@@ -54,3 +54,16 @@ if (new URL(import.meta.url).searchParams.has('deny-socket')) {
     return this;
   };
 }
+
+if (new URL(import.meta.url).searchParams.has('deny-connect')) {
+  const { Socket } = await import('node:net');
+  const connect = Socket.prototype.connect;
+  Socket.prototype.connect = function (...args) {
+    const target = Array.isArray(args[0]) ? args[0][0] : args[0];
+    const path = typeof target === 'string' ? target : target?.path;
+    if (typeof path !== 'string' || !path.endsWith('.sock')) return connect.apply(this, args);
+    const error = Object.assign(new Error(`connect EACCES: ${path}`), { code: 'EACCES' });
+    process.nextTick(() => this.emit('error', error));
+    return this;
+  };
+}

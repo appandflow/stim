@@ -419,7 +419,9 @@ workspace's own owned simulator booted, so the next `stim ios` skips the boot.
 Absent means 15; `0` shuts it down at park and at `stop`. Stim keeps it booted
 only while macOS memory pressure is normal and a device slot is free.
 `STIM_POOL_BOOTED_GRACE_MINUTES` overrides it, and when `STIM_HOME` is set it is
-`0` unless that variable is set. Emulators are always shut down at park and at `stop`. It needs the stim-daemon: with `daemon.mode` `off` or `report`, or on Windows, `worktree remove` and `stop` shut the simulator down at once.
+`0` unless that variable is set. Emulators are always shut down at park and at `stop`. It needs a reachable persistent stimd in acting mode: with an attached stimd,
+`daemon.mode` `off` or `report`, or on Windows, `worktree remove` and `stop`
+shut the simulator down at once.
 
 `remote.buildPoolDisabled` and `remote.devicePoolDisabled` list members excluded
 from this requester's automatic build and simulator/emulator placement. Both default

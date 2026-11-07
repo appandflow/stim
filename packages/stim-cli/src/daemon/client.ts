@@ -388,6 +388,7 @@ export async function ensureStimd(
   pin = false,
   held?: Socket[],
   command?: string,
+  allowAttached = true,
 ): Promise<boolean> {
   if (!spawnsDaemon(env)) {
     if (pin && stimdLive()) await admit(held, command);
@@ -409,7 +410,7 @@ export async function ensureStimd(
     }
     const launched = launchStimd(env, daemonMode(env), platform);
     let taken = await claimTaken(launched, ATTACH_AFTER_MS);
-    if (!taken && !held && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
+    if (!taken && !held && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
       const { hostStimd } = await import('../stimd/attached.ts');
       const host = await hostStimd(env);
       if (host !== 'held' && host !== 'blocked' && host !== null) attachedHost = host;
@@ -426,6 +427,25 @@ export async function ensureStimd(
     admitting = false;
     delete process.env.STIM_REEXEC;
   }
+}
+
+/** Waits for this build's stimd to acknowledge a socket request or a sandbox to deny it. */
+export async function waitForStimdHello(): Promise<'held' | 'blocked' | null> {
+  for (const deadline = Date.now() + CLAIM_WAIT_MS; Date.now() < deadline;) {
+    socketError = null;
+    const reply = await askStimd('hello', CONTACT_TIMEOUT_MS);
+    if (reply?.op === 'hello' && reply.build === stimdBuildId()) return 'held';
+    if (socketError === 'EPERM' || socketError === 'EACCES') return 'blocked';
+    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
+  }
+  return null;
+}
+
+/** Whether a live persistent stimd can enforce a deferred simulator shutdown. */
+export async function ensurePersistentStimd(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  if (!(await ensureStimd(env, process.platform, false, undefined, undefined, false))) return false;
+  const reply = await askStimd('hello', CONTACT_TIMEOUT_MS);
+  return reply?.op === 'hello' && reply.attached !== true && reply.mode === 'on';
 }
 
 /**

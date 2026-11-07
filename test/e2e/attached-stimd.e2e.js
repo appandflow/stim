@@ -374,3 +374,43 @@ test(
     }
   },
 );
+
+test(
+  'a held claim counts as a shared host only after same-build hello',
+  { skip: process.platform === 'win32', timeout: 30_000 },
+  async () => {
+    useHome('held-claim-home');
+    const { hostStimd } = await import(pathToFileURL(join(PACKAGE, 'dist', 'attached-stimd.mjs')).href);
+    const { tryAcquireClaim, releaseClaim } = await import(
+      pathToFileURL(join(REPO, 'packages/core/dist/ownership-claim.mjs')).href
+    );
+    const held = tryAcquireClaim({ root: join(home, 'run', 'stimd'), mode: 'exclusive', label: 'stimd' }).acquired;
+    assert.ok(held);
+    try {
+      assert.equal(await hostStimd(env, { handover: false }), null);
+      const module = pathToFileURL(join(PACKAGE, 'dist', 'attached-stimd.mjs')).href;
+      const denied = spawnSync(
+        process.execPath,
+        [
+          '--import',
+          `${PRELOAD}?deny-connect`,
+          '--input-type=module',
+          '-e',
+          `import { hostStimd } from ${JSON.stringify(module)}; console.log(JSON.stringify(await hostStimd(process.env, { handover: false })));`,
+        ],
+        { env, encoding: 'utf8', timeout: 15_000 },
+      );
+      assert.equal(denied.status, 0, denied.stderr);
+      assert.equal(JSON.parse(denied.stdout), 'blocked');
+    } finally {
+      releaseClaim(held);
+    }
+    const first = await hostStimd(env, { handover: false });
+    assert.ok(first && typeof first === 'object');
+    try {
+      assert.equal(await hostStimd(env, { handover: false }), 'held');
+    } finally {
+      await first.end();
+    }
+  },
+);

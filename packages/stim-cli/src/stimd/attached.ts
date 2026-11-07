@@ -84,7 +84,13 @@ export function hostStimd(
         line = JSON.parse(buffer.slice(0, end));
       } catch {}
       buffer = '';
-      if (!isJsonObject(line) || line.op !== 'attached') return;
+      if (!isJsonObject(line)) return;
+      if (line.op === 'attached-held' || line.op === 'attached-blocked') {
+        clearTimeout(timer);
+        resolve(line.op === 'attached-held' ? 'held' : 'blocked');
+        return;
+      }
+      if (line.op !== 'attached') return;
       clearTimeout(timer);
       const waitMs = Number(line.waitMs) || 0;
       child.unref();
@@ -99,9 +105,9 @@ export function hostStimd(
         },
       });
     });
-    child.once('exit', (code) => {
+    child.once('close', (code) => {
       clearTimeout(timer);
-      resolve(code === SANDBOX_EXIT ? 'blocked' : code === 0 ? 'held' : null);
+      resolve(code === SANDBOX_EXIT ? 'blocked' : null);
     });
     child.once('error', () => {
       clearTimeout(timer);
