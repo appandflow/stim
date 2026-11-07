@@ -10,6 +10,8 @@ const lifecycle = vi.hoisted(() => ({
   run: vi.fn<(options: { signal?: AbortSignal }) => Promise<unknown>>(),
   diagnostics: vi.fn<() => Promise<unknown>>(),
   stop: vi.fn<(options: { signal: AbortSignal }) => Promise<unknown>>(),
+  host: vi.fn<(env: NodeJS.ProcessEnv, options: { handover?: boolean }) => Promise<unknown>>(),
+  steps: [] as string[],
 }));
 vi.mock('stim', () => ({
   createStim: (options: StimOptions) => {
@@ -17,6 +19,7 @@ vi.mock('stim', () => ({
     return lifecycle;
   },
 }));
+vi.mock('stim/attached-stimd', () => ({ hostStimd: lifecycle.host }));
 
 let root: string;
 let active: string;
@@ -26,6 +29,11 @@ let options: CIOptions;
 beforeEach(() => {
   deviceId = 'owned-device';
   lifecycle.create.mockClear();
+  lifecycle.steps = [];
+  lifecycle.host.mockReset().mockImplementation(async () => {
+    lifecycle.steps.push('host');
+    return { end: async () => void lifecycle.steps.push('host ended') };
+  });
   vi.stubEnv('GITHUB_ACTIONS', 'false');
   vi.stubEnv('RUNNER_ENVIRONMENT', '');
   vi.stubEnv('STIM_HOME', undefined);
@@ -220,9 +228,36 @@ it('uses the same job-local home and cache for native work and commands across h
     expected,
     expected,
   ]);
+  expect(lifecycle.host.mock.calls.map(([env]) => ({ home: env.STIM_HOME, cache: env.STIM_BUILD_CACHE }))).toEqual([
+    expected,
+    expected,
+  ]);
   expect(options.home).toBeUndefined();
   expect(process.env.STIM_HOME).toBeUndefined();
   expect(process.env.STIM_BUILD_CACHE).toBeUndefined();
+});
+
+it('hosts stimd for the whole job, ending it after cleanup and diagnostics and never handing it over', async () => {
+  lifecycle.run.mockImplementationOnce(async () => {
+    lifecycle.steps.push('run');
+    writeFileSync(active, 'running');
+    writeFileSync(join(root, 'native.log'), 'running');
+    return { platform: 'ios', facts: { udid: deviceId, bundleId: 'test.app', metroPort: 8181 } };
+  });
+  lifecycle.stop.mockImplementationOnce(async () => {
+    lifecycle.steps.push('stop');
+    rmSync(active);
+    return { ok: true, outcomes: {}, summary: 'Stopped' };
+  });
+  lifecycle.diagnostics.mockImplementationOnce(async () => {
+    lifecycle.steps.push('diagnostics');
+    return { directory: root, records: [] };
+  });
+  options.command = [process.execPath, '-e', 'process.exitCode = 3'];
+  const result = await runCI(options);
+  expect(result.exitCode).toBe(3);
+  expect(lifecycle.steps).toEqual(['host', 'run', 'stop', 'diagnostics', 'host ended']);
+  expect(lifecycle.host.mock.calls[0]?.[1]).toEqual({ handover: false });
 });
 
 it('names the stim ci build command when no build is recorded', async () => {

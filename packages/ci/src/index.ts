@@ -2,6 +2,7 @@ import { failure, prepareCI, writeJson, type CIContextOptions } from './context.
 import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createStim, type StimRunOptions, type StimRunResult, type StimStopResult } from 'stim';
+import { hostStimd, type AttachedHost } from 'stim/attached-stimd';
 import { runCommand, type CommandResult } from './command.ts';
 import { copyDiagnosticLogs } from './artifacts.ts';
 
@@ -38,12 +39,18 @@ export interface CIResult {
   cleanup: { result: StimStopResult | null; error?: CIFailure };
 }
 
-function commandEnvironment(result: CIResult, options: CIOptions): NodeJS.ProcessEnv {
-  const facts = result.run!.facts;
+function stimEnvironment(options: CIOptions): NodeJS.ProcessEnv {
   return {
     ...process.env,
     ...(options.home ? { STIM_HOME: resolve(options.home) } : {}),
     ...(options.buildCache ? { STIM_BUILD_CACHE: resolve(options.buildCache) } : {}),
+  };
+}
+
+function commandEnvironment(result: CIResult, options: CIOptions): NodeJS.ProcessEnv {
+  const facts = result.run!.facts;
+  return {
+    ...stimEnvironment(options),
     STIM_CI_PLATFORM: result.platform,
     STIM_CI_DEVICE_ID: String('udid' in facts ? (facts.udid ?? '') : 'serial' in facts ? (facts.serial ?? '') : ''),
     STIM_CI_APP_ID: String('bundleId' in facts ? (facts.bundleId ?? '') : ''),
@@ -53,7 +60,11 @@ function commandEnvironment(result: CIResult, options: CIOptions): NodeJS.Proces
   };
 }
 
-/** Runs an app and an optional argv-based test command, stops its workspace or explicit slot, and retains diagnostics. */
+/**
+ * Runs an app and an optional argv-based test command, stops its workspace or explicit slot, and retains diagnostics.
+ * Unless a stimd already serves the home, the run hosts one as its own child for the whole job, which the test
+ * command's Stim commands share and which ends with the run, so the job leaves no stimd behind.
+ */
 export async function runCI(options: CIOptions): Promise<CIResult> {
   if (options.command && !options.command[0]) throw new Error('A non-empty test command is required.');
   for (const argument of options.command ?? []) {
@@ -98,8 +109,11 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
     onProgress,
   });
   let attempted = false;
+  let host: AttachedHost | null = null;
   try {
     signal?.throwIfAborted();
+    const hosted = await hostStimd(stimEnvironment(options), { handover: false });
+    if (typeof hosted === 'object') host = hosted;
     attempted = true;
     result.run = await stim.run({ ...options.run, recordedBuild: true, cleanAppState: true, signal });
     signal?.throwIfAborted();
@@ -172,6 +186,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
         result.failure = result.cleanup.error;
       }
     }
+    await host?.end();
     if (result.reportingError && result.exitCode === 0) {
       result.exitCode = 1;
       result.failure = result.reportingError;

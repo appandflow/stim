@@ -1,6 +1,6 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,7 @@ import { workspaceName } from '../../../core/index.ts';
 import { captureProcessToken } from '../../../core/process-identity.ts';
 import { runCI } from '../index.ts';
 
-test('a throwing reporter cannot interrupt owned process cleanup or redirect its captured home', async () => {
+test('a throwing reporter cannot interrupt owned process cleanup or redirect its captured home, and the job leaves no stimd', async () => {
   const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ci-reporter-')));
   const root = join(scratch, 'project');
   const home = join(scratch, 'home');
@@ -67,6 +67,10 @@ test('a throwing reporter cannot interrupt owned process cleanup or redirect its
     expect(JSON.parse(readFileSync(result.diagnostics.path!, 'utf8')).directory).toBe(
       join(home, 'workspaces', workspaceName(root), 'logs'),
     );
+    const stimd = readFileSync(join(home, 'daemon', 'daemon.ndjson'), 'utf8');
+    expect(stimd).toContain('"event":"daemon_started"');
+    expect(stimd).toContain('"event":"daemon_exited"');
+    expect(existsSync(join(home, 'run', 'stimd.json'))).toBe(false);
   } finally {
     await createStim({ projectRoot: root, home })
       .stop()
