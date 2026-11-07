@@ -4,6 +4,15 @@ import { join } from 'node:path';
 import { bindCIEngine } from '../stimd/attached.ts';
 import { collectStore } from '../engine-store/gc.ts';
 
+vi.mock('../spawn-entry.ts', async (load) => {
+  const actual = await load<typeof import('../spawn-entry.ts')>();
+  return {
+    ...actual,
+    spawnEntry: (name: Parameters<typeof actual.spawnEntry>[0]) =>
+      name === 'engine-flip' ? join(process.cwd(), 'packages/stim-cli/dist/engine-flip.mjs') : actual.spawnEntry(name),
+  };
+});
+
 const select = vi.hoisted(() => vi.fn<(env: NodeJS.ProcessEnv) => string | null>());
 const load = vi.hoisted(() => vi.fn<(dir: string) => Promise<((name: string) => Promise<string>) | null>>());
 const local = vi.hoisted(() => vi.fn<() => Promise<string>>());

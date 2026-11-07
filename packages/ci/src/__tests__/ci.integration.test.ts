@@ -456,3 +456,19 @@ it('cancels daemon admission before running and ends its owned host', async () =
   expect(lifecycle.steps).toContain('host ended');
   expect(lifecycle.release).toHaveBeenCalled();
 });
+
+it('preserves a selector cleanup refusal when the job is cancelled', async () => {
+  const controller = new AbortController();
+  lifecycle.host.mockImplementation(async () => {
+    controller.abort();
+    throw Object.assign(new Error('Selector cleanup could not be verified.'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy: 'Inspect the selector process.',
+    });
+  });
+  const result = await runCI({ ...options, signal: controller.signal });
+  expect(result.failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', remedy: 'Inspect the selector process.' });
+  expect(result.exitCode).not.toBe(0);
+  expect(lifecycle.run).not.toHaveBeenCalled();
+  expect(lifecycle.release).toHaveBeenCalled();
+});

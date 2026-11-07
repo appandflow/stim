@@ -71,6 +71,23 @@ export async function bindCIEngine(
     const { buildClaimRoot } = await import('../engine-store/claims.ts');
     const { tryAcquireClaim, releaseClaim } = await import('@stim-cli/core/ownership-claim');
     const root = dirname(retained);
+    try {
+      await (
+        await import('../engine-store/flip-drained.ts')
+      ).flipDrained(root, env.STIM_HOME || join(userHome(env), '.stim'), signal);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        'socketPath' in error &&
+        'code' in error &&
+        (error.code === 'EPERM' || error.code === 'EACCES')
+      )
+        throw Object.assign(new Error('The sandbox denied the Stim engine store lock.'), {
+          code: SANDBOX_BLOCKED,
+          remedy: 'Run outside the sandbox; `stim guide errors sandbox` explains the available allowances.',
+        });
+      throw error;
+    }
     let lock: Awaited<ReturnType<typeof takeLock>> = null;
     for (const until = Date.now() + 10_000; !lock && Date.now() < until;) {
       signal?.throwIfAborted();
@@ -94,23 +111,6 @@ export async function bindCIEngine(
     if (!lock) throw new Error('Could not lock the Stim engine store for this CI job.');
     try {
       signal?.throwIfAborted();
-      try {
-        await (
-          await import('../engine-store/flip-drained.ts')
-        ).flipDrained(root, env.STIM_HOME || join(userHome(env), '.stim'), signal);
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          'socketPath' in error &&
-          'code' in error &&
-          (error.code === 'EPERM' || error.code === 'EACCES')
-        )
-          throw Object.assign(new Error('The sandbox denied the Stim engine store lock.'), {
-            code: SANDBOX_BLOCKED,
-            remedy: 'Run outside the sandbox; `stim guide errors sandbox` explains the available allowances.',
-          });
-        throw error;
-      }
       if (selected) selected = selectedEngineDir(env);
       retained = selected ?? (own ? join(own.root, own.build) : null);
       if (own) (await import('../daemon/engine-switch.ts')).requireCurrentEngine(own);
@@ -217,14 +217,13 @@ export async function hostStimd(
     const { takeLock } = await import('../engine-store/locks.ts');
     let lock: Awaited<ReturnType<typeof takeLock>> = null;
     try {
+      await (
+        await import('../engine-store/flip-drained.ts')
+      ).flipDrained(engine.root, env.STIM_HOME || join(userHome(env), '.stim'), signal);
       lock = await takeLock(engine.root, '.lock.sock');
-      if (lock) {
-        await (
-          await import('../engine-store/flip-drained.ts')
-        ).flipDrained(engine.root, env.STIM_HOME || join(userHome(env), '.stim'), signal);
-        requireCurrentEngine(engine);
-      }
+      if (lock) requireCurrentEngine(engine);
     } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'STIM_CLAIM_UNAVAILABLE') throw error;
       signal?.throwIfAborted();
       if (error instanceof Error && 'code' in error) {
         if (error.code === 'STIM_ENGINE_SWITCHED' && 'version' in error && typeof error.version === 'string')

@@ -39,6 +39,7 @@ export default defineConfig({
     'fingerprint-precompute': 'bin/fingerprint-precompute.ts',
     'windows-report': 'bin/windows-report.ts',
     'engine-select': 'bin/engine-select.ts',
+    'engine-flip': 'bin/engine-flip.ts',
     'engine-state': 'src/engine-state.ts',
     '__self-test': 'bin/self-test.ts',
   },
