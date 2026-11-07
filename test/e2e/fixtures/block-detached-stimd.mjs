@@ -1,12 +1,20 @@
 import childProcess from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const { spawn, spawnSync } = childProcess;
 const starter = /(^|[\\/])(launchctl|systemd-run)$/;
 
 childProcess.spawn = function (file, args = [], options = {}) {
   if (Array.isArray(args) && args.includes('__stimd')) {
-    if (options?.detached) return spawn.call(this, process.execPath, ['-e', 'process.exit(1)'], { stdio: 'ignore' });
+    if (options?.detached) {
+      if (args.includes('--service')) {
+        writeFileSync(join(process.env.STIM_HOME, 'successor-args.json'), JSON.stringify(args));
+        return spawn.call(this, file, args, options);
+      }
+      return spawn.call(this, process.execPath, ['-e', 'process.exit(1)'], { stdio: 'ignore' });
+    }
     return spawn.call(this, file, ['--import', import.meta.url, ...args], options);
   }
   return spawn.call(this, file, args, options);
@@ -22,7 +30,7 @@ syncBuiltinESMExports();
 
 const release = process.env.STIM_E2E_HOLD_UNTIL;
 if (release) {
-  const { existsSync, writeFileSync } = await import('node:fs');
+  const { existsSync } = await import('node:fs');
   const pause = new Int32Array(new SharedArrayBuffer(4));
   for (const stream of [process.stdout, process.stderr]) {
     const write = stream.write.bind(stream);

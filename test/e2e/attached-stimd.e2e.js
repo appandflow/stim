@@ -11,7 +11,8 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { connect } from 'node:net';
+import { connect, createServer } from 'node:net';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
@@ -63,7 +64,7 @@ const alive = (pid) => {
 };
 const until = async (what, check, ms = 20_000) => {
   for (const deadline = Date.now() + ms; Date.now() < deadline;) {
-    const value = check();
+    const value = await check();
     if (value) return value;
     await new Promise((done) => setTimeout(done, 50));
   }
@@ -255,35 +256,106 @@ test(
   },
 );
 
-test('an attached CI host takes daemon mode from its selected home', { timeout: 30_000 }, async () => {
-  useHome('mode-home');
-  mkdirSync(home, { recursive: true });
-  writeFileSync(join(home, 'config.json'), JSON.stringify({ daemon: { mode: 'off' } }));
-  const { hostStimd } = await import(pathToFileURL(join(PACKAGE, 'dist', 'attached-stimd.mjs')).href);
-  const ambient = join(tmp, 'ambient-mode-home');
-  mkdirSync(ambient, { recursive: true });
-  writeFileSync(join(ambient, 'config.json'), JSON.stringify({ daemon: { mode: 'on' } }));
-  const previousHome = process.env.STIM_HOME;
-  process.env.STIM_HOME = ambient;
-  const selected = { ...env };
-  delete selected.STIM_DAEMON;
-  const host = await hostStimd(selected, { handover: false });
-  assert.ok(host && typeof host === 'object');
-  try {
-    const started = await until('selected home daemon', () => record());
-    await new Promise((done, reject) => {
+for (const selection of ['STIM_HOME', 'HOME']) {
+  test(`an attached CI host takes daemon mode from its selected ${selection}`, { timeout: 30_000 }, async () => {
+    useHome(`mode-${selection}`);
+    if (selection === 'HOME') home = join(tmp, 'home-only', '.stim');
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ daemon: { mode: 'off' } }));
+    const { hostStimd } = await import(pathToFileURL(join(PACKAGE, 'dist', 'attached-stimd.mjs')).href);
+    const ambient = join(tmp, 'ambient-mode-home');
+    mkdirSync(ambient, { recursive: true });
+    writeFileSync(join(ambient, 'config.json'), JSON.stringify({ daemon: { mode: 'on' } }));
+    const previousHome = process.env.STIM_HOME;
+    process.env.STIM_HOME = ambient;
+    const selected = { ...env };
+    delete selected.STIM_DAEMON;
+    if (selection === 'HOME') {
+      delete selected.STIM_HOME;
+      selected.HOME = join(tmp, 'home-only');
+      selected.USERPROFILE = selected.HOME;
+    }
+    let host;
+    try {
+      host = await hostStimd(selected, { handover: false });
+      assert.ok(host && typeof host === 'object');
+      const started = await until('selected home daemon', () => record());
+      await new Promise((done, reject) => {
+        const socket = connect(started.socket);
+        socket.once('error', reject);
+        socket.once('connect', () =>
+          socket.write(`${JSON.stringify({ kind: 'cli', build: started.build })}\n${JSON.stringify({ op: 'tick' })}\n`),
+        );
+        socket.once('close', done);
+        socket.resume();
+      });
+      assert.equal(existsSync(join(home, 'daemon', 'snapshot.json')), false);
+    } finally {
+      if (host && typeof host === 'object') await host.end();
+      if (previousHome === undefined) delete process.env.STIM_HOME;
+      else process.env.STIM_HOME = previousHome;
+    }
+  });
+}
+
+test(
+  'attached handover carries non-share listener options',
+  { skip: process.platform === 'win32', timeout: 60_000 },
+  async () => {
+    useHome('listener-home');
+    const reservation = createServer().listen(0, '127.0.0.1');
+    await once(reservation, 'listening');
+    const port = reservation.address().port;
+    await new Promise((done) => reservation.close(done));
+    const release = join(tmp, 'release-listener');
+    const first = agent(join(PACKAGE, 'dist', 'cli.mjs'), ['revive'], { STIM_E2E_HOLD_UNTIL: release });
+    const started = await until('attached stimd', () => record());
+    await until('host command', () => existsSync(`${release}.reached`));
+    const answer = await new Promise((done, reject) => {
       const socket = connect(started.socket);
+      let buffer = '';
+      socket.setEncoding('utf8');
       socket.once('error', reject);
+      socket.on('data', (chunk) => {
+        buffer += chunk;
+        for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+          const reply = JSON.parse(buffer.slice(0, end));
+          buffer = buffer.slice(end + 1);
+          if (reply.op === 'net') {
+            socket.destroy();
+            done(reply);
+          }
+        }
+      });
       socket.once('connect', () =>
-        socket.write(`${JSON.stringify({ kind: 'cli', build: started.build })}\n${JSON.stringify({ op: 'tick' })}\n`),
+        socket.write(
+          `${JSON.stringify({ kind: 'cli', build: started.build })}\n${JSON.stringify({ op: 'net.ensure', params: { port, loopbackOnly: true } })}\n`,
+        ),
       );
-      socket.once('close', done);
-      socket.resume();
     });
-    assert.equal(existsSync(join(home, 'daemon', 'snapshot.json')), false);
-  } finally {
-    await host.end();
-    if (previousHome === undefined) delete process.env.STIM_HOME;
-    else process.env.STIM_HOME = previousHome;
-  }
-});
+    assert.equal(answer.listening, true);
+    writeFileSync(release, '');
+    await first.closed;
+    const args = JSON.parse(readFileSync(join(home, 'successor-args.json'), 'utf8'));
+    assert.ok(args.includes('--service'));
+    assert.ok(args.includes('--carried'));
+    assert.ok(args.includes('--loopback-only'));
+    assert.equal(args[args.indexOf('--port') + 1], String(port));
+    const successor = await until('detached successor', () => {
+      const next = record();
+      return next && next.pid !== started.pid ? next : null;
+    });
+    try {
+      await until('successor listener', async () => {
+        try {
+          return (await fetch(`http://127.0.0.1:${port}/health`)).status < 600;
+        } catch {
+          return false;
+        }
+      });
+    } finally {
+      process.kill(successor.pid, 'SIGTERM');
+      await until('successor to exit', () => !alive(successor.pid));
+    }
+  },
+);

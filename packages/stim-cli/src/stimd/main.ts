@@ -482,6 +482,7 @@ export async function runStimd({
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
   const opCommands = new WeakMap<Socket, string>();
   let ending: string | null = null;
+  let attachedEnding: Promise<void> | undefined;
   let engineDirs: string[] = [];
   try {
     if (follower) engineDirs = workspaceEngineDirs(loadConfig());
@@ -707,13 +708,21 @@ export async function runStimd({
       handover: attached?.handover ?? false,
       mode: startMode,
       identity: { build, version: identity.version },
-      release: (why) => shutdown(ending === 'stdin' ? why : `${why} (${ending})`),
+      successorArgs: () => {
+        const running = net.running();
+        const carried = running && netServes ? { ...netServes, shareOnly: running.shareOnly } : null;
+        return serveArgs(carried, service);
+      },
+      release: async (why) => {
+        shutdown(ending === 'stdin' ? why : `${why} (${ending})`);
+        await net.close();
+      },
       log,
     });
   const requestEnd = (why: string) => {
     if (ending) return;
     ending = why;
-    void finishAttached();
+    attachedEnding = finishAttached();
   };
   const onSignal = (signal: NodeJS.Signals) => (attached ? lifetime.signal(signal, requestEnd) : shutdown(signal));
   const shutdown = (why: string, level: Level = 'info') => {
@@ -946,6 +955,7 @@ export async function runStimd({
   }
   await Promise.all([lane.settled(), dependencyWork, net.close()]);
   await threads.close();
+  await attachedEnding;
   return true;
 }
 
@@ -1038,7 +1048,9 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
   });
   try {
     const served = await runStimd({
-      mode: parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ?? daemonMode({}),
+      mode:
+        parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ??
+        daemonMode(argv.includes(ATTACHED_ARG) ? process.env : {}),
       serve,
       onNet: reportNet,
       afterSwitch: argv.includes('--after-switch'),

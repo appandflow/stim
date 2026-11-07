@@ -13,15 +13,6 @@ import {
 import { getExecutor } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { launchStimd, SANDBOX_BLOCKED, stimdEnv, stimdLive } from '../daemon/client.ts';
-import { daemonMode } from '../daemon/mode.ts';
-
-function loadConfigForEnv(env: NodeJS.ProcessEnv) {
-  try {
-    return env.STIM_HOME ? loadConfig(join(env.STIM_HOME, 'config.json')) : loadConfig();
-  } catch {
-    return null;
-  }
-}
 
 /** The `__stimd` argument of a stimd bound to the process that started it, which ends it by closing its stdin. */
 export const ATTACHED_ARG = '--attached';
@@ -66,7 +57,7 @@ export function hostStimd(
   env: NodeJS.ProcessEnv,
   { handover = true }: { handover?: boolean } = {},
 ): Promise<AttachedHost | 'held' | 'blocked' | null> {
-  const args = [spawnEntry('cli'), '__stimd', '--mode', daemonMode(env, loadConfigForEnv(env)), ATTACHED_ARG];
+  const args = [spawnEntry('cli'), '__stimd', ATTACHED_ARG];
   const child = getExecutor().spawn(process.execPath, handover ? args : [...args, NO_HANDOVER_ARG], {
     cwd: tmpdir(),
     stdio: ['pipe', 'pipe', 'inherit'],
@@ -222,6 +213,7 @@ export async function endAttached({
   mode,
   identity,
   release,
+  successorArgs,
   log,
 }: {
   inFlight: () => string[];
@@ -230,7 +222,8 @@ export async function endAttached({
   handover: boolean;
   mode: DaemonMode;
   identity: { build: string; version: string };
-  release: (why: string) => void;
+  release: (why: string) => Promise<void>;
+  successorArgs: () => string[];
   log: Log;
 }): Promise<void> {
   const deadline = Date.now() + waitMs;
@@ -269,13 +262,14 @@ export async function endAttached({
       log('warn', 'stimd_journal_failed', error instanceof Error ? error.message : String(error));
     }
   }
-  release(
+  const args = successorArgs();
+  await release(
     unfinished.length
       ? `its command ended and ${unfinished.join(', ')} still ran after ${waitMs / 1000} s`
       : 'its command ended',
   );
   if (!handover || (!alive && !unfinished.length)) return;
-  launchStimd(process.env, mode);
+  launchStimd(process.env, mode, process.platform, undefined, args);
   for (const until = Date.now() + HANDOVER_MS; Date.now() < until;) {
     if (stimdLive()) {
       log('info', 'attached_handover', 'a detached stimd took over this Stim home');
