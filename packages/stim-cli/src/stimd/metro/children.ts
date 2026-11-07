@@ -15,7 +15,7 @@ import {
 } from '@stim-cli/core/ownership-claim';
 import { getExecutor } from '../../exec.ts';
 import { recordForeignMetro, resolveProjectMetro, signalProcessTree } from '../../metro.ts';
-import { createNdjsonWriter, type NdjsonWriter } from '../../ndjson.ts';
+import { createNdjsonWriter, type NdjsonRecord, type NdjsonWriter } from '../../ndjson.ts';
 import { isMetroRunning } from '../../ports.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
 import { resolveMetroSharedCache } from '../../optimizations.ts';
@@ -51,6 +51,7 @@ const HEARTBEAT_FRESH_MS = 3000;
 const PROBE_MS = 500;
 const READY_MS = 120_000;
 const STOP_MS = 5000;
+const SUCCESSOR_WAIT_MS = 10_000;
 const IDLE_POINT_MS = 2 * 60_000;
 const GROUPS = process.platform !== 'win32';
 const PROVIDERS: ManagedProvider[] = ['cloudflared', 'ngrok', 'tailscale'];
@@ -70,6 +71,8 @@ interface MetroChild {
   tail: OutputTail | null;
   /** Whether it answered once, after which a fresh heartbeat alone proves it runs. */
   ready: boolean;
+  /** When an ensure last answered with it, which an idle stop decided earlier does not override. */
+  ensuredAt: number;
   gone: boolean;
 }
 
@@ -214,6 +217,16 @@ function record(child: MetroChild, hmrUpdates: boolean): void {
   setSupervisor(child.root, entry);
 }
 
+/** How a child's output lines become records: as the dev server of its mode writes them. */
+function outputRecord(mode: string): (chunk: unknown, stream: 'stdout' | 'stderr') => NdjsonRecord | null {
+  if (mode === MODE_COMMAND) return (chunk, stream) => recordFromLine(chunk, { stream, source: 'command' });
+  if (mode === MODE_EXPO) return (chunk, stream) => recordFromLine(chunk, { stream });
+  return (chunk, stream) => {
+    const entry = recordFromLine(chunk, { stream });
+    return entry?.raw ? { ...entry, event: `host_${stream}` } : entry;
+  };
+}
+
 function spawnHost(
   root: string,
   port: number,
@@ -254,10 +267,7 @@ function spawnHost(
     mode: MODE_BARE,
     child,
     log: writer,
-    toRecord: (chunk, stream) => {
-      const entry = recordFromLine(chunk, { stream });
-      return entry?.raw ? { ...entry, event: `host_${stream}` } : entry;
-    },
+    toRecord: outputRecord(MODE_BARE),
     signal: (sig) => {
       try {
         return child.pid !== undefined && signalProcessTree(child.pid, sig, { group: GROUPS });
@@ -345,6 +355,7 @@ async function start(root: string, port: number, log: Log): Promise<Answer> {
     startedAt: new Date().toISOString(),
     tail: handle.tail ?? null,
     ready: false,
+    ensuredAt: Date.now(),
     gone: false,
   };
   children.set(root, child);
@@ -381,7 +392,9 @@ async function start(root: string, port: number, log: Log): Promise<Answer> {
 }
 
 async function ensure(root: string, port: number, launch: boolean, log: Log): Promise<Answer> {
+  await adoptFromPredecessor(root, log);
   const child = children.get(root);
+  if (child) child.ensuredAt = Date.now();
   if (child && child.port === port && running(child)) {
     // compat C6 permanent
     if (launch && child.digest !== injectedDigest())
@@ -427,8 +440,10 @@ export function ensureMetro(params: unknown, log: Log): Promise<Answer> {
     fields.launch !== true &&
     running(child) &&
     heartbeatFresh(child)
-  )
+  ) {
+    child.ensuredAt = Date.now();
     return Promise.resolve(answer(child));
+  }
   return serialize(root, () => ensure(root, port, fields.launch === true, log));
 }
 
@@ -439,9 +454,20 @@ export function metroOpFlags(params: unknown): Answer {
     if (isJsonObject(params) && typeof params.workspace === 'string')
       child = children.get(realpathSync(params.workspace));
   } catch {}
+  const digest = child ? child.digest : predecessorDigest(params);
   // compat C6 permanent
-  return child && child.digest !== injectedDigest() ? { metroForeign: true } : {};
+  return digest !== undefined && digest !== injectedDigest() ? { metroForeign: true } : {};
   // compat end
+}
+
+function predecessorDigest(params: unknown): string | null | undefined {
+  try {
+    if (!isJsonObject(params) || typeof params.workspace !== 'string') return undefined;
+    const digest = predecessorClaim(realpathSync(params.workspace))?.details.digest;
+    return digest === undefined ? undefined : typeof digest === 'string' ? digest : null;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Whether this stimd supervises any Metro or tunnel child, which keeps it running whatever `daemon.mode` says. */
@@ -458,7 +484,8 @@ function retake(holder: ClaimHolder, root: string, label: string): ClaimHandle |
     return null;
   try {
     releaseClaim({ ...holder, root, label });
-    const attempt = tryAcquireClaim({ root, mode: 'exclusive', label, details: holder.details });
+    const { offsets: _consumed, ...details } = holder.details;
+    const attempt = tryAcquireClaim({ root, mode: 'exclusive', label, details });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (attempt.acquired) setClaimChild(attempt.acquired, holder.child);
     return attempt.acquired ?? null;
@@ -491,42 +518,57 @@ export function adoptMetroChildren(log: Log): void {
     );
     return;
   }
-  for (const path of paths) {
-    for (const holder of children.has(path) ? [] : readClaimSet(claimRoot(path, 'metro')).live) {
-      const claim = retake(holder, claimRoot(path, 'metro'), 'Metro');
-      if (!claim || !holder.child) continue;
-      const digest = typeof holder.details.digest === 'string' ? holder.details.digest : null;
-      const writer = metroWriter(path, digest);
-      const records = childRecords({
-        log: writer,
-        toRecord: (chunk, stream) => recordFromLine(chunk, { stream }),
-      });
-      const child: MetroChild = {
-        root: path,
-        port: Number(holder.details.port),
-        mode: String(holder.details.mode),
-        digest,
-        ...holder.child,
-        startedAt: holder.startedAt,
-        claim,
-        writer,
-        handle: null,
-        tail: tailChildOutput(outputFiles(path), records.push, offsetsOf(holder.details.offsets)),
-        ready: true,
-        gone: false,
-      };
-      children.set(path, child);
-      log(
-        'info',
-        'metro_adopted',
-        `${path}: adopted the ${child.mode} dev server pid ${child.pid}${child.digest !== injectedDigest() ? ', of other injected files' : ''}`,
-      );
-    }
-    for (const holder of tunnels.has(path) ? [] : readClaimSet(claimRoot(path, 'tunnel')).live) {
-      const claim = retake(holder, claimRoot(path, 'tunnel'), 'tunnel');
-      if (claim && holder.child) tunnels.set(path, { claim, ...holder.child, url: String(holder.details.url) });
-    }
+  for (const path of paths) adoptAt(path, log);
+}
+
+function adoptAt(path: string, log: Log): void {
+  if (!GROUPS) return;
+  for (const holder of children.has(path) ? [] : readClaimSet(claimRoot(path, 'metro')).live) {
+    const claim = retake(holder, claimRoot(path, 'metro'), 'Metro');
+    if (!claim || !holder.child) continue;
+    const digest = typeof holder.details.digest === 'string' ? holder.details.digest : null;
+    const mode = String(holder.details.mode);
+    const writer = metroWriter(path, digest);
+    const records = childRecords({ log: writer, toRecord: outputRecord(mode) });
+    const child: MetroChild = {
+      root: path,
+      port: Number(holder.details.port),
+      mode,
+      digest,
+      ...holder.child,
+      startedAt: holder.startedAt,
+      claim,
+      writer,
+      handle: null,
+      tail: tailChildOutput(outputFiles(path), records.push, offsetsOf(holder.details.offsets)),
+      ready: true,
+      ensuredAt: 0,
+      gone: false,
+    };
+    children.set(path, child);
+    log(
+      'info',
+      'metro_adopted',
+      `${path}: adopted the ${child.mode} dev server pid ${child.pid}${child.digest !== injectedDigest() ? ', of other injected files' : ''}`,
+    );
   }
+  for (const holder of tunnels.has(path) ? [] : readClaimSet(claimRoot(path, 'tunnel')).live) {
+    const claim = retake(holder, claimRoot(path, 'tunnel'), 'tunnel');
+    if (claim && holder.child) tunnels.set(path, { claim, ...holder.child, url: String(holder.details.url) });
+  }
+}
+
+/** The live Metro claim of a workspace this stimd does not supervise yet: another stimd's that is still exiting. */
+function predecessorClaim(root: string): ClaimHolder | undefined {
+  return children.has(root) ? undefined : readClaimSet(claimRoot(root, 'metro')).live.find((holder) => holder.child);
+}
+
+/** Waits up to `SUCCESSOR_WAIT_MS` for the stimd that holds the workspace's Metro claim to exit, then adopts its Metro. */
+async function adoptFromPredecessor(root: string, log: Log): Promise<void> {
+  const holder = predecessorClaim(root);
+  if (!holder) return;
+  await gone(() => inspectProcessIdentity(holder.owner) === 'same', SUCCESSOR_WAIT_MS);
+  adoptAt(root, log);
 }
 
 /** Whether nothing used the child's workspace since `since`: no Metro request, no device use, no blocker. */
@@ -567,10 +609,7 @@ export async function metroTick(act: boolean, log: Log): Promise<void> {
         });
     }
     for (const [root, tunnel] of tunnels)
-      if (inspectProcessIdentity(tunnel) !== 'same') {
-        tunnels.delete(root);
-        releaseClaim(tunnel.claim);
-      }
+      if (!busy.has(`tunnel:${root}`) && inspectProcessIdentity(tunnel) === 'gone') forgetTunnel(root, tunnel);
   } finally {
     ticking = false;
   }
@@ -586,8 +625,9 @@ function restartAt(
   again: boolean,
   state: Record<string, unknown> = {},
 ): Promise<Answer> {
+  const decidedAt = Date.now();
   return serialize(child.root, async () => {
-    if (children.get(child.root) !== child || child.gone) return {};
+    if (children.get(child.root) !== child || child.gone || child.ensuredAt > decidedAt) return {};
     await stopChild(child, why);
     writeWorkspaceState(child.root, state);
     if (!again) return {};
@@ -616,7 +656,10 @@ export function ensureTunnel(params: unknown): Promise<Answer> {
       code: 'bad-provider',
       message: `no tunnel provider ${String(fields.provider)}`,
     });
-  return serialize(`tunnel:${root}`, () => startTunnelChild(root, provider, Number(fields.port), fields));
+  const port = Number(fields.port);
+  if (!Number.isInteger(port) || port <= 0)
+    return Promise.resolve({ op: 'error', code: 'bad-port', message: `no port ${String(fields.port)}` });
+  return serialize(`tunnel:${root}`, () => startTunnelChild(root, provider, port, fields));
 }
 
 async function startTunnelChild(
@@ -663,9 +706,20 @@ async function stopTunnel(root: string, tunnel: TunnelChild): Promise<void> {
   try {
     signalProcessTree(tunnel.pid, 'SIGTERM', { group: GROUPS });
   } catch {}
-  await gone(() => inspectProcessIdentity(tunnel) === 'same', STOP_MS);
+  const alive = () => (GROUPS ? processGroupAlive(tunnel.pid) : inspectProcessIdentity(tunnel) === 'same');
+  if (!(await gone(alive, STOP_MS))) {
+    try {
+      signalProcessTree(tunnel.pid, 'SIGKILL', { group: GROUPS });
+    } catch {}
+    if (!(await gone(alive, 1000))) return;
+  }
+  forgetTunnel(root, tunnel);
+}
+
+function forgetTunnel(root: string, tunnel: TunnelChild): void {
   tunnels.delete(root);
   releaseClaim(tunnel.claim);
+  if (typeof tunnel.claim.details.logFile === 'string') rmSync(tunnel.claim.details.logFile, { force: true });
 }
 
 /**
