@@ -273,7 +273,7 @@ async function startHost({
     serverBaseUrl: `http://${hostname}:${port}`,
     logger: reporterLogger(reporter),
   });
-  return metro.runServer(config, {
+  const started = await metro.runServer(config, {
     unstable_extraMiddleware: [
       bundleResponseMiddleware(write, { runLsof: process.platform === 'darwin' ? runLsof : undefined }),
       symbolicationReporterMiddleware(reporter),
@@ -282,6 +282,8 @@ async function startHost({
     ],
     websocketEndpoints: { ...community.websocketEndpoints, ...dev.websocketEndpoints },
   });
+  // Current Metro releases resolve runServer with { httpServer }; older ones resolve with the server itself.
+  return started && started.httpServer ? started.httpServer : started;
 }
 
 function parseArgs(argv) {
@@ -328,14 +330,8 @@ if (require.main === module) {
 }
 
 module.exports = {
-  BARE_PACKAGES,
   appendCacheStore,
-  checkBareApi,
-  ensureNativePlatform,
-  loadFileStore,
   normalizeMetroTransformerPaths,
-  parseArgs,
-  reporterLogger,
   resolveBareDeps,
   startHost,
   symbolicationReporterMiddleware,

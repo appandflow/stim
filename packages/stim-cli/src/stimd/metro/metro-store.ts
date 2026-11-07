@@ -49,7 +49,7 @@ export function registerMetroStore(storeRoot: string): void {
   });
 }
 
-export function hasStoreAt(stores: unknown, storeRoot: string): boolean {
+function hasStoreAt(stores: unknown, storeRoot: string): boolean {
   if (!Array.isArray(stores)) return false;
   return stores.some((s) => sharedStoreRoot(s) === storeRoot);
 }

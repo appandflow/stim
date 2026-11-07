@@ -424,12 +424,15 @@ function retake(holder: ClaimHolder, root: string, label: string): ClaimHandle |
     inspectProcessIdentity(holder.child) !== 'same'
   )
     return null;
-  releaseClaim({ ...holder, root, label });
-  const attempt = tryAcquireClaim({ root, mode: 'exclusive', label, details: holder.details });
-  if (attempt.pending) releaseClaim(attempt.pending);
-  if (!attempt.acquired) return null;
-  setClaimChild(attempt.acquired, holder.child);
-  return attempt.acquired;
+  try {
+    releaseClaim({ ...holder, root, label });
+    const attempt = tryAcquireClaim({ root, mode: 'exclusive', label, details: holder.details });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (attempt.acquired) setClaimChild(attempt.acquired, holder.child);
+    return attempt.acquired ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -439,7 +442,18 @@ function retake(holder: ClaimHolder, root: string, label: string): ClaimHandle |
  */
 export function adoptMetroChildren(log: Log): void {
   if (!GROUPS) return;
-  for (const path of Object.keys(loadConfig()?.projects ?? {})) {
+  let paths: string[];
+  try {
+    paths = Object.keys(loadConfig()?.projects ?? {});
+  } catch (error) {
+    log(
+      'warn',
+      'metro_adopt_failed',
+      `the config cannot be read: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return;
+  }
+  for (const path of paths) {
     for (const holder of readClaimSet(claimRoot(path, 'metro')).live) {
       const claim = retake(holder, claimRoot(path, 'metro'), 'Metro');
       if (!claim || !holder.child) continue;
