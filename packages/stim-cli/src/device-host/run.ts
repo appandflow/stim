@@ -33,6 +33,7 @@ async function main(): Promise<void> {
     ![
       'prepare',
       'stop',
+      'stop-app',
       'install',
       'app-state',
       'offer',
@@ -100,7 +101,7 @@ async function main(): Promise<void> {
     );
     return;
   }
-  if (['install', 'app-state', 'logs', 'reverse'].includes(String(input.mode))) {
+  if (['install', 'stop-app', 'app-state', 'logs', 'reverse'].includes(String(input.mode))) {
     if (typeof input.session !== 'string' || !/^[a-f0-9-]{36}$/.test(input.session) || !hostedAppAttempt(input.attempt))
       throw new Error('Invalid hosted app request.');
     if (input.mode === 'app-state') {
@@ -115,6 +116,7 @@ async function main(): Promise<void> {
     if (port !== undefined && (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535))
       throw new Error('Invalid hosted Metro port.');
   }
+  if (input.mode === 'stop-app' && input.platform !== 'macos') throw new Error('App stop requires macOS.');
   if (input.mode === 'reverse' && input.platform !== 'android') throw new Error('Metro reverse requires Android.');
   let reverses: HostedAndroidReverses | undefined;
   if (input.mode === 'reverse-ports') {
@@ -169,9 +171,9 @@ async function main(): Promise<void> {
   const result =
     input.platform === 'macos'
       ? await runHostedMacosApp(
-          input.mode as 'prepare' | 'stop' | 'install',
+          input.mode as 'prepare' | 'stop' | 'stop-app' | 'install',
           { session: typeof input.session === 'string' ? input.session : '', appSlot: input.appSlot as number },
-          input.mode === 'install' ? { attempt: input.attempt as string } : undefined,
+          input.mode === 'install' || input.mode === 'stop-app' ? { attempt: input.attempt as string } : undefined,
         )
       : input.platform === 'android'
         ? await runHostedAndroidDevice(

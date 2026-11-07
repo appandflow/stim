@@ -13585,3 +13585,54 @@ describe('the web share listener of a server', () => {
     expect(await answers(port)).toBe(false);
   });
 });
+
+describe('attached Desktop admission', () => {
+  test('refuses new lifecycle and setup work before opening a subscription', async () => {
+    await start({ attached: true, desktopBootstrap: null });
+    assert(server);
+    const client = await localConnect(server);
+    await client.request('hello', { client: CLIENT, desktopBootstrap: true });
+    const api = vi.spyOn(stim, 'createStim');
+    const methods = [
+      'desktop.start.subscribe',
+      'desktop.run.subscribe',
+      'desktop.build.subscribe',
+      'desktop.gc.subscribe',
+      'desktop.worktree.warm.subscribe',
+      'desktop.worktree.remove.subscribe',
+      'desktop.machine-access.subscribe',
+      'desktop.remedy.subscribe',
+      'desktop.setup.subscribe',
+    ];
+    for (const method of methods)
+      expect(await client.request(method, { cwd: root })).toMatchObject({
+        error: { code: 'action-failed', message: expect.stringContaining('stim serve') },
+      });
+    expect(api).not.toHaveBeenCalled();
+    api.mockRestore();
+    expect(await client.request('desktop.stop.subscribe', {})).toHaveProperty('error.code', 'bad-request');
+    expect(await client.request('desktop.settings.schema', {})).toHaveProperty('result');
+    client.socket.close();
+  });
+
+  test('a persistent server still accepts Desktop lifecycle requests for validation', async () => {
+    await start({ desktopBootstrap: null });
+    assert(server);
+    const client = await localConnect(server);
+    await client.request('hello', { client: CLIENT, desktopBootstrap: true });
+    const original = stim.createStim;
+    const startWork = vi.fn<() => Promise<never>>(async () => {
+      throw new Error('fixture start');
+    });
+    const api = vi
+      .spyOn(stim, 'createStim')
+      .mockImplementation((options) => ({ ...original(options), start: startWork }));
+    try {
+      expect(await client.request('desktop.start.subscribe', { cwd: root })).toHaveProperty('result.subscription');
+      await until(() => startWork.mock.calls.length > 0);
+    } finally {
+      api.mockRestore();
+      client.socket.close();
+    }
+  });
+});

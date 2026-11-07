@@ -35,7 +35,7 @@ import {
   requiredMacosRecord,
   updateMacosRecord,
 } from '../macos/state.ts';
-import { stopHostedBundleInstances, stopMacosApp } from '../macos/stop.ts';
+import { stopHostedBundleInstances, stopMacosApp, stopMacosChildren } from '../macos/stop.ts';
 import { spawnOwned, stopOwnedProcess } from '../engine/spawn-owned.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
@@ -111,7 +111,7 @@ function removeAppData(root: string, path: string): void {
 }
 
 export async function runHostedMacosApp(
-  mode: 'prepare' | 'stop' | 'install',
+  mode: 'prepare' | 'stop' | 'stop-app' | 'install',
   request: { session: string; appSlot: number },
   app?: { attempt: string },
 ): Promise<HostedWorkerResult> {
@@ -201,6 +201,7 @@ export async function runHostedMacosApp(
     exec.runFile('codesign', ['--force', '--sign', '-', bundle], options);
     if (requiredMacosRecord(runRoot)) await stopMacosApp(runRoot, undefined, { drain: false });
     await stopHostedBundleInstances(area);
+    if (mode === 'stop-app') return { state: 'stopped', device };
     const previousId = preferenceIdentity(home, device.appSlot);
     if (previousId && previousId !== bundleId) removePreferences(previousId);
     mkdirSync(runRoot, { recursive: true, mode: 0o700 });
@@ -253,13 +254,18 @@ export async function runHostedMacosApp(
           clearClaimChild(claim);
           return startedApp;
         } catch (error) {
-          if (!(await stopOwnedProcess(owned)))
+          try {
+            await stopMacosChildren(owned);
+            if (!(await stopOwnedProcess(owned)))
+              throw new Error('The hosted app process group could not be stopped.', { cause: error });
+          } catch (cleanupError) {
             throw new WorkspaceProcessCleanupError(
               [claim],
               'Could not stop the unrecorded hosted macOS app.',
               'Verify that the app has stopped before retrying.',
-              error instanceof Error ? error : undefined,
+              cleanupError instanceof Error ? cleanupError : undefined,
             );
+          }
           throw error;
         }
       },

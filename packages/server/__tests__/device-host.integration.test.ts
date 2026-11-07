@@ -2163,6 +2163,82 @@ test.each([
   expect(existsSync(join(deviceHostArea(first.id), 'apps', 'app-first'))).toBe(code === null);
 });
 
+describe.skipIf(process.platform === 'win32')('hosted macOS replacement drain', () => {
+  test.each([null, 'write failed'])(
+    'hosted macOS replacement waits for the previous drain (error: %s)',
+    async (drainError) => {
+      await host.close();
+      let finish: (error: string | null) => void = () => {};
+      const drainHosted = vi
+        .fn<(session: string) => Promise<string | null>>()
+        .mockImplementationOnce(
+          () =>
+            new Promise((done) => {
+              finish = done;
+            }),
+        )
+        .mockResolvedValue(null);
+      host = new DeviceHost({
+        worker: join(home, 'worker.mjs'),
+        env: hostEnv,
+        agents,
+        drainHosted,
+        allowed: (client) => allowed.has(client),
+        limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
+      });
+      const session = await reserve({ platform: 'macos' });
+      await state(session.id, 'ready');
+      const sessionHome = join(deviceHostArea(session.id), 'home');
+      const appRoot = join(sessionHome, 'macos-app');
+      mkdirSync(appRoot, { recursive: true });
+      const workspace = join(sessionHome, 'workspaces', workspaceName(realpathSync(appRoot)));
+      mkdirSync(workspace, { recursive: true });
+      const previous = { pid: 123, processToken: 'fixture', startedAtMicros: 1 };
+      writeFileSync(
+        join(workspace, 'state.json'),
+        JSON.stringify({
+          macos: {
+            launchId: 'previous',
+            product: 'Fixture',
+            arguments: [],
+            bundle: appRoot,
+            bundleId: 'fixture',
+            executable: '/fixture',
+            build: { state: 'ok', startedAt: new Date().toISOString() },
+            app: previous,
+            supervisor: previous,
+          },
+        }),
+      );
+      const app = appOffer(session.id, 'replacement', 'macos');
+      host.appOffer('client', app.params);
+      await uploadManifest(app);
+      await host.appChunk('client', {
+        ...app.params,
+        sha256: app.sha256,
+        offset: 0,
+        data: app.content.toString('base64'),
+      });
+      expect(host.appLaunch('client', app.params)).toHaveProperty('result.state', 'installing');
+      await vi.waitFor(() => expect(drainHosted).toHaveBeenCalledWith(session.id));
+      expect(readFileSync(join(workspace, 'state.json'), 'utf8')).toContain('previous');
+      expect(readFileSync(join(sessionHome, 'modes'), 'utf8')).toContain('stop-app');
+      expect(existsSync(join(sessionHome, 'installed'))).toBe(false);
+      finish(drainError);
+      await vi.waitFor(() =>
+        expect(host.appAttach('client', app.params)).toHaveProperty(
+          'result.state',
+          drainError ? 'unknown' : 'installed',
+        ),
+      );
+      if (drainError) {
+        assert.match(readFileSync(join(workspace, 'state.json'), 'utf8'), /previous/);
+        assert.equal(existsSync(join(sessionHome, 'installed')), false);
+      }
+    },
+  );
+});
+
 test.skipIf(process.platform === 'win32')(
   'hosted macOS stop waits for final output before reporting stopped',
   async () => {

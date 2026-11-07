@@ -67,6 +67,7 @@ vi.mock('../engine/spawn-owned.ts', () => ({
 vi.mock('../macos/stop.ts', () => ({
   stopMacosApp: (root: string) => native.stop(root),
   stopHostedBundleInstances: (area: string) => native.stopApps(area),
+  stopMacosChildren: async () => {},
 }));
 
 let root: string;
@@ -249,6 +250,18 @@ test('stamps and signs verified bytes, launches with an isolated home, and delet
   }
   expect(existsSync(join(previous, 'manifest.json'))).toBe(true);
   expect(readFileSync(log, 'utf8')).toBe('app output');
+});
+
+test('replacement validation leaves the previous app alone on invalid input and rematerializes valid input', async () => {
+  receipt();
+  plist.CFBundleIdentifier = 'different';
+  expect(await runHostedMacosApp('stop-app', request, { attempt: 'app' })).toMatchObject({ state: 'unknown' });
+  expect(native.stop).not.toHaveBeenCalled();
+  expect(native.stopApps).not.toHaveBeenCalled();
+  plist.CFBundleIdentifier = bundleId;
+  expect(await runHostedMacosApp('stop-app', request, { attempt: 'app' })).toMatchObject({ state: 'stopped' });
+  expect(native.stopApps).toHaveBeenCalledOnce();
+  expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({ state: 'installed' });
 });
 
 test('replacing an app identity removes the stopped identity preferences before recording the new launch', async () => {

@@ -1682,6 +1682,25 @@ export class DeviceHost {
       await this.settleLogs(owned);
       if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
       releaseClaim(takeHostedInputClaim(owned.claim));
+      if (record.platform === 'macos' && readHostedMacosApp(join(deviceHostArea(record.id), 'home'))?.app) {
+        const previous = this.run(record, owned, 'stop-app', attempt);
+        owned.run = previous;
+        const outcome = await previous.done;
+        const stoppedDevice = isJsonObject(outcome.value) && parseHostedPlatformDevice(outcome.value.device, 'macos');
+        const stopped =
+          isJsonObject(outcome.value) &&
+          outcome.value.state === 'stopped' &&
+          stoppedDevice &&
+          record.device &&
+          hostedDeviceId(stoppedDevice) === hostedDeviceId(record.device);
+        if (!outcome.settled || outcome.notice || !stopped)
+          throw new Error(outcome.notice ?? 'The previous macOS app could not be stopped.');
+        const error = this.options.drainHosted
+          ? await this.options.drainHosted(record.id)
+          : 'the hosted macOS observer is unavailable';
+        if (error) throw new Error(`Could not drain the previous macOS app output: ${error}`);
+        if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
+      }
       const run = this.run(record, owned, 'install', attempt);
       owned.run = run;
       const outcome = await run.done;
@@ -2602,6 +2621,7 @@ export class DeviceHost {
     mode:
       | 'prepare'
       | 'stop'
+      | 'stop-app'
       | 'install'
       | 'app-state'
       | 'logs'
@@ -2639,7 +2659,7 @@ export class DeviceHost {
       },
       claim,
       timeoutMs:
-        mode === 'stop' || mode === 'park'
+        mode === 'stop' || mode === 'stop-app' || mode === 'park'
           ? this.limits.stopMs
           : mode === 'logs' || mode === 'app-state'
             ? this.limits.logsMs

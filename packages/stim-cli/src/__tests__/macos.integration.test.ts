@@ -887,6 +887,47 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
+test.skipIf(process.platform === 'win32')(
+  'failed launch cleanup refuses an unverified child and stops a verified separate group',
+  async () => {
+    const idle = 'setInterval(() => {}, 1000)';
+    const owner = getExecutor().spawn(
+      process.execPath,
+      [
+        '-e',
+        `const child = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(idle)}], { detached: true, stdio: 'ignore' }); process.stdout.write(child.pid + '\\n'); ${idle}`,
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    children.push(owner);
+    const childPid = Number(
+      await new Promise<string>((resolve) => owner.stdout?.once('data', (data) => resolve(String(data)))),
+    );
+    const ownerPid = owner.pid;
+    assert(ownerPid);
+    const ownerToken = captureProcessToken(ownerPid);
+    const childToken = captureProcessToken(childPid);
+    assert(ownerToken && childToken);
+    const app = { pid: ownerPid, processToken: ownerToken };
+    const child = { pid: childPid, processToken: childToken };
+    const capture = processIdentity.captureProcessIdentity;
+    const spy = vi
+      .spyOn(processIdentity, 'captureProcessIdentity')
+      .mockImplementation((pid) => (pid === childPid ? { ok: false, reason: 'UNAVAILABLE' } : capture(pid)));
+    try {
+      await expect(stopping.stopMacosChildren(app)).rejects.toThrow('Cannot verify macOS child');
+      expect(inspectProcessIdentity(child)).toBe('same');
+      spy.mockRestore();
+      await stopping.stopMacosChildren(app);
+      expect(inspectProcessIdentity(child)).toMatch(/^(gone|different)$/);
+      expect(inspectProcessIdentity(app)).toBe('same');
+    } finally {
+      spy.mockRestore();
+      if (inspectProcessIdentity(child) === 'same') process.kill(childPid, 'SIGKILL');
+    }
+  },
+);
+
 describe('macOS build placement and promotion', () => {
   let bundle: string;
   let bin: string;
@@ -1265,8 +1306,13 @@ describe('macOS build placement and promotion', () => {
         refuseDeclaredSpawns(context, 'cancelled during observe');
         return null;
       });
+      const childStop = vi.spyOn(stopping, 'stopMacosChildren').mockResolvedValue();
       const stop = vi.spyOn(owning, 'stopOwnedProcess').mockResolvedValue(true);
       await expect(runMacos(context, root, () => {}, undefined, 'local')).rejects.toThrow('cancelled during observe');
+      expect(childStop).toHaveBeenCalledWith(owned);
+      const stopOrder = stop.mock.invocationCallOrder[0];
+      assert(stopOrder !== undefined);
+      expect(childStop.mock.invocationCallOrder[0]).toBeLessThan(stopOrder);
       expect(stop).toHaveBeenCalledWith(owned);
     },
     20_000,

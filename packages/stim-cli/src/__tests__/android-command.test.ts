@@ -4055,6 +4055,17 @@ describe('launch verification', () => {
     expect(text).toMatch(/Do not run `stim android` unless native inputs changed or the app process exits/);
   });
 
+  test('delivered bundle with unavailable device logs remains unverified without a false Metro diagnosis', async () => {
+    const h = harness({
+      verifyLaunched: async () => ({ verified: false, record: { event: 'bundle_response_finished' } }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(result.facts?.launched).toBe(LAUNCH_UNVERIFIED);
+    expect(h.stderr.join('\n')).toContain('bundle delivered, but device log evidence is unavailable');
+    expect(h.stderr.join('\n')).not.toContain('no bundle request reached');
+  });
+
   test('a bare app with no bundle request is unverified and gets a relaunch remedy', async () => {
     const h = harness({ verifyLaunched: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) });
     const result = await h.run();

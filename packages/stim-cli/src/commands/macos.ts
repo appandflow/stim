@@ -25,7 +25,7 @@ import {
 import { errorRemedy } from '../engine/build-ledger.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { spawnOwned, stopOwnedProcess, type OwnedProcess } from '../engine/spawn-owned.ts';
-import { clearClaimChild } from '../ownership-claim.ts';
+import { clearClaimChild, markClaimChildPending, setClaimChild } from '../ownership-claim.ts';
 import { observeOwned } from '../daemon/client.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -47,7 +47,7 @@ import { planMacos } from '../macos/plan.ts';
 import type { BuildHandoff } from '../offload/client.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
-import { stopBundleInstances, stopMacosAppHeld } from '../macos/stop.ts';
+import { stopBundleInstances, stopMacosAppHeld, stopMacosChildren } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../build-placement.ts';
 import { upsertProject, withConfigLockAsync } from '../workspace/config.ts';
@@ -426,10 +426,18 @@ async function launchHere(
     return { record: { ...record, supervisor: app, app }, deadline: Date.now() + 20_000 };
   } catch (error) {
     try {
+      if (owned) {
+        for (const claim of operationState(context).declaring) {
+          markClaimChildPending(claim);
+          setClaimChild(claim, owned);
+        }
+        await stopMacosChildren(owned);
+      }
       if (owned && !(await stopOwnedProcess(owned)))
         throw new Error('The app process group could not be stopped.', { cause: error });
       await stopBundleInstances(root);
       await writeWorkspaceStateAsync(root, { macos: { ...record, supervisor: undefined, app: undefined } });
+      for (const claim of operationState(context).declaring) clearClaimChild(claim);
     } catch (cleanupError) {
       const failure = new WorkspaceProcessCleanupError(
         [...operationState(context).declaring],

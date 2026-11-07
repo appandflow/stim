@@ -50,6 +50,15 @@ async function stopProcesses(
   throw new Error(`Owned macOS process ${live.map((record) => record.pid).join(', ')} did not exit.`);
 }
 
+export async function stopMacosChildren(owner: Pick<MacosProcess, 'pid' | 'processToken'>): Promise<void> {
+  if (inspectProcessIdentity(owner) !== 'same')
+    throw new Error('Cannot verify the macOS app before draining its children.');
+  const children = await startedBy([owner], undefined, true);
+  if (inspectProcessIdentity(owner) !== 'same')
+    throw new Error('The macOS app exited while its children were inspected.');
+  await stopProcesses(children);
+}
+
 /** Stops every running copy of the workspace's owned app bundle, including copies LaunchServices started. */
 export async function stopBundleInstances(root: string, operation?: StimContext): Promise<boolean> {
   const instances = await runningBundleInstancesAsync(root, operation);

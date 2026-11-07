@@ -125,7 +125,11 @@ async function listProcesses(operation?: StimContext): Promise<ProcessRow[]> {
  * It must run before the owners are signalled, because a child whose parent exits is reparented and no longer
  * reachable by its parent.
  */
-export async function startedBy(owners: readonly MacosProcess[], operation?: StimContext): Promise<MacosProcess[]> {
+export async function startedBy(
+  owners: readonly Pick<MacosProcess, 'pid' | 'processToken'>[],
+  operation?: StimContext,
+  strict = false,
+): Promise<MacosProcess[]> {
   operation?.signal.throwIfAborted();
   const running = owners.filter((owner) => inspectProcessIdentity(owner) === 'same');
   if (!running.length || process.platform === 'win32') return [];
@@ -158,14 +162,20 @@ export async function startedBy(owners: readonly MacosProcess[], operation?: Sti
           startedAtMicros: start.status === 'running' ? start.startedAtMicros : 0,
         },
       });
-    } else if (!identity.reason.startsWith('NOT_FOUND'))
+    } else if (!identity.reason.startsWith('NOT_FOUND')) {
+      if (strict) throw new Error(`Cannot verify macOS child pid ${row.pid}.`);
       operation?.output('stderr', `Not ending pid ${row.pid}: its identity cannot be captured.\n`);
+    }
   }
   const current = new Map((await listProcesses(operation)).map((row) => [row.pid, row]));
   return recorded
-    .filter(({ row }) => {
+    .filter(({ row, record }) => {
       const again = current.get(row.pid);
-      return again?.ppid === row.ppid && again.pgid === row.pgid;
+      if (again?.ppid === row.ppid && again.pgid === row.pgid) return true;
+      const identity = inspectProcessIdentity(record);
+      if (strict && identity !== 'gone' && identity !== 'different')
+        throw new Error(`Cannot verify macOS child pid ${row.pid} after its parent or group changed.`);
+      return false;
     })
     .map(({ record }) => record);
 }
