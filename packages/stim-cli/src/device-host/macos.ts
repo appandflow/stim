@@ -215,6 +215,7 @@ export async function runHostedMacosApp(
       executable,
       arguments: record.arguments ?? [],
       launchId: randomUUID(),
+      ...(record.runId ? { runId: record.runId } : {}),
       supervisor: worker,
       build: { state: 'ok', startedAt: new Date().toISOString() },
     };
@@ -272,7 +273,10 @@ export async function runHostedMacosApp(
       },
       { external: true, ownerPurpose: 'hosted macOS launch' },
     );
-    const writer = createNdjsonWriter(macosLogFile(canonicalRunRoot), { maxBytes: LOG_ROTATE_BYTES });
+    const writer = createNdjsonWriter(macosLogFile(canonicalRunRoot), {
+      maxBytes: LOG_ROTATE_BYTES,
+      ...(record.runId ? { fields: { runId: record.runId } } : {}),
+    });
     writer.write({ src: 'client', platform: 'macos', level: 'info', msg: `Started ${product} (pid ${started.pid}).` });
     writer.close();
     return { state: 'installed', device, launched: true, pid: started.pid };

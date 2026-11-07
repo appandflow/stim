@@ -9,7 +9,7 @@ import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
 import { REAL_BYTES_THRESHOLD, runDormantDependencies } from '../daemon/dependencies.ts';
 import { runIdlePass } from '../daemon/idle.ts';
 import { runLadder } from '../daemon/ladder.ts';
-import { runDormantPass } from '../daemon/stages.ts';
+import { dormantCandidates, pendingDormant, runDormantPass } from '../daemon/stages.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim } from '../devices/sim-pool.ts';
 import * as android from '../devices/android.ts';
@@ -25,6 +25,10 @@ import * as lightened from '../workspace/lightened.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { serveShareList, shareRow } from './_share-list-server.ts';
+import * as archive from '../archive.ts';
+import { testContext } from './_context.ts';
+import * as settings from '../workspace/settings.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -117,6 +121,105 @@ describe('the idle stage under pressure (rung 1)', () => {
 describe('the dormant stage', () => {
   const dormant = (simsFailed = false) =>
     runDormantPass({ config: loadConfig(), act: true, log, devices: [], simsFailed });
+
+  test.each(['plain', 'workspace'])(
+    'candidate selection preserves %s settings cleanup over cancellation',
+    async (kind) => {
+      const root = join(projects, 'candidate-cleanup');
+      mkdirSync(root);
+      ensureWorkspaceStorage(root);
+      upsertProject(root, {});
+      recordWorkspaceUse(root, new Date(Date.now() - 4 * DAY_MS));
+      mkdirSync(workspaceLogsDir(root), { recursive: true });
+      writeFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), '{}\n');
+      const failure =
+        kind === 'plain'
+          ? Object.assign(new Error('unverified cleanup'), { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true })
+          : new WorkspaceProcessCleanupError([], 'unverified cleanup', 'Inspect the child.');
+      const controller = new AbortController();
+      vi.spyOn(settings, 'resolveProjectSettingsAsync').mockImplementation(async () => {
+        controller.abort();
+        throw failure;
+      });
+      const config = loadConfig();
+      if (!config) throw new Error('missing fixture config');
+      await expect(
+        dormantCandidates(
+          config,
+          { devices: [], simsFailed: false, operation: testContext({ signal: controller.signal }) },
+          3 * DAY_MS,
+        ),
+      ).rejects.toBe(failure);
+    },
+  );
+
+  test('candidate selection preserves unverified adb cleanup over cancellation', async () => {
+    const root = join(projects, 'candidate-adb-cleanup');
+    mkdirSync(root);
+    ensureWorkspaceStorage(root);
+    upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-candidate' } } });
+    recordWorkspaceUse(root, new Date(Date.now() - 4 * DAY_MS));
+    const failure = Object.assign(new Error('unverified cleanup'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+    });
+    const controller = new AbortController();
+    vi.spyOn(android, 'listAdbDevicesAsync').mockImplementation(async () => {
+      controller.abort();
+      throw failure;
+    });
+    const config = loadConfig();
+    if (!config) throw new Error('missing fixture config');
+    await expect(
+      dormantCandidates(
+        config,
+        { devices: [], simsFailed: false, operation: testContext({ signal: controller.signal }) },
+        3 * DAY_MS,
+      ),
+    ).rejects.toBe(failure);
+  });
+
+  test('pending dormant check passes its operation and preserves cleanup refusal', async () => {
+    const root = join(projects, 'pending-cleanup');
+    mkdirSync(root);
+    ensureWorkspaceStorage(root);
+    upsertProject(root, {});
+    recordWorkspaceUse(root, new Date());
+    mkdirSync(workspaceLogsDir(root), { recursive: true });
+    writeFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), '{}\n');
+    const failure = Object.assign(new Error('unverified cleanup'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+    });
+    const controller = new AbortController();
+    const operation = testContext({ signal: controller.signal });
+    const probe = vi.spyOn(settings, 'resolveProjectSettingsAsync').mockImplementation(async () => {
+      controller.abort();
+      throw failure;
+    });
+    await expect(pendingDormant(loadConfig(), { simsFailed: false }, { graceMs: 0, operation })).rejects.toBe(failure);
+    expect(probe).toHaveBeenCalledWith(root, { env: operation.env, signal: operation.signal, declareFor: operation });
+  });
+
+  test('passes the operation into archive and preserves cleanup refusal', async () => {
+    const root = join(projects, 'archive-cleanup');
+    mkdirSync(root);
+    ensureWorkspaceStorage(root);
+    upsertProject(root, {});
+    recordWorkspaceUse(root, new Date(Date.now() - 4 * DAY_MS));
+    mkdirSync(workspaceLogsDir(root), { recursive: true });
+    writeFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), '{}\n');
+    const operation = testContext();
+    const failure = Object.assign(new Error('unverified archive cleanup'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+    });
+    const write = vi.spyOn(archive, 'archiveWorkspace').mockRejectedValue(failure);
+    await expect(
+      runDormantPass({ config: loadConfig(), act: true, log, devices: [], simsFailed: false, operation }),
+    ).rejects.toBe(failure);
+    expect(write).toHaveBeenCalledWith(root, 'maintenance', expect.anything(), operation);
+  });
 
   test.skipIf(process.platform !== 'darwin')(
     'after idle.dormantDays it deletes the owned simulators, keeps node_modules and the parked pool, and records the stage',

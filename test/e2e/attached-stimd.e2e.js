@@ -238,6 +238,59 @@ test(
 );
 
 test(
+  'failed attached startup releases home and engine claims so the same home can retry',
+  { skip: process.platform === 'win32', timeout: 60_000 },
+  async () => {
+    const scratch = mkdtempSync(join(tmp, 'startup-refusal-'));
+    const engineRoot = join(scratch, 'engines');
+    const build = 'bbbbbbbbbbbb';
+    const selected = join(engineRoot, build);
+    const selectedHome = join(scratch, 'home');
+    mkdirSync(join(selected, 'dist'), { recursive: true });
+    mkdirSync(join(selectedHome, 'run'), { recursive: true });
+    cpSync(join(PACKAGE, 'dist'), join(selected, 'dist'), { recursive: true });
+    cpSync(join(PACKAGE, 'package.json'), join(selected, 'package.json'));
+    symlinkSync(join(PACKAGE, 'node_modules'), join(selected, 'node_modules'), 'junction');
+    writeFileSync(join(engineRoot, 'current.json'), JSON.stringify({ format: 1, dir: build, version: 'test' }));
+    const cli = join(selected, 'dist', 'cli.mjs');
+    const extra = { STIM_HOME: selectedHome, STIM_ENGINE_ROOT: engineRoot };
+    const { readClaimSet } = await import(pathToFileURL(join(REPO, 'packages/core/dist/ownership-claim.mjs')).href);
+    const clean = () => {
+      for (const root of [join(selectedHome, 'run', 'stimd'), join(engineRoot, 'claims', build)]) {
+        const survey = readClaimSet(root);
+        assert.deepEqual(survey.live, []);
+        assert.deepEqual(survey.unresolved, []);
+      }
+    };
+    const retry = async () => {
+      const command = agent(cli, ['revive'], extra);
+      assert.equal(await command.closed, 1);
+      assert.match(command.stderr(), /STIM_NO_PROJECT/);
+      clean();
+    };
+    try {
+      const denied = agent(cli, ['revive'], extra, `${PRELOAD}?deny-socket`);
+      assert.equal(await denied.closed, 1);
+      assert.match(denied.stderr(), /STIM_SANDBOX_BLOCKED/);
+      clean();
+      await retry();
+
+      const key = join(selectedHome, 'run', 'desktop.key');
+      rmSync(key, { force: true });
+      mkdirSync(key);
+      const failed = agent(cli, ['revive'], extra);
+      assert.equal(await failed.closed, 1);
+      assert.match(failed.stderr(), /STIM_DAEMON_UNAVAILABLE/);
+      clean();
+      rmSync(key, { recursive: true, force: true });
+      await retry();
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'a failed start waits for another command before its attached stimd exits',
   {
     skip: process.platform === 'win32' ? 'the blocked start is simulated with POSIX process groups' : false,
@@ -675,7 +728,53 @@ test('host end reports an attached daemon killed before shutdown', { timeout: 30
 });
 
 test(
-  'store lock contention past attached startup refuses admission',
+  'a host forced to kill an unresponsive attached daemon leaves home, daemon and engine claims unresolved',
+  { timeout: 30_000, skip: process.platform === 'win32' },
+  async () => {
+    const scratch = mkdtempSync(join(tmp, 'stalled-host-'));
+    const engineRoot = join(scratch, 'engines');
+    const build = 'bbbbbbbbbbbb';
+    const selected = join(engineRoot, build);
+    mkdirSync(join(selected, 'dist'), { recursive: true });
+    cpSync(join(PACKAGE, 'dist'), join(selected, 'dist'), { recursive: true });
+    symlinkSync(join(PACKAGE, 'node_modules'), join(selected, 'node_modules'), 'junction');
+    cpSync(join(PACKAGE, 'package.json'), join(selected, 'package.json'));
+    writeFileSync(join(engineRoot, 'current.json'), JSON.stringify({ format: 1, dir: build, version: 'test' }));
+    const selectedHome = join(scratch, 'home');
+    const selectedEnv = {
+      ...env,
+      STIM_HOME: selectedHome,
+      STIM_ENGINE_ROOT: engineRoot,
+      STIM_DAEMON_ATTACHED_EXIT_WAIT_SECONDS: '0',
+    };
+    const previousRoot = process.env.STIM_ENGINE_ROOT;
+    process.env.STIM_ENGINE_ROOT = engineRoot;
+    let host;
+    let pid;
+    try {
+      const engine = await import(pathToFileURL(join(selected, 'dist', 'attached-stimd.mjs')).href);
+      const { readClaimSet } = await import(pathToFileURL(join(REPO, 'packages/core/dist/ownership-claim.mjs')).href);
+      host = await engine.hostStimd(selectedEnv, { handover: false });
+      assert.ok(host && typeof host === 'object' && 'end' in host);
+      pid = JSON.parse(readFileSync(join(selectedHome, 'run', 'stimd.json'), 'utf8')).pid;
+      process.kill(pid, 'SIGSTOP');
+      await assert.rejects(host.end(), /Attached stimd exited/);
+      host = null;
+      assert.equal(readClaimSet(join(selectedHome, 'run', 'stimd')).unresolved.length, 1);
+      assert.equal(readClaimSet(join(selectedHome, 'daemon', 'claim')).unresolved.length, 1);
+      assert.equal(readClaimSet(join(engineRoot, 'claims', build)).unresolved.length, 1);
+    } finally {
+      if (pid && alive(pid)) process.kill(pid, 'SIGKILL');
+      if (host && typeof host === 'object' && 'end' in host) await host.end().catch(() => {});
+      if (previousRoot === undefined) delete process.env.STIM_ENGINE_ROOT;
+      else process.env.STIM_ENGINE_ROOT = previousRoot;
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'store lock contention refuses before startup and the same home can retry',
   { timeout: 25_000, skip: process.platform === 'win32' },
   async () => {
     const scratch = realpathSync(mkdtempSync('/tmp/stim-lock-'));
@@ -695,22 +794,11 @@ test(
     );
     const previousRoot = process.env.STIM_ENGINE_ROOT;
     process.env.STIM_ENGINE_ROOT = engineRoot;
+    let lockClosed = false;
     try {
       const engine = await import(pathToFileURL(join(selected, 'dist', 'attached-stimd.mjs')).href);
       const sharedHome = join(scratch, 'home');
       const host = engine.hostStimd({ ...env, STIM_HOME: sharedHome, STIM_ENGINE_ROOT: engineRoot });
-      const exclusive = join(sharedHome, 'run', 'stimd', 'exclusive');
-      await until('attached claim publication', () => {
-        try {
-          return readdirSync(exclusive).some(
-            (name) =>
-              name.endsWith('.claim') &&
-              JSON.parse(readFileSync(join(exclusive, name), 'utf8')).details.attached === true,
-          );
-        } catch {
-          return false;
-        }
-      });
       const on = agent(join(selected, 'dist', 'cli.mjs'), ['revive'], {
         STIM_HOME: sharedHome,
         STIM_ENGINE_ROOT: engineRoot,
@@ -724,12 +812,20 @@ test(
       assert.notEqual(await on.closed, 0);
       assert.notEqual(await off.closed, 0);
       assert.match(on.stderr(), /STIM_DAEMON_UNAVAILABLE/);
-      assert.match(off.stderr(), /STIM_DAEMON_UNAVAILABLE/);
+      assert.match(off.stderr(), /STIM_NO_PROJECT/);
       const result = await host;
       assert.equal(result?.refusal?.code, 'STIM_DAEMON_UNAVAILABLE');
       assert.equal(existsSync(join(sharedHome, 'run', 'stimd.json')), false);
-    } finally {
+      const { readClaimSet } = await import(pathToFileURL(join(REPO, 'packages/core/dist/ownership-claim.mjs')).href);
+      assert.deepEqual(readClaimSet(join(sharedHome, 'run', 'stimd')).unresolved, []);
       await new Promise((done) => lock.close(done));
+      lockClosed = true;
+      const retry = await engine.hostStimd({ ...env, STIM_HOME: sharedHome, STIM_ENGINE_ROOT: engineRoot });
+      assert.ok(retry && typeof retry === 'object' && 'end' in retry);
+      await retry.end();
+      assert.deepEqual(readClaimSet(join(sharedHome, 'run', 'stimd')).unresolved, []);
+    } finally {
+      if (!lockClosed) await new Promise((done) => lock.close(done));
       if (previousRoot === undefined) delete process.env.STIM_ENGINE_ROOT;
       else process.env.STIM_ENGINE_ROOT = previousRoot;
       rmSync(scratch, { recursive: true, force: true });

@@ -12,6 +12,7 @@ import {
   userHome,
   type DaemonMode,
 } from '@stim-cli/core/state';
+import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { launchStimd, SANDBOX_BLOCKED, stimdEnv, stimdLive } from '../daemon/client.ts';
@@ -36,7 +37,7 @@ type Log = (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: stri
 /** A stimd running as this process's child, which serves the home until `end` or until this process exits. */
 export interface AttachedHost {
   instance: string;
-  /** Asks the attached stimd to end and resolves once it exited, at most its exit wait plus 10 s later. */
+  /** Asks the attached stimd to end and resolves once it exited, at most its exit wait plus 11 s later. */
   end(): Promise<void>;
 }
 
@@ -221,7 +222,9 @@ export async function hostStimd(
         await import('../engine-store/flip-drained.ts')
       ).flipDrained(engine.root, env.STIM_HOME || join(userHome(env), '.stim'), signal);
       lock = await takeLock(engine.root, '.lock.sock');
-      if (lock) requireCurrentEngine(engine);
+      signal?.throwIfAborted();
+      if (!lock) return unavailable();
+      requireCurrentEngine(engine);
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'STIM_CLAIM_UNAVAILABLE') throw error;
       signal?.throwIfAborted();
@@ -249,6 +252,7 @@ export async function hostStimd(
   } catch {
     return Promise.resolve(unavailable());
   }
+  child.stdin?.on('error', () => {});
   // Node can signal process group 0 before a failed spawn reports its error: https://github.com/nodejs/node/pull/65054
   const kill = () => {
     if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
@@ -257,36 +261,54 @@ export async function hostStimd(
     child.once('exit', (code, exitSignal) => done({ code, signal: exitSignal }));
     child.once('error', () => done({ code: null, signal: null }));
   });
+  const stdioClosed = new Promise<void>((done) => child.once('close', () => done()));
+  const waitForOutput = () =>
+    new Promise<void>((finish) => {
+      const closeTimer = setTimeout(finish, 1000);
+      void stdioClosed.then(() => {
+        clearTimeout(closeTimer);
+        return finish();
+      });
+    });
   return new Promise((done, reject) => {
+    let terminalRefusal: { code: string; message: string; remedy: string } | undefined;
     let aborting = false;
+    let timedOut = false;
+    let stopping: Promise<void> | undefined;
     const resolve: typeof done = (value) => {
-      if (aborting) return;
+      if (aborting || timedOut) return;
       signal?.removeEventListener('abort', abort);
       done(value);
     };
-    const abort = () => {
+    const stopStartup = () =>
+      (stopping ??= (async () => {
+        child.stdin?.end();
+        const grace = setTimeout(kill, KILL_GRACE_MS);
+        await exited;
+        clearTimeout(grace);
+        await waitForOutput();
+      })());
+    const abort = async () => {
       aborting = true;
       clearTimeout(timer);
-      kill();
-      void exited.then(() => reject(signal?.reason));
+      await stopStartup();
+      reject(terminalRefusal ? Object.assign(new Error(terminalRefusal.message), terminalRefusal) : signal?.reason);
     };
     signal?.addEventListener('abort', abort, { once: true });
-    const timer = setTimeout(() => {
-      kill();
-      resolve(unavailable());
+    const timer = setTimeout(async () => {
+      timedOut = true;
+      await stopStartup();
+      signal?.removeEventListener('abort', abort);
+      if (!aborting) done(terminalRefusal ? { refusal: terminalRefusal } : unavailable());
     }, BIND_MS);
     if (signal?.aborted) abort();
     let buffer = '';
     child.stdout?.setEncoding('utf8');
-    child.stdout?.on('data', (chunk: string) => {
-      buffer += chunk;
-      const end = buffer.indexOf('\n');
-      if (end < 0) return;
+    const frame = (raw: string) => {
       let line: unknown;
       try {
-        line = JSON.parse(buffer.slice(0, end));
+        line = JSON.parse(raw);
       } catch {}
-      buffer = '';
       if (!isJsonObject(line)) return;
       if (
         line.op === 'attached-claim-refusal' &&
@@ -296,9 +318,11 @@ export async function hostStimd(
         typeof line.refusal.remedy === 'string'
       ) {
         clearTimeout(timer);
-        resolve({ refusal: { code: line.refusal.code, message: line.refusal.message, remedy: line.refusal.remedy } });
+        terminalRefusal = { code: line.refusal.code, message: line.refusal.message, remedy: line.refusal.remedy };
+        resolve({ refusal: terminalRefusal });
         return;
       }
+      if (aborting || timedOut) return;
       if (line.op === 'attached-engine-unavailable') {
         clearTimeout(timer);
         resolve('engine-unavailable');
@@ -339,13 +363,23 @@ export async function hostStimd(
           child.stdin?.end();
           const killTimer = setTimeout(kill, waitMs + KILL_GRACE_MS);
           const result = await exited;
+          await waitForOutput();
           clearTimeout(killTimer);
+          if (terminalRefusal) throw Object.assign(new Error(terminalRefusal.message), terminalRefusal);
           if (result.code !== 0)
             throw new Error(
               `Attached stimd exited ${result.signal ? `on ${result.signal}` : `with code ${String(result.code)}`}.`,
             );
         },
       });
+    };
+    child.stdout?.on('data', (chunk: string) => {
+      buffer += chunk;
+      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+        const raw = buffer.slice(0, end);
+        buffer = buffer.slice(end + 1);
+        frame(raw);
+      }
     });
     child.once('close', (code) => {
       clearTimeout(timer);
@@ -456,6 +490,7 @@ export function readoptJournal(log: Log): void {
 export async function endAttached({
   inFlight,
   admissionRevision,
+  seal = () => {},
   alive: measure,
   waitMs,
   handover,
@@ -467,6 +502,7 @@ export async function endAttached({
 }: {
   inFlight: () => string[];
   admissionRevision: () => number;
+  seal?: () => void;
   alive: (signal: AbortSignal) => Promise<string | null>;
   waitMs: number;
   handover: boolean;
@@ -503,6 +539,7 @@ export async function endAttached({
     try {
       alive = await measure(controller.signal);
     } catch (error) {
+      if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       alive = timedOut ? 'its home was not measured in time' : `its home could not be measured: ${String(error)}`;
     } finally {
       clearTimeout(timer);
@@ -511,6 +548,7 @@ export async function endAttached({
     if (inFlight().length && Date.now() < deadline) await drain();
     if (admissionRevision() !== revision) alive ??= 'a command was admitted while measuring its home';
   }
+  seal();
   const unfinished = inFlight();
   if (alive || unfinished.length) {
     try {

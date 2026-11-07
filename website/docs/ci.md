@@ -263,3 +263,13 @@ To try it with an agent:
 > diagnostics, and verify cleanup on both success and a deliberate test failure.
 
 Concurrent CI jobs must use separate Stim homes when a job owns an attached daemon.
+
+If Stim cannot verify that a Metro, tunnel, or maintenance child and its descendants stopped, or the server worker
+fails to confirm cleanup or is forced to exit, it retains ownership
+claims and refuses new work in that home. Verify that the named process tree has stopped, then remove the exact claims
+listed in the refusal. On Windows, a naturally exited Metro or tunnel leader does not prove its descendants stopped,
+so this can require manual reconciliation.
+An attached daemon killed unexpectedly, including during startup or forced shutdown, also leaves claims for manual
+reconciliation.
+When startup times out or is cancelled, Stim allows up to 10 seconds for the daemon to clean up before forcing it to
+exit.

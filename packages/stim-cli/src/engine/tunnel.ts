@@ -486,7 +486,7 @@ export async function startTunnel({
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   const outputFile = logFile || (spawnFn ? null : createTunnelLogFile(provider));
 
-  let child: ChildProcess;
+  let child: ChildProcess | undefined;
   try {
     const binary =
       provider === 'tailscale'
@@ -506,6 +506,8 @@ export async function startTunnel({
       if (typeof fd === 'number') closeSync(fd);
     }
   } catch (err) {
+    if (child?.pid && claims.length > 0)
+      return { failed: true, reason: `Could not start ${provider}: ${describe(err)}`, cleanupFailed: true };
     for (const claim of claims) clearClaimChild(claim);
     removeTunnelLogFile(outputFile);
     return { failed: true, reason: `Could not start ${provider}: ${describe(err)}` };
@@ -517,6 +519,13 @@ export async function startTunnel({
     childExited = true;
   });
   const cleanup = async (alreadyExited = childExited): Promise<TunnelCleanupResult> => {
+    let windowsTreeStopped = claims.length === 0 || !child.pid;
+    if (claims.length > 0 && process.platform === 'win32' && childIdentity && !alreadyExited) {
+      try {
+        if (inspectProcessIdentity(childIdentity) === 'same')
+          windowsTreeStopped = await signalProcessTreeAsync(childIdentity.pid, 'SIGKILL', { platform: 'win32' });
+      } catch {}
+    }
     if (
       claims.length > 0 &&
       childIdentity &&
@@ -534,7 +543,9 @@ export async function startTunnel({
       waitForGroup: claims.length > 0 && process.platform !== 'win32',
     });
     const drained =
-      stopped && (claims.length === 0 || process.platform === 'win32' || !child.pid || !processGroupAlive(child.pid));
+      stopped &&
+      (claims.length === 0 ||
+        (process.platform === 'win32' ? windowsTreeStopped : !child.pid || !processGroupAlive(child.pid)));
     if (drained) {
       for (const claim of claims) clearClaimChild(claim);
       removeTunnelLogFile(outputFile);
@@ -568,7 +579,7 @@ export async function startTunnel({
     return failAfterCleanup(`${provider} started but its process identity token could not be read.`);
   }
   childIdentity = { pid, processToken: initialProcessToken };
-  if (claims.length > 0) {
+  if (claims.length > 0 && process.platform !== 'win32') {
     try {
       for (const claim of claims) setClaimChild(claim, childIdentity);
     } catch (error) {

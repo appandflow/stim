@@ -1,5 +1,5 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import { type ExecOptions, type Executor, getExecutor } from '../../exec.ts';
+import { type Executor, getExecutor } from '../../exec.ts';
 import { androidToolCwd } from '../../devices/android.ts';
 import type { NdjsonRecord } from '../../ndjson.ts';
 import { cancellableSleep } from '../../cancellation.ts';
@@ -141,17 +141,9 @@ export function logcatBackfillArgs(serial: string, pid: number, since: number, c
   return ['-s', serial, 'logcat', '-d', '-T', (deviceTime / 1000).toFixed(3), '--pid', String(pid), '-v', 'time,epoch'];
 }
 
-function killOnAbort(signal?: AbortSignal): Pick<ExecOptions, 'onSpawn'> {
-  if (!signal) return {};
-  return {
-    onSpawn(child) {
-      const kill = () => child.kill('SIGKILL');
-      signal.addEventListener('abort', kill, { once: true });
-      child.once('close', () => signal.removeEventListener('abort', kill));
-      if (signal.aborted) kill();
-    },
-  };
-}
+export type QueryGuard = <T>(work: () => Promise<T>) => Promise<T>;
+
+export const isLogCleanupError = (error: unknown): error is Error => error instanceof Error && 'reportCleanup' in error;
 
 export async function androidClockOffset(
   serial: string,
@@ -161,22 +153,31 @@ export async function androidClockOffset(
     signal,
     env,
     cwd,
-  }: { exec?: Executor; now?: () => number; signal?: AbortSignal; env?: Record<string, string>; cwd?: string } = {},
+    guardQuery,
+  }: {
+    exec?: Executor;
+    now?: () => number;
+    signal?: AbortSignal;
+    env?: Record<string, string>;
+    cwd?: string;
+    guardQuery?: QueryGuard;
+  } = {},
 ): Promise<number | null> {
   const before = now();
   try {
-    const output = (
-      await exec.runFileAsync(adbCommand(env, cwd), ['-s', serial, 'shell', 'date', '+%s%3N'], {
+    const read = () =>
+      exec.runFileAsync(adbCommand(env, cwd), ['-s', serial, 'shell', 'date', '+%s%3N'], {
         timeoutMs: 1000,
         cwd: androidToolCwd(),
         ...(env ? { env } : {}),
-        ...killOnAbort(signal),
-      })
-    ).trim();
+        signal,
+      });
+    const output = (await (guardQuery ? guardQuery(read) : read())).trim();
     const after = now();
     if (!/^\d{13}$/.test(output) || after < before || after - before > 1000) return null;
     return Math.round((before + after) / 2) - Number(output);
-  } catch {
+  } catch (error) {
+    if (isLogCleanupError(error)) throw error;
     return null;
   }
 }
@@ -197,19 +198,27 @@ async function resolveAppPid(
     signal,
     env,
     cwd,
-  }: { exec?: Executor | null; signal?: AbortSignal; env?: Record<string, string>; cwd?: string } = {},
+    guardQuery,
+  }: {
+    exec?: Executor | null;
+    signal?: AbortSignal;
+    env?: Record<string, string>;
+    cwd?: string;
+    guardQuery?: QueryGuard;
+  } = {},
 ): Promise<number | null> {
   const e = exec || getExecutor();
   try {
-    return parsePidof(
-      await e.runFileAsync(adbCommand(env, cwd), ['-s', serial, 'shell', 'pidof', '-s', packageName], {
+    const read = () =>
+      e.runFileAsync(adbCommand(env, cwd), ['-s', serial, 'shell', 'pidof', '-s', packageName], {
         timeoutMs: 10_000,
         cwd: androidToolCwd() ?? cwd,
         ...(env ? { env } : {}),
-        ...killOnAbort(signal),
-      }),
-    );
-  } catch {
+        signal,
+      });
+    return parsePidof(await (guardQuery ? guardQuery(read) : read()));
+  } catch (error) {
+    if (isLogCleanupError(error)) throw error;
     return null;
   }
 }
@@ -230,6 +239,7 @@ export async function waitForAppPid({
   signal,
   env,
   cwd,
+  guardQuery,
   now = Date.now,
   sleep = (ms: number) => cancellableSleep(ms, { signal, what: 'device log attachment' }),
 }: {
@@ -241,13 +251,14 @@ export async function waitForAppPid({
   signal?: AbortSignal;
   env?: Record<string, string>;
   cwd?: string;
+  guardQuery?: QueryGuard;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }): Promise<PidResolution> {
   const deadline = now() + timeoutMs;
   for (;;) {
     if (signal?.aborted) return { failed: true, reason: 'device log attachment was cancelled' };
-    const pid = await resolveAppPid(serial, packageName, { exec, signal, env, cwd });
+    const pid = await resolveAppPid(serial, packageName, { exec, signal, env, cwd, guardQuery });
     if (pid) return { ok: true, pid };
     if (now() >= deadline) {
       return {
@@ -291,6 +302,7 @@ export interface PidWatcher {
   stop(): void;
   probe(): Promise<number | null>;
   readonly pid: number | null;
+  settled?(): Promise<void>;
 }
 
 export function watchAppPid({
@@ -302,7 +314,9 @@ export function watchAppPid({
   signal,
   env,
   cwd,
+  guardQuery,
   onChange,
+  onFailure = () => {},
   resolve = resolveAppPid,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
@@ -315,11 +329,19 @@ export function watchAppPid({
   signal?: AbortSignal;
   env?: Record<string, string>;
   cwd?: string;
+  guardQuery?: QueryGuard;
   onChange: (nextPid: number) => void | Promise<void>;
+  onFailure?: (error: Error) => void;
   resolve?: (
     serial: string,
     packageName: string,
-    opts: { exec?: Executor | null; signal?: AbortSignal; env?: Record<string, string>; cwd?: string },
+    opts: {
+      exec?: Executor | null;
+      signal?: AbortSignal;
+      env?: Record<string, string>;
+      cwd?: string;
+      guardQuery?: QueryGuard;
+    },
   ) => number | null | Promise<number | null>;
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (t: ReturnType<typeof setTimeout>) => void;
@@ -328,20 +350,42 @@ export function watchAppPid({
   let current = pid;
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
-  const tick = async () => {
+  const inflight = new Set<Promise<void>>();
+  let failure: Error | null = null;
+  const failed = (error: unknown) => {
+    if (!isLogCleanupError(error)) return;
+    failure ??= error;
+    onFailure(error);
+  };
+  const track = (work: Promise<void>) => {
+    inflight.add(work);
+    void work.then(
+      () => inflight.delete(work),
+      () => inflight.delete(work),
+    );
+  };
+  const tick = () => {
     timer = null;
     if (stopped) return;
-    let next: number | null = null;
-    try {
-      next = await resolve(serial, packageName, { exec, signal, env, cwd });
-    } catch {}
-    if (next && next !== current) {
-      current = next;
-      try {
-        await onChange(next);
-      } catch {}
-    }
-    if (!stopped) timer = setTimer(tick, every);
+    track(
+      (async () => {
+        let next: number | null = null;
+        try {
+          next = await resolve(serial, packageName, { exec, signal, env, cwd, guardQuery });
+        } catch (error) {
+          failed(error);
+        }
+        if (next && next !== current && !stopped) {
+          current = next;
+          try {
+            await onChange(next);
+          } catch (error) {
+            failed(error);
+          }
+        }
+        if (!stopped) timer = setTimer(tick, every);
+      })(),
+    );
   };
   timer = setTimer(tick, every);
   return {
@@ -351,11 +395,22 @@ export function watchAppPid({
       timer = null;
     },
     async probe() {
-      try {
-        return await resolve(serial, packageName, { exec, signal, env, cwd });
-      } catch {
-        return null;
-      }
+      if (stopped) return null;
+      let result: number | null = null;
+      const work = (async () => {
+        try {
+          result = await resolve(serial, packageName, { exec, signal, env, cwd, guardQuery });
+        } catch (error) {
+          failed(error);
+        }
+      })();
+      track(work);
+      await work;
+      return result;
+    },
+    async settled() {
+      while (inflight.size) await Promise.allSettled(inflight);
+      if (failure) throw failure;
     },
     get pid() {
       return current;

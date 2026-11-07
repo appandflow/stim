@@ -454,7 +454,13 @@ export async function verifyAndroidMetroRun({
 
   if (verification?.record) {
     phase('verify', chalk.yellow('UNVERIFIED: bundle delivered, but device log evidence is unavailable'));
-    return { state: LAUNCH_UNVERIFIED };
+    const report = launchErrorReport(verification.errors ?? [], root);
+    if (report.summary) phase('launch', chalk.dim(report.summary));
+    for (const line of report.lines) phase('launch', chalk.yellow(line));
+    return {
+      state: LAUNCH_UNVERIFIED,
+      warning: report.lines.length ? 'app errors detected; inspect the error above' : undefined,
+    };
   }
 
   phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));

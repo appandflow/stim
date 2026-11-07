@@ -1117,6 +1117,16 @@ inspection, stop, and control remain available. After the command ends, run
 `stim serve` outside the agent command to accept new work on a persistent
 stimd.
 
+If Stim cannot verify that a Metro, tunnel, or maintenance child and its descendants stopped, or the server worker
+fails to confirm cleanup or is forced to exit, it retains ownership
+claims and refuses new work in that home. Verify that the named process tree has stopped, then remove the exact claims
+listed in the refusal. On Windows, a naturally exited Metro or tunnel leader does not prove its descendants stopped,
+so this can require manual reconciliation.
+An attached daemon killed unexpectedly, including during startup or forced shutdown, also leaves claims for manual
+reconciliation.
+When startup times out or is cancelled, Stim allows up to 10 seconds for the daemon to clean up before forcing it to
+exit.
+
 Stim does not read the settings below. `stim doctor` and `stim settings` report
 any left in a config file or the environment, with the setting that replaces
 it. `stim settings set` and `get` refuse each with `STIM_BAD_ARG` naming its

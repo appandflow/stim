@@ -5,6 +5,7 @@ import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { IDLE_STOP_KEY, isJsonObject, readJsonObject } from '@stim-cli/core/state';
 import {
   markClaimChildPending,
+  claimRemoveCommand,
   processGroupAlive,
   readClaimSet,
   releaseClaim,
@@ -15,10 +16,10 @@ import {
   type ClaimHolder,
 } from '@stim-cli/core/ownership-claim';
 import { getExecutor } from '../../exec.ts';
-import { recordForeignMetro, resolveProjectMetro, signalProcessTree } from '../../metro.ts';
+import { recordForeignMetro, resolveProjectMetro, signalProcessTree, signalProcessTreeAsync } from '../../metro.ts';
 import { createNdjsonWriter, type NdjsonRecord, type NdjsonWriter } from '../../ndjson.ts';
 import { isMetroRunning } from '../../ports.ts';
-import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
+import { inspectProcessIdentity } from '../../process-identity.ts';
 import { resolveMetroSharedCache } from '../../optimizations.ts';
 import { clearSupervisor, loadConfig, setSupervisor } from '../../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
@@ -29,7 +30,7 @@ import {
   resolveProjectSettings,
   runnableMetroCommand,
 } from '../../workspace/settings.ts';
-import { clearWorkspaceStateKeys, writeWorkspaceState } from '../../workspace/workspace-state.ts';
+import { clearWorkspaceStateKeys, readWorkspaceState, writeWorkspaceState } from '../../workspace/workspace-state.ts';
 import { ownStoreEngine } from '../../daemon/engine-switch.ts';
 import type { ManagedProvider } from '../../engine/metro-reach.ts';
 import { metroRequestAt } from '../passes/idle-stop.ts';
@@ -80,6 +81,7 @@ interface MetroChild {
   /** When an ensure last answered with it, which an idle stop decided earlier does not override. */
   ensuredAt: number;
   gone: boolean;
+  stopping?: boolean;
 }
 
 interface TunnelChild {
@@ -100,6 +102,40 @@ export function setMetroInvocation(root: string, context: Invocation & { workspa
 const children = new Map<string, MetroChild>();
 const tunnels = new Map<string, TunnelChild>();
 const busy = new Map<string, Promise<Answer>>();
+let backgroundStopped = false;
+let closingChildren = false;
+let tickWork: Promise<void> | null = null;
+let closeWork: Promise<void> | null = null;
+let cleanupFailure: unknown;
+let onCleanupFailure: ((error: unknown) => void) | undefined;
+
+export function openMetroChildren(onFailure?: (error: unknown) => void): void {
+  backgroundStopped = false;
+  closingChildren = false;
+  closeWork = null;
+  cleanupFailure = undefined;
+  onCleanupFailure = onFailure;
+}
+
+export function metroCleanupPending(): boolean {
+  return cleanupFailure !== undefined;
+}
+
+export function metroEngineDirs(): string[] {
+  return [...children.values()].flatMap((child) =>
+    typeof child.claim.details.engineDir === 'string' ? [child.claim.details.engineDir] : [],
+  );
+}
+
+function failedCleanup(error: unknown): void {
+  if (cleanupFailure !== undefined) return;
+  cleanupFailure = error;
+  onCleanupFailure?.(error);
+}
+
+export function stopMetroTicks(): void {
+  backgroundStopped = true;
+}
 
 const claimRoot = (root: string, kind: 'metro' | 'tunnel') => join(workspaceDir(root), `${kind}.claim`);
 const heartbeatFile = (root: string) => join(workspaceDir(root), 'metro.heartbeat');
@@ -180,37 +216,66 @@ async function gone(alive: () => boolean, ms: number): Promise<boolean> {
   return !alive();
 }
 
+function unverifiedChild(claim: ClaimHandle, pid: number, reason: string): Error {
+  markClaimChildPending(claim);
+  return Object.assign(new Error(`${reason} Claim remains at ${claim.path}.`), {
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    remedy: `Verify ${pid ? `pid ${pid} and its descendants have` : 'the dev-server process tree has'} stopped, then run ${claimRemoveCommand(claim.path)}.`,
+    reportCleanup: true,
+  });
+}
+
 async function stopChild(child: MetroChild, why: string): Promise<void> {
+  if (child.stopping && cleanupFailure) throw cleanupFailure;
+  child.stopping = true;
   try {
-    if (child.handle) await child.handle.close();
-    else if (running(child)) {
+    if (!GROUPS) {
+      if (
+        inspectProcessIdentity(child) !== 'same' ||
+        !(await signalProcessTreeAsync(child.pid, 'SIGKILL', { platform: 'win32' }))
+      )
+        throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
+      if (!(await gone(() => running(child), STOP_MS)))
+        throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
+    } else if (child.handle) await child.handle.close();
+    else if (processGroupAlive(child.pid)) {
       const signal = (sig: NodeJS.Signals) => {
+        if (inspectProcessIdentity(child) !== 'same')
+          throw new Error(`Could not verify the dev-server process group for pid ${child.pid}.`);
         try {
-          signalProcessTree(child.pid, sig, { group: GROUPS });
+          signalProcessTree(child.pid, sig, { group: true });
         } catch {}
       };
-      const alive = () => (GROUPS ? processGroupAlive(child.pid) : running(child));
       signal('SIGTERM');
-      if (!(await gone(alive, STOP_MS))) {
+      if (!(await gone(() => processGroupAlive(child.pid), STOP_MS))) {
         signal('SIGKILL');
-        await gone(alive, 1000);
+        if (!(await gone(() => processGroupAlive(child.pid), 1000)))
+          throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid}.`);
       }
     }
-  } finally {
-    forget(child, `stimd stopped the ${child.mode} dev server: ${why}`);
+  } catch (error) {
+    throw unverifiedChild(child.claim, child.pid, error instanceof Error ? error.message : String(error));
   }
+  forget(child, `stimd stopped the ${child.mode} dev server: ${why}`);
 }
 
 /** Runs `work` after every earlier piece of work on `key`, so no two ensure, restart or stop of one child overlap. */
 function serialize(key: string, work: () => Promise<Answer>): Promise<Answer> {
+  if (closingChildren) return Promise.resolve({ op: 'error', code: 'metro', message: 'The Stim daemon is ending.' });
   const run = (busy.get(key) ?? Promise.resolve({}))
     .catch(() => ({}))
     .then(work)
-    .catch((error: unknown) => ({
-      op: 'error',
-      code: 'metro',
-      message: error instanceof Error ? error.message : String(error),
-    }));
+    .catch((error: unknown) => {
+      if (error instanceof Error && 'reportCleanup' in error) failedCleanup(error);
+      return {
+        op: 'error',
+        code: error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'metro',
+        message: error instanceof Error ? error.message : String(error),
+        ...(error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
+          ? { remedy: error.remedy }
+          : {}),
+      };
+    });
   busy.set(key, run);
   void run.finally(() => busy.get(key) === run && busy.delete(key));
   return run;
@@ -224,6 +289,7 @@ function record(child: MetroChild, hmrUpdates: boolean): void {
     port: child.port,
     mode: child.mode,
     startedAt: child.startedAt,
+    ...(typeof child.claim.details.engineDir === 'string' ? { engineDir: child.claim.details.engineDir } : {}),
     ...(hmrUpdates ? { hmrUpdates } : {}),
   };
   writeWorkspaceState(child.root, { supervisor: entry });
@@ -248,6 +314,7 @@ function spawnHost(
   env: Record<string, string>,
   writer: NdjsonWriter,
   baseEnv: NodeJS.ProcessEnv,
+  spawn: ReturnType<typeof getExecutor>['spawn'],
 ): ChildServerHandle {
   const settings = resolveProjectSettings(root).settings;
   const storeRoot = resolveMetroSharedCache(settings) ? metroStoreRoot(root) : null;
@@ -272,7 +339,7 @@ function spawnHost(
     heartbeatFile(root),
     ...(storeRoot ? ['--store-root', storeRoot] : []),
   ];
-  const child = getExecutor().spawn('node', args, {
+  const child = spawn('node', args, {
     cwd: root,
     stdio: ['ignore', ...output.fds],
     detached: GROUPS,
@@ -320,8 +387,13 @@ async function start(root: string, port: number, log: Log, operationEnv?: NodeJS
   };
   const output = openChildOutput(logsDir);
   let handle: ChildServerHandle;
+  let spawned: ReturnType<ReturnType<typeof getExecutor>['spawn']> | undefined;
+  const spawn: ReturnType<typeof getExecutor>['spawn'] = (...args) => {
+    spawned = getExecutor().spawn(...args);
+    return spawned;
+  };
   try {
-    if (GROUPS) markClaimChildPending(claim);
+    markClaimChildPending(claim);
     handle = command
       ? await startCommandServer({
           root,
@@ -330,13 +402,28 @@ async function start(root: string, port: number, log: Log, operationEnv?: NodeJS
           command,
           writer: writer,
           output,
+          spawnFn: spawn,
           extraEnv: env,
           baseEnv,
         })
       : mode === MODE_EXPO
-        ? await startExpoServer({ root, port, logsDir, writer: writer, settings, output, extraEnv: env, baseEnv })
-        : spawnHost(root, port, output, env, writer, baseEnv);
+        ? await startExpoServer({
+            root,
+            port,
+            logsDir,
+            writer: writer,
+            settings,
+            output,
+            extraEnv: env,
+            spawnFn: spawn,
+            baseEnv,
+          })
+        : spawnHost(root, port, output, env, writer, baseEnv, spawn);
   } catch (error) {
+    if (spawned?.pid) {
+      writer.close();
+      throw unverifiedChild(claim, spawned.pid, error instanceof Error ? error.message : String(error));
+    }
     releaseClaim(claim);
     writer.close();
     return { op: 'error', code: 'metro-start', message: error instanceof Error ? error.message : String(error) };
@@ -344,9 +431,16 @@ async function start(root: string, port: number, log: Log, operationEnv?: NodeJS
     for (const fd of output.fds) closeSync(fd);
   }
   const pid = handle.serverPid;
-  const processToken = pid ? captureProcessToken(pid) : null;
+  const processToken = handle.processToken;
   if (!pid || !processToken) {
-    await handle.close().catch(() => {});
+    try {
+      if (pid && (!GROUPS || processGroupAlive(pid)))
+        throw new Error('the dev server process identity could not be verified');
+      await handle.close();
+    } catch (error) {
+      writer.close();
+      throw unverifiedChild(claim, pid ?? 0, error instanceof Error ? error.message : String(error));
+    }
     releaseClaim(claim);
     writer.close();
     return {
@@ -378,13 +472,18 @@ async function start(root: string, port: number, log: Log, operationEnv?: NodeJS
   children.set(root, child);
   record(child, handle.observesRequests === true || mode === MODE_BARE);
   recordForeignMetro(root, port, {});
-  handle.onExit((info) =>
+  handle.onExit((info) => {
+    if (child.stopping || (GROUPS && processGroupAlive(child.pid))) return;
+    if (!GROUPS) {
+      failedCleanup(unverifiedChild(child.claim, child.pid, `Could not confirm the dev-server tree exited.`));
+      return;
+    }
     forget(
       child,
       `the ${mode} dev server exited (code ${info?.code ?? 'none'}, signal ${info?.signal ?? 'none'})`,
       'warn',
-    ),
-  );
+    );
+  });
   writer.write({
     src: 'metro',
     level: 'info',
@@ -419,6 +518,7 @@ async function ensure(
   await adoptFromPredecessor(root, log);
   if (signal?.aborted) return { op: 'error', code: 'cancelled', message: 'the operation ended' };
   const child = children.get(root);
+  if (child?.stopping && cleanupFailure) throw cleanupFailure;
   if (child) child.ensuredAt = Date.now();
   if (child && child.port === port && running(child)) {
     // compat C6 permanent
@@ -454,6 +554,7 @@ export function ensureMetro(
   operationEnv?: NodeJS.ProcessEnv,
   signal?: AbortSignal,
 ): Promise<Answer> {
+  if (closingChildren) return Promise.resolve({ op: 'error', code: 'metro', message: 'The Stim daemon is ending.' });
   const fields = isJsonObject(params) ? params : {};
   let root: string;
   try {
@@ -477,6 +578,7 @@ export function ensureMetro(
   if (
     !busy.has(root) &&
     child?.handle &&
+    !child.stopping &&
     child.port === port &&
     fields.launch !== true &&
     running(child) &&
@@ -486,6 +588,24 @@ export function ensureMetro(
     return Promise.resolve(answer(child));
   }
   return serialize(root, () => ensure(root, port, fields.launch === true, log, operationEnv, signal));
+}
+
+export function stopManagedMetro(params: unknown): Promise<Answer> {
+  const fields = isJsonObject(params) ? params : {};
+  let root: string;
+  try {
+    root = realpathSync(String(fields.root));
+  } catch {
+    return Promise.resolve({ op: 'error', code: 'bad-root', message: 'The workspace is unavailable.' });
+  }
+  return serialize(root, async () => {
+    const child = children.get(root);
+    if (!child) return { op: 'metro.stopped', state: 'not-owned' };
+    if (child.pid !== fields.pid || child.processToken !== fields.processToken)
+      return { op: 'error', code: 'metro-changed', message: 'The managed dev server changed before it could stop.' };
+    await stopChild(child, 'requested by a command');
+    return { op: 'metro.stopped', state: 'stopped' };
+  });
 }
 
 /** `op.begin {params: {workspace}}`'s flag: the workspace's Metro loaded other injected files, so it is foreign until a restart. */
@@ -513,7 +633,7 @@ function predecessorDigest(params: unknown): string | null | undefined {
 
 /** Whether this stimd supervises any Metro or tunnel child, which keeps it running whatever `daemon.mode` says. */
 export function metroChildrenRun(): boolean {
-  return children.size > 0 || tunnels.size > 0;
+  return children.size > 0 || tunnels.size > 0 || busy.size > 0;
 }
 
 function retake(holder: ClaimHolder, root: string, label: string): ClaimHandle | null {
@@ -587,6 +707,10 @@ function adoptAt(path: string, log: Log): void {
       gone: false,
     };
     children.set(path, child);
+    const supervisor = readWorkspaceState(path)?.supervisor;
+    if (isJsonObject(supervisor) && typeof claim.details.engineDir === 'string')
+      writeWorkspaceState(path, { supervisor: { ...supervisor, engineDir: claim.details.engineDir } });
+    else if (!isJsonObject(supervisor)) record(child, child.mode === MODE_BARE);
     log(
       'info',
       'metro_adopted',
@@ -626,28 +750,36 @@ async function idlePoint(child: MetroChild, since: number): Promise<boolean> {
  * next idle point, and, while the passes do not act (`daemon.mode` other than `on`), stops a Metro that served no
  * request and no Stim command for the workspace's `idle.minutes`, as the supervisor's own idle timer did.
  */
-export async function metroTick(act: boolean, log: Log): Promise<void> {
-  if (ticking) return;
-  ticking = true;
-  try {
+export function metroTick(act: boolean, log: Log): Promise<void> {
+  if (backgroundStopped || closingChildren) return Promise.resolve();
+  if (tickWork) return tickWork;
+  tickWork = (async () => {
     adoptMetroChildren(log);
     for (const child of children.values()) {
       if (busy.has(child.root)) continue;
+      if (child.stopping) continue;
       const decidedAt = Date.now();
       if (!running(child)) {
+        if (GROUPS && processGroupAlive(child.pid)) continue;
+        if (!GROUPS) {
+          failedCleanup(unverifiedChild(child.claim, child.pid, `Could not confirm the dev-server tree exited.`));
+          continue;
+        }
         forget(child, `the ${child.mode} dev server pid ${child.pid} is gone`, 'warn');
         continue;
       }
       // compat C6 permanent
       if (child.digest !== injectedDigest() && (await idlePoint(child, Date.now() - IDLE_POINT_MS))) {
-        void restartAt(child, decidedAt, 'it loaded other injected files; restarting it at an idle point', log, true);
+        if (backgroundStopped) break;
+        await restartAt(child, decidedAt, 'it loaded other injected files; restarting it at an idle point', log, true);
         continue;
       }
       // compat end
       if (act || child.mode === MODE_COMMAND) continue;
       const minutes = idleMinutesSetting(resolveProjectSettings(child.root).settings);
-      if (minutes > 0 && (await idlePoint(child, Date.now() - minutes * 60_000)))
-        void restartAt(
+      if (minutes > 0 && (await idlePoint(child, Date.now() - minutes * 60_000))) {
+        if (backgroundStopped) break;
+        await restartAt(
           child,
           decidedAt,
           `no Metro request or Stim command for ${minutes} minutes (idle.minutes)`,
@@ -657,20 +789,27 @@ export async function metroTick(act: boolean, log: Log): Promise<void> {
             [IDLE_STOP_KEY]: { reason: 'idle', at: new Date().toISOString(), idleMinutes: minutes },
           },
         );
+      }
     }
     for (const [root, tunnel] of tunnels)
       if (
         !busy.has(`tunnel:${root}`) &&
         inspectProcessIdentity(tunnel) === 'gone' &&
         !(GROUPS && processGroupAlive(tunnel.pid))
-      )
-        forgetTunnel(root, tunnel);
-  } finally {
-    ticking = false;
-  }
+      ) {
+        if (GROUPS) forgetTunnel(root, tunnel);
+        else failedCleanup(unverifiedChild(tunnel.claim, tunnel.pid, `Could not confirm the tunnel tree exited.`));
+      }
+  })()
+    .catch((error: unknown) => {
+      if (error instanceof Error && 'reportCleanup' in error) failedCleanup(error);
+      throw error;
+    })
+    .finally(() => {
+      tickWork = null;
+    });
+  return tickWork;
 }
-
-let ticking = false;
 
 /** Stops the child, unless an ensure took it over meanwhile, and starts it again when `again`, all in its root's turn. */
 function restartAt(
@@ -700,6 +839,7 @@ function restartAt(
  * this stimd in its own process group with file stdio, claimed under `tunnel.claim`, answering `{op: 'tunnel', url}`.
  */
 export function ensureTunnel(params: unknown, operationEnv?: NodeJS.ProcessEnv): Promise<Answer> {
+  if (closingChildren) return Promise.resolve({ op: 'error', code: 'metro', message: 'The Stim daemon is ending.' });
   const fields = isJsonObject(params) ? params : {};
   let root: string;
   try {
@@ -754,6 +894,7 @@ async function startTunnelChild(
     requireReachable: fields.requireReachable !== false,
   });
   if ('failed' in started) {
+    if (started.cleanupFailed) throw unverifiedChild(attempt.acquired, 0, started.reason);
     releaseClaim(attempt.acquired);
     return { op: 'error', code: 'tunnel-start', message: started.reason };
   }
@@ -765,15 +906,39 @@ async function startTunnelChild(
 }
 
 async function stopTunnel(root: string, tunnel: TunnelChild): Promise<void> {
+  if (!GROUPS) {
+    let stopped = false;
+    try {
+      stopped =
+        inspectProcessIdentity(tunnel) === 'same' &&
+        (await signalProcessTreeAsync(tunnel.pid, 'SIGKILL', { platform: 'win32' })) &&
+        (await gone(() => inspectProcessIdentity(tunnel) !== 'gone', STOP_MS));
+    } catch {}
+    if (!stopped)
+      throw unverifiedChild(tunnel.claim, tunnel.pid, `Could not confirm shutdown of tunnel pid ${tunnel.pid}.`);
+    forgetTunnel(root, tunnel);
+    return;
+  }
+  const alive = () => processGroupAlive(tunnel.pid);
+  const verify = () => {
+    if (inspectProcessIdentity(tunnel) !== 'same')
+      throw unverifiedChild(tunnel.claim, tunnel.pid, 'Could not verify the tunnel process group.');
+  };
+  if (!alive()) {
+    forgetTunnel(root, tunnel);
+    return;
+  }
+  verify();
   try {
     signalProcessTree(tunnel.pid, 'SIGTERM', { group: GROUPS });
   } catch {}
-  const alive = () => (GROUPS ? processGroupAlive(tunnel.pid) : inspectProcessIdentity(tunnel) === 'same');
   if (!(await gone(alive, STOP_MS))) {
+    verify();
     try {
       signalProcessTree(tunnel.pid, 'SIGKILL', { group: GROUPS });
     } catch {}
-    if (!(await gone(alive, 1000))) return;
+    if (!(await gone(alive, 1000)))
+      throw unverifiedChild(tunnel.claim, tunnel.pid, `Could not confirm shutdown of tunnel pid ${tunnel.pid}.`);
   }
   forgetTunnel(root, tunnel);
 }
@@ -788,13 +953,25 @@ function forgetTunnel(root: string, tunnel: TunnelChild): void {
  * At stimd's exit: on Windows, where children cannot be re-adopted, stops them; elsewhere stops following them and
  * records how far it read their output in their claims, for the next stimd.
  */
-export async function closeMetroChildren(): Promise<void> {
-  for (const child of children.values()) {
-    if (!GROUPS) await stopChild(child, 'stimd exits');
-    else if (child.tail) {
-      child.tail.stop();
-      updateClaimDetails(child.claim, { ...child.claim.details, offsets: child.tail.offsets() });
+export function closeMetroChildren(): Promise<void> {
+  if (closeWork) return closeWork;
+  backgroundStopped = true;
+  closingChildren = true;
+  closeWork = (async () => {
+    await tickWork?.catch(() => {});
+    await Promise.allSettled(busy.values());
+    if (cleanupFailure) throw cleanupFailure;
+    for (const child of children.values()) {
+      if (!GROUPS) await stopChild(child, 'stimd exits');
+      else if (child.tail) {
+        child.tail.stop();
+        updateClaimDetails(child.claim, { ...child.claim.details, offsets: child.tail.offsets() });
+      }
     }
-  }
-  if (!GROUPS) for (const [root, tunnel] of tunnels) await stopTunnel(root, tunnel);
+    if (!GROUPS) for (const [root, tunnel] of tunnels) await stopTunnel(root, tunnel);
+  })().catch((error: unknown) => {
+    if (error instanceof Error && 'reportCleanup' in error) failedCleanup(error);
+    throw error;
+  });
+  return closeWork;
 }

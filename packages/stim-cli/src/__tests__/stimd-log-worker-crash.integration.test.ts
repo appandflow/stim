@@ -32,6 +32,41 @@ vi.mock('node:worker_threads', async (original) => {
 });
 
 describe.skipIf(process.platform === 'win32')('logs worker failure', () => {
+  test('shutdown waits for recovery and refuses to create a replacement worker', async () => {
+    const { createStreams } = await import('../stimd/logs/streams.ts');
+    const home = mkdtempSync(join(tmpdir(), 'stim-worker-crash-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-worker-crash-app-')));
+    vi.stubEnv('STIM_HOME', home);
+    const streams = createStreams(() => {});
+    let release!: (code: number) => void;
+    const held = new Promise<number>((resolve) => {
+      release = resolve;
+    });
+    try {
+      expect(await streams.ownedSync(root)).toBeNull();
+      const worker = captured.workers.at(-1);
+      if (!worker) throw new Error('the logs worker was not started');
+      await worker.terminate();
+      const terminate = vi.spyOn(worker, 'terminate').mockReturnValue(held);
+      const recovery = streams.ownedSync(root);
+      await vi.waitFor(() => expect(terminate).toHaveBeenCalled());
+      const count = captured.workers.length;
+      const closing = streams.close();
+      expect(await streams.ownedSync(root)).toContain('closing');
+      release(0);
+      expect(await recovery).toContain('closing');
+      await closing;
+      expect(captured.workers).toHaveLength(count);
+      expect(await streams.ownedSync(root)).toContain('closing');
+    } finally {
+      release(0);
+      await streams.close().catch(() => {});
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('a retained native claim does not block unrelated owned log recovery', async () => {
     const { createStreams } = await import('../stimd/logs/streams.ts');
     const home = mkdtempSync(join(tmpdir(), 'stim-worker-crash-home-'));

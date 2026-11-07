@@ -133,7 +133,8 @@ export async function workspaceInUseAsync(
   try {
     instances = checks.supervisor === false ? [] : await bundleInstancePidsAsync(root, signal, operation);
   } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     signal?.throwIfAborted();
     instances = error instanceof Error ? error : new Error(String(error));
   }
@@ -186,7 +187,8 @@ export async function withIdleWorkspace<T>(
       { external: true, waitMs: 0, ownerPurpose: purpose, signal, declareSpawnsFor: operation },
     );
   } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     signal?.throwIfAborted();
     if (workspaceProcessLockError(error)) return { ran: false, reasons: [NATIVE_RUN_HELD] };
     if (isClaimRefusal(error) || isClaimUnavailable(error)) {

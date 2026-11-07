@@ -1,13 +1,13 @@
 import { getExecutor } from '../exec.ts';
 
-const state = vi.hoisted(() => ({ pending: false, released: false, dead: false }));
+const state = vi.hoisted(() => ({ pending: false, released: false, dead: false, unknown: false }));
 vi.mock('../ownership-claim.ts', async (load) => {
   const actual = await load<typeof import('../ownership-claim.ts')>();
   return {
     ...actual,
     readClaimSet: (root: string) => ({
       live:
-        root.includes('log-backfills') || state.dead
+        root.includes('log-backfills') || state.dead || state.unknown
           ? []
           : [
               {
@@ -33,7 +33,10 @@ vi.mock('../ownership-claim.ts', async (load) => {
                 details: { streamId: 'stream' },
               },
             ],
-      unresolved: [],
+      unresolved:
+        state.unknown && !root.includes('log-backfills')
+          ? [{ path: '/claim/unknown.claim', reason: 'unreadable' }]
+          : [],
     }),
     markClaimChildPending: () => {
       state.pending = true;
@@ -81,5 +84,16 @@ test('Windows recovery refuses a dead launcher with an unverified child tree', a
   } finally {
     state.dead = false;
     vi.unstubAllGlobals();
+  }
+});
+
+test('unknown ownership requests inspection without a deletion command', async () => {
+  const { clearStreamClaim } = await import('../stimd/logs/claim.ts');
+  state.unknown = true;
+  try {
+    await expect(clearStreamClaim('/workspace', 'stream', () => {})).rejects.toThrow(/Inspect the ownership/);
+    await expect(clearStreamClaim('/workspace', 'stream', () => {})).rejects.not.toThrow(/rm -/);
+  } finally {
+    state.unknown = false;
   }
 });

@@ -72,7 +72,10 @@ export interface BrowserStream {
  */
 export function observeBrowser(root: string, record: WebRecord, chrome: OwnedProcess): BrowserStream {
   const owner = { pid: record.pid, processToken: record.processToken };
-  const writer = createNdjsonWriter(webLogFile(root), { maxBytes: LOG_ROTATE_BYTES });
+  const writer = createNdjsonWriter(webLogFile(root), {
+    maxBytes: LOG_ROTATE_BYTES,
+    ...(record.runId ? { fields: { runId: record.runId } } : {}),
+  });
   const log = (level: string, event: string, msg: string, extra: Record<string, unknown> = {}) =>
     writer.write({ src: 'device', platform: 'web', level, event, msg, ...extra });
   let cdp: CdpConnection | null = null;

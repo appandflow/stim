@@ -31,6 +31,12 @@ const owned = createOwnedStreams(
   (running) => port.postMessage({ event: 'owned-running', running }),
 );
 
+function nativeTimestamp(stream: Entry, line: string): unknown {
+  // https://github.com/appandflow/stim/issues/5387: different native timestamp spellings may preserve duplicate evidence.
+  if (stream.platform === 'ios' && !stream.physical) return (JSON.parse(line) as { timestamp?: unknown }).timestamp;
+  return /^\s*(\d+\.\d{3,6})\s/.exec(line)?.[1];
+}
+
 type Message =
   | { op: 'owned-sync'; requestId: number; root?: string }
   | { op: 'owned-drain'; requestId: number; root: string; macosOnly?: boolean }
@@ -44,6 +50,7 @@ type Message =
       platform: 'ios' | 'android';
       physical: boolean;
       bundleId?: string;
+      runId?: string;
       slotKey: string;
       attribution: Record<string, unknown>;
     }
@@ -106,6 +113,7 @@ function handleOwnedRequest(message: OwnedRequest): void {
   );
 }
 
+// oxlint-disable-next-line complexity -- The worker dispatches the existing message protocol in one handler.
 port.on('message', (message: Message) => {
   try {
     if (isOwnedRequest(message)) {
@@ -120,7 +128,7 @@ port.on('message', (message: Message) => {
     if (message.op === 'open') {
       const writer = createNdjsonWriter(join(workspaceLogsDir(message.root), 'device.ndjson'), {
         maxBytes: LOG_ROTATE_BYTES,
-        fields: { streamId: message.streamId },
+        fields: { streamId: message.streamId, ...(message.runId ? { runId: message.runId } : {}) },
       });
       streams.set(message.streamId, {
         writer,
@@ -205,9 +213,18 @@ port.on('message', (message: Message) => {
       const record = parse(message.line, { now: Date.now, clockOffsetMs: message.clockOffsetMs });
       if (record) {
         if (message.op === 'backfill.line' && stream.backfill && (record.ts ?? 0) < stream.backfill.since) return;
-        const key = `${record.deviceTs ?? record.ts}:${record.proc ?? ''}:${createHash('sha256')
-          .update(record.msg ?? '')
-          .digest('hex')}`;
+        const nativeTime = nativeTimestamp(stream, message.line);
+        const key = JSON.stringify([
+          typeof nativeTime === 'string' ? nativeTime : (record.deviceTs ?? record.ts),
+          record.ts,
+          record.proc,
+          record.level,
+          record.subsystem,
+          record.category,
+          createHash('sha256')
+            .update(record.msg ?? '')
+            .digest('hex'),
+        ]);
         const history = message.op === 'backfill.line';
         const duplicate = history
           ? stream.backfill

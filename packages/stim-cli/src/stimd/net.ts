@@ -28,7 +28,8 @@ type ToNet =
 
 type FromNet =
   | { type: 'listening'; port: number }
-  | { type: 'refused'; message: string }
+  | { type: 'refused'; message: string; clean: boolean }
+  | { type: 'closed'; error?: string }
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
   | { type: 'idle' }
@@ -56,7 +57,7 @@ export interface NetThread {
  */
 export function createNetThread(
   log: (level: 'info' | 'warn', event: string, msg: string) => void,
-  onExit: () => void,
+  onExit: (failure?: Error) => void,
   onUpdate: (why: string) => void = () => {},
   drainHosted: (session: string) => Promise<string | null> = async () => 'hosted observer is unavailable',
 ): NetThread {
@@ -67,13 +68,31 @@ export function createNetThread(
   let shareOnly = false;
   let loopbackOnly = false;
   let port: number | null = null;
+  let cleanupFailure: Error | undefined;
+  let failureNotified = false;
   let nextId = 1;
   const sockets = new Map<number, Socket>();
   const post = (message: ToNet) => worker?.postMessage(message);
-  const stop = (thread: Worker) => {
+  const unverified = (reason: string, notify = true): Error => {
+    if (cleanupFailure) return cleanupFailure;
+    cleanupFailure = Object.assign(new Error(`Net thread cleanup could not be verified: ${reason}`), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+      remedy: 'Verify the server and its child processes have stopped.',
+    });
+    if (notify) {
+      failureNotified = true;
+      onExit(cleanupFailure);
+    }
+    return cleanupFailure;
+  };
+  const stop = (thread: Worker): Promise<unknown> => {
     listening = false;
-    stopping ??= new Promise((done) => thread.once('exit', done));
-    thread.postMessage({ type: 'stop' });
+    if (!stopping) {
+      stopping = new Promise((done) => thread.once('exit', done));
+      thread.postMessage({ type: 'stop' });
+    }
+    return stopping;
   };
   const ended = () => {
     worker = null;
@@ -83,10 +102,15 @@ export function createNetThread(
     port = null;
     for (const socket of sockets.values()) socket.destroy();
     sockets.clear();
-    onExit();
+    if (!cleanupFailure) onExit();
+    else if (!failureNotified) {
+      failureNotified = true;
+      onExit(cleanupFailure);
+    }
   };
   return {
     ensure(options): Promise<NetAnswer> {
+      if (cleanupFailure) return Promise.resolve({ listening: false, message: cleanupFailure.message });
       if (stopping) return stopping.then(() => this.ensure(options));
       if (started) {
         if (!options.shareOnly && shareOnly) {
@@ -98,6 +122,7 @@ export function createNetThread(
       shareOnly = options.shareOnly;
       loopbackOnly = options.loopbackOnly;
       const thread = new Worker(spawnEntry('net-thread'), { workerData: { net: options } });
+      let clean = false;
       worker = thread;
       started = new Promise<NetAnswer>((answer) => {
         thread.on('message', (message: FromNet | { type: 'hosted-drain'; id: number; session: string }) => {
@@ -108,8 +133,13 @@ export function createNetThread(
             answer({ listening: true, port: message.port });
           } else if (message.type === 'refused') {
             log('warn', 'net_refused', message.message);
+            clean = message.clean;
+            if (!clean) unverified(message.message);
             answer({ listening: false, message: message.message });
             void thread.terminate();
+          } else if (message.type === 'closed') {
+            clean = message.error === undefined;
+            if (message.error !== undefined) unverified(message.error);
           } else if (message.type === 'idle') {
             if (!shareOnly) return;
             log('info', 'net_idle', 'no web share is left; stopping the net thread');
@@ -124,10 +154,12 @@ export function createNetThread(
           else sockets.get(message.id)?.end();
         });
         thread.once('error', (error: Error) => {
+          unverified(error.message);
           log('warn', 'net_failed', error.message);
           answer({ listening: false, message: `the net thread failed: ${error.message}` });
         });
         thread.once('exit', (code) => {
+          if (!clean) unverified(`worker exited with code ${code} without confirming cleanup`, false);
           answer({ listening: false, message: `the net thread exited with code ${code}` });
           if (worker === thread) ended();
         });
@@ -154,11 +186,18 @@ export function createNetThread(
     },
     async close() {
       const thread = worker;
-      if (!thread) return;
-      stop(thread);
-      const timer = setTimeout(() => void thread.terminate(), STOP_WAIT_MS);
-      await new Promise((done) => thread.once('exit', done));
+      if (!thread) {
+        if (cleanupFailure) throw cleanupFailure;
+        return;
+      }
+      const stopped = stop(thread);
+      const timer = setTimeout(() => {
+        unverified('worker did not exit after shutdown');
+        void thread.terminate();
+      }, STOP_WAIT_MS);
+      await stopped;
       clearTimeout(timer);
+      if (cleanupFailure) throw cleanupFailure;
     },
   };
 }

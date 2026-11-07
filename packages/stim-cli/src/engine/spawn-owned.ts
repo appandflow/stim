@@ -42,8 +42,8 @@ export interface OwnedProcess {
 /**
  * Starts a process that outlives its launcher: detached, in its own process group, with file stdio, and holding an
  * exclusive ownership claim of its own, so stop, idle stop and status find it through that claim whether the launcher
- * was a command that exits or a long-lived host. A process whose identity cannot be captured, or whose claim is held,
- * is stopped before this throws when its termination can be verified; otherwise the launching claims remain held.
+ * was a command that exits or a long-lived host. If identity capture or claim publication fails, launching claims are
+ * retained for reconciliation until the process and any separately grouped children have been verified stopped.
  */
 export async function spawnOwned(launch: OwnedLaunch): Promise<OwnedProcess> {
   const declared = [...launch.declare];
@@ -118,8 +118,12 @@ export async function spawnOwned(launch: OwnedLaunch): Promise<OwnedProcess> {
         error instanceof Error ? error : undefined,
       );
     releaseClaim(claim);
-    for (const declaration of declared) clearClaimChild(declaration);
-    throw error;
+    throw new WorkspaceProcessCleanupError(
+      declared,
+      `Could not verify that all children of the failed ${launch.claim.label} launch stopped.`,
+      'Verify that the launched process and its children have stopped before retrying.',
+      error instanceof Error ? error : undefined,
+    );
   }
   return { ...owner, claim };
 }

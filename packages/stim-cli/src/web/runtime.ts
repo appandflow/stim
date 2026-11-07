@@ -2,6 +2,7 @@ import { withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { mkdirSync } from 'node:fs';
 import chalk from 'chalk';
 import { ambientEnv } from '@stim-cli/core';
+import { runId, validRunId } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
 import { observeOwned } from '../daemon/client.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
@@ -118,6 +119,7 @@ export async function launchOwnedBrowser(
             profile,
             url,
             startedAt: new Date().toISOString(),
+            ...(validRunId(runId()) ? { runId: runId() } : {}),
           }),
         );
       } catch (error) {

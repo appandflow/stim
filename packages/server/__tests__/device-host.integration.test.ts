@@ -1468,6 +1468,15 @@ test('refuses app mutations after the real session owner disappears until explic
   await state(retained.session, 'stopped');
 });
 
+test('a retry cannot assign a run ID to a legacy hosted macOS attempt', async () => {
+  const first = await reserve({ platform: 'macos' });
+  await state(first.id, 'ready');
+  const app = appOffer(first.id, 'legacy-attempt', 'macos');
+  expect(host.appOffer('client', app.params)).toHaveProperty('result');
+  expect(host.appOffer('client', app.params, 'later-run')).toHaveProperty('result');
+  expect(readHostedAppMetadata(first.id, app.params.attempt)).not.toHaveProperty('runId');
+});
+
 test.each([
   ['ios', 'release'],
   ['android', 'release'],
@@ -1491,7 +1500,9 @@ test.each([
     };
     expect(acceptsRequest({ id: 1, method: 'device-host.app.offer', params })).toBe(true);
     expect(host.appOffer('other', params)).toHaveProperty('error');
-    expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 0);
+    expect(host.appOffer('client', params, 'first-run')).toHaveProperty('result.missing.0.offset', 0);
+    expect(host.appOffer('client', params, 'retry-run')).toHaveProperty('result.missing.0.offset', 0);
+    expect(readHostedAppMetadata(first.id, params.attempt).runId).toBe(platform === 'macos' ? 'first-run' : undefined);
     const receiving = host.appAttach('client', params);
     expect(receiving).toHaveProperty('result.state', 'receiving');
     expect(receiving).not.toHaveProperty('result.agent');

@@ -1,6 +1,7 @@
 import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
 import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
 import { randomUUID } from 'node:crypto';
+import type { StimContext } from '@stim-cli/core';
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -32,6 +33,8 @@ import {
 import {
   ClaimUnavailableError,
   claimFailure,
+  claimRemoveCommand,
+  markClaimChildPending,
   isClaimRefusal,
   isClaimUnavailable,
   readClaimSet,
@@ -50,6 +53,7 @@ import { resolveSupervisorTarget } from '../stimd/metro/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
 import { getConfigDir, loadConfig, type Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { workspaceDir } from '../workspace/paths.ts';
 import { relaunchWithLogFile } from '../detached-entry.ts';
 import {
   LAUNCHD_LABEL_ENV,
@@ -78,8 +82,13 @@ import { takeOverLegacyDaemon } from './legacy-daemon-takeover.ts';
 import { listenPipe } from './pipe-win32.ts';
 import {
   adoptMetroChildren,
+  openMetroChildren,
+  metroCleanupPending,
+  metroEngineDirs,
+  stopMetroTicks,
   closeMetroChildren,
   ensureMetro,
+  stopManagedMetro,
   ensureTunnel,
   metroChildrenRun,
   metroOpFlags,
@@ -254,8 +263,13 @@ async function pendingWork(
   measured: TickMeasurement,
   slowTickMs: number,
   act: boolean,
+  operation: StimContext,
 ): Promise<string | null> {
-  const dormant = await pendingDormant(config, { simsFailed: measured.sims === null }, { graceMs: slowTickMs });
+  const dormant = await pendingDormant(
+    config,
+    { simsFailed: measured.sims === null },
+    { graceMs: slowTickMs, operation },
+  );
   if (dormant) return `${dormant} is not dormant yet`;
   const settings = resolveMaintenanceSettings(config);
   const removal =
@@ -277,8 +291,8 @@ function attachedReply(attached: boolean, instance?: string): { attached?: true;
 
 function markDaemonFailure(level: Level, attached: boolean, mark: (() => void) | null): void {
   if (level !== 'error') return;
-  mark?.();
   if (attached) process.exitCode = 1;
+  else mark?.();
 }
 
 function refreshRetention(retention: ReturnType<typeof followEngine>): string | null {
@@ -290,13 +304,162 @@ function refreshRetention(retention: ReturnType<typeof followEngine>): string | 
   }
 }
 
-async function retainAttachedEngine(attached: boolean, log: Parameters<typeof followEngine>[0], cleanup: () => void) {
+function handleNetStop(
+  serve: ServeOptions | undefined,
+  closing: boolean,
+  attached: boolean,
+  end: (why: string, level: Level) => void,
+  shutdown: (why: string, level: Level) => void,
+  tick: () => void,
+): void {
+  if (!serve || closing) return tick();
+  const why = 'the net thread `stim serve` started exited';
+  if (attached) end(why, 'warn');
+  else shutdown(why, 'warn');
+}
+
+function refusesSealedOperation(sealed: boolean, op: unknown): boolean {
+  return (
+    sealed &&
+    [
+      'op.begin',
+      'net.ensure',
+      'metro.ensure',
+      'tunnel.ensure',
+      'logs.start',
+      'metro.prepare',
+      'lease.prepare',
+      'lease.acquire',
+    ].includes(String(op))
+  );
+}
+
+function endingForeground(ending: string | null, attached: boolean, error: unknown): boolean {
+  return Boolean(ending || (attached && isUnverifiedCleanup(error)));
+}
+
+function handleForegroundError(
+  error: unknown,
+  ending: string | null,
+  attached: boolean,
+  end: (why: string, level: Level) => void,
+  shutdown: (why: string, level: Level) => void,
+): unknown {
+  if (endingForeground(ending, attached, error)) {
+    end('foreground cleanup could not be verified', 'error');
+    return isClaimUnavailable(error) ? error : undefined;
+  }
+  shutdown(
+    `the tick failed, so each supervisor's own idle timer takes over: ${error instanceof Error ? error.message : String(error)}`,
+    'error',
+  );
+  return isUnverifiedCleanup(error) ? error : undefined;
+}
+
+function createNetAndLogsClose(
+  net: ReturnType<typeof createNetThread>,
+  logs: ReturnType<typeof createStreams>,
+): () => Promise<void> {
+  let netAndLogsClose: Promise<void> | undefined;
+  return (): Promise<void> => {
+    netAndLogsClose ??= (async () => {
+      let netFailure: unknown;
+      try {
+        await net.close();
+      } catch (error) {
+        netFailure = error;
+      }
+      try {
+        await logs.close();
+      } catch (error) {
+        if (logs.running())
+          throw Object.assign(new ClaimUnavailableError(`device log cleanup could not be verified: ${String(error)}`), {
+            reportCleanup: true,
+            remedy: 'Inspect the device log claim and verify its process tree has stopped.',
+          });
+        throw error;
+      }
+      if (netFailure) throw netFailure;
+    })();
+    return netAndLogsClose;
+  };
+}
+
+function attachedCleanupError(
+  initial: unknown,
+  background: unknown,
+  results: PromiseSettledResult<unknown>[],
+): unknown {
+  const errors = [
+    initial,
+    background,
+    ...results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : [])),
+  ];
+  return errors.find(isUnverifiedCleanup) ?? errors.find(Boolean);
+}
+
+function countIdleTicks(idle: boolean, streamsRunning: boolean, previous: number): number {
+  return idle && !streamsRunning ? previous + 1 : 0;
+}
+
+function resolveForeground(): void {}
+
+async function waitForeground(done: Promise<void> | undefined, failure: () => unknown): Promise<void> {
+  await done;
+  const error = failure();
+  if (error) throw error;
+}
+
+function isUnverifiedCleanup(error: unknown): boolean {
+  return isClaimUnavailable(error) && 'reportCleanup' in error;
+}
+
+function markHomePending(home: ClaimHandle | null, cleanup: () => void = () => {}, enabled = true): void {
+  if (!enabled || !home) return;
+  try {
+    markClaimChildPending(home);
+  } catch (error) {
+    cleanup();
+    throw Object.assign(
+      new ClaimUnavailableError(`could not guard the Stim home: ${String(error)}`, { claimPath: home.path }),
+      { retentionFailure: true },
+    );
+  }
+}
+
+function retainUnverifiedForeground(
+  error: unknown,
+  home: ClaimHandle,
+  retention: ReturnType<typeof followEngine>,
+  daemon: ClaimHandle | null,
+): unknown {
+  if (!isClaimUnavailable(error)) return undefined;
+  if (!('reportCleanup' in error)) return error;
+  if ('retentionFailure' in error) return error;
+  markHomePending(home);
+  if (daemon) markHomePending(daemon);
+  const enginePath = retention?.retainUnknown();
+  const paths = [home.path, ...(daemon ? [daemon.path] : []), ...(enginePath ? [enginePath] : [])];
+  error.message += ` Stimd ownership remains held at ${paths.join(', ')}.`;
+  return Object.assign(error, {
+    retentionFailure: true,
+    remedy: `${error.remedy} After verifying the child and descendants have stopped, remove these claims: ${paths.map(claimRemoveCommand).join('; ')}`,
+  });
+}
+
+async function retainAttachedEngine(
+  attached: boolean,
+  log: Parameters<typeof followEngine>[0],
+  cleanup: () => void,
+  signal?: AbortSignal,
+) {
   if (!attached) return null;
   const engine = ownStoreEngine();
   if (!engine) return null;
   let lock: Awaited<ReturnType<typeof takeLock>> = null;
   try {
     for (const until = Date.now() + 10_000; !lock && Date.now() < until;) {
+      signal?.throwIfAborted();
       lock = await takeLock(engine.root, '.lock.sock');
       if (!lock) await new Promise((done) => setTimeout(done, 50));
     }
@@ -320,16 +483,26 @@ async function retainAttachedEngine(attached: boolean, log: Parameters<typeof fo
       { retentionFailure: true },
     );
   }
+  let retention: ReturnType<typeof followEngine> = null;
   try {
+    signal?.throwIfAborted();
     requireCurrentEngine(engine);
-    const retention = followEngine(log, true);
+    retention = followEngine(log, true);
     if (!retention)
       throw new ClaimUnavailableError('could not retain the attached Stim engine', {
         claimPath: join(engine.root, 'claims', engine.build),
       });
     retention.record(true, workspaceEngineDirs(loadConfig()));
+    try {
+      retention.retainUnknown();
+    } catch (error) {
+      throw new ClaimUnavailableError(`could not guard the attached Stim engine: ${String(error)}`, {
+        claimPath: join(engine.root, 'claims', engine.build),
+      });
+    }
     return retention;
   } catch (error) {
+    retention?.release();
     cleanup();
     if (isClaimRefusal(error) || isClaimUnavailable(error)) Object.assign(error, { retentionFailure: true });
     throw error;
@@ -338,28 +511,13 @@ async function retainAttachedEngine(attached: boolean, log: Parameters<typeof fo
   }
 }
 
-/**
- * One resident stimd per Stim home, which returns false when another holds the home: holds the claim at `run/stimd` exclusively and the daemon claim at `daemon/claim`
- * shared, after stopping a stim-daemon from Stim 1.40 to 1.42 that holds that one exclusively; serves the CLI socket,
- * whose address it writes to `run/stimd.json`; and ticks every minute while something runs in the home or the pressure
- * level is above normal, every 5 minutes otherwise, and on demand, each tick measuring once, running the activity,
- * dormant and pressure passes and writing `snapshot.json`, then, unless it exits, starting the slow passes on the passes
- * thread unless the last ones still run. A command's contact brings it back to the minute. It exits after two ticks in a
- * row with nothing running, no work pending (`pendingWork`), no slow pass running and no contact, when `daemon.mode`
- * turns off, or when a tick throws, releasing its claims so each supervisor's own idle timer takes over. During
- * shutdown it cancels the dependency size scan and waits for its cleanup and for any slow pass already running.
- */
-export async function runStimd({
-  tickMs = TICK_MS,
-  slowTickMs = tickMs * SLOW_TICKS,
-  mode: startMode = daemonMode({}),
-  serve,
-  desktopKey,
-  onNet,
-  afterSwitch = false,
-  service = serve !== undefined,
-  attached,
-}: {
+interface StimdStartup {
+  cleanup?: (error: unknown) => Promise<void>;
+  signal: AbortSignal;
+  finish?: () => void;
+}
+
+interface RunStimdOptions {
   tickMs?: number;
   /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
   slowTickMs?: number;
@@ -380,7 +538,52 @@ export async function runStimd({
    * `daemon.mode` off, and ends when its stdin closes or on a signal, through `endAttached`.
    */
   attached?: { handover: boolean };
-} = {}): Promise<boolean> {
+}
+
+/**
+ * One resident stimd per Stim home, which returns false when another holds the home: holds the claim at `run/stimd` exclusively and the daemon claim at `daemon/claim`
+ * shared, after stopping a stim-daemon from Stim 1.40 to 1.42 that holds that one exclusively; serves the CLI socket,
+ * whose address it writes to `run/stimd.json`; and ticks every minute while something runs in the home or the pressure
+ * level is above normal, every 5 minutes otherwise, and on demand, each tick measuring once, running the activity,
+ * dormant and pressure passes and writing `snapshot.json`, then, unless it exits, starting the slow passes on the passes
+ * thread unless the last ones still run. A command's contact brings it back to the minute. It exits after two ticks in a
+ * row with nothing running, no work pending (`pendingWork`), no slow pass running and no contact, when `daemon.mode`
+ * turns off, or when a tick throws, releasing its claims so each supervisor's own idle timer takes over. During
+ * shutdown it cancels the dependency size scan and waits for its cleanup and for any slow pass already running.
+ */
+export async function runStimd(options: RunStimdOptions = {}): Promise<boolean> {
+  const controller = new AbortController();
+  const startup: StimdStartup = { signal: controller.signal };
+  if (options.attached) {
+    const abort = () => controller.abort();
+    process.stdin.once('end', abort).once('error', abort);
+    process.stdin.resume();
+    startup.finish = () => process.stdin.off('end', abort).off('error', abort);
+  }
+  try {
+    return await runStimdInner(options, startup);
+  } catch (error) {
+    await startup.cleanup?.(error);
+    throw error;
+  } finally {
+    startup.finish?.();
+  }
+}
+
+async function runStimdInner(
+  {
+    tickMs = TICK_MS,
+    slowTickMs = tickMs * SLOW_TICKS,
+    mode: startMode = daemonMode({}),
+    serve,
+    desktopKey,
+    onNet,
+    afterSwitch = false,
+    service = serve !== undefined,
+    attached,
+  }: RunStimdOptions,
+  startup: StimdStartup,
+): Promise<boolean> {
   const identity = stimBuild();
   const build = stimdBuildId();
   const configAtStart = configuredDaemonMode();
@@ -425,7 +628,25 @@ export async function runStimd({
       );
     return false;
   }
+  const homeClaim = own;
   let keepOwn = false;
+  let startupClaim: ClaimHandle | null = null;
+  let startupFollower: ReturnType<typeof followEngine> = null;
+  let startupRetention: ReturnType<typeof followEngine> = null;
+  startup.cleanup = async (error) => {
+    if (isUnverifiedCleanup(error)) {
+      keepOwn = true;
+      retainUnverifiedForeground(error, homeClaim, startupRetention ?? startupFollower, startupClaim);
+    } else {
+      startupRetention?.release();
+      startupFollower?.release();
+      releaseClaim(startupClaim);
+      releaseClaim(own);
+    }
+    markAbnormal = null;
+    await writer.close();
+  };
+  markHomePending(own, undefined, attached !== undefined);
   markAbnormal = () => {
     if (!own || keepOwn) return;
     keepOwn = true;
@@ -482,7 +703,11 @@ export async function runStimd({
   };
   await takeOver();
   // compat end
+  startup.signal.throwIfAborted();
   const claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details, takeOver);
+  startupClaim = claim;
+  markHomePending(claim, undefined, attached !== undefined);
+  startup.signal.throwIfAborted();
   if (stopped !== null) log('info', 'stimd_takeover', `stopped stim-daemon pid ${stopped}, from an older Stim`);
   if (!claim) {
     releaseClaim(own);
@@ -490,23 +715,36 @@ export async function runStimd({
     writer.close();
     return false;
   }
+  let keepDaemon = false;
   readoptJournal(log);
   const follower = lifetime.detachedOnly(() => followEngine(log));
-  const retention = await retainAttachedEngine(attached !== undefined, log, () => {
-    releaseClaim(claim);
-    releaseClaim(own);
-    writer.close();
-  });
+  startupFollower = follower;
+  follower?.record(false, workspaceEngineDirs(loadConfig()));
+  const retention = await retainAttachedEngine(
+    attached !== undefined,
+    log,
+    () => {
+      releaseClaim(claim);
+      releaseClaim(own);
+      writer.close();
+    },
+    startup.signal,
+  );
+  startupRetention = retention;
+  startup.signal.throwIfAborted();
   process.title = 'stimd';
   const key = writeDesktopKey(desktopKey);
   const script = realpathSync(process.argv[1] ?? '');
   const net = createNetThread(
     log,
-    () => {
+    (failure) => {
       lastContact = Date.now();
+      if (failure) {
+        failBackground(failure, 'net cleanup could not be verified');
+        return;
+      }
       if (restartingNet) return;
-      if (serve && !closing) shutdown('the net thread `stim serve` started exited', 'warn');
-      else requestTick();
+      handleNetStop(serve, closing, attached !== undefined, requestEnd, shutdown, requestTick);
     },
     (why) => maybeUpdate(why, ASKED_MS),
     (session) => logs.ownedDrainHosted(session),
@@ -551,7 +789,10 @@ export async function runStimd({
   });
   const logs = createStreams((message) => log('warn', 'device_logs', message), log);
   const threads = createThreadTable(log);
-  const lane = createPassesLane(threads, log);
+  let backgroundFailure: unknown;
+  const lane = createPassesLane(threads, log, (error) => {
+    failBackground(error, 'background cleanup could not be verified');
+  });
   const statuses = createStatusSnapshots(log, join(daemonDir(), 'status-cwds.json'));
   let dependencyScanAt = -Infinity;
   let dependencyWork: Promise<void> | undefined;
@@ -602,9 +843,16 @@ export async function runStimd({
   const socketTokens = new WeakMap<Socket, string>();
   const opCommands = new WeakMap<Socket, string>();
   let ending: string | null = null;
+  let endingLevel: Level = 'info';
   let attachedEnding: Promise<void> | undefined;
-  let logsClosing: Promise<void> | undefined;
+  let shutdownDone: Promise<void> | undefined;
+  let writerDone: Promise<void> | undefined;
+  let relaunchDone: Promise<void> | undefined;
+  const foregroundAbort = new AbortController();
+  let foregroundDone: Promise<void> | undefined;
+  let foregroundFailure: unknown;
   let admissionRevision = 0;
+  let sealed = false;
   let attachedWatchdog: NodeJS.Timeout | undefined;
   const maintenanceAllowed = () => !closing && !ending;
   let engineDirs: string[] = [];
@@ -617,23 +865,40 @@ export async function runStimd({
   let heldSwitch = false;
   const hasActiveCommands = () => ops.size > 0;
   const pinned = (): boolean =>
+    Boolean(backgroundFailure) ||
+    metroCleanupPending() ||
     [...ops.values()].includes('pinned') ||
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
   const enginePinned = (): boolean => pinned() || logs.running();
+  const failBackground = (error: unknown, why: string) => {
+    backgroundFailure = error;
+    keepOwn = true;
+    keepDaemon = true;
+    markHomePending(homeClaim);
+    try {
+      (retention ?? follower)?.record(true, [...engineDirs, ...metroEngineDirs()]);
+    } finally {
+      retainUnverifiedForeground(error, homeClaim, retention ?? follower, claim);
+    }
+    if (attached) requestEnd(why, 'error');
+    else shutdown(why, 'error');
+  };
   const checkEngine = async (): Promise<void> => {
     if (!follower || switchedTo || closing) return;
     let next: Awaited<ReturnType<typeof follower.check>>;
     try {
-      follower.record(enginePinned(), engineDirs, logs.running());
+      follower.record(enginePinned(), [...engineDirs, ...metroEngineDirs()], logs.running());
       next = await follower.check(enginePinned);
     } catch (error) {
       log('warn', 'engine_check_failed', error instanceof Error ? error.message : String(error));
       return;
     }
     if (!next || switchedTo || closing) return;
-    if (!enginePinned()) await relaunch(next, follower.engine.root);
-    else if (!heldSwitch) {
+    if (!enginePinned()) {
+      relaunchDone = relaunch(next, follower.engine.root);
+      void relaunchDone.catch(() => {});
+    } else if (!heldSwitch) {
       heldSwitch = true;
       log(
         'warn',
@@ -651,7 +916,8 @@ export async function runStimd({
     const carried = running && netServes ? { ...netServes, shareOnly: running.shareOnly } : null;
     const why = `the engine switched to ${next.version} (${next.build})`;
     shutdown(why);
-    await net.close();
+    await shutdownDone;
+    if (keepOwn) return;
     launchStimd(process.env, startMode, process.platform, join(root, next.build, 'dist', 'cli.mjs'), [
       '--after-switch',
       ...serveArgs(carried, service),
@@ -721,6 +987,12 @@ export async function runStimd({
         }
         lastContact = Date.now();
         const { op } = message;
+        if (refusesSealedOperation(sealed, op)) {
+          socket.end(
+            `${JSON.stringify({ op: 'error', code: 'daemon-ending', message: 'The Stim daemon is ending.' })}\n`,
+          );
+          continue;
+        }
         if (
           handleLogRequest({
             message,
@@ -763,6 +1035,7 @@ export async function runStimd({
         } else if (op === 'presence.publish') {
           socket.end(`${JSON.stringify({ op: 'presence', forwarded: net.presence(message.params) })}\n`);
         } else if (op === 'net.ensure') {
+          admissionRevision++;
           const params = isJsonObject(message.params) ? message.params : {};
           const share = params.share === true;
           const port = Number.isInteger(params.port) ? Number(params.port) : undefined;
@@ -793,10 +1066,13 @@ export async function runStimd({
                 });
               })()
             : net.ensure(options);
-          void answer.then((state) => {
-            lastContact = Date.now();
-            return reply({ op: 'net', ...state });
-          });
+          void answer.then(
+            (state) => {
+              lastContact = Date.now();
+              return reply({ op: 'net', ...state });
+            },
+            (error: unknown) => reply({ op: 'net', listening: false, message: String(error) }),
+          );
         } else if (op === 'net.connect') {
           socket.off('data', onData);
           const head = buffer;
@@ -873,7 +1149,8 @@ export async function runStimd({
               ),
             );
           }
-        } else if (op === 'metro.ensure' || op === 'tunnel.ensure') {
+        } else if (op === 'metro.ensure' || op === 'tunnel.ensure' || op === 'metro.stop') {
+          admissionRevision++;
           const context = opContexts.get(socket);
           if (ops.has(socket) && !context) {
             reply({ op: 'error', code: 'op-not-ready', message: 'the operation has no admitted workspace' });
@@ -900,7 +1177,9 @@ export async function runStimd({
           const perform = () =>
             op === 'metro.ensure'
               ? ensureMetro(message.params, log, operationEnv, opControllers.get(socket)?.signal)
-              : ensureTunnel(message.params, operationEnv);
+              : op === 'metro.stop'
+                ? stopManagedMetro(message.params)
+                : ensureTunnel(message.params, operationEnv);
           const controller = opControllers.get(socket);
           const ask =
             context && controller
@@ -943,10 +1222,40 @@ export async function runStimd({
   });
   let bound = false;
   const waitMs = attachedExitWaitMs();
+  const closeNetAndLogs = createNetAndLogsClose(net, logs);
+  let attachedCleanup: Promise<void> | undefined;
+  const closeAttachedWork = (why: string, initial?: unknown): Promise<void> => {
+    attachedCleanup ??= (async () => {
+      const results = await Promise.allSettled([
+        waitForeground(foregroundDone, () => foregroundFailure),
+        lane.settled(),
+        dependencyWork,
+        closeMetroChildren(),
+        closeNetAndLogs(),
+      ]);
+      const error = attachedCleanupError(initial, backgroundFailure, results);
+      if (error) {
+        if (isUnverifiedCleanup(error)) {
+          keepOwn = true;
+          keepDaemon = true;
+        }
+        const retained = retainUnverifiedForeground(error, homeClaim, retention, claim) ?? error;
+        shutdown('attached cleanup could not be verified', 'error', true);
+        await shutdownDone;
+        throw retained;
+      }
+      shutdown(why, endingLevel);
+      await shutdownDone;
+    })();
+    return attachedCleanup;
+  };
   const finishAttached = () =>
     endAttached({
       inFlight: () => [...ops.keys()].map((socket) => opCommands.get(socket) ?? 'a command'),
       admissionRevision: () => admissionRevision,
+      seal: () => {
+        sealed = true;
+      },
       alive: async (signal) =>
         net.running()
           ? 'the net thread serves'
@@ -964,24 +1273,31 @@ export async function runStimd({
         const carried = running && netServes ? { ...netServes, shareOnly: running.shareOnly } : null;
         return serveArgs(carried, service);
       },
-      release: async (why) => {
-        shutdown(ending === 'stdin' ? why : `${why} (${ending})`);
-        await logsClosing;
-      },
+      release: (why) => closeAttachedWork(ending === 'stdin' ? why : `${why} (${ending})`),
       log,
+    }).catch((error: unknown) => {
+      sealed = true;
+      return closeAttachedWork('attached cleanup failed', error);
     });
-  const requestEnd = (why: string) => {
+  const requestEnd = (why: string, level: Level = 'info') => {
     if (ending) return;
     ending = why;
+    endingLevel = level;
+    retention?.record(true, [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
     attachedWatchdog = setTimeout(() => process.exit(1), waitMs + KILL_GRACE_MS);
     attachedWatchdog.unref();
+    foregroundAbort.abort();
+    stopMetroTicks();
+    interrupt?.();
     threads.abort('passes');
+    threads.abort('measure');
     attachedEnding = finishAttached();
   };
   const onSignal = (signal: NodeJS.Signals) => (attached ? lifetime.signal(signal, requestEnd) : shutdown(signal));
-  const shutdown = (why: string, level: Level = 'info') => {
+  const shutdown = (why: string, level: Level = 'info', preserve = false) => {
     if (closing) return;
     closing = true;
+    foregroundAbort.abort();
     markDaemonFailure(level, attached !== undefined, markAbnormal);
     if (dependencyWork) log('debug', 'daemon_dependency_scan_cancelled', 'stopping the dependency size scan');
     threads.abort('measure');
@@ -993,32 +1309,55 @@ export async function runStimd({
     for (const socket of open) socket.end().unref();
     if (bound && process.platform !== 'win32') rmSync(path, { force: true });
     if (readJsonObject(stimdRecordFile())?.pid === process.pid) rmSync(stimdRecordFile(), { force: true });
-    follower?.release();
-    markAbnormal = null;
     for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
-    logsClosing = net
-      .close()
-      .then(() => logs.close())
-      .catch((error: unknown) => {
-        log('warn', 'device_logs_close_failed', String(error));
+    let unverified = false;
+    shutdownDone = Promise.allSettled([
+      waitForeground(foregroundDone, () => foregroundFailure),
+      lane.settled(),
+      dependencyWork,
+      closeMetroChildren(),
+      closeNetAndLogs(),
+    ])
+      .then(async (results) => {
+        const error = attachedCleanupError(undefined, backgroundFailure, results);
+        if (isUnverifiedCleanup(error)) {
+          unverified = true;
+          keepOwn = true;
+          keepDaemon = true;
+          retainUnverifiedForeground(error, homeClaim, retention ?? follower, claim);
+        }
+        await threads.close();
+        return undefined;
       })
-      .finally(() => {
-        releaseClaim(claim);
-        if (!keepOwn) releaseClaim(own);
-      });
-    void Promise.all([lane.settled(), dependencyWork, logsClosing, closeMetroChildren()])
-      .then(() => threads.close())
-      .then(() => attachedEnding)
+      .catch(() => {})
       .then(() => {
-        retention?.release();
-        return writer.close();
+        if (!unverified && !metroCleanupPending()) follower?.release();
+        if (!keepDaemon) releaseClaim(claim);
+        if (!keepOwn) releaseClaim(own);
+        markAbnormal = null;
+        if (!preserve && !unverified) retention?.release();
+        return undefined;
       });
+    writerDone = shutdownDone
+      .then(() => attachedEnding)
+      .catch(() => {})
+      .then(async () => {
+        await writer.close();
+        return undefined;
+      });
+  };
+  startup.cleanup = async (error) => {
+    if (isUnverifiedCleanup(error)) backgroundFailure = error;
+    shutdown('daemon startup failed', lifetime.failLevel, isUnverifiedCleanup(error));
+    await shutdownDone;
+    await writerDone;
   };
   for (const signal of SIGNALS) process.once(signal, onSignal);
   try {
     await listen(path, server);
     bound = true;
+    startup.signal.throwIfAborted();
     writeAtomic(stimdRecordFile(), {
       format: RECORD_FORMAT,
       pid: process.pid,
@@ -1030,10 +1369,20 @@ export async function runStimd({
     shutdown(`cannot listen on ${path}: ${error instanceof Error ? error.message : String(error)}`, lifetime.failLevel);
     throw lifetime.listenFailed(error);
   }
+  openMetroChildren((error) => {
+    failBackground(error, 'Metro cleanup could not be verified');
+    log('error', 'metro_cleanup_unverified', error instanceof Error ? error.message : String(error));
+  });
   adoptMetroChildren(log);
+  (retention ?? follower)?.record(Boolean(retention), [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
   if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
+  startup.signal.throwIfAborted();
   await logs.ownedSync();
+  startup.signal.throwIfAborted();
   lifetime.serve(requestEnd, waitMs, instance);
+  startup.finish?.();
+  startup.finish = undefined;
+  startup.cleanup = undefined;
   log(
     'info',
     'daemon_started',
@@ -1043,6 +1392,9 @@ export async function runStimd({
   let emptyTicks = 0;
   let interval = tickMs;
   const kept = new Map<string, string>();
+  const syncOwned = () => {
+    if (!closing) void logs.ownedSync();
+  };
   for (;;) {
     if (!tickRequested && !closing) {
       await new Promise<void>((done) => {
@@ -1061,7 +1413,7 @@ export async function runStimd({
     }
     interrupt = null;
     hasten = null;
-    if (closing) break;
+    if (!maintenanceAllowed()) break;
     tickRequested = false;
     const mode = effectiveMode();
     const retentionError = refreshRetention(retention);
@@ -1088,15 +1440,21 @@ export async function runStimd({
     let pending: string | null = null;
     let wentDormant = false;
     let phases: Record<string, number> = {};
-    let ticked: HomePasses | null = null;
+    let ticked: HomePasses;
+    let settleForeground: () => void = resolveForeground;
+    foregroundDone = new Promise<void>((done) => {
+      settleForeground = done;
+    });
     try {
       const passes = await runHomePasses({
         act: mode === 'on',
         log,
         memoryWarningSince: lastSnapshot?.pressure?.memoryWarningSince ?? null,
+        signal: foregroundAbort.signal,
       });
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
-      void logs.ownedSync();
+      operation.signal.throwIfAborted();
+      syncOwned();
       actions.push(...lane.take());
       if (maintenanceAllowed() && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
         dependencyScanAt = Date.now();
@@ -1105,6 +1463,9 @@ export async function runStimd({
           .then(() => undefined)
           .catch((error: unknown) => {
             const message = error instanceof Error ? error.message : String(error);
+            if (isUnverifiedCleanup(error)) {
+              failBackground(error, 'dependency cleanup could not be verified');
+            }
             if (message !== 'aborted') log('warn', 'daemon_dependency_scan_failed', message);
           })
           .finally(() => {
@@ -1119,6 +1480,7 @@ export async function runStimd({
         log,
         operation,
       });
+      operation.signal.throwIfAborted();
       phases = { ...passes.phases, reclaimMs: Math.round(performance.now() - reclaimStarted) };
       if (reclaimed) {
         actions.push(reclaimed);
@@ -1137,7 +1499,7 @@ export async function runStimd({
           ? 'automatic maintenance runs'
           : updating
             ? 'an engine update check runs'
-            : await pendingWork(config, measured, slowTickMs, mode === 'on');
+            : await pendingWork(config, measured, slowTickMs, mode === 'on', operation);
       wentDormant = actions.some((action) => action.kind === 'dormant-stage' && action.outcome === 'done');
       interval = alive || pressure.level !== 'normal' ? tickMs : slowTickMs;
       for (const { path: workspace, outcome, detail } of workspaces) {
@@ -1194,15 +1556,14 @@ export async function runStimd({
       maybeUpdate('daily check', DAILY_MS);
     } catch (error) {
       for (const socket of replying) socket.destroy();
-      shutdown(
-        `the tick failed, so each supervisor's own idle timer takes over: ${error instanceof Error ? error.message : String(error)}`,
-        'error',
-      );
+      foregroundFailure = handleForegroundError(error, ending, attached !== undefined, requestEnd, shutdown);
       break;
+    } finally {
+      settleForeground();
     }
-    if (closing) break;
-    const idle = !alive && !pending && !wentDormant && !logsRunning() && Date.now() - contactSince >= tickMs;
-    emptyTicks = idle ? emptyTicks + 1 : 0;
+    if (!maintenanceAllowed()) break;
+    const idle = !alive && !pending && !wentDormant && Date.now() - contactSince >= tickMs;
+    emptyTicks = countIdleTicks(idle, logsRunning(), emptyTicks);
     const tookMs = Math.round(performance.now() - tickStarted);
     await new Promise((done) => setTimeout(done, 0));
     log(
@@ -1224,12 +1585,18 @@ export async function runStimd({
       shutdown('nothing runs in this Stim home');
       break;
     }
-    if (ticked && maintenanceAllowed()) lane.start(ticked, mode === 'on');
+    if (maintenanceAllowed()) lane.start(ticked, mode === 'on');
   }
-  await Promise.all([lane.settled(), dependencyWork, logsClosing]);
-  await threads.close();
-  await attachedEnding;
-  clearTimeout(attachedWatchdog);
+  try {
+    await attachedEnding;
+  } finally {
+    await Promise.allSettled([lane.settled(), dependencyWork, net.close()]);
+    await threads.close();
+    await shutdownDone;
+    await relaunchDone;
+    await writerDone;
+    clearTimeout(attachedWatchdog);
+  }
   return true;
 }
 
@@ -1237,7 +1604,8 @@ export async function runStimd({
 function workspaceEngineDirs(config: Config | null): string[] {
   return Object.keys(config?.projects ?? {}).flatMap((path) => {
     const state = readWorkspaceState(path);
-    return [state?.supervisor, ...Object.values(state?.collectors ?? {})].flatMap((record) => {
+    const claims = readClaimSet(join(workspaceDir(path), 'metro.claim')).live.map((claim) => claim.details);
+    return [state?.supervisor, ...Object.values(state?.collectors ?? {}), ...claims].flatMap((record) => {
       return isJsonObject(record) && typeof record.engineDir === 'string' ? [record.engineDir] : [];
     });
   });
@@ -1366,6 +1734,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
       );
     if (argv.includes(ATTACHED_ARG) && error instanceof Error && 'retentionFailure' in error) {
       const refusal = claimFailure(error, null);
+      if (refusal) console.error(`${refusal.code}: ${refusal.message}\n${refusal.remedy}`);
       if (refusal)
         await new Promise<void>((done) =>
           process.stdout.write(`${JSON.stringify({ op: 'attached-claim-refusal', refusal })}\n`, () => done()),

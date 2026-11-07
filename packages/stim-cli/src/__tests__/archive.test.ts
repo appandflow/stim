@@ -29,6 +29,7 @@ import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 import { testContext } from './_context.ts';
+import * as git from '../workspace/git.ts';
 
 const archiveIo = vi.hoisted(
   (): {
@@ -171,6 +172,27 @@ test('a cancelled archive request leaves live history untouched', async () => {
   ).rejects.toBe(cancelled);
   expect(readFileSync(join(dir, 'logs', 'metro.ndjson'), 'utf8')).toBe('saved logs');
   expect(readArchives()).toEqual([]);
+});
+
+test('archive preserves unverified Git cleanup over cancellation', async () => {
+  const dir = live();
+  const controller = new AbortController();
+  const failure = Object.assign(new Error('unverified cleanup'), {
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    reportCleanup: true,
+  });
+  const probe = vi.spyOn(git, 'gitAsync').mockImplementation(async () => {
+    controller.abort();
+    throw failure;
+  });
+  try {
+    await expect(
+      archiveWorkspace(root, 'maintenance', undefined, testContext({ signal: controller.signal })),
+    ).rejects.toBe(failure);
+    expect(readFileSync(join(dir, 'logs', 'metro.ndjson'), 'utf8')).toBe('saved logs');
+  } finally {
+    probe.mockRestore();
+  }
 });
 
 test('cancellation after history moves publishes it and skips retention', async () => {

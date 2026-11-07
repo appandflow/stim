@@ -37,6 +37,7 @@ import {
   getPlatformDeviceLimits,
   hostedIdleStopHours,
   isJsonObject,
+  validRunId,
   parseHostedMacosDevice,
   parseHostedPlatformDevice,
   hostedDeviceId,
@@ -1352,7 +1353,11 @@ export class DeviceHost {
     return record;
   }
 
-  appOffer(client: string, params: unknown): AppAnswer<Methods['device-host.app.offer']['result']> {
+  appOffer(
+    client: string,
+    params: unknown,
+    runId?: string | null,
+  ): AppAnswer<Methods['device-host.app.offer']['result']> {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
     const offer = parseHostedAppOffer(params);
     if (!offer)
@@ -1387,7 +1392,8 @@ export class DeviceHost {
         readHostedApp(record.id, record.appAttempt).state === 'receiving'
       )
         throw new Error('Complete the current app transfer or stop this hosted session before offering another app.');
-      const result = offerHostedApp(offer);
+      const initiatingRunId = record.platform === 'macos' ? validRunId(runId) : null;
+      const result = offerHostedApp(offer, initiatingRunId ?? undefined);
       this.change(record.id, (current) => {
         current.appAttempt = offer.attempt;
       });

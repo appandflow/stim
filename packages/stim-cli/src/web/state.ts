@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { rotatedLogPath } from '@stim-cli/core';
-import { isJsonObject, WEB_VIEWPORTS, type WebPageState, type WebViewport } from '@stim-cli/core/state';
+import { isJsonObject, validRunId, WEB_VIEWPORTS, type WebPageState, type WebViewport } from '@stim-cli/core/state';
 import { inspectProcessIdentity, sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
 import { chromeProcessState, chromeProcessStateAsync } from './profile.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
@@ -43,6 +43,7 @@ export interface WebRecord extends OwnedProcess, WebLaunchConfig {
   targetId?: string;
   version?: string;
   launchId?: string;
+  runId?: string;
 }
 
 function webDir(root: string): string {
@@ -79,6 +80,7 @@ function parseWebRecord(value: unknown): WebRecord | null {
   if (!owner || typeof record.cdpPort !== 'number' || typeof record.profile !== 'string') return null;
   if (typeof record.url !== 'string' || typeof record.chrome !== 'string') return null;
   const chromeProcess = processRecord(record.chromeProcess);
+  const parsedRunId = validRunId(record.runId);
   return {
     pid: owner.pid,
     processToken: owner.processToken,
@@ -94,6 +96,7 @@ function parseWebRecord(value: unknown): WebRecord | null {
     ...(typeof record.targetId === 'string' ? { targetId: record.targetId } : {}),
     ...(typeof record.version === 'string' ? { version: record.version } : {}),
     ...(typeof record.launchId === 'string' ? { launchId: record.launchId } : {}),
+    ...(parsedRunId ? { runId: parsedRunId } : {}),
   };
 }
 

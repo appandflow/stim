@@ -8,6 +8,7 @@ import { processContext, runProcessOperation } from '../cli-operation.ts';
 import {
   placementWord,
   validHostedAppArguments,
+  validRunId,
   type MacosAppRecord,
   type MacosBuild,
   type MacosProcess,
@@ -144,6 +145,7 @@ export async function runMacos(
             bundleId: '',
             executable: join(bundle, 'Contents', 'MacOS', macos.product),
             launchId: randomUUID(),
+            ...(validRunId(context.runId) ? { runId: context.runId } : {}),
             arguments: macos.arguments,
             supervisor: macosProcess(process.pid),
             build: { state: 'running', startedAt: new Date().toISOString(), buildMachine },
@@ -408,12 +410,12 @@ async function launchHere(
       claim: { root: macosRuntimeClaim(root), label: 'macOS app' },
       declare: operationState(context).declaring,
     });
-    checkCancelled();
     const started = macosProcess(owned.pid);
     if (started.processToken !== owned.processToken) throw new Error('The macOS launch process changed.');
     app = started;
     if (!updateMacosRecord(root, launcher, { supervisor: app, app }))
       throw new Error('The macOS launch owner changed.');
+    checkCancelled();
     for (const claim of operationState(context).declaring) clearClaimChild(claim);
     const writer = createNdjsonWriter(macosLogFile(root), { maxBytes: LOG_ROTATE_BYTES });
     writer.write({
@@ -439,6 +441,10 @@ async function launchHere(
       if (owned && !(await stopOwnedProcess(owned)))
         throw new Error('The app process group could not be stopped.', { cause: error });
       await stopBundleInstances(root);
+      const recorded = requiredMacosRecord(root);
+      if (owned && (recorded?.launchId !== record.launchId || recorded.app?.processToken !== owned.processToken))
+        throw new Error('The failed launch output cannot be attributed to its recorded app.', { cause: error });
+      await drainMacosOutput(root, recorded, undefined, context.env);
       await writeWorkspaceStateAsync(root, { macos: { ...record, supervisor: undefined, app: undefined } });
       for (const claim of operationState(context).declaring) clearClaimChild(claim);
     } catch (cleanupError) {
@@ -447,7 +453,7 @@ async function launchHere(
         `Could not drain the failed macOS launch: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
         'Verify that the workspace app has stopped before retrying.',
       );
-      failure.cause = cleanupError;
+      failure.cause = new AggregateError([error, cleanupError], 'The macOS launch and its cleanup failed.');
       throw failure;
     }
     throw error;

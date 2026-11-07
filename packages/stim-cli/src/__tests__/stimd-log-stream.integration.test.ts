@@ -700,3 +700,23 @@ process.exit(0);`;
     }
   }, 15_000);
 });
+
+test('an empty stored stream identity is refused without deleting its registration', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
+  vi.stubEnv('STIM_HOME', home);
+  const { registerCollector } = await import('../stimd/logs/state.ts');
+  registerCollector(root, 'ios', { kind: 'stream', streamId: '', startedAt: new Date().toISOString() });
+  const streams = createStreams(() => {});
+  try {
+    await expect(
+      streams.start({ root, platform: 'ios', udid: 'U1', bundleId: 'com.test', appName: 'Test' }, {}),
+    ).rejects.toThrow('no identity');
+    expect(readWorkspaceState(root)?.collectors?.ios).toMatchObject({ streamId: '' });
+  } finally {
+    await streams.close();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});

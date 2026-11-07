@@ -55,6 +55,66 @@ test('the logs worker decodes, attributes and flushes lines before closing a str
   }
 });
 
+test('each stream keeps its initiating run ID through aliases and backfill', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-log-writer-home-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-log-writer-app-')));
+  vi.stubEnv('STIM_HOME', home);
+  const writers = createLogWriters(() => {});
+  const line = (message: string) => JSON.stringify({ eventMessage: message, timestamp: '2026-11-07T00:00:00Z' });
+  try {
+    const first = await writers.open(
+      {
+        streamId: 'one',
+        slotKey: 'ios:one',
+        root,
+        platform: 'ios',
+        physical: false,
+        runId: 'run-one',
+        attribution: {},
+      },
+      () => {},
+    );
+    const second = await writers.open(
+      {
+        streamId: 'two',
+        slotKey: 'ios:two',
+        root,
+        platform: 'ios',
+        physical: false,
+        runId: 'run-two',
+        attribution: {},
+      },
+      () => {},
+    );
+    const fallback = await writers.open(
+      { streamId: 'fallback', slotKey: 'ios:three', root, platform: 'ios', physical: false, attribution: {} },
+      () => {},
+    );
+    await first.addAlias('ios:alias', {});
+    first.line(line('first'), null);
+    second.line(line('second'), null);
+    fallback.line(line('fallback'), null);
+    await first.beginBackfill(0);
+    first.backfillLine(line('history'), null);
+    await first.endBackfill();
+    for (const sink of [first, second, fallback]) {
+      sink.writer.close();
+      await sink.closed();
+    }
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8'));
+    expect(
+      records.filter((record) => record.msg === 'first' || record.msg === 'history').map((record) => record.runId),
+    ).toEqual(['run-one', 'run-one', 'run-one', 'run-one']);
+    expect(records.find((record) => record.msg === 'second')?.runId).toBe('run-two');
+    expect(records.find((record) => record.msg === 'fallback')?.runId).toMatch(/^[A-Za-z0-9._-]{1,64}$/);
+  } finally {
+    await writers.close();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('backfill deduplicates only live overlap and keeps repeated live records', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-log-writer-home-'));
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-log-writer-app-')));
@@ -89,6 +149,86 @@ test('backfill deduplicates only live overlap and keeps repeated live records', 
     expect(records.filter((record) => record.msg === 'live-first')).toHaveLength(3);
     expect(records.filter((record) => record.msg === 'history-first')).toHaveLength(2);
     expect(failure).not.toHaveBeenCalled();
+  } finally {
+    await writers.close();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.each(['ios', 'android'] as const)(
+  'backfill preserves distinct %s events in the same millisecond',
+  async (platform) => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-log-writer-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-log-writer-app-')));
+    vi.stubEnv('STIM_HOME', home);
+    const writers = createLogWriters(() => {});
+    const ios = (timestamp: string, messageType: string, subsystem: string, category: string) =>
+      JSON.stringify({ eventType: 'logEvent', timestamp, messageType, subsystem, category, eventMessage: 'same' });
+    const lines =
+      platform === 'ios'
+        ? [
+            ios('2026-11-07T00:00:00.123001Z', 'Info', 'one', 'one'),
+            ios('2026-11-07T00:00:00.123001Z', 'Error', 'one', 'one'),
+            ios('2026-11-07T00:00:00.123001Z', 'Info', 'two', 'one'),
+            ios('2026-11-07T00:00:00.123001Z', 'Info', 'one', 'two'),
+            ios('2026-11-07T00:00:00.123002Z', 'Info', 'one', 'one'),
+          ]
+        : [
+            '1794009600.123001 100 100 I app: same',
+            '1794009600.123001 100 100 E app: same',
+            '1794009600.123002 100 100 I app: same',
+          ];
+    try {
+      const sink = await writers.open(
+        { streamId: 'one', slotKey: platform, root, platform, physical: false, attribution: {} },
+        () => {},
+      );
+      const first = lines[0];
+      if (!first) throw new Error('missing test event');
+      sink.line(first, null);
+      await sink.beginBackfill(0);
+      for (const line of lines) sink.backfillLine(line, null);
+      await sink.endBackfill();
+      sink.writer.close();
+      await sink.closed();
+      const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8'));
+      expect(records.filter((record) => record.msg === 'same')).toHaveLength(lines.length);
+      expect(records.filter((record) => record.level === 'error')).toHaveLength(1);
+    } finally {
+      await writers.close();
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test('backfill preserves Android evidence moved into the window by a changed clock offset', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-log-writer-home-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-log-writer-app-')));
+  vi.stubEnv('STIM_HOME', home);
+  const writers = createLogWriters(() => {});
+  try {
+    const sink = await writers.open(
+      { streamId: 'one', slotKey: 'android', root, platform: 'android', physical: false, attribution: {} },
+      () => {},
+    );
+    const line = '1794009600.123001 100 100 E app: failed';
+    const since = 1794009600123;
+    sink.line(line, -1000);
+    sink.line(line, 1000);
+    await sink.beginBackfill(since);
+    sink.backfillLine(line, 1000);
+    sink.backfillLine(line, 1000);
+    await sink.endBackfill();
+    sink.writer.close();
+    await sink.closed();
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8'));
+    expect(
+      records.filter((record) => record.msg === 'failed' && typeof record.ts === 'number' && record.ts >= since),
+    ).toHaveLength(2);
   } finally {
     await writers.close();
     vi.unstubAllEnvs();

@@ -132,7 +132,8 @@ async function deviceActivityInputsAsync(
       try {
         serials.set(android.avdName, (await resolve(android.avdName)).serial ?? null);
       } catch (error) {
-        if (error instanceof WorkspaceProcessCleanupError) throw error;
+        if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+          throw error;
         signal?.throwIfAborted();
         serials.set(android.avdName, null);
       }

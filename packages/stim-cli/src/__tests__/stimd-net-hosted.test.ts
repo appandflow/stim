@@ -13,7 +13,10 @@ vi.mock('node:worker_threads', async () => {
     postMessage(message: unknown) {
       this.sent.push(message);
       if (typeof message === 'object' && message !== null && 'type' in message && message.type === 'stop')
-        queueMicrotask(() => this.emit('exit', 0));
+        queueMicrotask(() => {
+          this.emit('message', { type: 'closed' });
+          this.emit('exit', 0);
+        });
     }
   }
   return { Worker };

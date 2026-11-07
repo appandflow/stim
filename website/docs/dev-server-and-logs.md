@@ -280,7 +280,7 @@ including general OS error noise. Use `stim logs --source device --json` for ful
 captured reports. A missing report is not proof that the app did not crash: OS
 reports can be delayed, physical iPhone capture is console-only with no historical backfill, and stripped or
 remote builds may not have matching local debug symbols. This does not download
-symbols or replace Xcode/Android Studio's full crash-analysis tooling. Physical iPhone launches remain unverified because console output cannot prove complete readiness coverage.
+symbols or replace Xcode/Android Studio's full crash-analysis tooling. Physical iPhone launches remain unverified because console output cannot prove complete readiness coverage. Different native timestamp spellings or clock alignments can leave duplicate backfilled records.
 
 For delayed reports, rerun `stim logs --errors` before stopping or releasing the
 device. Collection requires the workspace's current launch and device ownership
@@ -527,7 +527,7 @@ stim logs --source agent.
 :::
 
 `stim stop` ends the supervisor and log collectors. It also frees the reserved
-port and shuts down the owned local device.
+port and shuts down the owned local device. On Windows, if the daemon crashes or a log stream exits before its process tree is stopped, Stim retains an unresolved claim. Verify the daemon, launcher and descendants are gone, then remove only the pending child marker using the exact command in the refusal and retry.
 
 ## Named server ports
 

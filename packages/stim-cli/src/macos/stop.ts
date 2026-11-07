@@ -154,6 +154,7 @@ export async function drainMacosOutput(
   root: string,
   record: MacosAppRecord | null,
   operation?: StimContext,
+  env: NodeJS.ProcessEnv | undefined = operation?.env,
 ): Promise<void> {
   if (!record?.app || record.supervisor?.pid !== record.app.pid) return;
   const claims = readClaimSet(stimdClaimRoot());
@@ -163,7 +164,7 @@ export async function drainMacosOutput(
     existsSync(macosAppStdout(root, record.launchId)) ||
     existsSync(macosAppStderr(root, record.launchId))
   ) {
-    const failure = await drainOwnedMacos(root, operation?.env);
+    const failure = await drainOwnedMacos(root, env);
     operation?.signal.throwIfAborted();
     if (failure) throw new Error(`Could not drain macOS app output: ${failure}`);
   }

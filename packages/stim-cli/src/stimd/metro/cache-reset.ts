@@ -1,5 +1,6 @@
 import { getProject, clearSupervisor, withConfigLockAsync } from '../../workspace/config.ts';
 import { killMetroTreeAsync, listeningPidsAsync, processCwds, resolveProjectMetro } from '../../metro.ts';
+import { stopMetroTree } from '../../daemon/client.ts';
 import { isMetroRunning } from '../../ports.ts';
 import { throwIfCancelled } from '../../cancellation.ts';
 import { waitForProcessExit } from '../../process-identity.ts';
@@ -39,7 +40,13 @@ async function stopOwnedMetro(root: string, requester: StopRequester, signal?: A
   if (target.status !== 'ours') return { status: 'not-running' };
   const expected = { pid: target.pid, processToken: target.processToken };
   await withWorkspaceStateLockAsync(root, () => requestDevServerStop(root, target.processToken, requester), signal);
-  const signalled = await killMetroTreeAsync(target.pid, target.processToken);
+  const signalled = await stopMetroTree(
+    root,
+    target.pid,
+    target.processToken,
+    () => killMetroTreeAsync(target.pid, target.processToken),
+    signal,
+  );
   if (!signalled)
     await withWorkspaceStateLockAsync(root, () => withdrawDevServerStopRequest(root, target.processToken));
   if (!signalled || !(await waitForProcessExit(expected, 10_000))) {

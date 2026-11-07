@@ -1,3 +1,4 @@
+import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import type { StimContext } from '@stim-cli/core';
 import type { DaemonLadderAction } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -146,6 +147,8 @@ export async function clearDependency(
       },
     );
   } catch (error) {
+    if (isClaimUnavailable(error)) throw error;
+    operation?.signal.throwIfAborted();
     return { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
   }
 }

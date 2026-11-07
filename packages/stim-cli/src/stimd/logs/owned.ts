@@ -106,7 +106,7 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
     if (identity !== 'same' && drained(dir, record.app)) return;
     const key = `macos:${dir}`;
     if (current(key, record.app.processToken) || ended.get(key) === record.app.processToken) return;
-    keep(key, tailMacosApp(dir, record.app, record.product, record.launchId));
+    keep(key, tailMacosApp(dir, record.app, record.product, record.launchId, record.runId));
   };
   const workspace = (root: string, asked: boolean): Promise<void> | null => {
     const record = readMacosRecord(root);
@@ -308,8 +308,11 @@ function lineSplitter(write: (line: string) => boolean, saved: unknown) {
  * records at info and warn, from the offsets a previous stimd recorded for the same app, and writes the app's exit
  * once it is gone, including for an app that exited before any tail saw it. The exit code is not known: no parent waits on the app.
  */
-function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId: string): Stream {
-  const writer = createNdjsonWriter(join(dir, 'macos.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId: string, runId?: string): Stream {
+  const writer = createNdjsonWriter(join(dir, 'macos.ndjson'), {
+    maxBytes: LOG_ROTATE_BYTES,
+    ...(runId ? { fields: { runId } } : {}),
+  });
   const mark = join(dir, TAIL_MARK);
   const offsets = { out: 0, err: 0 };
   const saved = readMark(dir);

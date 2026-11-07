@@ -4066,6 +4066,20 @@ describe('launch verification', () => {
     expect(h.stderr.join('\n')).not.toContain('no bundle request reached');
   });
 
+  test('unverified coverage still reports captured app errors', async () => {
+    const h = harness({
+      verifyLaunched: async () => ({
+        verified: false,
+        record: { event: 'bundle_response_finished' },
+        errors: [{ src: 'client', msg: 'a redbox from the app' }],
+      }),
+    });
+    const result = await h.run();
+    expect(result.facts?.launched).toBe(LAUNCH_UNVERIFIED);
+    expect(h.stderr.join('\n')).toContain('a redbox from the app');
+    expect(h.stdout[0]).toMatch(/^WARNING: .*app errors detected/);
+  });
+
   test('a bare app with no bundle request is unverified and gets a relaunch remedy', async () => {
     const h = harness({ verifyLaunched: async () => ({ verified: false, timedOut: true, waitedMs: 20000 }) });
     const result = await h.run();

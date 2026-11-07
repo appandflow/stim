@@ -59,6 +59,7 @@ import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { staleBrowserProfiles } from '../commands/gc/ledger.ts';
 import { testContext } from './_context.ts';
+import { withAmbientContext } from '@stim-cli/core';
 
 let home: string;
 let root: string;
@@ -601,32 +602,65 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
       return null;
     });
     const navigations: unknown[] = [];
+    let emit = (_event: CdpEvent) => {};
     vi.spyOn(browserCdp, 'connectOwnedBrowser').mockResolvedValue({
       async send(method, params) {
+        if (method === 'Browser.getVersion') return { product: 'Chrome/1' };
+        if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'owned-page', type: 'page' }] };
+        if (method === 'Runtime.enable')
+          emit({
+            method: 'Runtime.consoleAPICalled',
+            sessionId: 'owned-session',
+            params: { type: 'log', timestamp: 1, args: [{ type: 'string', value: 'launch output' }] },
+          });
         if (method === 'Target.getTargetInfo') return { targetInfo: { url: 'about:blank' } };
         if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
         if (method === 'Page.navigate') navigations.push(params?.url);
         return {};
       },
-      onEvent: () => {},
+      onEvent: (listener) => {
+        emit = listener;
+      },
       onClose: () => {},
       close: () => {},
     });
-    const result = await launchOwnedBrowser(
-      {
-        url: 'http://localhost:8901/launched',
-        config: { chrome: '/fixture/chrome', headless: true, viewport: 'desktop', ignoreCertificateErrors: false },
-      },
-      { root, note: () => {} },
+    const result = await withAmbientContext(testContext({ runId: 'web-initiator' }), () =>
+      launchOwnedBrowser(
+        {
+          url: 'http://localhost:8901/launched',
+          config: { chrome: '/fixture/chrome', headless: true, viewport: 'desktop', ignoreCertificateErrors: false },
+        },
+        { root, note: () => {} },
+      ),
     );
     assert(result.ok);
     const chrome = result.record.chromeProcess;
     assert(chrome);
+    expect(readWebRecord(root)?.runId).toBe('web-initiator');
+    const observer = observeBrowser(root, result.record, chrome);
+    await observer.attached;
+    observer.close();
+    const output = readFileSync(webLogFile(root), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(output).toContainEqual(expect.objectContaining({ msg: 'launch output', runId: 'web-initiator' }));
+    const reused = await withAmbientContext(testContext({ runId: 'web-retry' }), () =>
+      launchOwnedBrowser(
+        {
+          url: 'http://localhost:8901/reused',
+          config: { chrome: '/fixture/chrome', headless: true, viewport: 'desktop', ignoreCertificateErrors: false },
+        },
+        { root, note: () => {} },
+      ),
+    );
+    assert(reused.ok);
+    expect(reused).toMatchObject({ reused: true, record: { runId: 'web-initiator' } });
     expect(result.record).toMatchObject({ pid: chrome.pid, processToken: chrome.processToken, targetId: 'owned-page' });
     expect(inspectProcessIdentity(chrome)).toBe('same');
     expect(seen).toMatchObject({ detached: true, env: expect.objectContaining({ STIM_TEST_CALLER: 'caller' }) });
     expect(readClaimSet(webClaimRoot(root)).live.map((holder) => holder.owner.pid)).toEqual([chrome.pid]);
-    expect(navigations).toEqual(['http://localhost:8901/launched']);
+    expect(navigations).toEqual(['http://localhost:8901/launched', 'http://localhost:8901/reused']);
     expect((await teardownOwnedBrowser(root)).status).toBe('torn-down');
     expect(inspectProcessIdentity(chrome)).not.toBe('same');
     expect(readClaimSet(webClaimRoot(root)).live).toEqual([]);
@@ -729,22 +763,20 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     vi.spyOn(claims, 'setClaimChild').mockImplementation(() => {
       throw new Error('disk full');
     });
-    await expect(
-      launchOwnedBrowser(
-        {
-          url: 'http://localhost:8901/',
-          config: { chrome: '/fixture/chrome', headless: true, viewport: 'desktop', ignoreCertificateErrors: false },
-        },
-        { root, note: () => {} },
-      ),
-    ).rejects.toThrow(/disk full|Could not stop/);
+    const failure = await launchOwnedBrowser(
+      {
+        url: 'http://localhost:8901/',
+        config: { chrome: '/fixture/chrome', headless: true, viewport: 'desktop', ignoreCertificateErrors: false },
+      },
+      { root, note: () => {} },
+    ).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(workspaceLocks.WorkspaceProcessCleanupError);
+    assert(failure instanceof workspaceLocks.WorkspaceProcessCleanupError);
+    expect(failure.cause).toMatchObject({ message: 'disk full' });
     const held = readClaimSet(join(workspaceDir(root), 'web.lock'));
+    expect(held.live).toMatchObject([{ childDeclared: true, childPending: true }]);
     const child = children.at(-1);
     assert(child);
-    if (held.live.length + held.unresolved.length === 0) {
-      if (child.exitCode === null && child.signalCode === null) await new Promise((done) => child.once('exit', done));
-    }
-    expect(held.live.length + held.unresolved.length > 0 || child.signalCode === 'SIGKILL').toBe(true);
     expect(readWebRecord(root)).toBeNull();
   });
 
@@ -993,7 +1025,7 @@ describe.skipIf(process.platform === 'win32')('stimd browser observer', () => {
   });
 
   test('reattachment preserves new buffered messages without repeating recorded ones', async () => {
-    const record = { ...(await ownedBrowser()), targetId: 'owned-page' };
+    const record = { ...(await ownedBrowser()), targetId: 'owned-page', runId: 'web-launch' };
     writeWebRecord(root, record);
     assert(record.chromeProcess);
     let attach = 0;
@@ -1035,12 +1067,13 @@ describe.skipIf(process.platform === 'win32')('stimd browser observer', () => {
     const second = observeBrowser(root, next, next.chromeProcess);
     await second.attached;
     second.close();
-    const messages = readFileSync(webLogFile(root), 'utf8')
+    const entries = readFileSync(webLogFile(root), 'utf8')
       .trim()
       .split('\n')
       .map((line): Record<string, unknown> => JSON.parse(line))
-      .filter((entry) => entry.src === 'client')
-      .map((entry) => entry.msg);
+      .filter((entry) => entry.src === 'client');
+    const messages = entries.map((entry) => entry.msg);
+    expect(entries.every((entry) => entry.runId === 'web-launch')).toBe(true);
     expect(messages.filter((message) => message === 'before restart')).toHaveLength(1);
     expect(messages.filter((message) => message === 'during restart')).toHaveLength(1);
   });

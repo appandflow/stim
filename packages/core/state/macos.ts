@@ -5,6 +5,7 @@ import { readJsonObject } from './json-file.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { parseHostedMacosPlacement, type HostedMacosPlacement } from './hosted-macos.ts';
 import { readWorkspaceState } from './workspace-state.ts';
+import { validRunId } from './run-id.ts';
 
 export interface MacosProcess {
   pid: number;
@@ -31,6 +32,7 @@ export interface MacosBuild {
 
 export interface MacosAppRecord {
   launchId: string;
+  runId?: string;
   arguments: string[];
   product: string;
   /** The app's visible name: the product and the workspace label. Absent in older records. */
@@ -65,6 +67,7 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const {
     launchId,
+    runId,
     arguments: args,
     product,
     displayName,
@@ -90,8 +93,10 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
     (hostLaunched !== undefined && typeof hostLaunched !== 'boolean' && hostLaunched !== 'unverified')
   )
     return null;
+  const parsedRunId = validRunId(runId);
   return {
     launchId,
+    ...(parsedRunId ? { runId: parsedRunId } : {}),
     arguments: args as string[],
     product: product as string,
     ...(typeof displayName === 'string' ? { displayName } : {}),

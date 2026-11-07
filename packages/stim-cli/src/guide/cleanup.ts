@@ -1140,7 +1140,10 @@ THE ONE CASE GC WILL NOT REAP
   until it can confirm the collector is gone.
   A stream whose ownership claim is missing refuses with "The device log stream
   <id> has no verifiable claim"; inspect the stated claim and confirm the stream
-  is gone before removing its record.
+  is gone before removing its record. On Windows, a daemon crash or a stream
+  that exits on its own can leave a pending child marker: verify the daemon,
+  launcher and descendants have stopped, then use the exact marker removal
+  command in the refusal and retry.
 
   A different exact OS start identity proves PID reuse: the recorded collector
   is gone, and the unrelated process is never signalled. A missing, malformed,

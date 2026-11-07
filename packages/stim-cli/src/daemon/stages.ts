@@ -1,3 +1,4 @@
+import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { existsSync, readdirSync } from 'node:fs';
 import type { StimContext } from '@stim-cli/core';
 import {
@@ -133,7 +134,9 @@ async function idleFor(
   try {
     const { settings } = await projectSettings(path, operation);
     if (maintenanceKeepSetting(settings) || idleMinutesSetting(settings) === 0) return null;
-  } catch {
+  } catch (error) {
+    if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
+    operation?.signal.throwIfAborted();
     return null;
   }
   return decision.idleMs;
@@ -156,7 +159,10 @@ async function idleWorkspaces(
         ? null
         : await idleFor(path, thresholdMs, setting, { operation: reading.operation });
       readings.push({ path, project, idleMs });
-    } catch {}
+    } catch (error) {
+      if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
+      reading.operation?.signal.throwIfAborted();
+    }
   }
   return longestIdleFirst(readings);
 }
@@ -284,7 +290,7 @@ function recordedActivityAt(path: string): number {
 export async function pendingDormant(
   config: Config | null,
   reading: Pick<DeviceReading, 'simsFailed'>,
-  { now = Date.now(), graceMs }: { now?: number; graceMs: number },
+  { now = Date.now(), graceMs, operation }: { now?: number; graceMs: number; operation?: StimContext },
 ): Promise<string | null> {
   const afterMs = dormantAfterMs(config);
   if (!config || afterMs <= 0) return null;
@@ -295,9 +301,20 @@ export async function pendingDormant(
     const hosted = hostedFacts(path);
     if (hosted.placements.length || hosted.unreadable.length) continue;
     try {
-      const { settings } = await resolveProjectSettingsAsync(path);
+      const { settings } = await resolveProjectSettingsAsync(
+        path,
+        operation
+          ? {
+              env: operation.env,
+              signal: operation.signal,
+              declareFor: operation,
+            }
+          : {},
+      );
       if (maintenanceKeepSetting(settings) || idleMinutesSetting(settings) === 0) continue;
-    } catch {
+    } catch (error) {
+      if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
+      operation?.signal.throwIfAborted();
       continue;
     }
     const activityAt = recordedActivityAt(path);
@@ -366,6 +383,8 @@ export async function enterDormantStage(action: MaintenanceAction, operation?: S
           sims = await listAllIosSimsAsync({ timeoutMs: SIM_LIST_TIMEOUT_MS, signal: operation?.signal, operation });
         if (owns('android')) avds = await listAvdsAsync({ signal: operation?.signal, operation });
       } catch (error) {
+        if (isClaimUnavailable(error)) throw error;
+        operation?.signal.throwIfAborted();
         return {
           status: 'failed',
           bytes: 0,
@@ -402,7 +421,7 @@ export async function enterDormantStage(action: MaintenanceAction, operation?: S
         operation,
       );
       const logs = hasLogs(path);
-      if (logs) await archiveWorkspace(path, 'maintenance', readWorkspaceState(path));
+      if (logs) await archiveWorkspace(path, 'maintenance', readWorkspaceState(path), operation);
       const archived = logs && !hasLogs(path);
       const record: DormantStageRecord = {
         at: new Date().toISOString(),

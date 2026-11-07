@@ -1,6 +1,6 @@
 import { realpathSync } from 'node:fs';
 import type { Socket } from 'node:net';
-import { isJsonObject } from '@stim-cli/core/state';
+import { isJsonObject, validRunId } from '@stim-cli/core/state';
 import { traceInvocation, withInvocation, type Invocation } from '../forwarded.ts';
 import { parseStreamSpec, type StreamTable } from './streams.ts';
 
@@ -54,7 +54,9 @@ export function handleLogRequest({
       return true;
     }
     void traceInvocation(context, 'stimd.logs.start', () =>
-      withInvocation(context, signal, () => streams.start(spec, context.forwarded.env, signal)),
+      withInvocation(context, signal, () =>
+        streams.start(spec, context.forwarded.env, signal, validRunId(context.overrides.STIM_RUN_ID?.raw) ?? undefined),
+      ),
     ).then(
       (result) => respond({ op: 'logs.started', ...result }),
       (error: unknown) =>

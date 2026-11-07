@@ -501,6 +501,13 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   left untouched. The remedy tells you what to check and which command to run
   again, and when the run held ownership claims it lists the exact \`rm\`
   command for each retained claim.
+  When a Metro, tunnel, maintenance child or server worker cannot be verified
+  stopped, Stim also retains the home, shared daemon and engine claims and
+  refuses new work in that home.
+  On Windows, the leader's exit alone does not prove its descendants stopped;
+  verify the process tree before removing the listed claims.
+  An attached daemon killed unexpectedly can also leave home, shared daemon
+  and engine claims requiring the same check, including during startup or forced shutdown.
   Warm also reports this code for EACCES, EPERM, EROFS and ENOENT while taking a claim.
   The message names the claim path and original filesystem error. Restore write
   access to the existing claim store, checking parent permissions, symlink
@@ -1968,7 +1975,9 @@ not on any remote"  (worktree remove)
       body: () => `STIM_DAEMON_UNAVAILABLE
   An attached daemon may still be starting, ending, or serving a different
   build. Wait for its owning command to finish and retry, or use a separate
-  STIM_HOME. If startup still fails, run stim doctor or run outside the sandbox.`,
+  STIM_HOME. After startup times out or is cancelled, Stim allows up to 10
+  seconds for cleanup before forcing the daemon to exit. If startup still
+  fails, run stim doctor or run outside the sandbox.`,
     },
     STIM_CI_ATTACHED_HOME: {
       summary: 'another command owns this home’s attached daemon',

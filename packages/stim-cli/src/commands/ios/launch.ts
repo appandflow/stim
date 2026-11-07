@@ -491,7 +491,11 @@ function reportUnverified({
   | 'logsDir'
   | 'launchedAt'
   | 'launched'
-> & { verification: VerifyLaunchResultLike; siblings: string[] }): { state: string; unattributed?: boolean } {
+> & { verification: VerifyLaunchResultLike; siblings: string[] }): {
+  state: string;
+  warning?: string;
+  unattributed?: boolean;
+} {
   if (verification.unattributed) {
     const [headline, ...lines] = unattributedLaunchLines({ platform: 'ios', metroPort, slot, siblings });
     phase('verify', chalk.yellow(headline));
@@ -501,7 +505,11 @@ function reportUnverified({
 
   if (verification.record) {
     phase('verify', chalk.yellow('UNVERIFIED: bundle delivered, but device log evidence is unavailable'));
-    return { state: LAUNCH_UNVERIFIED };
+    const hasAppErrors = reportLaunchErrors(verification.errors ?? [], note, root);
+    return {
+      state: LAUNCH_UNVERIFIED,
+      warning: hasAppErrors ? 'app errors detected; inspect the error above' : undefined,
+    };
   }
 
   phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));

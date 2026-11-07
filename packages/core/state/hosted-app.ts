@@ -3,6 +3,7 @@ import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync } fr
 import { join, posix } from 'node:path';
 import { deviceHostArea } from './device-host.ts';
 import { isJsonObject } from './json-file.ts';
+import { validRunId } from './run-id.ts';
 
 export interface HostedAppFile {
   path: string;
@@ -28,6 +29,7 @@ export interface HostedAppDelivery extends Omit<HostedAppOffer, 'manifest'> {
 }
 
 export interface HostedAppRecord extends HostedAppDelivery {
+  runId?: string;
   manifest: HostedAppOffer['manifest'];
   files: HostedAppFile[];
 }
@@ -200,8 +202,10 @@ export function readHostedAppMetadata(
     (value.notice !== undefined && typeof value.notice !== 'string')
   )
     throw new Error('The hosted app receipt is malformed.');
+  const parsedRunId = validRunId(value.runId);
   return {
     ...offer,
+    ...(parsedRunId ? { runId: parsedRunId } : {}),
     state: value.state as HostedAppRecord['state'],
     launched: value.launched as HostedAppRecord['launched'],
     ...(typeof value.notice === 'string' ? { notice: value.notice } : {}),

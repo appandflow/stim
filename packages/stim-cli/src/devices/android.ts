@@ -1890,21 +1890,28 @@ export function ownedAvdSerialResolverAsync({
     return read;
   };
   const firstRunning = async (serials: string[], avdName: string) => {
-    try {
-      return await new Promise<string | undefined>((settle, reject) => {
-        let pending = serials.length;
-        if (pending === 0) return settle(undefined);
-        for (const serial of serials) {
-          avdNameOf(serial).name.then((name) => {
-            if (name === avdName) settle(serial);
-            else if (--pending === 0) settle(undefined);
+    const pending = serials.map((serial) => avdNameOf(serial));
+    const [answer] = await Promise.allSettled([
+      new Promise<string | undefined>((settle, reject) => {
+        let outstanding = serials.length;
+        if (outstanding === 0) return settle(undefined);
+        for (const [index, read] of pending.entries()) {
+          read.name.then((name) => {
+            if (name === avdName) settle(serials[index]);
+            else if (--outstanding === 0) settle(undefined);
             return name;
           }, reject);
         }
-      });
-    } finally {
-      for (const serial of serials) reads.get(serial)?.cancel();
-    }
+      }),
+    ]);
+    for (const read of pending) read.cancel();
+    const results = await Promise.allSettled(pending.map((read) => read.name));
+    const failure = results.find(
+      (result) => result.status === 'rejected' && result.reason instanceof Error && 'reportCleanup' in result.reason,
+    );
+    if (failure?.status === 'rejected') throw failure.reason;
+    if (answer.status === 'rejected') throw answer.reason;
+    return answer.value;
   };
   return async (avdName, preferredSerial) => {
     signal?.throwIfAborted();

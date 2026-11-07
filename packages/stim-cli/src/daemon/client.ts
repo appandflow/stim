@@ -31,6 +31,7 @@ import { getExecutor } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { daemonMode, spawnsDaemon } from './mode.ts';
 import { systemdDaemonArgs } from './systemd-launch.ts';
+import { workspaceDir } from '../workspace/paths.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
 const CLAIM_WAIT_MS = 5000;
@@ -49,7 +50,9 @@ export const LAUNCHD_LABEL_ENV = 'STIMD_LAUNCHD_LABEL';
 export function daemonClaimHeld(): boolean {
   try {
     const survey = readClaimSet(daemonClaimRoot());
-    return survey.live.length > 0 || survey.unresolved.length > 0;
+    if (survey.live.length > 0 || survey.unresolved.length > 0) return true;
+    const home = readClaimSet(stimdClaimRoot());
+    return home.unresolved.length > 0 || home.live.some((holder) => holder.childDeclared);
   } catch {
     return true;
   }
@@ -62,6 +65,15 @@ export function stimdLive(): boolean {
   } catch {
     return false;
   }
+}
+
+function requireResolvedStimdHome(): void {
+  const [claim] = readClaimSet(stimdClaimRoot()).unresolved;
+  if (!claim) return;
+  throw Object.assign(new Error(`The Stim daemon claim at ${claim.path} cannot be resolved (${claim.reason}).`), {
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    remedy: `Check that the prior daemon and its children have stopped, then run ${claimRemoveCommand(claim.path)} and retry.`,
+  });
 }
 
 async function admitExisting(
@@ -216,6 +228,28 @@ function askStimd(
     });
     socket.once('close', () => finish(null));
   });
+}
+
+export async function stopMetroTree(
+  root: string,
+  pid: number | undefined,
+  processToken: string | undefined,
+  fallback: () => Promise<boolean> | boolean,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (process.platform !== 'win32') return fallback();
+  const answer = await askStimd('metro.stop', 40_000, { params: { root, pid, processToken } }, signal);
+  if (signal?.aborted) return false;
+  if (answer?.op === 'metro.stopped' && answer.state === 'stopped') return true;
+  if (answer?.op === 'metro.stopped' && answer.state === 'not-owned') return fallback();
+  if (answer) return false;
+  let absent = false;
+  try {
+    const daemon = readClaimSet(stimdClaimRoot());
+    const metro = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+    absent = !daemon.live.length && !daemon.unresolved.length && !metro.live.length && !metro.unresolved.length;
+  } catch {}
+  return absent ? fallback() : false;
 }
 
 /**
@@ -424,6 +458,7 @@ export async function ensureStimd(
   invocation?: Invocation & { workspace?: string | null },
   requireForLogs = false,
 ): Promise<boolean> {
+  if (pin) requireResolvedStimdHome();
   if (!spawnsDaemon(env) && !requireForLogs) {
     if (pin && stimdLive()) await admitExisting(held, command, false, invocation);
     return false;
@@ -848,6 +883,7 @@ export async function beforeCommand(
   const creates = DAEMON_COMMANDS.includes(name);
   const inline = passes && INLINE_COMMANDS.includes(name);
   if (!creates && !inline) return;
+  if (creates && pin) requireResolvedStimdHome();
   const { commandWorkspace } = await import('./command-workspace.ts');
   const root = commandWorkspace(creates && recordUse, env, cwd);
   const taken =

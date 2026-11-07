@@ -8,7 +8,7 @@ import { deviceSlotKey, validateDeviceSlot } from '../../devices/device-slots.ts
 import { getExecutor } from '../../exec.ts';
 import { signalProcessTree } from '../../metro.ts';
 import {
-  claimRemoveCommand,
+  ClaimUnavailableError,
   clearClaimChild,
   markClaimChildPending,
   processGroupAlive,
@@ -17,9 +17,9 @@ import {
   type ClaimHandle,
 } from '../../ownership-claim.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
-import { adbCommand, startAndroidLogcat } from './android.ts';
+import { adbCommand, isLogCleanupError, startAndroidLogcat } from './android.ts';
 import { androidToolCwd } from '../../devices/android.ts';
-import { clearHistoryClaim, clearStreamClaim, takeStreamClaim } from './claim.ts';
+import { clearHistoryClaim, clearStreamClaim, pendingChildRemoveCommand, takeStreamClaim } from './claim.ts';
 import { backfillDeviceLog } from './backfill.ts';
 import { startIosDeviceConsole } from './ios-device.ts';
 import { startIosLogStream } from './ios.ts';
@@ -82,7 +82,12 @@ export interface StreamTable {
   ownedDrain(root: string, macosOnly?: boolean): Promise<string | null>;
   ownedDrainHosted(session: string): Promise<string | null>;
   ownedRunning(): boolean;
-  start(input: StreamSpec, env: Record<string, string>, signal?: AbortSignal): Promise<{ streamId: string }>;
+  start(
+    input: StreamSpec,
+    env: Record<string, string>,
+    signal?: AbortSignal,
+    runId?: string,
+  ): Promise<{ streamId: string }>;
   stop(root: string, platform: string, slot: string, streamId: string): Promise<boolean>;
   wait(
     root: string,
@@ -125,9 +130,12 @@ type Stream = {
   spawnedPid: number | null;
   identity: { pid: number; processToken: string } | null;
   signalling: Promise<void> | null;
+  stopping: boolean;
   treePending: boolean;
   lastStop: { pid: number | null; identity: string; signalled?: boolean; error?: string } | null;
   pending: boolean;
+  initialQueryPending: boolean;
+  queryReads: number;
   paused: boolean;
   generation: number;
   activePid: number | null;
@@ -142,6 +150,7 @@ type Stream = {
   done: Promise<void>;
   finalized: boolean;
   cleanupError: string | null;
+  probeFailure: Error | null;
   cleanup: () => Promise<void>;
   finish: () => void;
 };
@@ -162,7 +171,8 @@ function signalChild(stream: Stream): Promise<void> {
   }
   const identity = inspectProcessIdentity(child);
   if (identity !== 'same') {
-    if (stream.lastStop?.signalled !== false) stream.lastStop = { pid: child.pid, identity };
+    if (stream.lastStop?.pid !== child.pid || stream.lastStop.signalled === undefined)
+      stream.lastStop = { pid: child.pid, identity };
     return Promise.resolve();
   }
   stream.lastStop = { pid: child.pid, identity };
@@ -202,10 +212,10 @@ function signalChild(stream: Stream): Promise<void> {
 
 async function waitChild(stream: Stream): Promise<void> {
   await stream.signalling;
-  if (process.platform === 'win32' && stream.lastStop?.signalled === false)
+  if (process.platform === 'win32' && stream.treePending && stream.lastStop?.signalled !== true)
     throw new Error(
       `the device log process tree could not be verified stopped (stop=${JSON.stringify(stream.lastStop)}); ` +
-        `inspect it before running ${claimRemoveCommand(stream.claim.root)}.`,
+        `verify the prior daemon, child and descendants have stopped, then run ${pendingChildRemoveCommand(stream.claim.path)} and retry.`,
     );
   const running = () =>
     stream.identity
@@ -219,7 +229,7 @@ async function waitChild(stream: Stream): Promise<void> {
   if (running()) {
     if (stream.pending && !stream.identity)
       throw new Error(
-        `The device log child at ${stream.claim.root} cannot be verified stopped; inspect it before running ${claimRemoveCommand(stream.claim.root)}.`,
+        `The device log child at ${stream.claim.root} cannot be verified stopped; verify the prior daemon, child and descendants have stopped, then run ${pendingChildRemoveCommand(stream.claim.path)} and retry.`,
       );
     throw new Error('the device log stream did not stop');
   }
@@ -242,7 +252,10 @@ async function waitChild(stream: Stream): Promise<void> {
       );
     }
   }
-  if (stream.identity || stream.pending) clearClaimChild(stream.claim);
+  if (stream.queryReads === 0) {
+    if (stream.identity || stream.pending || stream.initialQueryPending) clearClaimChild(stream.claim);
+    stream.initialQueryPending = false;
+  } else stream.initialQueryPending = true;
   stream.pending = false;
   stream.treePending = false;
   stream.identity = null;
@@ -257,8 +270,13 @@ function spawnChild(
   args: string[],
   options: SpawnOptions,
 ): ChildProcess {
+  stream.lastStop = null;
+  if (stream.queryReads === 0) stream.initialQueryPending = false;
   markClaimChildPending(stream.claim);
   stream.pending = true;
+  // Windows taskkill /T needs the live launcher PID to find descendants; keep the claim pending until it succeeds.
+  // https://learn.microsoft.com/windows-server/administration/windows-commands/taskkill
+  stream.treePending = process.platform === 'win32';
   let child: ChildProcess;
   try {
     const android = stream.spec.platform === 'android';
@@ -269,8 +287,10 @@ function spawnChild(
       detached: process.platform !== 'win32',
     });
   } catch (error) {
-    clearClaimChild(stream.claim);
+    if (stream.queryReads === 0) clearClaimChild(stream.claim);
+    else stream.initialQueryPending = true;
     stream.pending = false;
+    stream.treePending = false;
     throw error;
   }
   stream.child = child;
@@ -278,8 +298,10 @@ function spawnChild(
   stream.childClosed = new Promise((resolve) => child.once('close', () => resolve()));
   child.on('error', () => {});
   if (!child.pid) {
-    clearClaimChild(stream.claim);
+    if (stream.queryReads === 0) clearClaimChild(stream.claim);
+    else stream.initialQueryPending = true;
     stream.pending = false;
+    stream.treePending = false;
     throw new Error('could not start the device log stream child');
   }
   const token = captureProcessToken(child.pid);
@@ -288,7 +310,7 @@ function spawnChild(
   }
   stream.identity = { pid: child.pid, processToken: token };
   try {
-    setClaimChild(stream.claim, stream.identity);
+    if (process.platform !== 'win32' && stream.queryReads === 0) setClaimChild(stream.claim, stream.identity);
   } catch (error) {
     void signalChild(stream);
     throw error;
@@ -342,6 +364,8 @@ export function createStreams(
   let writers: LogWriters | null = null;
   let writerFailure: Error | null = null;
   let writerRecovery: Promise<void> | null = null;
+  let closing = false;
+  let closePromise: Promise<void> | null = null;
   let ownedRunning = true;
   const serialize = <T>(key: string, work: () => Promise<T>): Promise<T> => {
     const result = (queues.get(key) ?? Promise.resolve()).then(work);
@@ -358,25 +382,34 @@ export function createStreams(
   };
   const abortAfterSignal = async (stream: Stream): Promise<void> => {
     await signalChild(stream);
-    if (process.platform !== 'win32' || stream.lastStop?.signalled !== false || stream.treePending)
+    if (
+      process.platform !== 'win32' ||
+      (!stream.child && stream.spawnedPid === null && !stream.pending) ||
+      stream.lastStop?.signalled === true
+    )
       stream.controller.abort();
   };
   const stop = async (stream: Stream): Promise<void> => {
+    stream.stopping = true;
     const retry = stream.finalized;
     await abortAfterSignal(stream);
-    if (process.platform === 'win32' && stream.lastStop?.signalled === false && !stream.treePending)
-      throw new Error(
-        `the device log claim at ${stream.claim.root} could not be marked pending (stop=${JSON.stringify(stream.lastStop)})`,
-      );
+    if (
+      process.platform === 'win32' &&
+      (stream.child || stream.spawnedPid !== null || stream.pending) &&
+      stream.lastStop?.signalled !== true
+    )
+      throw new Error(`the device log tree could not be stopped (stop=${JSON.stringify(stream.lastStop)})`);
     await stream.started.catch(() => null);
     await stream.done;
     if (retry && [...streams.values()].includes(stream)) await stream.cleanup();
+    if (stream.probeFailure) throw stream.probeFailure;
     if ([...streams.values()].includes(stream))
       throw new Error(
         `the device log stream could not be stopped${stream.cleanupError ? `: ${stream.cleanupError}` : ''}`,
       );
   };
   const getWriters = async (): Promise<LogWriters> => {
+    if (closing) throw new Error('the logs worker is closing');
     if (writerFailure) {
       writerRecovery ??= (async () => {
         await writers?.close();
@@ -387,6 +420,7 @@ export function createStreams(
       });
       await writerRecovery;
     }
+    if (closing) throw new Error('the logs worker is closing');
     if (writers) return writers;
     // Node closes worker-owned process handles on worker exit: https://github.com/nodejs/node/issues/46569
     writers = createLogWriters(
@@ -565,6 +599,10 @@ export function createStreams(
       })
       .catch((error: unknown) => {
         coverage.status = 'failed';
+        if (isLogCleanupError(error)) {
+          stream.probeFailure = error;
+          markClaimChildPending(stream.claim);
+        }
         if (!cancelled.aborted) {
           const message = error instanceof Error ? error.message : String(error);
           log(`device log backfill ${stream.id} failed: ${message}`);
@@ -609,7 +647,13 @@ export function createStreams(
       }
     },
     ownedRunning: () => ownedRunning,
-    async start(input: StreamSpec, env: Record<string, string>, signal?: AbortSignal): Promise<{ streamId: string }> {
+    async start(
+      input: StreamSpec,
+      env: Record<string, string>,
+      signal?: AbortSignal,
+      runId?: string,
+    ): Promise<{ streamId: string }> {
+      if (closing) throw new Error('the logs worker is closing');
       const root = realpathSync(input.root);
       const envHash = environmentHash(env);
       const slot = validateDeviceSlot(input.slot ?? 'default');
@@ -644,7 +688,8 @@ export function createStreams(
           return { streamId: shared.id };
         }
         if (isJsonObject(recorded)) {
-          if (typeof recorded.streamId !== 'string') throw new Error('the previous device log stream has no identity');
+          if (typeof recorded.streamId !== 'string' || !recorded.streamId)
+            throw new Error('the previous device log stream has no identity');
           const recordedId = recorded.streamId;
           await clearStreamClaim(root, recordedId, () => unregisterStreamAll(root, recordedId));
         }
@@ -668,6 +713,7 @@ export function createStreams(
               platform: input.platform,
               physical: input.physical === true,
               bundleId: input.bundleId,
+              runId,
               attribution: attribution(slot, input),
             },
             (paused) => {
@@ -709,9 +755,12 @@ export function createStreams(
           spawnedPid: null,
           identity: null,
           signalling: null,
+          stopping: false,
           treePending: false,
           lastStop: null,
           pending: false,
+          initialQueryPending: false,
+          queryReads: 0,
           paused: false,
           generation: 0,
           activePid: null,
@@ -726,10 +775,15 @@ export function createStreams(
           done,
           finalized: false,
           cleanupError: null,
+          probeFailure: null,
           cleanup: async () => {},
           finish,
         };
         try {
+          if (input.platform === 'android') {
+            markClaimChildPending(claim);
+            stream.initialQueryPending = true;
+          }
           registerCollector(root, slotKey, {
             kind: 'stream',
             streamId: id,
@@ -744,9 +798,30 @@ export function createStreams(
         streams.set(key, stream);
         stream.cleanup = async () => {
           await stream.signalling;
-          if (process.platform !== 'win32' || stream.lastStop?.signalled !== false || stream.treePending)
+          if (
+            process.platform !== 'win32' ||
+            (!stream.child && stream.spawnedPid === null && !stream.pending) ||
+            stream.lastStop?.signalled === true
+          )
             stream.controller.abort();
-          await Promise.allSettled(stream.histories);
+          try {
+            const started = await stream.started;
+            await started?.settled();
+            if (stream.probeFailure) throw stream.probeFailure;
+          } catch (error) {
+            if (isLogCleanupError(error)) {
+              markClaimChildPending(stream.claim);
+              stream.probeFailure = error;
+              throw error;
+            }
+          }
+          const histories = await Promise.allSettled(stream.histories);
+          for (const result of histories)
+            if (result.status === 'rejected' && isLogCleanupError(result.reason)) stream.probeFailure = result.reason;
+          if (stream.probeFailure) {
+            markClaimChildPending(stream.claim);
+            throw stream.probeFailure;
+          }
           await clearHistoryClaim(root, id);
           await waitChild(stream);
           await sink
@@ -781,10 +856,52 @@ export function createStreams(
           slot,
           signal: controller.signal,
           env,
+          guardQuery: async (work) => {
+            if (stream.queryReads === 0) markClaimChildPending(stream.claim);
+            stream.queryReads++;
+            let finished = false;
+            const finishRead = () => {
+              if (finished) return;
+              finished = true;
+              stream.queryReads--;
+              if (
+                stream.queryReads === 0 &&
+                !stream.probeFailure &&
+                !stream.stopping &&
+                stream.identity &&
+                process.platform !== 'win32'
+              ) {
+                try {
+                  setClaimChild(stream.claim, stream.identity);
+                  stream.initialQueryPending = false;
+                } catch (error) {
+                  const failure = Object.assign(
+                    new ClaimUnavailableError(`device log claim could not be restored: ${String(error)}`),
+                    {
+                      reportCleanup: true,
+                      remedy: `Inspect the device log claim at ${stream.claim.root}.`,
+                    },
+                  );
+                  stream.probeFailure = failure;
+                  throw failure;
+                }
+              }
+            };
+            try {
+              const value = await work();
+              finishRead();
+              return value;
+            } catch (error) {
+              if (isLogCleanupError(error)) stream.probeFailure = error;
+              finishRead();
+              throw error;
+            }
+          },
           writer: sink.writer,
           recordLine: (line, clockOffsetMs, child) => sink.line(line, clockOffsetMs, generations.get(child)),
           beforeFinish: sink.beforeFinish,
           startStream: (options) => {
+            if (stream.stopping) throw new Error('the device log stream is stopping');
             stream.generation++;
             stream.activePid = options.pid ?? null;
             stream.observedAt = null;
@@ -824,10 +941,14 @@ export function createStreams(
             await signalChild(stream);
             await waitChild(stream);
           },
+          onCleanupFailure: (error) => {
+            stream.probeFailure = error;
+          },
           onExit: finalize,
         });
         void stream.started.catch((error: unknown) => {
           log(`device log stream ${id} failed: ${String(error)}`);
+          if (isLogCleanupError(error)) stream.probeFailure = error;
           void (async () => {
             await abortAfterSignal(stream);
             if (!finishing) {
@@ -963,13 +1084,22 @@ export function createStreams(
     },
     running: () => streams.size > 0,
     async close(): Promise<void> {
-      await Promise.all(queues.values());
-      const results = await Promise.allSettled([...new Set(streams.values())].map(stop));
-      const owned = await Promise.allSettled([writers?.ownedClose()]);
-      const closed = await Promise.allSettled([writers?.close()]);
-      const failure = results.find((result) => result.status === 'rejected');
-      if (failure?.status === 'rejected') throw failure.reason;
-      for (const result of [...owned, ...closed]) if (result.status === 'rejected') throw result.reason;
+      closing = true;
+      closePromise ??= (async () => {
+        await Promise.all(queues.values());
+        const results = await Promise.allSettled([...new Set(streams.values())].map(stop));
+        const recovery = await Promise.allSettled([writerRecovery]);
+        const owned = await Promise.allSettled([writers?.ownedClose()]);
+        const closed = await Promise.allSettled([writers?.close()]);
+        const failure = results.find((result) => result.status === 'rejected');
+        if (failure?.status === 'rejected') throw failure.reason;
+        for (const result of [...recovery, ...owned, ...closed]) if (result.status === 'rejected') throw result.reason;
+      })();
+      try {
+        await closePromise;
+      } finally {
+        closePromise = null;
+      }
     },
   };
 }

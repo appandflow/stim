@@ -9,6 +9,7 @@ import {
   withDeviceBootAdmission,
   countLiveOwnedDevices,
   countLiveOwnedDevicesByPlatform,
+  countLiveOwnedDevicesByPlatformAsync,
   deviceSlotUsages,
   readFreshDeviceListing,
   type DeviceSlotWaitPolicy,
@@ -20,6 +21,7 @@ import { createRunRecorder, readStats, recordRunStats } from '../engine/stats.ts
 import { makeIosSim, makeConfig, makeAdbDevices } from './_factories.ts';
 import { serveShareList, shareRow } from './_share-list-server.ts';
 import { admissionLimits } from '../workspace/config.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 let root: string;
 beforeEach(() => {
@@ -33,6 +35,26 @@ afterEach(() => {
 });
 
 const empty = { sims: [], adb: makeAdbDevices(), config: makeConfig() };
+
+test.each(['plain', 'workspace'])('async device counts preserve %s cleanup refusal', async (kind) => {
+  const error =
+    kind === 'plain'
+      ? Object.assign(new Error('unverified cleanup'), { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true })
+      : new WorkspaceProcessCleanupError([], 'unverified cleanup', 'Inspect the child.');
+  const config = makeConfig({
+    projects: { '/project': { platforms: { android: { owned: true, consolePort: 5554 } } } },
+  });
+  await expect(
+    countLiveOwnedDevicesByPlatformAsync({
+      config,
+      sims: [],
+      booting: [],
+      adb: async () => {
+        throw error;
+      },
+    }),
+  ).rejects.toBe(error);
+});
 const occupied = [makeIosSim({ udid: 'holder', name: 'stim-holder', state: 'Booted' })];
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 

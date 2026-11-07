@@ -162,7 +162,8 @@ export async function measuredDirectorySizeAsync(
       cwd: operation?.cwd,
     });
   } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     signal?.throwIfAborted();
     operation?.signal.throwIfAborted();
     return null;
