@@ -4,6 +4,13 @@ import { androidToolCwd } from '../../devices/android.ts';
 import type { NdjsonRecord } from '../../ndjson.ts';
 import { cancellableSleep } from '../../cancellation.ts';
 
+export function adbCommand(env: Record<string, string> | undefined, cwd: string | undefined): string {
+  if (process.platform !== 'win32' || !env || !cwd) return 'adb';
+  const adb = getExecutor().findExecutable('adb', { cwd, env });
+  if (!adb) throw new Error('adb was not found in the caller environment');
+  return adb;
+}
+
 const LEVEL_BY_LETTER: Record<string, string> = {
   V: 'debug',
   D: 'debug',
@@ -153,12 +160,13 @@ export async function androidClockOffset(
     now = Date.now,
     signal,
     env,
-  }: { exec?: Executor; now?: () => number; signal?: AbortSignal; env?: Record<string, string> } = {},
+    cwd,
+  }: { exec?: Executor; now?: () => number; signal?: AbortSignal; env?: Record<string, string>; cwd?: string } = {},
 ): Promise<number | null> {
   const before = now();
   try {
     const output = (
-      await exec.runFileAsync('adb', ['-s', serial, 'shell', 'date', '+%s%3N'], {
+      await exec.runFileAsync(adbCommand(env, cwd), ['-s', serial, 'shell', 'date', '+%s%3N'], {
         timeoutMs: 1000,
         cwd: androidToolCwd(),
         ...(env ? { env } : {}),
@@ -184,13 +192,19 @@ export function parsePidof(text: unknown): number | null {
 async function resolveAppPid(
   serial: string,
   packageName: string,
-  { exec = null, signal, env }: { exec?: Executor | null; signal?: AbortSignal; env?: Record<string, string> } = {},
+  {
+    exec = null,
+    signal,
+    env,
+    cwd,
+  }: { exec?: Executor | null; signal?: AbortSignal; env?: Record<string, string>; cwd?: string } = {},
 ): Promise<number | null> {
   const e = exec || getExecutor();
   try {
     return parsePidof(
-      await e.runFileAsync('adb', ['-s', serial, 'shell', 'pidof', '-s', packageName], {
+      await e.runFileAsync(adbCommand(env, cwd), ['-s', serial, 'shell', 'pidof', '-s', packageName], {
         timeoutMs: 10_000,
+        cwd: androidToolCwd() ?? cwd,
         ...(env ? { env } : {}),
         ...killOnAbort(signal),
       }),
@@ -215,6 +229,7 @@ export async function waitForAppPid({
   exec = null,
   signal,
   env,
+  cwd,
   now = Date.now,
   sleep = (ms: number) => cancellableSleep(ms, { signal, what: 'device log attachment' }),
 }: {
@@ -225,13 +240,14 @@ export async function waitForAppPid({
   exec?: Executor | null;
   signal?: AbortSignal;
   env?: Record<string, string>;
+  cwd?: string;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }): Promise<PidResolution> {
   const deadline = now() + timeoutMs;
   for (;;) {
     if (signal?.aborted) return { failed: true, reason: 'device log attachment was cancelled' };
-    const pid = await resolveAppPid(serial, packageName, { exec, signal, env });
+    const pid = await resolveAppPid(serial, packageName, { exec, signal, env, cwd });
     if (pid) return { ok: true, pid };
     if (now() >= deadline) {
       return {
@@ -285,6 +301,7 @@ export function watchAppPid({
   exec = null,
   signal,
   env,
+  cwd,
   onChange,
   resolve = resolveAppPid,
   setTimer = setTimeout,
@@ -297,11 +314,12 @@ export function watchAppPid({
   exec?: Executor | null;
   signal?: AbortSignal;
   env?: Record<string, string>;
+  cwd?: string;
   onChange: (nextPid: number) => void | Promise<void>;
   resolve?: (
     serial: string,
     packageName: string,
-    opts: { exec?: Executor | null; signal?: AbortSignal; env?: Record<string, string> },
+    opts: { exec?: Executor | null; signal?: AbortSignal; env?: Record<string, string>; cwd?: string },
   ) => number | null | Promise<number | null>;
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (t: ReturnType<typeof setTimeout>) => void;
@@ -315,7 +333,7 @@ export function watchAppPid({
     if (stopped) return;
     let next: number | null = null;
     try {
-      next = await resolve(serial, packageName, { exec, signal, env });
+      next = await resolve(serial, packageName, { exec, signal, env, cwd });
     } catch {}
     if (next && next !== current) {
       current = next;
@@ -334,7 +352,7 @@ export function watchAppPid({
     },
     async probe() {
       try {
-        return await resolve(serial, packageName, { exec, signal, env });
+        return await resolve(serial, packageName, { exec, signal, env, cwd });
       } catch {
         return null;
       }

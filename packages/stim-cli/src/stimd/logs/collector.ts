@@ -54,7 +54,7 @@ export interface RunCollectorOptions {
   watchPid?: typeof watchAppPid;
   resolveClockOffset?: (
     serial: string,
-    opts: { now?: () => number; signal?: AbortSignal; env?: Record<string, string> },
+    opts: { now?: () => number; signal?: AbortSignal; env?: Record<string, string>; cwd?: string },
   ) => number | null | Promise<number | null>;
   now?: () => number;
   onExit: (code: number) => void;
@@ -181,6 +181,7 @@ export async function runCollector({
           timeoutMs: pidTimeoutMs,
           signal: shutdown.signal,
           env,
+          cwd: root,
         });
     if (!resolved.ok) {
       finish(1, 'error', `device log collector could not attach: ${resolved.reason}`, 'collector_failed');
@@ -209,7 +210,9 @@ export async function runCollector({
 
   const parse = platform === 'ios' ? (physical ? parseDeviceConsoleLine : parseLogStreamLine) : parseLogcatLine;
   const readClockOffset = async (): Promise<number | null> =>
-    platform === 'android' ? await resolveClockOffset(serial as string, { now, signal: shutdown.signal, env }) : null;
+    platform === 'android'
+      ? await resolveClockOffset(serial as string, { now, signal: shutdown.signal, env, cwd: root })
+      : null;
   const attach = (streamPid: number | null, clockOffsetMs: number | null): ChildProcess => {
     if (platform === 'android') {
       writer.write({
@@ -358,6 +361,7 @@ export async function runCollector({
       intervalMs: pidWatchMs,
       signal: shutdown.signal,
       env,
+      cwd: root,
       resolve: pidOf || undefined,
       onChange: (nextPid) => reattach(nextPid),
     });

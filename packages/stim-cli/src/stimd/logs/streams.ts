@@ -17,7 +17,8 @@ import {
   type ClaimHandle,
 } from '../../ownership-claim.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
-import { startAndroidLogcat } from './android.ts';
+import { adbCommand, startAndroidLogcat } from './android.ts';
+import { androidToolCwd } from '../../devices/android.ts';
 import { clearHistoryClaim, clearStreamClaim, takeStreamClaim } from './claim.ts';
 import { backfillDeviceLog } from './backfill.ts';
 import { startIosDeviceConsole } from './ios-device.ts';
@@ -256,9 +257,10 @@ function spawnChild(
   stream.pending = true;
   let child: ChildProcess;
   try {
-    child = getExecutor().spawn(cmd, args, {
+    const android = stream.spec.platform === 'android';
+    child = getExecutor().spawn(android ? adbCommand(env, stream.root) : cmd, args, {
       ...options,
-      cwd: stream.root,
+      cwd: android ? (androidToolCwd() ?? stream.root) : stream.root,
       env,
       detached: process.platform !== 'win32',
     });

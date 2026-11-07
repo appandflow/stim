@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { workspaceDir } from '../../workspace/paths.ts';
 import {
   claimRemoveCommand,
+  clearClaimChild,
+  markClaimChildPending,
   processGroupAlive,
   readClaimSet,
   releaseClaim,
@@ -11,6 +13,7 @@ import {
 } from '../../ownership-claim.ts';
 import { inspectProcessIdentity } from '../../process-identity.ts';
 import { signalProcessTree } from '../../metro.ts';
+import { getExecutor } from '../../exec.ts';
 
 const claimPath = (root: string, streamId: string) =>
   join(workspaceDir(root), 'log-streams', `stream-${createHash('sha256').update(streamId).digest('hex')}.claim`);
@@ -40,14 +43,37 @@ async function recover(path: string, expected?: string, beforeRelease?: () => vo
       throw new Error(
         `The device log child at ${path} cannot be verified; inspect it before running ${claimRemoveCommand(path)}.`,
       );
-    try {
-      signalProcessTree(child.pid, 'SIGTERM', { group: process.platform !== 'win32' });
-    } catch {}
-    const alive = () =>
-      process.platform === 'win32' ? inspectProcessIdentity(child) === 'same' : processGroupAlive(child.pid);
-    for (const deadline = Date.now() + 2000; alive() && Date.now() < deadline;)
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    if (alive()) throw new Error(`The device log child at ${path} did not stop; inspect it before retrying.`);
+    if (process.platform === 'win32') {
+      const claim = { ...holder, root: path, label: 'device log stream' };
+      markClaimChildPending(claim);
+      try {
+        await getExecutor().runFileAsync(
+          join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'),
+          ['/PID', String(child.pid), '/T', '/F'],
+          { timeoutMs: 30_000 },
+        );
+      } catch (error) {
+        throw new Error(
+          `The device log tree at ${path} could not be stopped: ${String(error)}; inspect it before running ${claimRemoveCommand(path)}.`,
+          { cause: error },
+        );
+      }
+      for (const deadline = Date.now() + 2000; inspectProcessIdentity(child) === 'same' && Date.now() < deadline;)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      if (inspectProcessIdentity(child) !== 'gone')
+        throw new Error(
+          `The device log child at ${path} cannot be verified stopped; inspect it before running ${claimRemoveCommand(path)}.`,
+        );
+      clearClaimChild(claim);
+    } else {
+      try {
+        signalProcessTree(child.pid, 'SIGTERM', { group: true });
+      } catch {}
+      for (const deadline = Date.now() + 2000; processGroupAlive(child.pid) && Date.now() < deadline;)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      if (processGroupAlive(child.pid))
+        throw new Error(`The device log child at ${path} did not stop; inspect it before retrying.`);
+    }
   }
   beforeRelease?.();
   for (const holder of [...survey.dead, ...survey.live]) {

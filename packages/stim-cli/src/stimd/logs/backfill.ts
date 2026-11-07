@@ -10,7 +10,8 @@ import {
   setClaimChild,
   type ClaimHandle,
 } from '../../ownership-claim.ts';
-import { androidClockOffset, logcatBackfillArgs, waitForAppPid } from './android.ts';
+import { adbCommand, androidClockOffset, logcatBackfillArgs, waitForAppPid } from './android.ts';
+import { androidToolCwd } from '../../devices/android.ts';
 import { logShowArgs } from './ios.ts';
 import { takeHistoryClaim } from './claim.ts';
 import type { LogSink } from './writer.ts';
@@ -69,6 +70,7 @@ export async function backfillDeviceLog({
       timeoutMs: 1000,
       signal,
       env,
+      cwd: root,
     });
     signal.throwIfAborted();
     if (!resolved.ok || !resolved.pid) throw new Error(resolved.reason ?? 'the Android app PID is unavailable');
@@ -76,10 +78,10 @@ export async function backfillDeviceLog({
     await sink.sync();
     onBegin();
     if (warm(pid)) return;
-    offset = await androidClockOffset(spec.serial, { signal, env });
+    offset = await androidClockOffset(spec.serial, { signal, env, cwd: root });
     signal.throwIfAborted();
     if (offset === null) throw new Error('the Android device clock could not be read');
-    command = 'adb';
+    command = adbCommand(env, root);
     // https://android.googlesource.com/platform/system/logging/+/refs/heads/main/logcat/logcat.cpp: -T keeps streaming without -d.
     args = logcatBackfillArgs(spec.serial, pid, since, offset);
   } else {
@@ -102,7 +104,7 @@ export async function backfillDeviceLog({
       onBegin();
       markClaimChildPending(claim);
       const output = await getExecutor().runFileAsync(command, args, {
-        cwd: root,
+        cwd: spec.platform === 'android' ? (androidToolCwd() ?? root) : root,
         env,
         signal,
         timeoutMs: 15_000,
