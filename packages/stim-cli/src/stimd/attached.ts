@@ -50,7 +50,10 @@ export function attachedExitWaitMs(env: NodeJS.ProcessEnv = process.env): number
 }
 
 /** Selects one engine for a CI job's hosting and API operations. */
-export async function bindCIEngine(env: NodeJS.ProcessEnv): Promise<{
+export async function bindCIEngine(
+  env: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+): Promise<{
   host: typeof hostStimd;
   hold: typeof holdCIStimd;
   runOp: import('../api/engine-route.ts').RunOp;
@@ -69,6 +72,7 @@ export async function bindCIEngine(env: NodeJS.ProcessEnv): Promise<{
     const root = dirname(retained);
     let lock: Awaited<ReturnType<typeof takeLock>> = null;
     for (const until = Date.now() + 10_000; !lock && Date.now() < until;) {
+      signal?.throwIfAborted();
       try {
         lock = await takeLock(root, '.lock.sock');
       } catch (error) {
@@ -88,6 +92,7 @@ export async function bindCIEngine(env: NodeJS.ProcessEnv): Promise<{
     }
     if (!lock) throw new Error('Could not lock the Stim engine store for this CI job.');
     try {
+      signal?.throwIfAborted();
       if (selected) selected = selectedEngineDir(env);
       retained = selected ?? (own ? join(own.root, own.build) : null);
       if (own) (await import('../daemon/engine-switch.ts')).requireCurrentEngine(own);
@@ -114,7 +119,9 @@ export async function bindCIEngine(env: NodeJS.ProcessEnv): Promise<{
     claim = null;
   };
   try {
+    signal?.throwIfAborted();
     const runOp = selected ? await loadEngineRunOp(selected) : null;
+    signal?.throwIfAborted();
     if (selected && !runOp)
       throw Object.assign(new Error('The selected Stim engine API cannot load.'), {
         code: 'STIM_ENGINE_UNAVAILABLE',
@@ -130,9 +137,11 @@ export async function bindCIEngine(env: NodeJS.ProcessEnv): Promise<{
           code: 'STIM_ENGINE_HOST_UNAVAILABLE',
           remedy: 'Run stim engine update to select an engine that supports attached hosting.',
         });
+      signal?.throwIfAborted();
       return { host: engine.hostStimd, hold: engine.holdCIStimd, runOp, release };
     }
     const local = (await import('../api.ts')).runOp;
+    signal?.throwIfAborted();
     return {
       host: hostStimd,
       hold: holdCIStimd,
@@ -150,8 +159,9 @@ export async function holdCIStimd(
   env: NodeJS.ProcessEnv,
   projectRoot: string,
   ownedInstance: string | null,
+  signal?: AbortSignal,
 ): Promise<() => void> {
-  return (await import('../api.ts')).holdCIStimd(env, projectRoot, ownedInstance);
+  return (await import('../api.ts')).holdCIStimd(env, projectRoot, ownedInstance, signal);
 }
 
 const unavailable = () => ({
@@ -170,7 +180,7 @@ const unavailable = () => ({
  */
 export function hostStimd(
   env: NodeJS.ProcessEnv,
-  { handover = true }: { handover?: boolean } = {},
+  { handover = true, signal }: { handover?: boolean; signal?: AbortSignal } = {},
 ): Promise<
   | AttachedHost
   | { switched: string }
@@ -182,6 +192,7 @@ export function hostStimd(
   | 'engine-unavailable'
   | null
 > {
+  signal?.throwIfAborted();
   const args = [spawnEntry('cli'), '__stimd', ATTACHED_ARG];
   let child: ReturnType<ReturnType<typeof getExecutor>['spawn']>;
   try {
@@ -195,14 +206,28 @@ export function hostStimd(
     return Promise.resolve(unavailable());
   }
   const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((done) => {
-    child.once('exit', (code, signal) => done({ code, signal }));
+    child.once('exit', (code, exitSignal) => done({ code, signal: exitSignal }));
     child.once('error', () => done({ code: null, signal: null }));
   });
-  return new Promise((resolve) => {
+  return new Promise((done, reject) => {
+    let aborting = false;
+    const resolve: typeof done = (value) => {
+      if (aborting) return;
+      signal?.removeEventListener('abort', abort);
+      done(value);
+    };
+    const abort = () => {
+      aborting = true;
+      clearTimeout(timer);
+      child.kill('SIGKILL');
+      void exited.then(() => reject(signal?.reason));
+    };
+    signal?.addEventListener('abort', abort, { once: true });
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       resolve(unavailable());
     }, BIND_MS);
+    if (signal?.aborted) abort();
     let buffer = '';
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
@@ -394,7 +419,7 @@ export async function endAttached({
 }: {
   inFlight: () => string[];
   admissionRevision: () => number;
-  alive: () => Promise<string | null>;
+  alive: (signal: AbortSignal) => Promise<string | null>;
   waitMs: number;
   handover: boolean;
   mode: () => DaemonMode;
@@ -421,15 +446,20 @@ export async function endAttached({
   let alive: string | null = null;
   const revision = admissionRevision();
   if (handover) {
-    let timer: NodeJS.Timeout | undefined;
-    const late = new Promise<string>((done) => {
-      timer = setTimeout(() => done('its home was not measured in time'), MEASURE_MS);
-    });
-    alive = await Promise.race([
-      measure().catch((error: unknown) => `its home could not be measured: ${String(error)}`),
-      late,
-    ]);
-    clearTimeout(timer);
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, MEASURE_MS);
+    try {
+      alive = await measure(controller.signal);
+    } catch (error) {
+      alive = timedOut ? 'its home was not measured in time' : `its home could not be measured: ${String(error)}`;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (timedOut) alive = 'its home was not measured in time';
     if (inFlight().length && Date.now() < deadline) await drain();
     if (admissionRevision() !== revision) alive ??= 'a command was admitted while measuring its home';
   }

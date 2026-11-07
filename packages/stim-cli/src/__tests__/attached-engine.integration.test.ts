@@ -110,3 +110,23 @@ test('refuses when the selected engine API cannot load', async () => {
     select.mockReset();
   }
 });
+
+test('cancels engine retention while the store lock is held', async () => {
+  const { takeLock } = await import('../engine-store/locks.ts');
+  const root = mkdtempSync(join(tmpdir(), 'stim-ci-cancel-lock-'));
+  const selected = join(root, 'bbbbbbbbbbbb');
+  mkdirSync(selected);
+  select.mockReturnValue(selected);
+  const lock = await takeLock(root, '.lock.sock');
+  if (!lock) throw new Error('could not acquire fixture lock');
+  const controller = new AbortController();
+  try {
+    const binding = bindCIEngine({}, controller.signal);
+    setTimeout(() => controller.abort(), 100);
+    await expect(binding).rejects.toMatchObject({ name: 'AbortError' });
+  } finally {
+    await lock.release();
+    select.mockReset();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

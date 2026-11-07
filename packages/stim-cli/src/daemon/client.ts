@@ -542,14 +542,19 @@ export function attachedHostEnd(): (() => Promise<void>) | undefined {
  * operation's, the connection goes into it instead, and closing it ends the op. stimd answers at once, or after a
  * switch already under way, with `engine-changed`. False when it does not answer.
  */
-function beginOp(held?: Socket[], command?: string, expectedInstance?: string | null): Promise<boolean> {
+function beginOp(
+  held?: Socket[],
+  command?: string,
+  expectedInstance?: string | null,
+  signal?: AbortSignal,
+): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (begun: boolean) => {
-      if (settled) return;
+      if (settled || (following && !signal?.aborted)) return;
       settled = true;
       clearTimeout(timer);
-      if (following) return;
+      signal?.removeEventListener('abort', abort);
       if (begun) {
         if (held) held.push(socket);
         else opSocket = socket;
@@ -567,6 +572,9 @@ function beginOp(held?: Socket[], command?: string, expectedInstance?: string | 
               : reply.attached === true && reply.instance === expectedInstance)),
       ),
     );
+    const abort = () => finish(false);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
     socket.once('close', () => {
       if (opSocket === socket) opSocket = null;
       finish(false);
@@ -575,10 +583,11 @@ function beginOp(held?: Socket[], command?: string, expectedInstance?: string | 
 }
 
 /** Pins an already-running stimd until the returned closure is called. */
-export async function holdExistingStimd(ownedInstance: string | null): Promise<() => void> {
+export async function holdExistingStimd(ownedInstance: string | null, signal?: AbortSignal): Promise<() => void> {
   const held: Socket[] = [];
   socketError = null;
-  if (!(await beginOp(held, 'stim ci', ownedInstance))) {
+  if (!(await beginOp(held, 'stim ci', ownedInstance, signal))) {
+    signal?.throwIfAborted();
     if (socketError === 'EPERM' || socketError === 'EACCES') throw sandboxBlocked();
     throw new Error('Could not pin the Stim daemon for this CI job.');
   }

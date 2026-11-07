@@ -12,6 +12,9 @@ const lifecycle = vi.hoisted(() => ({
   stop: vi.fn<(options: { signal: AbortSignal }) => Promise<unknown>>(),
   host: vi.fn<(env: NodeJS.ProcessEnv, options: { handover?: boolean }) => Promise<unknown>>(),
   release: vi.fn<() => void>(),
+  hold: vi.fn<
+    (_env: NodeJS.ProcessEnv, _root: string, _instance: string | null, signal?: AbortSignal) => Promise<() => void>
+  >(),
   steps: new Array<string>(),
 }));
 vi.mock('stim', () => ({
@@ -24,10 +27,7 @@ vi.mock('stim/attached-stimd', () => ({
   bindCIEngine: async () => ({
     host: lifecycle.host,
     release: lifecycle.release,
-    hold: async () => {
-      lifecycle.steps.push('hold');
-      return () => void lifecycle.steps.push('hold released');
-    },
+    hold: lifecycle.hold,
     runOp: (name: 'run' | 'stop' | 'diagnostics', args: unknown[]) => Reflect.apply(lifecycle[name], lifecycle, args),
   }),
 }));
@@ -42,6 +42,10 @@ beforeEach(() => {
   lifecycle.create.mockClear();
   lifecycle.release.mockReset();
   lifecycle.steps = [];
+  lifecycle.hold.mockReset().mockImplementation(async () => {
+    lifecycle.steps.push('hold');
+    return () => void lifecycle.steps.push('hold released');
+  });
   lifecycle.host.mockReset().mockImplementation(async () => {
     lifecycle.steps.push('host');
     return { end: async () => void lifecycle.steps.push('host ended') };
@@ -271,7 +275,7 @@ it('hosts stimd for the whole job, ending it after cleanup and diagnostics and n
   const result = await runCI(options);
   expect(result.exitCode).toBe(3);
   expect(lifecycle.steps).toEqual(['host', 'hold', 'run', 'stop', 'diagnostics', 'hold released', 'host ended']);
-  expect(lifecycle.host.mock.calls[0]?.[1]).toEqual({ handover: false });
+  expect(lifecycle.host.mock.calls[0]?.[1]).toMatchObject({ handover: false });
   expect(lifecycle.create.mock.calls.at(-1)?.[0].env?.STIM_POOL_BOOTED_GRACE_MINUTES).toBe('0');
   expect(lifecycle.host.mock.calls[0]?.[0].STIM_POOL_BOOTED_GRACE_MINUTES).toBe('0');
 });
@@ -437,4 +441,18 @@ it.each([0, 3])('reports an abnormal daemon exit after a test exits %i', async (
   expect(result.exitCode).toBe(testExit || 1);
   expect(result.failure?.code).toBe(testExit ? 'STIM_CI_TEST_FAILED' : 'STIM_CI_CLEANUP_FAILED');
   expect(result.cleanup.error?.message).toContain('Attached stimd exited');
+});
+
+it('cancels daemon admission before running and ends its owned host', async () => {
+  const controller = new AbortController();
+  lifecycle.hold.mockImplementation(async (_env, _root, _instance, signal) => {
+    controller.abort();
+    signal?.throwIfAborted();
+    return () => {};
+  });
+  const result = await runCI({ ...options, signal: controller.signal });
+  expect(result.exitCode).toBe(130);
+  expect(lifecycle.run).not.toHaveBeenCalled();
+  expect(lifecycle.steps).toContain('host ended');
+  expect(lifecycle.release).toHaveBeenCalled();
 });
