@@ -1,7 +1,8 @@
-import { renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   isJsonObject,
   loadConfig,
@@ -53,6 +54,30 @@ export function attachedExitWaitMs(env: NodeJS.ProcessEnv = process.env): number
  * `held` when another stimd took the home first, `blocked` when a sandbox denies its socket, and null when it failed
  * otherwise or did not serve within 10 s.
  */
+/** Selects one engine for a CI job's hosting and API operations. */
+export async function bindCIEngine(env: NodeJS.ProcessEnv): Promise<{
+  host: typeof hostStimd;
+  runOp: import('../api/engine-route.ts').RunOp;
+}> {
+  const { selectedEngineDir, loadEngineRunOp } = await import('../api/engine-route.ts');
+  const selected = selectedEngineDir(env);
+  const runOp = selected ? await loadEngineRunOp(selected) : null;
+  if (selected && runOp) {
+    const entry = join(selected, 'dist', 'attached-stimd.mjs');
+    const engine: Partial<typeof import('./attached.ts')> = existsSync(entry)
+      ? await import(pathToFileURL(entry).href)
+      : {};
+    if (typeof engine.hostStimd !== 'function')
+      throw Object.assign(new Error('The selected Stim engine cannot host a CI daemon.'), {
+        code: 'STIM_ENGINE_HOST_UNAVAILABLE',
+        remedy: 'Run stim engine update to select an engine that supports attached hosting.',
+      });
+    return { host: engine.hostStimd, runOp };
+  }
+  const local = (await import('../api.ts')).runOp;
+  return { host: hostStimd, runOp: (name, args, ctx) => Reflect.apply(local, undefined, [name, args, ctx]) };
+}
+
 export function hostStimd(
   env: NodeJS.ProcessEnv,
   { handover = true }: { handover?: boolean } = {},

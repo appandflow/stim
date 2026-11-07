@@ -1957,6 +1957,12 @@ not on any remote"  (worktree remove)
   the remedy names: npx stim@<this version> engine rollback, or
   npx stim@<this version> engine use <this version>.`,
     },
+    STIM_ENGINE_HOST_UNAVAILABLE: {
+      summary: 'the selected engine predates attached CI hosting',
+      body: () => `STIM_ENGINE_HOST_UNAVAILABLE
+  The selected machine engine cannot host the daemon for stim ci run.
+  Run stim engine update to select an engine that supports attached hosting.`,
+    },
     STIM_SANDBOX_BLOCKED: {
       summary: "a sandbox denies stimd's socket, so the command can neither reach nor host stimd",
       body: () => `STIM_SANDBOX_BLOCKED  ("<STIM_HOME>/run/stimd.sock is outside this sandbox's

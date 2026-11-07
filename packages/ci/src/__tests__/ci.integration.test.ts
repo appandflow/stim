@@ -19,7 +19,12 @@ vi.mock('stim', () => ({
     return lifecycle;
   },
 }));
-vi.mock('stim/attached-stimd', () => ({ hostStimd: lifecycle.host }));
+vi.mock('stim/attached-stimd', () => ({
+  bindCIEngine: async () => ({
+    host: lifecycle.host,
+    runOp: (name: 'run' | 'stop' | 'diagnostics', args: unknown[]) => Reflect.apply(lifecycle[name], lifecycle, args),
+  }),
+}));
 
 let root: string;
 let active: string;
@@ -386,4 +391,13 @@ it.each([0, 3])('records cancellation during daemon shutdown after a test exits 
   expect(result.exitCode).toBe(testExit || 130);
   expect(result.failure?.code).toBe(testExit ? 'STIM_CI_TEST_FAILED' : 'STIM_CI_CANCELLED');
   expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).exitCode).toBe(testExit || 130);
+});
+
+it('does not time out a passing run while its daemon host ends', async () => {
+  lifecycle.host.mockResolvedValueOnce({
+    end: async () => new Promise<void>((done) => setTimeout(done, 150)),
+  });
+  const result = await runCI({ ...options, command: undefined, timeoutMs: 100 });
+  expect(result.exitCode).toBe(0);
+  expect(result.failure).toBeUndefined();
 });

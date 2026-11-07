@@ -10,6 +10,9 @@ its own checkout. The run stops that checkout's workspace, including resources
 started before a build failure; an explicit API `run.slot` limits cleanup to
 that slot. Do not point CI at a developer's active checkout.
 
+If the selected machine engine predates attached CI hosting, `run` refuses with
+`STIM_ENGINE_HOST_UNAVAILABLE`. Run `stim engine update` to select a capable engine.
+
 ## Build, then run
 
 `stim ci build` is the only step that compiles. `stim ci run` never compiles:
