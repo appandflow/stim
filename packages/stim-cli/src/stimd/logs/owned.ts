@@ -193,6 +193,9 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
         const dir = hostedMacosLogsDir(home);
         const record = readHostedMacosApp(home);
         if (!dir || !record?.app) return 'the hosted macOS app record is unavailable';
+        // compat C27 until removal-minor
+        if (record.supervisor?.pid !== record.app.pid) return null;
+        // compat end
         macos(dir, record);
         const key = `macos:${dir}`;
         const stream = streams.get(key);

@@ -381,6 +381,50 @@ test.skipIf(process.platform === 'win32')('a refused runtime claim retains an un
   }
 });
 
+test.skipIf(process.platform === 'win32')('a launcher lost before handoff leaves its declaration pending', async () => {
+  const launcher = await ownedProcess();
+  const declaration = tryAcquireClaim({ root: join(dir, 'launch.lock'), mode: 'exclusive', owner: launcher }).acquired;
+  assert(declaration);
+  const helperFile = join(dir, 'helper.pid');
+  let helper: { pid: number; processToken: string } | undefined;
+  const owned = await owning.spawnOwned({
+    file: process.execPath,
+    args: [
+      '-e',
+      `const {spawn}=require('node:child_process'); const fs=require('node:fs'); const child=spawn(process.execPath,['-e','setInterval(() => {}, 1000)'],{detached:true,stdio:'ignore'}); child.unref(); fs.writeFileSync(${JSON.stringify(helperFile)},String(child.pid)); setInterval(() => {}, 1000);`,
+    ],
+    cwd: root,
+    env: process.env,
+    stdout: join(dir, 'out'),
+    stderr: join(dir, 'err'),
+    claim: { root: join(dir, 'runtime'), label: 'app' },
+    declare: [declaration],
+  });
+  try {
+    await vi.waitFor(() => expect(existsSync(helperFile)).toBe(true));
+    const pid = Number(readFileSync(helperFile, 'utf8'));
+    const token = captureProcessToken(pid);
+    assert(token);
+    helper = { pid, processToken: token };
+    process.kill(launcher.pid, 'SIGKILL');
+    expect(await waitForProcessExit(launcher, 5000)).toBe(true);
+    process.kill(-owned.pid, 'SIGKILL');
+    expect(await waitForProcessExit(owned, 5000)).toBe(true);
+    expect(inspectProcessIdentity(helper)).toBe('same');
+    expect(readClaimSet(declaration.root).unresolved).toMatchObject([{ path: declaration.path }]);
+    expect(() => tryAcquireClaim({ root: declaration.root, mode: 'exclusive' })).toThrow(/ownership/i);
+  } finally {
+    if (helper && inspectProcessIdentity(helper) === 'same') process.kill(-helper.pid, 'SIGKILL');
+    if (inspectProcessIdentity(owned) === 'same') process.kill(-owned.pid, 'SIGKILL');
+    if (inspectProcessIdentity(launcher) === 'same') process.kill(launcher.pid, 'SIGKILL');
+    if (helper) assert(await waitForProcessExit(helper, 5000));
+    assert(await waitForProcessExit(owned, 5000));
+    assert(await waitForProcessExit(launcher, 5000));
+    releaseClaim(owned.claim);
+    releaseClaim(declaration);
+  }
+});
+
 test.skipIf(process.platform === 'win32')(
   'the runtime claim remains live while a launched app helper survives',
   async () => {
@@ -630,6 +674,30 @@ test.skipIf(process.platform === 'win32')(
     }
   },
 );
+
+test('hosted drain accepts a legacy supervisor record without a new spool checkpoint', async () => {
+  const serverHome = process.env.STIM_HOME;
+  assert(serverHome);
+  const session = '12345678-1234-1234-1234-123456789abc';
+  const home = join(deviceHostArea(session), 'home');
+  const hostedRoot = join(home, 'macos-app');
+  mkdirSync(hostedRoot, { recursive: true });
+  process.env.STIM_HOME = home;
+  try {
+    const app = { pid: 123, processToken: 'old-app', startedAtMicros: 1 };
+    const supervisor = { pid: 456, processToken: 'old-supervisor', startedAtMicros: 1 };
+    writeWorkspaceState(hostedRoot, { macos: record({ app, supervisor }) });
+    process.env.STIM_HOME = serverHome;
+    const streams = createOwnedStreams(() => {});
+    try {
+      expect(await streams.drainHosted(session)).toBeNull();
+    } finally {
+      streams.close();
+    }
+  } finally {
+    process.env.STIM_HOME = serverHome;
+  }
+});
 
 test.skipIf(process.platform === 'win32')(
   'a failed final checkpoint keeps the spool and does not repeat the exit line',

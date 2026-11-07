@@ -2175,6 +2175,61 @@ test.each([
 });
 
 describe.skipIf(process.platform === 'win32')('hosted macOS replacement drain', () => {
+  test.each(['stop', 'replacement'])(
+    'a stale legacy supervisor permits hosted %s without an observer',
+    async (action) => {
+      await host.close();
+      host = new DeviceHost({
+        worker: join(home, 'worker.mjs'),
+        env: hostEnv,
+        agents,
+        allowed: (client) => allowed.has(client),
+        limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
+      });
+      const session = await reserve({ platform: 'macos' });
+      await state(session.id, 'ready');
+      const sessionHome = join(deviceHostArea(session.id), 'home');
+      const appRoot = join(sessionHome, 'macos-app');
+      mkdirSync(appRoot, { recursive: true });
+      const workspace = join(sessionHome, 'workspaces', workspaceName(realpathSync(appRoot)));
+      mkdirSync(workspace, { recursive: true });
+      writeFileSync(
+        join(workspace, 'state.json'),
+        JSON.stringify({
+          macos: {
+            launchId: 'legacy',
+            product: 'Fixture',
+            arguments: [],
+            bundle: appRoot,
+            bundleId: 'fixture',
+            executable: '/fixture',
+            build: { state: 'ok', startedAt: new Date().toISOString() },
+            app: { pid: 123, processToken: 'app', startedAtMicros: 1 },
+            supervisor: { pid: 456, processToken: 'exited-supervisor', startedAtMicros: 1 },
+          },
+        }),
+      );
+      if (action === 'stop') {
+        host.stop('client', { session: session.id });
+        await state(session.id, 'stopped');
+      } else {
+        const app = appOffer(session.id, 'replacement', 'macos');
+        host.appOffer('client', app.params);
+        await uploadManifest(app);
+        await host.appChunk('client', {
+          ...app.params,
+          sha256: app.sha256,
+          offset: 0,
+          data: app.content.toString('base64'),
+        });
+        assert.match(JSON.stringify(host.appLaunch('client', app.params)), /"state":"installing"/);
+        await vi.waitFor(() =>
+          assert.match(JSON.stringify(host.appAttach('client', app.params)), /"state":"installed"/),
+        );
+      }
+    },
+  );
+
   test.each([null, 'write failed'])(
     'hosted macOS replacement waits for the previous drain (error: %s)',
     async (drainError) => {

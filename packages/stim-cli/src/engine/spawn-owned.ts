@@ -29,7 +29,7 @@ export interface OwnedLaunch {
   truncate?: boolean;
   /** The exclusive claim the process holds for as long as it runs. */
   claim: { root: string; label: string; details?: ClaimDetails };
-  /** The launching operation's claims, which record the process from its spawn on; the caller clears them once it has recorded the process. */
+  /** The launching operation's claims stay pending until the caller records the process and clears them. */
   declare: Iterable<ClaimHandle>;
 }
 
@@ -91,8 +91,6 @@ export async function spawnOwned(launch: OwnedLaunch): Promise<OwnedProcess> {
   const owner = { pid, processToken: captured.token };
   let claim: ClaimHandle | undefined;
   try {
-    // Windows cannot prove that a dead leader's descendants have exited, so keep the pending declaration.
-    if (process.platform !== 'win32') for (const declaration of declared) setClaimChild(declaration, owner);
     const attempt = tryAcquireClaim({ ...launch.claim, mode: 'exclusive', owner });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (!attempt.acquired)

@@ -1688,7 +1688,9 @@ export class DeviceHost {
       await this.settleLogs(owned);
       if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
       releaseClaim(takeHostedInputClaim(owned.claim));
-      if (record.platform === 'macos' && readHostedMacosApp(join(deviceHostArea(record.id), 'home'))?.app) {
+      const previousApp =
+        record.platform === 'macos' ? readHostedMacosApp(join(deviceHostArea(record.id), 'home')) : null;
+      if (previousApp?.app) {
         const previous = this.run(record, owned, 'stop-app', attempt);
         owned.run = previous;
         const outcome = await previous.done;
@@ -1701,10 +1703,14 @@ export class DeviceHost {
           hostedDeviceId(stoppedDevice) === hostedDeviceId(record.device);
         if (!outcome.settled || outcome.notice || !stopped)
           throw new Error(outcome.notice ?? 'The previous macOS app could not be stopped.');
-        const error = this.options.drainHosted
-          ? await this.options.drainHosted(record.id)
-          : 'the hosted macOS observer is unavailable';
-        if (error) throw new Error(`Could not drain the previous macOS app output: ${error}`);
+        // compat C27 until removal-minor
+        if (previousApp.supervisor?.pid === previousApp.app.pid) {
+          // compat end
+          const error = this.options.drainHosted
+            ? await this.options.drainHosted(record.id)
+            : 'the hosted macOS observer is unavailable';
+          if (error) throw new Error(`Could not drain the previous macOS app output: ${error}`);
+        }
         if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
       }
       const run = this.run(record, owned, 'install', attempt);
@@ -2035,7 +2041,11 @@ export class DeviceHost {
       parseHostedPlatformDevice(outcome.value.device, record.platform) !== null &&
       hostedDeviceId(parseHostedPlatformDevice(outcome.value.device, record.platform)!) === hostedDeviceId(device);
     let drainError: string | null = null;
-    if (stopped && record.platform === 'macos' && readHostedMacosApp(join(deviceHostArea(record.id), 'home'))?.app) {
+    const stoppedApp =
+      stopped && record.platform === 'macos' ? readHostedMacosApp(join(deviceHostArea(record.id), 'home')) : null;
+    // compat C27 until removal-minor
+    if (stoppedApp?.app && stoppedApp.supervisor?.pid === stoppedApp.app.pid) {
+      // compat end
       drainError = this.options.drainHosted
         ? await this.options.drainHosted(record.id)
         : 'the hosted macOS observer is unavailable';
