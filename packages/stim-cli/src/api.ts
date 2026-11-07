@@ -724,6 +724,7 @@ export async function holdCIStimd(
   env: NodeJS.ProcessEnv,
   projectRoot: string,
   ownedInstance: string | null,
+  signal?: AbortSignal,
 ): Promise<() => void> {
   const home = env.STIM_HOME || join(userHome(env), '.stim');
   const context: StimContext = {
@@ -733,10 +734,12 @@ export async function holdCIStimd(
     cwd: projectRoot,
     env,
     runId: 'ci',
-    signal: new AbortController().signal,
+    signal: signal ?? new AbortController().signal,
     output: () => {},
   };
-  return withAmbientContext(context, async () => (await import('./daemon/client.ts')).holdExistingStimd(ownedInstance));
+  return withAmbientContext(context, async () =>
+    (await import('./daemon/client.ts')).holdExistingStimd(ownedInstance, signal),
+  );
 }
 
 function operationContext(

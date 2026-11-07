@@ -144,11 +144,11 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   let releaseDaemon: (() => void) | undefined;
   try {
     signal?.throwIfAborted();
-    const binding = await bindCIEngine(stimEnvironment(options));
+    const binding = await bindCIEngine(stimEnvironment(options), signal);
     releaseEngine = binding.release;
     const hosted = await binding.host(
       { ...stimEnvironment(options), STIM_POOL_BOOTED_GRACE_MINUTES: '0' },
-      { handover: false },
+      { handover: false, signal },
     );
     host = acceptedHost(hosted);
     if (host) {
@@ -160,7 +160,9 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
         onProgress,
       });
     }
-    releaseDaemon = await binding.hold(stimEnvironment(options), projectRoot, host && host.instance);
+    signal?.throwIfAborted();
+    releaseDaemon = await binding.hold(stimEnvironment(options), projectRoot, host && host.instance, signal);
+    signal?.throwIfAborted();
     const context = {
       projectRoot,
       home: options.home ? resolve(options.home) : undefined,

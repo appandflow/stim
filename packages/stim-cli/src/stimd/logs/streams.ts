@@ -156,9 +156,21 @@ function signalChild(stream: Stream): void {
   stream.lastStop = { pid: child.pid, identity };
   if (identity !== 'same') return;
   try {
-    stream.lastStop.signalled = signalProcessTree(child.pid, 'SIGTERM', { group: process.platform !== 'win32' });
+    if (process.platform === 'win32') {
+      getExecutor().runFile('taskkill', ['/PID', String(child.pid), '/T', '/F'], { timeoutMs: 30_000 });
+      stream.lastStop.signalled = true;
+    } else {
+      stream.lastStop.signalled = signalProcessTree(child.pid, 'SIGTERM', { group: true });
+    }
   } catch (error) {
-    stream.lastStop.error = error instanceof Error ? error.message : String(error);
+    stream.lastStop.signalled = false;
+    const detail = error instanceof Error ? error : new Error(String(error));
+    stream.lastStop.error = JSON.stringify({
+      code: Reflect.get(detail, 'code'),
+      status: Reflect.get(detail, 'status'),
+      stderr: String(Reflect.get(detail, 'stderr') ?? '').slice(0, 2048),
+      message: detail.message.slice(0, 2048),
+    });
   }
 }
 

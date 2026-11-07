@@ -931,12 +931,12 @@ export async function runStimd({
     endAttached({
       inFlight: () => [...ops.keys()].map((socket) => opCommands.get(socket) ?? 'a command'),
       admissionRevision: () => admissionRevision,
-      alive: async () =>
+      alive: async (signal) =>
         net.running()
           ? 'the net thread serves'
           : metroChildrenRun()
             ? 'Metro or a tunnel is running'
-            : homeAlive(loadConfig(), await measureTick(loadConfig(), Date.now(), { probe: false })),
+            : homeAlive(loadConfig(), await measureTick(loadConfig(), Date.now(), { probe: false, signal })),
       waitMs,
       handover: attached?.handover ?? false,
       mode: effectiveMode,
