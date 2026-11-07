@@ -8,6 +8,7 @@ import { deviceSlotKey, validateDeviceSlot } from '../../devices/device-slots.ts
 import { getExecutor } from '../../exec.ts';
 import { signalProcessTree } from '../../metro.ts';
 import {
+  ClaimUnavailableError,
   clearClaimChild,
   markClaimChildPending,
   processGroupAlive,
@@ -124,6 +125,8 @@ type Stream = {
   treePending: boolean;
   lastStop: { pid: number | null; identity: string; signalled?: boolean; error?: string } | null;
   pending: boolean;
+  initialQueryPending: boolean;
+  queryReads: number;
   paused: boolean;
   generation: number;
   activePid: number | null;
@@ -240,7 +243,10 @@ async function waitChild(stream: Stream): Promise<void> {
       );
     }
   }
-  if (stream.identity || stream.pending) clearClaimChild(stream.claim);
+  if (stream.queryReads === 0) {
+    if (stream.identity || stream.pending || stream.initialQueryPending) clearClaimChild(stream.claim);
+    stream.initialQueryPending = false;
+  } else stream.initialQueryPending = true;
   stream.pending = false;
   stream.treePending = false;
   stream.identity = null;
@@ -256,6 +262,7 @@ function spawnChild(
   options: SpawnOptions,
 ): ChildProcess {
   stream.lastStop = null;
+  if (stream.queryReads === 0) stream.initialQueryPending = false;
   markClaimChildPending(stream.claim);
   stream.pending = true;
   // Windows taskkill /T needs the live launcher PID to find descendants; keep the claim pending until it succeeds.
@@ -271,7 +278,8 @@ function spawnChild(
       detached: process.platform !== 'win32',
     });
   } catch (error) {
-    clearClaimChild(stream.claim);
+    if (stream.queryReads === 0) clearClaimChild(stream.claim);
+    else stream.initialQueryPending = true;
     stream.pending = false;
     stream.treePending = false;
     throw error;
@@ -281,7 +289,8 @@ function spawnChild(
   stream.childClosed = new Promise((resolve) => child.once('close', () => resolve()));
   child.on('error', () => {});
   if (!child.pid) {
-    clearClaimChild(stream.claim);
+    if (stream.queryReads === 0) clearClaimChild(stream.claim);
+    else stream.initialQueryPending = true;
     stream.pending = false;
     stream.treePending = false;
     throw new Error('could not start the device log stream child');
@@ -292,7 +301,7 @@ function spawnChild(
   }
   stream.identity = { pid: child.pid, processToken: token };
   try {
-    if (process.platform !== 'win32') setClaimChild(stream.claim, stream.identity);
+    if (process.platform !== 'win32' && stream.queryReads === 0) setClaimChild(stream.claim, stream.identity);
   } catch (error) {
     void signalChild(stream);
     throw error;
@@ -569,6 +578,10 @@ export function createStreams(log: (message: string) => void): StreamTable {
       })
       .catch((error: unknown) => {
         coverage.status = 'failed';
+        if (isLogCleanupError(error)) {
+          stream.probeFailure = error;
+          markClaimChildPending(stream.claim);
+        }
         if (!cancelled.aborted) {
           const message = error instanceof Error ? error.message : String(error);
           log(`device log backfill ${stream.id} failed: ${message}`);
@@ -623,7 +636,8 @@ export function createStreams(log: (message: string) => void): StreamTable {
           return { streamId: shared.id };
         }
         if (isJsonObject(recorded)) {
-          if (typeof recorded.streamId !== 'string') throw new Error('the previous device log stream has no identity');
+          if (typeof recorded.streamId !== 'string' || !recorded.streamId)
+            throw new Error('the previous device log stream has no identity');
           const recordedId = recorded.streamId;
           await clearStreamClaim(root, recordedId, () => unregisterStreamAll(root, recordedId));
         }
@@ -692,6 +706,8 @@ export function createStreams(log: (message: string) => void): StreamTable {
           treePending: false,
           lastStop: null,
           pending: false,
+          initialQueryPending: false,
+          queryReads: 0,
           paused: false,
           generation: 0,
           activePid: null,
@@ -711,6 +727,10 @@ export function createStreams(log: (message: string) => void): StreamTable {
           finish,
         };
         try {
+          if (input.platform === 'android') {
+            markClaimChildPending(claim);
+            stream.initialQueryPending = true;
+          }
           registerCollector(root, slotKey, {
             kind: 'stream',
             streamId: id,
@@ -742,7 +762,13 @@ export function createStreams(log: (message: string) => void): StreamTable {
               throw error;
             }
           }
-          await Promise.allSettled(stream.histories);
+          const histories = await Promise.allSettled(stream.histories);
+          for (const result of histories)
+            if (result.status === 'rejected' && isLogCleanupError(result.reason)) stream.probeFailure = result.reason;
+          if (stream.probeFailure) {
+            markClaimChildPending(stream.claim);
+            throw stream.probeFailure;
+          }
           await clearHistoryClaim(root, id);
           await waitChild(stream);
           await sink
@@ -777,6 +803,47 @@ export function createStreams(log: (message: string) => void): StreamTable {
           slot,
           signal: controller.signal,
           env,
+          guardQuery: async (work) => {
+            if (stream.queryReads === 0) markClaimChildPending(stream.claim);
+            stream.queryReads++;
+            let finished = false;
+            const finishRead = () => {
+              if (finished) return;
+              finished = true;
+              stream.queryReads--;
+              if (
+                stream.queryReads === 0 &&
+                !stream.probeFailure &&
+                !stream.stopping &&
+                stream.identity &&
+                process.platform !== 'win32'
+              ) {
+                try {
+                  setClaimChild(stream.claim, stream.identity);
+                  stream.initialQueryPending = false;
+                } catch (error) {
+                  const failure = Object.assign(
+                    new ClaimUnavailableError(`device log claim could not be restored: ${String(error)}`),
+                    {
+                      reportCleanup: true,
+                      remedy: `Inspect the device log claim at ${stream.claim.root}.`,
+                    },
+                  );
+                  stream.probeFailure = failure;
+                  throw failure;
+                }
+              }
+            };
+            try {
+              const value = await work();
+              finishRead();
+              return value;
+            } catch (error) {
+              if (isLogCleanupError(error)) stream.probeFailure = error;
+              finishRead();
+              throw error;
+            }
+          },
           writer: sink.writer,
           recordLine: (line, clockOffsetMs, child) => sink.line(line, clockOffsetMs, generations.get(child)),
           beforeFinish: sink.beforeFinish,

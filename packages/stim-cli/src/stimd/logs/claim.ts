@@ -33,19 +33,24 @@ async function recover(path: string, expected?: string, beforeRelease?: () => vo
     const remedy = issue?.pendingChild ? pendingRemedy(issue.path) : `Inspect the ownership at ${path}`;
     throw new Error(`Device log ownership at ${path} is unresolved. ${remedy}.`);
   }
-  if (expected && ![...survey.live, ...survey.dead].some((holder) => holder.details.streamId === expected))
+  if (
+    expected !== undefined &&
+    ![...survey.live, ...survey.dead].some((holder) => holder.details.streamId === expected)
+  )
     throw new Error(
       `The device log stream ${expected} has no verifiable claim at ${path}; inspect it before removing its record.`,
     );
   for (const holder of survey.dead) {
-    if (expected && holder.details.streamId !== expected) throw new Error(`The device log stream at ${path} changed.`);
+    if (expected !== undefined && holder.details.streamId !== expected)
+      throw new Error(`The device log stream at ${path} changed.`);
     if (process.platform === 'win32' && holder.childDeclared) {
       markClaimChildPending({ ...holder, root: path, label: 'device log stream' });
       throw new Error(`The device log tree at ${path} cannot be verified stopped; ${pendingRemedy(holder.path)}.`);
     }
   }
   for (const holder of survey.live) {
-    if (expected && holder.details.streamId !== expected) throw new Error(`The device log stream at ${path} changed.`);
+    if (expected !== undefined && holder.details.streamId !== expected)
+      throw new Error(`The device log stream at ${path} changed.`);
     const owner = inspectProcessIdentity(holder.owner);
     if (owner === 'same' || owner === 'unknown' || !holder.child)
       throw new Error(`Another device log stream holds ${path}; stop that stream before replacing it.`);

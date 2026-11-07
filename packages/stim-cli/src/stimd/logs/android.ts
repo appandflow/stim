@@ -141,6 +141,8 @@ export function logcatBackfillArgs(serial: string, pid: number, since: number, c
   return ['-s', serial, 'logcat', '-d', '-T', (deviceTime / 1000).toFixed(3), '--pid', String(pid), '-v', 'time,epoch'];
 }
 
+export type QueryGuard = <T>(work: () => Promise<T>) => Promise<T>;
+
 export const isLogCleanupError = (error: unknown): error is Error => error instanceof Error && 'reportCleanup' in error;
 
 export async function androidClockOffset(
@@ -151,18 +153,26 @@ export async function androidClockOffset(
     signal,
     env,
     cwd,
-  }: { exec?: Executor; now?: () => number; signal?: AbortSignal; env?: Record<string, string>; cwd?: string } = {},
+    guardQuery,
+  }: {
+    exec?: Executor;
+    now?: () => number;
+    signal?: AbortSignal;
+    env?: Record<string, string>;
+    cwd?: string;
+    guardQuery?: QueryGuard;
+  } = {},
 ): Promise<number | null> {
   const before = now();
   try {
-    const output = (
-      await exec.runFileAsync(adbCommand(env, cwd), ['-s', serial, 'shell', 'date', '+%s%3N'], {
+    const read = () =>
+      exec.runFileAsync(adbCommand(env, cwd), ['-s', serial, 'shell', 'date', '+%s%3N'], {
         timeoutMs: 1000,
         cwd: androidToolCwd(),
         ...(env ? { env } : {}),
         signal,
-      })
-    ).trim();
+      });
+    const output = (await (guardQuery ? guardQuery(read) : read())).trim();
     const after = now();
     if (!/^\d{13}$/.test(output) || after < before || after - before > 1000) return null;
     return Math.round((before + after) / 2) - Number(output);
@@ -188,18 +198,25 @@ async function resolveAppPid(
     signal,
     env,
     cwd,
-  }: { exec?: Executor | null; signal?: AbortSignal; env?: Record<string, string>; cwd?: string } = {},
+    guardQuery,
+  }: {
+    exec?: Executor | null;
+    signal?: AbortSignal;
+    env?: Record<string, string>;
+    cwd?: string;
+    guardQuery?: QueryGuard;
+  } = {},
 ): Promise<number | null> {
   const e = exec || getExecutor();
   try {
-    return parsePidof(
-      await e.runFileAsync(adbCommand(env, cwd), ['-s', serial, 'shell', 'pidof', '-s', packageName], {
+    const read = () =>
+      e.runFileAsync(adbCommand(env, cwd), ['-s', serial, 'shell', 'pidof', '-s', packageName], {
         timeoutMs: 10_000,
         cwd: androidToolCwd() ?? cwd,
         ...(env ? { env } : {}),
         signal,
-      }),
-    );
+      });
+    return parsePidof(await (guardQuery ? guardQuery(read) : read()));
   } catch (error) {
     if (isLogCleanupError(error)) throw error;
     return null;
@@ -222,6 +239,7 @@ export async function waitForAppPid({
   signal,
   env,
   cwd,
+  guardQuery,
   now = Date.now,
   sleep = (ms: number) => cancellableSleep(ms, { signal, what: 'device log attachment' }),
 }: {
@@ -233,13 +251,14 @@ export async function waitForAppPid({
   signal?: AbortSignal;
   env?: Record<string, string>;
   cwd?: string;
+  guardQuery?: QueryGuard;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }): Promise<PidResolution> {
   const deadline = now() + timeoutMs;
   for (;;) {
     if (signal?.aborted) return { failed: true, reason: 'device log attachment was cancelled' };
-    const pid = await resolveAppPid(serial, packageName, { exec, signal, env, cwd });
+    const pid = await resolveAppPid(serial, packageName, { exec, signal, env, cwd, guardQuery });
     if (pid) return { ok: true, pid };
     if (now() >= deadline) {
       return {
@@ -295,6 +314,7 @@ export function watchAppPid({
   signal,
   env,
   cwd,
+  guardQuery,
   onChange,
   onFailure = () => {},
   resolve = resolveAppPid,
@@ -309,12 +329,19 @@ export function watchAppPid({
   signal?: AbortSignal;
   env?: Record<string, string>;
   cwd?: string;
+  guardQuery?: QueryGuard;
   onChange: (nextPid: number) => void | Promise<void>;
   onFailure?: (error: Error) => void;
   resolve?: (
     serial: string,
     packageName: string,
-    opts: { exec?: Executor | null; signal?: AbortSignal; env?: Record<string, string>; cwd?: string },
+    opts: {
+      exec?: Executor | null;
+      signal?: AbortSignal;
+      env?: Record<string, string>;
+      cwd?: string;
+      guardQuery?: QueryGuard;
+    },
   ) => number | null | Promise<number | null>;
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (t: ReturnType<typeof setTimeout>) => void;
@@ -344,7 +371,7 @@ export function watchAppPid({
       (async () => {
         let next: number | null = null;
         try {
-          next = await resolve(serial, packageName, { exec, signal, env, cwd });
+          next = await resolve(serial, packageName, { exec, signal, env, cwd, guardQuery });
         } catch (error) {
           failed(error);
         }
@@ -372,7 +399,7 @@ export function watchAppPid({
       let result: number | null = null;
       const work = (async () => {
         try {
-          result = await resolve(serial, packageName, { exec, signal, env, cwd });
+          result = await resolve(serial, packageName, { exec, signal, env, cwd, guardQuery });
         } catch (error) {
           failed(error);
         }

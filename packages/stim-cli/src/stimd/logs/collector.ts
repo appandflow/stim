@@ -10,6 +10,7 @@ import { parseLogStreamLine } from './ios.ts';
 import {
   type PidResolution,
   type PidWatcher,
+  type QueryGuard,
   androidClockOffset,
   isLogCleanupError,
   parseLogcatLine,
@@ -55,7 +56,13 @@ export interface RunCollectorOptions {
   watchPid?: typeof watchAppPid;
   resolveClockOffset?: (
     serial: string,
-    opts: { now?: () => number; signal?: AbortSignal; env?: Record<string, string>; cwd?: string },
+    opts: {
+      now?: () => number;
+      signal?: AbortSignal;
+      env?: Record<string, string>;
+      cwd?: string;
+      guardQuery?: QueryGuard;
+    },
   ) => number | null | Promise<number | null>;
   now?: () => number;
   onExit: (code: number) => void;
@@ -67,6 +74,7 @@ export interface RunCollectorOptions {
   beforeFinish?: (signalled: boolean) => void;
   stderr?: (line: string) => void;
   onCleanupFailure?: (error: Error) => void;
+  guardQuery?: QueryGuard;
 }
 
 export interface RunCollectorHandle {
@@ -133,6 +141,7 @@ export async function runCollector({
   beforeFinish,
   stderr = (line: string) => console.error(line),
   onCleanupFailure = () => {},
+  guardQuery,
 }: RunCollectorOptions): Promise<RunCollectorHandle | null> {
   const attribution = slot === 'default' ? {} : { slot, deviceId: udid ?? serial };
   const writer =
@@ -192,6 +201,7 @@ export async function runCollector({
           signal: shutdown.signal,
           env,
           cwd: root,
+          guardQuery,
         });
     if (!resolved.ok) {
       finish(1, 'error', `device log collector could not attach: ${resolved.reason}`, 'collector_failed');
@@ -221,7 +231,7 @@ export async function runCollector({
   const parse = platform === 'ios' ? (physical ? parseDeviceConsoleLine : parseLogStreamLine) : parseLogcatLine;
   const readClockOffset = async (): Promise<number | null> =>
     platform === 'android'
-      ? await resolveClockOffset(serial as string, { now, signal: shutdown.signal, env, cwd: root })
+      ? await resolveClockOffset(serial as string, { now, signal: shutdown.signal, env, cwd: root, guardQuery })
       : null;
   const attach = (streamPid: number | null, clockOffsetMs: number | null): ChildProcess => {
     if (platform === 'android') {
@@ -385,6 +395,7 @@ export async function runCollector({
       signal: shutdown.signal,
       env,
       cwd: root,
+      guardQuery,
       resolve: pidOf || undefined,
       onChange: (nextPid) => reattach(nextPid),
       onFailure: (error) => {
