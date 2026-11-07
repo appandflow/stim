@@ -275,7 +275,14 @@ export async function endAttached({
       : 'its command ended',
   );
   if (!handover || (!alive && !unfinished.length)) return;
-  launchStimd(process.env, mode(), process.platform, undefined, args);
+  try {
+    launchStimd(process.env, mode(), process.platform, undefined, args);
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || (error.code !== 'EPERM' && error.code !== 'EACCES'))
+      throw error;
+    log('warn', 'attached_handover_blocked', 'no detached stimd took over; the next command re-adopts the home');
+    return;
+  }
   for (const until = Date.now() + HANDOVER_MS; Date.now() < until;) {
     if (stimdLive()) {
       log('info', 'attached_handover', 'a detached stimd took over this Stim home');

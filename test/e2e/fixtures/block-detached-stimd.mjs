@@ -9,6 +9,8 @@ const starter = /(^|[\\/])(launchctl|systemd-run)$/;
 childProcess.spawn = function (file, args = [], options = {}) {
   if (Array.isArray(args) && args.includes('__stimd')) {
     if (options?.detached) {
+      if (new URL(import.meta.url).searchParams.has('throw-detached'))
+        throw Object.assign(new Error('detached spawn denied'), { code: 'EPERM' });
       if (args.includes('--service')) {
         writeFileSync(join(process.env.STIM_HOME, 'successor-args.json'), JSON.stringify(args));
         return spawn.call(this, file, args, options);

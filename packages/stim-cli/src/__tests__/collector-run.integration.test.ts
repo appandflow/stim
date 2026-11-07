@@ -101,6 +101,40 @@ describe('runCollector seams', () => {
 describe('runCollector reattach seams', () => {
   const fakeChild = (pid: number | null | undefined) => makeChildProcess({ pid: pid ?? undefined });
 
+  test('late output retains the child that produced it after Android reattachment', async () => {
+    const started: ChildProcess[] = [];
+    const lines: ChildProcess[] = [];
+    let reportPid: ((pid: number) => void | Promise<void>) | undefined;
+    const result = await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: () => 0,
+      watchPid: ({ onChange }) => {
+        reportPid = onChange;
+        return { stop: () => {}, probe: async () => 4200, pid: 3132 };
+      },
+      startStream: ({ pid }) => {
+        const child = fakeChild(pid);
+        started.push(child);
+        return child;
+      },
+      stopStream: async () => {},
+      recordLine: (_line, _offset, child) => lines.push(child),
+      onExit: () => {},
+    });
+    assert(reportPid);
+    await reportPid(4200);
+    await until(() => started.length === 2, { label: 'the reattached stream' });
+    started[0]!.stdout!.emit('data', 'old line\n');
+    started[1]!.stdout!.emit('data', 'new line\n');
+    expect(lines).toEqual([started[0], started[1]]);
+    assert(result);
+    result.finish(0, 'info', 'done', 'collector_stopped');
+  });
+
   test('a newer pid reported while a reattach reads the device clock replaces it instead of adding a stream', async () => {
     const started: ChildProcess[] = [];
     const pendingClocks: Array<() => void> = [];

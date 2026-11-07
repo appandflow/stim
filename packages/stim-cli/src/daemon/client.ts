@@ -427,7 +427,14 @@ export async function ensureStimd(
       else await admit(held, command, invocation);
       return true;
     }
-    const launched = launchStimd(env, daemonMode(env), platform);
+    let launched: ReturnType<typeof launchStimd>;
+    try {
+      launched = launchStimd(env, daemonMode(env), platform);
+    } catch (error) {
+      if (!(error instanceof Error) || !('code' in error) || (error.code !== 'EPERM' && error.code !== 'EACCES'))
+        throw error;
+      launched = { settled: Promise.resolve(), exited: () => true };
+    }
     let taken = await claimTaken(launched, ATTACH_AFTER_MS);
     if (!taken && !held && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
       const { hostStimd } = await import('../stimd/attached.ts');
@@ -645,6 +652,7 @@ export function deviceLogReadinessWait(
   platform: 'ios' | 'android',
   slot: string,
   streamId: string,
+  since: number,
   operation?: StimContext,
 ): (ms: number) => Promise<void> {
   let revision = 0;
@@ -656,7 +664,7 @@ export function deviceLogReadinessWait(
       ? await askStimd(
           'readiness.wait',
           timeoutMs + 1000,
-          { opToken, params: { root, platform, slot, streamId, after: revision, timeoutMs } },
+          { opToken, params: { root, platform, slot, streamId, since, after: revision, timeoutMs } },
           operation?.signal,
         )
       : null;
@@ -709,6 +717,7 @@ export async function beforeCommand(
     pin = false,
     held,
     invocation,
+    deviceLogs = true,
   }: {
     cwd: string;
     recordUse: boolean;
@@ -716,6 +725,7 @@ export async function beforeCommand(
     pin?: boolean;
     held?: Socket[];
     invocation?: Invocation & { workspace?: string | null };
+    deviceLogs?: boolean;
   } = {
     cwd: process.cwd(),
     recordUse: true,
@@ -737,7 +747,7 @@ export async function beforeCommand(
       `stim ${name}`,
       true,
       invocation && { ...invocation, workspace: root },
-      name === 'ios' || name === 'android',
+      deviceLogs && (name === 'ios' || name === 'android'),
     ));
   if ((taken && daemonMode(env) !== 'off') || !inline) return;
   const { runPassesInProcess } = await import('./passes.ts');

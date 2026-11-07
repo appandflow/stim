@@ -258,7 +258,7 @@ interface RecordedArgs {
   storeBuild: { options?: unknown; platform?: unknown; path?: unknown; key?: unknown };
   resolveBuild: { key?: unknown };
   evictBuild: { platform?: unknown; key?: unknown };
-  verifyLaunch: { since?: unknown; logsDir?: unknown; platform?: unknown };
+  verifyLaunch: { since?: unknown; logsDir?: unknown; platform?: unknown; deviceStreamId?: string | null };
   uploadRemote: { fingerprintHash?: unknown; buildPath?: unknown };
   resolveRemote: { projectRoot?: unknown; platform?: unknown; fingerprintHash?: unknown };
   replaceCollector: { udid?: unknown; bundleId?: unknown; appName?: unknown; appExecutable?: unknown };
@@ -634,7 +634,10 @@ test.each([false, true])('the iOS API preserves retained Metro cleanup after can
     });
   try {
     await expect(
-      createStim({ projectRoot: root, home: tmpHome }).run({ platform: 'ios', signal: controller.signal }),
+      createStim({ projectRoot: root, home: tmpHome, admission: 'none' }).run({
+        platform: 'ios',
+        signal: controller.signal,
+      }),
     ).rejects.toMatchObject({
       code: 'STIM_CLAIM_UNAVAILABLE',
       remedy: 'Recover Metro.',
@@ -646,7 +649,7 @@ test.each([false, true])('the iOS API preserves retained Metro cleanup after can
 });
 
 test('the API refuses recordedBuild and cleanAppState together with a physical device', async () => {
-  const stim = createStim({ projectRoot: root, home: tmpHome });
+  const stim = createStim({ projectRoot: root, home: tmpHome, admission: 'none' });
   await expect(stim.run({ platform: 'ios', recordedBuild: true, device: true })).rejects.toMatchObject({
     code: 'STIM_BAD_ARG',
   });
@@ -3417,6 +3420,14 @@ describe('the collector', () => {
     expect(h.notes).toEqual([]);
     expect(h.starts.length).toBe(1);
     expect(result.streamId).toBe('stream-1');
+  });
+
+  test('a failed stream start reports a warning and has no stream ID', async () => {
+    const h = collectorHarness();
+    h.opts.startStream = async () => ({ error: 'EAGAIN' });
+    const result = await replaceCollector(h.opts);
+    expect(result.streamId).toBeNull();
+    expect(h.notes.join('\n')).toContain('EAGAIN');
   });
 
   test('a previous collector that cannot be proven ours is retained and blocks replacement', async () => {
@@ -6639,6 +6650,23 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     const { calls } = await run({ device: true }, connected());
     expect(calls.order.indexOf('stopPreviousCollector')).toBeLessThan(calls.order.indexOf('installIosDeviceApp'));
     expect(calls.order.indexOf('installIosDeviceApp')).toBeLessThan(calls.order.indexOf('replaceCollector'));
+  });
+
+  test('simulator readiness identifies the current device stream', async () => {
+    reserve();
+    const { calls } = await run({});
+    const verify = calls.args.verifyLaunch;
+    expect(verify?.deviceStreamId).toBe('stream-5150');
+  });
+
+  test('a simulator run without a log stream supplies no stream identity', async () => {
+    reserve();
+    const { calls } = await run(
+      {},
+      { replaceCollector: async () => ({ killed: null, streamId: null, error: 'EAGAIN' }) },
+    );
+    const verify = calls.args.verifyLaunch;
+    expect(verify?.deviceStreamId).toBeNull();
   });
 
   test('the simulator path does not stop its collector early: nothing there holds a console', async () => {

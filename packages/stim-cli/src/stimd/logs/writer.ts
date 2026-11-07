@@ -6,7 +6,10 @@ import { workspaceLogsDir } from '../../workspace/paths.ts';
 
 export interface LogSink {
   writer: NdjsonWriter;
-  line(line: string, clockOffsetMs: number | null): void;
+  line(line: string, clockOffsetMs: number | null, generation?: number): void;
+  beginBackfill(since: number): Promise<void>;
+  backfillLine(line: string, clockOffsetMs: number | null): void;
+  endBackfill(): Promise<void>;
   beforeFinish(signalled: boolean): void;
   addAlias(slotKey: string, attribution: Record<string, unknown>): Promise<void>;
   removeAlias(slotKey: string): Promise<void>;
@@ -32,6 +35,7 @@ export interface LogWriters {
 export function createLogWriters(
   onFailure: (error: Error) => void,
   onChange: (streamId: string) => void = () => {},
+  onObserved: (streamId: string, generation: number) => void = () => {},
 ): LogWriters {
   const worker = new Worker(spawnEntry('stimd-thread'), { workerData: { stimdThread: 'logs' } });
   let next = 0;
@@ -59,9 +63,14 @@ export function createLogWriters(
       message?: string;
       streamId?: string;
       bytes?: number;
+      generation?: number;
     }) => {
       if (message.event === 'changed' && message.streamId) {
         onChange(message.streamId);
+        return;
+      }
+      if (message.event === 'observed' && message.streamId && message.generation !== undefined) {
+        onObserved(message.streamId, message.generation);
         return;
       }
       if (message.event === 'drained' && message.streamId) {
@@ -127,21 +136,30 @@ export function createLogWriters(
           return { file, written: 0, dropped: 0, lastError: null };
         },
       };
+      const sendLine = (
+        op: 'line' | 'backfill.line',
+        line: string,
+        clockOffsetMs: number | null,
+        generation?: number,
+      ) => {
+        try {
+          const bytes = Buffer.byteLength(line);
+          send({ op, streamId: input.streamId, line, clockOffsetMs, bytes, generation });
+          state.bytes += bytes;
+          if (!state.paused && state.bytes >= 1024 * 1024) {
+            state.paused = true;
+            state.change(true);
+          }
+        } catch (error) {
+          fail(error instanceof Error ? error : new Error(String(error)));
+        }
+      };
       return {
         writer,
-        line: (line, clockOffsetMs) => {
-          try {
-            const bytes = Buffer.byteLength(line);
-            send({ op: 'line', streamId: input.streamId, line, clockOffsetMs, bytes });
-            state.bytes += bytes;
-            if (!state.paused && state.bytes >= 1024 * 1024) {
-              state.paused = true;
-              state.change(true);
-            }
-          } catch (error) {
-            fail(error instanceof Error ? error : new Error(String(error)));
-          }
-        },
+        line: (line, clockOffsetMs, generation) => sendLine('line', line, clockOffsetMs, generation),
+        beginBackfill: (since) => request({ op: 'backfill.begin', streamId: input.streamId, since }),
+        backfillLine: (line, clockOffsetMs) => sendLine('backfill.line', line, clockOffsetMs),
+        endBackfill: () => request({ op: 'backfill.end', streamId: input.streamId }),
         beforeFinish: (signalled) => {
           try {
             send({ op: 'before-finish', streamId: input.streamId, signalled });

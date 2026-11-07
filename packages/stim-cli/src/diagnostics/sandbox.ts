@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { connect } from 'net';
 import { homedir } from 'os';
 import { basename, dirname, join, sep } from 'path';
@@ -22,9 +22,17 @@ export interface SandboxAllowance {
  */
 export function sandboxAllowance(stimHome: string = '~/.stim', socket: string = stimdSocket()): SandboxAllowance {
   let real = socket;
-  try {
-    real = join(realpathSync(dirname(socket)), basename(socket));
-  } catch {}
+  if (process.platform !== 'win32') {
+    const missing: string[] = [];
+    let existing = dirname(socket);
+    while (!existsSync(existing) && dirname(existing) !== existing) {
+      missing.unshift(basename(existing));
+      existing = dirname(existing);
+    }
+    try {
+      real = join(realpathSync(existing), ...missing, basename(socket));
+    } catch {}
+  }
   return {
     allowWrite: [stimHome],
     allowMachLookup: ['com.apple.coresimulator.*'],
@@ -174,7 +182,12 @@ export function missingAllowance(
   ) {
     missing.push('sandbox.network.allowMachLookup');
   }
-  if (!list('sandbox', 'network', 'allowUnixSockets').some((entry) => covers(entry, socket, home))) {
+  const socketEntries = list('sandbox', 'network', 'allowUnixSockets');
+  if (
+    !sandboxAllowance(stimHome, socket).allowUnixSockets.every((path) =>
+      socketEntries.some((entry) => covers(entry, path, home)),
+    )
+  ) {
     missing.push('sandbox.network.allowUnixSockets');
   }
   if (!files.some((f) => nested(f, 'sandbox', 'network', 'allowLocalBinding') === true)) {

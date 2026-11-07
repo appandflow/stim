@@ -62,7 +62,7 @@ export interface RunCollectorOptions {
   env?: Record<string, string>;
   stopStream?: (child: ChildProcess | null) => Promise<void>;
   writer?: NdjsonWriter;
-  recordLine?: (line: string, clockOffsetMs: number | null) => void;
+  recordLine?: (line: string, clockOffsetMs: number | null, child: ChildProcess) => void;
   beforeFinish?: (signalled: boolean) => void;
   stderr?: (line: string) => void;
 }
@@ -230,7 +230,7 @@ export async function runCollector({
       });
     }
     const onLine = (line: string) => {
-      if (recordLine) return recordLine(line, clockOffsetMs);
+      if (recordLine) return recordLine(line, clockOffsetMs, spawned);
       const record = parse(line, { now, clockOffsetMs });
       if (!record) return;
       captured++;

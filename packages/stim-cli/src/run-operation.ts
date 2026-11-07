@@ -72,6 +72,7 @@ export async function runOperation(
       passes: entry.caller === 'cli',
       pin: true,
       invocation: context,
+      deviceLogs: entry.caller === 'cli' || entry.operation === 'run',
       ...(entry.caller === 'api' ? { held } : {}),
     });
   } catch (error) {

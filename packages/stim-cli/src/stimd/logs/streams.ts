@@ -16,7 +16,8 @@ import {
 } from '../../ownership-claim.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
 import { startAndroidLogcat } from './android.ts';
-import { clearStreamClaim, takeStreamClaim } from './claim.ts';
+import { clearHistoryClaim, clearStreamClaim, takeStreamClaim } from './claim.ts';
+import { backfillDeviceLog } from './backfill.ts';
 import { startIosDeviceConsole } from './ios-device.ts';
 import { startIosLogStream } from './ios.ts';
 import { readCollectors, registerCollector, unregisterStream, unregisterStreamAll } from './state.ts';
@@ -81,9 +82,11 @@ export interface StreamTable {
     platform: string,
     slot: string,
     streamId: string,
+    since: number,
     after: number,
     timeoutMs: number,
     signal?: AbortSignal,
+    env?: Record<string, string>,
   ): Promise<{ revision: number; gone?: true }>;
   running(): boolean;
   close(): Promise<void>;
@@ -103,10 +106,18 @@ type Stream = {
   identity: { pid: number; processToken: string } | null;
   pending: boolean;
   paused: boolean;
+  generation: number;
+  activePid: number | null;
+  observedAt: number | null;
   revision: number;
   waiters: Set<(gone: boolean) => void>;
+  historySeen: WeakSet<AbortSignal>;
+  histories: Set<Promise<void>>;
+  historyQueue: Promise<void>;
   started: Promise<RunCollectorHandle | null>;
   done: Promise<void>;
+  finalized: boolean;
+  cleanup: () => Promise<void>;
   finish: () => void;
 };
 
@@ -217,10 +228,12 @@ export function createStreams(log: (message: string) => void): StreamTable {
     return result;
   };
   const stop = async (stream: Stream): Promise<void> => {
+    const retry = stream.finalized;
     signalChild(stream);
     stream.controller.abort();
     await stream.started.catch(() => null);
     await stream.done;
+    if (retry && [...streams.values()].includes(stream)) await stream.cleanup();
     if ([...streams.values()].includes(stream)) throw new Error('the device log stream could not be stopped');
   };
   const getWriters = async (): Promise<LogWriters> => {
@@ -252,6 +265,10 @@ export function createStreams(log: (message: string) => void): StreamTable {
         stream.revision++;
         for (const wake of stream.waiters) wake(false);
       },
+      (streamId, generation) => {
+        const stream = [...streams.values()].find((entry) => entry.id === streamId);
+        if (stream && stream.generation === generation && stream.observedAt === null) stream.observedAt = Date.now();
+      },
     );
     return writers;
   };
@@ -266,6 +283,45 @@ export function createStreams(log: (message: string) => void): StreamTable {
     }
     stream.aliases.delete(key);
     streams.delete(key);
+  };
+  const scheduleBackfill = (stream: Stream, since: number, signal: AbortSignal, env: Record<string, string>): void => {
+    if (stream.spec.physical || stream.historySeen.has(signal)) return;
+    stream.historySeen.add(signal);
+    const cancelled = AbortSignal.any([signal, stream.controller.signal]);
+    const task = stream.historyQueue.then(async () => {
+      cancelled.throwIfAborted();
+      return backfillDeviceLog({
+        root: stream.root,
+        streamId: stream.id,
+        spec: stream.spec,
+        since,
+        env,
+        signal: cancelled,
+        warm: (pid) =>
+          stream.observedAt !== null &&
+          stream.observedAt <= since &&
+          (stream.spec.platform !== 'android' || stream.activePid === pid),
+        sink: stream.sink,
+      });
+    });
+    stream.histories.add(task);
+    stream.historyQueue = task
+      .catch((error: unknown) => {
+        if (!cancelled.aborted) {
+          const message = error instanceof Error ? error.message : String(error);
+          log(`device log backfill ${stream.id} failed: ${message}`);
+          stream.sink.writer.write({
+            src: 'device',
+            platform: stream.spec.platform,
+            level: 'warn',
+            event: 'collector_backfill_failed',
+            msg: `Device log backfill failed: ${message}`,
+          });
+        }
+      })
+      .finally(() => {
+        stream.histories.delete(task);
+      });
   };
   return {
     async start(input: StreamSpec, env: Record<string, string>, signal?: AbortSignal): Promise<{ streamId: string }> {
@@ -367,10 +423,18 @@ export function createStreams(log: (message: string) => void): StreamTable {
           identity: null,
           pending: false,
           paused: false,
+          generation: 0,
+          activePid: null,
+          observedAt: null,
           revision: 0,
           waiters: new Set(),
+          historySeen: new WeakSet(),
+          histories: new Set(),
+          historyQueue: Promise.resolve(),
           started: Promise.resolve(null),
           done,
+          finalized: false,
+          cleanup: async () => {},
           finish,
         };
         try {
@@ -387,29 +451,36 @@ export function createStreams(log: (message: string) => void): StreamTable {
           throw error;
         }
         streams.set(key, stream);
+        stream.cleanup = async () => {
+          stream.controller.abort();
+          await Promise.allSettled(stream.histories);
+          await clearHistoryClaim(root, id);
+          await waitChild(stream);
+          await sink
+            .closed()
+            .catch((error: unknown) => log(`device log stream ${id} could not flush: ${String(error)}`));
+          if ([...streams.values()].includes(stream)) {
+            if (!releaseClaim(claim)) throw new Error('the device log claim changed during cleanup');
+            unregisterStreamAll(root, id);
+            for (const alias of stream.aliases.keys()) if (streams.get(alias) === stream) streams.delete(alias);
+            for (const wake of stream.waiters) wake(true);
+          }
+        };
         let finishing = false;
         const finalize = () => {
           if (finishing) return;
           finishing = true;
-          void (async () => {
-            try {
-              await waitChild(stream);
-              await sink
-                .closed()
-                .catch((error: unknown) => log(`device log stream ${id} could not flush: ${String(error)}`));
-              if ([...streams.values()].includes(stream)) {
-                if (!releaseClaim(claim)) throw new Error('the device log claim changed during cleanup');
-                unregisterStreamAll(root, id);
-                for (const alias of stream.aliases.keys()) if (streams.get(alias) === stream) streams.delete(alias);
-                for (const wake of stream.waiters) wake(true);
-              }
-            } catch (error) {
+          void stream
+            .cleanup()
+            .catch((error: unknown) => {
               log(`device log stream ${id} did not close: ${error instanceof Error ? error.message : String(error)}`);
-            } finally {
+            })
+            .finally(() => {
+              stream.finalized = true;
               stream.finish();
-            }
-          })();
+            });
         };
+        const generations = new WeakMap<ChildProcess, number>();
         stream.started = runCollector({
           ...input,
           root,
@@ -417,32 +488,38 @@ export function createStreams(log: (message: string) => void): StreamTable {
           signal: controller.signal,
           env,
           writer: sink.writer,
-          recordLine: sink.line,
+          recordLine: (line, clockOffsetMs, child) => sink.line(line, clockOffsetMs, generations.get(child)),
           beforeFinish: sink.beforeFinish,
           startStream: (options) => {
+            stream.generation++;
+            stream.activePid = options.pid ?? null;
+            stream.observedAt = null;
             const spawnFn = (cmd: string, args: string[], opts: SpawnOptions) =>
               spawnChild(stream, env, cmd, args, opts);
+            let child: ChildProcess;
             if (input.platform === 'android') {
               if (!input.serial || !options.pid) throw new Error('the Android log stream has no serial or app pid');
-              return startAndroidLogcat({ serial: input.serial, pid: options.pid, spawnFn });
-            }
-            if (!input.udid) throw new Error('the iOS log stream has no device id');
-            if (input.physical) {
+              child = startAndroidLogcat({ serial: input.serial, pid: options.pid, spawnFn });
+            } else if (!input.udid) throw new Error('the iOS log stream has no device id');
+            else if (input.physical) {
               if (!input.bundleId) throw new Error('the iOS device console has no bundle id');
-              return startIosDeviceConsole({
+              child = startIosDeviceConsole({
                 udid: input.udid,
                 bundleId: input.bundleId,
                 payloadUrl: input.payloadUrl,
                 spawnFn,
               });
+            } else {
+              if (!input.appName) throw new Error('the iOS log stream has no app name');
+              child = startIosLogStream({
+                udid: input.udid,
+                appName: input.appName,
+                executableName: input.appExecutable,
+                spawnFn,
+              });
             }
-            if (!input.appName) throw new Error('the iOS log stream has no app name');
-            return startIosLogStream({
-              udid: input.udid,
-              appName: input.appName,
-              executableName: input.appExecutable,
-              spawnFn,
-            });
+            generations.set(child, stream.generation);
+            return child;
           },
           stopStream: async () => {
             signalChild(stream);
@@ -482,10 +559,11 @@ export function createStreams(log: (message: string) => void): StreamTable {
         return true;
       });
     },
-    async wait(root, platform, slot, streamId, after, timeoutMs, signal) {
+    async wait(root, platform, slot, streamId, since, after, timeoutMs, signal, env) {
       const key = `${realpathSync(root)}\0${deviceSlotKey(platform, validateDeviceSlot(slot))}`;
       const stream = streams.get(key);
       if (!stream || stream.id !== streamId) return { revision: after, gone: true };
+      if (signal && env) scheduleBackfill(stream, since, signal, env);
       if (stream.revision > after) return { revision: stream.revision };
       signal?.throwIfAborted();
       return new Promise((resolve, reject) => {

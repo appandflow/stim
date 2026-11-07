@@ -308,7 +308,16 @@ export async function verifyAndroidMetroRun({
         verifyLaunched({
           signal: operation?.signal,
           ...(deviceStreamId
-            ? { sleep: deviceLogReadinessWait(root, 'android', slot ?? 'default', deviceStreamId, operation) }
+            ? {
+                sleep: deviceLogReadinessWait(
+                  root,
+                  'android',
+                  slot ?? 'default',
+                  deviceStreamId,
+                  launchedAt,
+                  operation,
+                ),
+              }
             : {}),
           timeoutMs,
           requireBundleResponse: true,
@@ -323,6 +332,7 @@ export async function verifyAndroidMetroRun({
           mode: workspaceDevServerMode(root, isExpo),
           readNativeCrashes,
           readDeviceRecords: hostedLogs?.readDeviceRecords,
+          ...(hostedLogs || remoteDevice ? {} : { deviceStreamId }),
           deviceLogsThrough: hostedLogs?.deviceLogsThrough,
           processAlive: hostedLogs
             ? hostedLogs.processAlive

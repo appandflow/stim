@@ -273,6 +273,7 @@ interface VerifyArgs {
   metroPort?: string | number | null;
   platform?: string | null;
   timeoutMs?: number;
+  deviceStreamId?: string | null;
 }
 
 interface Calls {
@@ -624,7 +625,7 @@ test.each([false, true])('the Android API preserves retained Metro cleanup after
   );
   try {
     await expect(
-      createStim({ projectRoot: root }).run({ platform: 'android', signal: controller.signal }),
+      createStim({ projectRoot: root, admission: 'none' }).run({ platform: 'android', signal: controller.signal }),
     ).rejects.toMatchObject({
       code: 'STIM_CLAIM_UNAVAILABLE',
       remedy: 'Recover Metro.',
@@ -1169,6 +1170,7 @@ describe('explicit remote backend behavior', () => {
     writeWorkspaceState(root, { collectors: { android: { pid: PREVIOUS_COLLECTOR_PID, startedAt: 'then' } } });
     const { h } = remoteHarness('eas', {
       verifyCollector: () => ({ status: 'ours' as const }),
+      pidAlive: () => false,
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
         checkCapacity: async () => null,
@@ -3697,11 +3699,20 @@ describe('Contract 5: the device-log collector', () => {
     expect(h.calls.kill).toEqual([]);
   });
 
+  test('readiness identifies the current device stream', async () => {
+    const h = harness();
+    await h.run();
+    const verify = h.calls.verify[0];
+    expect(verify?.deviceStreamId).toBe('stream-1');
+  });
+
   test('a device log stream that cannot start does not fail the run', async () => {
     const h = harness({ startLogStream: async () => ({ error: 'EAGAIN' }) });
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(labelled(h.stderr, 'logs')[0]).toMatch(/EAGAIN/);
+    const verify = h.calls.verify[0];
+    expect(verify?.deviceStreamId).toBeNull();
   });
 });
 

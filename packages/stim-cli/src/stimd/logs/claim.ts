@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { deviceSlotFileKey } from '../../devices/device-slots.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
@@ -14,6 +15,8 @@ import { signalProcessTree } from '../../metro.ts';
 
 const claimPath = (root: string, platform: string, slot: string) =>
   join(workspaceDir(root), 'log-streams', `${deviceSlotFileKey(platform, slot)}.claim`);
+const historyPath = (root: string, streamId: string) =>
+  join(workspaceDir(root), 'log-backfills', `${createHash('sha256').update(streamId).digest('hex')}.claim`);
 
 async function recover(path: string, expected?: string): Promise<void> {
   const survey = readClaimSet(path);
@@ -53,7 +56,38 @@ async function recover(path: string, expected?: string): Promise<void> {
   }
 }
 
+export async function clearHistoryClaim(root: string, streamId: string): Promise<void> {
+  const path = historyPath(root, streamId);
+  const survey = readClaimSet(path);
+  for (const holder of survey.live) {
+    if (holder.details.streamId !== streamId || holder.owner.pid !== process.pid || !holder.child) continue;
+    if (inspectProcessIdentity(holder.owner) !== 'same') continue;
+    const identity = inspectProcessIdentity(holder.child);
+    if (identity === 'same' || identity === 'unknown') continue;
+    if (process.platform !== 'win32' && processGroupAlive(holder.child.pid)) continue;
+    if (!releaseClaim({ ...holder, root: path, label: 'device log backfill' }))
+      throw new Error(`The device log claim at ${path} changed while it was being recovered.`);
+  }
+  const remaining = readClaimSet(path);
+  if (remaining.live.length || remaining.dead.length || remaining.unresolved.length) await recover(path, streamId);
+}
+
+export async function takeHistoryClaim(root: string, streamId: string): Promise<ClaimHandle> {
+  const path = historyPath(root, streamId);
+  await clearHistoryClaim(root, streamId);
+  const attempt = tryAcquireClaim({
+    root: path,
+    mode: 'exclusive',
+    label: 'device log backfill',
+    details: { streamId },
+  });
+  if (attempt.pending) releaseClaim(attempt.pending);
+  if (!attempt.acquired) throw new Error(`Another device log backfill holds ${path}.`);
+  return attempt.acquired;
+}
+
 export async function clearStreamClaim(root: string, platform: string, slot: string, streamId: string): Promise<void> {
+  await clearHistoryClaim(root, streamId);
   await recover(claimPath(root, platform, slot), streamId);
 }
 

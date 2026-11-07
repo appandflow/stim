@@ -290,7 +290,7 @@ export async function verifyIosMetroRun({
         d.verifyLaunch({
           signal: operation?.signal,
           ...(deviceStreamId
-            ? { sleep: deviceLogReadinessWait(root, 'ios', slot ?? 'default', deviceStreamId, operation) }
+            ? { sleep: deviceLogReadinessWait(root, 'ios', slot ?? 'default', deviceStreamId, launchedAt, operation) }
             : {}),
           requireBundleResponse: true,
           slot: launchSlotScope(root, slot),
@@ -305,6 +305,7 @@ export async function verifyIosMetroRun({
           mode: workspaceDevServerMode(root, isExpo),
           readNativeCrashes,
           readDeviceRecords: hostedLogs?.readDeviceRecords,
+          ...(hostedLogs || remoteDevice ? {} : { deviceStreamId }),
           deviceLogsThrough: hostedLogs?.deviceLogsThrough,
           processAlive: hostedLogs
             ? hostedLogs.processAlive
@@ -1081,7 +1082,7 @@ export async function finishIosRun({
           bundleId: bundleId!,
           appName: appName ?? bundleId!,
           collectorStreamId: collector.streamId,
-          sleep: deviceLogReadinessWait(root, 'ios', slot ?? 'default', collector.streamId, operation),
+          sleep: deviceLogReadinessWait(root, 'ios', slot ?? 'default', collector.streamId, launchedAt, operation),
           wireless: overWifi,
           readRecords: () =>
             readCollectorRecords(logsDir).filter(

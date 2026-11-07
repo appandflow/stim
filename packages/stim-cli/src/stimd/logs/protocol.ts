@@ -79,6 +79,8 @@ export function handleLogRequest({
       typeof fields.platform !== 'string' ||
       typeof fields.slot !== 'string' ||
       typeof fields.streamId !== 'string' ||
+      !Number.isSafeInteger(fields.since) ||
+      Number(fields.since) < 0 ||
       !Number.isSafeInteger(fields.after) ||
       Number(fields.after) < 0 ||
       !Number.isSafeInteger(fields.timeoutMs) ||
@@ -89,15 +91,24 @@ export function handleLogRequest({
       return true;
     }
     const { root, platform, slot, streamId } = fields;
+    const signal = owner ? controllers.get(owner)?.signal : undefined;
+    if (!signal) {
+      respond({ op: 'error', code: 'readiness.wait', message: 'the operation is no longer admitted' });
+      return true;
+    }
     void traceInvocation(context, 'stimd.readiness.wait', () =>
-      streams.wait(
-        root,
-        platform,
-        slot,
-        streamId,
-        Number(fields.after),
-        Number(fields.timeoutMs),
-        owner ? controllers.get(owner)?.signal : undefined,
+      withInvocation(context, signal, () =>
+        streams.wait(
+          root,
+          platform,
+          slot,
+          streamId,
+          Number(fields.since),
+          Number(fields.after),
+          Number(fields.timeoutMs),
+          signal,
+          context.forwarded.env,
+        ),
       ),
     ).then(
       (result) => respond({ op: 'readiness.changed', ...result }),

@@ -129,6 +129,11 @@ function logcatArgs(serial: string, pid: number | string): string[] {
   return ['-s', serial, 'logcat', '--pid', String(pid), '-v', 'time,epoch'];
 }
 
+export function logcatBackfillArgs(serial: string, pid: number, since: number, clockOffsetMs: number | null): string[] {
+  const deviceTime = Math.max(0, since - (clockOffsetMs ?? 0));
+  return ['-s', serial, 'logcat', '-d', '-T', (deviceTime / 1000).toFixed(3), '--pid', String(pid), '-v', 'time,epoch'];
+}
+
 function killOnAbort(signal?: AbortSignal): Pick<ExecOptions, 'onSpawn'> {
   if (!signal) return {};
   return {

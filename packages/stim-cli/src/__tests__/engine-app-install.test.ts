@@ -624,6 +624,15 @@ describe('verifyLaunch: the stability window ends on evidence that the app JavaS
     });
   };
 
+  test('device evidence belongs to the current stream, or none when startup failed', async () => {
+    const old = { ...device('android', 4000, 'Running "old"'), proc: 'ReactNativeJS(1)', streamId: 'old' };
+    const current = { ...device('android', 4500, 'Running "current"'), proc: 'ReactNativeJS(1)', streamId: 'current' };
+    const records = { device: [old, current] };
+    expect((await run('android', records, { deviceStreamId: 'current' })).jsRunning).toBe(true);
+    expect((await run('android', { device: [old] }, { deviceStreamId: 'current' })).jsRunning).not.toBe(true);
+    expect((await run('android', records, { deviceStreamId: null })).jsRunning).not.toBe(true);
+  });
+
   test('Android: a Running line from before the JavaScript bundle began loading is not evidence', async () => {
     const result = await run('android', {
       device: [

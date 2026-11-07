@@ -1101,7 +1101,8 @@ THE ONE CASE GC WILL NOT REAP
   streams only when it is the process that starts the app, so the collector
   runs \`devicectl device process launch --console\` itself rather than
   attaching after the fact. Each physical iPhone launch starts its own console,
-  and \`stop\` ends it.
+  and \`stop\` ends it. Unlike simulator and Android streams, this console has
+  no historical launch-log backfill.
 
   THE APP'S LIFETIME IS BOUND TO THAT COLLECTOR, and this is the one place a
   phone behaves worse than a simulator. \`devicectl device process launch

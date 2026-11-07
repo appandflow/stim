@@ -58,6 +58,17 @@ describe.skipIf(process.platform === 'win32')('native device logs without automa
       let end: (() => unknown) | undefined;
       let streamId: string | undefined;
       try {
+        const build = await runOperation({
+          caller: 'api',
+          operation: 'build',
+          platform,
+          admission: 'command',
+          cwd: root,
+          env,
+        });
+        if ('refusal' in build) throw new Error(build.refusal.message);
+        expect(build.opToken).toBeUndefined();
+        expect(readClaimSet(stimdClaimRoot()).live).toEqual([]);
         const admitted = await runOperation({
           caller: 'api',
           operation: 'run',
@@ -106,4 +117,73 @@ describe.skipIf(process.platform === 'win32')('native device logs without automa
     },
     45_000,
   );
+});
+
+describe.skipIf(process.platform === 'win32')('physical iOS on an attached daemon', () => {
+  test('refuses the console before spawning devicectl', async () => {
+    const { spawn } = await import('node:child_process');
+    const { once } = await import('node:events');
+    const { spawnEntry } = await import('../spawn-entry.ts');
+    const { checkPhysicalIosLog } = await import('../daemon/client.ts');
+    const home = mkdtempSync(join(tmpdir(), 'stim-attached-ios-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-attached-ios-app-')));
+    const bin = join(home, 'bin');
+    const invoked = join(home, 'invoked');
+    mkdirSync(bin);
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'fixture', dependencies: { 'react-native': '0.0.0' } }),
+    );
+    const xcrun = join(bin, 'xcrun');
+    writeFileSync(xcrun, `#!/bin/sh\ntouch "${invoked}"\nexit 0\n`);
+    chmodSync(xcrun, 0o755);
+    vi.stubEnv('STIM_HOME', home);
+    const env = {
+      ...process.env,
+      STIM_HOME: home,
+      STIM_ENGINE_ROOT: join(home, 'engine'),
+      STIM_DAEMON: 'on',
+      PATH: [bin, process.env.PATH].join(delimiter),
+    };
+    const daemon = spawn(process.execPath, [spawnEntry('cli'), '__stimd', '--attached', '--no-handover'], {
+      env,
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    const exited = once(daemon, 'exit');
+    let end: (() => unknown) | undefined;
+    try {
+      await vi.waitFor(() => expect(existsSync(join(home, 'run', 'stimd.json'))).toBe(true), { timeout: 15_000 });
+      const admitted = await runOperation({
+        caller: 'api',
+        operation: 'run',
+        platform: 'ios',
+        admission: 'command',
+        cwd: root,
+        env,
+      });
+      if ('refusal' in admitted) throw new Error(admitted.refusal.message);
+      end = admitted.end;
+      const context = testContext({ home, projectRoot: root, cwd: root, env });
+      operationState(context).stimdOpToken = admitted.opToken;
+      expect(await checkPhysicalIosLog(context)).toMatchObject({
+        error: expect.stringContaining('attached stimd'),
+        remedy: expect.stringContaining('stim serve'),
+      });
+      expect(
+        await startDeviceLogStream(
+          { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test', physical: true },
+          context,
+        ),
+      ).toMatchObject({ error: expect.stringContaining('attached stimd') });
+      expect(existsSync(invoked)).toBe(false);
+    } finally {
+      await end?.();
+      daemon.stdin.end();
+      if (daemon.exitCode === null) daemon.kill('SIGTERM');
+      await exited;
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
