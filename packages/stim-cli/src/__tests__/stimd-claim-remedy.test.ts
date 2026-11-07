@@ -1,11 +1,14 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { clearStreamClaim } from '../stimd/logs/claim.ts';
 import { registerCollector, unregisterStreamAll } from '../stimd/logs/state.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { workspaceDir } from '../workspace/paths.ts';
+import { readClaimSet } from '../ownership-claim.ts';
 
 test.skipIf(process.platform === 'win32')(
   'removing the inspected pending child marker enables normal stream recovery',
@@ -27,6 +30,23 @@ markClaimChildPending(claim);`;
     try {
       expect((await once(child, 'exit'))[0]).toBe(0);
       registerCollector(root, 'ios', { kind: 'stream', streamId: 'stream', startedAt: new Date().toISOString() });
+      const claimRoot = join(
+        workspaceDir(root),
+        'log-streams',
+        `stream-${createHash('sha256').update('stream').digest('hex')}.claim`,
+      );
+      const pending = readClaimSet(claimRoot).unresolved[0];
+      expect(pending?.pendingChild).toBe(true);
+      if (!pending) throw new Error('missing pending holder');
+      const marker = `${pending.path.slice(0, -'.claim'.length)}.child`;
+      for (const malformed of ['{}', '{"record":{"pid":"invalid"}}']) {
+        writeFileSync(marker, malformed);
+        expect(readClaimSet(claimRoot).unresolved[0]?.pendingChild).toBeUndefined();
+        await expect(clearStreamClaim(root, 'stream', () => unregisterStreamAll(root, 'stream'))).rejects.not.toThrow(
+          /rm -/,
+        );
+      }
+      writeFileSync(marker, '{"record":null}');
       let message = '';
       try {
         await clearStreamClaim(root, 'stream', () => unregisterStreamAll(root, 'stream'));

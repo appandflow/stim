@@ -65,7 +65,8 @@ export async function ownedDeviceUsage(
     if (!owned.length) return [];
     try {
       return await read();
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && 'reportCleanup' in error) throw error;
       failure(label);
       return null;
     }

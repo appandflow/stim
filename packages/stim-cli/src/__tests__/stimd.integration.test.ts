@@ -25,6 +25,7 @@ import { markClaimChildPending, readClaimSet, releaseClaim, tryAcquireClaim } fr
 import * as engineSwitch from '../daemon/engine-switch.ts';
 import * as engineFollow from '../stimd/engine-follow.ts';
 import * as stimdThreads from '../stimd/threads.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { allDrained, buildClaimRoot, keptEntries, readBuildClaims } from '../engine-store/claims.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { takeWaitTicket } from '../engine/wait-queue.ts';
@@ -427,11 +428,11 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       mkdirSync(root, { recursive: true });
       writeFileSync(join(root, 'current.json'), JSON.stringify({ format: 1, dir: build, version: '1' }));
       const engine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root, build });
-      const failure = Object.assign(new Error('fixture background cleanup unverified'), {
-        code: 'STIM_CLAIM_UNAVAILABLE',
-        remedy: 'Inspect fixture child.',
-        reportCleanup: true,
-      });
+      const failure = new WorkspaceProcessCleanupError(
+        [],
+        'fixture background cleanup unverified',
+        'Inspect fixture child.',
+      );
       const threads = vi.spyOn(stimdThreads, 'createThreadTable').mockReturnValue({
         run: async (name) => {
           if (worker === 'measure' && name === 'measure') throw failure;

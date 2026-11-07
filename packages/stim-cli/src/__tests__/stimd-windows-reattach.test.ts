@@ -37,7 +37,7 @@ vi.mock('../stimd/logs/collector.ts', () => ({
   runCollector: async (options: RunCollectorOptions) => {
     state.options = options;
     const child = options.startStream({ platform: 'android', serial: 'emulator-1', pid: 100 });
-    return { child, writer: options.writer, finish: () => {}, startedAt: '', pid: 100 };
+    return { child, writer: options.writer, finish: () => {}, settled: async () => {}, startedAt: '', pid: 100 };
   },
 }));
 

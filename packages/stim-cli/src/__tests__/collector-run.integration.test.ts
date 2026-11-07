@@ -199,13 +199,165 @@ describe('runCollector reattach seams', () => {
     await until(() => pendingClocks.length === 1, { label: 'the reattach clock read' });
     assert(reportPid);
     void reportPid(4300);
+    const firstClock = pendingClocks[0];
+    assert(firstClock);
+    firstClock();
     await until(() => pendingClocks.length === 2, { label: 'the second clock read' });
-    for (const release of pendingClocks) release();
+    const secondClock = pendingClocks[1];
+    assert(secondClock);
+    secondClock();
     await until(() => started.length === 2, { label: 'the reattached stream' });
     await new Promise((r) => setTimeout(r, 50));
     expect(started.map((c) => c.pid)).toEqual([3132, 4300]);
     assert(result);
     result.finish(0, 'info', 'done', 'collector_stopped');
+  });
+
+  test('overlapping exit and watcher reports attach only one replacement', async () => {
+    const started: ChildProcess[] = [];
+    let reportPid: ((pid: number) => void | Promise<void>) | undefined;
+    let releaseStop = () => {};
+    let stopStarted = false;
+    const stopped = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const result = await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: () => 0,
+      watchPid: ({ onChange }) => {
+        reportPid = onChange;
+        return { stop: () => {}, probe: async () => 4200, pid: 3132 };
+      },
+      startStream: ({ pid }) => {
+        const child = fakeChild(pid);
+        started.push(child);
+        return child;
+      },
+      stopStream: async () => {
+        stopStarted = true;
+        await stopped;
+      },
+      onExit: () => {},
+    });
+    const initial = started[0];
+    assert(initial);
+    initial.emit('close', 0, null);
+    await until(() => stopStarted, { label: 'reattach stop' });
+    assert(reportPid);
+    const duplicate = reportPid(4200);
+    releaseStop();
+    await duplicate;
+    expect(started.map((child) => child.pid)).toEqual([3132, 4200]);
+    assert(result);
+    result.finish(0, 'info', 'done', 'collector_stopped');
+  });
+
+  test('stopping during reattachment prevents a replacement child', async () => {
+    const started: ChildProcess[] = [];
+    const controller = new AbortController();
+    let reportPid: ((pid: number) => void | Promise<void>) | undefined;
+    let releaseStop = () => {};
+    let stopStarted = false;
+    const stopped = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      signal: controller.signal,
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: () => 0,
+      watchPid: ({ onChange }) => {
+        reportPid = onChange;
+        return { stop: () => {}, probe: async () => null, pid: 3132 };
+      },
+      startStream: ({ pid }) => {
+        const child = fakeChild(pid);
+        started.push(child);
+        return child;
+      },
+      stopStream: async () => {
+        stopStarted = true;
+        await stopped;
+      },
+      onExit: () => {},
+    });
+    assert(reportPid);
+    const transition = reportPid(4200);
+    await until(() => stopStarted, { label: 'reattach stop' });
+    controller.abort();
+    releaseStop();
+    await transition;
+    expect(started.map((child) => child.pid)).toEqual([3132]);
+  });
+
+  test('stopping joins an in-flight reattachment clock read', async () => {
+    const controller = new AbortController();
+    let reportPid: ((pid: number) => void | Promise<void>) | undefined;
+    let releaseClock = () => {};
+    let clockStarted = false;
+    let reads = 0;
+    const clock = new Promise<number>((resolve) => {
+      releaseClock = () => resolve(0);
+    });
+    const result = await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      signal: controller.signal,
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: () => (++reads === 1 ? 0 : ((clockStarted = true), clock)),
+      watchPid: ({ onChange }) => {
+        reportPid = onChange;
+        return { stop: () => {}, probe: async () => null, pid: 3132 };
+      },
+      startStream: ({ pid }) => fakeChild(pid),
+      stopStream: async () => {},
+      onExit: () => {},
+    });
+    assert(reportPid);
+    assert(result);
+    void reportPid(4200);
+    await until(() => clockStarted, { label: 'reattach clock' });
+    controller.abort();
+    let settled = false;
+    const joined = result.settled().then(() => {
+      settled = true;
+      return undefined;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    releaseClock();
+    await joined;
+    expect(settled).toBe(true);
+  });
+
+  test('a late child close after finish does not start another PID query', async () => {
+    const probe = vi.fn<() => Promise<number | null>>().mockResolvedValue(null);
+    const child = fakeChild(3132);
+    const result = await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: () => 0,
+      watchPid: () => ({ stop: () => {}, probe, pid: 3132 }),
+      startStream: () => child,
+      onExit: () => {},
+    });
+    assert(result);
+    result.finish(0, 'info', 'done', 'collector_stopped');
+    child.emit('close', 0, null);
+    await result.settled();
+    expect(probe).not.toHaveBeenCalled();
   });
 
   test('finish aborts the adb reads the collector still has in flight', async () => {

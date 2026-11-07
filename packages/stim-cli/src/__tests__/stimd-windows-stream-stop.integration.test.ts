@@ -20,9 +20,10 @@ import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { getExecutor } from '../exec.ts';
 import { createStreams } from '../stimd/logs/streams.ts';
 
-const identity = vi.hoisted<{ windows: boolean; live: boolean; workers: Worker[] }>(() => ({
+const identity = vi.hoisted<{ windows: boolean; live: boolean; unknown: boolean; workers: Worker[] }>(() => ({
   windows: false,
   live: true,
+  unknown: false,
   workers: [],
 }));
 vi.mock('node:worker_threads', async (load) => {
@@ -41,7 +42,13 @@ vi.mock('../process-identity.ts', async (load) => {
     ...actual,
     captureProcessToken: (pid: number) => (identity.windows ? 'windows-token' : actual.captureProcessToken(pid)),
     inspectProcessIdentity: (...args: Parameters<typeof actual.inspectProcessIdentity>) =>
-      identity.windows ? (identity.live ? 'same' : 'gone') : actual.inspectProcessIdentity(...args),
+      identity.windows
+        ? identity.unknown
+          ? 'unknown'
+          : identity.live
+            ? 'same'
+            : 'gone'
+        : actual.inspectProcessIdentity(...args),
   };
 });
 
@@ -142,7 +149,6 @@ test.skipIf(process.platform === 'win32')(
       pid = Number(readFileSync(pidFile, 'utf8').trim());
       const run = vi.spyOn(getExecutor(), 'runFileAsync').mockImplementation(async () => {
         await held;
-        identity.live = false;
         throw new Error('tree stop failed');
       });
       identity.windows = true;
@@ -153,12 +159,13 @@ test.skipIf(process.platform === 'win32')(
       await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());
       expect(() => realProcess.kill(pid, 0)).not.toThrow();
       release();
-      await vi.waitFor(() =>
-        expect(messages.some((message) => message.includes('could not be verified stopped'))).toBe(true),
-      );
-      expect(readWorkspaceState(root)?.collectors?.ios).toBeDefined();
-      await vi.waitFor(() => expect(() => realProcess.kill(pid, 0)).toThrow(/ESRCH/));
+      const attempt = run.mock.results[0]?.value;
+      if (!attempt) throw new Error('taskkill was not attempted');
+      await expect(attempt).rejects.toThrow('tree stop failed');
+      expect(() => realProcess.kill(pid, 0)).not.toThrow();
+      expect(messages.some((message) => message.includes('logs worker failed'))).toBe(true);
       vi.unstubAllGlobals();
+      expect(readWorkspaceState(root)?.collectors?.ios).toBeDefined();
       identity.windows = false;
       const claimRoot = join(
         workspaceDir(root),
@@ -214,7 +221,7 @@ test.skipIf(process.platform === 'win32')('a pending claim write failure does no
     });
     identity.windows = true;
     vi.stubGlobal('process', Object.create(realProcess, { platform: { value: 'win32' } }));
-    await expect(streams.stop(root, 'ios', 'default', streamId)).rejects.toThrow('could not be marked pending');
+    await expect(streams.stop(root, 'ios', 'default', streamId)).rejects.toThrow('write failed');
     expect(() => realProcess.kill(pid, 0)).not.toThrow();
   } finally {
     vi.unstubAllGlobals();
@@ -352,3 +359,101 @@ test.skipIf(process.platform === 'win32')(
   },
   10000,
 );
+
+test.skipIf(process.platform === 'win32')(
+  'a failed Windows tree stop keeps the launcher alive for a successful retry',
+  async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    vi.stubEnv('STIM_HOME', home);
+    const pidFile = join(home, 'pid');
+    const xcrun = join(bin, 'xcrun');
+    writeFileSync(xcrun, '#!/bin/sh\necho $$ > "$TEST_PID"\nexec sleep 600\n');
+    chmodSync(xcrun, 0o755);
+    const env = { ...process.env, TEST_PID: pidFile, PATH: [bin, process.env.PATH].join(delimiter) };
+    const streams = createStreams(() => {});
+    const realProcess = process;
+    let pid = 0;
+    let attempts = 0;
+    try {
+      const { streamId } = await streams.start(
+        { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
+        env,
+      );
+      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
+      pid = Number(readFileSync(pidFile, 'utf8').trim());
+      vi.spyOn(getExecutor(), 'runFileAsync').mockImplementation(async () => {
+        if (++attempts === 1) throw new Error('taskkill failed');
+        identity.live = false;
+        vi.unstubAllGlobals();
+        realProcess.kill(pid, 'SIGTERM');
+        return '';
+      });
+      identity.windows = true;
+      vi.stubGlobal('process', Object.create(realProcess, { platform: { value: 'win32' } }));
+      await expect(streams.stop(root, 'ios', 'default', streamId)).rejects.toThrow('could not be stopped');
+      expect(() => realProcess.kill(pid, 0)).not.toThrow();
+      expect(await streams.stop(root, 'ios', 'default', streamId)).toBe(true);
+      expect(attempts).toBe(2);
+    } finally {
+      vi.unstubAllGlobals();
+      identity.windows = false;
+      identity.live = true;
+      vi.restoreAllMocks();
+      await streams.close().catch(() => {});
+      if (pid) {
+        try {
+          realProcess.kill(pid, 'SIGKILL');
+        } catch {}
+      }
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')('unknown Windows identity leaves the launcher alive', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
+  const bin = join(home, 'bin');
+  mkdirSync(bin);
+  vi.stubEnv('STIM_HOME', home);
+  const pidFile = join(home, 'pid');
+  const xcrun = join(bin, 'xcrun');
+  writeFileSync(xcrun, '#!/bin/sh\necho $$ > "$TEST_PID"\nexec sleep 600\n');
+  chmodSync(xcrun, 0o755);
+  const env = { ...process.env, TEST_PID: pidFile, PATH: [bin, process.env.PATH].join(delimiter) };
+  const streams = createStreams(() => {});
+  const realProcess = process;
+  let pid = 0;
+  try {
+    const { streamId } = await streams.start(
+      { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
+      env,
+    );
+    await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
+    pid = Number(readFileSync(pidFile, 'utf8').trim());
+    identity.windows = true;
+    identity.unknown = true;
+    vi.stubGlobal('process', Object.create(realProcess, { platform: { value: 'win32' } }));
+    await expect(streams.stop(root, 'ios', 'default', streamId)).rejects.toThrow('could not be stopped');
+    expect(() => realProcess.kill(pid, 0)).not.toThrow();
+  } finally {
+    vi.unstubAllGlobals();
+    identity.windows = false;
+    identity.unknown = false;
+    vi.restoreAllMocks();
+    await streams.close().catch(() => {});
+    if (pid) {
+      try {
+        realProcess.kill(pid, 'SIGKILL');
+      } catch {}
+    }
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});

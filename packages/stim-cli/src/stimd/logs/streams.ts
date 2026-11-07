@@ -16,7 +16,7 @@ import {
   type ClaimHandle,
 } from '../../ownership-claim.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
-import { adbCommand, startAndroidLogcat } from './android.ts';
+import { adbCommand, isLogCleanupError, startAndroidLogcat } from './android.ts';
 import { androidToolCwd } from '../../devices/android.ts';
 import { clearHistoryClaim, clearStreamClaim, pendingChildRemoveCommand, takeStreamClaim } from './claim.ts';
 import { backfillDeviceLog } from './backfill.ts';
@@ -120,6 +120,7 @@ type Stream = {
   spawnedPid: number | null;
   identity: { pid: number; processToken: string } | null;
   signalling: Promise<void> | null;
+  stopping: boolean;
   treePending: boolean;
   lastStop: { pid: number | null; identity: string; signalled?: boolean; error?: string } | null;
   pending: boolean;
@@ -137,6 +138,7 @@ type Stream = {
   done: Promise<void>;
   finalized: boolean;
   cleanupError: string | null;
+  probeFailure: Error | null;
   cleanup: () => Promise<void>;
   finish: () => void;
 };
@@ -356,19 +358,27 @@ export function createStreams(log: (message: string) => void): StreamTable {
   };
   const abortAfterSignal = async (stream: Stream): Promise<void> => {
     await signalChild(stream);
-    if (process.platform !== 'win32' || stream.lastStop?.signalled !== false || stream.treePending)
+    if (
+      process.platform !== 'win32' ||
+      (!stream.child && stream.spawnedPid === null && !stream.pending) ||
+      stream.lastStop?.signalled === true
+    )
       stream.controller.abort();
   };
   const stop = async (stream: Stream): Promise<void> => {
+    stream.stopping = true;
     const retry = stream.finalized;
     await abortAfterSignal(stream);
-    if (process.platform === 'win32' && stream.lastStop?.signalled === false && !stream.treePending)
-      throw new Error(
-        `the device log claim at ${stream.claim.root} could not be marked pending (stop=${JSON.stringify(stream.lastStop)})`,
-      );
+    if (
+      process.platform === 'win32' &&
+      (stream.child || stream.spawnedPid !== null || stream.pending) &&
+      stream.lastStop?.signalled !== true
+    )
+      throw new Error(`the device log tree could not be stopped (stop=${JSON.stringify(stream.lastStop)})`);
     await stream.started.catch(() => null);
     await stream.done;
     if (retry && [...streams.values()].includes(stream)) await stream.cleanup();
+    if (stream.probeFailure) throw stream.probeFailure;
     if ([...streams.values()].includes(stream))
       throw new Error(
         `the device log stream could not be stopped${stream.cleanupError ? `: ${stream.cleanupError}` : ''}`,
@@ -678,6 +688,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
           spawnedPid: null,
           identity: null,
           signalling: null,
+          stopping: false,
           treePending: false,
           lastStop: null,
           pending: false,
@@ -695,6 +706,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
           done,
           finalized: false,
           cleanupError: null,
+          probeFailure: null,
           cleanup: async () => {},
           finish,
         };
@@ -713,8 +725,23 @@ export function createStreams(log: (message: string) => void): StreamTable {
         streams.set(key, stream);
         stream.cleanup = async () => {
           await stream.signalling;
-          if (process.platform !== 'win32' || stream.lastStop?.signalled !== false || stream.treePending)
+          if (
+            process.platform !== 'win32' ||
+            (!stream.child && stream.spawnedPid === null && !stream.pending) ||
+            stream.lastStop?.signalled === true
+          )
             stream.controller.abort();
+          try {
+            const started = await stream.started;
+            await started?.settled();
+            if (stream.probeFailure) throw stream.probeFailure;
+          } catch (error) {
+            if (isLogCleanupError(error)) {
+              markClaimChildPending(stream.claim);
+              stream.probeFailure = error;
+              throw error;
+            }
+          }
           await Promise.allSettled(stream.histories);
           await clearHistoryClaim(root, id);
           await waitChild(stream);
@@ -754,6 +781,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
           recordLine: (line, clockOffsetMs, child) => sink.line(line, clockOffsetMs, generations.get(child)),
           beforeFinish: sink.beforeFinish,
           startStream: (options) => {
+            if (stream.stopping) throw new Error('the device log stream is stopping');
             stream.generation++;
             stream.activePid = options.pid ?? null;
             stream.observedAt = null;
@@ -793,10 +821,14 @@ export function createStreams(log: (message: string) => void): StreamTable {
             await signalChild(stream);
             await waitChild(stream);
           },
+          onCleanupFailure: (error) => {
+            stream.probeFailure = error;
+          },
           onExit: finalize,
         });
         void stream.started.catch((error: unknown) => {
           log(`device log stream ${id} failed: ${String(error)}`);
+          if (isLogCleanupError(error)) stream.probeFailure = error;
           void (async () => {
             await abortAfterSignal(stream);
             if (!finishing) {

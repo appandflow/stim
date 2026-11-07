@@ -7,7 +7,7 @@ import { levelForEvent, logStreamArgs, parseLogStreamLine } from '../stimd/logs/
 import { androidClockOffset, waitForAppPid, watchAppPid, parseLogcatLine } from '../stimd/logs/android.ts';
 import { deviceConsoleArgs, parseDeviceConsoleLine, CONSOLE_ENV } from '../stimd/logs/ios-device.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
-import { makeChildProcess, makeExecutor } from './_factories.ts';
+import { makeExecutor } from './_factories.ts';
 
 function isNotNull<T>(value: T | null): value is T {
   return value !== null;
@@ -178,26 +178,34 @@ describe('android: logcat -v time', () => {
     ]);
   });
 
-  test('an adb read still in flight when the collector stops is killed instead of orphaned', async () => {
-    const killed: Array<NodeJS.Signals | number | undefined> = [];
-    const child = makeChildProcess({
-      kill: (signal?: NodeJS.Signals | number) => {
-        killed.push(signal);
-        return true;
-      },
-    });
+  test('adb reads pass cancellation to the executor cleanup boundary', async () => {
+    const signals: Array<AbortSignal | undefined> = [];
     const exec = makeExecutor({
-      runFileAsync: (_file, _args, options) => {
-        options.onSpawn?.(child);
-        return new Promise<string>(() => {});
+      runFileAsync: async (_file, _args, options) => {
+        signals.push(options.signal);
+        return '';
       },
     });
     const stopping = new AbortController();
-    void androidClockOffset('serial', { exec, signal: stopping.signal });
-    void waitForAppPid({ serial: 'serial', packageName: 'com.x', exec, signal: stopping.signal });
-    expect(killed).toEqual([]);
+    await androidClockOffset('serial', { exec, signal: stopping.signal });
+    await waitForAppPid({ serial: 'serial', packageName: 'com.x', exec, signal: stopping.signal, timeoutMs: 0 });
+    expect(signals).toEqual([stopping.signal, stopping.signal]);
     stopping.abort();
-    expect(killed).toEqual(['SIGKILL', 'SIGKILL']);
+    expect(signals.every((signal) => signal?.aborted)).toBe(true);
+  });
+
+  test('unverified adb cleanup errors are not converted to missing PID or clock', async () => {
+    const failure = Object.assign(new Error('query cleanup unknown'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+    });
+    const exec = makeExecutor({
+      runFileAsync: async () => {
+        throw failure;
+      },
+    });
+    await expect(androidClockOffset('serial', { exec })).rejects.toBe(failure);
+    await expect(waitForAppPid({ serial: 'serial', packageName: 'com.x', exec })).rejects.toBe(failure);
   });
 
   test('epoch logcat keeps device time and shifts timestamps without reviving buffered records', () => {
