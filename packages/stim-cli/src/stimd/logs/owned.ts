@@ -81,10 +81,10 @@ export function createOwnedStreams(log: Log): OwnedStreams {
     if (!dir || !record?.app) return;
     const identity = inspectProcessIdentity(record.app);
     if (identity === 'unknown') return;
-    if (identity !== 'same' && (record.supervisor?.pid !== record.app.pid || drained(dir, record.app))) return;
     // compat C27 until removal-minor
-    if (legacy(record.supervisor, record.app.pid)) return;
+    if (record.supervisor?.pid !== record.app.pid) return;
     // compat end
+    if (identity !== 'same' && drained(dir, record.app)) return;
     const key = `macos:${dir}`;
     if (current(key, record.app.processToken) || ended.get(key) === record.app.processToken) return;
     keep(key, tailMacosApp(dir, record.app, record.product));

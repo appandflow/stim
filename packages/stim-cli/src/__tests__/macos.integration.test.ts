@@ -222,14 +222,16 @@ test.skipIf(process.platform === 'win32')(
             .filter((entry) => entry.src === 'client')
             .map(({ level, msg }) => [level, msg])
         : [];
-    const streams = createOwnedStreams(() => {});
-    try {
-      await streams.sync(root);
-      for (let tries = 0; tries < 40 && client().length < 3; tries++) await new Promise((done) => setTimeout(done, 50));
-      await streams.sync(root);
-      await new Promise((done) => setTimeout(done, 600));
-    } finally {
-      streams.close();
+    for (const stimd of [1, 2]) {
+      const streams = createOwnedStreams(() => {});
+      try {
+        await streams.sync(root);
+        for (let tries = 0; tries < 40 && client().length < 3; tries++)
+          await new Promise((done) => setTimeout(done, 50));
+        await new Promise((done) => setTimeout(done, stimd === 2 ? 600 : 0));
+      } finally {
+        streams.close();
+      }
     }
     expect(client()).toEqual([
       ['info', 'printed before the crash'],
