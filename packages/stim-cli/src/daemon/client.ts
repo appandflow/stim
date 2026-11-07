@@ -408,7 +408,14 @@ export async function ensureStimd(
       else await admit(held, command);
       return true;
     }
-    const launched = launchStimd(env, daemonMode(env), platform);
+    let launched: ReturnType<typeof launchStimd>;
+    try {
+      launched = launchStimd(env, daemonMode(env), platform);
+    } catch (error) {
+      if (!(error instanceof Error) || !('code' in error) || (error.code !== 'EPERM' && error.code !== 'EACCES'))
+        throw error;
+      launched = { settled: Promise.resolve(), exited: () => true };
+    }
     let taken = await claimTaken(launched, ATTACH_AFTER_MS);
     if (!taken && !held && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
       const { hostStimd } = await import('../stimd/attached.ts');

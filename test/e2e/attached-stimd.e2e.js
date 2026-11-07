@@ -415,3 +415,28 @@ test(
     }
   },
 );
+
+test(
+  'a synchronous detached spawn denial falls back to an attached daemon',
+  { skip: process.platform === 'win32', timeout: 30_000 },
+  async () => {
+    useHome('throw-detached-home');
+    const release = join(tmp, 'release-throw-detached');
+    const first = agent(
+      join(PACKAGE, 'dist', 'cli.mjs'),
+      ['revive'],
+      { STIM_E2E_HOLD_UNTIL: release },
+      `${PRELOAD}?throw-detached`,
+    );
+    const host = await until('the attached daemon', () => record());
+    await until('the command to start', () => existsSync(`${release}.reached`));
+    assert.equal(
+      execFileSync('ps', ['-o', 'ppid=', '-p', String(host.pid)], { encoding: 'utf8' }).trim(),
+      String(first.child.pid),
+    );
+    writeFileSync(release, '');
+    assert.equal(await first.closed, 1);
+    assert.match(first.stderr(), /STIM_NO_PROJECT/);
+    assert.equal(alive(host.pid), false);
+  },
+);
