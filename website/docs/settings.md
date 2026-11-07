@@ -1110,7 +1110,8 @@ use a separate `STIM_HOME`. If the sandbox denies stimd's socket itself, the
 command stops with `STIM_SANDBOX_BLOCKED`. On macOS, `stim doctor --fix` adds
 the socket to Claude Code's `sandbox.network.allowUnixSockets`. On Linux, run
 Stim outside the sandbox because Claude Code cannot allow a single socket path.
-An attached stimd refuses offloaded build and probe jobs, hosted device setup,
+An attached stimd refuses offloaded build and probe jobs, new Desktop start,
+run, build and maintenance work, hosted device setup,
 runtime installation, and app transfers and launches. Existing session
 inspection, stop, and control remain available. After the command ends, run
 `stim serve` outside the agent command to accept new work on a persistent
