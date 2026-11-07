@@ -65,7 +65,6 @@ export function windowsShellLaunchArgs({ file, args, cwd }: { file: string; args
     '$start.Arguments = $env:STIM_WINDOWS_LAUNCH_ARGS; ' +
     '$start.WorkingDirectory = $env:STIM_WINDOWS_LAUNCH_CWD; ' +
     '$start.UseShellExecute = $true; ' +
-    '$start.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden; ' +
     '[Console]::Out.Write([System.Diagnostics.Process]::Start($start).Id)';
   return {
     file: 'powershell.exe',

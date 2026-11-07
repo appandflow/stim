@@ -78,7 +78,10 @@ export function createOwnedStreams(log: Log): OwnedStreams {
     return false;
   };
   const macos = (dir: string | null, record: MacosAppRecord | null) => {
-    if (!dir || !record?.app || inspectProcessIdentity(record.app) !== 'same') return;
+    if (!dir || !record?.app) return;
+    const identity = inspectProcessIdentity(record.app);
+    if (identity === 'unknown') return;
+    if (identity !== 'same' && (record.supervisor?.pid !== record.app.pid || drained(dir, record.app))) return;
     // compat C27 until removal-minor
     if (legacy(record.supervisor, record.app.pid)) return;
     // compat end
@@ -153,6 +156,21 @@ export function createOwnedStreams(log: Log): OwnedStreams {
   };
 }
 
+function readMark(dir: string): Record<string, unknown> | null {
+  try {
+    const saved: unknown = JSON.parse(readFileSync(join(dir, TAIL_MARK), 'utf8'));
+    return isJsonObject(saved) ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a tail already copied all of the exited app's output and wrote its exit. */
+function drained(dir: string, app: MacosProcess): boolean {
+  const mark = readMark(dir);
+  return mark?.processToken === app.processToken && mark.exited === true;
+}
+
 function lineSplitter(write: (line: string) => void) {
   const decoder = new StringDecoder('utf8');
   let pending = '';
@@ -178,19 +196,17 @@ function lineSplitter(write: (line: string) => void) {
 /**
  * Follows the stdout and stderr files of a macOS app `spawnOwned` started into `macos.ndjson` in `dir`, as client
  * records at info and warn, from the offsets a previous stimd recorded for the same app, and writes the app's exit
- * once it is gone. The exit code is not known: no parent waits on the app.
+ * once it is gone, including for an app that exited before any tail saw it. The exit code is not known: no parent waits on the app.
  */
 function tailMacosApp(dir: string, app: MacosProcess, product: string): Stream {
   const writer = createNdjsonWriter(join(dir, 'macos.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
   const mark = join(dir, TAIL_MARK);
   const offsets = { out: 0, err: 0 };
-  try {
-    const saved: unknown = JSON.parse(readFileSync(mark, 'utf8'));
-    if (isJsonObject(saved) && saved.processToken === app.processToken) {
-      offsets.out = Number(saved.out) || 0;
-      offsets.err = Number(saved.err) || 0;
-    }
-  } catch {}
+  const saved = readMark(dir);
+  if (saved?.processToken === app.processToken) {
+    offsets.out = Number(saved.out) || 0;
+    offsets.err = Number(saved.err) || 0;
+  }
   const write = (level: string) => (msg: string) => writer.write({ src: 'client', platform: 'macos', level, msg });
   const files = [
     { key: 'out' as const, path: join(dir, MACOS_APP_STDOUT), lines: lineSplitter(write('info')) },
@@ -241,6 +257,9 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string): Stream {
     if (identity !== 'gone' && identity !== 'different') return;
     for (const file of files) file.lines.end();
     writer.write({ src: 'client', platform: 'macos', level: 'info', msg: `Exited ${product}.` });
+    try {
+      writeFileSync(mark, JSON.stringify({ processToken: app.processToken, ...offsets, exited: true }));
+    } catch {}
     stop();
   }, TAIL_MS);
   timer.unref();

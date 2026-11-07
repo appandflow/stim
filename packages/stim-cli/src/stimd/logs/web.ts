@@ -88,7 +88,8 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
     cdp?.close();
     if (chromeGone()) {
       try {
-        removeSingletonFiles(record.profile);
+        if (readWebRecord(root)?.chromeProcess?.processToken === chrome.processToken)
+          removeSingletonFiles(record.profile);
       } catch {}
       log(level, event, msg);
       try {

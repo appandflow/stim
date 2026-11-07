@@ -25,6 +25,7 @@ import {
 import { errorRemedy } from '../engine/build-ledger.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { spawnOwned } from '../engine/spawn-owned.ts';
+import { clearClaimChild } from '../ownership-claim.ts';
 import { observeOwned } from '../daemon/client.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -399,6 +400,7 @@ async function launchHere(
     app = macosProcess(owned.pid);
     if (!updateMacosRecord(root, launcher, { supervisor: app, app }))
       throw new Error('The macOS launch owner changed.');
+    for (const claim of operationState(context).declaring) clearClaimChild(claim);
     const writer = createNdjsonWriter(macosLogFile(root), { maxBytes: LOG_ROTATE_BYTES });
     writer.write({
       src: 'client',

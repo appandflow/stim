@@ -198,6 +198,47 @@ test('an unresolved app-spawn claim blocks cleanup and refuses a successful stop
   }
 });
 
+test.skipIf(process.platform === 'win32')(
+  'stimd copies the output of an app that exited before it was observed, once',
+  async () => {
+    const child = getExecutor().spawn(process.execPath, ['-e', 'setTimeout(() => {}, 200)'], { stdio: 'ignore' });
+    children.push(child);
+    await once(child, 'spawn');
+    if (child.pid === undefined) throw new Error('The app fixture did not start.');
+    const app = macosProcess(child.pid);
+    await once(child, 'exit');
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, 'macos-app.out'), 'printed before the crash\n');
+    writeFileSync(join(logs, 'macos-app.err'), 'fatal: missing library');
+    const log = join(logs, 'macos.ndjson');
+    const client = () =>
+      existsSync(log)
+        ? readFileSync(log, 'utf8')
+            .trim()
+            .split('\n')
+            .map((line): Record<string, unknown> => JSON.parse(line))
+            .filter((entry) => entry.src === 'client')
+            .map(({ level, msg }) => [level, msg])
+        : [];
+    const streams = createOwnedStreams(() => {});
+    try {
+      await streams.sync(root);
+      for (let tries = 0; tries < 40 && client().length < 3; tries++) await new Promise((done) => setTimeout(done, 50));
+      await streams.sync(root);
+      await new Promise((done) => setTimeout(done, 600));
+    } finally {
+      streams.close();
+    }
+    expect(client()).toEqual([
+      ['info', 'printed before the crash'],
+      ['warn', 'fatal: missing library'],
+      ['info', 'Exited Sample.'],
+    ]);
+  },
+);
+
 test('a device-slot stop preserves the recorded macOS app and supervisor', async () => {
   const app = await ownedProcess();
   const supervisor = await ownedProcess();

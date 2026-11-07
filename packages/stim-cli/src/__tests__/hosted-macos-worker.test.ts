@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import {
   assertHostedDeviceLedger,
   HOSTED_MACOS_APP_SLOTS,
+  hostedMacosLogsDir,
   parseHostedMacosDevice,
   parseHostedOfferRequest,
   readMacosRecord,
@@ -207,7 +208,7 @@ test('stamps and signs verified bytes, launches with an isolated home, and delet
       claim: expect.objectContaining({ root: macosRuntimeClaim(runRoot) }),
     }),
   ]);
-  expect(workspaceLogsDir(runRoot).startsWith(home)).toBe(true);
+  expect(hostedMacosLogsDir(home)).toBe(workspaceLogsDir(runRoot));
   expect(readMacosRecord(realpathSync(join(home, 'macos-app')))).toMatchObject({
     bundleId: `${bundleId}.hosted3`,
     arguments: offeredArguments,

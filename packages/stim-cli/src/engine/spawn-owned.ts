@@ -26,7 +26,7 @@ export interface OwnedLaunch {
   truncate?: boolean;
   /** The exclusive claim the process holds for as long as it runs. */
   claim: { root: string; label: string; details?: ClaimDetails };
-  /** The launching operation's claims, which record the process from its spawn until its own claim exists. */
+  /** The launching operation's claims, which record the process from its spawn on; the caller clears them once it has recorded the process. */
   declare?: Iterable<ClaimHandle>;
 }
 
@@ -53,9 +53,14 @@ export function spawnOwned(launch: OwnedLaunch): OwnedProcess {
     throw error;
   }
   const kill = () => {
+    if (pid === undefined) return;
     try {
-      if (pid !== undefined) process.kill(pid, 'SIGKILL');
-    } catch {}
+      process.kill(process.platform === 'win32' ? pid : -pid, 'SIGKILL');
+    } catch {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {}
+    }
   };
   if (pid === undefined) {
     for (const claim of declared) clearClaimChild(claim);
@@ -87,7 +92,6 @@ export function spawnOwned(launch: OwnedLaunch): OwnedProcess {
     releaseClaim(claim);
     throw error;
   }
-  for (const each of declared) clearClaimChild(each);
   return { ...owner, claim };
 }
 

@@ -16,6 +16,7 @@ import type {
 } from '../integrations/web-project.ts';
 import { signalProcessTree } from '../metro.ts';
 import { reserveBrowserPort } from '../named-ports.ts';
+import { clearClaimChild } from '../ownership-claim.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { chromeArgs } from './chrome.ts';
@@ -126,6 +127,7 @@ export async function launchOwnedBrowser(
         } catch {}
         throw error;
       }
+      clearClaimChild(claim);
       const unobserved = await observeOwned(root, ambientEnv());
       const record = liveWebRecord(readWebRecord(root));
       if (signal?.aborted || unobserved !== null || !record || record.chromeProcess?.pid !== chrome.pid) {
