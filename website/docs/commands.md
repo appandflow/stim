@@ -143,7 +143,8 @@ left in a config file or the environment, with the setting that replaces it.
 
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
 not allowed through it, which shows up as unrelated-looking failures against
-the simulator service, the adb server, and Stim's own state directory.
+the simulator service, the adb server, and Stim's own state directory, or as
+`STIM_SANDBOX_BLOCKED` when the sandbox denies stimd's socket.
 For that finding, `--fix` writes the missing allowance into `.claude/settings.local.json` at the
 repository root, the per-user file, merging it with whatever is already there
 and preserving other settings. It cannot add a Codex allowance because that

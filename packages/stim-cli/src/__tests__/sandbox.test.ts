@@ -56,6 +56,66 @@ test.skipIf(process.platform !== 'win32')(
   },
 );
 
+test('missingAllowance asks for the stimd socket until an allowUnixSockets entry covers it', () => {
+  const dir = scratch();
+  const home = '/Users/example';
+  const socket = '/Users/example/.stim/run/stimd.sock';
+  const missing = (sockets: string[]): string[] => {
+    const path = join(dir, 'settings.local.json');
+    writeFileSync(
+      path,
+      JSON.stringify({
+        sandbox: {
+          filesystem: { allowWrite: ['~/.stim'] },
+          network: {
+            allowMachLookup: ['com.apple.coresimulator.*'],
+            allowLocalBinding: true,
+            allowUnixSockets: sockets,
+          },
+        },
+      }),
+    );
+    return missingAllowance([path], '~/.stim', home, socket);
+  };
+  try {
+    expect(missing([])).toEqual(['sandbox.network.allowUnixSockets']);
+    expect(missing(['/var/run/docker.sock'])).toEqual(['sandbox.network.allowUnixSockets']);
+    for (const entry of [socket, '~/.stim/run', '~/.stim/run/stimd.sock']) expect(missing([entry])).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('applyClaudeAllowance adds the stimd socket to an allowance written without it, keeping other sockets', () => {
+  const root = scratch();
+  try {
+    const path = claudeLocalSettingsPath(root);
+    const socket = join(root, 'home', 'run', 'stimd.sock');
+    mkdirSync(join(root, '.claude'));
+    writeFileSync(
+      path,
+      JSON.stringify({
+        sandbox: {
+          filesystem: { allowWrite: ['~/.stim'] },
+          network: {
+            allowMachLookup: ['com.apple.coresimulator.*'],
+            allowLocalBinding: true,
+            allowUnixSockets: ['/var/run/docker.sock'],
+          },
+        },
+      }),
+    );
+    expect(missingAllowance([path], '~/.stim', root, socket)).toEqual(['sandbox.network.allowUnixSockets']);
+
+    expect(applyClaudeAllowance(path, sandboxAllowance('~/.stim', socket)).status).toBe('updated');
+    const after = JSON.parse(readFileSync(path, 'utf-8')) as { sandbox: { network: { allowUnixSockets: string[] } } };
+    expect(after.sandbox.network.allowUnixSockets).toEqual(['/var/run/docker.sock', socket]);
+    expect(missingAllowance([path], '~/.stim', root, socket)).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('unmergeableKey names a value the merge would have to discard', () => {
   expect(unmergeableKey({})).toBe(null);
   expect(unmergeableKey({ permissions: { allow: [] } })).toBe(null);

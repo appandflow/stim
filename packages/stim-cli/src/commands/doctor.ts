@@ -43,6 +43,7 @@ import {
   detectHarness,
   missingAllowance,
   sandboxAllowance,
+  sandboxBlocksSocket,
   sandboxFinding,
 } from '../diagnostics/sandbox.ts';
 import { androidImageDecision, runDoctor } from '../diagnostics/doctor.ts';
@@ -315,7 +316,7 @@ export function applySandboxFix(
     note(chalk.yellow('Nothing to apply under Codex.'));
     note(
       chalk.dim(
-        'Its sandbox is one setting, `sandbox_mode`, with no per-path allowance: the only value that clears Stim is `danger-full-access`, which turns the sandbox off rather than allowing these three. Run Stim with the sandbox off instead, or set it yourself.',
+        'Its sandbox is one setting, `sandbox_mode`, with no per-path allowance: the only value that clears Stim is `danger-full-access`, which turns the sandbox off rather than allowing these four. Run Stim with the sandbox off instead, or set it yourself.',
       ),
     );
     return 1;
@@ -342,7 +343,7 @@ export function applySandboxFix(
   note(chalk.green(`${result.status === 'created' ? 'Wrote' : 'Updated'} ${target}`));
   note(
     chalk.dim(
-      "Added writes to Stim's state directory, the simulator XPC service, and local port binding. Claude Code reads project settings from the directory a session starts in, so this file only counts for sessions rooted there. Restart the session for it to take effect.",
+      "Added writes to Stim's state directory, the simulator XPC service, stimd's socket, and local port binding. Claude Code reads project settings from the directory a session starts in, so this file only counts for sessions rooted there. Restart the session for it to take effect.",
     ),
   );
   return 0;
@@ -404,7 +405,14 @@ async function repairDoctorProject(
   const settingsRoot = settingsContext.repoRoot ?? root;
   let exitCode: 0 | 1 = 0;
   signal?.throwIfAborted();
-  if (sandboxFinding(settingsRoot, { env, home: env.HOME ?? env.USERPROFILE, stimHome: env.STIM_HOME })) {
+  if (
+    sandboxFinding(settingsRoot, {
+      env,
+      home: env.HOME ?? env.USERPROFILE,
+      stimHome: env.STIM_HOME,
+      socketBlocked: detectHarness(env) !== null && (await sandboxBlocksSocket()),
+    })
+  ) {
     exitCode = applySandboxFix(settingsRoot, env, note);
   }
   for (const doctor of doctors) {
@@ -624,6 +632,7 @@ async function assembleDoctorReport(
       env,
       home: env.HOME ?? env.USERPROFILE,
       stimHome: operation?.home ?? env.STIM_HOME,
+      socketBlocked: await sandboxBlocksSocket(),
     });
     if (sandbox) findings.push(sandbox);
   }
