@@ -226,6 +226,98 @@ test('an indeterminate Windows launch keeps its pending declaration', async () =
   }
 });
 
+test.skipIf(process.platform === 'win32')('a failed owned launch retains a pending declaration', async () => {
+  const declaration = tryAcquireClaim({ root: join(dir, 'launch.lock'), mode: 'exclusive', label: 'launch' }).acquired;
+  assert(declaration);
+  const runtime = join(dir, 'runtime');
+  const held = tryAcquireClaim({ root: runtime, mode: 'exclusive', label: 'held' }).acquired;
+  assert(held);
+  const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+    throw new Error('cannot signal');
+  });
+  let launchedPid: number | undefined;
+  const executor = getExecutor();
+  setExecutor({
+    ...executor,
+    spawn: (file, args, options) => {
+      const child = executor.spawn(file, args, options);
+      launchedPid = child.pid;
+      return child;
+    },
+  });
+  try {
+    await expect(
+      owning.spawnOwned({
+        file: process.execPath,
+        args: ['-e', 'setInterval(() => {}, 1000)'],
+        cwd: root,
+        env: process.env,
+        stdout: join(dir, 'out'),
+        stderr: join(dir, 'err'),
+        claim: { root: runtime, label: 'app' },
+        declare: [declaration],
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceProcessCleanupError);
+    expect(readClaimSet(declaration.root).live.find((entry) => entry.claimId === declaration.claimId)).toMatchObject({
+      childDeclared: true,
+      child: null,
+    });
+  } finally {
+    kill.mockRestore();
+    resetExecutor();
+    if (launchedPid !== undefined) process.kill(-launchedPid, 'SIGKILL');
+    releaseClaim(held);
+    releaseClaim(declaration);
+  }
+});
+
+test.skipIf(process.platform === 'win32')('a failed pending declaration sends no cleanup signal', async () => {
+  const declaration = tryAcquireClaim({ root: join(dir, 'launch.lock'), mode: 'exclusive', label: 'launch' }).acquired;
+  assert(declaration);
+  const runtime = join(dir, 'runtime');
+  const held = tryAcquireClaim({ root: runtime, mode: 'exclusive', label: 'held' }).acquired;
+  assert(held);
+  const markPending = ownership.markClaimChildPending;
+  const mark = vi.spyOn(ownership, 'markClaimChildPending');
+  mark.mockImplementationOnce(markPending);
+  mark.mockImplementationOnce(() => {
+    throw new Error('pending write failed');
+  });
+  const kill = vi.spyOn(process, 'kill');
+  let launchedPid: number | undefined;
+  const executor = getExecutor();
+  setExecutor({
+    ...executor,
+    spawn: (file, args, options) => {
+      const child = executor.spawn(file, args, options);
+      launchedPid = child.pid;
+      return child;
+    },
+  });
+  try {
+    await expect(
+      owning.spawnOwned({
+        file: process.execPath,
+        args: ['-e', 'setInterval(() => {}, 1000)'],
+        cwd: root,
+        env: process.env,
+        stdout: join(dir, 'out'),
+        stderr: join(dir, 'err'),
+        claim: { root: runtime, label: 'app' },
+        declare: [declaration],
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceProcessCleanupError);
+    expect(kill.mock.calls.some(([pid, signal]) => pid === -(launchedPid ?? 0) && signal === 'SIGKILL')).toBe(false);
+  } finally {
+    mark.mockRestore();
+    kill.mockRestore();
+    resetExecutor();
+    if (launchedPid !== undefined) process.kill(-launchedPid, 'SIGKILL');
+    releaseClaim(held);
+    releaseClaim(declaration);
+  }
+});
+
 test.skipIf(process.platform === 'win32')(
   'the runtime claim remains live while a launched app helper survives',
   async () => {
@@ -1257,6 +1349,62 @@ describe('macOS build placement and promotion', () => {
       }
     },
     30_000,
+  );
+
+  test.skipIf(process.platform !== 'darwin')(
+    'replacement retains the previous record when its output cannot be drained',
+    async () => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      const app = macosProcess(process.pid);
+      const previous = record({ app, supervisor: app });
+      writeWorkspaceState(root, { macos: previous });
+      mkdirSync(workspaceLogsDir(root), { recursive: true });
+      writeFileSync(join(workspaceLogsDir(root), macosAppLogName(previous.launchId, 'out')), 'old output\n');
+      vi.spyOn(stopping, 'stopMacosAppHeld').mockResolvedValue(true);
+      const drain = vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue('fixture refusal');
+      const buildSpy = vi.spyOn(nativeBuild, 'buildMacosBundle');
+      await expect(runMacos(testContext(), root, () => {}, undefined, 'local')).rejects.toThrow('fixture refusal');
+      expect(drain).toHaveBeenCalledOnce();
+      expect(buildSpy).not.toHaveBeenCalled();
+      expect(readMacosRecord(root)).toMatchObject({ launchId: previous.launchId, app });
+    },
+  );
+
+  test.skipIf(process.platform !== 'darwin')(
+    'a spawn cleanup refusal retains its pending launch declarations',
+    async () => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+        async ({ bundle: targetBundle, bundleId: targetId }) => {
+          mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+          writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+          return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+        },
+      );
+      vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+      vi.spyOn(owning, 'spawnOwned').mockImplementation(async ({ declare }) => {
+        const claims = [...declare];
+        for (const claim of claims) markClaimChildPending(claim);
+        throw new WorkspaceProcessCleanupError(claims, 'unverified spawn', 'verify the child');
+      });
+      let failure: unknown;
+      try {
+        failure = await runMacos(testContext(), root, () => {}, undefined, 'local').catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(WorkspaceProcessCleanupError);
+        assert(failure instanceof WorkspaceProcessCleanupError);
+        expect(failure.claims.length).toBeGreaterThan(0);
+        for (const claim of failure.claims) {
+          expect(readClaimSet(claim.root).live.find((entry) => entry.claimId === claim.claimId)).toMatchObject({
+            childDeclared: true,
+            child: null,
+          });
+        }
+      } finally {
+        if (failure instanceof WorkspaceProcessCleanupError) for (const claim of failure.claims) releaseClaim(claim);
+      }
+    },
   );
 
   test.skipIf(process.platform !== 'darwin')(

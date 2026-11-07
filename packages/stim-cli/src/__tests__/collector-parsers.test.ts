@@ -1,5 +1,7 @@
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { getExecutor } from '../exec.ts';
 import { fileURLToPath } from 'node:url';
 import { levelForEvent, logStreamArgs, parseLogStreamLine } from '../stimd/logs/ios.ts';
 import { androidClockOffset, waitForAppPid, watchAppPid, parseLogcatLine } from '../stimd/logs/android.ts';
@@ -108,6 +110,45 @@ describe('ios: demoting device noise', () => {
 });
 
 describe('android: logcat -v time', () => {
+  test('Windows adb probes resolve the caller PATH before switching to the safe directory', async () => {
+    const realProcess = process;
+    const env = { PATH: 'relative-tools' };
+    const calls: Array<{ file: string; cwd: string | undefined }> = [];
+    const exec = makeExecutor({
+      runFileAsync: async (file, args, opts) => {
+        calls.push({ file, cwd: opts.cwd });
+        return args.includes('date') ? String(Date.now()) : '3132';
+      },
+    });
+    const find = vi.spyOn(getExecutor(), 'findExecutable').mockReturnValue('C:\\caller\\relative-tools\\adb.exe');
+    try {
+      vi.stubGlobal('process', Object.create(realProcess, { platform: { value: 'win32' } }));
+      await androidClockOffset('serial', { exec, env, cwd: 'C:\\caller' });
+      await waitForAppPid({ serial: 'serial', packageName: 'com.x', exec, env, cwd: 'C:\\caller' });
+      expect(find).toHaveBeenCalledWith('adb', { env, cwd: 'C:\\caller' });
+      expect(calls).toEqual([
+        { file: 'C:\\caller\\relative-tools\\adb.exe', cwd: homedir() },
+        { file: 'C:\\caller\\relative-tools\\adb.exe', cwd: homedir() },
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+  test('Windows adb probes do not execute a different tool when caller lookup fails', async () => {
+    const realProcess = process;
+    const run = vi.fn<() => Promise<string>>();
+    const exec = makeExecutor({ runFileAsync: run });
+    vi.spyOn(getExecutor(), 'findExecutable').mockReturnValue(null);
+    try {
+      vi.stubGlobal('process', Object.create(realProcess, { platform: { value: 'win32' } }));
+      expect(await androidClockOffset('serial', { exec, env: { PATH: 'missing' }, cwd: 'C:\\caller' })).toBeNull();
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
   test('the clock sample and the pid reads use the async executor with their adb argument lists', async () => {
     const asyncCalls: string[][] = [];
     const exec = makeExecutor({

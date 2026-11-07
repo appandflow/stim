@@ -17,7 +17,8 @@ import {
   type ClaimHandle,
 } from '../../ownership-claim.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
-import { startAndroidLogcat } from './android.ts';
+import { adbCommand, startAndroidLogcat } from './android.ts';
+import { androidToolCwd } from '../../devices/android.ts';
 import { clearHistoryClaim, clearStreamClaim, takeStreamClaim } from './claim.ts';
 import { backfillDeviceLog } from './backfill.ts';
 import { startIosDeviceConsole } from './ios-device.ts';
@@ -260,9 +261,10 @@ function spawnChild(
   stream.pending = true;
   let child: ChildProcess;
   try {
-    child = getExecutor().spawn(cmd, args, {
+    const android = stream.spec.platform === 'android';
+    child = getExecutor().spawn(android ? adbCommand(env, stream.root) : cmd, args, {
       ...options,
-      cwd: stream.root,
+      cwd: android ? (androidToolCwd() ?? stream.root) : stream.root,
       env,
       detached: process.platform !== 'win32',
     });
@@ -442,7 +444,7 @@ export function createStreams(
   ): HistoryCoverage => {
     if (stream.spec.physical)
       return {
-        status: stream.writeFailures ? ('failed' as const) : ('covered' as const),
+        status: 'failed' as const,
         warm: true,
         startedAt: Infinity,
       };
@@ -512,12 +514,8 @@ export function createStreams(
               throw new AndroidPidChanged();
             if (stream.generation !== generation)
               throw new Error('the device log source changed during history replay');
-            const warm =
-              stream.observedAt !== null &&
-              stream.observedAt <= since &&
-              (stream.spec.platform !== 'android' || stream.activePid === pid);
-            coverage.warm = warm;
-            return warm;
+            coverage.warm = false;
+            return false;
           },
           sink: stream.sink,
         })

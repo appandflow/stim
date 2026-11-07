@@ -47,7 +47,7 @@ import { planMacos } from '../macos/plan.ts';
 import type { BuildHandoff } from '../offload/client.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
-import { stopBundleInstances, stopMacosAppHeld, stopMacosChildren } from '../macos/stop.ts';
+import { drainMacosOutput, stopBundleInstances, stopMacosAppHeld, stopMacosChildren } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../build-placement.ts';
 import { upsertProject, withConfigLockAsync } from '../workspace/config.ts';
@@ -131,7 +131,10 @@ export async function runMacos(
             probe.connection.close();
           }
           if (!remote) await assertLocalMacosCapacity(root, context);
-          if (!previous?.host) await stopMacosAppHeld(root);
+          if (!previous?.host) {
+            await stopMacosAppHeld(root);
+            await drainMacosOutput(root, previous ?? null, context);
+          }
           await withConfigLockAsync(() => upsertProject(root, {}));
           await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
           const bundle = join(macosDir(root), `${macos.product}.app`);
@@ -425,6 +428,7 @@ async function launchHere(
     if (unobserved) note(`The macOS app's output is not recorded in stim logs: ${unobserved}.`);
     return { record: { ...record, supervisor: app, app }, deadline: Date.now() + 20_000 };
   } catch (error) {
+    if (!owned && error instanceof WorkspaceProcessCleanupError) throw error;
     try {
       if (owned) {
         for (const claim of operationState(context).declaring) {

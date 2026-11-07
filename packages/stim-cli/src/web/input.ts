@@ -14,8 +14,10 @@ export const INPUT_STARTED = 'started';
  * and the input reach the page by different routes.
  */
 export const INPUT_LISTENER: string = `(() => {
-  const send = globalThis.${INPUT_BINDING};
-  if (typeof send !== 'function' || window !== window.top) return;
+  if (typeof globalThis.${INPUT_BINDING} !== 'function' || window !== window.top) return;
+  if (globalThis.__stimInputInstalled) return;
+  globalThis.__stimInputInstalled = true;
+  const send = (payload) => globalThis.${INPUT_BINDING}?.(payload);
   const BURST_MS = 1000, FLUSH_MS = 1000, MAX_WAIT_MS = 3000, TAKEOVER_MS = 3000, MAX_ACTIONS = 50;
   let pending = [], marks = [], dropped = 0, lastKeyAt = -Infinity, timer = 0, firstAt = 0;
   const clip = (value, max) => {

@@ -924,14 +924,18 @@ describe.skipIf(process.platform === 'win32')('stimd browser observer', () => {
     const record = { ...original, ...original.chromeProcess, targetId: 'owned-page' };
     writeWebRecord(root, record);
     let attempts = 0;
+    const requests: { method: string; params?: Record<string, unknown> }[] = [];
     vi.spyOn(browserCdp, 'connectOwnedBrowser').mockImplementation(async () => {
       const attempt = ++attempts;
       return {
-        async send(method) {
+        async send(method, params) {
           if (attempt === 1) throw new Error('transient disconnect');
+          requests.push({ method, params });
           if (method === 'Browser.getVersion') return { product: 'Chrome/1' };
           if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'owned-page', type: 'page' }] };
           if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
+          if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: 'current-frame' } } };
+          if (method === 'Page.createIsolatedWorld') return { executionContextId: 42 };
           return {};
         },
         onEvent: () => {},
@@ -947,6 +951,14 @@ describe.skipIf(process.platform === 'win32')('stimd browser observer', () => {
       expect(streams.running()).toBe(true);
       await vi.waitFor(() => expect(attempts).toBe(2), { timeout: 8000, interval: 50 });
       await vi.waitFor(() => expect(readFileSync(webLogFile(root), 'utf8')).toContain('web_browser_observed'));
+      expect(requests).toContainEqual({
+        method: 'Page.createIsolatedWorld',
+        params: { frameId: 'current-frame', worldName: 'stim' },
+      });
+      expect(requests).toContainEqual({
+        method: 'Runtime.evaluate',
+        params: expect.objectContaining({ contextId: 42, expression: expect.stringContaining('__stimInputInstalled') }),
+      });
     } finally {
       streams.close();
     }

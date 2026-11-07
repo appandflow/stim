@@ -329,6 +329,16 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
         { source: INPUT_LISTENER, worldName: INPUT_WORLD },
         sessionId,
       );
+      const tree = await connection.send('Page.getFrameTree', {}, sessionId);
+      const frameId = (tree.frameTree as { frame?: { id?: unknown } } | undefined)?.frame?.id;
+      if (typeof frameId !== 'string') throw new Error('the current page frame is unavailable');
+      const world = await connection.send('Page.createIsolatedWorld', { frameId, worldName: INPUT_WORLD }, sessionId);
+      if (typeof world.executionContextId !== 'number') throw new Error('the current page context is unavailable');
+      await connection.send(
+        'Runtime.evaluate',
+        { expression: INPUT_LISTENER, contextId: world.executionContextId },
+        sessionId,
+      );
     } catch (error) {
       log('warn', 'web_input_unobserved', `agent input on the page is not recorded: ${describe(error)}`);
     }

@@ -100,6 +100,16 @@ export async function spawnOwned(launch: OwnedLaunch): Promise<OwnedProcess> {
     claim = attempt.acquired;
     if (process.platform !== 'win32') setClaimChild(claim, owner);
   } catch (error) {
+    try {
+      for (const declaration of declared) markClaimChildPending(declaration);
+    } catch (failure) {
+      throw new WorkspaceProcessCleanupError(
+        declared,
+        `Could not retain the failed ${launch.claim.label} launch declaration.`,
+        'Verify that the launched process and its children have stopped before retrying.',
+        failure instanceof Error ? failure : undefined,
+      );
+    }
     if (!(await stopOwnedProcess(owner)))
       throw new WorkspaceProcessCleanupError(
         declared,

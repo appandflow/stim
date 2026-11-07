@@ -1,4 +1,4 @@
-import { readMacosRecord, stimdClaimRoot, type MacosProcess } from '@stim-cli/core/state';
+import { readMacosRecord, stimdClaimRoot, type MacosAppRecord, type MacosProcess } from '@stim-cli/core/state';
 import { existsSync } from 'node:fs';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
@@ -127,19 +127,7 @@ export function stopMacosApp(
     const record = requiredMacosRecord(root);
     if (!record?.host) {
       const stopped = await stopMacosAppHeld(root, operation);
-      if (options.drain !== false && record?.app && record.supervisor?.pid === record.app.pid) {
-        const claims = readClaimSet(stimdClaimRoot());
-        if (
-          claims.live.length ||
-          claims.unresolved.length ||
-          existsSync(macosAppStdout(root, record.launchId)) ||
-          existsSync(macosAppStderr(root, record.launchId))
-        ) {
-          const failure = await drainOwnedMacos(root, operation?.env);
-          operation?.signal.throwIfAborted();
-          if (failure) throw new Error(`Could not drain macOS app output: ${failure}`);
-        }
-      }
+      if (options.drain !== false) await drainMacosOutput(root, record, operation);
       return stopped;
     }
     const { stopHostedMacos } = await import('../device-host/hosted-macos.ts');
@@ -160,4 +148,23 @@ export function stopMacosApp(
     signal: operation?.signal,
     declareSpawnsFor: operation,
   });
+}
+
+export async function drainMacosOutput(
+  root: string,
+  record: MacosAppRecord | null,
+  operation?: StimContext,
+): Promise<void> {
+  if (!record?.app || record.supervisor?.pid !== record.app.pid) return;
+  const claims = readClaimSet(stimdClaimRoot());
+  if (
+    claims.live.length ||
+    claims.unresolved.length ||
+    existsSync(macosAppStdout(root, record.launchId)) ||
+    existsSync(macosAppStderr(root, record.launchId))
+  ) {
+    const failure = await drainOwnedMacos(root, operation?.env);
+    operation?.signal.throwIfAborted();
+    if (failure) throw new Error(`Could not drain macOS app output: ${failure}`);
+  }
 }
