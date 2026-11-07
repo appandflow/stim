@@ -120,6 +120,7 @@ type Stream = {
   spawnedPid: number | null;
   identity: { pid: number; processToken: string } | null;
   signalling: Promise<void> | null;
+  treePending: boolean;
   lastStop: { pid: number | null; identity: string; signalled?: boolean; error?: string } | null;
   pending: boolean;
   paused: boolean;
@@ -164,6 +165,9 @@ function signalChild(stream: Stream): Promise<void> {
   const signalling = (async () => {
     try {
       if (process.platform === 'win32') {
+        markClaimChildPending(stream.claim);
+        stream.treePending = true;
+        stream.pending = true;
         await getExecutor().runFileAsync(
           join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe'),
           ['/PID', String(child.pid), '/T', '/F'],
@@ -235,6 +239,7 @@ async function waitChild(stream: Stream): Promise<void> {
   }
   if (stream.identity || stream.pending) clearClaimChild(stream.claim);
   stream.pending = false;
+  stream.treePending = false;
   stream.identity = null;
   stream.spawnedPid = null;
   stream.child = null;
@@ -343,12 +348,16 @@ export function createStreams(log: (message: string) => void): StreamTable {
   };
   const abortAfterSignal = async (stream: Stream): Promise<void> => {
     await signalChild(stream);
-    stream.controller.abort();
+    if (process.platform !== 'win32' || stream.lastStop?.signalled !== false || stream.treePending)
+      stream.controller.abort();
   };
   const stop = async (stream: Stream): Promise<void> => {
     const retry = stream.finalized;
-    await signalChild(stream);
-    stream.controller.abort();
+    await abortAfterSignal(stream);
+    if (process.platform === 'win32' && stream.lastStop?.signalled === false && !stream.treePending)
+      throw new Error(
+        `the device log claim at ${stream.claim.root} could not be marked pending (stop=${JSON.stringify(stream.lastStop)})`,
+      );
     await stream.started.catch(() => null);
     await stream.done;
     if (retry && [...streams.values()].includes(stream)) await stream.cleanup();
@@ -665,6 +674,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
           spawnedPid: null,
           identity: null,
           signalling: null,
+          treePending: false,
           lastStop: null,
           pending: false,
           paused: false,
@@ -699,7 +709,8 @@ export function createStreams(log: (message: string) => void): StreamTable {
         streams.set(key, stream);
         stream.cleanup = async () => {
           await stream.signalling;
-          stream.controller.abort();
+          if (process.platform !== 'win32' || stream.lastStop?.signalled !== false || stream.treePending)
+            stream.controller.abort();
           await Promise.allSettled(stream.histories);
           await clearHistoryClaim(root, id);
           await waitChild(stream);
