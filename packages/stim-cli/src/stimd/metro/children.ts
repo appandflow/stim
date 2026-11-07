@@ -560,7 +560,8 @@ function adoptAt(path: string, log: Log): void {
 
 /** The live Metro claim of a workspace this stimd does not supervise yet: another stimd's that is still exiting. */
 function predecessorClaim(root: string): ClaimHolder | undefined {
-  return children.has(root) ? undefined : readClaimSet(claimRoot(root, 'metro')).live.find((holder) => holder.child);
+  if (children.has(root)) return undefined;
+  return readClaimSet(claimRoot(root, 'metro')).live.find((holder) => holder.child && holder.owner.pid !== process.pid);
 }
 
 /** Waits up to `SUCCESSOR_WAIT_MS` for the stimd that holds the workspace's Metro claim to exit, then adopts its Metro. */
@@ -591,25 +592,38 @@ export async function metroTick(act: boolean, log: Log): Promise<void> {
     adoptMetroChildren(log);
     for (const child of children.values()) {
       if (busy.has(child.root)) continue;
+      const decidedAt = Date.now();
       if (!running(child)) {
         forget(child, `the ${child.mode} dev server pid ${child.pid} is gone`, 'warn');
         continue;
       }
       // compat C6 permanent
       if (child.digest !== injectedDigest() && (await idlePoint(child, Date.now() - IDLE_POINT_MS))) {
-        void restartAt(child, 'it loaded other injected files; restarting it at an idle point', log, true);
+        void restartAt(child, decidedAt, 'it loaded other injected files; restarting it at an idle point', log, true);
         continue;
       }
       // compat end
       if (act || child.mode === MODE_COMMAND) continue;
       const minutes = idleMinutesSetting(resolveProjectSettings(child.root).settings);
       if (minutes > 0 && (await idlePoint(child, Date.now() - minutes * 60_000)))
-        void restartAt(child, `no Metro request or Stim command for ${minutes} minutes (idle.minutes)`, log, false, {
-          [IDLE_STOP_KEY]: { reason: 'idle', at: new Date().toISOString(), idleMinutes: minutes },
-        });
+        void restartAt(
+          child,
+          decidedAt,
+          `no Metro request or Stim command for ${minutes} minutes (idle.minutes)`,
+          log,
+          false,
+          {
+            [IDLE_STOP_KEY]: { reason: 'idle', at: new Date().toISOString(), idleMinutes: minutes },
+          },
+        );
     }
     for (const [root, tunnel] of tunnels)
-      if (!busy.has(`tunnel:${root}`) && inspectProcessIdentity(tunnel) === 'gone') forgetTunnel(root, tunnel);
+      if (
+        !busy.has(`tunnel:${root}`) &&
+        inspectProcessIdentity(tunnel) === 'gone' &&
+        !(GROUPS && processGroupAlive(tunnel.pid))
+      )
+        forgetTunnel(root, tunnel);
   } finally {
     ticking = false;
   }
@@ -620,14 +634,14 @@ let ticking = false;
 /** Stops the child, unless an ensure took it over meanwhile, and starts it again when `again`, all in its root's turn. */
 function restartAt(
   child: MetroChild,
+  decidedAt: number,
   why: string,
   log: Log,
   again: boolean,
   state: Record<string, unknown> = {},
 ): Promise<Answer> {
-  const decidedAt = Date.now();
   return serialize(child.root, async () => {
-    if (children.get(child.root) !== child || child.gone || child.ensuredAt > decidedAt) return {};
+    if (children.get(child.root) !== child || child.gone || child.ensuredAt >= decidedAt) return {};
     await stopChild(child, why);
     writeWorkspaceState(child.root, state);
     if (!again) return {};
