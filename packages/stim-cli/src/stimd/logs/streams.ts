@@ -198,7 +198,7 @@ function signalChild(stream: Stream): Promise<void> {
 
 async function waitChild(stream: Stream): Promise<void> {
   await stream.signalling;
-  if (process.platform === 'win32' && stream.lastStop?.signalled === false)
+  if (process.platform === 'win32' && stream.treePending && stream.lastStop?.signalled !== true)
     throw new Error(
       `the device log process tree could not be verified stopped (stop=${JSON.stringify(stream.lastStop)}); ` +
         `inspect it before running ${claimRemoveCommand(stream.claim.root)}.`,
@@ -255,6 +255,9 @@ function spawnChild(
 ): ChildProcess {
   markClaimChildPending(stream.claim);
   stream.pending = true;
+  // Windows taskkill /T needs the live launcher PID to find descendants; keep the claim pending until it succeeds.
+  // https://learn.microsoft.com/windows-server/administration/windows-commands/taskkill
+  stream.treePending = process.platform === 'win32';
   let child: ChildProcess;
   try {
     const android = stream.spec.platform === 'android';
@@ -267,6 +270,7 @@ function spawnChild(
   } catch (error) {
     clearClaimChild(stream.claim);
     stream.pending = false;
+    stream.treePending = false;
     throw error;
   }
   stream.child = child;
@@ -276,6 +280,7 @@ function spawnChild(
   if (!child.pid) {
     clearClaimChild(stream.claim);
     stream.pending = false;
+    stream.treePending = false;
     throw new Error('could not start the device log stream child');
   }
   const token = captureProcessToken(child.pid);
@@ -284,7 +289,7 @@ function spawnChild(
   }
   stream.identity = { pid: child.pid, processToken: token };
   try {
-    setClaimChild(stream.claim, stream.identity);
+    if (process.platform !== 'win32') setClaimChild(stream.claim, stream.identity);
   } catch (error) {
     void signalChild(stream);
     throw error;

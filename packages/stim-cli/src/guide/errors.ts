@@ -501,6 +501,10 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   left untouched. The remedy tells you what to check and which command to run
   again, and when the run held ownership claims it lists the exact \`rm\`
   command for each retained claim.
+  When a Metro, tunnel or maintenance child cannot be verified stopped, Stim
+  also retains the home and engine claims and refuses new work in that home.
+  On Windows, the leader's exit alone does not prove its descendants stopped;
+  verify the process tree before removing the listed claims.
   Warm also reports this code for EACCES, EPERM, EROFS and ENOENT while taking a claim.
   The message names the claim path and original filesystem error. Restore write
   access to the existing claim store, checking parent permissions, symlink

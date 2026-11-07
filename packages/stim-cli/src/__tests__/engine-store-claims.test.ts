@@ -8,6 +8,9 @@ import { collectStore } from '../engine-store/gc.ts';
 import { keptJobUses, readJobUses, recordJobUse } from '../engine-store/jobs.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim, updateClaimDetails } from '../ownership-claim.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
+import * as engineSwitch from '../daemon/engine-switch.ts';
+import { followEngine } from '../stimd/engine-follow.ts';
+import { getExecutor } from '../exec.ts';
 
 const A = 'aaaaaaaaaaaa';
 const B = 'bbbbbbbbbbbb';
@@ -77,6 +80,40 @@ describe('the GC keep-set', () => {
     plant(B, { pid: 4242, processToken: 'nonsense' }, {}, 'unknown');
     const none = { current: null, previous: null, staged: null };
     expect([...keptEntries(none, readBuildClaims(root))]).toEqual([B]);
+  });
+
+  test('keeps the adopted builds named by a readable pending claim after its owner exits', async () => {
+    const { spawn } = await import('node:child_process');
+    writeFileSync(join(root, 'current.json'), JSON.stringify({ format: 1, dir: A, version: '1' }));
+    writeFileSync(join(root, 'staged.json'), JSON.stringify({ format: 1, dir: B, version: '2' }));
+    const engine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root, build: A });
+    const run = vi.spyOn(getExecutor(), 'runFileAsync');
+    const follower = followEngine(() => {});
+    assert(follower);
+    try {
+      const script = `
+      import { tryAcquireClaim, markClaimChildPending } from '@stim-cli/core/ownership-claim';
+      const claim = tryAcquireClaim({ root: process.argv[1], mode: 'shared',
+        details: { drained: false, engineDirs: [process.argv[2]] } }).acquired;
+      if (!claim) throw new Error('fixture claim unavailable');
+      markClaimChildPending(claim);
+    `;
+      const child = spawn(process.execPath, ['--input-type=module', '-e', script, buildClaimRoot(root, A), B], {
+        cwd: join(process.cwd(), 'packages/stim-cli'),
+        stdio: 'ignore',
+      });
+      expect(await new Promise<number | null>((done) => child.once('close', done))).toBe(0);
+      const claims = readBuildClaims(root);
+      expect(allDrained(survey(A))).toBe(false);
+      expect([...keptEntries({ current: null, previous: null, staged: null }, claims)].toSorted()).toEqual([A, B]);
+      follower.record(false, []);
+      expect(await follower.check(() => false)).toBeNull();
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      follower?.release();
+      run.mockRestore();
+      engine.mockRestore();
+    }
   });
 });
 

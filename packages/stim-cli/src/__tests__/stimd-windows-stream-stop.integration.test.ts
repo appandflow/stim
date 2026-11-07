@@ -38,6 +38,7 @@ vi.mock('../process-identity.ts', async (load) => {
   const actual = await load<typeof import('../process-identity.ts')>();
   return {
     ...actual,
+    captureProcessToken: (pid: number) => (identity.windows ? 'windows-token' : actual.captureProcessToken(pid)),
     inspectProcessIdentity: (...args: Parameters<typeof actual.inspectProcessIdentity>) =>
       identity.windows ? (identity.live ? 'same' : 'gone') : actual.inspectProcessIdentity(...args),
   };
@@ -224,6 +225,69 @@ test.skipIf(process.platform === 'win32')('a pending claim write failure does no
         realProcess.kill(pid, 'SIGKILL');
       } catch {}
     }
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.platform === 'win32')('natural Windows stream exit keeps its child claim unresolved', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
+  const bin = join(home, 'bin');
+  mkdirSync(bin);
+  vi.stubEnv('STIM_HOME', home);
+  const pidFile = join(home, 'pid');
+  const done = join(home, 'done');
+  const xcrun = join(bin, 'xcrun');
+  writeFileSync(xcrun, '#!/bin/sh\necho $$ > "$TEST_PID"\nwhile [ ! -f "$DONE" ]; do sleep .05; done\n');
+  chmodSync(xcrun, 0o755);
+  const env = { ...process.env, TEST_PID: pidFile, DONE: done, PATH: [bin, process.env.PATH].join(delimiter) };
+  const messages: string[] = [];
+  const streams = createStreams((message) => messages.push(message));
+  const realProcess = process;
+  const executor = getExecutor();
+  const originalSpawn = executor.spawn.bind(executor);
+  const originalMark = ownership.markClaimChildPending;
+  try {
+    vi.spyOn(ownership, 'markClaimChildPending').mockImplementation((claim) => {
+      originalMark(claim);
+      identity.windows = true;
+      vi.stubGlobal('process', Object.create(realProcess, { platform: { value: 'win32' } }));
+    });
+    vi.spyOn(executor, 'spawn').mockImplementation((file, args, options) => {
+      vi.unstubAllGlobals();
+      const child = originalSpawn(file, args, options);
+      vi.stubGlobal('process', Object.create(realProcess, { platform: { value: 'win32' } }));
+      return child;
+    });
+    const { streamId } = await streams.start(
+      { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
+      env,
+    );
+    await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
+    const pid = Number(readFileSync(pidFile, 'utf8').trim());
+    writeFileSync(done, '');
+    await vi.waitFor(() => expect(() => realProcess.kill(pid, 0)).toThrow(/ESRCH/));
+    await vi.waitFor(() =>
+      expect(messages.some((message) => message.includes('could not be verified stopped'))).toBe(true),
+    );
+    vi.unstubAllGlobals();
+    identity.windows = false;
+    const claimRoot = join(
+      workspaceDir(root),
+      'log-streams',
+      `stream-${createHash('sha256').update(streamId).digest('hex')}.claim`,
+    );
+    const holder = readClaimSet(claimRoot).live[0];
+    expect(holder).toBeDefined();
+    if (!holder) throw new Error('claim missing');
+    expect(claimLiveness({ ...holder, owner: { pid: 99999999, processToken: 'gone' } })).toBe('unknown');
+  } finally {
+    vi.unstubAllGlobals();
+    identity.windows = false;
+    vi.restoreAllMocks();
+    await streams.close().catch(() => {});
     vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });

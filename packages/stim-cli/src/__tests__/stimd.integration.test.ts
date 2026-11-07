@@ -21,7 +21,11 @@ import {
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as clonefile from '../clonefile.ts';
-import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { markClaimChildPending, readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import * as engineSwitch from '../daemon/engine-switch.ts';
+import * as engineFollow from '../stimd/engine-follow.ts';
+import * as stimdThreads from '../stimd/threads.ts';
+import { allDrained, buildClaimRoot, keptEntries, readBuildClaims } from '../engine-store/claims.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { takeWaitTicket } from '../engine/wait-queue.ts';
 import {
@@ -47,7 +51,7 @@ import * as maintenanceRun from '../stimd/passes/run.ts';
 import * as spawnEntry from '../spawn-entry.ts';
 import * as ndjson from '../ndjson.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
-import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 
 vi.mock('../stimd/threads.ts', () => import('./fixtures/inline-stimd-threads.ts'));
@@ -276,6 +280,224 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       process.exitCode = oldExit;
     }
   });
+
+  test.each(['attached', 'persistent'])(
+    '%s shutdown joins a foreground child before releasing the home',
+    async (kind) => {
+      const before = new Set(process.listeners('SIGTERM'));
+      let childPid = 0;
+      let childStarted = () => {};
+      let childStopped = () => {};
+      let releaseCleanup = () => {};
+      const started = new Promise<void>((done) => {
+        childStarted = done;
+      });
+      const stopped = new Promise<void>((done) => {
+        childStopped = done;
+      });
+      const cleanup = new Promise<void>((done) => {
+        releaseCleanup = done;
+      });
+      const passes = vi.spyOn(daemonPasses, 'runHomePasses').mockImplementation(async ({ signal }) => {
+        if (!signal) throw new Error('foreground signal missing');
+        try {
+          await getExecutor().runFileAsync(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+            timeoutMs: 30_000,
+            signal,
+            onSpawn: (child) => {
+              childPid = child.pid ?? 0;
+              childStarted();
+            },
+          });
+        } finally {
+          childStopped();
+          await cleanup;
+        }
+        throw new Error('foreground child unexpectedly completed');
+      });
+      let running: Promise<boolean> | undefined;
+      try {
+        running = runStimd({
+          mode: 'on',
+          tickMs: 60_000,
+          ...(kind === 'attached' ? { attached: { handover: false } } : {}),
+        });
+        await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+        const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+        assert(handler);
+        void requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
+        await started;
+        handler('SIGTERM');
+        await stopped;
+        expect(childPid).toBeGreaterThan(0);
+        expect(() => process.kill(childPid, 0)).toThrow(/ESRCH/);
+        expect(readClaimSet(stimdClaimRoot()).live.length).toBeGreaterThan(0);
+        releaseCleanup();
+        await running;
+        expect(readClaimSet(stimdClaimRoot()).live).toEqual([]);
+      } finally {
+        releaseCleanup();
+        passes.mockRestore();
+        await running?.catch(() => {});
+      }
+    },
+    20_000,
+  );
+
+  test('unverified foreground cleanup keeps home and engine claims marked for recovery', async () => {
+    const before = new Set(process.listeners('SIGTERM'));
+    const oldExit = process.exitCode;
+    const root = join(home, 'engine');
+    const build = 'aaaaaaaaaaaa';
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'current.json'), JSON.stringify({ format: 1, dir: build, version: '1' }));
+    const engineClaim = tryAcquireClaim({ root: join(root, 'claims', build), mode: 'shared' }).acquired;
+    assert(engineClaim);
+    const ownEngine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root, build });
+    const releaseEngine = vi.fn<() => void>();
+    const follower = vi.spyOn(engineFollow, 'followEngine').mockReturnValue({
+      engine: { root, build },
+      record: () => {},
+      admit: async () => null,
+      check: async () => null,
+      retainUnknown: () => {
+        markClaimChildPending(engineClaim);
+        return engineClaim.path;
+      },
+      release: releaseEngine,
+    });
+    let entered = () => {};
+    const started = new Promise<void>((done) => {
+      entered = done;
+    });
+    const passes = vi.spyOn(daemonPasses, 'runHomePasses').mockImplementation(async ({ signal }) => {
+      if (!signal) throw new Error('foreground signal missing');
+      entered();
+      await new Promise<void>((done) => signal.addEventListener('abort', () => done(), { once: true }));
+      throw Object.assign(new Error('fixture cleanup unverified'), {
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        remedy: 'Inspect fixture child.',
+        reportCleanup: true,
+      });
+    });
+    let running: Promise<boolean> | undefined;
+    try {
+      process.exitCode = undefined;
+      running = runStimd({ mode: 'on', tickMs: 60_000, attached: { handover: false } });
+      await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+      const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+      assert(handler);
+      void requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
+      await started;
+      handler('SIGTERM');
+      await expect(running).rejects.toMatchObject({
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        remedy: expect.stringContaining(engineClaim.path),
+      });
+      expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: true }]);
+      expect(readClaimSet(engineClaim.root).live).toMatchObject([{ childDeclared: true }]);
+      expect(releaseEngine).not.toHaveBeenCalled();
+    } finally {
+      passes.mockRestore();
+      follower.mockRestore();
+      ownEngine.mockRestore();
+      releaseClaim(engineClaim);
+      process.exitCode = oldExit;
+      await running?.catch(() => {});
+    }
+  }, 20_000);
+
+  test.each(['passes', 'measure'])(
+    'persistent %s cleanup refusal retains the home and engine',
+    async (worker) => {
+      const oldExit = process.exitCode;
+      const root = join(home, 'engine');
+      const build = 'aaaaaaaaaaaa';
+      mkdirSync(root, { recursive: true });
+      writeFileSync(join(root, 'current.json'), JSON.stringify({ format: 1, dir: build, version: '1' }));
+      const engine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root, build });
+      const failure = Object.assign(new Error('fixture background cleanup unverified'), {
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        remedy: 'Inspect fixture child.',
+        reportCleanup: true,
+      });
+      const threads = vi.spyOn(stimdThreads, 'createThreadTable').mockReturnValue({
+        run: async (name) => {
+          if (worker === 'measure' && name === 'measure') throw failure;
+          return [];
+        },
+        abort: () => {},
+        close: async () => {},
+      });
+      const lane = vi.spyOn(stimdThreads, 'createPassesLane').mockImplementation((_threads, _log, onFailure) => ({
+        start: () => {
+          if (worker === 'passes') queueMicrotask(() => onFailure?.(failure));
+        },
+        running: () => false,
+        take: () => [],
+        settled: async () => {},
+      }));
+      let running: Promise<boolean> | undefined;
+      try {
+        process.exitCode = undefined;
+        running = runStimd({ mode: 'on', tickMs: 60_000 });
+        await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+        void requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
+        await running;
+        expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: true }]);
+        const survey = readClaimSet(buildClaimRoot(root, build));
+        expect(survey.live).toMatchObject([{ childDeclared: true }]);
+        expect(allDrained(survey)).toBe(false);
+        expect(keptEntries({ current: null, previous: null, staged: null }, readBuildClaims(root)).has(build)).toBe(
+          true,
+        );
+      } finally {
+        lane.mockRestore();
+        threads.mockRestore();
+        engine.mockRestore();
+        process.exitCode = oldExit;
+        await running?.catch(() => {});
+      }
+    },
+    20_000,
+  );
+
+  test('publishes an existing Metro claim build when the engine follower starts', async () => {
+    const before = new Set(process.listeners('SIGTERM'));
+    const project = join(home, 'project');
+    mkdirSync(project);
+    upsertProject(project, { metroPort: 8181 });
+    const metro = tryAcquireClaim({
+      root: join(workspaceDir(project), 'metro.claim'),
+      mode: 'exclusive',
+      details: { engineDir: 'bbbbbbbbbbbb' },
+    }).acquired;
+    assert(metro);
+    const record = vi.fn<(pinned: boolean, engineDirs: string[]) => void>();
+    const follow = vi.spyOn(engineFollow, 'followEngine').mockReturnValue({
+      engine: { root: join(home, 'engine'), build: 'aaaaaaaaaaaa' },
+      record,
+      admit: async () => null,
+      check: async () => null,
+      retainUnknown: () => null,
+      release: () => {},
+    });
+    let running: Promise<boolean> | undefined;
+    try {
+      running = runStimd({ mode: 'on', tickMs: 60_000 });
+      await vi.waitFor(() => expect(record).toHaveBeenCalled(), { timeout: 10_000, interval: 20 });
+      expect(record.mock.calls[0]).toEqual([false, ['bbbbbbbbbbbb']]);
+      await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+      const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+      assert(handler);
+      handler('SIGTERM');
+      await running;
+    } finally {
+      follow.mockRestore();
+      releaseClaim(metro);
+      await running?.catch(() => {});
+    }
+  }, 20_000);
 
   test('only a persistent daemon can enforce deferred simulator shutdown', async () => {
     const attached = getExecutor().spawn(

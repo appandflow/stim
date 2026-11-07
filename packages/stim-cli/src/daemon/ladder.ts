@@ -1,3 +1,4 @@
+import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { existsSync, rmSync } from 'node:fs';
 import { buildCacheRoot, metroCacheRoot, withDirLock, type StimContext } from '@stim-cli/core';
 import {
@@ -182,6 +183,8 @@ async function run(
   try {
     outcome = await executeAction(plan, { ...actContext(context.settings), operation: context.operation });
   } catch (error) {
+    if (isClaimUnavailable(error)) throw error;
+    context.operation?.signal.throwIfAborted();
     outcome = { status: 'failed' as const, bytes: 0, detail: error instanceof Error ? error.message : String(error) };
   }
   const restored = outcome.status === 'done' ? (outcome.restore ?? restore) : undefined;
@@ -545,6 +548,8 @@ export async function runLadder(
     try {
       await RUNG_ACTS[rung](context, causes);
     } catch (error) {
+      if (isClaimUnavailable(error)) throw error;
+      input.operation?.signal.throwIfAborted();
       input.log(
         'warn',
         'pressure_rung_failed',

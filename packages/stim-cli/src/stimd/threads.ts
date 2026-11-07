@@ -24,7 +24,7 @@ type FromThread =
       fields: Record<string, unknown>;
     }
   | { type: 'done'; result: DaemonLadderAction[] }
-  | { type: 'failed'; message: string };
+  | { type: 'failed'; message: string; code?: string; remedy?: string; reportCleanup?: boolean };
 
 interface Thread {
   worker: Worker;
@@ -64,7 +64,14 @@ export function createThreadTable(log: Log): ThreadTable {
       thread.idle = setTimeout(() => end(name, thread), IDLE_MS);
       thread.idle.unref();
       if (message.type === 'done') pending?.resolve(message.result);
-      else pending?.reject(new Error(message.message));
+      else
+        pending?.reject(
+          Object.assign(new Error(message.message), {
+            ...(message.code ? { code: message.code } : {}),
+            ...(message.remedy ? { remedy: message.remedy } : {}),
+            ...(message.reportCleanup ? { reportCleanup: true } : {}),
+          }),
+        );
     });
     const gone = (error: Error) => {
       if (threads.get(name) === thread) threads.delete(name);
@@ -120,8 +127,13 @@ export function createThreadTable(log: Log): ThreadTable {
  * maintenance pass, from the measurement of the tick that started them, one run at a time, so they never hold the tick
  * that serves waiting runs.
  */
-export function createPassesLane(threads: ThreadTable, log: Log): MaintenanceLane {
+export function createPassesLane(
+  threads: ThreadTable,
+  log: Log,
+  onCleanupFailure?: (error: unknown) => void,
+): MaintenanceLane {
   let current: Promise<void> | null = null;
+  let failure: unknown;
   let taken: DaemonLadderAction[] = [];
   return {
     start({ config, measured, workspaces, pressure }, act) {
@@ -137,6 +149,10 @@ export function createPassesLane(threads: ThreadTable, log: Log): MaintenanceLan
         })
         .then((actions) => void taken.push(...actions))
         .catch((error: unknown) => {
+          if (error instanceof Error && 'reportCleanup' in error) {
+            failure = error;
+            onCleanupFailure?.(error);
+          }
           log('warn', 'daemon_maintenance_failed', error instanceof Error ? error.message : String(error));
         })
         .finally(() => {
@@ -151,6 +167,7 @@ export function createPassesLane(threads: ThreadTable, log: Log): MaintenanceLan
     },
     settled: async () => {
       await current;
+      if (failure) throw failure;
     },
   };
 }
@@ -186,6 +203,17 @@ else if (thread && parentPort) {
       port.postMessage({
         type: 'failed',
         message: signal.aborted && !cleanup ? 'aborted' : error instanceof Error ? error.message : String(error),
+        ...(cleanup
+          ? {
+              reportCleanup: true,
+              ...(error instanceof Error && 'code' in error && typeof error.code === 'string'
+                ? { code: error.code }
+                : {}),
+              ...(error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
+                ? { remedy: error.remedy }
+                : {}),
+            }
+          : {}),
       });
     }
   });

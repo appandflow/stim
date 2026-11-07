@@ -1,3 +1,4 @@
+import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { existsSync, readdirSync } from 'node:fs';
 import type { StimContext } from '@stim-cli/core';
 import {
@@ -366,6 +367,8 @@ export async function enterDormantStage(action: MaintenanceAction, operation?: S
           sims = await listAllIosSimsAsync({ timeoutMs: SIM_LIST_TIMEOUT_MS, signal: operation?.signal, operation });
         if (owns('android')) avds = await listAvdsAsync({ signal: operation?.signal, operation });
       } catch (error) {
+        if (isClaimUnavailable(error)) throw error;
+        operation?.signal.throwIfAborted();
         return {
           status: 'failed',
           bytes: 0,

@@ -1,7 +1,9 @@
 import { cpus, freemem, loadavg, totalmem } from 'node:os';
-import { configDir } from '@stim-cli/core';
+import { configDir, type StimContext } from '@stim-cli/core';
+import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { INTERACTIONS_KEY, buildWorkerRoot, readInteractions, type DaemonMeasurement } from '@stim-cli/core/state';
 import { readVolumeSpaceAsync } from '../stimd/passes/budget.ts';
+import { processContext } from '../cli-operation.ts';
 import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { deviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';
@@ -41,7 +43,9 @@ async function availableMemory(signal?: AbortSignal): Promise<number | null> {
   if (process.platform !== 'darwin') return freemem();
   try {
     return parseVmStatAvailable(await getExecutor().runFileAsync('vm_stat', [], { timeoutMs: 5000, signal }));
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'STIM_CLAIM_UNAVAILABLE') throw error;
+    signal?.throwIfAborted();
     return null;
   }
 }
@@ -52,11 +56,16 @@ export function measureDisk(config: Config | null, signal?: AbortSignal): Promis
 }
 
 /** macOS memory pressure and available memory, or free memory elsewhere. */
-export async function measureMemory(signal?: AbortSignal): Promise<DaemonMeasurement['memory']> {
+export async function measureMemory(
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<DaemonMeasurement['memory']> {
   const results = await Promise.allSettled([
-    readHostMemoryPressureAsync(undefined, undefined, signal),
+    readHostMemoryPressureAsync(undefined, undefined, signal, operation),
     availableMemory(signal),
   ]);
+  const cleanup = results.find((result) => result.status === 'rejected' && isClaimUnavailable(result.reason));
+  if (cleanup?.status === 'rejected') throw cleanup.reason;
   signal?.throwIfAborted();
   if (results[0].status === 'rejected') throw results[0].reason;
   if (results[1].status === 'rejected') throw results[1].reason;
@@ -118,9 +127,12 @@ async function recordFocusedUse(slots: ReturnType<typeof focusedSlots>, at: stri
 export async function measureTick(
   config: Config | null,
   now: number,
-  { probe = true, signal }: { probe?: boolean; signal?: AbortSignal } = {},
+  { probe = true, signal, operation }: { probe?: boolean; signal?: AbortSignal; operation?: StimContext } = {},
 ): Promise<TickMeasurement> {
-  const results = await Promise.allSettled([measureDisk(config, signal), measureMemory(signal)]);
+  operation ??= signal ? processContext(process.cwd(), signal) : undefined;
+  const results = await Promise.allSettled([measureDisk(config, signal), measureMemory(signal, operation)]);
+  const cleanup = results.find((result) => result.status === 'rejected' && isClaimUnavailable(result.reason));
+  if (cleanup?.status === 'rejected') throw cleanup.reason;
   signal?.throwIfAborted();
   if (results[0].status === 'rejected') throw results[0].reason;
   if (results[1].status === 'rejected') throw results[1].reason;
@@ -131,14 +143,16 @@ export async function measureTick(
     try {
       sims = await listAllIosSimsAsync({ timeoutMs: SIM_LIST_TIMEOUT_MS, signal });
     } catch (error) {
+      if (isClaimUnavailable(error)) throw error;
+      signal?.throwIfAborted();
       sims = null;
       simsError = error instanceof Error ? error.message : String(error);
     }
   }
   signal?.throwIfAborted();
-  const devices = await collectOwnedDeviceActivityAsync(config, sims ?? [], now, undefined, signal);
+  const devices = await collectOwnedDeviceActivityAsync(config, sims ?? [], now, undefined, signal, operation);
   signal?.throwIfAborted();
-  const use = probe ? await probeFocusedDeviceUse() : null;
+  const use = probe ? await probeFocusedDeviceUse({ signal }) : null;
   const used = use ? focusedSlots(use, config, devices) : [];
   const usedAt = use ? new Date(now - use.idleMs).toISOString() : '';
   await recordFocusedUse(used, usedAt);

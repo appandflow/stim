@@ -66,6 +66,7 @@ export interface ClaimSetState {
 export interface ClaimProblem {
   path: string;
   reason: string;
+  engineDirs?: string[];
 }
 
 export interface ClaimSurvey {
@@ -413,6 +414,13 @@ function survey(dir: string, mode: ClaimMode, into: ClaimSurvey): void {
     else {
       into.unresolved.push({
         path,
+        ...(Array.isArray(holder.details.engineDirs)
+          ? {
+              engineDirs: holder.details.engineDirs.filter(
+                (entry): entry is string => typeof entry === 'string' && /^[0-9a-f]{12}$/.test(entry),
+              ),
+            }
+          : {}),
         reason:
           holder.childDeclared && !holder.child
             ? 'it spawned the process that holds it and was killed before recording which one'

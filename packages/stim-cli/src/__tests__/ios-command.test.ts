@@ -1786,6 +1786,23 @@ describe('launch verification', () => {
     expect(errs.join('\n')).not.toContain('no bundle request reached');
   });
 
+  test('unverified coverage still reports captured app errors', async () => {
+    reserve();
+    const { logs, errs, exitCode } = await run(
+      {},
+      {
+        verifyLaunch: async () => ({
+          verified: false,
+          record: { event: 'bundle_response_finished' },
+          errors: [{ src: 'metro', msg: 'ERROR [Error: root render failed]' }],
+        }),
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(errs.join('\n')).toContain('root render failed');
+    expect(logs[0]).toMatch(/^WARNING: .*app errors detected/);
+  });
+
   test('a bare unverified launch exits 0 and gives a relaunch remedy', async () => {
     reserve();
     const { logs, errs, exitCode } = await run(

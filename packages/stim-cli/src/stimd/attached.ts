@@ -12,6 +12,7 @@ import {
   userHome,
   type DaemonMode,
 } from '@stim-cli/core/state';
+import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { launchStimd, SANDBOX_BLOCKED, stimdEnv, stimdLive } from '../daemon/client.ts';
@@ -36,7 +37,7 @@ type Log = (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: stri
 /** A stimd running as this process's child, which serves the home until `end` or until this process exits. */
 export interface AttachedHost {
   instance: string;
-  /** Asks the attached stimd to end and resolves once it exited, at most its exit wait plus 10 s later. */
+  /** Asks the attached stimd to end and resolves once it exited, at most its exit wait plus 11 s later. */
   end(): Promise<void>;
 }
 
@@ -257,7 +258,9 @@ export async function hostStimd(
     child.once('exit', (code, exitSignal) => done({ code, signal: exitSignal }));
     child.once('error', () => done({ code: null, signal: null }));
   });
+  const stdioClosed = new Promise<void>((done) => child.once('close', () => done()));
   return new Promise((done, reject) => {
+    let terminalRefusal: { code: string; message: string; remedy: string } | undefined;
     let aborting = false;
     const resolve: typeof done = (value) => {
       if (aborting) return;
@@ -278,15 +281,11 @@ export async function hostStimd(
     if (signal?.aborted) abort();
     let buffer = '';
     child.stdout?.setEncoding('utf8');
-    child.stdout?.on('data', (chunk: string) => {
-      buffer += chunk;
-      const end = buffer.indexOf('\n');
-      if (end < 0) return;
+    const frame = (raw: string) => {
       let line: unknown;
       try {
-        line = JSON.parse(buffer.slice(0, end));
+        line = JSON.parse(raw);
       } catch {}
-      buffer = '';
       if (!isJsonObject(line)) return;
       if (
         line.op === 'attached-claim-refusal' &&
@@ -296,7 +295,8 @@ export async function hostStimd(
         typeof line.refusal.remedy === 'string'
       ) {
         clearTimeout(timer);
-        resolve({ refusal: { code: line.refusal.code, message: line.refusal.message, remedy: line.refusal.remedy } });
+        terminalRefusal = { code: line.refusal.code, message: line.refusal.message, remedy: line.refusal.remedy };
+        resolve({ refusal: terminalRefusal });
         return;
       }
       if (line.op === 'attached-engine-unavailable') {
@@ -339,13 +339,29 @@ export async function hostStimd(
           child.stdin?.end();
           const killTimer = setTimeout(kill, waitMs + KILL_GRACE_MS);
           const result = await exited;
+          await new Promise<void>((finish) => {
+            const closeTimer = setTimeout(finish, 1000);
+            void stdioClosed.then(() => {
+              clearTimeout(closeTimer);
+              return finish();
+            });
+          });
           clearTimeout(killTimer);
+          if (terminalRefusal) throw Object.assign(new Error(terminalRefusal.message), terminalRefusal);
           if (result.code !== 0)
             throw new Error(
               `Attached stimd exited ${result.signal ? `on ${result.signal}` : `with code ${String(result.code)}`}.`,
             );
         },
       });
+    };
+    child.stdout?.on('data', (chunk: string) => {
+      buffer += chunk;
+      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+        const raw = buffer.slice(0, end);
+        buffer = buffer.slice(end + 1);
+        frame(raw);
+      }
     });
     child.once('close', (code) => {
       clearTimeout(timer);
@@ -456,6 +472,7 @@ export function readoptJournal(log: Log): void {
 export async function endAttached({
   inFlight,
   admissionRevision,
+  seal = () => {},
   alive: measure,
   waitMs,
   handover,
@@ -467,6 +484,7 @@ export async function endAttached({
 }: {
   inFlight: () => string[];
   admissionRevision: () => number;
+  seal?: () => void;
   alive: (signal: AbortSignal) => Promise<string | null>;
   waitMs: number;
   handover: boolean;
@@ -503,6 +521,7 @@ export async function endAttached({
     try {
       alive = await measure(controller.signal);
     } catch (error) {
+      if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
       alive = timedOut ? 'its home was not measured in time' : `its home could not be measured: ${String(error)}`;
     } finally {
       clearTimeout(timer);
@@ -511,6 +530,7 @@ export async function endAttached({
     if (inFlight().length && Date.now() < deadline) await drain();
     if (admissionRevision() !== revision) alive ??= 'a command was admitted while measuring its home';
   }
+  seal();
   const unfinished = inFlight();
   if (alive || unfinished.length) {
     try {
