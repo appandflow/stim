@@ -59,7 +59,7 @@ function lockPath(path: string): string {
 }
 
 /** The socket used for the engine store's short lock, including its long-path fallback. */
-export function engineLockSocket(root: string): string {
+export function engineLockSocket(root: string, name: '.lock.sock' | '.flip.sock' = '.lock.sock'): string {
   let existing = root;
   const missing: string[] = [];
   while (!existsSync(existing) && dirname(existing) !== existing) {
@@ -70,7 +70,7 @@ export function engineLockSocket(root: string): string {
   try {
     canonical = join(realpathSync(existing), ...missing);
   } catch {}
-  return lockPath(join(canonical, '.lock.sock'));
+  return lockPath(join(canonical, name));
 }
 
 function closeLock(server: Server): Promise<void> {

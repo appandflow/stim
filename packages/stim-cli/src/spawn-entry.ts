@@ -11,6 +11,7 @@ export type SpawnEntryName =
   | 'stimd-status'
   | 'net-thread'
   | 'engine-select'
+  | 'engine-flip'
   | '__self-test';
 
 const DEV_ENTRIES: Record<SpawnEntryName, string> = {
@@ -20,6 +21,7 @@ const DEV_ENTRIES: Record<SpawnEntryName, string> = {
   'stimd-status': './stimd/status-thread.ts',
   'net-thread': '../../server/src/net-thread.ts',
   'engine-select': '../bin/engine-select.ts',
+  'engine-flip': '../bin/engine-flip.ts',
   '__self-test': '../bin/self-test.ts',
 };
 

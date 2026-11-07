@@ -39,7 +39,7 @@ import { stopHostedBundleInstances, stopMacosApp, stopMacosChildren } from '../m
 import { spawnOwned, stopOwnedProcess } from '../engine/spawn-owned.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
-import { clearClaimChild } from '../ownership-claim.ts';
+import { clearClaimChild, markClaimChildPending } from '../ownership-claim.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { materializeHostedApp, newer } from './app.ts';
@@ -255,6 +255,7 @@ export async function runHostedMacosApp(
           return startedApp;
         } catch (error) {
           try {
+            markClaimChildPending(claim);
             await stopMacosChildren(owned);
             if (!(await stopOwnedProcess(owned)))
               throw new Error('The hosted app process group could not be stopped.', { cause: error });

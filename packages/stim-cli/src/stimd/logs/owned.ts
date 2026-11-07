@@ -443,6 +443,7 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId:
     if (!read()) return false;
     const identity = inspectProcessIdentity(app);
     if ((identity !== 'gone' && identity !== 'different') || processGroupAlive(app.pid)) return false;
+    if (!read()) return false;
     for (const file of files) if (!file.lines.end()) return false;
     if (!exitWritten) {
       if (!writer.write({ src: 'client', platform: 'macos', level: 'info', msg: `Exited ${product}.` })) return false;

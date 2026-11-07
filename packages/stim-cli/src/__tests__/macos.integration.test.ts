@@ -47,7 +47,7 @@ import * as offload from '../offload/client.ts';
 import * as machines from '../offload/build-machines.ts';
 import * as slots from '../engine/build-slots.ts';
 import * as spawns from '../engine/spawn-claims.ts';
-import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
+import { WorkspaceProcessCleanupError, workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { markClaimChildPending, readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import * as ownership from '../ownership-claim.ts';
 import { startedBy } from '../macos/instances.ts';
@@ -577,6 +577,34 @@ test('a reused app PID can be finalized when its original group is gone', async 
   }
 });
 
+test('final drain reads output written immediately before app exit', async () => {
+  const app = { pid: 123456, processToken: 'last-output', startedAtMicros: 1 };
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  const out = join(logs, macosAppLogName('test-launch', 'out'));
+  writeFileSync(out, 'first output\n');
+  const identity = vi.spyOn(processIdentity, 'inspectProcessIdentity').mockReturnValue('same');
+  const group = vi.spyOn(ownership, 'processGroupAlive').mockReturnValue(false);
+  const streams = createOwnedStreams(() => {});
+  try {
+    await streams.sync(root);
+    identity.mockReturnValueOnce('same');
+    identity.mockImplementationOnce(() => {
+      appendFileSync(out, 'final output\n');
+      return 'gone';
+    });
+    expect(await streams.drain(root)).toBeNull();
+    const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
+    expect(output).toContain('final output');
+    expect(output.indexOf('final output')).toBeLessThan(output.indexOf('Exited Sample.'));
+  } finally {
+    streams.close();
+    identity.mockRestore();
+    group.mockRestore();
+  }
+});
+
 test.skipIf(process.platform === 'win32')('stimd preserves a partial output line across a restart', async () => {
   const app = await ownedProcess();
   writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
@@ -924,6 +952,34 @@ test.skipIf(process.platform === 'win32')(
     } finally {
       spy.mockRestore();
       if (inspectProcessIdentity(child) === 'same') process.kill(childPid, 'SIGKILL');
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a pending cleanup declaration remains unresolved after both owners exit',
+  async () => {
+    const launcher = await ownedProcess();
+    const app = await ownedProcess();
+    const claimRoot = join(dir, 'failed-launch.claims');
+    const attempt = tryAcquireClaim({ root: claimRoot, mode: 'exclusive', label: 'failed launch', owner: launcher });
+    assert(attempt.acquired);
+    const claim = attempt.acquired;
+    try {
+      markClaimChildPending(claim);
+      process.kill(app.pid, 'SIGKILL');
+      process.kill(launcher.pid, 'SIGKILL');
+      expect(await waitForProcessExit(app, 5000)).toBe(true);
+      expect(await waitForProcessExit(launcher, 5000)).toBe(true);
+      const survey = readClaimSet(claimRoot);
+      expect(survey.live).toEqual([]);
+      expect(survey.unresolved).toHaveLength(1);
+    } finally {
+      for (const processRecord of [app, launcher]) {
+        if (inspectProcessIdentity(processRecord) === 'same') process.kill(processRecord.pid, 'SIGKILL');
+        await waitForProcessExit(processRecord, 5000);
+      }
+      releaseClaim(claim);
     }
   },
 );
@@ -1314,6 +1370,66 @@ describe('macOS build placement and promotion', () => {
       assert(stopOrder !== undefined);
       expect(childStop.mock.invocationCallOrder[0]).toBeLessThan(stopOrder);
       expect(stop).toHaveBeenCalledWith(owned);
+    },
+    20_000,
+  );
+
+  test.skipIf(process.platform !== 'darwin')(
+    'a cancelled launch retains its app record and declared child when helper cleanup is unverified',
+    async () => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+        async ({ bundle: targetBundle, bundleId: targetId }) => {
+          mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+          writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+          return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+        },
+      );
+      vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+      const context = testContext();
+      const mocked = getExecutor();
+      resetExecutor();
+      const app = await ownedProcess();
+      setExecutor(mocked);
+      const owned = {
+        pid: app.pid,
+        processToken: app.processToken,
+        claim: {
+          root: 'fixture',
+          path: 'fixture',
+          claimId: 'fixture',
+          mode: 'exclusive' as const,
+          owner: app,
+          startedAt: new Date().toISOString(),
+          details: {},
+          label: 'fixture',
+        },
+      };
+      vi.spyOn(owning, 'spawnOwned').mockResolvedValue(owned);
+      vi.spyOn(stimdClient, 'observeOwned').mockImplementation(async () => {
+        refuseDeclaredSpawns(context, 'cancelled during observe');
+        return null;
+      });
+      vi.spyOn(stopping, 'stopMacosChildren').mockRejectedValue(new Error('unverified child'));
+      const stop = vi.spyOn(owning, 'stopOwnedProcess');
+      let failure: unknown;
+      try {
+        failure = await runMacos(context, root, () => {}, undefined, 'local').catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(WorkspaceProcessCleanupError);
+        assert(failure instanceof WorkspaceProcessCleanupError);
+        expect(stop).not.toHaveBeenCalled();
+        expect(readMacosRecord(root)?.app).toMatchObject({ pid: app.pid, processToken: app.processToken });
+        expect(failure.claims.length).toBeGreaterThan(0);
+        for (const claim of failure.claims) {
+          const holder = readClaimSet(claim.root).live.find((entry) => entry.claimId === claim.claimId);
+          expect(holder).toMatchObject({ childDeclared: true, child: null });
+        }
+      } finally {
+        if (inspectProcessIdentity(app) === 'same') process.kill(app.pid, 'SIGKILL');
+        await waitForProcessExit(app, 5000);
+        if (failure instanceof WorkspaceProcessCleanupError) for (const claim of failure.claims) releaseClaim(claim);
+      }
     },
     20_000,
   );

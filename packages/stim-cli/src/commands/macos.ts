@@ -25,7 +25,7 @@ import {
 import { errorRemedy } from '../engine/build-ledger.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { spawnOwned, stopOwnedProcess, type OwnedProcess } from '../engine/spawn-owned.ts';
-import { clearClaimChild, markClaimChildPending, setClaimChild } from '../ownership-claim.ts';
+import { clearClaimChild, markClaimChildPending } from '../ownership-claim.ts';
 import { observeOwned } from '../daemon/client.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -429,7 +429,6 @@ async function launchHere(
       if (owned) {
         for (const claim of operationState(context).declaring) {
           markClaimChildPending(claim);
-          setClaimChild(claim, owned);
         }
         await stopMacosChildren(owned);
       }
