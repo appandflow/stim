@@ -357,8 +357,8 @@ function isUnverifiedCleanup(error: unknown): boolean {
   return isClaimUnavailable(error) && 'reportCleanup' in error;
 }
 
-function markHomePending(home: ClaimHandle, cleanup: () => void = () => {}, enabled = true): void {
-  if (!enabled) return;
+function markHomePending(home: ClaimHandle | null, cleanup: () => void = () => {}, enabled = true): void {
+  if (!enabled || !home) return;
   try {
     markClaimChildPending(home);
   } catch (error) {
@@ -374,13 +374,15 @@ function retainUnverifiedForeground(
   error: unknown,
   home: ClaimHandle,
   retention: ReturnType<typeof followEngine>,
+  daemon: ClaimHandle | null,
 ): unknown {
   if (!isClaimUnavailable(error)) return undefined;
   if (!('reportCleanup' in error)) return error;
   if ('retentionFailure' in error) return error;
   markHomePending(home);
+  if (daemon) markHomePending(daemon);
   const enginePath = retention?.retainUnknown();
-  const paths = [home.path, ...(enginePath ? [enginePath] : [])];
+  const paths = [home.path, ...(daemon ? [daemon.path] : []), ...(enginePath ? [enginePath] : [])];
   error.message += ` Stimd ownership remains held at ${paths.join(', ')}.`;
   return Object.assign(error, {
     retentionFailure: true,
@@ -577,7 +579,7 @@ async function runStimdInner(
   startup.cleanup = async (error) => {
     if (isUnverifiedCleanup(error)) {
       keepOwn = true;
-      retainUnverifiedForeground(error, homeClaim, startupRetention ?? startupFollower);
+      retainUnverifiedForeground(error, homeClaim, startupRetention ?? startupFollower, startupClaim);
     } else {
       startupRetention?.release();
       startupFollower?.release();
@@ -647,6 +649,7 @@ async function runStimdInner(
   startup.signal.throwIfAborted();
   const claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details, takeOver);
   startupClaim = claim;
+  markHomePending(claim, undefined, attached !== undefined);
   startup.signal.throwIfAborted();
   if (stopped !== null) log('info', 'stimd_takeover', `stopped stim-daemon pid ${stopped}, from an older Stim`);
   if (!claim) {
@@ -655,6 +658,7 @@ async function runStimdInner(
     writer.close();
     return false;
   }
+  let keepDaemon = false;
   readoptJournal(log);
   const follower = lifetime.detachedOnly(() => followEngine(log));
   startupFollower = follower;
@@ -676,8 +680,12 @@ async function runStimdInner(
   const script = realpathSync(process.argv[1] ?? '');
   const net = createNetThread(
     log,
-    () => {
+    (failure) => {
       lastContact = Date.now();
+      if (failure) {
+        failBackground(failure, 'net cleanup could not be verified');
+        return;
+      }
       if (restartingNet) return;
       handleNetStop(serve, closing, attached !== undefined, requestEnd, shutdown, requestTick);
     },
@@ -793,11 +801,12 @@ async function runStimdInner(
   const failBackground = (error: unknown, why: string) => {
     backgroundFailure = error;
     keepOwn = true;
+    keepDaemon = true;
     markHomePending(homeClaim);
     try {
       (retention ?? follower)?.record(true, [...engineDirs, ...metroEngineDirs()]);
     } finally {
-      retainUnverifiedForeground(error, homeClaim, retention ?? follower);
+      retainUnverifiedForeground(error, homeClaim, retention ?? follower, claim);
     }
     if (attached) requestEnd(why, 'error');
     else shutdown(why, 'error');
@@ -943,10 +952,13 @@ async function runStimdInner(
                 });
               })()
             : net.ensure(options);
-          void answer.then((state) => {
-            lastContact = Date.now();
-            return reply({ op: 'net', ...state });
-          });
+          void answer.then(
+            (state) => {
+              lastContact = Date.now();
+              return reply({ op: 'net', ...state });
+            },
+            (error: unknown) => reply({ op: 'net', listening: false, message: String(error) }),
+          );
         } else if (op === 'net.connect') {
           socket.off('data', onData);
           const head = buffer;
@@ -1037,8 +1049,11 @@ async function runStimdInner(
       ]);
       const error = attachedCleanupError(initial, backgroundFailure, results);
       if (error) {
-        if (isUnverifiedCleanup(error)) keepOwn = true;
-        const retained = retainUnverifiedForeground(error, homeClaim, retention) ?? error;
+        if (isUnverifiedCleanup(error)) {
+          keepOwn = true;
+          keepDaemon = true;
+        }
+        const retained = retainUnverifiedForeground(error, homeClaim, retention, claim) ?? error;
         shutdown('attached cleanup could not be verified', 'error', true);
         await shutdownDone;
         throw retained;
@@ -1121,7 +1136,8 @@ async function runStimdInner(
         if (isUnverifiedCleanup(error)) {
           unverified = true;
           keepOwn = true;
-          retainUnverifiedForeground(error, homeClaim, retention ?? follower);
+          keepDaemon = true;
+          retainUnverifiedForeground(error, homeClaim, retention ?? follower, claim);
         }
         await threads.close();
         return undefined;
@@ -1129,7 +1145,7 @@ async function runStimdInner(
       .catch(() => {})
       .then(() => {
         if (!unverified && !metroCleanupPending()) follower?.release();
-        releaseClaim(claim);
+        if (!keepDaemon) releaseClaim(claim);
         if (!keepOwn) releaseClaim(own);
         markAbnormal = null;
         if (!preserve && !unverified) retention?.release();

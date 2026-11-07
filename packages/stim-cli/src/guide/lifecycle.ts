@@ -575,8 +575,9 @@ current engine defers its promotion while the host or job is active.
 Concurrent CI jobs must use separate Stim homes when a job owns an attached daemon.
 
 When Stim cannot verify that a Metro, tunnel or maintenance child and its
-descendants stopped, it retains ownership claims and refuses new work in that
-home. Verify the named process tree has stopped, then remove the exact claims
+descendants stopped, or the server worker fails to confirm cleanup or is forced
+to exit, it retains ownership claims and refuses new work in that home. Verify
+the named process tree has stopped, then remove the exact claims
 listed in the refusal. On Windows, a naturally exited Metro or tunnel leader
 does not prove its descendants stopped, so this can require manual reconciliation.
 An attached daemon killed unexpectedly, including during startup or forced
