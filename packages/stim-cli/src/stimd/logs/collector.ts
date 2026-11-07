@@ -273,7 +273,7 @@ export async function runCollector({
     spawned.stdout?.on('data', (chunk) => outReader.push(chunk));
     spawned.stderr?.on('data', (chunk) => errReader.push(chunk));
 
-    spawned.on('exit', (code, signal) => {
+    spawned.on('close', (code, signal) => {
       if (spawned !== child) return;
       const settle = (next: number | null) => {
         if (spawned !== child) return;

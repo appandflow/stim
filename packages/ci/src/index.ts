@@ -2,7 +2,7 @@ import { failure, prepareCI, writeJson, type CIContextOptions } from './context.
 import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createStim, type StimRunOptions, type StimRunResult, type StimStopResult } from 'stim';
-import { hostStimd, type AttachedHost } from 'stim/attached-stimd';
+import { bindCIEngine, type AttachedHost } from 'stim/attached-stimd';
 import { runCommand, type CommandResult } from './command.ts';
 import { copyDiagnosticLogs } from './artifacts.ts';
 
@@ -111,13 +111,16 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   });
   let attempted = false;
   let host: AttachedHost | null = null;
+  let releaseEngine: (() => void) | undefined;
   try {
     signal?.throwIfAborted();
-    const hosted = await hostStimd(
+    const binding = await bindCIEngine(stimEnvironment(options));
+    releaseEngine = binding.release;
+    const hosted = await binding.host(
       { ...stimEnvironment(options), STIM_POOL_BOOTED_GRACE_MINUTES: '0' },
       { handover: false },
     );
-    if (hosted === 'blocked')
+    if (hosted === 'blocked' || hosted === 'blocked-lock')
       throw Object.assign(new Error('The sandbox denied the Stim daemon socket.'), {
         code: 'STIM_SANDBOX_BLOCKED',
         remedy: 'Run outside the sandbox; `stim guide errors sandbox` explains the available allowances.',
@@ -133,6 +136,20 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
         onProgress,
       });
     }
+    const context = {
+      projectRoot,
+      home: options.home ? resolve(options.home) : undefined,
+      buildCache: options.buildCache ? resolve(options.buildCache) : undefined,
+      env: host ? { ...process.env, STIM_POOL_BOOTED_GRACE_MINUTES: '0' } : { ...process.env },
+      onProgress,
+    };
+    stim = new Proxy(stim, {
+      get(target, name) {
+        const value: unknown = Reflect.get(target, name);
+        if (typeof name !== 'string' || typeof value !== 'function') return value;
+        return (...args: unknown[]) => binding.runOp(name, args, context);
+      },
+    });
     attempted = true;
     result.run = await stim.run({ ...options.run, recordedBuild: true, cleanAppState: true, signal });
     signal?.throwIfAborted();
@@ -205,14 +222,24 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
         result.failure = result.cleanup.error;
       }
     }
-    await host?.end();
-    if (signal?.aborted && result.exitCode === 0) {
-      const timedOut = timeout?.aborted && !options.signal?.aborted;
-      result.exitCode = timedOut ? 124 : 130;
-      result.failure = {
-        code: timedOut ? 'STIM_CI_TIMEOUT' : 'STIM_CI_CANCELLED',
-        message: timedOut ? `CI run exceeded ${options.timeoutMs}ms.` : 'CI run was cancelled.',
-      };
+    try {
+      await host?.end();
+    } catch (error) {
+      result.cleanup.error ??= failure(error, 'STIM_CI_CLEANUP_FAILED');
+    } finally {
+      try {
+        releaseEngine?.();
+      } catch (error) {
+        result.cleanup.error ??= failure(error, 'STIM_CI_CLEANUP_FAILED');
+      }
+    }
+    if (result.cleanup.error && result.exitCode === 0) {
+      result.exitCode = 1;
+      result.failure = result.cleanup.error;
+    }
+    if (options.signal?.aborted && result.exitCode === 0) {
+      result.exitCode = 130;
+      result.failure = { code: 'STIM_CI_CANCELLED', message: 'CI run was cancelled.' };
     }
     if (result.reportingError && result.exitCode === 0) {
       result.exitCode = 1;

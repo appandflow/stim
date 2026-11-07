@@ -11,6 +11,7 @@ const lifecycle = vi.hoisted(() => ({
   diagnostics: vi.fn<() => Promise<unknown>>(),
   stop: vi.fn<(options: { signal: AbortSignal }) => Promise<unknown>>(),
   host: vi.fn<(env: NodeJS.ProcessEnv, options: { handover?: boolean }) => Promise<unknown>>(),
+  release: vi.fn<() => void>(),
   steps: new Array<string>(),
 }));
 vi.mock('stim', () => ({
@@ -19,7 +20,13 @@ vi.mock('stim', () => ({
     return lifecycle;
   },
 }));
-vi.mock('stim/attached-stimd', () => ({ hostStimd: lifecycle.host }));
+vi.mock('stim/attached-stimd', () => ({
+  bindCIEngine: async () => ({
+    host: lifecycle.host,
+    release: lifecycle.release,
+    runOp: (name: 'run' | 'stop' | 'diagnostics', args: unknown[]) => Reflect.apply(lifecycle[name], lifecycle, args),
+  }),
+}));
 
 let root: string;
 let active: string;
@@ -29,6 +36,7 @@ let options: CIOptions;
 beforeEach(() => {
   deviceId = 'owned-device';
   lifecycle.create.mockClear();
+  lifecycle.release.mockReset();
   lifecycle.steps = [];
   lifecycle.host.mockReset().mockImplementation(async () => {
     lifecycle.steps.push('host');
@@ -386,4 +394,29 @@ it.each([0, 3])('records cancellation during daemon shutdown after a test exits 
   expect(result.exitCode).toBe(testExit || 130);
   expect(result.failure?.code).toBe(testExit ? 'STIM_CI_TEST_FAILED' : 'STIM_CI_CANCELLED');
   expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).exitCode).toBe(testExit || 130);
+});
+
+it('does not time out a passing run while its daemon host ends', async () => {
+  lifecycle.host.mockResolvedValueOnce({
+    end: async () => new Promise<void>((done) => setTimeout(done, 150)),
+  });
+  const result = await runCI({ ...options, command: undefined, timeoutMs: 100 });
+  expect(result.exitCode).toBe(0);
+  expect(result.failure).toBeUndefined();
+});
+
+it('reports a failed engine claim release after cleanup', async () => {
+  lifecycle.release.mockImplementationOnce(() => {
+    throw Object.assign(new Error('claim at /scratch/claim could not be released'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy: 'Restore claim store access',
+    });
+  });
+  const result = await runCI({ ...options, command: undefined });
+  expect(result.exitCode).toBe(1);
+  expect(result.failure).toMatchObject({
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    message: expect.stringContaining('/scratch/claim'),
+    remedy: 'Restore claim store access',
+  });
 });

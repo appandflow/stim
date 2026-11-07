@@ -1963,6 +1963,12 @@ not on any remote"  (worktree remove)
   the remedy names: npx stim@<this version> engine rollback, or
   npx stim@<this version> engine use <this version>.`,
     },
+    STIM_ENGINE_HOST_UNAVAILABLE: {
+      summary: 'the selected engine predates attached CI hosting',
+      body: () => `STIM_ENGINE_HOST_UNAVAILABLE
+  The selected machine engine cannot host the daemon for stim ci run.
+  Run stim engine update to select an engine that supports attached hosting.`,
+    },
     STIM_SANDBOX_BLOCKED: {
       summary: "a sandbox denies stimd's socket, so the command can neither reach nor host stimd",
       body: () => `STIM_SANDBOX_BLOCKED  ("<STIM_HOME>/run/stimd.sock is outside this sandbox's
@@ -1976,7 +1982,8 @@ not on any remote"  (worktree remove)
   exits; the next command starts or hosts the next one. The refusal comes
   only when the sandbox itself denies the socket (EPERM or EACCES): a stimd
   started outside the sandbox holds the home and this command may not
-  connect, or the attached stimd may not bind. A slow start is never refused.
+  connect, the attached stimd may not bind, or its engine store lock is denied.
+  A slow start is never refused.
   On macOS, run stim doctor --fix inside Claude Code, then restart the session.
   On Linux, a path-specific socket allowance is unsupported; run the command
   outside the sandbox. status, logs, reload, doctor and other read commands

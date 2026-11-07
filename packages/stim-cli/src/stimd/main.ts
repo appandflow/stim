@@ -51,6 +51,7 @@ import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { relaunchWithLogFile } from '../detached-entry.ts';
 import {
   LAUNCHD_LABEL_ENV,
+  SANDBOX_BLOCKED,
   launchStimd,
   launchdLabelPrefix,
   serveThroughStimd,
@@ -90,6 +91,7 @@ import { handleLogRequest } from './logs/protocol.ts';
 import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
 import { followEngine } from './engine-follow.ts';
+import { takeLock } from '../engine-store/locks.ts';
 import { createStatusSnapshots } from './status-snapshot.ts';
 import { crashLooping, holdCrashLoop, keptBoots, parseBoots, type Boot } from './crash-hold.ts';
 import { ASKED_MS, autoUpdateOn, checkForUpdate, DAILY_MS, lastUpdateCheck, updateDue } from './auto-update.ts';
@@ -101,6 +103,7 @@ import { stopForeignSupervisors } from './foreign-supervisors.ts';
 import {
   ATTACHED_ARG,
   attachedExitWaitMs,
+  KILL_GRACE_MS,
   endAttached,
   NO_HANDOVER_ARG,
   readoptJournal,
@@ -265,6 +268,44 @@ function keepsServingWhenOff(attached: boolean): boolean {
   return attached || metroChildrenRun();
 }
 
+async function retainAttachedEngine(attached: boolean, log: Parameters<typeof followEngine>[0], cleanup: () => void) {
+  if (!attached) return null;
+  const engine = ownStoreEngine();
+  if (!engine) return null;
+  let lock: Awaited<ReturnType<typeof takeLock>> = null;
+  try {
+    for (const until = Date.now() + 10_000; !lock && Date.now() < until;) {
+      lock = await takeLock(engine.root, '.lock.sock');
+      if (!lock) await new Promise((done) => setTimeout(done, 50));
+    }
+  } catch (error) {
+    cleanup();
+    if (
+      error instanceof Error &&
+      'socketPath' in error &&
+      'code' in error &&
+      (error.code === 'EPERM' || error.code === 'EACCES')
+    )
+      throw Object.assign(new Error(error.message), { code: SANDBOX_BLOCKED, engineLock: true });
+    throw error;
+  }
+  if (!lock) {
+    cleanup();
+    throw new Error('Could not lock the attached Stim engine store.');
+  }
+  try {
+    const retention = followEngine(log);
+    if (!retention) throw new Error('Could not retain the attached Stim engine.');
+    retention.record(true, []);
+    return retention;
+  } catch (error) {
+    cleanup();
+    throw error;
+  } finally {
+    await lock.release();
+  }
+}
+
 /**
  * One resident stimd per Stim home, which returns false when another holds the home: holds the claim at `run/stimd` exclusively and the daemon claim at `daemon/claim`
  * shared, after stopping a stim-daemon from Stim 1.40 to 1.42 that holds that one exclusively; serves the CLI socket,
@@ -352,7 +393,6 @@ export async function runStimd({
     );
     own = updateClaimDetails(own, { ...details, boots: marked }) ?? own;
   };
-  process.title = 'stimd';
   const store = lifetime.detachedOnly(ownStoreEngine);
   if (store && crashLooping(boots, build)) {
     const held = await holdCrashLoop(store, identity.version, getConfigDir());
@@ -411,6 +451,12 @@ export async function runStimd({
   }
   readoptJournal(log);
   const follower = lifetime.detachedOnly(() => followEngine(log));
+  const retention = await retainAttachedEngine(attached !== undefined, log, () => {
+    releaseClaim(claim);
+    releaseClaim(own);
+    writer.close();
+  });
+  process.title = 'stimd';
   const key = writeDesktopKey(desktopKey);
   const script = realpathSync(process.argv[1] ?? '');
   const net = createNetThread(
@@ -516,6 +562,9 @@ export async function runStimd({
   const opCommands = new WeakMap<Socket, string>();
   let ending: string | null = null;
   let attachedEnding: Promise<void> | undefined;
+  let admissionRevision = 0;
+  let attachedWatchdog: NodeJS.Timeout | undefined;
+  const maintenanceAllowed = () => !closing && !ending;
   let engineDirs: string[] = [];
   try {
     if (follower) engineDirs = workspaceEngineDirs(loadConfig());
@@ -716,6 +765,7 @@ export async function runStimd({
             socket.end(`${JSON.stringify({ op: 'error', code: 'net-off', message: 'the net thread does not run' })}\n`);
           return;
         } else if (op === 'op.begin') {
+          admissionRevision++;
           hasten?.();
           ops.set(socket, 'pinned');
           opControllers.set(socket, new AbortController());
@@ -840,6 +890,7 @@ export async function runStimd({
   const finishAttached = () =>
     endAttached({
       inFlight: () => [...ops.keys()].map((socket) => opCommands.get(socket) ?? 'a command'),
+      admissionRevision: () => admissionRevision,
       alive: async () =>
         net.running()
           ? 'the net thread serves'
@@ -864,6 +915,9 @@ export async function runStimd({
   const requestEnd = (why: string) => {
     if (ending) return;
     ending = why;
+    attachedWatchdog = setTimeout(() => process.exit(1), waitMs + KILL_GRACE_MS);
+    attachedWatchdog.unref();
+    threads.abort('passes');
     attachedEnding = finishAttached();
   };
   const onSignal = (signal: NodeJS.Signals) => (attached ? lifetime.signal(signal, requestEnd) : shutdown(signal));
@@ -896,7 +950,10 @@ export async function runStimd({
     ])
       .then(() => threads.close())
       .then(() => attachedEnding)
-      .then(() => writer.close());
+      .then(() => {
+        retention?.release();
+        return writer.close();
+      });
   };
   for (const signal of SIGNALS) process.once(signal, onSignal);
   try {
@@ -973,7 +1030,7 @@ export async function runStimd({
       });
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
       actions.push(...lane.take());
-      if (!closing && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
+      if (maintenanceAllowed() && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
         dependencyScanAt = Date.now();
         dependencyWork = threads
           .run('measure', { cwd: process.cwd() })
@@ -1099,11 +1156,12 @@ export async function runStimd({
       shutdown('nothing runs in this Stim home');
       break;
     }
-    if (ticked && !closing) lane.start(ticked, mode === 'on');
+    if (ticked && maintenanceAllowed()) lane.start(ticked, mode === 'on');
   }
   await Promise.all([lane.settled(), dependencyWork, net.close()]);
   await threads.close();
   await attachedEnding;
+  clearTimeout(attachedWatchdog);
   return true;
 }
 
@@ -1219,6 +1277,10 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
       writer.write({ src: 'stimd', level: 'error', event: 'daemon_failed', msg: message });
       writer.close();
     } catch {}
+    if (argv.includes(ATTACHED_ARG) && isSandboxBlocked(error) && 'engineLock' in error)
+      await new Promise<void>((done) =>
+        process.stdout.write(`${JSON.stringify({ op: 'attached-blocked-lock' })}\n`, () => done()),
+      );
     process.exitCode = isSandboxBlocked(error) ? SANDBOX_EXIT : 1;
   }
   if (label)
