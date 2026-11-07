@@ -336,7 +336,11 @@ function waitForFileUrl(
       child.removeListener('error', onError);
       child.removeListener('exit', onExit);
       signal?.removeEventListener('abort', onAbort);
-      resolve({ url, exited });
+      let lastLine: string | null = null;
+      try {
+        lastLine = readFileSync(logFile, 'utf-8').trim().split(/\r?\n/).at(-1)?.trim() || null;
+      } catch {}
+      resolve({ url, exited, lastLine });
     };
     const onAbort = () => finish(null);
     const probe = () => {
@@ -478,7 +482,7 @@ export async function startTunnel({
 }: StartTunnelOptions): Promise<StartTunnelResult> {
   throwIfCancelled(signal, 'Metro tunnel startup');
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
-  const outputFile = provider === 'tailscale' ? null : logFile || (spawnFn ? null : createTunnelLogFile(provider));
+  const outputFile = logFile || (spawnFn ? null : createTunnelLogFile(provider));
 
   let child: ChildProcess;
   try {
@@ -487,10 +491,12 @@ export async function startTunnel({
     if (!binary) throw new Error('Install Tailscale and sign in to your tailnet.');
     const { bin, args } = tunnelArgv(provider, port, ngrokUrl, outputFile, binary);
     for (const claim of claims) markClaimChildPending(claim);
-    child = spawn(bin, args, {
-      stdio: outputFile ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
-      detached: true,
-    });
+    const fd = outputFile && provider === 'tailscale' ? openSync(outputFile, 'a') : 'ignore';
+    try {
+      child = spawn(bin, args, { stdio: outputFile ? ['ignore', fd, fd] : ['ignore', 'pipe', 'pipe'], detached: true });
+    } finally {
+      if (typeof fd === 'number') closeSync(fd);
+    }
   } catch (err) {
     for (const claim of claims) clearClaimChild(claim);
     removeTunnelLogFile(outputFile);

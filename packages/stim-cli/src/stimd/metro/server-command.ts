@@ -5,7 +5,7 @@ import { getExecutor } from '../../exec.ts';
 import { signalProcessTree } from '../../metro.ts';
 import { type NdjsonWriter, createNdjsonWriter } from '../../ndjson.ts';
 import { METRO_COMMAND_PORT } from '../../workspace/settings.ts';
-import { type ChildServerHandle, superviseChildServer } from './child-server.ts';
+import { type ChildOutput, type ChildServerHandle, superviseChildServer } from './child-server.ts';
 import { recordFromLine, repositoryRoot } from './server-expo.ts';
 import { MODE_COMMAND } from './state.ts';
 import { projectNodeLine, withProjectNode } from './project-node.ts';
@@ -34,11 +34,16 @@ export async function startCommandServer({
   groupAlive = processGroupAlive,
   killTimeoutMs = 5000,
   platform = process.platform,
+  output = null,
+  extraEnv = {},
 }: {
   root: string;
   port: number;
   logsDir: string;
   command: readonly string[];
+  /** File stdio for a child that outlives its parent, instead of pipes. */
+  output?: { files: ChildOutput; fds: [number, number] } | null;
+  extraEnv?: Record<string, string>;
   writer?: NdjsonWriter | null;
   spawnFn?: ((cmd: string, args: string[], opts: SpawnOptions) => ChildProcess) | null;
   signalTree?: typeof signalProcessTree;
@@ -68,9 +73,9 @@ export async function startCommandServer({
   }
   const child = spawn(program as string, args, {
     cwd: root,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: output ? ['ignore', ...output.fds] : ['ignore', 'pipe', 'pipe'],
     detached: group,
-    env: { ...node.env, FORCE_COLOR: '0' },
+    env: { ...node.env, FORCE_COLOR: '0', ...extraEnv },
   });
 
   return superviseChildServer({
@@ -88,5 +93,6 @@ export async function startCommandServer({
     },
     alive: group ? () => Boolean(child.pid) && groupAlive(child.pid as number) : null,
     killTimeoutMs,
+    output: output?.files,
   });
 }
