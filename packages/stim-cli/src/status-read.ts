@@ -134,6 +134,7 @@ import {
   physicalDeviceStates,
   type PhysicalDeviceReading,
 } from './physical-devices.ts';
+import { ownBuildLines } from './stimd/metro/injected.ts';
 
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
 
@@ -606,10 +607,10 @@ function readLogDerivedFacts(states: EnvironmentState[]): void {
       }
     }
     if (state.metro) {
-      const bundle = metroBundleState(tailLines(join(workspaceLogsDir(state.path), 'metro.ndjson')) ?? [], {
-        running: state.metro.running,
-        now,
-      });
+      // compat C6 permanent
+      const lines = ownBuildLines(tailLines(join(workspaceLogsDir(state.path), 'metro.ndjson')) ?? []);
+      // compat end
+      const bundle = metroBundleState(lines, { running: state.metro.running, now });
       if (bundle) state.metro.bundle = bundle;
       else delete state.metro.bundle;
     }
