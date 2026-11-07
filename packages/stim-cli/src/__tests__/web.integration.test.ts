@@ -27,6 +27,7 @@ import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
 import { BROWSER_LOCK, teardownOwnedBrowser } from '../devices/teardown.ts';
+import * as teardown from '../devices/teardown.ts';
 import { getNamedPort, clearNamedPorts, reserveBrowserPort } from '../named-ports.ts';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { observeBrowser } from '../stimd/logs/web.ts';
@@ -787,6 +788,46 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     ).rejects.toBeDefined();
     expect(chrome && ['gone', 'different'].includes(inspectProcessIdentity(chrome))).toBe(true);
     expect(readWebRecord(root)).toBeNull();
+  });
+
+  test('failed cancellation cleanup retains the browser record and blocks another launch', async () => {
+    setExecutor(fakeChrome({}));
+    const controller = new AbortController();
+    vi.spyOn(stimdClient, 'observeOwned').mockImplementation(async (workspace) => {
+      const record = readWebRecord(workspace);
+      assert(record);
+      writeWebRecord(workspace, { ...record, targetId: 'owned-page' });
+      return null;
+    });
+    vi.spyOn(browserCdp, 'connectOwnedBrowser').mockImplementation(async () => {
+      controller.abort();
+      throw new Error('navigation cancelled');
+    });
+    const original = teardown.teardownBrowserHeld;
+    vi.spyOn(teardown, 'teardownBrowserHeld')
+      .mockImplementationOnce(original)
+      .mockResolvedValue({ status: 'failed', reason: 'fixture cleanup failure' });
+    const request = {
+      url: 'http://localhost:8901/',
+      config: {
+        chrome: '/fixture/chrome',
+        headless: true,
+        viewport: 'desktop' as const,
+        ignoreCertificateErrors: false,
+      },
+    };
+    await expect(
+      launchOwnedBrowser(request, { root, note: () => {}, signal: controller.signal }),
+    ).rejects.toBeInstanceOf(workspaceLocks.WorkspaceProcessCleanupError);
+    expect(readWebRecord(root)?.chromeProcess).toBeDefined();
+    const attempt = claims.tryAcquireClaim({
+      root: join(workspaceDir(root), 'web.lock'),
+      mode: 'exclusive',
+      label: 'next launch',
+    });
+    if (attempt.pending) claims.releaseClaim(attempt.pending);
+    if (attempt.acquired) claims.releaseClaim(attempt.acquired);
+    expect(attempt.acquired).toBeUndefined();
   });
 
   test.each([

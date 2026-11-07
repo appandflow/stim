@@ -85,6 +85,7 @@ export async function spawnOwned(launch: OwnedLaunch): Promise<OwnedProcess> {
     if (!attempt.acquired)
       throw new Error(`The ${launch.claim.label} claim is held at ${attempt.held?.path ?? launch.claim.root}.`);
     claim = attempt.acquired;
+    if (process.platform !== 'win32') setClaimChild(claim, owner);
   } catch (error) {
     if (!(await stopOwnedProcess(owner)))
       throw new WorkspaceProcessCleanupError(

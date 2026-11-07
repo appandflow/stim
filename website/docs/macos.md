@@ -94,7 +94,7 @@ output in workspace logs and does not launch an app. Runtime stdout and stderr
 are client logs, and Stim runs the app with `NSUnbufferedIO=YES` so Swift `print`
 output arrives per line instead of when the app exits. The app runs detached, started by the command (or by stimd
 for a Desktop or phone run) with that caller's environment; its stdout and stderr go to files in the workspace logs that stimd turns into those records,
-and its exit is an info record without an exit code. `macos --json` prints one launch
+and its exit is an info record without an exit code. While stimd runs, each raw output file is capped at 8 MiB; it warns when a reset may drop output. If stimd stays down, the files can grow, and a replaced app that stimd never observed keeps its raw files until workspace cleanup without replaying them into `stim logs`. `macos --json` prints one launch
 record on stdout, with progress on stderr. `status --json` reports
 `environments[].macos`, its build and process state. This command does not
 support `--slot` or `reload`.

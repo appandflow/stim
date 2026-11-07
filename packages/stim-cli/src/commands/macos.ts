@@ -383,21 +383,29 @@ async function launchHere(
   await stopBundleInstances(root);
   const launcher = record.supervisor;
   if (!launcher) throw new Error('The macOS launch has no recorded owner.');
+  const checkCancelled = () => {
+    context.signal.throwIfAborted();
+    runCancellationSignal(context)?.throwIfAborted();
+    const refusal = operationState(context).refusal;
+    if (refusal !== null) throw new Error(refusal);
+  };
   let app: MacosProcess | undefined;
   let owned: OwnedProcess | undefined;
   try {
+    checkCancelled();
     owned = await spawnOwned({
       file: record.executable,
       args: record.arguments,
       cwd: root,
       // Foundation reads NSUnbufferedIO to flush stdout per write; Swift print() to a file otherwise waits until exit.
       env: { ...ambientEnv(), STIM_BACKGROUND_LAUNCH: '1', NSUnbufferedIO: 'YES' },
-      stdout: macosAppStdout(root),
-      stderr: macosAppStderr(root),
+      stdout: macosAppStdout(root, record.launchId),
+      stderr: macosAppStderr(root, record.launchId),
       truncate: true,
       claim: { root: macosRuntimeClaim(root), label: 'macOS app' },
       declare: operationState(context).declaring,
     });
+    checkCancelled();
     const started = macosProcess(owned.pid);
     if (started.processToken !== owned.processToken) throw new Error('The macOS launch process changed.');
     app = started;

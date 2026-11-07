@@ -237,8 +237,8 @@ export async function runHostedMacosApp(
           cwd: canonicalRunRoot,
           // Foundation reads NSUnbufferedIO to flush stdout per write; Swift print() to a file otherwise waits until exit.
           env: { ...env, NSUnbufferedIO: 'YES' },
-          stdout: macosAppStdout(canonicalRunRoot),
-          stderr: macosAppStderr(canonicalRunRoot),
+          stdout: macosAppStdout(canonicalRunRoot, launch.launchId),
+          stderr: macosAppStderr(canonicalRunRoot, launch.launchId),
           truncate: true,
           claim: { root: macosRuntimeClaim(canonicalRunRoot), label: 'hosted macOS app' },
           declare: [claim],

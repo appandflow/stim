@@ -23,7 +23,7 @@ import {
 } from '@stim-cli/core/state';
 import { runHostedMacosApp } from '../device-host/macos.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
-import { macosRuntimeClaim } from '../macos/state.ts';
+import { macosAppStderr, macosAppStdout, macosRuntimeClaim } from '../macos/state.ts';
 import { makeChildProcess } from './_factories.ts';
 
 const native = vi.hoisted(() => ({
@@ -202,10 +202,12 @@ test('stamps and signs verified bytes, launches with an isolated home, and delet
     }),
   );
   const runRoot = realpathSync(join(home, 'macos-app'));
+  const launchedRecord = readMacosRecord(runRoot);
+  expect(launchedRecord).not.toBeNull();
   expect(native.launches).toEqual([
     expect.objectContaining({
-      stdout: join(workspaceLogsDir(runRoot), 'macos-app.out'),
-      stderr: join(workspaceLogsDir(runRoot), 'macos-app.err'),
+      stdout: macosAppStdout(runRoot, launchedRecord!.launchId),
+      stderr: macosAppStderr(runRoot, launchedRecord!.launchId),
       claim: expect.objectContaining({ root: macosRuntimeClaim(runRoot) }),
     }),
   ]);

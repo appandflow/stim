@@ -142,13 +142,16 @@ and compileSteps is SwiftPM's step total. An offloaded build reports the worker'
 steps the same way.
 The app runs detached, started by the command (or by stimd for a Desktop or
 phone run) with that caller's environment; a hosted app gets the host's
-restricted environment. Its stdout and stderr go to logs/macos-app.out and macos-app.err
-in the workspace, which stimd follows into client records (stdout at info,
+restricted environment. Its stdout and stderr go to per-launch files in the workspace
+logs, which stimd follows into client records (stdout at info,
 stderr at warn) while the app runs, and its exit becomes an info record
 without an exit code; build output becomes build records, all with platform
 "macos".
 Stim runs the app with NSUnbufferedIO=YES, so Swift print output arrives per
-line instead of when the app exits.
+line instead of when the app exits. While stimd runs, each raw output file is
+capped at 8 MiB; it warns when a reset may drop output. If stimd stays down,
+the files can grow, and a replaced app that stimd never observed keeps its raw
+files until workspace cleanup without replaying them into stim logs.
 
 BUILD OFFLOAD
 

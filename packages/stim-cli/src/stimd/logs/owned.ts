@@ -4,6 +4,7 @@ import {
   readFileSync,
   readSync,
   renameSync,
+  rmSync,
   statSync,
   truncateSync,
   writeFileSync,
@@ -20,9 +21,10 @@ import {
   type MacosAppRecord,
   type MacosProcess,
 } from '@stim-cli/core/state';
-import { MACOS_APP_STDERR, MACOS_APP_STDOUT } from '../../macos/state.ts';
+import { macosAppLogName } from '../../macos/state.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { inspectProcessIdentity } from '../../process-identity.ts';
+import { processGroupAlive } from '../../ownership-claim.ts';
 import { readWebRecord } from '../../web/state.ts';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { loadConfig } from '../../workspace/config.ts';
@@ -95,7 +97,7 @@ export function createOwnedStreams(log: Log): OwnedStreams {
     if (identity !== 'same' && drained(dir, record.app)) return;
     const key = `macos:${dir}`;
     if (current(key, record.app.processToken) || ended.get(key) === record.app.processToken) return;
-    keep(key, tailMacosApp(dir, record.app, record.product));
+    keep(key, tailMacosApp(dir, record.app, record.product, record.launchId));
   };
   const workspace = (root: string, asked: boolean): Promise<void> | null => {
     const record = readMacosRecord(root);
@@ -210,7 +212,7 @@ function lineSplitter(write: (line: string) => void, saved: unknown) {
  * records at info and warn, from the offsets a previous stimd recorded for the same app, and writes the app's exit
  * once it is gone, including for an app that exited before any tail saw it. The exit code is not known: no parent waits on the app.
  */
-function tailMacosApp(dir: string, app: MacosProcess, product: string): Stream {
+function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId: string): Stream {
   const writer = createNdjsonWriter(join(dir, 'macos.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
   const mark = join(dir, TAIL_MARK);
   const offsets = { out: 0, err: 0 };
@@ -227,12 +229,12 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string): Stream {
   const files = [
     {
       key: 'out' as const,
-      path: join(dir, MACOS_APP_STDOUT),
+      path: join(dir, macosAppLogName(launchId, 'out')),
       lines: lineSplitter(write('info'), matching && recovering !== 'out' ? saved.outPending : null),
     },
     {
       key: 'err' as const,
-      path: join(dir, MACOS_APP_STDERR),
+      path: join(dir, macosAppLogName(launchId, 'err')),
       lines: lineSplitter(write('warn'), matching && recovering !== 'err' ? saved.errPending : null),
     },
   ] as const;
@@ -305,23 +307,26 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string): Stream {
     writer.close();
     end();
   };
-  const timer = setInterval(() => {
-    const identity = inspectProcessIdentity(app);
+  const finish = () => {
     read();
-    if (identity !== 'gone' && identity !== 'different') return;
+    const identity = inspectProcessIdentity(app);
+    if (identity !== 'gone' || processGroupAlive(app.pid)) return false;
     for (const file of files) file.lines.end();
     writer.write({ src: 'client', platform: 'macos', level: 'info', msg: `Exited ${product}.` });
     try {
       writeFileSync(mark, JSON.stringify({ processToken: app.processToken, ...offsets, exited: true }));
+      if (writer.dropped === 0) for (const file of files) rmSync(file.path, { force: true });
     } catch {}
     stop();
-  }, TAIL_MS);
+    return true;
+  };
+  const timer = setInterval(finish, TAIL_MS);
   timer.unref();
   return {
     token: app.processToken,
     ended,
     close() {
-      if (!done) stop();
+      if (!done && !finish()) stop();
     },
   };
 }
