@@ -13,7 +13,7 @@ import {
 import { existsSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTreeAsync, pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../stimd/metro/stop-cause.ts';
-import { ensureStimd } from '../daemon/client.ts';
+import { drainOwned, ensureStimd } from '../daemon/client.ts';
 import { readBootedParkDeadline } from './booted-park.ts';
 import {
   teardownOwnedBrowser,
@@ -23,7 +23,7 @@ import {
   type ParkRequest,
 } from './teardown.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
-import { releaseClaim } from '../ownership-claim.ts';
+import { readClaimSet, releaseClaim } from '../ownership-claim.ts';
 import { parkedMaxSetting } from './sim-pool.ts';
 import { verifyCollectorOwnership } from '../stimd/logs/ownership.ts';
 import {
@@ -35,10 +35,16 @@ import {
   type ManagedTunnelRecord,
 } from '../stimd/metro/state.ts';
 import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
-import { isJsonObject, LAST_BUILD_KEYS, readMacosRecord, hostedNativeRecords } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  LAST_BUILD_KEYS,
+  readMacosRecord,
+  hostedNativeRecords,
+  stimdClaimRoot,
+} from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
-import { macosAppPresent } from '../macos/state.ts';
-import { readWebRecord } from '../web/state.ts';
+import { macosAppPresent, macosLogFile } from '../macos/state.ts';
+import { readWebRecord, webLogFile } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { removePhoneReverses } from './phone-reverses.ts';
@@ -57,6 +63,23 @@ import {
   waitForProcessExit,
   type ProcessRecord,
 } from '../process-identity.ts';
+
+function hasOwnedLogs(root: string): boolean {
+  return (
+    macosAppPresent(root) ||
+    readWebRecord(root) !== null ||
+    existsSync(macosLogFile(root)) ||
+    existsSync(webLogFile(root))
+  );
+}
+
+async function drainWorkspaceLogs(root: string, affected: boolean, operation: StimContext | undefined): Promise<void> {
+  if (!affected) return;
+  const claims = readClaimSet(stimdClaimRoot());
+  if (!claims.live.length && !claims.unresolved.length && !macosAppPresent(root)) return;
+  const failure = await drainOwned(root, operation?.env);
+  if (failure) throw new Error(`Could not drain workspace logs: ${failure}`);
+}
 
 function throwIfCleanupInterrupted(error: unknown, operation?: StimContext): void {
   if (error instanceof WorkspaceProcessCleanupError) throw error;
@@ -493,6 +516,7 @@ async function reclaimIdleProject(
   verifyAvdClaims(project, operation);
   const dereferenced = describeDereferenced(project);
   const initialState = readWorkspaceState(path);
+  const ownedLogs = hasOwnedLogs(path);
   await removePhoneReverses(path, { operation });
 
   let killedPid: number | null = null;
@@ -671,6 +695,7 @@ async function reclaimIdleProject(
     const dir = workspaceDir(path);
     if (existsSync(dir)) {
       try {
+        await drainWorkspaceLogs(path, ownedLogs, operation);
         await removeWorkspaceOutput(path, dir, archive, initialState, operation);
         if (workspaceExisted) removedWorkspaceDirs.push(dir);
       } catch (error) {

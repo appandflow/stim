@@ -43,6 +43,7 @@ interface Stream {
   attached?: Promise<void>;
   ended: Promise<void>;
   close(): void;
+  drain?(): boolean;
 }
 
 /**
@@ -58,6 +59,7 @@ export interface OwnedStreams {
    */
   sync(root?: string): Promise<string | null>;
   running(): boolean;
+  drain(root: string): Promise<string | null>;
   close(): void;
 }
 
@@ -84,6 +86,7 @@ export function createOwnedStreams(log: Log): OwnedStreams {
   const current = (key: string, token: string) => {
     const stream = streams.get(key);
     if (stream?.token === token) return true;
+    if (stream?.drain && !stream.drain()) throw new Error('the previous macOS app output could not be drained');
     stream?.close();
     return false;
   };
@@ -157,6 +160,29 @@ export function createOwnedStreams(log: Log): OwnedStreams {
       return null;
     },
     running: () => streams.size > 0,
+    async drain(root) {
+      if (closed) return 'stimd is stopping';
+      try {
+        workspace(root, false)?.catch(() => {});
+        for (const key of [`macos:${workspaceLogsDir(root)}`, `web:${root}`]) {
+          const stream = streams.get(key);
+          if (!stream) continue;
+          if (stream.attached) await stream.attached.catch(() => {});
+          if (stream.drain && !stream.drain())
+            return 'the macOS app output could not be drained or its process group could not be verified stopped';
+          ended.set(key, stream.token);
+          streams.delete(key);
+          stream.close();
+          await stream.ended;
+        }
+        const app = readMacosRecord(root);
+        if (app?.app && !app.host && app.supervisor?.pid === app.app.pid && !drained(workspaceLogsDir(root), app.app))
+          return 'the macOS app output could not be drained';
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
     close() {
       closed = true;
       clearInterval(timer);
@@ -238,7 +264,7 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId:
       lines: lineSplitter(write('warn'), matching && recovering !== 'err' ? saved.errPending : null),
     },
   ] as const;
-  const checkpoint = (resetting?: 'out' | 'err') => {
+  const checkpoint = (resetting?: 'out' | 'err', exited = false) => {
     const staging = `${mark}.tmp`;
     writeFileSync(
       staging,
@@ -248,6 +274,7 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId:
         outPending: files[0].lines.save(),
         errPending: files[1].lines.save(),
         ...(resetting ? { resetting } : {}),
+        ...(exited ? { exited: true } : {}),
       }),
     );
     renameSync(staging, mark);
@@ -307,17 +334,27 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId:
     writer.close();
     end();
   };
+  let exitWritten = false;
   const finish = () => {
     read();
     const identity = inspectProcessIdentity(app);
     if (identity !== 'gone' || processGroupAlive(app.pid)) return false;
+    if (writer.dropped > 0) return false;
     for (const file of files) file.lines.end();
-    writer.write({ src: 'client', platform: 'macos', level: 'info', msg: `Exited ${product}.` });
+    if (writer.dropped > 0) return false;
+    if (!exitWritten) {
+      if (!writer.write({ src: 'client', platform: 'macos', level: 'info', msg: `Exited ${product}.` })) return false;
+      exitWritten = true;
+    }
     try {
-      writeFileSync(mark, JSON.stringify({ processToken: app.processToken, ...offsets, exited: true }));
-      if (writer.dropped === 0) for (const file of files) rmSync(file.path, { force: true });
-    } catch {}
+      checkpoint(undefined, true);
+    } catch {
+      return false;
+    }
     stop();
+    try {
+      for (const file of files) rmSync(file.path, { force: true });
+    } catch {}
     return true;
   };
   const timer = setInterval(finish, TAIL_MS);
@@ -325,6 +362,7 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId:
   return {
     token: app.processToken,
     ended,
+    drain: finish,
     close() {
       if (!done && !finish()) stop();
     },

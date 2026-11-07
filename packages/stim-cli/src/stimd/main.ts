@@ -635,10 +635,17 @@ export async function runStimd({
         } else if (op === 'op.wait' || op === 'op.resume') {
           if (ops.has(socket)) ops.set(socket, op === 'op.wait' ? 'waiting' : 'pinned');
           void checkEngine();
-        } else if (op === 'logs.observe') {
+        } else if (op === 'logs.observe' || op === 'logs.drain') {
           const root = isJsonObject(message.params) ? message.params.root : undefined;
           if (typeof root !== 'string') socket.destroy();
-          else void owned.sync(root).then((error) => socket.end(`${JSON.stringify({ op: 'logs.observed', error })}\n`));
+          else {
+            const request = op === 'logs.observe' ? owned.sync(root) : owned.drain(root);
+            void request.then((error) =>
+              socket.end(
+                `${JSON.stringify({ op: op === 'logs.observe' ? 'logs.observed' : 'logs.drained', error })}\n`,
+              ),
+            );
+          }
         } else if (op === 'metro.ensure' || op === 'tunnel.ensure') {
           const ask = op === 'metro.ensure' ? ensureMetro(message.params, log) : ensureTunnel(message.params);
           void ask

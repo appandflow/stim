@@ -1,8 +1,9 @@
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
+import { createHash } from 'node:crypto';
 import type { ActivityDriver } from '@stim-cli/core/state';
 import { probeWebDrivers } from '../../devices/activity.ts';
 import { signalProcessTree } from '../../metro.ts';
-import { createNdjsonWriter } from '../../ndjson.ts';
+import { createNdjsonWriter, readNdjsonGenerations, type NdjsonRecord } from '../../ndjson.ts';
 import { connectOwnedBrowser, type CdpConnection, type CdpEvent } from '../../web/cdp.ts';
 import { DESKTOP_PAGE, PHONE_SCREEN } from '../../web/chrome.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from '../../web/events.ts';
@@ -154,8 +155,31 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
     const driver = createDriverProbe(record.cdpPort, [process.pid, chrome.pid]);
     let batchDriver: Promise<ActivityDriver | null> | null = null;
     let reloading = false;
-    // Runtime.enable and Log.enable replay the page's earlier messages before they answer; a re-attach has recorded them.
     let replaying = Boolean(record.targetId);
+    const recordedKeys = new Map<string, number>();
+    if (replaying) {
+      for (const entry of readNdjsonGenerations(webLogFile(root))) {
+        if (typeof entry.cdpKey === 'string') recordedKeys.set(entry.cdpKey, (recordedKeys.get(entry.cdpKey) ?? 0) + 1);
+      }
+    }
+    const writePage = (method: string, params: Record<string, unknown>, entry: NdjsonRecord) => {
+      const timestamp =
+        method === 'Log.entryAdded' && params.entry && typeof params.entry === 'object' && 'timestamp' in params.entry
+          ? params.entry.timestamp
+          : params.timestamp;
+      const key =
+        typeof timestamp === 'number'
+          ? createHash('sha256')
+              .update(JSON.stringify([chrome.processToken, targetId, method, timestamp, entry]))
+              .digest('hex')
+          : null;
+      const remaining = replaying && key ? (recordedKeys.get(key) ?? 0) : 0;
+      if (key && remaining > 0) {
+        recordedKeys.set(key, remaining - 1);
+        return;
+      }
+      writer.write(key ? { ...entry, cdpKey: key } : entry);
+    };
     let route: { written: string | null; latest: string | null; at: number; timer: NodeJS.Timeout | null } = {
       written: null,
       latest: null,
@@ -183,14 +207,14 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
       const params = event.params;
       switch (event.method) {
         case 'Runtime.consoleAPICalled':
-          if (!replaying) writer.write(consoleRecord(params));
+          writePage(event.method, params, consoleRecord(params));
           return;
         case 'Runtime.exceptionThrown':
-          if (!replaying) writer.write(exceptionRecord(params));
+          writePage(event.method, params, exceptionRecord(params));
           return;
         case 'Log.entryAdded': {
           const entry = logEntryRecord(params);
-          if (entry && !replaying) writer.write(entry);
+          if (entry) writePage(event.method, params, entry);
           return;
         }
         case 'Runtime.bindingCalled': {
@@ -293,6 +317,7 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
     for (const domain of ['Runtime', 'Log', 'Network', 'Page'])
       await connection.send(`${domain}.enable`, {}, sessionId);
     replaying = false;
+    recordedKeys.clear();
     try {
       await connection.send(
         'Runtime.addBinding',

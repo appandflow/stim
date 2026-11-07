@@ -149,7 +149,7 @@ without an exit code; build output becomes build records, all with platform
 "macos".
 Stim runs the app with NSUnbufferedIO=YES, so Swift print output arrives per
 line instead of when the app exits. While stimd runs, each raw output file is
-capped at 8 MiB; it warns when a reset may drop output. If stimd stays down,
+reset after reaching 8 MiB; it warns when a reset may drop output. If stimd stays down,
 the files can grow, and a replaced app that stimd never observed keeps its raw
 files until workspace cleanup without replaying them into stim logs.
 

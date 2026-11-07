@@ -488,9 +488,13 @@ const OBSERVE_MS = 30_000;
  * session and the macOS app's output. Starts a stimd when none runs, whatever `daemon.mode` says, since nothing else
  * records that output. Resolves to null once stimd observes it, or to why it does not.
  */
-export async function observeOwned(root: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+async function ownedRequest(
+  op: 'logs.observe' | 'logs.drain',
+  root: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string | null> {
   if (!stimdLive() && !(await claimTaken(launchStimd(env, daemonMode(env))))) return 'no stimd runs in this Stim home';
-  const ask = () => askStimd('logs.observe', OBSERVE_MS, { params: { root } });
+  const ask = () => askStimd(op, OBSERVE_MS, { params: { root } });
   let reply = await ask();
   const deadline = Date.now() + CLAIM_WAIT_MS;
   while (!reply && !stimdRefused() && Date.now() < deadline) {
@@ -498,11 +502,19 @@ export async function observeOwned(root: string, env: NodeJS.ProcessEnv = proces
     reply = await ask();
   }
   if (!reply && stimdRefused() && (await successorBound())) reply = await ask();
-  if (reply?.op !== 'logs.observed')
+  if (reply?.op !== (op === 'logs.observe' ? 'logs.observed' : 'logs.drained'))
     return stimdRefused()
       ? `this Stim home's stimd runs another Stim build (${refusedBuild}); run the command with that build`
       : 'stimd did not answer';
   return typeof reply.error === 'string' ? reply.error : null;
+}
+
+export function observeOwned(root: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  return ownedRequest('logs.observe', root, env);
+}
+
+export function drainOwned(root: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  return ownedRequest('logs.drain', root, env);
 }
 
 /** Whether the net thread serves, on which port, or why it does not. */

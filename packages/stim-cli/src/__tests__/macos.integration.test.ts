@@ -336,6 +336,81 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
+test.skipIf(process.platform === 'win32')(
+  'workspace drain flushes the stopped app and prevents stream rediscovery',
+  async () => {
+    const app = await ownedProcess();
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'final line');
+    const streams = createOwnedStreams(() => {});
+    try {
+      await streams.sync(root);
+      expect(await streams.drain(root)).toContain('could not be verified stopped');
+      children.at(-1)!.kill('SIGKILL');
+      expect(await waitForProcessExit(app, 5000)).toBe(true);
+      expect(await streams.drain(root)).toBeNull();
+      const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
+      expect(output).toContain('final line');
+      expect(output).toContain('Exited Sample.');
+      rmSync(logs, { recursive: true });
+      await streams.sync(root);
+      expect(existsSync(logs)).toBe(false);
+    } finally {
+      streams.close();
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a failed final checkpoint keeps the spool and does not repeat the exit line',
+  async () => {
+    const app = await ownedProcess();
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    const out = join(logs, macosAppLogName('test-launch', 'out'));
+    writeFileSync(out, 'final output\n');
+    const streams = createOwnedStreams(() => {});
+    try {
+      await streams.sync(root);
+      children.at(-1)!.kill('SIGKILL');
+      expect(await waitForProcessExit(app, 5000)).toBe(true);
+      const staging = join(logs, 'macos-app.tail.json.tmp');
+      mkdirSync(staging);
+      expect(await streams.drain(root)).toContain('could not be verified stopped');
+      expect(await streams.drain(root)).toContain('could not be verified stopped');
+      expect(existsSync(out)).toBe(true);
+      rmSync(staging, { recursive: true });
+      expect(await streams.drain(root)).toBeNull();
+      const lines = readFileSync(join(logs, 'macos.ndjson'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line): Record<string, unknown> => JSON.parse(line));
+      expect(lines.filter((line) => line.msg === 'Exited Sample.')).toHaveLength(1);
+    } finally {
+      streams.close();
+    }
+  },
+);
+
+test.skipIf(process.platform !== 'darwin')('workspace removal keeps output when stimd refuses the drain', async () => {
+  writeWorkspaceState(root, { macos: record() });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, 'macos.ndjson'), 'saved output\n');
+  const drain = vi.spyOn(stimdClient, 'drainOwned').mockResolvedValue('fixture refusal');
+  try {
+    const result = await reclaimProject(root, { deleteOwnedDevices: false });
+    expect(result.keptEntry).toBe(true);
+    expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toBe('saved output\n');
+    expect(drain).toHaveBeenCalledOnce();
+  } finally {
+    drain.mockRestore();
+  }
+});
+
 test.skipIf(process.platform === 'win32')('stimd preserves a partial output line across a restart', async () => {
   const app = await ownedProcess();
   writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });

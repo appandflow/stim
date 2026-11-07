@@ -1,7 +1,7 @@
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { createStim } from '../api.ts';
 import * as stimdClient from '../daemon/client.ts';
-import { readClaimSet } from '../ownership-claim.ts';
+import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import * as claims from '../ownership-claim.ts';
 import * as workspaceLocks from '../engine/workspace-process-lock.ts';
 import assert from 'node:assert';
@@ -770,9 +770,23 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     upsertProject(root, { settings: { web: { url: 'http://localhost:8901/cancelled' } } });
     vi.spyOn(chromeLookup, 'findChrome').mockReturnValue('/fixture/chrome');
     const controller = new AbortController();
-    setExecutor(fakeChrome({}));
+    const ready = join(home, 'chrome-ready');
+    setExecutor(
+      makeExecutor({
+        spawn: (_file, _args, options) => {
+          const child = spawn(
+            process.execPath,
+            ['-e', `require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready'); setInterval(() => {}, 1000)`],
+            options ?? {},
+          );
+          children.push(child);
+          return child;
+        },
+      }),
+    );
     let chrome: WebRecord['chromeProcess'];
     vi.spyOn(stimdClient, 'observeOwned').mockImplementation(async (workspace) => {
+      await vi.waitFor(() => expect(existsSync(ready)).toBe(true));
       const record = readWebRecord(workspace);
       assert(record);
       chrome = record.chromeProcess;
@@ -784,8 +798,14 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
       throw new Error('navigation cancelled');
     });
     await expect(
-      createStim({ projectRoot: root }).run({ platform: 'web', signal: controller.signal }),
-    ).rejects.toBeDefined();
+      launchOwnedBrowser(
+        {
+          url: 'http://localhost:8901/cancelled',
+          config: { chrome: '/fixture/chrome', headless: true, viewport: 'desktop', ignoreCertificateErrors: false },
+        },
+        { root, note: () => {}, signal: controller.signal },
+      ),
+    ).rejects.toThrow('navigation cancelled');
     expect(chrome && ['gone', 'different'].includes(inspectProcessIdentity(chrome))).toBe(true);
     expect(readWebRecord(root)).toBeNull();
   });
@@ -820,13 +840,13 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
       launchOwnedBrowser(request, { root, note: () => {}, signal: controller.signal }),
     ).rejects.toBeInstanceOf(workspaceLocks.WorkspaceProcessCleanupError);
     expect(readWebRecord(root)?.chromeProcess).toBeDefined();
-    const attempt = claims.tryAcquireClaim({
+    const attempt = tryAcquireClaim({
       root: join(workspaceDir(root), 'web.lock'),
       mode: 'exclusive',
       label: 'next launch',
     });
-    if (attempt.pending) claims.releaseClaim(attempt.pending);
-    if (attempt.acquired) claims.releaseClaim(attempt.acquired);
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (attempt.acquired) releaseClaim(attempt.acquired);
     expect(attempt.acquired).toBeUndefined();
   });
 
@@ -895,6 +915,59 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
 describe.skipIf(process.platform === 'win32')('stimd browser observer', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  test('reattachment preserves new buffered messages without repeating recorded ones', async () => {
+    const record = { ...(await ownedBrowser()), targetId: 'owned-page' };
+    writeWebRecord(root, record);
+    assert(record.chromeProcess);
+    let attach = 0;
+    vi.spyOn(browserCdp, 'connectOwnedBrowser').mockImplementation(async () => {
+      const round = attach++;
+      let emit = (_event: CdpEvent) => {};
+      return {
+        async send(method) {
+          if (method === 'Browser.getVersion') return { product: 'Chrome/1' };
+          if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'owned-page', type: 'page' }] };
+          if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
+          if (method === 'Runtime.enable') {
+            for (const [timestamp, message] of round === 0
+              ? [[1, 'before restart']]
+              : [
+                  [1, 'before restart'],
+                  [2, 'during restart'],
+                ])
+              emit({
+                method: 'Runtime.consoleAPICalled',
+                sessionId: 'owned-session',
+                params: { type: 'error', timestamp, args: [{ type: 'string', value: message }] },
+              });
+          }
+          return {};
+        },
+        onEvent: (listener) => {
+          emit = listener;
+        },
+        onClose: () => {},
+        close: () => {},
+      };
+    });
+    const first = observeBrowser(root, record, record.chromeProcess);
+    await first.attached;
+    first.close();
+    const next = readWebRecord(root);
+    assert(next?.chromeProcess);
+    const second = observeBrowser(root, next, next.chromeProcess);
+    await second.attached;
+    second.close();
+    const messages = readFileSync(webLogFile(root), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line): Record<string, unknown> => JSON.parse(line))
+      .filter((entry) => entry.src === 'client')
+      .map((entry) => entry.msg);
+    expect(messages.filter((message) => message === 'before restart')).toHaveLength(1);
+    expect(messages.filter((message) => message === 'during restart')).toHaveLength(1);
   });
 
   test.each([
