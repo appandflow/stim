@@ -54,7 +54,7 @@ function stagedDir(root: string): string | null {
  * Takes this stimd's shared claim under its build's claim root when it runs from the engine store; null otherwise, or
  * when the claim cannot be taken, and then the engine does not wait for this stimd.
  */
-export function followEngine(log: Log): EngineFollower | null {
+export function followEngine(log: Log, retained = false): EngineFollower | null {
   const engine = ownStoreEngine();
   if (!engine) return null;
   const root = buildClaimRoot(engine.root, engine.build);
@@ -62,7 +62,7 @@ export function followEngine(log: Log): EngineFollower | null {
     root,
     mode: 'shared',
     label: 'stimd engine',
-    details: { home: getConfigDir(), drained: true, engineDirs: [] },
+    details: { home: getConfigDir(), drained: !retained, engineDirs: [], ...(retained ? { retained: true } : {}) },
   });
   if (attempt.pending) releaseClaim(attempt.pending);
   let claim: ClaimHandle | null = attempt.acquired ?? null;
@@ -71,7 +71,12 @@ export function followEngine(log: Log): EngineFollower | null {
   let dirs: string[] = [];
   const record = (pinned: boolean, engineDirs: string[]) => {
     dirs = [...new Set(engineDirs)].toSorted();
-    const details = { home: getConfigDir(), drained: !pinned, engineDirs: dirs };
+    const details = {
+      home: getConfigDir(),
+      drained: !pinned,
+      engineDirs: dirs,
+      ...(retained ? { retained: true } : {}),
+    };
     if (!claim || JSON.stringify(details) === JSON.stringify(claim.details)) return;
     const was = claim.details.drained;
     claim = updateClaimDetails(claim, details);

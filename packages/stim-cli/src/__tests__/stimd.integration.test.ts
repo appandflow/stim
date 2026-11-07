@@ -889,6 +889,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       () => expect(readClaimSet(daemonClaimRoot()).live.map((claim) => claim.mode)).toEqual(['shared']),
       { timeout: 20_000, interval: 50 },
     );
+    await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 50 });
     expect(await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' })).toBe(true);
     const [winner] = readClaimSet(daemonClaimRoot()).live;
     assert(winner);

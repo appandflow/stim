@@ -93,7 +93,7 @@ export async function bindCIEngine(env: NodeJS.ProcessEnv): Promise<{
           root: buildClaimRoot(root, basename(retained)),
           mode: 'shared',
           label: 'stim ci engine',
-          details: { drained: false, engineDirs: [] },
+          details: { drained: false, engineDirs: [], retained: true },
         });
         if (attempt.pending) releaseClaim(attempt.pending);
         claim = attempt.acquired ?? null;
@@ -150,9 +150,9 @@ export function hostStimd(
     env: stimdEnv(env, process.platform),
     windowsHide: true,
   });
-  const exited = new Promise<number | null>((done) => {
-    child.once('exit', (code) => done(code));
-    child.once('error', () => done(null));
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((done) => {
+    child.once('exit', (code, signal) => done({ code, signal }));
+    child.once('error', () => done({ code: null, signal: null }));
   });
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
@@ -188,8 +188,12 @@ export function hostStimd(
           child.ref();
           child.stdin?.end();
           const kill = setTimeout(() => child.kill('SIGKILL'), waitMs + KILL_GRACE_MS);
-          await exited;
+          const result = await exited;
           clearTimeout(kill);
+          if (result.code !== 0)
+            throw new Error(
+              `Attached stimd exited ${result.signal ? `on ${result.signal}` : `with code ${String(result.code)}`}.`,
+            );
         },
       });
     });

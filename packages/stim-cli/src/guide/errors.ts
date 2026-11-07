@@ -1989,7 +1989,8 @@ not on any remote"  (worktree remove)
   A build waiting at its build slot, stim logs --follow and stim status
   --watch end when the engine switches builds under them; the CLI prints the
   quoted line and exits 75. While a newer build is staged, a cache miss waits
-  at its build slot for up to 10 minutes so running builds can finish.
+  at its build slot for up to 10 minutes so running builds can finish. A build
+  retained by an attached host or CI job skips that wait.
   Rerun the same command: it runs the new build.`,
     },
     STIM_ROUTER_TOO_OLD: {
