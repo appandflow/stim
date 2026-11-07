@@ -9,6 +9,7 @@ import {
   machineSettingValue,
   readJsonObject,
   stimdRunDir,
+  userHome,
   type DaemonMode,
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
@@ -93,6 +94,23 @@ export async function bindCIEngine(
     if (!lock) throw new Error('Could not lock the Stim engine store for this CI job.');
     try {
       signal?.throwIfAborted();
+      try {
+        await (
+          await import('../engine-store/flip-drained.ts')
+        ).flipDrained(root, env.STIM_HOME || join(userHome(env), '.stim'), signal);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          'socketPath' in error &&
+          'code' in error &&
+          (error.code === 'EPERM' || error.code === 'EACCES')
+        )
+          throw Object.assign(new Error('The sandbox denied the Stim engine store lock.'), {
+            code: SANDBOX_BLOCKED,
+            remedy: 'Run outside the sandbox; `stim guide errors sandbox` explains the available allowances.',
+          });
+        throw error;
+      }
       if (selected) selected = selectedEngineDir(env);
       retained = selected ?? (own ? join(own.root, own.build) : null);
       if (own) (await import('../daemon/engine-switch.ts')).requireCurrentEngine(own);
@@ -178,7 +196,7 @@ const unavailable = () => ({
  * `held` when another stimd took the home first, `blocked` when a sandbox denies its socket, and a refusal when it
  * cannot start or admit the command.
  */
-export function hostStimd(
+export async function hostStimd(
   env: NodeJS.ProcessEnv,
   { handover = true, signal }: { handover?: boolean; signal?: AbortSignal } = {},
 ): Promise<
@@ -192,6 +210,33 @@ export function hostStimd(
   | 'engine-unavailable'
   | null
 > {
+  signal?.throwIfAborted();
+  const { ownStoreEngine, requireCurrentEngine } = await import('../daemon/engine-switch.ts');
+  const engine = ownStoreEngine();
+  if (engine) {
+    const { takeLock } = await import('../engine-store/locks.ts');
+    let lock: Awaited<ReturnType<typeof takeLock>> = null;
+    try {
+      lock = await takeLock(engine.root, '.lock.sock');
+      if (lock) {
+        await (
+          await import('../engine-store/flip-drained.ts')
+        ).flipDrained(engine.root, env.STIM_HOME || join(userHome(env), '.stim'), signal);
+        requireCurrentEngine(engine);
+      }
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (error instanceof Error && 'code' in error) {
+        if (error.code === 'STIM_ENGINE_SWITCHED' && 'version' in error && typeof error.version === 'string')
+          return { switched: error.version };
+        if (error.code === 'STIM_ENGINE_UNAVAILABLE') return 'engine-unavailable';
+        if ('socketPath' in error && (error.code === 'EPERM' || error.code === 'EACCES')) return 'blocked-lock';
+      }
+      return unavailable();
+    } finally {
+      await lock?.release();
+    }
+  }
   signal?.throwIfAborted();
   const args = [spawnEntry('cli'), '__stimd', ATTACHED_ARG];
   let child: ReturnType<ReturnType<typeof getExecutor>['spawn']>;

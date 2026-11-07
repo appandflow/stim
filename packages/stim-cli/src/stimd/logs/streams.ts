@@ -155,8 +155,11 @@ function signalChild(stream: Stream): Promise<void> {
     return Promise.resolve();
   }
   const identity = inspectProcessIdentity(child);
+  if (identity !== 'same') {
+    if (stream.lastStop?.signalled !== false) stream.lastStop = { pid: child.pid, identity };
+    return Promise.resolve();
+  }
   stream.lastStop = { pid: child.pid, identity };
-  if (identity !== 'same') return Promise.resolve();
   const lastStop = stream.lastStop;
   const signalling = (async () => {
     try {
@@ -190,6 +193,10 @@ function signalChild(stream: Stream): Promise<void> {
 
 async function waitChild(stream: Stream): Promise<void> {
   await stream.signalling;
+  if (process.platform === 'win32' && stream.lastStop?.signalled === false)
+    throw new Error(
+      `the device log process tree could not be verified stopped; inspect the claim at ${stream.claim.root}`,
+    );
   const running = () =>
     stream.identity
       ? alive(stream)
@@ -333,6 +340,10 @@ export function createStreams(log: (message: string) => void): StreamTable {
     });
     return result;
   };
+  const abortAfterSignal = async (stream: Stream): Promise<void> => {
+    await signalChild(stream);
+    stream.controller.abort();
+  };
   const stop = async (stream: Stream): Promise<void> => {
     const retry = stream.finalized;
     await signalChild(stream);
@@ -364,8 +375,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
         writerFailure = error;
         log(`the logs worker failed: ${error.message}`);
         for (const stream of new Set(streams.values())) {
-          void signalChild(stream);
-          stream.controller.abort();
+          void abortAfterSignal(stream);
         }
       },
       (streamId) => {
@@ -687,6 +697,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
         }
         streams.set(key, stream);
         stream.cleanup = async () => {
+          await stream.signalling;
           stream.controller.abort();
           await Promise.allSettled(stream.histories);
           await clearHistoryClaim(root, id);
@@ -770,12 +781,13 @@ export function createStreams(log: (message: string) => void): StreamTable {
         });
         void stream.started.catch((error: unknown) => {
           log(`device log stream ${id} failed: ${String(error)}`);
-          void signalChild(stream);
-          stream.controller.abort();
-          if (!finishing) {
-            sink.writer.close();
-            finalize();
-          }
+          void (async () => {
+            await abortAfterSignal(stream);
+            if (!finishing) {
+              sink.writer.close();
+              finalize();
+            }
+          })();
         });
         return { streamId: id };
       });

@@ -43,14 +43,14 @@ export function sandboxAllowance(
   env: NodeJS.ProcessEnv = process.env,
 ): SandboxAllowance {
   const store = engineRoot(env);
-  const lock = engineLockSocket(store);
-  const socketWrites = [socket, lock].flatMap((path) =>
+  const locks = [engineLockSocket(store), engineLockSocket(store, '.flip.sock')];
+  const socketWrites = [socket, ...locks].flatMap((path) =>
     path.startsWith('/tmp/stim-sockets-') ? allowancePaths(dirname(path)) : [],
   );
   return {
     allowWrite: [...new Set([stimHome, ...allowancePaths(store), ...socketWrites])],
     allowMachLookup: ['com.apple.coresimulator.*'],
-    allowUnixSockets: [...new Set([...allowancePaths(socket), ...allowancePaths(lock)])],
+    allowUnixSockets: [...new Set([...allowancePaths(socket), ...locks.flatMap(allowancePaths)])],
     allowLocalBinding: true,
   };
 }
@@ -69,14 +69,15 @@ const reach = (path: string): Promise<unknown> =>
     probe.once('error', done);
   });
 
-/** Whether the sandbox denies either stimd's socket or the engine store lock socket. */
+/** Whether the sandbox denies stimd's socket or either engine store lock socket. */
 export async function sandboxBlocksSocket(
   socket: string = stimdSocket(),
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
   if (process.platform === 'win32') return false;
   if (denied(await reach(socket))) return true;
-  return denied(await reach(engineLockSocket(engineRoot(env))));
+  const root = engineRoot(env);
+  return denied(await reach(engineLockSocket(root))) || denied(await reach(engineLockSocket(root, '.flip.sock')));
 }
 
 export function detectHarness(env: NodeJS.ProcessEnv = process.env): Harness {
