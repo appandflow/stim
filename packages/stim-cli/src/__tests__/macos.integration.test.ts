@@ -45,11 +45,12 @@ import * as machines from '../offload/build-machines.ts';
 import * as slots from '../engine/build-slots.ts';
 import * as spawns from '../engine/spawn-claims.ts';
 import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
-import { markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { markClaimChildPending, readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { startedBy } from '../macos/instances.ts';
 import { macosDir, macosProcess, macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
-import * as registration from '../macos/registration.ts';
-import { spawnEntry } from '../spawn-entry.ts';
+import * as owning from '../engine/spawn-owned.ts';
+import * as stimdClient from '../daemon/client.ts';
+import { createOwnedStreams } from '../stimd/logs/owned.ts';
 import { withLocalMacosAdmission } from '../macos/admission.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { buildMacosOperation } from '../commands/macos-build.ts';
@@ -618,15 +619,14 @@ describe('macOS build placement and promotion', () => {
     });
   });
 
-  describe.skipIf(process.platform !== 'darwin')('failed launch registration', () => {
-    test.each(['delayed supervisor', 'unrecorded app'])('drains the %s', async (mode) => {
+  test.skipIf(process.platform !== 'darwin')(
+    'launches the app with the command environment and its own claim, and stimd records its output',
+    async () => {
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
-      const resumed = join(dir, 'resume-supervisor');
-      const marker = join(dir, 'late-app-started');
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.arguments', [
         '-e',
-        `require('node:fs').writeFileSync(${JSON.stringify(marker)},'ready');setInterval(()=>{},1000)`,
+        "console.log('env', process.env.STIM_BACKGROUND_LAUNCH, process.env.NSUnbufferedIO, process.env.STIM_TEST_CALLER);console.error('warned');setInterval(()=>{},1000)",
       ]);
       const cached = remoteBundle();
       copyFileSync(process.execPath, join(cached, 'Contents', 'MacOS', 'Sample'));
@@ -637,18 +637,11 @@ describe('macOS build placement and promotion', () => {
         restore: async () => ({ bundle: cached, tier: 'local' }),
         store: async () => {},
       });
+      vi.stubEnv('STIM_TEST_CALLER', 'caller');
+      vi.stubEnv('DYLD_LIBRARY_PATH', join(dirname(process.execPath), '..', 'lib'));
       const mocked = getExecutor();
       resetExecutor();
       const real = getExecutor();
-      let supervisor: MacosProcess | undefined;
-      let app: MacosProcess | undefined;
-      const wait = registration.waitForMacosRegistration;
-      vi.spyOn(registration, 'waitForMacosRegistration').mockImplementation(async (project, launchId, child) => {
-        const [message] = await once(child, 'message');
-        if (message.error) throw new Error(message.error);
-        if (!message.gated) app = macosProcess(message.pid);
-        return wait(project, launchId, child, Date.now() + 20);
-      });
       setExecutor({
         ...mocked,
         runFile: (file, args, options) => {
@@ -662,40 +655,53 @@ describe('macOS build placement and promotion', () => {
           return mocked.runFile(file, args, options);
         },
         runFileAsync: (file, args, options) =>
-          file === 'ps' || file === 'lsof'
-            ? real.runFileAsync(file, args, options)
-            : Promise.resolve().then(() => getExecutor().runFile(file, args, options)),
-        spawn: (file, args, options) => {
-          if (args[0] !== spawnEntry('macos-run')) return mocked.spawn(file, args, options);
-          const executable = join(macosDir(root), 'Sample.app', 'Contents', 'MacOS', 'Sample');
-          const entry = new URL('../../dist/macos-run.mjs', import.meta.url).href;
-          const script =
-            mode === 'delayed supervisor'
-              ? `import{watch,existsSync}from'node:fs';await new Promise(r=>{const w=watch(${JSON.stringify(dir)},()=>{if(existsSync(${JSON.stringify(resumed)})){w.close();r()}});process.send({gated:true})});const{runMacosSupervisor}=await import(${JSON.stringify(entry)});await runMacosSupervisor(${JSON.stringify(root)},${JSON.stringify(args[2])});`
-              : `import{spawn}from'node:child_process';const app=spawn(${JSON.stringify(executable)},['-e','process.send("ready");setInterval(()=>{},1000)'],{stdio:['ignore','ignore','inherit','ipc']});app.once('error',e=>process.send({error:e.message}));app.once('message',()=>process.send({pid:app.pid}));setInterval(()=>{},1000);`;
-          const child = real.spawn(process.execPath, ['--input-type=module', '-e', script], {
-            ...options,
-            env: { ...options?.env, DYLD_LIBRARY_PATH: join(dirname(process.execPath), '..', 'lib') },
-          });
-          children.push(child);
-          if (child.pid === undefined) throw new Error('Supervisor fixture did not start');
-          supervisor = macosProcess(child.pid);
-          return child;
-        },
+          file === 'lsappinfo'
+            ? Promise.resolve('ASN:0x0-0x1:')
+            : file === 'ps' || file === 'lsof'
+              ? real.runFileAsync(file, args, options)
+              : Promise.resolve().then(() => getExecutor().runFile(file, args, options)),
+        spawn: (file, args, options) =>
+          file === join(macosDir(root), 'Sample.app', 'Contents', 'MacOS', 'Sample')
+            ? real.spawn(file, args, options)
+            : mocked.spawn(file, args, options),
       });
+      const streams = createOwnedStreams(() => {});
+      vi.spyOn(stimdClient, 'observeOwned').mockImplementation((workspace) => streams.sync(workspace));
+      let launched: MacosAppRecord | undefined;
       try {
-        await expect(runMacos(testContext(), root, () => {}, undefined, 'local')).rejects.toThrow('did not register');
-        expect(inspectProcessIdentity(supervisor)).toBe('gone');
-        expect(app ? inspectProcessIdentity(app) : null).toBe(mode === 'unrecorded app' ? 'gone' : null);
-        writeFileSync(resumed, 'resume');
-        expect(existsSync(marker)).toBe(false);
+        launched = await runMacos(testContext(), root, () => {}, undefined, 'local');
+        const app = launched.app;
+        if (!app) throw new Error('The launch recorded no app.');
+        expect(launched.supervisor).toEqual(app);
+        expect(inspectProcessIdentity(app)).toBe('same');
+        expect(readMacosRecord(root)).toMatchObject({ app, supervisor: app });
+        expect(readClaimSet(macosRuntimeClaim(root)).live.map((holder) => holder.owner.pid)).toEqual([app.pid]);
+        const log = join(workspaceLogsDir(root), 'macos.ndjson');
+        const recorded = async (msg: string) => {
+          for (let tries = 0; tries < 100; tries++) {
+            const lines = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : [];
+            const found = lines
+              .map((line): Record<string, unknown> => JSON.parse(line))
+              .find((entry) => entry.src === 'client' && entry.msg === msg);
+            if (found) return found;
+            await new Promise((done) => setTimeout(done, 50));
+          }
+          throw new Error(`macos.ndjson has no client record ${msg}`);
+        };
+        expect(await recorded('env 1 YES caller')).toMatchObject({ level: 'info' });
+        expect(await recorded('warned')).toMatchObject({ level: 'warn' });
+        await stopMacosApp(root);
+        expect(inspectProcessIdentity(app)).not.toBe('same');
+        expect(await recorded('Exited Sample.')).toMatchObject({ level: 'info' });
+        expect(readClaimSet(macosRuntimeClaim(root)).live).toEqual([]);
       } finally {
-        const owners = [app, supervisor].filter((owner) => owner !== undefined);
-        for (const owner of owners) if (inspectProcessIdentity(owner) === 'same') process.kill(owner.pid, 'SIGKILL');
-        expect(await Promise.all(owners.map((owner) => waitForProcessExit(owner, 1000)))).not.toContain(false);
+        streams.close();
+        const app = launched?.app;
+        if (app && inspectProcessIdentity(app) === 'same') process.kill(app.pid, 'SIGKILL');
       }
-    });
-  });
+    },
+    30_000,
+  );
 
   test.skipIf(process.platform !== 'darwin')(
     'a registered app waiting for LaunchServices leaves spare admission available',
@@ -703,7 +709,6 @@ describe('macOS build placement and promotion', () => {
       const mocked = getExecutor();
       resetExecutor();
       const app = await ownedProcess();
-      const supervisor = await ownedProcess();
       const child = children.at(-1)!;
       let enter!: () => void;
       let release!: () => void;
@@ -724,17 +729,24 @@ describe('macOS build placement and promotion', () => {
           return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
         },
       );
-      vi.spyOn(registration, 'waitForMacosRegistration').mockImplementation(
-        async (project, _launch, _child, _deadline, accept) => {
-          const current = { ...requiredMacosRecord(project)!, app, supervisor };
-          writeWorkspaceState(project, { macos: current });
-          accept?.(current);
-          return current;
+      vi.spyOn(owning, 'spawnOwned').mockReturnValue({
+        pid: app.pid,
+        processToken: app.processToken,
+        claim: {
+          root: macosRuntimeClaim(root),
+          path: macosRuntimeClaim(root),
+          claimId: 'fixture',
+          mode: 'exclusive',
+          owner: app,
+          startedAt: new Date().toISOString(),
+          details: {},
+          label: 'macOS app',
         },
-      );
+        child,
+      });
+      vi.spyOn(stimdClient, 'observeOwned').mockResolvedValue(null);
       setExecutor({
         ...mocked,
-        spawn: () => child,
         runFileAsync: async (file, args, options) => {
           if (file !== 'lsappinfo') return mocked.runFile(file, args, options);
           enter();
@@ -764,7 +776,7 @@ describe('macOS build placement and promotion', () => {
         release();
         await pending;
       }
-      expect((await pending).app).toEqual(app);
+      expect((await pending).app).toMatchObject({ pid: app.pid, processToken: app.processToken });
     },
   );
 

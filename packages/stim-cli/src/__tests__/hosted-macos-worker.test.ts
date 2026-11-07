@@ -21,7 +21,6 @@ import {
   type HostedMacosDevice,
 } from '@stim-cli/core/state';
 import { runHostedMacosApp } from '../device-host/macos.ts';
-import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { makeChildProcess } from './_factories.ts';
 
@@ -45,6 +44,12 @@ vi.mock('../macos/state.ts', async (original) => ({
 vi.mock('../process-identity.ts', async (original) => ({
   ...(await original<typeof import('../process-identity.ts')>()),
   inspectProcessIdentity: (record: unknown) => native.identity(record),
+}));
+vi.mock('../engine/spawn-owned.ts', () => ({
+  spawnOwned: (launch: { file: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }) => {
+    const child = native.spawn(launch.file, launch.args, { cwd: launch.cwd, env: launch.env, detached: true });
+    return { pid: child.pid, processToken: 'app', child };
+  },
 }));
 vi.mock('../macos/stop.ts', () => ({
   stopMacosAppHeld: (root: string) => native.stop(root),
@@ -88,27 +93,7 @@ beforeEach(() => {
     if (args[0] === 'vtool') return build;
     return '';
   });
-  native.spawn.mockImplementation((_file, args = []) => {
-    const runRoot = args[1]!;
-    const record = readMacosRecord(runRoot)!;
-    writeWorkspaceState(runRoot, {
-      macos: {
-        ...record,
-        supervisor: { pid: 101, processToken: 'supervisor', startedAtMicros: 1 },
-        app: { pid: 102, processToken: 'app', startedAtMicros: 1 },
-      },
-    });
-    const child = makeChildProcess({ connected: true });
-    child.send = () => {
-      queueMicrotask(() => child.emit('message', 'macos-accepted'));
-      return true;
-    };
-    child.disconnect = () => {
-      Object.assign(child, { connected: false });
-      child.emit('disconnect');
-    };
-    return child;
-  });
+  native.spawn.mockImplementation(() => makeChildProcess({ pid: 102 }));
 });
 afterEach(() => {
   delete process.env.STIM_HOME;
@@ -189,9 +174,10 @@ test('stamps and signs verified bytes, launches with an isolated home, and delet
     ['--force', '--sign', '-', bundle],
   ]);
   expect(native.spawn).toHaveBeenCalledWith(
-    process.execPath,
-    [expect.stringMatching(/macos[/\\-]run\.(ts|mjs)$/), realpathSync(join(home, 'macos-app')), expect.any(String)],
+    realpathSync(join(bundle, 'Contents', 'MacOS', 'Fixture')),
+    offeredArguments,
     expect.objectContaining({
+      cwd: realpathSync(join(home, 'macos-app')),
       detached: true,
       env: expect.objectContaining({
         STIM_HOME: home,
@@ -237,7 +223,6 @@ test('stamps and signs verified bytes, launches with an isolated home, and delet
     expect(existsSync(join(attempt, 'receipt.json'))).toBe(true);
   }
   expect(existsSync(join(previous, 'manifest.json'))).toBe(true);
-  expect(existsSync(join(home, 'macos-supervisor.log'))).toBe(true);
   expect(readFileSync(log, 'utf8')).toBe('app output');
 });
 
@@ -295,6 +280,7 @@ test('launch passes only allowed environment variables and isolated paths to cli
     HOME: join(home, 'app-home'),
     CFFIXED_USER_HOME: join(home, 'app-home'),
     TMPDIR: join(home, 'app-home', 'tmp'),
+    NSUnbufferedIO: 'YES',
   });
 });
 
@@ -376,19 +362,16 @@ test.each([
   expect(existsSync(file)).toBe(false);
 });
 
-test('does not claim a launch when registration lacks a verified process', async () => {
+test('does not record a launch whose app process cannot be verified', async () => {
   receipt();
-  native.identity.mockReturnValue('unknown');
-  const spawn = native.spawn.getMockImplementation()!;
-  native.spawn.mockImplementation((...args) => {
-    const child = spawn(...args);
-    Object.assign(child, { exitCode: 1 });
-    return child;
+  native.spawn.mockImplementation(() => {
+    throw new Error('Could not verify the hosted macOS app process; it was stopped.');
   });
   expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({
     state: 'unknown',
-    notice: expect.stringContaining('did not register'),
+    notice: expect.stringContaining('Could not verify'),
   });
+  expect(readMacosRecord(realpathSync(join(home, 'macos-app')))?.app).toBeUndefined();
 });
 
 test('stop without an app skips defaults and refuses a foreign preference domain', async () => {

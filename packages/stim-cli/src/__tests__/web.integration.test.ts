@@ -1,9 +1,12 @@
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { createStim } from '../api.ts';
+import * as stimdClient from '../daemon/client.ts';
+import { readClaimSet } from '../ownership-claim.ts';
 import * as workspaceLocks from '../engine/workspace-process-lock.ts';
 import assert from 'node:assert';
 import * as chromeLookup from '../web/chrome.ts';
 import * as browserCdp from '../web/cdp.ts';
+import type { CdpEvent } from '../web/cdp.ts';
 import { resetExecutor, setExecutor, type Executor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
@@ -13,6 +16,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -23,7 +27,8 @@ import { join } from 'node:path';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
 import { BROWSER_LOCK, teardownOwnedBrowser } from '../devices/teardown.ts';
 import { getNamedPort, clearNamedPorts, reserveBrowserPort } from '../named-ports.ts';
-import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
+import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
+import { observeBrowser } from '../stimd/logs/web.ts';
 import { environmentState, withWebFacts } from '../status.ts';
 import { runWeb } from '../commands/web.ts';
 import { launchOwnedBrowser } from '../web/runtime.ts';
@@ -39,6 +44,7 @@ import {
   readWebRecord,
   webFacts,
   webFactsAsync,
+  webClaimRoot,
   webProfileDir,
   webLogFile,
   writeWebRecord,
@@ -562,83 +568,60 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     vi.restoreAllMocks();
   });
 
-  test.each(['message', 'disconnect', 'exit'])('browser registration settles from %s', async (ending) => {
-    let registered = () => {};
-    const publication = new Promise<void>((resolve) => {
-      registered = resolve;
+  function fakeChrome(seen: { env?: NodeJS.ProcessEnv; detached?: boolean }) {
+    return makeExecutor({
+      spawn: (_file, _args, options) => {
+        seen.env = options?.env;
+        seen.detached = options?.detached;
+        const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], options ?? {});
+        children.push(child);
+        return child;
+      },
     });
-    let supervisor: ChildProcess | undefined;
-    setExecutor(
-      makeExecutor({
-        spawn: (_file, args = []) => {
-          const child = spawn(
-            process.execPath,
-            [
-              '-e',
-              ending === 'exit'
-                ? "process.on('message', () => process.exit(1)); setInterval(() => {}, 1000);"
-                : "process.on('message', () => process.send?.('web-registered')); setInterval(() => {}, 1000);",
-            ],
-            { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] },
-          );
-          children.push(child);
-          supervisor = child;
-          assert(child.pid !== undefined);
-          const processToken = captureProcessToken(child.pid);
-          assert(processToken);
-          const pid = child.pid;
-          child.once(ending === 'exit' ? 'exit' : 'message', registered);
-          if (ending === 'disconnect') child.disconnect();
-          setImmediate(() => {
-            if (ending === 'exit') {
-              child.send('exit');
-              return;
-            }
-            writeWebRecord(root, {
-              pid,
-              processToken,
-              chromeProcess: { pid, processToken },
-              chrome: '/fixture/chrome',
-              headless: true,
-              viewport: 'desktop',
-              ignoreCertificateErrors: false,
-              cdpPort: Number(args[args.indexOf('--port') + 1]),
-              profile: webProfileDir(root),
-              launchId: args[args.indexOf('--launch-id') + 1],
-              targetId: 'ready-page',
-              url: 'http://localhost:8901/ready',
-              startedAt: new Date().toISOString(),
-            });
-            if (ending === 'disconnect') registered();
-            else child.send('publish');
-          });
-          return child;
-        },
-      }),
-    );
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-    let finished = false;
-    const launch = launchOwnedBrowser(
+  }
+
+  test('launches Chrome with the caller environment and its own claim, then navigates once stimd observes it', async () => {
+    upsertProject(root, { settings: { web: { url: 'http://localhost:8901/launched' } } });
+    vi.spyOn(chromeLookup, 'findChrome').mockReturnValue('/fixture/chrome');
+    vi.stubEnv('STIM_TEST_CALLER', 'caller');
+    const seen: { env?: NodeJS.ProcessEnv; detached?: boolean } = {};
+    setExecutor(fakeChrome(seen));
+    vi.spyOn(stimdClient, 'observeOwned').mockImplementation(async (workspace) => {
+      const record = readWebRecord(workspace);
+      assert(record);
+      writeWebRecord(workspace, { ...record, targetId: 'owned-page', version: 'Chrome/1' });
+      return null;
+    });
+    const navigations: unknown[] = [];
+    vi.spyOn(browserCdp, 'connectOwnedBrowser').mockResolvedValue({
+      async send(method, params) {
+        if (method === 'Target.getTargetInfo') return { targetInfo: { url: 'about:blank' } };
+        if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
+        if (method === 'Page.navigate') navigations.push(params?.url);
+        return {};
+      },
+      onEvent: () => {},
+      onClose: () => {},
+      close: () => {},
+    });
+    const result = await launchOwnedBrowser(
       {
-        url: 'http://localhost:8901/ready',
+        url: 'http://localhost:8901/launched',
         config: { chrome: '/fixture/chrome', headless: true, viewport: 'desktop', ignoreCertificateErrors: false },
       },
       { root, note: () => {} },
-    ).then((result) => {
-      finished = true;
-      return result;
-    });
-    try {
-      await publication;
-      await vi.advanceTimersByTimeAsync(ending === 'disconnect' ? 1000 : 0);
-      expect(finished).toBe(true);
-      expect((await launch).ok).toBe(ending !== 'exit');
-    } finally {
-      await vi.advanceTimersByTimeAsync(1000);
-      await launch;
-      if (supervisor?.connected) supervisor.disconnect();
-      vi.useRealTimers();
-    }
+    );
+    assert(result.ok);
+    const chrome = result.record.chromeProcess;
+    assert(chrome);
+    expect(result.record).toMatchObject({ pid: chrome.pid, processToken: chrome.processToken, targetId: 'owned-page' });
+    expect(inspectProcessIdentity(chrome)).toBe('same');
+    expect(seen).toMatchObject({ detached: true, env: expect.objectContaining({ STIM_TEST_CALLER: 'caller' }) });
+    expect(readClaimSet(webClaimRoot(root)).live.map((holder) => holder.owner.pid)).toEqual([chrome.pid]);
+    expect(navigations).toEqual(['http://localhost:8901/launched']);
+    expect((await teardownOwnedBrowser(root)).status).toBe('torn-down');
+    expect(inspectProcessIdentity(chrome)).not.toBe('same');
+    expect(readClaimSet(webClaimRoot(root)).live).toEqual([]);
   });
 
   test.each(['lock', 'connect', 'verify'])(
@@ -731,64 +714,23 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     },
   );
 
-  test('a cancelled new web launch drains its registered supervisor and browser', async () => {
+  test('a launch cancelled while stimd attaches drains the Chrome it started', async () => {
     upsertProject(root, { settings: { web: { url: 'http://localhost:8901/cancelled' } } });
     vi.spyOn(chromeLookup, 'findChrome').mockReturnValue('/fixture/chrome');
     const controller = new AbortController();
-    const launched: Array<Pick<WebRecord, 'pid' | 'processToken'>> = [];
-    let registration: Promise<void> | undefined;
-    setExecutor(
-      makeExecutor({
-        spawn: (_file, args = []) => {
-          const supervisor = nodeProcess("process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000);");
-          const chrome = nodeProcess('setInterval(() => {}, 1000);');
-          const supervisorPid = supervisor.pid;
-          const chromePid = chrome.pid;
-          assert(supervisorPid !== undefined && chromePid !== undefined);
-          const supervisorToken = captureProcessToken(supervisorPid);
-          const chromeToken = captureProcessToken(chromePid);
-          assert(supervisorToken && chromeToken);
-          launched.push(
-            { pid: supervisorPid, processToken: supervisorToken },
-            { pid: chromePid, processToken: chromeToken },
-          );
-          registration = new Promise<void>((resolve) =>
-            setTimeout(() => {
-              const profile = webProfileDir(root);
-              mkdirSync(profile, { recursive: true });
-              symlinkSync(`${hostname()}-${chromePid}`, join(profile, 'SingletonLock'));
-              writeWebRecord(root, {
-                pid: supervisorPid,
-                processToken: supervisorToken,
-                chromeProcess: { pid: chromePid, processToken: chromeToken },
-                chrome: '/fixture/chrome',
-                headless: true,
-                viewport: 'desktop',
-                ignoreCertificateErrors: false,
-                cdpPort: Number(args[args.indexOf('--port') + 1]),
-                profile,
-                launchId: args[args.indexOf('--launch-id') + 1],
-                url: 'http://localhost:8901/cancelled',
-                startedAt: new Date().toISOString(),
-              });
-              controller.abort();
-              resolve();
-            }, 200),
-          );
-          return supervisor;
-        },
-      }),
-    );
-    try {
-      await expect(
-        createStim({ projectRoot: root }).run({ platform: 'web', signal: controller.signal }),
-      ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
-      expect(launched).toHaveLength(2);
-      expect(launched.every((record) => ['gone', 'different'].includes(inspectProcessIdentity(record)))).toBe(true);
-      expect(readWebRecord(root)).toBeNull();
-    } finally {
-      await registration;
-    }
+    const seen: { env?: NodeJS.ProcessEnv } = {};
+    setExecutor(fakeChrome(seen));
+    let chrome: WebRecord['chromeProcess'];
+    vi.spyOn(stimdClient, 'observeOwned').mockImplementation(async (workspace) => {
+      chrome = readWebRecord(workspace)?.chromeProcess;
+      controller.abort();
+      return null;
+    });
+    await expect(
+      createStim({ projectRoot: root }).run({ platform: 'web', signal: controller.signal }),
+    ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(chrome && ['gone', 'different'].includes(inspectProcessIdentity(chrome))).toBe(true);
+    expect(readWebRecord(root)).toBeNull();
   });
 
   test.each([
@@ -850,6 +792,77 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     expect(spawnBrowser).not.toHaveBeenCalled();
     expect(getProject(root)?.metroPort).toBe(null);
     expect(readWebRecord(root)).toMatchObject({ url, pid: owned.pid, chromeProcess: owned.chromeProcess });
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('stimd browser observer', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('holds the phone emulation, records page console output, and clears the record once Chrome exits', async () => {
+    const workspace = realpathSync(root);
+    const chromeChild = nodeProcess('setInterval(() => {}, 1000);');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const chrome = { pid: chromeChild.pid!, processToken: captureProcessToken(chromeChild.pid!)! };
+    const profile = webProfileDir(workspace);
+    mkdirSync(profile, { recursive: true });
+    const record: WebRecord = {
+      ...chrome,
+      chromeProcess: chrome,
+      chrome: '/fixture/chrome',
+      headless: true,
+      viewport: 'phone',
+      ignoreCertificateErrors: false,
+      cdpPort: 8950,
+      profile,
+      url: 'http://localhost:8900/',
+      startedAt: new Date().toISOString(),
+    };
+    writeWebRecord(workspace, record);
+    const sent: string[] = [];
+    let emit = (_event: CdpEvent) => {};
+    let closed = () => {};
+    vi.spyOn(browserCdp, 'connectOwnedBrowser').mockResolvedValue({
+      async send(method) {
+        sent.push(method);
+        if (method === 'Browser.getVersion') return { product: 'Chrome/1' };
+        if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'owned-page', type: 'page' }] };
+        if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
+        return {};
+      },
+      onEvent: (listener) => {
+        emit = listener;
+      },
+      onClose: (listener) => {
+        closed = listener;
+      },
+      close: () => {},
+    });
+    const stream = observeBrowser(workspace, record, chrome);
+    await stream.attached;
+    expect(readWebRecord(workspace)).toMatchObject({ targetId: 'owned-page', version: 'Chrome/1' });
+    expect(sent).toContain('Emulation.setDeviceMetricsOverride');
+    emit({
+      method: 'Runtime.consoleAPICalled',
+      sessionId: 'owned-session',
+      params: { type: 'log', args: [{ type: 'string', value: 'hello from the page' }] },
+    });
+    process.kill(chrome.pid, 'SIGKILL');
+    await waitForProcessExit(chrome, 2000);
+    closed();
+    await stream.ended;
+    const lines = readFileSync(webLogFile(workspace), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ msg: 'hello from the page', platform: 'web' }),
+        expect.objectContaining({ level: 'error', event: 'web_browser_exited' }),
+      ]),
+    );
+    expect(readWebRecord(workspace)).toBeNull();
   });
 });
 
