@@ -14,6 +14,7 @@ import { delimiter, join } from 'node:path';
 import type { Worker } from 'node:worker_threads';
 import { claimLiveness, readClaimSet } from '../ownership-claim.ts';
 import * as ownership from '../ownership-claim.ts';
+import * as streamState from '../stimd/logs/state.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { getExecutor } from '../exec.ts';
@@ -293,3 +294,61 @@ test.skipIf(process.platform === 'win32')('natural Windows stream exit keeps its
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a successful tree stop remains valid when pipe closure needs a retry',
+  async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    vi.stubEnv('STIM_HOME', home);
+    const pidFile = join(home, 'pid');
+    const done = join(home, 'done');
+    const xcrun = join(bin, 'xcrun');
+    writeFileSync(xcrun, '#!/bin/sh\necho $$ > "$TEST_PID"\n(sleep 3; touch "$DONE") &\nexec sleep 600\n');
+    chmodSync(xcrun, 0o755);
+    const env = { ...process.env, TEST_PID: pidFile, DONE: done, PATH: [bin, process.env.PATH].join(delimiter) };
+    const streams = createStreams(() => {});
+    const realProcess = process;
+    let pid = 0;
+    try {
+      const { streamId } = await streams.start(
+        { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
+        env,
+      );
+      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
+      pid = Number(readFileSync(pidFile, 'utf8').trim());
+      vi.spyOn(getExecutor(), 'runFileAsync').mockImplementation(async () => {
+        identity.live = false;
+        realProcess.kill(pid, 'SIGTERM');
+        return '';
+      });
+      identity.windows = true;
+      vi.stubGlobal('process', Object.create(realProcess, { platform: { value: 'win32' } }));
+      await expect(streams.stop(root, 'ios', 'default', streamId)).rejects.toThrow('pipes did not close');
+      await vi.waitFor(() => expect(existsSync(done)).toBe(true), { timeout: 3000 });
+      const unregister = streamState.unregisterStreamAll;
+      vi.spyOn(streamState, 'unregisterStreamAll').mockImplementation((...args) => {
+        vi.unstubAllGlobals();
+        return unregister(...args);
+      });
+      expect(await streams.stop(root, 'ios', 'default', streamId)).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+      identity.windows = false;
+      identity.live = true;
+      vi.restoreAllMocks();
+      await streams.close().catch(() => {});
+      if (pid) {
+        try {
+          realProcess.kill(pid, 'SIGKILL');
+        } catch {}
+      }
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  10000,
+);

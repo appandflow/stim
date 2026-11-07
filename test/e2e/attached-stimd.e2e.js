@@ -238,6 +238,59 @@ test(
 );
 
 test(
+  'failed attached startup releases home and engine claims so the same home can retry',
+  { skip: process.platform === 'win32', timeout: 60_000 },
+  async () => {
+    const scratch = mkdtempSync(join(tmp, 'startup-refusal-'));
+    const engineRoot = join(scratch, 'engines');
+    const build = 'bbbbbbbbbbbb';
+    const selected = join(engineRoot, build);
+    const selectedHome = join(scratch, 'home');
+    mkdirSync(join(selected, 'dist'), { recursive: true });
+    mkdirSync(join(selectedHome, 'run'), { recursive: true });
+    cpSync(join(PACKAGE, 'dist'), join(selected, 'dist'), { recursive: true });
+    cpSync(join(PACKAGE, 'package.json'), join(selected, 'package.json'));
+    symlinkSync(join(PACKAGE, 'node_modules'), join(selected, 'node_modules'), 'junction');
+    writeFileSync(join(engineRoot, 'current.json'), JSON.stringify({ format: 1, dir: build, version: 'test' }));
+    const cli = join(selected, 'dist', 'cli.mjs');
+    const extra = { STIM_HOME: selectedHome, STIM_ENGINE_ROOT: engineRoot };
+    const { readClaimSet } = await import(pathToFileURL(join(REPO, 'packages/core/dist/ownership-claim.mjs')).href);
+    const clean = () => {
+      for (const root of [join(selectedHome, 'run', 'stimd'), join(engineRoot, 'claims', build)]) {
+        const survey = readClaimSet(root);
+        assert.deepEqual(survey.live, []);
+        assert.deepEqual(survey.unresolved, []);
+      }
+    };
+    const retry = async () => {
+      const command = agent(cli, ['revive'], extra);
+      assert.equal(await command.closed, 1);
+      assert.match(command.stderr(), /STIM_NO_PROJECT/);
+      clean();
+    };
+    try {
+      const denied = agent(cli, ['revive'], extra, `${PRELOAD}?deny-socket`);
+      assert.equal(await denied.closed, 1);
+      assert.match(denied.stderr(), /STIM_SANDBOX_BLOCKED/);
+      clean();
+      await retry();
+
+      const key = join(selectedHome, 'run', 'desktop.key');
+      rmSync(key, { force: true });
+      mkdirSync(key);
+      const failed = agent(cli, ['revive'], extra);
+      assert.equal(await failed.closed, 1);
+      assert.match(failed.stderr(), /STIM_DAEMON_UNAVAILABLE/);
+      clean();
+      rmSync(key, { recursive: true, force: true });
+      await retry();
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
   'a failed start waits for another command before its attached stimd exits',
   {
     skip: process.platform === 'win32' ? 'the blocked start is simulated with POSIX process groups' : false,

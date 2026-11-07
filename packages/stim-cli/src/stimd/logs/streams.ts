@@ -157,7 +157,8 @@ function signalChild(stream: Stream): Promise<void> {
   }
   const identity = inspectProcessIdentity(child);
   if (identity !== 'same') {
-    if (stream.lastStop?.signalled !== false) stream.lastStop = { pid: child.pid, identity };
+    if (stream.lastStop?.pid !== child.pid || stream.lastStop.signalled === undefined)
+      stream.lastStop = { pid: child.pid, identity };
     return Promise.resolve();
   }
   stream.lastStop = { pid: child.pid, identity };
