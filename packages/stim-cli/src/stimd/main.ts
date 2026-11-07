@@ -444,28 +444,7 @@ async function retainAttachedEngine(attached: boolean, log: Parameters<typeof fo
   }
 }
 
-/**
- * One resident stimd per Stim home, which returns false when another holds the home: holds the claim at `run/stimd` exclusively and the daemon claim at `daemon/claim`
- * shared, after stopping a stim-daemon from Stim 1.40 to 1.42 that holds that one exclusively; serves the CLI socket,
- * whose address it writes to `run/stimd.json`; and ticks every minute while something runs in the home or the pressure
- * level is above normal, every 5 minutes otherwise, and on demand, each tick measuring once, running the activity,
- * dormant and pressure passes and writing `snapshot.json`, then, unless it exits, starting the slow passes on the passes
- * thread unless the last ones still run. A command's contact brings it back to the minute. It exits after two ticks in a
- * row with nothing running, no work pending (`pendingWork`), no slow pass running and no contact, when `daemon.mode`
- * turns off, or when a tick throws, releasing its claims so each supervisor's own idle timer takes over. During
- * shutdown it cancels the dependency size scan and waits for its cleanup and for any slow pass already running.
- */
-export async function runStimd({
-  tickMs = TICK_MS,
-  slowTickMs = tickMs * SLOW_TICKS,
-  mode: startMode = daemonMode({}),
-  serve,
-  desktopKey,
-  onNet,
-  afterSwitch = false,
-  service = serve !== undefined,
-  attached,
-}: {
+interface RunStimdOptions {
   tickMs?: number;
   /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
   slowTickMs?: number;
@@ -486,7 +465,43 @@ export async function runStimd({
    * `daemon.mode` off, and ends when its stdin closes or on a signal, through `endAttached`.
    */
   attached?: { handover: boolean };
-} = {}): Promise<boolean> {
+}
+
+/**
+ * One resident stimd per Stim home, which returns false when another holds the home: holds the claim at `run/stimd` exclusively and the daemon claim at `daemon/claim`
+ * shared, after stopping a stim-daemon from Stim 1.40 to 1.42 that holds that one exclusively; serves the CLI socket,
+ * whose address it writes to `run/stimd.json`; and ticks every minute while something runs in the home or the pressure
+ * level is above normal, every 5 minutes otherwise, and on demand, each tick measuring once, running the activity,
+ * dormant and pressure passes and writing `snapshot.json`, then, unless it exits, starting the slow passes on the passes
+ * thread unless the last ones still run. A command's contact brings it back to the minute. It exits after two ticks in a
+ * row with nothing running, no work pending (`pendingWork`), no slow pass running and no contact, when `daemon.mode`
+ * turns off, or when a tick throws, releasing its claims so each supervisor's own idle timer takes over. During
+ * shutdown it cancels the dependency size scan and waits for its cleanup and for any slow pass already running.
+ */
+export async function runStimd(options: RunStimdOptions = {}): Promise<boolean> {
+  const startup: { cleanup?: (error: unknown) => Promise<void> } = {};
+  try {
+    return await runStimdInner(options, startup);
+  } catch (error) {
+    await startup.cleanup?.(error);
+    throw error;
+  }
+}
+
+async function runStimdInner(
+  {
+    tickMs = TICK_MS,
+    slowTickMs = tickMs * SLOW_TICKS,
+    mode: startMode = daemonMode({}),
+    serve,
+    desktopKey,
+    onNet,
+    afterSwitch = false,
+    service = serve !== undefined,
+    attached,
+  }: RunStimdOptions,
+  startup: { cleanup?: (error: unknown) => Promise<void> },
+): Promise<boolean> {
   const identity = stimBuild();
   const build = stimdBuildId();
   const configAtStart = configuredDaemonMode();
@@ -531,16 +546,25 @@ export async function runStimd({
       );
     return false;
   }
-  markHomePending(
-    own,
-    () => {
-      releaseClaim(own);
-      writer.close();
-    },
-    attached !== undefined,
-  );
   const homeClaim = own;
   let keepOwn = false;
+  let startupClaim: ClaimHandle | null = null;
+  let startupFollower: ReturnType<typeof followEngine> = null;
+  let startupRetention: ReturnType<typeof followEngine> = null;
+  startup.cleanup = async (error) => {
+    if (isUnverifiedCleanup(error)) {
+      keepOwn = true;
+      retainUnverifiedForeground(error, homeClaim, startupRetention ?? startupFollower);
+    } else {
+      startupRetention?.release();
+      startupFollower?.release();
+      releaseClaim(startupClaim);
+      releaseClaim(own);
+    }
+    markAbnormal = null;
+    await writer.close();
+  };
+  markHomePending(own, undefined, attached !== undefined);
   markAbnormal = () => {
     if (!own || keepOwn) return;
     keepOwn = true;
@@ -598,6 +622,7 @@ export async function runStimd({
   await takeOver();
   // compat end
   const claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details, takeOver);
+  startupClaim = claim;
   if (stopped !== null) log('info', 'stimd_takeover', `stopped stim-daemon pid ${stopped}, from an older Stim`);
   if (!claim) {
     releaseClaim(own);
@@ -607,12 +632,14 @@ export async function runStimd({
   }
   readoptJournal(log);
   const follower = lifetime.detachedOnly(() => followEngine(log));
+  startupFollower = follower;
   follower?.record(false, workspaceEngineDirs(loadConfig()));
   const retention = await retainAttachedEngine(attached !== undefined, log, () => {
     releaseClaim(claim);
     releaseClaim(own);
     writer.close();
   });
+  startupRetention = retention;
   process.title = 'stimd';
   const key = writeDesktopKey(desktopKey);
   const script = realpathSync(process.argv[1] ?? '');
@@ -1079,6 +1106,12 @@ export async function runStimd({
         return undefined;
       });
   };
+  startup.cleanup = async (error) => {
+    if (isUnverifiedCleanup(error)) backgroundFailure = error;
+    shutdown('daemon startup failed', lifetime.failLevel, isUnverifiedCleanup(error));
+    await shutdownDone;
+    await writerDone;
+  };
   for (const signal of SIGNALS) process.once(signal, onSignal);
   try {
     await listen(path, server);
@@ -1102,6 +1135,7 @@ export async function runStimd({
   (retention ?? follower)?.record(Boolean(retention), [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
   if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
   lifetime.serve(requestEnd, waitMs, instance);
+  startup.cleanup = undefined;
   log(
     'info',
     'daemon_started',
