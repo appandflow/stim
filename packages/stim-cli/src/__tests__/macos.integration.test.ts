@@ -6,6 +6,7 @@ import { EventEmitter, once } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import {
+  appendFileSync,
   constants,
   promises as fs,
   copyFileSync,
@@ -17,6 +18,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -240,6 +242,85 @@ test.skipIf(process.platform === 'win32')(
     ]);
   },
 );
+
+test.skipIf(process.platform === 'win32')('stimd preserves a partial output line across a restart', async () => {
+  const app = await ownedProcess();
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  const out = join(logs, 'macos-app.out');
+  const mark = join(logs, 'macos-app.tail.json');
+  writeFileSync(out, 'first half ');
+  const first = createOwnedStreams(() => {});
+  await first.sync(root);
+  for (let tries = 0; tries < 40 && !existsSync(mark); tries++) await new Promise((done) => setTimeout(done, 50));
+  expect(existsSync(mark)).toBe(true);
+  first.close();
+  appendFileSync(out, 'second half\n');
+  const second = createOwnedStreams(() => {});
+  try {
+    await second.sync(root);
+    const log = join(logs, 'macos.ndjson');
+    for (let tries = 0; tries < 40 && !existsSync(log); tries++) await new Promise((done) => setTimeout(done, 50));
+    expect(readFileSync(log, 'utf8')).toContain('first half second half');
+  } finally {
+    second.close();
+  }
+});
+
+test.skipIf(process.platform === 'win32')('stimd caps a verbose app spool and continues tailing it', async () => {
+  const app = await ownedProcess();
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  const out = join(logs, 'macos-app.out');
+  writeFileSync(out, 'x'.repeat(8 * 1024 * 1024));
+  const streams = createOwnedStreams(() => {});
+  try {
+    await streams.sync(root);
+    for (let tries = 0; tries < 100 && statSync(out).size !== 0; tries++)
+      await new Promise((done) => setTimeout(done, 50));
+    expect(statSync(out).size).toBe(0);
+    appendFileSync(out, 'after reset\n');
+    const log = join(logs, 'macos.ndjson');
+    for (let tries = 0; tries < 40 && !readFileSync(log, 'utf8').includes('after reset'); tries++)
+      await new Promise((done) => setTimeout(done, 50));
+    const output = readFileSync(log, 'utf8');
+    expect(output).toContain('output may have been dropped');
+    expect(output).toContain('after reset');
+  } finally {
+    streams.close();
+  }
+});
+
+test.skipIf(process.platform === 'win32')('stimd recovers an interrupted spool reset', async () => {
+  const app = await ownedProcess();
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, 'macos-app.out'), 'after reset\n');
+  writeFileSync(
+    join(logs, 'macos-app.tail.json'),
+    JSON.stringify({
+      processToken: app.processToken,
+      out: 8 * 1024 * 1024,
+      err: 0,
+      resetting: 'out',
+    }),
+  );
+  const streams = createOwnedStreams(() => {});
+  try {
+    await streams.sync(root);
+    const log = join(logs, 'macos.ndjson');
+    for (let tries = 0; tries < 40 && !readFileSync(log, 'utf8').includes('after reset'); tries++)
+      await new Promise((done) => setTimeout(done, 50));
+    const output = readFileSync(log, 'utf8');
+    expect(output).toContain('output may have been dropped');
+    expect(output).toContain('after reset');
+  } finally {
+    streams.close();
+  }
+});
 
 test('a device-slot stop preserves the recorded macOS app and supervisor', async () => {
   const app = await ownedProcess();
@@ -771,7 +852,7 @@ describe('macOS build placement and promotion', () => {
           return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
         },
       );
-      vi.spyOn(owning, 'spawnOwned').mockReturnValue({
+      vi.spyOn(owning, 'spawnOwned').mockResolvedValue({
         pid: app.pid,
         processToken: app.processToken,
         claim: {

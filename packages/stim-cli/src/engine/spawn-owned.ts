@@ -1,4 +1,5 @@
-import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, writeFileSync } from 'node:fs';
+import type { ChildProcess } from 'node:child_process';
 import { dirname } from 'node:path';
 import { windowsShellLaunchArgs } from '../detached-entry.ts';
 import { getExecutor } from '../exec.ts';
@@ -11,7 +12,9 @@ import {
   type ClaimDetails,
   type ClaimHandle,
 } from '../ownership-claim.ts';
-import { captureProcessIdentity } from '../process-identity.ts';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
+import { WorkspaceProcessCleanupError } from './workspace-process-lock.ts';
+import { signalProcessTreeAsync } from '../metro.ts';
 
 export interface OwnedLaunch {
   file: string;
@@ -27,7 +30,7 @@ export interface OwnedLaunch {
   /** The exclusive claim the process holds for as long as it runs. */
   claim: { root: string; label: string; details?: ClaimDetails };
   /** The launching operation's claims, which record the process from its spawn on; the caller clears them once it has recorded the process. */
-  declare?: Iterable<ClaimHandle>;
+  declare: Iterable<ClaimHandle>;
 }
 
 export interface OwnedProcess {
@@ -40,67 +43,103 @@ export interface OwnedProcess {
  * Starts a process that outlives its launcher: detached, in its own process group, with file stdio, and holding an
  * exclusive ownership claim of its own, so stop, idle stop and status find it through that claim whether the launcher
  * was a command that exits or a long-lived host. A process whose identity cannot be captured, or whose claim is held,
- * is killed before this throws.
+ * is stopped before this throws when its termination can be verified; otherwise the launching claims remain held.
  */
-export function spawnOwned(launch: OwnedLaunch): OwnedProcess {
-  const declared = [...(launch.declare ?? [])];
+export async function spawnOwned(launch: OwnedLaunch): Promise<OwnedProcess> {
+  const declared = [...launch.declare];
   for (const claim of declared) markClaimChildPending(claim);
+  let child: ChildProcess | undefined;
   let pid: number | undefined;
   try {
-    pid = process.platform === 'win32' ? startWindows(launch) : startDetached(launch);
+    if (process.platform === 'win32') pid = startWindows(launch);
+    else {
+      child = startDetached(launch);
+      pid = child.pid;
+    }
   } catch (error) {
     for (const claim of declared) clearClaimChild(claim);
     throw error;
   }
-  const kill = () => {
-    if (pid === undefined) return;
-    try {
-      process.kill(process.platform === 'win32' ? pid : -pid, 'SIGKILL');
-    } catch {
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch {}
-    }
-  };
   if (pid === undefined) {
     for (const claim of declared) clearClaimChild(claim);
     throw new Error(`Could not start ${launch.file}.`);
   }
   const captured = captureProcessIdentity(pid);
   if (!captured.ok) {
-    kill();
-    for (const claim of declared) clearClaimChild(claim);
-    throw Object.assign(
-      new Error(`Could not verify the ${launch.claim.label} process: ${captured.reason}; it was stopped.`),
-      {
-        code: 'STIM_CLAIM_UNAVAILABLE',
-        remedy: 'Check that this user can inspect its own processes (ps), then run the command again.',
-      },
+    try {
+      child?.kill('SIGKILL');
+    } catch {}
+    throw new WorkspaceProcessCleanupError(
+      declared,
+      `Could not verify the ${launch.claim.label} process: ${captured.reason}.`,
+      'Verify that the launched process and its children have stopped before retrying.',
     );
   }
   const owner = { pid, processToken: captured.token };
-  for (const claim of declared) setClaimChild(claim, owner);
   let claim: ClaimHandle | undefined;
   try {
+    for (const declaration of declared) setClaimChild(declaration, owner);
     const attempt = tryAcquireClaim({ ...launch.claim, mode: 'exclusive', owner });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (!attempt.acquired)
       throw new Error(`The ${launch.claim.label} claim is held at ${attempt.held?.path ?? launch.claim.root}.`);
     claim = attempt.acquired;
   } catch (error) {
-    kill();
+    if (!(await stopOwnedProcess(owner)))
+      throw new WorkspaceProcessCleanupError(
+        declared,
+        `Could not stop the failed ${launch.claim.label} launch.`,
+        'Verify that the launched process and its children have stopped before retrying.',
+        error instanceof Error ? error : undefined,
+      );
     releaseClaim(claim);
+    for (const declaration of declared) clearClaimChild(declaration);
     throw error;
   }
   return { ...owner, claim };
 }
 
-function startDetached(launch: OwnedLaunch): number | undefined {
-  const flags = launch.truncate ? 'w' : 'a';
-  for (const file of [launch.stdout, launch.stderr]) mkdirSync(dirname(file), { recursive: true });
-  const out = openSync(launch.stdout, flags);
-  const err = launch.stderr === launch.stdout ? out : openSync(launch.stderr, flags);
+export async function stopOwnedProcess(owner: { pid: number; processToken: string }): Promise<boolean> {
+  const identity = inspectProcessIdentity(owner);
+  if (identity === 'unknown') return false;
+  if (process.platform === 'win32') {
+    if (identity !== 'same') return false;
+    try {
+      if (!(await signalProcessTreeAsync(owner.pid, 'SIGKILL', { group: true }))) return false;
+    } catch {
+      return false;
+    }
+    return waitForProcessExit(owner, 5000);
+  }
+  if (identity === 'same') {
+    try {
+      process.kill(-owner.pid, 'SIGKILL');
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) return false;
+    }
+    if (!(await waitForProcessExit(owner, 5000))) return false;
+  }
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    try {
+      process.kill(-owner.pid, 0);
+    } catch (error) {
+      return error instanceof Error && 'code' in error && error.code === 'ESRCH';
+    }
+    if (Date.now() >= deadline) return false;
+    await new Promise((done) => setTimeout(done, 50));
+  }
+}
+
+function startDetached(launch: OwnedLaunch): ChildProcess {
+  for (const file of new Set([launch.stdout, launch.stderr])) {
+    mkdirSync(dirname(file), { recursive: true });
+    if (launch.truncate) writeFileSync(file, '');
+  }
+  const out = openSync(launch.stdout, 'a');
+  let err = out;
   try {
+    if (launch.stderr !== launch.stdout) err = openSync(launch.stderr, 'a');
     const child = getExecutor().spawn(launch.file, launch.args, {
       cwd: launch.cwd,
       env: launch.env,
@@ -109,7 +148,7 @@ function startDetached(launch: OwnedLaunch): number | undefined {
     });
     child.once('error', () => {});
     child.unref?.();
-    return child.pid;
+    return child;
   } finally {
     closeSync(out);
     if (err !== out) closeSync(err);

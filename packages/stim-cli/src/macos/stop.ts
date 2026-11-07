@@ -19,7 +19,7 @@ function signal(pid: number, name: NodeJS.Signals): void {
   }
 }
 
-export async function stopProcesses(
+async function stopProcesses(
   records: readonly MacosProcess[],
   waitMs: number = APP_EXIT_MS,
   operation?: StimContext,

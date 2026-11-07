@@ -2,6 +2,7 @@ import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { createStim } from '../api.ts';
 import * as stimdClient from '../daemon/client.ts';
 import { readClaimSet } from '../ownership-claim.ts';
+import * as claims from '../ownership-claim.ts';
 import * as workspaceLocks from '../engine/workspace-process-lock.ts';
 import assert from 'node:assert';
 import * as chromeLookup from '../web/chrome.ts';
@@ -719,6 +720,27 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     },
   );
 
+  test('a failed launch declaration retains the lock if Chrome cannot be verified stopped', async () => {
+    upsertProject(root, { settings: { web: { url: 'http://localhost:8901/' } } });
+    vi.spyOn(chromeLookup, 'findChrome').mockReturnValue('/fixture/chrome');
+    setExecutor(fakeChrome({}));
+    vi.spyOn(claims, 'setClaimChild').mockImplementation(() => {
+      throw new Error('disk full');
+    });
+    await expect(
+      launchOwnedBrowser(
+        {
+          url: 'http://localhost:8901/',
+          config: { chrome: '/fixture/chrome', headless: true, viewport: 'desktop', ignoreCertificateErrors: false },
+        },
+        { root, note: () => {} },
+      ),
+    ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    const held = readClaimSet(join(workspaceDir(root), 'web.lock'));
+    expect(held.live.length + held.unresolved.length).toBeGreaterThan(0);
+    expect(readWebRecord(root)).toBeNull();
+  });
+
   test('a launch cancelled while stimd attaches drains the Chrome it started', async () => {
     upsertProject(root, { settings: { web: { url: 'http://localhost:8901/cancelled' } } });
     vi.spyOn(chromeLookup, 'findChrome').mockReturnValue('/fixture/chrome');
@@ -734,6 +756,30 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     await expect(
       createStim({ projectRoot: root }).run({ platform: 'web', signal: controller.signal }),
     ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(chrome && ['gone', 'different'].includes(inspectProcessIdentity(chrome))).toBe(true);
+    expect(readWebRecord(root)).toBeNull();
+  });
+
+  test('a launch cancelled during its first navigation drains the Chrome it started', async () => {
+    upsertProject(root, { settings: { web: { url: 'http://localhost:8901/cancelled' } } });
+    vi.spyOn(chromeLookup, 'findChrome').mockReturnValue('/fixture/chrome');
+    const controller = new AbortController();
+    setExecutor(fakeChrome({}));
+    let chrome: WebRecord['chromeProcess'];
+    vi.spyOn(stimdClient, 'observeOwned').mockImplementation(async (workspace) => {
+      const record = readWebRecord(workspace);
+      assert(record);
+      chrome = record.chromeProcess;
+      writeWebRecord(workspace, { ...record, targetId: 'owned-page' });
+      return null;
+    });
+    vi.spyOn(browserCdp, 'connectOwnedBrowser').mockImplementation(async () => {
+      controller.abort();
+      throw new Error('navigation cancelled');
+    });
+    await expect(
+      createStim({ projectRoot: root }).run({ platform: 'web', signal: controller.signal }),
+    ).rejects.toBeDefined();
     expect(chrome && ['gone', 'different'].includes(inspectProcessIdentity(chrome))).toBe(true);
     expect(readWebRecord(root)).toBeNull();
   });

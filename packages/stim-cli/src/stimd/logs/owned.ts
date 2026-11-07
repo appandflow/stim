@@ -1,6 +1,14 @@
-import { closeSync, openSync, readFileSync, readSync, statSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  openSync,
+  readFileSync,
+  readSync,
+  renameSync,
+  statSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
-import { StringDecoder } from 'node:string_decoder';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
   deviceHostArea,
@@ -171,24 +179,28 @@ function drained(dir: string, app: MacosProcess): boolean {
   return mark?.processToken === app.processToken && mark.exited === true;
 }
 
-function lineSplitter(write: (line: string) => void) {
-  const decoder = new StringDecoder('utf8');
-  let pending = '';
+function lineSplitter(write: (line: string) => void, saved: unknown) {
+  let pending = typeof saved === 'string' ? Buffer.from(saved, 'base64') : Buffer.alloc(0);
   return {
     push(chunk: Buffer) {
-      pending += decoder.write(chunk);
-      while (pending.length > LINE_BYTES && !pending.includes('\n')) {
-        write(pending.slice(0, LINE_BYTES));
-        pending = pending.slice(LINE_BYTES);
+      pending = Buffer.concat([pending, chunk]);
+      for (;;) {
+        const newline = pending.indexOf(10);
+        if (newline >= 0) {
+          write(pending.subarray(0, newline).toString('utf8').replace(/\r$/, ''));
+          pending = pending.subarray(newline + 1);
+        } else if (pending.length > LINE_BYTES) {
+          let end = LINE_BYTES;
+          while (end > 0 && (pending.readUInt8(end) & 0xc0) === 0x80) end--;
+          write(pending.subarray(0, end).toString('utf8'));
+          pending = pending.subarray(end);
+        } else break;
       }
-      const lines = pending.split('\n');
-      pending = lines.pop() ?? '';
-      for (const line of lines) write(line.replace(/\r$/, ''));
     },
+    save: () => pending.toString('base64'),
     end() {
-      pending += decoder.end();
-      if (pending) write(pending);
-      pending = '';
+      if (pending.length) write(pending.toString('utf8'));
+      pending = Buffer.alloc(0);
     },
   };
 }
@@ -208,35 +220,77 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string): Stream {
     offsets.err = Number(saved.err) || 0;
   }
   const write = (level: string) => (msg: string) => writer.write({ src: 'client', platform: 'macos', level, msg });
+  const matching = saved?.processToken === app.processToken;
+  let recovering: 'out' | 'err' | null =
+    matching && (saved.resetting === 'out' || saved.resetting === 'err') ? saved.resetting : null;
+  if (recovering) offsets[recovering] = 0;
   const files = [
-    { key: 'out' as const, path: join(dir, MACOS_APP_STDOUT), lines: lineSplitter(write('info')) },
-    { key: 'err' as const, path: join(dir, MACOS_APP_STDERR), lines: lineSplitter(write('warn')) },
-  ];
+    {
+      key: 'out' as const,
+      path: join(dir, MACOS_APP_STDOUT),
+      lines: lineSplitter(write('info'), matching && recovering !== 'out' ? saved.outPending : null),
+    },
+    {
+      key: 'err' as const,
+      path: join(dir, MACOS_APP_STDERR),
+      lines: lineSplitter(write('warn'), matching && recovering !== 'err' ? saved.errPending : null),
+    },
+  ] as const;
+  const checkpoint = (resetting?: 'out' | 'err') => {
+    const staging = `${mark}.tmp`;
+    writeFileSync(
+      staging,
+      JSON.stringify({
+        processToken: app.processToken,
+        ...offsets,
+        outPending: files[0].lines.save(),
+        errPending: files[1].lines.save(),
+        ...(resetting ? { resetting } : {}),
+      }),
+    );
+    renameSync(staging, mark);
+  };
+  if (recovering) write('warn')('macOS app output may have been dropped when its raw log reached the size limit.');
   const buffer = Buffer.alloc(CHUNK_BYTES);
   const read = () => {
     let moved = false;
     for (const file of files) {
       let fd: number;
+      let size: number;
       try {
-        if (statSync(file.path).size < offsets[file.key]) continue;
+        size = statSync(file.path).size;
+        if (size < offsets[file.key]) continue;
         fd = openSync(file.path, 'r');
       } catch {
         continue;
       }
       try {
-        for (let n = readSync(fd, buffer, 0, CHUNK_BYTES, offsets[file.key]); n > 0;) {
+        const limit = Math.min(size, offsets[file.key] + LOG_ROTATE_BYTES);
+        while (offsets[file.key] < limit) {
+          const n = readSync(fd, buffer, 0, Math.min(CHUNK_BYTES, limit - offsets[file.key]), offsets[file.key]);
+          if (n === 0) break;
           file.lines.push(buffer.subarray(0, n));
           offsets[file.key] += n;
           moved = true;
-          n = readSync(fd, buffer, 0, CHUNK_BYTES, offsets[file.key]);
         }
       } finally {
         closeSync(fd);
       }
+      if (size >= LOG_ROTATE_BYTES) {
+        try {
+          file.lines.end();
+          checkpoint(file.key);
+          write('warn')('macOS app output may have been dropped when its raw log reached the size limit.');
+          truncateSync(file.path);
+          offsets[file.key] = 0;
+          checkpoint();
+        } catch {}
+      }
     }
-    if (moved) {
+    if (moved || recovering) {
       try {
-        writeFileSync(mark, JSON.stringify({ processToken: app.processToken, ...offsets }));
+        checkpoint();
+        recovering = null;
       } catch {}
     }
   };

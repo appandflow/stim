@@ -35,10 +35,12 @@ import {
   requiredMacosRecord,
   updateMacosRecord,
 } from '../macos/state.ts';
-import { stopHostedBundleInstances, stopMacosAppHeld } from '../macos/stop.ts';
-import { spawnOwned } from '../engine/spawn-owned.ts';
+import { stopHostedBundleInstances, stopMacosApp } from '../macos/stop.ts';
+import { spawnOwned, stopOwnedProcess } from '../engine/spawn-owned.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
+import { clearClaimChild } from '../ownership-claim.ts';
+import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { materializeHostedApp, newer } from './app.ts';
 import type { HostedWorkerResult } from './worker.ts';
@@ -139,7 +141,7 @@ export async function runHostedMacosApp(
     const runRoot = join(realpathSync(home), 'macos-app');
     const area = realpathSync(join(home, '..'));
     if (mode === 'stop') {
-      if (requiredMacosRecord(runRoot)) await stopMacosAppHeld(runRoot);
+      if (requiredMacosRecord(runRoot)) await stopMacosApp(runRoot);
       await stopHostedBundleInstances(area);
       const bundleId = preferenceIdentity(home, device.appSlot);
       if (bundleId) removePreferences(bundleId);
@@ -197,7 +199,7 @@ export async function runHostedMacosApp(
       }
     }
     exec.runFile('codesign', ['--force', '--sign', '-', bundle], options);
-    if (requiredMacosRecord(runRoot)) await stopMacosAppHeld(runRoot);
+    if (requiredMacosRecord(runRoot)) await stopMacosApp(runRoot);
     await stopHostedBundleInstances(area);
     const previousId = preferenceIdentity(home, device.appSlot);
     if (previousId && previousId !== bundleId) removePreferences(previousId);
@@ -225,22 +227,44 @@ export async function runHostedMacosApp(
     for (const key of ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'USER', 'LOGNAME', 'SHELL', 'TERM'])
       if (process.env[key] !== undefined) env[key] = process.env[key];
     Object.assign(env, { STIM_HOME: home, HOME: isolated, CFFIXED_USER_HOME: isolated, TMPDIR: temporary });
-    const owned = spawnOwned({
-      file: executable,
-      args: launch.arguments,
-      cwd: canonicalRunRoot,
-      // Foundation reads NSUnbufferedIO to flush stdout per write; Swift print() to a file otherwise waits until exit.
-      env: { ...env, NSUnbufferedIO: 'YES' },
-      stdout: macosAppStdout(canonicalRunRoot),
-      stderr: macosAppStderr(canonicalRunRoot),
-      truncate: true,
-      claim: { root: macosRuntimeClaim(canonicalRunRoot), label: 'hosted macOS app' },
-    });
-    const started = macosProcess(owned.pid);
-    if (!updateMacosRecord(canonicalRunRoot, worker, { supervisor: started, app: started })) {
-      process.kill(started.pid, 'SIGTERM');
-      throw new Error('The hosted macOS launch owner changed.');
-    }
+    const started = await withWorkspaceProcessLock(
+      workspaceDir(canonicalRunRoot),
+      'macos-launch',
+      async (claim) => {
+        const owned = await spawnOwned({
+          file: executable,
+          args: launch.arguments,
+          cwd: canonicalRunRoot,
+          // Foundation reads NSUnbufferedIO to flush stdout per write; Swift print() to a file otherwise waits until exit.
+          env: { ...env, NSUnbufferedIO: 'YES' },
+          stdout: macosAppStdout(canonicalRunRoot),
+          stderr: macosAppStderr(canonicalRunRoot),
+          truncate: true,
+          claim: { root: macosRuntimeClaim(canonicalRunRoot), label: 'hosted macOS app' },
+          declare: [claim],
+        });
+        try {
+          const startedApp = macosProcess(owned.pid);
+          if (
+            startedApp.processToken !== owned.processToken ||
+            !updateMacosRecord(canonicalRunRoot, worker, { supervisor: startedApp, app: startedApp })
+          )
+            throw new Error('The hosted macOS launch owner changed.');
+          clearClaimChild(claim);
+          return startedApp;
+        } catch (error) {
+          if (!(await stopOwnedProcess(owned)))
+            throw new WorkspaceProcessCleanupError(
+              [claim],
+              'Could not stop the unrecorded hosted macOS app.',
+              'Verify that the app has stopped before retrying.',
+              error instanceof Error ? error : undefined,
+            );
+          throw error;
+        }
+      },
+      { external: true, ownerPurpose: 'hosted macOS launch' },
+    );
     const writer = createNdjsonWriter(macosLogFile(canonicalRunRoot), { maxBytes: LOG_ROTATE_BYTES });
     writer.write({ src: 'client', platform: 'macos', level: 'info', msg: `Started ${product} (pid ${started.pid}).` });
     writer.close();

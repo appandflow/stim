@@ -492,6 +492,11 @@ export async function observeOwned(root: string, env: NodeJS.ProcessEnv = proces
   if (!stimdLive() && !(await claimTaken(launchStimd(env, daemonMode(env))))) return 'no stimd runs in this Stim home';
   const ask = () => askStimd('logs.observe', OBSERVE_MS, { params: { root } });
   let reply = await ask();
+  const deadline = Date.now() + CLAIM_WAIT_MS;
+  while (!reply && !stimdRefused() && Date.now() < deadline) {
+    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
+    reply = await ask();
+  }
   if (!reply && stimdRefused() && (await successorBound())) reply = await ask();
   if (reply?.op !== 'logs.observed')
     return stimdRefused()

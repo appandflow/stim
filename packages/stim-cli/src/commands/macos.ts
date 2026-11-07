@@ -24,7 +24,7 @@ import {
 } from '../engine/build-progress.ts';
 import { errorRemedy } from '../engine/build-ledger.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
-import { spawnOwned } from '../engine/spawn-owned.ts';
+import { spawnOwned, stopOwnedProcess, type OwnedProcess } from '../engine/spawn-owned.ts';
 import { clearClaimChild } from '../ownership-claim.ts';
 import { observeOwned } from '../daemon/client.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
@@ -47,7 +47,7 @@ import { planMacos } from '../macos/plan.ts';
 import type { BuildHandoff } from '../offload/client.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
-import { stopBundleInstances, stopMacosAppHeld, stopProcesses as stopMacosProcesses } from '../macos/stop.ts';
+import { stopBundleInstances, stopMacosAppHeld } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../build-placement.ts';
 import { upsertProject, withConfigLockAsync } from '../workspace/config.ts';
@@ -384,8 +384,9 @@ async function launchHere(
   const launcher = record.supervisor;
   if (!launcher) throw new Error('The macOS launch has no recorded owner.');
   let app: MacosProcess | undefined;
+  let owned: OwnedProcess | undefined;
   try {
-    const owned = spawnOwned({
+    owned = await spawnOwned({
       file: record.executable,
       args: record.arguments,
       cwd: root,
@@ -397,7 +398,9 @@ async function launchHere(
       claim: { root: macosRuntimeClaim(root), label: 'macOS app' },
       declare: operationState(context).declaring,
     });
-    app = macosProcess(owned.pid);
+    const started = macosProcess(owned.pid);
+    if (started.processToken !== owned.processToken) throw new Error('The macOS launch process changed.');
+    app = started;
     if (!updateMacosRecord(root, launcher, { supervisor: app, app }))
       throw new Error('The macOS launch owner changed.');
     for (const claim of operationState(context).declaring) clearClaimChild(claim);
@@ -414,7 +417,8 @@ async function launchHere(
     return { record: { ...record, supervisor: app, app }, deadline: Date.now() + 20_000 };
   } catch (error) {
     try {
-      if (app) await stopMacosProcesses([app]);
+      if (owned && !(await stopOwnedProcess(owned)))
+        throw new Error('The app process group could not be stopped.', { cause: error });
       await stopBundleInstances(root);
       await writeWorkspaceStateAsync(root, { macos: { ...record, supervisor: undefined, app: undefined } });
     } catch (cleanupError) {

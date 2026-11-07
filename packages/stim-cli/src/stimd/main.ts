@@ -385,6 +385,7 @@ export async function runStimd({
     (why) => maybeUpdate(why, ASKED_MS),
   );
   let restartingNet = false;
+  const keepRunning = () => net.running() || restartingNet || owned.running() || metroChildrenRun();
   let updating: Promise<void> | null = null;
   const maybeUpdate = (why: string, everyMs: number) => {
     if (!follower || updating || closing) return;
@@ -750,7 +751,7 @@ export async function runStimd({
     const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
     void metroTick(mode === 'on', log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
     if (mode === 'off') {
-      if (net.running() || restartingNet || owned.running() || metroChildrenRun()) {
+      if (keepRunning()) {
         for (const socket of tickReplies.splice(0)) socket.destroy();
         continue;
       }

@@ -6,7 +6,7 @@ import { phaseLine } from '../command-output.ts';
 import { observeOwned } from '../daemon/client.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { BROWSER_LOCK, teardownBrowserHeld } from '../devices/teardown.ts';
-import { spawnOwned } from '../engine/spawn-owned.ts';
+import { spawnOwned, stopOwnedProcess } from '../engine/spawn-owned.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import type {
   WebFailure,
@@ -14,7 +14,6 @@ import type {
   WebRuntimeContext,
   WebRuntimePreparation,
 } from '../integrations/web-project.ts';
-import { signalProcessTree } from '../metro.ts';
 import { reserveBrowserPort } from '../named-ports.ts';
 import { clearClaimChild } from '../ownership-claim.ts';
 import { workspaceDir } from '../workspace/paths.ts';
@@ -98,7 +97,7 @@ export async function launchOwnedBrowser(
         viewport: config.viewport,
         ignoreCertificateErrors: config.ignoreCertificateErrors,
       };
-      const chrome = spawnOwned({
+      const chrome = await spawnOwned({
         file: config.chrome,
         args: chromeArgs({ profile, port, ...launch }),
         cwd: root,
@@ -122,9 +121,13 @@ export async function launchOwnedBrowser(
           }),
         );
       } catch (error) {
-        try {
-          signalProcessTree(chrome.pid, 'SIGKILL', { group: true });
-        } catch {}
+        if (!(await stopOwnedProcess(owner)))
+          throw new WorkspaceProcessCleanupError(
+            [claim],
+            'Could not stop the unrecorded browser.',
+            'Verify that Chrome has stopped before retrying.',
+            error instanceof Error ? error : undefined,
+          );
         throw error;
       }
       clearClaimChild(claim);
@@ -146,7 +149,18 @@ export async function launchOwnedBrowser(
           `Read ${browserLogFile(root)} and \`stim logs --errors\`, then run \`stim web\` again.`,
         );
       }
-      await sendToOwnedPage(record, 'Page.navigate', { url }, signal);
+      try {
+        await sendToOwnedPage(record, 'Page.navigate', { url }, signal);
+      } catch (error) {
+        const cleanup = await teardownBrowserHeld(root);
+        if (cleanup.status === 'failed' || cleanup.status === 'skipped')
+          throw new WorkspaceProcessCleanupError(
+            [claim],
+            `The failed browser launch could not be stopped: ${cleanup.reason ?? 'unknown reason'}.`,
+            'Run `stim stop`.',
+          );
+        throw error;
+      }
       return { ok: true, record, since, reused: false };
     },
     { external: true, ownerPurpose: 'stim web', signal },

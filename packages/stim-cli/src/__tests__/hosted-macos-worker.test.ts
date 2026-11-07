@@ -49,6 +49,7 @@ vi.mock('../process-identity.ts', async (original) => ({
   inspectProcessIdentity: (record: unknown) => native.identity(record),
 }));
 vi.mock('../engine/spawn-owned.ts', () => ({
+  stopOwnedProcess: async () => true,
   spawnOwned: (launch: {
     file: string;
     args: string[];
@@ -60,11 +61,11 @@ vi.mock('../engine/spawn-owned.ts', () => ({
   }) => {
     native.launches.push(launch);
     const child = native.spawn(launch.file, launch.args, { cwd: launch.cwd, env: launch.env, detached: true });
-    return { pid: child.pid, processToken: 'app', child };
+    return { pid: child.pid, processToken: 'worker', child };
   },
 }));
 vi.mock('../macos/stop.ts', () => ({
-  stopMacosAppHeld: (root: string) => native.stop(root),
+  stopMacosApp: (root: string) => native.stop(root),
   stopHostedBundleInstances: (area: string) => native.stopApps(area),
 }));
 
