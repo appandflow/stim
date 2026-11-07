@@ -1963,6 +1963,12 @@ not on any remote"  (worktree remove)
   the remedy names: npx stim@<this version> engine rollback, or
   npx stim@<this version> engine use <this version>.`,
     },
+    STIM_CI_ATTACHED_HOME: {
+      summary: 'another command owns this home’s attached daemon',
+      body: () => `STIM_CI_ATTACHED_HOME
+  A concurrent CI job cannot share a daemon tied to another command's lifetime.
+  Use a separate STIM_HOME for each concurrent CI job.`,
+    },
     STIM_ENGINE_HOST_UNAVAILABLE: {
       summary: 'the selected engine predates attached CI hosting',
       body: () => `STIM_ENGINE_HOST_UNAVAILABLE

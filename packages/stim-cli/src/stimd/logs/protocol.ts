@@ -81,6 +81,8 @@ export function handleLogRequest({
       typeof fields.streamId !== 'string' ||
       !Number.isSafeInteger(fields.since) ||
       Number(fields.since) < 0 ||
+      (fields.through !== undefined && (!Number.isSafeInteger(fields.through) || Number(fields.through) < 0)) ||
+      (fields.checkCoverage !== undefined && typeof fields.checkCoverage !== 'boolean') ||
       !Number.isSafeInteger(fields.after) ||
       Number(fields.after) < 0 ||
       !Number.isSafeInteger(fields.timeoutMs) ||
@@ -108,6 +110,8 @@ export function handleLogRequest({
           Number(fields.timeoutMs),
           signal,
           context.forwarded.env,
+          Number(fields.through ?? 0),
+          fields.checkCoverage === true,
         ),
       ),
     ).then(

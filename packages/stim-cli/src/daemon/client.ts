@@ -439,7 +439,16 @@ export async function ensureStimd(
     if (!taken && !held && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
       const { hostStimd } = await import('../stimd/attached.ts');
       const host = await hostStimd(env);
-      if (host !== 'held' && host !== 'blocked' && host !== 'blocked-lock' && host !== null) attachedHost = host;
+      if (host && typeof host === 'object' && 'refusal' in host)
+        throw Object.assign(new Error(host.refusal.message), host.refusal);
+      if (host === 'engine-unavailable')
+        throw Object.assign(new Error('The selected Stim engine cannot be verified.'), {
+          code: 'STIM_ENGINE_UNAVAILABLE',
+          remedy: 'Run stim engine rollback or stim engine use to restore the engine pointer.',
+        });
+      if (host && typeof host === 'object' && 'switched' in host)
+        (await import('./engine-switch.ts')).endForSwitch(host.switched);
+      if (host && typeof host === 'object' && 'end' in host) attachedHost = host;
       taken = stimdLive() || (await claimTaken(launched, CLAIM_WAIT_MS - ATTACH_AFTER_MS));
       if ((host === 'blocked' || host === 'blocked-lock') && !taken) {
         const path =
@@ -455,7 +464,15 @@ export async function ensureStimd(
     if (taken && pin) await admit(held, command, invocation);
     return taken;
   } catch (error) {
-    if (isSandboxBlocked(error)) throw error;
+    if (
+      isSandboxBlocked(error) ||
+      (error instanceof Error &&
+        'code' in error &&
+        (error.code === 'STIM_ENGINE_UNAVAILABLE' ||
+          error.code === 'STIM_CLAIM_UNAVAILABLE' ||
+          error.code === 'STIM_CLAIM_REFUSED'))
+    )
+      throw error;
     return false;
   } finally {
     admitting = false;
@@ -464,11 +481,12 @@ export async function ensureStimd(
 }
 
 /** Waits for this build's stimd to acknowledge a socket request or a sandbox to deny it. */
-export async function waitForStimdHello(): Promise<'held' | 'blocked' | null> {
+export async function waitForStimdHello(): Promise<'held' | 'held-attached' | 'blocked' | null> {
   for (const deadline = Date.now() + CLAIM_WAIT_MS; Date.now() < deadline;) {
     socketError = null;
     const reply = await askStimd('hello', CONTACT_TIMEOUT_MS);
-    if (reply?.op === 'hello' && reply.build === stimdBuildId()) return 'held';
+    if (reply?.op === 'hello' && reply.build === stimdBuildId())
+      return reply.attached === true ? 'held-attached' : 'held';
     if (socketError === 'EPERM' || socketError === 'EACCES') return 'blocked';
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }
@@ -529,6 +547,7 @@ function beginOp(
   held?: Socket[],
   command?: string,
   invocation?: Invocation & { workspace?: string | null },
+  expectedInstance?: string | null,
 ): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
@@ -547,7 +566,13 @@ function beginOp(
     const timer = setTimeout(() => finish(false), OP_BEGIN_TIMEOUT_MS);
     const socket = openStimd([{ op: 'op.begin', ...(command ? { command } : {}), params: invocation }], (reply) => {
       if (reply.op === 'op.begun' && typeof reply.opToken === 'string') opTokens.set(socket, reply.opToken);
-      finish(reply.op === 'op.begun');
+      finish(
+        reply.op === 'op.begun' &&
+          (expectedInstance === undefined ||
+            (expectedInstance === null
+              ? reply.attached !== true
+              : reply.attached === true && reply.instance === expectedInstance)),
+      );
     });
     socket.once('close', () => {
       if (opSocket === socket) opSocket = null;
@@ -662,9 +687,14 @@ export function deviceLogReadinessWait(
   streamId: string,
   since: number,
   operation?: StimContext,
-): (ms: number) => Promise<void> {
+): ((ms: number) => Promise<void>) & {
+  coverage: () => 'pending' | 'covered' | 'failed';
+  coverThrough: (at: number) => void;
+} {
   let revision = 0;
-  return async (ms) => {
+  let through = 0;
+  let coverage: 'pending' | 'covered' | 'failed' = 'pending';
+  const wait = async (ms: number) => {
     const started = Date.now();
     const opToken = operationToken(operation);
     const timeoutMs = Math.min(30_000, Math.max(0, Math.ceil(ms)));
@@ -672,20 +702,56 @@ export function deviceLogReadinessWait(
       ? await askStimd(
           'readiness.wait',
           timeoutMs + 1000,
-          { opToken, params: { root, platform, slot, streamId, since, after: revision, timeoutMs } },
+          {
+            opToken,
+            params: {
+              root,
+              platform,
+              slot,
+              streamId,
+              since,
+              through,
+              checkCoverage: coverage === 'pending',
+              after: revision,
+              timeoutMs,
+            },
+          },
           operation?.signal,
         )
       : null;
     throwIfCancelled(operation?.signal, 'launch readiness check');
     if (reply?.op === 'readiness.changed' && typeof reply.revision === 'number') {
       revision = reply.revision;
+      if (reply.coverage === 'pending' || reply.coverage === 'covered' || reply.coverage === 'failed')
+        coverage = reply.coverage;
       if (reply.gone !== true) return;
     }
+    coverage = 'failed';
     await cancellableSleep(Math.max(0, ms - (Date.now() - started)), {
       signal: operation?.signal,
       what: 'launch readiness check',
     });
   };
+  return Object.assign(wait, {
+    coverage: () => coverage,
+    coverThrough: (at: number) => {
+      if (at > through) {
+        through = Math.ceil(at);
+        if (coverage === 'covered') coverage = 'pending';
+      }
+    },
+  });
+}
+
+/** Pins an already-running stimd until the returned closure is called. */
+export async function holdExistingStimd(ownedInstance: string | null): Promise<() => void> {
+  const held: Socket[] = [];
+  socketError = null;
+  if (!(await beginOp(held, 'stim ci', undefined, ownedInstance))) {
+    if (socketError === 'EPERM' || socketError === 'EACCES') throw sandboxBlocked();
+    throw new Error('Could not pin the Stim daemon for this CI job.');
+  }
+  return () => held.forEach((socket) => socket.destroy());
 }
 
 /** Whether a stimd of this build replaced, within `CLAIM_WAIT_MS`, the one of an older build that refused it. */

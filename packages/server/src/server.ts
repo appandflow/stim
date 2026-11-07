@@ -588,6 +588,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const buildAllowed = (session: Pick<PairedDevice, 'id'>) =>
     approved().build.some((entry) => entry.id === session.id && entry.capabilities.includes('build'));
   let startupProbe: ReturnType<typeof probeDirectories> | null = null;
+  const startupAbort = new AbortController();
+  let homeCheck: Promise<void> | undefined;
   let startupRetry: NodeJS.Timeout | null = null;
   let setupPruneTimer: NodeJS.Timeout | null = null;
   let shareServerGrace: NodeJS.Timeout | null = null;
@@ -1968,6 +1970,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (setupPruneTimer) clearInterval(setupPruneTimer);
     if (shareServerGrace) clearTimeout(shareServerGrace);
     startupProbe?.cancel();
+    startupAbort.abort();
+    await settle(homeCheck ?? Promise.resolve());
     watcher?.close();
     if (revocationPoll) clearInterval(revocationPoll);
     if (hostedIdleSweep) clearInterval(hostedIdleSweep);
@@ -2159,7 +2163,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (closing) return settle(startup);
     if (reason === null) {
       try {
-        homeId = await createStim({ projectRoot: homedir(), env: options.env, admission: 'none' }).identity();
+        homeId = await createStim({ projectRoot: homedir(), env: options.env, admission: 'none' }).identity({
+          signal: startupAbort.signal,
+        });
         if (closing) return settle(startup);
         becomeReady();
       } catch (error) {
@@ -2167,6 +2173,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         cause = 'start-failed';
       }
     }
+    if (closing) return settle(startup);
     if (reason === null) {
       if (startup.state === 'degraded') console.error('stim-server: the Stim home answers again; serving clients.');
       startup = { state: 'ready' };
@@ -2196,9 +2203,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     startup = { state: 'degraded', reason, cause };
     settle(startup);
-    startupRetry = setTimeout(() => void checkHome(), options.startupRetryMs ?? STARTUP_RETRY_MS);
+    startupRetry = setTimeout(() => {
+      homeCheck = checkHome();
+    }, options.startupRetryMs ?? STARTUP_RETRY_MS);
   };
-  void checkHome();
+  homeCheck = checkHome();
   const localHttp = createServer((request, response) => {
     if (request.method === 'GET' && request.url === '/health') return void answerHealth(response);
     response.writeHead(426, { 'content-type': 'text/plain' }).end('stim-server speaks WebSocket only.\n');

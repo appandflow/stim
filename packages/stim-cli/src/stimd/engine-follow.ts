@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  ClaimUnavailableError,
   readClaimSet,
   releaseClaim,
   tryAcquireClaim,
@@ -79,11 +80,16 @@ export function followEngine(log: Log, retained = false): EngineFollower | null 
       engineDirs: dirs,
       ...(retained || activeRetained ? { retained: true } : {}),
     };
+    if (retained && claim && !readClaimSet(root).live.some((holder) => holder.claimId === claim?.claimId))
+      throw new ClaimUnavailableError('the retained engine claim is missing or unreadable', { claimPath: claim.path });
     if (!claim || JSON.stringify(details) === JSON.stringify(claim.details)) return;
     const was = claim.details.drained;
+    const path = claim.path;
     claim = updateClaimDetails(claim, details);
-    if (!claim)
+    if (!claim) {
+      if (retained) throw new ClaimUnavailableError('could not update the retained engine claim', { claimPath: path });
       log('warn', 'engine_claim_lost', `the claim under ${root} is gone; the engine no longer waits for this stimd`);
+    }
     if (was !== details.drained) log('debug', pinned ? 'engine_pinned' : 'engine_drained', `drained: ${!pinned}`);
   };
   const flip = async (pinned: () => boolean) => {

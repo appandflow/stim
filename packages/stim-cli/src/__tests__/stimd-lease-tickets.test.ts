@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deviceLeasePath, parseLease, takeLease } from '../engine/device-lease.ts';
+import { deviceLeasePath, parseLease, raiseLease, takeLease } from '../engine/device-lease.ts';
 import { createLeaseTickets } from '../stimd/lease-tickets.ts';
 
 test('shared operation grants release their run lease only after the last ticket', async () => {
@@ -38,11 +38,54 @@ test('shared operation grants release their run lease only after the last ticket
     const path = deviceLeasePath('ios', 'phone');
     const token = parseLease(readFileSync(path, 'utf8'))?.token;
     expect(parseLease(readFileSync(path, 'utf8'))?.token).toBe(token);
-    tickets.drop(ownerB);
+    tickets.release(b, ownerB);
     expect(() => readFileSync(path)).toThrow(/ENOENT/);
   } finally {
     ownerA.destroy();
     ownerB.destroy();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a disconnected grant protects the shared run token through its existing expiry', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-ticket-home-'));
+  const root = mkdtempSync(join(tmpdir(), 'stim-ticket-app-'));
+  vi.stubEnv('STIM_HOME', home);
+  const ownerA = new Socket();
+  const ownerB = new Socket();
+  const tickets = createLeaseTickets();
+  const request = {
+    root,
+    platform: 'ios' as const,
+    slot: 'default',
+    id: 'phone',
+    deviceName: null,
+    idLabel: 'udid',
+    waitSeconds: 0,
+    noWait: false,
+    installBoundMs: 60_000,
+    appId: null,
+  };
+  try {
+    const a = tickets.prepare(ownerA, request, new AbortController().signal);
+    const b = tickets.prepare(ownerB, request, new AbortController().signal);
+    await tickets.acquire(a, ownerA, () => {});
+    await tickets.acquire(b, ownerB, () => {});
+    const started = Date.now();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(started + 30_000);
+    expect(raiseLease({ root, platform: 'ios', minMs: 120_000 }).status).toBe('raised');
+    const path = deviceLeasePath('ios', 'phone');
+    const before = parseLease(readFileSync(path, 'utf8'));
+    tickets.drop(ownerA);
+    now.mockReturnValue(started + 70_000);
+    tickets.release(b, ownerB);
+    expect(parseLease(readFileSync(path, 'utf8'))).toEqual(before);
+  } finally {
+    ownerA.destroy();
+    ownerB.destroy();
+    vi.restoreAllMocks();
     vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });

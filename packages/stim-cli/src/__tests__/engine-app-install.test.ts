@@ -633,6 +633,49 @@ describe('verifyLaunch: the stability window ends on evidence that the app JavaS
     expect((await run('android', records, { deviceStreamId: null })).jsRunning).not.toBe(true);
   });
 
+  test('waits for cold history and reads its evidence before reporting success', async () => {
+    const clock = fakeClock();
+    let coverage: 'pending' | 'covered' = 'pending';
+    const sleep = Object.assign(
+      async (ms: number) => {
+        await clock.sleep(ms);
+        if (clock.at() >= 6000) coverage = 'covered';
+      },
+      { coverage: () => coverage },
+    );
+    const result = await verifyLaunch({
+      since,
+      platform: 'android',
+      now: clock.now,
+      sleep,
+      readRecords: () => metro('android').filter((r) => Number(r.ts) <= clock.at()),
+      readDeviceRecords: () =>
+        coverage === 'covered' ? [{ ...device('android', 2500, 'Running "main"'), proc: 'ReactNativeJS(1)' }] : [],
+      readClientRecords: () => [],
+      processAlive: () => true,
+    });
+    expect(result).toMatchObject({ verified: true, jsRunning: true });
+    expect(clock.at()).toBeGreaterThanOrEqual(6000);
+  });
+
+  test.each(['failed', 'pending'] as const)('does not verify when history is %s', async (coverage) => {
+    const clock = fakeClock();
+    const sleep = Object.assign(clock.sleep, { coverage: () => coverage });
+    const result = await verifyLaunch({
+      since,
+      platform: 'android',
+      timeoutMs: 6000,
+      now: clock.now,
+      sleep,
+      readRecords: () => metro('android').filter((r) => Number(r.ts) <= clock.at()),
+      readDeviceRecords: () => [],
+      readClientRecords: () => [],
+      processAlive: () => true,
+    });
+    expect(result.verified).toBe(false);
+    expect(clock.at()).toBeLessThanOrEqual(since + 6000);
+  });
+
   test('Android: a Running line from before the JavaScript bundle began loading is not evidence', async () => {
     const result = await run('android', {
       device: [
@@ -688,6 +731,43 @@ describe('optional app readiness', () => {
   function signal(ts: number, state: string, extra: Partial<NdjsonRecord> = {}): NdjsonRecord {
     return { ts, src: 'device', platform: 'ios', level: 'info', msg: `[stim:readiness] ${state}`, ...extra };
   }
+
+  test('replays through the stability boundary when an early pending signal is followed by silence', async () => {
+    const clock = fakeClock();
+    let through = 0;
+    let coverage: 'pending' | 'covered' = 'covered';
+    const records = [signal(1500, 'pending')];
+    const sleep = Object.assign(
+      async (ms: number) => {
+        await clock.sleep(ms);
+        if (coverage === 'pending') {
+          records.push(signal(2500, 'ready'));
+          coverage = 'covered';
+        }
+      },
+      {
+        coverage: () => coverage,
+        coverThrough: (at: number) => {
+          if (at > through) {
+            through = at;
+            coverage = 'pending';
+          }
+        },
+      },
+    );
+    const result = await verifyLaunch({
+      since: 1000,
+      platform: 'ios',
+      now: clock.now,
+      sleep,
+      readRecords: () => [{ ts: 1000, event: 'bundle_build_done', platform: 'ios' }],
+      readDeviceRecords: () => records,
+      readClientRecords: () => [],
+      processAlive: () => true,
+    });
+    expect(result).toMatchObject({ verified: true, readiness: 'ready' });
+    expect(clock.at()).toBeLessThan(10_000);
+  });
 
   async function run(records: NdjsonRecord[], options: Partial<Parameters<typeof verifyLaunch>[0]> = {}) {
     const clock = fakeClock();

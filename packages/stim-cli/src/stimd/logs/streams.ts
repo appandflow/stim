@@ -89,7 +89,9 @@ export interface StreamTable {
     timeoutMs: number,
     signal?: AbortSignal,
     env?: Record<string, string>,
-  ): Promise<{ revision: number; gone?: true }>;
+    through?: number,
+    checkCoverage?: boolean,
+  ): Promise<{ revision: number; gone?: true; coverage?: 'pending' | 'covered' | 'failed' }>;
   running(): boolean;
   close(): Promise<void>;
 }
@@ -116,7 +118,10 @@ type Stream = {
   observedAt: number | null;
   revision: number;
   waiters: Set<(gone: boolean) => void>;
-  historySeen: WeakSet<AbortSignal>;
+  historySeen: WeakMap<
+    AbortSignal,
+    { status: 'pending' | 'covered' | 'failed'; generation?: number; startedAt?: number; warm?: boolean }
+  >;
   histories: Set<Promise<void>>;
   historyQueue: Promise<void>;
   started: Promise<RunCollectorHandle | null>;
@@ -169,7 +174,14 @@ async function waitChild(stream: Stream): Promise<void> {
         return undefined;
       });
     });
-    if (!closed) throw new Error('the device log stream pipes did not close');
+    if (!closed) {
+      const child = stream.child;
+      throw new Error(
+        `the device log stream pipes did not close (exit=${String(child?.exitCode)}, signal=${String(child?.signalCode)}, ` +
+          `stdoutEnded=${String(child?.stdout?.readableEnded)}, stdoutFlowing=${String(child?.stdout?.readableFlowing)}, ` +
+          `stderrEnded=${String(child?.stderr?.readableEnded)}, stderrFlowing=${String(child?.stderr?.readableFlowing)}, backpressure=${stream.paused})`,
+      );
+    }
   }
   if (stream.identity || stream.pending) clearClaimChild(stream.claim);
   stream.pending = false;
@@ -338,29 +350,103 @@ export function createStreams(log: (message: string) => void): StreamTable {
     stream.aliases.delete(key);
     streams.delete(key);
   };
-  const scheduleBackfill = (stream: Stream, since: number, signal: AbortSignal, env: Record<string, string>): void => {
-    if (stream.spec.physical || stream.historySeen.has(signal)) return;
-    stream.historySeen.add(signal);
+  const scheduleBackfill = (
+    stream: Stream,
+    since: number,
+    signal: AbortSignal,
+    env: Record<string, string>,
+    through: number,
+  ) => {
+    if (stream.spec.physical) return { status: 'covered' as const, warm: true, startedAt: Infinity };
+    const existing = stream.historySeen.get(signal);
+    if (existing) {
+      if (
+        existing.generation !== undefined &&
+        (existing.generation !== stream.generation ||
+          !stream.child ||
+          stream.child.exitCode !== null ||
+          stream.child.signalCode !== null)
+      )
+        existing.status = 'failed';
+      if (existing.status !== 'covered' || existing.warm || (existing.startedAt ?? 0) >= through) return existing;
+    }
+    const coverage: {
+      status: 'pending' | 'covered' | 'failed';
+      generation?: number;
+      startedAt?: number;
+      warm?: boolean;
+    } = { status: 'pending' };
+    stream.historySeen.set(signal, coverage);
     const cancelled = AbortSignal.any([signal, stream.controller.signal]);
     const task = stream.historyQueue.then(async () => {
       cancelled.throwIfAborted();
-      return backfillDeviceLog({
+      await new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+          cancelled.removeEventListener('abort', abort);
+        };
+        const abort = () => {
+          cleanup();
+          reject(cancelled.reason);
+        };
+        cancelled.addEventListener('abort', abort, { once: true });
+        void stream.started.then(
+          (started) => {
+            if (!started) {
+              cleanup();
+              reject(new Error('the device log stream did not attach'));
+            } else {
+              cleanup();
+              resolve();
+            }
+            return undefined;
+          },
+          (error: unknown) => {
+            cleanup();
+            reject(error);
+          },
+        );
+        if (cancelled.aborted) abort();
+      });
+      const generation = stream.generation;
+      const activePid = stream.activePid;
+      coverage.generation = generation;
+      coverage.startedAt = Date.now();
+      await backfillDeviceLog({
         root: stream.root,
         streamId: stream.id,
         spec: stream.spec,
         since,
         env,
         signal: cancelled,
-        warm: (pid) =>
-          stream.observedAt !== null &&
-          stream.observedAt <= since &&
-          (stream.spec.platform !== 'android' || stream.activePid === pid),
+        warm: (pid) => {
+          if (stream.generation !== generation || (stream.spec.platform === 'android' && activePid !== pid))
+            throw new Error('the device log source changed during history replay');
+          const warm =
+            stream.observedAt !== null &&
+            stream.observedAt <= since &&
+            (stream.spec.platform !== 'android' || stream.activePid === pid);
+          coverage.warm = warm;
+          return warm;
+        },
         sink: stream.sink,
       });
+      if (
+        stream.generation !== generation ||
+        !stream.child ||
+        stream.child.exitCode !== null ||
+        stream.child.signalCode !== null
+      )
+        throw new Error('the device log source changed during history replay');
+      return undefined;
     });
     stream.histories.add(task);
     stream.historyQueue = task
+      .then(() => {
+        coverage.status = 'covered';
+        return undefined;
+      })
       .catch((error: unknown) => {
+        coverage.status = 'failed';
         if (!cancelled.aborted) {
           const message = error instanceof Error ? error.message : String(error);
           log(`device log backfill ${stream.id} failed: ${message}`);
@@ -375,7 +461,9 @@ export function createStreams(log: (message: string) => void): StreamTable {
       })
       .finally(() => {
         stream.histories.delete(task);
+        for (const wake of stream.waiters) wake(false);
       });
+    return coverage;
   };
   return {
     async start(input: StreamSpec, env: Record<string, string>, signal?: AbortSignal): Promise<{ streamId: string }> {
@@ -484,7 +572,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
           observedAt: null,
           revision: 0,
           waiters: new Set(),
-          historySeen: new WeakSet(),
+          historySeen: new WeakMap(),
           histories: new Set(),
           historyQueue: Promise.resolve(),
           started: Promise.resolve(null),
@@ -579,6 +667,10 @@ export function createStreams(log: (message: string) => void): StreamTable {
             return child;
           },
           stopStream: async () => {
+            stream.generation++;
+            stream.activePid = null;
+            stream.observedAt = null;
+            for (const wake of stream.waiters) wake(false);
             signalChild(stream);
             await waitChild(stream);
           },
@@ -620,19 +712,40 @@ export function createStreams(log: (message: string) => void): StreamTable {
         return true;
       });
     },
-    async wait(root, platform, slot, streamId, since, after, timeoutMs, signal, env) {
+    async wait(
+      root,
+      platform,
+      slot,
+      streamId,
+      since,
+      after,
+      timeoutMs,
+      signal,
+      env,
+      through = 0,
+      checkCoverage = false,
+    ) {
       const key = `${realpathSync(root)}\0${deviceSlotKey(platform, validateDeviceSlot(slot))}`;
       const stream = streams.get(key);
       if (!stream || stream.id !== streamId) return { revision: after, gone: true };
-      if (signal && env) scheduleBackfill(stream, since, signal, env);
-      if (stream.revision > after) return { revision: stream.revision };
+      const coverage = signal && env ? scheduleBackfill(stream, since, signal, env, through) : undefined;
+      const coverageStatus = () =>
+        coverage?.status === 'covered' && !coverage.warm && (coverage.startedAt ?? 0) < through
+          ? ('pending' as const)
+          : coverage?.status;
+      if (stream.revision > after || (checkCoverage && coverageStatus() !== 'pending'))
+        return { revision: stream.revision, ...(coverage ? { coverage: coverageStatus() } : {}) };
       signal?.throwIfAborted();
       return new Promise((resolve, reject) => {
         const finish = (gone: boolean) => {
           clearTimeout(timer);
           signal?.removeEventListener('abort', abort);
           stream.waiters.delete(finish);
-          resolve({ revision: stream.revision, ...(gone ? { gone: true as const } : {}) });
+          resolve({
+            revision: stream.revision,
+            ...(gone ? { gone: true as const } : {}),
+            ...(coverage ? { coverage: coverageStatus() } : {}),
+          });
         };
         const abort = () => {
           clearTimeout(timer);

@@ -273,3 +273,5 @@ warm-cache run actually skips compilation, a deliberate test failure retains
 its logs/exit code, cancellation leaves no live owned processes, and a shared
 runner's unrelated workspace remains running. Native timings and cross-provider
 acceptance require real tool runs; unit tests are not that evidence.
+
+Concurrent CI jobs must use separate Stim homes when a job owns an attached daemon.

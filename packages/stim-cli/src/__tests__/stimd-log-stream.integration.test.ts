@@ -185,9 +185,18 @@ describe.skipIf(process.platform === 'win32')('native device streams', () => {
       eventMessage: 'early launch',
     });
     const xcrun = join(bin, 'xcrun');
-    writeFileSync(xcrun, `#!/bin/sh\ncase "$*" in\n  *"log show"*) echo '${event}';;\n  *) exec sleep 600;;\nesac\n`);
+    const queries = join(home, 'history-queries');
+    writeFileSync(
+      xcrun,
+      `#!/bin/sh\ncase "$*" in\n  *"log show"*) echo query >> "$HISTORY_QUERIES"; sleep 0.2; echo '${event}';;\n  *) exec sleep 600;;\nesac\n`,
+    );
     chmodSync(xcrun, 0o755);
-    const env = { ...process.env, STIM_HOME: home, PATH: [bin, process.env.PATH].join(delimiter) };
+    const env = {
+      ...process.env,
+      STIM_HOME: home,
+      HISTORY_QUERIES: queries,
+      PATH: [bin, process.env.PATH].join(delimiter),
+    };
     const errors: string[] = [];
     const streams = createStreams((message) => errors.push(message));
     try {
@@ -195,11 +204,27 @@ describe.skipIf(process.platform === 'win32')('native device streams', () => {
         { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
         env,
       );
-      await streams.wait(root, 'ios', 'default', streamId, since, 0, 500, new AbortController().signal, env);
-      await vi.waitFor(() => {
-        const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8'));
-        expect(records.some((record) => record.msg === 'early launch')).toBe(true);
-      });
+      const signal = new AbortController().signal;
+      let reply = await streams.wait(root, 'ios', 'default', streamId, since, 0, 0, signal, env);
+      expect(reply.coverage).toBe('pending');
+      while (reply.coverage === 'pending') {
+        reply = await streams.wait(root, 'ios', 'default', streamId, since, reply.revision, 1000, signal, env);
+      }
+      expect(reply.coverage).toBe('covered');
+      const through = Date.now();
+      reply = await streams.wait(root, 'ios', 'default', streamId, since, reply.revision, 0, signal, env, through);
+      expect(reply.coverage).toBe('pending');
+      while (reply.coverage === 'pending') {
+        reply = await streams.wait(root, 'ios', 'default', streamId, since, reply.revision, 1000, signal, env, through);
+      }
+      expect(reply.coverage).toBe('covered');
+      expect(readFileSync(queries, 'utf8').trim().split('\n')).toHaveLength(2);
+      const waitStarted = Date.now();
+      reply = await streams.wait(root, 'ios', 'default', streamId, since, reply.revision, 100, signal, env, through);
+      expect(reply.coverage).toBe('covered');
+      expect(Date.now() - waitStarted).toBeGreaterThanOrEqual(80);
+      const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8'));
+      expect(records.some((record) => record.msg === 'early launch')).toBe(true);
       expect(await streams.stop(root, 'ios', 'default', streamId)).toBe(true);
       expect(errors).toEqual([]);
     } finally {
@@ -209,6 +234,49 @@ describe.skipIf(process.platform === 'win32')('native device streams', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+  test('Android replay coverage fails when the attached app PID changes', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    vi.stubEnv('STIM_HOME', home);
+    vi.stubEnv('STIM_PID_WATCH_MS', '50');
+    const pidFile = join(home, 'app-pid');
+    writeFileSync(pidFile, '3132');
+    const adb = join(bin, 'adb');
+    writeFileSync(
+      adb,
+      `#!/bin/sh\ncase "$*" in\n  *pidof*) cat "$APP_PID";;\n  *date*) date +%s000;;\n  *logcat*" -d "*) date '+%s.000 3132 3132 I Test: historical';;\n  *logcat*) exec sleep 600;;\nesac\n`,
+    );
+    chmodSync(adb, 0o755);
+    const env = { ...process.env, STIM_HOME: home, APP_PID: pidFile, PATH: [bin, process.env.PATH].join(delimiter) };
+    const streams = createStreams(() => {});
+    try {
+      const { streamId } = await streams.start(
+        { root, platform: 'android', serial: 'emulator-1', packageName: 'com.test.app' },
+        env,
+      );
+      const since = Date.now() - 1000;
+      const signal = new AbortController().signal;
+      let reply = await streams.wait(root, 'android', 'default', streamId, since, 0, 0, signal, env);
+      while (reply.coverage === 'pending')
+        reply = await streams.wait(root, 'android', 'default', streamId, since, reply.revision, 1000, signal, env);
+      expect(reply.coverage).toBe('covered');
+      writeFileSync(pidFile, '4141');
+      await vi.waitFor(() => {
+        const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8'));
+        expect(records.some((record) => record.event === 'collector_reattached')).toBe(true);
+      });
+      reply = await streams.wait(root, 'android', 'default', streamId, since, reply.revision, 0, signal, env);
+      expect(reply.coverage).toBe('failed');
+    } finally {
+      await streams.close().catch(() => {});
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('a main-owned device stream writes logs, refuses stale stops, and reaps its child', async () => {
     const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
