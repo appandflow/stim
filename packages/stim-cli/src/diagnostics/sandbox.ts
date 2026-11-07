@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'fs';
-import { connect, createServer } from 'net';
+import { connect } from 'net';
 import { homedir } from 'os';
 import { basename, dirname, join, sep } from 'path';
 import { stimdSocket } from '@stim-cli/core/state';
@@ -47,30 +47,10 @@ const reach = (path: string): Promise<unknown> =>
     probe.once('error', done);
   });
 
-/**
- * Whether this process is denied stimd's socket: connecting to it, or, with no
- * stimd listening, binding a probe socket beside it and connecting to that.
- */
+/** Whether connecting to stimd's socket is denied by the sandbox. */
 export async function sandboxBlocksSocket(socket: string = stimdSocket()): Promise<boolean> {
   if (process.platform === 'win32') return false;
-  const reached = await reach(socket);
-  if (denied(reached)) return true;
-  if (!reached) return false;
-  const path = join(dirname(socket), `probe-${process.pid}.sock`);
-  const server = createServer();
-  try {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    await new Promise<void>((done, fail) => {
-      server.once('error', fail);
-      server.listen(path, done);
-    });
-    return denied(await reach(path));
-  } catch (error) {
-    return denied(error);
-  } finally {
-    server.close();
-    rmSync(path, { force: true });
-  }
+  return denied(await reach(socket));
 }
 
 export function detectHarness(env: NodeJS.ProcessEnv = process.env): Harness {
@@ -286,11 +266,28 @@ export function sandboxFinding(
     stimHome = process.env.STIM_HOME || '~/.stim',
     blocked,
     socketBlocked = false,
-  }: { env?: NodeJS.ProcessEnv; home?: string; stimHome?: string; blocked?: boolean; socketBlocked?: boolean } = {},
+    platform = process.platform,
+  }: {
+    env?: NodeJS.ProcessEnv;
+    home?: string;
+    stimHome?: string;
+    blocked?: boolean;
+    socketBlocked?: boolean;
+    platform?: NodeJS.Platform;
+  } = {},
 ): Finding | null {
   const harness = detectHarness(env);
   if (!harness) return null;
   if (!(blocked ?? (socketBlocked || sandboxBlocksStimHome(stimHome, home)))) return null;
+
+  if (harness === 'claude-code' && platform === 'linux' && socketBlocked) {
+    return {
+      level: 'cost',
+      title: "The sandbox blocks Stim's Unix socket",
+      detail: 'Claude Code on Linux cannot allow a single Unix socket path through its sandbox.',
+      fix: 'Run Stim outside the sandbox. See `stim guide errors sandbox`.',
+    };
+  }
 
   const symptoms = `Writes to ${stimHome} raise EPERM on a directory you can write, commands stop with STIM_SANDBOX_BLOCKED because stimd's socket is denied, the simulator service looks dead, and the adb server looks unreachable.`;
   const title = 'This session sandboxes shell commands, and Stim is not allowed through';

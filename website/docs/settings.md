@@ -1102,8 +1102,9 @@ commands still using it for up to `daemon.attachedExitWaitSeconds`
 (`STIM_DAEMON_ATTACHED_EXIT_WAIT_SECONDS`, a machine setting, default `120`;
 `0` exits at once), names them on stderr, then exits; the next command starts
 or hosts the next stimd. If the sandbox denies stimd's socket itself, the
-command stops with `STIM_SANDBOX_BLOCKED`; `stim doctor --fix` adds the socket
-to Claude Code's `sandbox.network.allowUnixSockets`.
+command stops with `STIM_SANDBOX_BLOCKED`. On macOS, `stim doctor --fix` adds
+the socket to Claude Code's `sandbox.network.allowUnixSockets`. On Linux, run
+Stim outside the sandbox because Claude Code cannot allow a single socket path.
 
 Stim does not read the settings below. `stim doctor` and `stim settings` report
 any left in a config file or the environment, with the setting that replaces

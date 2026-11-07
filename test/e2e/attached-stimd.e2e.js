@@ -225,8 +225,65 @@ test(
     assert.ok(Date.now() - started < 10_000, 'the refusal does not wait out the slow-start window');
     assert.match(
       denied.stderr(),
-      /STIM_SANDBOX_BLOCKED: \S+\.sock is outside this sandbox's allowance; run stim doctor --fix, then rerun/,
+      /STIM_SANDBOX_BLOCKED: \S+\.sock is outside this sandbox's allowance; run Stim outside the sandbox or see stim guide errors sandbox/,
     );
     assert.equal(record(), null);
   },
 );
+
+test(
+  'a failed start waits for another command before its attached stimd exits',
+  {
+    skip: process.platform === 'win32' ? 'the blocked start is simulated with POSIX process groups' : false,
+    timeout: 60_000,
+  },
+  async () => {
+    useHome('failure-home');
+    const release = join(tmp, 'release-failure');
+    const first = agent(join(PACKAGE, 'dist', 'cli.mjs'), ['start'], { STIM_E2E_HOLD_UNTIL: release });
+    const host = await until('the attached stimd', () => record());
+    await until('start to reach its failure', () => existsSync(`${release}.reached`));
+    const other = await holdOp(host.build);
+    writeFileSync(release, '');
+    await until('the host to wait for the other command', () =>
+      /waiting up to \d+ s for stim ios/.test(first.stderr()),
+    );
+    other.destroy();
+    assert.equal(await first.closed, 1);
+    assert.match(first.stderr(), /STIM_NO_PROJECT/);
+    assert.ok(!alive(host.pid));
+  },
+);
+
+test('an attached CI host takes daemon mode from its selected home', { timeout: 30_000 }, async () => {
+  useHome('mode-home');
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ daemon: { mode: 'off' } }));
+  const { hostStimd } = await import(pathToFileURL(join(PACKAGE, 'dist', 'attached-stimd.mjs')).href);
+  const ambient = join(tmp, 'ambient-mode-home');
+  mkdirSync(ambient, { recursive: true });
+  writeFileSync(join(ambient, 'config.json'), JSON.stringify({ daemon: { mode: 'on' } }));
+  const previousHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = ambient;
+  const selected = { ...env };
+  delete selected.STIM_DAEMON;
+  const host = await hostStimd(selected, { handover: false });
+  assert.ok(host && typeof host === 'object');
+  try {
+    const started = await until('selected home daemon', () => record());
+    await new Promise((done, reject) => {
+      const socket = connect(started.socket);
+      socket.once('error', reject);
+      socket.once('connect', () =>
+        socket.write(`${JSON.stringify({ kind: 'cli', build: started.build })}\n${JSON.stringify({ op: 'tick' })}\n`),
+      );
+      socket.once('close', done);
+      socket.resume();
+    });
+    assert.equal(existsSync(join(home, 'daemon', 'snapshot.json')), false);
+  } finally {
+    await host.end();
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+  }
+});

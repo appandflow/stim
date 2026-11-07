@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
 import { runId, trace } from '@stim-cli/core/state';
 import { debugLog } from '../src/debug-log.ts';
+import { CliExit } from '../src/cli-operation.ts';
 import { refuseRelativeStimPaths } from '../src/workspace/config.ts';
 
 if (process.argv[2] === '__stimd') {
@@ -12,7 +13,7 @@ if (process.argv[2] === '__stimd') {
 
 if (process.argv[2] === '__job') {
   const code = await (await import('../src/job/main.ts')).runJobEntry(process.argv.slice(3));
-  await new Promise((resolve) => process.stdout.write('', resolve));
+  await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
   process.exit(code);
 }
 
@@ -64,11 +65,12 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
   const program = new Command();
   program.name('stim').description('Isolated React Native dev environments per project/worktree').version(pkg.version);
 
+  let end: (() => unknown) | undefined;
+  let exitCode: number | undefined;
   try {
     refuseRelativeStimPaths();
     process.env.STIM_RUN_ID = runId();
     const first = argv[2];
-    let end: (() => unknown) | undefined;
     const loadCommand = commands.get((first === 'help' ? argv[3] : first) ?? '');
     if (loadCommand) {
       (await loadCommand()).default(program, pkg.version);
@@ -115,13 +117,22 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
       end = entered.end;
     });
     await program.parseAsync(argv);
-    await end?.();
   } catch (err) {
-    const code = (err as { code?: unknown })?.code;
-    const message = err instanceof Error ? err.message : String(err);
-    if (typeof code === 'string' && code.startsWith('STIM_')) console.error(`${code}: ${message}`);
-    else console.error(`Unexpected error: ${message.replace(/\.$/, '')}. Report it at ${pkg.bugs.url}`);
-    process.exit(1);
+    if (err instanceof CliExit) {
+      exitCode = err.exitCode;
+    } else {
+      const code = (err as { code?: unknown })?.code;
+      const message = err instanceof Error ? err.message : String(err);
+      if (typeof code === 'string' && code.startsWith('STIM_')) console.error(`${code}: ${message}`);
+      else console.error(`Unexpected error: ${message.replace(/\.$/, '')}. Report it at ${pkg.bugs.url}`);
+      exitCode = 1;
+    }
+  } finally {
+    await end?.();
+  }
+  if (exitCode !== undefined) {
+    await new Promise<void>((resolve) => process.stdout.write('', () => resolve()));
+    process.exit(exitCode);
   }
 }
 

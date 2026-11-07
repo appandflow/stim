@@ -86,7 +86,9 @@ export function isSandboxBlocked(error: unknown): error is Error {
 
 function sandboxBlocked(): Error {
   return Object.assign(
-    new Error(`${stimdSocket()} is outside this sandbox's allowance; run stim doctor --fix, then rerun`),
+    new Error(
+      `${stimdSocket()} is outside this sandbox's allowance; run Stim outside the sandbox or see stim guide errors sandbox`,
+    ),
     { code: SANDBOX_BLOCKED },
   );
 }

@@ -15,6 +15,14 @@ import { spawnEntry } from '../spawn-entry.ts';
 import { launchStimd, SANDBOX_BLOCKED, stimdEnv, stimdLive } from '../daemon/client.ts';
 import { daemonMode } from '../daemon/mode.ts';
 
+function loadConfigForEnv(env: NodeJS.ProcessEnv) {
+  try {
+    return env.STIM_HOME ? loadConfig(join(env.STIM_HOME, 'config.json')) : loadConfig();
+  } catch {
+    return null;
+  }
+}
+
 /** The `__stimd` argument of a stimd bound to the process that started it, which ends it by closing its stdin. */
 export const ATTACHED_ARG = '--attached';
 /** The `__stimd` argument of an attached stimd that never hands its home over to a detached stimd, for `stim ci`. */
@@ -58,7 +66,7 @@ export function hostStimd(
   env: NodeJS.ProcessEnv,
   { handover = true }: { handover?: boolean } = {},
 ): Promise<AttachedHost | 'held' | 'blocked' | null> {
-  const args = [spawnEntry('cli'), '__stimd', '--mode', daemonMode(env), ATTACHED_ARG];
+  const args = [spawnEntry('cli'), '__stimd', '--mode', daemonMode(env, loadConfigForEnv(env)), ATTACHED_ARG];
   const child = getExecutor().spawn(process.execPath, handover ? args : [...args, NO_HANDOVER_ARG], {
     cwd: tmpdir(),
     stdio: ['pipe', 'pipe', 'inherit'],

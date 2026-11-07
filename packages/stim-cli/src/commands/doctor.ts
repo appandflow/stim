@@ -310,8 +310,14 @@ export function applySandboxFix(
   settingsRoot: string,
   env: NodeJS.ProcessEnv = process.env,
   note: (message: string) => void = console.error,
+  socketBlocked = false,
+  platform: NodeJS.Platform = process.platform,
 ): 0 | 1 {
   const harness = detectHarness(env);
+  if (harness === 'claude-code' && platform === 'linux' && socketBlocked) {
+    note(chalk.yellow('Claude Code on Linux cannot allow a single Unix socket path. Run Stim outside the sandbox.'));
+    return 1;
+  }
   if (harness === 'codex') {
     note(chalk.yellow('Nothing to apply under Codex.'));
     note(
@@ -405,15 +411,17 @@ async function repairDoctorProject(
   const settingsRoot = settingsContext.repoRoot ?? root;
   let exitCode: 0 | 1 = 0;
   signal?.throwIfAborted();
+  const socketBlocked = detectHarness(env) !== null && (await sandboxBlocksSocket());
   if (
     sandboxFinding(settingsRoot, {
       env,
       home: env.HOME ?? env.USERPROFILE,
       stimHome: env.STIM_HOME,
-      socketBlocked: detectHarness(env) !== null && (await sandboxBlocksSocket()),
+      socketBlocked,
+      platform: source.host,
     })
   ) {
-    exitCode = applySandboxFix(settingsRoot, env, note);
+    exitCode = applySandboxFix(settingsRoot, env, note, socketBlocked, source.host);
   }
   for (const doctor of doctors) {
     signal?.throwIfAborted();

@@ -1856,7 +1856,7 @@ not on any remote"  (worktree remove)
       writes to STIM_HOME (~/.stim unless set)
 
     STIM_SANDBOX_BLOCKED: <STIM_HOME>/run/stimd.sock is outside this
-    sandbox's allowance; run stim doctor --fix, then rerun
+    sandbox's allowance; run Stim outside the sandbox or see stim guide errors sandbox
       stimd's socket, which start, ios, android, web, macos and revive
       connect to or bind (see that code's entry)
 
@@ -1898,6 +1898,10 @@ not on any remote"  (worktree remove)
   The socket entry is the absolute path stim doctor prints; when that path is
   longer than the platform's socket limit (103 bytes on macOS) stimd uses
   /tmp/stim-sockets-<uid>/<hash>.sock instead, and doctor writes that one.
+
+  On Linux, Claude Code cannot allow individual Unix sockets through seccomp.
+  If the socket is denied, run Stim outside the sandbox; doctor does not
+  automatically enable access to every Unix socket.
 
   In Codex the sandbox is one flag, \`codex -s\`, with no per-path allowance:
   workspace-write still refuses STIM_HOME.
@@ -1956,7 +1960,7 @@ not on any remote"  (worktree remove)
     STIM_SANDBOX_BLOCKED: {
       summary: "a sandbox denies stimd's socket, so the command can neither reach nor host stimd",
       body: () => `STIM_SANDBOX_BLOCKED  ("<STIM_HOME>/run/stimd.sock is outside this sandbox's
-                       allowance; run stim doctor --fix, then rerun")
+                       allowance; run Stim outside the sandbox or see stim guide errors sandbox")
   start, ios, android, web, macos and revive run under this home's stimd.
   They start it detached; when a detached start has not bound within 2 s
   (a harness that blocks launchd, systemd-run or detached children), the
@@ -1967,10 +1971,10 @@ not on any remote"  (worktree remove)
   only when the sandbox itself denies the socket (EPERM or EACCES): a stimd
   started outside the sandbox holds the home and this command may not
   connect, or the attached stimd may not bind. A slow start is never refused.
-  Run stim doctor --fix inside the session, which adds the socket to
-  sandbox.network.allowUnixSockets (Claude Code), then restart the session
-  and rerun; or run the command outside the sandbox. status, logs, reload,
-  doctor and other read commands keep working inside the sandbox.`,
+  On macOS, run stim doctor --fix inside Claude Code, then restart the session.
+  On Linux, a path-specific socket allowance is unsupported; run the command
+  outside the sandbox. status, logs, reload, doctor and other read commands
+  keep working inside the sandbox.`,
     },
     STIM_ENGINE_SWITCHED: {
       summary: 'the machine engine switched to a newer build while this run waited',

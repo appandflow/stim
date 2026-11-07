@@ -148,8 +148,10 @@ the simulator service, the adb server, and Stim's own state directory, or as
 For that finding, `--fix` writes the missing allowance into `.claude/settings.local.json` at the
 repository root, the per-user file, merging it with whatever is already there
 and preserving other settings. It cannot add a Codex allowance because that
-sandbox has no per-path allowance to add. This repair runs only when the
-report shows that finding, so an unsandboxed session leaves the file alone.
+sandbox has no per-path allowance to add. When Claude Code on Linux denies
+the Unix socket, `--fix` refuses the path-specific repair; run Stim outside the
+sandbox. This repair runs only when the report shows that finding, so an
+unsandboxed session leaves the file alone.
 See `stim guide errors sandbox` for the failure signatures and the manual
 settings.
 

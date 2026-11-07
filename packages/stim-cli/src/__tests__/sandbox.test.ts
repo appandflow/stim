@@ -245,3 +245,17 @@ test('applySandboxFix writes nothing under Codex, and nothing without a harness'
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('Linux socket denial does not write a path-specific Claude allowance', () => {
+  const root = scratch();
+  try {
+    const env = { CLAUDECODE: '1', STIM_HOME: join(root, 'home') };
+    const notes: string[] = [];
+    expect(applySandboxFix(root, env, (message) => notes.push(message), true, 'linux')).toBe(1);
+    expect(existsSync(claudeLocalSettingsPath(root))).toBe(false);
+    expect(notes.join(' ')).toContain('outside the sandbox');
+    expect(sandboxFinding(root, { env, socketBlocked: true, platform: 'linux' })?.fix).toContain('outside the sandbox');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
