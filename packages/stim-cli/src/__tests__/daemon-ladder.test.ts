@@ -25,6 +25,8 @@ import * as lightened from '../workspace/lightened.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { serveShareList, shareRow } from './_share-list-server.ts';
+import * as archive from '../archive.ts';
+import { testContext } from './_context.ts';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -117,6 +119,26 @@ describe('the idle stage under pressure (rung 1)', () => {
 describe('the dormant stage', () => {
   const dormant = (simsFailed = false) =>
     runDormantPass({ config: loadConfig(), act: true, log, devices: [], simsFailed });
+
+  test('passes the operation into archive and preserves cleanup refusal', async () => {
+    const root = join(projects, 'archive-cleanup');
+    mkdirSync(root);
+    ensureWorkspaceStorage(root);
+    upsertProject(root, {});
+    recordWorkspaceUse(root, new Date(Date.now() - 4 * DAY_MS));
+    mkdirSync(workspaceLogsDir(root), { recursive: true });
+    writeFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), '{}\n');
+    const operation = testContext();
+    const failure = Object.assign(new Error('unverified archive cleanup'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+    });
+    const write = vi.spyOn(archive, 'archiveWorkspace').mockRejectedValue(failure);
+    await expect(
+      runDormantPass({ config: loadConfig(), act: true, log, devices: [], simsFailed: false, operation }),
+    ).rejects.toBe(failure);
+    expect(write).toHaveBeenCalledWith(root, 'maintenance', expect.anything(), operation);
+  });
 
   test.skipIf(process.platform !== 'darwin')(
     'after idle.dormantDays it deletes the owned simulators, keeps node_modules and the parked pool, and records the stage',
