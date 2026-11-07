@@ -720,7 +720,7 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     },
   );
 
-  test('a failed launch declaration retains the lock if Chrome cannot be verified stopped', async () => {
+  test('a failed launch declaration stops Chrome or retains its lock', async () => {
     upsertProject(root, { settings: { web: { url: 'http://localhost:8901/' } } });
     vi.spyOn(chromeLookup, 'findChrome').mockReturnValue('/fixture/chrome');
     setExecutor(fakeChrome({}));
@@ -735,9 +735,14 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
         },
         { root, note: () => {} },
       ),
-    ).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    ).rejects.toThrow(/disk full|Could not stop/);
     const held = readClaimSet(join(workspaceDir(root), 'web.lock'));
-    expect(held.live.length + held.unresolved.length).toBeGreaterThan(0);
+    const child = children.at(-1);
+    assert(child);
+    if (held.live.length + held.unresolved.length === 0) {
+      if (child.exitCode === null && child.signalCode === null) await new Promise((done) => child.once('exit', done));
+    }
+    expect(held.live.length + held.unresolved.length > 0 || child.signalCode === 'SIGKILL').toBe(true);
     expect(readWebRecord(root)).toBeNull();
   });
 

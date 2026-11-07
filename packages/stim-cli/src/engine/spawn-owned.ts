@@ -78,7 +78,8 @@ export async function spawnOwned(launch: OwnedLaunch): Promise<OwnedProcess> {
   const owner = { pid, processToken: captured.token };
   let claim: ClaimHandle | undefined;
   try {
-    for (const declaration of declared) setClaimChild(declaration, owner);
+    // Windows cannot prove that a dead leader's descendants have exited, so keep the pending declaration.
+    if (process.platform !== 'win32') for (const declaration of declared) setClaimChild(declaration, owner);
     const attempt = tryAcquireClaim({ ...launch.claim, mode: 'exclusive', owner });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (!attempt.acquired)
