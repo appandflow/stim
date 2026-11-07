@@ -53,6 +53,7 @@ import {
   ensureTunnel,
   metroTick,
   openMetroChildren,
+  stopManagedMetro,
 } from '../stimd/metro/children.ts';
 import { getExecutor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
@@ -92,6 +93,35 @@ test.skipIf(process.platform === 'win32')(
     await metroTick(true, log);
     await expect(closeMetroChildren()).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
     expect(fixtures.close).toHaveBeenCalledOnce();
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'managed stop checks the child identity and waits for verified close',
+  async () => {
+    let finish = () => {};
+    fixtures.close.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    expect(await ensureMetro({ root, port: 8181 }, log)).toMatchObject({ op: 'metro' });
+    expect(await stopManagedMetro({ root, pid: 424243, processToken: 'test-token' })).toMatchObject({
+      op: 'error',
+      code: 'metro-changed',
+    });
+    expect(fixtures.close).not.toHaveBeenCalled();
+    const stopping = stopManagedMetro({ root, pid: 424242, processToken: 'test-token' });
+    await vi.waitFor(() => expect(fixtures.close).toHaveBeenCalledOnce());
+    expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toHaveLength(1);
+    finish();
+    await expect(stopping).resolves.toMatchObject({ op: 'metro.stopped', state: 'stopped' });
+    expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toEqual([]);
+    await expect(stopManagedMetro({ root, pid: 424242, processToken: 'test-token' })).resolves.toMatchObject({
+      op: 'metro.stopped',
+      state: 'not-owned',
+    });
   },
 );
 

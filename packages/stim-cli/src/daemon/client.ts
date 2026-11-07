@@ -27,6 +27,7 @@ import { getExecutor } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { daemonMode, spawnsDaemon } from './mode.ts';
 import { systemdDaemonArgs } from './systemd-launch.ts';
+import { workspaceDir } from '../workspace/paths.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
 const CLAIM_WAIT_MS = 5000;
@@ -195,18 +196,45 @@ function askStimd(
   op: string,
   timeoutMs: number,
   fields: Record<string, unknown> = {},
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
     let socket: Socket | null = null;
     const finish = (reply: Record<string, unknown> | null) => {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
       socket?.destroy();
       if (!following) resolve(reply);
     };
+    const abort = () => finish(null);
     const timer = setTimeout(() => finish(null), timeoutMs);
+    if (signal?.aborted) return finish(null);
+    signal?.addEventListener('abort', abort, { once: true });
     socket = openStimd([{ ...fields, op }], (reply) => finish(reply));
     socket.once('close', () => finish(null));
   });
+}
+
+export async function stopMetroTree(
+  root: string,
+  pid: number | undefined,
+  processToken: string | undefined,
+  fallback: () => Promise<boolean> | boolean,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (process.platform !== 'win32') return fallback();
+  const answer = await askStimd('metro.stop', 40_000, { params: { root, pid, processToken } }, signal);
+  if (signal?.aborted) return false;
+  if (answer?.op === 'metro.stopped' && answer.state === 'stopped') return true;
+  if (answer?.op === 'metro.stopped' && answer.state === 'not-owned') return fallback();
+  if (answer) return false;
+  let absent = false;
+  try {
+    const daemon = readClaimSet(stimdClaimRoot());
+    const metro = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+    absent = !daemon.live.length && !daemon.unresolved.length && !metro.live.length && !metro.unresolved.length;
+  } catch {}
+  return absent ? fallback() : false;
 }
 
 /**

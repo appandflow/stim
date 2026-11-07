@@ -85,6 +85,7 @@ import {
   stopMetroTicks,
   closeMetroChildren,
   ensureMetro,
+  stopManagedMetro,
   ensureTunnel,
   metroChildrenRun,
   metroOpFlags,
@@ -982,9 +983,14 @@ async function runStimdInner(
         } else if (op === 'op.wait' || op === 'op.resume') {
           if (ops.has(socket)) ops.set(socket, op === 'op.wait' ? 'waiting' : 'pinned');
           void checkEngine();
-        } else if (op === 'metro.ensure' || op === 'tunnel.ensure') {
+        } else if (op === 'metro.ensure' || op === 'tunnel.ensure' || op === 'metro.stop') {
           admissionRevision++;
-          const ask = op === 'metro.ensure' ? ensureMetro(message.params, log) : ensureTunnel(message.params);
+          const ask =
+            op === 'metro.ensure'
+              ? ensureMetro(message.params, log)
+              : op === 'metro.stop'
+                ? stopManagedMetro(message.params)
+                : ensureTunnel(message.params);
           void ask
             .catch((error: unknown) => ({
               op: 'error',
@@ -1031,6 +1037,7 @@ async function runStimdInner(
       ]);
       const error = attachedCleanupError(initial, backgroundFailure, results);
       if (error) {
+        if (isUnverifiedCleanup(error)) keepOwn = true;
         const retained = retainUnverifiedForeground(error, homeClaim, retention) ?? error;
         shutdown('attached cleanup could not be verified', 'error', true);
         await shutdownDone;

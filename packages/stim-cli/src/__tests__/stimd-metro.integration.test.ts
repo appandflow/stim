@@ -177,6 +177,36 @@ afterEach(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test.skipIf(process.platform !== 'win32')(
+  'Windows stop and restart preserve managed Metro ownership',
+  async () => {
+    const root = bareProject();
+    rmSync(join(root, '.nvmrc'));
+    await startStimd();
+    const port = await freePort();
+    try {
+      const first = await ask('metro.ensure', { root, port });
+      expect(first).toMatchObject({ op: 'metro' });
+      const stop = spawn(process.execPath, [cli, 'stop'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = '';
+      stop.stdout?.on('data', (chunk) => (output += String(chunk)));
+      stop.stderr?.on('data', (chunk) => (output += String(chunk)));
+      const [code] = await once(stop, 'exit');
+      if (code !== 0) throw new Error(`stim stop exited ${code}: ${output}`);
+      const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+      expect(claims.unresolved).toEqual([]);
+      expect(claims.live).toEqual([]);
+      await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'metro' });
+    } finally {
+      if (existsSync(workspaceStateFile(root))) {
+        const supervisor = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor;
+        if (supervisor) await ask('metro.stop', { root, pid: supervisor.pid, processToken: supervisor.processToken });
+      }
+    }
+  },
+  30_000,
+);
+
 describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel children', () => {
   test('an attached stimd hands over when only a tunnel is running', async () => {
     const root = bareProject();
