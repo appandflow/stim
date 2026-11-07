@@ -24,7 +24,7 @@ export interface OwnedLaunch {
   stderr: string;
   /** Empties the output files first instead of appending to them. */
   truncate?: boolean;
-  /** The exclusive claim the process holds for as long as it, or its process group, runs. */
+  /** The exclusive claim the process holds for as long as it runs. */
   claim: { root: string; label: string; details?: ClaimDetails };
   /** The launching operation's claims, which record the process from its spawn until its own claim exists. */
   declare?: Iterable<ClaimHandle>;
@@ -98,7 +98,6 @@ export function spawnOwned(launch: OwnedLaunch): OwnedProcess {
     if (!attempt.acquired)
       throw new Error(`The ${launch.claim.label} claim is held at ${attempt.held?.path ?? launch.claim.root}.`);
     claim = attempt.acquired;
-    setClaimChild(claim, owner);
   } catch (error) {
     kill();
     releaseClaim(claim);

@@ -109,7 +109,14 @@ export function createOwnedStreams(log: Log): OwnedStreams {
           return error instanceof Error ? error.message : String(error);
         }
       }
-      for (const path of Object.keys(loadConfig()?.projects ?? {})) {
+      let paths: string[];
+      try {
+        paths = Object.keys(loadConfig()?.projects ?? {});
+      } catch (error) {
+        log('warn', 'owned_sync_failed', error instanceof Error ? error.message : String(error));
+        paths = [];
+      }
+      for (const path of paths) {
         try {
           workspace(path)?.catch(() => {});
         } catch (error) {
