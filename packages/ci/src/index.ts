@@ -61,6 +61,10 @@ function commandEnvironment(result: CIResult, options: CIOptions, ownedHost: boo
   };
 }
 
+function hostInstance(host: AttachedHost | null): string | null {
+  return host?.instance ?? null;
+}
+
 /**
  * Runs an app and an optional argv-based test command, stops its workspace or explicit slot, and retains diagnostics.
  * Unless a stimd already serves the home, the run hosts one as its own child for the whole job, which the test
@@ -112,6 +116,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   let attempted = false;
   let host: AttachedHost | null = null;
   let releaseEngine: (() => void) | undefined;
+  let releaseDaemon: (() => void) | undefined;
   try {
     signal?.throwIfAborted();
     const binding = await bindCIEngine(stimEnvironment(options));
@@ -151,6 +156,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
         onProgress,
       });
     }
+    releaseDaemon = await binding.hold(stimEnvironment(options), projectRoot, hostInstance(host));
     const context = {
       projectRoot,
       home: options.home ? resolve(options.home) : undefined,
@@ -237,6 +243,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
         result.failure = result.cleanup.error;
       }
     }
+    releaseDaemon?.();
     try {
       await host?.end();
     } catch (error) {

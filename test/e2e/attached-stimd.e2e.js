@@ -612,6 +612,10 @@ test('host end reports an attached daemon killed before shutdown', { timeout: 30
     host = await module.hostStimd({ ...env, STIM_HOME: scratch }, { handover: false });
     assert.ok(host && typeof host === 'object');
     const info = JSON.parse(readFileSync(join(scratch, 'run', 'stimd.json'), 'utf8'));
+    const hostEnv = { ...env, STIM_HOME: scratch };
+    await assert.rejects(module.holdCIStimd(hostEnv, project, 'another-instance'));
+    const release = await module.holdCIStimd(hostEnv, project, host.instance);
+    release();
     process.kill(info.pid, 'SIGKILL');
     await assert.rejects(host.end(), /Attached stimd exited/);
     host = null;

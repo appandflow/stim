@@ -25,7 +25,7 @@ test('hosts through the selected engine with the chosen environment and options'
     mkdirSync(join(root, 'dist'));
     writeFileSync(
       join(root, 'dist', 'attached-stimd.mjs'),
-      `export async function hostStimd(env, options) { return { env, options }; }`,
+      `export async function hostStimd(env, options) { return { env, options }; } export async function holdCIStimd() {}`,
     );
     select.mockReturnValue(root);
     const env = { STIM_HOME: join(root, 'home') };
@@ -57,7 +57,10 @@ test.each([true, false])('keeps the selected operations when the pointer changes
   const root = mkdtempSync(join(tmpdir(), 'stim-pin-engine-'));
   try {
     mkdirSync(join(root, 'dist'));
-    writeFileSync(join(root, 'dist', 'attached-stimd.mjs'), 'export function hostStimd() {}');
+    writeFileSync(
+      join(root, 'dist', 'attached-stimd.mjs'),
+      'export function hostStimd() {} export function holdCIStimd() {}',
+    );
     select.mockReturnValue(hasEngine ? root : null);
     local.mockResolvedValue('local');
     const binding = await bindCIEngine({});
@@ -76,7 +79,10 @@ test('retains a selected engine across later pointers and collection until relea
   const selected = join(root, 'bbbbbbbbbbbb');
   try {
     mkdirSync(join(selected, 'dist'), { recursive: true });
-    writeFileSync(join(selected, 'dist', 'attached-stimd.mjs'), 'export function hostStimd() {}');
+    writeFileSync(
+      join(selected, 'dist', 'attached-stimd.mjs'),
+      'export function hostStimd() {} export function holdCIStimd() {}',
+    );
     select.mockReturnValue(selected);
     const binding = await bindCIEngine({});
     writeFileSync(join(root, 'current.json'), JSON.stringify({ format: 1, dir: 'cccccccccccc' }));
@@ -85,6 +91,20 @@ test('retains a selected engine across later pointers and collection until relea
     expect(await binding.runOp('run', [], {})).toBe(selected);
     binding.release();
     expect(collectStore(root)).toContain('bbbbbbbbbbbb');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    select.mockReset();
+  }
+});
+
+test('refuses when the selected engine API cannot load', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-bad-api-'));
+  const selected = join(root, 'aaaaaaaaaaaa');
+  try {
+    mkdirSync(selected);
+    select.mockReturnValue(selected);
+    load.mockResolvedValueOnce(null);
+    await expect(bindCIEngine({})).rejects.toMatchObject({ code: 'STIM_ENGINE_UNAVAILABLE' });
   } finally {
     rmSync(root, { recursive: true, force: true });
     select.mockReset();

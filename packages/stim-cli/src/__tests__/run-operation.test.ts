@@ -74,3 +74,19 @@ it('collects an attached host created after CLI admission', async () => {
     lookup.mockRestore();
   }
 });
+
+it('refuses CLI admission when engine verification fails', async () => {
+  const client = await import('../daemon/client.ts');
+  const failure = vi
+    .spyOn(client, 'beforeCommand')
+    .mockRejectedValueOnce(
+      Object.assign(new Error('engine unavailable'), { code: 'STIM_ENGINE_UNAVAILABLE', remedy: 'repair the engine' }),
+    );
+  try {
+    await expect(cli('ios')).resolves.toMatchObject({
+      refusal: { code: 'STIM_ENGINE_UNAVAILABLE', remedy: 'repair the engine' },
+    });
+  } finally {
+    failure.mockRestore();
+  }
+});

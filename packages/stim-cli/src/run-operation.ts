@@ -71,6 +71,14 @@ export async function runOperation(
       ...(entry.caller === 'api' ? { held } : {}),
     });
   } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'STIM_ENGINE_UNAVAILABLE')
+      return {
+        refusal: {
+          code: 'STIM_ENGINE_UNAVAILABLE',
+          message: error.message,
+          remedy: 'remedy' in error && typeof error.remedy === 'string' ? error.remedy : 'Run stim engine update.',
+        },
+      };
     if (client.isSandboxBlocked(error))
       return {
         refusal: {

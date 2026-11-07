@@ -24,6 +24,10 @@ vi.mock('stim/attached-stimd', () => ({
   bindCIEngine: async () => ({
     host: lifecycle.host,
     release: lifecycle.release,
+    hold: async () => {
+      lifecycle.steps.push('hold');
+      return () => void lifecycle.steps.push('hold released');
+    },
     runOp: (name: 'run' | 'stop' | 'diagnostics', args: unknown[]) => Reflect.apply(lifecycle[name], lifecycle, args),
   }),
 }));
@@ -266,7 +270,7 @@ it('hosts stimd for the whole job, ending it after cleanup and diagnostics and n
   options.command = [process.execPath, '-e', 'process.exitCode = 3'];
   const result = await runCI(options);
   expect(result.exitCode).toBe(3);
-  expect(lifecycle.steps).toEqual(['host', 'run', 'stop', 'diagnostics', 'host ended']);
+  expect(lifecycle.steps).toEqual(['host', 'hold', 'run', 'stop', 'diagnostics', 'hold released', 'host ended']);
   expect(lifecycle.host.mock.calls[0]?.[1]).toEqual({ handover: false });
   expect(lifecycle.create.mock.calls.at(-1)?.[0].env?.STIM_POOL_BOOTED_GRACE_MINUTES).toBe('0');
   expect(lifecycle.host.mock.calls[0]?.[0].STIM_POOL_BOOTED_GRACE_MINUTES).toBe('0');

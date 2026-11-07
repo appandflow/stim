@@ -719,6 +719,26 @@ function createLocalStim(options: StimOptions): StimClient {
   };
 }
 
+/** Pins an existing daemon for the duration of a CI job. */
+export async function holdCIStimd(
+  env: NodeJS.ProcessEnv,
+  projectRoot: string,
+  ownedInstance: string | null,
+): Promise<() => void> {
+  const home = env.STIM_HOME || join(userHome(env), '.stim');
+  const context: StimContext = {
+    home,
+    buildCache: null,
+    projectRoot,
+    cwd: projectRoot,
+    env,
+    runId: 'ci',
+    signal: new AbortController().signal,
+    output: () => {},
+  };
+  return withAmbientContext(context, async () => (await import('./daemon/client.ts')).holdExistingStimd(ownedInstance));
+}
+
 function operationContext(
   client: StimOptions & { env: NodeJS.ProcessEnv; projectRoot: string },
   home: string,

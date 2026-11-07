@@ -514,7 +514,7 @@ export function attachedHostEnd(): (() => Promise<void>) | undefined {
  * operation's, the connection goes into it instead, and closing it ends the op. stimd answers at once, or after a
  * switch already under way, with `engine-changed`. False when it does not answer.
  */
-function beginOp(held?: Socket[], command?: string): Promise<boolean> {
+function beginOp(held?: Socket[], command?: string, expectedInstance?: string | null): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (begun: boolean) => {
@@ -531,13 +531,30 @@ function beginOp(held?: Socket[], command?: string): Promise<boolean> {
     };
     const timer = setTimeout(() => finish(false), OP_BEGIN_TIMEOUT_MS);
     const socket = openStimd([{ op: 'op.begin', ...(command ? { command } : {}) }], (reply) =>
-      finish(reply.op === 'op.begun'),
+      finish(
+        reply.op === 'op.begun' &&
+          (expectedInstance === undefined ||
+            (expectedInstance === null
+              ? reply.attached !== true
+              : reply.attached === true && reply.instance === expectedInstance)),
+      ),
     );
     socket.once('close', () => {
       if (opSocket === socket) opSocket = null;
       finish(false);
     });
   });
+}
+
+/** Pins an already-running stimd until the returned closure is called. */
+export async function holdExistingStimd(ownedInstance: string | null): Promise<() => void> {
+  const held: Socket[] = [];
+  socketError = null;
+  if (!(await beginOp(held, 'stim ci', ownedInstance))) {
+    if (socketError === 'EPERM' || socketError === 'EACCES') throw sandboxBlocked();
+    throw new Error('Could not pin the Stim daemon for this CI job.');
+  }
+  return () => held.forEach((socket) => socket.destroy());
 }
 
 /** Whether a stimd of this build replaced, within `CLAIM_WAIT_MS`, the one of an older build that refused it. */

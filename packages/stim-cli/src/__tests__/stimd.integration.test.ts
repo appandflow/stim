@@ -32,6 +32,7 @@ import {
   stimdBuildId,
 } from '../daemon/client.ts';
 import { runOperation } from '../run-operation.ts';
+import { holdCIStimd } from '../api.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
@@ -243,6 +244,23 @@ describe('stimd on every platform', () => {
 });
 
 describe.skipIf(process.platform === 'win32')('stimd', () => {
+  test('a CI hold keeps a quiescent persistent daemon alive through off mode', async () => {
+    const running = runStimd({ mode: 'on', tickMs: 100 });
+    await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+    const releaseHold = await holdCIStimd({ ...process.env, STIM_HOME: home }, home, null);
+    try {
+      await new Promise((done) => setTimeout(done, 700));
+      expect(existsSync(stimdRecordFile())).toBe(true);
+      saveConfig({ version: 2, projects: {}, repos: {}, daemon: { mode: 'off' } });
+      await new Promise((done) => setTimeout(done, 400));
+      expect(existsSync(stimdRecordFile())).toBe(true);
+    } finally {
+      releaseHold();
+    }
+    await running;
+    expect(existsSync(stimdRecordFile())).toBe(false);
+  }, 20_000);
+
   test('an attached daemon reports a failed tick as an unsuccessful exit', async () => {
     const oldExit = process.exitCode;
     const failing = vi.spyOn(daemonPasses, 'runHomePasses').mockRejectedValueOnce(new Error('tick failed in test'));
