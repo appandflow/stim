@@ -11,7 +11,7 @@ import {
 import { finishHostedAndroidRun } from './android/hosted.ts';
 import type { followHostedLaunchLogs } from '../device-host/hosted-logs-sync.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
-import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
+import { exitCli, runProcessOperation } from '../cli-operation.ts';
 import { parseMachine } from '@stim-cli/core/state';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
@@ -289,8 +289,8 @@ export function registerAndroid(program: Command): void {
       const { value: result, interrupted } = await runProcessOperation(root, (context) =>
         runAndroidOperation(context, root, { ...opts, waitConflict: waitFlagConflict(process.argv) }),
       );
-      if (!result.ok) process.exit(interrupted ?? 1);
-      else if (result.uploadsAbandoned) exitAfterFlush(0);
+      if (!result.ok) exitCli(interrupted ?? 1);
+      else if (result.uploadsAbandoned) exitCli(0);
     });
 }
 

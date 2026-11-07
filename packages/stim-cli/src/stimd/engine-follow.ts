@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  ClaimUnavailableError,
   readClaimSet,
   releaseClaim,
   tryAcquireClaim,
@@ -54,7 +55,7 @@ function stagedDir(root: string): string | null {
  * Takes this stimd's shared claim under its build's claim root when it runs from the engine store; null otherwise, or
  * when the claim cannot be taken, and then the engine does not wait for this stimd.
  */
-export function followEngine(log: Log): EngineFollower | null {
+export function followEngine(log: Log, retained = false): EngineFollower | null {
   const engine = ownStoreEngine();
   if (!engine) return null;
   const root = buildClaimRoot(engine.root, engine.build);
@@ -62,7 +63,7 @@ export function followEngine(log: Log): EngineFollower | null {
     root,
     mode: 'shared',
     label: 'stimd engine',
-    details: { home: getConfigDir(), drained: true, engineDirs: [] },
+    details: { home: getConfigDir(), drained: !retained, engineDirs: [], ...(retained ? { retained: true } : {}) },
   });
   if (attempt.pending) releaseClaim(attempt.pending);
   let claim: ClaimHandle | null = attempt.acquired ?? null;
@@ -71,12 +72,22 @@ export function followEngine(log: Log): EngineFollower | null {
   let dirs: string[] = [];
   const record = (pinned: boolean, engineDirs: string[]) => {
     dirs = [...new Set(engineDirs)].toSorted();
-    const details = { home: getConfigDir(), drained: !pinned, engineDirs: dirs };
+    const details = {
+      home: getConfigDir(),
+      drained: !pinned,
+      engineDirs: dirs,
+      ...(retained ? { retained: true } : {}),
+    };
+    if (retained && claim && !readClaimSet(root).live.some((holder) => holder.claimId === claim?.claimId))
+      throw new ClaimUnavailableError('the retained engine claim is missing or unreadable', { claimPath: claim.path });
     if (!claim || JSON.stringify(details) === JSON.stringify(claim.details)) return;
     const was = claim.details.drained;
+    const path = claim.path;
     claim = updateClaimDetails(claim, details);
-    if (!claim)
+    if (!claim) {
+      if (retained) throw new ClaimUnavailableError('could not update the retained engine claim', { claimPath: path });
       log('warn', 'engine_claim_lost', `the claim under ${root} is gone; the engine no longer waits for this stimd`);
+    }
     if (was !== details.drained) log('debug', pinned ? 'engine_pinned' : 'engine_drained', `drained: ${!pinned}`);
   };
   const flip = async (pinned: () => boolean) => {

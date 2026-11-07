@@ -1,5 +1,6 @@
 import * as desktopLinks from '../devices/stim-desktop.ts';
 import { testContext } from './_context.ts';
+import { CliExit } from '../cli-operation.ts';
 import { recordBuild, recordedBuildKey } from '../engine/recorded-build.ts';
 import { createStim } from '../api.ts';
 import * as iosOperation from '../commands/ios.ts';
@@ -573,7 +574,13 @@ async function run(opts: Record<string, unknown> = {}, overrides: LooseDeps = {}
     exitCode = c;
   });
   try {
-    await action(opts);
+    try {
+      await action(opts);
+    } catch (error) {
+      if (!(error instanceof CliExit)) throw error;
+      onExit?.();
+      exitCode = error.exitCode;
+    }
     exitCode ??= process.exitCode ?? null;
   } finally {
     stdout.mockRestore();

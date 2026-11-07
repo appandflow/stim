@@ -44,9 +44,9 @@ describe('runOperation', () => {
   });
 
   it('admits a top-level CLI command, but not a subcommand or --plan', async () => {
-    await expect(cli('ios')).resolves.toEqual({ admitted: 'ios' });
-    await expect(cli('')).resolves.toEqual({ admitted: null });
-    await expect(cli('ios', true)).resolves.toEqual({ admitted: null });
+    await expect(cli('ios')).resolves.toMatchObject({ admitted: 'ios', end: expect.any(Function) });
+    await expect(cli('')).resolves.toMatchObject({ admitted: null, end: expect.any(Function) });
+    await expect(cli('ios', true)).resolves.toMatchObject({ admitted: null, end: expect.any(Function) });
   });
 
   it('refuses a governed command while a removed variable is set, for both callers and with --plan', async () => {
@@ -55,7 +55,76 @@ describe('runOperation', () => {
       expect(entered).toMatchObject({
         refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('STIM_MAINTENANCE') },
       });
-    await expect(cli('doctor')).resolves.toEqual({ admitted: 'doctor' });
+    await expect(cli('doctor')).resolves.toMatchObject({ admitted: 'doctor', end: expect.any(Function) });
     await expect(api('build', 'android', 'none')).resolves.toEqual({ admitted: null });
   });
+});
+
+it('collects an attached host created after CLI admission', async () => {
+  const client = await import('../daemon/client.ts');
+  const end = vi.fn<() => void>();
+  const lookup = vi.spyOn(client, 'attachedHostEnd').mockReturnValue(async () => end());
+  try {
+    const entered = await cli('stop');
+    expect(lookup).not.toHaveBeenCalled();
+    if ('refusal' in entered) throw new Error('unexpected refusal');
+    await entered.end?.();
+    expect(end).toHaveBeenCalledOnce();
+  } finally {
+    lookup.mockRestore();
+  }
+});
+
+it.each(['STIM_DAEMON_UNAVAILABLE', 'STIM_ENGINE_UNAVAILABLE', 'STIM_CLAIM_UNAVAILABLE', 'STIM_CLAIM_REFUSED'])(
+  'refuses CLI admission for %s',
+  async (code) => {
+    const client = await import('../daemon/client.ts');
+    const failure = vi.spyOn(client, 'beforeCommand').mockRejectedValueOnce(
+      Object.assign(new Error('engine unavailable'), {
+        code,
+        remedy: 'repair the engine',
+      }),
+    );
+    try {
+      await expect(cli('ios')).resolves.toMatchObject({
+        refusal: { code, remedy: 'repair the engine' },
+      });
+    } finally {
+      failure.mockRestore();
+    }
+  },
+);
+
+it('preserves an admission refusal if its attached host already failed during cleanup', async () => {
+  const client = await import('../daemon/client.ts');
+  const before = vi
+    .spyOn(client, 'beforeCommand')
+    .mockRejectedValueOnce(
+      Object.assign(new Error('daemon unavailable'), { code: 'STIM_DAEMON_UNAVAILABLE', remedy: 'retry' }),
+    );
+  const end = vi.spyOn(client, 'attachedHostEnd').mockReturnValue(async () => {
+    throw new Error('host exited');
+  });
+  try {
+    await expect(cli('ios')).resolves.toMatchObject({
+      refusal: { code: 'STIM_DAEMON_UNAVAILABLE', message: 'daemon unavailable', remedy: 'retry' },
+    });
+    expect(end).toHaveBeenCalledOnce();
+  } finally {
+    before.mockRestore();
+    end.mockRestore();
+  }
+});
+
+it('keeps an attached host when an unrelated admission error is best effort', async () => {
+  const client = await import('../daemon/client.ts');
+  const before = vi.spyOn(client, 'beforeCommand').mockRejectedValueOnce(new Error('unrelated'));
+  const end = vi.spyOn(client, 'attachedHostEnd');
+  try {
+    await expect(cli('ios')).resolves.toMatchObject({ admitted: 'ios' });
+    expect(end).not.toHaveBeenCalled();
+  } finally {
+    before.mockRestore();
+    end.mockRestore();
+  }
 });

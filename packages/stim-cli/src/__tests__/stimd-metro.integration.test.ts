@@ -178,6 +178,24 @@ afterEach(async () => {
 });
 
 describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel children', () => {
+  test('an attached stimd hands over when only a tunnel is running', async () => {
+    const root = bareProject();
+    write(join(dir, 'bin', 'launchctl'), '#!/bin/sh\nexit 0\n', 0o755);
+    write(join(dir, 'bin', 'systemd-run'), '#!/bin/sh\nexit 0\n', 0o755);
+    const child = spawn(process.execPath, [cli, '__stimd', '--attached'], { env, stdio: ['pipe', 'ignore', 'ignore'] });
+    stimd = child;
+    await vi.waitFor(() => expect(record()?.pid).toBe(child.pid), { timeout: 15_000, interval: 50 });
+    await expect(
+      ask('tunnel.ensure', { root, provider: 'cloudflared', port: await freePort(), requireReachable: false }),
+    ).resolves.toMatchObject({ op: 'tunnel' });
+    const exited = once(child, 'exit');
+    child.stdin?.end();
+    await exited;
+    expect(JSON.parse(readFileSync(join(home, 'run', 'stimd-journal.json'), 'utf8')).alive).toBe(
+      'Metro or a tunnel is running',
+    );
+  }, 30_000);
+
   test("metro.ensure starts Metro through metro-host.cjs on the project's Node, and a warm child answers at once", async () => {
     const root = bareProject();
     const port = await freePort();

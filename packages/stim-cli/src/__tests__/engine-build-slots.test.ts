@@ -13,6 +13,7 @@ import {
   tryAcquireBuildSlot,
 } from '../engine/build-slots.ts';
 import { liveWaiters, positionCeilingMs, waitCeiling } from '../engine/wait-queue.ts';
+import { buildClaimRoot } from '../engine-store/claims.ts';
 
 let tmpHome: string;
 
@@ -97,6 +98,34 @@ describe('acquireBuildSlot', () => {
       expect(lines).toEqual(['switching Stim to 1.51.0; waiting for 1 running builds']);
       expect(listBuildSlots().map((slot) => slot.path)).toEqual([held.path]);
       releaseBuildSlot(held);
+    });
+
+    test('a retained lifetime takes a build slot without waiting for an impossible promotion', async () => {
+      plantClaim(buildClaimRoot(engine.root, engine.build), 'shared', liveClaimOwner(), {
+        details: { retained: true, drained: false },
+      });
+      let waited = false;
+      const handle = await acquireBuildSlot({
+        max: 1,
+        engine,
+        now: () => 0,
+        sleep: async () => {
+          waited = true;
+        },
+      });
+      expect(handle.acquired).toBe(true);
+      expect(waited).toBe(false);
+      releaseBuildSlot(handle);
+    });
+
+    test('a retained old build still refuses after the engine switched with unlimited slots', async () => {
+      plantClaim(buildClaimRoot(engine.root, engine.build), 'shared', liveClaimOwner(), {
+        details: { retained: true, drained: false },
+      });
+      write('current.json', { dir: 'bbbbbbbbbbbb', version: '1.51.0' });
+      await expect(acquireBuildSlot({ max: 0, engine, now: () => 0 })).rejects.toMatchObject({
+        code: 'STIM_ENGINE_SWITCHED',
+      });
     });
 
     test('the hold ends 10 minutes after the staging and the miss takes its slot', async () => {
