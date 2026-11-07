@@ -4,6 +4,7 @@ import { dirname, join, resolve as resolvePath, sep } from 'node:path';
 import { rotatedLogPath } from '@stim-cli/core';
 import { acceptsShape, settingDefinition } from '@stim-cli/core/state';
 import { tailLines } from '../devices/activity.ts';
+import { ownBuildLines } from '../stimd/metro/injected.ts';
 
 const WARMUP_TIMEOUT_MS = 60_000;
 
@@ -59,7 +60,9 @@ function recordedBundleUrl(
   if (!logsDir || !root || !setting) return null;
   const log = join(logsDir, 'metro.ndjson');
   for (const file of [log, rotatedLogPath(log)]) {
-    for (const line of (tailLines(file) ?? []).toReversed()) {
+    // compat C6 permanent
+    for (const line of ownBuildLines(tailLines(file) ?? []).toReversed()) {
+      // compat end
       try {
         const record = JSON.parse(line);
         if (

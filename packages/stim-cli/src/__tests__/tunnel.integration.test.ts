@@ -21,8 +21,10 @@ import type { ChildProcess } from 'node:child_process';
 import { resolve4 } from 'node:dns/promises';
 import { EventEmitter, once } from 'node:events';
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   mkdtempSync,
   renameSync,
   rmSync,
@@ -79,7 +81,7 @@ describe('parseNgrokLine', () => {
 
 describe('startTunnel: the happy path', () => {
   test.each(['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'])(
-    'tailscale resolves %s and reads piped output without creating a log file',
+    'tailscale resolves %s and reads its output from a log file it writes through file stdio',
     async (binary) => {
       const resolvedBinary = binary === 'tailscale' ? '/usr/local/bin/tailscale' : binary;
       const home = mkdtempSync(join(tmpdir(), 'stim-tailscale-test-'));
@@ -100,21 +102,22 @@ describe('startTunnel: the happy path', () => {
           requireReachable: false,
           probeReachable: probe,
         });
-        child.stdout?.emit(
-          'data',
+        const [logName = ''] = readdirSync(join(home, 'tunnel-logs'));
+        appendFileSync(
+          join(home, 'tunnel-logs', logName),
           'Available within your tailnet:\n\nhttps://host.tail123.ts.net:8081/\n|-- proxy http://127.0.0.1:8081\n',
         );
         const result = await promise;
-        expect(result).toMatchObject({ url: 'https://host.tail123.ts.net:8081/', pid: IMPOSSIBLE_PID, logFile: null });
+        expect(result).toMatchObject({
+          url: 'https://host.tail123.ts.net:8081/',
+          pid: IMPOSSIBLE_PID,
+          logFile: join(home, 'tunnel-logs', logName),
+        });
         expect(spawn).toHaveBeenCalledExactlyOnceWith(
           resolvedBinary,
           ['serve', '--https=8081', 'http://127.0.0.1:8081'],
-          {
-            stdio: ['ignore', 'pipe', 'pipe'],
-            detached: true,
-          },
+          { stdio: ['ignore', expect.any(Number), expect.any(Number)], detached: true },
         );
-        expect(existsSync(join(home, 'tunnel-logs'))).toBe(false);
         expect(probe).not.toHaveBeenCalled();
         assert(!('failed' in result));
         const root = join(home, 'project');
@@ -129,8 +132,9 @@ describe('startTunnel: the happy path', () => {
           startedAt: 'T',
         };
         writeWorkspaceState(root, { metroTunnel: { ...record, logFile: result.logFile } });
-        expect(readMetroTunnel(root)).toEqual(record);
+        expect(readMetroTunnel(root)).toEqual({ ...record, logFile: result.logFile });
         await expect(result.cleanup()).resolves.toEqual({ status: 'stopped' });
+        expect(existsSync(join(home, 'tunnel-logs', logName))).toBe(false);
       } finally {
         if (previousHome === undefined) delete process.env.STIM_HOME;
         else process.env.STIM_HOME = previousHome;
