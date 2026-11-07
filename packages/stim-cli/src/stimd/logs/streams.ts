@@ -195,7 +195,8 @@ async function waitChild(stream: Stream): Promise<void> {
   await stream.signalling;
   if (process.platform === 'win32' && stream.lastStop?.signalled === false)
     throw new Error(
-      `the device log process tree could not be verified stopped; inspect the claim at ${stream.claim.root}`,
+      `the device log process tree could not be verified stopped (stop=${JSON.stringify(stream.lastStop)}); ` +
+        `inspect it before running ${claimRemoveCommand(stream.claim.root)}.`,
     );
   const running = () =>
     stream.identity
