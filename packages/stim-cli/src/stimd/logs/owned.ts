@@ -207,28 +207,34 @@ function drained(dir: string, app: MacosProcess): boolean {
   return mark?.processToken === app.processToken && mark.exited === true;
 }
 
-function lineSplitter(write: (line: string) => void, saved: unknown) {
+function lineSplitter(write: (line: string) => boolean, saved: unknown) {
   let pending = typeof saved === 'string' ? Buffer.from(saved, 'base64') : Buffer.alloc(0);
+  const flush = (): boolean => {
+    for (;;) {
+      const newline = pending.indexOf(10);
+      if (newline >= 0) {
+        if (!write(pending.subarray(0, newline).toString('utf8').replace(/\r$/, ''))) return false;
+        pending = pending.subarray(newline + 1);
+      } else if (pending.length > LINE_BYTES) {
+        let end = LINE_BYTES;
+        while (end > 0 && (pending.readUInt8(end) & 0xc0) === 0x80) end--;
+        if (!write(pending.subarray(0, end).toString('utf8'))) return false;
+        pending = pending.subarray(end);
+      } else return true;
+    }
+  };
   return {
-    push(chunk: Buffer) {
+    push(chunk: Buffer): boolean {
       pending = Buffer.concat([pending, chunk]);
-      for (;;) {
-        const newline = pending.indexOf(10);
-        if (newline >= 0) {
-          write(pending.subarray(0, newline).toString('utf8').replace(/\r$/, ''));
-          pending = pending.subarray(newline + 1);
-        } else if (pending.length > LINE_BYTES) {
-          let end = LINE_BYTES;
-          while (end > 0 && (pending.readUInt8(end) & 0xc0) === 0x80) end--;
-          write(pending.subarray(0, end).toString('utf8'));
-          pending = pending.subarray(end);
-        } else break;
-      }
+      return flush();
     },
+    flush,
     save: () => pending.toString('base64'),
-    end() {
-      if (pending.length) write(pending.toString('utf8'));
+    end(): boolean {
+      if (!flush()) return false;
+      if (pending.length && !write(pending.toString('utf8'))) return false;
       pending = Buffer.alloc(0);
+      return true;
     },
   };
 }
@@ -279,18 +285,35 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId:
     );
     renameSync(staging, mark);
   };
-  if (recovering) write('warn')('macOS app output may have been dropped when its raw log reached the size limit.');
+  let recoveryWarningPending = recovering !== null;
   const buffer = Buffer.alloc(CHUNK_BYTES);
-  const read = () => {
+  const read = (): boolean => {
+    if (recoveryWarningPending) {
+      if (!write('warn')('macOS app output may have been dropped when its raw log reached the size limit.'))
+        return false;
+      recoveryWarningPending = false;
+    }
     let moved = false;
+    let complete = true;
     for (const file of files) {
+      const before = file.lines.save();
+      const flushed = file.lines.flush();
+      if (before !== file.lines.save()) moved = true;
+      if (!flushed) {
+        complete = false;
+        continue;
+      }
       let fd: number;
       let size: number;
       try {
         size = statSync(file.path).size;
-        if (size < offsets[file.key]) continue;
+        if (size < offsets[file.key]) {
+          complete = false;
+          continue;
+        }
         fd = openSync(file.path, 'r');
-      } catch {
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) complete = false;
         continue;
       }
       try {
@@ -298,30 +321,47 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId:
         while (offsets[file.key] < limit) {
           const n = readSync(fd, buffer, 0, Math.min(CHUNK_BYTES, limit - offsets[file.key]), offsets[file.key]);
           if (n === 0) break;
-          file.lines.push(buffer.subarray(0, n));
+          const written = file.lines.push(buffer.subarray(0, n));
           offsets[file.key] += n;
           moved = true;
+          if (!written) {
+            complete = false;
+            break;
+          }
         }
+      } catch {
+        complete = false;
       } finally {
         closeSync(fd);
       }
-      if (size >= LOG_ROTATE_BYTES) {
+      if (complete && size >= LOG_ROTATE_BYTES) {
         try {
-          file.lines.end();
+          if (!file.lines.end()) {
+            complete = false;
+            continue;
+          }
           checkpoint(file.key);
-          write('warn')('macOS app output may have been dropped when its raw log reached the size limit.');
+          if (!write('warn')('macOS app output may have been dropped when its raw log reached the size limit.')) {
+            complete = false;
+            continue;
+          }
           truncateSync(file.path);
           offsets[file.key] = 0;
           checkpoint();
-        } catch {}
+        } catch {
+          complete = false;
+        }
       }
     }
     if (moved || recovering) {
       try {
         checkpoint();
         recovering = null;
-      } catch {}
+      } catch {
+        complete = false;
+      }
     }
+    return complete;
   };
   let end!: () => void;
   const ended = new Promise<void>((resolve) => {
@@ -336,12 +376,10 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId:
   };
   let exitWritten = false;
   const finish = () => {
-    read();
+    if (!read()) return false;
     const identity = inspectProcessIdentity(app);
-    if (identity !== 'gone' || processGroupAlive(app.pid)) return false;
-    if (writer.dropped > 0) return false;
-    for (const file of files) file.lines.end();
-    if (writer.dropped > 0) return false;
+    if ((identity !== 'gone' && identity !== 'different') || processGroupAlive(app.pid)) return false;
+    for (const file of files) if (!file.lines.end()) return false;
     if (!exitWritten) {
       if (!writer.write({ src: 'client', platform: 'macos', level: 'info', msg: `Exited ${product}.` })) return false;
       exitWritten = true;

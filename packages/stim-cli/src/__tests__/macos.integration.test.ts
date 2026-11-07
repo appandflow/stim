@@ -48,6 +48,7 @@ import * as slots from '../engine/build-slots.ts';
 import * as spawns from '../engine/spawn-claims.ts';
 import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { markClaimChildPending, readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import * as ownership from '../ownership-claim.ts';
 import { startedBy } from '../macos/instances.ts';
 import { macosAppLogName, macosDir, macosProcess, macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
 import * as owning from '../engine/spawn-owned.ts';
@@ -64,6 +65,7 @@ import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir } from '../work
 import { runStop } from '../commands/stop.ts';
 import { stopMacosApp } from '../macos/stop.ts';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
+import * as processIdentity from '../process-identity.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 
@@ -219,6 +221,11 @@ test.skipIf(process.platform === 'win32')(
     try {
       await streams.sync(root);
       expect(await waitForProcessExit(owned, 5000)).toBe(true);
+      expect(readClaimSet(claimRoot).live.map((holder) => holder.owner.pid)).toContain(owned.pid);
+      await expect(stopMacosApp(root)).rejects.toMatchObject({
+        code: 'STIM_MACOS_OWNER_UNVERIFIED',
+        message: expect.stringContaining('no signal was sent to that process group'),
+      });
       expect(readClaimSet(claimRoot).live.map((holder) => holder.owner.pid)).toContain(owned.pid);
       appendFileSync(out, 'helper output after leader\n');
       const log = join(logs, 'macos.ndjson');
@@ -396,9 +403,11 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform !== 'darwin')('workspace removal keeps output when stimd refuses the drain', async () => {
-  writeWorkspaceState(root, { macos: record() });
+  const app = await ownedProcess();
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
   const logs = workspaceLogsDir(root);
   mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'raw output\n');
   writeFileSync(join(logs, 'macos.ndjson'), 'saved output\n');
   const drain = vi.spyOn(stimdClient, 'drainOwned').mockResolvedValue('fixture refusal');
   try {
@@ -408,6 +417,55 @@ test.skipIf(process.platform !== 'darwin')('workspace removal keeps output when 
     expect(drain).toHaveBeenCalledOnce();
   } finally {
     drain.mockRestore();
+  }
+});
+
+test.skipIf(process.platform === 'win32')(
+  'a transient output write failure is retried before the spool is removed',
+  async () => {
+    const app = await ownedProcess();
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    const out = join(logs, macosAppLogName('test-launch', 'out'));
+    writeFileSync(out, 'retry this line\n');
+    const log = join(logs, 'macos.ndjson');
+    mkdirSync(log);
+    const streams = createOwnedStreams(() => {});
+    try {
+      await streams.sync(root);
+      children.at(-1)!.kill('SIGKILL');
+      expect(await waitForProcessExit(app, 5000)).toBe(true);
+      expect(await streams.drain(root)).toContain('could not be drained');
+      expect(existsSync(out)).toBe(true);
+      rmSync(log, { recursive: true });
+      expect(await streams.drain(root)).toBeNull();
+      const output = readFileSync(log, 'utf8');
+      expect(output).toContain('retry this line');
+      expect(output).toContain('Exited Sample.');
+    } finally {
+      streams.close();
+    }
+  },
+);
+
+test('a reused app PID can be finalized when its original group is gone', async () => {
+  const app = { pid: 123456, processToken: 'old-app', startedAtMicros: 1 };
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'final output\n');
+  const identity = vi.spyOn(processIdentity, 'inspectProcessIdentity').mockReturnValue('different');
+  const group = vi.spyOn(ownership, 'processGroupAlive').mockReturnValue(false);
+  const streams = createOwnedStreams(() => {});
+  try {
+    await streams.sync(root);
+    expect(await streams.drain(root)).toBeNull();
+    expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('final output');
+  } finally {
+    streams.close();
+    identity.mockRestore();
+    group.mockRestore();
   }
 });
 
@@ -451,7 +509,7 @@ test.skipIf(process.platform === 'win32')('stimd caps a verbose app spool and co
     expect(statSync(out).size).toBe(0);
     appendFileSync(out, 'after reset\n');
     const log = join(logs, 'macos.ndjson');
-    for (let tries = 0; tries < 40 && !readFileSync(log, 'utf8').includes('after reset'); tries++)
+    for (let tries = 0; tries < 40 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('after reset')); tries++)
       await new Promise((done) => setTimeout(done, 50));
     const output = readFileSync(log, 'utf8');
     expect(output).toContain('output may have been dropped');
@@ -480,7 +538,7 @@ test.skipIf(process.platform === 'win32')('stimd recovers an interrupted spool r
   try {
     await streams.sync(root);
     const log = join(logs, 'macos.ndjson');
-    for (let tries = 0; tries < 40 && !readFileSync(log, 'utf8').includes('after reset'); tries++)
+    for (let tries = 0; tries < 40 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('after reset')); tries++)
       await new Promise((done) => setTimeout(done, 50));
     const output = readFileSync(log, 'utf8');
     expect(output).toContain('output may have been dropped');

@@ -83,7 +83,7 @@ LaunchServices with `open` or `agent-device open`. `stim macos`, `stim stop`,
 `stim worktree remove` and `stim gc --delete` stop all of them: SIGTERM, up to
 5 seconds, then SIGKILL. Stop reports success only after each copy has exited;
 when one cannot be verified or does not exit, it reports the failure and removal
-keeps the workspace. For a hosted session the same rule covers every app bundle the
+keeps the workspace. If the app leader has exited but its process group remains, Stim cannot prove the group still belongs to it and sends no signal. Inspect it with `ps -A -o pid,pgid,command` and stop only verified owned members before retrying. A reused PID can also leave the runtime claim unresolved after its group is gone; inspect that claim and remove it only after verifying no owned process remains. For a hosted session the same rule covers every app bundle the
 session received, so stop and a replacement launch also end a copy that LaunchServices
 started from an earlier attempt. It does not start Metro. Local `stim macos` starts the app in
 the background without activating it or changing focus: it sets

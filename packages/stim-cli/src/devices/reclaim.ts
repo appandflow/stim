@@ -43,7 +43,7 @@ import {
   stimdClaimRoot,
 } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
-import { macosAppPresent, macosLogFile } from '../macos/state.ts';
+import { macosAppPresent, macosAppStderr, macosAppStdout, macosLogFile } from '../macos/state.ts';
 import { readWebRecord, webLogFile } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
@@ -73,10 +73,25 @@ function hasOwnedLogs(root: string): boolean {
   );
 }
 
-async function drainWorkspaceLogs(root: string, affected: boolean, operation: StimContext | undefined): Promise<void> {
+function hasLocalTail(root: string): boolean {
+  const macos = readMacosRecord(root);
+  return (
+    !!macos?.app &&
+    !macos.host &&
+    macos.supervisor?.pid === macos.app.pid &&
+    (existsSync(macosAppStdout(root, macos.launchId)) || existsSync(macosAppStderr(root, macos.launchId)))
+  );
+}
+
+async function drainWorkspaceLogs(
+  root: string,
+  affected: boolean,
+  localTail: boolean,
+  operation: StimContext | undefined,
+): Promise<void> {
   if (!affected) return;
   const claims = readClaimSet(stimdClaimRoot());
-  if (!claims.live.length && !claims.unresolved.length && !macosAppPresent(root)) return;
+  if (!claims.live.length && !claims.unresolved.length && !localTail) return;
   const failure = await drainOwned(root, operation?.env);
   if (failure) throw new Error(`Could not drain workspace logs: ${failure}`);
 }
@@ -517,6 +532,7 @@ async function reclaimIdleProject(
   const dereferenced = describeDereferenced(project);
   const initialState = readWorkspaceState(path);
   const ownedLogs = hasOwnedLogs(path);
+  const localTail = hasLocalTail(path);
   await removePhoneReverses(path, { operation });
 
   let killedPid: number | null = null;
@@ -695,7 +711,7 @@ async function reclaimIdleProject(
     const dir = workspaceDir(path);
     if (existsSync(dir)) {
       try {
-        await drainWorkspaceLogs(path, ownedLogs, operation);
+        await drainWorkspaceLogs(path, ownedLogs, localTail, operation);
         await removeWorkspaceOutput(path, dir, archive, initialState, operation);
         if (workspaceExisted) removedWorkspaceDirs.push(dir);
       } catch (error) {
