@@ -174,6 +174,7 @@ port.on('message', (message: Message) => {
         const nativeTime = nativeTimestamp(stream, message.line);
         const key = JSON.stringify([
           typeof nativeTime === 'string' ? nativeTime : (record.deviceTs ?? record.ts),
+          record.ts,
           record.proc,
           record.level,
           record.subsystem,

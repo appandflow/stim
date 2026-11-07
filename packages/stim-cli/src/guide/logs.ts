@@ -249,6 +249,8 @@ THE RECORD
              launch remains unverified.
     collector_backfill_dedup_limited warns that a busy overlap exceeded the
              bounded deduplication window; duplicate records may remain.
+             Different native timestamp spellings or clock alignments can also
+             leave duplicate records.
     raw      true when the level was inferred from a line of text rather than
              reported by the producer (every expo-child and command-child
              record)

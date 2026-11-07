@@ -280,7 +280,7 @@ including general OS error noise. Use `stim logs --source device --json` for ful
 captured reports. A missing report is not proof that the app did not crash: OS
 reports can be delayed, physical iPhone capture is console-only with no historical backfill, and stripped or
 remote builds may not have matching local debug symbols. This does not download
-symbols or replace Xcode/Android Studio's full crash-analysis tooling. Physical iPhone launches remain unverified because console output cannot prove complete readiness coverage.
+symbols or replace Xcode/Android Studio's full crash-analysis tooling. Physical iPhone launches remain unverified because console output cannot prove complete readiness coverage. Different native timestamp spellings or clock alignments can leave duplicate backfilled records.
 
 For delayed reports, rerun `stim logs --errors` before stopping or releasing the
 device. Collection requires the workspace's current launch and device ownership

@@ -205,6 +205,38 @@ test.each(['ios', 'android'] as const)(
   },
 );
 
+test('backfill preserves Android evidence moved into the window by a changed clock offset', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-log-writer-home-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-log-writer-app-')));
+  vi.stubEnv('STIM_HOME', home);
+  const writers = createLogWriters(() => {});
+  try {
+    const sink = await writers.open(
+      { streamId: 'one', slotKey: 'android', root, platform: 'android', physical: false, attribution: {} },
+      () => {},
+    );
+    const line = '1794009600.123001 100 100 E app: failed';
+    const since = 1794009600123;
+    sink.line(line, -1000);
+    sink.line(line, 1000);
+    await sink.beginBackfill(since);
+    sink.backfillLine(line, 1000);
+    sink.backfillLine(line, 1000);
+    await sink.endBackfill();
+    sink.writer.close();
+    await sink.closed();
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8'));
+    expect(
+      records.filter((record) => record.msg === 'failed' && typeof record.ts === 'number' && record.ts >= since),
+    ).toHaveLength(2);
+  } finally {
+    await writers.close();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('a failed live write does not suppress a successful historical copy', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-log-writer-home-'));
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-log-writer-app-')));
