@@ -250,6 +250,17 @@ describe('waiting for a device another workspace holds', () => {
     return taken.lease;
   }
 
+  test('cancelling a pending lease wait leaves the holder untouched', async () => {
+    const h = harness();
+    const lease = held(h, 60_000);
+    const controller = new AbortController();
+    const pending = acquire(h, { signal: controller.signal, sleep: undefined });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(h.read()?.token).toBe(lease.token);
+    expect(h.holders.get(ROOT)).toBeUndefined();
+  });
+
   test('a lease that frees mid-wait is taken by the waiter', async () => {
     const h = harness();
     held(h, 6_000);
@@ -389,6 +400,54 @@ describe('a run cut short by an abort', () => {
     stop();
     controller.abort('SIGINT');
     expect(released).toEqual([]);
+  });
+});
+
+describe('ticket release', () => {
+  test('does not send a release for an aborted operation, and waits for a normal acknowledgement', async () => {
+    const client = await import('../daemon/client.ts');
+    let acknowledge!: () => void;
+    const reply = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const release = vi.spyOn(client, 'releaseDeviceTicket').mockReturnValue(reply);
+    try {
+      const controller = new AbortController();
+      const context = testContext({ signal: controller.signal });
+      const lease = runLease({
+        root: ROOT,
+        platform: 'ios',
+        kind: 'run',
+        expiresAt: null,
+        ticket: 'ticket',
+        operation: context,
+      });
+      controller.abort();
+      await lease.release();
+      expect(release).not.toHaveBeenCalled();
+
+      const liveContext = testContext();
+      const liveLease = runLease({
+        root: ROOT,
+        platform: 'ios',
+        kind: 'run',
+        expiresAt: null,
+        ticket: 'live',
+        operation: liveContext,
+      });
+      let finished = false;
+      const pending = Promise.resolve(liveLease.release()).then(() => {
+        finished = true;
+        return undefined;
+      });
+      await vi.waitFor(() => expect(release).toHaveBeenCalledWith('live', liveContext));
+      expect(finished).toBe(false);
+      acknowledge();
+      await pending;
+      expect(finished).toBe(true);
+    } finally {
+      release.mockRestore();
+    }
   });
 });
 

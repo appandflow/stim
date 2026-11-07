@@ -2,7 +2,7 @@ import { endWorkspaceShares } from '../local-server.ts';
 import type { StimContext } from '@stim-cli/core';
 import { archiveWorkspace } from '../archive.ts';
 import { clearNamedPorts } from '../named-ports.ts';
-import { projectDeviceSlots } from './device-slots.ts';
+import { parseDeviceSlotKey, projectDeviceSlots } from './device-slots.ts';
 import {
   type ProjectRecord,
   clearDevice,
@@ -13,7 +13,7 @@ import {
 import { existsSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTreeAsync, pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../stimd/metro/stop-cause.ts';
-import { ensurePersistentStimd } from '../daemon/client.ts';
+import { ensurePersistentStimd, stopDeviceLogStream } from '../daemon/client.ts';
 import { readBootedParkDeadline } from './booted-park.ts';
 import {
   teardownOwnedBrowser,
@@ -26,6 +26,7 @@ import { acquireAvdClaim } from './avd-claim.ts';
 import { releaseClaim } from '../ownership-claim.ts';
 import { parkedMaxSetting } from './sim-pool.ts';
 import { verifyCollectorOwnership } from '../stimd/logs/ownership.ts';
+import { sameCollectorRecord } from '../stimd/logs/state.ts';
 import {
   MODE_COMMAND,
   clearManagedMetroTunnel,
@@ -67,10 +68,12 @@ async function reapCollectors(
   root: string,
   {
     verify = verifyCollectorOwnership,
+    stopStream = stopDeviceLogStream,
     collectors,
     operation,
   }: {
     verify?: typeof verifyCollectorOwnership;
+    stopStream?: typeof stopDeviceLogStream;
     collectors: Record<string, unknown>;
     operation?: StimContext;
   },
@@ -79,6 +82,23 @@ async function reapCollectors(
   const failedDevices: SkippedDevice[] = [];
   for (const [platform, record] of Object.entries(collectors)) {
     operation?.signal.throwIfAborted();
+    if (isJsonObject(record) && record.kind === 'stream') {
+      const parsed = parseDeviceSlotKey(platform);
+      const result =
+        parsed && typeof record.streamId === 'string'
+          ? await stopStream(root, parsed.platform, parsed.slot, record.streamId, operation)
+          : { error: 'the stream identity is invalid' };
+      if ('error' in result) {
+        const entry: SkippedDevice = {
+          platform: parsed?.platform ?? 'ios',
+          name: `${platform} log stream`,
+          reason: `${result.error}; keeping its ownership record`,
+        };
+        skippedDevices.push(entry);
+        failedDevices.push(entry);
+      }
+      continue;
+    }
     const rec = record as ProcessRecord | null;
     const pid = rec?.pid;
     if (typeof pid !== 'number' || pid <= 0 || pid === process.pid || !pidExists(pid)) continue;
@@ -387,6 +407,7 @@ type ReclaimOptions = {
   stopMetroTunnel?: StopMetroTunnelFn;
   releaseLeases?: (root: string) => ReleasedLease[];
   verifyCollector?: typeof verifyCollectorOwnership;
+  stopStream?: typeof stopDeviceLogStream;
   teardownBrowser?: typeof teardownOwnedBrowser;
   stopRequester?: StopRequester;
 };
@@ -477,6 +498,7 @@ async function reclaimIdleProject(
     stopMetroTunnel = defaultStopMetroTunnel,
     releaseLeases = releaseWorkspaceLeases,
     verifyCollector = verifyCollectorOwnership,
+    stopStream,
     teardownBrowser = teardownOwnedBrowser,
     stopRequester = { by: 'stim gc --delete' },
     operation,
@@ -557,6 +579,7 @@ async function reclaimIdleProject(
 
   const { skippedDevices: skippedCollectors, failedDevices: failedCollectors } = await reapCollectors(path, {
     verify: verifyCollector,
+    stopStream,
     collectors: initialState?.collectors ?? {},
     operation,
   });
@@ -577,11 +600,7 @@ async function reclaimIdleProject(
       (currentProject?.supervisor && !sameProcessRecord(currentProject.supervisor, project?.supervisor)) ||
       readWebRecord(path) !== null ||
       Object.entries(currentState?.collectors ?? {}).some(
-        ([platform, record]) =>
-          !sameProcessRecord(
-            record as ProcessRecord,
-            initialState?.collectors?.[platform] as ProcessRecord | undefined,
-          ),
+        ([platform, record]) => !sameCollectorRecord(record, initialState?.collectors?.[platform]),
       ),
     );
     if (replacement) {

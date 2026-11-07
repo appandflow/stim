@@ -1398,6 +1398,12 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Stim home (\`stim ci build\`, or the API build), then run again. \`stim guide ci\`
   has the flow. \`stim ios\` and \`stim android\` never use it.`,
     },
+    STIM_ENV_TOO_LARGE: {
+      summary: 'the invocation environment exceeds the forwarding limit',
+      body: () => `STIM_ENV_TOO_LARGE
+  The environment forwarded to stimd exceeds 512 KB. The refusal names the
+  five largest variables. Reduce or unset them, then rerun the command.`,
+    },
     STIM_BAD_ARG: {
       summary: 'an argument, setting, directory, flavor, or device name refused before anything starts',
       aliases: ['STIM_NO_PROJECT'],
@@ -2003,8 +2009,9 @@ not on any remote"  (worktree remove)
   A build waiting at its build slot, stim logs --follow and stim status
   --watch end when the engine switches builds under them; the CLI prints the
   quoted line and exits 75. While a newer build is staged, a cache miss waits
-  at its build slot for up to 10 minutes so running builds can finish. A build
-  retained by an attached host or CI job skips that wait.
+  at its build slot for up to 10 minutes so running builds can finish. When the
+  current engine is retained by an attached host, CI job or active native log
+  stream, builds skip that wait.
   Rerun the same command: it runs the new build.`,
     },
     STIM_ROUTER_TOO_OLD: {

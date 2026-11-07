@@ -134,7 +134,11 @@ describe('with no daemon holding the home, as on Windows', () => {
     const cwd = process.cwd();
     process.chdir(root);
     try {
-      await beforeCommand('ios', { ...process.env, STIM_DAEMON: 'off', HOME: home, USERPROFILE: home });
+      await beforeCommand(
+        'ios',
+        { ...process.env, STIM_DAEMON: 'off', HOME: home, USERPROFILE: home },
+        { cwd: root, recordUse: true, passes: true, deviceLogs: false },
+      );
     } finally {
       process.chdir(cwd);
     }

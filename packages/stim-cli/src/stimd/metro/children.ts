@@ -1,3 +1,4 @@
+import { withInvocation, type Invocation } from '../forwarded.ts';
 import { closeSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
@@ -22,7 +23,12 @@ import { resolveMetroSharedCache } from '../../optimizations.ts';
 import { clearSupervisor, loadConfig, setSupervisor } from '../../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
 import { detectIsExpo } from '../../workspace/project.ts';
-import { idleMinutesSetting, resolveProjectSettings, runnableMetroCommand } from '../../workspace/settings.ts';
+import {
+  idleMinutesSetting,
+  metroPortSetting,
+  resolveProjectSettings,
+  runnableMetroCommand,
+} from '../../workspace/settings.ts';
 import { clearWorkspaceStateKeys, writeWorkspaceState } from '../../workspace/workspace-state.ts';
 import { ownStoreEngine } from '../../daemon/engine-switch.ts';
 import type { ManagedProvider } from '../../engine/metro-reach.ts';
@@ -81,6 +87,14 @@ interface TunnelChild {
   pid: number;
   processToken: string;
   url: string;
+}
+
+const invocations = new Map<string, Invocation & { workspace: string }>();
+
+export function setMetroInvocation(root: string, context: Invocation & { workspace: string }): void {
+  try {
+    invocations.set(realpathSync(root), context);
+  } catch {}
 }
 
 const children = new Map<string, MetroChild>();
@@ -233,11 +247,12 @@ function spawnHost(
   output: { files: ChildOutput; fds: [number, number] },
   env: Record<string, string>,
   writer: NdjsonWriter,
+  baseEnv: NodeJS.ProcessEnv,
 ): ChildServerHandle {
   const settings = resolveProjectSettings(root).settings;
   const storeRoot = resolveMetroSharedCache(settings) ? metroStoreRoot(root) : null;
   if (storeRoot) registerMetroStore(storeRoot);
-  const node = withProjectNode(root, process.env, { top: repositoryRoot(root) ?? root });
+  const node = withProjectNode(root, baseEnv, { top: repositoryRoot(root) ?? root });
   if (node.pinned)
     writer.write({
       src: 'metro',
@@ -281,7 +296,7 @@ function spawnHost(
   });
 }
 
-async function start(root: string, port: number, log: Log): Promise<Answer> {
+async function start(root: string, port: number, log: Log, operationEnv?: NodeJS.ProcessEnv): Promise<Answer> {
   ensureWorkspaceStorage(root);
   const logsDir = workspaceLogsDir(root);
   mkdirSync(logsDir, { recursive: true });
@@ -297,6 +312,7 @@ async function start(root: string, port: number, log: Log): Promise<Answer> {
   const claim = attempt.acquired;
   rmSync(heartbeatFile(root), { force: true });
   const writer = metroWriter(root, digest);
+  const baseEnv = operationEnv ?? invocations.get(root)?.forwarded.env ?? process.env;
   const env = {
     STIM_METRO_HEARTBEAT: heartbeatFile(root),
     STIM_METRO_PORT: String(port),
@@ -315,10 +331,11 @@ async function start(root: string, port: number, log: Log): Promise<Answer> {
           writer: writer,
           output,
           extraEnv: env,
+          baseEnv,
         })
       : mode === MODE_EXPO
-        ? await startExpoServer({ root, port, logsDir, writer: writer, settings, output, extraEnv: env })
-        : spawnHost(root, port, output, env, writer);
+        ? await startExpoServer({ root, port, logsDir, writer: writer, settings, output, extraEnv: env, baseEnv })
+        : spawnHost(root, port, output, env, writer, baseEnv);
   } catch (error) {
     releaseClaim(claim);
     writer.close();
@@ -391,8 +408,16 @@ async function start(root: string, port: number, log: Log): Promise<Answer> {
   return answer(child, 'starting');
 }
 
-async function ensure(root: string, port: number, launch: boolean, log: Log): Promise<Answer> {
+async function ensure(
+  root: string,
+  port: number,
+  launch: boolean,
+  log: Log,
+  operationEnv?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+): Promise<Answer> {
   await adoptFromPredecessor(root, log);
+  if (signal?.aborted) return { op: 'error', code: 'cancelled', message: 'the operation ended' };
   const child = children.get(root);
   if (child) child.ensuredAt = Date.now();
   if (child && child.port === port && running(child)) {
@@ -412,7 +437,8 @@ async function ensure(root: string, port: number, launch: boolean, log: Log): Pr
     return { op: 'metro', state: found.metro.processToken ? 'supervisor' : 'foreign', pid: found.metro.pid, port };
   }
   if (found.notOurs) return { op: 'error', code: 'port-taken', message: found.notOurs };
-  return start(root, port, log);
+  if (signal?.aborted) return { op: 'error', code: 'cancelled', message: 'the operation ended' };
+  return start(root, port, log, operationEnv);
 }
 
 /**
@@ -422,7 +448,12 @@ async function ensure(root: string, port: number, launch: boolean, log: Log): Pr
  * that runs from the project and that Stim did not start is reused and recorded in `metro.foreign.json`. With
  * `launch`, a Metro of other injected files is restarted first.
  */
-export function ensureMetro(params: unknown, log: Log): Promise<Answer> {
+export function ensureMetro(
+  params: unknown,
+  log: Log,
+  operationEnv?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+): Promise<Answer> {
   const fields = isJsonObject(params) ? params : {};
   let root: string;
   try {
@@ -430,7 +461,17 @@ export function ensureMetro(params: unknown, log: Log): Promise<Answer> {
   } catch {
     return Promise.resolve({ op: 'error', code: 'bad-root', message: `no workspace at ${String(fields.root)}` });
   }
-  const port = Number.isInteger(fields.port) ? Number(fields.port) : loadConfig()?.projects?.[root]?.metroPort;
+  const portEnv =
+    process.platform === 'win32'
+      ? Object.entries(operationEnv ?? {}).find(([name]) => name.toUpperCase() === 'STIM_METRO_PORT')?.[1]
+      : operationEnv?.STIM_METRO_PORT;
+  const override = portEnv
+    ? metroPortSetting(resolveProjectSettings(root).settings, { STIM_METRO_PORT: portEnv })
+    : null;
+  if (override?.error) return Promise.resolve({ op: 'error', code: 'bad-port', message: override.error });
+  const port = Number.isInteger(fields.port)
+    ? Number(fields.port)
+    : (override?.port ?? loadConfig()?.projects?.[root]?.metroPort);
   if (!port) return Promise.resolve({ op: 'error', code: 'no-port', message: `${root} has no Metro port` });
   const child = children.get(root);
   if (
@@ -444,7 +485,7 @@ export function ensureMetro(params: unknown, log: Log): Promise<Answer> {
     child.ensuredAt = Date.now();
     return Promise.resolve(answer(child));
   }
-  return serialize(root, () => ensure(root, port, fields.launch === true, log));
+  return serialize(root, () => ensure(root, port, fields.launch === true, log, operationEnv, signal));
 }
 
 /** `op.begin {params: {workspace}}`'s flag: the workspace's Metro loaded other injected files, so it is foreign until a restart. */
@@ -645,7 +686,10 @@ function restartAt(
     await stopChild(child, why);
     writeWorkspaceState(child.root, state);
     if (!again) return {};
-    const answered = await ensure(child.root, child.port, false, log);
+    const context = invocations.get(child.root);
+    const answered = context
+      ? await withInvocation(context, new AbortController().signal, () => ensure(child.root, child.port, false, log))
+      : await ensure(child.root, child.port, false, log);
     if (answered.op === 'error') log('warn', 'metro_restart_failed', `${child.root}: ${String(answered.message)}`);
     return answered;
   });
@@ -655,7 +699,7 @@ function restartAt(
  * `tunnel.ensure {root, provider, port, ngrokUrl?, requireReachable?}`: the workspace's tunnel provider as a child of
  * this stimd in its own process group with file stdio, claimed under `tunnel.claim`, answering `{op: 'tunnel', url}`.
  */
-export function ensureTunnel(params: unknown): Promise<Answer> {
+export function ensureTunnel(params: unknown, operationEnv?: NodeJS.ProcessEnv): Promise<Answer> {
   const fields = isJsonObject(params) ? params : {};
   let root: string;
   try {
@@ -673,7 +717,9 @@ export function ensureTunnel(params: unknown): Promise<Answer> {
   const port = Number(fields.port);
   if (!Number.isInteger(port) || port <= 0)
     return Promise.resolve({ op: 'error', code: 'bad-port', message: `no port ${String(fields.port)}` });
-  return serialize(`tunnel:${root}`, () => startTunnelChild(root, provider, port, fields));
+  return serialize(`tunnel:${root}`, () =>
+    startTunnelChild(root, provider, port, fields, operationEnv ?? invocations.get(root)?.forwarded.env),
+  );
 }
 
 async function startTunnelChild(
@@ -681,6 +727,7 @@ async function startTunnelChild(
   provider: ManagedProvider,
   port: number,
   fields: Record<string, unknown>,
+  env?: NodeJS.ProcessEnv,
 ): Promise<Answer> {
   const known = tunnels.get(root);
   if (known && inspectProcessIdentity(known) === 'same') {
@@ -699,6 +746,7 @@ async function startTunnelChild(
     return { op: 'error', code: 'tunnel-claimed', message: `another process holds ${claimRoot(root, 'tunnel')}` };
   const { startTunnel } = await import('../../engine/tunnel.ts');
   const started = await startTunnel({
+    env,
     claims: [attempt.acquired],
     provider,
     port,

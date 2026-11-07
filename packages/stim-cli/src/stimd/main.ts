@@ -1,3 +1,5 @@
+import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
+import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
@@ -81,9 +83,13 @@ import {
   ensureTunnel,
   metroChildrenRun,
   metroOpFlags,
+  setMetroInvocation,
   metroTick,
 } from './metro/children.ts';
+import { invocation, traceInvocation, withInvocation, type Invocation } from './forwarded.ts';
 import { createPassesLane, createThreadTable } from './threads.ts';
+import { createStreams } from './logs/streams.ts';
+import { handleLogRequest } from './logs/protocol.ts';
 import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
 import { followEngine } from './engine-follow.ts';
@@ -542,6 +548,7 @@ export async function runStimd({
     desktopKey: key,
     script,
   });
+  const logs = createStreams((message) => log('warn', 'device_logs', message));
   const threads = createThreadTable(log);
   const lane = createPassesLane(threads, log);
   const statuses = createStatusSnapshots(log, join(daemonDir(), 'status-cwds.json'));
@@ -579,6 +586,17 @@ export async function runStimd({
   };
   const open = new Set<Socket>();
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
+  const hasOffWork = () =>
+    Boolean(
+      logs.running() ||
+      keepsServingWhenOff(lifetime.keepsServingWhenOff, ops.size > 0, Boolean(net.running()), restartingNet),
+    );
+  const opContexts = new Map<Socket, Invocation & { workspace: string }>();
+  const opControllers = new Map<Socket, AbortController>();
+  const opTokens = new Map<string, Socket>();
+  const leaseTickets = createLeaseTickets((message) => log('warn', 'device_lease_release_failed', message));
+  const metroTickets = createMetroTickets(log);
+  const socketTokens = new WeakMap<Socket, string>();
   const opCommands = new WeakMap<Socket, string>();
   let ending: string | null = null;
   let attachedEnding: Promise<void> | undefined;
@@ -598,18 +616,19 @@ export async function runStimd({
     [...ops.values()].includes('pinned') ||
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
+  const enginePinned = (): boolean => pinned() || logs.running();
   const checkEngine = async (): Promise<void> => {
     if (!follower || switchedTo || closing) return;
     let next: Awaited<ReturnType<typeof follower.check>>;
     try {
-      follower.record(pinned(), engineDirs);
-      next = await follower.check(pinned);
+      follower.record(enginePinned(), engineDirs, logs.running());
+      next = await follower.check(enginePinned);
     } catch (error) {
       log('warn', 'engine_check_failed', error instanceof Error ? error.message : String(error));
       return;
     }
     if (!next || switchedTo || closing) return;
-    if (!pinned()) await relaunch(next, follower.engine.root);
+    if (!enginePinned()) await relaunch(next, follower.engine.root);
     else if (!heldSwitch) {
       heldSwitch = true;
       log(
@@ -649,6 +668,13 @@ export async function runStimd({
     socket.on('error', () => drop(socket));
     socket.on('close', () => {
       drop(socket);
+      opContexts.delete(socket);
+      const token = socketTokens.get(socket);
+      if (token) opTokens.delete(token);
+      opControllers.get(socket)?.abort();
+      leaseTickets.drop(socket);
+      metroTickets.drop(socket);
+      opControllers.delete(socket);
       if (ops.delete(socket)) void checkEngine();
     });
     const onData = (chunk: Buffer) => {
@@ -691,6 +717,40 @@ export async function runStimd({
         }
         lastContact = Date.now();
         const { op } = message;
+        if (
+          handleLogRequest({
+            message,
+            socket,
+            streams: logs,
+            operations: opContexts,
+            controllers: opControllers,
+            tokens: opTokens,
+            attached: attached !== undefined,
+          })
+        )
+          continue;
+        if (
+          handleMetroTicketRequest({
+            message,
+            socket,
+            tickets: metroTickets,
+            operations: opContexts,
+            controllers: opControllers,
+            tokens: opTokens,
+          })
+        )
+          continue;
+        if (
+          handleLeaseRequest({
+            message,
+            socket,
+            tickets: leaseTickets,
+            operations: opContexts,
+            controllers: opControllers,
+            tokens: opTokens,
+          })
+        )
+          continue;
         if (op === 'hello') {
           hasten?.();
           socket.end(
@@ -747,6 +807,7 @@ export async function runStimd({
           admissionRevision++;
           hasten?.();
           ops.set(socket, 'pinned');
+          opControllers.set(socket, new AbortController());
           opCommands.set(socket, typeof message.command === 'string' ? message.command : 'a command');
           void (follower?.admit() ?? Promise.resolve(null))
             .catch((error: unknown) => {
@@ -754,10 +815,37 @@ export async function runStimd({
               return null;
             })
             .then((next) => {
+              if (socket.destroyed) return undefined;
               if (!next) {
+                const params = isJsonObject(message.params) ? message.params : {};
+                const forwarded = isJsonObject(params.forwarded) ? params.forwarded : {};
+                if (
+                  typeof params.workspace === 'string' &&
+                  typeof forwarded.cwd === 'string' &&
+                  isJsonObject(forwarded.env)
+                ) {
+                  const env = Object.fromEntries(
+                    Object.entries(forwarded.env).filter(
+                      (entry): entry is [string, string] => typeof entry[1] === 'string',
+                    ),
+                  );
+                  const context = invocation(forwarded.cwd, env);
+                  if ('code' in context) {
+                    ops.delete(socket);
+                    void checkEngine();
+                    socket.end(`${JSON.stringify({ op: 'error', ...context })}\n`);
+                    return undefined;
+                  }
+                  opContexts.set(socket, { ...context, workspace: params.workspace });
+                  const token = randomUUID();
+                  opTokens.set(token, socket);
+                  socketTokens.set(socket, token);
+                  setMetroInvocation(params.workspace, { ...context, workspace: params.workspace });
+                }
                 reply({
                   op: 'op.begun',
                   ...metroOpFlags(message.params),
+                  ...(socketTokens.has(socket) ? { opToken: socketTokens.get(socket) } : {}),
                   ...attachedReply(attached !== undefined, instance),
                 });
                 return undefined;
@@ -770,14 +858,48 @@ export async function runStimd({
           if (ops.has(socket)) ops.set(socket, op === 'op.wait' ? 'waiting' : 'pinned');
           void checkEngine();
         } else if (op === 'metro.ensure' || op === 'tunnel.ensure') {
-          const ask = op === 'metro.ensure' ? ensureMetro(message.params, log) : ensureTunnel(message.params);
+          const context = opContexts.get(socket);
+          if (ops.has(socket) && !context) {
+            reply({ op: 'error', code: 'op-not-ready', message: 'the operation has no admitted workspace' });
+            continue;
+          }
+          const fields = isJsonObject(message.params) ? message.params : {};
+          let operationEnv: NodeJS.ProcessEnv | undefined;
+          try {
+            if (
+              context &&
+              typeof fields.root === 'string' &&
+              realpathSync(fields.root) === realpathSync(context.workspace)
+            )
+              operationEnv = context.forwarded.env;
+          } catch {}
+          if (context && !operationEnv) {
+            reply({
+              op: 'error',
+              code: 'bad-workspace',
+              message: 'the request does not match the operation workspace',
+            });
+            continue;
+          }
+          const perform = () =>
+            op === 'metro.ensure'
+              ? ensureMetro(message.params, log, operationEnv, opControllers.get(socket)?.signal)
+              : ensureTunnel(message.params, operationEnv);
+          const controller = opControllers.get(socket);
+          const ask =
+            context && controller
+              ? traceInvocation(context, `stimd.${op}`, () => withInvocation(context, controller.signal, perform))
+              : perform();
           void ask
             .catch((error: unknown) => ({
               op: 'error',
               code: op,
               message: error instanceof Error ? error.message : String(error),
             }))
-            .then((answer) => socket.end(`${JSON.stringify(answer)}\n`));
+            .then((answer) => {
+              if (ops.has(socket)) return reply(answer);
+              return socket.end(`${JSON.stringify(answer)}\n`);
+            });
         } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'status') void statuses.answer(message.params).then((answer) => socket.end(`${answer}\n`));
         else if (op === 'tick') {
@@ -859,7 +981,13 @@ export async function runStimd({
     markAbnormal = null;
     for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
-    void Promise.all([lane.settled(), dependencyWork, net.close(), closeMetroChildren()])
+    void Promise.all([
+      lane.settled(),
+      dependencyWork,
+      net.close(),
+      closeMetroChildren(),
+      logs.close().catch((error: unknown) => log('warn', 'device_logs_close_failed', String(error))),
+    ])
       .then(() => threads.close())
       .then(() => attachedEnding)
       .then(() => {
@@ -922,9 +1050,7 @@ export async function runStimd({
     }
     void metroTick(mode === 'on', log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
     if (mode === 'off') {
-      if (
-        keepsServingWhenOff(lifetime.keepsServingWhenOff, hasActiveCommands(), Boolean(net.running()), restartingNet)
-      ) {
+      if (hasOffWork()) {
         for (const socket of tickReplies.splice(0)) socket.destroy();
         continue;
       }
@@ -1052,7 +1178,7 @@ export async function runStimd({
       break;
     }
     if (closing) break;
-    const idle = !alive && !pending && !wentDormant && Date.now() - contactSince >= tickMs;
+    const idle = !alive && !pending && !wentDormant && !logs.running() && Date.now() - contactSince >= tickMs;
     emptyTicks = idle ? emptyTicks + 1 : 0;
     const tookMs = Math.round(performance.now() - tickStarted);
     await new Promise((done) => setTimeout(done, 0));

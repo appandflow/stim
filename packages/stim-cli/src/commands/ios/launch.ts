@@ -52,6 +52,7 @@ import {
 } from '../../diagnostics/native-crash.ts';
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 import type { HostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
+import { deviceLogReadinessWait } from '../../daemon/client.ts';
 
 interface VerifyIosRunArgs {
   operation?: StimContext;
@@ -79,6 +80,7 @@ interface VerifyIosRunArgs {
   metroOrigin: string | null;
   enterActivity?: BuildProgress['activity'];
   hostedLogs?: Omit<HostedLaunchLogs, 'stop'>;
+  deviceStreamId?: string | null;
 }
 
 interface IosRuntimeRoute {
@@ -263,6 +265,7 @@ export async function verifyIosMetroRun({
   metroOrigin,
   enterActivity,
   hostedLogs,
+  deviceStreamId,
 }: VerifyIosRunArgs): Promise<{ state: boolean | string; warning?: string; unattributed?: boolean }> {
   const runCommand = nativeRunCommand('ios', slot, { physical, deviceId: udid });
   const readNativeCrashes = () =>
@@ -286,6 +289,9 @@ export async function verifyIosMetroRun({
     ? await withDrainingCancellation(operation, operation?.signal, () =>
         d.verifyLaunch({
           signal: operation?.signal,
+          ...(deviceStreamId
+            ? { sleep: deviceLogReadinessWait(root, 'ios', slot ?? 'default', deviceStreamId, launchedAt, operation) }
+            : {}),
           requireBundleResponse: true,
           slot: launchSlotScope(root, slot),
           appPid: physical || remoteDevice ? null : launched?.pid,
@@ -299,6 +305,7 @@ export async function verifyIosMetroRun({
           mode: workspaceDevServerMode(root, isExpo),
           readNativeCrashes,
           readDeviceRecords: hostedLogs?.readDeviceRecords,
+          ...(hostedLogs || remoteDevice ? {} : { deviceStreamId }),
           deviceLogsThrough: hostedLogs?.deviceLogsThrough,
           processAlive: hostedLogs
             ? hostedLogs.processAlive
@@ -492,6 +499,11 @@ function reportUnverified({
     return { state: LAUNCH_UNVERIFIED, unattributed: true };
   }
 
+  if (verification.record) {
+    phase('verify', chalk.yellow('UNVERIFIED: bundle delivered, but device log evidence is unavailable'));
+    return { state: LAUNCH_UNVERIFIED };
+  }
+
   phase('verify', chalk.yellow("UNVERIFIED: no bundle request reached this workspace's Metro"));
   for (const line of unverifiedLaunchLines({
     platform: PLATFORM,
@@ -591,7 +603,7 @@ interface FinishIosRunArgs {
   startedAt: string;
   closeWriter: () => void;
   lease: RunLease | null;
-  releaseLease: () => void;
+  releaseLease: () => void | Promise<void>;
   recordRun: ReportIosResultArgs['recordRun'];
   devServer: ReportIosResultArgs['devServer'];
   enterPhase: (phase: BuildPhase) => void;
@@ -961,6 +973,7 @@ export async function finishIosRun({
   const dropSwapDir = artifact.release;
   let installSkipped = false;
   let launched: IosRuntimeLaunchResult;
+  let deviceStreamId: string | null = null;
   let launchedAt = d.now();
   const evictUnbound = () =>
     evictUnbindableCacheHit({
@@ -982,11 +995,26 @@ export async function finishIosRun({
     });
 
   if (physical) {
+    const consoleRefusal = await d.checkPhysicalIosLog(operation);
+    if (consoleRefusal)
+      return fail({
+        code: 'STIM_LAUNCH_FAILED',
+        message: consoleRefusal.error,
+        remedy: consoleRefusal.remedy,
+        build: { ...buildFailure, appPath, bundleId },
+      });
     const overWifi = await installsOverWifi(d, udid, wireless, note);
     const bounds = iosDeviceBounds(overWifi);
     const lostBeforeInstall = raiseLeaseFor(bounds.installMs, true);
     if (lostBeforeInstall) return fail(lostBeforeInstall);
-    await d.stopPreviousCollector({ root, note });
+    const previousCollector = await d.stopPreviousCollector({ root, note, operation });
+    if (previousCollector.error)
+      return fail({
+        code: 'STIM_LAUNCH_FAILED',
+        message: `Could not stop the previous device log stream: ${previousCollector.error}`,
+        remedy: 'Run `stim stop` and retry.',
+        build: { ...buildFailure, appPath, bundleId },
+      });
     enterPhase('install');
     const installTimer = stepTimer(d.now);
     const installed = await d.installIosDeviceApp(
@@ -1031,6 +1059,7 @@ export async function finishIosRun({
       devMenuParams,
       lanAddress,
       launch: async ({ payloadUrl }) => {
+        // devicectl --console launches the app, so each physical launch needs a fresh console.
         const collector = await d.replaceCollector({
           root,
           slot,
@@ -1040,22 +1069,25 @@ export async function finishIosRun({
           physical: true,
           payloadUrl,
           note,
+          operation,
         });
-        if (!collector?.pid) {
+        if (!collector?.streamId) {
           return {
             error: {
               code: 'STIM_LAUNCH_FAILED',
-              message: `The device log collector, which is what launches ${bundleId} on a phone, could not be started.`,
-              remedy: `Check ${logFile} and the workspace collector log, then run the command again.`,
+              message: `The device log stream, which launches ${bundleId} on a phone, could not be started${collector?.error ? `: ${collector.error}` : '.'}`,
+              remedy: `Check ${logFile} and run \`stim logs --source agent\`, then retry.`,
               build: { ...buildFailure, appPath, bundleId },
             },
           };
         }
+        deviceStreamId = collector.streamId;
         const started = await d.awaitIosDeviceLaunch({
           udid,
           bundleId: bundleId!,
           appName: appName ?? bundleId!,
-          collectorPid: collector.pid,
+          collectorStreamId: collector.streamId,
+          sleep: deviceLogReadinessWait(root, 'ios', slot ?? 'default', collector.streamId, launchedAt, operation),
           wireless: overWifi,
           readRecords: () =>
             readCollectorRecords(logsDir).filter(
@@ -1151,8 +1183,19 @@ export async function finishIosRun({
 
     dropSwapDir();
 
-    if (!remoteDevice)
-      await d.replaceCollector({ root, slot, udid, bundleId: bundleId!, appName, appExecutable, note });
+    if (!remoteDevice) {
+      const collector = await d.replaceCollector({
+        root,
+        slot,
+        udid,
+        bundleId: bundleId!,
+        appName,
+        appExecutable,
+        note,
+        operation,
+      });
+      deviceStreamId = collector.streamId;
+    }
     enterPhase('launch');
     const launchTimer = stepTimer(d.now);
     launchedAt = d.now();
@@ -1285,6 +1328,7 @@ export async function finishIosRun({
     remoteDevice: Boolean(remoteDevice),
     metroOrigin: typeof launched?.jsLocation === 'string' ? launched.jsLocation : null,
     enterActivity,
+    deviceStreamId,
   });
   if (launchState === LAUNCH_FATAL) {
     const evicted = await evictUnbound();
@@ -1310,7 +1354,7 @@ export async function finishIosRun({
   );
 
   const leaseFacts = lease?.facts() ?? null;
-  releaseLease();
+  await releaseLease();
 
   const uploadsAbandoned = await artifact.completeUploads();
   const facts = reportIosResult({

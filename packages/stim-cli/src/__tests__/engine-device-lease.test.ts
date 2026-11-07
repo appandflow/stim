@@ -268,6 +268,17 @@ describe('releasing a lease', () => {
     expect(h.holders.get(ROOT_A)).toEqual({});
   });
 
+  test('an operation cannot release a later grant in the same workspace slot', () => {
+    const h = harness();
+    const first = takeLease({ root: ROOT_A, platform: 'ios', id: UDID, kind: 'run', durationMs: 60_000 }, h.io);
+    assert(first.status === 'taken');
+    h.advance(61_000);
+    const second = takeLease({ root: ROOT_A, platform: 'ios', id: UDID, kind: 'run' }, h.io);
+    assert(second.status === 'taken');
+    expect(releaseRunLease({ root: ROOT_A, platform: 'ios', token: first.lease.token }, h.io)).toBeNull();
+    expect(h.read('ios', UDID)?.token).toBe(second.lease.token);
+  });
+
   test('a declared lease outlives the run that raised it', () => {
     const h = harness();
     takeLease({ root: ROOT_A, platform: 'ios', id: UDID, kind: 'declared' }, h.io);

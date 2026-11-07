@@ -99,6 +99,7 @@ describe('startTunnel: the happy path', () => {
         const promise = startVerified({
           provider: 'tailscale',
           port: 8081,
+          env: { PATH: '/fixture', APP_ENV: 'staging' },
           requireReachable: false,
           probeReachable: probe,
         });
@@ -116,7 +117,11 @@ describe('startTunnel: the happy path', () => {
         expect(spawn).toHaveBeenCalledExactlyOnceWith(
           resolvedBinary,
           ['serve', '--https=8081', 'http://127.0.0.1:8081'],
-          { stdio: ['ignore', expect.any(Number), expect.any(Number)], detached: true },
+          {
+            stdio: ['ignore', expect.any(Number), expect.any(Number)],
+            detached: true,
+            env: { PATH: '/fixture', APP_ENV: 'staging' },
+          },
         );
         expect(probe).not.toHaveBeenCalled();
         assert(!('failed' in result));

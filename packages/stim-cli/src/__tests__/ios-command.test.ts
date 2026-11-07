@@ -50,7 +50,6 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { collectorProcessTitle } from '../stimd/logs/ownership.ts';
 import { getProject, setDevice, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { prepareHostedIos } from '../device-host/hosted-ios.ts';
 import { writeHostedNative } from '../workspace/placement-state.ts';
@@ -73,7 +72,6 @@ import {
   appNameFromPath,
   buildLogFile,
   cacheDescription,
-  collectorEntry,
   devClientScheme,
   iosConfigurationSetting,
   iosFacts,
@@ -92,7 +90,7 @@ import {
   schemesFromInfoPlist,
   writeLastBuild,
 } from '../commands/ios.ts';
-import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeIosSim } from './_factories.ts';
+import { collectorProcessTitle, asProcessExit, makeError, makeExecutor, makeIosSim } from './_factories.ts';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { IosDeviceMismatchError } from '../engine/device-ios.ts';
@@ -260,7 +258,7 @@ interface RecordedArgs {
   storeBuild: { options?: unknown; platform?: unknown; path?: unknown; key?: unknown };
   resolveBuild: { key?: unknown };
   evictBuild: { platform?: unknown; key?: unknown };
-  verifyLaunch: { since?: unknown; logsDir?: unknown; platform?: unknown };
+  verifyLaunch: { since?: unknown; logsDir?: unknown; platform?: unknown; deviceStreamId?: string | null };
   uploadRemote: { fingerprintHash?: unknown; buildPath?: unknown };
   resolveRemote: { projectRoot?: unknown; platform?: unknown; fingerprintHash?: unknown };
   replaceCollector: { udid?: unknown; bundleId?: unknown; appName?: unknown; appExecutable?: unknown };
@@ -437,8 +435,9 @@ function harness(overrides: LooseDeps = {}) {
     },
     replaceCollector: async (args) => {
       record('replaceCollector', args);
-      return { killed: null, pid: 5150 };
+      return { killed: null, streamId: 'stream-5150' };
     },
+    checkPhysicalIosLog: async () => null,
     stopPreviousCollector: async (args) => {
       record('stopPreviousCollector', args);
       return { killed: null };
@@ -603,6 +602,7 @@ function buildRecords() {
 }
 
 test.each([false, true])('the iOS API preserves retained Metro cleanup after cancellation=%s', async (cancel) => {
+  const admission = vi.spyOn(await import('../daemon/client.ts'), 'beforeCommand').mockResolvedValue();
   reserve();
   const controller = new AbortController();
   const retainedClaimRoots = [join(tmpHome, 'retained-metro')];
@@ -635,7 +635,10 @@ test.each([false, true])('the iOS API preserves retained Metro cleanup after can
     });
   try {
     await expect(
-      createStim({ projectRoot: root, home: tmpHome }).run({ platform: 'ios', signal: controller.signal }),
+      createStim({ projectRoot: root, home: tmpHome, admission: 'none' }).run({
+        platform: 'ios',
+        signal: controller.signal,
+      }),
     ).rejects.toMatchObject({
       code: 'STIM_CLAIM_UNAVAILABLE',
       remedy: 'Recover Metro.',
@@ -643,17 +646,23 @@ test.each([false, true])('the iOS API preserves retained Metro cleanup after can
     });
   } finally {
     adapter.mockRestore();
+    admission.mockRestore();
   }
 });
 
 test('the API refuses recordedBuild and cleanAppState together with a physical device', async () => {
-  const stim = createStim({ projectRoot: root, home: tmpHome });
-  await expect(stim.run({ platform: 'ios', recordedBuild: true, device: true })).rejects.toMatchObject({
-    code: 'STIM_BAD_ARG',
-  });
-  await expect(stim.run({ platform: 'android', cleanAppState: true, device: 'R5CT' })).rejects.toMatchObject({
-    code: 'STIM_BAD_ARG',
-  });
+  const admission = vi.spyOn(await import('../daemon/client.ts'), 'beforeCommand').mockResolvedValue();
+  const stim = createStim({ projectRoot: root, home: tmpHome, admission: 'none' });
+  try {
+    await expect(stim.run({ platform: 'ios', recordedBuild: true, device: true })).rejects.toMatchObject({
+      code: 'STIM_BAD_ARG',
+    });
+    await expect(stim.run({ platform: 'android', cleanAppState: true, device: 'R5CT' })).rejects.toMatchObject({
+      code: 'STIM_BAD_ARG',
+    });
+  } finally {
+    admission.mockRestore();
+  }
 });
 
 describe('the project gate', () => {
@@ -1763,6 +1772,18 @@ describe('launch verification', () => {
     expect(text).not.toContain('then run `stim reload ios`');
     expect(text).not.toContain('agent-device metro reload --metro-port');
     expect(text).toMatch(/Do not run `stim ios` unless native inputs changed or the app process exits/);
+  });
+
+  test('delivered bundle with unavailable device logs remains unverified without a false Metro diagnosis', async () => {
+    reserve();
+    const { logs, errs, exitCode } = await run(
+      { json: true },
+      { verifyLaunch: async () => ({ verified: false, record: { event: 'bundle_response_finished' } }) },
+    );
+    expect(exitCode).toBe(null);
+    expect(parseFirst(logs).launched).toBe('unverified');
+    expect(errs.join('\n')).toContain('bundle delivered, but device log evidence is unavailable');
+    expect(errs.join('\n')).not.toContain('no bundle request reached');
   });
 
   test('a bare unverified launch exits 0 and gives a relaunch remedy', async () => {
@@ -3361,7 +3382,7 @@ describe('the collector', () => {
     verify?: NonNullable<ReplaceCollectorArgs['verify']>;
   } = {}) {
     if (state) writeWorkspaceState(root, state);
-    const spawns: { cmd: string; args: readonly string[]; opts: Record<string, unknown> }[] = [];
+    const starts: unknown[] = [];
     const kills: { pid: number; signal: NodeJS.Signals }[] = [];
     const notes: string[] = [];
     const opts: ReplaceCollectorArgs = {
@@ -3369,9 +3390,9 @@ describe('the collector', () => {
       udid: UDID,
       bundleId: 'com.example.app',
       appName: 'FixtureDev',
-      spawn: (cmd, args, spawnOptions) => {
-        spawns.push({ cmd, args, opts: spawnOptions });
-        return makeChildProcess({ pid: 7001 });
+      startStream: async (spec) => {
+        starts.push(spec);
+        return { streamId: 'stream-1' };
       },
       kill: (pid, signal) => {
         kills.push({ pid, signal });
@@ -3383,7 +3404,7 @@ describe('the collector', () => {
       waitMs: 0,
       note: (line) => notes.push(line),
     };
-    return { spawns, kills, notes, opts };
+    return { starts, kills, notes, opts };
   }
 
   test('a previous collector proven ours is SIGTERMed and replaced, not duplicated', async () => {
@@ -3391,8 +3412,8 @@ describe('the collector', () => {
     const result = await replaceCollector(h.opts);
     expect(h.kills).toEqual([{ pid: 999, signal: 'SIGTERM' }]);
     expect(result.killed).toBe(999);
-    expect(h.spawns.length).toBe(1);
-    expect(result.pid).toBe(7001);
+    expect(h.starts.length).toBe(1);
+    expect(result.streamId).toBe('stream-1');
   });
 
   test('a previous collector that is already gone (ESRCH) is not an error', async () => {
@@ -3404,7 +3425,7 @@ describe('the collector', () => {
     });
     const result = await replaceCollector(h.opts);
     expect(result.killed).toBe(null);
-    expect(h.spawns.length).toBe(1);
+    expect(h.starts.length).toBe(1);
   });
 
   test('a previous collector proven gone is left alone, never signalled, and not noted', async () => {
@@ -3416,11 +3437,19 @@ describe('the collector', () => {
     expect(h.kills).toEqual([]);
     expect(result.killed).toBe(null);
     expect(h.notes).toEqual([]);
-    expect(h.spawns.length).toBe(1);
-    expect(result.pid).toBe(7001);
+    expect(h.starts.length).toBe(1);
+    expect(result.streamId).toBe('stream-1');
   });
 
-  test('a previous collector that cannot be proven ours is left running, noted once, and replaced anyway', async () => {
+  test('a failed stream start reports a warning and has no stream ID', async () => {
+    const h = collectorHarness();
+    h.opts.startStream = async () => ({ error: 'EAGAIN' });
+    const result = await replaceCollector(h.opts);
+    expect(result.streamId).toBeNull();
+    expect(h.notes.join('\n')).toContain('EAGAIN');
+  });
+
+  test('a previous collector that cannot be proven ours is retained and blocks replacement', async () => {
     const h = collectorHarness({
       state: { collectors: { ios: { pid: 999 } } },
       verify: () => ({ status: 'unverified', reason: "pid 999 does not run this workspace's ios log collector" }),
@@ -3430,9 +3459,9 @@ describe('the collector', () => {
     expect(result.killed).toBe(null);
     expect(h.notes.length).toBe(1);
     expect(h.notes[0]).toMatch(/pid 999/);
-    expect(h.notes[0]).toMatch(/not signalled/);
-    expect(h.spawns.length).toBe(1);
-    expect(result.pid).toBe(7001);
+    expect(h.notes[0]).toMatch(/cannot be verified/);
+    expect(h.starts.length).toBe(0);
+    expect(result.error).toMatch(/stim stop/);
   });
 
   test('the default ownership check is wired through: a live process with a persisted identity is signalled', async () => {
@@ -3463,59 +3492,12 @@ describe('the collector', () => {
       expect(h.kills).toEqual([]);
       expect(result.killed).toBe(null);
       expect(h.notes.length).toBe(1);
-      expect(h.notes[0]).toMatch(/not signalled/);
+      expect(h.notes[0]).toMatch(/cannot be verified/);
     } finally {
       child.kill('SIGKILL');
       await collectorExits(child);
     }
   }, 20_000);
-
-  test('the collector is spawned detached, unref-ed, with the REAL app name from the .app path', async () => {
-    const h = collectorHarness();
-    await replaceCollector(h.opts);
-    const firstSpawn = h.spawns[0];
-    assert(firstSpawn);
-    const { cmd, args, opts } = firstSpawn;
-    expect(cmd).toBe(process.execPath);
-    expect(args[0]).toBe(collectorEntry());
-    expect(existsSync(collectorEntry())).toBeTruthy();
-    expect(args.slice(1)).toEqual([
-      '--platform',
-      'ios',
-      '--root',
-      root,
-      '--udid',
-      UDID,
-      '--bundle',
-      'com.example.app',
-      '--app-name',
-      'FixtureDev',
-    ]);
-    expect(opts.detached).toBe(true);
-    expect(opts.cwd).toBe(root);
-  });
-
-  test('an --app-executable is appended when the caller supplies CFBundleExecutable', async () => {
-    const h = collectorHarness();
-    h.opts.appExecutable = 'Fixture';
-    await replaceCollector(h.opts);
-    const firstSpawn = h.spawns[0];
-    assert(firstSpawn);
-    expect(firstSpawn.args.slice(1)).toEqual([
-      '--platform',
-      'ios',
-      '--root',
-      root,
-      '--udid',
-      UDID,
-      '--bundle',
-      'com.example.app',
-      '--app-name',
-      'FixtureDev',
-      '--app-executable',
-      'Fixture',
-    ]);
-  });
 
   test('the command hands it the app name derived from the .app basename', async () => {
     reserve();
@@ -6592,6 +6574,28 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(facts.cacheKey).toBe(`${FINGERPRINT}-debug-device`);
   });
 
+  test('an attached daemon refuses a physical console before stopping the old app or installing', async () => {
+    reserve();
+    const { exitCode, calls, logs } = await run(
+      { device: true, json: true },
+      {
+        ...connected(),
+        checkPhysicalIosLog: async () => ({
+          error: 'A physical iOS console cannot use an attached stimd.',
+          remedy: 'Run `stim serve` in a foreground terminal, then retry.',
+        }),
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_LAUNCH_FAILED',
+      remedy: expect.stringContaining('stim serve'),
+    });
+    expect(calls.order).not.toContain('stopPreviousCollector');
+    expect(calls.order).not.toContain('installIosDeviceApp');
+    expect(calls.order).not.toContain('replaceCollector');
+  });
+
   test('the phone launch line is the shared shape plus the pid that proves it', async () => {
     reserve();
     const { errs } = await run({ device: true }, connected());
@@ -6665,6 +6669,23 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     const { calls } = await run({ device: true }, connected());
     expect(calls.order.indexOf('stopPreviousCollector')).toBeLessThan(calls.order.indexOf('installIosDeviceApp'));
     expect(calls.order.indexOf('installIosDeviceApp')).toBeLessThan(calls.order.indexOf('replaceCollector'));
+  });
+
+  test('simulator readiness identifies the current device stream', async () => {
+    reserve();
+    const { calls } = await run({});
+    const verify = calls.args.verifyLaunch;
+    expect(verify?.deviceStreamId).toBe('stream-5150');
+  });
+
+  test('a simulator run without a log stream supplies no stream identity', async () => {
+    reserve();
+    const { calls } = await run(
+      {},
+      { replaceCollector: async () => ({ killed: null, streamId: null, error: 'EAGAIN' }) },
+    );
+    const verify = calls.args.verifyLaunch;
+    expect(verify?.deviceStreamId).toBeNull();
   });
 
   test('the simulator path does not stop its collector early: nothing there holds a console', async () => {
@@ -7358,6 +7379,33 @@ describe('ios --device: the lease on the phone', () => {
 
     const sim = await run({ json: true });
     expect(parseFirst(sim.logs)).not.toHaveProperty('lease');
+  });
+
+  test('waits for device lease release before returning', async () => {
+    reserve();
+    let acknowledge!: () => void;
+    let started!: () => void;
+    const releasing = new Promise<void>((resolve) => {
+      acknowledge = resolve;
+    });
+    const releaseStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const { lease } = fakeLease({
+      release: () => {
+        started();
+        return releasing;
+      },
+    });
+    let finished = false;
+    const result = run({ device: true }, leaseDeps(lease)).then((value) => {
+      finished = true;
+      return value;
+    });
+    await releaseStarted;
+    expect(finished).toBe(false);
+    acknowledge();
+    expect((await result).exitCode).toBe(null);
   });
 
   test('every device step raises the lease to its own bound, in order', async () => {

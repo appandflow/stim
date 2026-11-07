@@ -791,9 +791,17 @@ async function read<T>(
         env: context.env,
       });
       if ('refusal' in entered) throw new StimError(entered.refusal);
+      const state = operationState(context);
+      const previousOpToken = state.stimdOpToken;
+      if (entered.opToken) state.stimdOpToken = entered.opToken;
+      const cancel = () => entered.end?.();
+      context.signal.addEventListener('abort', cancel, { once: true });
+      if (context.signal.aborted) cancel();
       try {
         return await operation(context);
       } finally {
+        context.signal.removeEventListener('abort', cancel);
+        state.stimdOpToken = previousOpToken;
         entered.end?.();
       }
     });
