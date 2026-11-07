@@ -676,7 +676,9 @@ export async function runStimd({
     endAttached({
       inFlight: () => [...ops.keys()].map((socket) => opCommands.get(socket) ?? 'a command'),
       alive: async () =>
-        net.running() ? 'the net thread serves' : homeAlive(loadConfig(), await measureTick(loadConfig(), Date.now())),
+        net.running()
+          ? 'the net thread serves'
+          : homeAlive(loadConfig(), await measureTick(loadConfig(), Date.now(), { probe: false })),
       waitMs,
       handover: attached?.handover ?? false,
       mode: startMode,

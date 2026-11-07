@@ -28,6 +28,7 @@ const BIND_MS = 10_000;
 const POLL_MS = 200;
 const HANDOVER_MS = 2000;
 const KILL_GRACE_MS = 10_000;
+const MEASURE_MS = 5000;
 
 type Log = (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void;
 
@@ -238,7 +239,17 @@ export async function endAttached({
   }
   const unfinished = inFlight();
   let alive: string | null = null;
-  if (handover) alive = await measure().catch((error: unknown) => `its home could not be measured: ${String(error)}`);
+  if (handover) {
+    let timer: NodeJS.Timeout | undefined;
+    const late = new Promise<string>((done) => {
+      timer = setTimeout(() => done('its home was not measured in time'), MEASURE_MS);
+    });
+    alive = await Promise.race([
+      measure().catch((error: unknown) => `its home could not be measured: ${String(error)}`),
+      late,
+    ]);
+    clearTimeout(timer);
+  }
   if (alive || unfinished.length) {
     try {
       const at = new Date().toISOString();
