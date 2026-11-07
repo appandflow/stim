@@ -145,10 +145,10 @@ function openStimd(
       }
       buffer = buffer.slice(end + 1);
       if (!isJsonObject(message)) continue;
+      if (message.op === 'engine-changed') refusedByAttached = message.attached === true;
       // compat C26 permanent
       if (message.op === 'engine-changed') {
         refusedBuild ??= String(message.build);
-        refusedByAttached = message.attached === true;
         const next = switchedEngine();
         if (next && next.build === message.build) following ??= followSwitch(next.version, waiter);
       }

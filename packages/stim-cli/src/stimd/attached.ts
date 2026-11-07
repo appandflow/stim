@@ -122,6 +122,11 @@ export interface StimdLifetime {
   keepsServingWhenOff: boolean;
   /** `make()` for a detached stimd; null attached, which neither follows the engine nor rolls it back. */
   detachedOnly<T>(make: () => T): T | null;
+  /**
+   * Its version, and for an attached stimd `attached: true`, in its `engine-changed` refusal of another build's client,
+   * which then does not wait for a successor of its own build, since an attached stimd never relaunches.
+   */
+  refusal: { version: string; attached?: true };
   /** The error a failed listen ends the boot with: an attached stimd's denied socket is {@link SANDBOX_BLOCKED}. */
   listenFailed(error: unknown): unknown;
   /**
@@ -133,7 +138,7 @@ export interface StimdLifetime {
   serve(requestEnd: (why: string) => void, waitMs: number): void;
 }
 
-export function stimdLifetime(attached: boolean): StimdLifetime {
+export function stimdLifetime(attached: boolean, version: string): StimdLifetime {
   if (!attached)
     return {
       retries: (detached) => detached,
@@ -141,6 +146,7 @@ export function stimdLifetime(attached: boolean): StimdLifetime {
       failLevel: 'error',
       keepsServingWhenOff: false,
       detachedOnly: (make) => make(),
+      refusal: { version },
       listenFailed: (error) => error,
       signal: () => {},
       serve: () => {},
@@ -151,6 +157,7 @@ export function stimdLifetime(attached: boolean): StimdLifetime {
     failLevel: 'warn',
     keepsServingWhenOff: true,
     detachedOnly: () => null,
+    refusal: { version, attached: true },
     listenFailed: (error) =>
       error instanceof Error && 'code' in error && (error.code === 'EPERM' || error.code === 'EACCES')
         ? Object.assign(new Error(error.message), { code: SANDBOX_BLOCKED })

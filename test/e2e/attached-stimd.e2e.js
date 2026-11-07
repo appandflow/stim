@@ -188,24 +188,24 @@ test(
   async () => {
     useHome('race-home');
     const cli = join(PACKAGE, 'dist', 'cli.mjs');
-    const agents = ['a', 'b'].map((name) => ({
-      release: join(tmp, `race-${name}`),
-      ...agent(cli, ['revive'], { STIM_E2E_HOLD_UNTIL: join(tmp, `race-${name}`) }),
-    }));
+    const racers = ['a', 'b'].map((name) => {
+      const release = join(tmp, `race-${name}`);
+      return Object.assign(agent(cli, ['revive'], { STIM_E2E_HOLD_UNTIL: release }), { release });
+    });
     const host = await until('one agent to host stimd', () => record());
     const parent = execFileSync('ps', ['-o', 'ppid=', '-p', String(host.pid)], { encoding: 'utf8' }).trim();
-    const owner = agents.find(({ child }) => String(child.pid) === parent);
-    const other = agents.find((entry) => entry !== owner);
+    const owner = racers.find(({ child }) => String(child.pid) === parent);
+    const other = racers.find((entry) => entry !== owner);
     assert.ok(owner && other, "the stimd is one agent's child");
     await until('both agents to be admitted and in their command', () =>
-      agents.every(({ release }) => existsSync(`${release}.reached`)),
+      racers.every(({ release }) => existsSync(`${release}.reached`)),
     );
     writeFileSync(owner.release, '');
     await until('the host to wait for the other agent', () =>
       /waiting up to \d+ s for stim revive/.test(owner.stderr()),
     );
     writeFileSync(other.release, '');
-    await Promise.all(agents.map(({ closed }) => closed));
+    await Promise.all(racers.map(({ closed }) => closed));
     assert.ok(!alive(host.pid), 'the stimd exits once both commands ended');
     assert.ok(
       !existsSync(join(home, 'run', 'stimd-journal.json')),

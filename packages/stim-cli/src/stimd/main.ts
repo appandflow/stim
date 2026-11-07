@@ -306,7 +306,7 @@ export async function runStimd({
   );
   const updateCheckedAt = Math.max(0, ...leftover.map((holder) => Number(holder.details.updateCheckedAt) || 0));
   const details = { socket: path, mode: startMode, build, version: identity.version, boots, updateCheckedAt };
-  const lifetime = stimdLifetime(attached !== undefined);
+  const lifetime = stimdLifetime(attached !== undefined, identity.version);
   let own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details, undefined, lifetime.retries(CLAIM_TRIES));
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
@@ -560,14 +560,7 @@ export async function runStimd({
             return;
           }
           if (switchedTo || (message.kind !== 'desktop' && message.build !== build)) {
-            reply({
-              op: 'engine-changed',
-              build,
-              version: identity.version,
-              pid: process.pid,
-              ...(attached ? { attached: true } : {}),
-              ...switchedTo,
-            });
+            reply({ op: 'engine-changed', build, ...lifetime.refusal, pid: process.pid, ...switchedTo });
             socket.end();
             return;
           }
