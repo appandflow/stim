@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bindCIEngine } from '../stimd/attached.ts';
@@ -126,6 +126,52 @@ test('cancels engine retention while the store lock is held', async () => {
     await expect(binding).rejects.toMatchObject({ name: 'AbortError' });
   } finally {
     await lock.release();
+    select.mockReset();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a later CI admission promotes a staged engine after retained jobs finish', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-ci-flip-'));
+  const a = join(root, 'aaaaaaaaaaaa');
+  const b = join(root, 'bbbbbbbbbbbb');
+  const current = join(root, 'current.json');
+  const staged = join(root, 'staged.json');
+  for (const dir of [a, b]) {
+    mkdirSync(join(dir, 'dist'), { recursive: true });
+    writeFileSync(
+      join(dir, 'dist', 'attached-stimd.mjs'),
+      'export function hostStimd() {} export function holdCIStimd() {}',
+    );
+  }
+  writeFileSync(
+    join(b, 'dist', 'engine-select.mjs'),
+    `
+    import { writeFileSync, rmSync } from 'node:fs';
+    import { join } from 'node:path';
+    writeFileSync(join(process.env.STIM_ENGINE_ROOT, 'current.json'), JSON.stringify({format:1, dir:'bbbbbbbbbbbb', version:'2'}));
+    rmSync(join(process.env.STIM_ENGINE_ROOT, 'staged.json'));
+  `,
+  );
+  writeFileSync(current, JSON.stringify({ format: 1, dir: 'aaaaaaaaaaaa', version: '1' }));
+  select.mockImplementation(() => join(root, JSON.parse(readFileSync(current, 'utf8')).dir));
+  try {
+    const first = await bindCIEngine({ STIM_HOME: join(root, 'home') });
+    writeFileSync(staged, JSON.stringify({ format: 1, dir: 'bbbbbbbbbbbb', version: '2' }));
+    const second = await bindCIEngine({ STIM_HOME: join(root, 'home') });
+    expect(await second.runOp('run', [], {})).toBe(a);
+    first.release();
+    second.release();
+    const unknown = join(root, 'claims', 'cccccccccccc');
+    writeFileSync(unknown, 'unreadable claim root');
+    const third = await bindCIEngine({ STIM_HOME: join(root, 'home') });
+    expect(await third.runOp('run', [], {})).toBe(a);
+    third.release();
+    rmSync(unknown);
+    const fourth = await bindCIEngine({ STIM_HOME: join(root, 'home') });
+    expect(await fourth.runOp('run', [], {})).toBe(b);
+    fourth.release();
+  } finally {
     select.mockReset();
     rmSync(root, { recursive: true, force: true });
   }

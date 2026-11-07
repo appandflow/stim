@@ -89,8 +89,11 @@ test('missingAllowance asks for the stimd socket until an allowUnixSockets entry
   try {
     expect(missing([])).toEqual(['sandbox.network.allowUnixSockets']);
     expect(missing(['/var/run/docker.sock'])).toEqual(['sandbox.network.allowUnixSockets']);
-    const lock = sandboxAllowance('~/.stim', socket).allowUnixSockets.at(-1) ?? '';
-    for (const entry of [socket, '~/.stim/run', '~/.stim/run/stimd.sock']) expect(missing([entry, lock])).toEqual([]);
+    const locks = sandboxAllowance('~/.stim', socket).allowUnixSockets.filter(
+      (path) => path.endsWith('.lock.sock') || path.endsWith('.flip.sock'),
+    );
+    for (const entry of [socket, '~/.stim/run', '~/.stim/run/stimd.sock'])
+      expect(missing([entry, ...locks])).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -285,8 +288,10 @@ test.skipIf(process.platform === 'win32')('socket allowance includes both the gi
       writeFileSync(settings, JSON.stringify({ sandbox: { network: { allowUnixSockets: sockets } } }));
     write([socket]);
     expect(missingAllowance([settings], root, root, socket)).toContain('sandbox.network.allowUnixSockets');
-    const lock = sandboxAllowance(root, socket).allowUnixSockets.at(-1) ?? '';
-    write([socket, resolved, lock]);
+    const locks = sandboxAllowance(root, socket).allowUnixSockets.filter(
+      (path) => path.endsWith('.lock.sock') || path.endsWith('.flip.sock'),
+    );
+    write([socket, resolved, ...locks]);
     expect(missingAllowance([settings], root, root, socket)).not.toContain('sandbox.network.allowUnixSockets');
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -302,6 +307,7 @@ test('doctor allowance includes a custom engine store and its exact lock socket'
     const allowance = sandboxAllowance(home, join(home, 'run', 'stimd.sock'), env);
     expect(allowance.allowWrite).toContain(store);
     expect(allowance.allowUnixSockets).toContain(engineLockSocket(store));
+    expect(allowance.allowUnixSockets).toContain(engineLockSocket(store, '.flip.sock'));
     const path = join(root, 'settings.json');
     applyClaudeAllowance(path, allowance);
     expect(missingAllowance([path], home, root, join(home, 'run', 'stimd.sock'), env)).toEqual([]);
@@ -317,10 +323,16 @@ test.skipIf(process.platform === 'win32')(
     try {
       const store = join(root, 'long-engine-'.repeat(15));
       const lock = engineLockSocket(store);
+      const flip = engineLockSocket(store, '.flip.sock');
       const env = { STIM_ENGINE_ROOT: store };
       const allowance = sandboxAllowance(join(root, 'home'), join(root, 'home', 'stimd.sock'), env);
       const resolved = join(realpathSync('/tmp'), 'stim-sockets-' + process.getuid?.(), lock.split('/').at(-1) ?? '');
-      expect(allowance.allowUnixSockets).toEqual(expect.arrayContaining([lock, resolved]));
+      const resolvedFlip = join(
+        realpathSync('/tmp'),
+        'stim-sockets-' + process.getuid?.(),
+        flip.split('/').at(-1) ?? '',
+      );
+      expect(allowance.allowUnixSockets).toEqual(expect.arrayContaining([lock, resolved, flip, resolvedFlip]));
       expect(allowance.allowWrite).toEqual(
         expect.arrayContaining([
           join('/tmp', 'stim-sockets-' + process.getuid?.()),
