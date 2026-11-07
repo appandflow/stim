@@ -294,7 +294,7 @@ async function retainAttachedEngine(attached: boolean, log: Parameters<typeof fo
     throw new Error('Could not lock the attached Stim engine store.');
   }
   try {
-    const retention = followEngine(log);
+    const retention = followEngine(log, true);
     if (!retention) throw new Error('Could not retain the attached Stim engine.');
     retention.record(true, []);
     return retention;
@@ -582,7 +582,7 @@ export async function runStimd({
     if (!follower || switchedTo || closing) return;
     let next: Awaited<ReturnType<typeof follower.check>>;
     try {
-      follower.record(enginePinned(), engineDirs);
+      follower.record(enginePinned(), engineDirs, logs.running());
       next = await follower.check(enginePinned);
     } catch (error) {
       log('warn', 'engine_check_failed', error instanceof Error ? error.message : String(error));

@@ -17,6 +17,39 @@ import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 
 describe.skipIf(process.platform === 'win32')('native device streams', () => {
+  test('Android stream reuse respects the caller environment for the same app and aliases', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    vi.stubEnv('STIM_HOME', home);
+    const pidFile = join(home, 'pids');
+    const adb = join(bin, 'adb');
+    writeFileSync(
+      adb,
+      '#!/bin/sh\ncase "$*" in *pidof*) echo 3132;; *date*) date +%s000;; *logcat*) echo $$ >> "$TEST_PID"; exec sleep 600;; esac\n',
+    );
+    chmodSync(adb, 0o755);
+    const env = { ...process.env, STIM_HOME: home, TEST_PID: pidFile, PATH: [bin, process.env.PATH].join(delimiter) };
+    const streams = createStreams(() => {});
+    try {
+      const spec = { root, platform: 'android' as const, serial: 'emulator-1', packageName: 'com.test.app' };
+      const first = await streams.start({ ...spec, slot: 'phone' }, { ...env, ANDROID_LOG_TAGS: '*:S' });
+      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
+      const replacement = await streams.start({ ...spec, slot: 'phone' }, env);
+      expect(replacement.streamId).not.toBe(first.streamId);
+      const other = await streams.start({ ...spec, slot: 'tablet' }, { ...env, ANDROID_LOG_TAGS: '*:S' });
+      expect(other.streamId).not.toBe(replacement.streamId);
+      await vi.waitFor(() => expect(readFileSync(pidFile, 'utf8').trim().split('\n')).toHaveLength(3));
+      expect(await streams.stop(root, 'android', 'phone', replacement.streamId)).toBe(true);
+      expect(await streams.stop(root, 'android', 'tablet', other.streamId)).toBe(true);
+    } finally {
+      await streams.close().catch(() => {});
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   test('a deleted workspace can still stop its recorded stream', async () => {
     const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
@@ -356,8 +389,11 @@ process.exit(0);`;
     let child: { pid: number; processToken: string } | null = null;
     try {
       const spec = { root, platform: 'ios' as const, udid: 'U1', bundleId: 'com.test.app', appName: 'Test' };
-      const first = await streams.start({ ...spec, slot: 'phone' }, env);
-      const second = await streams.start({ ...spec, slot: 'tablet' }, env);
+      const first = await streams.start({ ...spec, slot: 'phone' }, { ...env, STIM_RUN_ID: 'one', STIM_TRACE: '/one' });
+      const second = await streams.start(
+        { ...spec, slot: 'tablet' },
+        { ...env, STIM_RUN_ID: 'two', STIM_TRACE: '/two' },
+      );
       expect(second.streamId).toBe(first.streamId);
       await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
       const pids = readFileSync(pidFile, 'utf8').trim().split('\n').map(Number);

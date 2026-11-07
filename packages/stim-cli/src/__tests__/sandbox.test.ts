@@ -309,3 +309,26 @@ test('doctor allowance includes a custom engine store and its exact lock socket'
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test.skipIf(process.platform === 'win32')(
+  'allows logical and resolved hashed lock paths for a long engine root',
+  () => {
+    const root = scratch();
+    try {
+      const store = join(root, 'long-engine-'.repeat(15));
+      const lock = engineLockSocket(store);
+      const env = { STIM_ENGINE_ROOT: store };
+      const allowance = sandboxAllowance(join(root, 'home'), join(root, 'home', 'stimd.sock'), env);
+      const resolved = join(realpathSync('/tmp'), 'stim-sockets-' + process.getuid?.(), lock.split('/').at(-1) ?? '');
+      expect(allowance.allowUnixSockets).toEqual(expect.arrayContaining([lock, resolved]));
+      expect(allowance.allowWrite).toEqual(
+        expect.arrayContaining([
+          join('/tmp', 'stim-sockets-' + process.getuid?.()),
+          join(realpathSync('/tmp'), 'stim-sockets-' + process.getuid?.()),
+        ]),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

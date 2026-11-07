@@ -587,3 +587,20 @@ test(
     }
   },
 );
+
+test('host end reports an attached daemon killed before shutdown', { timeout: 30_000 }, async () => {
+  const scratch = mkdtempSync(join(tmp, 'killed-host-'));
+  let host;
+  try {
+    const module = await import(pathToFileURL(join(PACKAGE, 'dist', 'attached-stimd.mjs')).href);
+    host = await module.hostStimd({ ...env, STIM_HOME: scratch }, { handover: false });
+    assert.ok(host && typeof host === 'object');
+    const info = JSON.parse(readFileSync(join(scratch, 'run', 'stimd.json'), 'utf8'));
+    process.kill(info.pid, 'SIGKILL');
+    await assert.rejects(host.end(), /Attached stimd exited/);
+    host = null;
+  } finally {
+    if (host && typeof host === 'object') await host.end().catch(() => {});
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});

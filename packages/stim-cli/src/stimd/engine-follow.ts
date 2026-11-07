@@ -29,7 +29,7 @@ type Log = (
 export interface EngineFollower {
   engine: StoreEngine;
   /** Records whether this stimd has pinned work and which builds its home's supervisors and collectors run. */
-  record(pinned: boolean, engineDirs: string[]): void;
+  record(pinned: boolean, engineDirs: string[], activeRetained?: boolean): void;
   /**
    * Admits an `op.begin`: records the work as pinned, then waits out a switch under way. Returns the build the engine
    * switched to meanwhile, which the op must not run on, or null.
@@ -54,7 +54,7 @@ function stagedDir(root: string): string | null {
  * Takes this stimd's shared claim under its build's claim root when it runs from the engine store; null otherwise, or
  * when the claim cannot be taken, and then the engine does not wait for this stimd.
  */
-export function followEngine(log: Log): EngineFollower | null {
+export function followEngine(log: Log, retained = false): EngineFollower | null {
   const engine = ownStoreEngine();
   if (!engine) return null;
   const root = buildClaimRoot(engine.root, engine.build);
@@ -62,16 +62,23 @@ export function followEngine(log: Log): EngineFollower | null {
     root,
     mode: 'shared',
     label: 'stimd engine',
-    details: { home: getConfigDir(), drained: true, engineDirs: [] },
+    details: { home: getConfigDir(), drained: !retained, engineDirs: [], ...(retained ? { retained: true } : {}) },
   });
   if (attempt.pending) releaseClaim(attempt.pending);
   let claim: ClaimHandle | null = attempt.acquired ?? null;
   if (!claim) return null;
   let flipping = false;
   let dirs: string[] = [];
-  const record = (pinned: boolean, engineDirs: string[]) => {
+  let activeRetained = false;
+  const record = (pinned: boolean, engineDirs: string[], active = activeRetained) => {
+    activeRetained = active;
     dirs = [...new Set(engineDirs)].toSorted();
-    const details = { home: getConfigDir(), drained: !pinned, engineDirs: dirs };
+    const details = {
+      home: getConfigDir(),
+      drained: !pinned,
+      engineDirs: dirs,
+      ...(retained || activeRetained ? { retained: true } : {}),
+    };
     if (!claim || JSON.stringify(details) === JSON.stringify(claim.details)) return;
     const was = claim.details.drained;
     claim = updateClaimDetails(claim, details);

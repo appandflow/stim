@@ -420,3 +420,16 @@ it('reports a failed engine claim release after cleanup', async () => {
     remedy: 'Restore claim store access',
   });
 });
+
+it.each([0, 3])('reports an abnormal daemon exit after a test exits %i', async (testExit) => {
+  lifecycle.host.mockResolvedValueOnce({
+    end: async () => {
+      throw new Error('Attached stimd exited with code 1.');
+    },
+  });
+  options.command = [process.execPath, '-e', `process.exitCode = ${testExit}`];
+  const result = await runCI(options);
+  expect(result.exitCode).toBe(testExit || 1);
+  expect(result.failure?.code).toBe(testExit ? 'STIM_CI_TEST_FAILED' : 'STIM_CI_CLEANUP_FAILED');
+  expect(result.cleanup.error?.message).toContain('Attached stimd exited');
+});

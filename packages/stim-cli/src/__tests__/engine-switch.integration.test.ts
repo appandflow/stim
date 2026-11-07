@@ -19,7 +19,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stimdRecordFile, workspaceAgentDeviceDir } from '@stim-cli/core/state';
 import { readClaimSet } from '../ownership-claim.ts';
-import { acquireBuildSlot } from '../engine/build-slots.ts';
+import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
 import { writeAgentDeviceBootHook } from '../engine/agent-device.ts';
 import { buildClaimRoot } from '../engine-store/claims.ts';
 import { takeLock } from '../engine-store/locks.ts';
@@ -224,6 +224,23 @@ test.skipIf(process.platform === 'win32')(
     expect(b).toMatch(/^[0-9a-f]{12}$/);
     expect(readJson(join(root, 'current.json')).dir).toBe(a);
 
+    const lock = await takeLock(root, '.lock.sock');
+    assert(lock);
+    pinned.socket.destroy();
+    await until('the retained stream claim', () => claimOf(a)[0]?.retained === true);
+    expect(claimOf(a)[0]?.drained).toBe(false);
+    const currentBuild = await acquireBuildSlot({ max: 8, engine: { root, build: a }, intervalMs: 20 });
+    expect(readJson(join(root, 'current.json')).dir).toBe(a);
+    expect(releaseBuildSlot(currentBuild)).toBe(true);
+    const stopped = await logRequest(
+      a,
+      [{ op: 'logs.stop', params: { root: work, platform: 'ios', slot: 'default', streamId } }],
+      2,
+    );
+    expect(stopped[1]).toMatchObject({ op: 'logs.stopped', stopped: true });
+    (await ask(a, [], 1)).socket.destroy();
+    await until('A to record drained', () => claimOf(a)[0]?.drained === true);
+
     const lines: string[] = [];
     const held = acquireBuildSlot({
       max: 8,
@@ -240,18 +257,6 @@ test.skipIf(process.platform === 'win32')(
       `switching Stim to ${readJson(join(root, 'staged.json')).version}; waiting for 0 running builds`,
     ]);
 
-    const lock = await takeLock(root, '.lock.sock');
-    assert(lock);
-    pinned.socket.destroy();
-    await new Promise((done) => setTimeout(done, 200));
-    expect(claimOf(a)[0]?.drained).toBe(false);
-    const stopped = await logRequest(
-      a,
-      [{ op: 'logs.stop', params: { root: work, platform: 'ios', slot: 'default', streamId } }],
-      2,
-    );
-    expect(stopped[1]).toMatchObject({ op: 'logs.stopped', stopped: true });
-    await until('A to record drained', () => claimOf(a)[0]?.drained === true);
     expect(readJson(join(root, 'current.json')).dir).toBe(a);
 
     await lock.release();

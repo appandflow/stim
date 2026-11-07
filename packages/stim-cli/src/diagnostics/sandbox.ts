@@ -43,11 +43,12 @@ export function sandboxAllowance(
   env: NodeJS.ProcessEnv = process.env,
 ): SandboxAllowance {
   const store = engineRoot(env);
-
+  const lock = engineLockSocket(store);
+  const lockWrites = lock.startsWith('/tmp/stim-sockets-') ? allowancePaths(dirname(lock)) : [];
   return {
-    allowWrite: [...new Set([stimHome, ...allowancePaths(store)])],
+    allowWrite: [...new Set([stimHome, ...allowancePaths(store), ...lockWrites])],
     allowMachLookup: ['com.apple.coresimulator.*'],
-    allowUnixSockets: [...new Set([...allowancePaths(socket), engineLockSocket(store)])],
+    allowUnixSockets: [...new Set([...allowancePaths(socket), ...allowancePaths(lock)])],
     allowLocalBinding: true,
   };
 }
