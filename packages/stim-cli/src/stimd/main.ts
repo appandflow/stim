@@ -439,6 +439,7 @@ export async function runStimd({
     pathPrepend: [],
     loopbackOnly: false,
     shareOnly: false,
+    attached: attached !== undefined,
     ...fields,
     desktopKey: key,
     script,

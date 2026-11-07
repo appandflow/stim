@@ -747,7 +747,11 @@ and stim ci run does the same for the whole job. Once that command ends, its
 stimd keeps serving the other commands still using it for up to this many
 seconds, naming them on stderr, then writes STIM_HOME/run/stimd-journal.json
 and exits; 0 exits at once. An attached stimd never exits idle or under
-daemon.mode off, which turns off only its passes.
+daemon.mode off, which turns off only its passes. It refuses offloaded build
+and probe jobs, hosted device setup, runtime installation and app transfers
+and launches. Existing session inspection, stop and control remain available.
+After the command ends, run stim serve outside the agent command to accept
+new work on a persistent stimd.
 
 AUTOMATIC MAINTENANCE IS MACHINE-LEVEL
 Automatic maintenance runs in daemon.mode: it removes what gc would under the
