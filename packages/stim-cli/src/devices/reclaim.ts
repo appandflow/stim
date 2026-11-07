@@ -13,7 +13,7 @@ import {
 import { existsSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTreeAsync, pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../stimd/metro/stop-cause.ts';
-import { ensurePersistentStimd, stopDeviceLogStream } from '../daemon/client.ts';
+import { ensurePersistentStimd, stopDeviceLogStream, stopMetroTree } from '../daemon/client.ts';
 import { readBootedParkDeadline } from './booted-park.ts';
 import {
   teardownOwnedBrowser,
@@ -538,7 +538,13 @@ async function reclaimIdleProject(
     await withWorkspaceStateLockAsync(path, () => requestDevServerStop(path, processToken, stopRequester)).catch(
       () => {},
     );
-    const signalled = await killMetroTreeAsync(supervisor.pid, supervisor.processToken, operation);
+    const signalled = await stopMetroTree(
+      path,
+      supervisor.pid,
+      supervisor.processToken,
+      () => killMetroTreeAsync(supervisor.pid, supervisor.processToken, operation),
+      signal,
+    );
     if (!signalled)
       await withWorkspaceStateLockAsync(path, () => withdrawDevServerStopRequest(path, processToken)).catch(() => {});
     if (signalled && (await waitForProcessExit(supervisor, 10_000, signal))) {

@@ -79,7 +79,7 @@ import { sameCollectorRecord } from '../stimd/logs/state.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { readBootedParkDeadline } from '../devices/booted-park.ts';
 import { clearDeferredShutdown } from '../devices/deferred-shutdown.ts';
-import { ensurePersistentStimd, stopDeviceLogStream } from '../daemon/client.ts';
+import { ensurePersistentStimd, stopDeviceLogStream, stopMetroTree } from '../daemon/client.ts';
 import { removeOwnedEmulatorMetroReverses } from '../devices/android.ts';
 import { removePhoneReverses } from '../devices/phone-reverses.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
@@ -646,7 +646,15 @@ async function stopWorkspace({
     ok = false;
     stillHolding = `supervisor pid ${target.pid} could not be verified`;
   } else {
-    outcomes.supervisor = await stopSupervisor(target, { root, killGroup, waiter, report, releaseReverses, requester });
+    outcomes.supervisor = await stopSupervisor(target, {
+      root,
+      killGroup,
+      waiter,
+      report,
+      releaseReverses,
+      requester,
+      operation,
+    });
     if (outcomes.supervisor.status !== 'stopped') {
       ok = false;
       stillHolding = outcomes.supervisor.reason;
@@ -994,6 +1002,7 @@ async function stopSupervisor(
     report,
     releaseReverses,
     requester,
+    operation,
   }: {
     root: string;
     killGroup: typeof killMetroTree | typeof killMetroTreeAsync;
@@ -1001,6 +1010,7 @@ async function stopSupervisor(
     report: (line: string) => void;
     releaseReverses: () => Promise<void>;
     requester: StopRequester | undefined;
+    operation?: StimContext;
   },
 ): Promise<SupervisorOutcome> {
   await releaseReverses();
@@ -1012,7 +1022,13 @@ async function stopSupervisor(
   } catch {}
   let signalled = false;
   try {
-    signalled = await killGroup(target.pid, target.processToken);
+    signalled = await stopMetroTree(
+      root,
+      target.pid,
+      target.processToken,
+      () => killGroup(target.pid, target.processToken),
+      operation?.signal,
+    );
   } catch (e) {
     signalled = false;
     report(

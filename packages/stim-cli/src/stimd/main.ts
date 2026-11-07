@@ -87,6 +87,7 @@ import {
   stopMetroTicks,
   closeMetroChildren,
   ensureMetro,
+  stopManagedMetro,
   ensureTunnel,
   metroChildrenRun,
   metroOpFlags,
@@ -1115,7 +1116,7 @@ async function runStimdInner(
         } else if (op === 'op.wait' || op === 'op.resume') {
           if (ops.has(socket)) ops.set(socket, op === 'op.wait' ? 'waiting' : 'pinned');
           void checkEngine();
-        } else if (op === 'metro.ensure' || op === 'tunnel.ensure') {
+        } else if (op === 'metro.ensure' || op === 'tunnel.ensure' || op === 'metro.stop') {
           admissionRevision++;
           const context = opContexts.get(socket);
           if (ops.has(socket) && !context) {
@@ -1143,7 +1144,9 @@ async function runStimdInner(
           const perform = () =>
             op === 'metro.ensure'
               ? ensureMetro(message.params, log, operationEnv, opControllers.get(socket)?.signal)
-              : ensureTunnel(message.params, operationEnv);
+              : op === 'metro.stop'
+                ? stopManagedMetro(message.params)
+                : ensureTunnel(message.params, operationEnv);
           const controller = opControllers.get(socket);
           const ask =
             context && controller
@@ -1199,6 +1202,7 @@ async function runStimdInner(
       ]);
       const error = attachedCleanupError(initial, backgroundFailure, results);
       if (error) {
+        if (isUnverifiedCleanup(error)) keepOwn = true;
         const retained = retainUnverifiedForeground(error, homeClaim, retention) ?? error;
         shutdown('attached cleanup could not be verified', 'error', true);
         await shutdownDone;

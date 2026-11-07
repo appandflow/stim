@@ -587,6 +587,24 @@ export function ensureMetro(
   return serialize(root, () => ensure(root, port, fields.launch === true, log, operationEnv, signal));
 }
 
+export function stopManagedMetro(params: unknown): Promise<Answer> {
+  const fields = isJsonObject(params) ? params : {};
+  let root: string;
+  try {
+    root = realpathSync(String(fields.root));
+  } catch {
+    return Promise.resolve({ op: 'error', code: 'bad-root', message: 'The workspace is unavailable.' });
+  }
+  return serialize(root, async () => {
+    const child = children.get(root);
+    if (!child) return { op: 'metro.stopped', state: 'not-owned' };
+    if (child.pid !== fields.pid || child.processToken !== fields.processToken)
+      return { op: 'error', code: 'metro-changed', message: 'The managed dev server changed before it could stop.' };
+    await stopChild(child, 'requested by a command');
+    return { op: 'metro.stopped', state: 'stopped' };
+  });
+}
+
 /** `op.begin {params: {workspace}}`'s flag: the workspace's Metro loaded other injected files, so it is foreign until a restart. */
 export function metroOpFlags(params: unknown): Answer {
   let child: MetroChild | undefined;

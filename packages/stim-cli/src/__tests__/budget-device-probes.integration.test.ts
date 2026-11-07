@@ -3,6 +3,8 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
+import * as android from '../devices/android.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 import { createIosSimSnapshot } from '../devices/ios.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -47,6 +49,25 @@ afterEach(() => {
   resetExecutor();
   delete process.env.STIM_HOME;
   rmSync(base, { recursive: true, force: true });
+});
+
+test.each(['plain', 'workspace'])('device activity preserves %s cleanup refusal over cancellation', async (kind) => {
+  const error =
+    kind === 'plain'
+      ? Object.assign(new Error('unverified cleanup'), { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true })
+      : new WorkspaceProcessCleanupError([], 'unverified cleanup', 'Inspect the child.');
+  const controller = new AbortController();
+  const resolver = vi.spyOn(android, 'ownedAvdSerialResolverAsync').mockReturnValue(async () => {
+    controller.abort();
+    throw error;
+  });
+  try {
+    await expect(collectOwnedDeviceActivityAsync(loadConfig(), [], NOW, process.env, controller.signal)).rejects.toBe(
+      error,
+    );
+  } finally {
+    resolver.mockRestore();
+  }
 });
 
 async function responsive<T>(read: () => Promise<T>): Promise<T> {

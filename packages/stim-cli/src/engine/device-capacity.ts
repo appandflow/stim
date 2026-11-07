@@ -319,6 +319,7 @@ async function listedAwait<T>(
   try {
     return (await read()) ?? empty;
   } catch (error) {
+    if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
     if (absent(error)) return empty;
     throw new DeviceCountUnavailable('', { cause: error });
   }

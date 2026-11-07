@@ -405,7 +405,7 @@ export async function enterDormantStage(action: MaintenanceAction, operation?: S
         operation,
       );
       const logs = hasLogs(path);
-      if (logs) await archiveWorkspace(path, 'maintenance', readWorkspaceState(path));
+      if (logs) await archiveWorkspace(path, 'maintenance', readWorkspaceState(path), operation);
       const archived = logs && !hasLogs(path);
       const record: DormantStageRecord = {
         at: new Date().toISOString(),

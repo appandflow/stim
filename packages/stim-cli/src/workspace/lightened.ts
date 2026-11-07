@@ -65,8 +65,9 @@ async function sourceFacts(worktree: string, operation?: StimContext): Promise<S
       ),
     };
   } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     operation?.signal.throwIfAborted();
-    if (error instanceof WorkspaceProcessCleanupError) throw error;
     return null;
   }
 }

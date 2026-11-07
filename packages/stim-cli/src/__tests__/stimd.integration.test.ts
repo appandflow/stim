@@ -419,6 +419,60 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
     }
   }, 20_000);
 
+  test('unverified final measurement keeps home and engine claims marked for recovery', async () => {
+    const before = new Set(process.listeners('SIGTERM'));
+    const oldExit = process.exitCode;
+    const root = join(home, 'engine');
+    const build = 'aaaaaaaaaaaa';
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'current.json'), JSON.stringify({ format: 1, dir: build, version: '1' }));
+    const engineClaim = tryAcquireClaim({ root: join(root, 'claims', build), mode: 'shared' }).acquired;
+    assert(engineClaim);
+    const ownEngine = vi.spyOn(engineSwitch, 'ownStoreEngine').mockReturnValue({ root, build });
+    const releaseEngine = vi.fn<() => void>();
+    const follower = vi.spyOn(engineFollow, 'followEngine').mockReturnValue({
+      engine: { root, build },
+      record: () => {},
+      admit: async () => null,
+      check: async () => null,
+      retainUnknown: () => {
+        markClaimChildPending(engineClaim);
+        return engineClaim.path;
+      },
+      release: releaseEngine,
+    });
+    const original = measure.measureTick;
+    const measurement = vi.spyOn(measure, 'measureTick').mockImplementation(async (...args) => {
+      if (args[2]?.probe === false)
+        throw Object.assign(new Error('final measurement cleanup unverified'), {
+          code: 'STIM_CLAIM_UNAVAILABLE',
+          remedy: 'Inspect fixture child.',
+          reportCleanup: true,
+        });
+      return original(...args);
+    });
+    let running: Promise<boolean> | undefined;
+    try {
+      process.exitCode = undefined;
+      running = runStimd({ mode: 'on', tickMs: 60_000, attached: { handover: true } });
+      await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+      const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+      assert(handler);
+      handler('SIGTERM');
+      await expect(running).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+      expect(readClaimSet(stimdClaimRoot()).live).toMatchObject([{ childDeclared: true }]);
+      expect(readClaimSet(engineClaim.root).live).toMatchObject([{ childDeclared: true }]);
+      expect(releaseEngine).not.toHaveBeenCalled();
+    } finally {
+      measurement.mockRestore();
+      follower.mockRestore();
+      ownEngine.mockRestore();
+      releaseClaim(engineClaim);
+      process.exitCode = oldExit;
+      await running?.catch(() => {});
+    }
+  }, 20_000);
+
   test.each(['passes', 'measure'])(
     'persistent %s cleanup refusal retains the home and engine',
     async (worker) => {
