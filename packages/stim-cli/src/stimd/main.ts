@@ -278,8 +278,8 @@ function attachedReply(attached: boolean, instance?: string): { attached?: true;
 
 function markDaemonFailure(level: Level, attached: boolean, mark: (() => void) | null): void {
   if (level !== 'error') return;
-  mark?.();
   if (attached) process.exitCode = 1;
+  else mark?.();
 }
 
 function refreshRetention(retention: ReturnType<typeof followEngine>): string | null {
@@ -387,13 +387,19 @@ function retainUnverifiedForeground(
   });
 }
 
-async function retainAttachedEngine(attached: boolean, log: Parameters<typeof followEngine>[0], cleanup: () => void) {
+async function retainAttachedEngine(
+  attached: boolean,
+  log: Parameters<typeof followEngine>[0],
+  cleanup: () => void,
+  signal?: AbortSignal,
+) {
   if (!attached) return null;
   const engine = ownStoreEngine();
   if (!engine) return null;
   let lock: Awaited<ReturnType<typeof takeLock>> = null;
   try {
     for (const until = Date.now() + 10_000; !lock && Date.now() < until;) {
+      signal?.throwIfAborted();
       lock = await takeLock(engine.root, '.lock.sock');
       if (!lock) await new Promise((done) => setTimeout(done, 50));
     }
@@ -419,6 +425,7 @@ async function retainAttachedEngine(attached: boolean, log: Parameters<typeof fo
   }
   let retention: ReturnType<typeof followEngine> = null;
   try {
+    signal?.throwIfAborted();
     requireCurrentEngine(engine);
     retention = followEngine(log, true);
     if (!retention)
@@ -442,6 +449,12 @@ async function retainAttachedEngine(attached: boolean, log: Parameters<typeof fo
   } finally {
     await lock.release();
   }
+}
+
+interface StimdStartup {
+  cleanup?: (error: unknown) => Promise<void>;
+  signal: AbortSignal;
+  finish?: () => void;
 }
 
 interface RunStimdOptions {
@@ -479,12 +492,21 @@ interface RunStimdOptions {
  * shutdown it cancels the dependency size scan and waits for its cleanup and for any slow pass already running.
  */
 export async function runStimd(options: RunStimdOptions = {}): Promise<boolean> {
-  const startup: { cleanup?: (error: unknown) => Promise<void> } = {};
+  const controller = new AbortController();
+  const startup: StimdStartup = { signal: controller.signal };
+  if (options.attached) {
+    const abort = () => controller.abort();
+    process.stdin.once('end', abort).once('error', abort);
+    process.stdin.resume();
+    startup.finish = () => process.stdin.off('end', abort).off('error', abort);
+  }
   try {
     return await runStimdInner(options, startup);
   } catch (error) {
     await startup.cleanup?.(error);
     throw error;
+  } finally {
+    startup.finish?.();
   }
 }
 
@@ -500,7 +522,7 @@ async function runStimdInner(
     service = serve !== undefined,
     attached,
   }: RunStimdOptions,
-  startup: { cleanup?: (error: unknown) => Promise<void> },
+  startup: StimdStartup,
 ): Promise<boolean> {
   const identity = stimBuild();
   const build = stimdBuildId();
@@ -621,8 +643,10 @@ async function runStimdInner(
   };
   await takeOver();
   // compat end
+  startup.signal.throwIfAborted();
   const claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details, takeOver);
   startupClaim = claim;
+  startup.signal.throwIfAborted();
   if (stopped !== null) log('info', 'stimd_takeover', `stopped stim-daemon pid ${stopped}, from an older Stim`);
   if (!claim) {
     releaseClaim(own);
@@ -634,12 +658,18 @@ async function runStimdInner(
   const follower = lifetime.detachedOnly(() => followEngine(log));
   startupFollower = follower;
   follower?.record(false, workspaceEngineDirs(loadConfig()));
-  const retention = await retainAttachedEngine(attached !== undefined, log, () => {
-    releaseClaim(claim);
-    releaseClaim(own);
-    writer.close();
-  });
+  const retention = await retainAttachedEngine(
+    attached !== undefined,
+    log,
+    () => {
+      releaseClaim(claim);
+      releaseClaim(own);
+      writer.close();
+    },
+    startup.signal,
+  );
   startupRetention = retention;
+  startup.signal.throwIfAborted();
   process.title = 'stimd';
   const key = writeDesktopKey(desktopKey);
   const script = realpathSync(process.argv[1] ?? '');
@@ -1116,6 +1146,7 @@ async function runStimdInner(
   try {
     await listen(path, server);
     bound = true;
+    startup.signal.throwIfAborted();
     writeAtomic(stimdRecordFile(), {
       format: RECORD_FORMAT,
       pid: process.pid,
@@ -1134,7 +1165,10 @@ async function runStimdInner(
   adoptMetroChildren(log);
   (retention ?? follower)?.record(Boolean(retention), [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
   if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
+  startup.signal.throwIfAborted();
   lifetime.serve(requestEnd, waitMs, instance);
+  startup.finish?.();
+  startup.finish = undefined;
   startup.cleanup = undefined;
   log(
     'info',

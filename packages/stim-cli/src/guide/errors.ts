@@ -1968,7 +1968,9 @@ not on any remote"  (worktree remove)
       body: () => `STIM_DAEMON_UNAVAILABLE
   An attached daemon may still be starting, ending, or serving a different
   build. Wait for its owning command to finish and retry, or use a separate
-  STIM_HOME. If startup still fails, run stim doctor or run outside the sandbox.`,
+  STIM_HOME. After startup times out or is cancelled, Stim allows up to 10
+  seconds for cleanup before forcing the daemon to exit. If startup still
+  fails, run stim doctor or run outside the sandbox.`,
     },
     STIM_CI_ATTACHED_HOME: {
       summary: 'another command owns this home’s attached daemon',

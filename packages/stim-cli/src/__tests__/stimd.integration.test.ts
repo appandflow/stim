@@ -266,6 +266,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
   }, 20_000);
 
   test('an attached daemon reports a failed tick as an unsuccessful exit', async () => {
+    const before = new Set(process.listeners('SIGTERM'));
     const oldExit = process.exitCode;
     const failing = vi.spyOn(daemonPasses, 'runHomePasses').mockRejectedValueOnce(new Error('tick failed in test'));
     try {
@@ -275,6 +276,16 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
       await running;
       expect(process.exitCode).toBe(1);
+      expect(readClaimSet(stimdClaimRoot()).live).toEqual([]);
+      expect(readClaimSet(stimdClaimRoot()).unresolved).toEqual([]);
+      process.exitCode = undefined;
+      const retry = runStimd({ mode: 'on', tickMs: 60_000, attached: { handover: false } });
+      await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+      const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+      assert(handler);
+      handler('SIGTERM');
+      await retry;
+      expect(readClaimSet(stimdClaimRoot()).unresolved).toEqual([]);
     } finally {
       failing.mockRestore();
       process.exitCode = oldExit;
