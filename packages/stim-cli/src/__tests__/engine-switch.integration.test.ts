@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import {
   appendFileSync,
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -93,13 +94,47 @@ async function beginTimes(build: string, runs: number): Promise<number[]> {
 
 const claimOf = (build: string) => readClaimSet(buildClaimRoot(root, build)).live.map((claim) => claim.details);
 
+function logRequest(
+  build: string,
+  messages: Record<string, unknown>[],
+  count: number,
+): Promise<Record<string, unknown>[]> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(stimd().socket);
+    const replies: Record<string, unknown>[] = [];
+    let buffer = '';
+    socket.setEncoding('utf8');
+    socket.on('data', (chunk: string) => {
+      buffer += chunk;
+      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+        replies.push(JSON.parse(buffer.slice(0, end)));
+        buffer = buffer.slice(end + 1);
+        if (replies.length === count) {
+          socket.destroy();
+          resolve(replies);
+        } else if (messages[replies.length - 1]) socket.write(`${JSON.stringify(messages[replies.length - 1])}\n`);
+      }
+    });
+    socket.once('error', reject);
+    socket.once('connect', () => socket.write(`${JSON.stringify({ kind: 'cli', build })}\n`));
+  });
+}
+
 beforeAll(() => {
   tmp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-switch-')));
   home = join(tmp, 'home');
   root = join(tmp, 'engine');
   work = join(tmp, 'work');
   mkdirSync(work);
+  const bin = join(tmp, 'bin');
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, 'xcrun'),
+    '#!/bin/sh\nif [ "$1 $2 $3 $4" = "devicectl device process launch" ]; then exec sleep 600; fi\nexec /usr/bin/xcrun "$@"\n',
+  );
+  chmodSync(join(bin, 'xcrun'), 0o755);
   env = { ...process.env, HOME: tmp, STIM_HOME: home, STIM_ENGINE_ROOT: root, STIM_DAEMON: 'on' };
+  env.PATH = `${bin}:${env.PATH}`;
   process.env.STIM_HOME = home;
   process.env.STIM_ENGINE_ROOT = root;
   const installed = (name: string) => join(tmp, name, 'lib', 'node_modules', 'stim');
@@ -158,6 +193,27 @@ test.skipIf(process.platform === 'win32')(
     const watched = new Promise<number | null>((done) => watch.once('exit', (code) => done(code)));
 
     const pinned = await ask(a, ['op.begin'], 2);
+    const [hello, begun, started] = await logRequest(
+      a,
+      [
+        { op: 'op.begin', params: { workspace: work, forwarded: { cwd: work, env } } },
+        {
+          op: 'logs.start',
+          params: {
+            root: work,
+            platform: 'ios',
+            udid: 'U1',
+            bundleId: 'com.test.app',
+            appName: 'Test',
+            physical: true,
+          },
+        },
+      ],
+      3,
+    );
+    expect([hello?.op, begun?.op, started?.op]).toEqual(['hello', 'op.begun', 'logs.started']);
+    const streamId = started?.streamId;
+    expect(streamId).toEqual(expect.any(String));
     expect(claimOf(a)).toEqual([expect.objectContaining({ drained: false })]);
     const stage = spawnSync(
       process.execPath,
@@ -187,6 +243,14 @@ test.skipIf(process.platform === 'win32')(
     const lock = await takeLock(root, '.lock.sock');
     assert(lock);
     pinned.socket.destroy();
+    await new Promise((done) => setTimeout(done, 200));
+    expect(claimOf(a)[0]?.drained).toBe(false);
+    const stopped = await logRequest(
+      a,
+      [{ op: 'logs.stop', params: { root: work, platform: 'ios', slot: 'default', streamId } }],
+      2,
+    );
+    expect(stopped[1]).toMatchObject({ op: 'logs.stopped', stopped: true });
     await until('A to record drained', () => claimOf(a)[0]?.drained === true);
     expect(readJson(join(root, 'current.json')).dir).toBe(a);
 

@@ -528,18 +528,19 @@ export async function runStimd({
     [...ops.values()].includes('pinned') ||
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
+  const enginePinned = (): boolean => pinned() || logs.running();
   const checkEngine = async (): Promise<void> => {
     if (!follower || switchedTo || closing) return;
     let next: Awaited<ReturnType<typeof follower.check>>;
     try {
-      follower.record(pinned(), engineDirs);
-      next = await follower.check(pinned);
+      follower.record(enginePinned(), engineDirs);
+      next = await follower.check(enginePinned);
     } catch (error) {
       log('warn', 'engine_check_failed', error instanceof Error ? error.message : String(error));
       return;
     }
     if (!next || switchedTo || closing) return;
-    if (!pinned()) await relaunch(next, follower.engine.root);
+    if (!enginePinned()) await relaunch(next, follower.engine.root);
     else if (!heldSwitch) {
       heldSwitch = true;
       log(

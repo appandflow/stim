@@ -17,6 +17,34 @@ import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 
 describe.skipIf(process.platform === 'win32')('native device streams', () => {
+  test('a deleted workspace can still stop its recorded stream', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    vi.stubEnv('STIM_HOME', home);
+    const xcrun = join(bin, 'xcrun');
+    const pidFile = join(home, 'pid');
+    writeFileSync(xcrun, '#!/bin/sh\necho $$ > "$TEST_PID"\nexec sleep 600\n');
+    chmodSync(xcrun, 0o755);
+    const env = { ...process.env, STIM_HOME: home, TEST_PID: pidFile, PATH: [bin, process.env.PATH].join(delimiter) };
+    const streams = createStreams(() => {});
+    try {
+      const { streamId } = await streams.start(
+        { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
+        env,
+      );
+      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
+      rmSync(root, { recursive: true, force: true });
+      expect(await streams.stop(root, 'ios', 'default', streamId)).toBe(true);
+      expect(readWorkspaceState(root)?.collectors).toBeUndefined();
+    } finally {
+      await streams.close().catch(() => {});
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   test('shutdown drains a final line without interrupting another stream', async () => {
     const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
@@ -27,7 +55,7 @@ describe.skipIf(process.platform === 'win32')('native device streams', () => {
     const xcrun = join(bin, 'xcrun');
     writeFileSync(
       xcrun,
-      `#!/bin/sh\nexec "${process.execPath}" -e 'const fs = require("fs"); process.on("SIGTERM", () => { console.log(JSON.stringify({eventType:"logEvent",eventMessage:"trailer"})); process.exit(0); }); fs.appendFileSync(process.env.READY, "ready\\n"); setInterval(() => {}, 1000);'\n`,
+      `#!/bin/sh\nexec "${process.execPath}" -e 'const fs = require("fs"); process.on("SIGTERM", () => { process.stdout.write(JSON.stringify({eventType:"logEvent",eventMessage:"trailer"})); process.exit(0); }); fs.appendFileSync(process.env.READY, "ready\\n"); setInterval(() => {}, 1000);'\n`,
     );
     chmodSync(xcrun, 0o755);
     const env = { ...process.env, STIM_HOME: home, READY: ready, PATH: [bin, process.env.PATH].join(delimiter) };

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { isJsonObject } from '@stim-cli/core/state';
 import { runCollector, type RunCollectorHandle } from './collector.ts';
@@ -379,8 +380,8 @@ export function createStreams(log: (message: string) => void): StreamTable {
         }
         if (isJsonObject(recorded)) {
           if (typeof recorded.streamId !== 'string') throw new Error('the previous device log stream has no identity');
-          await clearStreamClaim(root, recorded.streamId);
-          unregisterStreamAll(root, recorded.streamId);
+          const recordedId = recorded.streamId;
+          await clearStreamClaim(root, recordedId, () => unregisterStreamAll(root, recordedId));
         }
         const id = randomUUID();
         const claim = await takeStreamClaim(root, id);
@@ -478,8 +479,8 @@ export function createStreams(log: (message: string) => void): StreamTable {
             .closed()
             .catch((error: unknown) => log(`device log stream ${id} could not flush: ${String(error)}`));
           if ([...streams.values()].includes(stream)) {
-            if (!releaseClaim(claim)) throw new Error('the device log claim changed during cleanup');
             unregisterStreamAll(root, id);
+            if (!releaseClaim(claim)) throw new Error(`the device log claim at ${claim.root} changed during cleanup`);
             for (const alias of stream.aliases.keys()) if (streams.get(alias) === stream) streams.delete(alias);
             for (const wake of stream.waiters) wake(true);
           }
@@ -558,8 +559,14 @@ export function createStreams(log: (message: string) => void): StreamTable {
       });
     },
     async stop(root: string, platform: string, slot: string, streamId: string): Promise<boolean> {
-      const key = `${realpathSync(root)}\0${deviceSlotKey(platform, validateDeviceSlot(slot))}`;
-      const canonicalRoot = realpathSync(root);
+      let canonicalRoot: string;
+      try {
+        canonicalRoot = realpathSync(root);
+      } catch (error) {
+        if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') throw error;
+        canonicalRoot = resolvePath(root);
+      }
+      const key = `${canonicalRoot}\0${deviceSlotKey(platform, validateDeviceSlot(slot))}`;
       return serialize(canonicalRoot, async () => {
         const stream = streams.get(key);
         if (!stream) {
@@ -567,8 +574,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
           if (recorded === undefined) return false;
           if (!isJsonObject(recorded) || recorded.kind !== 'stream' || recorded.streamId !== streamId)
             throw new Error('the device log stream changed');
-          await clearStreamClaim(root, streamId);
-          unregisterStreamAll(root, streamId);
+          await clearStreamClaim(root, streamId, () => unregisterStreamAll(root, streamId));
           return true;
         }
         if (stream.id !== streamId) throw new Error('the device log stream changed');
@@ -605,8 +611,10 @@ export function createStreams(log: (message: string) => void): StreamTable {
     running: () => streams.size > 0,
     async close(): Promise<void> {
       await Promise.all(queues.values());
-      await Promise.all([...new Set(streams.values())].map(stop));
+      const results = await Promise.allSettled([...new Set(streams.values())].map(stop));
       await writers?.close();
+      const failure = results.find((result) => result.status === 'rejected');
+      if (failure?.status === 'rejected') throw failure.reason;
     },
   };
 }
