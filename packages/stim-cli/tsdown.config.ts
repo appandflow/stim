@@ -25,6 +25,7 @@ export default defineConfig({
     'cache-manifest': 'src/cache/cache-manifest.ts',
     'pull-requests': 'src/pull-request-state.ts',
     'share-links': 'src/workspace/share-links.ts',
+    'attached-stimd': 'src/stimd/attached.ts',
     'build-artifact-cache': 'src/offload/build-artifact-cache.ts',
     'stimd-thread': 'src/stimd/threads.ts',
     'stimd-status': 'src/stimd/status-thread.ts',

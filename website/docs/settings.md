@@ -1094,6 +1094,17 @@ stages off. `idle.dormantDays` is a machine setting.
 
 <StimTabs code="stim settings set daemon.mode report --scope machine" />
 
+When a command cannot start stimd detached, as in an agent sandbox that blocks
+launchd, `systemd-run` or detached children, it runs stimd as its own child
+instead, and `stim ci run` does the same for the whole job so nothing is left
+on the runner. After that command ends, its stimd keeps serving the other
+commands still using it for up to `daemon.attachedExitWaitSeconds`
+(`STIM_DAEMON_ATTACHED_EXIT_WAIT_SECONDS`, a machine setting, default `120`;
+`0` exits at once), names them on stderr, then exits; the next command starts
+or hosts the next stimd. If the sandbox denies stimd's socket itself, the
+command stops with `STIM_SANDBOX_BLOCKED`; `stim doctor --fix` adds the socket
+to Claude Code's `sandbox.network.allowUnixSockets`.
+
 Stim does not read the settings below. `stim doctor` and `stim settings` report
 any left in a config file or the environment, with the setting that replaces
 it. `stim settings set` and `get` refuse each with `STIM_BAD_ARG` naming its

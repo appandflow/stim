@@ -30,6 +30,7 @@ import { systemdDaemonArgs } from './systemd-launch.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
 const CLAIM_WAIT_MS = 5000;
+const ATTACH_AFTER_MS = 2000;
 const CLAIM_POLL_MS = 50;
 const LAUNCH_TIMEOUT_MS = 5000;
 const OP_BEGIN_TIMEOUT_MS = 30_000;
@@ -71,6 +72,23 @@ let refusedBuild: string | null = null;
 let opSocket: Socket | null = null;
 let following: Promise<never> | null = null;
 let admitting = false;
+let socketDenied = false;
+let attachedHost: import('../stimd/attached.ts').AttachedHost | null = null;
+
+/** The code of the refusal of a command that can neither reach this home's stimd nor host one in its own process. */
+export const SANDBOX_BLOCKED = 'STIM_SANDBOX_BLOCKED';
+
+/** Whether `error` is the {@link SANDBOX_BLOCKED} refusal. */
+export function isSandboxBlocked(error: unknown): error is Error {
+  return error instanceof Error && 'code' in error && error.code === SANDBOX_BLOCKED;
+}
+
+function sandboxBlocked(): Error {
+  return Object.assign(
+    new Error(`${stimdSocket()} is outside this sandbox's allowance; run stim doctor --fix, then rerun`),
+    { code: SANDBOX_BLOCKED },
+  );
+}
 
 /** Whether a stimd of another build refused this process's connection. */
 export function stimdRefused(): boolean {
@@ -137,7 +155,9 @@ function openStimd(
       else answered = true;
     }
   });
-  socket.once('error', () => {});
+  socket.once('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EPERM' || error.code === 'EACCES') socketDenied = true;
+  });
   return socket;
 }
 
@@ -201,7 +221,7 @@ export const STIMD_ENV: ReadonlySet<string> = new Set<string>([
 ]);
 
 /** Windows environment names are case-insensitive, and `Path` and `SystemRoot` are their usual spelling there. */
-function stimdEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Record<string, string> {
+export function stimdEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Record<string, string> {
   const kept: Record<string, string> = {};
   for (const [name, value] of Object.entries(env))
     if (value !== undefined && STIMD_ENV.has(platform === 'win32' ? name.toUpperCase() : name)) kept[name] = value;
@@ -336,9 +356,12 @@ export function launchStimd(
   return { settled, exited: () => exited };
 }
 
-/** Whether a live stimd claim shows up within `CLAIM_WAIT_MS`, checking again as soon as the started stimd exits. */
-async function claimTaken({ settled, exited }: ReturnType<typeof launchStimd>): Promise<boolean> {
-  const deadline = Date.now() + CLAIM_WAIT_MS;
+/** Whether a live stimd claim shows up within `waitMs`, checking again as soon as the started stimd exits. */
+async function claimTaken(
+  { settled, exited }: ReturnType<typeof launchStimd>,
+  waitMs = CLAIM_WAIT_MS,
+): Promise<boolean> {
+  const deadline = Date.now() + waitMs;
   for (;;) {
     if (stimdLive()) return true;
     if (exited() || Date.now() >= deadline) return stimdLive();
@@ -349,16 +372,23 @@ async function claimTaken({ settled, exited }: ReturnType<typeof launchStimd>): 
 /**
  * Makes sure this home's stimd runs before a command creates running state: tells a live one about the contact so it
  * does not exit under the command, or starts one in the mode this command resolves, `STIM_DAEMON` included, and waits
- * up to five seconds for it to take its claim. Returns whether a stimd holds the home; an unresolvable daemon claim is
- * reported and counts as held.
+ * for it to take its claim. When that detached stimd has not taken it within 2 s, a CLI command (not an API caller)
+ * hosts stimd as its own child for its lifetime (`hostStimd`), and otherwise waits up to five seconds in all. Under
+ * `daemon.mode` off it starts nothing, but a pinned command still begins its op with a live stimd, such as the one
+ * `stim ci` hosts. Throws {@link SANDBOX_BLOCKED} when the sandbox denies this home's stimd socket. Returns whether a
+ * stimd holds the home; an unresolvable daemon claim is reported and counts as held.
  */
 export async function ensureStimd(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
   pin = false,
   held?: Socket[],
+  command?: string,
 ): Promise<boolean> {
-  if (!spawnsDaemon(env)) return false;
+  if (!spawnsDaemon(env)) {
+    if (pin && stimdLive()) await admit(held, command);
+    return false;
+  }
   try {
     const [claim] = [...readClaimSet(daemonClaimRoot()).unresolved, ...readClaimSet(stimdClaimRoot()).unresolved];
     if (claim) {
@@ -370,13 +400,23 @@ export async function ensureStimd(
     admitting = pin && !held;
     if (stimdLive()) {
       if (!pin) await askStimd('hello', CONTACT_TIMEOUT_MS);
-      else if (!(await beginOp(held)) && stimdRefused() && (await successorBound())) await beginOp(held);
+      else await admit(held, command);
       return true;
     }
-    const taken = await claimTaken(launchStimd(env, daemonMode(env), platform));
-    if (taken && pin) await beginOp(held);
+    const launched = launchStimd(env, daemonMode(env), platform);
+    let taken = await claimTaken(launched, ATTACH_AFTER_MS);
+    if (!taken && !held && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
+      const { hostStimd } = await import('../stimd/attached.ts');
+      const host = await hostStimd(env);
+      if (host === 'blocked') throw sandboxBlocked();
+      if (host !== 'held' && host !== null) attachedHost = host;
+      taken = stimdLive();
+    }
+    taken ||= await claimTaken(launched, CLAIM_WAIT_MS - ATTACH_AFTER_MS);
+    if (taken && pin) await admit(held, command);
     return taken;
-  } catch {
+  } catch (error) {
+    if (isSandboxBlocked(error)) throw error;
     return false;
   } finally {
     admitting = false;
@@ -385,12 +425,36 @@ export async function ensureStimd(
 }
 
 /**
+ * Begins this command's op with the live stimd, once more after a stimd of this build replaced one of an older build
+ * that refused it. Throws {@link SANDBOX_BLOCKED} when the sandbox denied the connection.
+ */
+async function admit(held: Socket[] | undefined, command: string | undefined): Promise<void> {
+  if (await beginOp(held, command)) return;
+  if (socketDenied) throw sandboxBlocked();
+  if (stimdRefused() && (await successorBound())) await beginOp(held, command);
+}
+
+/**
+ * How to end the stimd this command hosts, if it hosts one: close this command's own op first, then wait for the
+ * stimd to finish the other commands' ops (up to `daemon.attachedExitWaitSeconds`) and exit.
+ */
+export function attachedHostEnd(): (() => Promise<void>) | undefined {
+  const host = attachedHost;
+  if (!host) return undefined;
+  return () => {
+    attachedHost = null;
+    opSocket?.destroy();
+    return host.end();
+  };
+}
+
+/**
  * Sends `op.begin` and keeps the connection open until this process exits, which is the op's `op.end`: until then
  * stimd counts the command's work as pinned, except while it waits at a build slot (`opWaiting`). With `held`, an API
  * operation's, the connection goes into it instead, and closing it ends the op. stimd answers at once, or after a
  * switch already under way, with `engine-changed`. False when it does not answer.
  */
-function beginOp(held?: Socket[]): Promise<boolean> {
+function beginOp(held?: Socket[], command?: string): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (begun: boolean) => {
@@ -406,7 +470,9 @@ function beginOp(held?: Socket[]): Promise<boolean> {
       resolve(begun);
     };
     const timer = setTimeout(() => finish(false), OP_BEGIN_TIMEOUT_MS);
-    const socket = openStimd([{ op: 'op.begin' }], (reply) => finish(reply.op === 'op.begun'));
+    const socket = openStimd([{ op: 'op.begin', ...(command ? { command } : {}) }], (reply) =>
+      finish(reply.op === 'op.begun'),
+    );
     socket.once('close', () => {
       if (opSocket === socket) opSocket = null;
       finish(false);
@@ -461,7 +527,7 @@ export async function beforeCommand(
   if (!creates && !inline) return;
   const { commandWorkspace } = await import('./command-workspace.ts');
   const root = commandWorkspace(creates && recordUse, env, cwd);
-  const taken = creates && (await ensureStimd(env, process.platform, pin, held));
+  const taken = creates && (await ensureStimd(env, process.platform, pin, held, `stim ${name}`));
   if (taken || !inline) return;
   const { runPassesInProcess } = await import('./passes.ts');
   await runPassesInProcess(name, env, root);

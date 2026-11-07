@@ -39,11 +39,12 @@ function apiCommand(operation: ApiOperation, platform: string | undefined): stri
  * (`admission: 'none'`) take no admission. API callers never run the passes in process: maintenance reads its
  * machine-global scope guards from `process.env`, not the client's environment. API `start` records its workspace's
  * use itself, after the caller's `beforeStart`, so its admission does not. Returns the refusal, or the command
- * admitted (null when none was).
+ * admitted (null when none was) and, for a CLI command that hosts stimd, `end`, which the CLI awaits once the command
+ * finished so that stimd ends with it.
  */
 export async function runOperation(
   entry: OperationEntry,
-): Promise<{ refusal: OperationRefusal } | { admitted: string | null; end?: () => void }> {
+): Promise<{ refusal: OperationRefusal } | { admitted: string | null; end?: () => unknown }> {
   const command =
     entry.caller === 'cli'
       ? entry.command || null
@@ -58,16 +59,27 @@ export async function runOperation(
   if (refusal) return { refusal };
   if (entry.caller === 'cli' && entry.plan) return { admitted: null };
   const held: import('node:net').Socket[] = [];
+  const client = await import('./daemon/client.ts');
   try {
-    const { beforeCommand } = await import('./daemon/client.ts');
-    await beforeCommand(command, entry.env, {
+    await client.beforeCommand(command, entry.env, {
       cwd: entry.cwd,
       recordUse: entry.caller === 'cli' || entry.operation !== 'start',
       passes: entry.caller === 'cli',
       pin: true,
       ...(entry.caller === 'api' ? { held } : {}),
     });
-  } catch {}
+  } catch (error) {
+    if (client.isSandboxBlocked(error))
+      return {
+        refusal: {
+          code: client.SANDBOX_BLOCKED,
+          message: error.message,
+          remedy: 'Outside the sandbox the command runs as is; `stim guide errors STIM_SANDBOX_BLOCKED` explains it.',
+        },
+      };
+  }
+  const end = entry.caller === 'cli' ? client.attachedHostEnd() : undefined;
+  if (end) return { admitted: command, end };
   return held.length
     ? { admitted: command, end: () => held.forEach((socket) => socket.destroy()) }
     : { admitted: command };

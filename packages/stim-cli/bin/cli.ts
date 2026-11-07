@@ -68,6 +68,7 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
     refuseRelativeStimPaths();
     process.env.STIM_RUN_ID = runId();
     const first = argv[2];
+    let end: (() => unknown) | undefined;
     const loadCommand = commands.get((first === 'help' ? argv[3] : first) ?? '');
     if (loadCommand) {
       (await loadCommand()).default(program, pkg.version);
@@ -111,8 +112,10 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
         console.error(refusal.remedy);
         process.exit(1);
       }
+      end = entered.end;
     });
     await program.parseAsync(argv);
+    await end?.();
   } catch (err) {
     const code = (err as { code?: unknown })?.code;
     const message = err instanceof Error ? err.message : String(err);

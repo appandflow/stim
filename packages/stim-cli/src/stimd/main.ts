@@ -80,6 +80,15 @@ import { readRecords } from '../engine-store/store.ts';
 // compat C25 until removal-minor
 import { stopForeignSupervisors } from './foreign-supervisors.ts';
 // compat end
+import {
+  ATTACHED_ARG,
+  attachedExitWaitMs,
+  endAttached,
+  NO_HANDOVER_ARG,
+  readoptJournal,
+  SANDBOX_EXIT,
+  stimdLifetime,
+} from './attached.ts';
 
 const TICK_MS = 60_000;
 const DEPENDENCY_SCAN_MS = 10 * 60_000;
@@ -121,12 +130,13 @@ async function takeClaim(
   label: string,
   details: Record<string, unknown>,
   beforeRetry: () => Promise<unknown> = async () => {},
+  retries = CLAIM_TRIES,
 ): Promise<ClaimHandle | null> {
   for (let tries = 0; ; tries++) {
     const attempt = tryAcquireClaim({ root, mode, label, details });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (attempt.acquired) return attempt.acquired;
-    if (tries >= CLAIM_TRIES) return null;
+    if (tries >= retries) return null;
     await beforeRetry();
     await new Promise((done) => setTimeout(done, CLAIM_RETRY_MS));
   }
@@ -253,6 +263,7 @@ export async function runStimd({
   onNet,
   afterSwitch = false,
   service = serve !== undefined,
+  attached,
 }: {
   tickMs?: number;
   /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
@@ -269,6 +280,11 @@ export async function runStimd({
   afterSwitch?: boolean;
   /** Whether a service unit or `stim serve` runs this stimd, which turns `engine.autoUpdate`'s `auto` on. */
   service?: boolean;
+  /**
+   * Bound to the process that started it (`hostStimd`): it neither follows the engine nor exits idle or under
+   * `daemon.mode` off, and ends when its stdin closes or on a signal, through `endAttached`.
+   */
+  attached?: { handover: boolean };
 } = {}): Promise<boolean> {
   const identity = stimBuild();
   const build = stimdBuildId();
@@ -289,7 +305,8 @@ export async function runStimd({
   );
   const updateCheckedAt = Math.max(0, ...leftover.map((holder) => Number(holder.details.updateCheckedAt) || 0));
   const details = { socket: path, mode: startMode, build, version: identity.version, boots, updateCheckedAt };
-  let own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details);
+  const lifetime = stimdLifetime(attached !== undefined);
+  let own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details, undefined, lifetime.retries(CLAIM_TRIES));
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
     writer.close();
@@ -305,7 +322,7 @@ export async function runStimd({
     own = updateClaimDetails(own, { ...details, boots: marked }) ?? own;
   };
   process.title = 'stimd';
-  const store = ownStoreEngine();
+  const store = lifetime.detachedOnly(ownStoreEngine);
   if (store && crashLooping(boots, build)) {
     const held = await holdCrashLoop(store, identity.version, getConfigDir());
     if ('rolledBack' in held || 'moved' in held) {
@@ -355,13 +372,14 @@ export async function runStimd({
   // compat end
   const claim = await takeClaim(daemonClaimRoot(), 'shared', 'stimd', details, takeOver);
   if (stopped !== null) log('info', 'stimd_takeover', `stopped stim-daemon pid ${stopped}, from an older Stim`);
+  readoptJournal(log);
   if (!claim) {
     releaseClaim(own);
     log('warn', 'stimd_claim_held', 'a stim-daemon from an older Stim still holds the daemon claim; exiting');
     writer.close();
     return false;
   }
-  const follower = followEngine(log);
+  const follower = lifetime.detachedOnly(() => followEngine(log));
   const key = writeDesktopKey(desktopKey);
   const script = realpathSync(process.argv[1] ?? '');
   const net = createNetThread(
@@ -448,6 +466,9 @@ export async function runStimd({
   };
   const open = new Set<Socket>();
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
+  const opCommands = new WeakMap<Socket, string>();
+  let ending: string | null = null;
+  let lastAlive: string | null = null;
   let engineDirs: string[] = [];
   try {
     if (follower) engineDirs = workspaceEngineDirs(loadConfig());
@@ -606,6 +627,7 @@ export async function runStimd({
         } else if (op === 'op.begin') {
           hasten?.();
           ops.set(socket, 'pinned');
+          opCommands.set(socket, typeof message.command === 'string' ? message.command : 'a command');
           void (follower?.admit() ?? Promise.resolve(null))
             .catch((error: unknown) => {
               log('warn', 'engine_admit_failed', error instanceof Error ? error.message : String(error));
@@ -649,7 +671,24 @@ export async function runStimd({
     socket.on('data', onData);
   });
   let bound = false;
-  const onSignal = (signal: NodeJS.Signals) => shutdown(signal);
+  const waitMs = attachedExitWaitMs();
+  const finishAttached = () =>
+    endAttached({
+      inFlight: () => [...ops.keys()].map((socket) => opCommands.get(socket) ?? 'a command'),
+      alive: lastAlive,
+      waitMs,
+      handover: attached?.handover ?? false,
+      mode: startMode,
+      identity: { build, version: identity.version },
+      release: (why) => shutdown(ending === 'stdin' ? why : `${why} (${ending})`),
+      log,
+    });
+  const requestEnd = (why: string) => {
+    if (ending) return;
+    ending = why;
+    void finishAttached();
+  };
+  const onSignal = (signal: NodeJS.Signals) => (attached ? requestEnd(signal) : shutdown(signal));
   const shutdown = (why: string, level: Level = 'info') => {
     if (closing) return;
     closing = true;
@@ -686,10 +725,11 @@ export async function runStimd({
       version: identity.version,
     });
   } catch (error) {
-    shutdown(`cannot listen on ${path}: ${error instanceof Error ? error.message : String(error)}`, 'error');
+    shutdown(`cannot listen on ${path}: ${error instanceof Error ? error.message : String(error)}`, lifetime.failLevel);
     throw error;
   }
   if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
+  lifetime.serve(requestEnd, waitMs);
   log(
     'info',
     'daemon_started',
@@ -722,7 +762,7 @@ export async function runStimd({
     const configured = configuredDaemonMode();
     const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
     if (mode === 'off') {
-      if (net.running() || restartingNet) {
+      if (net.running() || restartingNet || lifetime.keepsServingWhenOff) {
         for (const socket of tickReplies.splice(0)) socket.destroy();
         continue;
       }
@@ -850,6 +890,7 @@ export async function runStimd({
       break;
     }
     if (closing) break;
+    lastAlive = alive;
     const idle = !alive && !pending && !wentDormant && Date.now() - contactSince >= tickMs;
     emptyTicks = idle ? emptyTicks + 1 : 0;
     const tookMs = Math.round(performance.now() - tickStarted);
@@ -868,7 +909,7 @@ export async function runStimd({
       },
     );
     loopDelay.reset();
-    if (emptyTicks >= EMPTY_TICKS_BEFORE_EXIT) {
+    if (emptyTicks >= lifetime.idleTicks(EMPTY_TICKS_BEFORE_EXIT)) {
       await checkEngine();
       shutdown('nothing runs in this Stim home');
       break;
@@ -974,6 +1015,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
       onNet: reportNet,
       afterSwitch: argv.includes('--after-switch'),
       service: serve !== undefined && !argv.includes('--carried'),
+      ...(argv.includes(ATTACHED_ARG) ? { attached: { handover: !argv.includes(NO_HANDOVER_ARG) } } : {}),
     });
     if (serve && !served && stimdLive()) await serveThroughStimd(serve, reportNet);
   } catch (error) {
@@ -989,7 +1031,8 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
       writer.write({ src: 'stimd', level: 'error', event: 'daemon_failed', msg: message });
       writer.close();
     } catch {}
-    process.exitCode = 1;
+    const denied = error instanceof Error && 'code' in error && (error.code === 'EPERM' || error.code === 'EACCES');
+    process.exitCode = argv.includes(ATTACHED_ARG) && denied ? SANDBOX_EXIT : 1;
   }
   if (label)
     try {
