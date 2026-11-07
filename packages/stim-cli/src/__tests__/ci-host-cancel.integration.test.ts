@@ -56,3 +56,28 @@ test.skipIf(process.platform === 'win32')(
   },
   15_000,
 );
+
+test('host end preserves a later structured cleanup refusal even in the same stdout chunk', async () => {
+  const executor = getExecutor();
+  const script = `
+    process.stdout.write(JSON.stringify({ op: 'attached', instance: 'fixture', waitMs: 1000 }) + '\\n' +
+      JSON.stringify({ op: 'attached-claim-refusal', refusal: { code: 'STIM_CLAIM_UNAVAILABLE', message: 'cleanup unverified', remedy: 'inspect claim' } }) + '\\n');
+    process.stdin.resume();
+    process.stdin.on('end', () => { process.exitCode = 1; });
+  `;
+  setExecutor({
+    ...executor,
+    spawn: (_file, _args, options) => executor.spawn(process.execPath, ['-e', script], options),
+  });
+  try {
+    const hosted = await hostStimd(process.env);
+    if (!hosted || typeof hosted !== 'object' || !('end' in hosted)) throw new Error('fixture did not host');
+    await expect(hosted.end()).rejects.toMatchObject({
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      message: 'cleanup unverified',
+      remedy: 'inspect claim',
+    });
+  } finally {
+    resetExecutor();
+  }
+});

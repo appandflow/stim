@@ -4,6 +4,7 @@ import {
   ClaimUnavailableError,
   readClaimSet,
   releaseClaim,
+  markClaimChildPending,
   tryAcquireClaim,
   updateClaimDetails,
   type ClaimHandle,
@@ -38,6 +39,7 @@ export interface EngineFollower {
   admit(): Promise<{ build: string; version: string } | null>;
   /** The build the engine points at once it is not this one, else flips a staged build when every claim drained. */
   check(pinned: () => boolean): Promise<{ build: string; version: string } | null>;
+  retainUnknown(): string | null;
   release(): void;
 }
 
@@ -144,6 +146,11 @@ export function followEngine(log: Log, retained = false): EngineFollower | null 
         flipping = false;
       }
       return switchedEngine(engine);
+    },
+    retainUnknown() {
+      if (!claim) return null;
+      markClaimChildPending(claim);
+      return claim.path;
     },
     release() {
       releaseClaim(claim);

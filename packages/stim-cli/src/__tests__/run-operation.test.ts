@@ -128,3 +128,39 @@ it('keeps an attached host when an unrelated admission error is best effort', as
     end.mockRestore();
   }
 });
+
+it.each(['on', 'off'])('refuses a creating command on an unresolved home under daemon mode %s', async (mode) => {
+  const { spawn } = await import('node:child_process');
+  const { resolve } = await import('node:path');
+  const workspace = await import('../daemon/command-workspace.ts');
+  const recorded = vi.spyOn(workspace, 'commandWorkspace');
+  const script = `
+    import { tryAcquireClaim, markClaimChildPending } from '@stim-cli/core/ownership-claim';
+    import { stimdClaimRoot } from '@stim-cli/core/state';
+    const claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive' }).acquired;
+    if (!claim) throw new Error('fixture claim unavailable');
+    markClaimChildPending(claim);
+  `;
+  try {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+      cwd: resolve('packages/stim-cli'),
+      env,
+      stdio: 'ignore',
+    });
+    expect(await new Promise<number | null>((done) => child.once('close', done))).toBe(0);
+    const result = await runOperation({
+      caller: 'cli',
+      command: 'start',
+      plan: false,
+      cwd: dir,
+      env: { ...env, STIM_DAEMON: mode },
+    });
+    expect(result).toMatchObject({
+      refusal: { code: 'STIM_CLAIM_UNAVAILABLE', remedy: expect.stringContaining('rm ') },
+    });
+    expect(recorded).not.toHaveBeenCalled();
+    expect(await cli('stop')).toHaveProperty('admitted', 'stop');
+  } finally {
+    recorded.mockRestore();
+  }
+});

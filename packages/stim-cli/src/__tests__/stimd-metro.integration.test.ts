@@ -18,7 +18,7 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { processGroupAlive } from '@stim-cli/core/ownership-claim';
 import { readMetroRecords } from '../engine/launch-verify.ts';
-import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 const cli = join(repo, 'packages/stim-cli/dist/cli.mjs');
@@ -196,6 +196,49 @@ describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel
     );
   }, 30_000);
 
+  test('attached shutdown seals admission and joins an in-flight tunnel start before releasing home', async () => {
+    const root = bareProject();
+    const started = join(dir, 'tunnel-started');
+    const release = join(dir, 'tunnel-release');
+    write(
+      join(dir, 'bin', 'cloudflared'),
+      `#!/bin/sh
+while [ $# -gt 0 ]; do [ "$1" = --logfile ] && log="$2"; shift; done
+touch ${JSON.stringify(started)}
+while [ ! -e ${JSON.stringify(release)} ]; do sleep 0.05; done
+echo "https://fixture-words.trycloudflare.com" >> "$log"
+exec sleep 600
+`,
+      0o755,
+    );
+    write(join(dir, 'bin', 'launchctl'), '#!/bin/sh\nexit 0\n', 0o755);
+    write(join(dir, 'bin', 'systemd-run'), '#!/bin/sh\nexit 0\n', 0o755);
+    const child = spawn(process.execPath, [cli, '__stimd', '--attached'], { env, stdio: ['pipe', 'ignore', 'ignore'] });
+    stimd = child;
+    await vi.waitFor(() => expect(record()?.pid).toBe(child.pid), { timeout: 15_000, interval: 50 });
+    const pending = ask('tunnel.ensure', {
+      root,
+      provider: 'cloudflared',
+      port: await freePort(),
+      requireReachable: false,
+    });
+    const exited = once(child, 'exit');
+    try {
+      await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 10_000, interval: 20 });
+      child.stdin?.end();
+      await new Promise((done) => setTimeout(done, 700));
+      expect(alive(child.pid)).toBe(true);
+      expect(await ask('op.begin', {})).toMatchObject({ op: 'error', code: 'daemon-ending' });
+      writeFileSync(release, '');
+      expect(await pending).toHaveProperty('op', 'tunnel');
+      await exited;
+      expect(existsSync(join(home, 'run', 'stimd-journal.json'))).toBe(true);
+    } finally {
+      writeFileSync(release, '');
+      await pending.catch(() => {});
+    }
+  }, 30_000);
+
   test("metro.ensure starts Metro through metro-host.cjs on the project's Node, and a warm child answers at once", async () => {
     const root = bareProject();
     const port = await freePort();
@@ -245,8 +288,17 @@ describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel
 
     await stopStimd();
     expect([alive(metro.pid), alive(tunnel.pid)]).toEqual([true, true]);
+    const metroClaim = claimFile(root, 'metro');
+    const priorClaim = JSON.parse(readFileSync(metroClaim, 'utf8'));
+    writeFileSync(
+      metroClaim,
+      JSON.stringify({ ...priorClaim, details: { ...priorClaim.details, engineDir: 'bbbbbbbbbbbb' } }),
+    );
     appendFileSync(join(workspaceLogsDir(root), 'metro.stderr.log'), 'error: written while no stimd ran\n');
     await startStimd();
+    await vi.waitFor(() =>
+      expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor.engineDir).toBe('bbbbbbbbbbbb'),
+    );
     await vi.waitFor(
       () =>
         expect(readFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), 'utf8')).toContain(
