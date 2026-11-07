@@ -56,14 +56,17 @@ test.skipIf(process.platform === 'win32')(
       for (let i = 0; i < 200 && !existsSync(marker); i++) await new Promise((done) => setTimeout(done, 25));
       expect(existsSync(marker)).toBe(true);
       const pid = Number(readFileSync(marker, 'utf8'));
+      beforeRelease.mockImplementation(() => expect(() => process.kill(pid, 0)).toThrow(/ESRCH/));
       expect(hostSpawn).not.toHaveBeenCalled();
       controller.abort();
       await expect(hosted).rejects.toMatchObject({ name: 'AbortError' });
       expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
+      expect(beforeRelease).toHaveBeenCalledTimes(2);
       expect(hostSpawn).not.toHaveBeenCalled();
     } finally {
       controller.abort();
       own.mockReset();
+      beforeRelease.mockReset();
       resetExecutor();
       rmSync(root, { recursive: true, force: true });
     }
