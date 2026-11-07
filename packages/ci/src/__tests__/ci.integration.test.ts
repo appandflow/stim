@@ -227,6 +227,8 @@ it('uses the same job-local home and cache for native work and commands across h
   expect(lifecycle.create.mock.calls.map(([value]) => ({ home: value.home, cache: value.buildCache }))).toEqual([
     expected,
     expected,
+    expected,
+    expected,
   ]);
   expect(lifecycle.host.mock.calls.map(([env]) => ({ home: env.STIM_HOME, cache: env.STIM_BUILD_CACHE }))).toEqual([
     expected,
@@ -258,6 +260,8 @@ it('hosts stimd for the whole job, ending it after cleanup and diagnostics and n
   expect(result.exitCode).toBe(3);
   expect(lifecycle.steps).toEqual(['host', 'run', 'stop', 'diagnostics', 'host ended']);
   expect(lifecycle.host.mock.calls[0]?.[1]).toEqual({ handover: false });
+  expect(lifecycle.create.mock.calls.at(-1)?.[0].env?.STIM_POOL_BOOTED_GRACE_MINUTES).toBe('0');
+  expect(lifecycle.host.mock.calls[0]?.[0].STIM_POOL_BOOTED_GRACE_MINUTES).toBe('0');
 });
 
 it('names the stim ci build command when no build is recorded', async () => {
@@ -330,4 +334,33 @@ it('asks Stim to install the recorded build from clean app state and never to bu
       cleanAppState: true,
     }),
   );
+});
+
+it('disables booted simulator grace only for work under its own attached host', async () => {
+  vi.stubEnv('STIM_POOL_BOOTED_GRACE_MINUTES', '15');
+  const output = join(root, 'grace.json');
+  options.command = [
+    process.execPath,
+    '-e',
+    `require('node:fs').writeFileSync(${JSON.stringify(output)}, JSON.stringify(process.env.STIM_POOL_BOOTED_GRACE_MINUTES));`,
+  ];
+  await runCI(options);
+  expect(JSON.parse(readFileSync(output, 'utf8'))).toBe('0');
+  expect(lifecycle.create.mock.calls.at(-1)?.[0].env?.STIM_POOL_BOOTED_GRACE_MINUTES).toBe('0');
+  lifecycle.host.mockResolvedValueOnce('held');
+  await runCI({ ...options, artifactsDir: join(root, 'second-results') });
+  expect(JSON.parse(readFileSync(output, 'utf8'))).toBe('15');
+  expect(lifecycle.create.mock.calls.at(-1)?.[0].env).toBeUndefined();
+});
+
+it.each([
+  ['blocked', 'STIM_SANDBOX_BLOCKED'],
+  [null, 'STIM_CI_SETUP_FAILED'],
+])('refuses CI setup when its daemon host returns %s', async (hosted, code) => {
+  lifecycle.host.mockResolvedValueOnce(hosted);
+  const result = await runCI(options);
+  expect(result.exitCode).toBe(1);
+  expect(result.failure?.code).toBe(code);
+  expect(lifecycle.run).not.toHaveBeenCalled();
+  expect(lifecycle.stop).not.toHaveBeenCalled();
 });

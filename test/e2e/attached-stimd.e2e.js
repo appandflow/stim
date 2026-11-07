@@ -336,19 +336,19 @@ test(
     assert.equal(answer.listening, true);
     writeFileSync(release, '');
     await first.closed;
-    const args = JSON.parse(readFileSync(join(home, 'successor-args.json'), 'utf8'));
-    assert.ok(args.includes('--service'));
-    assert.ok(args.includes('--carried'));
-    assert.ok(args.includes('--loopback-only'));
-    assert.equal(args[args.indexOf('--port') + 1], String(port));
     const successor = await until('detached successor', () => {
       const next = record();
       return next && next.pid !== started.pid ? next : null;
     });
     try {
+      const args = JSON.parse(readFileSync(join(home, 'successor-args.json'), 'utf8'));
+      assert.ok(args.includes('--service'));
+      assert.ok(args.includes('--carried'));
+      assert.ok(args.includes('--loopback-only'));
+      assert.equal(args[args.indexOf('--port') + 1], String(port));
       await until('successor listener', async () => {
         try {
-          return (await fetch(`http://127.0.0.1:${port}/health`)).status < 600;
+          return (await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) })).status < 600;
         } catch {
           return false;
         }

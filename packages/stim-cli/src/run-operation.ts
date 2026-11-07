@@ -31,6 +31,8 @@ function apiCommand(operation: ApiOperation, platform: string | undefined): stri
   return API_COMMANDS[operation] ?? null;
 }
 
+const endCli = async () => (await import('./daemon/client.ts')).attachedHostEnd()?.();
+
 /**
  * The one entry every CLI command and API operation passes before it runs. A command the daemon governs is refused
  * while the environment sets a removed setting's variable or a leftover setting turns a mechanism off; otherwise the
@@ -51,13 +53,13 @@ export async function runOperation(
       : entry.admission === 'command' && entry.operation
         ? apiCommand(entry.operation, entry.platform)
         : null;
-  if (!command) return { admitted: null };
+  if (!command) return entry.caller === 'cli' ? { admitted: null, end: endCli } : { admitted: null };
   const refusal =
     fallbackRefusal(command, entry.env) ??
     removedEnvironmentRefusal(command, entry.env) ??
     removedConfigRefusal(command, entry.cwd, entry.env);
   if (refusal) return { refusal };
-  if (entry.caller === 'cli' && entry.plan) return { admitted: null };
+  if (entry.caller === 'cli' && entry.plan) return { admitted: null, end: endCli };
   const held: import('node:net').Socket[] = [];
   const client = await import('./daemon/client.ts');
   try {
@@ -78,8 +80,7 @@ export async function runOperation(
         },
       };
   }
-  const end = entry.caller === 'cli' ? client.attachedHostEnd() : undefined;
-  if (end) return { admitted: command, end };
+  if (entry.caller === 'cli') return { admitted: command, end: endCli };
   return held.length
     ? { admitted: command, end: () => held.forEach((socket) => socket.destroy()) }
     : { admitted: command };

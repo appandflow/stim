@@ -47,10 +47,11 @@ function stimEnvironment(options: CIOptions): NodeJS.ProcessEnv {
   };
 }
 
-function commandEnvironment(result: CIResult, options: CIOptions): NodeJS.ProcessEnv {
+function commandEnvironment(result: CIResult, options: CIOptions, ownedHost: boolean): NodeJS.ProcessEnv {
   const facts = result.run!.facts;
   return {
     ...stimEnvironment(options),
+    ...(ownedHost ? { STIM_POOL_BOOTED_GRACE_MINUTES: '0' } : {}),
     STIM_CI_PLATFORM: result.platform,
     STIM_CI_DEVICE_ID: String('udid' in facts ? (facts.udid ?? '') : 'serial' in facts ? (facts.serial ?? '') : ''),
     STIM_CI_APP_ID: String('bundleId' in facts ? (facts.bundleId ?? '') : ''),
@@ -102,7 +103,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
         }
       }
     : undefined;
-  const stim = createStim({
+  let stim = createStim({
     projectRoot,
     home: options.home ? resolve(options.home) : undefined,
     buildCache: options.buildCache ? resolve(options.buildCache) : undefined,
@@ -112,8 +113,26 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   let host: AttachedHost | null = null;
   try {
     signal?.throwIfAborted();
-    const hosted = await hostStimd(stimEnvironment(options), { handover: false });
-    if (typeof hosted === 'object') host = hosted;
+    const hosted = await hostStimd(
+      { ...stimEnvironment(options), STIM_POOL_BOOTED_GRACE_MINUTES: '0' },
+      { handover: false },
+    );
+    if (hosted === 'blocked')
+      throw Object.assign(new Error('The sandbox denied the Stim daemon socket.'), {
+        code: 'STIM_SANDBOX_BLOCKED',
+        remedy: 'Run outside the sandbox; `stim guide errors sandbox` explains the available allowances.',
+      });
+    if (hosted === null) throw new Error('Could not start the Stim daemon for this CI job.');
+    if (hosted && typeof hosted === 'object') {
+      host = hosted;
+      stim = createStim({
+        projectRoot,
+        home: options.home ? resolve(options.home) : undefined,
+        buildCache: options.buildCache ? resolve(options.buildCache) : undefined,
+        env: { ...process.env, STIM_POOL_BOOTED_GRACE_MINUTES: '0' },
+        onProgress,
+      });
+    }
     attempted = true;
     result.run = await stim.run({ ...options.run, recordedBuild: true, cleanAppState: true, signal });
     signal?.throwIfAborted();
@@ -124,7 +143,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
       result.test = await runCommand({
         command: options.command,
         cwd: projectRoot,
-        env: commandEnvironment(result, options),
+        env: commandEnvironment(result, options, host !== null),
         artifactsDir,
         signal,
         onOutput: onProgress,
