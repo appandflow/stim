@@ -303,6 +303,10 @@ export async function runStimd({
   const identity = stimBuild();
   const build = stimdBuildId();
   const configAtStart = configuredDaemonMode();
+  const effectiveMode = () => {
+    const configured = configuredDaemonMode();
+    return configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
+  };
   const started = performance.now();
   const startedAt = new Date().toISOString();
   mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
@@ -707,7 +711,7 @@ export async function runStimd({
             : homeAlive(loadConfig(), await measureTick(loadConfig(), Date.now(), { probe: false })),
       waitMs,
       handover: attached?.handover ?? false,
-      mode: startMode,
+      mode: effectiveMode,
       identity: { build, version: identity.version },
       successorArgs: () => {
         const running = net.running();
@@ -797,8 +801,7 @@ export async function runStimd({
     hasten = null;
     if (closing) break;
     tickRequested = false;
-    const configured = configuredDaemonMode();
-    const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
+    const mode = effectiveMode();
     void metroTick(mode === 'on', log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
     if (mode === 'off') {
       if (net.running() || restartingNet || keepsServingWhenOff(lifetime.keepsServingWhenOff)) {

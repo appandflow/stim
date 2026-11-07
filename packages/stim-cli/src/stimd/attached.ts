@@ -220,7 +220,7 @@ export async function endAttached({
   alive: () => Promise<string | null>;
   waitMs: number;
   handover: boolean;
-  mode: DaemonMode;
+  mode: () => DaemonMode;
   identity: { build: string; version: string };
   release: (why: string) => Promise<void>;
   successorArgs: () => string[];
@@ -269,7 +269,7 @@ export async function endAttached({
       : 'its command ended',
   );
   if (!handover || (!alive && !unfinished.length)) return;
-  launchStimd(process.env, mode, process.platform, undefined, args);
+  launchStimd(process.env, mode(), process.platform, undefined, args);
   for (const until = Date.now() + HANDOVER_MS; Date.now() < until;) {
     if (stimdLive()) {
       log('info', 'attached_handover', 'a detached stimd took over this Stim home');

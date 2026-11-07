@@ -334,6 +334,8 @@ test(
       );
     });
     assert.equal(answer.listening, true);
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ daemon: { mode: 'off' } }));
+    rmSync(join(home, 'daemon', 'snapshot.json'), { force: true });
     writeFileSync(release, '');
     await first.closed;
     const successor = await until('detached successor', () => {
@@ -346,6 +348,7 @@ test(
       assert.ok(args.includes('--carried'));
       assert.ok(args.includes('--loopback-only'));
       assert.equal(args[args.indexOf('--port') + 1], String(port));
+      assert.equal(args[args.indexOf('--mode') + 1], 'off');
       await until('successor listener', async () => {
         try {
           return (await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(1000) })).status < 600;
@@ -353,6 +356,18 @@ test(
           return false;
         }
       });
+      await new Promise((done, reject) => {
+        const socket = connect(successor.socket);
+        socket.once('error', reject);
+        socket.once('connect', () =>
+          socket.write(
+            `${JSON.stringify({ kind: 'cli', build: successor.build })}\n${JSON.stringify({ op: 'tick' })}\n`,
+          ),
+        );
+        socket.once('close', done);
+        socket.resume();
+      });
+      assert.equal(existsSync(join(home, 'daemon', 'snapshot.json')), false);
     } finally {
       process.kill(successor.pid, 'SIGTERM');
       await until('successor to exit', () => !alive(successor.pid));
