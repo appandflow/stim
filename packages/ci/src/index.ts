@@ -209,7 +209,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
       result.failure.remedy = `Run ${buildCommand(options, projectRoot)} first.`;
   } finally {
     cleaningUp = true;
-    if (signal?.aborted) {
+    if (signal?.aborted && result.failure?.code !== 'STIM_CLAIM_UNAVAILABLE') {
       const timedOut = timeout?.aborted && !options.signal?.aborted;
       result.exitCode = timedOut ? 124 : 130;
       result.failure = {
