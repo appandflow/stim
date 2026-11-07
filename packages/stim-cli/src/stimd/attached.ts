@@ -1,7 +1,8 @@
-import { renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   isJsonObject,
   loadConfig,
@@ -26,7 +27,7 @@ const DEFAULT_WAIT_SECONDS = 120;
 const BIND_MS = 10_000;
 const POLL_MS = 200;
 const HANDOVER_MS = 2000;
-const KILL_GRACE_MS = 10_000;
+export const KILL_GRACE_MS = 10_000;
 const MEASURE_MS = 5000;
 
 type Log = (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void;
@@ -53,6 +54,30 @@ export function attachedExitWaitMs(env: NodeJS.ProcessEnv = process.env): number
  * `held` when another stimd took the home first, `blocked` when a sandbox denies its socket, and null when it failed
  * otherwise or did not serve within 10 s.
  */
+/** Selects one engine for a CI job's hosting and API operations. */
+export async function bindCIEngine(env: NodeJS.ProcessEnv): Promise<{
+  host: typeof hostStimd;
+  runOp: import('../api/engine-route.ts').RunOp;
+}> {
+  const { selectedEngineDir, loadEngineRunOp } = await import('../api/engine-route.ts');
+  const selected = selectedEngineDir(env);
+  const runOp = selected ? await loadEngineRunOp(selected) : null;
+  if (selected && runOp) {
+    const entry = join(selected, 'dist', 'attached-stimd.mjs');
+    const engine: Partial<typeof import('./attached.ts')> = existsSync(entry)
+      ? await import(pathToFileURL(entry).href)
+      : {};
+    if (typeof engine.hostStimd !== 'function')
+      throw Object.assign(new Error('The selected Stim engine cannot host a CI daemon.'), {
+        code: 'STIM_ENGINE_HOST_UNAVAILABLE',
+        remedy: 'Run stim engine update to select an engine that supports attached hosting.',
+      });
+    return { host: engine.hostStimd, runOp };
+  }
+  const local = (await import('../api.ts')).runOp;
+  return { host: hostStimd, runOp: (name, args, ctx) => Reflect.apply(local, undefined, [name, args, ctx]) };
+}
+
 export function hostStimd(
   env: NodeJS.ProcessEnv,
   { handover = true }: { handover?: boolean } = {},
@@ -213,6 +238,7 @@ export function readoptJournal(log: Log): void {
  */
 export async function endAttached({
   inFlight,
+  admissionRevision,
   alive: measure,
   waitMs,
   handover,
@@ -223,6 +249,7 @@ export async function endAttached({
   log,
 }: {
   inFlight: () => string[];
+  admissionRevision: () => number;
   alive: () => Promise<string | null>;
   waitMs: number;
   handover: boolean;
@@ -234,18 +261,21 @@ export async function endAttached({
 }): Promise<void> {
   const deadline = Date.now() + waitMs;
   let shown = '';
-  for (;;) {
-    await new Promise((done) => setTimeout(done, POLL_MS));
-    const others = [...new Set(inFlight())];
-    if (!others.length || Date.now() >= deadline) break;
-    if (others.join(', ') === shown) continue;
-    shown = others.join(', ');
-    const message = `waiting up to ${Math.ceil((deadline - Date.now()) / 1000)} s for ${shown} to finish`;
-    process.stderr.write(`stimd: ${message}\n`);
-    log('info', 'attached_waiting', message);
-  }
-  const unfinished = inFlight();
+  const drain = async () => {
+    for (;;) {
+      await new Promise((done) => setTimeout(done, POLL_MS));
+      const others = [...new Set(inFlight())];
+      if (!others.length || Date.now() >= deadline) break;
+      if (others.join(', ') === shown) continue;
+      shown = others.join(', ');
+      const message = `waiting up to ${Math.ceil((deadline - Date.now()) / 1000)} s for ${shown} to finish`;
+      process.stderr.write(`stimd: ${message}\n`);
+      log('info', 'attached_waiting', message);
+    }
+  };
+  await drain();
   let alive: string | null = null;
+  const revision = admissionRevision();
   if (handover) {
     let timer: NodeJS.Timeout | undefined;
     const late = new Promise<string>((done) => {
@@ -256,7 +286,10 @@ export async function endAttached({
       late,
     ]);
     clearTimeout(timer);
+    if (inFlight().length && Date.now() < deadline) await drain();
+    if (admissionRevision() !== revision) alive ??= 'a command was admitted while measuring its home';
   }
+  const unfinished = inFlight();
   if (alive || unfinished.length) {
     try {
       const at = new Date().toISOString();

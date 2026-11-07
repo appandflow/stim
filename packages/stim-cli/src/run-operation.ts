@@ -38,7 +38,8 @@ const endCli = async () => (await import('./daemon/client.ts')).attachedHostEnd(
  * while the environment sets a removed setting's variable or a leftover setting turns a mechanism off; otherwise the
  * operation takes the daemon's admission (`beforeCommand`) under the CLI command it shares a policy with. A CLI
  * subcommand, `--plan`, an API operation that creates no running state and an API caller inside a Stim resident
- * (`admission: 'none'`) take no admission. API callers never run the passes in process: maintenance reads its
+ * (`admission: 'none'`) take no admission. A resident native run still registers a scoped op for its device logs,
+ * without command policy or workspace-use recording. API callers never run the passes in process: maintenance reads its
  * machine-global scope guards from `process.env`, not the client's environment. API `start` records its workspace's
  * use itself, after the caller's `beforeStart`, so its admission does not. Returns the refusal, or the command
  * admitted (null when none was) and, for a CLI command that hosts stimd, `end`, which the CLI awaits once the command
@@ -53,22 +54,29 @@ export async function runOperation(
       : entry.admission === 'command' && entry.operation
         ? apiCommand(entry.operation, entry.platform)
         : null;
-  if (!command) return entry.caller === 'cli' ? { admitted: null, end: endCli } : { admitted: null };
+  const residentNativeRun =
+    entry.caller === 'api' &&
+    entry.admission === 'none' &&
+    entry.operation === 'run' &&
+    (entry.platform === 'ios' || entry.platform === 'android');
+  const operationCommand = command ?? (residentNativeRun ? entry.platform : null);
+  if (!operationCommand) return entry.caller === 'cli' ? { admitted: null, end: endCli } : { admitted: null };
   const refusal =
-    fallbackRefusal(command, entry.env) ??
-    removedEnvironmentRefusal(command, entry.env) ??
-    removedConfigRefusal(command, entry.cwd, entry.env);
+    command &&
+    (fallbackRefusal(command, entry.env) ??
+      removedEnvironmentRefusal(command, entry.env) ??
+      removedConfigRefusal(command, entry.cwd, entry.env));
   if (refusal) return { refusal };
   if (entry.caller === 'cli' && entry.plan) return { admitted: null, end: endCli };
-  const creates = ['start', 'ios', 'android', 'web', 'macos', 'revive'].includes(command);
+  const creates = ['start', 'ios', 'android', 'web', 'macos', 'revive'].includes(operationCommand);
   const context = creates ? (await import('./stimd/forwarded.ts')).invocation(entry.cwd, entry.env) : undefined;
   if (context && 'code' in context) return { refusal: context };
   const held: import('node:net').Socket[] = [];
   const client = await import('./daemon/client.ts');
   try {
-    await client.beforeCommand(command, entry.env, {
+    await client.beforeCommand(operationCommand, entry.env, {
       cwd: entry.cwd,
-      recordUse: entry.caller === 'cli' || entry.operation !== 'start',
+      recordUse: !residentNativeRun && (entry.caller === 'cli' || entry.operation !== 'start'),
       passes: entry.caller === 'cli',
       pin: true,
       invocation: context,

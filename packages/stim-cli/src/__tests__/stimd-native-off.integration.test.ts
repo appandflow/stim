@@ -21,11 +21,13 @@ import { testContext } from './_context.ts';
 
 describe.skipIf(process.platform === 'win32')('native device logs without automatic passes', () => {
   test.each([
-    ['ios', { STIM_DAEMON: 'off', CI: undefined }],
-    ['android', { STIM_DAEMON: undefined, CI: '1' }],
+    ['ios', { STIM_DAEMON: 'off', CI: undefined }, 'command'],
+    ['android', { STIM_DAEMON: undefined, CI: '1' }, 'command'],
+    ['ios', { STIM_DAEMON: 'off', CI: undefined }, 'none'],
+    ['android', { STIM_DAEMON: undefined, CI: '1' }, 'none'],
   ] as const)(
-    '%s starts stimd and records launch evidence',
-    async (platform, mode) => {
+    '%s starts stimd and records launch evidence (%s, %s)',
+    async (platform, mode, admission) => {
       const home = mkdtempSync(join(tmpdir(), 'stim-native-off-home-'));
       const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-native-off-app-')));
       const bin = join(home, 'bin');
@@ -73,7 +75,7 @@ describe.skipIf(process.platform === 'win32')('native device logs without automa
           caller: 'api',
           operation: 'run',
           platform,
-          admission: 'command',
+          admission,
           cwd: root,
           env,
         });

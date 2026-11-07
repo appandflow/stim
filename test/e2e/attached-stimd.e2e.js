@@ -9,6 +9,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { connect, createServer } from 'node:net';
@@ -443,3 +444,84 @@ test(
     assert.match(daemonLog(), /"event":"attached_handover_blocked"/);
   },
 );
+
+test(
+  'attached stimd bounds shutdown after its parent closes stdin with stalled maintenance',
+  { timeout: 30_000 },
+  async () => {
+    const scratch = mkdtempSync(join(tmp, 'watchdog-'));
+    const marker = join(scratch, 'passes-started');
+    const preload = pathToFileURL(join(import.meta.dirname, 'fixtures', 'stall-stimd-passes.mjs')).href;
+    const cli = join(PACKAGE, 'dist', 'cli.mjs');
+    const child = spawn(process.execPath, ['--import', preload, cli, '__stimd', '--attached', '--no-handover'], {
+      cwd: project,
+      env: {
+        ...env,
+        STIM_HOME: scratch,
+        STIM_DAEMON_ATTACHED_EXIT_WAIT_SECONDS: '0',
+        STIM_TEST_STALLED_PASSES: marker,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    agents.push(child);
+    child.stdout.resume();
+    child.stderr.resume();
+    const exited = new Promise((done) => child.once('exit', (code) => done(code)));
+    try {
+      const info = await until('attached daemon', () => {
+        try {
+          return JSON.parse(readFileSync(join(scratch, 'run', 'stimd.json'), 'utf8'));
+        } catch {
+          return null;
+        }
+      });
+      const socket = connect(info.socket);
+      socket.on('error', () => {});
+      socket.on('connect', () =>
+        socket.write(`${JSON.stringify({ kind: 'cli', build: info.build })}\n${JSON.stringify({ op: 'tick' })}\n`),
+      );
+      await until('maintenance to stall', () => existsSync(marker));
+      socket.destroy();
+      child.stdin.end();
+      assert.equal(await exited, 1);
+    } finally {
+      child.kill('SIGKILL');
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);
+
+test('an installed CI caller shares the selected engine daemon of another build', { timeout: 30_000 }, async () => {
+  const scratch = mkdtempSync(join(tmp, 'engine-routing-'));
+  const engineRoot = join(scratch, 'engines');
+  const selected = join(engineRoot, 'bbbbbbbbbbbb');
+  const installed = join(scratch, 'node_modules', 'stim');
+  mkdirSync(join(installed, 'dist'), { recursive: true });
+  mkdirSync(join(selected, 'dist'), { recursive: true });
+  cpSync(join(PACKAGE, 'dist'), join(installed, 'dist'), { recursive: true });
+  cpSync(join(PACKAGE, 'dist'), join(selected, 'dist'), { recursive: true });
+  for (const dir of [selected, installed]) {
+    symlinkSync(join(PACKAGE, 'node_modules'), join(dir, 'node_modules'), 'junction');
+    cpSync(join(PACKAGE, 'package.json'), join(dir, 'package.json'));
+  }
+  appendFileSync(join(selected, 'dist', 'cli.mjs'), '\n');
+  writeFileSync(join(engineRoot, 'current.json'), JSON.stringify({ format: 1, dir: 'bbbbbbbbbbbb' }));
+  const chosenEnv = { ...env, STIM_HOME: join(scratch, 'home'), STIM_ENGINE_ROOT: engineRoot };
+  const previousRoot = process.env.STIM_ENGINE_ROOT;
+  process.env.STIM_ENGINE_ROOT = engineRoot;
+  let owner;
+  try {
+    const engine = await import(pathToFileURL(join(selected, 'dist', 'attached-stimd.mjs')).href);
+    owner = await engine.hostStimd(chosenEnv, { handover: false });
+    assert.equal(typeof owner, 'object');
+    assert.ok(owner);
+    const caller = await import(pathToFileURL(join(installed, 'dist', 'attached-stimd.mjs')).href);
+    const binding = await caller.bindCIEngine(chosenEnv);
+    assert.equal(await binding.host(chosenEnv, { handover: false }), 'held');
+  } finally {
+    if (owner && typeof owner === 'object') await owner.end();
+    if (previousRoot === undefined) delete process.env.STIM_ENGINE_ROOT;
+    else process.env.STIM_ENGINE_ROOT = previousRoot;
+    rmSync(scratch, { recursive: true, force: true });
+  }
+});

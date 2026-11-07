@@ -17,6 +17,60 @@ import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 
 describe.skipIf(process.platform === 'win32')('native device streams', () => {
+  test('shutdown drains a final line without interrupting another stream', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    vi.stubEnv('STIM_HOME', home);
+    const ready = join(home, 'ready');
+    const xcrun = join(bin, 'xcrun');
+    writeFileSync(
+      xcrun,
+      `#!/bin/sh\nexec "${process.execPath}" -e 'const fs = require("fs"); process.on("SIGTERM", () => { console.log(JSON.stringify({eventType:"logEvent",eventMessage:"trailer"})); process.exit(0); }); fs.appendFileSync(process.env.READY, "ready\\n"); setInterval(() => {}, 1000);'\n`,
+    );
+    chmodSync(xcrun, 0o755);
+    const env = { ...process.env, STIM_HOME: home, READY: ready, PATH: [bin, process.env.PATH].join(delimiter) };
+    const errors: string[] = [];
+    const streams = createStreams((message) => errors.push(message));
+    try {
+      const spec = { root, platform: 'ios' as const, bundleId: 'com.test.app', appName: 'Test' };
+      const first = await streams.start({ ...spec, udid: 'U1', slot: 'one' }, env);
+      const second = await streams.start({ ...spec, udid: 'U2', slot: 'two' }, env);
+      await vi.waitFor(() => expect(readFileSync(ready, 'utf8').trim().split('\n')).toHaveLength(2));
+      expect(await streams.stop(root, 'ios', 'one', first.streamId)).toBe(true);
+      const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8'));
+      expect(records.some((record) => record.msg === 'trailer' && record.slot === 'one')).toBe(true);
+      expect(readWorkspaceState(root)?.collectors?.['ios:two']).toMatchObject({ streamId: second.streamId });
+      expect(await streams.stop(root, 'ios', 'two', second.streamId)).toBe(true);
+      expect(errors).toEqual([]);
+    } finally {
+      await streams.close().catch(() => {});
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+  test('an asynchronous executable-not-found error does not escape the stream owner', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
+    vi.stubEnv('STIM_HOME', home);
+    const errors: string[] = [];
+    const streams = createStreams((message) => errors.push(message));
+    try {
+      await streams.start(
+        { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' },
+        { ...process.env, STIM_HOME: home, PATH: home },
+      );
+      await vi.waitFor(() => expect(readWorkspaceState(root)?.collectors).toBeUndefined());
+      expect(streams.running()).toBe(false);
+    } finally {
+      await streams.close().catch(() => {});
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   test('cancelling readiness reaps its historical child without stopping the live stream', async () => {
     const home = mkdtempSync(join(tmpdir(), 'stim-stream-home-'));
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-stream-app-')));
@@ -290,6 +344,10 @@ process.exit(0);`;
         );
       });
       expect(await streams.stop(root, 'ios', 'phone', first.streamId)).toBe(true);
+      expect(process.kill(pid, 0)).toBe(true);
+      const replacement = await streams.start({ ...spec, udid: 'U2', slot: 'phone' }, env);
+      expect(replacement.streamId).not.toBe(first.streamId);
+      expect(await streams.stop(root, 'ios', 'phone', replacement.streamId)).toBe(true);
       expect(process.kill(pid, 0)).toBe(true);
       expect(await streams.stop(root, 'ios', 'tablet', first.streamId)).toBe(true);
       expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);

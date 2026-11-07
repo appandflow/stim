@@ -101,6 +101,7 @@ import { stopForeignSupervisors } from './foreign-supervisors.ts';
 import {
   ATTACHED_ARG,
   attachedExitWaitMs,
+  KILL_GRACE_MS,
   endAttached,
   NO_HANDOVER_ARG,
   readoptJournal,
@@ -520,6 +521,9 @@ export async function runStimd({
   let ending: string | null = null;
   let attachedEnding: Promise<void> | undefined;
   let logsClosing: Promise<void> | undefined;
+  let admissionRevision = 0;
+  let attachedWatchdog: NodeJS.Timeout | undefined;
+  const maintenanceAllowed = () => !closing && !ending;
   let engineDirs: string[] = [];
   try {
     if (follower) engineDirs = workspaceEngineDirs(loadConfig());
@@ -719,6 +723,7 @@ export async function runStimd({
             socket.end(`${JSON.stringify({ op: 'error', code: 'net-off', message: 'the net thread does not run' })}\n`);
           return;
         } else if (op === 'op.begin') {
+          admissionRevision++;
           hasten?.();
           ops.set(socket, 'pinned');
           opControllers.set(socket, new AbortController());
@@ -854,6 +859,7 @@ export async function runStimd({
   const finishAttached = () =>
     endAttached({
       inFlight: () => [...ops.keys()].map((socket) => opCommands.get(socket) ?? 'a command'),
+      admissionRevision: () => admissionRevision,
       alive: async () =>
         net.running()
           ? 'the net thread serves'
@@ -880,6 +886,9 @@ export async function runStimd({
   const requestEnd = (why: string) => {
     if (ending) return;
     ending = why;
+    attachedWatchdog = setTimeout(() => process.exit(1), waitMs + KILL_GRACE_MS);
+    attachedWatchdog.unref();
+    threads.abort('passes');
     attachedEnding = finishAttached();
   };
   const onSignal = (signal: NodeJS.Signals) => (attached ? lifetime.signal(signal, requestEnd) : shutdown(signal));
@@ -994,7 +1003,7 @@ export async function runStimd({
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
       void logs.ownedSync();
       actions.push(...lane.take());
-      if (!closing && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
+      if (maintenanceAllowed() && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
         dependencyScanAt = Date.now();
         dependencyWork = threads
           .run('measure', { cwd: process.cwd() })
@@ -1126,11 +1135,12 @@ export async function runStimd({
       shutdown('nothing runs in this Stim home');
       break;
     }
-    if (ticked && !closing) lane.start(ticked, mode === 'on');
+    if (ticked && maintenanceAllowed()) lane.start(ticked, mode === 'on');
   }
   await Promise.all([lane.settled(), dependencyWork, logsClosing]);
   await threads.close();
   await attachedEnding;
+  clearTimeout(attachedWatchdog);
   return true;
 }
 
