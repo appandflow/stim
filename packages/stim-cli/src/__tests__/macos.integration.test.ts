@@ -903,6 +903,101 @@ test.skipIf(process.platform === 'win32')('stimd caps a verbose app spool and co
   }
 });
 
+test.skipIf(process.platform === 'win32')('the first drain succeeds when both raw streams exceed the cap', async () => {
+  const app = await ownedProcess();
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  const out = join(logs, macosAppLogName('test-launch', 'out'));
+  const err = join(logs, macosAppLogName('test-launch', 'err'));
+  writeFileSync(out, 'x'.repeat(8 * 1024 * 1024 + 1));
+  writeFileSync(err, 'y'.repeat(8 * 1024 * 1024 + 1));
+  children.at(-1)!.kill('SIGKILL');
+  expect(await waitForProcessExit(app, 5000)).toBe(true);
+  const streams = createOwnedStreams(() => {});
+  try {
+    await streams.sync(root);
+    expect(await streams.drain(root)).toBeNull();
+    const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
+    expect(output).toContain('output may have been dropped');
+    expect(output).toContain('Exited Sample.');
+  } finally {
+    streams.close();
+  }
+});
+
+test.skipIf(process.platform === 'win32')('stimd caps both raw streams while the log sink is unavailable', async () => {
+  const app = await ownedProcess();
+  writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+  const logs = workspaceLogsDir(root);
+  mkdirSync(logs, { recursive: true });
+  const out = join(logs, macosAppLogName('test-launch', 'out'));
+  const err = join(logs, macosAppLogName('test-launch', 'err'));
+  const log = join(logs, 'macos.ndjson');
+  mkdirSync(log);
+  writeFileSync(out, 'out\n'.repeat(2 * 1024 * 1024 + 1));
+  writeFileSync(err, 'err\n'.repeat(2 * 1024 * 1024 + 1));
+  const first = createOwnedStreams(() => {});
+  let second: ReturnType<typeof createOwnedStreams> | undefined;
+  try {
+    await first.sync(root);
+    for (let tries = 0; tries < 100 && (statSync(out).size || statSync(err).size); tries++)
+      await new Promise((done) => setTimeout(done, 50));
+    expect(statSync(out).size).toBe(0);
+    expect(statSync(err).size).toBe(0);
+    first.close();
+    appendFileSync(out, 'out\n'.repeat(2 * 1024 * 1024 + 1));
+    appendFileSync(err, 'err\n'.repeat(2 * 1024 * 1024 + 1));
+    second = createOwnedStreams(() => {});
+    await second.sync(root);
+    for (let tries = 0; tries < 100 && (statSync(out).size || statSync(err).size); tries++)
+      await new Promise((done) => setTimeout(done, 50));
+    expect(statSync(out).size).toBe(0);
+    expect(statSync(err).size).toBe(0);
+    rmSync(log, { recursive: true });
+    appendFileSync(out, 'after recovery\n');
+    for (
+      let tries = 0;
+      tries < 100 && (!existsSync(log) || !readFileSync(log, 'utf8').includes('after recovery'));
+      tries++
+    )
+      await new Promise((done) => setTimeout(done, 50));
+    expect(readFileSync(log, 'utf8')).toContain('output may have been dropped');
+    expect(readFileSync(log, 'utf8')).toContain('after recovery');
+  } finally {
+    first.close();
+    second?.close();
+  }
+});
+
+test.skipIf(process.platform === 'win32')(
+  'stimd caps raw output when the reset checkpoint cannot be written',
+  async () => {
+    const app = await ownedProcess();
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    const out = join(logs, macosAppLogName('test-launch', 'out'));
+    const log = join(logs, 'macos.ndjson');
+    const staging = join(logs, 'macos-app.tail.json.tmp');
+    mkdirSync(log);
+    mkdirSync(staging);
+    writeFileSync(out, 'out\n'.repeat(2 * 1024 * 1024 + 1));
+    const streams = createOwnedStreams(() => {});
+    try {
+      await streams.sync(root);
+      for (let tries = 0; tries < 100 && statSync(out).size; tries++) await new Promise((done) => setTimeout(done, 50));
+      expect(statSync(out).size).toBe(0);
+      rmSync(staging, { recursive: true });
+      rmSync(log, { recursive: true });
+      for (let tries = 0; tries < 100 && !existsSync(log); tries++) await new Promise((done) => setTimeout(done, 50));
+      expect(readFileSync(log, 'utf8')).toContain('output may have been dropped');
+    } finally {
+      streams.close();
+    }
+  },
+);
+
 test.skipIf(process.platform === 'win32')('stimd recovers an interrupted spool reset', async () => {
   const app = await ownedProcess();
   writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });

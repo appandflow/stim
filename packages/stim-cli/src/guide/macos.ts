@@ -161,6 +161,9 @@ line instead of when the app exits. While stimd runs, each raw output file is
 reset after reaching 8 MiB; it warns when a reset may drop output. If stimd stays down,
 the files can grow, and a replaced app that stimd never observed keeps its raw
 files until workspace cleanup without replaying them into stim logs.
+If a reset checkpoint cannot be written and stimd crashes before the warning is
+recorded, the warning can be lost. A raw file that cannot be inspected or
+truncated can grow.
 
 BUILD OFFLOAD
 

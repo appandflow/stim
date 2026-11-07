@@ -358,66 +358,74 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId:
   let recoveryWarningPending = recovering !== null;
   const buffer = Buffer.alloc(CHUNK_BYTES);
   const read = (): boolean => {
-    if (recoveryWarningPending) {
-      if (!write('warn')('macOS app output may have been dropped when its raw log reached the size limit.'))
-        return false;
-      recoveryWarningPending = false;
-    }
     let moved = false;
     let complete = true;
+    if (recoveryWarningPending) {
+      if (write('warn')('macOS app output may have been dropped when its raw log reached the size limit.')) {
+        recoveryWarningPending = false;
+        recovering = null;
+        moved = true;
+      } else complete = false;
+    }
     for (const file of files) {
       const before = file.lines.save();
-      const flushed = file.lines.flush();
+      const flushed = !recoveryWarningPending && file.lines.flush();
       if (before !== file.lines.save()) moved = true;
-      if (!flushed) {
-        complete = false;
-        continue;
-      }
-      let fd: number;
+      if (!flushed) complete = false;
       let size: number;
       try {
         size = statSync(file.path).size;
-        if (size < offsets[file.key]) {
-          complete = false;
-          continue;
-        }
-        fd = openSync(file.path, 'r');
       } catch (error) {
         if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) complete = false;
         continue;
       }
-      try {
-        const limit = Math.min(size, offsets[file.key] + LOG_ROTATE_BYTES);
-        while (offsets[file.key] < limit) {
-          const n = readSync(fd, buffer, 0, Math.min(CHUNK_BYTES, limit - offsets[file.key]), offsets[file.key]);
-          if (n === 0) break;
-          const written = file.lines.push(buffer.subarray(0, n));
-          offsets[file.key] += n;
-          moved = true;
-          if (!written) {
-            complete = false;
-            break;
-          }
-        }
-      } catch {
+      if (size < offsets[file.key]) {
+        offsets[file.key] = 0;
+        recovering = file.key;
+        recoveryWarningPending = true;
+        moved = true;
         complete = false;
-      } finally {
-        closeSync(fd);
       }
-      if (complete && size >= LOG_ROTATE_BYTES) {
+      if (flushed && !recoveryWarningPending) {
+        let fd: number | undefined;
         try {
-          if (!file.lines.end()) {
-            complete = false;
-            continue;
+          fd = openSync(file.path, 'r');
+          const limit = Math.min(size, offsets[file.key] + LOG_ROTATE_BYTES);
+          while (offsets[file.key] < limit) {
+            const n = readSync(fd, buffer, 0, Math.min(CHUNK_BYTES, limit - offsets[file.key]), offsets[file.key]);
+            if (n === 0) break;
+            const written = file.lines.push(buffer.subarray(0, n));
+            offsets[file.key] += n;
+            moved = true;
+            if (!written) {
+              complete = false;
+              break;
+            }
           }
+        } catch {
+          complete = false;
+        } finally {
+          if (fd !== undefined) closeSync(fd);
+        }
+      }
+      if (size >= LOG_ROTATE_BYTES) {
+        if (flushed && !file.lines.end()) complete = false;
+        recovering = file.key;
+        recoveryWarningPending = true;
+        try {
           checkpoint(file.key);
-          if (!write('warn')('macOS app output may have been dropped when its raw log reached the size limit.')) {
-            complete = false;
-            continue;
-          }
+        } catch {
+          // If this checkpoint fails and stimd crashes, the output-loss warning may be lost.
+          complete = false;
+        }
+        try {
           truncateSync(file.path);
           offsets[file.key] = 0;
-          checkpoint();
+          moved = true;
+          if (write('warn')('macOS app output may have been dropped when its raw log reached the size limit.')) {
+            recovering = null;
+            recoveryWarningPending = false;
+          } else complete = false;
         } catch {
           complete = false;
         }
@@ -425,8 +433,7 @@ function tailMacosApp(dir: string, app: MacosProcess, product: string, launchId:
     }
     if (moved || recovering) {
       try {
-        checkpoint();
-        recovering = null;
+        checkpoint(recovering ?? undefined);
       } catch {
         complete = false;
       }
