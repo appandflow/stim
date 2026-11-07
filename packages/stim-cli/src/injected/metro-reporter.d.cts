@@ -28,3 +28,5 @@ export interface NdjsonReporter {
 }
 
 export function ndjsonReporter(options?: { dir?: string }): NdjsonReporter;
+
+export function startHeartbeat(file: string, fields?: Record<string, unknown>): void;

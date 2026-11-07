@@ -160,7 +160,10 @@ function ndjsonReporter({ dir } = {}) {
         ensured = true;
       }
       const target = path.join(logDir, file);
-      const line = JSON.stringify({ ...record, msg: stripAnsi(record.msg) }) + '\n';
+      // compat C6 permanent
+      const inj = process.env.STIM_INJECTED_DIGEST;
+      const line = JSON.stringify({ ...record, msg: stripAnsi(record.msg), ...(inj ? { inj } : {}) }) + '\n';
+      // compat end
       const unchecked = uncheckedBytes.get(file);
       if (unchecked === undefined || unchecked >= LOG_ROTATE_BYTES / 8) {
         uncheckedBytes.set(file, 0);
@@ -244,4 +247,22 @@ function ndjsonReporter({ dir } = {}) {
   };
 }
 
-module.exports = { ndjsonReporter };
+const HEARTBEAT_MS = 1000;
+
+/**
+ * Rewrites `file` every second with this process's pid, the time and `fields`, which tells stimd that this Metro's
+ * event loop still runs. The timer does not keep the process alive.
+ */
+function startHeartbeat(file, fields = {}) {
+  const beat = () => {
+    const tmp = `${file}.${process.pid}.tmp`;
+    try {
+      fs.writeFileSync(tmp, JSON.stringify({ pid: process.pid, at: Date.now(), ...fields }));
+      fs.renameSync(tmp, file);
+    } catch {}
+  };
+  beat();
+  setInterval(beat, HEARTBEAT_MS).unref();
+}
+
+module.exports = { ndjsonReporter, startHeartbeat };
