@@ -18,6 +18,10 @@ export interface LogSink {
 }
 
 export interface LogWriters {
+  ownedSync(root?: string): Promise<void>;
+  ownedDrain(root: string, macosOnly?: boolean): Promise<void>;
+  ownedDrainHosted(session: string): Promise<void>;
+  ownedClose(): Promise<void>;
   open(
     input: {
       streamId: string;
@@ -36,6 +40,8 @@ export interface LogWriters {
 export function createLogWriters(
   onFailure: (error: Error) => void,
   onChange: (streamId: string) => void = () => {},
+  onOwned: (running: boolean) => void = () => {},
+  onOwnedLog: (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void = () => {},
   onObserved: (streamId: string, generation: number) => void = () => {},
   onWriteFailure: (streamId: string, generation: number) => void = () => {},
 ): LogWriters {
@@ -43,6 +49,7 @@ export function createLogWriters(
   let next = 0;
   let failed: Error | null = null;
   let closing = false;
+  let terminated: Promise<number> | null = null;
   const flow = new Map<string, { bytes: number; paused: boolean; change: (paused: boolean) => void }>();
   const pending = new Map<number, { resolve: () => void; reject: (error: Error) => void }>();
   const fail = (error: Error) => {
@@ -65,8 +72,14 @@ export function createLogWriters(
       message?: string;
       streamId?: string;
       bytes?: number;
+      running?: boolean;
+      level?: 'debug' | 'info' | 'warn' | 'error';
+      name?: string;
       generation?: number;
     }) => {
+      if (message.event === 'owned-running') return onOwned(message.running === true);
+      if (message.event === 'owned-log')
+        return onOwnedLog(message.level ?? 'warn', message.name ?? 'owned', message.message ?? '');
       if (message.event === 'changed' && message.streamId) {
         onChange(message.streamId);
         return;
@@ -104,6 +117,7 @@ export function createLogWriters(
   };
   const request = (message: Record<string, unknown>): Promise<void> => {
     if (failed) return Promise.reject(failed);
+    if (closing) return Promise.reject(new Error('the logs worker is closed'));
     const requestId = ++next;
     return new Promise((resolve, reject) => {
       pending.set(requestId, { resolve, reject });
@@ -116,6 +130,10 @@ export function createLogWriters(
     });
   };
   return {
+    ownedSync: (root) => request({ op: 'owned-sync', root }),
+    ownedDrain: (root, macosOnly) => request({ op: 'owned-drain', root, macosOnly }),
+    ownedDrainHosted: (session) => request({ op: 'owned-drain-hosted', session }),
+    ownedClose: () => (closing ? Promise.resolve() : request({ op: 'owned-close' })),
     async open(input, onFlow) {
       await request({ op: 'open', ...input });
       const state = { bytes: 0, paused: false, change: onFlow };
@@ -182,8 +200,14 @@ export function createLogWriters(
       };
     },
     async close() {
-      closing = true;
-      await worker.terminate();
+      if (!terminated) {
+        closing = true;
+        const error = new Error('the logs worker is closed');
+        for (const item of pending.values()) item.reject(error);
+        pending.clear();
+        terminated = worker.terminate();
+      }
+      await terminated;
     },
   };
 }

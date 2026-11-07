@@ -48,6 +48,35 @@ export function windowsLauncherArgs({
   };
 }
 
+/**
+ * How a process that outlives its launcher starts on win32 without the handles {@link windowsLauncherArgs} describes:
+ * through ShellExecuteEx, which takes no stdio redirection, so it gets none. The launcher prints the started process's
+ * id.
+ */
+export function windowsShellLaunchArgs({ file, args, cwd }: { file: string; args: readonly string[]; cwd: string }): {
+  file: string;
+  args: string[];
+  env: Record<string, string>;
+} {
+  const script =
+    "$ErrorActionPreference = 'Stop'; " +
+    '$start = [System.Diagnostics.ProcessStartInfo]::new(); ' +
+    '$start.FileName = $env:STIM_WINDOWS_LAUNCH_FILE; ' +
+    '$start.Arguments = $env:STIM_WINDOWS_LAUNCH_ARGS; ' +
+    '$start.WorkingDirectory = $env:STIM_WINDOWS_LAUNCH_CWD; ' +
+    '$start.UseShellExecute = $true; ' +
+    '[Console]::Out.Write([System.Diagnostics.Process]::Start($start).Id)';
+  return {
+    file: 'powershell.exe',
+    args: ['-NoProfile', '-NonInteractive', '-Command', script],
+    env: {
+      STIM_WINDOWS_LAUNCH_FILE: file,
+      STIM_WINDOWS_LAUNCH_ARGS: args.map(windowsArgument).join(' '),
+      STIM_WINDOWS_LAUNCH_CWD: cwd,
+    },
+  };
+}
+
 function windowsArgument(value: string): string {
   return `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
 }

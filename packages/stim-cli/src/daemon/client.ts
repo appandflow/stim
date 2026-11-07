@@ -589,14 +589,14 @@ function beginOp(
     };
     const timer = setTimeout(() => finish(false), OP_BEGIN_TIMEOUT_MS);
     const socket = openStimd([{ op: 'op.begin', ...(command ? { command } : {}), params: invocation }], (reply) => {
-      if (reply.op === 'op.begun' && typeof reply.opToken === 'string') opTokens.set(socket, reply.opToken);
-      finish(
+      const begun =
         reply.op === 'op.begun' &&
-          (expectedInstance === undefined ||
-            (expectedInstance === null
-              ? reply.attached !== true
-              : reply.attached === true && reply.instance === expectedInstance)),
-      );
+        (expectedInstance === undefined ||
+          (expectedInstance === null
+            ? reply.attached !== true
+            : reply.attached === true && reply.instance === expectedInstance));
+      if (begun && typeof reply.opToken === 'string') opTokens.set(socket, reply.opToken);
+      finish(begun);
     });
     const abort = () => finish(false);
     signal?.addEventListener('abort', abort, { once: true });
@@ -879,6 +879,47 @@ function send(message: Record<string, unknown>): void {
  */
 export async function publishPresence(params: PresencePublishParams, timeoutMs: number): Promise<void> {
   if (stimdLive()) await askStimd('presence.publish', timeoutMs, { params });
+}
+
+const OBSERVE_MS = 30_000;
+
+/**
+ * Asks this home's stimd to observe what the op at `root` launched through `spawnOwned`: the owned Chrome's DevTools
+ * session and the macOS app's output. Starts a stimd when none runs, whatever `daemon.mode` says, since nothing else
+ * records that output. Resolves to null once stimd observes it, or to why it does not.
+ */
+async function ownedRequest(
+  op: 'logs.observe' | 'logs.drain',
+  root: string,
+  env: NodeJS.ProcessEnv,
+  macosOnly = false,
+): Promise<string | null> {
+  if (!stimdLive() && !(await claimTaken(launchStimd(env, daemonMode(env))))) return 'no stimd runs in this Stim home';
+  const ask = () => askStimd(op, OBSERVE_MS, { params: { root, ...(macosOnly ? { platform: 'macos' } : {}) } });
+  let reply = await ask();
+  const deadline = Date.now() + CLAIM_WAIT_MS;
+  while (!reply && !stimdRefused() && Date.now() < deadline) {
+    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
+    reply = await ask();
+  }
+  if (!reply && stimdRefused() && (await successorBound())) reply = await ask();
+  if (reply?.op !== (op === 'logs.observe' ? 'logs.observed' : 'logs.drained'))
+    return stimdRefused()
+      ? `this Stim home's stimd runs another Stim build (${refusedBuild}); run the command with that build`
+      : 'stimd did not answer';
+  return typeof reply.error === 'string' ? reply.error : null;
+}
+
+export function observeOwned(root: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  return ownedRequest('logs.observe', root, env);
+}
+
+export function drainOwned(root: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  return ownedRequest('logs.drain', root, env);
+}
+
+export function drainOwnedMacos(root: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  return ownedRequest('logs.drain', root, env, true);
 }
 
 /** Whether the net thread serves, on which port, or why it does not. */

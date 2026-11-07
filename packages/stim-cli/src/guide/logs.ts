@@ -252,6 +252,9 @@ THE RECORD
     raw      true when the level was inferred from a line of text rather than
              reported by the producer (every expo-child and command-child
              record)
+    cdpKey   optional web page-event key used to suppress previously recorded
+             DevTools replay after reattachment. Events without a timestamp are
+             preserved but can repeat after reattachment.
     context  --errors --json only: the code frame and stack lines Expo
              printed after this error, as an array of strings. Absent when
              there are none. Stim adds it at query time; it is not in the

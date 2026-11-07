@@ -22,6 +22,7 @@ import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engin
 import { pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { releaseBrowserPort } from '../named-ports.ts';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
+import { waitForGroupExit } from '../process-group-exit.ts';
 import { chromeProcessStateAsync, liveProfileHolder, removeSingletonFiles } from '../web/profile.ts';
 import {
   CDP_PORT_LABEL,
@@ -986,7 +987,7 @@ export async function teardownBrowserHeld(
           reason: `the browser supervisor (pid ${record.pid}) or its Chrome could not be verified; its record was kept`,
         };
       }
-      if (supervisor === 'same') {
+      if (supervisor === 'same' && record.pid !== record.chromeProcess?.pid) {
         try {
           process.kill(record.pid, 'SIGTERM');
         } catch {}
@@ -1008,6 +1009,7 @@ export async function teardownBrowserHeld(
           reason: `pid ${holder} still holds ${profile}, and the browser record does not name it; it was left running`,
         };
       }
+      if (exited && process.platform !== 'win32') await waitForGroupExit(exited.pid, CHROME_KILL_WAIT_MS);
       const claims = clearFreeClaimSet({ root: webClaimRoot(root), label: 'browser supervisor' });
       if (claims.status !== 'cleared') {
         return {

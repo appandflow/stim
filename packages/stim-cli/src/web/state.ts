@@ -28,7 +28,10 @@ export interface OwnedProcess {
   processToken: string;
 }
 
-/** The browser supervisor's record in workspace state; `chromeProcess` appears once Chrome is spawned. */
+/**
+ * The owned Chrome's record in workspace state. Its owner (`pid`, `processToken`) is Chrome itself, the process its claim
+ * follows; in a record an older Stim wrote it is that Stim's browser supervisor.
+ */
 export interface WebRecord extends OwnedProcess, WebLaunchConfig {
   pid: number;
   processToken: string;
@@ -42,7 +45,7 @@ export interface WebRecord extends OwnedProcess, WebLaunchConfig {
   launchId?: string;
 }
 
-export function webDir(root: string): string {
+function webDir(root: string): string {
   return join(workspaceDir(root), 'web');
 }
 
@@ -56,10 +59,6 @@ export function webClaimRoot(root: string): string {
 
 export function webLogFile(root: string): string {
   return join(workspaceLogsDir(root), 'web.ndjson');
-}
-
-export function webSupervisorLogFile(root: string): string {
-  return join(workspaceLogsDir(root), 'web-supervisor.log');
 }
 
 export function browserLogFile(root: string): string {

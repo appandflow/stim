@@ -509,6 +509,7 @@ export async function runStimd({
       else requestTick();
     },
     (why) => maybeUpdate(why, ASKED_MS),
+    (session) => logs.ownedDrainHosted(session),
   );
   let restartingNet = false;
   let updating: Promise<void> | null = null;
@@ -548,7 +549,7 @@ export async function runStimd({
     desktopKey: key,
     script,
   });
-  const logs = createStreams((message) => log('warn', 'device_logs', message));
+  const logs = createStreams((message) => log('warn', 'device_logs', message), log);
   const threads = createThreadTable(log);
   const lane = createPassesLane(threads, log);
   const statuses = createStatusSnapshots(log, join(daemonDir(), 'status-cwds.json'));
@@ -586,9 +587,11 @@ export async function runStimd({
   };
   const open = new Set<Socket>();
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
+  const logsRunning = () => logs.running() || logs.ownedRunning();
   const hasOffWork = () =>
     Boolean(
       logs.running() ||
+      logs.ownedRunning() ||
       keepsServingWhenOff(lifetime.keepsServingWhenOff, ops.size > 0, Boolean(net.running()), restartingNet),
     );
   const opContexts = new Map<Socket, Invocation & { workspace: string }>();
@@ -600,6 +603,7 @@ export async function runStimd({
   const opCommands = new WeakMap<Socket, string>();
   let ending: string | null = null;
   let attachedEnding: Promise<void> | undefined;
+  let logsClosing: Promise<void> | undefined;
   let admissionRevision = 0;
   let attachedWatchdog: NodeJS.Timeout | undefined;
   const maintenanceAllowed = () => !closing && !ending;
@@ -857,6 +861,18 @@ export async function runStimd({
         } else if (op === 'op.wait' || op === 'op.resume') {
           if (ops.has(socket)) ops.set(socket, op === 'op.wait' ? 'waiting' : 'pinned');
           void checkEngine();
+        } else if (op === 'logs.observe' || op === 'logs.drain') {
+          const root = isJsonObject(message.params) ? message.params.root : undefined;
+          if (typeof root !== 'string') socket.destroy();
+          else {
+            const macosOnly = isJsonObject(message.params) && message.params.platform === 'macos';
+            const request = op === 'logs.observe' ? logs.ownedSync(root) : logs.ownedDrain(root, macosOnly);
+            void request.then((error) =>
+              socket.end(
+                `${JSON.stringify({ op: op === 'logs.observe' ? 'logs.observed' : 'logs.drained', error })}\n`,
+              ),
+            );
+          }
         } else if (op === 'metro.ensure' || op === 'tunnel.ensure') {
           const context = opContexts.get(socket);
           if (ops.has(socket) && !context) {
@@ -934,9 +950,11 @@ export async function runStimd({
       alive: async (signal) =>
         net.running()
           ? 'the net thread serves'
-          : metroChildrenRun()
-            ? 'Metro or a tunnel is running'
-            : homeAlive(loadConfig(), await measureTick(loadConfig(), Date.now(), { probe: false, signal })),
+          : logs.ownedRunning()
+            ? 'owned app logs are being observed'
+            : metroChildrenRun()
+              ? 'Metro or a tunnel is running'
+              : homeAlive(loadConfig(), await measureTick(loadConfig(), Date.now(), { probe: false, signal })),
       waitMs,
       handover: attached?.handover ?? false,
       mode: effectiveMode,
@@ -948,7 +966,7 @@ export async function runStimd({
       },
       release: async (why) => {
         shutdown(ending === 'stdin' ? why : `${why} (${ending})`);
-        await net.close();
+        await logsClosing;
       },
       log,
     });
@@ -976,18 +994,20 @@ export async function runStimd({
     if (bound && process.platform !== 'win32') rmSync(path, { force: true });
     if (readJsonObject(stimdRecordFile())?.pid === process.pid) rmSync(stimdRecordFile(), { force: true });
     follower?.release();
-    releaseClaim(claim);
-    if (!keepOwn) releaseClaim(own);
     markAbnormal = null;
     for (const signal of SIGNALS) process.off(signal, onSignal);
     log(level, 'daemon_exited', `exiting: ${why}`);
-    void Promise.all([
-      lane.settled(),
-      dependencyWork,
-      net.close(),
-      closeMetroChildren(),
-      logs.close().catch((error: unknown) => log('warn', 'device_logs_close_failed', String(error))),
-    ])
+    logsClosing = net
+      .close()
+      .then(() => logs.close())
+      .catch((error: unknown) => {
+        log('warn', 'device_logs_close_failed', String(error));
+      })
+      .finally(() => {
+        releaseClaim(claim);
+        if (!keepOwn) releaseClaim(own);
+      });
+    void Promise.all([lane.settled(), dependencyWork, logsClosing, closeMetroChildren()])
       .then(() => threads.close())
       .then(() => attachedEnding)
       .then(() => {
@@ -1012,6 +1032,7 @@ export async function runStimd({
   }
   adoptMetroChildren(log);
   if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
+  await logs.ownedSync();
   lifetime.serve(requestEnd, waitMs, instance);
   log(
     'info',
@@ -1050,6 +1071,7 @@ export async function runStimd({
     }
     void metroTick(mode === 'on', log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
     if (mode === 'off') {
+      await logs.ownedSync();
       if (hasOffWork()) {
         for (const socket of tickReplies.splice(0)) socket.destroy();
         continue;
@@ -1074,6 +1096,7 @@ export async function runStimd({
         memoryWarningSince: lastSnapshot?.pressure?.memoryWarningSince ?? null,
       });
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
+      void logs.ownedSync();
       actions.push(...lane.take());
       if (maintenanceAllowed() && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
         dependencyScanAt = Date.now();
@@ -1178,7 +1201,7 @@ export async function runStimd({
       break;
     }
     if (closing) break;
-    const idle = !alive && !pending && !wentDormant && !logs.running() && Date.now() - contactSince >= tickMs;
+    const idle = !alive && !pending && !wentDormant && !logsRunning() && Date.now() - contactSince >= tickMs;
     emptyTicks = idle ? emptyTicks + 1 : 0;
     const tookMs = Math.round(performance.now() - tickStarted);
     await new Promise((done) => setTimeout(done, 0));
@@ -1203,7 +1226,7 @@ export async function runStimd({
     }
     if (ticked && maintenanceAllowed()) lane.start(ticked, mode === 'on');
   }
-  await Promise.all([lane.settled(), dependencyWork, net.close()]);
+  await Promise.all([lane.settled(), dependencyWork, logsClosing]);
   await threads.close();
   await attachedEnding;
   clearTimeout(attachedWatchdog);

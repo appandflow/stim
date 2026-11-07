@@ -8,6 +8,7 @@ import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { parseLogcatLine } from './android.ts';
 import { parseDeviceConsoleLine } from './ios-device.ts';
 import { parseLogStreamLine } from './ios.ts';
+import { createOwnedStreams } from './owned.ts';
 
 if (!parentPort) throw new Error('the logs worker requires a parent port');
 const port = parentPort;
@@ -25,8 +26,16 @@ type Entry = {
   backfill: { since: number; live: Map<string, number>; warned: boolean; failed: boolean } | null;
 };
 const streams = new Map<string, Entry>();
+const owned = createOwnedStreams(
+  (level, event, msg) => port.postMessage({ event: 'owned-log', level, name: event, message: msg }),
+  (running) => port.postMessage({ event: 'owned-running', running }),
+);
 
 type Message =
+  | { op: 'owned-sync'; requestId: number; root?: string }
+  | { op: 'owned-drain'; requestId: number; root: string; macosOnly?: boolean }
+  | { op: 'owned-drain-hosted'; requestId: number; session: string }
+  | { op: 'owned-close'; requestId: number }
   | {
       op: 'open';
       requestId: number;
@@ -74,8 +83,40 @@ const add = (map: Map<string, number>, key: string): boolean => {
   return true;
 };
 
+type OwnedRequest = Extract<Message, { op: 'owned-sync' | 'owned-drain' | 'owned-drain-hosted' }>;
+
+function isOwnedRequest(message: Message): message is OwnedRequest {
+  return message.op === 'owned-sync' || message.op === 'owned-drain' || message.op === 'owned-drain-hosted';
+}
+
+function handleOwnedRequest(message: OwnedRequest): void {
+  const result =
+    message.op === 'owned-sync'
+      ? owned.sync(message.root)
+      : message.op === 'owned-drain'
+        ? owned.drain(message.root, message.macosOnly)
+        : owned.drainHosted(message.session);
+  void result.then(
+    (error) => {
+      port.postMessage({ event: 'owned-running', running: owned.running() });
+      port.postMessage({ requestId: message.requestId, error });
+      return undefined;
+    },
+    (error: unknown) => port.postMessage({ requestId: message.requestId, error: String(error) }),
+  );
+}
+
 port.on('message', (message: Message) => {
   try {
+    if (isOwnedRequest(message)) {
+      handleOwnedRequest(message);
+      return;
+    }
+    if (message.op === 'owned-close') {
+      owned.close();
+      port.postMessage({ requestId: message.requestId });
+      return;
+    }
     if (message.op === 'open') {
       const writer = createNdjsonWriter(join(workspaceLogsDir(message.root), 'device.ndjson'), {
         maxBytes: LOG_ROTATE_BYTES,

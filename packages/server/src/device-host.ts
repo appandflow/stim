@@ -129,6 +129,7 @@ interface ReverseBridge {
 }
 
 export interface DeviceHostOptions {
+  drainHosted?: (session: string) => Promise<string | null>;
   worker: string;
   env: NodeJS.ProcessEnv;
   allowed: (client: string) => boolean;
@@ -2001,18 +2002,26 @@ export class DeviceHost {
     const run = this.run(record, owned, 'stop');
     owned.run = run;
     const outcome = await run.done;
-    const stopped =
+    let stopped =
       !outcome.notice &&
       outcome.settled &&
       isJsonObject(outcome.value) &&
       outcome.value.state === 'stopped' &&
       parseHostedPlatformDevice(outcome.value.device, record.platform) !== null &&
       hostedDeviceId(parseHostedPlatformDevice(outcome.value.device, record.platform)!) === hostedDeviceId(device);
+    let drainError: string | null = null;
+    if (stopped && record.platform === 'macos' && readHostedMacosApp(join(deviceHostArea(record.id), 'home'))?.app) {
+      drainError = this.options.drainHosted
+        ? await this.options.drainHosted(record.id)
+        : 'the hosted macOS observer is unavailable';
+      if (drainError) stopped = false;
+    }
     this.change(record.id, (current) => {
       current.state = stopped ? 'stopped' : 'unknown';
       if (stopped) delete current.notice;
       else
         current.notice =
+          drainError ??
           outcome.notice ??
           (isJsonObject(outcome.value) && typeof outcome.value.notice === 'string'
             ? outcome.value.notice

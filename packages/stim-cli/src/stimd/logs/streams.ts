@@ -77,6 +77,10 @@ export function parseStreamSpec(value: unknown): StreamSpec | null {
 }
 
 export interface StreamTable {
+  ownedSync(root?: string): Promise<string | null>;
+  ownedDrain(root: string, macosOnly?: boolean): Promise<string | null>;
+  ownedDrainHosted(session: string): Promise<string | null>;
+  ownedRunning(): boolean;
   start(input: StreamSpec, env: Record<string, string>, signal?: AbortSignal): Promise<{ streamId: string }>;
   stop(root: string, platform: string, slot: string, streamId: string): Promise<boolean>;
   wait(
@@ -327,12 +331,16 @@ const matches = (stream: Stream, input: StreamSpec, root: string, envHash: strin
 const attribution = (slot: string, input: StreamSpec) =>
   slot === 'default' ? {} : { slot, deviceId: input.udid ?? input.serial };
 
-export function createStreams(log: (message: string) => void): StreamTable {
+export function createStreams(
+  log: (message: string) => void,
+  ownedLog: (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void = () => {},
+): StreamTable {
   const streams = new Map<string, Stream>();
   const queues = new Map<string, Promise<void>>();
   let writers: LogWriters | null = null;
   let writerFailure: Error | null = null;
   let writerRecovery: Promise<void> | null = null;
+  let ownedRunning = true;
   const serialize = <T>(key: string, work: () => Promise<T>): Promise<T> => {
     const result = (queues.get(key) ?? Promise.resolve()).then(work);
     const done = result.then(
@@ -368,7 +376,6 @@ export function createStreams(log: (message: string) => void): StreamTable {
   };
   const getWriters = async (): Promise<LogWriters> => {
     if (writerFailure) {
-      if (streams.size) throw writerFailure;
       writerRecovery ??= (async () => {
         await writers?.close();
         writers = null;
@@ -383,6 +390,7 @@ export function createStreams(log: (message: string) => void): StreamTable {
     writers = createLogWriters(
       (error) => {
         writerFailure = error;
+        ownedRunning = true;
         log(`the logs worker failed: ${error.message}`);
         for (const stream of new Set(streams.values())) {
           void abortAfterSignal(stream);
@@ -394,6 +402,10 @@ export function createStreams(log: (message: string) => void): StreamTable {
         stream.revision++;
         for (const wake of stream.waiters) wake(false);
       },
+      (running) => {
+        ownedRunning = running;
+      },
+      ownedLog,
       (streamId, generation) => {
         const stream = [...streams.values()].find((entry) => entry.id === streamId);
         if (stream && stream.generation === generation && stream.observedAt === null) stream.observedAt = Date.now();
@@ -574,6 +586,31 @@ export function createStreams(log: (message: string) => void): StreamTable {
     return coverage;
   };
   return {
+    async ownedSync(root) {
+      try {
+        await (await getWriters()).ownedSync(root);
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
+    async ownedDrain(root, macosOnly) {
+      try {
+        await (await getWriters()).ownedDrain(root, macosOnly);
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
+    async ownedDrainHosted(session) {
+      try {
+        await (await getWriters()).ownedDrainHosted(session);
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
+    ownedRunning: () => ownedRunning,
     async start(input: StreamSpec, env: Record<string, string>, signal?: AbortSignal): Promise<{ streamId: string }> {
       const root = realpathSync(input.root);
       const envHash = environmentHash(env);
@@ -930,9 +967,11 @@ export function createStreams(log: (message: string) => void): StreamTable {
     async close(): Promise<void> {
       await Promise.all(queues.values());
       const results = await Promise.allSettled([...new Set(streams.values())].map(stop));
-      await writers?.close();
+      const owned = await Promise.allSettled([writers?.ownedClose()]);
+      const closed = await Promise.allSettled([writers?.close()]);
       const failure = results.find((result) => result.status === 'rejected');
       if (failure?.status === 'rejected') throw failure.reason;
+      for (const result of [...owned, ...closed]) if (result.status === 'rejected') throw result.reason;
     },
   };
 }

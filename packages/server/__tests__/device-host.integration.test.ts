@@ -263,6 +263,7 @@ beforeEach(() => {
   hostEnv = { ...process.env, STIM_MAX_DEVICES: '1' };
   host = new DeviceHost({
     worker,
+    drainHosted: async () => null,
     env: hostEnv,
     agents,
     allowed: (client) => allowed.has(client),
@@ -2161,6 +2162,65 @@ test.each([
   );
   expect(existsSync(join(deviceHostArea(first.id), 'apps', 'app-first'))).toBe(code === null);
 });
+
+test.skipIf(process.platform === 'win32')(
+  'hosted macOS stop waits for final output before reporting stopped',
+  async () => {
+    await host.close();
+    let finish: (error: string | null) => void = () => {};
+    const drainHosted = vi.fn<(session: string) => Promise<string | null>>(
+      () =>
+        new Promise<string | null>((done) => {
+          finish = done;
+        }),
+    );
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents,
+      drainHosted,
+      allowed: (client) => allowed.has(client),
+      limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
+    });
+    const macos = await reserve({ platform: 'macos' });
+    await state(macos.id, 'ready');
+    const sessionHome = join(deviceHostArea(macos.id), 'home');
+    const appRoot = join(sessionHome, 'macos-app');
+    mkdirSync(appRoot, { recursive: true });
+    const workspace = join(sessionHome, 'workspaces', workspaceName(realpathSync(appRoot)));
+    mkdirSync(join(workspace, 'logs'), { recursive: true });
+    const app = { pid: 123, processToken: 'fixture', startedAtMicros: 1 };
+    writeFileSync(
+      join(workspace, 'state.json'),
+      JSON.stringify({
+        macos: {
+          launchId: 'fixture',
+          product: 'Fixture',
+          arguments: [],
+          bundle: appRoot,
+          bundleId: 'fixture',
+          executable: '/fixture',
+          build: { state: 'ok', startedAt: new Date().toISOString() },
+          app,
+          supervisor: app,
+        },
+      }),
+    );
+    host.stop('client', { session: macos.id });
+    await vi.waitFor(() => expect(drainHosted).toHaveBeenCalledWith(macos.id));
+    expect(readHostedSessions().find((record) => record.id === macos.id)?.state).not.toBe('stopped');
+    writeFileSync(
+      join(workspace, 'logs', 'macos.ndjson'),
+      JSON.stringify({ src: 'client', msg: 'final output' }) + '\n',
+    );
+    finish(null);
+    await state(macos.id, 'stopped');
+    expect(await host.logsQuery('client', { session: macos.id })).toHaveProperty(
+      'result.records.0.msg',
+      'final output',
+    );
+  },
+);
 
 test.skipIf(process.platform === 'win32')(
   'returns the hosted macOS app logs to its own client only, in pages, also after the session stopped',

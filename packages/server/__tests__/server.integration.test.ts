@@ -531,6 +531,7 @@ async function start(
   writeFileSync(tailscale, FAKE_TAILSCALE);
   chmodSync(tailscale, 0o755);
   server = await startServer({
+    drainHosted: async () => null,
     host: overrides.host,
     hostsDevices: overrides.hostsDevices ?? true,
     attached: overrides.attached,

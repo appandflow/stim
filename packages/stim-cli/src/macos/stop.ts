@@ -1,11 +1,13 @@
-import { readMacosRecord, type MacosProcess } from '@stim-cli/core/state';
+import { readMacosRecord, stimdClaimRoot, type MacosProcess } from '@stim-cli/core/state';
+import { existsSync } from 'node:fs';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { withWorkspaceStateLockAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { hostedBundleDirs, runningBundleInstancesAsync, runningInstancesInAsync, startedBy } from './instances.ts';
-import { macosRuntimeClaim, requiredMacosRecord } from './state.ts';
-import { readClaimSet } from '../ownership-claim.ts';
+import { macosAppStderr, macosAppStdout, macosRuntimeClaim, requiredMacosRecord } from './state.ts';
+import { drainOwnedMacos } from '../daemon/client.ts';
+import { processGroupAlive, readClaimSet } from '../ownership-claim.ts';
 import type { StimContext } from '@stim-cli/core';
 
 const APP_EXIT_MS = 5000;
@@ -19,7 +21,7 @@ function signal(pid: number, name: NodeJS.Signals): void {
   }
 }
 
-export async function stopProcesses(
+async function stopProcesses(
   records: readonly MacosProcess[],
   waitMs: number = APP_EXIT_MS,
   operation?: StimContext,
@@ -67,7 +69,8 @@ export async function stopMacosAppHeld(root: string, operation?: StimContext): P
     [record?.supervisor, record?.app].filter((each) => each !== undefined),
     operation,
   );
-  if (record?.supervisor) await stopProcesses([record.supervisor], SUPERVISOR_EXIT_MS, operation);
+  if (record?.supervisor && record.supervisor.pid !== record.app?.pid)
+    await stopProcesses([record.supervisor], SUPERVISOR_EXIT_MS, operation);
   const app = readMacosRecord(root)?.app ?? record?.app;
   if (app) await stopProcesses([app], undefined, operation);
   await stopProcesses(started, undefined, operation);
@@ -75,6 +78,23 @@ export async function stopMacosAppHeld(root: string, operation?: StimContext): P
   await stopProcesses(instances, undefined, operation);
   operation?.signal.throwIfAborted();
   if (!record) return instances.length > 0;
+  // POSIX may reuse a process group ID after its leader exits; a numeric group alone does not prove ownership.
+  if (
+    app &&
+    process.platform !== 'win32' &&
+    ['gone', 'different'].includes(inspectProcessIdentity(app)) &&
+    processGroupAlive(app.pid)
+  ) {
+    throw Object.assign(
+      new Error(
+        `The macOS app leader exited but process group ${app.pid} remains; no signal was sent to that process group. Inspect it with ps -A -o pid,pgid,command and stop its verified owned members before retrying.`,
+      ),
+      {
+        code: 'STIM_MACOS_OWNER_UNVERIFIED',
+        remedy: 'Verify the remaining group members belong to this workspace before stopping them.',
+      },
+    );
+  }
   const claims = readClaimSet(macosRuntimeClaim(root));
   if (claims.unresolved.length || claims.live.length) {
     throw Object.assign(
@@ -88,11 +108,31 @@ export async function stopMacosAppHeld(root: string, operation?: StimContext): P
 }
 
 /** Stops the workspace's app here, or its session on the hosting Mac, which must confirm the session stopped. */
-export function stopMacosApp(root: string, operation?: StimContext): Promise<boolean> {
+export function stopMacosApp(
+  root: string,
+  operation?: StimContext,
+  options: { drain?: boolean } = {},
+): Promise<boolean> {
   const stop = async () => {
     operation?.signal.throwIfAborted();
     const record = requiredMacosRecord(root);
-    if (!record?.host) return stopMacosAppHeld(root, operation);
+    if (!record?.host) {
+      const stopped = await stopMacosAppHeld(root, operation);
+      if (options.drain !== false && record?.app && record.supervisor?.pid === record.app.pid) {
+        const claims = readClaimSet(stimdClaimRoot());
+        if (
+          claims.live.length ||
+          claims.unresolved.length ||
+          existsSync(macosAppStdout(root, record.launchId)) ||
+          existsSync(macosAppStderr(root, record.launchId))
+        ) {
+          const failure = await drainOwnedMacos(root, operation?.env);
+          operation?.signal.throwIfAborted();
+          if (failure) throw new Error(`Could not drain macOS app output: ${failure}`);
+        }
+      }
+      return stopped;
+    }
     const { stopHostedMacos } = await import('../device-host/hosted-macos.ts');
     await stopHostedMacos(root, record.host, operation?.signal);
     operation?.signal.throwIfAborted();
