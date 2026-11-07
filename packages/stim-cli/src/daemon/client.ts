@@ -481,6 +481,20 @@ export async function publishPresence(params: PresencePublishParams, timeoutMs: 
   if (stimdLive()) await askStimd('presence.publish', timeoutMs, { params });
 }
 
+const OBSERVE_MS = 30_000;
+
+/**
+ * Asks this home's stimd to observe what the op at `root` launched through `spawnOwned`: the owned Chrome's DevTools
+ * session and the macOS app's output. Starts a stimd when none runs, whatever `daemon.mode` says, since nothing else
+ * records that output. Resolves to null once stimd observes it, or to why it does not.
+ */
+export async function observeOwned(root: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  if (!stimdLive() && !(await claimTaken(launchStimd(env, daemonMode(env))))) return 'no stimd runs in this Stim home';
+  const reply = await askStimd('logs.observe', OBSERVE_MS, { params: { root } });
+  if (reply?.op !== 'logs.observed') return 'stimd did not answer';
+  return typeof reply.error === 'string' ? reply.error : null;
+}
+
 /** Whether the net thread serves, on which port, or why it does not. */
 export type NetAnswer = { listening: true; port: number } | { listening: false; message: string };
 

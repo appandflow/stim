@@ -986,7 +986,7 @@ export async function teardownBrowserHeld(
           reason: `the browser supervisor (pid ${record.pid}) or its Chrome could not be verified; its record was kept`,
         };
       }
-      if (supervisor === 'same') {
+      if (supervisor === 'same' && record.pid !== record.chromeProcess?.pid) {
         try {
           process.kill(record.pid, 'SIGTERM');
         } catch {}

@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import {
-  closeSync,
   existsSync,
   lstatSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -14,7 +12,7 @@ import {
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
-import { withDirLock } from '@stim-cli/core';
+import { LOG_ROTATE_BYTES, withDirLock } from '@stim-cli/core';
 import {
   assertHostedDeviceLedger,
   hostedMacosAppSlot,
@@ -28,10 +26,18 @@ import {
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
-import { macosProcess, requiredMacosRecord } from '../macos/state.ts';
+import {
+  macosAppStderr,
+  macosAppStdout,
+  macosLogFile,
+  macosProcess,
+  macosRuntimeClaim,
+  requiredMacosRecord,
+  updateMacosRecord,
+} from '../macos/state.ts';
 import { stopHostedBundleInstances, stopMacosAppHeld } from '../macos/stop.ts';
-import { waitForMacosRegistration } from '../macos/registration.ts';
-import { spawnEntry } from '../spawn-entry.ts';
+import { spawnOwned } from '../engine/spawn-owned.ts';
+import { createNdjsonWriter } from '../ndjson.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { materializeHostedApp, newer } from './app.ts';
@@ -198,6 +204,7 @@ export async function runHostedMacosApp(
     mkdirSync(runRoot, { recursive: true, mode: 0o700 });
     const canonicalRunRoot = realpathSync(runRoot);
     ensureWorkspaceStorage(canonicalRunRoot);
+    const worker = macosProcess(process.pid);
     const launch: MacosAppRecord = {
       product,
       bundle: root,
@@ -205,7 +212,7 @@ export async function runHostedMacosApp(
       executable,
       arguments: record.arguments ?? [],
       launchId: randomUUID(),
-      supervisor: macosProcess(process.pid),
+      supervisor: worker,
       build: { state: 'ok', startedAt: new Date().toISOString() },
     };
     writeRecord(home, 'hosted-macos-app.json', { bundleId });
@@ -214,27 +221,30 @@ export async function runHostedMacosApp(
     const temporary = join(isolated, 'tmp');
     mkdirSync(isolated, { recursive: true, mode: 0o700 });
     mkdirSync(temporary, { mode: 0o700, recursive: true });
-    const fd = openSync(join(home, 'macos-supervisor.log'), 'a', 0o600);
-    let child;
     const env: NodeJS.ProcessEnv = {};
     for (const key of ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'USER', 'LOGNAME', 'SHELL', 'TERM'])
       if (process.env[key] !== undefined) env[key] = process.env[key];
     Object.assign(env, { STIM_HOME: home, HOME: isolated, CFFIXED_USER_HOME: isolated, TMPDIR: temporary });
-    try {
-      child = exec.spawn(process.execPath, [spawnEntry('macos-run'), canonicalRunRoot, launch.launchId], {
-        detached: true,
-        stdio: ['ignore', fd, fd, 'ipc'],
-        cwd: canonicalRunRoot,
-        env,
-      });
-      child.unref();
-    } finally {
-      closeSync(fd);
+    const owned = spawnOwned({
+      file: executable,
+      args: launch.arguments,
+      cwd: canonicalRunRoot,
+      // Foundation reads NSUnbufferedIO to flush stdout per write; Swift print() to a file otherwise waits until exit.
+      env: { ...env, NSUnbufferedIO: 'YES' },
+      stdout: macosAppStdout(canonicalRunRoot),
+      stderr: macosAppStderr(canonicalRunRoot),
+      truncate: true,
+      claim: { root: macosRuntimeClaim(canonicalRunRoot), label: 'hosted macOS app' },
+    });
+    const started = macosProcess(owned.pid);
+    if (!updateMacosRecord(canonicalRunRoot, worker, { supervisor: started, app: started })) {
+      process.kill(started.pid, 'SIGTERM');
+      throw new Error('The hosted macOS launch owner changed.');
     }
-    const deadline = Date.now() + 20_000;
-    const current = await waitForMacosRegistration(canonicalRunRoot, launch.launchId, child, deadline);
-    if (current?.app) return { state: 'installed', device, launched: true, pid: current.app.pid };
-    throw new Error('The hosted macOS app did not register. See macos-supervisor.log in the worker home.');
+    const writer = createNdjsonWriter(macosLogFile(canonicalRunRoot), { maxBytes: LOG_ROTATE_BYTES });
+    writer.write({ src: 'client', platform: 'macos', level: 'info', msg: `Started ${product} (pid ${started.pid}).` });
+    writer.close();
+    return { state: 'installed', device, launched: true, pid: started.pid };
   } catch (error) {
     return {
       state:

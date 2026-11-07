@@ -179,9 +179,10 @@ web line.
 
 OWNERSHIP AND CLEANUP
 
-A browser supervisor process holds the DevTools session and an ownership
-claim for its lifetime; Chrome is the claim's child. Stim signals the
-supervisor or Chrome only after verifying the process identity it recorded.
+Chrome holds an ownership claim of its own for its lifetime, and stimd holds
+the DevTools session that records the page's logs, attaching again after a
+stimd restart. Stim signals Chrome only after verifying the process identity
+it recorded.
   stim stop               closes Chrome and keeps the profile, so cookies and
                           storage survive the next stim web
   stim stop --slot web    closes only Chrome, keeping the profile, Metro and

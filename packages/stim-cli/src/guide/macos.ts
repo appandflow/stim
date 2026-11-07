@@ -54,7 +54,7 @@ executables, including Stim Desktop's sim-fold helper, are not built.
   stim status --json      # environments[].macos and build state
   stim logs --source build
   stim logs --errors
-  stim stop               # stop this workspace's owned app and supervisor
+  stim stop               # stop this workspace's owned app
 
 Each invocation validates the project settings, development plist and resource
 entries before stopping its previous owned app, rebuilding and launching. SwiftPM
@@ -140,8 +140,12 @@ plannedPhases are null; finished runs and their phase times are in
 environments[].builds.macos, where phases includes launch once the launch step finishes
 and compileSteps is SwiftPM's step total. An offloaded build reports the worker's
 steps the same way.
-Runtime stdout and stderr become client records; build output becomes build
-records, all with platform "macos". Unexpected app exits are error records.
+The app runs as a detached child of the command, with the command's
+environment. Its stdout and stderr go to logs/macos-app.out and macos-app.err
+in the workspace, which stimd follows into client records (stdout at info,
+stderr at warn) while the app runs, and its exit becomes an info record
+without an exit code; build output becomes build records, all with platform
+"macos".
 Stim runs the app with NSUnbufferedIO=YES, so Swift print output arrives per
 line instead of when the app exits.
 
@@ -218,7 +222,7 @@ actions are no longer returned, and a failed open is not shown.
 
 OWNERSHIP AND LOCAL VIEWING
 
-The supervisor owns a process-identity claim with the app as its child. Stop
+The app holds a process-identity claim of its own for its lifetime. Stop
 signals only verified recorded identities. That includes the commands the app
 started that are still running, even mid-operation: they get SIGTERM, then
 SIGKILL, as the app does. They are its direct children and the helpers in their

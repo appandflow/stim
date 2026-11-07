@@ -69,6 +69,7 @@ import { takeOverLegacyDaemon } from './legacy-daemon-takeover.ts';
 // compat end
 import { listenPipe } from './pipe-win32.ts';
 import { createPassesLane, createThreadTable } from './threads.ts';
+import { createOwnedStreams } from './logs/owned.ts';
 import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
 import { followEngine } from './engine-follow.ts';
@@ -413,6 +414,7 @@ export async function runStimd({
   });
   const threads = createThreadTable(log);
   const lane = createPassesLane(threads, log);
+  const owned = createOwnedStreams(log);
   const statuses = createStatusSnapshots(log, join(daemonDir(), 'status-cwds.json'));
   let dependencyScanAt = -Infinity;
   let dependencyWork: Promise<void> | undefined;
@@ -623,6 +625,10 @@ export async function runStimd({
         } else if (op === 'op.wait' || op === 'op.resume') {
           if (ops.has(socket)) ops.set(socket, op === 'op.wait' ? 'waiting' : 'pinned');
           void checkEngine();
+        } else if (op === 'logs.observe') {
+          const root = isJsonObject(message.params) ? message.params.root : undefined;
+          if (typeof root !== 'string') socket.destroy();
+          else void owned.sync(root).then((error) => socket.end(`${JSON.stringify({ op: 'logs.observed', error })}\n`));
         } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'status') void statuses.answer(message.params).then((answer) => socket.end(`${answer}\n`));
         else if (op === 'tick') {
@@ -657,6 +663,7 @@ export async function runStimd({
     if (dependencyWork) log('debug', 'daemon_dependency_scan_cancelled', 'stopping the dependency size scan');
     threads.abort('measure');
     statuses.close();
+    owned.close();
     loopDelay.disable();
     interrupt?.();
     server.close();
@@ -690,6 +697,7 @@ export async function runStimd({
     throw error;
   }
   if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
+  void owned.sync();
   log(
     'info',
     'daemon_started',
@@ -722,7 +730,7 @@ export async function runStimd({
     const configured = configuredDaemonMode();
     const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
     if (mode === 'off') {
-      if (net.running() || restartingNet) {
+      if (net.running() || restartingNet || owned.running()) {
         for (const socket of tickReplies.splice(0)) socket.destroy();
         continue;
       }
@@ -746,6 +754,7 @@ export async function runStimd({
         memoryWarningSince: lastSnapshot?.pressure?.memoryWarningSince ?? null,
       });
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
+      void owned.sync();
       actions.push(...lane.take());
       if (!closing && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
         dependencyScanAt = Date.now();

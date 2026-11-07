@@ -7,6 +7,10 @@ import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace
 
 export const macosDir = (root: string): string => join(workspaceDir(root), 'macos');
 export const macosLogFile = (root: string): string => join(workspaceLogsDir(root), 'macos.ndjson');
+export const MACOS_APP_STDOUT = 'macos-app.out';
+export const MACOS_APP_STDERR = 'macos-app.err';
+export const macosAppStdout = (root: string): string => join(workspaceLogsDir(root), MACOS_APP_STDOUT);
+export const macosAppStderr = (root: string): string => join(workspaceLogsDir(root), MACOS_APP_STDERR);
 export const macosRuntimeClaim = (root: string): string => join(macosDir(root), 'runtime.lock');
 
 export const macosAppPresent = (root: string): boolean =>

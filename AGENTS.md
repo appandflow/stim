@@ -787,10 +787,11 @@ emulators are shut down by `stop`.
 
 `stim web` launches the installed Chrome only with a profile Stim created under
 `$STIM_HOME/workspaces/<id>/web/`, listed under `web` in the created-devices
-ledger, and never attaches to a browser it did not start. Its supervisor holds
-an ownership claim with Chrome as the claim's child. Teardown goes through
-`devices/teardown.ts`, signals the supervisor or Chrome only after verifying
-the recorded identity, removes Chrome's `Singleton*` lock files only once Chrome
+ledger, and never attaches to a browser it did not start. The command starts
+Chrome through `spawnOwned`, which gives Chrome an ownership claim of its own,
+and stimd holds its DevTools session. Teardown goes through
+`devices/teardown.ts`, signals Chrome (or the browser supervisor an older Stim
+started) only after verifying the recorded identity, removes Chrome's `Singleton*` lock files only once Chrome
 is gone, and deletes a profile only when the ledger lists it.
 
 A physical device reached through `android --device` or `ios --device` is

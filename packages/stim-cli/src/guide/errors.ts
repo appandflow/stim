@@ -1283,17 +1283,17 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       summary: 'the previous owned Chrome could not be stopped or verified; it was left running',
       body: () => `STIM_WEB_BROWSER_HELD
   stim web replaces the workspace's owned Chrome when its options change, and
-  the previous one could not be stopped: its supervisor or Chrome did not
-  exit, or their process identities could not be verified. Stim never signals
+  the previous one could not be stopped: Chrome did not exit, or its process
+  identity could not be verified. Stim never signals
   a process it cannot verify. Check stim status for browser-unverified, then
   follow stim guide errors teardown.`,
     },
     STIM_WEB_LAUNCH_FAILED: {
       summary: 'the owned Chrome did not start or did not open DevTools on its reserved port',
       body: () => `STIM_WEB_LAUNCH_FAILED
-  The browser supervisor exited before Chrome answered on its reserved
-  DevTools port. The remedy names the supervisor log; web.ndjson carries the
-  failure as web_browser_failed, and browser.log holds Chrome's own output.
+  Chrome did not answer on its reserved DevTools port, or stimd could not
+  attach to its page. web.ndjson carries the failure as web_browser_failed,
+  and browser.log, which the remedy names, holds Chrome's own output.
   A port another process bound first also lands here: run stim web again to
   reserve a fresh one.`,
     },
