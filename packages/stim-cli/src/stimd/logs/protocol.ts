@@ -11,6 +11,7 @@ export function handleLogRequest({
   operations,
   controllers,
   tokens,
+  attached,
 }: {
   message: Record<string, unknown>;
   socket: Socket;
@@ -18,6 +19,7 @@ export function handleLogRequest({
   operations: Map<Socket, Invocation & { workspace: string }>;
   controllers: Map<Socket, AbortController>;
   tokens: Map<string, Socket>;
+  attached: boolean;
 }): boolean {
   if (message.op !== 'logs.start' && message.op !== 'logs.stop' && message.op !== 'readiness.wait') return false;
   const respond = (answer: Record<string, unknown>) => {
@@ -35,6 +37,15 @@ export function handleLogRequest({
     } catch {}
     if (!context || !spec || !matches) {
       respond({ op: 'error', code: 'bad-workspace', message: 'the log stream does not match an admitted operation' });
+      return true;
+    }
+    if (attached && spec.platform === 'ios' && spec.physical) {
+      respond({
+        op: 'error',
+        code: 'logs.start',
+        message:
+          'A physical iOS console cannot use an attached stimd. Run `stim serve` in a foreground terminal, then retry.',
+      });
       return true;
     }
     const signal = owner ? controllers.get(owner)?.signal : undefined;

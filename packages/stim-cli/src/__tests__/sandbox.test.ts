@@ -56,6 +56,67 @@ test.skipIf(process.platform !== 'win32')(
   },
 );
 
+test('missingAllowance asks for the stimd socket until an allowUnixSockets entry covers it', () => {
+  const dir = scratch();
+  const home = '/Users/example';
+  const socket = '/Users/example/.stim/run/stimd.sock';
+  const missing = (sockets: string[]): string[] => {
+    const path = join(dir, 'settings.local.json');
+    writeFileSync(
+      path,
+      JSON.stringify({
+        sandbox: {
+          filesystem: { allowWrite: ['~/.stim'] },
+          network: {
+            allowMachLookup: ['com.apple.coresimulator.*'],
+            allowLocalBinding: true,
+            allowUnixSockets: sockets,
+          },
+        },
+      }),
+    );
+    return missingAllowance([path], '~/.stim', home, socket);
+  };
+  try {
+    expect(missing([])).toEqual(['sandbox.network.allowUnixSockets']);
+    expect(missing(['/var/run/docker.sock'])).toEqual(['sandbox.network.allowUnixSockets']);
+    for (const entry of [socket, '~/.stim/run', '~/.stim/run/stimd.sock']) expect(missing([entry])).toEqual([]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('applyClaudeAllowance adds the stimd socket to an allowance written without it, keeping other sockets', () => {
+  const root = scratch();
+  try {
+    const path = claudeLocalSettingsPath(root);
+    const socket = join(root, 'home', 'run', 'stimd.sock');
+    mkdirSync(join(root, '.claude'));
+    writeFileSync(
+      path,
+      JSON.stringify({
+        sandbox: {
+          filesystem: { allowWrite: ['~/.stim'] },
+          network: {
+            allowMachLookup: ['com.apple.coresimulator.*'],
+            allowLocalBinding: true,
+            allowUnixSockets: ['/var/run/docker.sock'],
+          },
+        },
+      }),
+    );
+    expect(missingAllowance([path], '~/.stim', root, socket)).toEqual(['sandbox.network.allowUnixSockets']);
+
+    expect(applyClaudeAllowance(path, sandboxAllowance('~/.stim', socket)).status).toBe('updated');
+    expect(JSON.parse(readFileSync(path, 'utf-8'))).toMatchObject({
+      sandbox: { network: { allowUnixSockets: ['/var/run/docker.sock', socket] } },
+    });
+    expect(missingAllowance([path], '~/.stim', root, socket)).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('unmergeableKey names a value the merge would have to discard', () => {
   expect(unmergeableKey({})).toBe(null);
   expect(unmergeableKey({ permissions: { allow: [] } })).toBe(null);
@@ -180,6 +241,20 @@ test('applySandboxFix writes nothing under Codex, and nothing without a harness'
     expect(none.exitCode).toBe(undefined);
 
     expect(existsSync(claudeLocalSettingsPath(root))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Linux socket denial does not write a path-specific Claude allowance', () => {
+  const root = scratch();
+  try {
+    const env = { CLAUDECODE: '1', STIM_HOME: join(root, 'home') };
+    const notes: string[] = [];
+    expect(applySandboxFix(root, env, (message) => notes.push(message), true, 'linux')).toBe(1);
+    expect(existsSync(claudeLocalSettingsPath(root))).toBe(false);
+    expect(notes.join(' ')).toContain('outside the sandbox');
+    expect(sandboxFinding(root, { env, socketBlocked: true, platform: 'linux' })?.fix).toContain('outside the sandbox');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -54,14 +54,16 @@ import {
   launchStimd,
   launchdLabelPrefix,
   serveThroughStimd,
+  isSandboxBlocked,
   stimdBuildId,
   stimdLive,
+  waitForStimdHello,
   type NetAnswer,
 } from '../daemon/client.ts';
 import { getExecutor } from '../exec.ts';
 import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from '../daemon/mode.ts';
 import { ownedHere } from '../daemon/idle.ts';
-import type { TickMeasurement } from '../daemon/measure.ts';
+import { measureTick, type TickMeasurement } from '../daemon/measure.ts';
 import { listWaiting } from '../engine/wait-queue.ts';
 import { runHomePasses, type HomePasses } from '../daemon/passes.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
@@ -96,6 +98,15 @@ import { readRecords } from '../engine-store/store.ts';
 // compat C25 until removal-minor
 import { stopForeignSupervisors } from './foreign-supervisors.ts';
 // compat end
+import {
+  ATTACHED_ARG,
+  attachedExitWaitMs,
+  endAttached,
+  NO_HANDOVER_ARG,
+  readoptJournal,
+  SANDBOX_EXIT,
+  stimdLifetime,
+} from './attached.ts';
 
 const TICK_MS = 60_000;
 const DEPENDENCY_SCAN_MS = 10 * 60_000;
@@ -137,12 +148,13 @@ async function takeClaim(
   label: string,
   details: Record<string, unknown>,
   beforeRetry: () => Promise<unknown> = async () => {},
+  retries = CLAIM_TRIES,
 ): Promise<ClaimHandle | null> {
   for (let tries = 0; ; tries++) {
     const attempt = tryAcquireClaim({ root, mode, label, details });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (attempt.acquired) return attempt.acquired;
-    if (tries >= CLAIM_TRIES) return null;
+    if (tries >= retries) return null;
     await beforeRetry();
     await new Promise((done) => setTimeout(done, CLAIM_RETRY_MS));
   }
@@ -249,6 +261,10 @@ async function pendingWork(
     : `the finished worktree ${removal.target}, removable since ${at}, waits for the next worktree check`;
 }
 
+function keepsServingWhenOff(attached: boolean): boolean {
+  return attached || metroChildrenRun();
+}
+
 /**
  * One resident stimd per Stim home, which returns false when another holds the home: holds the claim at `run/stimd` exclusively and the daemon claim at `daemon/claim`
  * shared, after stopping a stim-daemon from Stim 1.40 to 1.42 that holds that one exclusively; serves the CLI socket,
@@ -269,6 +285,7 @@ export async function runStimd({
   onNet,
   afterSwitch = false,
   service = serve !== undefined,
+  attached,
 }: {
   tickMs?: number;
   /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
@@ -285,10 +302,19 @@ export async function runStimd({
   afterSwitch?: boolean;
   /** Whether a service unit or `stim serve` runs this stimd, which turns `engine.autoUpdate`'s `auto` on. */
   service?: boolean;
+  /**
+   * Bound to the process that started it (`hostStimd`): it neither follows the engine nor exits idle or under
+   * `daemon.mode` off, and ends when its stdin closes or on a signal, through `endAttached`.
+   */
+  attached?: { handover: boolean };
 } = {}): Promise<boolean> {
   const identity = stimBuild();
   const build = stimdBuildId();
   const configAtStart = configuredDaemonMode();
+  const effectiveMode = () => {
+    const configured = configuredDaemonMode();
+    return configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
+  };
   const started = performance.now();
   const startedAt = new Date().toISOString();
   mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
@@ -305,10 +331,16 @@ export async function runStimd({
   );
   const updateCheckedAt = Math.max(0, ...leftover.map((holder) => Number(holder.details.updateCheckedAt) || 0));
   const details = { socket: path, mode: startMode, build, version: identity.version, boots, updateCheckedAt };
-  let own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details);
+  const lifetime = stimdLifetime(attached !== undefined, identity.version);
+  let own = await takeClaim(stimdClaimRoot(), 'exclusive', 'stimd', details, undefined, lifetime.retries(CLAIM_TRIES));
   if (!own) {
     log('debug', 'stimd_claim_held', 'another stimd holds this Stim home; exiting');
     writer.close();
+    const answer = attached ? await waitForStimdHello() : null;
+    if (answer)
+      await new Promise<void>((done) =>
+        process.stdout.write(`${JSON.stringify({ op: `attached-${answer}` })}\n`, () => done()),
+      );
     return false;
   }
   let keepOwn = false;
@@ -321,7 +353,7 @@ export async function runStimd({
     own = updateClaimDetails(own, { ...details, boots: marked }) ?? own;
   };
   process.title = 'stimd';
-  const store = ownStoreEngine();
+  const store = lifetime.detachedOnly(ownStoreEngine);
   if (store && crashLooping(boots, build)) {
     const held = await holdCrashLoop(store, identity.version, getConfigDir());
     if ('rolledBack' in held || 'moved' in held) {
@@ -377,7 +409,8 @@ export async function runStimd({
     writer.close();
     return false;
   }
-  const follower = followEngine(log);
+  readoptJournal(log);
+  const follower = lifetime.detachedOnly(() => followEngine(log));
   const key = writeDesktopKey(desktopKey);
   const script = realpathSync(process.argv[1] ?? '');
   const net = createNetThread(
@@ -423,12 +456,12 @@ export async function runStimd({
     pathPrepend: [],
     loopbackOnly: false,
     shareOnly: false,
+    attached: attached !== undefined,
     ...fields,
     desktopKey: key,
     script,
   });
   const logs = createStreams((message) => log('warn', 'device_logs', message));
-  const hasOffWork = () => Boolean(net.running() || restartingNet || metroChildrenRun() || logs.running());
   const threads = createThreadTable(log);
   const lane = createPassesLane(threads, log);
   const statuses = createStatusSnapshots(log, join(daemonDir(), 'status-cwds.json'));
@@ -466,12 +499,23 @@ export async function runStimd({
   };
   const open = new Set<Socket>();
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
+  const hasOffWork = () =>
+    Boolean(
+      net.running() ||
+      restartingNet ||
+      logs.running() ||
+      ops.size > 0 ||
+      keepsServingWhenOff(lifetime.keepsServingWhenOff),
+    );
   const opContexts = new Map<Socket, Invocation & { workspace: string }>();
   const opControllers = new Map<Socket, AbortController>();
   const opTokens = new Map<string, Socket>();
   const leaseTickets = createLeaseTickets((message) => log('warn', 'device_lease_release_failed', message));
   const metroTickets = createMetroTickets(log);
   const socketTokens = new WeakMap<Socket, string>();
+  const opCommands = new WeakMap<Socket, string>();
+  let ending: string | null = null;
+  let attachedEnding: Promise<void> | undefined;
   let engineDirs: string[] = [];
   try {
     if (follower) engineDirs = workspaceEngineDirs(loadConfig());
@@ -570,7 +614,7 @@ export async function runStimd({
             return;
           }
           if (switchedTo || (message.kind !== 'desktop' && message.build !== build)) {
-            reply({ op: 'engine-changed', build, version: identity.version, pid: process.pid, ...switchedTo });
+            reply({ op: 'engine-changed', build, ...lifetime.refusal, pid: process.pid, ...switchedTo });
             socket.end();
             return;
           }
@@ -592,6 +636,7 @@ export async function runStimd({
             operations: opContexts,
             controllers: opControllers,
             tokens: opTokens,
+            attached: attached !== undefined,
           })
         )
           continue;
@@ -619,7 +664,9 @@ export async function runStimd({
           continue;
         if (op === 'hello') {
           hasten?.();
-          socket.end(`${JSON.stringify({ op: 'hello', pid: process.pid, build, version: identity.version })}\n`);
+          socket.end(
+            `${JSON.stringify({ op: 'hello', pid: process.pid, build, version: identity.version, mode: effectiveMode(), ...(attached ? { attached: true } : {}) })}\n`,
+          );
         } else if (op === 'presence.publish') {
           socket.end(`${JSON.stringify({ op: 'presence', forwarded: net.presence(message.params) })}\n`);
         } else if (op === 'net.ensure') {
@@ -671,6 +718,7 @@ export async function runStimd({
           hasten?.();
           ops.set(socket, 'pinned');
           opControllers.set(socket, new AbortController());
+          opCommands.set(socket, typeof message.command === 'string' ? message.command : 'a command');
           void (follower?.admit() ?? Promise.resolve(null))
             .catch((error: unknown) => {
               log('warn', 'engine_admit_failed', error instanceof Error ? error.message : String(error));
@@ -787,7 +835,37 @@ export async function runStimd({
     socket.on('data', onData);
   });
   let bound = false;
-  const onSignal = (signal: NodeJS.Signals) => shutdown(signal);
+  const waitMs = attachedExitWaitMs();
+  const finishAttached = () =>
+    endAttached({
+      inFlight: () => [...ops.keys()].map((socket) => opCommands.get(socket) ?? 'a command'),
+      alive: async () =>
+        net.running()
+          ? 'the net thread serves'
+          : metroChildrenRun()
+            ? 'Metro or a tunnel is running'
+            : homeAlive(loadConfig(), await measureTick(loadConfig(), Date.now(), { probe: false })),
+      waitMs,
+      handover: attached?.handover ?? false,
+      mode: effectiveMode,
+      identity: { build, version: identity.version },
+      successorArgs: () => {
+        const running = net.running();
+        const carried = running && netServes ? { ...netServes, shareOnly: running.shareOnly } : null;
+        return serveArgs(carried, service);
+      },
+      release: async (why) => {
+        shutdown(ending === 'stdin' ? why : `${why} (${ending})`);
+        await net.close();
+      },
+      log,
+    });
+  const requestEnd = (why: string) => {
+    if (ending) return;
+    ending = why;
+    attachedEnding = finishAttached();
+  };
+  const onSignal = (signal: NodeJS.Signals) => (attached ? lifetime.signal(signal, requestEnd) : shutdown(signal));
   const shutdown = (why: string, level: Level = 'info') => {
     if (closing) return;
     closing = true;
@@ -816,6 +894,7 @@ export async function runStimd({
       logs.close().catch((error: unknown) => log('warn', 'device_logs_close_failed', String(error))),
     ])
       .then(() => threads.close())
+      .then(() => attachedEnding)
       .then(() => writer.close());
   };
   for (const signal of SIGNALS) process.once(signal, onSignal);
@@ -830,11 +909,12 @@ export async function runStimd({
       version: identity.version,
     });
   } catch (error) {
-    shutdown(`cannot listen on ${path}: ${error instanceof Error ? error.message : String(error)}`, 'error');
-    throw error;
+    shutdown(`cannot listen on ${path}: ${error instanceof Error ? error.message : String(error)}`, lifetime.failLevel);
+    throw lifetime.listenFailed(error);
   }
   adoptMetroChildren(log);
   if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
+  lifetime.serve(requestEnd, waitMs);
   log(
     'info',
     'daemon_started',
@@ -864,8 +944,7 @@ export async function runStimd({
     hasten = null;
     if (closing) break;
     tickRequested = false;
-    const configured = configuredDaemonMode();
-    const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
+    const mode = effectiveMode();
     void metroTick(mode === 'on', log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
     if (mode === 'off') {
       if (hasOffWork()) {
@@ -1014,7 +1093,7 @@ export async function runStimd({
       },
     );
     loopDelay.reset();
-    if (emptyTicks >= EMPTY_TICKS_BEFORE_EXIT) {
+    if (emptyTicks >= lifetime.idleTicks(EMPTY_TICKS_BEFORE_EXIT)) {
       await checkEngine();
       shutdown('nothing runs in this Stim home');
       break;
@@ -1023,6 +1102,7 @@ export async function runStimd({
   }
   await Promise.all([lane.settled(), dependencyWork, net.close()]);
   await threads.close();
+  await attachedEnding;
   return true;
 }
 
@@ -1115,11 +1195,14 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
   });
   try {
     const served = await runStimd({
-      mode: parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ?? daemonMode({}),
+      mode:
+        parseDaemonMode(at >= 0 ? argv[at + 1] : undefined) ??
+        daemonMode(argv.includes(ATTACHED_ARG) ? process.env : {}),
       serve,
       onNet: reportNet,
       afterSwitch: argv.includes('--after-switch'),
       service: serve !== undefined && !argv.includes('--carried'),
+      ...(argv.includes(ATTACHED_ARG) ? { attached: { handover: !argv.includes(NO_HANDOVER_ARG) } } : {}),
     });
     if (serve && !served && stimdLive()) await serveThroughStimd(serve, reportNet);
   } catch (error) {
@@ -1135,7 +1218,7 @@ export async function runStimdEntry(argv: readonly string[]): Promise<void> {
       writer.write({ src: 'stimd', level: 'error', event: 'daemon_failed', msg: message });
       writer.close();
     } catch {}
-    process.exitCode = 1;
+    process.exitCode = isSandboxBlocked(error) ? SANDBOX_EXIT : 1;
   }
   if (label)
     try {

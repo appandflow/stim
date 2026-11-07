@@ -1,5 +1,6 @@
 import * as desktopLinks from '../devices/stim-desktop.ts';
 import { testContext } from './_context.ts';
+import { CliExit } from '../cli-operation.ts';
 import { recordBuild, recordedBuildKey } from '../engine/recorded-build.ts';
 import { createStim } from '../api.ts';
 import * as iosOperation from '../commands/ios.ts';
@@ -436,6 +437,7 @@ function harness(overrides: LooseDeps = {}) {
       record('replaceCollector', args);
       return { killed: null, streamId: 'stream-5150' };
     },
+    checkPhysicalIosLog: async () => null,
     stopPreviousCollector: async (args) => {
       record('stopPreviousCollector', args);
       return { killed: null };
@@ -571,7 +573,13 @@ async function run(opts: Record<string, unknown> = {}, overrides: LooseDeps = {}
     exitCode = c;
   });
   try {
-    await action(opts);
+    try {
+      await action(opts);
+    } catch (error) {
+      if (!(error instanceof CliExit)) throw error;
+      onExit?.();
+      exitCode = error.exitCode;
+    }
     exitCode ??= process.exitCode ?? null;
   } finally {
     stdout.mockRestore();
@@ -6534,6 +6542,28 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(facts.udid).toBe(PHONE);
     expect(facts.launched).toBe(true);
     expect(facts.cacheKey).toBe(`${FINGERPRINT}-debug-device`);
+  });
+
+  test('an attached daemon refuses a physical console before stopping the old app or installing', async () => {
+    reserve();
+    const { exitCode, calls, logs } = await run(
+      { device: true, json: true },
+      {
+        ...connected(),
+        checkPhysicalIosLog: async () => ({
+          error: 'A physical iOS console cannot use an attached stimd.',
+          remedy: 'Run `stim serve` in a foreground terminal, then retry.',
+        }),
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_LAUNCH_FAILED',
+      remedy: expect.stringContaining('stim serve'),
+    });
+    expect(calls.order).not.toContain('stopPreviousCollector');
+    expect(calls.order).not.toContain('installIosDeviceApp');
+    expect(calls.order).not.toContain('replaceCollector');
   });
 
   test('the phone launch line is the shared shape plus the pid that proves it', async () => {

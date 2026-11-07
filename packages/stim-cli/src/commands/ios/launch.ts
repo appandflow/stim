@@ -989,6 +989,14 @@ export async function finishIosRun({
     });
 
   if (physical) {
+    const consoleRefusal = await d.checkPhysicalIosLog(operation);
+    if (consoleRefusal)
+      return fail({
+        code: 'STIM_LAUNCH_FAILED',
+        message: consoleRefusal.error,
+        remedy: consoleRefusal.remedy,
+        build: { ...buildFailure, appPath, bundleId },
+      });
     const overWifi = await installsOverWifi(d, udid, wireless, note);
     const bounds = iosDeviceBounds(overWifi);
     const lostBeforeInstall = raiseLeaseFor(bounds.installMs, true);

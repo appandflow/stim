@@ -79,7 +79,7 @@ import { sameCollectorRecord } from '../stimd/logs/state.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { readBootedParkDeadline } from '../devices/booted-park.ts';
 import { clearDeferredShutdown } from '../devices/deferred-shutdown.ts';
-import { ensureStimd, stopDeviceLogStream } from '../daemon/client.ts';
+import { ensurePersistentStimd, stopDeviceLogStream } from '../daemon/client.ts';
 import { removeOwnedEmulatorMetroReverses } from '../devices/android.ts';
 import { removePhoneReverses } from '../devices/phone-reverses.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
@@ -1448,7 +1448,7 @@ function signalledHolder(holder: ClaimHolder): boolean {
 async function iosShutdownDeadline(operation: StimContext | undefined): Promise<string | null> {
   try {
     const until = await readBootedParkDeadline('ios', operation);
-    return until && (await ensureStimd(operation?.env)) ? until : null;
+    return until && (await ensurePersistentStimd(operation?.env)) ? until : null;
   } catch {
     operation?.signal.throwIfAborted();
     return null;

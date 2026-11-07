@@ -1113,6 +1113,10 @@ THE ONE CASE GC WILL NOT REAP
   entry. \`stop\` closes the app and releases this workspace's leases.
   Nothing is uninstalled, and the next \`ios --device\` starts it again.
 
+  A sandbox-attached stimd ends with its host command, so Stim refuses a
+  physical iPhone launch before installation when that is the active daemon.
+  Run \`stim serve\` in a foreground terminal, then retry the launch.
+
   Unplugging the phone ends devicectl, which ends the collector: it unregisters
   itself and exits either way. A separately held \`device lock\` lease survives
   collector exit until released or expired; \`gc --delete\` can remove its

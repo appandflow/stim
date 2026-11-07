@@ -818,6 +818,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const jobs: OffloadJobs = new OffloadJobs({
     stimCli: options.stimCli,
     machine: options.name,
+    attached: options.attached,
     env: () => options.currentEnv?.() ?? options.env,
     limits: builds.limits,
     admit: (client) => {

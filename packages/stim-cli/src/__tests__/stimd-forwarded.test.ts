@@ -102,6 +102,7 @@ it('classifies each environment-named setting by the process that makes its deci
     'pool.androidParkedMax',
     'pool.bootedGraceMinutes',
     'daemon.mode',
+    'daemon.attachedExitWaitSeconds',
     'debug.logs',
   ];
   const cli = [

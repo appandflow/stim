@@ -1475,7 +1475,9 @@ result as proof instead of requiring an unrelated screenshot.`,
   expiry in the workspace state and makes sure the stim-daemon runs. \`stop\`
   prints \`<name> stays booted for N minutes\`, and \`stop --json\` reports
   \`device.ios\` as { status: "kept-booted", label, until } with \`ok\` true.
-  If any gate fails, \`stop\` shuts the simulator down as before.
+  Grace also requires a reachable persistent stimd in acting mode; an attached
+  stimd cannot enforce it after its command exits. If any gate fails, \`stop\`
+  shuts the simulator down as before.
     - \`ios\` in the workspace before the expiry uses the booted simulator, with
       no boot, and forgets the record.
     - \`worktree remove\` parks it booted under the park gates, or shuts it
