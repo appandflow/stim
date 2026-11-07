@@ -364,3 +364,26 @@ it.each([
   expect(lifecycle.run).not.toHaveBeenCalled();
   expect(lifecycle.stop).not.toHaveBeenCalled();
 });
+
+it.each([0, 3])('records cancellation during daemon shutdown after a test exits %i', async (testExit) => {
+  const controller = new AbortController();
+  let ending!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((done) => (ending = done));
+  const wait = new Promise<void>((done) => (release = done));
+  lifecycle.host.mockResolvedValueOnce({
+    end: async () => {
+      ending();
+      await wait;
+    },
+  });
+  options.command = [process.execPath, '-e', `process.exitCode = ${testExit}`];
+  const run = runCI({ ...options, signal: controller.signal });
+  await started;
+  controller.abort();
+  release();
+  const result = await run;
+  expect(result.exitCode).toBe(testExit || 130);
+  expect(result.failure?.code).toBe(testExit ? 'STIM_CI_TEST_FAILED' : 'STIM_CI_CANCELLED');
+  expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).exitCode).toBe(testExit || 130);
+});

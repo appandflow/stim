@@ -206,6 +206,14 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
       }
     }
     await host?.end();
+    if (signal?.aborted && result.exitCode === 0) {
+      const timedOut = timeout?.aborted && !options.signal?.aborted;
+      result.exitCode = timedOut ? 124 : 130;
+      result.failure = {
+        code: timedOut ? 'STIM_CI_TIMEOUT' : 'STIM_CI_CANCELLED',
+        message: timedOut ? `CI run exceeded ${options.timeoutMs}ms.` : 'CI run was cancelled.',
+      };
+    }
     if (result.reportingError && result.exitCode === 0) {
       result.exitCode = 1;
       result.failure = result.reportingError;

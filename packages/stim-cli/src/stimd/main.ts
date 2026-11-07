@@ -760,6 +760,7 @@ export async function runStimd({
     log(level, 'daemon_exited', `exiting: ${why}`);
     void Promise.all([lane.settled(), dependencyWork, net.close(), closeMetroChildren()])
       .then(() => threads.close())
+      .then(() => attachedEnding)
       .then(() => writer.close());
   };
   for (const signal of SIGNALS) process.once(signal, onSignal);

@@ -160,6 +160,7 @@ test(
     await first.closed;
     assert.match(first.stderr(), /stimd: waiting up to \d+ s for stim ios to finish/);
     assert.ok(!alive(host.pid), 'the attached stimd exits after its wait');
+    assert.match(daemonLog(), /"event":"attached_handover_blocked"/);
     second.destroy();
     const journal = JSON.parse(readFileSync(join(home, 'run', 'stimd-journal.json'), 'utf8'));
     assert.equal(journal.format, 1);
