@@ -7,7 +7,9 @@ import { getExecutor } from '../../exec.ts';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../../ndjson.ts';
 import { stripAnsi } from '../../process-output.ts';
-import { type ChildServerHandle, superviseChildServer } from './child-server.ts';
+import { type ChildOutput, type ChildServerHandle, superviseChildServer } from './child-server.ts';
+import { signalProcessTree } from '../../metro.ts';
+import { processGroupAlive } from '@stim-cli/core/ownership-claim';
 import { resolvePackageJson } from '../../workspace/project.ts';
 import {
   expoMetroConfigPath,
@@ -283,6 +285,8 @@ export async function startExpoServer({
   onTunnelUrl = null,
   platform = process.platform,
   settings,
+  output = null,
+  extraEnv = {},
 }: {
   root: string;
   port: number;
@@ -295,6 +299,9 @@ export async function startExpoServer({
   onTunnelUrl?: ((url: string) => void) | null;
   platform?: NodeJS.Platform;
   settings?: SettingsObject;
+  /** File stdio and its own process group, for a child that outlives its parent, instead of pipes. */
+  output?: { files: ChildOutput; fds: [number, number] } | null;
+  extraEnv?: Record<string, string>;
 }): Promise<ChildServerHandle> {
   const resolved = resolveExpoBin(root);
   if (!resolved) {
@@ -329,10 +336,11 @@ export async function startExpoServer({
       msg: `Metro runs on ${projectNodeLine(node.pinned)}`,
     });
   }
+  const group = output !== null && platform !== 'win32';
   const child = spawn(command, commandArgs, {
     cwd: root,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: false,
+    stdio: output ? ['ignore', ...output.fds] : ['ignore', 'pipe', 'pipe'],
+    detached: group,
     env: {
       ...node.env,
       FORCE_COLOR: '0',
@@ -341,6 +349,7 @@ export async function startExpoServer({
       ...storeEnv,
       // Expo's legacy tunnel uses port 8081; v2 uses this workspace's reserved port.
       ...(tunnel ? { EXPO_UNSTABLE_TUNNEL_V2: '1' } : {}),
+      ...extraEnv,
     },
   });
 
@@ -350,8 +359,17 @@ export async function startExpoServer({
     child,
     log,
     toRecord: (chunk, stream) => recordFromLine(chunk, { stream }),
-    signal: (sig) => child.kill(sig),
+    signal: (sig) => {
+      if (!group || !child.pid) return child.kill(sig);
+      try {
+        return signalProcessTree(child.pid, sig, { group, platform });
+      } catch {
+        return false;
+      }
+    },
+    alive: group ? () => child.pid !== undefined && processGroupAlive(child.pid) : null,
     killTimeoutMs,
+    output: output?.files,
     onRecord: (record) => {
       if (!tunnel || tunnelUrlSeen || !onTunnelUrl || typeof record.msg !== 'string') return;
       const url = parseExpoWaitingOnUrl(record.msg);

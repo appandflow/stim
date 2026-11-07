@@ -3,11 +3,12 @@ import { once } from 'node:events';
 import { getExecutor } from '../exec.ts';
 import { processGroupAlive } from '../ownership-claim.ts';
 import type { SpawnOptions } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, closeSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseNdjsonText } from '../ndjson.ts';
 import { startCommandServer } from '../stimd/metro/server-command.ts';
+import { openChildOutput } from '../stimd/metro/child-server.ts';
 import { makeChildProcess } from './_factories.ts';
 
 let root: string;
@@ -21,37 +22,49 @@ afterEach(() => {
 const command = ['node', '../react-native/cli.js', 'start', '--port', '{port}'];
 
 describe('startCommandServer', () => {
-  test('runs the argv from the app directory with {port} replaced, as its own process group off Windows', async () => {
+  test('runs the argv from the app directory with {port} replaced, as its own process group writing files off Windows', async () => {
     const calls: { cmd: string; args: string[]; opts: SpawnOptions }[] = [];
     const spawnFn = (cmd: string, args: string[], opts: SpawnOptions) => {
       calls.push({ cmd, args, opts });
       return makeChildProcess({ pid: 4242 });
     };
     const logsDir = join(root, 'logs');
-    await startCommandServer({ root, port: 8095, logsDir, command, spawnFn, platform: 'darwin' });
-    await startCommandServer({ root, port: 8095, logsDir, command, spawnFn, platform: 'win32' });
+    mkdirSync(logsDir);
+    const output = openChildOutput(logsDir);
+    try {
+      await startCommandServer({ root, port: 8095, logsDir, command, spawnFn, platform: 'darwin', output });
+      await startCommandServer({ root, port: 8095, logsDir, command, spawnFn, platform: 'win32', output });
+    } finally {
+      for (const fd of output.fds) closeSync(fd);
+    }
 
     expect(calls[0]?.cmd).toBe('node');
     expect(calls[0]?.args).toEqual(['../react-native/cli.js', 'start', '--port', '8095']);
-    expect(calls[0]?.opts.cwd).toBe(root);
-    expect(calls[0]?.opts.detached).toBe(true);
+    expect(calls[0]?.opts).toMatchObject({ cwd: root, detached: true, stdio: ['ignore', ...output.fds] });
     expect(calls[1]?.opts.detached).toBe(false);
   });
 
-  test('its output becomes raw command records with inferred levels and bundle markers', async () => {
+  test('what it writes to its output files becomes raw command records with inferred levels and bundle markers', async () => {
     const child = makeChildProcess({ pid: 4242 });
     const logsDir = join(root, 'logs');
-    await startCommandServer({ root, port: 8096, logsDir, command, spawnFn: () => child });
-    child.stdout!.emit('data', 'iOS Bundled 812ms js/RNTesterApp.ios.js (1204 modules)\n');
-    child.stderr!.emit('data', 'error: Unable to resolve module ./Missing\n');
+    mkdirSync(logsDir);
+    const output = openChildOutput(logsDir);
+    for (const fd of output.fds) closeSync(fd);
+    await startCommandServer({ root, port: 8096, logsDir, command, spawnFn: () => child, output });
+    appendFileSync(output.files.stdout, 'iOS Bundled 812ms js/RNTesterApp.ios.js (1204 modules)\n');
+    appendFileSync(output.files.stderr, 'error: Unable to resolve module ./Missing\n');
 
-    const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8')).filter(
-      (r) => !String(r.event).startsWith('cache_store_'),
+    const records = () =>
+      parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8')).filter(
+        (r) => !String(r.event).startsWith('cache_store_'),
+      );
+    await vi.waitFor(() =>
+      expect(records()).toMatchObject([
+        { src: 'metro', level: 'info', raw: true, event: 'command_stdout', marker: true },
+        { src: 'metro', level: 'error', raw: true, event: 'command_stderr' },
+      ]),
     );
-    expect(records).toMatchObject([
-      { src: 'metro', level: 'info', raw: true, event: 'command_stdout', marker: true },
-      { src: 'metro', level: 'error', raw: true, event: 'command_stderr' },
-    ]);
+    child.emit('exit', 0, null);
   });
 
   test('close refuses unconfirmed shutdown after signalling the group with SIGTERM and SIGKILL', async () => {

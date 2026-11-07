@@ -1,11 +1,22 @@
 import assert from 'node:assert';
 import type { SpawnOptions } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  chmodSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { type NdjsonWriter, parseNdjsonText } from '../ndjson.ts';
 import { expoSdkMajor, inferLevel, recordFromLine, startExpoServer } from '../stimd/metro/server-expo.ts';
+import { openChildOutput } from '../stimd/metro/child-server.ts';
 import {
   expoMetroConfigPath,
   expoMetroStoreEnv,
@@ -86,7 +97,7 @@ describe('startExpoServer', () => {
     });
   });
 
-  test('bundle responses that start and finish within a second are all logged and leave the idle tracker with no open request', async () => {
+  test('bundle responses the child writes to its output files within a second are all logged, from its own process group, and leave the idle tracker with no open request', async () => {
     fakeBin();
     const child = fakeChild();
     let clock = 1_000_000;
@@ -100,7 +111,27 @@ describe('startExpoServer', () => {
         return true;
       },
     } as unknown as NdjsonWriter;
-    await startExpoServer({ root, port: 8115, logsDir: join(root, 'logs'), writer, spawnFn: () => child });
+    const logsDir = join(root, 'logs');
+    mkdirSync(logsDir, { recursive: true });
+    const output = openChildOutput(logsDir);
+    let spawned: SpawnOptions | undefined;
+    try {
+      await startExpoServer({
+        root,
+        port: 8115,
+        logsDir,
+        writer,
+        platform: 'darwin',
+        output,
+        spawnFn: (_cmd, _args, opts) => {
+          spawned = opts;
+          return child;
+        },
+      });
+    } finally {
+      for (const fd of output.fds) closeSync(fd);
+    }
+    expect(spawned).toMatchObject({ detached: true, stdio: ['ignore', ...output.fds] });
     const line = (stage: 'started' | 'finished', requestId: string) =>
       `stim-bundle-response: ${JSON.stringify({
         ts: clock,
@@ -111,21 +142,23 @@ describe('startExpoServer', () => {
         requestId,
         msg: `ios bundle response ${stage}`,
       })}\n`;
-    child.stderr!.emit('data', line('started', 'a'));
-    child.stdout!.emit('data', 'iOS Bundling index.js\n');
-    child.stderr!.emit('data', line('started', 'b'));
-    child.stderr!.emit('data', line('started', 'c'));
-    for (const id of ['a', 'b', 'c']) child.stderr!.emit('data', line('finished', id));
+    appendFileSync(output.files.stderr, line('started', 'a'));
+    appendFileSync(output.files.stdout, 'iOS Bundling index.js\n');
+    appendFileSync(output.files.stderr, line('started', 'b') + line('started', 'c'));
+    for (const id of ['a', 'b', 'c']) appendFileSync(output.files.stderr, line('finished', id));
 
-    const bundle = written.filter((r) => String(r.event).startsWith('bundle_response_'));
-    expect(bundle.map((r) => `${r.event}:${r.requestId}`)).toEqual([
-      'bundle_response_started:a',
-      'bundle_response_started:b',
-      'bundle_response_started:c',
-      'bundle_response_finished:a',
-      'bundle_response_finished:b',
-      'bundle_response_finished:c',
-    ]);
+    const bundle = () => written.filter((r) => String(r.event).startsWith('bundle_response_'));
+    await vi.waitFor(() =>
+      expect(bundle().map((r) => `${r.event}:${r.requestId}`)).toEqual([
+        'bundle_response_started:a',
+        'bundle_response_started:b',
+        'bundle_response_started:c',
+        'bundle_response_finished:a',
+        'bundle_response_finished:b',
+        'bundle_response_finished:c',
+      ]),
+    );
+    child.emit('exit', 0, null);
     const quietSince = clock;
     clock += 3_600_000;
     expect(activity.lastActivityAt()).toBe(quietSince);

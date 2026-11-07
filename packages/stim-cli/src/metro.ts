@@ -4,8 +4,9 @@ import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts
 import { getExecutor } from './exec.ts';
 import { isMetroRunning } from './ports.ts';
 import { addressPort, parseLsofListeners } from './listening-ports.ts';
-import { readlinkSync, realpathSync } from 'fs';
-import { sep } from 'path';
+import { readlinkSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import { join, sep } from 'path';
+import { workspaceDir } from './workspace/paths.ts';
 import { inspectProcessIdentity } from './process-identity.ts';
 import { readWorkspaceState } from './workspace/workspace-state.ts';
 
@@ -245,6 +246,21 @@ export async function resolveProjectMetro(
       ...(owner ? { processToken: owner.processToken as string } : {}),
     },
   };
+}
+
+/**
+ * Records in `metro.foreign.json` the Metro `resolveProjectMetro` found on `port`, running from the project, that no
+ * Stim process started and whose logs Stim therefore does not capture, for `reload` and `logs --errors`; with no
+ * such Metro, removes the record.
+ */
+export function recordForeignMetro(projectPath: string, port: number, found: MetroResolution): void {
+  const file = join(workspaceDir(canonicalPath(projectPath)), 'metro.foreign.json');
+  if (!found.metro || found.metro.processToken) {
+    rmSync(file, { force: true });
+    return;
+  }
+  const { pid, cwd } = found.metro;
+  writeFileSync(file, `${JSON.stringify({ pid, port, cwd, at: new Date().toISOString() })}\n`);
 }
 
 /**
