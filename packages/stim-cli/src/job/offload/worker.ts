@@ -48,12 +48,11 @@ import { assembleTaskFor } from '../../engine/gradle.ts';
 
 import { getExecutor } from '../../exec.ts';
 import { git, gitQuiet } from '../../workspace/git.ts';
-import { logLines } from '../../macos/run.ts';
 import { stripAnsi } from '../../process-output.ts';
 import { resolveBundleExtras, stageBundle } from '../../macos/stage.ts';
 import { manifestDigest } from '../../offload/manifest.ts';
 import { pathNodeVersion, projectNodeLine, unmetNodePin, withProjectNode } from '../../stimd/metro/project-node.ts';
-import { parseNdjsonText, type NdjsonWriter } from '../../ndjson.ts';
+import { logLines, parseNdjsonText, type NdjsonWriter } from '../../ndjson.ts';
 import type { Optimizations } from '../../optimizations.ts';
 import { podAction } from '../../commands/ios/support.ts';
 import type { AndroidBuildOptions } from '../../offload/client.ts';

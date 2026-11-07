@@ -1,8 +1,7 @@
-import { StringDecoder } from 'node:string_decoder';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { readMacosRecord } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
-import { createNdjsonWriter } from '../ndjson.ts';
+import { createNdjsonWriter, logLines } from '../ndjson.ts';
 import {
   clearClaimChild,
   markClaimChildPending,
@@ -12,25 +11,6 @@ import {
 } from '../ownership-claim.ts';
 import { inspectProcessIdentity, sameProcessRecord, waitForProcessExit } from '../process-identity.ts';
 import { macosLogFile, macosProcess, macosRuntimeClaim, updateMacosRecord } from './state.ts';
-
-export function logLines(stream: NodeJS.ReadableStream, write: (line: string) => void): void {
-  const decoder = new StringDecoder('utf8');
-  let pending = '';
-  stream.on('data', (chunk: Buffer) => {
-    pending += decoder.write(chunk);
-    while (pending.length > 65536 && !pending.includes('\n')) {
-      write(pending.slice(0, 65536));
-      pending = pending.slice(65536);
-    }
-    const lines = pending.split('\n');
-    pending = lines.pop() ?? '';
-    for (const line of lines) write(line.replace(/\r$/, ''));
-  });
-  stream.on('end', () => {
-    pending += decoder.end();
-    if (pending) write(pending);
-  });
-}
 
 export async function runMacosSupervisor(root: string, launchId: string): Promise<void> {
   const record = readMacosRecord(root);
