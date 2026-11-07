@@ -26,7 +26,7 @@ const DEFAULT_WAIT_SECONDS = 120;
 const BIND_MS = 10_000;
 const POLL_MS = 200;
 const HANDOVER_MS = 2000;
-const KILL_GRACE_MS = 10_000;
+export const KILL_GRACE_MS = 10_000;
 const MEASURE_MS = 5000;
 
 type Log = (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void;
@@ -213,6 +213,7 @@ export function readoptJournal(log: Log): void {
  */
 export async function endAttached({
   inFlight,
+  admissionRevision,
   alive: measure,
   waitMs,
   handover,
@@ -223,6 +224,7 @@ export async function endAttached({
   log,
 }: {
   inFlight: () => string[];
+  admissionRevision: () => number;
   alive: () => Promise<string | null>;
   waitMs: number;
   handover: boolean;
@@ -234,18 +236,21 @@ export async function endAttached({
 }): Promise<void> {
   const deadline = Date.now() + waitMs;
   let shown = '';
-  for (;;) {
-    await new Promise((done) => setTimeout(done, POLL_MS));
-    const others = [...new Set(inFlight())];
-    if (!others.length || Date.now() >= deadline) break;
-    if (others.join(', ') === shown) continue;
-    shown = others.join(', ');
-    const message = `waiting up to ${Math.ceil((deadline - Date.now()) / 1000)} s for ${shown} to finish`;
-    process.stderr.write(`stimd: ${message}\n`);
-    log('info', 'attached_waiting', message);
-  }
-  const unfinished = inFlight();
+  const drain = async () => {
+    for (;;) {
+      await new Promise((done) => setTimeout(done, POLL_MS));
+      const others = [...new Set(inFlight())];
+      if (!others.length || Date.now() >= deadline) break;
+      if (others.join(', ') === shown) continue;
+      shown = others.join(', ');
+      const message = `waiting up to ${Math.ceil((deadline - Date.now()) / 1000)} s for ${shown} to finish`;
+      process.stderr.write(`stimd: ${message}\n`);
+      log('info', 'attached_waiting', message);
+    }
+  };
+  await drain();
   let alive: string | null = null;
+  const revision = admissionRevision();
   if (handover) {
     let timer: NodeJS.Timeout | undefined;
     const late = new Promise<string>((done) => {
@@ -256,7 +261,10 @@ export async function endAttached({
       late,
     ]);
     clearTimeout(timer);
+    if (inFlight().length && Date.now() < deadline) await drain();
+    if (admissionRevision() !== revision) alive ??= 'a command was admitted while measuring its home';
   }
+  const unfinished = inFlight();
   if (alive || unfinished.length) {
     try {
       const at = new Date().toISOString();

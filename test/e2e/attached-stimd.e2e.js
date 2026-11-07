@@ -443,3 +443,49 @@ test(
     assert.match(daemonLog(), /"event":"attached_handover_blocked"/);
   },
 );
+
+test(
+  'attached stimd bounds shutdown after its parent closes stdin with stalled maintenance',
+  { timeout: 30_000 },
+  async () => {
+    const scratch = mkdtempSync(join(tmp, 'watchdog-'));
+    const marker = join(scratch, 'passes-started');
+    const preload = pathToFileURL(join(import.meta.dirname, 'fixtures', 'stall-stimd-passes.mjs')).href;
+    const cli = join(PACKAGE, 'dist', 'cli.mjs');
+    const child = spawn(process.execPath, ['--import', preload, cli, '__stimd', '--attached', '--no-handover'], {
+      cwd: project,
+      env: {
+        ...env,
+        STIM_HOME: scratch,
+        STIM_DAEMON_ATTACHED_EXIT_WAIT_SECONDS: '0',
+        STIM_TEST_STALLED_PASSES: marker,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    agents.push(child);
+    child.stdout.resume();
+    child.stderr.resume();
+    const exited = new Promise((done) => child.once('exit', (code) => done(code)));
+    try {
+      const info = await until('attached daemon', () => {
+        try {
+          return JSON.parse(readFileSync(join(scratch, 'run', 'stimd.json'), 'utf8'));
+        } catch {
+          return null;
+        }
+      });
+      const socket = connect(info.socket);
+      socket.on('error', () => {});
+      socket.on('connect', () =>
+        socket.write(`${JSON.stringify({ kind: 'cli', build: info.build })}\n${JSON.stringify({ op: 'tick' })}\n`),
+      );
+      await until('maintenance to stall', () => existsSync(marker));
+      socket.destroy();
+      child.stdin.end();
+      assert.equal(await exited, 1);
+    } finally {
+      child.kill('SIGKILL');
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);
