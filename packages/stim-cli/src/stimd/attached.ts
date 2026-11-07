@@ -132,7 +132,6 @@ export async function bindCIEngine(env: NodeJS.ProcessEnv): Promise<{
         });
       return { host: engine.hostStimd, hold: engine.holdCIStimd, runOp, release };
     }
-    if (selected) release();
     const local = (await import('../api.ts')).runOp;
     return {
       host: hostStimd,
@@ -167,6 +166,7 @@ export function hostStimd(
 ): Promise<
   | AttachedHost
   | { switched: string }
+  | { refusal: { code: string; message: string; remedy: string } }
   | 'held'
   | 'held-attached'
   | 'blocked'
@@ -202,6 +202,17 @@ export function hostStimd(
       } catch {}
       buffer = '';
       if (!isJsonObject(line)) return;
+      if (
+        line.op === 'attached-claim-refusal' &&
+        isJsonObject(line.refusal) &&
+        typeof line.refusal.code === 'string' &&
+        typeof line.refusal.message === 'string' &&
+        typeof line.refusal.remedy === 'string'
+      ) {
+        clearTimeout(timer);
+        resolve({ refusal: { code: line.refusal.code, message: line.refusal.message, remedy: line.refusal.remedy } });
+        return;
+      }
       if (line.op === 'attached-engine-unavailable') {
         clearTimeout(timer);
         resolve('engine-unavailable');

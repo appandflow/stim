@@ -71,10 +71,16 @@ export async function runOperation(
       ...(entry.caller === 'api' ? { held } : {}),
     });
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'STIM_ENGINE_UNAVAILABLE')
+    if (
+      error instanceof Error &&
+      'code' in error &&
+      (error.code === 'STIM_ENGINE_UNAVAILABLE' ||
+        error.code === 'STIM_CLAIM_UNAVAILABLE' ||
+        error.code === 'STIM_CLAIM_REFUSED')
+    )
       return {
         refusal: {
-          code: 'STIM_ENGINE_UNAVAILABLE',
+          code: error.code,
           message: error.message,
           remedy: 'remedy' in error && typeof error.remedy === 'string' ? error.remedy : 'Run stim engine update.',
         },

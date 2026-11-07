@@ -509,6 +509,14 @@ test('an installed CI caller shares the selected engine daemon of another build'
   appendFileSync(join(selected, 'dist', 'cli.mjs'), '\n');
   writeFileSync(join(engineRoot, 'current.json'), JSON.stringify({ format: 1, dir: 'bbbbbbbbbbbb', version: 'test' }));
   const chosenEnv = { ...env, STIM_HOME: join(scratch, 'home'), STIM_ENGINE_ROOT: engineRoot };
+  const { workspaceName } = await import(pathToFileURL(join(REPO, 'packages/core/dist/index.mjs')).href);
+  const workspaceDir = join(chosenEnv.STIM_HOME, 'workspaces', workspaceName(project));
+  mkdirSync(workspaceDir, { recursive: true });
+  writeFileSync(
+    join(chosenEnv.STIM_HOME, 'config.json'),
+    JSON.stringify({ version: 2, projects: { [project]: {} }, repos: {} }),
+  );
+  writeFileSync(join(workspaceDir, 'state.json'), JSON.stringify({ supervisor: { engineDir: 'aaaaaaaaaaaa' } }));
   const previousRoot = process.env.STIM_ENGINE_ROOT;
   process.env.STIM_ENGINE_ROOT = engineRoot;
   let owner;
@@ -522,6 +530,16 @@ test('an installed CI caller shares the selected engine daemon of another build'
     const claimRoot = join(engineRoot, 'claims', 'bbbbbbbbbbbb', 'shared');
     const claims = () => readdirSync(claimRoot).filter((name) => name.endsWith('.claim')).length;
     assert.equal(claims(), 1);
+    const residentClaim = JSON.parse(
+      readFileSync(
+        join(
+          claimRoot,
+          readdirSync(claimRoot).find((name) => name.endsWith('.claim')),
+        ),
+        'utf8',
+      ),
+    );
+    assert.deepEqual(residentClaim.details.engineDirs, ['aaaaaaaaaaaa']);
     direct = await engine.bindCIEngine(chosenEnv);
     assert.equal(claims(), 2);
     const caller = await import(pathToFileURL(join(installed, 'dist', 'attached-stimd.mjs')).href);
@@ -549,6 +567,36 @@ test('an installed CI caller shares the selected engine daemon of another build'
       'engine-unavailable',
     );
     assert.equal(claims(), 1);
+    writeFileSync(
+      join(engineRoot, 'current.json'),
+      JSON.stringify({ format: 1, dir: 'bbbbbbbbbbbb', version: 'test' }),
+    );
+    const daemon = JSON.parse(readFileSync(join(chosenEnv.STIM_HOME, 'run', 'stimd.json'), 'utf8'));
+    rmSync(
+      join(
+        claimRoot,
+        readdirSync(claimRoot).find((name) => name.endsWith('.claim')),
+      ),
+    );
+    const tick = connect(daemon.socket);
+    tick.on('error', () => {});
+    tick.on('connect', () =>
+      tick.write(`${JSON.stringify({ kind: 'cli', build: daemon.build })}\n${JSON.stringify({ op: 'tick' })}\n`),
+    );
+    await until(
+      'daemon to stop after its claim is lost',
+      () => !existsSync(join(chosenEnv.STIM_HOME, 'run', 'stimd.json')),
+    );
+    tick.destroy();
+    await assert.rejects(owner.end(), /Attached stimd exited/);
+    owner = null;
+    const blockedClaims = join(engineRoot, 'claims', 'bbbbbbbbbbbb');
+    rmSync(blockedClaims, { recursive: true, force: true });
+    writeFileSync(blockedClaims, 'blocking file');
+    const refused = await engine.hostStimd({ ...chosenEnv, STIM_HOME: join(scratch, 'claim-refusal-home') });
+    assert.equal(refused?.refusal?.code, 'STIM_CLAIM_REFUSED');
+    assert.match(refused.refusal.message, /claim/);
+    assert.match(refused.refusal.remedy, /retry/);
   } finally {
     if (owner && typeof owner === 'object') await owner.end();
     binding?.release();

@@ -420,6 +420,8 @@ export async function ensureStimd(
     if (!taken && !held && allowAttached && Reflect.get(globalThis, Symbol.for('stim.cli'))) {
       const { hostStimd } = await import('../stimd/attached.ts');
       const host = await hostStimd(env);
+      if (host && typeof host === 'object' && 'refusal' in host)
+        throw Object.assign(new Error(host.refusal.message), host.refusal);
       if (host === 'engine-unavailable')
         throw Object.assign(new Error('The selected Stim engine cannot be verified.'), {
           code: 'STIM_ENGINE_UNAVAILABLE',
@@ -445,7 +447,11 @@ export async function ensureStimd(
   } catch (error) {
     if (
       isSandboxBlocked(error) ||
-      (error instanceof Error && 'code' in error && error.code === 'STIM_ENGINE_UNAVAILABLE')
+      (error instanceof Error &&
+        'code' in error &&
+        (error.code === 'STIM_ENGINE_UNAVAILABLE' ||
+          error.code === 'STIM_CLAIM_UNAVAILABLE' ||
+          error.code === 'STIM_CLAIM_REFUSED'))
     )
       throw error;
     return false;
