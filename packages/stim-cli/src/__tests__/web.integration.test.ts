@@ -778,18 +778,23 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     assert(chrome);
     writeWebRecord(root, { ...initial, ...chrome, targetId: 'owned-page' });
     const createWriter = ndjson.createNdjsonWriter;
+    let fail = false;
     vi.spyOn(ndjson, 'createNdjsonWriter').mockImplementation((...args) => {
       const writer = createWriter(...args);
       const write = writer.write.bind(writer);
       return {
         ...writer,
+        get dropped() {
+          return writer.dropped;
+        },
         write(record) {
-          return write(record && typeof record === 'object' ? { ...record, impossible: BigInt(1) } : record);
+          return write(fail && record && typeof record === 'object' ? { ...record, impossible: BigInt(1) } : record);
         },
         close: writer.close.bind(writer),
       };
     });
     let closed = () => {};
+    let emit = (_event: CdpEvent) => {};
     vi.spyOn(browserCdp, 'connectOwnedBrowser').mockResolvedValue({
       async send(method) {
         if (method === 'Browser.getVersion') return { product: 'Chrome/1' };
@@ -797,7 +802,9 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
         if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
         return {};
       },
-      onEvent: () => {},
+      onEvent: (listener) => {
+        emit = listener;
+      },
       onClose: (listener) => {
         closed = listener;
       },
@@ -808,6 +815,15 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     const streams = createOwnedStreams(() => {});
     try {
       expect(await streams.observeWeb(root, chrome.pid, chrome.processToken)).toBeNull();
+      fail = true;
+      emit({
+        method: 'Runtime.consoleAPICalled',
+        sessionId: 'owned-session',
+        params: {
+          type: 'log',
+          args: [{ type: 'string', value: 'dropped' }],
+        },
+      });
       expect(await streams.drain(root)).toContain('could not be recorded');
       expect(await streams.drain(root)).toContain('could not be recorded');
       expect(streams.running()).toBe(true);
@@ -1035,6 +1051,78 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     expect(observe).toHaveBeenCalledWith(root, chrome.pid, chrome.processToken, expect.any(Object));
     expect(connect).not.toHaveBeenCalled();
     expect(readWebRecord(root)?.chromeProcess).toEqual(chrome);
+  });
+
+  test.each(['setup', 'startup'])('a %s log write failure refuses browser reuse before navigation', async (phase) => {
+    const initial = await ownedBrowser();
+    const chrome = initial.chromeProcess;
+    assert(chrome);
+    const record = { ...initial, ...chrome, targetId: 'owned-page' };
+    writeWebRecord(root, record);
+    const createWriter = ndjson.createNdjsonWriter;
+    vi.spyOn(ndjson, 'createNdjsonWriter').mockImplementation((...args) => {
+      const writer = createWriter(...args);
+      return {
+        ...writer,
+        get dropped() {
+          return writer.dropped;
+        },
+        get lastError() {
+          return writer.lastError;
+        },
+        write(value) {
+          const event = value && typeof value === 'object' && 'event' in value ? value.event : undefined;
+          const fail = phase === 'setup' ? event === 'web_input_unobserved' : event === 'web_browser_observed';
+          return writer.write(fail && value && typeof value === 'object' ? { ...value, invalid: BigInt(1) } : value);
+        },
+        close: writer.close.bind(writer),
+      };
+    });
+    const streams = createOwnedStreams(() => {});
+    let closed = () => {};
+    const navigations: string[] = [];
+    vi.spyOn(browserCdp, 'connectOwnedBrowser').mockResolvedValue({
+      async send(method) {
+        if (method === 'Browser.getVersion') return { product: 'Chrome/1' };
+        if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'owned-page', type: 'page' }] };
+        if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
+        if (method === 'Page.getFrameTree' && phase === 'startup')
+          return { frameTree: { frame: { id: 'owned-page' } } };
+        if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
+        if (method === 'Page.navigate') navigations.push(method);
+        return {};
+      },
+      onEvent: () => {},
+      onClose: (listener) => {
+        closed = listener;
+      },
+      close: () => {
+        closed();
+      },
+    });
+    vi.spyOn(stimdClient, 'observeOwnedWeb').mockImplementation((workspace, pid, token) =>
+      streams.observeWeb(workspace, pid, token),
+    );
+    vi.spyOn(teardown, 'teardownBrowserHeld').mockResolvedValue({ status: 'failed', reason: 'fixture retained' });
+    try {
+      const result = await launchOwnedBrowser(
+        {
+          url: record.url,
+          config: {
+            chrome: record.chrome,
+            headless: record.headless,
+            viewport: record.viewport,
+            ignoreCertificateErrors: record.ignoreCertificateErrors,
+          },
+        },
+        { root, note: () => {} },
+      );
+      expect(result.ok).toBe(false);
+      expect(navigations).toEqual([]);
+      expect(await streams.drain(root)).toContain('could not be recorded');
+    } finally {
+      await streams.close();
+    }
   });
 
   test('a fresh launch does not navigate after its observer disconnects before acknowledgement', async () => {

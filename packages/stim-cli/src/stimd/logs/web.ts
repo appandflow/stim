@@ -416,11 +416,12 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
     }
     if (closed || disconnected) throw new Error('the browser observer disconnected during setup');
     if (!updateWebRecord(root, owner, { targetId, version })) throw new Error('the browser record changed');
-    log(
+    const recorded = log(
       'info',
       record.targetId ? 'web_browser_observed' : 'web_browser_started',
       `stimd pid ${process.pid} observes ${version} (pid ${chrome.pid}) on ${record.profile}`,
     );
+    if (!recorded || writer.dropped) throw new Error('the browser output could not be recorded');
     attachedLive = true;
   })();
   attached.catch((error: unknown) => {

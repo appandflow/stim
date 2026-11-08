@@ -2305,6 +2305,60 @@ describe.skipIf(process.platform === 'win32')('hosted macOS replacement drain', 
     expect(agentCalls.filter(([kind]) => kind === 'running')).toHaveLength(1);
   });
 
+  test('does not report installation when the macOS app exits during observer attachment', async () => {
+    await host.close();
+    const drainHosted = vi.fn<(session: string) => Promise<string | null>>(async () => null);
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents,
+      drainHosted,
+      observeHosted: async (_session, pid, token) => {
+        const app = { pid, processToken: token };
+        assert.equal(processIdentity.inspectProcessIdentity(app), 'same');
+        process.kill(pid, 'SIGKILL');
+        assert(await processIdentity.waitForProcessExit(app, 5000));
+        return null;
+      },
+      allowed: (client) => allowed.has(client),
+    });
+    const { session, app } = await readyApp();
+    expect(host.appLaunch('client', app.params)).toHaveProperty('result.state', 'installing');
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'unknown'));
+    expect(drainHosted).toHaveBeenCalledWith(session.id);
+    expect(readFileSync(join(deviceHostArea(session.id), 'home', 'modes'), 'utf8')).toContain('stop-current');
+    expect(agentCalls.filter(([kind]) => kind === 'running')).toHaveLength(0);
+  });
+
+  test('does not report installation when the macOS app exits during agent startup', async () => {
+    await host.close();
+    const drainHosted = vi.fn<(session: string) => Promise<string | null>>(async () => null);
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      drainHosted,
+      observeHosted: async () => null,
+      agents: {
+        ...agents,
+        appRunning: async (input) => {
+          const result = await agents.appRunning(input);
+          const app = readHostedMacosApp(join(deviceHostArea(input.session), 'home'))?.app;
+          assert(app);
+          assert.equal(processIdentity.inspectProcessIdentity(app), 'same');
+          process.kill(app.pid, 'SIGKILL');
+          assert(await processIdentity.waitForProcessExit(app, 5000));
+          return result;
+        },
+      },
+      allowed: (client) => allowed.has(client),
+    });
+    const { session, app } = await readyApp();
+    expect(host.appLaunch('client', app.params)).toHaveProperty('result.state', 'installing');
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'unknown'));
+    expect(drainHosted).toHaveBeenCalledWith(session.id);
+    expect(agentCalls.filter(([kind]) => kind === 'stopped')).not.toHaveLength(0);
+  });
+
   test.each(['stop', 'revoke', 'close'])(
     'does not report installation if %s occurs during the observer ACK',
     async (action) => {

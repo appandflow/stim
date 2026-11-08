@@ -1773,7 +1773,27 @@ export class DeviceHost {
         if (interrupted()) return;
         if (this.closed || !this.options.allowed(record.client) || !this.attached(record.id))
           error ??= 'the hosted session is no longer available';
+        if (error === null && inspectProcessIdentity(observed.app) !== 'same')
+          error = 'the hosted macOS app exited or its identity could not be verified';
+        let agentStarted = false;
+        if (error === null) {
+          await this.startAgent(record, attempt, value.pid);
+          agentStarted = true;
+          if (interrupted()) return;
+          if (this.closed || !this.options.allowed(record.client) || !this.attached(record.id))
+            error = 'the hosted session is no longer available';
+          const current = readHostedMacosApp(join(deviceHostArea(record.id), 'home'));
+          if (
+            current?.launchId !== observed.launchId ||
+            current.app?.pid !== value.pid ||
+            current.app.processToken !== observed.app.processToken ||
+            inspectProcessIdentity(observed.app) !== 'same'
+          )
+            error ??= 'the hosted macOS app exited or its identity could not be verified';
+        }
         if (error !== null) {
+          if (agentStarted) await this.stopAgent(record.id, true);
+          if (interrupted()) return;
           const current = readHostedMacosApp(join(deviceHostArea(record.id), 'home'));
           if (
             current?.launchId !== observed.launchId ||
@@ -1805,12 +1825,7 @@ export class DeviceHost {
         }
       }
       if (installed) owned.installedAttempt = attempt;
-      if (
-        installed &&
-        (record.platform !== 'macos' ||
-          (typeof value.pid === 'number' && Number.isSafeInteger(value.pid) && value.pid > 0))
-      )
-        await this.startAgent(record, attempt, value.pid as number);
+      if (installed && record.platform !== 'macos') await this.startAgent(record, attempt, value.pid as number);
       if (interrupted() || this.closed || !this.options.allowed(record.client)) return;
       const app = changeHostedApp(record.id, attempt, (current) => {
         current.state = installed ? 'installed' : 'unknown';

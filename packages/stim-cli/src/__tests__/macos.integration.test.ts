@@ -39,6 +39,7 @@ import * as worktree from '../workspace/worktree.ts';
 import * as stopping from '../macos/stop.ts';
 import { buildMacosBundle } from '../macos/build.ts';
 import * as nativeBuild from '../macos/build.ts';
+import * as buildProgress from '../engine/build-progress.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { planMacos } from '../macos/plan.ts';
@@ -2007,6 +2008,91 @@ describe('macOS build placement and promotion', () => {
   });
 
   describe.skipIf(process.platform !== 'darwin')('observer drain retention', () => {
+    test.each(['observer', 'launchservices', 'bookkeeping'])(
+      'a launch that exits during %s drains output and retains unverified ownership',
+      async (phase) => {
+        writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+        writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+        vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+          async ({ bundle: targetBundle, bundleId: targetId }) => {
+            mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+            writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+            return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+          },
+        );
+        vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+        const mocked = getExecutor();
+        resetExecutor();
+        const app = await ownedProcess();
+        setExecutor(mocked);
+        const claim = {
+          root: 'fixture',
+          path: 'fixture',
+          claimId: 'fixture',
+          mode: 'exclusive' as const,
+          owner: app,
+          startedAt: new Date().toISOString(),
+          details: {},
+          label: 'fixture',
+        };
+        vi.spyOn(owning, 'spawnOwned').mockResolvedValue({ ...app, claim });
+        const drain = vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue(null);
+        const inspect = processIdentity.inspectProcessIdentity;
+        let exitedDuringBookkeeping = false;
+        vi.spyOn(processIdentity, 'inspectProcessIdentity').mockImplementation((owner) =>
+          exitedDuringBookkeeping && owner?.pid === app.pid ? 'gone' : inspect(owner),
+        );
+        const recordPhase = buildProgress.recordBuildPhase;
+        vi.spyOn(buildProgress, 'recordBuildPhase').mockImplementation((...args) => {
+          if (phase === 'bookkeeping' && args[3] === 'launch') {
+            process.kill(app.pid, 'SIGKILL');
+            exitedDuringBookkeeping = true;
+          }
+          recordPhase(...args);
+        });
+        const executor = getExecutor();
+        setExecutor({
+          ...executor,
+          runFileAsync: async (file, args, options) => {
+            if (file !== 'lsappinfo') return executor.runFileAsync(file, args, options);
+            if (phase === 'launchservices') {
+              process.kill(app.pid, 'SIGKILL');
+              assert(await waitForProcessExit(app, 5000));
+            }
+            return 'ASN:0x0-0x1:';
+          },
+        });
+        vi.spyOn(stimdClient, 'observeOwnedMacos').mockImplementation(async () => {
+          const recorded = readMacosRecord(root);
+          assert(recorded);
+          writeFileSync(join(workspaceLogsDir(root), macosAppLogName(recorded.launchId, 'out')), 'final output\n');
+          if (phase === 'observer') {
+            process.kill(app.pid, 'SIGKILL');
+            assert(await waitForProcessExit(app, 5000));
+          }
+          return null;
+        });
+        let failure: unknown;
+        try {
+          failure = await runMacos(testContext(), root, () => {}, undefined, 'local').catch((error: unknown) => error);
+          expect(failure).toBeInstanceOf(WorkspaceProcessCleanupError);
+          assert(failure instanceof WorkspaceProcessCleanupError);
+          expect(drain).toHaveBeenCalledOnce();
+          expect(readMacosRecord(root)?.app).toMatchObject({ pid: app.pid, processToken: app.processToken });
+          for (const held of failure.claims)
+            expect(readClaimSet(held.root).live.find((entry) => entry.claimId === held.claimId)).toMatchObject({
+              childDeclared: true,
+              child: null,
+            });
+        } finally {
+          if (inspectProcessIdentity(app) === 'same') process.kill(app.pid, 'SIGKILL');
+          const exited = await waitForProcessExit(app, 5000);
+          if (exited && failure instanceof WorkspaceProcessCleanupError)
+            for (const held of failure.claims) releaseClaim(held);
+          expect(exited).toBe(true);
+        }
+      },
+    );
     test.each([false, true])(
       'a launch retains output and claim if the observer cannot drain (cancelled: %s)',
       async (cancelled) => {
