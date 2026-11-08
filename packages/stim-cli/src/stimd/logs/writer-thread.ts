@@ -148,8 +148,11 @@ port.on('message', (message: Message) => {
       return;
     }
     if (message.op === 'owned-close') {
-      owned.close();
-      port.postMessage({ requestId: message.requestId });
+      void owned.close().then(
+        (error) => port.postMessage({ requestId: message.requestId, error }),
+        (error: unknown) =>
+          port.postMessage({ requestId: message.requestId, error: String(error) || 'owned close failed' }),
+      );
       return;
     }
     if (message.op === 'open') {

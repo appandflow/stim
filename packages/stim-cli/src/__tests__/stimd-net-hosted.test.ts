@@ -80,3 +80,24 @@ test('an empty worker error rejects a hosted drain request', async () => {
     await writers.close();
   }
 });
+
+test('owned shutdown waits for the log worker acknowledgement', async () => {
+  const writers = createLogWriters(() => {});
+  try {
+    let settled = false;
+    const pending = writers.ownedClose().then(() => {
+      settled = true;
+      return undefined;
+    });
+    const worker = state.worker;
+    if (!worker) throw new Error('the logs worker did not start');
+    const request = worker.sent[0] as { requestId: number };
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    worker.emit('message', { requestId: request.requestId, error: null });
+    await pending;
+    expect(settled).toBe(true);
+  } finally {
+    await writers.close();
+  }
+});

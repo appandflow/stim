@@ -259,6 +259,11 @@ tell me which actions Stim recorded for the page.
 
 Stim signals Chrome only after it verifies the process identity it recorded,
 and deletes a profile only when its ledger lists it.
+Before removing workspace output, Stim waits for the browser observer to close
+and record buffered events. Cleanup is refused if that drain fails. If the log
+worker exits unexpectedly while observing output, Stim cannot verify its final
+buffered records and refuses cleanup while that daemon runs. Inspect the retained
+workspace and its owned processes before manually reconciling it.
 
 ## Stim Desktop
 

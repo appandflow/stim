@@ -367,6 +367,8 @@ export function createStreams(
   let writers: LogWriters | null = null;
   let writerFailure: Error | null = null;
   let writerRecovery: Promise<void> | null = null;
+  let ownedUnverified = false;
+  let ownedPending = 0;
   let closing = false;
   let closePromise: Promise<void> | null = null;
   let ownedRunning = true;
@@ -428,6 +430,7 @@ export function createStreams(
     // Node closes worker-owned process handles on worker exit: https://github.com/nodejs/node/issues/46569
     writers = createLogWriters(
       (error) => {
+        if (ownedRunning || ownedPending > 0) ownedUnverified = true;
         writerFailure = error;
         ownedRunning = true;
         log(`the logs worker failed: ${error.message}`);
@@ -626,54 +629,76 @@ export function createStreams(
   };
   return {
     async ownedSync(root) {
+      ownedPending++;
       try {
         await (await getWriters()).ownedSync(root);
         return null;
       } catch (error) {
         return error instanceof Error ? error.message : String(error);
+      } finally {
+        ownedPending--;
       }
     },
     async ownedDrain(root, macosOnly) {
+      if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
+      ownedPending++;
       try {
         await (await getWriters()).ownedDrain(root, macosOnly);
+        if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
         return null;
       } catch (error) {
         return error instanceof Error ? error.message : String(error);
+      } finally {
+        ownedPending--;
       }
     },
     async ownedObserveWeb(root, pid, token) {
+      ownedPending++;
       try {
         await (await getWriters()).ownedObserveWeb(root, pid, token);
         return null;
       } catch (error) {
         return (error instanceof Error ? error.message : String(error)) || 'the browser observer failed';
+      } finally {
+        ownedPending--;
       }
     },
     async ownedObserveMacos(root, pid, token, launchId) {
+      ownedPending++;
       try {
         await (await getWriters()).ownedObserveMacos(root, pid, token, launchId);
         return null;
       } catch (error) {
         return (error instanceof Error ? error.message : String(error)) || 'the macOS observer failed';
+      } finally {
+        ownedPending--;
       }
     },
     async ownedObserveHosted(session, pid, token, launchId) {
+      ownedPending++;
       try {
         await (await getWriters()).ownedObserveHosted(session, pid, token, launchId);
         return null;
       } catch (error) {
         return (error instanceof Error ? error.message : String(error)) || 'the hosted observer failed';
+      } finally {
+        ownedPending--;
       }
     },
     async ownedDrainHosted(session) {
+      if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
+      ownedPending++;
       try {
         await (await getWriters()).ownedDrainHosted(session);
+        if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
         return null;
       } catch (error) {
         return (error instanceof Error ? error.message : String(error)) || 'the hosted drain failed';
+      } finally {
+        ownedPending--;
       }
     },
-    ownedRunning: () => ownedRunning,
+    ownedRunning: () => ownedRunning || ownedUnverified,
     async start(
       input: StreamSpec,
       env: Record<string, string>,
@@ -1118,6 +1143,8 @@ export function createStreams(
         const recovery = await Promise.allSettled([writerRecovery]);
         const owned = await Promise.allSettled([writers?.ownedClose()]);
         const closed = await Promise.allSettled([writers?.close()]);
+        if (ownedUnverified)
+          throw new Error('the previous owned log worker exited before its output could be verified');
         const failure = results.find((result) => result.status === 'rejected');
         if (failure?.status === 'rejected') throw failure.reason;
         for (const result of [...recovery, ...owned, ...closed]) if (result.status === 'rejected') throw result.reason;

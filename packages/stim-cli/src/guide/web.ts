@@ -195,6 +195,12 @@ Chrome is gone, Stim removes the SingletonLock files a killed Chrome leaves,
 which would otherwise block the next launch. status reports
 browser-unverified when an identity cannot be proven; follow stim guide
 errors teardown.
+Before removing workspace output, Stim waits for the browser observer to close
+and record buffered events. If that drain fails, cleanup is refused.
+If the log worker exits unexpectedly while observing output, Stim cannot
+verify its final buffered records and refuses cleanup while that daemon runs.
+Inspect the retained workspace and its owned processes before manually
+reconciling it.
 
 STIM DESKTOP
 

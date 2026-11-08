@@ -969,29 +969,53 @@ test('a reused app PID can be finalized when its original group is gone', async 
   }
 });
 
-test('final drain reads output written immediately before app exit', async () => {
-  const app = { pid: 123456, processToken: 'last-output', startedAtMicros: 1 };
+test.each([false, true])(
+  'final drain reads output written immediately before app exit (macosOnly=%s)',
+  async (macosOnly) => {
+    const app = { pid: 123456, processToken: 'last-output', startedAtMicros: 1 };
+    writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
+    const logs = workspaceLogsDir(root);
+    mkdirSync(logs, { recursive: true });
+    const out = join(logs, macosAppLogName('test-launch', 'out'));
+    writeFileSync(out, 'first output\n');
+    const identity = vi.spyOn(processIdentity, 'inspectProcessIdentity').mockReturnValue('same');
+    const group = vi.spyOn(ownership, 'processGroupAlive').mockReturnValue(false);
+    const streams = createOwnedStreams(() => {});
+    try {
+      await streams.sync(root);
+      identity.mockReturnValueOnce('same');
+      identity.mockImplementationOnce(() => {
+        appendFileSync(out, 'final output\n');
+        return 'gone';
+      });
+      expect(await streams.drain(root, macosOnly)).toBeNull();
+      const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
+      expect(output).toContain('final output');
+      expect(output.indexOf('final output')).toBeLessThan(output.indexOf('Exited Sample.'));
+    } finally {
+      await streams.close();
+      identity.mockRestore();
+      group.mockRestore();
+    }
+  },
+);
+
+test.each([false, true])('drain starts an unobserved local macOS tail (macosOnly=%s)', async (macosOnly) => {
+  const app = { pid: 123456, processToken: 'unobserved-output', startedAtMicros: 1 };
   writeWorkspaceState(root, { macos: record({ app, supervisor: app }) });
   const logs = workspaceLogsDir(root);
   mkdirSync(logs, { recursive: true });
-  const out = join(logs, macosAppLogName('test-launch', 'out'));
-  writeFileSync(out, 'first output\n');
-  const identity = vi.spyOn(processIdentity, 'inspectProcessIdentity').mockReturnValue('same');
+  writeFileSync(join(logs, macosAppLogName('test-launch', 'out')), 'unobserved output\n');
+  const identity = vi.spyOn(processIdentity, 'inspectProcessIdentity').mockReturnValue('gone');
   const group = vi.spyOn(ownership, 'processGroupAlive').mockReturnValue(false);
   const streams = createOwnedStreams(() => {});
   try {
-    await streams.sync(root);
-    identity.mockReturnValueOnce('same');
-    identity.mockImplementationOnce(() => {
-      appendFileSync(out, 'final output\n');
-      return 'gone';
-    });
-    expect(await streams.drain(root)).toBeNull();
+    expect(await streams.drain(root, macosOnly)).toBeNull();
     const output = readFileSync(join(logs, 'macos.ndjson'), 'utf8');
-    expect(output).toContain('final output');
-    expect(output.indexOf('final output')).toBeLessThan(output.indexOf('Exited Sample.'));
+    expect(output).toContain('unobserved output');
+    expect(output.indexOf('unobserved output')).toBeLessThan(output.indexOf('Exited Sample.'));
   } finally {
-    streams.close();
+    await streams.close();
     identity.mockRestore();
     group.mockRestore();
   }

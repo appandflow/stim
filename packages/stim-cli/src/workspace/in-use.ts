@@ -145,7 +145,7 @@ export async function workspaceInUseAsync(
   });
 }
 
-export async function emptyWorkspaceDir(dir: string, signal?: AbortSignal): Promise<void> {
+export async function emptyWorkspaceDir(dir: string, signal?: AbortSignal, preserve?: string): Promise<void> {
   signal?.throwIfAborted();
   const stat = await lstat(dir);
   signal?.throwIfAborted();
@@ -157,7 +157,7 @@ export async function emptyWorkspaceDir(dir: string, signal?: AbortSignal): Prom
   }
   for (const name of await readdir(dir)) {
     signal?.throwIfAborted();
-    if (name !== `${NATIVE_RUN}.lock`) await rm(join(dir, name), { recursive: true, force: true });
+    if (name !== `${NATIVE_RUN}.lock` && name !== preserve) await rm(join(dir, name), { recursive: true, force: true });
   }
 }
 

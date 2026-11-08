@@ -105,7 +105,7 @@ describe.skipIf(process.platform === 'win32')('logs worker failure', () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 15_000);
-  test('owned output resumes from its checkpoint after the shared worker exits', async () => {
+  test('owned output resumes after worker exit but drain and shutdown retain uncertainty', async () => {
     const { createStreams } = await import('../stimd/logs/streams.ts');
     const home = mkdtempSync(join(tmpdir(), 'stim-worker-crash-home-'));
     const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-worker-crash-app-')));
@@ -144,7 +144,8 @@ describe.skipIf(process.platform === 'win32')('logs worker failure', () => {
       await vi.waitFor(() => expect(readFileSync(join(logs, 'macos.ndjson'), 'utf8')).toContain('after crash'));
       child.kill('SIGKILL');
       await once(child, 'exit');
-      expect(await streams.ownedDrain(root)).toBeNull();
+      expect(await streams.ownedDrain(root)).toContain('previous owned log worker exited');
+      await expect(streams.close()).rejects.toThrow('previous owned log worker exited');
     } finally {
       child.kill('SIGKILL');
       await streams.close().catch(() => {});

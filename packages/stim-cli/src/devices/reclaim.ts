@@ -10,12 +10,13 @@ import {
   removeProject,
   withConfigLockAsync,
 } from '../workspace/config.ts';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTreeAsync, pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../stimd/metro/stop-cause.ts';
 import { drainOwned, ensurePersistentStimd, stopDeviceLogStream, stopMetroTree } from '../daemon/client.ts';
 import { readBootedParkDeadline } from './booted-park.ts';
 import {
+  BROWSER_LOCK,
   teardownOwnedBrowser,
   teardownOwnedIosSim,
   teardownOwnedAvd,
@@ -52,7 +53,7 @@ import { removePhoneReverses } from './phone-reverses.ts';
 import { stopTunnel, type StopTunnelResult } from '../engine/tunnel.ts';
 import { getExecutor } from '../exec.ts';
 import { runOperationFile } from '../engine/operation-exec.ts';
-import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { agentDeviceDaemon } from './activity.ts';
 import { phaseLine } from '../command-output.ts';
 import { workspaceAgentDeviceDir, workspaceDir } from '../workspace/paths.ts';
@@ -498,6 +499,7 @@ async function removeWorkspaceOutput(
   dir: string,
   archive: ReclaimOptions['archive'],
   state: ReturnType<typeof readWorkspaceState>,
+  lockDir: string,
   operation?: StimContext,
 ): Promise<void> {
   const stateDir = workspaceAgentDeviceDir(path);
@@ -521,7 +523,8 @@ async function removeWorkspaceOutput(
   }
   operation?.signal.throwIfAborted();
   if (archive) await archiveWorkspace(path, archive.removedBy, state, operation);
-  await emptyWorkspaceDir(dir, operation?.signal);
+  if (realpathSync(dir) !== lockDir) throw new Error('Workspace storage changed during cleanup');
+  await emptyWorkspaceDir(dir, operation?.signal, `${BROWSER_LOCK}.lock`);
 }
 
 async function reclaimIdleProject(
@@ -736,8 +739,18 @@ async function reclaimIdleProject(
     const dir = workspaceDir(path);
     if (existsSync(dir)) {
       try {
-        await drainWorkspaceLogs(path, ownedLogs, localTail, operation);
-        await removeWorkspaceOutput(path, dir, archive, initialState, operation);
+        const lockDir = realpathSync(dir);
+        await withWorkspaceProcessLock(
+          lockDir,
+          BROWSER_LOCK,
+          async () => {
+            if (realpathSync(dir) !== lockDir) throw new Error('Workspace storage changed during cleanup');
+            if (readWebRecord(path)) throw new Error('A replacement browser appeared during cleanup');
+            await drainWorkspaceLogs(path, ownedLogs, localTail, operation);
+            await removeWorkspaceOutput(path, dir, archive, initialState, lockDir, operation);
+          },
+          { external: true, waitMs: 0, ownerPurpose: 'workspace removal', signal, declareSpawnsFor: operation },
+        );
         if (workspaceExisted) removedWorkspaceDirs.push(dir);
       } catch (error) {
         throwIfCleanupInterrupted(error, operation);

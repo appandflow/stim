@@ -62,7 +62,8 @@ export interface BrowserStream {
   ended: Promise<void>;
   live(): boolean;
   /** Detaches without touching Chrome, which keeps running. */
-  close(): void;
+  close(): Promise<string | null>;
+  failure(): string | null;
 }
 
 /**
@@ -84,29 +85,59 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
   let attachedLive = false;
   let disconnected = false;
   let stopping = false;
+  let stopTask: Promise<void> | null = null;
+  let disconnectTask: Promise<[string, string, string]> | null = null;
+  let failure: string | null = null;
+  let finalizing: Promise<string | null> | null = null;
+  let transportClosed: Promise<void> = Promise.resolve();
+  let handleDisconnect: (() => void) | null = null;
+  const connecting = new AbortController();
+  const pending = new Set<Promise<unknown>>();
+  let flushRoute: (() => void) | null = null;
   let end!: () => void;
   const ended = new Promise<void>((resolve) => {
     end = resolve;
   });
   const chromeGone = () => chromeProcessState(chrome, record.profile) === 'gone';
-  const finish = (level: string, event: string, msg: string) => {
+  const finish = (level?: string, event?: string, msg?: string): Promise<string | null> => {
     attachedLive = false;
-    if (closed) return;
+    if (finalizing) return finalizing;
     closed = true;
-    cdp?.close();
-    if (chromeGone()) {
-      try {
-        if (readWebRecord(root)?.chromeProcess?.processToken === chrome.processToken)
-          removeSingletonFiles(record.profile);
-      } catch {}
-      log(level, event, msg);
-      try {
-        clearWebRecord(root, owner);
-      } catch {}
-    } else
-      log('error', event, `${msg}; Chrome pid ${chrome.pid} is still running, so its record is kept for stim stop`);
-    writer.close();
-    end();
+    if (cdp) cdp.close();
+    else connecting.abort();
+    finalizing = (async () => {
+      await attached.catch(() => {});
+      await transportClosed;
+      await stopTask;
+      const disconnectedResult = await disconnectTask;
+      if (!event && disconnectedResult) [level, event, msg] = disconnectedResult;
+      flushRoute?.();
+      await Promise.allSettled(pending);
+      if (level && event && msg && chromeGone()) {
+        try {
+          if (readWebRecord(root)?.chromeProcess?.processToken === chrome.processToken)
+            removeSingletonFiles(record.profile);
+        } catch {}
+        log(level, event, msg);
+      } else if (event && msg)
+        log('error', event, `${msg}; Chrome pid ${chrome.pid} is still running, so its record is kept for stim stop`);
+      const result = writer.close();
+      if (result.dropped)
+        failure = `the browser output could not be recorded: ${result.lastError?.message ?? 'write failed'}`;
+      if (!failure && event && chromeGone()) {
+        try {
+          clearWebRecord(root, owner);
+        } catch {}
+      }
+      end();
+      return failure;
+    })().catch((error: unknown) => {
+      failure = `the browser output drain failed: ${describe(error)}`;
+      writer.close();
+      end();
+      return failure;
+    });
+    return finalizing;
   };
   const stopChrome = async () => {
     stopping = true;
@@ -132,7 +163,7 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
     const waiting = () => !closed && !chromeGone();
     while (!connection && Date.now() < deadline && waiting()) {
       try {
-        connection = await connectOwnedBrowser(record.cdpPort, chrome.pid);
+        connection = await connectOwnedBrowser(record.cdpPort, chrome.pid, connecting.signal);
       } catch (error) {
         lastError = error;
         await sleep(100);
@@ -144,6 +175,14 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
       );
     }
     cdp = connection;
+    transportClosed = new Promise<void>((resolve) =>
+      connection.onClose(() => {
+        disconnected = true;
+        attachedLive = false;
+        resolve();
+        handleDisconnect?.();
+      }),
+    );
     if (closed) return connection.close();
     const version = String((await connection.send('Browser.getVersion')).product ?? '');
     await connection.send('Target.setDiscoverTargets', { discover: true });
@@ -200,10 +239,16 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
       route.at = Date.now();
       log('info', 'web_route', `route changed to ${route.latest}`, { url: route.latest });
     };
+    flushRoute = () => {
+      if (route.timer) clearTimeout(route.timer);
+      writeRoute();
+    };
     connection.onEvent((event: CdpEvent) => {
-      if (closed) return;
-      if (event.method === 'Target.targetDestroyed' && event.params.targetId === targetId && !stopping) {
-        void stopChrome().then(() => finish('info', 'web_page_closed', 'the owned page was closed; closed Chrome'));
+      if (event.method === 'Target.targetDestroyed' && event.params.targetId === targetId && !stopping && !closed) {
+        stopTask = stopChrome().catch((error: unknown) => {
+          failure = `the browser could not be stopped: ${describe(error)}`;
+        });
+        void stopTask.then(() => finish('info', 'web_page_closed', 'the owned page was closed; closed Chrome'));
         return;
       }
       if (event.method === 'Target.targetCrashed' && event.params.targetId === targetId) {
@@ -228,17 +273,26 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
           if (params.name !== INPUT_BINDING) return;
           if (params.payload === INPUT_STARTED) {
             batchDriver = driver();
+            const probe = batchDriver;
+            pending.add(probe);
+            void probe.finally(() => pending.delete(probe));
             return;
           }
           const batch = parseInputBatch(String(params.payload ?? ''));
           const attributed = batchDriver ?? driver();
+          pending.add(attributed);
+          void attributed.finally(() => pending.delete(attributed));
           batchDriver = null;
           if (!batch.actions.length && !batch.dropped) return;
-          void (async () => {
+          const task = (async () => {
             const found = await attributed;
-            if (!found || closed) return;
+            if (!found) return;
             for (const entry of webAgentRecords(batch, targetId, found.tool, Date.now())) writer.write(entry);
-          })();
+          })().catch((error: unknown) => {
+            failure = `the browser input could not be recorded: ${describe(error)}`;
+          });
+          pending.add(task);
+          void task.finally(() => pending.delete(task));
           return;
         }
         case 'Page.frameStartedNavigating':
@@ -307,21 +361,24 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
         }
       }
     });
-    connection.onClose(() => {
-      disconnected = true;
-      attachedLive = false;
+    handleDisconnect = () => {
       if (stopping || closed) return;
-      void (async () => {
+      disconnectTask = (async (): Promise<[string, string, string]> => {
         const until = Date.now() + 2000;
         while (!chromeGone() && Date.now() < until) await sleep(POLL_MS);
-        if (!chromeGone()) return finish('warn', 'web_browser_unobserved', 'Chrome closed its DevTools connection');
+        if (!chromeGone()) return ['warn', 'web_browser_unobserved', 'Chrome closed its DevTools connection'];
         const recorded = () => readWebRecord(root)?.chromeProcess?.processToken === chrome.processToken;
         const settle = Date.now() + STOP_SETTLE_MS;
         while (recorded() && Date.now() < settle) await sleep(POLL_MS);
-        if (recorded()) finish('error', 'web_browser_exited', `Chrome exited; see ${browserLogFile(root)}`);
-        else finish('info', 'web_browser_stopped', 'Chrome was stopped');
-      })();
-    });
+        if (recorded()) return ['error', 'web_browser_exited', `Chrome exited; see ${browserLogFile(root)}`];
+        return ['info', 'web_browser_stopped', 'Chrome was stopped'];
+      })().catch((error: unknown): [string, string, string] => {
+        failure = `the browser disconnect could not be recorded: ${describe(error)}`;
+        return ['error', 'web_browser_failed', failure];
+      });
+      void disconnectTask.then(([level, event, msg]) => finish(level, event, msg));
+    };
+    if (disconnected) handleDisconnect();
 
     for (const domain of ['Runtime', 'Log', 'Network', 'Page'])
       await connection.send(`${domain}.enable`, {}, sessionId);
@@ -367,20 +424,14 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
     attachedLive = true;
   })();
   attached.catch((error: unknown) => {
-    finish('error', 'web_browser_failed', `could not observe the owned Chrome: ${describe(error)}`);
+    void finish('error', 'web_browser_failed', `could not observe the owned Chrome: ${describe(error)}`);
   });
   return {
     attached,
     ended,
     live: () => attachedLive && !closed,
-    close() {
-      if (closed) return;
-      closed = true;
-      attachedLive = false;
-      cdp?.close();
-      writer.close();
-      end();
-    },
+    close: () => finish(),
+    failure: () => failure,
   };
 }
 

@@ -43,7 +43,8 @@ interface Stream {
   token: string;
   attached?: Promise<void>;
   ended: Promise<void>;
-  close(): void;
+  close(): void | Promise<string | null>;
+  failure?(): string | null;
   live?(): boolean;
   ready?(): string | null;
   drain?(): boolean;
@@ -67,7 +68,7 @@ export interface OwnedStreams {
   observeMacos(root: string, pid: number, token: string, launchId: string): Promise<string | null>;
   observeHosted(session: string, pid: number, token: string, launchId: string): Promise<string | null>;
   drainHosted(session: string): Promise<string | null>;
-  close(): void;
+  close(): Promise<string | null>;
 }
 
 // compat C27 until removal-minor
@@ -77,10 +78,28 @@ function legacy(owner: { pid: number; processToken: string } | undefined, pid: n
 }
 // compat end
 
+async function closeStream(stream: Stream): Promise<string | null> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return (
+      (await Promise.race([
+        stream.close(),
+        new Promise<string>((resolve) => {
+          timer = setTimeout(() => resolve('the browser output drain timed out'), 20_000);
+        }),
+      ])) ?? null
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function createOwnedStreams(log: Log, changed: (running: boolean) => void = () => {}): OwnedStreams {
   const streams = new Map<string, Stream>();
   const ended = new Map<string, string>();
   const retries = new Map<string, NodeJS.Timeout>();
+  const draining = new Set<string>();
+  const drainEpoch = new Map<string, number>();
   const running = () => streams.size > 0 || retries.size > 0;
   let closed = false;
   const keep = (key: string, stream: Stream, retry?: () => boolean) => {
@@ -88,6 +107,7 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
     changed(true);
     void stream.ended.then(() => {
       if (streams.get(key) !== stream) return undefined;
+      if (stream.failure?.()) return undefined;
       streams.delete(key);
       if (!closed && !retry?.()) ended.set(key, stream.token);
       changed(running());
@@ -137,20 +157,34 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
     if (stream?.token !== token || !stream.ready) return 'the macOS observer is unavailable';
     return stream.ready();
   };
-  const workspace = (root: string, asked: boolean, webOnly = false): Promise<void> | null => {
+  const workspace = async (root: string, asked: boolean, webOnly = false): Promise<void> => {
     if (!webOnly) {
       const record = readMacosRecord(root);
       if (!record?.host) macos(workspaceLogsDir(root), record);
     }
     const web = readWebRecord(root);
-    if (!web?.chromeProcess || inspectProcessIdentity(web.chromeProcess) !== 'same') return null;
+    if (!web?.chromeProcess || inspectProcessIdentity(web.chromeProcess) !== 'same') return;
     // compat C27 until removal-minor
-    if (legacy(web, web.chromeProcess.pid)) return null;
+    if (legacy(web, web.chromeProcess.pid)) return;
     // compat end
     const key = `web:${root}`;
-    if (current(key, web.chromeProcess.processToken)) return streams.get(key)?.attached ?? null;
-    if (!asked && ended.get(key) === web.chromeProcess.processToken) return null;
-    if (!asked && retries.has(key)) return null;
+    if (closed || draining.has(key)) return;
+    const epoch = drainEpoch.get(key) ?? 0;
+    const previous = streams.get(key);
+    if (previous?.token === web.chromeProcess.processToken) return previous.attached;
+    if (previous) {
+      const error = await closeStream(previous);
+      if (error) throw new Error(error);
+      if (closed || draining.has(key) || (drainEpoch.get(key) ?? 0) !== epoch) return;
+      const replacement = streams.get(key);
+      if (replacement && replacement !== previous) {
+        if (replacement.token === web.chromeProcess.processToken) await replacement.attached;
+        return;
+      }
+      streams.delete(key);
+    }
+    if (!asked && ended.get(key) === web.chromeProcess.processToken) return;
+    if (!asked && retries.has(key)) return;
     clearTimeout(retries.get(key));
     retries.delete(key);
     const stream = observeBrowser(root, web, web.chromeProcess);
@@ -165,7 +199,7 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
       clearTimeout(retries.get(key));
       const timer = setTimeout(() => {
         retries.delete(key);
-        if (!closed) workspace(root, false)?.catch(() => {});
+        if (!closed) void workspace(root, false).catch(() => {});
         changed(running());
       }, WEB_RETRY_MS);
       timer.unref();
@@ -208,7 +242,7 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
       }
       for (const path of paths) {
         try {
-          workspace(path, false)?.catch(() => {});
+          void workspace(path, false).catch(() => {});
         } catch (error) {
           log('warn', 'owned_sync_failed', `${path}: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -228,7 +262,6 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
         if (legacy(record, pid)) return null;
         // compat end
         const attached = workspace(root, true, true);
-        if (!attached) return 'the browser observer is unavailable';
         await attached;
         const latest = readWebRecord(root)?.chromeProcess;
         const stream = streams.get(`web:${root}`);
@@ -286,29 +319,50 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
     },
     async drain(root, macosOnly = false) {
       if (closed) return 'stimd is stopping';
+      const webKey = `web:${root}`;
+      if (!macosOnly && draining.has(webKey)) return 'the browser output is already draining';
+      if (!macosOnly) {
+        draining.add(webKey);
+        drainEpoch.set(webKey, (drainEpoch.get(webKey) ?? 0) + 1);
+      }
       try {
-        const webKey = `web:${root}`;
+        const record = readMacosRecord(root);
+        if (!record?.host) macos(workspaceLogsDir(root), record);
+        const webRecord = !macosOnly ? readWebRecord(root) : null;
+        const webProcess = webRecord?.chromeProcess;
+        const webToken = webProcess?.processToken;
+        const webStream = streams.get(webKey);
+        if (webProcess && !webStream && ended.get(webKey) !== webToken && !legacy(webRecord, webProcess.pid))
+          return 'the browser output observer is unavailable';
         if (!macosOnly) {
           clearTimeout(retries.get(webKey));
           retries.delete(webKey);
-          const webToken = readWebRecord(root)?.chromeProcess?.processToken;
-          if (webToken) ended.set(webKey, webToken);
-          workspace(root, false)?.catch(() => {});
-        } else {
-          const record = readMacosRecord(root);
-          if (!record?.host) macos(workspaceLogsDir(root), record);
         }
         for (const key of [`macos:${workspaceLogsDir(root)}`, ...(macosOnly ? [] : [webKey])]) {
           const stream = streams.get(key);
           if (!stream) continue;
-          if (stream.attached) await stream.attached.catch(() => {});
+          if (key === webKey) {
+            if (webToken && webToken !== stream.token)
+              return 'the browser record changed before its output was drained';
+            const result = await closeStream(stream);
+            if (result) return result;
+            const latest = readWebRecord(root)?.chromeProcess?.processToken;
+            if (latest && latest !== webToken) return 'the browser record changed while its output was draining';
+            clearTimeout(retries.get(webKey));
+            retries.delete(webKey);
+          } else if (stream.attached) await stream.attached.catch(() => {});
           if (stream.drain && !stream.drain())
             return 'the macOS app output could not be drained or its process group could not be verified stopped';
           ended.set(key, stream.token);
           streams.delete(key);
           changed(running());
-          stream.close();
+          if (key !== webKey) stream.close();
           await stream.ended;
+        }
+        if (!macosOnly) {
+          const latest = readWebRecord(root)?.chromeProcess?.processToken;
+          if (latest && latest !== webToken) return 'the browser record changed while its output was draining';
+          if (webToken && (webStream || ended.get(webKey) === webToken)) ended.set(webKey, webToken);
         }
         const app = readMacosRecord(root);
         changed(running());
@@ -317,15 +371,20 @@ export function createOwnedStreams(log: Log, changed: (running: boolean) => void
         return null;
       } catch (error) {
         return error instanceof Error ? error.message : String(error);
+      } finally {
+        if (!macosOnly) draining.delete(webKey);
       }
     },
-    close() {
+    async close() {
       closed = true;
       clearInterval(timer);
       for (const retry of retries.values()) clearTimeout(retry);
       retries.clear();
-      for (const stream of streams.values()) stream.close();
+      const results = await Promise.all([...streams.values()].map(closeStream));
+      const failure = results.find((result) => result !== null);
+      if (failure) return failure;
       streams.clear();
+      return null;
     },
   };
 }
