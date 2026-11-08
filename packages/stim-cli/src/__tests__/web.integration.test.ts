@@ -7,6 +7,7 @@ import * as workspaceLocks from '../engine/workspace-process-lock.ts';
 import assert from 'node:assert';
 import * as chromeLookup from '../web/chrome.ts';
 import * as browserCdp from '../web/cdp.ts';
+import * as browserProfile from '../web/profile.ts';
 import type { CdpEvent } from '../web/cdp.ts';
 import { getExecutor, resetExecutor, setExecutor, type Executor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
@@ -1639,6 +1640,62 @@ describe.skipIf(process.platform === 'win32')('stimd browser observer', () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
+
+  test.each(['gone', 'unknown'] as const)(
+    'does not adopt another page when the recorded page is missing and Chrome is %s',
+    async (outcome) => {
+      const initial = await ownedBrowser();
+      const chrome = initial.chromeProcess;
+      assert(chrome);
+      const record = { ...initial, ...chrome, targetId: 'owned-page' };
+      writeWebRecord(root, record);
+      let state: 'running' | 'gone' | 'unknown' = 'running';
+      vi.spyOn(browserProfile, 'chromeProcessState').mockImplementation(() => state);
+      const update = vi.spyOn(webState, 'updateWebRecord');
+      const sent: string[] = [];
+      const onEvent = vi.fn<(listener: (event: CdpEvent) => void) => void>();
+      let closed = () => {};
+      vi.spyOn(browserCdp, 'connectOwnedBrowser').mockResolvedValue({
+        async send(method) {
+          sent.push(method);
+          if (method === 'Browser.getVersion') return { product: 'Chrome/1' };
+          if (method === 'Target.getTargets') return { targetInfos: [{ targetId: 'other-tool-page', type: 'page' }] };
+          if (method === 'Browser.close') state = outcome;
+          return {};
+        },
+        onEvent,
+        onClose: (listener) => {
+          closed = listener;
+        },
+        close: () => {
+          closed();
+        },
+      });
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      const stream = observeBrowser(root, record, chrome);
+      const result = stream.attached.then(
+        () => null,
+        (error: Error) => error.message,
+      );
+      try {
+        await vi.advanceTimersByTimeAsync(6000);
+        expect(await result).toContain('owned browser page is no longer available');
+        await stream.ended;
+        expect(sent).toContain('Browser.close');
+        expect(sent).not.toContain('Target.attachToTarget');
+        expect(sent).not.toContain('Page.navigate');
+        expect(sent).not.toContain('Page.captureScreenshot');
+        expect(onEvent).not.toHaveBeenCalled();
+        expect(update).not.toHaveBeenCalled();
+        if (outcome === 'gone') assert.equal(readWebRecord(root), null);
+        else assert.equal(readWebRecord(root)?.targetId, 'owned-page');
+      } finally {
+        closed();
+        await stream.close();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   test('retries a transient DevTools failure while Chrome remains alive', async () => {
     const original = await ownedBrowser();

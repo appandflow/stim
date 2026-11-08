@@ -190,7 +190,15 @@ export function observeBrowser(root: string, record: WebRecord, chrome: OwnedPro
       targetInfos?: { targetId: string; type: string }[];
     };
     const pages = targetInfos?.filter((target) => target.type === 'page') ?? [];
-    const page = pages.find((target) => target.targetId === record.targetId) ?? pages[0];
+    const page = record.targetId ? pages.find((target) => target.targetId === record.targetId) : pages[0];
+    if (!page && record.targetId) {
+      stopTask = stopChrome().catch((error: unknown) => {
+        failure = `the browser could not be stopped: ${describe(error)}`;
+      });
+      await stopTask;
+      void finish('info', 'web_page_closed', 'the owned page was closed; closed Chrome');
+      throw new Error('the owned browser page is no longer available');
+    }
     if (!page) throw new Error('Chrome opened no page');
     const targetId = page.targetId;
     const { sessionId } = (await connection.send('Target.attachToTarget', { targetId, flatten: true })) as {
