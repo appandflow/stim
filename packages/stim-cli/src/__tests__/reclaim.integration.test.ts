@@ -152,6 +152,48 @@ test('reclaimProject keeps the workspace when a browser supervisor appears after
   expect(existsSync(workspaceDir('/proj'))).toBe(true);
 });
 
+test('reclaim drains browser output created during teardown before removing the workspace', async () => {
+  setExecutor(makeExecutor());
+  upsertProject('/proj', {});
+  ensureWorkspaceStorage('/proj');
+  plantClaim(stimdClaimRoot(), 'shared', liveClaimOwner());
+  const output = webLogFile('/proj');
+  let drainEntered!: () => void;
+  const drainStarted = new Promise<void>((resolve) => {
+    drainEntered = resolve;
+  });
+  let finishDrain!: () => void;
+  const drainWait = new Promise<void>((resolve) => {
+    finishDrain = resolve;
+  });
+  const drain = vi.spyOn(stimdClient, 'drainOwned').mockImplementation(async () => {
+    drainEntered();
+    await drainWait;
+    writeFileSync(output, 'final browser output\n', { flag: 'a' });
+    return null;
+  });
+  const removal = reclaimProject('/proj', {
+    deleteOwnedDevices: false,
+    teardownBrowser: async () => {
+      mkdirSync(dirname(output), { recursive: true });
+      writeFileSync(output, 'browser started during reclaim\n');
+      return { status: 'torn-down', label: 'Chrome' };
+    },
+  });
+  try {
+    await drainStarted;
+    expect(existsSync(output)).toBe(true);
+    expect(getProject('/proj')).not.toBeNull();
+    finishDrain();
+    expect((await removal).keptEntry).toBe(false);
+    expect(existsSync(workspaceDir('/proj'))).toBe(false);
+  } finally {
+    finishDrain();
+    await removal;
+    drain.mockRestore();
+  }
+});
+
 test('reclaim holds the browser lock through log drain and agent shutdown', async () => {
   upsertProject('/proj', {});
   ensureWorkspaceStorage('/proj');

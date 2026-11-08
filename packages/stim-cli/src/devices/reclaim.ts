@@ -746,7 +746,7 @@ async function reclaimIdleProject(
           async () => {
             if (realpathSync(dir) !== lockDir) throw new Error('Workspace storage changed during cleanup');
             if (readWebRecord(path)) throw new Error('A replacement browser appeared during cleanup');
-            await drainWorkspaceLogs(path, ownedLogs, localTail, operation);
+            await drainWorkspaceLogs(path, ownedLogs || hasOwnedLogs(path), localTail, operation);
             await removeWorkspaceOutput(path, dir, archive, initialState, lockDir, operation);
           },
           { external: true, waitMs: 0, ownerPurpose: 'workspace removal', signal, declareSpawnsFor: operation },
