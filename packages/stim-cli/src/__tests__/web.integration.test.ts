@@ -1471,6 +1471,45 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     }
   });
 
+  test.each([false, true])(
+    'observer startup rejection cleans up or retains the browser (refuse=%s)',
+    async (refuse) => {
+      setExecutor(fakeChrome({}));
+      let chrome: WebRecord['chromeProcess'];
+      const startupError = new Error('observer startup failed');
+      vi.spyOn(stimdClient, 'observeOwnedWeb').mockImplementation(async (workspace) => {
+        chrome = readWebRecord(workspace)?.chromeProcess;
+        throw startupError;
+      });
+      const original = teardown.teardownBrowserHeld;
+      if (refuse)
+        vi.spyOn(teardown, 'teardownBrowserHeld')
+          .mockImplementationOnce(original)
+          .mockResolvedValue({ status: 'failed', reason: 'fixture cleanup failure' });
+      const failure = await launchOwnedBrowser(
+        {
+          url: 'http://localhost:8901/',
+          config: { chrome: '/fixture/chrome', headless: true, viewport: 'desktop', ignoreCertificateErrors: false },
+        },
+        { root, note: () => {} },
+      ).catch((error: unknown) => error);
+      assert(chrome);
+      if (refuse) {
+        assert(failure instanceof workspaceLocks.WorkspaceProcessCleanupError);
+        assert.equal(failure.cause, startupError);
+        assert.deepEqual(readWebRecord(root)?.chromeProcess, chrome);
+        const attempt = tryAcquireClaim({ root: join(workspaceDir(root), 'web.lock'), mode: 'exclusive' });
+        if (attempt.pending) releaseClaim(attempt.pending);
+        if (attempt.acquired) releaseClaim(attempt.acquired);
+        assert.equal(attempt.acquired, undefined);
+      } else {
+        assert.equal(failure, startupError);
+        assert(['gone', 'different'].includes(inspectProcessIdentity(chrome)));
+        assert.equal(readWebRecord(root), null);
+      }
+    },
+  );
+
   test('a launch cancelled while stimd attaches drains the Chrome it started', async () => {
     upsertProject(root, { settings: { web: { url: 'http://localhost:8901/cancelled' } } });
     vi.spyOn(chromeLookup, 'findChrome').mockReturnValue('/fixture/chrome');

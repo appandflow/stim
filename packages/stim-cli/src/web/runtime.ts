@@ -139,7 +139,20 @@ export async function launchOwnedBrowser(
         );
       }
       clearClaimChild(claim);
-      const unobserved = await observeOwnedWeb(root, chrome.pid, chrome.processToken, ambientEnv());
+      let unobserved: string | null;
+      try {
+        unobserved = await observeOwnedWeb(root, chrome.pid, chrome.processToken, ambientEnv());
+      } catch (error) {
+        const cleanup = await teardownBrowserHeld(root);
+        if (cleanup.status === 'failed' || cleanup.status === 'skipped')
+          throw new WorkspaceProcessCleanupError(
+            [claim],
+            `The failed browser launch could not be stopped: ${cleanup.reason ?? 'unknown reason'}.`,
+            'Run `stim stop`.',
+            error instanceof Error ? error : undefined,
+          );
+        throw error;
+      }
       const record = liveWebRecord(readWebRecord(root));
       if (signal?.aborted || unobserved !== null || !record || record.chromeProcess?.pid !== chrome.pid) {
         const cleanup = await teardownBrowserHeld(root);
