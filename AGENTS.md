@@ -439,10 +439,10 @@ outside it moves to its own issue and pull request.
   with its `zipalign` then `apksigner` path, or refuses. An offloaded Exact
   build is keyed by the synced manifest's digest, installed from the fetched
   app and never cached; it carries the values of the settings `app.json` `env`
-  declares that the client's environment or `.env.local` sets, and only for an
+  declares that the client's environment, `.env.local` or `.env` sets, and only for an
   app that declares no native modules. Its worker needs Exact's own Bun, Rust
   and exact2 for the app's pins, reports what it lacks in the offer, and builds
-  in a checkout folder named like the client's app folder; it shares the worker
+  an app at the repository root in a checkout folder named like the client's; it shares the worker
   user's `~/.cargo` and `~/.cache/exact` across clients. An offloaded build runs
   the client's exact Stim build on the worker: the worker's stimd answers
   `job.start` by running that build's `dist/cli.mjs __job offload-build` (or

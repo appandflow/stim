@@ -301,8 +301,8 @@ function makePrivateWindowsDirs(dirs: Array<[dir: string, key?: string]>): void 
  * Creates the checkout directory `src` of `area`. On Windows it is a junction to a private `windowsShortDir`, and the
  * repository's Gradle home is made private too; an area whose `src` is a directory keeps it.
  */
-function ensureCheckout(area: string, src: string, exact: ExactOffload | undefined): void {
-  if (exact) exactCheckout(area, exact.name);
+function ensureCheckout(area: string, src: string, job: Pick<WorkerJob, 'exact' | 'project'>): void {
+  if (job.exact && job.project === '') exactCheckout(area, job.exact.name);
   const stat = lstatSync(src, { throwIfNoEntry: false });
   if (process.platform === 'win32') {
     const linked = !stat || stat.isSymbolicLink();
@@ -699,7 +699,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     }
   };
   const failed = (code: string, message: string): WorkerResult => ({ ok: false, code, message, timings });
-  ensureCheckout(job.area, join(job.area, 'src'), job.exact);
+  ensureCheckout(job.area, join(job.area, 'src'), job);
   const src = realpathSync(join(job.area, 'src'));
   const root = join(src, job.project);
 
@@ -1032,7 +1032,6 @@ function exactCheckout(area: string, name: string): void {
   symlinkSync(target, src);
 }
 
-/** Builds a macOS SwiftPM or Exact app, whose identity is the digest of the synced manifest the client sent. */
 async function compileSyncedManifest(
   job: WorkerJob,
   root: string,
@@ -1092,10 +1091,17 @@ async function compileExact(
       code: 'exact-tools',
       message: `Exact's toolchain is incomplete here: ${missing.map((problem) => problem.reason).join('; ')}.`,
     };
-  const env: NodeJS.ProcessEnv = { ...process.env, EXACT2: exactCheckoutDir(exact) };
-  delete env.EXACT_SIM;
-  for (const name of declared) delete env[name];
-  Object.assign(env, exact.env);
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env))
+    if (
+      !declared.includes(key) &&
+      key !== 'BUN' &&
+      key !== 'CARGO_TARGET_DIR' &&
+      key !== 'EXACT2' &&
+      !key.startsWith('EXACT_')
+    )
+      env[key] = value;
+  Object.assign(env, exact.env, { EXACT2: exactCheckoutDir(exact) });
   note('build', `Exact ${job.configuration === 'Release' ? 'Release' : 'Debug'}`);
   const built = await time('buildMs', () =>
     runExactIosBuild({

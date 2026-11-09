@@ -10,6 +10,7 @@ import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import { sourceManifest } from '../offload/native-source.ts';
+import { iosSyncPlan } from '../offload/signing-files.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
 import { exactOffloadPlan, type ExactOffload } from './exact-offload.ts';
 import {
@@ -193,13 +194,18 @@ function exactRecipe(root: string, context: IosArtifactContext): IosArtifactReci
         optimizations: null,
         exact: offloaded(),
       }),
+      syncPlan: iosSyncPlan,
       unchanged: async (sourceDigest) => {
         const signal = context.operation?.signal;
-        const repoRoot = await repoRootAsync(root, { env: context.operation?.env, signal });
-        return (
-          repoRoot !== null &&
-          sourceDigest === manifestDigest(await sourceManifest(realpathSync(repoRoot), false, signal))
+        const found = await repoRootAsync(root, { env: context.operation?.env, signal });
+        if (found === null) return false;
+        const repoRoot = realpathSync(found);
+        const files = await sourceManifest(repoRoot, false, signal);
+        const synced = await iosSyncPlan(
+          repoRoot,
+          files.map((file) => file.path),
         );
+        return sourceDigest === manifestDigest(files.filter((file) => !synced.omit.has(file.path)));
       },
     },
   };

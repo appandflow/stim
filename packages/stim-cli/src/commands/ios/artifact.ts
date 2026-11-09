@@ -618,6 +618,7 @@ export async function acquireIosArtifact(
       choice,
       expectedFingerprint: null,
       request: offload.request(candidate.runtime),
+      syncPlan: offload.syncPlan,
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
       onEnter: (name) => {

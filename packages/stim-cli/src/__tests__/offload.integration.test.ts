@@ -688,12 +688,12 @@ describe('strict client routing', () => {
       started = params;
       return { error: { code: 'busy', message: 'stop here' } };
     });
-    const connection = Object.assign(Object.create(BuildConnection.prototype), {
+    const connection: BuildConnection = Object.assign(Object.create(BuildConnection.prototype), {
       host: [],
       request,
       close: vi.fn<() => void>(),
       onProgress: () => {},
-    }) as BuildConnection;
+    });
     vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
     const choice = await chooseBuildMachine({
       projectRoot: root,

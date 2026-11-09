@@ -53,8 +53,9 @@ beforeEach(() => {
       'ensureBun("1.4.2");',
     ].join('\n'),
   );
-  writeFileSync(join(app, 'app.json'), JSON.stringify({ env: ['API_URL', 'STORE_ID', 'UNSET', 'lower'] }));
+  writeFileSync(join(app, 'app.json'), JSON.stringify({ env: ['API_URL', 'STORE_ID', 'REGION', 'UNSET', 'lower'] }));
   writeFileSync(join(app, '.env.local'), 'API_URL=from-file\nSTORE_ID="42"\nOTHER=secret\n');
+  writeFileSync(join(app, '.env'), 'STORE_ID=1\nREGION=ca\n');
 });
 
 afterEach(() => {
@@ -67,7 +68,7 @@ test('an offload carries the pins, the app directory name and the declared setti
     exact2: sha,
     bun: '1.4.2',
     rust: '1.97.0',
-    env: { API_URL: 'from-shell', STORE_ID: '42' },
+    env: { API_URL: 'from-shell', STORE_ID: '42', REGION: 'ca' },
   });
 });
 
@@ -128,6 +129,12 @@ test("a machine reports each missing piece of Exact's toolchain with the command
   mkdirSync(join(checkout, 'scripts'), { recursive: true });
   mkdirSync(join(checkout, 'node_modules'));
   writeFileSync(join(checkout, 'scripts', 'app-cli.mjs'), '');
+  expect(exactToolProblems(pins, { HOME: home }).map((each) => each.reason)).toContain(
+    `~/.exact/exact2/${sha} is not at commit ${sha.slice(0, 10)}`,
+  );
+  execFileSync('git', ['clone', '-q', exact2, join(root, 'clone')]);
+  execFileSync('mv', [join(root, 'clone', '.git'), join(checkout, '.git')]);
+  git(checkout, 'checkout', '-q', '--', '.');
   expect(exactToolProblems(pins, { HOME: home })).toEqual([
     {
       reason: `no Rust 1.97.0 target ${EXACT_SIM_TARGET}`,

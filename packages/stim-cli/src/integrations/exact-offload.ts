@@ -54,7 +54,6 @@ export function exactDeclaresModules(manifest: Record<string, unknown>): boolean
   return Array.isArray(modules) ? modules.length > 0 : modules !== undefined && modules !== null;
 }
 
-/** The setting names `app.json` `env` declares, as Exact reads them. */
 export function exactDeclaredSettings(manifest: Record<string, unknown>): string[] {
   return Array.isArray(manifest.env)
     ? [...new Set(manifest.env.filter((name): name is string => typeof name === 'string' && SETTING.test(name)))]
@@ -62,24 +61,23 @@ export function exactDeclaredSettings(manifest: Record<string, unknown>): string
 }
 
 /**
- * The declared settings' values in Exact's order: this process's environment, then `.env.local` (Node's dotenv grammar,
- * as Exact parses it). `.env` is not read here; it syncs with the checkout.
+ * The declared settings' values in Exact's order: this process's environment, then `.env.local`, then `.env`, each in
+ * Node's dotenv grammar as Exact parses them.
  */
 function exactSettingValues(
   names: readonly string[],
   env: NodeJS.ProcessEnv,
-  localFile: string | null,
+  files: readonly string[],
 ): Record<string, string> {
-  const local = localFile === null ? {} : parseEnv(localFile);
+  const parsed = files.map((text) => parseEnv(text));
   const values: Record<string, string> = {};
   for (const name of names) {
-    const value = env[name] ?? (Object.hasOwn(local, name) ? local[name] : undefined);
+    const value = env[name] ?? parsed.find((file) => Object.hasOwn(file, name))?.[name];
     if (value !== undefined) values[name] = value;
   }
   return values;
 }
 
-/** The Bun pin and the default exact2 path that a generated `exact.mjs` names, or null for each it does not. */
 function exactLauncherPins(launcher: string): { bun: string | null; exact2Default: string | null } {
   return {
     bun: /ensureBun\(\s*["'](\d+\.\d+\.\d+)["']\s*\)/.exec(launcher)?.[1] ?? null,
@@ -87,7 +85,6 @@ function exactLauncherPins(launcher: string): { bun: string | null; exact2Defaul
   };
 }
 
-/** The Rust channel exact2's `rust-toolchain.toml` pins, or null. */
 function exactRustChannel(toolchain: string): string | null {
   const channel = /^\s*channel\s*=\s*"([^"]+)"/m.exec(toolchain)?.[1];
   return channel && RUST_CHANNEL.test(channel) ? channel : null;
@@ -134,17 +131,17 @@ export function exactOffloadPlan(root: string, env: NodeJS.ProcessEnv): ExactOff
   const name = basename(realpathSync(root));
   if (!APP_NAME.test(name))
     return { unsupported: `the app directory name ${JSON.stringify(name)} is not a plain ASCII file name` };
-  const localPath = join(root, '.env.local');
-  let local: string | null = null;
-  try {
-    local = existsSync(localPath) ? readFileSync(localPath, 'utf8') : null;
-  } catch {
-    return { unsupported: '.env.local is not readable' };
+  const files: string[] = [];
+  for (const file of ['.env.local', '.env']) {
+    try {
+      if (existsSync(join(root, file))) files.push(readFileSync(join(root, file), 'utf8'));
+    } catch {
+      return { unsupported: `${file} is not readable` };
+    }
   }
-  return { name, exact2, bun, rust, env: exactSettingValues(exactDeclaredSettings(manifest), env, local) };
+  return { name, exact2, bun, rust, env: exactSettingValues(exactDeclaredSettings(manifest), env, files) };
 }
 
-/** The pins of a `build.offer` or `build.start` parameter, or null when one is malformed. */
 export function exactPinsParam(value: unknown): ExactPins | null {
   if (!isJsonObject(value)) return null;
   const { exact2, bun, rust } = value;
@@ -158,7 +155,6 @@ export function exactPinsParam(value: unknown): ExactPins | null {
     : null;
 }
 
-/** The Exact offload of a `build.start` parameter, or null when any part is malformed. */
 export function exactOffloadParam(value: unknown): ExactOffload | null {
   const pins = exactPinsParam(value);
   if (!pins || !isJsonObject(value)) return null;
@@ -186,7 +182,6 @@ export function exactCheckoutDir(pins: Pick<ExactPins, 'exact2'>, home: string =
   return join(home, '.exact', 'exact2', pins.exact2);
 }
 
-/** What of Exact's toolchain for `pins` this machine lacks, each with the commands that install it. */
 export function exactToolProblems(pins: ExactPins, env: NodeJS.ProcessEnv): ExactToolProblem[] {
   const home = env.HOME ?? homedir();
   const problems: ExactToolProblem[] = [];
@@ -223,10 +218,21 @@ export function exactToolProblems(pins: ExactPins, env: NodeJS.ProcessEnv): Exac
   const checkout = exactCheckoutDir(pins, home);
   const shown = `~/.exact/exact2/${pins.exact2}`;
   const setup = `cd ${shown} && ~/.bun-${pins.bun}/bin/bun scripts/exact.mjs setup`;
+  const checkoutCommand = `git -C ${shown} checkout ${pins.exact2}`;
   if (!existsSync(join(checkout, 'scripts', 'app-cli.mjs')))
     problems.push({
       reason: `no exact2 ${pins.exact2.slice(0, 10)} at ${shown}`,
-      commands: [`git clone https://github.com/expo/exact ${shown}`, `git -C ${shown} checkout ${pins.exact2}`, setup],
+      commands: [`git clone https://github.com/expo/exact ${shown}`, checkoutCommand, setup],
+    });
+  else if (git(checkout, ['rev-parse', 'HEAD']) !== pins.exact2)
+    problems.push({
+      reason: `${shown} is not at commit ${pins.exact2.slice(0, 10)}`,
+      commands: [checkoutCommand, setup],
+    });
+  else if (git(checkout, ['status', '--porcelain', '--untracked-files=no']) !== '')
+    problems.push({
+      reason: `${shown} has local changes; Stim builds only a clean checkout of the pin`,
+      commands: [`git -C ${shown} status`],
     });
   else if (!existsSync(join(checkout, 'node_modules')) || !existsSync(join(cargoHome, 'hermes-lean-sys')))
     problems.push({ reason: `Exact's setup has not run for exact2 ${pins.exact2.slice(0, 10)}`, commands: [setup] });

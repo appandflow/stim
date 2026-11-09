@@ -1250,7 +1250,6 @@ function macosBuildParameters(request: Extract<BuildRequest, { platform: 'macos'
   };
 }
 
-/** The `build.start` identity: the synced digest for macOS and Exact builds, which the worker checks; else the fingerprint. */
 function startIdentity(request: BuildRequest, synced: string, expected: string | null | undefined) {
   if (request.platform === 'macos') return { fingerprint: synced };
   return request.platform === 'ios' && request.exact
@@ -1258,7 +1257,6 @@ function startIdentity(request: BuildRequest, synced: string, expected: string |
     : { fingerprint: expected };
 }
 
-/** The fingerprint the worker must report having built: an Exact build's synced digest, else the requested one. */
 function builtIdentity(request: BuildRequest, synced: string | null, expected: string | null | undefined) {
   return request.platform === 'ios' && request.exact ? synced : expected;
 }
@@ -2166,15 +2164,20 @@ export function offloadCheck(
         problems: [{ code: 'checkout', reason: `this app is not in a git checkout (${repository})` }],
       };
     }
+    resolved ??= targets();
+    const judged = await resolved;
+    const exact = judged.find((target) => target.platform === 'ios' && target.exact);
     const probe = await probeMachine(
       credential,
-      { ...repository, rubyVersion: readRubyVersion(projectRoot) ?? undefined },
+      {
+        ...repository,
+        rubyVersion: readRubyVersion(projectRoot) ?? undefined,
+        ...(exact?.platform === 'ios' && exact.exact ? { exact: exact.exact } : {}),
+      },
       { connectMs: DOCTOR_CONNECT_MS, offerMs: DOCTOR_OFFER_MS, kind: 'offload-probe' },
     );
     if ('failure' in probe) return { capacity: null, problems: [{ code: 'unreachable', reason: probe.failure }] };
     probe.connection.close();
-    resolved ??= targets();
-    const judged = await resolved;
     return {
       capacity: probe.offer.capacity,
       problems: machineProblems(probe.offer, judged),

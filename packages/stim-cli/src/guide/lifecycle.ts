@@ -469,7 +469,7 @@ Rust version exact2 pins and its aarch64-apple-ios-sim target, and the exact2
 commit this app uses, set up with Exact's setup. A machine that lacks one is
 skipped and the placement line names the missing piece and the command that
 installs it. The values of the settings app.json env declares travel with the
-build: this shell's, else .env.local's; .env syncs with the checkout. These
+build: this shell's, else .env.local's, else .env's, as Exact reads them. These
 build here: apps whose app.json declares native modules (Exact may read them on
 a simulator), an exact2 checkout with local changes, and an app folder name
 that is not a plain ASCII file name.
