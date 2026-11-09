@@ -381,7 +381,9 @@ function problemCode({ code }: OffloadProblem): string {
     ? code
     : code === 'runtime'
       ? 'no-matching-device'
-      : 'version-mismatch';
+      : code === 'exact'
+        ? 'exact-tools'
+        : 'version-mismatch';
 }
 
 export type Reply = { result: unknown } | { error: { code: string; message: string } };

@@ -580,7 +580,13 @@ export async function acquireIosArtifact(
       if (candidate.cacheOnly) return null;
       const only = candidate.machines.length === 1 ? candidate.machines[0]!.machine : null;
       if (only && choice.startsWith(`${only}: `)) fallbackMachine = only;
-      fallBack(choice, choice, { code: 'no-remote-mac-took-it', candidates: asked });
+      fallBack(choice, choice, {
+        code: 'no-remote-mac-took-it',
+        candidates: asked,
+        ...(asked.some((each) => each.code === 'exact-tools')
+          ? { remedy: 'Run the install command above on that machine, or rerun with --remote-build local.' }
+          : {}),
+      });
       return null;
     }
     run.openOffload(() => closeOffload(choice));
@@ -596,7 +602,7 @@ export async function acquireIosArtifact(
     return choice;
   }
 
-  /** Builds on the chosen machine and installs the fetched app without a cache store; false builds here instead unless a machine was named. */
+  /** Builds on the chosen machine and installs the fetched app, kept in the workspace until the next offload, with no cache store; false builds here instead unless a machine was named. */
   async function compileElsewhereUncached({
     choice,
     candidate,
@@ -632,10 +638,10 @@ export async function acquireIosArtifact(
       if (!outcome.sourceDigest || !(await offload.unchanged(outcome.sourceDigest))) {
         reason = 'the checkout here changed while it built';
       } else {
-        const kept = join(workspaceDir(root), 'offload', `${PLATFORM}-${process.pid}-${Date.now()}`);
+        const kept = join(workspaceDir(root), 'offload', `${PLATFORM}-app`);
         try {
+          rmSync(kept, { recursive: true, force: true });
           mkdirSync(kept, { recursive: true });
-          run.own(kept);
           const app = join(kept, basename(outcome.artifactPath));
           renameSync(outcome.artifactPath, app);
           prepared = await recipe.materialize(app, { fresh: true, ownTemporary: (directory) => run.own(directory) });
