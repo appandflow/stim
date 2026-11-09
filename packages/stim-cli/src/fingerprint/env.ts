@@ -15,7 +15,10 @@ const DENIED =
 const VOLATILE = /^(?:PWD|OLDPWD|SHLVL|_|TMPDIR|SSH_.*|__CF.*|ITERM_.*|TMUX.*|VSCODE_.*|WINDOWID|STIM_.*)$/;
 const PINS = { CI: '1', FORCE_COLOR: '0', LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8', TZ: 'UTC' };
 const PINNED = new Set([...Object.keys(PINS), 'PWD', 'EXPO_NO_TELEMETRY']);
-/** Toolchain, user and machine locations: out of the key and never sent to a build worker. */
+/**
+ * Toolchain, user and machine locations: out of the key and never sent to a build worker. The Gradle, CocoaPods and
+ * pnpm homes and stores are where a build worker isolates each client.
+ */
 const MACHINE_LOCAL = new Set([
   'PATH',
   'HOME',
@@ -31,6 +34,10 @@ const MACHINE_LOCAL = new Set([
   'ANDROID_NDK_HOME',
   'NODE_BINARY',
   'DEVELOPER_DIR',
+  'GRADLE_USER_HOME',
+  'CP_HOME_DIR',
+  'CP_CACHE_DIR',
+  'npm_config_store_dir',
 ]);
 const BUILD_DENIED = new Set(['USE_CCACHE', 'APP_PATH', 'RCT_SKIP_CACHES']);
 const SCANNED = /(?:\.podspec|\.rb|\.gradle|\.gradle\.kts|^Podfile|^CMakeLists\.txt)$/;
