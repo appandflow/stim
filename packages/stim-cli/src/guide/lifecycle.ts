@@ -441,8 +441,8 @@ Run from that directory:
 
 stim ios runs the app's own ./exact.mjs ios --no-install with EXACT_SIM set to
 the workspace's owned simulator, installs the .app it reports, and launches it
-as a native process without Metro (metroPort: null). It accepts no --scheme or
---configuration; build a release with ./exact.mjs ios --release. Exact
+as a native process without Metro (metroPort: null). It refuses --scheme and
+any --configuration but Debug; build a release with ./exact.mjs ios --release. Exact
 compiles incrementally in the checkout's target/ directory, so Stim keeps no
 artifact cache for it; a one-line Contract edit rebuilds in seconds.
 

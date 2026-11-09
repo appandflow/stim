@@ -29,13 +29,22 @@ export function exactBuiltApp(lines: readonly string[]): string | null {
 }
 
 async function compile(root: string, context: IosArtifactContext): Promise<IosCompileResult> {
+  const udid = context.target.udid;
+  if (!udid)
+    throw new IosRecipeRefusal({
+      code: 'STIM_BAD_ARG',
+      message:
+        "An Exact build needs this workspace's own simulator before it starts, because Exact may run the app on a simulator to read its native modules.",
+      remedy:
+        'Run stim ios when a simulator slot is free. Build-only and architecture-selected builds of Exact apps are not supported.',
+    });
   const run = await runCaptured({
     cmd: join(root, EXACT_CLI),
     args: ['ios', '--no-install'],
     cwd: root,
     env: {
       ...context.operation?.env,
-      ...(context.target.udid ? { EXACT_SIM: context.target.udid } : {}),
+      EXACT_SIM: udid,
       FORCE_COLOR: '0',
     },
     spawn: (file, args, opts) => getExecutor().spawn(file, args, opts),
@@ -57,7 +66,11 @@ async function compile(root: string, context: IosArtifactContext): Promise<IosCo
     const bundleId = await readBundleId(appPath);
     if (bundleId) return { ...common, ok: true, appPath, bundleId };
   }
-  const errors = run.transcript.filter((line) => ERROR_LINE.test(line));
+  const errors = [
+    ...(run.error ? [`could not run ./${EXACT_CLI}: ${String(run.error)}`] : []),
+    ...(!run.error && run.code === 0 ? [`./${EXACT_CLI} ios reported no built app with a bundle id`] : []),
+    ...run.transcript.filter((line) => ERROR_LINE.test(line)),
+  ];
   return {
     ...common,
     ok: false,
