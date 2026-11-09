@@ -250,6 +250,15 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
+test('a prebuild repair finishes its fingerprint evaluation inside the step', { timeout: 10_000 }, async () => {
+  mockChildren({});
+  const source = facts({ pods: null, prebuild: [{ platform: 'android', status: { kind: 'unfinished' } }] });
+  expect(planSourceRepairs(source).map((step) => step.id)).toEqual(['prebuild:android']);
+  expect(await repair(source)).toBe(1);
+  expect(notes.join('\n')).toContain('could not fingerprint');
+  expect(readClaimSet(warmClaimPath(app)).live).toEqual([]);
+});
+
 test('a workspace a stim run holds is refused before anything is asked or run', async () => {
   mockChildren({});
   const asked: string[] = [];

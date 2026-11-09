@@ -177,32 +177,36 @@ async function repairPrebuild(context: RunContext, platform: NativePlatform, ste
   }
 
   await recordPrebuildAsync(root, platform, null);
-  const prebuilt = await runPrebuild(root, platform, null);
-  if (prebuilt.failed)
-    return fail(
-      prebuilt.reason ?? 'expo prebuild failed.',
-      (prebuilt.lastLines ?? []).slice(-5),
-      prebuilt.remedy ?? null,
+  const generated = await fenced(context, async () => {
+    const prebuilt = await runPrebuild(root, platform, null);
+    if (prebuilt.failed)
+      return fail(
+        prebuilt.reason ?? 'expo prebuild failed.',
+        (prebuilt.lastLines ?? []).slice(-5),
+        prebuilt.remedy ?? null,
+      );
+    note(
+      phaseLine(
+        'prebuild',
+        `${platform}/ ${plan === 'generate' ? 'generated' : 'updated in place'} (${formatDuration(prebuilt.durationMs ?? 0)})`,
+      ),
     );
-  note(
-    phaseLine(
-      'prebuild',
-      `${platform}/ ${plan === 'generate' ? 'generated' : 'updated in place'} (${formatDuration(prebuilt.durationMs ?? 0)})`,
-    ),
-  );
 
-  if (platform === 'ios') {
-    const iosDir = resolveIosProjectDir(settings, root).dir;
-    const podState = readPodState(root, iosDir);
-    const verdict = podsAreStale(podState.lockText, podState.manifestText, podState.dir);
-    if (podAction(podState, verdict, { prebuildRan: true }).install) {
-      const failure = await installPods(context, step);
-      if (failure) {
-        describeFailure('pods', failure, note);
-        return false;
+    if (platform === 'ios') {
+      const iosDir = resolveIosProjectDir(settings, root).dir;
+      const podState = readPodState(root, iosDir);
+      const verdict = podsAreStale(podState.lockText, podState.manifestText, podState.dir);
+      if (podAction(podState, verdict, { prebuildRan: true }).install) {
+        const failure = await installPods(context, step);
+        if (failure) {
+          describeFailure('pods', failure, note);
+          return false;
+        }
       }
     }
-  }
+    return true;
+  });
+  if (!generated) return false;
 
   const after = await readFingerprint(context.operation, { root, ...options, embedMode: 'development' });
   context.operation.signal.throwIfAborted();
@@ -223,24 +227,40 @@ async function runStep(context: RunContext, step: SourceRepairStep): Promise<boo
   if (step.id === 'deps') {
     const dependencies = dependencyState(facts.root, repoRoot);
     if (!dependencies) return true;
-    const failure = await runDependencyInstall({
-      dependencies,
-      subject: `source ${dependencies.root}: ${facts.deps?.reason === 'missing' ? 'no installed dependencies' : `the installed tree does not match ${dependencies.lock}`}`,
-      installer: hold.installer,
-      spawn: installerSpawn(hold.installer, null),
-      emit: note,
-      again: 'stim doctor --fix',
+    return fenced(context, async () => {
+      const failure = await runDependencyInstall({
+        dependencies,
+        subject: `source ${dependencies.root}: ${facts.deps?.reason === 'missing' ? 'no installed dependencies' : `the installed tree does not match ${dependencies.lock}`}`,
+        installer: hold.installer,
+        spawn: installerSpawn(hold.installer, null),
+        emit: note,
+        again: 'stim doctor --fix',
+      });
+      preserveInstallerFailure(context, failure);
+      if (failure) describeFailure('deps', failure, note);
+      return !failure;
     });
-    preserveInstallerFailure(context, failure);
-    if (failure) describeFailure('deps', failure, note);
-    return !failure;
   }
-  if (step.id === 'pods') {
-    const failure = await installPods(context, step);
-    if (failure) describeFailure('pods', failure, note);
-    return !failure;
-  }
+  if (step.id === 'pods')
+    return fenced(context, async () => {
+      const failure = await installPods(context, step);
+      if (failure) describeFailure('pods', failure, note);
+      return !failure;
+    });
   return repairPrebuild(context, step.id === 'prebuild:ios' ? 'ios' : 'android', step);
+}
+
+async function fenced<T>(context: RunContext, work: () => Promise<T>): Promise<T> {
+  const fence = fenceDeclaredSpawns(context.operation);
+  let unverified: unknown;
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof Error && 'reportCleanup' in error) unverified = error;
+    throw error;
+  } finally {
+    await fence.finish(unverified);
+  }
 }
 
 const LABELS: Record<SourceRepairStep['id'], string> = {
@@ -330,18 +350,7 @@ async function runApproved(context: RunContext, approved: SourceRepairStep[], de
       exitCode = 1;
       continue;
     }
-    const fence = fenceDeclaredSpawns(context.operation);
-    let unverified: unknown;
-    let ok: boolean;
-    try {
-      ok = await runStep(context, step);
-    } catch (error) {
-      if (error instanceof Error && 'reportCleanup' in error) unverified = error;
-      throw error;
-    } finally {
-      await fence.finish(unverified);
-    }
-    if (!ok) {
+    if (!(await runStep(context, step))) {
       failed.add(step.id);
       exitCode = 1;
     }
