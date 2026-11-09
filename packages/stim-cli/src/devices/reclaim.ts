@@ -45,7 +45,7 @@ import {
   stimdClaimRoot,
 } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
-import { macosAppPresent, macosAppStderr, macosAppStdout, macosLogFile } from '../macos/state.ts';
+import { macosAppPresent } from '../macos/state.ts';
 import { readWebRecord, webLogFile } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
@@ -67,33 +67,13 @@ import {
 } from '../process-identity.ts';
 
 function hasOwnedLogs(root: string): boolean {
-  return (
-    macosAppPresent(root) ||
-    readWebRecord(root) !== null ||
-    existsSync(macosLogFile(root)) ||
-    existsSync(webLogFile(root))
-  );
+  return readWebRecord(root) !== null || existsSync(webLogFile(root));
 }
 
-function hasLocalTail(root: string): boolean {
-  const macos = readMacosRecord(root);
-  return (
-    !!macos?.app &&
-    !macos.host &&
-    macos.supervisor?.pid === macos.app.pid &&
-    (existsSync(macosAppStdout(root, macos.launchId)) || existsSync(macosAppStderr(root, macos.launchId)))
-  );
-}
-
-async function drainWorkspaceLogs(
-  root: string,
-  affected: boolean,
-  localTail: boolean,
-  operation: StimContext | undefined,
-): Promise<void> {
+async function drainWorkspaceLogs(root: string, affected: boolean, operation: StimContext | undefined): Promise<void> {
   if (!affected) return;
   const claims = readClaimSet(stimdClaimRoot());
-  if (!claims.live.length && !claims.unresolved.length && !localTail) return;
+  if (!claims.live.length && !claims.unresolved.length) return;
   const failure = await drainOwned(root, operation?.env);
   if (failure) throw new Error(`Could not drain workspace logs: ${failure}`);
 }
@@ -557,7 +537,6 @@ async function reclaimIdleProject(
   const dereferenced = describeDereferenced(project);
   const initialState = readWorkspaceState(path);
   const ownedLogs = hasOwnedLogs(path);
-  const localTail = hasLocalTail(path);
   await removePhoneReverses(path, { operation });
 
   let killedPid: number | null = null;
@@ -746,7 +725,7 @@ async function reclaimIdleProject(
           async () => {
             if (realpathSync(dir) !== lockDir) throw new Error('Workspace storage changed during cleanup');
             if (readWebRecord(path)) throw new Error('A replacement browser appeared during cleanup');
-            await drainWorkspaceLogs(path, ownedLogs || hasOwnedLogs(path), localTail, operation);
+            await drainWorkspaceLogs(path, ownedLogs || hasOwnedLogs(path), operation);
             await removeWorkspaceOutput(path, dir, archive, initialState, lockDir, operation);
           },
           { external: true, waitMs: 0, ownerPurpose: 'workspace removal', signal, declareSpawnsFor: operation },

@@ -22,7 +22,6 @@ type ToNet =
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
   | { type: 'presence'; params: unknown }
-  | { type: 'hosted-drained' | 'hosted-observed'; id: number; error: string | null }
   | { type: 'keep' }
   | { type: 'stop' };
 
@@ -59,9 +58,6 @@ export function createNetThread(
   log: (level: 'info' | 'warn', event: string, msg: string) => void,
   onExit: (failure?: Error) => void,
   onUpdate: (why: string) => void = () => {},
-  drainHosted: (session: string) => Promise<string | null> = async () => 'hosted observer is unavailable',
-  observeHosted: (session: string, pid: number, token: string, launchId: string) => Promise<string | null> = async () =>
-    'hosted observer is unavailable',
 ): NetThread {
   let worker: Worker | null = null;
   let started: Promise<NetAnswer> | null = null;
@@ -127,49 +123,29 @@ export function createNetThread(
       let clean = false;
       worker = thread;
       started = new Promise<NetAnswer>((answer) => {
-        thread.on(
-          'message',
-          (
-            message:
-              | FromNet
-              | { type: 'hosted-drain'; id: number; session: string }
-              | { type: 'hosted-observe'; id: number; session: string; pid: number; token: string; launchId: string },
-          ) => {
-            if (message.type === 'listening') {
-              listening = true;
-              port = message.port;
-              log('info', 'net_started', `the net thread listens on port ${message.port}`);
-              answer({ listening: true, port: message.port });
-            } else if (message.type === 'refused') {
-              log('warn', 'net_refused', message.message);
-              clean = message.clean;
-              if (!clean) unverified(message.message);
-              answer({ listening: false, message: message.message });
-              void thread.terminate();
-            } else if (message.type === 'closed') {
-              clean = message.error === undefined;
-              if (message.error !== undefined) unverified(message.error);
-            } else if (message.type === 'idle') {
-              if (!shareOnly) return;
-              log('info', 'net_idle', 'no web share is left; stopping the net thread');
-              stop(thread);
-            } else if (message.type === 'update') onUpdate(message.why);
-            else if (message.type === 'hosted-observe')
-              void observeHosted(message.session, message.pid, message.token, message.launchId).then(
-                (error) => thread.postMessage({ type: 'hosted-observed', id: message.id, error }),
-                (error: unknown) =>
-                  thread.postMessage({ type: 'hosted-observed', id: message.id, error: String(error) }),
-              );
-            else if (message.type === 'hosted-drain')
-              void drainHosted(message.session).then(
-                (error) => thread.postMessage({ type: 'hosted-drained', id: message.id, error }),
-                (error: unknown) =>
-                  thread.postMessage({ type: 'hosted-drained', id: message.id, error: String(error) }),
-              );
-            else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);
-            else sockets.get(message.id)?.end();
-          },
-        );
+        thread.on('message', (message: FromNet) => {
+          if (message.type === 'listening') {
+            listening = true;
+            port = message.port;
+            log('info', 'net_started', `the net thread listens on port ${message.port}`);
+            answer({ listening: true, port: message.port });
+          } else if (message.type === 'refused') {
+            log('warn', 'net_refused', message.message);
+            clean = message.clean;
+            if (!clean) unverified(message.message);
+            answer({ listening: false, message: message.message });
+            void thread.terminate();
+          } else if (message.type === 'closed') {
+            clean = message.error === undefined;
+            if (message.error !== undefined) unverified(message.error);
+          } else if (message.type === 'idle') {
+            if (!shareOnly) return;
+            log('info', 'net_idle', 'no web share is left; stopping the net thread');
+            stop(thread);
+          } else if (message.type === 'update') onUpdate(message.why);
+          else if (message.type === 'data') sockets.get(message.id)?.write(message.chunk);
+          else sockets.get(message.id)?.end();
+        });
         thread.once('error', (error: Error) => {
           unverified(error.message);
           log('warn', 'net_failed', error.message);

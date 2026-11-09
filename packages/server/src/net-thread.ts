@@ -8,7 +8,6 @@ export type ToNet =
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
   | { type: 'presence'; params: unknown }
-  | { type: 'hosted-drained' | 'hosted-observed'; id: number; error: string | null }
   | { type: 'keep' }
   | { type: 'stop' };
 
@@ -50,34 +49,6 @@ class Bridged extends Duplex {
 async function run(port: MessagePort, options: NetOptions): Promise<void> {
   const post = (message: FromNet) => port.postMessage(message);
   const connections = new Map<number, Bridged>();
-  let nextDrain = 1;
-  const drains = new Map<number, (error: string | null) => void>();
-  const drainHosted = (session: string) =>
-    new Promise<string | null>((done) => {
-      const id = nextDrain++;
-      const timer = setTimeout(() => {
-        drains.delete(id);
-        done('hosted observer did not answer');
-      }, 10_000);
-      drains.set(id, (error) => {
-        clearTimeout(timer);
-        done(error);
-      });
-      port.postMessage({ type: 'hosted-drain', id, session });
-    });
-  const observeHosted = (session: string, pid: number, token: string, launchId: string) =>
-    new Promise<string | null>((done) => {
-      const id = nextDrain++;
-      const timer = setTimeout(() => {
-        drains.delete(id);
-        done('hosted observer did not answer');
-      }, 10_000);
-      drains.set(id, (error) => {
-        clearTimeout(timer);
-        done(error);
-      });
-      port.postMessage({ type: 'hosted-observe', id, session, pid, token, launchId });
-    });
   const pending: ToNet[] = [];
   let handle: (message: ToNet) => void = (message) => void pending.push(message);
   port.on('message', (message: ToNet) => handle(message));
@@ -87,8 +58,6 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
       options,
       () => post({ type: 'idle' }),
       (why) => post({ type: 'update', why }),
-      drainHosted,
-      observeHosted,
     );
   } catch (error) {
     post({
@@ -106,9 +75,6 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
       connections.set(message.id, stream);
       stream.once('close', () => connections.delete(message.id));
       server.acceptLocal(stream);
-    } else if (message.type === 'hosted-drained' || message.type === 'hosted-observed') {
-      drains.get(message.id)?.(message.error);
-      drains.delete(message.id);
     } else if (message.type === 'data') connections.get(message.id)?.push(Buffer.from(message.chunk));
     else if (message.type === 'end') connections.get(message.id)?.push(null);
     else if (message.type === 'presence') server.publishPresence(message.params);

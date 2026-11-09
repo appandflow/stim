@@ -19,11 +19,8 @@ export interface LogSink {
 
 export interface LogWriters {
   ownedSync(root?: string): Promise<void>;
-  ownedDrain(root: string, macosOnly?: boolean): Promise<void>;
+  ownedDrain(root: string): Promise<void>;
   ownedObserveWeb(root: string, pid: number, token: string): Promise<void>;
-  ownedObserveMacos(root: string, pid: number, token: string, launchId: string): Promise<void>;
-  ownedObserveHosted(session: string, pid: number, token: string, launchId: string): Promise<void>;
-  ownedDrainHosted(session: string): Promise<void>;
   ownedClose(): Promise<void>;
   open(
     input: {
@@ -135,13 +132,8 @@ export function createLogWriters(
   };
   return {
     ownedSync: (root) => request({ op: 'owned-sync', root }),
-    ownedDrain: (root, macosOnly) => request({ op: 'owned-drain', root, macosOnly }),
+    ownedDrain: (root) => request({ op: 'owned-drain', root }),
     ownedObserveWeb: (root, pid, token) => request({ op: 'owned-observe-web', root, pid, token }),
-    ownedObserveMacos: (root, pid, token, launchId) =>
-      request({ op: 'owned-observe-macos', root, pid, token, launchId }),
-    ownedObserveHosted: (session, pid, token, launchId) =>
-      request({ op: 'owned-observe-hosted', session, pid, token, launchId }),
-    ownedDrainHosted: (session) => request({ op: 'owned-drain-hosted', session }),
     ownedClose: () => (closing ? Promise.resolve() : request({ op: 'owned-close' })),
     async open(input, onFlow) {
       await request({ op: 'open', ...input });

@@ -103,7 +103,7 @@
     "C27": {
       "loc": 10,
       "end": "removal minor",
-      "mechanism": "stimd's owned-app observers leave a Chrome or macOS app to the web-run or macos-run supervisor an older Stim started"
+      "mechanism": "stimd's owned-browser observer leaves a Chrome to the web-run supervisor an older Stim started"
     }
   },
   "words": {

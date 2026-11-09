@@ -33,7 +33,6 @@ import {
   beforeCommand,
   ensurePersistentStimd,
   ensureStimd,
-  observeOwnedMacos,
   observeOwnedWeb,
   requestDaemonTick,
   stimdBuildId,
@@ -193,9 +192,8 @@ test.skipIf(process.platform === 'win32')(
     });
     await new Promise<void>((done) => server.listen(stimdSocket(), done));
     try {
-      expect(await observeOwnedMacos('/fixture', 123, 'token', 'launch')).toContain('did not answer');
       expect(await observeOwnedWeb('/fixture', 123, 'token')).toContain('did not answer');
-      expect(requests).toEqual(['logs.observe-macos', 'logs.observe-web']);
+      expect(requests).toEqual(['logs.observe-web']);
     } finally {
       await new Promise<void>((done) => server.close(() => done()));
       releaseClaim(claim);
