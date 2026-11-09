@@ -132,7 +132,7 @@ test('refuses without a booted workspace simulator', async () => {
 });
 
 test.skipIf(process.platform === 'win32')('waits for the boot before build admission, and boots once', async () => {
-  exactScript('echo "$EXACT_SIM"\nexit 1');
+  exactScript('[ "$EXACT_SIM" = SIM-2 ] && exit 7\nexit 1');
   let finish: (udid: string) => void = () => {};
   let calls = 0;
   const recipe = exactIosProject(root).artifact(
@@ -149,6 +149,6 @@ test.skipIf(process.platform === 'win32')('waits for the boot before build admis
   finish('SIM-2');
   await identity;
 
-  expect(await recipe.compile()).toMatchObject({ diagnostics: [{ message: 'SIM-2' }] });
+  expect(await recipe.compile()).toMatchObject({ ok: false, exitCode: 7 });
   expect(calls).toBe(1);
 });
