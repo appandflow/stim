@@ -31,6 +31,7 @@ import { observeOwnedMacos } from '../daemon/client.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { getExecutor } from '../exec.ts';
+import { cancellableSleep } from '../cancellation.ts';
 import {
   macosAppStderr,
   macosAppStdout,
@@ -177,17 +178,24 @@ export async function runMacos(
               deadline,
               owned,
             } = await withLocalMacosAdmission(root, context, () => launchHere(context, root, record));
-            if ((await waitForLaunchServices(here, deadline)) === 'timeout')
-              note(
-                'macOS LaunchServices does not list the app yet. agent-device open may start a second copy; wait and check lsappinfo.',
-              );
-            launched();
-            if (inspectProcessIdentity(owned) !== 'same') {
-              const error = new Error('The macOS app exited or its identity could not be verified during launch.');
+            try {
+              const runSignal = runCancellationSignal(context);
+              const signal = runSignal ? AbortSignal.any([context.signal, runSignal]) : context.signal;
+              if ((await waitForLaunchServices(here, deadline, signal)) === 'timeout')
+                note(
+                  'macOS LaunchServices does not list the app yet. agent-device open may start a second copy; wait and check lsappinfo.',
+                );
+              launched();
+              signal.throwIfAborted();
+              const refusal = operationState(context).refusal;
+              if (refusal !== null) throw new Error(refusal);
+              if (inspectProcessIdentity(owned) !== 'same')
+                throw new Error('The macOS app exited or its identity could not be verified during launch.');
+              return here;
+            } catch (error) {
               await cleanupFailedMacosLaunch(context, root, record, owned, error);
               throw error;
             }
-            return here;
           }
           const connection = await connectHost(remote);
           const write = (patch: Partial<MacosAppRecord>) =>
@@ -374,15 +382,22 @@ const LAUNCH_SERVICES_CALL_MS = 2_000;
 export async function waitForLaunchServices(
   record: MacosAppRecord,
   deadline: number,
+  signal?: AbortSignal,
 ): Promise<'listed' | 'timeout' | 'skipped'> {
   if (record.host || !record.app) return 'skipped';
   const args = ['find', `bundleid=${record.bundleId}`, `pid=${record.app.pid}`];
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     const out = await getExecutor()
-      .runFileAsync('lsappinfo', args, { timeoutMs: LAUNCH_SERVICES_CALL_MS })
-      .catch(() => '');
+      .runFileAsync('lsappinfo', args, { timeoutMs: LAUNCH_SERVICES_CALL_MS, signal })
+      .catch((error: unknown) => {
+        if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+          throw error;
+        return '';
+      });
+    signal?.throwIfAborted();
     if (out.includes('ASN:')) return 'listed';
-    await new Promise((done) => setTimeout(done, 100));
+    await cancellableSleep(100, { signal, what: 'LaunchServices' });
   }
   return 'timeout';
 }

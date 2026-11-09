@@ -2093,6 +2093,51 @@ describe('macOS build placement and promotion', () => {
         }
       },
     );
+    test('cancellation during LaunchServices verification cleans up the launched app', async () => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+        async ({ bundle: targetBundle, bundleId: targetId }) => {
+          mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+          writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+          return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+        },
+      );
+      vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+      const stopChildren = vi.spyOn(stopping, 'stopMacosChildren').mockResolvedValue();
+      const stop = vi.spyOn(owning, 'stopOwnedProcess').mockResolvedValue(true);
+      const app = macosProcess(process.pid);
+      const claim = {
+        root: 'fixture',
+        path: 'fixture',
+        claimId: 'fixture',
+        mode: 'exclusive' as const,
+        owner: app,
+        startedAt: new Date().toISOString(),
+        details: {},
+        label: 'fixture',
+      };
+      vi.spyOn(owning, 'spawnOwned').mockResolvedValue({ ...app, claim });
+      vi.spyOn(stimdClient, 'observeOwnedMacos').mockResolvedValue(null);
+      vi.spyOn(stimdClient, 'drainOwnedMacos').mockResolvedValue(null);
+      const controller = new AbortController();
+      const executor = getExecutor();
+      setExecutor({
+        ...executor,
+        runFileAsync: async (file, args, options) => {
+          if (file !== 'lsappinfo') return executor.runFileAsync(file, args, options);
+          controller.abort(new Error('cancelled during LaunchServices'));
+          return 'ASN:0x0-0x1:';
+        },
+      });
+      await expect(
+        runMacos(testContext({ signal: controller.signal }), root, () => {}, undefined, 'local'),
+      ).rejects.toThrow('cancelled during LaunchServices');
+      expect(stopChildren).toHaveBeenCalledWith(expect.objectContaining({ pid: app.pid }));
+      expect(stop).toHaveBeenCalledWith(expect.objectContaining({ pid: app.pid }));
+      expect(readMacosRecord(root)?.app).toBeUndefined();
+    });
+
     test.each([false, true])(
       'a launch retains output and claim if the observer cannot drain (cancelled: %s)',
       async (cancelled) => {
