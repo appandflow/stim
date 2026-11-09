@@ -83,6 +83,8 @@ export interface IosArtifactContext {
     offloadRuntime(): string | null;
     hostedArchitecture?: SimulatorArch;
     offloadRefusal: string | null;
+    /** Settles once this run's own boot of the workspace simulator has finished; absent when the run boots none. */
+    booted?(): Promise<{ ok: true; udid: string } | { ok: false; reason: string }>;
   };
   device: {
     udid: string;

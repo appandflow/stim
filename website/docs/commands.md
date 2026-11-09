@@ -631,7 +631,8 @@ simulator, installs the reported `.app` and launches it as a native process
 without Metro. Exact compiles incrementally in the checkout's `target/`
 directory, so Stim keeps no artifact cache for it. `--configuration Release`
 adds `--release`, Exact's shipping build, whose first build takes minutes.
-`--scheme` and any other configuration are refused.
+`--scheme` and any other configuration are refused. The build starts once Stim
+has booted the simulator, and build-only runs (`stim ci build`) are refused.
 
 Drive and test the app with Exact's own commands, pointed at the simulator
 `stim ios` reported:

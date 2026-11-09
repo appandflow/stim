@@ -20,7 +20,7 @@ const CACHE_INELIGIBLE = 'Exact builds incrementally in its own target/ director
 const BUILT_APP = /^host\/apple: (\/.+?\.app)(?: on | \(|$)/;
 const ERROR_LINE = /^error(?:\[\w+\])?: /;
 
-export function exactBuiltApp(lines: readonly string[]): string | null {
+function exactBuiltApp(lines: readonly string[]): string | null {
   for (const line of lines.toReversed()) {
     const app = BUILT_APP.exec(line)?.[1];
     if (app) return app;
@@ -29,15 +29,16 @@ export function exactBuiltApp(lines: readonly string[]): string | null {
 }
 
 async function compile(root: string, context: IosArtifactContext): Promise<IosCompileResult> {
-  const udid = context.target.udid;
-  if (!udid)
+  if (!context.target.booted)
     throw new IosRecipeRefusal({
       code: 'STIM_BAD_ARG',
       message:
-        "An Exact build needs this workspace's own simulator before it starts, because Exact may run the app on a simulator to read its native modules.",
-      remedy:
-        'Run stim ios when a simulator slot is free. Build-only and architecture-selected builds of Exact apps are not supported.',
+        "An Exact build needs this workspace's own booted simulator, because Exact may run the app on it to read its native modules.",
+      remedy: 'Build and run Exact apps with stim ios; build-only runs (stim ci build) are not supported.',
     });
+  const booted = await context.target.booted();
+  if (!booted.ok) throw new IosRecipeRefusal({ code: 'STIM_NO_DEVICE', message: booted.reason });
+  const udid = booted.udid;
   const run = await runCaptured({
     cmd: join(root, EXACT_CLI),
     args: ['ios', '--no-install', ...(context.configuration === 'Release' ? ['--release'] : [])],
@@ -66,10 +67,12 @@ async function compile(root: string, context: IosArtifactContext): Promise<IosCo
     const bundleId = await readBundleId(appPath);
     if (bundleId) return { ...common, ok: true, appPath, bundleId };
   }
+  const errorLines = run.transcript.filter((line) => ERROR_LINE.test(line));
+  const lastLine = run.transcript.at(-1);
   const errors = [
     ...(run.error ? [`could not run ./${EXACT_CLI}: ${String(run.error)}`] : []),
     ...(!run.error && run.code === 0 ? [`./${EXACT_CLI} ios reported no built app with a bundle id`] : []),
-    ...run.transcript.filter((line) => ERROR_LINE.test(line)),
+    ...(errorLines.length === 0 && !run.error && run.code !== 0 && lastLine ? [lastLine] : errorLines),
   ];
   return {
     ...common,
@@ -142,7 +145,7 @@ export function exactDoctor(): ProjectDoctor {
             {
               level: 'note',
               title: 'Exact application',
-              detail: `stim ios builds with ./${EXACT_CLI} ios --no-install on the workspace's own simulator and launches it without Metro. Run Exact's own commands (test, agent) with EXACT_SIM set to that simulator.`,
+              detail: `stim ios builds with ./${EXACT_CLI} ios --no-install (--release for --configuration Release) on the workspace's own simulator and launches it without Metro. Run Exact's own commands (test, agent) with EXACT_SIM set to that simulator.`,
               fix: null,
             },
           ],
