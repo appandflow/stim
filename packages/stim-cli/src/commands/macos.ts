@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { closeSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';
@@ -25,36 +25,33 @@ import {
 } from '../engine/build-progress.ts';
 import { errorRemedy } from '../engine/build-ledger.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
-import { spawnOwned, stopOwnedProcess, type OwnedProcess } from '../engine/spawn-owned.ts';
-import { clearClaimChild, markClaimChildPending } from '../ownership-claim.ts';
-import { observeOwnedMacos } from '../daemon/client.ts';
+import { spawnDeclared } from '../engine/spawn-claims.ts';
+import { clearClaimChild } from '../ownership-claim.ts';
+import { sameProcessRecord } from '../process-identity.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { getExecutor } from '../exec.ts';
 import { cancellableSleep } from '../cancellation.ts';
-import {
-  macosAppStderr,
-  macosAppStdout,
-  macosDir,
-  macosLogFile,
-  macosProcess,
-  macosRuntimeClaim,
-  requiredMacosRecord,
-  updateMacosRecord,
-} from '../macos/state.ts';
+import { macosDir, macosLogFile, macosProcess, requiredMacosRecord } from '../macos/state.ts';
 import { workspaceAppName } from '../macos/app-name.ts';
 import { assertLocalMacosCapacity, peekLocalMacosCapacity, withLocalMacosAdmission } from '../macos/admission.ts';
 import { buildMacosBundle } from '../macos/build.ts';
 import { planMacos } from '../macos/plan.ts';
+import { waitForMacosRegistration } from '../macos/registration.ts';
 import type { BuildHandoff } from '../offload/client.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
-import { drainMacosOutput, stopBundleInstances, stopMacosAppHeld, stopMacosChildren } from '../macos/stop.ts';
+import { stopBundleInstances, stopMacosAppHeld, stopProcesses as stopMacosProcesses } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { inspectProcessIdentity } from '../process-identity.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../build-placement.ts';
+import { spawnEntry } from '../spawn-entry.ts';
 import { upsertProject, withConfigLockAsync } from '../workspace/config.ts';
-import { ensureWorkspaceStorageAsync, workspaceDir, workspaceAgentDeviceDir } from '../workspace/paths.ts';
+import {
+  ensureWorkspaceStorageAsync,
+  workspaceDir,
+  workspaceLogsDir,
+  workspaceAgentDeviceDir,
+} from '../workspace/paths.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import {
   resolveProjectSettingsAsync,
@@ -134,10 +131,7 @@ export async function runMacos(
             probe.connection.close();
           }
           if (!remote) await assertLocalMacosCapacity(root, context);
-          if (!previous?.host) {
-            await stopMacosAppHeld(root);
-            await drainMacosOutput(root, previous ?? null, context);
-          }
+          if (!previous?.host) await stopMacosAppHeld(root);
           await withConfigLockAsync(() => upsertProject(root, {}));
           await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
           const bundle = join(macosDir(root), `${macos.product}.app`);
@@ -173,11 +167,9 @@ export async function runMacos(
           };
           if (!remote) {
             // https://github.com/appandflow/stim/issues/4483: capacity can fill during compilation; builds stay parallel without an app reservation.
-            const {
-              record: here,
-              deadline,
-              owned,
-            } = await withLocalMacosAdmission(root, context, () => launchHere(context, root, record));
+            const { record: here, deadline } = await withLocalMacosAdmission(root, context, () =>
+              launchHere(context, root, record),
+            );
             try {
               const runSignal = runCancellationSignal(context);
               const signal = runSignal ? AbortSignal.any([context.signal, runSignal]) : context.signal;
@@ -189,11 +181,15 @@ export async function runMacos(
               signal.throwIfAborted();
               const refusal = operationState(context).refusal;
               if (refusal !== null) throw new Error(refusal);
-              if (inspectProcessIdentity(owned) !== 'same')
-                throw new Error('The macOS app exited or its identity could not be verified during launch.');
               return here;
             } catch (error) {
-              await cleanupFailedMacosLaunch(context, root, record, owned, error);
+              await cleanupFailedMacosLaunch(
+                context,
+                root,
+                record,
+                [here.supervisor, here.app].filter((each) => each !== undefined),
+                error,
+              );
               throw error;
             }
           }
@@ -406,56 +402,46 @@ async function launchHere(
   context: StimContext,
   root: string,
   record: MacosAppRecord,
-): Promise<{ record: MacosAppRecord; deadline: number; owned: OwnedProcess }> {
+): Promise<{ record: MacosAppRecord; deadline: number }> {
   await stopBundleInstances(root);
-  const launcher = record.supervisor;
-  if (!launcher) throw new Error('The macOS launch has no recorded owner.');
-  const checkCancelled = () => {
-    context.signal.throwIfAborted();
-    runCancellationSignal(context)?.throwIfAborted();
-    const refusal = operationState(context).refusal;
-    if (refusal !== null) throw new Error(refusal);
-  };
-  let app: MacosProcess | undefined;
-  let owned: OwnedProcess | undefined;
+  const fd = openSync(join(workspaceLogsDir(root), 'macos-supervisor.log'), 'a');
+  const claims = [...operationState(context).declaring];
+  let child;
+  let supervisor: MacosProcess | undefined;
   try {
-    checkCancelled();
-    owned = await spawnOwned({
-      file: record.executable,
-      args: record.arguments,
-      cwd: root,
-      // Foundation reads NSUnbufferedIO to flush stdout per write; Swift print() to a file otherwise waits until exit.
-      env: { ...ambientEnv(), STIM_BACKGROUND_LAUNCH: '1', NSUnbufferedIO: 'YES' },
-      stdout: macosAppStdout(root, record.launchId),
-      stderr: macosAppStderr(root, record.launchId),
-      truncate: true,
-      claim: { root: macosRuntimeClaim(root), label: 'macOS app' },
-      declare: operationState(context).declaring,
+    try {
+      child = spawnDeclared(context, () =>
+        getExecutor().spawn(process.execPath, [spawnEntry('macos-run'), root, record.launchId], {
+          cwd: root,
+          detached: true,
+          stdio: ['ignore', fd, fd, 'ipc'],
+          env: { ...ambientEnv(), STIM_BACKGROUND_LAUNCH: '1' },
+        }),
+      );
+      if (child.pid !== undefined) supervisor = macosProcess(child.pid);
+      child.unref();
+    } finally {
+      closeSync(fd);
+    }
+    const deadline = Date.now() + 20_000;
+    const current = await waitForMacosRegistration(root, record.launchId, child, deadline, (registered) => {
+      if (!supervisor || !sameProcessRecord(registered.supervisor, supervisor))
+        throw new Error('The macOS launch supervisor changed before handoff.');
+      for (const claim of claims) clearClaimChild(claim);
     });
-    const started = macosProcess(owned.pid);
-    if (started.processToken !== owned.processToken) throw new Error('The macOS launch process changed.');
-    app = started;
-    if (!updateMacosRecord(root, launcher, { supervisor: app, app }))
-      throw new Error('The macOS launch owner changed.');
-    checkCancelled();
-    for (const claim of operationState(context).declaring) clearClaimChild(claim);
-    const writer = createNdjsonWriter(macosLogFile(root), { maxBytes: LOG_ROTATE_BYTES });
-    writer.write({
-      src: 'client',
-      platform: 'macos',
-      level: 'info',
-      msg: `Started ${record.product} (pid ${app.pid}).`,
-    });
-    writer.close();
-    const unobserved = await observeOwnedMacos(root, app.pid, app.processToken, record.launchId, ambientEnv());
-    checkCancelled();
-    if (unobserved !== null) throw new Error(`The macOS app's output could not be observed: ${unobserved}.`);
-    if (inspectProcessIdentity(owned) !== 'same')
-      throw new Error('The macOS app exited or its identity could not be verified during launch.');
-    return { record: { ...record, supervisor: app, app }, deadline: Date.now() + 20_000, owned };
+    if (current) return { record: current, deadline };
+    throw new Error('The macOS app did not register. See macos-supervisor.log in the workspace logs.');
   } catch (error) {
-    if (!owned && error instanceof WorkspaceProcessCleanupError) throw error;
-    await cleanupFailedMacosLaunch(context, root, record, owned, error);
+    if (!supervisor && child?.pid !== undefined && child.exitCode === null && child.signalCode === null) {
+      const failure = new WorkspaceProcessCleanupError(
+        [...operationState(context).declaring],
+        'Could not drain the failed macOS launch: the spawned macOS supervisor identity could not be verified.',
+        'Verify that the workspace supervisor and app have stopped before retrying.',
+      );
+      failure.cause = error;
+      throw failure;
+    }
+    await cleanupFailedMacosLaunch(context, root, record, supervisor ? [supervisor] : [], error);
     throw error;
   }
 }
@@ -464,34 +450,18 @@ async function cleanupFailedMacosLaunch(
   context: StimContext,
   root: string,
   record: MacosAppRecord,
-  owned: OwnedProcess | undefined,
+  owners: readonly MacosProcess[],
   error: unknown,
 ): Promise<void> {
   try {
-    if (owned) {
-      for (const claim of operationState(context).declaring) markClaimChildPending(claim);
-      if (inspectProcessIdentity(owned) !== 'same') {
-        const recorded = requiredMacosRecord(root);
-        if (recorded?.launchId === record.launchId && recorded.app?.processToken === owned.processToken)
-          await drainMacosOutput(root, recorded, undefined, context.env);
-        throw new Error('Cannot verify the macOS app before draining its children.');
-      }
-      await stopMacosChildren(owned);
-    }
-    if (owned && !(await stopOwnedProcess(owned)))
-      throw new Error('The app process group could not be stopped.', { cause: error });
+    await stopMacosProcesses(owners);
     await stopBundleInstances(root);
-    const recorded = requiredMacosRecord(root);
-    if (owned && (recorded?.launchId !== record.launchId || recorded.app?.processToken !== owned.processToken))
-      throw new Error('The failed launch output cannot be attributed to its recorded app.', { cause: error });
-    await drainMacosOutput(root, recorded, undefined, context.env);
     await writeWorkspaceStateAsync(root, { macos: { ...record, supervisor: undefined, app: undefined } });
-    for (const claim of operationState(context).declaring) clearClaimChild(claim);
   } catch (cleanupError) {
     const failure = new WorkspaceProcessCleanupError(
       [...operationState(context).declaring],
       `Could not drain the failed macOS launch: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
-      'Verify that the workspace app has stopped before retrying.',
+      'Verify that the workspace supervisor and app have stopped before retrying.',
     );
     failure.cause = new AggregateError([error, cleanupError], 'The macOS launch and its cleanup failed.');
     throw failure;

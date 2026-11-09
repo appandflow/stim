@@ -19,7 +19,6 @@ import { androidImageInstallPolicy, ensureSystemImage } from '../devices/android
 import { loadConfig } from '../workspace/config.ts';
 import { countLiveOwnedDevicesByPlatform, type DeviceCountExclusion } from '../engine/device-capacity.ts';
 
-// eslint-disable-next-line complexity -- the worker validates its existing operation variants in one entry.
 async function main(): Promise<void> {
   const chunks: Buffer[] = [];
   let bytes = 0;
@@ -34,8 +33,6 @@ async function main(): Promise<void> {
     ![
       'prepare',
       'stop',
-      'stop-app',
-      'stop-current',
       'install',
       'app-state',
       'offer',
@@ -103,7 +100,7 @@ async function main(): Promise<void> {
     );
     return;
   }
-  if (['install', 'stop-app', 'stop-current', 'app-state', 'logs', 'reverse'].includes(String(input.mode))) {
+  if (['install', 'app-state', 'logs', 'reverse'].includes(String(input.mode))) {
     if (typeof input.session !== 'string' || !/^[a-f0-9-]{36}$/.test(input.session) || !hostedAppAttempt(input.attempt))
       throw new Error('Invalid hosted app request.');
     if (input.mode === 'app-state') {
@@ -118,18 +115,6 @@ async function main(): Promise<void> {
     if (port !== undefined && (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535))
       throw new Error('Invalid hosted Metro port.');
   }
-  if ((input.mode === 'stop-app' || input.mode === 'stop-current') && input.platform !== 'macos')
-    throw new Error('App stop requires macOS.');
-  if (
-    input.mode === 'stop-current' &&
-    (!isJsonObject(input.expectedApp) ||
-      typeof input.expectedApp.pid !== 'number' ||
-      !Number.isSafeInteger(input.expectedApp.pid) ||
-      input.expectedApp.pid <= 0 ||
-      typeof input.expectedApp.token !== 'string' ||
-      typeof input.expectedApp.launchId !== 'string')
-  )
-    throw new Error('Invalid hosted macOS app identity.');
   if (input.mode === 'reverse' && input.platform !== 'android') throw new Error('Metro reverse requires Android.');
   let reverses: HostedAndroidReverses | undefined;
   if (input.mode === 'reverse-ports') {
@@ -184,15 +169,9 @@ async function main(): Promise<void> {
   const result =
     input.platform === 'macos'
       ? await runHostedMacosApp(
-          input.mode as 'prepare' | 'stop' | 'stop-app' | 'stop-current' | 'install',
-          {
-            session: typeof input.session === 'string' ? input.session : '',
-            appSlot: input.appSlot as number,
-            ...(input.mode === 'stop-current'
-              ? { expectedApp: input.expectedApp as { pid: number; token: string; launchId: string } }
-              : {}),
-          },
-          input.mode === 'install' || input.mode === 'stop-app' ? { attempt: input.attempt as string } : undefined,
+          input.mode as 'prepare' | 'stop' | 'install',
+          { session: typeof input.session === 'string' ? input.session : '', appSlot: input.appSlot as number },
+          input.mode === 'install' ? { attempt: input.attempt as string } : undefined,
         )
       : input.platform === 'android'
         ? await runHostedAndroidDevice(
