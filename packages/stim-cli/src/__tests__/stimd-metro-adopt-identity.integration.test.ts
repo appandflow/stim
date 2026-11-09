@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
-import { waitForProcessExit } from '@stim-cli/core/process-identity';
+import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import * as identity from '../process-identity.ts';
 import * as metro from '../metro.ts';
 import { upsertProject } from '../workspace/config.ts';
@@ -19,7 +19,7 @@ import {
 import { goneClaimOwner, plantClaim } from './_factories.ts';
 
 async function stopFixture(pid: number, token: string): Promise<void> {
-  const status = identity.inspectProcessIdentity({ pid, processToken: token });
+  const status = inspectProcessIdentity({ pid, processToken: token });
   if (status === 'unknown') throw new Error(`fixture child ${pid} could not be verified`);
   if (status === 'same') {
     metro.signalProcessTree(pid, 'SIGKILL', { group: true });
@@ -42,12 +42,12 @@ describe.skipIf(process.platform === 'win32')('adopted Metro identity', () => {
       child.unref();
       const pid = child.pid;
       if (!pid) throw new Error('fixture child did not start');
-      const token = identity.captureProcessToken(pid);
+      const token = captureProcessToken(pid);
       if (!token) {
         child.kill('SIGKILL');
         throw new Error('fixture child identity unavailable');
       }
-      const original = identity.inspectProcessIdentity;
+      const original = inspectProcessIdentity;
       const claimRoot = join(workspaceDir(root), 'metro.claim');
       plantClaim(claimRoot, 'exclusive', goneClaimOwner(), {
         details: { port: 8181, mode: 'command' },
@@ -90,12 +90,12 @@ describe.skipIf(process.platform === 'win32')('adopted Metro identity', () => {
       child.unref();
       const pid = child.pid;
       if (!pid) throw new Error('fixture child did not start');
-      const token = identity.captureProcessToken(pid);
+      const token = captureProcessToken(pid);
       if (!token) {
         child.kill('SIGKILL');
         throw new Error('fixture child identity unavailable');
       }
-      const original = identity.inspectProcessIdentity;
+      const original = inspectProcessIdentity;
       const claimRoot = join(workspaceDir(root), 'tunnel.claim');
       plantClaim(claimRoot, 'exclusive', goneClaimOwner(), {
         details: { port: 8181, provider: 'cloudflared', url: 'https://example.test' },
