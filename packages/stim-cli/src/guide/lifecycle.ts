@@ -2020,6 +2020,19 @@ THE BUILD CACHE HAS THREE LEVELS
   applies unless cache.fingerprintInputs is set to an array of app-relative
   paths; even an empty array overrides it. Other fingerprint.config.js options
   do not apply; stim doctor reports them.
+  CALLBACK-ONLY INPUTS. Expo's getConfig does not run the callbacks a config
+  plugin registers on mods (withDangerousMod, withXcodeProject and the like).
+  An environment variable or file a plugin reads only inside such a callback,
+  at prebuild time, is not traced, so changing it does not change the key.
+  Declare it: add a file or dir entry to fingerprint.config.js extraSources
+  (or the path to cache.fingerprintInputs), and for an environment value add a
+  contents entry that reads it when the config loads:
+    module.exports = { extraSources: [
+      { type: 'file', filePath: 'certs/push.pem' },
+      { type: 'contents', id: 'push-env', contents: process.env.PUSH_ENV ?? '' },
+    ] };
+  Values and files read in the plugin function itself, outside a callback,
+  are traced without a declaration.
   If embedded config or a dependency reads a private Stim credential, or
   project config enumerates an environment containing one, Stim declines to
   cache the build. Remove that credential from the build environment to retry.

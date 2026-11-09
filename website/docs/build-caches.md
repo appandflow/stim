@@ -126,6 +126,29 @@ relative to the app; even an empty array overrides `extraSources`. Other
 `fingerprint.config.js` options no longer change the key. Run `stim doctor`
 to see unsupported options. Doctor runs project config and autolinking in an isolated child to check determinism and worktree parity; run it only in a checkout whose project code you trust.
 
+### Inputs read only in a plugin callback
+
+Expo's `getConfig` does not run the callbacks a config plugin registers on mods
+(`withDangerousMod`, `withXcodeProject` and similar). An environment variable
+or file that a plugin reads only inside such a callback, at prebuild time, is
+not traced, so changing it does not change the key. Values and files read in
+the plugin function itself, outside a callback, are traced without any
+declaration. Declare the callback-only inputs yourself:
+
+```js title="fingerprint.config.js"
+module.exports = {
+  extraSources: [
+    { type: 'file', filePath: 'certs/push.pem' },
+    { type: 'contents', id: 'push-env', contents: process.env.PUSH_ENV ?? '' },
+  ],
+};
+```
+
+`file` and `dir` entries key the contents of the path. A `contents` entry that
+reads `process.env` when the config loads keys that value. If you set
+`cache.fingerprintInputs`, list the paths there instead; it replaces
+`extraSources`, and it takes paths only.
+
 If embedded config or a dependency reads a private Stim credential, or project
 config enumerates an environment containing one, Stim runs the build without
 the cache. Remove that credential from the build environment to retry caching.
