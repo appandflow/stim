@@ -647,6 +647,18 @@ it was created in, and `EXACT2` set to the Exact checkout when it sits at
 another folder depth. Only iOS simulators are supported; macOS, web, Android
 and physical devices use Exact's own commands.
 
+With [remote machines](./remote-machines.md), `remote.build` and
+`--remote-build` place an Exact build like any iOS simulator build. The worker
+runs the same `./exact.mjs ios --no-install` in a checkout folder named like
+this app's, with `EXACT2` at `~/.exact/exact2/<commit>` and no simulator, and
+this Mac installs the `.app` on its owned simulator. Nothing is cached. The
+values of the settings `app.json` `env` declares travel with the build: this
+shell's, else `.env.local`'s; `.env` syncs with the checkout. Apps whose
+`app.json` declares native modules, an `exact2` checkout with local changes and
+an app folder name that is not a plain ASCII file name build here. See
+[Exact apps on a worker](./remote-machines.md#exact-apps-on-the-worker) for
+what the worker needs.
+
 Copy this request to your agent:
 
 ```text

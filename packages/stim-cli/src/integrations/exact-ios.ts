@@ -1,11 +1,17 @@
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { filesystemBuildCapability } from '../cache/build-cache.ts';
 import { skippedMissReason } from '../cache/miss-reason.ts';
 import { iosProcessRuntime } from '../commands/ios/launch.ts';
 import { runCaptured } from '../engine/deps.ts';
 import { COMPILATION_CACHE_UNAVAILABLE, HEARTBEAT_INTERVAL_MS, readBundleId } from '../engine/xcode.ts';
+import { iosToolchainAsync } from '../engine/toolchain.ts';
 import { getExecutor } from '../exec.ts';
+import type { NdjsonWriter } from '../ndjson.ts';
+import { manifestDigest } from '../offload/manifest.ts';
+import { sourceManifest } from '../offload/native-source.ts';
+import { repoRootAsync } from '../workspace/worktree.ts';
+import { exactOffloadPlan, type ExactOffload } from './exact-offload.ts';
 import {
   IosRecipeRefusal,
   type IosArtifactContext,
@@ -28,43 +34,35 @@ function exactBuiltApp(lines: readonly string[]): string | null {
   return null;
 }
 
-async function compile(
-  root: string,
-  context: IosArtifactContext,
-  booting: ReturnType<NonNullable<IosArtifactContext['target']['booted']>> | null,
-): Promise<IosCompileResult> {
-  if (!booting)
-    throw new IosRecipeRefusal({
-      code: 'STIM_BAD_ARG',
-      message:
-        "An Exact build needs this workspace's own booted simulator, because Exact may run the app on it to read its native modules.",
-      remedy: 'Build and run Exact apps with stim ios; build-only runs (stim ci build) are not supported.',
-    });
-  const booted = await booting;
-  if (!booted.ok)
-    throw new IosRecipeRefusal({
-      code: 'STIM_NO_DEVICE',
-      message: booted.reason,
-      remedy: 'Run stim ios again to re-establish an owned simulator for this workspace.',
-    });
-  const udid = booted.udid;
+/** Runs `./exact.mjs ios --no-install` in `root` and reads the app it built; the caller decides `EXACT_SIM`. */
+export async function runExactIosBuild({
+  root,
+  release,
+  env,
+  logWriter,
+  onHeartbeat,
+  estimateMs,
+}: {
+  root: string;
+  release: boolean;
+  env: NodeJS.ProcessEnv;
+  logWriter: NdjsonWriter;
+  onHeartbeat: (line: string) => void;
+  estimateMs: number | null;
+}): Promise<IosCompileResult> {
   const run = await runCaptured({
     cmd: join(root, EXACT_CLI),
-    args: ['ios', '--no-install', ...(context.configuration === 'Release' ? ['--release'] : [])],
+    args: ['ios', '--no-install', ...(release ? ['--release'] : [])],
     cwd: root,
-    env: {
-      ...context.operation?.env,
-      EXACT_SIM: udid,
-      FORCE_COLOR: '0',
-    },
+    env: { ...env, FORCE_COLOR: '0' },
     spawn: (file, args, opts) => getExecutor().spawn(file, args, opts),
     now: Date.now,
     heartbeatMs: HEARTBEAT_INTERVAL_MS,
-    onHeartbeat: context.note,
-    logWriter: context.logWriter(),
+    onHeartbeat,
+    logWriter,
     event: 'exact_build',
     label: 'build',
-    estimateMs: context.estimates().coldBuildMs,
+    estimateMs,
   });
   const common = {
     durationMs: run.durationMs,
@@ -94,9 +92,45 @@ async function compile(
   };
 }
 
+async function compile(
+  root: string,
+  context: IosArtifactContext,
+  booting: ReturnType<NonNullable<IosArtifactContext['target']['booted']>> | null,
+): Promise<IosCompileResult> {
+  if (!booting)
+    throw new IosRecipeRefusal({
+      code: 'STIM_BAD_ARG',
+      message:
+        "An Exact build needs this workspace's own booted simulator, because Exact may run the app on it to read its native modules.",
+      remedy: 'Build and run Exact apps with stim ios; build-only runs (stim ci build) are not supported.',
+    });
+  const booted = await booting;
+  if (!booted.ok)
+    throw new IosRecipeRefusal({
+      code: 'STIM_NO_DEVICE',
+      message: booted.reason,
+      remedy: 'Run stim ios again to re-establish an owned simulator for this workspace.',
+    });
+  return runExactIosBuild({
+    root,
+    release: context.configuration === 'Release',
+    env: { ...context.operation?.env, EXACT_SIM: booted.udid },
+    logWriter: context.logWriter(),
+    onHeartbeat: context.note,
+    estimateMs: context.estimates().coldBuildMs,
+  });
+}
+
 function exactRecipe(root: string, context: IosArtifactContext): IosArtifactRecipe {
   let booting: ReturnType<NonNullable<IosArtifactContext['target']['booted']>> | null = null;
   const boot = () => (booting ??= context.target.booted?.() ?? null);
+  let plan: ExactOffload | { unsupported: string } | null = null;
+  const offloadPlan = () => (plan ??= exactOffloadPlan(root, context.operation?.env ?? {}));
+  const offloaded = (): ExactOffload => {
+    const planned = offloadPlan();
+    if ('unsupported' in planned) throw new Error(`An Exact offload has no plan: ${planned.unsupported}`);
+    return planned;
+  };
   return {
     buildTool: EXACT_CLI,
     identity: async () => {
@@ -124,7 +158,50 @@ function exactRecipe(root: string, context: IosArtifactContext): IosArtifactReci
     explain: () => ({ reason: skippedMissReason(CACHE_INELIGIBLE), diff: null }),
     untrackedLine: () => null,
     expoCache: null,
-    offload: null,
+    offload: {
+      uncached: true,
+      context: () => {
+        const runtime = context.target.offloadRuntime();
+        const planned = context.target.offloadRefusal || !runtime ? null : offloadPlan();
+        return {
+          runtime,
+          unsupported:
+            context.target.offloadRefusal ??
+            (!runtime
+              ? 'no simulator runtime is available for worker selection'
+              : planned && 'unsupported' in planned
+                ? planned.unsupported
+                : null),
+        };
+      },
+      target: async () => {
+        const { exact2, bun, rust } = offloaded();
+        return {
+          platform: 'ios',
+          local: await iosToolchainAsync(root, null),
+          runtime: null,
+          cocoapodsPinned: false,
+          exact: { exact2, bun, rust },
+        };
+      },
+      request: (runtime) => ({
+        platform: 'ios',
+        runtime,
+        configuration: context.configuration,
+        scheme: null,
+        isExpo: false,
+        optimizations: null,
+        exact: offloaded(),
+      }),
+      unchanged: async (sourceDigest) => {
+        const signal = context.operation?.signal;
+        const repoRoot = await repoRootAsync(root, { env: context.operation?.env, signal });
+        return (
+          repoRoot !== null &&
+          sourceDigest === manifestDigest(await sourceManifest(realpathSync(repoRoot), false, signal))
+        );
+      },
+    },
   };
 }
 

@@ -52,6 +52,8 @@ export interface IosArtifactRecipe {
     runOptions: { configuration?: string; arch?: string } | null;
   } | null;
   offload: {
+    /** The app is never cached: an offloaded build is keyed by the synced sources and installed without a cache store. */
+    uncached?: true;
     context():
       | { runtime: string | null; unsupported: string | null }
       | Promise<{ runtime: string | null; unsupported: string | null }>;
@@ -61,7 +63,8 @@ export interface IosArtifactRecipe {
     request(runtime: string): Extract<Parameters<typeof offloadBuild>[0]['request'], { platform: 'ios' }>;
     fingerprintInputs?: Parameters<typeof offloadBuild>[0]['fingerprintInputs'];
     syncPlan?: Parameters<typeof offloadBuild>[0]['syncPlan'];
-    unchanged(): Promise<boolean>;
+    /** Whether the sources still match the build; an uncached offload passes the digest of the sources it synced. */
+    unchanged(sourceDigest?: string): Promise<boolean>;
     /** The identity of an app the machine built under another fingerprint, after its own pod install. */
     rekeyed?(fingerprint: string): IosArtifactIdentity;
   } | null;
