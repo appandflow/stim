@@ -228,6 +228,7 @@ const NOAGENTS = "{appRunning:async()=>({grant:{driver:'none'}}),appStopped:asyn
 type AgentCall = ['running', HostedAgentApp, string] | ['stopped', string];
 let agentCalls: AgentCall[];
 let appRunningGate: Promise<void> | undefined;
+let appRunningResults: Promise<unknown>[];
 let agentAccess: Map<string, AgentAccess>;
 let agentIssued: Map<string, AgentAccess>;
 const agents = {
@@ -236,7 +237,9 @@ const agents = {
     agentCalls.push(['running', app, readHostedAppMetadata(app.session, attempt).state]);
     const access = agentAccess.get(app.session) ?? { grant: { driver: 'none' } as const };
     agentIssued.set(app.session, access);
-    return (appRunningGate ?? Promise.resolve()).then(() => access);
+    const result = (appRunningGate ?? Promise.resolve()).then(() => access);
+    appRunningResults.push(result);
+    return result;
   },
   appStopped: (session: string, _device?: string | { serial: string; avdName: string }) => {
     agentCalls.push(['stopped', session]);
@@ -254,6 +257,7 @@ const request = { workspace: '/client/worktree', slot: 'default', platform: 'ios
 beforeEach(() => {
   agentCalls = [];
   appRunningGate = undefined;
+  appRunningResults = [];
   agentAccess = new Map();
   agentIssued = new Map();
   home = mkdtempSync(join(tmpdir(), 'stim-hosted-test-'));
@@ -1776,14 +1780,18 @@ test(
     const app = await offerAndUpload(session.id, 'app-first');
     let release!: () => void;
     appRunningGate = new Promise((resolve) => (release = resolve));
-    host.appLaunch('client', app.params);
-    await vi.waitFor(() => expect(agentCalls.filter(([kind]) => kind === 'running')).toHaveLength(1));
-    host.stop('client', { session: session.id });
-    await state(session.id, 'stopped');
-    release();
-    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state'));
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(readHostedAppMetadata(session.id, 'app-first').state).not.toBe('installed');
+    try {
+      host.appLaunch('client', app.params);
+      await vi.waitFor(() => expect(agentCalls.filter(([kind]) => kind === 'running')).toHaveLength(1));
+      host.stop('client', { session: session.id });
+      await state(session.id, 'stopped');
+    } finally {
+      release();
+    }
+    await Promise.all(appRunningResults);
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(readHostedAppMetadata(session.id, 'app-first').state).toBe('installing');
   },
 );
 
