@@ -161,7 +161,7 @@ if(input.mode === 'inspect') {
   out({state:existsSync(join(home,'app-exited'))?'stopped':'running'});
 } else if(input.mode === 'logs') {
   writeFileSync(join(home,'logs-entered'),String(process.pid));
-  if((input.deviceType ?? input.deviceProfile) === 'logs-hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
+  if((input.deviceType ?? input.deviceProfile) === 'logs-hang') { process.on('SIGTERM',()=>{writeFileSync(join(home,'logs-term'),'1')}); setInterval(()=>{},1000); }
   else {
     if((input.deviceType ?? input.deviceProfile) === 'logs-delayed') await new Promise(resolve=>setTimeout(resolve,150));
     const logs=join(home,input.platform+'-logs');mkdirSync(logs,{recursive:true});
@@ -188,9 +188,6 @@ if(input.mode === 'inspect') {
   const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
   const app=JSON.parse(readFileSync(join(home,'..','apps',input.attempt,'receipt.json'),'utf8'));
   if(input.deviceType === 'install-hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
-  else if(input.deviceType === 'install-finishes-on-term') {
-    process.on('SIGTERM',()=>{out({state:'installed',device:stored,launched:true});process.exit(0)});setInterval(()=>{},1000);
-  }
   else {
     if(input.platform === 'macos' && process.platform === 'darwin') {
       const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});
@@ -230,6 +227,7 @@ const noAgents = {
 const NOAGENTS = "{appRunning:async()=>({grant:{driver:'none'}}),appStopped:async()=>{},access:()=>undefined}";
 type AgentCall = ['running', HostedAgentApp, string] | ['stopped', string];
 let agentCalls: AgentCall[];
+let appRunningGate: Promise<void> | undefined;
 let agentAccess: Map<string, AgentAccess>;
 let agentIssued: Map<string, AgentAccess>;
 const agents = {
@@ -238,7 +236,7 @@ const agents = {
     agentCalls.push(['running', app, readHostedAppMetadata(app.session, attempt).state]);
     const access = agentAccess.get(app.session) ?? { grant: { driver: 'none' } as const };
     agentIssued.set(app.session, access);
-    return Promise.resolve(access);
+    return (appRunningGate ?? Promise.resolve()).then(() => access);
   },
   appStopped: (session: string, _device?: string | { serial: string; avdName: string }) => {
     agentCalls.push(['stopped', session]);
@@ -255,6 +253,7 @@ const request = { workspace: '/client/worktree', slot: 'default', platform: 'ios
 
 beforeEach(() => {
   agentCalls = [];
+  appRunningGate = undefined;
   agentAccess = new Map();
   agentIssued = new Map();
   home = mkdtempSync(join(tmpdir(), 'stim-hosted-test-'));
@@ -1755,34 +1754,71 @@ test.each(['stop', 'revoke'])(
   },
 );
 
-test.each(['stop', 'revoke'])(
-  '%s while the install worker finishes leaves the attempt unrecorded as installed and starts no agent',
+async function offerAndUpload(session: string, attempt: string) {
+  const app = appOffer(session, attempt);
+  host.appOffer('client', app.params);
+  await uploadManifest(app);
+  await host.appChunk('client', {
+    ...app.params,
+    sha256: app.sha256,
+    offset: 0,
+    data: app.content.toString('base64'),
+  });
+  return app;
+}
+
+test(
+  'a stop while agent control starts leaves the installed attempt unrecorded',
   { skip: process.platform === 'win32' },
-  async (action) => {
-    const first = await reserve({ deviceType: 'install-finishes-on-term' });
-    await state(first.id, 'ready');
-    const app = appOffer(first.id);
-    const { content, params, sha256 } = app;
-    host.appOffer('client', params);
-    await uploadManifest(app);
-    await host.appChunk('client', {
-      session: first.id,
-      attempt: params.attempt,
-      sha256,
-      offset: 0,
-      data: content.toString('base64'),
+  async () => {
+    const session = await reserve();
+    await state(session.id, 'ready');
+    const app = await offerAndUpload(session.id, 'app-first');
+    let release!: () => void;
+    appRunningGate = new Promise((resolve) => (release = resolve));
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(agentCalls.filter(([kind]) => kind === 'running')).toHaveLength(1));
+    host.stop('client', { session: session.id });
+    await state(session.id, 'stopped');
+    release();
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state'));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(readHostedAppMetadata(session.id, 'app-first').state).not.toBe('installed');
+  },
+);
+
+test(
+  'a stop while an install waits for the log worker starts no install worker',
+  { skip: process.platform === 'win32' },
+  async () => {
+    await host.close();
+    hostEnv.STIM_DEBUG = '1';
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents,
+      allowed: (client) => allowed.has(client),
+      limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
     });
-    host.appLaunch('client', params);
-    await vi.waitFor(() => expect(existsSync(join(deviceHostArea(first.id), 'home', 'installed'))).toBe(true));
-    if (action === 'stop') host.stop('client', { session: first.id });
-    else {
-      allowed.delete('client');
-      host.revoke();
-    }
-    await state(first.id, 'stopped');
-    allowed.add('client');
-    expect(host.appAttach('client', params)).toHaveProperty('result.state', 'unknown');
-    expect(agentCalls.filter(([kind]) => kind === 'running')).toEqual([]);
+    const session = await reserve({ deviceType: 'logs-hang' });
+    await state(session.id, 'ready');
+    const first = await offerAndUpload(session.id, 'app-first');
+    host.appLaunch('client', first.params);
+    await vi.waitFor(() => expect(host.appAttach('client', first.params)).toHaveProperty('result.state', 'installed'));
+    const pending = host.logsQuery('client', { session: session.id });
+    const workerHome = join(deviceHostArea(session.id), 'home');
+    await vi.waitFor(() => expect(existsSync(join(workerHome, 'logs-entered'))).toBe(true));
+    const second = await offerAndUpload(session.id, 'app-second');
+    host.appLaunch('client', second.params);
+    await vi.waitFor(() => expect(existsSync(join(workerHome, 'logs-term'))).toBe(true));
+    host.stop('client', { session: session.id });
+    await pending;
+    await state(session.id, 'stopped');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const starts = readNdjsonGenerations(join(home, 'logs', 'debug', 'server.ndjson')).filter(
+      (record) => record.event === 'device-host.worker.start' && record.mode === 'install',
+    );
+    expect(starts).toHaveLength(1);
   },
 );
 
