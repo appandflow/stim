@@ -83,7 +83,7 @@ LaunchServices with `open` or `agent-device open`. `stim macos`, `stim stop`,
 `stim worktree remove` and `stim gc --delete` stop all of them: SIGTERM, up to
 5 seconds, then SIGKILL. Stop reports success only after each copy has exited;
 when one cannot be verified or does not exit, it reports the failure and removal
-keeps the workspace. If the app leader has exited but its process group remains, Stim cannot prove the group still belongs to it and sends no signal. Inspect it with `ps -A -o pid,pgid,command` and stop only verified owned members before retrying. A reused PID can also leave the runtime claim unresolved after its group is gone; inspect that claim and remove it only after verifying no owned process remains. If a launch cannot publish its runtime claim, Stim retains the launch claim even after stopping the leader's group because a separately grouped child may still run. Inspect the named claim and remove it only after verifying the app and its children have stopped. For a hosted session the same rule covers every app bundle the
+keeps the workspace. When a record names the app as its own supervisor and the app has exited while its process group remains, Stim cannot prove the group still belongs to it and sends no signal. Inspect it with `ps -A -o pid,pgid,command` and stop only verified owned members before retrying. For a hosted session the same rule covers every app bundle the
 session received, so stop and a replacement launch also end a copy that LaunchServices
 started from an earlier attempt. It does not start Metro. Local `stim macos` starts the app in
 the background without activating it or changing focus: it sets
@@ -92,9 +92,7 @@ An app that activates itself at launch or on reopen still takes focus. Hosted la
 (`macos --remote`) do not set it. A failed build keeps the compiler
 output in workspace logs and does not launch an app. Runtime stdout and stderr
 are client logs, and Stim runs the app with `NSUnbufferedIO=YES` so Swift `print`
-output arrives per line instead of when the app exits. The app runs detached, started by the command (or by stimd
-for a Desktop or phone run) with that caller's environment; its stdout and stderr go to files in the workspace logs that stimd turns into those records,
-and its exit is an info record without an exit code. While stimd runs, each raw output file is reset after reaching 8 MiB; it warns when a reset may drop output. If stimd stays down, the files can grow, and a replaced app that stimd never observed keeps its raw files until workspace cleanup without replaying them into `stim logs`. `macos --json` prints one launch
+output arrives per line instead of when the app exits; unexpected exits are errors. `macos --json` prints one launch
 record on stdout, with progress on stderr. `status --json` reports
 `environments[].macos`, its build and process state. This command does not
 support `--slot` or `reload`.
