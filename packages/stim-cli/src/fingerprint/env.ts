@@ -70,7 +70,11 @@ export function evaluatorEnv(requester: Env, root: string, platform: Platform): 
 }
 
 /** Stim's own secrets, which no app config or build script reads. */
-const STIM_SECRET = /^STIM_(?:KEYSTORE_PASSWORD|SETUP_TICKET|ASC_KEY_.*)$/;
+const STIM_SECRET = /^STIM_(?:ACCESS_TICKET|KEYSTORE_PASSWORD|SETUP_TICKET|ASC_KEY_.*)$/;
+export const privateReplayEnv = (name: string): boolean => STIM_SECRET.test(name);
+
+export const fingerprintEnvName = (name: string): boolean =>
+  /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && keyable(name) && !STIM_SECRET.test(name);
 
 /**
  * What a workspace's fingerprint env file keeps: the requester's env without diagnostic, shell-session and Stim
@@ -81,7 +85,6 @@ export function workspaceEnv(requester: Env): Record<string, string> {
   for (const name of Object.keys(env))
     if (
       isDenied(name) ||
-      STIM_MACHINE_LOCAL.test(name) ||
       STIM_SECRET.test(name) ||
       (VOLATILE.test(name) && !name.startsWith('STIM_') && name !== 'TMPDIR')
     )
@@ -114,27 +117,89 @@ export function envRows(
     .filter((name) => keyable(name) && !(pinned && PINNED.has(name)))
     .map((name) => {
       const value = env[name];
-      const keyed = value !== undefined && isAbsolute(value) ? pathForm(value) : (value ?? null);
+      const keyed = value !== undefined && isAbsolute(value) ? { path: pathForm(value) } : (value ?? null);
       return { name: `${prefix}${name}`, kind: 'env', hash: sha256(canonicalJson(keyed)) };
     });
 }
 
 /** `env:*`: what project code that enumerates `process.env` can see. */
-export function enumerationRow(env: Env): Input {
+export function enumerationRow(env: Env, pathForm: (path: string) => string, pinned = true): Input {
   const entries = Object.entries(defined(env))
-    .filter(([name]) => keyable(name) && !VOLATILE.test(name) && !PINNED.has(name))
+    .filter(([name]) => keyable(name) && !isSessionName(name) && !(pinned && PINNED.has(name)))
+    .map(([name, value]) => [name, isAbsolute(value) ? { path: pathForm(value) } : value] as const)
     .toSorted(([a], [b]) => byCodeUnit(a, b));
   return { name: 'env:*', kind: 'env', hash: sha256(canonicalJson(entries)) };
+}
+
+export function fingerprintJobEnv(
+  inputs: readonly Input[],
+  requester: Env,
+  pathForm: (path: string) => string,
+): { set: Record<string, string | { path: string }>; absent: string[] } | null {
+  const names = new Set<string>();
+  let enumerated = false;
+  let embedded = false;
+  for (const input of inputs) {
+    if (input.kind !== 'env') continue;
+    const match = /^(?:env:|env@embed:)(.+)$/.exec(input.name);
+    const name = match?.[1];
+    if (!name) continue;
+    if (name === '*') {
+      enumerated = true;
+      if (input.name === 'env@embed:*') embedded = true;
+    } else names.add(name);
+  }
+  if (enumerated)
+    for (const name of Object.keys(requester))
+      if (keyable(name) && !isSessionName(name) && (embedded || !PINNED.has(name))) names.add(name);
+  const entries: [string, string | { path: string }][] = [];
+  const absent: string[] = [];
+  for (const name of [...names].toSorted(byCodeUnit)) {
+    if (!fingerprintEnvName(name)) return null;
+    const value = requester[name];
+    if (value === undefined) absent.push(name);
+    else {
+      const mapped = isAbsolute(value) ? pathForm(value) : value;
+      if (isAbsolute(value) && mapped.startsWith('outside:')) return null;
+      entries.push([name, isAbsolute(value) ? { path: mapped } : value]);
+    }
+  }
+  return { set: Object.fromEntries(entries), absent };
+}
+
+export function materializeFingerprintEnv(
+  client: { set: Record<string, string | { path: string }>; absent: string[] },
+  resolvePath: (path: string) => string | null,
+): { set: Record<string, string>; absent: string[] } | null {
+  const entries: [string, string][] = [];
+  for (const [name, value] of Object.entries(client.set)) {
+    const resolved = typeof value === 'string' ? value : resolvePath(value.path);
+    if (resolved === null) return null;
+    entries.push([name, resolved]);
+  }
+  return { set: Object.fromEntries(entries), absent: client.absent };
 }
 
 /**
  * The base env of every step of an offloaded build: the worker's own, with every name the client keyed replaced by
  * the client's value or removed when the client had none.
  */
-export function jobEnv(base: Env, client: { set: Record<string, string>; absent: readonly string[] }): Env {
+export function jobEnv(
+  base: Env,
+  client: { set: Record<string, string>; absent: readonly string[] },
+  enumerated = false,
+  embedded = false,
+): Env {
   const env = defined(base);
   for (const name of Object.keys(env))
-    if (isDenied(name) || name in client.set || client.absent.includes(name)) delete env[name];
+    if (
+      isDenied(name) ||
+      STIM_SECRET.test(name) ||
+      Object.hasOwn(client.set, name) ||
+      client.absent.includes(name) ||
+      (enumerated && keyable(name) && !isSessionName(name) && (embedded || !PINNED.has(name)))
+    )
+      delete env[name];
   return { ...env, ...client.set };
 }
 

@@ -316,7 +316,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         settings, build script, gradle.properties and
                         gradle/ are fingerprinted. Native sources Gradle
                         builds from elsewhere in the repository are not:
-                        list them in fingerprint.config.js extraSources.
+                        list them in cache.fingerprintInputs.
                         android refuses with STIM_BAD_ARG a root outside the
                         repository or without settings.gradle, a module
                         without a build script, and either value on an Expo

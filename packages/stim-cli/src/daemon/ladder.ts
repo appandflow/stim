@@ -1,8 +1,9 @@
 import { existsSync, rmSync } from 'node:fs';
-import { buildCacheRoot, metroCacheRoot, withDirLock, type StimContext } from '@stim-cli/core';
+import { join } from 'node:path';
+import { buildCacheRoot, configDir, metroCacheRoot, withDirLock, type StimContext } from '@stim-cli/core';
 import {
-  fingerprintMemoDir,
-  fingerprintMemoLock,
+  fingerprintIndexDir,
+  fingerprintIndexLock,
   sharedCompilationCache,
   type DaemonLadderAction,
   type DaemonPressure,
@@ -373,16 +374,19 @@ async function cachesRung(context: RungContext): Promise<void> {
         });
     }
   }
-  const memo = fingerprintMemoDir();
-  if (critical && existsSync(memo) && (await context.stillShort())) {
-    const bytes = (await measuredDirectorySizeAsync(memo, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
-    if (context.act) withDirLock(fingerprintMemoLock(), () => rmSync(memo, { recursive: true, force: true }));
+  for (const [directory, lock] of [
+    [fingerprintIndexDir(), fingerprintIndexLock()],
+    [join(configDir(), 'fingerprint-memo'), join(configDir(), 'fingerprint-memo.lock')],
+  ] as const) {
+    if (!critical || !existsSync(directory) || !(await context.stillShort())) continue;
+    const bytes = (await measuredDirectorySizeAsync(directory, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
+    if (context.act) withDirLock(lock, () => rmSync(directory, { recursive: true, force: true }));
     recordAction(
       context,
       {
         rung: 3,
         kind: 'empty-cache',
-        target: memo,
+        target: directory,
         outcome: context.act ? 'done' : 'would',
         bytes: context.act || context.measure ? bytes : 0,
         detail: 'the next build fingerprints its tree in full',

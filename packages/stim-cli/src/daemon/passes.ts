@@ -202,6 +202,7 @@ export function createMaintenanceLane(
       current = (async () => {
         const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
         await precompute.run({ config, workspaces, pressure, operation }, act).catch((error: unknown) => {
+          if (error instanceof Error && 'reportCleanup' in error) throw error;
           log('warn', 'daemon_fingerprint_precompute', error instanceof Error ? error.message : String(error));
         });
         const fingerprintMs = lap();

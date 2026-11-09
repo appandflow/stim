@@ -1,10 +1,12 @@
-import { readDoctorFingerprint } from '../doctor-fingerprint.ts';
+import { brokenPodLinks } from './doctor-pods-flavor.ts';
+import { readFingerprint } from '../fingerprint-precompute.ts';
+import { processContext } from '../cli-operation.ts';
+import { diffInputs, isUncertain } from '../fingerprint/key.ts';
 import { reportSignal, trackReportResource } from '../report-runtime.ts';
 import type { StimContext } from '@stim-cli/core';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from 'fs';
 import { rm } from 'fs/promises';
-import { createRequire } from 'module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
@@ -27,9 +29,6 @@ import { makeTemporaryDirectory } from '../temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
 import { appProjectProblem, detectIsExpo, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
 import { CHROME_INSTALL_REMEDY, findChrome } from '../web/chrome.ts';
-import * as expoFingerprint from '@expo/fingerprint';
-import { diffFingerprintSources, fingerprintProject } from '../cache/build-cache.ts';
-import type { DebugInfoDir, FingerprintSource } from '@expo/fingerprint';
 import {
   dirtyFingerprintFiles,
   gitCommonDirAsync,
@@ -98,6 +97,8 @@ import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '
 import { androidSdkRefusal } from '../engine/gradle.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
 import { checkMachineSettings, readMachineSettings, type MachineSettings } from './doctor-config.ts';
+
+export { brokenPodLinks } from './doctor-pods-flavor.ts';
 
 type AnyJson = Record<string, unknown>;
 
@@ -218,20 +219,6 @@ export function podsManifestState(podfileLock: string, podManifest: string): 'mi
     return readFileSync(podfileLock, 'utf-8') === readFileSync(podManifest, 'utf-8') ? null : 'stale';
   } catch {
     return 'stale';
-  }
-}
-
-export async function brokenPodLinks(podsRoot: string): Promise<string[]> {
-  try {
-    const output = await getExecutor().runFileAsync('find', ['-L', podsRoot, '-type', 'l', '-print'], {
-      timeoutMs: 10_000,
-    });
-    return output
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-  } catch {
-    return [];
   }
 }
 
@@ -1595,154 +1582,9 @@ export function checkFingerprintParity({
   return finding(
     'note',
     'This checkout does not fingerprint like a fresh worktree of HEAD',
-    `A clean detached worktree of HEAD computes a different @expo/fingerprint hash than this checkout, so worktrees will MISS the cache entries this checkout fills (and vice versa) until the two agree.${differing} ${cause} (To measure this, doctor ran a real fingerprint twice and briefly created a temporary git worktree -- .git/worktrees metadata was touched and cleaned up.)`,
+    `A clean detached worktree of HEAD computes a different Stim fingerprint hash than this checkout, so worktrees will MISS the cache entries this checkout fills (and vice versa) until the two agree.${differing} ${cause} (To measure this, doctor ran a real fingerprint twice and briefly created a temporary git worktree -- .git/worktrees metadata was touched and cleaned up.)`,
     'Commit the dirty fingerprint inputs, or list the build-irrelevant ones in .fingerprintignore (same syntax as .gitignore, at the project root). Stim already ignores android/local.properties, android/.idea, *.xcodeproj/xcuserdata, .git and its contents, and .expo. It also ignores ios/main.jsbundle and ios/assets while a .gitignore pattern matches them. Only the ones that genuinely cannot change the native build belong there -- generated reports, local env files, a lockfile that embeds absolute machine paths (the fingerprint already counts the ios/Podfile.lock checksum of a podspec that names the checkout path without that path). Never ignore a real native input (a Podfile, a gradle file, the app config) to force a hit: that trades a slow build for a wrong one.',
   );
-}
-
-function fingerprintConfigSkipped(root: string): Finding | null {
-  const file = ['fingerprint.config.js', 'fingerprint.config.cjs'].find((name) => existsSync(join(root, name)));
-  if (!file) return null;
-  return {
-    ...finding(
-      'note',
-      `Skipped the fingerprint checks: ${file} is code`,
-      `@expo/fingerprint loads ${file} with require(), and doctor does not execute project code, so it did not compare this checkout's fingerprint with a fresh worktree or look for linked libraries that carry Git metadata into it.`,
-      'Builds load the config. Once you trust this checkout, `stim ios` or `stim android` reports whether a worktree hits the cache this checkout fills.',
-    ),
-    code: 'fingerprint-config-skipped',
-  };
-}
-
-function fingerprintParitySkipped(title: string, detail: string, fix: string): Finding {
-  return { ...finding('note', title, detail, fix), code: 'fingerprint-parity-skipped' };
-}
-
-// @expo/fingerprint resolves through resolve-from, which follows the real path, NODE_PATH and global module folders.
-function fingerprintResolves(root: string, request: string): boolean {
-  try {
-    createRequire(join(realpathSync(root), 'package.json')).resolve(request);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function coldFingerprintRunsProjectCode(root: string, platform: DoctorPlatform | undefined): Finding | null {
-  const resolved = ['expo/package.json', 'expo/config', 'expo-modules-autolinking/package.json']
-    .find((request) => fingerprintResolves(root, request))
-    ?.replace(/\/.*$/, '');
-  if (resolved) {
-    return fingerprintParitySkipped(
-      'Skipped the fingerprint parity check: dependencies resolve from outside the app',
-      `This app has no node_modules of its own, but ${resolved} resolves from outside it. @expo/fingerprint would evaluate the app config and run the autolinking CLI, which loads project config files, and doctor does not execute project code.`,
-      'Builds load the config. Once you trust this checkout, `stim ios` or `stim android` reports whether a worktree hits the cache this checkout fills.',
-    );
-  }
-  if (platform !== 'ios') {
-    return fingerprintParitySkipped(
-      'Skipped the fingerprint parity check for Android or a project without an iOS directory on a checkout without dependencies',
-      'Without expo-modules-autolinking installed, @expo/fingerprint runs `npx react-native config` in the project to read Android autolinking, which can load project config and download a CLI, and doctor does not execute project code.',
-      'Once you trust this checkout, `stim android` reports whether a worktree hits the cache this checkout fills.',
-    );
-  }
-  return null;
-}
-
-function gitMetadataAt(path: string): boolean {
-  try {
-    const git = lstatSync(join(path, '.git'));
-    return git.isFile() || git.isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-function listDirectory(dir: string): string[] {
-  try {
-    return readdirSync(dir);
-  } catch {
-    return [];
-  }
-}
-
-async function hasLinkedPackageWithGit(projectRoot: string): Promise<boolean> {
-  const root = (await repoRootAsync(projectRoot)) ?? projectRoot;
-  for (let dir = projectRoot; ; dir = dirname(dir)) {
-    if (linkedPackageWithGitIn(join(dir, 'node_modules'))) return true;
-    if (dir === root || dirname(dir) === dir || relative(root, dirname(dir)).startsWith('..')) return false;
-  }
-}
-
-function linkedPackageWithGitIn(nodeModules: string): boolean {
-  return listDirectory(nodeModules)
-    .filter((entry) => !entry.startsWith('.'))
-    .flatMap((entry) =>
-      entry.startsWith('@') ? listDirectory(join(nodeModules, entry)).map((child) => join(entry, child)) : [entry],
-    )
-    .some((name) => {
-      const root = join(nodeModules, name);
-      try {
-        return lstatSync(root).isSymbolicLink() && gitMetadataAt(root);
-      } catch {
-        return false;
-      }
-    });
-}
-
-/**
- * A linked native library (a `link:` or `file:` dependency, or a workspace
- * symlink) brings its checkout's Git metadata into a directory the fingerprint
- * hashes whole. That metadata changes with every Git operation in the linked
- * checkout, so workspaces rarely hash alike even when the library's native
- * sources match. The fingerprint's own debug output says which directories
- * still hash a .git entry, whatever ignore mechanism the project uses. Linked
- * packages can be hoisted, so the gate looks at every node_modules from the
- * app up to the repository root.
- */
-export async function detectLinkedLibraryGitMetadata(
-  projectRoot: string,
-  {
-    createFingerprint = expoFingerprint.createFingerprintAsync,
-    platform,
-    operation,
-  }: {
-    createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
-    platform?: DoctorPlatform;
-    operation?: StimContext;
-  } = {},
-): Promise<Finding | null> {
-  const mainRoot = await mainCheckoutProjectRoot(projectRoot);
-  if (!(await hasLinkedPackageWithGit(mainRoot))) return null;
-  const skipped = fingerprintConfigSkipped(mainRoot);
-  if (skipped) return skipped;
-  let sources: FingerprintSource[];
-  try {
-    sources =
-      (operation && createFingerprint === expoFingerprint.createFingerprintAsync
-        ? await readDoctorFingerprint(operation, { root: mainRoot, platform, debug: true })
-        : await fingerprintProject(mainRoot, { platform, createFingerprint, debug: true })
-      )?.sources ?? [];
-  } catch {
-    return null;
-  }
-  const directories = sources.flatMap((source) => {
-    if (source.type !== 'dir' || typeof source.filePath !== 'string') return [];
-    const children = (source.debugInfo as DebugInfoDir | undefined)?.children ?? [];
-    return children.some((child) => child?.path === `${source.filePath}/.git`) ? [source.filePath] : [];
-  });
-  if (!directories.length) return null;
-  const several = directories.length > 1;
-  const entries = directories.flatMap((dir) => [`${dir}/.git`, `${dir}/.git/**/*`]);
-  return {
-    ...finding(
-      'note',
-      `${several ? `${directories.length} linked native libraries carry` : 'A linked native library carries'} Git metadata into the fingerprint`,
-      `${directories.map((dir) => `${dir}/.git`).join(', ')} ${several ? 'are' : 'is'} inside a directory the fingerprint hashes whole. Git rewrites that metadata on every commit, checkout, or worktree of the linked checkout (a worktree turns a .git directory into a pointer file), so this workspace and its worktrees rarely compute the same fingerprint even when the library's native sources match, and each one compiles instead of reusing the artifact.`,
-      `When the native build does not read that Git state, add ${entries.map((entry) => `\`${entry}\``).join(', ')} to .fingerprintignore at the project root: the first form matches the pointer file a worktree has, the second excludes a .git directory's contents. Ignore only the .git entry, not the package: its native sources still have to move the key.`,
-    ),
-    code: 'linked-library-git-metadata',
-  };
 }
 
 async function appPathInRepository(projectRoot: string): Promise<string> {
@@ -1755,44 +1597,24 @@ async function appPathInRepository(projectRoot: string): Promise<string> {
 export async function detectFingerprintParity(
   projectRoot: string,
   {
-    createFingerprint = expoFingerprint.createFingerprintAsync,
-    differ = expoFingerprint.diffFingerprints,
     dirtyFiles = dirtyFingerprintFiles,
     platform: selectedPlatform,
     iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
+    androidLayout,
+    fingerprintInputs,
     operation,
   }: {
-    createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
-    differ?: typeof expoFingerprint.diffFingerprints | null;
     dirtyFiles?: (root: string) => string[] | Promise<string[]>;
     platform?: DoctorPlatform;
     iosProjectPath?: string;
+    androidLayout?: AndroidLayout;
+    fingerprintInputs?: string[];
     operation?: StimContext;
   } = {},
 ): Promise<Finding | null> {
-  if ((await gitQuietAsync(projectRoot, ['rev-parse', '--git-dir'])) == null) {
-    return null;
-  }
-  // A fresh `git worktree add` of HEAD carries no node_modules, and @expo/fingerprint reads
-  // installed packages as sources, so from an installed checkout every comparison reports drift
-  // that is only the missing install. The question has an answer only on a cold checkout.
-  if (hasInstalledDependencies(projectRoot)) return null;
-  const skipped = fingerprintConfigSkipped(projectRoot);
-  if (skipped) return skipped;
-
-  const platform =
-    selectedPlatform ??
-    (existsSync(join(projectRoot, iosProjectPath))
-      ? 'ios'
-      : existsSync(join(projectRoot, 'android'))
-        ? 'android'
-        : undefined);
-  const unsafe = coldFingerprintRunsProjectCode(projectRoot, platform);
-  if (unsafe) return unsafe;
-  // @expo/fingerprint spawns `npx react-native config` unless this is true or expo-modules-autolinking >= 1.12 resolves.
-  const coldFingerprint: typeof createFingerprint = (root, options) =>
-    createFingerprint(root, { ...options, useRNCoreAutolinkingFromExpo: true });
-
+  if ((await gitQuietAsync(projectRoot, ['rev-parse', '--git-dir'])) == null) return null;
+  const platform = selectedPlatform ?? (existsSync(join(projectRoot, iosProjectPath)) ? 'ios' : 'android');
+  const context = operation ?? processContext(projectRoot);
   let base: string;
   try {
     base = makeTemporaryDirectory(projectRoot, 'stim-parity-');
@@ -1801,13 +1623,14 @@ export async function detectFingerprintParity(
   }
   const worktree = join(base, 'head');
   let released: () => void;
-  let rejected: (error: unknown) => void;
+  let rejected!: (error: unknown) => void;
   const cleanup = new Promise<void>((done, reject) => {
     released = done;
     rejected = reject;
   });
   const release = () => released();
   let added = false;
+  let retain = false;
   trackReportResource(operation, cleanup, () => cleanup);
 
   try {
@@ -1819,32 +1642,80 @@ export async function detectFingerprintParity(
       )) !== null;
     if (!added) return null;
     const headApp = join(worktree, await appPathInRepository(projectRoot));
-    const headSkipped = fingerprintConfigSkipped(headApp) ?? coldFingerprintRunsProjectCode(headApp, platform);
-    if (headSkipped) return headSkipped;
+    const sourceTop = await repoRootAsync(projectRoot);
+    if (sourceTop) {
+      const top = realpathSync.native(sourceTop);
+      for (let dir = realpathSync.native(projectRoot); ; dir = dirname(dir)) {
+        const modules = join(dir, 'node_modules');
+        const destination = join(worktree, relative(top, modules));
+        if (existsSync(modules) && !lstatSync(destination, { throwIfNoEntry: false })) {
+          mkdirSync(dirname(destination), { recursive: true });
+          symlinkSync(modules, destination, 'junction');
+        }
+        if (dir === top || dirname(dir) === dir) break;
+      }
+    }
     const inspect = (root: string) =>
-      operation && createFingerprint === expoFingerprint.createFingerprintAsync
-        ? readDoctorFingerprint(operation, { root, platform, iosProjectPath, cold: true })
-        : fingerprintProject(root, { platform, iosProjectPath, createFingerprint: coldFingerprint });
+      readFingerprint(context, {
+        root,
+        platform,
+        iosProjectPath,
+        fingerprintInputs,
+        embedMode: 'development',
+        ...(androidLayout
+          ? {
+              androidLayout: {
+                ...androidLayout,
+                gradleRoot: resolve(root, relative(projectRoot, androidLayout.gradleRoot)),
+                moduleDir: resolve(root, relative(projectRoot, androidLayout.moduleDir)),
+              },
+            }
+          : {}),
+      });
     const project = await inspect(projectRoot);
     const clean = await inspect(headApp);
-    if (!project || !clean) return null;
+    if (!project || isUncertain(project) || !clean || isUncertain(clean))
+      return finding(
+        'note',
+        'Fingerprint parity could not be checked',
+        'The checkout or clean worktree could not produce a fingerprint, so their cache keys were not compared.',
+        'Check the fingerprint diagnostic and installed project dependencies, then retry.',
+      );
+    if (!project.portable || !clean.portable)
+      return finding(
+        'note',
+        'Fingerprint parity could not be checked',
+        'An input cannot be mapped safely between the checkout and clean worktree.',
+        'Check linked packages and inputs outside the project before relying on cache sharing.',
+      );
     if (project.hash === clean.hash) return null;
-    const changed = diffFingerprintSources({
-      previous: clean.sources,
-      previousHash: clean.hash,
-      current: project,
-      differ,
-    }).map((change) => change.name);
+    const changed = diffInputs(clean.inputs, project.inputs).map((change) => change.name);
     return checkFingerprintParity({
       projectHash: project.hash,
       worktreeHash: clean.hash,
       changed,
       dirtyFiles: await dirtyFiles(projectRoot),
     });
-  } catch {
-    return null;
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'reportCleanup' in error) {
+      retain = true;
+      const previous = 'remedy' in error && typeof error.remedy === 'string' ? error.remedy : '';
+      Object.assign(error, {
+        remedy:
+          `${previous} After verifying evaluator cleanup, remove the temporary worktree ${worktree} with git worktree remove --force, then remove ${base}.`.trim(),
+      });
+      if (reportSignal(operation)) rejected(error);
+      throw error;
+    }
+    context.signal.throwIfAborted();
+    return finding(
+      'note',
+      'Fingerprint parity could not be checked',
+      'The fingerprint comparison failed.',
+      'Check the project dependencies and retry.',
+    );
   } finally {
-    await finishCleanup();
+    if (!retain) await finishCleanup();
   }
 
   async function finishCleanup() {

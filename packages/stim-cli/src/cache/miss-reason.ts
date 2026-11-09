@@ -1,7 +1,5 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
-import * as expoFingerprint from '@expo/fingerprint';
-import type { FingerprintSource } from '@expo/fingerprint';
 import {
   LAST_BUILD_KEYS,
   loadConfig,
@@ -20,7 +18,7 @@ const MISS_CHANGE_CAP = 20;
 interface MissBaseline {
   fingerprint: string;
   cacheKey: string;
-  sources: FingerprintSource[];
+  sources: unknown[];
   from: 'workspace' | 'project';
 }
 
@@ -67,7 +65,7 @@ export interface MissBaselineDeps {
   readState?: (root: string) => WorkspaceState | null;
   projectRoots?: () => string[];
   identity?: (root: string) => string | null;
-  sourcesOf?: (platform: string, key: string) => FingerprintSource[] | null;
+  sourcesOf?: (platform: string, key: string) => unknown[] | null;
 }
 
 export function findMissBaseline(
@@ -202,18 +200,16 @@ export function explainBuildMiss({
   current,
   rekeyedBy = [],
   baselineDeps,
-  differ = expoFingerprint.diffFingerprints,
 }: {
   root: string;
   platform: StatsPlatform;
-  current: { hash: string; sources: FingerprintSource[] };
+  current: { hash: string; sources: unknown[] };
   rekeyedBy?: string[];
   baselineDeps?: MissBaselineDeps;
-  differ?: typeof expoFingerprint.diffFingerprints | null;
 }): { reason: BuildMissReason; changedNames: string[]; previousHash: string | null } {
   const baseline = findMissBaseline(root, platform, baselineDeps);
   const changes = baseline
-    ? diffFingerprintSources({ previous: baseline.sources, previousHash: baseline.fingerprint, current, differ })
+    ? diffFingerprintSources({ previous: baseline.sources, previousHash: baseline.fingerprint, current })
     : [];
   return {
     reason: missReasonFromChanges({
@@ -236,7 +232,7 @@ export function predictBuildMiss({
 }: {
   root: string;
   platform: StatsPlatform;
-  current: { hash: string; sources: FingerprintSource[] };
+  current: { hash: string; sources: unknown[] };
   prebuild: 'generate' | 'regenerate' | null;
 }): BuildMissReason {
   const { reason } = explainBuildMiss({ root, platform, current });
@@ -253,15 +249,4 @@ export function predictBuildMiss({
 
 export function skippedMissReason(summary: string): BuildMissReason {
   return { kind: 'cache-skipped', summary, changes: [], changeCount: 0, baseline: null, rekeyedBy: [] };
-}
-
-export function fingerprintErrorMissReason(message: string): BuildMissReason {
-  return {
-    kind: 'fingerprint-error',
-    summary: `fingerprinting failed: ${message}`,
-    changes: [],
-    changeCount: 0,
-    baseline: null,
-    rekeyedBy: [],
-  };
 }

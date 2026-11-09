@@ -1,3 +1,4 @@
+import { getExecutor } from '../exec.ts';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Finding } from './doctor.ts';
@@ -58,4 +59,18 @@ export function inspectPodsFlavor(sourceIosDir: string, worktreeIosDir: string, 
     detail: podsFlavorDetail(pods, configuration),
     fix: advice.charAt(0).toUpperCase() + advice.slice(1) + '.',
   };
+}
+
+export async function brokenPodLinks(podsRoot: string): Promise<string[]> {
+  try {
+    const output = await getExecutor().runFileAsync('find', ['-L', podsRoot, '-type', 'l', '-print'], {
+      timeoutMs: 10_000,
+    });
+    return output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
 }

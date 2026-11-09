@@ -2,12 +2,10 @@ import { realpathSync } from 'node:fs';
 import { fingerprint } from './evaluate.ts';
 import { readWorkspaceEnv } from './index-store.ts';
 import { isUncertain } from './key.ts';
-import { verifyPending, type VerifyRequest } from './verify.ts';
+import type { VerifyRequest } from './verify.ts';
 
 /** Workspaces whose fingerprint one pass brings up to date. */
 const MAX_PRECOMPUTES_PER_PASS = 2;
-/** Pending index hits one pass verifies per workspace it was given; verification is not held back by host load. */
-const VERIFIES_PER_PASS = 1;
 
 export type PrecomputeOutcome =
   | { root: string; outcome: 'computed'; hash: string; from: 'evaluated' | 'index' }
@@ -15,14 +13,13 @@ export type PrecomputeOutcome =
 
 /**
  * One background pass, as the daemon and later the passes worker run it: brings the index of up to two workspaces up
- * to date under the env each last computed its fingerprint with, re-running only the parts whose reads changed, and
- * verifies pending index hits. `admitted` is the caller's admission decision (pressure, load) for the precomputes;
- * verification has its own budget and runs either way.
+ * to date under the env each last computed its fingerprint with, re-running only the parts whose reads changed.
+ * `admitted` is the caller's admission decision for the precomputes.
  */
 export async function precomputePass(
   requests: readonly VerifyRequest[],
   { admitted, signal }: { admitted: boolean; signal: AbortSignal },
-): Promise<{ precomputed: PrecomputeOutcome[]; verified: number }> {
+): Promise<{ precomputed: PrecomputeOutcome[] }> {
   const precomputed: PrecomputeOutcome[] = [];
   for (const request of admitted ? requests.slice(0, MAX_PRECOMPUTES_PER_PASS) : []) {
     let project: string;
@@ -48,6 +45,5 @@ export async function precomputePass(
         : { root: request.root, outcome: 'computed', hash: result.hash, from: result.from },
     );
   }
-  const verified = await verifyPending({ perPass: Math.max(VERIFIES_PER_PASS, requests.length), signal });
-  return { precomputed, verified };
+  return { precomputed };
 }

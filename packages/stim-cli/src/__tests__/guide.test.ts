@@ -28,7 +28,6 @@ import {
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_FINGERPRINT_IGNORES } from '../cache/build-cache.ts';
 import { WATCHMAN_NESTED_WORKTREES } from '../diagnostics/doctor-watchman.ts';
 import { SERVER_FINDING_CODES } from '../diagnostics/server-setup.ts';
 import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
@@ -788,14 +787,6 @@ test('the agent and cleanup guides shut down owned simulators without an occupan
   expect(renderTopic('cleanup')).toMatch(
     /claimed from the workspace's git root\s+itself[^.]*only after it has shut that\s+device down/,
   );
-});
-
-test('the guide names every path Stim ignores by default', () => {
-  const lifecycle = renderSection('lifecycle', 'builds') ?? '';
-  for (const path of DEFAULT_FINGERPRINT_IGNORES) {
-    const bare = path.replace(/^\*\*\//, '').replace(/\/\*\*(\/\*)?$/, '');
-    expect(lifecycle).toContain(bare);
-  }
 });
 
 test('the reload payload guide distinguishes dispatch from observed completion', () => {

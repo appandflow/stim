@@ -5,13 +5,14 @@ import type { StimContext } from '@stim-cli/core';
 import { constants, promises as fs } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { providerUploadOutcome, storedAppId } from '../../cache/build-cache.ts';
-import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
+import { settleFingerprintCheck } from '../../fingerprint/operation.ts';
 import { phaseLine } from '../../command-output.ts';
 import { hostSystemImageArch } from '../../devices/android.ts';
 import { workspaceShareURL } from '../../devices/stim-desktop.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
 import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../../engine/build-progress.ts';
+import { artifactErrorCode, settleArtifactCleanup, unresolvedCleanup } from '../../engine/acquire-artifact.ts';
 import type { CcacheActivity } from '../../engine/build-facts.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../../engine/native-run.ts';
 import { cancelledError, throwIfCancelled } from '../../cancellation.ts';
@@ -162,6 +163,7 @@ export async function buildAndroidOperation(
         if (isEasBuildFailure(easBuild))
           throw Object.assign(new Error(easBuild.message ?? easBuild.code), easBuild, { details: easBuild });
         let artifact: PreparedAndroidArtifact | undefined;
+        let artifactFailure: unknown;
         let directory: string | undefined;
         let built: AndroidBuildFacts | null = null;
         let failureAfterCleanup: ReturnType<typeof cancelledError> | null = null;
@@ -286,16 +288,23 @@ export async function buildAndroidOperation(
             links,
           };
         } catch (error) {
-          const failure = runCancellationSignal(context)?.aborted ? cancelledError('Android build', error) : error;
-          finishRecord(
-            'failed',
-            (failure as { code?: string }).code,
-            failure instanceof Error ? failure.message : String(failure),
-          );
-          stats.record({ failed: true, durationMs: Date.now() - started });
+          artifactFailure = error;
+          const cleanup = unresolvedCleanup(error);
+          const failure =
+            !cleanup && runCancellationSignal(context)?.aborted ? cancelledError('Android build', error) : error;
+          try {
+            finishRecord(
+              'failed',
+              artifactErrorCode(failure),
+              failure instanceof Error ? failure.message : String(failure),
+            );
+            stats.record({ failed: true, durationMs: Date.now() - started });
+          } catch (diagnosticError) {
+            if (!cleanup) throw diagnosticError;
+          }
           throw failure;
         } finally {
-          await artifact?.release();
+          await settleArtifactCleanup(artifactFailure, artifact?.release());
           failureAfterCleanup =
             built && runCancellationSignal(context)?.aborted ? cancelledError('Android build') : null;
           if (failureAfterCleanup) {

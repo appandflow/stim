@@ -1,9 +1,9 @@
 import assert from 'node:assert';
 import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { connect, type Socket } from 'node:net';
+import { connect, createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn as spawnChild, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import {
@@ -24,7 +24,13 @@ import * as clonefile from '../clonefile.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { takeWaitTicket } from '../engine/wait-queue.ts';
-import { beforeCommand, ensureStimd, requestDaemonTick, stimdBuildId } from '../daemon/client.ts';
+import {
+  backgroundPassesAvailable,
+  beforeCommand,
+  ensureStimd,
+  requestDaemonTick,
+  stimdBuildId,
+} from '../daemon/client.ts';
 import { runOperation } from '../run-operation.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
@@ -65,6 +71,51 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
   vi.unstubAllEnvs();
+});
+
+describe.skipIf(process.platform === 'win32')('background passes availability', () => {
+  test.each([
+    ['older daemon', {}, false],
+    ['report mode', { mode: 'report' }, false],
+    ['attached daemon', { mode: 'on', attached: true }, false],
+    ['persistent acting daemon', { mode: 'on' }, true],
+  ] as const)(
+    'background passes availability rejects %s unless it can act persistently',
+    async (_label, hello, expected) => {
+      const claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'fixture stimd' }).acquired;
+      assert(claim);
+      const socketPath = stimdSocket();
+      mkdirSync(dirname(socketPath), { recursive: true });
+      const server = createServer((socket) => {
+        let buffer = '';
+        let framed = false;
+        socket.on('data', (chunk) => {
+          buffer += String(chunk);
+          for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+            const line = buffer.slice(0, end);
+            buffer = buffer.slice(end + 1);
+            const message: Record<string, unknown> = JSON.parse(line);
+            if (!framed) {
+              framed = true;
+              if (message.build !== stimdBuildId()) {
+                socket.end(`${JSON.stringify({ op: 'engine-changed' })}\n`);
+                return;
+              }
+              socket.write(`${JSON.stringify({ op: 'hello', kind: 'stimd' })}\n`);
+            } else socket.end(`${JSON.stringify({ op: 'hello', ...hello })}\n`);
+          }
+        });
+      });
+      try {
+        await new Promise<void>((resolve, reject) => server.once('error', reject).listen(socketPath, resolve));
+        expect(await backgroundPassesAvailable()).toBe(expected);
+      } finally {
+        if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+        rmSync(socketPath, { force: true });
+        releaseClaim(claim);
+      }
+    },
+  );
 });
 
 /**

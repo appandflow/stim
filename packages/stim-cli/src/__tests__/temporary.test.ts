@@ -94,6 +94,19 @@ test("an operation's STIM_TMPDIR wins over the host process's", () => {
   expect(withAmbientContext(context, () => temporaryRoot(near))).toBe(tmpdir());
 });
 
+test('an explicit operation selects its temp directory and home over the ambient operation', () => {
+  const selectedHome = join(base, 'selected-home');
+  const selectedTemp = join(base, 'selected-temp');
+  const ambientTemp = join(base, 'ambient-temp');
+  mkdirSync(selectedHome);
+  mkdirSync(selectedTemp);
+  mkdirSync(ambientTemp);
+  writeFileSync(join(selectedHome, 'config.json'), JSON.stringify({ tempDir: selectedTemp }));
+  const ambient = testContext({ env: { ...process.env, STIM_TMPDIR: ambientTemp } });
+  const selected = testContext({ home: selectedHome, env: { ...process.env, STIM_TMPDIR: undefined } });
+  expect(withAmbientContext(ambient, () => temporaryRoot(near, selected))).toBe(selectedTemp);
+});
+
 test('artifact cleanup yields to other work, removes read-only directories and leaves symlink targets intact', async () => {
   const staged = join(base, 'staged');
   const retained = join(base, 'retained');

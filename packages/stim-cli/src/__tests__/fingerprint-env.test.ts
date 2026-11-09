@@ -3,7 +3,19 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'vitest';
 import { entryPoints, findPackage, packageIdentity, packageRows } from '../fingerprint/closure.ts';
-import { buildEnvRows, buildScripts, jobEnv, scriptEnvNames, templateScripts } from '../fingerprint/env.ts';
+import type { Input } from '../fingerprint/key.ts';
+import {
+  buildEnvRows,
+  buildScripts,
+  enumerationRow,
+  fingerprintJobEnv,
+  jobEnv,
+  materializeFingerprintEnv,
+  scriptEnvNames,
+  templateScripts,
+  workspaceEnv,
+} from '../fingerprint/env.ts';
+import { resolveReplayEnvPath } from '../fingerprint/replay.ts';
 
 const MOBILE = fileURLToPath(new URL('../../../../apps/mobile', import.meta.url));
 const SCRIPT = /(?:\.podspec|\.rb|\.gradle|\.gradle\.kts|^Podfile|^CMakeLists\.txt)$/;
@@ -152,8 +164,107 @@ test("a worker's job env takes the client's value of every keyed name and drops 
       USE_FRAMEWORKS: 'dynamic',
       DEBUG: 'x',
       STIM_HOME: '/worker/.stim',
+      STIM_SETUP_TICKET: 'server-secret',
+      STIM_ACCESS_TICKET: 'worker-access-secret',
     },
     { set: { APP_VARIANT: 'staging' }, absent: ['USE_FRAMEWORKS'] },
   );
   expect(env).toEqual({ PATH: '/worker/bin', APP_VARIANT: 'staging', STIM_HOME: '/worker/.stim' });
+  expect(JSON.stringify(env)).not.toContain('worker-access-secret');
+});
+
+test('workspace replay keeps the selected home and run identity but not private tickets', () => {
+  expect(
+    workspaceEnv({
+      STIM_HOME: '/private/stim',
+      STIM_RUN_ID: 'run',
+      STIM_ACCESS_TICKET: 'access',
+      STIM_SETUP_TICKET: 'setup',
+    }),
+  ).toEqual({ STIM_HOME: '/private/stim', STIM_RUN_ID: 'run' });
+});
+
+test('a worker removes extra keyed env when project code enumerated its environment', () => {
+  expect(
+    jobEnv(
+      { PATH: '/worker/bin', STIM_HOME: '/worker/.stim', CI: '1', WORKER_ONLY: 'extra', APP_VARIANT: 'worker' },
+      { set: { APP_VARIANT: 'client' }, absent: [] },
+      true,
+    ),
+  ).toEqual({ PATH: '/worker/bin', STIM_HOME: '/worker/.stim', CI: '1', APP_VARIANT: 'client' });
+});
+
+test('enumerated env paths use the same relocated form as individually read env', () => {
+  const first = enumerationRow({ ASSET_DIR: '/first/project/assets', FLAG: 'yes' }, (path) =>
+    path.replace('/first/project', '<project>'),
+  );
+  const second = enumerationRow({ ASSET_DIR: '/second/project/assets', FLAG: 'yes' }, (path) =>
+    path.replace('/second/project', '<project>'),
+  );
+  expect(first).toEqual(second);
+});
+
+test('offload sends keyed env values and absences without machine or worker-only values', () => {
+  expect(
+    fingerprintJobEnv(
+      [
+        { name: 'env:APP_VARIANT', kind: 'env', hash: 'x' },
+        { name: 'env:USE_FRAMEWORKS', kind: 'env', hash: 'x' },
+        { name: 'env:*', kind: 'env', hash: 'x' },
+      ],
+      { APP_VARIANT: 'staging', ASSET_DIR: '/client/app/assets', PATH: '/bin', STIM_HOME: '/home' },
+      (path) => path.replace('/client/app', '<project>'),
+    ),
+  ).toEqual({ set: { APP_VARIANT: 'staging', ASSET_DIR: { path: '<project>/assets' } }, absent: ['USE_FRAMEWORKS'] });
+});
+
+test('offload refuses a keyed secret or path outside the project', () => {
+  const row = (name: string): Input => ({ name: `env:${name}`, kind: 'env', hash: 'x' });
+  expect(fingerprintJobEnv([row('STIM_SETUP_TICKET')], { STIM_SETUP_TICKET: 'secret' }, () => '')).toBeNull();
+  expect(fingerprintJobEnv([row('ASSET_DIR')], { ASSET_DIR: '/outside' }, () => 'outside:hash')).toBeNull();
+});
+
+test('absolute env paths do not collide with relative literal values', () => {
+  const form = (path: string) => path.replace('/project/', '');
+  expect(buildEnvRows(['ASSET_DIR'], { ASSET_DIR: '/project/assets' }, 'ios', form).rows).not.toEqual(
+    buildEnvRows(['ASSET_DIR'], { ASSET_DIR: 'assets' }, 'ios', form).rows,
+  );
+  expect(enumerationRow({ ASSET_DIR: '/project/assets' }, form)).not.toEqual(
+    enumerationRow({ ASSET_DIR: 'assets' }, form),
+  );
+});
+
+test('worker resolves only tagged paths and keeps literal prefix-like values', () => {
+  const client = { set: { ASSET_DIR: { path: 'assets' }, LITERAL: 'npm:thing/file' }, absent: ['UNSET'] };
+  expect(materializeFingerprintEnv(client, (path) => `/worker/project/${path}`)).toEqual({
+    set: { ASSET_DIR: '/worker/project/assets', LITERAL: 'npm:thing/file' },
+    absent: ['UNSET'],
+  });
+});
+
+test('worker refuses Windows absolute and drive-relative path forms on every host', () => {
+  const roots = { project: '/project', install: '/project' };
+  for (const path of ['C:\\secret', 'C:/secret', 'C:secret', '\\\\server\\share'])
+    expect(resolveReplayEnvPath(path, roots)).toBeNull();
+});
+
+test('enumerated app STIM_ variables affect the key and do not leak from the worker', () => {
+  const first = enumerationRow({ STIM_APP_PUSH: 'one' }, (path) => path);
+  const second = enumerationRow({ STIM_APP_PUSH: 'two' }, (path) => path);
+  expect(first.hash).not.toBe(second.hash);
+  expect(jobEnv({ STIM_HOME: '/worker', STIM_APP_PUSH: 'worker' }, { set: {}, absent: [] }, true)).toEqual({
+    STIM_HOME: '/worker',
+  });
+});
+
+test('embedded env enumeration keys and forwards values not pinned in that environment', () => {
+  const form = (path: string) => path;
+  expect(enumerationRow({ CI: 'one' }, form, false).hash).not.toBe(enumerationRow({ CI: 'two' }, form, false).hash);
+  expect(enumerationRow({ CI: 'one' }, form).hash).toBe(enumerationRow({ CI: 'two' }, form).hash);
+  const rows: Input[] = [{ name: 'env@embed:*', kind: 'env', hash: 'x' }];
+  const sent = fingerprintJobEnv(rows, { CI: 'client' }, form);
+  expect(sent).toEqual({ set: { CI: 'client' }, absent: [] });
+  expect(
+    jobEnv({ CI: 'worker', LANG: 'worker', PATH: '/bin' }, { set: { CI: 'client' }, absent: [] }, true, true),
+  ).toEqual({ CI: 'client', PATH: '/bin' });
 });

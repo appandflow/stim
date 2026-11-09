@@ -156,6 +156,7 @@ import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from
 import { acquireAndroidArtifactOrRecorded, type PreparedAndroidArtifact } from './android/artifact.ts';
 import { lookupRecordedBuild, type RecordedBuildRequest } from '../engine/recorded-build.ts';
 import { logPostBuildFailure, persistLastBuild, persistThrownBuild } from './android/result.ts';
+import { settleArtifactCleanup, unresolvedCleanup } from '../engine/acquire-artifact.ts';
 import { finishAndroidRun, type AndroidRuntimePlan } from './android/launch.ts';
 import { androidDeviceSelectorRefusal, resolveAndroidRunPlan } from './android/plan.ts';
 import { planAndroid } from './android/next-build.ts';
@@ -1649,28 +1650,40 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     }
   };
 
+  const reportRunFailure = (error: unknown): RunAndroidResult => {
+    const cleanup = unresolvedCleanup(error);
+    const cancelled = cleanup
+      ? null
+      : cancelledFailure(context, PLATFORM, {
+          code: 'STIM_CANCELLED',
+          message: 'while finishing the run',
+        });
+    if (cancelled) return fail(cancelled.code, cancelled.message, cancelled.remedy, { lastBuildStatus: true });
+    try {
+      logPostBuildFailure(artifactAcquired, writer, thrownRunFailureRecord(error, progress.phase()));
+      persistThrownBuild({
+        acquired: artifactAcquired,
+        error,
+        recordBuild,
+        root,
+        record,
+        startedAt,
+        durationMs: now() - started,
+        out,
+      });
+      recordRun({ failed: true, durationMs: now() - started });
+    } catch (diagnosticError) {
+      if (!cleanup) throw diagnosticError;
+    }
+    throw error;
+  };
+  let artifactFailure: unknown;
   try {
     return await runFromFingerprint();
   } catch (error) {
-    const cancelled = cancelledFailure(context, PLATFORM, {
-      code: 'STIM_CANCELLED',
-      message: 'while finishing the run',
-    });
-    if (cancelled) return fail(cancelled.code, cancelled.message, cancelled.remedy, { lastBuildStatus: true });
-    logPostBuildFailure(artifactAcquired, writer, thrownRunFailureRecord(error, progress.phase()));
-    persistThrownBuild({
-      acquired: artifactAcquired,
-      error,
-      recordBuild,
-      root,
-      record,
-      startedAt,
-      durationMs: now() - started,
-      out,
-    });
-    recordRun({ failed: true, durationMs: now() - started });
-    throw error;
+    artifactFailure = error;
+    return reportRunFailure(error);
   } finally {
-    await preparedArtifact?.release();
+    await settleArtifactCleanup(artifactFailure, preparedArtifact?.release());
   }
 }

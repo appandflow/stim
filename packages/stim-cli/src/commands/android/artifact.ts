@@ -19,13 +19,18 @@ import {
 import type { loadCacheProvider } from '@stim-cli/cache';
 import { prepareProviderDownloadDir, providerDownloadPath, type storedAppId } from '../../cache/build-cache.ts';
 import type { RecordedBuild } from '../../engine/recorded-build.ts';
-import type { FingerprintCheck } from '../../cache/fingerprint-memo.ts';
+import type { FingerprintCheck } from '../../fingerprint/operation.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
 import type { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild } from '../../engine/build-lock.ts';
 import { BuildSlotCapacityError, type acquireBuildSlot, type releaseBuildSlot } from '../../engine/build-slots.ts';
-import { acquireArtifact, settleArtifactUploads, type ArtifactRun } from '../../engine/acquire-artifact.ts';
+import {
+  acquireArtifact,
+  settleArtifactCleanup,
+  settleArtifactUploads,
+  type ArtifactRun,
+} from '../../engine/acquire-artifact.ts';
 import type { ReadyArtifact } from '../../engine/artifact-lifecycle.ts';
 import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE, ccacheActivityLine } from '../../engine/ccache.ts';
 import type { EasBuildResult } from '../../engine/eas-build.ts';
@@ -550,6 +555,10 @@ export async function acquireAndroidArtifact(
     return { cacheOnly: false, here, code: placement.code, reason: placement.reason, machines };
   }
 
+  let preflightInputs:
+    | ReturnType<NonNullable<NonNullable<AndroidArtifactRecipe['offload']>['fingerprintInputs']>>
+    | undefined;
+
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
   async function chooseMachine(candidate: Candidate): Promise<OffloadChoice | null> {
     const offload = recipe.offload!;
@@ -563,6 +572,17 @@ export async function acquireAndroidArtifact(
       return null;
     }
     const request = offload.request;
+    let queryPeer = Boolean(cachePolicy.read && cachePolicy.remote && storeHash && !request.native && !embedsJs);
+    if (queryPeer) {
+      preflightInputs = offload.fingerprintInputs?.().catch((error: unknown) => {
+        if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
+        signal?.throwIfAborted();
+        return { uncertain: error instanceof Error ? error.message : String(error) };
+      });
+      const inputs = await preflightInputs;
+      queryPeer = Boolean(inputs && !('uncertain' in inputs));
+      if (!queryPeer && candidate.cacheOnly) return null;
+    }
     const { chooseBuildMachine, closeOffload, placementLoad } = await import('../../offload/client.ts');
     const choice = await chooseBuildMachine({
       projectRoot: root,
@@ -573,9 +593,7 @@ export async function acquireAndroidArtifact(
       selected: buildMachine,
       onCandidates: (each) => (asked = each),
       cacheOnly: candidate.cacheOnly,
-      ...(cachePolicy.read && cachePolicy.remote && storeHash && !request.native && !embedsJs
-        ? { reactNativeArtifact: { fingerprint: storeHash, request } }
-        : {}),
+      ...(queryPeer && storeHash ? { reactNativeArtifact: { fingerprint: storeHash, request } } : {}),
       ...(cachePolicy.read && cachePolicy.remote && request.native?.provider === 'gradle' && request.android.variant
         ? {
             gradleArtifact: {
@@ -632,7 +650,7 @@ export async function acquireAndroidArtifact(
       choice,
       expectedFingerprint: uncached ? null : storeHash,
       request: recipe.offload!.request,
-      fingerprintInputs: recipe.offload!.fingerprintInputs,
+      fingerprintInputs: preflightInputs ? () => preflightInputs! : recipe.offload!.fingerprintInputs,
       syncPlan: recipe.offload?.syncPlan,
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
@@ -655,6 +673,7 @@ export async function acquireAndroidArtifact(
       try {
         unchanged = await recipe.offload!.unchanged();
       } catch (error) {
+        if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
         reason = (error as Error).message;
       }
       if (unchanged && UNSIGNED_APK.test(artifactPath) && recipe.offload?.signUnsigned) {
@@ -959,8 +978,15 @@ export async function acquireAndroidArtifact(
           },
         };
       },
+      settleBeforeRelease: async () => {
+        await recipe.fingerprintCheck?.()?.join();
+      },
       settleFailed: async () => {
-        await settleArtifactUploads(uploadPending, providerUpload);
+        await settleArtifactCleanup(
+          undefined,
+          recipe.fingerprintCheck?.()?.cancel(),
+          settleArtifactUploads(uploadPending, providerUpload),
+        );
       },
       refuse: (error) => {
         if (error instanceof OffloadRefusal) {
@@ -993,7 +1019,7 @@ export async function acquireAndroidArtifact(
     },
   );
   if (!acquired.ok) {
-    recipe.fingerprintCheck?.()?.cancel();
+    await recipe.fingerprintCheck?.()?.cancel();
     return { ok: false, failure: acquired.failure, ccache: ccacheActivity };
   }
 
@@ -1006,8 +1032,11 @@ export async function acquireAndroidArtifact(
       apkPackage: record.cacheHit && storeKey ? entryAppId(PLATFORM, storeKey) : null,
       fingerprintCheck: recipe.fingerprintCheck?.() ?? null,
       release: async () => {
-        recipe.fingerprintCheck?.()?.cancel();
-        await settleArtifactUploads(providerUpload, uploadPending);
+        await settleArtifactCleanup(
+          undefined,
+          recipe.fingerprintCheck?.()?.cancel(),
+          settleArtifactUploads(providerUpload, uploadPending),
+        );
         acquired.release();
       },
       waitedForBuild,

@@ -8,6 +8,7 @@ import {
   type AndroidLayout,
 } from '../workspace/settings.ts';
 import {
+  byCodeUnit,
   canonicalJson,
   isUncertain,
   mergeInputs,
@@ -19,7 +20,17 @@ import {
   type Uncertain,
 } from './key.ts';
 import { canonicalPodfileLock } from './podfile-lock.ts';
-import { compileIgnore, field, nativeSubset, pathForm, walk, within, type Roots, type WalkOptions } from './walk.ts';
+import {
+  compileIgnore,
+  field,
+  ignoredInput,
+  nativeSubset,
+  pathForm,
+  walk,
+  within,
+  type Roots,
+  type WalkOptions,
+} from './walk.ts';
 
 const PATCH_DIRS = ['patches', 'cng-patches', '.yarn/patches'];
 const APP_ROOT_SKIPPED = new Set(['node_modules', 'Pods', 'build', 'android', '.git', '.DS_Store', '.stim.json']);
@@ -48,6 +59,7 @@ export interface StaticTarget {
   iosProjectPath?: string;
   androidLayout?: AndroidLayout | null;
   keepSigningFiles?: boolean;
+  fingerprintInputs?: readonly string[];
 }
 
 export interface StaticContext {
@@ -62,7 +74,9 @@ export interface StaticContext {
   fingerprintConfig?: unknown;
   /** Roots of native packages hashed by content: workspace links, `file:`, git and unclassified origins. */
   contentPackages?: readonly string[];
+  namedNativePaths?: Readonly<Record<string, readonly string[]>>;
   hashes?: WalkOptions['hashes'];
+  replay?: { native: NativeMode; files: Input[]; fingerprintInputs?: Input; verifyMembership?: boolean };
 }
 
 export interface StaticInputs {
@@ -192,7 +206,7 @@ const unquote = (value: string) => value.trim().replace(/^(['"])(.*)\1$/, '$2');
  * Patch files wherever they live and the `patched-dependencies` row: pnpm's `patchedDependencies` (lockfile,
  * `package.json`, `pnpm-workspace.yaml`), yarn `patch:` references and the `patch-package` directory.
  */
-function patches(roots: Roots): { files: string[]; dirs: string[]; row: Input | null } | Uncertain {
+export function patches(roots: Roots): { files: string[]; dirs: string[]; row: Input | null } | Uncertain {
   const files = new Set<string>();
   const dirs = new Set<string>();
   const lock = yamlBlock(readText(join(roots.install, 'pnpm-lock.yaml')), 'patchedDependencies');
@@ -218,10 +232,28 @@ function patches(roots: Roots): { files: string[]; dirs: string[]; row: Input | 
     }
     const script = field(field(manifest, 'scripts'), 'postinstall');
     if (typeof script === 'string' && script.includes('patch-package')) {
-      const flag = /--patch-dir(?:=|\s+)(\S+)/.exec(script);
-      const name = flag?.[1] ? unquote(flag[1]) : 'patches';
+      const apply =
+        /^\s*patch-package((?:[ \t]+(?:--error-on-fail|--error-on-warn|--patch-dir(?:=|[ \t]+)(?:"[^"$`\\\r\n]*"|'[^'$`\\\r\n]*'|[A-Za-z0-9_./-]+)))*)[ \t]*$/.exec(
+          script,
+        );
+      const flags = [...script.matchAll(/(?:^|[ \t])--patch-dir(?==|[ \t]|$)/g)];
+      const flag = /(?:^|[ \t])--patch-dir(?:=|[ \t]+)(?:"([^"]*)"|'([^']*)'|([A-Za-z0-9_./-]+))(?=[ \t]|$)/.exec(
+        script,
+      );
+      if (!apply || flags.length > 1)
+        return {
+          uncertain: `the patch-package invocation in ${join(dir, 'package.json')} cannot be safely interpreted`,
+        };
+      const name = flag ? (flag[1] ?? flag[2] ?? flag[3] ?? '') : 'patches';
       const patchDir = resolve(dir, name);
-      if (/[$`]/.test(name) || !(within(patchDir, roots.project) || within(patchDir, roots.install)))
+      if (
+        !name ||
+        name.startsWith('~') ||
+        name.startsWith('-') ||
+        /[$`\\]/.test(name) ||
+        (process.platform === 'win32' && (flag?.[2] !== undefined || /[%!]/.test(name))) ||
+        !(within(patchDir, roots.project) || within(patchDir, roots.install))
+      )
         return { uncertain: `the patch-package directory in ${join(dir, 'package.json')} cannot be resolved` };
       dirs.add(patchDir);
     }
@@ -291,9 +323,22 @@ export function staticInputs(context: StaticContext, target: StaticTarget): Stat
   const ios = target.platform === 'ios';
   const layout = targetLayout(target);
   const nativeDir = nativeDirectory(project, target);
-  const native = nativeMode(context, nativeDir);
+  const native = context.replay?.native ?? nativeMode(context, nativeDir);
   if (isUncertain(native)) return native;
-  const extra = projectFingerprintConfig(context.fingerprintConfig, project);
+  if (target.fingerprintInputs?.some((path) => !path || isAbsolute(path)))
+    return { uncertain: 'cache.fingerprintInputs must contain nonempty app-relative paths' };
+  const override =
+    context.replay?.fingerprintInputs ??
+    (target.fingerprintInputs === undefined
+      ? undefined
+      : {
+          name: 'stim:fingerprintInputs',
+          kind: 'manifest' as const,
+          hash: sha256(canonicalJson([...new Set(target.fingerprintInputs)].toSorted(byCodeUnit))),
+        });
+  const extra = override
+    ? { trees: (target.fingerprintInputs ?? []).map((path) => resolve(project, path)), rows: [override] }
+    : projectFingerprintConfig(context.fingerprintConfig, project);
   if (isUncertain(extra)) return extra;
   const patched = patches(roots);
   if (isUncertain(patched)) return patched;
@@ -306,13 +351,16 @@ export function staticInputs(context: StaticContext, target: StaticTarget): Stat
         moduleRoots.push(resolve(project, path));
   }
   const codegen = field(field(manifest, 'codegenConfig'), 'jsSrcsDir');
+  const ignore = compileIgnore(readText(join(project, '.fingerprintignore')) ?? '');
   const trees = [
     ...(native === 'tracked' ? nativeTrees(project, nativeDir, target) : []),
     ...[project, roots.install].flatMap((dir) => PATCH_DIRS.map((name) => join(dir, name))),
     ...patched.dirs,
     ...patched.files,
     ...moduleRoots.flatMap(moduleDirs),
-    ...(context.contentPackages ?? []).flatMap((dir) => nativeSubset(dir)),
+    ...(context.contentPackages ?? []).flatMap((dir) =>
+      nativeSubset(dir, context.namedNativePaths?.[dir] ?? [], project, ignore),
+    ),
     ...(typeof codegen === 'string' ? [resolve(project, codegen)] : []),
     ...configNamedPaths(
       context.config,
@@ -324,26 +372,39 @@ export function staticInputs(context: StaticContext, target: StaticTarget): Stat
     ...extra.trees,
   ];
   const podfileLock = join(nativeDir, 'Podfile.lock');
-  const walked = walk({
-    roots,
-    trees,
-    ignore: compileIgnore(readText(join(project, '.fingerprintignore')) ?? ''),
-    tracked: context.tracked,
-    skip: ios && nativeDir === project ? [...APP_ROOT_SKIPPED].map((name) => join(project, name)) : [],
-    trackedOnly: ios && native === 'tracked' ? [join(nativeDir, 'main.jsbundle'), join(nativeDir, 'assets')] : [],
-    keepSigningFiles: target.keepSigningFiles,
-    hashes: context.hashes,
-    transforms: new Map(
-      ios
-        ? [
-            [
-              podfileLock,
-              (bytes: Buffer) => canonicalPodfileLock(bytes.toString('utf8'), join(nativeDir, 'Pods'), context.root),
-            ],
-          ]
-        : [],
-    ),
-  });
+  const walkInputs = () =>
+    walk({
+      roots,
+      trees,
+      ignore,
+      tracked: context.tracked,
+      skip: ios && nativeDir === project ? [...APP_ROOT_SKIPPED].map((name) => join(project, name)) : [],
+      trackedOnly: ios && native === 'tracked' ? [join(nativeDir, 'main.jsbundle'), join(nativeDir, 'assets')] : [],
+      ...(context.replay?.verifyMembership
+        ? { workspaceInputs: new Set(context.replay.files.map((input) => input.name)) }
+        : {}),
+      keepSigningFiles: target.keepSigningFiles,
+      hashes: context.hashes,
+      transforms: new Map(
+        ios
+          ? [
+              [
+                podfileLock,
+                (bytes: Buffer) => canonicalPodfileLock(bytes.toString('utf8'), join(nativeDir, 'Pods'), context.root),
+              ],
+            ]
+          : [],
+      ),
+    });
+  if (context.replay?.verifyMembership) {
+    const discovered = walkInputs();
+    if (isUncertain(discovered)) return discovered;
+    const listed = new Set(context.replay.files.map((input) => input.name));
+    const lockName = pathForm(podfileLock, roots);
+    const added = discovered.inputs.find((input) => !listed.has(input.name) && !(ios && input.name === lockName));
+    if (added) return { uncertain: `the native inputs added ${added.name} during the worker build` };
+  }
+  const walked = context.replay ? { inputs: context.replay.files, portable: true } : walkInputs();
   if (isUncertain(walked)) return walked;
   const projected = Object.fromEntries(
     Object.entries(manifest && typeof manifest === 'object' ? manifest : {}).filter(
@@ -351,6 +412,14 @@ export function staticInputs(context: StaticContext, target: StaticTarget): Stat
     ),
   );
   const inputs: Input[] = [...walked.inputs, ...extra.rows, ...(patched.row ? [patched.row] : [])];
+  if (
+    !context.replay &&
+    ios &&
+    native === 'tracked' &&
+    !existsSync(podfileLock) &&
+    !ignoredInput(ignore, relative(project, podfileLock).split(sep).join('/'))
+  )
+    inputs.push({ name: pathForm(podfileLock, roots), kind: 'file', hash: sha256(canonicalJson(['absent'])) });
   if (manifest !== null)
     inputs.push({ name: 'package.json#native', kind: 'manifest', hash: sha256(canonicalJson(projected)) });
   try {

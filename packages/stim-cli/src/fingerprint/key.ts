@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
+import { FINGERPRINT_SCHEMA } from '@stim-cli/core/state';
 
-/** Bumped whenever a change alters which rows exist or their bytes for any project, so every key moves at once. */
-export const FINGERPRINT_SCHEMA = 1;
+export { FINGERPRINT_SCHEMA };
 
 type InputKind = 'file' | 'package' | 'config' | 'autolinking' | 'manifest' | 'env';
 export type Platform = 'ios' | 'android';

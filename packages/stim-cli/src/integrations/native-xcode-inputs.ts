@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import type { FingerprintSource } from '@expo/fingerprint';
 import { fingerprintNativeInputs, NativeInputError, type NativeInputSnapshot } from './native-inputs.ts';
 import { pbxReferences, pbxString, type NativeXcodeModel, type NativeXcodeSelection } from './native-xcode-project.ts';
 import { workspaceDir, workspaceDerivedData } from '../workspace/paths.ts';
@@ -33,7 +32,9 @@ export function nativeXcodeHasPackages(selection: NativeXcodeSelection): boolean
   );
 }
 
-export function nativeXcodeSources(snapshot: NativeInputSnapshot): FingerprintSource[] {
+export function nativeXcodeSources(
+  snapshot: NativeInputSnapshot,
+): { type: 'contents'; id: string; contents: string; hash: string; reasons: string[] }[] {
   return snapshot.entries.map((entry) => ({
     type: 'contents',
     id: entry.path,

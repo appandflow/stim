@@ -51,9 +51,9 @@ export function daemonClaimHeld(): boolean {
 }
 
 /** Whether this home's stimd runs. */
-export function stimdLive(): boolean {
+export function stimdLive(home?: string): boolean {
   try {
-    return readClaimSet(stimdClaimRoot()).live.length > 0;
+    return readClaimSet(stimdClaimRoot(home)).live.length > 0;
   } catch {
     return false;
   }
@@ -104,8 +104,9 @@ function openStimd(
   messages: Record<string, unknown>[],
   onMessage: (message: Record<string, unknown>) => void,
   waiter = false,
+  home?: string,
 ): Socket {
-  const socket = connect(stimdSocket());
+  const socket = connect(stimdSocket(home));
   let buffer = '';
   let answered = false;
   socket.setEncoding('utf8');
@@ -148,6 +149,7 @@ function askStimd(
   op: string,
   timeoutMs: number,
   fields: Record<string, unknown> = {},
+  home?: string,
 ): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
     let socket: Socket | null = null;
@@ -157,7 +159,7 @@ function askStimd(
       if (!following) resolve(reply);
     };
     const timer = setTimeout(() => finish(null), timeoutMs);
-    socket = openStimd([{ ...fields, op }], (reply) => finish(reply));
+    socket = openStimd([{ ...fields, op }], (reply) => finish(reply), false, home);
     socket.once('close', () => finish(null));
   });
 }
@@ -665,6 +667,12 @@ function tickOnce(timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
     });
     socket.once('close', () => finish(false));
   });
+}
+
+export async function backgroundPassesAvailable(home?: string): Promise<boolean> {
+  if (!stimdLive(home)) return false;
+  const reply = await askStimd('hello', CONTACT_TIMEOUT_MS, {}, home);
+  return reply?.op === 'hello' && reply.mode === 'on' && reply.attached !== true;
 }
 
 /**

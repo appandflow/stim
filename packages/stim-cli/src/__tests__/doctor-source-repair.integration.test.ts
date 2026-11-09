@@ -1,11 +1,14 @@
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { processContext } from '../cli-operation.ts';
 import { repairSourceCheckout } from '../diagnostics/doctor-source-repair.ts';
 import { planSourceRepairs, type SourceCheckoutFacts } from '../diagnostics/doctor-source.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { warmClaimPath } from '../engine/warm-claim.ts';
+import { processGroupAlive, readClaimSet } from '../ownership-claim.ts';
+import { captureProcessIdentity, inspectProcessIdentity } from '../process-identity.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { makeChildProcess } from './_factories.ts';
@@ -20,6 +23,7 @@ let base: string;
 let app: string;
 let spawned: { cmd: string; args: string[] }[];
 let notes: string[];
+let retainBase: boolean;
 
 function write(rel: string, value = ''): void {
   mkdirSync(dirname(join(app, rel)), { recursive: true });
@@ -79,6 +83,7 @@ beforeEach(() => {
   process.env.STIM_HOME = join(base, 'stim-home');
   spawned = [];
   notes = [];
+  retainBase = false;
   mkdirSync(app, { recursive: true });
   execFileSync('git', ['init', '-q', app]);
   write('package.json', JSON.stringify({ name: 'app' }));
@@ -90,6 +95,7 @@ beforeEach(() => {
 afterEach(() => {
   resetExecutor();
   delete process.env.STIM_HOME;
+  if (retainBase) throw new Error(`Could not verify pod cleanup; retained ${base}.`);
   rmSync(base, { recursive: true, force: true });
 });
 
@@ -175,6 +181,74 @@ test('a failed dependency install stops the steps that read the dependencies', a
   expect(spawned.map((call) => `${call.cmd} ${call.args.join(' ')}`)).toEqual(['npm ci']);
   expect(notes.join('\n')).toContain('skipped: the dependencies are not repaired');
 });
+
+test.skipIf(process.platform === 'win32')(
+  'unverified pod cleanup retains native and warm ownership before later prebuild',
+  { timeout: 30_000 },
+  async () => {
+    const marker = join(base, 'pod-child');
+    const real = getExecutor();
+    let group: number | undefined;
+    setExecutor({
+      ...real,
+      spawn(cmd, args, options) {
+        spawned.push({ cmd, args: [...args] });
+        if (cmd !== 'pod') return real.spawn(cmd, args, options);
+        const script = `const {spawn}=require('node:child_process'); const {writeFileSync}=require('node:fs'); const child=spawn(process.execPath,['-e','setInterval(() => {}, 1000)'],{stdio:'ignore'}); writeFileSync(${JSON.stringify(marker)},String(child.pid)); child.unref();`;
+        const child = spawn(process.execPath, ['-e', script], { ...options, detached: true });
+        group = child.pid;
+        return child;
+      },
+    });
+    const clock = Date.now;
+    let advance = 0;
+    const time = vi.spyOn(Date, 'now').mockImplementation(() => clock() + advance++ * 360_000);
+    let descendant: { pid: number; processToken: string } | null = null;
+    let cleanupFailure: unknown;
+    try {
+      const source = facts({
+        pods: { iosDir: join(app, 'ios'), broken: false, state: 'stale', iosTracked: false },
+        prebuild: [{ platform: 'android', status: { kind: 'unfinished' } }],
+      });
+      expect(planSourceRepairs(source).map((step) => step.id)).toEqual(['pods', 'prebuild:android']);
+      await expect(repair(source)).rejects.toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true });
+      expect(podCommands()).toEqual(['install']);
+      expect(spawned.some(({ cmd }) => cmd !== 'pod')).toBe(false);
+      expect(existsSync(marker)).toBe(true);
+      const identity = captureProcessIdentity(Number(readFileSync(marker, 'utf8')));
+      if (!identity.ok) throw new Error('could not identify owned pod descendant');
+      descendant = { pid: Number(readFileSync(marker, 'utf8')), processToken: identity.token };
+      expect(readClaimSet(warmClaimPath(app)).live).toEqual(
+        expect.arrayContaining([expect.objectContaining({ childDeclared: true })]),
+      );
+      expect(readClaimSet(join(workspaceDir(app), 'native-run.lock')).live).toEqual(
+        expect.arrayContaining([expect.objectContaining({ childDeclared: true })]),
+      );
+    } finally {
+      time.mockRestore();
+      if (!descendant && existsSync(marker)) {
+        const pid = Number(readFileSync(marker, 'utf8'));
+        const identity = captureProcessIdentity(pid);
+        if (identity.ok) descendant = { pid, processToken: identity.token };
+        else retainBase = true;
+      }
+      if (descendant && inspectProcessIdentity(descendant) === 'same') {
+        try {
+          process.kill(descendant.pid, 'SIGKILL');
+        } catch (error) {
+          if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ESRCH')
+            cleanupFailure = error;
+        }
+      }
+      const until = Date.now() + 5000;
+      if (group)
+        while (processGroupAlive(group) && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 25));
+      if (group && processGroupAlive(group)) retainBase = true;
+      if (cleanupFailure) retainBase = true;
+    }
+    if (retainBase) throw new Error(`Could not verify pod cleanup; retained ${base}.`, { cause: cleanupFailure });
+  },
+);
 
 test('a workspace a stim run holds is refused before anything is asked or run', async () => {
   mockChildren({});

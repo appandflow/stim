@@ -5,6 +5,8 @@ import { join } from 'path';
 import {
   androidAvdConfigSetting,
   cacheProviderSettingError,
+  fingerprintInputsSetting,
+  mergeSettingsLayers,
   androidAvdConfigSettingError,
   androidLayoutSettingError,
   iosProjectDirSettingError,
@@ -34,6 +36,16 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+});
+
+test('fingerprint input settings distinguish unset from an explicit empty override', () => {
+  expect(fingerprintInputsSetting({})).toBeUndefined();
+  const resolved = mergeSettingsLayers([
+    { cache: { fingerprintInputs: [] } },
+    { cache: { fingerprintInputs: ['shared'] } },
+  ]);
+  expect(fingerprintInputsSetting(resolved)).toEqual([]);
+  expect(() => fingerprintInputsSetting({ cache: { fingerprintInputs: 'shared' } })).toThrow('cache.fingerprintInputs');
 });
 
 test('a __proto__ key in a committed .stim.json sets no effective setting', () => {
@@ -245,6 +257,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'remote.easFallback': { valid: true, invalid: 'yes', expected: 'true or false' },
   'worktree.exclude': { valid: ['node_modules'], invalid: ['ok', 7], expected: 'an array of strings' },
   'worktree.defaultBranch': { valid: 'main', invalid: ['main'], expected: 'a string' },
+  'cache.fingerprintInputs': { valid: ['shared'], invalid: [7], expected: 'an array of strings' },
   'cache.provider': { valid: './cache.cjs', invalid: {}, expected: 'a string' },
   'cache.options': { valid: { bucket: 'a' }, invalid: 'nope', expected: 'an object' },
 };

@@ -75,7 +75,7 @@ import { type ReportAndroidResultArgs, finishAndroidUpload, reportAndroidResult,
 import { workspaceLinks } from '../../devices/stim-desktop.ts';
 import { loadConfig, saveConfig, setDevice, withConfigLockAsync, upsertProject } from '../../workspace/config.ts';
 import { providerUploadOutcome } from '../../cache/build-cache.ts';
-import { settleFingerprintCheck, type FingerprintCheck } from '../../cache/fingerprint-memo.ts';
+import { settleFingerprintCheck, type FingerprintCheck } from '../../fingerprint/operation.ts';
 import { launchOutcomeRecord, type MobileRuntimePreparation, type RuntimeReadiness } from '../native-runtime.ts';
 import type { RuntimePlan } from '../../engine/runtime-plan.ts';
 import { killPreviousCollector, startCollector } from './collector.ts';

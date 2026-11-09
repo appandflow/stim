@@ -27,6 +27,9 @@ import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts'
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
 
 vi.mock('../stimd/threads.ts', () => import('./fixtures/inline-stimd-threads.ts'));
+vi.mock('../daemon/fingerprint-precompute.ts', () => ({
+  createFingerprintPrecompute: () => ({ run: async () => {} }),
+}));
 
 const MINUTE_MS = 60_000;
 let home: string;

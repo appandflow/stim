@@ -1,3 +1,5 @@
+import { FINGERPRINT_SCHEMA } from '../fingerprint/key.ts';
+import type { Fingerprint } from '../fingerprint/evaluate.ts';
 import * as desktopLinks from '../devices/stim-desktop.ts';
 import { testContext } from './_context.ts';
 import { recordBuild, recordedBuildKey } from '../engine/recorded-build.ts';
@@ -5,10 +7,11 @@ import { createStim } from '../api.ts';
 import * as androidOperation from '../commands/android.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { nativeAndroidFixture } from './_native-android-project.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { readWorkspaceLaunches } from '../stimd/metro/state.ts';
 import { runReload } from '../commands/reload.ts';
-import * as buildCache from '../cache/build-cache.ts';
-import { resolveBuild, type FingerprintTarget, type ProjectFingerprint } from '../cache/build-cache.ts';
+import { resolveBuild } from '../cache/build-cache.ts';
+import { patches, type StaticTarget as FingerprintTarget } from '../fingerprint/inputs.ts';
 import { projectIntegrations } from '../integrations/projects.ts';
 import { createProjectRegistry } from '../integrations/project-registry.ts';
 import {
@@ -54,6 +57,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -88,7 +92,6 @@ import {
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   NO_DEVICE,
-  NO_FINGERPRINT,
   androidDevClientScheme,
   androidSystemImageSetting,
   androidVariantSetting,
@@ -137,7 +140,22 @@ vi.mock('../devices/stim-desktop.ts', async (importOriginal) => ({
   workspaceLinks: () => undefined,
 }));
 
-const FINGERPRINT = 'a3f9b1c2d3e4f5a6b7c8d9e0f1a2b3c4';
+const FINGERPRINT = 'a3f9b1c2d3e4f5a6b7c8d9e0f1a2b3c4'.padEnd(64, '0');
+const androidFingerprint = (hash: string, fields: Partial<Fingerprint> = {}): Fingerprint => ({
+  schema: FINGERPRINT_SCHEMA,
+  hash,
+  platform: 'android',
+  native: 'tracked',
+  inputs: [],
+  nativePackages: [],
+  configModules: [],
+  config: null,
+  portable: true,
+  opaque: [],
+  from: 'evaluated',
+  fingerprintConfigKeys: [],
+  ...fields,
+});
 const CACHE_KEY = `${FINGERPRINT}-debug-sim`;
 const STORED_ASSETS: AssetManifest = {
   version: 1,
@@ -367,6 +385,7 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
   };
   const stderr: string[] = [];
   const stdout: string[] = [];
+  let currentFingerprint: NonNullable<ReactNativeAndroidDependencies['fingerprint']>;
   const options = {
     root,
     projectRegistry: undefined as NonNullable<Parameters<typeof runAndroid>[0]>['projectRegistry'],
@@ -395,15 +414,19 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
     warmMetro: async () => {},
     fingerprint: async (path: string) => {
       calls.fingerprint.push(path);
-      return { hash: FINGERPRINT, sources: [] };
+      return androidFingerprint(FINGERPRINT);
     },
-    memoize: async (
-      projectRoot: string,
-      target: FingerprintTarget,
-      {
-        fingerprint,
-      }: { fingerprint?: (root: string, target: FingerprintTarget) => Promise<ProjectFingerprint | null> },
-    ) => ({ fingerprint: fingerprint ? await fingerprint(projectRoot, target) : null, memoHit: false, check: null }),
+    fingerprintForBuild: async (
+      ...args: Parameters<NonNullable<ReactNativeAndroidDependencies['fingerprintForBuild']>>
+    ) => {
+      const [projectRoot, target, { operation, embedMode }] = args;
+      const result = await currentFingerprint(projectRoot, target, {
+        env: operation?.env ?? process.env,
+        embedMode,
+        operation,
+      });
+      return 'uncertain' in result ? result : { fingerprint: result, check: null };
+    },
     untracked: (args: { projectRoot: string }) => {
       calls.untracked.push(args);
       return [];
@@ -433,7 +456,7 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       const cacheOptions =
         typeof opts === 'string'
           ? opts
-          : { overwrite: opts?.overwrite, sources: opts?.sources, assetManifest: opts?.assetManifest };
+          : { overwrite: opts?.overwrite, inputs: opts?.inputs, assetManifest: opts?.assetManifest };
       calls.storeCached.push([platform, key, path, cacheOptions]);
       return path;
     },
@@ -575,6 +598,7 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
     emit: (line: string) => stdout.push(line),
     ...overrides,
   };
+  currentFingerprint = options.fingerprint as NonNullable<ReactNativeAndroidDependencies['fingerprint']>;
   const ensureDevice = options.ensureDevice;
   return {
     calls,
@@ -616,6 +640,38 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       }),
   };
 }
+
+test('a patch newer than the install prevents storing a local Android build', async () => {
+  mkdirSync(join(root, 'node_modules'), { recursive: true });
+  writeFileSync(join(root, 'node_modules', '.modules.yaml'), 'layoutVersion: 5\n');
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(join(root, 'node_modules', '.modules.yaml'), old, old);
+  mkdirSync(join(root, 'patches'), { recursive: true });
+  writeFileSync(join(root, 'patches', 'fixture.patch'), 'fixture patch\n');
+  const h = harness();
+  const result = await h.run();
+  expect(result.ok).toBe(true);
+  expect(h.calls.storeCached).toEqual([]);
+  expect(h.stderr.some((line) => line.includes('changed after the last install'))).toBe(true);
+});
+
+test.each([true, false])('a declared custom Android patch newer=%s controls the local store', async (newer) => {
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  manifest.pnpm = { patchedDependencies: { 'fixture@1.0.0': 'vendor-patches/nested/fixture.patch' } };
+  writeFileSync(join(root, 'package.json'), JSON.stringify(manifest));
+  mkdirSync(join(root, 'vendor-patches', 'nested'), { recursive: true });
+  writeFileSync(join(root, 'vendor-patches', 'nested', 'fixture.patch'), 'fixture patch\n');
+  mkdirSync(join(root, 'node_modules'), { recursive: true });
+  const stamp = join(root, 'node_modules', '.modules.yaml');
+  writeFileSync(stamp, 'layoutVersion: 5\n');
+  const time = new Date(Date.now() + (newer ? -60_000 : 60_000));
+  utimesSync(stamp, time, time);
+  const h = harness();
+  const result = await h.run();
+  expect(result.ok).toBe(true);
+  expect(h.calls.storeCached).toHaveLength(newer ? 0 : 1);
+  expect(h.stderr.some((line) => line.includes('changed after the last install'))).toBe(newer);
+});
 
 test.each([false, true])('the Android API preserves retained Metro cleanup after cancellation=%s', async (cancel) => {
   const controller = new AbortController();
@@ -1405,7 +1461,7 @@ describe('explicit remote backend behavior', () => {
       },
       fingerprint: async () => {
         order.push('fingerprint');
-        return { hash: FINGERPRINT, sources: [] };
+        return androidFingerprint(FINGERPRINT);
       },
     });
 
@@ -1522,7 +1578,7 @@ describe('explicit remote backend behavior', () => {
       },
       fingerprint: async () => {
         order.push('fingerprint');
-        return { hash: FINGERPRINT, sources: [] };
+        return androidFingerprint(FINGERPRINT);
       },
     });
 
@@ -1582,7 +1638,7 @@ describe('explicit remote backend behavior', () => {
       writeState: (projectRoot: string, patch: Record<string, unknown>) => writeWorkspaceState(projectRoot, patch),
       fingerprint: async () => {
         clock = Date.parse('2026-09-25T14:59:27.000Z');
-        return { hash: FINGERPRINT, sources: [] };
+        return androidFingerprint(FINGERPRINT);
       },
     });
 
@@ -2016,6 +2072,7 @@ describe('a cache miss', () => {
     );
     const order: string[] = [];
     const h = harness({
+      fingerprint: async () => androidFingerprint(FINGERPRINT, { native: 'generated' }),
       prebuild: async (..._args: unknown[]) => {
         order.push('prebuild');
         return { ok: true, durationMs: 12000 };
@@ -2236,18 +2293,55 @@ describe('product flavors (--variant / android.variant)', () => {
 });
 
 describe('the applicationId comes from the built APK', () => {
-  test('a memoized fingerprint whose background check disagrees warns at the end of the run', async () => {
-    const consulted: boolean[] = [];
+  test('an acquisition exception joins its background fingerprint before returning', async () => {
+    const failure = new WorkspaceProcessCleanupError([], 'Build cleanup unresolved', 'Inspect the child.');
+    let entered!: () => void;
+    let finish!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const cancel = vi.fn<() => Promise<void>>(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+          entered();
+        }),
+    );
+    const h = harness({
+      fingerprintForBuild: async () => ({
+        fingerprint: androidFingerprint(FINGERPRINT, { from: 'index' }),
+        check: { join: async () => ({ status: 'confirmed' }), settle: async () => ({ status: 'confirmed' }), cancel },
+      }),
+      build: async () => {
+        throw failure;
+      },
+    });
+    let returned = false;
+    const pending = h
+      .run()
+      .catch((error: unknown) => error)
+      .finally(() => {
+        returned = true;
+      });
+    await started;
+    expect(returned).toBe(false);
+    finish();
+    expect(await pending).toBe(failure);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  test('an indexed fingerprint whose background check disagrees warns at the end of the run', async () => {
+    const consulted: (boolean | undefined)[] = [];
     const h = harness({
       resolveCached: () => '/cache/app-debug.apk',
-      memoize: async (_root: string, _target: FingerprintTarget, { consult }: { consult: boolean }) => {
+      fingerprintForBuild: async (_root: string, _target: FingerprintTarget, { consult }: { consult?: boolean }) => {
         consulted.push(consult);
         return {
-          fingerprint: { hash: FINGERPRINT, sources: [] },
-          memoHit: true,
+          fingerprint: androidFingerprint(FINGERPRINT, { from: 'index' }),
           check: {
-            settle: async () => ({ status: 'stale', recorded: FINGERPRINT, current: 'ffee0011' }),
-            cancel: () => {},
+            join: async () => ({ status: 'disagreed', recorded: FINGERPRINT, current: 'ffee0011' }),
+            settle: async () => ({ status: 'disagreed', recorded: FINGERPRINT, current: 'ffee0011' }),
+            cancel: async () => {},
           },
         };
       },
@@ -2257,7 +2351,9 @@ describe('the applicationId comes from the built APK', () => {
     expect(h.calls.fingerprint).toEqual([]);
     expect(h.stderr.join('\n')).toMatch(/no longer matches the tree \(ffee0011\)/);
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
-    expect(records.find((record) => record.event === 'fingerprint_memo_stale')).toMatchObject({ current: 'ffee0011' });
+    expect(records.find((record) => record.event === 'fingerprint_index_disagreement')).toMatchObject({
+      current: 'ffee0011',
+    });
   });
 
   test('the APK is authoritative when it answers, even when project detection disagrees', async () => {
@@ -2557,29 +2653,26 @@ describe('the other refusals', () => {
     expect(h.stdout).toEqual([]);
   });
 
-  test('a fingerprint with no hash refuses without a package-install remedy', async () => {
+  test('an uncertain fingerprint builds without looking up or storing a cached artifact', async () => {
     const h = harness({
-      fingerprint: async () => null,
+      fingerprint: async () => ({ uncertain: 'fixture' }),
       resolveCached: never('the cache lookup'),
-      build: never('the build'),
+      storeCached: never('the cache store'),
     });
-    const result = await h.run();
-    assert(result.error);
-    expect(result.error.code).toBe(NO_FINGERPRINT);
-    expect(result.error.remedy).not.toMatch(/npm i -D @expo\/fingerprint/);
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build).toHaveLength(1);
   });
 
-  test('a fingerprint that throws is reported, not propagated', async () => {
+  test('a fingerprint error is reported and the build continues uncached', async () => {
     const h = harness({
       fingerprint: async () => {
         throw new Error('bad app.json');
       },
-      build: never('the build'),
+      resolveCached: never('the cache lookup'),
+      storeCached: never('the cache store'),
     });
-    const result = await h.run();
-    assert(result.error);
-    expect(result.error.code).toBe(NO_FINGERPRINT);
-    expect(result.error.message).toMatch(/bad app\.json/);
+    expect((await h.run()).ok).toBe(true);
+    expect(h.stderr.join('\n')).toMatch(/bad app\.json/);
   });
 
   async function errorRecords() {
@@ -3231,30 +3324,19 @@ describe('--no-build-cache', () => {
     expect(activeReport).not.toHaveProperty('cacheLookupOutcome');
   });
 
-  test('fingerprints in full without consulting the memo', async () => {
-    const consulted: boolean[] = [];
+  test('computes a fresh fingerprint without consulting the index', async () => {
+    const consulted: (boolean | undefined)[] = [];
     const h = harness({
       useBuildCache: false,
-      memoize: async (
-        projectRoot: string,
-        target: FingerprintTarget,
-        {
-          consult,
-          fingerprint,
-        }: {
-          consult: boolean;
-          fingerprint?: (root: string, target: FingerprintTarget) => Promise<ProjectFingerprint | null>;
-        },
-      ) => {
+      fingerprintForBuild: async (_root: string, _target: FingerprintTarget, { consult }: { consult?: boolean }) => {
         consulted.push(consult);
         return {
-          fingerprint: fingerprint ? await fingerprint(projectRoot, target) : null,
-          memoHit: false,
+          fingerprint: androidFingerprint(FINGERPRINT),
           check: null,
         };
       },
     });
-    await h.run();
+    expect((await h.run()).ok).toBe(true);
     expect(consulted).toEqual([false]);
   });
 
@@ -3264,14 +3346,22 @@ describe('--no-build-cache', () => {
       loadProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
     });
     await h.run();
-    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: true, sources: [], assetManifest: null });
+    expect(h.calls.storeCached[0]?.[3]).toEqual({
+      overwrite: true,
+      inputs: { schema: FINGERPRINT_SCHEMA, hash: FINGERPRINT, inputs: [] },
+      assetManifest: null,
+    });
     expect(h.calls.uploadRemoteBuild.length).toBe(1);
   });
 
   test('a default run stores without overwriting: two worktrees at the same fingerprint agree', async () => {
     const h = harness();
     await h.run();
-    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: false, sources: [], assetManifest: null });
+    expect(h.calls.storeCached[0]?.[3]).toEqual({
+      overwrite: false,
+      inputs: { schema: FINGERPRINT_SCHEMA, hash: FINGERPRINT, inputs: [] },
+      assetManifest: null,
+    });
   });
 });
 
@@ -4383,7 +4473,7 @@ test('android fingerprints with platforms scoped to android', async () => {
   const h = harness({
     fingerprint: async (path: string, options?: Record<string, unknown>) => {
       seen.push({ path, options });
-      return { hash: FINGERPRINT, sources: [] };
+      return androidFingerprint(FINGERPRINT);
     },
   });
   await h.run();
@@ -5072,7 +5162,7 @@ describe('the release APK swap', () => {
     await h.run();
     expect(h.calls.storeCached[0]?.[3]).toEqual({
       overwrite: true,
-      sources: [],
+      inputs: { schema: FINGERPRINT_SCHEMA, hash: FINGERPRINT, inputs: [] },
       assetManifest: CAPTURED_ASSETS,
     });
   });
@@ -5096,7 +5186,7 @@ describe('the release APK swap', () => {
     ]);
     expect(h.calls.storeCached[0]?.[3]).toEqual({
       overwrite: false,
-      sources: [],
+      inputs: { schema: FINGERPRINT_SCHEMA, hash: FINGERPRINT, inputs: [] },
       assetManifest: CAPTURED_ASSETS,
     });
   });
@@ -5105,7 +5195,11 @@ describe('the release APK swap', () => {
     const h = harness({ captureAssets: never('the asset capture') });
     const result = await h.run();
     expect(result.ok).toBe(true);
-    expect(h.calls.storeCached[0]?.[3]).toEqual({ overwrite: false, sources: [], assetManifest: null });
+    expect(h.calls.storeCached[0]?.[3]).toEqual({
+      overwrite: false,
+      inputs: { schema: FINGERPRINT_SCHEMA, hash: FINGERPRINT, inputs: [] },
+      assetManifest: null,
+    });
   });
 
   test('a swap failure falls back to a full build too -- stale JS is never installed', async () => {
@@ -5165,7 +5259,7 @@ describe('re-fingerprint after prebuild', () => {
 
   function shifting() {
     let call = 0;
-    return async () => ({ hash: call++ === 0 ? COLD : WARM, sources: [{ type: 'dir', filePath: 'android' }] });
+    return async () => androidFingerprint(call++ === 0 ? COLD : WARM, { native: 'generated' });
   }
 
   function cngProject() {
@@ -5189,7 +5283,7 @@ describe('re-fingerprint after prebuild', () => {
     expect(String(storedKey)).toMatch(new RegExp(`^${WARM}`));
 
     mkdirSync(join(root, 'android', 'app'), { recursive: true });
-    const warm = harness({ fingerprint: async () => ({ hash: WARM, sources: [] }) });
+    const warm = harness({ fingerprint: async () => androidFingerprint(WARM, { native: 'generated' }) });
     await warm.run();
     expect(warm.calls.resolveCached[0]?.[1]).toBe(storedKey);
   });
@@ -5200,11 +5294,11 @@ describe('re-fingerprint after prebuild', () => {
     const stale = harness({ fingerprint: shifting() });
     expect((await stale.run()).ok).toBe(true);
     expect(stale.calls.prebuild.length).toBe(1);
-    expect(readState().prebuild).toEqual({ android: WARM });
+    expect(readState().prebuild).toEqual({ android: { schema: FINGERPRINT_SCHEMA, hash: WARM } });
     expect(String(stale.calls.storeCached[0]?.[1])).toMatch(new RegExp(`^${WARM}`));
 
     const current = harness({
-      fingerprint: async () => ({ hash: WARM, sources: [{ type: 'dir', filePath: 'android' }] }),
+      fingerprint: async () => androidFingerprint(WARM, { native: 'generated' }),
       prebuild: never('prebuild'),
     });
     expect((await current.run()).ok).toBe(true);
@@ -5349,19 +5443,16 @@ describe('re-fingerprint after Gradle', () => {
   const BEFORE_BUILD = 'before1111';
   const AFTER_BUILD = 'after2222';
 
-  test('stores under the fingerprint after a build mutation and hits it on the next run', async () => {
+  test('does not cache when a native dependency changes during Gradle', async () => {
     const manifest = join(root, 'node_modules', 'example', 'android', 'src', 'main', 'AndroidManifest.xml');
     mkdirSync(join(root, 'node_modules', 'example', 'android', 'src', 'main'), { recursive: true });
     writeFileSync(manifest, 'before');
     const configuredUploads: unknown[] = [];
     const fingerprint = async () => {
       const contents = readFileSync(manifest, 'utf8');
-      return {
-        hash: contents === 'before' ? BEFORE_BUILD : AFTER_BUILD,
-        sources: [
-          { type: 'file', filePath: 'node_modules/example/android/src/main/AndroidManifest.xml', hash: contents },
-        ],
-      };
+      return androidFingerprint(contents === 'before' ? BEFORE_BUILD : AFTER_BUILD, {
+        inputs: [{ name: 'npm:example/android/src/main/AndroidManifest.xml', kind: 'file', hash: contents }],
+      });
     };
     const h = harness({
       fingerprint,
@@ -5378,42 +5469,26 @@ describe('re-fingerprint after Gradle', () => {
     });
     const result = await h.run();
 
-    expect(h.calls.storeCached[0]?.[1]).toBe(`${AFTER_BUILD}-debug-sim`);
-    expect(configuredUploads[0]).toMatchObject({ key: `${AFTER_BUILD}-debug-sim` });
-    expect(h.calls.uploadRemoteBuild[0]?.fingerprintHash).toBe(AFTER_BUILD);
-    expect(result.facts?.fingerprint).toBe(AFTER_BUILD);
-    expect(result.facts?.cacheKey).toBe(`${AFTER_BUILD}-debug-sim`);
-    expect(readState().lastBuild.cacheKey).toBe(`${AFTER_BUILD}-debug-sim`);
-    expect(h.stderr.some((line) => /after Gradle/.test(line))).toBe(true);
-
-    const storedKey = String(h.calls.storeCached[0]?.[1]);
-    const cachedApk = fakeApk();
-    const lookedUp: string[] = [];
-
-    const warm = harness({
-      fingerprint,
-      resolveCached: (_platform: string, key: string) => {
-        lookedUp.push(key);
-        return key === storedKey ? cachedApk : null;
-      },
-      build: never('gradle'),
-    });
-    const warmResult = await warm.run();
-
-    expect(lookedUp).toEqual([`${AFTER_BUILD}-debug-sim`]);
-    expect(warmResult.facts?.cacheHit).toBe('local');
-    expect(warmResult.facts?.cacheKey).toBe(`${AFTER_BUILD}-debug-sim`);
+    expect(result.ok).toBe(true);
+    expect(h.calls.storeCached).toEqual([]);
+    expect(configuredUploads).toEqual([]);
+    expect(h.calls.uploadRemoteBuild).toEqual([]);
+    expect(result.facts?.fingerprint).toBeNull();
+    expect(result.facts?.cacheKey).toBeNull();
+    expect(h.stderr.join('\n')).toContain(
+      'npm:example/android/src/main/AndroidManifest.xml changed while the build ran',
+    );
   });
 
   test.each([
     ['throws', async () => Promise.reject(new Error('fingerprint failed'))],
-    ['returns no hash', async () => ({ hash: '', sources: [] })],
+    ['returns no hash', async () => ({ uncertain: 'fingerprint unavailable' })],
   ])('does not cache when the post-Gradle fingerprint %s', async (_label, unavailableFingerprint) => {
     let fingerprintCalls = 0;
     const configuredUploads: unknown[] = [];
     const h = harness({
       fingerprint: async () => {
-        if (fingerprintCalls++ === 0) return { hash: BEFORE_BUILD, sources: [] };
+        if (fingerprintCalls++ === 0) return androidFingerprint(BEFORE_BUILD);
         return unavailableFingerprint();
       },
       resolveCacheProvider: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
@@ -5446,10 +5521,9 @@ describe('re-fingerprint after Gradle', () => {
       planPrebuildFor: () => 'generate',
       fingerprint: async () => {
         const contents = readFileSync(config, 'utf8');
-        return {
-          hash: contents === 'portrait' ? BEFORE_BUILD : AFTER_BUILD,
-          sources: [{ type: 'contents', id: 'expoConfig', contents: '', hash: contents, reasons: ['expoConfig'] }],
-        };
+        return androidFingerprint(contents === 'portrait' ? BEFORE_BUILD : AFTER_BUILD, {
+          inputs: [{ name: 'config', kind: 'config', hash: contents }],
+        });
       },
       build: async () => {
         writeFileSync(config, 'landscape');
@@ -5472,9 +5546,9 @@ describe('re-fingerprint after Gradle', () => {
     expect(result.facts?.fingerprint).toBeNull();
     expect(result.facts?.cacheKey).toBeNull();
     expect(readState().lastBuild.cacheKey).toBeNull();
-    expect(readState().prebuild).toEqual({ android: BEFORE_BUILD });
+    expect(readState().prebuild).toEqual({ android: { schema: FINGERPRINT_SCHEMA, hash: BEFORE_BUILD } });
     expect(h.calls.install[0]?.apkPath).toBe(apk);
-    expect(h.stderr.some((line) => /expoConfig changed while the build ran/.test(line))).toBe(true);
+    expect(h.stderr.some((line) => /config changed while the build ran/.test(line))).toBe(true);
   });
 
   test('an app config edited during prebuild skips the late lookup and the store', async () => {
@@ -5485,10 +5559,9 @@ describe('re-fingerprint after Gradle', () => {
       planPrebuildFor: () => 'generate',
       fingerprint: async () => {
         const contents = readFileSync(config, 'utf8');
-        return {
-          hash: contents === 'portrait' ? BEFORE_BUILD : AFTER_BUILD,
-          sources: [{ type: 'contents', id: 'expoConfig', contents: '', hash: contents, reasons: ['expoConfig'] }],
-        };
+        return androidFingerprint(contents === 'portrait' ? BEFORE_BUILD : AFTER_BUILD, {
+          inputs: [{ name: 'config', kind: 'config', hash: contents }],
+        });
       },
       prebuild: async () => {
         writeFileSync(config, 'landscape');
@@ -5501,10 +5574,11 @@ describe('re-fingerprint after Gradle', () => {
 
     expect(result.ok).toBe(true);
     expect(result.facts?.cacheHit).not.toBe('local');
+    expect(h.calls.resolveCached.some(([, key]) => String(key).startsWith(AFTER_BUILD))).toBe(false);
     expect(h.calls.storeCached).toEqual([]);
     expect(result.facts?.cacheKey).toBeNull();
     expect(readState().prebuild).toEqual({ android: null });
-    expect(h.stderr.some((line) => /expoConfig changed while the build ran/.test(line))).toBe(true);
+    expect(h.stderr.some((line) => /config changed while the build ran/.test(line))).toBe(true);
   });
 
   test('the package prebuild writes into app.json is stored under the post-prebuild key', async () => {
@@ -5514,10 +5588,10 @@ describe('re-fingerprint after Gradle', () => {
       planPrebuildFor: () => 'generate',
       fingerprint: async () => {
         const contents = readFileSync(config, 'utf8');
-        return {
-          hash: contents.includes('package') ? AFTER_BUILD : BEFORE_BUILD,
-          sources: [{ type: 'contents', id: 'expoConfig', contents, hash: contents, reasons: ['expoConfig'] }],
-        };
+        return androidFingerprint(contents.includes('package') ? AFTER_BUILD : BEFORE_BUILD, {
+          inputs: [{ name: 'config', kind: 'config', hash: contents }],
+          config: JSON.parse(contents),
+        });
       },
       prebuild: async () => {
         writeFileSync(config, JSON.stringify({ android: { package: 'com.anonymous.app' }, name: 'app' }));
@@ -5529,7 +5603,7 @@ describe('re-fingerprint after Gradle', () => {
 
     expect(h.calls.storeCached[0]?.[1]).toBe(`${AFTER_BUILD}-debug-sim`);
     expect(result.facts?.cacheKey).toBe(`${AFTER_BUILD}-debug-sim`);
-    expect(readState().prebuild).toEqual({ android: AFTER_BUILD });
+    expect(readState().prebuild).toEqual({ android: { schema: FINGERPRINT_SCHEMA, hash: AFTER_BUILD } });
   });
 });
 
@@ -6966,11 +7040,11 @@ describe('run statistics', () => {
     expect(runs[0]?.run.failed).toBe(true);
   });
 
-  test('a refusal before a cache key exists is not a run', async () => {
+  test('an uncached build with an uncertain fingerprint has no keyed run statistic', async () => {
     const { runs, recordStats } = recorder();
-    const h = harness({ recordStats, fingerprint: async () => ({ hash: null, sources: [] }) });
+    const h = harness({ recordStats, fingerprint: async () => ({ uncertain: 'fixture' }) });
 
-    expect((await h.run()).ok).toBe(false);
+    expect((await h.run()).ok).toBe(true);
     expect(runs).toEqual([]);
   });
 
@@ -7347,7 +7421,7 @@ describe('Metro prefetch', () => {
         },
         fingerprint: async () => {
           expect(warming).toBe(true);
-          return { hash: FINGERPRINT, sources: [] };
+          return androidFingerprint(FINGERPRINT);
         },
       });
       expect((await h.run()).ok).toBe(true);
@@ -7690,6 +7764,172 @@ describe('strict remote machine selection', () => {
     return { choose, offload };
   }
 
+  test('a changed full fingerprint refuses Android offload before transfer', async () => {
+    configureMini();
+    const { choose, offload } = offloadedRelease();
+    let observed: unknown;
+    offload.mockImplementation(async ({ fingerprintInputs }) => {
+      observed = await fingerprintInputs?.();
+      return { ok: false, machine: 'mini', reason: 'the native inputs changed before offload' };
+    });
+    let count = 0;
+    const h = harness({
+      buildMachine: 'mini',
+      fingerprint: async () => androidFingerprint(count++ === 0 ? FINGERPRINT : 'b'.repeat(64)),
+      build: vi.fn<() => never>(),
+    });
+    const result = await h.run();
+    expect(observed).toMatchObject({ uncertain: 'the native inputs changed before offload' });
+    expect(choose.mock.calls[0]?.[0]).not.toHaveProperty('reactNativeArtifact');
+    expect(count).toBe(2);
+    expect(result.ok).toBe(false);
+    expect(h.calls.storeCached).toEqual([]);
+  });
+
+  test('a verified Android peer query reuses its preflight for the worker', async () => {
+    configureMini();
+    mkdirSync(join(root, '.git'));
+    const { choose, offload } = offloadedRelease();
+    const original = offload.getMockImplementation();
+    assert(original);
+    let count = 0;
+    let counts: number[] = [];
+    let inputs: unknown;
+    offload.mockImplementation(async (args) => {
+      counts = [count];
+      inputs = await args.fingerprintInputs?.();
+      counts.push(count);
+      return original(args);
+    });
+    const h = harness({
+      buildMachine: 'mini',
+      fingerprint: async () => {
+        count++;
+        return androidFingerprint(FINGERPRINT);
+      },
+      build: vi.fn<() => never>(),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(choose.mock.calls[0]?.[0]).toHaveProperty('reactNativeArtifact');
+    expect(inputs).toMatchObject({ schema: 2 });
+    expect(counts).toEqual([2, 2]);
+  });
+
+  test('an unverified cache-only Android candidate never queries a peer', async () => {
+    configureMini();
+    vi.spyOn(offloadClient, 'offloadPlacement').mockReturnValue({
+      offload: false,
+      code: 'this-mac-free',
+      reason: 'fixture',
+    });
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
+    let count = 0;
+    const h = harness({
+      fingerprint: async () => androidFingerprint(count++ === 0 ? FINGERPRINT : 'b'.repeat(64)),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(choose).not.toHaveBeenCalled();
+    expect(h.calls.build).toHaveLength(1);
+  });
+
+  test.each([
+    'patch-package --reverse',
+    'patch-package --patch-dir --reverse',
+    'patch-package --patch-dir "--reverse"',
+    'cd vendor && patch-package',
+    'cd vendor\npatch-package --patch-dir custom-patches',
+    '(patch-package --patch-dir custom-patches)',
+    'patch-package --patch-dir vendor*',
+    'patch-package --patch-dir vendor-patches>patch.log',
+  ])('an unsupported patch invocation never queries a peer or stores an artifact: %s', async (script) => {
+    configureMini();
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ dependencies: { expo: '54.0.0' }, scripts: { postinstall: script } }),
+    );
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
+    const h = harness({
+      fingerprint: async () => {
+        const result = patches({ project: root, install: root });
+        if (!('uncertain' in result)) throw new Error('The patch invocation was unexpectedly accepted.');
+        return result;
+      },
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(choose).not.toHaveBeenCalled();
+    expect(h.calls.storeCached).toEqual([]);
+  });
+
+  test('a Windows-expanded patch directory never queries a peer or stores an artifact', async () => {
+    configureMini();
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({
+        dependencies: { expo: '54.0.0' },
+        scripts: { postinstall: 'patch-package --patch-dir "%PATCH_DIR%"' },
+      }),
+    );
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
+    const h = harness({
+      fingerprint: async () => {
+        const original = Object.getOwnPropertyDescriptor(process, 'platform');
+        try {
+          Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+          const result = patches({ project: root, install: root });
+          if (!('uncertain' in result)) throw new Error('The expanded patch path was unexpectedly accepted.');
+          return result;
+        } finally {
+          if (original) Object.defineProperty(process, 'platform', original);
+        }
+      },
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(choose).not.toHaveBeenCalled();
+    expect(h.calls.storeCached).toEqual([]);
+  });
+
+  test.each([
+    ['plain', false],
+    ['plain', true],
+    ['class', false],
+    ['class', true],
+  ] as const)('Android peer preflight preserves %s cleanup refusal when cancelled=%s', async (kind, cancel) => {
+    configureMini();
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
+    const controller = new AbortController();
+    const context = testContext({ signal: controller.signal });
+    const diagnostic = vi.fn<() => never>(() => {
+      throw new Error('diagnostic output failed');
+    });
+    const failure =
+      kind === 'plain'
+        ? { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true, message: 'unverified cleanup' }
+        : new WorkspaceProcessCleanupError([], 'unverified cleanup', 'Inspect the child.');
+    let count = 0;
+    const h = harness({
+      context,
+      buildMachine: 'mini',
+      recordStats: () => {
+        throw new Error('stats failed');
+      },
+      out: (line: string) => {
+        if (line.includes('Run statistics could not be recorded')) diagnostic();
+      },
+      fingerprint: async () => {
+        if (count++ === 0) return androidFingerprint(FINGERPRINT);
+        if (cancel) controller.abort();
+        throw failure;
+      },
+      build: vi.fn<() => never>(),
+    });
+    await expect(h.run()).rejects.toBe(failure);
+    expect(choose).not.toHaveBeenCalled();
+    expect(h.calls.storeCached).toEqual([]);
+    expect(diagnostic).toHaveBeenCalledOnce();
+  });
+
   test("a Release miss on a named machine installs its APK and replaces the entry with the worker's bytes", async () => {
     configureMini();
     offloadedRelease();
@@ -7729,6 +7969,7 @@ describe('strict remote machine selection', () => {
     { variant: 'release', asks: false, retained: false },
   ])('a $variant miss asks machines for an APK built elsewhere: $asks', async ({ variant, asks, retained }) => {
     configureMini();
+    if (asks) mkdirSync(join(root, '.git'));
     const { choose, offload } = offloadedRelease();
     await harness({ buildMachine: 'mini', variant, build: vi.fn<() => never>() }).run();
     expect(choose.mock.calls[0]?.[0].reactNativeArtifact !== undefined).toBe(asks);
@@ -7741,7 +7982,7 @@ describe('strict remote machine selection', () => {
   ])('an Expo $variant offload sends the gitignored .env.production: $sent', async ({ variant, sent }) => {
     configureMini();
     const { offload } = offloadedRelease();
-    vi.spyOn(buildCache, 'gitignoredFingerprintInputs').mockResolvedValue([]);
+    mkdirSync(join(root, '.git'));
     writeFileSync(
       join(root, 'package.json'),
       JSON.stringify({ scripts: { ios: 'expo run:ios' }, dependencies: { expo: '*' } }),
@@ -7750,11 +7991,17 @@ describe('strict remote machine selection', () => {
     await harness({
       buildMachine: 'mini',
       variant,
+      fingerprint: async (_root: string, _target: FingerprintTarget, options: { embedMode: string }) =>
+        androidFingerprint(FINGERPRINT, {
+          inputs:
+            options.embedMode === 'production' ? [{ name: '.env.production', kind: 'file', hash: 'a'.repeat(64) }] : [],
+        }),
       planPrebuildFor: () => 'none',
       build: vi.fn<() => never>(),
     }).run();
     const inputs = await offload.mock.calls[0]?.[0].fingerprintInputs?.();
-    expect(inputs?.ignored.includes(join(root, '.env.production'))).toBe(sent);
+    assert(inputs && !('uncertain' in inputs));
+    expect(inputs.ignored.includes(join(root, '.env.production'))).toBe(sent);
   });
 
   test.each([
@@ -7938,10 +8185,8 @@ describe('strict remote machine selection', () => {
         }
         return path;
       });
-      const fingerprint = async () => ({
-        hash: scenario === 'checkout changed' && built ? 'changed' : FINGERPRINT,
-        sources: [],
-      });
+      const fingerprint = async () =>
+        androidFingerprint(scenario === 'checkout changed' && built ? 'b'.repeat(64) : FINGERPRINT);
       const h = harness({
         context,
         json: true,

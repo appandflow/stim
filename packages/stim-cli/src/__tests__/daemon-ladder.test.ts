@@ -270,7 +270,7 @@ describe('the dormant stage', () => {
 describe('the pressure ladder', () => {
   const buildCache = () => join(home, 'build-cache');
   const metroCache = () => join(home, 'metro-cache');
-  const memo = () => join(home, 'fingerprint-memo');
+  const memo = () => join(home, 'fingerprint');
   const old = (path: string) => {
     const at = (Date.now() - 2 * 60 * MINUTE_MS) / 1000;
     utimesSync(path, at, at);

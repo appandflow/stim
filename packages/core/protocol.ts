@@ -49,7 +49,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * A server refuses a missing or lower one on its network listener; a client refuses a server that sends a lower one.
  * Peer 2 offloads through `job.start`, which runs the client's exact build on the worker.
  */
-export const PEER = 2;
+export const PEER = 3;
 
 /** The refusal a CLI gives a worker or device host whose `peer` is missing or lower than {@link PEER}. */
 // compat C12 permanent
@@ -1228,7 +1228,8 @@ export interface BuildAndroidOptions {
 
 export interface BuildFingerprintSource {
   id: string;
-  hash: string | null;
+  kind: 'file' | 'package' | 'config' | 'autolinking' | 'manifest' | 'env';
+  hash: string;
 }
 
 export interface GradleOffloadInputs {
@@ -1253,10 +1254,11 @@ export interface BuildStartParams {
   fingerprint: string | null;
   /** The id and hash of each source of `fingerprint`, so the machine can name the sources its fingerprint differs in. */
   fingerprintSources?: BuildFingerprintSource[];
-  /** Paths relative to `project` that the client's git ignores for `fingerprint`, such as through .git/info/exclude. */
-  fingerprintIgnored?: string[];
-  /** Top-level entries of `project` that the client's git tracks although an ignore pattern matches them. */
-  fingerprintTracked?: string[];
+  fingerprintSchema?: number;
+  fingerprintEnv?: { set: Record<string, string | { path: string }>; absent: string[] };
+  fingerprintNative?: 'tracked' | 'generated';
+  fingerprintLayout?: { projectPath: string | null; gradleRoot: string | null; module: string | null };
+  fingerprintRuntime?: { node: string; evaluator: string; packages: Record<string, string | null> };
   native?:
     | {
         provider: 'xcode';
@@ -1292,8 +1294,8 @@ export interface BuildStartParams {
   cacheArtifact?: boolean;
   /**
    * The client has no Xcode and left pod install to the machine. When the machine's fingerprint after pod install
-   * differs from `fingerprint` only in `fingerprintSources` inside the iOS project directory, it builds under and
-   * reports its own instead of refusing. An older machine ignores it.
+   * differs from `fingerprint` only in the iOS Podfile.lock row, it builds under and reports its own instead of
+   * refusing.
    */
   podsOnWorker?: boolean;
   /**

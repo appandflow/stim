@@ -1,17 +1,27 @@
-import { stat } from 'node:fs/promises';
+import { readFile, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { dirname, join, relative } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import type { DaemonPressure, DaemonWorkspaceDecision } from '@stim-cli/core/state';
-import { LOCKFILES } from '../cache/static-fingerprint.ts';
+import { fingerprintPendingVerifyDir, LOCKFILES } from '@stim-cli/core/state';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
-import { runFingerprintPrecompute, type FingerprintPrecomputeRequest } from '../fingerprint-precompute.ts';
-import type { FingerprintPrecompute } from '../cache/fingerprint-memo.ts';
+import {
+  runFingerprintPrecompute,
+  runFingerprintVerification,
+  type FingerprintPrecompute,
+  type FingerprintPrecomputeRequest,
+} from '../fingerprint-precompute.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { sizeScanDeferred } from '../stimd/passes/measure.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { gitAsync } from '../workspace/git.ts';
-import { resolveAndroidLayout, resolveIosProjectDir, resolveProjectSettingsAsync } from '../workspace/settings.ts';
+import {
+  fingerprintInputsSetting,
+  resolveAndroidLayout,
+  resolveIosProjectDir,
+  resolveProjectSettingsAsync,
+} from '../workspace/settings.ts';
 
 export const MAX_PRECOMPUTES_PER_PASS = 2;
 
@@ -26,6 +36,10 @@ export interface PrecomputeDependencies {
   signature: (root: string, signal: AbortSignal) => Promise<string>;
   requests: (path: string, project: ProjectRecord, operation: StimContext) => Promise<FingerprintPrecomputeRequest[]>;
   run: (operation: StimContext, request: FingerprintPrecomputeRequest) => Promise<FingerprintPrecompute>;
+  verify: (
+    operation: StimContext,
+    request: FingerprintPrecomputeRequest & { pendingFile: string },
+  ) => Promise<{ verified: number } | { outcome: 'skipped'; reason: string }>;
   loadDeferred: () => boolean;
 }
 
@@ -72,7 +86,11 @@ async function lockfileSignature(root: string): Promise<string> {
 }
 
 export async function treeSignature(root: string, signal: AbortSignal): Promise<string> {
-  const head = await gitAsync(root, ['rev-parse', 'HEAD'], { signal }).catch(() => 'no-head');
+  const head = await gitAsync(root, ['rev-parse', 'HEAD'], { signal }).catch((error: unknown) => {
+    if (error instanceof Error && 'reportCleanup' in error) throw error;
+    signal.throwIfAborted();
+    return 'no-head';
+  });
   return `${head}|${await lockfileSignature(root)}`;
 }
 
@@ -93,16 +111,24 @@ async function precomputeRequests(
     signal: operation.signal,
     declareFor: operation,
   });
+  const inputs = fingerprintInputsSetting(settings);
+  const configured = inputs === undefined ? {} : { fingerprintInputs: inputs };
   const requests: FingerprintPrecomputeRequest[] = [];
   const ios = used.has('ios') ? projectRegistry.selectIos(root) : null;
   if (ios && 'id' in ios && ios.id === 'react-native')
-    requests.push({ root, platform: 'ios', iosProjectPath: resolveIosProjectDir(settings, root).relative });
+    requests.push({
+      root,
+      platform: 'ios',
+      iosProjectPath: resolveIosProjectDir(settings, root).relative,
+      ...configured,
+    });
   const android = used.has('android') ? projectRegistry.selectAndroid(root) : null;
   if (android && 'id' in android && android.id === 'react-native')
     requests.push({
       root,
       platform: 'android',
       androidLayout: resolveAndroidLayout(settings, root, context.repoRoot ?? root),
+      ...configured,
     });
   return requests;
 }
@@ -120,10 +146,12 @@ export function createFingerprintPrecompute(log: Log, overrides: Partial<Precomp
     signature: treeSignature,
     requests: precomputeRequests,
     run: runFingerprintPrecompute,
+    verify: runFingerprintVerification,
     loadDeferred: sizeScanDeferred,
     ...overrides,
   };
   const seen = new Map<string, string>();
+  let pendingCursor = 0;
   let held: string | null = null;
   const failed = (path: string, error: unknown) =>
     log('warn', 'daemon_fingerprint_precompute', `${path}: ${error instanceof Error ? error.message : String(error)}`, {
@@ -132,6 +160,73 @@ export function createFingerprintPrecompute(log: Log, overrides: Partial<Precomp
     });
   return {
     async run({ config, workspaces, pressure, operation }: PrecomputeInput, act: boolean): Promise<void> {
+      if (act) {
+        const directory = fingerprintPendingVerifyDir(operation.home);
+        const names = await readdir(directory).catch((): string[] => []);
+        const pending = names.filter((name) => name.endsWith('.json')).toSorted();
+        const roots = new Set<string>();
+        const count = Math.min(pending.length, 128);
+        let visited = 0;
+        let started = 0;
+        for (; visited < count && started < MAX_PRECOMPUTES_PER_PASS; visited++) {
+          operation.signal.throwIfAborted();
+          const name = pending[(pendingCursor + visited) % pending.length];
+          if (!name) continue;
+          let value: unknown;
+          try {
+            value = JSON.parse(await readFile(join(directory, name), { encoding: 'utf8', signal: operation.signal }));
+          } catch {
+            operation.signal.throwIfAborted();
+            continue;
+          }
+          if (
+            !value ||
+            typeof value !== 'object' ||
+            !('root' in value) ||
+            typeof value.root !== 'string' ||
+            !('target' in value) ||
+            !value.target ||
+            typeof value.target !== 'object' ||
+            !('platform' in value.target) ||
+            (value.target.platform !== 'ios' && value.target.platform !== 'android')
+          )
+            continue;
+          let root: string;
+          try {
+            root = await realpath(value.root);
+          } catch (error) {
+            operation.signal.throwIfAborted();
+            if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+              const claimed = join(directory, `claim-${randomUUID()}.json`);
+              try {
+                await rename(join(directory, name), claimed);
+                const current: unknown = JSON.parse(await readFile(claimed, 'utf8'));
+                if (current && typeof current === 'object' && 'root' in current && current.root === value.root) {
+                  try {
+                    await realpath(value.root);
+                  } catch (missing) {
+                    if (missing && typeof missing === 'object' && 'code' in missing && missing.code === 'ENOENT')
+                      await rm(claimed, { force: true });
+                  }
+                }
+              } catch {}
+            }
+            continue;
+          }
+          if (roots.has(root)) continue;
+          roots.add(root);
+          started++;
+          try {
+            const result = await d.verify(operation, { root, platform: value.target.platform, pendingFile: name });
+            if ('outcome' in result) failed(root, new Error(result.reason));
+          } catch (error) {
+            if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
+            operation.signal.throwIfAborted();
+            failed(root, error);
+          }
+        }
+        pendingCursor = pending.length ? (pendingCursor + visited) % pending.length : 0;
+      }
       for (const path of seen.keys()) if (!config?.projects[path]) seen.delete(path);
       const live = workspaces.flatMap((entry) => {
         const project = entry.outcome === 'active' ? config?.projects[entry.path] : undefined;
@@ -150,6 +245,7 @@ export function createFingerprintPrecompute(log: Log, overrides: Partial<Precomp
         try {
           signature = await d.signature(where, operation.signal);
         } catch (error) {
+          if (error instanceof Error && 'reportCleanup' in error) throw error;
           operation.signal.throwIfAborted();
           failed(path, error);
           continue;
@@ -159,6 +255,7 @@ export function createFingerprintPrecompute(log: Log, overrides: Partial<Precomp
         try {
           requests = await d.requests(path, project, operation);
         } catch (error) {
+          if (error instanceof Error && 'reportCleanup' in error) throw error;
           operation.signal.throwIfAborted();
           failed(path, error);
           seen.set(path, signature);
@@ -182,6 +279,7 @@ export function createFingerprintPrecompute(log: Log, overrides: Partial<Precomp
             outcome = result.outcome;
             if (result.outcome === 'skipped') reason = result.reason;
           } catch (error) {
+            if (error instanceof Error && 'reportCleanup' in error) throw error;
             operation.signal.throwIfAborted();
             outcome = 'failed';
             reason = error instanceof Error ? error.message : String(error);

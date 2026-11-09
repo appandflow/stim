@@ -267,7 +267,7 @@ only while its `server.acceptClientBuilds` is `true`; otherwise it refuses
 with `This machine takes only published Stim builds.` and the setting to
 change. Completed artifacts on a worker are reused when both Stim builds carry
 the same build compatibility version. Every connection between two machines
-also compares one wire integer, `peer`: a worker whose Stim is older than this
+also compares one wire integer, `peer` (3 for the owned-fingerprint protocol): a worker whose Stim is older than this
 one's is refused with `peer-too-old`, `stim remote update <mac>`, and the
 `npm i -g stim@<version> && stim service install` to run there.
 
@@ -816,6 +816,9 @@ temporarily; it cannot authenticate.
   fingerprint sources that differ and the files `pod install` or prebuild rewrote
   on the worker; make that input agree on both Macs. Rerun with
   `--remote-build auto` or `local` only when you want to change placement.
+  If cleanup cannot be confirmed, Stim retains the worker's repository claim
+  and any build-slot and selected-engine claims. Verify the worker and evaluator groups
+  stopped, then recover only the claim paths in the refusal.
 - [STIM_HOSTING_REFUSED](./troubleshooting.md#STIM_HOSTING_REFUSED): the host
   is unreachable, has no compatible simulator or cannot confirm the session.
   Retry the same host, or reconcile with `stim stop` when it is reachable.

@@ -631,6 +631,12 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Branch `worktree warm --refresh` expects the source checkout on',
   },
   {
+    key: 'cache.fingerprintInputs',
+    type: { kind: 'strings' },
+    scopes: PROJECT,
+    description: 'Additional app-relative files and directories included in the native fingerprint',
+  },
+  {
     key: 'cache.provider',
     type: { kind: 'string', pattern: '\\S', patternHelp: 'a module path or package name' },
     scopes: PROJECT,

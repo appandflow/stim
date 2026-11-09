@@ -1,3 +1,8 @@
+import { FINGERPRINT_SCHEMA } from '../fingerprint/key.ts';
+import type { Fingerprint } from '../fingerprint/evaluate.ts';
+import * as fingerprintEvaluator from '../fingerprint/evaluate.ts';
+import { fingerprintForBuild } from '../fingerprint/operation.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import * as desktopLinks from '../devices/stim-desktop.ts';
 import { testContext } from './_context.ts';
 import { recordBuild, recordedBuildKey } from '../engine/recorded-build.ts';
@@ -20,7 +25,6 @@ import { workerFailureReason } from '../build-placement.ts';
 import { POD_MISSING_REASON } from '../engine/deps.ts';
 import * as offloadClient from '../offload/client.ts';
 import * as iosDevices from '../devices/ios.ts';
-import * as buildCache from '../cache/build-cache.ts';
 import * as tailnet from '../offload/tailnet.ts';
 import * as sharedState from '@stim-cli/core/state';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
@@ -148,7 +152,22 @@ const writeHostedIos = (root: string, slot: string, host: HostedIosPlacement | n
   writeHostedNative(root, slot, host, 'ios');
 
 const UDID = 'BF2A1C3D-4E5F-6071-8293-A4B5C6D7E8F9';
-const FINGERPRINT = 'a3f9b1c2d3e4f5';
+const FINGERPRINT = 'a3f9b1c2d3e4f5'.padEnd(64, '0');
+const iosFingerprint = (hash: string, fields: Partial<Fingerprint> = {}): Fingerprint => ({
+  schema: FINGERPRINT_SCHEMA,
+  hash,
+  platform: 'ios',
+  native: 'tracked',
+  inputs: [],
+  nativePackages: [],
+  configModules: [],
+  config: null,
+  portable: true,
+  opaque: [],
+  from: 'evaluated',
+  fingerprintConfigKeys: [],
+  ...fields,
+});
 const DEVICE_PID = 4242;
 const IDENTITY = { sha1: 'A'.repeat(40), name: 'Apple Development: Tester (TEAMID5678)' };
 const PROFILE = {
@@ -263,7 +282,7 @@ interface RecordedArgs {
   uploadRemote: { fingerprintHash?: unknown; buildPath?: unknown };
   resolveRemote: { projectRoot?: unknown; platform?: unknown; fingerprintHash?: unknown };
   replaceCollector: { udid?: unknown; bundleId?: unknown; appName?: unknown; appExecutable?: unknown };
-  loadProjectProvider: { isExpo?: unknown; sources?: unknown };
+  loadProjectProvider: { isExpo?: unknown; sources?: unknown; config?: unknown };
   acquireBuildLock: { root?: unknown; platform?: unknown; logFile?: unknown; key?: unknown };
   untrackedNativeFiles: { projectRoot?: unknown; iosProjectPath?: unknown };
   ensureWorkspaceStorage: unknown;
@@ -338,15 +357,15 @@ function harness(overrides: LooseDeps = {}) {
     warmMetro: async (args) => {
       record('warmMetro', args);
     },
-    fingerprintProject: async (path) => {
-      record('fingerprintProject', path);
-      return { hash: FINGERPRINT, sources: [] };
+    fingerprint: async (path) => {
+      record('fingerprint', path);
+      return iosFingerprint(FINGERPRINT);
     },
-    memoizedFingerprint: async (projectRoot, target, { fingerprint }) => ({
-      fingerprint: fingerprint ? await fingerprint(projectRoot, target) : null,
-      memoHit: false,
-      check: null,
-    }),
+    fingerprintForBuild: async (projectRoot, target, { operation, embedMode }) => {
+      const compute = deps.fingerprint as NonNullable<IosDeps['fingerprint']>;
+      const result = await compute(projectRoot, target, { env: operation?.env ?? process.env, embedMode, operation });
+      return 'uncertain' in result ? result : { fingerprint: result, check: null };
+    },
     untrackedNativeFiles: (args) => {
       record('untrackedNativeFiles', args);
       return [];
@@ -364,7 +383,7 @@ function harness(overrides: LooseDeps = {}) {
         platform,
         key,
         path,
-        options: typeof options === 'string' ? options : { overwrite: options?.overwrite, sources: options?.sources },
+        options: typeof options === 'string' ? options : { overwrite: options?.overwrite, inputs: options?.inputs },
       });
       return path;
     },
@@ -589,6 +608,62 @@ async function run(opts: Record<string, unknown> = {}, overrides: LooseDeps = {}
 function reserve(port = 8082) {
   upsertProject(root, { metroPort: port });
 }
+
+test('a queued fingerprint disagreement is warned once on stderr without changing JSON output', async () => {
+  reserve();
+  const directory = join(tmpHome, 'fingerprint');
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(
+    join(directory, 'disagreements.json'),
+    JSON.stringify({
+      count: 1,
+      unreported: [{ platform: 'ios', recorded: 'a'.repeat(64), current: 'b'.repeat(64), changes: [] }],
+    }),
+  );
+  vi.spyOn(fingerprintEvaluator, 'fingerprint').mockResolvedValue(iosFingerprint(FINGERPRINT));
+  const first = await run({ json: true }, { fingerprintForBuild });
+  const second = await run({ json: true }, { fingerprintForBuild });
+  const warning = 'an earlier cache lookup used fingerprint';
+  expect(first.stderr).toContain(warning);
+  expect(first.logs.join('\n')).not.toContain(warning);
+  expect(second.stderr).not.toContain(warning);
+  expect(parseFirst(first.logs)).toBeDefined();
+  expect(parseFirst(second.logs)).toBeDefined();
+});
+
+test('a patch newer than the install prevents storing a local iOS build', async () => {
+  reserve();
+  mkdirSync(join(root, 'node_modules'), { recursive: true });
+  writeFileSync(join(root, 'node_modules', '.modules.yaml'), 'layoutVersion: 5\n');
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(join(root, 'node_modules', '.modules.yaml'), old, old);
+  mkdirSync(join(root, 'patches'), { recursive: true });
+  writeFileSync(join(root, 'patches', 'fixture.patch'), 'fixture patch\n');
+  const store = vi.fn<Required<IosDeps>['storeBuild']>();
+  const result = await run({ json: true }, { storeBuild: store });
+  expect(result.exitCode).toBeNull();
+  expect(store).not.toHaveBeenCalled();
+  expect(result.stderr).toContain('changed after the last install');
+});
+
+test.each([true, false])('a declared custom iOS patch newer=%s controls the local store', async (newer) => {
+  reserve();
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  manifest.pnpm = { patchedDependencies: { 'fixture@1.0.0': 'vendor-patches/nested/fixture.patch' } };
+  writeFileSync(join(root, 'package.json'), JSON.stringify(manifest));
+  mkdirSync(join(root, 'vendor-patches', 'nested'), { recursive: true });
+  writeFileSync(join(root, 'vendor-patches', 'nested', 'fixture.patch'), 'fixture patch\n');
+  mkdirSync(join(root, 'node_modules'), { recursive: true });
+  const stamp = join(root, 'node_modules', '.modules.yaml');
+  writeFileSync(stamp, 'layoutVersion: 5\n');
+  const time = new Date(Date.now() + (newer ? -60_000 : 60_000));
+  utimesSync(stamp, time, time);
+  const store = vi.fn<Required<IosDeps>['storeBuild']>((_platform, _key, path) => path);
+  const result = await run({ json: true }, { storeBuild: store });
+  expect(result.exitCode).toBeNull();
+  expect(store).toHaveBeenCalledTimes(newer ? 0 : 1);
+  expect(result.stderr.includes('changed after the last install')).toBe(newer);
+});
 
 function buildRecords() {
   const file = buildLogFile(root);
@@ -833,7 +908,7 @@ describe('the Metro gate', () => {
     );
     expect(exitCode).toBe(1);
     expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
-    expect(calls.order.includes('fingerprintProject')).toBeFalsy();
+    expect(calls.order.includes('fingerprint')).toBeFalsy();
     expect(parseFirst(logs)).toMatchObject({
       code: 'STIM_SUPERVISOR_EXITED',
       message: "Could not start this workspace's dev server: The supervisor exited (code 1).",
@@ -914,14 +989,14 @@ describe('the simulator boot gate', () => {
           events.push('boot end');
           return { ok: true, udid: UDID };
         },
-        fingerprintProject: async () => {
+        fingerprint: async () => {
           fingerprintStartedAt ||= clock;
           events.push('fingerprint start');
           markFingerprintStarted();
           await tick();
           clock += 3_000;
           events.push('fingerprint end');
-          return { hash: FINGERPRINT, sources: [] };
+          return iosFingerprint(FINGERPRINT);
         },
       },
     );
@@ -962,13 +1037,13 @@ describe('the simulator boot gate', () => {
     expect(out).toMatch(/CoreLocationMigrator failed/);
   });
 
-  test('a fingerprint that cannot be computed still refuses before the device is used', async () => {
+  test('an uncertain fingerprint builds and installs without caching', async () => {
     reserve();
-    const { exitCode, errs, calls } = await run({}, { fingerprintProject: async () => null });
-    expect(exitCode).toBe(1);
-    expect(calls.order.includes('buildIos')).toBe(false);
-    expect(calls.order.includes('installIosApp')).toBe(false);
-    expect(errs.join('\n')).toMatch(/STIM_NO_FINGERPRINT/);
+    const { exitCode, calls } = await run({}, { fingerprint: async () => ({ uncertain: 'fixture' }) });
+    expect(exitCode).toBe(null);
+    expect(calls.order).toContain('buildIos');
+    expect(calls.order).toContain('installIosApp');
+    expect(calls.order).not.toContain('storeBuild');
   });
 });
 
@@ -1367,9 +1442,9 @@ describe('Metro prefetch', () => {
             warming = true;
             return new Promise(() => {});
           },
-          fingerprintProject: async () => {
+          fingerprint: async () => {
             expect(warming).toBe(true);
-            return { hash: FINGERPRINT, sources: [] };
+            return iosFingerprint(FINGERPRINT);
           },
         },
       );
@@ -1942,49 +2017,40 @@ describe('the cache', () => {
     expect(facts.appPath).toBe(cachedApp);
   });
 
-  test('a memoized fingerprint whose background check disagrees warns at the end of the run', async () => {
+  test('an indexed fingerprint whose background check disagrees warns at the end of the run', async () => {
     reserve();
-    const consulted: boolean[] = [];
     const { exitCode, stderr } = await run(
       {},
       {
         resolveBuild: () => '/cache/Fixture.app',
-        memoizedFingerprint: async (_root, _target, { consult }) => {
-          consulted.push(consult);
-          return {
-            fingerprint: { hash: FINGERPRINT, sources: [] },
-            memoHit: true,
-            check: {
-              settle: async () => ({ status: 'stale', recorded: FINGERPRINT, current: 'ffee0011' }),
-              cancel: () => {},
-            },
-          };
-        },
+        fingerprintForBuild: async () => ({
+          fingerprint: iosFingerprint(FINGERPRINT, { from: 'index' }),
+          check: {
+            join: async () => ({ status: 'disagreed', recorded: FINGERPRINT, current: 'ffee0011' }),
+            settle: async () => ({ status: 'disagreed', recorded: FINGERPRINT, current: 'ffee0011' }),
+            cancel: async () => {},
+          },
+        }),
       },
     );
     expect(exitCode).toBe(null);
-    expect(consulted).toEqual([true]);
-    expect(stderr).toMatch(/matches a recorded fingerprint of this tree/);
-    expect(stderr).toMatch(/fingerprint a3f9b1\.\. no longer matches the tree \(ffee0011\)/);
-    expect(buildRecords().find((entry) => entry.event === 'fingerprint_memo_stale')).toMatchObject({
+    expect(stderr).toMatch(/matches a recorded fingerprint/);
+    expect(stderr).toMatch(/recorded fingerprint a3f9b1\.\. no longer matches the tree \(ffee0011\)/);
+    expect(buildRecords().find((entry) => entry.event === 'fingerprint_index_disagreement')).toMatchObject({
       recorded: FINGERPRINT,
       current: 'ffee0011',
     });
   });
 
-  test('--no-build-cache fingerprints in full without consulting the memo', async () => {
+  test('--no-build-cache computes a fresh fingerprint without consulting the index', async () => {
     reserve();
-    const consulted: boolean[] = [];
+    const consulted: (boolean | undefined)[] = [];
     await run(
       { buildCache: false },
       {
-        memoizedFingerprint: async (projectRoot, target, { consult, fingerprint }) => {
+        fingerprintForBuild: async (_root, _target, { consult }) => {
           consulted.push(consult);
-          return {
-            fingerprint: fingerprint ? await fingerprint(projectRoot, target) : null,
-            memoHit: false,
-            check: null,
-          };
+          return { fingerprint: iosFingerprint(FINGERPRINT), check: null };
         },
       },
     );
@@ -2031,7 +2097,7 @@ describe('the cache', () => {
     expect(exitCode).toBe(null);
     const order = calls.order.filter((c) =>
       [
-        'fingerprintProject',
+        'fingerprint',
         'runPrebuild',
         'runPodInstall',
         'buildIos',
@@ -2041,26 +2107,18 @@ describe('the cache', () => {
       ].includes(c),
     );
     expect(order).toEqual([
-      'fingerprintProject',
+      'fingerprint',
       'runPrebuild',
       'runPodInstall',
-      'fingerprintProject',
+      'fingerprint',
       'buildIos',
-      'fingerprintProject',
+      'fingerprint',
       'storeBuild',
       'installIosApp',
       'launchIosApp',
     ]);
     expect(calls.args.storeBuild.path).toBe(appPath);
     expect(calls.args.storeBuild.platform).toBe('ios');
-  });
-
-  test('an unresolvable fingerprint is STIM_NO_FINGERPRINT, never an unkeyed build', async () => {
-    reserve();
-    const { errs, exitCode, calls } = await run({}, { fingerprintProject: async () => null });
-    expect(exitCode).toBe(1);
-    expect(!calls.order.includes('buildIos')).toBeTruthy();
-    expect(errs.join('\n')).toMatch(/STIM_NO_FINGERPRINT/);
   });
 
   test('--no-build-cache looks nothing up: not the local cache, not the provider', async () => {
@@ -2105,14 +2163,20 @@ describe('the cache', () => {
       },
     );
     expect(exitCode).toBe(null);
-    expect(calls.args.storeBuild.options).toEqual({ overwrite: true, sources: [] });
+    expect(calls.args.storeBuild.options).toEqual({
+      overwrite: true,
+      inputs: { schema: FINGERPRINT_SCHEMA, hash: FINGERPRINT, inputs: [] },
+    });
     expect(calls.order.includes('uploadRemote')).toBeTruthy();
   });
 
   test('a default run stores without overwriting: two worktrees at the same fingerprint agree', async () => {
     reserve();
     const { calls } = await run({});
-    expect(calls.args.storeBuild.options).toEqual({ overwrite: false, sources: [] });
+    expect(calls.args.storeBuild.options).toEqual({
+      overwrite: false,
+      inputs: { schema: FINGERPRINT_SCHEMA, hash: FINGERPRINT, inputs: [] },
+    });
   });
 
   test('a build that follows a failed swap REPLACES the entry that just failed (Android form)', async () => {
@@ -2127,7 +2191,10 @@ describe('the cache', () => {
     );
     expect(exitCode).toBe(null);
     expect(calls.order.includes('buildIos')).toBeTruthy();
-    expect(calls.args.storeBuild.options).toEqual({ overwrite: true, sources: [] });
+    expect(calls.args.storeBuild.options).toEqual({
+      overwrite: true,
+      inputs: { schema: FINGERPRINT_SCHEMA, hash: FINGERPRINT, inputs: [] },
+    });
   });
 
   test('a cache store that fails does not fail a successful build', async () => {
@@ -2285,6 +2352,109 @@ describe('the remote cache', () => {
     }
     expect((await pending).exitCode).toBe(1);
     expect(installationStarted).toBe(true);
+  });
+
+  test('preserves the first cleanup refusal while joining the prepared artifact cleanup', async () => {
+    reserve();
+    const first = new WorkspaceProcessCleanupError([], 'Install cleanup unresolved', 'Inspect the child.');
+    const later = new WorkspaceProcessCleanupError([], 'Upload cleanup unresolved', 'Inspect the child.');
+    const cancel = vi.fn<() => Promise<void>>(async () => {
+      throw later;
+    });
+    const upload = vi.fn<NonNullable<IosDeps['uploadRemote']>>(async () => {
+      throw later;
+    });
+    const temporary = join(tmpHome, 'prepared-retained-copy');
+    const { deps, calls } = harness({
+      detectIsExpo: () => true,
+      loadProjectProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'EAS' }),
+      fingerprintForBuild: async () => ({
+        fingerprint: iosFingerprint(FINGERPRINT),
+        check: { join: async () => ({ status: 'confirmed' }), settle: async () => ({ status: 'confirmed' }), cancel },
+      }),
+      uploadRemote: upload,
+      installIosApp: () => {
+        throw first;
+      },
+    });
+    const registry = deps.projectRegistry;
+    assert(registry);
+    deps.projectRegistry = {
+      ...registry,
+      selectIos(path) {
+        const selected = registry.selectIos(path);
+        if ('problem' in selected) return selected;
+        return {
+          ...selected,
+          load: async (settings) => {
+            const project = await selected.load(settings);
+            return {
+              ...project,
+              artifact(context) {
+                const recipe = project.artifact(context);
+                return {
+                  ...recipe,
+                  materialize: async (appPath, options) => {
+                    const result = await recipe.materialize(appPath, options);
+                    if (options.fresh && result) {
+                      const copy = join(temporary, 'Fixture.app');
+                      mkdirSync(copy, { recursive: true });
+                      writeFileSync(join(copy, 'Info.plist'), 'retained app bytes');
+                      options.ownTemporary(temporary);
+                      return copy;
+                    }
+                    return result;
+                  },
+                };
+              },
+            };
+          },
+        };
+      },
+    };
+    await expect(runIosOperation(testContext(), root, { json: true }, deps as IosDeps)).rejects.toBe(first);
+    expect(calls.order).toContain('buildIos');
+    expect(upload).toHaveBeenCalledOnce();
+    expect(upload.mock.calls[0]?.[0]?.buildPath).toBe(join(temporary, 'Fixture.app'));
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(readFileSync(join(temporary, 'Fixture.app', 'Info.plist'), 'utf8')).toBe('retained app bytes');
+  });
+
+  test('an acquisition exception joins its background fingerprint before returning', async () => {
+    reserve();
+    const failure = new WorkspaceProcessCleanupError([], 'Build cleanup unresolved', 'Inspect the child.');
+    let entered!: () => void;
+    let finish!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const cancel = vi.fn<() => Promise<void>>(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+          entered();
+        }),
+    );
+    const { deps } = harness({
+      fingerprintForBuild: async () => ({
+        fingerprint: iosFingerprint(FINGERPRINT, { from: 'index' }),
+        check: { join: async () => ({ status: 'confirmed' }), settle: async () => ({ status: 'confirmed' }), cancel },
+      }),
+      buildIos: async () => {
+        throw failure;
+      },
+    });
+    let returned = false;
+    const pending = runIosOperation(testContext(), root, { json: true }, deps as IosDeps)
+      .catch((error: unknown) => error)
+      .finally(() => {
+        returned = true;
+      });
+    await started;
+    expect(returned).toBe(false);
+    finish();
+    expect(await pending).toBe(failure);
+    expect(cancel).toHaveBeenCalledOnce();
   });
 
   test('a provider that THROWS degrades to a local-only run with a note', async () => {
@@ -2910,7 +3080,7 @@ describe('pods', () => {
           installed = true;
           return { ok: true, durationMs: 1 };
         },
-        fingerprintProject: async () => ({ hash: installed ? 'b'.repeat(40) : FINGERPRINT, sources: [] }),
+        fingerprint: async () => iosFingerprint(installed ? 'b'.repeat(64) : FINGERPRINT),
         resolveBuild: () => (installed ? '/cache/Fixture.app' : null),
         installIosApp: async () => {
           seen.push(active());
@@ -3872,9 +4042,9 @@ test('ios fingerprints with platforms scoped to ios', async () => {
   await run(
     {},
     {
-      fingerprintProject: async (path, options) => {
+      fingerprint: async (path, options) => {
         seen.push({ path, options });
-        return { hash: FINGERPRINT, sources: [] };
+        return iosFingerprint(FINGERPRINT);
       },
     },
   );
@@ -4236,9 +4406,9 @@ describe('--remote', () => {
       { remote: 'eas' },
       {
         ...remote.deps,
-        fingerprintProject: async () => {
+        fingerprint: async () => {
           vi.advanceTimersByTime(1000);
-          return { hash: FINGERPRINT, sources: [] };
+          return iosFingerprint(FINGERPRINT);
         },
       },
     );
@@ -4519,7 +4689,7 @@ describe('--remote', () => {
     const remote = remoteStub();
     reserve();
     const { calls } = await run({ remote: 'eas' }, remote.deps);
-    expect(calls.order.includes('fingerprintProject')).toBeTruthy();
+    expect(calls.order.includes('fingerprint')).toBeTruthy();
     expect(calls.order.includes('resolveBuild')).toBeTruthy();
     expect(calls.order.includes('buildIos')).toBeTruthy();
   });
@@ -4600,7 +4770,7 @@ describe('--remote', () => {
     expect(exitCode).toBe(1);
     expect(stderr).toContain('agent-device is not on PATH.');
     expect(resolveEasDevelopmentBuild).not.toHaveBeenCalled();
-    expect(calls.order.includes('fingerprintProject')).toBeFalsy();
+    expect(calls.order.includes('fingerprint')).toBeFalsy();
   });
 
   test('without the flag nothing remote is consulted', async () => {
@@ -4742,32 +4912,36 @@ test('a miss against a stored entry says what changed, logs fingerprint_diff and
   const entry = join(tmpHome, 'build-cache', 'ios', 'old-key');
   mkdirSync(entry, { recursive: true });
   writeFileSync(
-    join(entry, 'fingerprint-sources.json'),
-    JSON.stringify([
-      { type: 'file', filePath: 'ios/Podfile.lock', hash: 'aa' },
-      { type: 'contents', id: 'expoConfig', hash: 'bb' },
-    ]),
+    join(entry, 'inputs.json'),
+    JSON.stringify({
+      schema: FINGERPRINT_SCHEMA,
+      hash: 'oldhash',
+      inputs: [
+        { name: 'ios/Podfile.lock', kind: 'file', hash: 'aa' },
+        { name: 'config', kind: 'config', hash: 'bb' },
+      ],
+    }),
   );
 
   const { errs } = await run(
     {},
     {
-      fingerprintProject: async () => ({
-        hash: FINGERPRINT,
-        sources: [
-          { type: 'file', filePath: 'ios/Podfile.lock', hash: 'a2' },
-          { type: 'contents', id: 'expoConfig', hash: 'bb' },
-        ],
-      }),
+      fingerprint: async () =>
+        iosFingerprint(FINGERPRINT, {
+          inputs: [
+            { name: 'ios/Podfile.lock', kind: 'file', hash: 'a2' },
+            { name: 'config', kind: 'config', hash: 'bb' },
+          ],
+        }),
     },
   );
 
-  expect(errs).toContain(phaseLine('cache', 'miss: ios/Podfile.lock changed'));
+  expect(errs).toContain(phaseLine('cache', 'miss: ios/ changed'));
   const state = readWorkspaceState(root) as { lastIosBuild?: { missReason?: unknown } } | null;
   expect(state?.lastIosBuild?.missReason).toEqual({
     kind: 'changed',
-    summary: 'ios/Podfile.lock changed',
-    changes: [{ source: 'ios/Podfile.lock', change: 'changed', category: 'file' }],
+    summary: 'ios/ changed',
+    changes: [{ source: 'ios/Podfile.lock', change: 'changed', category: 'native-dir' }],
     changeCount: 1,
     baseline: { fingerprint: 'oldhash', cacheKey: 'old-key', from: 'workspace' },
     rekeyedBy: [],
@@ -5011,7 +5185,7 @@ test('a runtime preparation refusal reaches the failure callback before device o
     for (const operation of [
       'ensureOwnedDevice',
       'ensureBooted',
-      'fingerprintProject',
+      'fingerprint',
       'buildIos',
       'installIosApp',
       'launchIosApp',
@@ -5352,7 +5526,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
 
   function shifting() {
     let call = 0;
-    return async () => ({ hash: call++ === 0 ? COLD : WARM, sources: [{ type: 'dir', filePath: 'ios' }] });
+    return async () => iosFingerprint(call++ === 0 ? COLD : WARM);
   }
 
   test.each([
@@ -5373,10 +5547,10 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
           mutation === 'pod install'
             ? { hasPodfile: true, lockText: 'A', manifestText: 'B' }
             : { hasPodfile: false, lockText: null, manifestText: null },
-        fingerprintProject: async () => {
-          if (fingerprintCalls++ === 0) return { hash: COLD, sources: [] };
+        fingerprint: async () => {
+          if (fingerprintCalls++ === 0) return iosFingerprint(COLD);
           if (failure === 'throws') throw new Error('unable to read updated native inputs');
-          return { hash: '', sources: [] };
+          return { uncertain: 'unable to read updated native inputs' };
         },
         resolveCacheProviderConfig: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
         loadCacheProvider: async () => ({
@@ -5423,7 +5597,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
           detectIsExpo: () => true,
           planPrebuild: () => 'generate',
           readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
-          fingerprintProject: shifting(),
+          fingerprint: shifting(),
           resolveBuild: (_platform, key) => {
             lookedUp.push(key);
             return null;
@@ -5440,7 +5614,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       const warm = await run(
         { scheme },
         {
-          fingerprintProject: async () => ({ hash: WARM, sources: [] }),
+          fingerprint: async () => iosFingerprint(WARM),
           discoverXcodeProject: () => ({ kind: 'workspace', flag: '-workspace', path: '/app/ios/App.xcworkspace' }),
           resolveScheme: () => ({ scheme: scheme ?? 'App' }),
         },
@@ -5461,19 +5635,17 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
           return 'regenerate';
         },
         readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'A' }),
-        fingerprintProject: shifting(),
+        fingerprint: shifting(),
       },
     );
     expect(exitCode).toBe(null);
     expect(calls.order.includes('runPodInstall')).toBe(true);
-    expect(planned).toEqual([
-      root,
-      'ios',
-      { isExpo: true, fingerprint: COLD, sources: [{ type: 'dir', filePath: 'ios' }] },
-    ]);
+    expect(planned).toEqual([root, 'ios', { isExpo: true, fingerprint: COLD, native: 'tracked' }]);
     expect(errs.join('\n')).toMatch(/prebuild +ios\/ not generated from this fingerprint -> updated in place/);
     expect(errs.join('\n')).toMatch(/pods +prebuild updated ios\/ in place -> installed/);
-    expect((readWorkspaceState(root) as WorkspaceState).prebuild).toEqual({ ios: WARM });
+    expect(readWorkspaceState(root)?.prebuild).toEqual({
+      ios: { schema: FINGERPRINT_SCHEMA, hash: WARM },
+    });
     expect(String(calls.args.storeBuild.key)).toMatch(new RegExp(`^${WARM}`));
   });
 
@@ -5495,7 +5667,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
         detectIsExpo: () => true,
         planPrebuild: () => 'generate',
         readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
-        fingerprintProject: shifting(),
+        fingerprint: shifting(),
       },
     );
     const shift = errs.find((line) => /^  fingerprint\s+\S+ -> /.test(line));
@@ -5520,7 +5692,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       {
         detectIsExpo: () => true,
         planPrebuild: () => 'generate',
-        fingerprintProject: shifting(),
+        fingerprint: shifting(),
         resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
         launchIosApp: () => ({ failed: true, code: 'STIM_LAUNCH_FAILED', reason: 'launch timed out' }),
       },
@@ -5540,14 +5712,17 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       {
         detectIsExpo: () => true,
         planPrebuild: () => 'generate',
-        memoizedFingerprint: async () => ({
-          fingerprint: { hash: COLD, sources: [{ type: 'dir', filePath: 'ios', reasons: [], hash: null }] },
-          memoHit: true,
-          check: { settle: async () => ({ status: 'confirmed', recorded: COLD, current: COLD }), cancel: () => {} },
+        fingerprintForBuild: async () => ({
+          fingerprint: iosFingerprint(COLD, { from: 'index' }),
+          check: {
+            join: async () => ({ status: 'confirmed', recorded: COLD, current: COLD }),
+            settle: async () => ({ status: 'confirmed', recorded: COLD, current: COLD }),
+            cancel: async () => {},
+          },
         }),
-        fingerprintProject: async () => {
+        fingerprint: async () => {
           full++;
-          return { hash: WARM, sources: [{ type: 'dir', filePath: 'ios', reasons: [], hash: null }] };
+          return iosFingerprint(WARM);
         },
         resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
       },
@@ -5568,7 +5743,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       {
         detectIsExpo: () => true,
         planPrebuild: () => 'generate',
-        fingerprintProject: shifting(),
+        fingerprint: shifting(),
         resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
         ...(waited
           ? {
@@ -5608,7 +5783,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       {
         detectIsExpo: () => true,
         planPrebuild: () => 'generate',
-        fingerprintProject: shifting(),
+        fingerprint: shifting(),
         resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
       },
     );
@@ -5625,7 +5800,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       {
         detectIsExpo: () => true,
         planPrebuild: () => 'generate',
-        fingerprintProject: shifting(),
+        fingerprint: shifting(),
         resolveBuild: (_platform, key) => (key.startsWith(WARM) ? cachedApp : null),
         swapJsBundle: async () => ({ ok: false, step: 'bundle', reason: 'hermesc not found' }),
       },
@@ -5642,7 +5817,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       {
         detectIsExpo: () => true,
         planPrebuild: () => 'generate',
-        fingerprintProject: shifting(),
+        fingerprint: shifting(),
         resolveBuild: (_platform, key) => {
           lookedUp.push(key);
           return null;
@@ -5673,10 +5848,10 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
   test('a warm tree runs no mutating step, so the fingerprint is computed once before the build and once after it', async () => {
     reserve();
     const { calls } = await run();
-    expect(calls.order.filter((c) => c === 'fingerprintProject' || c === 'buildIos')).toEqual([
-      'fingerprintProject',
+    expect(calls.order.filter((c) => c === 'fingerprint' || c === 'buildIos')).toEqual([
+      'fingerprint',
       'buildIos',
-      'fingerprintProject',
+      'fingerprint',
     ]);
   });
 
@@ -5684,10 +5859,9 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
     function configFingerprint(file: string) {
       return async () => {
         const config = readFileSync(file, 'utf8');
-        return {
-          hash: config === 'portrait' ? COLD : WARM,
-          sources: [{ type: 'contents', id: 'expoConfig', contents: '', hash: config, reasons: ['expoConfig'] }],
-        };
+        return iosFingerprint(config === 'portrait' ? COLD : WARM, {
+          inputs: [{ name: 'config', kind: 'config', hash: config }],
+        });
       };
     }
 
@@ -5705,7 +5879,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
           detectIsExpo: () => true,
           planPrebuild: () => 'generate',
           readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
-          fingerprintProject: configFingerprint(config),
+          fingerprint: configFingerprint(config),
           runPodInstall: async () => {
             if (step === 'runPodInstall') writeFileSync(config, 'landscape');
             return { ok: true, durationMs: 18000 };
@@ -5738,17 +5912,19 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       expect(facts.cacheKey).toBeNull();
       const state = readWorkspaceState(root) as WorkspaceState;
       expect(state.lastBuild?.cacheKey).toBeNull();
-      expect(state.prebuild).toEqual({ ios: step === 'runPodInstall' ? null : COLD });
-      expect(stderr).toContain('expoConfig changed while the build ran');
+      expect(state.prebuild).toEqual({
+        ios: step === 'runPodInstall' ? null : { schema: FINGERPRINT_SCHEMA, hash: COLD },
+      });
+      expect(stderr).toContain('config changed while the build ran');
     });
 
     function resolvedConfigFingerprint(file: string) {
       return async () => {
         const contents = readFileSync(file, 'utf8');
-        return {
-          hash: contents.includes('bundleIdentifier') ? WARM : COLD,
-          sources: [{ type: 'contents', id: 'expoConfig', contents, hash: contents, reasons: ['expoConfig'] }],
-        };
+        return iosFingerprint(contents.includes('bundleIdentifier') ? WARM : COLD, {
+          inputs: [{ name: 'config', kind: 'config', hash: contents }],
+          config: JSON.parse(contents),
+        });
       };
     }
 
@@ -5762,7 +5938,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
           detectIsExpo: () => true,
           planPrebuild: () => 'generate',
           readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
-          fingerprintProject: resolvedConfigFingerprint(config),
+          fingerprint: resolvedConfigFingerprint(config),
           runPrebuild: async () => {
             writeFileSync(
               config,
@@ -5775,7 +5951,9 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
 
       expect(exitCode).toBeNull();
       expect(calls.args.storeBuild.key).toBe(`${WARM}-debug-sim-arm64`);
-      expect((readWorkspaceState(root) as WorkspaceState).prebuild).toEqual({ ios: WARM });
+      expect(readWorkspaceState(root)?.prebuild).toEqual({
+        ios: { schema: FINGERPRINT_SCHEMA, hash: WARM },
+      });
     });
 
     test('a config edit during pod install is not installed from an entry at the post-mutation key', async () => {
@@ -5789,7 +5967,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
           detectIsExpo: () => true,
           planPrebuild: () => 'generate',
           readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
-          fingerprintProject: configFingerprint(config),
+          fingerprint: configFingerprint(config),
           runPodInstall: async () => {
             writeFileSync(config, 'landscape');
             return { ok: true, durationMs: 18000 };
@@ -5805,19 +5983,18 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       expect((readWorkspaceState(root) as WorkspaceState).prebuild).toEqual({ ios: null });
     });
 
-    test('a node_modules rewrite during xcodebuild moves the key instead of skipping the store', async () => {
+    test('a native dependency edit during xcodebuild prevents storing the artifact', async () => {
       reserve();
       const manifest = join(root, 'generated.txt');
       writeFileSync(manifest, 'before');
       const { calls, errs } = await run(
         {},
         {
-          fingerprintProject: async () => {
+          fingerprint: async () => {
             const contents = readFileSync(manifest, 'utf8');
-            return {
-              hash: contents === 'before' ? COLD : WARM,
-              sources: [{ type: 'file', filePath: '../../node_modules/example/ios/Generated.h', hash: contents }],
-            };
+            return iosFingerprint(contents === 'before' ? COLD : WARM, {
+              inputs: [{ name: 'npm:example/ios/Generated.h', kind: 'file', hash: contents }],
+            });
           },
           buildIos: async () => {
             writeFileSync(manifest, 'after');
@@ -5831,8 +6008,8 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
         },
       );
 
-      expect(calls.args.storeBuild.key).toBe(`${WARM}-debug-sim-arm64`);
-      expect(errs.join('\n')).toMatch(/aaaaaa\.\. -> bbbbbb\.\. \(after xcodebuild\)/);
+      expect(calls.order).not.toContain('storeBuild');
+      expect(errs.join('\n')).toContain('npm:example/ios/Generated.h changed while the build ran');
     });
   });
 });
@@ -5879,9 +6056,9 @@ test('ios.projectPath set to the app directory reaches pods, the Xcode build, fi
         podDirs.push(directory);
         return { hasPodfile: false, lockText: null, manifestText: null };
       },
-      fingerprintProject: async (_path: string, options: unknown) => {
-        fingerprintOptions.push(options);
-        return { hash: FINGERPRINT, sources: [] };
+      fingerprint: async (_path: string, target: unknown) => {
+        fingerprintOptions.push(target);
+        return iosFingerprint(FINGERPRINT);
       },
       untrackedNativeFiles: (args: unknown) => {
         untracked.push(args);
@@ -5901,7 +6078,14 @@ test('a miss that CAN be diffed says what changed instead of guessing at untrack
   writeWorkspaceState(root, { lastBuild: { platform: 'ios', fingerprint: 'oldhash', cacheKey: 'old-key' } });
   const entry = join(tmpHome, 'build-cache', 'ios', 'old-key');
   mkdirSync(entry, { recursive: true });
-  writeFileSync(join(entry, 'fingerprint-sources.json'), JSON.stringify([{ type: 'contents', id: 'expoConfig' }]));
+  writeFileSync(
+    join(entry, 'inputs.json'),
+    JSON.stringify({
+      schema: FINGERPRINT_SCHEMA,
+      hash: 'oldhash',
+      inputs: [{ name: 'config', kind: 'config', hash: 'old' }],
+    }),
+  );
   const asked: unknown[] = [];
   const { errs } = await run(
     {},
@@ -5910,7 +6094,8 @@ test('a miss that CAN be diffed says what changed instead of guessing at untrack
         asked.push(args);
         return ['ios/scratch.txt'];
       },
-      fingerprintProject: async () => ({ hash: FINGERPRINT, sources: [{ type: 'contents', id: 'other' }] }),
+      fingerprint: async () =>
+        iosFingerprint(FINGERPRINT, { inputs: [{ name: 'config', kind: 'config', hash: 'new' }] }),
     },
   );
   expect(asked.length).toBe(0);
@@ -6134,7 +6319,7 @@ describe('the project cache provider', () => {
         ['resolveBuild', 'loadProjectProvider', 'acquireBuildLock', 'buildIos', 'storeBuild'].includes(c),
       ),
     ).toEqual(['resolveBuild', 'loadProjectProvider', 'acquireBuildLock', 'buildIos', 'storeBuild']);
-    expect(Array.isArray(calls.args.loadProjectProvider.sources)).toBe(true);
+    expect(calls.args.loadProjectProvider.config).toBeNull();
   });
 
   test('a fresh build uploads to the provider and the Expo provider independently', async () => {
@@ -6372,7 +6557,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(exitCode).toBe(1);
     expect(errs.join('\n')).toMatch(/STIM_BAD_ARG/);
     expect(errs.join('\n')).toMatch(/empty UDID/);
-    expect(calls.order.includes('fingerprintProject')).toBe(false);
+    expect(calls.order.includes('fingerprint')).toBe(false);
   });
 
   test('--device and --remote together refuse, because they name two different devices', async () => {
@@ -6757,7 +6942,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
       {
         ...connected(),
         readPodState: () => ({ hasPodfile: true, lockText: 'A', manifestText: 'B' }),
-        fingerprintProject: async () => (fingerprintCalls++ === 0 ? { hash: FINGERPRINT, sources: [] } : null),
+        fingerprint: async () => (fingerprintCalls++ === 0 ? iosFingerprint(FINGERPRINT) : { uncertain: 'fixture' }),
       },
     );
     expect(exitCode).toBeNull();
@@ -6778,7 +6963,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(exitCode).toBe(1);
     expect(errs.join('\n')).toMatch(/STIM_BAD_ARG/);
     expect(errs.join('\n')).toMatch(/Invalid ios\.lanHost/);
-    expect(calls.order.includes('fingerprintProject')).toBe(false);
+    expect(calls.order.includes('fingerprint')).toBe(false);
   });
 
   test('a device run never touches the Expo provider, in either direction', async () => {
@@ -7021,7 +7206,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(exitCode).toBe(1);
     expect(errs.join('\n')).toMatch(/STIM_NO_LAN_ADDRESS/);
     expect(errs.join('\n')).toMatch(/Join a Wi-Fi or Ethernet network/);
-    expect(calls.order.includes('fingerprintProject')).toBe(false);
+    expect(calls.order.includes('fingerprint')).toBe(false);
   });
 
   test('a LAN origin that is not this workspace Metro refuses before the build', async () => {
@@ -7038,7 +7223,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     );
     expect(exitCode).toBe(1);
     expect(errs.join('\n')).toMatch(/STIM_LAN_METRO_UNREACHABLE/);
-    expect(calls.order.includes('fingerprintProject')).toBe(false);
+    expect(calls.order.includes('fingerprint')).toBe(false);
   });
 
   test('ios.lanHost pins the address written into ip.txt and gated', async () => {
@@ -8500,7 +8685,7 @@ describe('EAS development builds', () => {
       launched: true,
     });
     for (const step of [
-      'fingerprintProject',
+      'fingerprint',
       'resolveBuild',
       'loadProjectProvider',
       'runPrebuild',
@@ -8569,6 +8754,27 @@ test('a named iOS run scopes allocation, launch verification, collector and buil
 });
 
 describe('--plan', () => {
+  test('reports the evaluator refusal and its redacted diagnostic', async () => {
+    const { logs, errs, exitCode } = await run(
+      { plan: true, json: true },
+      {
+        fingerprint: async () => ({
+          uncertain: 'config evaluator exited 1',
+          evaluator: 'config',
+          remedy: 'Fix the app config.',
+          stderrTail: ['config failed: ***'],
+        }),
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_NO_FINGERPRINT',
+      message: expect.stringContaining('config evaluator exited 1'),
+      remedy: 'Fix the app config.',
+    });
+    expect(errs.join('\n')).toContain('config failed: ***');
+  });
+
   const debugKey = buildCacheKey('ios', FINGERPRINT, { isSimulator: true, arch: 'arm64' });
 
   test('the ios.remote setting is refused: the run keys the remote arch, which a plan cannot read', async () => {
@@ -8579,7 +8785,7 @@ describe('--plan', () => {
     expect(exitCode).toBe(1);
     expect(parseFirst(logs)).toMatchObject({ code: 'STIM_BAD_ARG' });
     expect(parseFirst(logs).message).toContain('ios.remote');
-    expect(calls.order).not.toContain('fingerprintProject');
+    expect(calls.order).not.toContain('fingerprint');
   });
 
   test('ios.remote auto with an invalid STIM_REMOTE_BUILD blames the variable, not ios.remote', async () => {
@@ -8744,22 +8950,24 @@ describe('--plan', () => {
     writeWorkspaceState(root, { lastIosBuild: { platform: 'ios', fingerprint: 'oldhash', cacheKey: 'old-key' } });
     mkdirSync(join(tmpHome, 'build-cache', 'ios', 'old-key'), { recursive: true });
     writeFileSync(
-      join(tmpHome, 'build-cache', 'ios', 'old-key', 'fingerprint-sources.json'),
-      JSON.stringify([
-        { type: 'dir', filePath: 'node_modules/expo-camera', reasons: ['expoAutolinkingIos'], hash: 'aa' },
-      ]),
+      join(tmpHome, 'build-cache', 'ios', 'old-key', 'inputs.json'),
+      JSON.stringify({
+        schema: FINGERPRINT_SCHEMA,
+        hash: 'oldhash',
+        inputs: [{ name: 'package:expo-camera', kind: 'package', hash: 'aa' }],
+      }),
     );
     return statSync(workspaceStateFile(root)).mtimeMs;
   }
 
   const withClipboard = {
-    fingerprintProject: async () => ({
-      hash: FINGERPRINT,
-      sources: [
-        { type: 'dir', filePath: 'node_modules/expo-camera', reasons: ['expoAutolinkingIos'], hash: 'aa' },
-        { type: 'dir', filePath: 'node_modules/expo-clipboard', reasons: ['expoAutolinkingIos'], hash: 'bb' },
-      ],
-    }),
+    fingerprint: async () =>
+      iosFingerprint(FINGERPRINT, {
+        inputs: [
+          { name: 'package:expo-camera', kind: 'package', hash: 'aa' },
+          { name: 'package:expo-clipboard', kind: 'package', hash: 'bb' },
+        ],
+      }),
   } as const;
 
   test('a miss names what changed since the baseline build without writing state', async () => {
@@ -8767,8 +8975,8 @@ describe('--plan', () => {
     const { logs } = await run({ plan: true, json: true }, withClipboard);
     expect(parseFirst(logs).missReason).toEqual({
       kind: 'changed',
-      summary: 'native dependency added: expo-clipboard',
-      changes: [{ source: 'node_modules/expo-clipboard', change: 'added', category: 'native-dependency' }],
+      summary: 'expo-clipboard added',
+      changes: [{ source: 'package:expo-clipboard', change: 'added', category: 'package' }],
       changeCount: 1,
       baseline: { fingerprint: 'oldhash', from: 'workspace' },
       rekeyedBy: [],
@@ -8785,7 +8993,7 @@ describe('--plan', () => {
       outcome: 'cold',
       missReason: {
         kind: 'prebuild-pending',
-        summary: 'native dependency added: expo-clipboard (before prebuild regenerates ios/)',
+        summary: 'expo-clipboard added (before prebuild regenerates ios/)',
         changeCount: 1,
       },
     });
@@ -9864,7 +10072,7 @@ describe('strict remote machine selection', () => {
     expect(failure.remedy).toContain('brew install cocoapods');
   });
 
-  function offloadedRelease(cacheHit: boolean) {
+  function offloadedRelease(cacheHit: boolean, builtFingerprint?: string) {
     const artifactPath = join(root, 'fetched.app');
     mkdirSync(artifactPath, { recursive: true });
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
@@ -9875,6 +10083,7 @@ describe('strict remote machine selection', () => {
       ok: true,
       machine: 'mini',
       artifactPath,
+      ...(builtFingerprint ? { builtFingerprint } : {}),
       ...(cacheHit && { cacheHit }),
       compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
       ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
@@ -9891,6 +10100,215 @@ describe('strict remote machine selection', () => {
     });
     return choose;
   }
+
+  test('stores an offloaded post-pods artifact only under the worker fingerprint', async () => {
+    reserve();
+    configureMini();
+    const afterPods = 'b'.repeat(64);
+    offloadedRelease(false, afterPods);
+    const store = vi.fn<Required<IosDeps>['storeBuild']>(async (_platform, _key, path) => path);
+    const uploads: Array<{ key: string }> = [];
+    const result = await run(
+      { remoteBuild: 'mini', configuration: 'Release', json: true },
+      {
+        storeBuild: store,
+        resolveCacheProviderConfig: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+        loadCacheProvider: async () => ({
+          name: './cache.cjs',
+          provider: {
+            builds: {
+              resolve: () => null,
+              store: (input: { key: string }) => {
+                uploads.push(input);
+              },
+            },
+          },
+        }),
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    expect(store).toHaveBeenCalledTimes(1);
+    expect(store.mock.calls[0]?.[1]).toContain(afterPods);
+    expect(store.mock.calls[0]?.[1]).not.toContain(FINGERPRINT);
+    expect(uploads).toEqual([]);
+    expect(readWorkspaceState(root)?.lastBuild).toMatchObject({
+      fingerprint: afterPods,
+      cacheKey: expect.stringContaining(afterPods),
+    });
+  });
+
+  test('does not store a named worker build that refuses changed native inputs', async () => {
+    reserve();
+    configureMini();
+    offloadedRelease(false);
+    vi.mocked(offloadClient.offloadBuild).mockResolvedValue({
+      ok: false,
+      machine: 'mini',
+      reason: workerFailureReason('fingerprint-mismatch', 'Podfile changed'),
+    });
+    const store = vi.fn<Required<IosDeps>['storeBuild']>();
+    const uploads: unknown[] = [];
+    const result = await run(
+      { remoteBuild: 'mini', json: true },
+      {
+        storeBuild: store,
+        resolveCacheProviderConfig: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+        loadCacheProvider: async () => ({
+          name: './cache.cjs',
+          provider: {
+            builds: {
+              resolve: () => null,
+              store: (input: unknown) => {
+                uploads.push(input);
+              },
+            },
+          },
+        }),
+      },
+    );
+    expect(result.exitCode).not.toBeNull();
+    expect(store).not.toHaveBeenCalled();
+    expect(uploads).toEqual([]);
+  });
+
+  test('a changed full fingerprint refuses the offload inputs before transfer', async () => {
+    reserve();
+    configureMini();
+    const choose = offloadedRelease(false);
+    let observed: unknown;
+    vi.mocked(offloadClient.offloadBuild).mockImplementation(async ({ fingerprintInputs }) => {
+      observed = await fingerprintInputs?.();
+      return { ok: false, machine: 'mini', reason: 'the native inputs changed before offload' };
+    });
+    let count = 0;
+    const store = vi.fn<Required<IosDeps>['storeBuild']>();
+    const result = await run(
+      { remoteBuild: 'mini', json: true },
+      {
+        fingerprint: async () => iosFingerprint(count++ === 0 ? FINGERPRINT : 'b'.repeat(64)),
+        storeBuild: store,
+      },
+    );
+    expect(observed).toMatchObject({ uncertain: 'the native inputs changed before offload' });
+    expect(choose.mock.calls[0]?.[0]).not.toHaveProperty('reactNativeArtifact');
+    expect(count).toBe(2);
+    expect(result.exitCode).not.toBeNull();
+    expect(store).not.toHaveBeenCalled();
+  });
+
+  test('a verified peer query reuses its preflight for the worker', async () => {
+    reserve();
+    configureMini();
+    mkdirSync(join(root, '.git'));
+    const choose = offloadedRelease(false);
+    const offload = vi.mocked(offloadClient.offloadBuild);
+    const original = offload.getMockImplementation();
+    assert(original);
+    let count = 0;
+    let counts: number[] = [];
+    let inputs: unknown;
+    offload.mockImplementation(async (args) => {
+      counts = [count];
+      inputs = await args.fingerprintInputs?.();
+      counts.push(count);
+      return original(args);
+    });
+    const result = await run(
+      { remoteBuild: 'mini', json: true },
+      {
+        fingerprint: async () => {
+          count++;
+          return iosFingerprint(FINGERPRINT);
+        },
+        storeBuild: (_platform, _key, path) => path,
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    expect(choose.mock.calls[0]?.[0]).toHaveProperty('reactNativeArtifact');
+    expect(inputs).toMatchObject({ schema: 2 });
+    expect(counts).toEqual([2, 2]);
+  });
+
+  test('an unverified cache-only iOS candidate never queries a peer', async () => {
+    reserve();
+    configureMini();
+    vi.spyOn(offloadClient, 'offloadPlacement').mockReturnValue({
+      offload: false,
+      code: 'this-mac-free',
+      reason: 'fixture',
+    });
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
+    let count = 0;
+    const result = await run(
+      { json: true },
+      {
+        fingerprint: async () => iosFingerprint(count++ === 0 ? FINGERPRINT : 'b'.repeat(64)),
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    expect(choose).not.toHaveBeenCalled();
+    expect(result.calls.order).toContain('buildIos');
+  });
+
+  test.each([
+    ['plain', false],
+    ['plain', true],
+    ['class', false],
+    ['class', true],
+  ] as const)('iOS peer preflight preserves %s cleanup refusal when cancelled=%s', async (kind, cancel) => {
+    reserve();
+    configureMini();
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
+    const controller = new AbortController();
+    const diagnostic = vi.fn<() => never>(() => {
+      throw new Error('diagnostic output failed');
+    });
+    const context = testContext({
+      signal: controller.signal,
+      output: (_stream, line) => {
+        if (line.includes('Run statistics could not be recorded')) diagnostic();
+      },
+    });
+    const failure =
+      kind === 'plain'
+        ? { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true, message: 'unverified cleanup' }
+        : new WorkspaceProcessCleanupError([], 'unverified cleanup', 'Inspect the child.');
+    let count = 0;
+    const { deps, calls } = harness({
+      recordStats: () => {
+        throw new Error('stats failed');
+      },
+      ensureOwnedDevice: async ({ flags }) => {
+        const policy = flags?.deviceSlotWait;
+        policy?.waitingFor?.({
+          kind: 'device-slot',
+          inUse: 1,
+          max: 1,
+          since: new Date().toISOString(),
+          position: 1,
+          resource: 'booted devices',
+        });
+        const created = new Promise<never>((_resolve, reject) => {
+          policy?.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+        });
+        return { owned: true, creating: { runtimeId: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0', created } };
+      },
+      fingerprint: async () => {
+        if (count++ === 0) return iosFingerprint(FINGERPRINT);
+        if (cancel) controller.abort();
+        throw failure;
+      },
+    });
+    await expect(runIosOperation(context, root, { remoteBuild: 'mini', json: true }, deps as IosDeps)).rejects.toBe(
+      failure,
+    );
+    expect(choose).not.toHaveBeenCalled();
+    expect(calls.order).not.toContain('buildIos');
+    expect(diagnostic).toHaveBeenCalledOnce();
+  });
 
   test('a non-Debug cache miss builds on a named machine and installs its app with the JS it bundled', async () => {
     reserve();
@@ -9966,6 +10384,7 @@ describe('strict remote machine selection', () => {
   ])('a $configuration miss asks machines for a cached app built elsewhere: $asks', async ({ configuration, asks }) => {
     reserve();
     configureMini();
+    if (asks) mkdirSync(join(root, '.git'));
     const choose = offloadedRelease(false);
     await run(
       { remoteBuild: 'mini', configuration, json: true },
@@ -9987,12 +10406,19 @@ describe('strict remote machine selection', () => {
     reserve();
     configureMini();
     offloadedRelease(false);
-    vi.spyOn(buildCache, 'gitignoredFingerprintInputs').mockResolvedValue([]);
+    mkdirSync(join(root, '.git'));
     writeFileSync(join(root, '.env.production'), 'EXPO_PUBLIC_API=https://api.example.com\n');
     await run(
       { remoteBuild: 'mini', configuration, json: true },
       {
         detectIsExpo: () => true,
+        fingerprint: async (_root, _target, options) =>
+          iosFingerprint(FINGERPRINT, {
+            inputs:
+              options.embedMode === 'production'
+                ? [{ name: '.env.production', kind: 'file', hash: 'a'.repeat(64) }]
+                : [],
+          }),
         storeBuild: (_platform, _key, path) => path,
         buildIos: () => {
           throw new Error('unexpected local compile');
@@ -10000,7 +10426,8 @@ describe('strict remote machine selection', () => {
       },
     );
     const inputs = await vi.mocked(offloadClient.offloadBuild).mock.calls[0]?.[0].fingerprintInputs?.();
-    expect(inputs?.ignored.includes(join(root, '.env.production'))).toBe(sent);
+    assert(inputs && !('uncertain' in inputs));
+    expect(inputs.ignored.includes(join(root, '.env.production'))).toBe(sent);
   });
 
   test('a listed paired named cache hit contacts no worker and records no compilation', async () => {
@@ -10121,13 +10548,11 @@ describe('strict remote machine selection', () => {
         }
         return path;
       });
-      const fingerprint = async () => ({
-        hash: scenario === 'checkout changed' && built ? 'changed' : FINGERPRINT,
-        sources: [],
-      });
+      const fingerprint = async () =>
+        iosFingerprint(scenario === 'checkout changed' && built ? 'b'.repeat(64) : FINGERPRINT);
       const result = await run(
         { remoteBuild: 'mini', json: true },
-        { fingerprintProject: fingerprint, storeBuild: store, buildIos: compile, acquireBuildSlot: slot },
+        { fingerprint, storeBuild: store, buildIos: compile, acquireBuildSlot: slot },
       );
       expect(result.exitCode).toBe(scenario === 'stored' ? null : scenario === 'cancelled' ? 130 : 1);
       expect(result.stderr).toContain(
@@ -10472,7 +10897,7 @@ describe('registered iOS project recipes', () => {
       for (const forbidden of [
         'resolveProjectMetro',
         'startDevServer',
-        'fingerprintProject',
+        'fingerprint',
         'runPrebuild',
         'runPodInstall',
         'buildIos',
@@ -10636,7 +11061,7 @@ describe('registered iOS project recipes', () => {
       expect(requests[0]!.args).toEqual(expect.arrayContaining(['-scheme', 'Native', '-configuration', configuration]));
       for (const forbidden of [
         'startDevServer',
-        'fingerprintProject',
+        'fingerprint',
         'runPrebuild',
         'buildIos',
         'swapJsBundle',
@@ -10744,7 +11169,7 @@ describe('registered iOS project recipes', () => {
         });
         for (const forbidden of [
           'startDevServer',
-          'fingerprintProject',
+          'fingerprint',
           'runPrebuild',
           'buildIos',
           'swapJsBundle',
@@ -10849,7 +11274,7 @@ describe('registered iOS project recipes', () => {
         message: expect.stringContaining('This project integration does not support'),
       });
       expect(result.calls.order).not.toContain('ensureOwnedDevice');
-      expect(result.calls.order).not.toContain('fingerprintProject');
+      expect(result.calls.order).not.toContain('fingerprint');
       expect(result.calls.order).not.toContain('resolveProjectMetro');
       expect(result.calls.order).not.toContain('buildIos');
     },

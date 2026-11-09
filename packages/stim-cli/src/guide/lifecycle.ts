@@ -1977,7 +1977,7 @@ Run it before copying the checkout into worktrees.
 
 THE BUILD CACHE HAS THREE LEVELS
   1. Stim's own, on this machine: a directory under ~/.stim shared by
-     every worktree, keyed on the @expo/fingerprint hash of the native inputs.
+     every worktree, keyed on Stim's fingerprint of the native inputs.
      Free, instant, offline, and the only level a project without any
      provider has.
   2. The project's own cache provider, on ANY project including bare React
@@ -2012,20 +2012,42 @@ THE BUILD CACHE HAS THREE LEVELS
   trims, and clears local caches only: the provider contract has no delete
   operation, so no local command can remove data a team or CI system shares.
 
-  WHAT THE KEY COUNTS. Stim runs @expo/fingerprint with its default
-  \`balanced\` preset, the one the project's own Expo uses. An installed
-  dependency, and a config plugin loaded from node_modules, counts by its name
-  and version, not by its files. A package whose real path is outside
-  node_modules -- a workspace package, a link: dependency, a local Expo module
-  -- counts by its files, and so do patches/, the app's committed ios/ or
-  android/, the evaluated app config and its local plugins. patches/ and
-  .yarn/patches/ next to a monorepo's lockfile count too, and so do the patch
-  hashes pnpm-lock.yaml records, wherever the patch files live. The app's
-  version, ios.buildNumber and android.versionCode, eas.json, .easignore and
-  the path overrides of react-native.config.js are left out, so a Release
-  cache hit keeps the version it was built with. A project that wants native
-  package files hashed sets \`preset: 'strict'\` in fingerprint.config.js, at
-  about twice the fingerprint's CPU.
+  WHAT THE KEY COUNTS. Stim fingerprints evaluated app config and autolinking,
+  native build scripts and their relevant environment, tracked native folders,
+  patches, and native files of linked, local, git and file dependencies.
+  Registry packages count by their identity. Version fields, EAS configuration
+  and Metro-bundled JavaScript are excluded. fingerprint.config.js extraSources
+  applies unless cache.fingerprintInputs is set to an array of app-relative
+  paths; even an empty array overrides it. Other fingerprint.config.js options
+  do not apply; stim doctor reports them.
+  If embedded config or a dependency reads a private Stim credential, or
+  project config enumerates an environment containing one, Stim declines to
+  cache the build. Remove that credential from the build environment to retry.
+  The private workspace replay record keeps STIM_HOME and STIM_RUN_ID, but
+  neither is sent to a build worker as a fingerprint input.
+  Stim can cache patch-package postinstalls only when they invoke patch-package
+  directly to apply patches, with a literal patch directory and supported error
+  flags. Wrappers, compound commands and other modes make the fingerprint
+  uncertain; use a direct apply invocation to enable caching and offload.
+  On Windows, use a double-quoted literal path without environment expansion.
+
+  On the first build after this change, older build-cache entries miss. If a
+  generated Expo native directory has an old prebuild record, use the same Stim
+  version in the project and globally, preserve any changes, then move or remove
+  that generated ios/ or android/ directory and retry. Stim generates it again.
+  Tracked native directories are not removed. Builds in one Stim home share the
+  workspace native-run lock; separate Stim homes do not share that lock.
+
+  An approved build worker receives the keyed environment values for install,
+  prebuild and compilation. Project build tools may print their environment in
+  build logs. Stim removes its own access and setup credentials from the worker's
+  build environment. Inputs that cannot be mapped safely to the worker refuse offload.
+  If config only probes or lists Git-ignored entries the worker cannot reproduce,
+  Stim falls back locally; list needed files or directories in
+  cache.fingerprintInputs to key and transfer their contents.
+  If worker cleanup cannot be confirmed, Stim retains the repository claim and
+  any build-slot and selected-engine claims. Verify the worker and evaluator groups stopped,
+  then recover only the claim paths printed in the refusal.
 
   AN EDIT INSIDE node_modules/ IS NOT SEEN. Editing a dependency's native file
   in place (node_modules/<pkg>/ios, android, cpp, a podspec or build.gradle)
@@ -2039,64 +2061,19 @@ THE BUILD CACHE HAS THREE LEVELS
   every worktree reuses it, edit included, until the dependency's version or
   patches change; undo the edit with another --no-build-cache build.
 
-  A KNOWN TREE SKIPS THE FULL FINGERPRINT. After a full fingerprint at the
-  first lookup of a React Native or Expo run, or ahead of the run by the daemon
-  (below), Stim records it in
-  $STIM_HOME/fingerprint-memo (~/.stim by default) under a static digest of
-  the tree: git blob ids of the native inputs git tracks, the contents of the
-  untracked, modified and ignored ones, the app config's sources and the files
-  and directories it names, each installed package's path, version and native
-  markers, the lockfile, and the environment variables the config and its
-  .env files read. Any worktree whose tree has the same digest, a fresh one
-  included, reuses the record instead of evaluating the config and running
-  autolinking:
+  A KNOWN TREE REUSES VALIDATED OBSERVATIONS. Stim keeps a private
+  $STIM_HOME/fingerprint of the inputs, environment and evaluator reads
+  behind a key. A later run reuses a part only while its recorded inputs still
+  match; opaque parts run again. An index hit is checked in the background. A
+  disagreement drops the record and warns. At run end, a check still running
+  after three seconds is cancelled and its subprocess cleanup is joined.
+  Cleanup proof covers evaluator process groups. Project-created detached
+  sessions require project-managed cleanup.
 
-    fingerprint matches a recorded fingerprint of this tree; confirming it in the background
-
-  A full fingerprint then runs at low priority while the app installs and
-  launches. The record is put back only when it agrees. If the run reaches its
-  end first, it waits up to 3 seconds more, then gives the check up and leaves
-  no record, so the next run fingerprints in full. A disagreement prints a
-  warning naming both hashes at the end of the run and writes a
-  fingerprint_memo_stale record to the build log; run the command again to use
-  the current tree.
-
-  THE DAEMON RECORDS IT AHEAD OF THE RUN. While daemon.mode is on, the daemon
-  looks at each workspace that is running and not idle, and has an iOS or
-  Android device recorded, on every minute tick. When its git HEAD, its
-  lockfile (pnpm-lock.yaml, yarn.lock, package-lock.json or bun.lock) or the
-  install stamp in node_modules (.modules.yaml, .package-lock.json or
-  .yarn-integrity) changed since the last look, and a run's own digest finds no record, it computes the
-  digest and the full fingerprint in a low-priority child process, one at a
-  time and at most two per tick, and records them as a run would. The next
-  stim ios or stim android of that tree then reads the record and starts its
-  background check as above. A record is read only when the run's own digest
-  of the tree equals the recorded one, so a precompute never makes a run use a
-  fingerprint of other inputs: an edit made after it, a different .env, or an
-  environment variable the config reads that has another value in the
-  command's shell than in the daemon's leaves the record unread, and the run
-  fingerprints in full. Nothing starts while daemon.mode is report, the
-  pressure level is above normal or the host load exceeds 4 per core, and a
-  tree whose child ended, whether it recorded, skipped, failed or timed out
-  (2 minutes), is not looked at again until one of those changes. It never records for a pod install alone: a run
-  after one fingerprints in full once. The record written is the same one a
-  run writes, so the 256-record cap and gc pruning apply to it. The daemon
-  logs one daemon_fingerprint_precompute record to daemon.ndjson per child,
-  with its outcome (recorded, present, skipped or failed) and duration, and
-  one line when a hold starts or ends.
-
-  A config the digest cannot follow always fingerprints in full: a dynamic
-  require or import, process.env used other than by literal name, file,
-  process or network access while it is evaluated, a dotenv import, a
-  fileHookTransform, or a preset that hashes package files. A local config
-  plugin counts as evaluated too, with one exception: the digest does not
-  track the files a plugin that applies mods reads, assuming it reads them in
-  its mods at prebuild. A plugin that also puts what it reads into the config
-  is a gap only the background check catches. So does a project outside git or on Yarn Plug'n'Play. The record is
-  never consulted after prebuild or pod install, by a build worker, by doctor,
-  or with --no-build-cache; ios --plan and android --plan read one without
-  writing. Records are 0600, at most 256 per platform, and gc prunes them by
-  age with the other caches.
+  With daemon.mode on, Stim can precompute active workspaces in low-priority
+  children when HEAD, lockfile or the install stamp changes. Changed inputs or
+  environment invalidate reused parts. Doctor and post-prebuild checks compute
+  without the index.
 
   A MISS EXPLAINS ITSELF. Each local cache entry keeps the per-source hashes
   of its fingerprint (hashes only, pruned with the entry). Before compiling,
@@ -2130,12 +2107,11 @@ THE BUILD CACHE HAS THREE LEVELS
   of compiling beside it. No second line means nothing was found there and the
   run compiles.
 
-  A GITIGNORED (CNG) ios/ OR android/ IS NOT IN THE KEY: @expo/fingerprint
+  A GENERATED (CNG) ios/ OR android/ IS NOT IN THE KEY: Stim
   hashes the app config instead, so the directory must come from that config.
   Stim records the fingerprint each of its prebuilds produced in the
-  workspace state. On a miss, an existing CNG directory with no matching
-  record -- the app config, a config plugin or a dependency changed since, or
-  someone else generated it -- is updated in place with \`expo prebuild
+  workspace state. On a miss, an existing CNG directory with a current-schema record whose
+  inputs changed is updated in place with \`expo prebuild
   --no-clean\` (plain \`expo prebuild\` before Expo SDK 57, whose CLI keeps
   the directory by default and has no --no-clean) before pods and the
   compile, so a stale directory is never built and stored under the new key.
@@ -2207,24 +2183,16 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   BUILD is what breaks that, and it fails silently -- a cache that never hits
   looks exactly like a cache that is not there.
 
-  Stim ignores paths a fresh checkout never has and no native Debug build
-  reads: android/local.properties, android/.idea, *.xcodeproj/xcuserdata, .git (and its contents), .expo,
-  on Android the signing files *.keystore, *.jks, *.p12, *.pfx and keystore.properties (but not debug.keystore or
-  an APK's own src/*/assets and src/*/res), which an Android offload does not send, on iOS *.p8, *.p12, *.mobileprovision and *.provisionprofile, which an iOS offload does not send, and,
-  while a .gitignore pattern matches them (even when committed), the
-  \`react-native bundle\` output ios/main.jsbundle and ios/assets. A project
-  does not repeat those.
+  Stim excludes certain generated build directories, local tool state and signing files
+  from native tree walks. Examples include DerivedData, xcuserdata, .gradle,
+  .idea, local.properties, .expo, .git, *.keystore, *.p12 and
+  *.mobileprovision. debug.keystore and files under src/*/assets and src/*/res
+  remain eligible. Registry packages count by identity rather than by walking
+  node_modules. Stim counts ios/main.jsbundle and ios/assets only when Git
+  tracks them. A project does not repeat these exclusions.
   Everything else is the project's call, including a lockfile whose checksums
   embed machine paths -- ignoring a path any project might read turns a slow
   build into a wrong one.
-
-  A linked native library (a \`link:\` or \`file:\` dependency, or a workspace
-  symlink) brings its checkout's .git into a directory the fingerprint hashes
-  whole; Git rewrites that metadata on every commit, checkout, or worktree, so
-  workspaces rarely agree. \`stim doctor\` names the entries to ignore when the
-  native build does not read Git state: the .git path as the fingerprint sees
-  it and its /**/* form, which is what skips a .git directory's contents.
-  Ignore those entries only, never the package.
 
   \`.fingerprintignore\` at the project root (same syntax as .gitignore) is the
   answer. Put in it only what genuinely cannot change the native build: a
@@ -2240,24 +2208,11 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   -- to force a hit: that trades a slow build for a wrong one.
 
 
-  React Native Test App can generate checkout-specific Android output under
-  node_modules/react-native-test-app/android/support/build. If fingerprint
-  differences point only there, add these project-specific entries:
-
-    node_modules/react-native-test-app/android/support/build
-    node_modules/react-native-test-app/android/support/build/**/*
-
-  Put them in the app root's .fingerprintignore and use the path as it appears
-  in the fingerprint sources; a hoisted or linked dependency may differ.
-  Keep android/support/build.gradle and native sources included. Confirm equal
-  fingerprints across built worktrees, and confirm a real native input edit
-  still changes the hash. These exclusions are not Stim defaults.
-
-  \`stim doctor\` measures this directly rather than reading the file: it
-  fingerprints HEAD in a temporary clean worktree, compares, and reports a
-  mismatch naming the differing sources. Untracked, non-gitignored files under
-  ios/ or android/ count too -- they are hashed like any other source, so a
-  stray file there moves the key on your machine and nowhere else.`,
+  \`stim doctor\` recomputes the current fingerprint and reports inputs it
+  cannot safely evaluate or offload. Its determinism and worktree parity checks
+  run project config and autolinking in an isolated child, so run doctor only
+  in a checkout whose project code you trust. Untracked, non-gitignored native files can
+  move the key on one machine and not another.`,
     },
     concurrency: {
       summary: "waiting on another workspace's build, --no-build-cache, concurrency.maxBuilds and maxDevices",

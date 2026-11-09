@@ -1,6 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
 import type { BuildCacheCapability, CacheProvider } from '@stim-cli/cache';
-import type { FingerprintCheck } from '../cache/fingerprint-memo.ts';
+import type { FingerprintCheck } from '../fingerprint/operation.ts';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { AndroidBuildPlan, AndroidRunPlan } from '../commands/android/plan.ts';
 import type { AndroidPlanOptions } from '../commands/android/next-build.ts';

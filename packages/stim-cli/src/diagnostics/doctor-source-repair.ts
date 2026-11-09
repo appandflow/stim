@@ -1,19 +1,26 @@
 import type { StimContext } from '@stim-cli/core';
 import { join } from 'node:path';
-import {
-  changedDuringBuildLine,
-  configInputsChanged,
-  fingerprintProject,
-  refingerprintAfterMutation,
-} from '../cache/build-cache.ts';
+import { changedDuringBuildLine } from '../cache/build-cache.ts';
+import type { Fingerprint } from '../fingerprint/evaluate.ts';
+import { readFingerprint } from '../fingerprint-precompute.ts';
+import { configInputsChanged } from '../fingerprint/changes.ts';
+import { isUncertain } from '../fingerprint/key.ts';
 import { podAction } from '../commands/ios/support.ts';
 import { formatDuration, phaseLine, quotedPath } from '../command-output.ts';
 import { dependencyState } from '../dependency-state.ts';
 import { podsAreStale, readPodState, runPodInstall, type PodInstallResult } from '../engine/deps.ts';
-import { planPrebuildAsync, recordPrebuildAsync, runPrebuild, staleNativeDirRefusal } from '../engine/prebuild.ts';
+import { planPrebuildAsync, recordPrebuildAsync, runPrebuild, prebuildPlanRefusal } from '../engine/prebuild.ts';
 import { withWarmClaim, type WarmClaimHold } from '../engine/warm-claim.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { fenceDeclaredSpawns } from '../engine/spawn-claims.ts';
 import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
-import { resolveAndroidLayout, resolveIosProjectDir, type SettingsObject } from '../workspace/settings.ts';
+import {
+  fingerprintInputsSetting,
+  resolveAndroidLayout,
+  resolveIosProjectDir,
+  type SettingsObject,
+} from '../workspace/settings.ts';
 import {
   awaitInstallerSettled,
   installerSpawn,
@@ -59,6 +66,19 @@ interface RunContext extends SourceRepairOptions {
   hold: WarmClaimHold;
 }
 
+function preserveInstallerFailure(context: RunContext, failure: RefreshFailure | null): void {
+  if (!failure?.cleanupUnverified) return;
+  const claims = [...operationState(context.operation).declaring];
+  throw Object.assign(
+    new WorkspaceProcessCleanupError(
+      claims,
+      failure.message,
+      failure.remedy ?? 'Verify that the installer and its descendants have stopped.',
+    ),
+    { reportCleanup: true },
+  );
+}
+
 async function installPods(
   context: RunContext,
   { cleanPods = false, mayUpdatePods = false }: Pick<SourceRepairStep, 'cleanPods' | 'mayUpdatePods'>,
@@ -81,6 +101,7 @@ async function installPods(
       ),
     );
     const running = await awaitInstallerSettled(hold.installer, facts.root, 'the pod command', 'stim doctor --fix');
+    preserveInstallerFailure(context, running);
     return running
       ? { failed: true, code: running.code, reason: running.message, remedy: running.remedy ?? '' }
       : result;
@@ -113,30 +134,43 @@ async function installPods(
 async function repairPrebuild(context: RunContext, platform: NativePlatform, step: SourceRepairStep): Promise<boolean> {
   const { facts, repoRoot, settings, note } = context;
   const { root } = facts;
+  const inputs = fingerprintInputsSetting(settings);
   const options =
     platform === 'ios'
-      ? { platform, iosProjectPath: resolveIosProjectDir(settings, root).relative }
-      : { platform, androidLayout: resolveAndroidLayout(settings, root, repoRoot) };
+      ? {
+          platform,
+          iosProjectPath: resolveIosProjectDir(settings, root).relative,
+          ...(inputs === undefined ? {} : { fingerprintInputs: inputs }),
+        }
+      : {
+          platform,
+          androidLayout: resolveAndroidLayout(settings, root, repoRoot),
+          ...(inputs === undefined ? {} : { fingerprintInputs: inputs }),
+        };
   const fail = (message: string, lines: string[] = [], remedy: string | null = null): false => {
     describeFailure('prebuild', { code: 'STIM_PREBUILD_FAILED', message, lines, remedy }, note);
     return false;
   };
-  let before: Awaited<ReturnType<typeof fingerprintProject>>;
+  let before: Fingerprint;
   try {
-    before = await fingerprintProject(root, options);
+    const result = await readFingerprint(context.operation, { root, ...options, embedMode: 'development' });
+    if (!result || isUncertain(result))
+      return fail(`could not fingerprint ${root}: ${result?.uncertain ?? 'no result'}`);
+    before = result;
   } catch (error) {
+    if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
+    context.operation.signal.throwIfAborted();
     return fail(`could not fingerprint ${root}: ${error instanceof Error ? error.message : String(error)}`);
   }
-  if (!before?.hash) return fail(`could not fingerprint ${root}: @expo/fingerprint produced no hash for it`);
 
   const plan = await planPrebuildAsync(
     root,
     platform,
-    { isExpo: true, fingerprint: before.hash, sources: before.sources },
+    { isExpo: true, fingerprint: before.hash, native: before.native },
     context.operation.signal,
   );
   if (plan === 'refuse')
-    return fail(staleNativeDirRefusal(platform).message, [], staleNativeDirRefusal(platform).remedy);
+    return fail(prebuildPlanRefusal(root, platform).message, [], prebuildPlanRefusal(root, platform).remedy);
   if (plan === 'none') {
     note(phaseLine('prebuild', `${platform}/ is already current for this fingerprint`));
     return true;
@@ -170,16 +204,11 @@ async function repairPrebuild(context: RunContext, platform: NativePlatform, ste
     }
   }
 
-  const after = await refingerprintAfterMutation({
-    projectRoot: root,
-    platform,
-    previousHash: before.hash,
-    ...(platform === 'ios'
-      ? { iosProjectPath: resolveIosProjectDir(settings, root).relative }
-      : { androidLayout: resolveAndroidLayout(settings, root, repoRoot) }),
-  });
-  if (!after) return fail(`could not fingerprint ${root} after the prebuild, so its record was not written`);
-  const edited = configInputsChanged(before.sources, after.sources, { prebuildRan: true });
+  const after = await readFingerprint(context.operation, { root, ...options, embedMode: 'development' });
+  context.operation.signal.throwIfAborted();
+  if (!after || isUncertain(after))
+    return fail(`could not fingerprint ${root} after the prebuild: ${after?.uncertain ?? 'no result'}`);
+  const edited = configInputsChanged(before, after, { prebuildRan: true });
   if (edited.length)
     return fail(
       `${changedDuringBuildLine(edited).replace(/; the build will be installed but not cached$/, '')}, so the prebuild record was not written`,
@@ -202,6 +231,7 @@ async function runStep(context: RunContext, step: SourceRepairStep): Promise<boo
       emit: note,
       again: 'stim doctor --fix',
     });
+    preserveInstallerFailure(context, failure);
     if (failure) describeFailure('deps', failure, note);
     return !failure;
   }
@@ -254,7 +284,13 @@ export async function repairSourceCheckout(options: SourceRepairOptions): Promis
       facts.root,
       () =>
         withWarmClaim(
-          { repositoryRoot: options.repoRoot, phase: 'refresh', ceilingMs: 0, signal: operation.signal },
+          {
+            repositoryRoot: options.repoRoot,
+            phase: 'refresh',
+            ceilingMs: 0,
+            signal: operation.signal,
+            declareSpawnsFor: operation,
+          },
           (hold) =>
             runApproved(
               { ...options, hold },
@@ -294,7 +330,18 @@ async function runApproved(context: RunContext, approved: SourceRepairStep[], de
       exitCode = 1;
       continue;
     }
-    if (!(await runStep(context, step))) {
+    const fence = fenceDeclaredSpawns(context.operation);
+    let unverified: unknown;
+    let ok: boolean;
+    try {
+      ok = await runStep(context, step);
+    } catch (error) {
+      if (error instanceof Error && 'reportCleanup' in error) unverified = error;
+      throw error;
+    } finally {
+      await fence.finish(unverified);
+    }
+    if (!ok) {
       failed.add(step.id);
       exitCode = 1;
     }

@@ -57,7 +57,8 @@ import {
 } from './native-source.ts';
 import { nativeGradleTransfer, type GradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
-import type { FingerprintSource } from '@expo/fingerprint';
+import type { Uncertain } from '../fingerprint/key.ts';
+import type { FingerprintInputs } from '../fingerprint/operation.ts';
 import { STIM_VERSION } from '../stim-version.ts';
 import { spawnEntry, stimBuild } from '../spawn-entry.ts';
 import { isReleaseConfiguration } from '../commands/ios/support.ts';
@@ -897,7 +898,7 @@ export interface OffloadChoice extends OfferingMachine {
 /** Closes every connection the choice still holds. */
 export function closeOffload(choice: OffloadChoice): void {
   choice.connection.close();
-  for (const each of choice.runnersUp.splice(0)) each.connection.close();
+  for (let next = choice.runnersUp.shift(); next; next = choice.runnersUp.shift()) next.connection.close();
 }
 
 const XCODE_UNSUPPORTED = 'This worker does not support native Xcode builds.';
@@ -1593,33 +1594,63 @@ async function fetchArtifact({
   return { artifactPath, digest, received, declared };
 }
 
-interface FingerprintInputs {
-  sources: readonly FingerprintSource[];
-  ignored: readonly string[];
-  /** The paths, relative to the project, that this Mac's git ignores for the fingerprint. */
-  ignoredPaths?: readonly string[];
-  /** The top-level entries, relative to the project, that this Mac's git tracks although an ignore pattern matches them. */
-  trackedPaths?: readonly string[];
-}
-
-function fingerprintSourcesParam(inputs: FingerprintInputs | null) {
+function fingerprintParams(inputs: FingerprintInputs | null) {
   if (!inputs) return {};
   return {
-    fingerprintSources: inputs.sources.map((source) => ({
-      id: source.type === 'contents' ? source.id : source.filePath,
-      hash: source.hash,
-    })),
+    fingerprintSources: inputs.sources.map(({ name, kind, hash }) => ({ id: name, kind, hash })),
+    fingerprintSchema: inputs.schema,
+    fingerprintEnv: inputs.env,
+    fingerprintNative: inputs.native,
+    fingerprintLayout: inputs.layout,
+    fingerprintRuntime: inputs.runtime,
   };
 }
 
-function fingerprintIgnoredParam(inputs: FingerprintInputs | null) {
-  if (!inputs?.ignoredPaths?.length) return {};
-  return { fingerprintIgnored: [...inputs.ignoredPaths] };
-}
-
-function fingerprintTrackedParam(inputs: FingerprintInputs | null) {
-  if (!inputs?.trackedPaths?.length) return {};
-  return { fingerprintTracked: [...inputs.trackedPaths] };
+function buildStartParams(
+  choice: OffloadChoice,
+  request: BuildRequest,
+  expectedFingerprint: string | null | undefined,
+  digest: string,
+  inputs: FingerprintInputs | null,
+) {
+  const { identity } = choice;
+  const native = request.platform !== 'macos' ? request.native : undefined;
+  return {
+    repo: identity.repo,
+    project: identity.project,
+    platform: request.platform,
+    fingerprint: request.platform === 'macos' ? digest : expectedFingerprint,
+    ...fingerprintParams(inputs),
+    ...(native
+      ? {
+          native: {
+            provider: native.provider,
+            sourceDigest: digest,
+            ...(native.provider === 'xcode'
+              ? { cacheKey: native.cacheKey, arch: native.arch, parameters: native.snapshot.parameters }
+              : { inputs: native.transfer.declaration, cache: native.cache }),
+          },
+        }
+      : {}),
+    ...(request.platform === 'macos'
+      ? macosBuildParameters(request)
+      : {
+          configuration: request.platform === 'ios' ? request.configuration : null,
+          scheme: request.platform === 'ios' ? request.scheme : null,
+          iosProjectPath: request.platform === 'ios' ? (request.iosProjectPath ?? null) : null,
+          runtime: request.platform === 'ios' ? request.runtime : null,
+          packageName: packageName(join(identity.repoRoot, identity.project)),
+          isExpo: request.isExpo,
+          ...(!native && request.cacheArtifact === true ? { cacheArtifact: true } : {}),
+          optimizations:
+            request.platform === 'ios' && isJsonObject(request.optimizations) ? request.optimizations : null,
+          ...(request.platform === 'android' ? { android: request.android } : {}),
+        }),
+    stimBuild: choice.target.local.stimBuild,
+    compat: choice.target.local.compat,
+    ...startJdk(choice),
+    ...startPods(choice, request),
+  };
 }
 
 function keepCorruptCacheMessage(
@@ -1645,7 +1676,7 @@ export async function offloadBuild(
     /** One line about where the build goes, such as the next machine after a refusal. */
     note: (line: string) => void;
     /** The fingerprint sources behind `expectedFingerprint` and the gitignored files they read, as absolute paths. */
-    fingerprintInputs?: () => Promise<FingerprintInputs>;
+    fingerprintInputs?: () => Promise<FingerprintInputs | Uncertain>;
     /** Which of these repository-relative paths stay here, or why none may go, decided before any is uploaded. */
     syncPlan?: SyncPlanner;
     restarts?: number;
@@ -1803,7 +1834,7 @@ export async function offloadBuild(
     let syncMs = 0;
     let uploadedBytes = 0;
     let workerStarted = 0;
-    let fingerprintInputs: Promise<FingerprintInputs | null> | undefined;
+    let fingerprintInputs: Promise<FingerprintInputs | Uncertain | null> | undefined;
     const readFingerprintInputs = () =>
       (fingerprintInputs ??=
         !native && request.platform !== 'macos' && input.fingerprintInputs
@@ -1828,6 +1859,12 @@ export async function offloadBuild(
         if (moveOn(unsupported)) continue;
         return fail(unsupported);
       }
+      const candidate = await readFingerprintInputs();
+      if (!native && request.platform !== 'macos') {
+        if (!candidate) return fail('The fingerprint cannot be safely reproduced on a build worker.');
+        if ('uncertain' in candidate) return fail(candidate.uncertain);
+      }
+      const inputs = candidate && !('uncertain' in candidate) ? candidate : null;
       cached = await peerArtifact(choice, request, expectedFingerprint);
       if (cached) {
         cacheHit = true;
@@ -1840,7 +1877,6 @@ export async function offloadBuild(
         break;
       }
       if (choice.cacheOnly) return fail('The exact artifact is no longer available.');
-      const inputs = await readFingerprintInputs();
       const synced = await syncSource(
         choice.connection,
         identity,
@@ -1866,47 +1902,10 @@ export async function offloadBuild(
       choice.connection.onProgress((event) => (job === null ? early.push(event) : handle(event)));
       if (!namedBuildMachine(choice.selected)) requireAutomaticMachine('build', choice.machine);
       checkCancelled();
-      const reply = await choice.connection.request('build.start', {
-        repo: identity.repo,
-        project: identity.project,
-        platform: request.platform,
-        fingerprint: request.platform === 'macos' ? synced.digest : expectedFingerprint,
-        ...fingerprintSourcesParam(inputs),
-        ...fingerprintIgnoredParam(inputs),
-        ...fingerprintTrackedParam(inputs),
-        ...(native
-          ? {
-              native: {
-                provider: native.provider,
-                sourceDigest: synced.digest,
-                ...(native.provider === 'xcode'
-                  ? { cacheKey: native.cacheKey, arch: native.arch, parameters: native.snapshot.parameters }
-                  : {
-                      inputs: native.transfer.declaration,
-                      cache: native.cache,
-                    }),
-              },
-            }
-          : {}),
-        ...(request.platform === 'macos'
-          ? macosBuildParameters(request)
-          : {
-              configuration: request.platform === 'ios' ? request.configuration : null,
-              scheme: request.platform === 'ios' ? request.scheme : null,
-              iosProjectPath: request.platform === 'ios' ? (request.iosProjectPath ?? null) : null,
-              runtime: request.platform === 'ios' ? request.runtime : null,
-              packageName: packageName(join(identity.repoRoot, identity.project)),
-              isExpo: request.isExpo,
-              ...(!native && request.cacheArtifact === true ? { cacheArtifact: true } : {}),
-              optimizations:
-                request.platform === 'ios' && isJsonObject(request.optimizations) ? request.optimizations : null,
-              ...(request.platform === 'android' ? { android: request.android } : {}),
-            }),
-        stimBuild: choice.target.local.stimBuild,
-        compat: choice.target.local.compat,
-        ...startJdk(choice),
-        ...startPods(choice, request),
-      });
+      const reply = await choice.connection.request(
+        'build.start',
+        buildStartParams(choice, request, expectedFingerprint, synced.digest, inputs),
+      );
       checkCancelled();
       if ('result' in reply) {
         job = (reply.result as { job: string }).job;
@@ -1997,6 +1996,19 @@ export async function offloadBuild(
       },
     };
   } catch (error) {
+    if (typeof error === 'object' && error !== null && 'reportCleanup' in error) {
+      keepStaging = true;
+      try {
+        closeOffload(choice);
+      } catch {
+        for (let next = choice.runnersUp.shift(); next; next = choice.runnersUp.shift()) {
+          try {
+            next.connection.close();
+          } catch {}
+        }
+      }
+      throw error;
+    }
     checkCancelled();
     const reason = (error as Error).message.split('\n')[0] ?? String(error);
     return cacheHit ? await retryCachedMiss(reason) : fail(reason);

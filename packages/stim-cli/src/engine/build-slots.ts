@@ -283,9 +283,10 @@ export async function acquireBuildSlot({
   }
 }
 
-export function releaseBuildSlot(handle?: BuildSlotHandle | null): boolean {
+export function releaseBuildSlot(handle?: BuildSlotHandle | null, retain = false): boolean {
   if (!handle || handle.unlimited) return false;
   stopDeclaringSpawnsOn(ambientContext(), handle.claim);
+  if (retain) return false;
   const released = releaseClaim(handle.claim);
   if (released) notifyReleased('build');
   return released;

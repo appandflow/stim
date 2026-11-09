@@ -15,14 +15,13 @@ import {
 } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { totalmem } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, win32 } from 'node:path';
 import { createInterface } from 'node:readline';
 import { isDeepStrictEqual } from 'node:util';
 import {
   markClaimChildPending,
   processGroupAlive,
   releaseClaim,
-  setClaimChild,
   tryAcquireClaim,
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
@@ -87,7 +86,13 @@ import {
   type BuildLimits,
 } from '@stim-cli/server/build';
 import { SCHEMA } from '../../engine-store/schema.ts';
+import { buildClaimRoot } from '../../engine-store/claims.ts';
+import { takeLock } from '../../engine-store/locks.ts';
+import { readManifest } from '../../engine-store/store.ts';
+import { ownStoreEngine } from '../../daemon/engine-switch.ts';
 import { getExecutor } from '../../exec.ts';
+import { fingerprintEnvName } from '../../fingerprint/env.ts';
+import { FINGERPRINT_SCHEMA } from '../../fingerprint/key.ts';
 import { spawnEntry } from '../../spawn-entry.ts';
 import { BuildArtifactCache, validArtifactIdentity } from '../../offload/build-artifact-cache.ts';
 import { runArtifactQuery, type ArtifactQueryResult } from './artifact-query.ts';
@@ -143,45 +148,95 @@ const MAX_FINGERPRINT_SOURCES = 20_000;
 function fingerprintSources(value: unknown): BuildFingerprintSource[] | null | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.length > MAX_FINGERPRINT_SOURCES) return null;
-  const valid = value.every(
-    (source) =>
-      isJsonObject(source) &&
-      Object.keys(source).every((key) => key === 'id' || key === 'hash') &&
-      typeof source.id === 'string' &&
-      source.id.length > 0 &&
-      source.id.length <= MAX_PATH_CHARS &&
-      (source.hash === null || (typeof source.hash === 'string' && /^[0-9a-f]{1,128}$/.test(source.hash))),
-  );
+  const names = new Set<string>();
+  const valid = value.every((source) => {
+    if (
+      !isJsonObject(source) ||
+      Object.keys(source).some((key) => key !== 'id' && key !== 'kind' && key !== 'hash') ||
+      typeof source.id !== 'string' ||
+      source.id.length === 0 ||
+      source.id.length > MAX_PATH_CHARS ||
+      source.id.includes('\0') ||
+      names.has(source.id) ||
+      typeof source.kind !== 'string' ||
+      !['file', 'package', 'config', 'autolinking', 'manifest', 'env'].includes(source.kind) ||
+      typeof source.hash !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(source.hash)
+    )
+      return false;
+    names.add(source.id);
+    return true;
+  });
   return valid ? (value as BuildFingerprintSource[]) : null;
 }
 
-function fingerprintIgnored(value: unknown): string[] | null | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value) || value.length > MAX_FINGERPRINT_SOURCES) return null;
-  const paths: string[] = [];
-  for (const path of value) {
-    if (typeof path !== 'string' || path.length === 0 || path.length > MAX_PATH_CHARS) return null;
-    paths.push(path);
+function fingerprintEnv(value: unknown): BuildStartParams['fingerprintEnv'] | null {
+  if (!isJsonObject(value) || !isJsonObject(value.set) || !Array.isArray(value.absent)) return null;
+  if (Object.keys(value).some((key) => key !== 'set' && key !== 'absent')) return null;
+  const entries = Object.entries(value.set);
+  if (entries.length > MAX_FINGERPRINT_SOURCES || value.absent.length > MAX_FINGERPRINT_SOURCES) return null;
+  const names = new Set<string>();
+  for (const [name, content] of entries) {
+    if (!fingerprintEnvName(name) || name.length > MAX_PATH_CHARS) return null;
+    if (typeof content === 'string') {
+      if (content.includes('\0')) return null;
+    } else if (
+      !isJsonObject(content) ||
+      Object.keys(content).length !== 1 ||
+      typeof content.path !== 'string' ||
+      !content.path ||
+      content.path.length > MAX_PATH_CHARS ||
+      content.path.includes('\0') ||
+      content.path.startsWith('outside:') ||
+      content.path.startsWith('/') ||
+      win32.isAbsolute(content.path) ||
+      /^[A-Za-z]:/.test(content.path) ||
+      content.path.split(/[\\/]/).some((part) => part === '..' || part === '')
+    )
+      return null;
+    names.add(name);
   }
-  return paths;
+  for (const name of value.absent) {
+    if (typeof name !== 'string' || !fingerprintEnvName(name) || name.length > MAX_PATH_CHARS || names.has(name))
+      return null;
+    names.add(name);
+  }
+  return value as BuildStartParams['fingerprintEnv'];
 }
 
-function fingerprintTracked(value: unknown): string[] | null | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value) || value.length > MAX_FINGERPRINT_SOURCES) return null;
-  const names: string[] = [];
-  for (const name of value) {
-    const valid =
-      typeof name === 'string' &&
-      name.length > 0 &&
-      name.length <= 255 &&
-      name !== '.' &&
-      name !== '..' &&
-      !/[/\0]/.test(name);
-    if (!valid) return null;
-    names.push(name);
-  }
-  return names;
+function fingerprintReplay(
+  params: Record<string, unknown>,
+  sources: BuildFingerprintSource[] | undefined,
+): Pick<
+  BuildStartParams,
+  'fingerprintSchema' | 'fingerprintEnv' | 'fingerprintNative' | 'fingerprintLayout' | 'fingerprintRuntime'
+> | null {
+  const env = fingerprintEnv(params.fingerprintEnv);
+  const layout = params.fingerprintLayout;
+  const runtime = params.fingerprintRuntime;
+  if (
+    params.fingerprintSchema !== FINGERPRINT_SCHEMA ||
+    !sources ||
+    !env ||
+    (params.fingerprintNative !== 'tracked' && params.fingerprintNative !== 'generated') ||
+    !isJsonObject(layout) ||
+    !['projectPath', 'gradleRoot', 'module'].every((key) => layout[key] === null || typeof layout[key] === 'string') ||
+    !isJsonObject(runtime) ||
+    typeof runtime.node !== 'string' ||
+    !/^\d+\.\d+$/.test(runtime.node) ||
+    typeof runtime.evaluator !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(runtime.evaluator) ||
+    !isJsonObject(runtime.packages) ||
+    !Object.values(runtime.packages).every((value) => value === null || typeof value === 'string')
+  )
+    return null;
+  return {
+    fingerprintSchema: FINGERPRINT_SCHEMA,
+    fingerprintEnv: env,
+    fingerprintNative: params.fingerprintNative,
+    fingerprintLayout: layout as BuildStartParams['fingerprintLayout'],
+    fingerprintRuntime: runtime as BuildStartParams['fingerprintRuntime'],
+  };
 }
 
 const GRADLE_NAME = /^[A-Za-z0-9_-]{1,100}$/;
@@ -311,6 +366,7 @@ interface Job {
   reactNativeArtifact?: Record<string, unknown>;
   swiftpmArtifact?: Record<string, unknown>;
   settled: boolean;
+  cleanupSettled: boolean;
   cancel: () => void;
   done: Promise<void>;
   send: (event: BuildProgressEvent) => void;
@@ -789,19 +845,77 @@ export class BuildHost {
    */
 
   /** Starts the build of one synced manifest; the job belongs to the caller's connection. */
-  launch({
-    client,
-    repo,
-    job,
-    session,
-    send,
-  }: {
+  async launch(options: {
     client: string;
     repo: string;
     job: Record<string, unknown>;
     session: BuildSession;
     send: (event: BuildProgressEvent) => void;
-  }): Job | Refusal {
+  }): Promise<Job | Refusal> {
+    const engine = ownStoreEngine();
+    const ownership: { claim: ClaimHandle | null; transferred: boolean } = { claim: null, transferred: false };
+    let result: Job | Refusal;
+    try {
+      result = await (async () => {
+        if (this.closed || options.session.signal.aborted)
+          return refusal('build-refused', 'This offload job is ending.');
+        if (engine) {
+          const lock = await takeLock(engine.root, '.lock.sock');
+          if (!lock) return refusal('build-busy', 'The engine store is busy; retry the build.');
+          try {
+            if (this.closed || options.session.signal.aborted)
+              return refusal('build-refused', 'This offload job is ending.');
+            const tree = join(engine.root, engine.build);
+            const manifest = readManifest(tree);
+            if (!manifest || manifest.build !== engine.build || !existsSync(join(tree, 'dist', 'cli.mjs')))
+              return refusal('build-refused', 'The selected engine is unavailable; update Stim and retry.');
+            const attempt = tryAcquireClaim({
+              root: buildClaimRoot(engine.root, engine.build),
+              mode: 'shared',
+              label: 'offload engine',
+              details: { drained: false },
+            });
+            if (attempt.pending) releaseClaim(attempt.pending);
+            if (!attempt.acquired) return refusal('build-busy', 'The selected engine is busy; retry the build.');
+            ownership.claim = attempt.acquired;
+          } finally {
+            await lock.release();
+          }
+        }
+        if (this.closed || options.session.signal.aborted)
+          return refusal('build-refused', 'This offload job is ending.');
+        return this.launchOwned(options, ownership.claim, () => {
+          ownership.transferred = true;
+        });
+      })();
+    } catch (error) {
+      result = refusal('build-refused', `Cannot retain the selected engine: ${String(error)}`);
+    }
+    if (!ownership.transferred && ownership.claim && !releaseClaim(ownership.claim))
+      return refusal(
+        'build-refused',
+        `Cannot release the selected engine claim at ${ownership.claim.path}; verify the job stopped and remove that claim before retrying.`,
+      );
+    return result;
+  }
+
+  private launchOwned(
+    {
+      client,
+      repo,
+      job,
+      session,
+      send,
+    }: {
+      client: string;
+      repo: string;
+      job: Record<string, unknown>;
+      session: BuildSession;
+      send: (event: BuildProgressEvent) => void;
+    },
+    engineClaim: ClaimHandle | null,
+    transfer: () => void,
+  ): Job | Refusal {
     if (this.closed) return refusal('build-refused', 'This offload job is ending.');
     const { capacity, numbers } = this.assess();
     if (capacity.declined)
@@ -838,8 +952,10 @@ export class BuildHost {
     const id = randomUUID();
     let slot: ClaimHandle | null = null;
     const releaseClaims = () => {
-      releaseClaim(slot);
-      releaseClaim(claim);
+      const slotReleased = !slot || releaseClaim(slot);
+      const areaReleased = releaseClaim(claim);
+      const engineReleased = !engineClaim || releaseClaim(engineClaim);
+      return slotReleased && areaReleased && engineReleased;
     };
     const maxBuilds = machineCapacity().maxBuilds;
     try {
@@ -866,12 +982,24 @@ export class BuildHost {
       return refusal('build-refused', String(error));
     }
     recordAreaUse(area);
+    const fingerprintTemp = join(area, 'fingerprint-work', id);
+    try {
+      mkdirSync(fingerprintTemp, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      releaseClaims();
+      return refusal('build-refused', `Cannot create the fingerprint work directory: ${String(error)}`);
+    }
     const started = Date.now();
     try {
       markClaimChildPending(claim);
       if (slot) markClaimChildPending(slot);
+      if (engineClaim) markClaimChildPending(engineClaim);
     } catch (error) {
-      releaseClaims();
+      try {
+        rmSync(fingerprintTemp, { recursive: true, force: true });
+      } finally {
+        releaseClaims();
+      }
       return refusal('build-refused', (error as Error).message);
     }
     let child: ChildProcess;
@@ -882,8 +1010,13 @@ export class BuildHost {
         stdio: ['pipe', 'pipe', 'ignore'],
         env: this.workerEnvironment(clientDir, area),
       });
+      transfer();
     } catch (error) {
-      releaseClaims();
+      try {
+        rmSync(fingerprintTemp, { recursive: true, force: true });
+      } finally {
+        releaseClaims();
+      }
       return refusal('build-refused', (error as Error).message);
     }
     let treeKilled: Promise<void> | null = null;
@@ -909,11 +1042,7 @@ export class BuildHost {
     };
     try {
       const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-      // Gradle daemons detach from worker groups; Android claims must survive a server crash.
-      if (captured?.ok && job.platform !== 'android') {
-        setClaimChild(claim, { pid: child.pid, processToken: captured.token });
-        if (slot) setClaimChild(slot, { pid: child.pid, processToken: captured.token });
-      } else if (!captured?.ok) cancel();
+      if (!captured?.ok) cancel();
     } catch {
       cancel();
     }
@@ -923,6 +1052,7 @@ export class BuildHost {
         ...job,
         job: id,
         area,
+        fingerprintTemp,
         blobs: join(clientDir, 'blobs'),
         swiftpmCache: join(clientDir, 'cache', 'swiftpm'),
         artifactCache: this.artifactCacheDir(client, repo),
@@ -939,6 +1069,7 @@ export class BuildHost {
       slotted: slot !== null,
       outcome: null,
       settled: false,
+      cleanupSettled: false,
       cancel,
       done: Promise.resolve(),
       send,
@@ -967,12 +1098,20 @@ export class BuildHost {
           value,
           isJsonObject(job.native) && job.native.provider === 'gradle' ? 'gradle' : undefined,
         );
+        entry.cleanupSettled =
+          value.fingerprintSettled === true &&
+          (value.ok === true
+            ? entry.outcome.ok
+            : value.ok === false && typeof value.code === 'string' && typeof value.message === 'string');
       }
     });
     this.jobs.add(entry);
     this.owned.set(id, entry);
     entry.done = new Promise<void>((resolve) => {
-      child.on('error', () => {});
+      let spawnFailed = false;
+      child.on('error', () => {
+        if (child.pid === undefined) spawnFailed = true;
+      });
       child.on('close', () => {
         clearTimeout(timeout);
         const outcome: BuildJobOutcome =
@@ -993,13 +1132,21 @@ export class BuildHost {
           if (killTimer) clearTimeout(killTimer);
           finished = true;
           const drained = !drainAndroid || (await this.drainCancelledAndroid(client, repo));
-          if (drained) releaseClaims();
-          else
+          let released = false;
+          if (drained && (entry.cleanupSettled || spawnFailed)) {
+            try {
+              rmSync(fingerprintTemp, { recursive: true, force: true });
+            } catch {}
+            released = releaseClaims();
+          }
+          if (!released) {
+            entry.cleanupSettled = false;
             entry.outcome = {
               ok: false,
               code: 'cleanup-unresolved',
-              message: `Android cleanup is unresolved. Inspect ${claim.root} and this repository's Gradle processes, then recover its repository and build-slot claims before retrying.`,
+              message: `Build cleanup is unresolved. Verify the worker and its descendants have stopped, then remove ${fingerprintTemp} and recover the repository claim at ${claim.path}${slot ? `, build-slot claim at ${slot.path}` : ''}${engineClaim ? `, and engine claim at ${engineClaim.path}` : ''} before retrying.`,
             };
+          }
           if (
             entry.outcome?.ok &&
             isJsonObject(job.native) &&
@@ -1095,7 +1242,10 @@ export class BuildHost {
     job.send = nowhere;
     job.cancel();
     this.owned.delete(job.id);
-    void job.done.then(() => rmSync(dirname(job.archive), { recursive: true, force: true }));
+    void job.done.then(() => {
+      if (job.cleanupSettled) rmSync(dirname(job.archive), { recursive: true, force: true });
+      return undefined;
+    });
   }
 
   /** Hands a job of `client` to `session`, taking it from the connection that held it; null when there is none. */
@@ -1377,22 +1527,19 @@ export class BuildSession {
     if (expectedSources === null)
       return refusal(
         'bad-request',
-        `params.fingerprintSources must be at most ${MAX_FINGERPRINT_SOURCES} sources, each an id and a hex hash or null.`,
+        `params.fingerprintSources must contain unique typed inputs with SHA-256 hashes (at most ${MAX_FINGERPRINT_SOURCES}).`,
       );
+    let replay: Pick<
+      BuildStartParams,
+      'fingerprintSchema' | 'fingerprintEnv' | 'fingerprintNative' | 'fingerprintLayout' | 'fingerprintRuntime'
+    > = {};
+    if (!native && platform !== 'macos') {
+      const parsed = fingerprintReplay(params, expectedSources);
+      if (!parsed) return refusal('bad-request', 'build.start needs a compatible fingerprint replay description.');
+      replay = parsed;
+    }
     if (!native && [...this.files.values()].some((file) => file.kind === 'directory'))
       return refusal('bad-request', 'Directory entries require a native build request.');
-    const expectedIgnored = fingerprintIgnored(params.fingerprintIgnored);
-    if (expectedIgnored === null)
-      return refusal(
-        'bad-request',
-        `params.fingerprintIgnored must be at most ${MAX_FINGERPRINT_SOURCES} paths of at most ${MAX_PATH_CHARS} characters.`,
-      );
-    const expectedTracked = fingerprintTracked(params.fingerprintTracked);
-    if (expectedTracked === null)
-      return refusal(
-        'bad-request',
-        `params.fingerprintTracked must be at most ${MAX_FINGERPRINT_SOURCES} top-level entry names.`,
-      );
     const android = platform === 'android' ? androidOptions(params.android) : null;
     if (platform === 'android' && !android) {
       return refusal(
@@ -1422,7 +1569,7 @@ export class BuildSession {
     }
     if (typeof params.compat !== 'number') return refusal('bad-request', 'build.start needs params.compat.');
     const compat = params.compat;
-    const launched = this.host.launch({
+    const launched = await this.host.launch({
       client: this.client,
       repo: params.repo,
       session: this,
@@ -1445,13 +1592,16 @@ export class BuildSession {
         iosProjectPath: optional(params.iosProjectPath),
         runtime: optional(params.runtime),
         expectedFingerprint: params.fingerprint as string | null,
+        ...replay,
         ...(expectedSources ? { expectedSources } : {}),
-        ...(expectedIgnored ? { expectedIgnored } : {}),
-        ...(expectedTracked ? { expectedTracked } : {}),
         optimizations: isJsonObject(params.optimizations) ? params.optimizations : null,
       },
     });
     if ('error' in launched) return launched;
+    if (this.closed) {
+      this.host.abandon(launched);
+      return refusal('build-refused', 'This offload job is ending.');
+    }
     this.jobs.set(launched.id, launched);
     return { result: { job: launched.id } };
   }

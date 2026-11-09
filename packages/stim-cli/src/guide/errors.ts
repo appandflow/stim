@@ -110,13 +110,11 @@ Branch on the code, never on the message.`,
   Metro, gets a fresh reservation.`,
     },
     STIM_NO_FINGERPRINT: {
-      summary: '@expo/fingerprint produced no hash, so the shared cache cannot be addressed',
+      summary: 'Stim could not determine a native fingerprint',
       body: () => `STIM_NO_FINGERPRINT
-  \`@expo/fingerprint\` produced no hash, so the shared build cache cannot be
-  addressed. Stim uses its declared @expo/fingerprint dependency directly,
-  independently of the target project's package graph. This is a refusal
-  rather than a silent full build because an unaddressable cache means every
-  workspace on the commit compiles from scratch, forever.`,
+  Stim could not determine the native inputs for a build-cache key. Follow the
+  printed evaluator or project-input remedy. A build can run locally without a
+  reusable cache key when its inputs cannot be determined safely.`,
     },
     STIM_PREBUILD_FAILED: {
       summary: 'expo prebuild could not generate or regenerate the native directory',

@@ -564,7 +564,9 @@ export async function runStimd({
         const { op } = message;
         if (op === 'hello') {
           hasten?.();
-          socket.end(`${JSON.stringify({ op: 'hello', pid: process.pid, build, version: identity.version })}\n`);
+          const configured = configuredDaemonMode();
+          const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
+          socket.end(`${JSON.stringify({ op: 'hello', pid: process.pid, build, version: identity.version, mode })}\n`);
         } else if (op === 'presence.publish') {
           socket.end(`${JSON.stringify({ op: 'presence', forwarded: net.presence(message.params) })}\n`);
         } else if (op === 'net.ensure') {
