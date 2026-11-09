@@ -40,7 +40,7 @@ async function compile(root: string, context: IosArtifactContext): Promise<IosCo
     });
   const run = await runCaptured({
     cmd: join(root, EXACT_CLI),
-    args: ['ios', '--no-install'],
+    args: ['ios', '--no-install', ...(context.configuration === 'Release' ? ['--release'] : [])],
     cwd: root,
     env: {
       ...context.operation?.env,
@@ -119,11 +119,12 @@ export function exactIosProject(root: string): IosProject {
     runtimeKind: () => 'process',
     bundleId: () => null,
     schemeProblem(scheme, configuration) {
-      if (scheme !== undefined || (configuration && configuration !== 'Debug'))
+      if (scheme !== undefined || (configuration && configuration !== 'Debug' && configuration !== 'Release'))
         return {
           code: 'STIM_BAD_ARG',
-          message: 'Exact apps have no Xcode schemes or configurations; stim ios builds the development app.',
-          remedy: `Drop --scheme and --configuration, or build a release with ./${EXACT_CLI} ios --release.`,
+          message:
+            'Exact apps have no Xcode schemes; --configuration takes Debug (the development app) or Release (./exact.mjs ios --release).',
+          remedy: 'Drop --scheme, and pass --configuration Debug or Release.',
         };
       return null;
     },

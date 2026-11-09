@@ -629,8 +629,9 @@ An [Exact](https://github.com/expo/exact) app has `exact.mjs` next to
 `./exact.mjs ios --no-install` with `EXACT_SIM` set to the workspace's owned
 simulator, installs the reported `.app` and launches it as a native process
 without Metro. Exact compiles incrementally in the checkout's `target/`
-directory, so Stim keeps no artifact cache for it. `--scheme` and any
-`--configuration` but `Debug` are refused; build a release with `./exact.mjs ios --release`.
+directory, so Stim keeps no artifact cache for it. `--configuration Release`
+adds `--release`, Exact's shipping build, whose first build takes minutes.
+`--scheme` and any other configuration are refused.
 
 Drive and test the app with Exact's own commands, pointed at the simulator
 `stim ios` reported:

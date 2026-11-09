@@ -814,7 +814,8 @@ files.
 Do not infer and rebuild commands from project scripts. Bare React Native hosts
 Metro from the project's dependencies. Expo runs its fixed start command. iOS
 and Android use fixed `xcodebuild` and Gradle arguments. An Exact app builds
-with its own `./exact.mjs ios --no-install`, with `EXACT_SIM` naming the
+with its own `./exact.mjs ios --no-install` (plus `--release` for
+`--configuration Release`), with `EXACT_SIM` naming the
 workspace's owned simulator; Stim refuses the build when no owned simulator is
 bound yet.
 
