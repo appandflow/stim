@@ -28,15 +28,19 @@ function exactBuiltApp(lines: readonly string[]): string | null {
   return null;
 }
 
-async function compile(root: string, context: IosArtifactContext): Promise<IosCompileResult> {
-  if (!context.target.booted)
+async function compile(
+  root: string,
+  context: IosArtifactContext,
+  booting: ReturnType<NonNullable<IosArtifactContext['target']['booted']>> | null,
+): Promise<IosCompileResult> {
+  if (!booting)
     throw new IosRecipeRefusal({
       code: 'STIM_BAD_ARG',
       message:
         "An Exact build needs this workspace's own booted simulator, because Exact may run the app on it to read its native modules.",
       remedy: 'Build and run Exact apps with stim ios; build-only runs (stim ci build) are not supported.',
     });
-  const booted = await context.target.booted();
+  const booted = await booting;
   if (!booted.ok) throw new IosRecipeRefusal({ code: 'STIM_NO_DEVICE', message: booted.reason });
   const udid = booted.udid;
   const run = await runCaptured({
@@ -86,9 +90,14 @@ async function compile(root: string, context: IosArtifactContext): Promise<IosCo
 }
 
 function exactRecipe(root: string, context: IosArtifactContext): IosArtifactRecipe {
+  let booting: ReturnType<NonNullable<IosArtifactContext['target']['booted']>> | null = null;
+  const boot = () => (booting ??= context.target.booted?.() ?? null);
   return {
     buildTool: EXACT_CLI,
-    identity: async () => ({ cacheIneligible: CACHE_INELIGIBLE }),
+    identity: async () => {
+      await boot();
+      return { cacheIneligible: CACHE_INELIGIBLE };
+    },
     cache: () =>
       filesystemBuildCapability({
         context: context.operation,
@@ -106,7 +115,7 @@ function exactRecipe(root: string, context: IosArtifactContext): IosArtifactReci
       });
     },
     materialize: async (path) => path,
-    compile: () => compile(root, context),
+    compile: () => compile(root, context, boot()),
     explain: () => ({ reason: skippedMissReason(CACHE_INELIGIBLE), diff: null }),
     untrackedLine: () => null,
     expoCache: null,

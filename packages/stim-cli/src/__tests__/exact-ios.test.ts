@@ -130,3 +130,25 @@ test('refuses without a booted workspace simulator', async () => {
     failure: { code: 'STIM_NO_DEVICE', message: 'boot timed out' },
   });
 });
+
+test.skipIf(process.platform === 'win32')('waits for the boot before build admission, and boots once', async () => {
+  exactScript('echo "$EXACT_SIM"\nexit 1');
+  let finish: (udid: string) => void = () => {};
+  let calls = 0;
+  const recipe = exactIosProject(root).artifact(
+    context(null, () => {
+      calls += 1;
+      return new Promise((resolve) => (finish = (udid) => resolve({ ok: true, udid })));
+    }),
+  );
+
+  let identified = false;
+  const identity = recipe.identity().then(() => (identified = true));
+  await new Promise(setImmediate);
+  expect(identified).toBe(false);
+  finish('SIM-2');
+  await identity;
+
+  expect(await recipe.compile()).toMatchObject({ diagnostics: [{ message: 'SIM-2' }] });
+  expect(calls).toBe(1);
+});
