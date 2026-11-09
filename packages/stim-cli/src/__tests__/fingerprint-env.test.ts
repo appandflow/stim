@@ -16,6 +16,7 @@ import {
   workspaceEnv,
 } from '../fingerprint/env.ts';
 import { resolveReplayEnvPath } from '../fingerprint/replay.ts';
+import { pathForm } from '../fingerprint/walk.ts';
 
 const MOBILE = fileURLToPath(new URL('../../../../apps/mobile', import.meta.url));
 const SCRIPT = /(?:\.podspec|\.rb|\.gradle|\.gradle\.kts|^Podfile|^CMakeLists\.txt)$/;
@@ -246,6 +247,21 @@ test('worker refuses Windows absolute and drive-relative path forms on every hos
   const roots = { project: '/project', install: '/project' };
   for (const path of ['C:\\secret', 'C:/secret', 'C:secret', '\\\\server\\share'])
     expect(resolveReplayEnvPath(path, roots)).toBeNull();
+});
+
+test('an env path naming the install root or the project itself resolves to it on the worker', () => {
+  const client = { project: '/client/repo/apps/app', install: '/client/repo' };
+  const worker = { project: '/worker/src/apps/app', install: '/worker/src' };
+  const sent = fingerprintJobEnv(
+    [{ name: 'env:*', kind: 'env', hash: 'x' }],
+    { REPO_ROOT: client.install, APP_ROOT: client.project },
+    (path) => pathForm(path, client),
+  );
+  if (!sent) throw new Error('the install-root path was not sent');
+  expect(materializeFingerprintEnv(sent, (path) => resolveReplayEnvPath(path, worker))).toEqual({
+    set: { REPO_ROOT: worker.install, APP_ROOT: worker.project },
+    absent: [],
+  });
 });
 
 test('enumerated app STIM_ variables affect the key and do not leak from the worker', () => {

@@ -191,7 +191,7 @@ function fingerprintEnv(value: unknown): BuildStartParams['fingerprintEnv'] | nu
       content.path.startsWith('/') ||
       win32.isAbsolute(content.path) ||
       /^[A-Za-z]:/.test(content.path) ||
-      content.path.split(/[\\/]/).some((part) => part === '..' || part === '')
+      (content.path !== '<install>/' && content.path.split(/[\\/]/).some((part) => part === '..' || part === ''))
     )
       return null;
     names.add(name);

@@ -68,10 +68,11 @@ test('build.start refuses a drive path in tagged fingerprint environment before 
       ).toMatchObject({ error: { code: 'bad-request', message: expect.stringContaining('fingerprint replay') } });
     }
     expect(launch).not.toHaveBeenCalled();
-    expect(
-      await session.start({ ...base, fingerprintEnv: { set: { ASSET_DIR: { path: 'assets' } }, absent: [] } }),
-    ).toMatchObject({ error: { code: 'build-refused', message: 'admitted' } });
-    expect(launch).toHaveBeenCalledOnce();
+    for (const path of ['assets', '<install>/'])
+      expect(
+        await session.start({ ...base, fingerprintEnv: { set: { ASSET_DIR: { path } }, absent: [] } }),
+      ).toMatchObject({ error: { code: 'build-refused', message: 'admitted' } });
+    expect(launch).toHaveBeenCalledTimes(2);
   } finally {
     launch.mockRestore();
     session.close();

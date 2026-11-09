@@ -14,6 +14,7 @@ const MAX_BYTES = 2 * 1024 ** 3;
 
 export function resolveReplayEnvPath(name: string, roots: Roots): string | null {
   if (name.startsWith('outside:') || isAbsolute(name) || win32.isAbsolute(name) || /^[A-Za-z]:/.test(name)) return null;
+  if (name === '<install>/') return roots.install;
   let boundary = roots.project;
   let relative = name;
   if (name.startsWith('<install>/')) {
