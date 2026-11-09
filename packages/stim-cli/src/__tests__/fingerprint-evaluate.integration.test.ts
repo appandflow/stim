@@ -778,6 +778,30 @@ describe.skipIf(!existsSync(MOBILE_MODULES))('fingerprint evaluators on the inst
     expect(isUncertain(replayed) ? replayed : replayed.hash).toBe(initial.hash);
   });
 
+  test('inputs a project declares change the key', SLOW, async () => {
+    const root = expoApp({
+      'fingerprint.config.js':
+        "module.exports = { extraSources: [{ type: 'file', filePath: 'declared.txt' }, { type: 'contents', id: 'flavor', contents: process.env.FP_DECLARED ?? '' }] };\n",
+      'declared.txt': 'one',
+      'listed.txt': 'one',
+    });
+    const compute = (env: NodeJS.ProcessEnv, fingerprintInputs?: string[]) =>
+      fingerprint(root, { platform: 'ios', fingerprintInputs }, { env, embedMode: 'development' });
+    const hashOf = async (result: ReturnType<typeof compute>) => {
+      const value = await result;
+      if (isUncertain(value)) throw new Error(value.uncertain);
+      return value.hash;
+    };
+    const base = await hashOf(compute(baseEnv({ FP_DECLARED: 'a' })));
+    expect(await hashOf(compute(baseEnv({ FP_DECLARED: 'a' })))).toBe(base);
+    expect(await hashOf(compute(baseEnv({ FP_DECLARED: 'b' })))).not.toBe(base);
+    write(join(root, 'declared.txt'), 'two');
+    expect(await hashOf(compute(baseEnv({ FP_DECLARED: 'a' })))).not.toBe(base);
+    const listed = await hashOf(compute(baseEnv(), ['listed.txt']));
+    write(join(root, 'listed.txt'), 'two');
+    expect(await hashOf(compute(baseEnv(), ['listed.txt']))).not.toBe(listed);
+  });
+
   test('a copied Expo plugin callback is keyed and invalidates the evaluator index', SLOW, async () => {
     const root = expoApp({});
     const modules = join(root, 'node_modules');
