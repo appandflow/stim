@@ -622,6 +622,37 @@ Run this native Xcode app with stim ios --scheme MyApp --configuration Debug
 inspect stim logs --errors, then stop only this workspace with stim stop.
 ```
 
+### Exact apps
+
+An [Exact](https://github.com/expo/exact) app has `exact.mjs` next to
+`app.json`. Run `stim ios` from that directory. It runs the app's own
+`./exact.mjs ios --no-install` with `EXACT_SIM` set to the workspace's owned
+simulator, installs the reported `.app` and launches it as a native process
+without Metro. Exact compiles incrementally in the checkout's `target/`
+directory, so Stim keeps no artifact cache for it. `--scheme` and
+`--configuration` are refused; build a release with `./exact.mjs ios --release`.
+
+Drive and test the app with Exact's own commands, pointed at the simulator
+`stim ios` reported:
+
+```sh
+EXACT_SIM=<udid> ./exact.mjs agent ios tree "screenshot out.png"
+EXACT_SIM=<udid> ./exact.mjs test ios
+```
+
+Exact limits worktrees: a worktree needs the same folder name as the checkout
+it was created in, and `EXACT2` set to the Exact checkout when it sits at
+another folder depth. Only iOS simulators are supported; macOS, web, Android
+and physical devices use Exact's own commands.
+
+Copy this request to your agent:
+
+```text
+Run this Exact app with stim ios --json. Drive it with ./exact.mjs agent ios and
+test it with ./exact.mjs test ios, both with EXACT_SIM set to the simulator stim
+ios reported. Inspect stim logs --errors, then stop only this workspace with stim stop.
+```
+
 ## `android`
 
 ```text

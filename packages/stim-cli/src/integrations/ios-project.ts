@@ -26,7 +26,15 @@ export interface IosSourcePreparation {
   mutationLabel: string;
 }
 
+export type IosCompileResult = Pick<BuildIosResult, 'durationMs' | 'transcriptLines' | 'compilationCache'> &
+  (
+    | { ok: true; appPath: string; bundleId: string }
+    | Omit<Extract<BuildIosResult, { ok: false }>, 'durationMs' | 'transcriptLines' | 'compilationCache'>
+  );
+
 export interface IosArtifactRecipe {
+  /** The tool named in build progress and failures; xcodebuild when absent. */
+  buildTool?: string;
   identity(): Promise<IosArtifactIdentity | { cacheIneligible: string }>;
   /** The background check of a memoized fingerprint that identity() used, if any. */
   fingerprintCheck?(): FingerprintCheck | null;
@@ -36,7 +44,7 @@ export interface IosArtifactRecipe {
   validate(): Promise<IosArtifactIdentity | null>;
   validateExternal(path: string): void | Promise<void>;
   materialize(path: string, options: { fresh: boolean; ownTemporary(directory: string): void }): Promise<string | null>;
-  compile(): Promise<BuildIosResult>;
+  compile(): Promise<IosCompileResult>;
   explain(rekeyedBy: string[]): { reason: BuildMissReason; diff: Record<string, unknown> | null };
   untrackedLine(): string | null;
   expoCache: {
