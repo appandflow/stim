@@ -1603,6 +1603,7 @@ function fingerprintParams(inputs: FingerprintInputs | null) {
     fingerprintNative: inputs.native,
     fingerprintLayout: inputs.layout,
     fingerprintRuntime: inputs.runtime,
+    ...(inputs.fingerprintInputs === undefined ? {} : { fingerprintInputs: inputs.fingerprintInputs }),
   };
 }
 

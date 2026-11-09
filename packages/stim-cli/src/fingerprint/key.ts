@@ -50,6 +50,14 @@ export const sha256 = (value: string | Buffer): string => createHash('sha256').u
 /** Code-unit order, which does not depend on the ICU data `localeCompare` reads. */
 export const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
+export function fingerprintInputsRow(paths: readonly string[]): Input {
+  return {
+    name: 'stim:fingerprintInputs',
+    kind: 'manifest',
+    hash: sha256(canonicalJson([...new Set(paths)].toSorted(byCodeUnit))),
+  };
+}
+
 export function isUncertain(value: unknown): value is Uncertain {
   return typeof value === 'object' && value !== null && 'uncertain' in value;
 }

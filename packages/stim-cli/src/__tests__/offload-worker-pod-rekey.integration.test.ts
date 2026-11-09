@@ -25,7 +25,7 @@ const modules = fileURLToPath(new URL('../../../../apps/mobile/node_modules', im
 const sha = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 
 describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
-  test.each(['lock', 'other', 'added', 'after-build', 'workspace'] as const)(
+  test.each(['lock', 'other', 'added', 'after-build', 'workspace', 'declared'] as const)(
     'build.start %s post-pods changes through the real worker',
     { timeout: 180_000 },
     async (change) => {
@@ -77,6 +77,7 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
             "platform :ios, '16.0'\nconfig_command = ['node', '--eval', 'require(require.resolve(\"expo/bin/autolinking\"))(process.argv.slice(1))', 'react-native-config', '--json', '--platform', 'ios']\nconfig = use_native_modules!(config_command)\n",
           'ios/Fixture.xcodeproj/project.pbxproj': '// fixture\n',
           ...(change === 'workspace' ? { 'ios/Fixture.xcworkspace/contents.xcworkspacedata': '<Workspace/>\n' } : {}),
+          ...(change === 'declared' ? { 'native-extra/kept.txt': 'kept\n' } : {}),
         };
         const write = (path: string, text: string) => {
           mkdirSync(dirname(path), { recursive: true });
@@ -92,7 +93,7 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
         script('pnpm', ':');
         script(
           'pod',
-          `mkdir -p Pods\nprintf 'PODS:\\n  - Fixture (1.0.0)\\n\\nCOCOAPODS: 1.16.2\\n' > Podfile.lock\ncp Podfile.lock Pods/Manifest.lock\n${change === 'other' ? "printf '\\n# changed by pod install\\n' >> Podfile" : change === 'added' ? "mkdir -p Fixture; printf '// generated\\n' > Fixture/Generated.swift" : change === 'workspace' ? "mkdir -p Fixture.xcworkspace/xcshareddata/swiftpm; printf '{}\\n' > Fixture.xcworkspace/xcshareddata/swiftpm/Package.resolved" : ':'}`,
+          `mkdir -p Pods\nprintf 'PODS:\\n  - Fixture (1.0.0)\\n\\nCOCOAPODS: 1.16.2\\n' > Podfile.lock\ncp Podfile.lock Pods/Manifest.lock\n${change === 'other' ? "printf '\\n# changed by pod install\\n' >> Podfile" : change === 'added' ? "mkdir -p Fixture; printf '// generated\\n' > Fixture/Generated.swift" : change === 'workspace' ? "mkdir -p Fixture.xcworkspace/xcshareddata/swiftpm; printf '{}\\n' > Fixture.xcworkspace/xcshareddata/swiftpm/Package.resolved" : change === 'declared' ? "printf 'added\\n' > ../native-extra/added.txt" : ':'}`,
         );
         script(
           'xcrun',
@@ -104,7 +105,10 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
         );
         await run('git', ['init', '--quiet', project]);
         await run('git', ['-C', project, 'add', '.']);
-        const target = { platform: 'ios' as const };
+        const target = {
+          platform: 'ios' as const,
+          ...(change === 'declared' ? { fingerprintInputs: ['native-extra'] } : {}),
+        };
         const initial = await fingerprint(project, target, {
           env: process.env,
           embedMode: 'development',
@@ -156,6 +160,7 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
           fingerprintNative: replay.native,
           fingerprintLayout: replay.layout,
           fingerprintRuntime: replay.runtime,
+          ...(replay.fingerprintInputs ? { fingerprintInputs: replay.fingerprintInputs } : {}),
           podsOnWorker: true,
         });
         if (!('result' in started)) throw new Error(started.error.message);
@@ -187,6 +192,7 @@ describe.skipIf(process.platform === 'win32')('post-pods worker rekey', () => {
             code: 'no-fingerprint',
             message: expect.stringContaining('ios/Fixture.xcworkspace/xcshareddata/swiftpm/Package.resolved'),
           },
+          declared: { ok: false, code: 'no-fingerprint', message: expect.stringContaining('native-extra/added.txt') },
         };
         if (result && typeof result === 'object' && 'ok' in result && result.ok !== expected[change].ok)
           console.error('Unexpected worker outcome:', JSON.stringify(result));

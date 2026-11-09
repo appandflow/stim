@@ -24,6 +24,7 @@ export interface FingerprintInputs {
   native: NativeMode;
   layout: Layout;
   runtime: FingerprintRuntime;
+  fingerprintInputs?: string[];
 }
 
 export async function fingerprintForBuild(
@@ -97,6 +98,7 @@ export function fingerprintOffloadInputs(
     native: key.native,
     layout: targetLayout(target),
     runtime,
+    ...(target.fingerprintInputs === undefined ? {} : { fingerprintInputs: [...target.fingerprintInputs] }),
   };
 }
 

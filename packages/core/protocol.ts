@@ -1259,6 +1259,8 @@ export interface BuildStartParams {
   fingerprintNative?: 'tracked' | 'generated';
   fingerprintLayout?: { projectPath: string | null; gradleRoot: string | null; module: string | null };
   fingerprintRuntime?: { node: string; evaluator: string; packages: Record<string, string | null> };
+  /** The client's `cache.fingerprintInputs`, relative to `project`; required when `fingerprintSources` holds their row. */
+  fingerprintInputs?: string[];
   native?:
     | {
         provider: 'xcode';

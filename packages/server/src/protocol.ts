@@ -2250,6 +2250,11 @@ export function protocolJsonSchema(): JsonSchema {
                   packages: { type: 'object', maxProperties: 16, additionalProperties: { type: ['string', 'null'] } },
                 },
               },
+              fingerprintInputs: {
+                type: 'array',
+                maxItems: 20000,
+                items: { type: 'string', minLength: 1, maxLength: 1024 },
+              },
               podsOnWorker: { type: 'boolean' },
               reuseArtifact: { type: 'boolean' },
               native: {

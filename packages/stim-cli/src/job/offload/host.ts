@@ -15,7 +15,7 @@ import {
 } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { totalmem } from 'node:os';
-import { basename, dirname, join, win32 } from 'node:path';
+import { basename, dirname, join, posix, win32 } from 'node:path';
 import { createInterface } from 'node:readline';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -92,7 +92,7 @@ import { readManifest } from '../../engine-store/store.ts';
 import { ownStoreEngine } from '../../daemon/engine-switch.ts';
 import { getExecutor } from '../../exec.ts';
 import { fingerprintEnvName } from '../../fingerprint/env.ts';
-import { FINGERPRINT_SCHEMA } from '../../fingerprint/key.ts';
+import { FINGERPRINT_SCHEMA, fingerprintInputsRow } from '../../fingerprint/key.ts';
 import { spawnEntry } from '../../spawn-entry.ts';
 import { BuildArtifactCache, validArtifactIdentity } from '../../offload/build-artifact-cache.ts';
 import { runArtifactQuery, type ArtifactQueryResult } from './artifact-query.ts';
@@ -204,19 +204,52 @@ function fingerprintEnv(value: unknown): BuildStartParams['fingerprintEnv'] | nu
   return value as BuildStartParams['fingerprintEnv'];
 }
 
+function fingerprintInputs(
+  value: unknown,
+  project: unknown,
+  sources: BuildFingerprintSource[],
+): string[] | null | undefined {
+  const row = sources.find((source) => source.id === 'stim:fingerprintInputs');
+  if (value === undefined) return row ? null : undefined;
+  if (!row || !Array.isArray(value) || value.length > MAX_FINGERPRINT_SOURCES || typeof project !== 'string')
+    return null;
+  const valid = value.every(
+    (path) =>
+      typeof path === 'string' &&
+      path.length > 0 &&
+      path.length <= MAX_PATH_CHARS &&
+      !path.includes('\0') &&
+      !posix.isAbsolute(path) &&
+      !win32.isAbsolute(path) &&
+      !/^[A-Za-z]:/.test(path) &&
+      !/^\.\.(?:\/|$)/.test(posix.normalize(posix.join(project || '.', path.replaceAll('\\', '/')))),
+  );
+  if (!valid) return null;
+  const paths = value as string[];
+  const expected = fingerprintInputsRow(paths);
+  return row.kind === expected.kind && row.hash === expected.hash ? paths : null;
+}
+
 function fingerprintReplay(
   params: Record<string, unknown>,
   sources: BuildFingerprintSource[] | undefined,
 ): Pick<
   BuildStartParams,
-  'fingerprintSchema' | 'fingerprintEnv' | 'fingerprintNative' | 'fingerprintLayout' | 'fingerprintRuntime'
+  | 'fingerprintSchema'
+  | 'fingerprintEnv'
+  | 'fingerprintNative'
+  | 'fingerprintLayout'
+  | 'fingerprintRuntime'
+  | 'fingerprintInputs'
 > | null {
   const env = fingerprintEnv(params.fingerprintEnv);
   const layout = params.fingerprintLayout;
   const runtime = params.fingerprintRuntime;
+  const declared = sources && fingerprintInputs(params.fingerprintInputs, params.project, sources);
   if (
     params.fingerprintSchema !== FINGERPRINT_SCHEMA ||
     !sources ||
+    declared === null ||
     !env ||
     (params.fingerprintNative !== 'tracked' && params.fingerprintNative !== 'generated') ||
     !isJsonObject(layout) ||
@@ -236,6 +269,7 @@ function fingerprintReplay(
     fingerprintNative: params.fingerprintNative,
     fingerprintLayout: layout as BuildStartParams['fingerprintLayout'],
     fingerprintRuntime: runtime as BuildStartParams['fingerprintRuntime'],
+    ...(declared ? { fingerprintInputs: declared } : {}),
   };
 }
 
@@ -1531,7 +1565,12 @@ export class BuildSession {
       );
     let replay: Pick<
       BuildStartParams,
-      'fingerprintSchema' | 'fingerprintEnv' | 'fingerprintNative' | 'fingerprintLayout' | 'fingerprintRuntime'
+      | 'fingerprintSchema'
+      | 'fingerprintEnv'
+      | 'fingerprintNative'
+      | 'fingerprintLayout'
+      | 'fingerprintRuntime'
+      | 'fingerprintInputs'
     > = {};
     if (!native && platform !== 'macos') {
       const parsed = fingerprintReplay(params, expectedSources);

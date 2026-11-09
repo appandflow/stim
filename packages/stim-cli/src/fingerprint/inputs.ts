@@ -8,8 +8,8 @@ import {
   type AndroidLayout,
 } from '../workspace/settings.ts';
 import {
-  byCodeUnit,
   canonicalJson,
+  fingerprintInputsRow,
   isUncertain,
   mergeInputs,
   sha256,
@@ -329,13 +329,7 @@ export function staticInputs(context: StaticContext, target: StaticTarget): Stat
     return { uncertain: 'cache.fingerprintInputs must contain nonempty app-relative paths' };
   const override =
     context.replay?.fingerprintInputs ??
-    (target.fingerprintInputs === undefined
-      ? undefined
-      : {
-          name: 'stim:fingerprintInputs',
-          kind: 'manifest' as const,
-          hash: sha256(canonicalJson([...new Set(target.fingerprintInputs)].toSorted(byCodeUnit))),
-        });
+    (target.fingerprintInputs === undefined ? undefined : fingerprintInputsRow(target.fingerprintInputs));
   const extra = override
     ? { trees: (target.fingerprintInputs ?? []).map((path) => resolve(project, path)), rows: [override] }
     : projectFingerprintConfig(context.fingerprintConfig, project);

@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BuildHost } from '../job/offload/host.ts';
+import { fingerprintInputsRow } from '../fingerprint/key.ts';
 
 const fixture = vi.hoisted((): { root: string; release: (() => void) | undefined } => ({
   root: '',
@@ -71,6 +72,46 @@ test('build.start refuses a drive path in tagged fingerprint environment before 
       await session.start({ ...base, fingerprintEnv: { set: { ASSET_DIR: { path: 'assets' } }, absent: [] } }),
     ).toMatchObject({ error: { code: 'build-refused', message: 'admitted' } });
     expect(launch).toHaveBeenCalledOnce();
+  } finally {
+    launch.mockRestore();
+    session.close();
+    await host.close();
+  }
+});
+
+test('build.start admits declared fingerprint inputs only when they match the keyed row and stay in the repository', async () => {
+  const host = new BuildHost({ worker: 'unused', env: process.env });
+  const session = host.session('client', { OPEN: 1, readyState: 1, bufferedAmount: 0, send: () => {} }, () => {});
+  const launch = vi.spyOn(host, 'launch').mockResolvedValue({ error: { code: 'build-refused', message: 'admitted' } });
+  const start = (paths: string[] | undefined, keyed: string[] = paths ?? ['native-extra']) => {
+    const row = fingerprintInputsRow(keyed);
+    return session.start({
+      repo: 'repo',
+      project: 'apps/app',
+      platform: 'ios',
+      runtime: 'iOS-27-0',
+      stimBuild: 'b1',
+      compat: 6,
+      fingerprint: 'a'.repeat(64),
+      fingerprintSources: [{ id: row.name, kind: row.kind, hash: row.hash }],
+      fingerprintSchema: 2,
+      fingerprintEnv: { set: {}, absent: [] },
+      fingerprintNative: 'tracked',
+      fingerprintLayout: { projectPath: null, gradleRoot: null, module: null },
+      fingerprintRuntime: { node: '22.22', evaluator: '0'.repeat(64), packages: {} },
+      ...(paths ? { fingerprintInputs: paths } : {}),
+    });
+  };
+  try {
+    session.sync({ repo: 'repo', files: [], done: true });
+    for (const refused of [start(undefined), start(['other'], ['native-extra']), start(['../../../outside'])])
+      expect(await refused).toMatchObject({
+        error: { code: 'bad-request', message: expect.stringContaining('fingerprint replay') },
+      });
+    expect(launch).not.toHaveBeenCalled();
+    expect(await start(['../../packages/shared', 'native-extra'])).toMatchObject({
+      error: { code: 'build-refused', message: 'admitted' },
+    });
   } finally {
     launch.mockRestore();
     session.close();

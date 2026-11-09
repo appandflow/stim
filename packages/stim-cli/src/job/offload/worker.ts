@@ -118,7 +118,12 @@ interface ManifestEntry {
 /** What stim-server hands this process on stdin; it has already checked every path and blob. */
 interface WorkerJob extends Pick<
   BuildStartParams,
-  'fingerprintSchema' | 'fingerprintEnv' | 'fingerprintNative' | 'fingerprintLayout' | 'fingerprintRuntime'
+  | 'fingerprintSchema'
+  | 'fingerprintEnv'
+  | 'fingerprintNative'
+  | 'fingerprintLayout'
+  | 'fingerprintRuntime'
+  | 'fingerprintInputs'
 > {
   job: string;
   area: string;
@@ -717,7 +722,12 @@ function replayLayout(job: WorkerJob, platform: 'ios' | 'android', root: string,
   } catch (error) {
     return { error: (error as Error).message } as const;
   }
-  const target = { platform, iosProjectPath: iosProject.relative, androidLayout };
+  const target = {
+    platform,
+    iosProjectPath: iosProject.relative,
+    androidLayout,
+    ...(job.fingerprintInputs ? { fingerprintInputs: job.fingerprintInputs } : {}),
+  };
   if (!isDeepStrictEqual(targetLayout(target), job.fingerprintLayout))
     return { error: 'The worker native layout differs from the client.', layoutMismatch: true } as const;
   return { iosProject, androidLayout, target } as const;

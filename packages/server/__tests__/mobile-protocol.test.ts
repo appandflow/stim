@@ -372,6 +372,7 @@ test('the build.start wire schema accepts every BuildStartParams field, includin
     fingerprintNative: 'tracked',
     fingerprintLayout: { projectPath: null, gradleRoot: 'android', module: ':app' },
     fingerprintRuntime: { node: '22.22', evaluator: 'b'.repeat(64), packages: { expo: '58.0.0' } },
+    fingerprintInputs: ['native-extra'],
     native: {
       provider: 'xcode',
       sourceDigest: 'a'.repeat(64),
