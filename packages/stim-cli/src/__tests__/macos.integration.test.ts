@@ -284,7 +284,7 @@ test.skipIf(process.platform === 'win32')('a failed pending declaration sends no
   const runtime = join(dir, 'runtime');
   const held = tryAcquireClaim({ root: runtime, mode: 'exclusive', label: 'held' }).acquired;
   assert(held);
-  const markPending = ownership.markClaimChildPending;
+  const markPending = markClaimChildPending;
   const mark = vi.spyOn(ownership, 'markClaimChildPending');
   mark.mockImplementationOnce(markPending);
   mark.mockImplementationOnce(() => {
