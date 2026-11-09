@@ -41,7 +41,13 @@ import { waitForMacosRegistration } from '../macos/registration.ts';
 import type { BuildHandoff } from '../offload/client.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
-import { stopBundleInstances, stopMacosAppHeld, stopProcesses as stopMacosProcesses } from '../macos/stop.ts';
+import {
+  stopBundleInstances,
+  stopMacosAppHeld,
+  stopProcesses as stopMacosProcesses,
+  SUPERVISOR_EXIT_MS,
+} from '../macos/stop.ts';
+import { startedBy } from '../macos/instances.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../build-placement.ts';
 import { spawnEntry } from '../spawn-entry.ts';
@@ -177,19 +183,13 @@ export async function runMacos(
                 note(
                   'macOS LaunchServices does not list the app yet. agent-device open may start a second copy; wait and check lsappinfo.',
                 );
-              launched();
               signal.throwIfAborted();
               const refusal = operationState(context).refusal;
               if (refusal !== null) throw new Error(refusal);
+              launched();
               return here;
             } catch (error) {
-              await cleanupFailedMacosLaunch(
-                context,
-                root,
-                record,
-                [here.supervisor, here.app].filter((each) => each !== undefined),
-                error,
-              );
+              await cleanupFailedMacosLaunch(context, root, record, here.supervisor, here.app, error);
               throw error;
             }
           }
@@ -441,7 +441,7 @@ async function launchHere(
       failure.cause = error;
       throw failure;
     }
-    await cleanupFailedMacosLaunch(context, root, record, supervisor ? [supervisor] : [], error);
+    await cleanupFailedMacosLaunch(context, root, record, supervisor, undefined, error);
     throw error;
   }
 }
@@ -450,11 +450,15 @@ async function cleanupFailedMacosLaunch(
   context: StimContext,
   root: string,
   record: MacosAppRecord,
-  owners: readonly MacosProcess[],
+  supervisor: MacosProcess | undefined,
+  app: MacosProcess | undefined,
   error: unknown,
 ): Promise<void> {
   try {
-    await stopMacosProcesses(owners);
+    const started = await startedBy([supervisor, app].filter((each) => each !== undefined));
+    if (supervisor && supervisor.pid !== app?.pid) await stopMacosProcesses([supervisor], SUPERVISOR_EXIT_MS);
+    if (app) await stopMacosProcesses([app]);
+    await stopMacosProcesses(started);
     await stopBundleInstances(root);
     await writeWorkspaceStateAsync(root, { macos: { ...record, supervisor: undefined, app: undefined } });
   } catch (cleanupError) {

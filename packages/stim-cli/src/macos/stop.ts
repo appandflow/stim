@@ -9,7 +9,7 @@ import { processGroupAlive, readClaimSet } from '../ownership-claim.ts';
 import type { StimContext } from '@stim-cli/core';
 
 const APP_EXIT_MS = 5000;
-const SUPERVISOR_EXIT_MS = 2 * APP_EXIT_MS + 2000;
+export const SUPERVISOR_EXIT_MS: number = 2 * APP_EXIT_MS + 2000;
 
 function signal(pid: number, name: NodeJS.Signals): void {
   try {

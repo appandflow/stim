@@ -1080,6 +1080,73 @@ describe('macOS build placement and promotion', () => {
   );
 
   test.skipIf(process.platform !== 'darwin')(
+    'cancellation during LaunchServices verification stops commands the app started',
+    async () => {
+      const mocked = getExecutor();
+      resetExecutor();
+      const real = getExecutor();
+      const idle = 'setInterval(() => {}, 1000)';
+      const appChild = getExecutor().spawn(
+        process.execPath,
+        [
+          '-e',
+          `const c = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(idle)}], { stdio: 'ignore' }); process.stdout.write(c.pid + '\\n'); ${idle}`,
+        ],
+        { stdio: ['ignore', 'pipe', 'ignore'] },
+      );
+      children.push(appChild);
+      const helperPid = Number(
+        await new Promise<string>((resolve) => appChild.stdout?.once('data', (d) => resolve(String(d)))),
+      );
+      const appPid = appChild.pid;
+      const appToken = appPid === undefined ? null : captureProcessToken(appPid);
+      if (appPid === undefined || !appToken) throw new Error('The fixture app has no identity.');
+      const app: MacosProcess = { pid: appPid, processToken: appToken, startedAtMicros: 1 };
+      const supervisor = await ownedProcess();
+      const child = children.at(-1);
+      if (!child) throw new Error('The supervisor fixture did not start.');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+        async ({ bundle: targetBundle, bundleId: targetId }) => {
+          mkdirSync(workspaceLogsDir(root), { recursive: true });
+          mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+          writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+          return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+        },
+      );
+      vi.spyOn(registration, 'waitForMacosRegistration').mockImplementation(
+        async (project, _launch, _child, _deadline, accept) => {
+          const current = { ...requiredMacosRecord(project), app, supervisor } as MacosAppRecord;
+          writeWorkspaceState(project, { macos: current });
+          accept?.(current);
+          return current;
+        },
+      );
+      vi.spyOn(stopping, 'stopBundleInstances').mockResolvedValue(false);
+      const controller = new AbortController();
+      setExecutor({
+        ...mocked,
+        spawn: () => child,
+        runFileAsync: async (file, args, options) => {
+          if (file === 'ps') return real.runFileAsync(file, args, options);
+          if (file !== 'lsappinfo') return mocked.runFile(file, args, options);
+          controller.abort(new Error('cancelled during LaunchServices'));
+          return 'ASN:0x0-0x1:';
+        },
+      });
+      await expect(
+        runMacos(testContext({ signal: controller.signal }), root, () => {}, undefined, 'local'),
+      ).rejects.toThrow('cancelled during LaunchServices');
+      expect(inspectProcessIdentity(supervisor)).not.toBe('same');
+      expect(inspectProcessIdentity(app)).not.toBe('same');
+      expect(() => process.kill(helperPid, 0)).toThrow(/ESRCH/);
+      expect(readMacosRecord(root)?.app).toBeUndefined();
+      expect(readMacosRecord(root)?.supervisor).toBeUndefined();
+    },
+  );
+
+  test.skipIf(process.platform !== 'darwin')(
     'a registered app waiting for LaunchServices leaves spare admission available',
     async () => {
       const mocked = getExecutor();

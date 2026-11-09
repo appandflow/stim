@@ -188,6 +188,9 @@ if(input.mode === 'inspect') {
   const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
   const app=JSON.parse(readFileSync(join(home,'..','apps',input.attempt,'receipt.json'),'utf8'));
   if(input.deviceType === 'install-hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
+  else if(input.deviceType === 'install-finishes-on-term') {
+    process.on('SIGTERM',()=>{out({state:'installed',device:stored,launched:true});process.exit(0)});setInterval(()=>{},1000);
+  }
   else {
     if(input.platform === 'macos' && process.platform === 'darwin') {
       const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});
@@ -1749,6 +1752,37 @@ test.each(['stop', 'revoke'])(
     allowed.add('client');
     expect(host.appAttach('client', params)).toHaveProperty('result.state', 'unknown');
     expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toEqual([]);
+  },
+);
+
+test.each(['stop', 'revoke'])(
+  '%s while the install worker finishes leaves the attempt unrecorded as installed and starts no agent',
+  { skip: process.platform === 'win32' },
+  async (action) => {
+    const first = await reserve({ deviceType: 'install-finishes-on-term' });
+    await state(first.id, 'ready');
+    const app = appOffer(first.id);
+    const { content, params, sha256 } = app;
+    host.appOffer('client', params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      session: first.id,
+      attempt: params.attempt,
+      sha256,
+      offset: 0,
+      data: content.toString('base64'),
+    });
+    host.appLaunch('client', params);
+    await vi.waitFor(() => expect(existsSync(join(deviceHostArea(first.id), 'home', 'installed'))).toBe(true));
+    if (action === 'stop') host.stop('client', { session: first.id });
+    else {
+      allowed.delete('client');
+      host.revoke();
+    }
+    await state(first.id, 'stopped');
+    allowed.add('client');
+    expect(host.appAttach('client', params)).toHaveProperty('result.state', 'unknown');
+    expect(agentCalls.filter(([kind]) => kind === 'running')).toEqual([]);
   },
 );
 
