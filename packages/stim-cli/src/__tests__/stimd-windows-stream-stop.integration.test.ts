@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { delimiter, join } from 'node:path';
 import type { Worker } from 'node:worker_threads';
+import { markClaimChildPending } from '@stim-cli/core/ownership-claim';
 import { claimLiveness, readClaimSet } from '../ownership-claim.ts';
 import * as ownership from '../ownership-claim.ts';
 import * as streamState from '../stimd/logs/state.ts';
@@ -256,7 +257,7 @@ test.skipIf(process.platform === 'win32')('natural Windows stream exit keeps its
   const realProcess = process;
   const executor = getExecutor();
   const originalSpawn = executor.spawn.bind(executor);
-  const originalMark = ownership.markClaimChildPending;
+  const originalMark = markClaimChildPending;
   try {
     vi.spyOn(ownership, 'markClaimChildPending').mockImplementation((claim) => {
       originalMark(claim);
