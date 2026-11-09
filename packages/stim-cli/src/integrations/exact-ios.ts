@@ -41,7 +41,12 @@ async function compile(
       remedy: 'Build and run Exact apps with stim ios; build-only runs (stim ci build) are not supported.',
     });
   const booted = await booting;
-  if (!booted.ok) throw new IosRecipeRefusal({ code: 'STIM_NO_DEVICE', message: booted.reason });
+  if (!booted.ok)
+    throw new IosRecipeRefusal({
+      code: 'STIM_NO_DEVICE',
+      message: booted.reason,
+      remedy: 'Run stim ios again to re-establish an owned simulator for this workspace.',
+    });
   const udid = booted.udid;
   const run = await runCaptured({
     cmd: join(root, EXACT_CLI),
