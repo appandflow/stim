@@ -69,6 +69,7 @@ import { workspaceInUse } from '../workspace/in-use.ts';
 let dir: string;
 let root: string;
 const children: ChildProcess[] = [];
+const helperPids: number[] = [];
 
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-macos-')));
@@ -81,6 +82,11 @@ afterEach(async () => {
   vi.spyOn(worktree, 'repoRootAsync').mockRestore();
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }
+  for (const pid of helperPids.splice(0)) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {}
   }
   rmSync(dir, { recursive: true, force: true });
   delete process.env.STIM_HOME;
@@ -1098,6 +1104,7 @@ describe('macOS build placement and promotion', () => {
       const helperPid = Number(
         await new Promise<string>((resolve) => appChild.stdout?.once('data', (d) => resolve(String(d)))),
       );
+      helperPids.push(helperPid);
       const appPid = appChild.pid;
       const appToken = appPid === undefined ? null : captureProcessToken(appPid);
       if (appPid === undefined || !appToken) throw new Error('The fixture app has no identity.');
