@@ -455,9 +455,14 @@ async function cleanupFailedMacosLaunch(
   error: unknown,
 ): Promise<void> {
   try {
-    const started = await startedBy([supervisor, app].filter((each) => each !== undefined));
-    if (supervisor && supervisor.pid !== app?.pid) await stopMacosProcesses([supervisor], SUPERVISOR_EXIT_MS);
-    if (app) await stopMacosProcesses([app]);
+    const collected = await Promise.allSettled([startedBy([supervisor, app].filter((each) => each !== undefined))]);
+    const stops = await Promise.allSettled([
+      supervisor && supervisor.pid !== app?.pid ? stopMacosProcesses([supervisor], SUPERVISOR_EXIT_MS) : undefined,
+      app ? stopMacosProcesses([app]) : undefined,
+    ]);
+    const failed = [collected[0], ...stops].find((each) => each.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
+    const started = collected[0].status === 'fulfilled' ? collected[0].value : [];
     await stopMacosProcesses(started);
     await stopBundleInstances(root);
     await writeWorkspaceStateAsync(root, { macos: { ...record, supervisor: undefined, app: undefined } });
