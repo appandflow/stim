@@ -129,7 +129,7 @@ export function hostedAgentPort(root: string, session: string): number | null {
     : null;
 }
 
-export function clearHostedMetro(root: string, session: string): void {
+function clearHostedMetro(root: string, session: string): void {
   updateWorkspaceState(root, (state) => {
     const requests = { ...hostedMetroRequests(state) };
     delete requests[session];

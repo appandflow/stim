@@ -491,7 +491,9 @@ function spawnHost(
 /** Opens the hosted Metro links (`device-host.metro.link`, reverse ports, agent relay) this workspace's sessions ask for. */
 function serveLinks(child: MetroChild, log: Log): void {
   try {
-    child.closeLinks = watchHostedMetro(child.root, child.port, child.processToken);
+    child.closeLinks = watchHostedMetro(child.root, child.port, child.processToken, (msg) =>
+      child.writer.write({ src: 'metro', level: 'warn', event: 'hosted_metro_link_failed', msg }),
+    );
   } catch (error) {
     log('warn', 'metro_links_failed', `${child.root}: ${error instanceof Error ? error.message : String(error)}`);
   }
