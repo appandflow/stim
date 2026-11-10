@@ -230,6 +230,69 @@ function askStimd(
   });
 }
 
+/** What `metro.ensure` sends besides the workspace and its port. */
+export interface MetroLaunchParams {
+  root: string;
+  port: number;
+  tunnel?: boolean;
+  publicOrigin?: string | null;
+  resetCache?: boolean;
+}
+
+/**
+ * Asks this home's stimd to run the workspace's Metro through a Metro ticket (`metro.prepare`, then `metro.wait`): the
+ * admitted operation's when it has a stimd connection, else one admitted for this request, starting a stimd first
+ * whatever `daemon.mode` says, since only stimd runs Metro. Resolves with stimd's answer, or null when no stimd answers
+ * within `timeoutMs` or `signal` aborts.
+ */
+export async function ensureMetroThroughStimd(
+  params: MetroLaunchParams,
+  timeoutMs: number,
+  operation?: StimContext,
+  signal?: AbortSignal,
+): Promise<Record<string, unknown> | null> {
+  const held: Socket[] = [];
+  try {
+    let opToken = operationToken(operation);
+    if (!opToken) {
+      const env = operation?.env ?? process.env;
+      const context = (await import('../stimd/forwarded.ts')).invocation(params.root, env);
+      if ('code' in context) return { op: 'error', ...context };
+      await ensureStimd(
+        env,
+        process.platform,
+        true,
+        held,
+        'stim start',
+        true,
+        { ...context, workspace: params.root },
+        true,
+      );
+      opToken = admittedOpToken(held);
+      if (!opToken) return null;
+    }
+    const prepared = await askStimd('metro.prepare', 10_000, { opToken, params }, signal);
+    if (prepared?.op !== 'metro.prepared' || typeof prepared.ticket !== 'string') return prepared;
+    return await askStimd('metro.wait', timeoutMs, { opToken, params: { ticket: prepared.ticket } }, signal);
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') throw error;
+    return {
+      op: 'error',
+      code: error.code,
+      message: error.message,
+      ...('remedy' in error && typeof error.remedy === 'string' ? { remedy: error.remedy } : {}),
+    };
+  } finally {
+    for (const socket of held) socket.destroy();
+  }
+}
+
+/**
+ * Stops a workspace's dev server: through this home's stimd (`metro.stop`) when a stimd runs or a Metro claim shows
+ * one ran it, starting a stimd to adopt a Metro an exited one left; through `fallback`, which signals the recorded
+ * process tree, when stimd does not own it (a dev server supervisor an older Stim started) or neither exists.
+ * Resolves whether it stopped.
+ */
 export async function stopMetroTree(
   root: string,
   pid: number | undefined,
@@ -237,19 +300,31 @@ export async function stopMetroTree(
   fallback: () => Promise<boolean> | boolean,
   signal?: AbortSignal,
 ): Promise<boolean> {
-  if (process.platform !== 'win32') return fallback();
+  const held = () => {
+    try {
+      const daemon = readClaimSet(stimdClaimRoot());
+      const metro = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+      return {
+        daemon: daemon.live.length > 0 || daemon.unresolved.length > 0,
+        metro: metro.live.length > 0 || metro.unresolved.length > 0,
+      };
+    } catch {
+      return null;
+    }
+  };
+  const before = held();
+  if (before && !before.daemon && !before.metro) return fallback();
+  if (before && !before.daemon && process.platform !== 'win32')
+    await ensureStimd(process.env, process.platform, false, undefined, undefined, false, undefined, true).catch(
+      () => false,
+    );
   const answer = await askStimd('metro.stop', 40_000, { params: { root, pid, processToken } }, signal);
   if (signal?.aborted) return false;
   if (answer?.op === 'metro.stopped' && answer.state === 'stopped') return true;
   if (answer?.op === 'metro.stopped' && answer.state === 'not-owned') return fallback();
   if (answer) return false;
-  let absent = false;
-  try {
-    const daemon = readClaimSet(stimdClaimRoot());
-    const metro = readClaimSet(join(workspaceDir(root), 'metro.claim'));
-    absent = !daemon.live.length && !daemon.unresolved.length && !metro.live.length && !metro.unresolved.length;
-  } catch {}
-  return absent ? fallback() : false;
+  const after = held();
+  return after && !after.daemon && !after.metro ? fallback() : false;
 }
 
 /**
@@ -444,7 +519,7 @@ async function claimTaken(
  * does not exit under the command, or starts one in the mode this command resolves, `STIM_DAEMON` included, and waits
  * for it to take its claim. When that detached stimd has not taken it within 2 s, a CLI command (not an API caller)
  * hosts stimd as its own child for its lifetime (`hostStimd`), and otherwise waits up to five seconds in all. Under
- * `daemon.mode` off it starts stimd for device logs when requested; otherwise a pinned command begins its op only
+ * `daemon.mode` off it starts stimd when `required`, for Metro and device logs; otherwise a pinned command begins its op only
  * with a live stimd, such as the one `stim ci` hosts. Throws {@link SANDBOX_BLOCKED} when the sandbox denies this home's stimd socket. Returns whether a
  * stimd holds the home; an unresolvable daemon claim is reported and counts as held.
  */
@@ -456,10 +531,10 @@ export async function ensureStimd(
   command?: string,
   allowAttached = true,
   invocation?: Invocation & { workspace?: string | null },
-  requireForLogs = false,
+  required = false,
 ): Promise<boolean> {
   if (pin) requireResolvedStimdHome();
-  if (!spawnsDaemon(env) && !requireForLogs) {
+  if (!spawnsDaemon(env) && !required) {
     if (pin && stimdLive()) await admitExisting(held, command, false, invocation);
     return false;
   }

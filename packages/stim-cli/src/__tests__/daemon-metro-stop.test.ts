@@ -33,16 +33,12 @@ vi.mock('@stim-cli/core/ownership-claim', async (original) => ({
 
 import { stopMetroTree } from '../daemon/client.ts';
 
-const platform = Object.getOwnPropertyDescriptor(process, 'platform');
-if (!platform) throw new Error('process.platform is unavailable');
 beforeEach(() => {
-  Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
   state.reply = null;
   state.close = true;
-  state.live = [];
+  state.live = [{}];
   state.unresolved = [];
 });
-afterEach(() => Object.defineProperty(process, 'platform', platform));
 
 test('uses the acknowledged managed stop without invoking the fallback', async () => {
   state.reply = { op: 'metro.stopped', state: 'stopped' };
@@ -56,13 +52,16 @@ test('falls back on explicit not-owned or absent daemon and claims', async () =>
   state.reply = { op: 'metro.stopped', state: 'not-owned' };
   expect(await stopMetroTree('/project', 42, 'token', fallback)).toBe(true);
   state.reply = null;
+  state.live = [];
   expect(await stopMetroTree('/project', 42, 'token', fallback)).toBe(true);
   expect(fallback).toHaveBeenCalledTimes(2);
 });
 
 test.each(['live', 'unresolved'])('refuses an unanswered stop with %s claims', async (kind) => {
-  if (kind === 'live') state.live = [{}];
-  else state.unresolved = [{}];
+  if (kind === 'unresolved') {
+    state.live = [];
+    state.unresolved = [{}];
+  }
   const fallback = vi.fn<() => boolean>(() => true);
   expect(await stopMetroTree('/project', 42, 'token', fallback)).toBe(false);
   expect(fallback).not.toHaveBeenCalled();
