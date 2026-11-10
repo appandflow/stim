@@ -8,7 +8,7 @@ on:
       - 'packages/core/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/mobile-next.yml'
-  # Picks up a head whose push run skipped the gate, and a build whose upload to TestFlight failed.
+  # Picks up a head whose push run skipped the gate; it only warns about a build missing from TestFlight.
   schedule:
     - cron: '23 * * * *'
   workflow_dispatch:

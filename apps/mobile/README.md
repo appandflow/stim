@@ -1269,8 +1269,9 @@ node scripts/dev-icons.mjs
 `.github/workflows/mobile-next.yml` ships Stim Next from the head of `main`
 once that commit passed `merge gate` (or, for an admin push that bypassed the
 merge queue, the CI release-gate jobs). It runs on each push that touches
-`apps/mobile`, `packages/core` (the app's only workspace dependency) or
-`pnpm-lock.yaml`, and hourly to pick up a head that had not passed yet:
+`apps/mobile`, `packages/core` (the app's only workspace dependency),
+`pnpm-lock.yaml` or the workflow, and hourly to pick up a head that had not
+passed yet:
 
 - When the latest finished EAS `next` build is not on the commit's iOS
   fingerprint, it builds the `next` profile and uploads it to TestFlight, where
