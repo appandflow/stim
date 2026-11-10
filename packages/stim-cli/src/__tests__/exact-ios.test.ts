@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 
 import { exactIosProject } from '../integrations/exact-ios.ts';
-import { IosRecipeRefusal, type IosArtifactContext } from '../integrations/ios-project.ts';
+import type { IosArtifactContext } from '../integrations/ios-project.ts';
 import { resolveOptimizations } from '../optimizations.ts';
 import type { IosCommandOptions } from '../commands/ios/types.ts';
 import { resolveSettings } from '../workspace/settings.ts';
@@ -149,7 +149,7 @@ test.skipIf(process.platform === 'win32')(
     expect(await compile(context(null, null))).toMatchObject({ diagnostics: [{ message: 'sim= ios --no-install' }] });
 
     writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' }, modules: ['shop-map'] }));
-    await expect(compile(context(null, null))).rejects.toBeInstanceOf(IosRecipeRefusal);
+    await expect(compile(context(null, null))).rejects.toMatchObject({ failure: { code: 'STIM_BAD_ARG' } });
   },
 );
 
