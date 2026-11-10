@@ -50,10 +50,10 @@ test('native discovery requires a wrapper and settings, accepts tooling packages
   write(join(root, 'package.json'), JSON.stringify({ name: 'tooling' }));
   expect(projectRegistry.projectProblem(root, 'android')).toBeNull();
   expect(
-    projectRegistry.detectPlatforms(root, {
+    projectRegistry.detectProject(root, {
       context: { projectPath: root, gitCommonDir: null, repoRoot: null },
       settings: {},
-    }),
+    }).platforms,
   ).toEqual(['android']);
   expect(projectRegistry.selectAndroid(root)).toHaveProperty('load');
   expect(projectRegistry.projectProblem(root, 'ios')).not.toBeNull();

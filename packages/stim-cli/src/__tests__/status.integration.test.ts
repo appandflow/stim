@@ -849,13 +849,18 @@ test('a label-only worktree root is flagged labelOnly in --json and relabelled i
   expect(logs.some((l) => /worktree root \(holds the label/.test(l))).toBeTruthy();
 });
 
-test('status reports detected platforms before a run, including resolved project settings', async () => {
+test('status reports detected platforms and the dev server before a run, including resolved project settings', async () => {
   const root = process.cwd();
   writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '54' } }));
   writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { platforms: ['ios'] } }));
   writeFileSync(join(root, '.stim.json'), JSON.stringify({ web: { url: 'http://localhost:5173' } }));
   saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'fresh', platforms: {} } } }));
-  expect((await runStatusJson()).environments[0].platforms).toEqual(['ios', 'web']);
+  expect((await runStatusJson()).environments[0]).toMatchObject({ platforms: ['ios', 'web'], devServer: true });
+
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'shop' }));
+  writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' } }));
+  writeFileSync(join(root, 'exact.mjs'), '');
+  expect((await runStatusJson()).environments[0]).toMatchObject({ platforms: ['ios', 'web'], devServer: false });
 });
 
 test('status reports when doctor last ran per platform, and nothing before it has', async () => {

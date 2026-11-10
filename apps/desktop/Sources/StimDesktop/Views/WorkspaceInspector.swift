@@ -34,13 +34,15 @@ struct Inspector: View {
             ResourcesSection(env: env, machine: machine, history: history, sampled: usage)
           }
 
-          MetroLogsSection(
-            env: env, reportsBundles: reportsBundles,
-            openLogs: {
-              var query = LogQuery()
-              query.sources = [.metro]
-              openLogs(query)
-            })
+          if env.devServer != false {
+            MetroLogsSection(
+              env: env, reportsBundles: reportsBundles,
+              openLogs: {
+                var query = LogQuery()
+                query.sources = [.metro]
+                openLogs(query)
+              })
+          }
 
         }
         VStack(alignment: .leading, spacing: Space.md) {
@@ -385,20 +387,22 @@ struct WorktreeInspector: View {
           }
         }
         ResourcesSection(env: page.apps[0], machine: machine, history: history, sampled: nil, page: page, samples: sampled)
-        VStack(alignment: .leading, spacing: Space.md) {
-          SectionLabel(title: "Metro")
-          let metros = labeledApps.filter { $0.0.metro != nil }
-          if metros.isEmpty {
-            InlineEmpty("No dev server")
-          } else {
-            ForEach(metros, id: \.0.path) { app, label in
-              MetroLogsSection(
-                env: app, reportsBundles: reportsBundles, showsHeading: false, appLabel: label,
-                openLogs: {
-                  var query = LogQuery()
-                  query.sources = [.metro]
-                  openLogs(app, query)
-                })
+        if page.apps.contains(where: { $0.devServer != false }) {
+          VStack(alignment: .leading, spacing: Space.md) {
+            SectionLabel(title: "Metro")
+            let metros = labeledApps.filter { $0.0.metro != nil }
+            if metros.isEmpty {
+              InlineEmpty("No dev server")
+            } else {
+              ForEach(metros, id: \.0.path) { app, label in
+                MetroLogsSection(
+                  env: app, reportsBundles: reportsBundles, showsHeading: false, appLabel: label,
+                  openLogs: {
+                    var query = LogQuery()
+                    query.sources = [.metro]
+                    openLogs(app, query)
+                  })
+              }
             }
           }
         }

@@ -161,7 +161,6 @@ export const projectIntegrations: readonly ProjectIntegration[] = [
   nativeXcodeProjectIntegration,
 ];
 export const projectRegistry: ProjectRegistry = createProjectRegistry(projectIntegrations);
-export const detectPlatforms: ProjectRegistry['detectPlatforms'] = projectRegistry.detectPlatforms;
 
 export function nativeProjectIntegration(
   root: string,

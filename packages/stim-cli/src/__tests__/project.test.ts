@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve, join } from 'path';
-import { detectPlatforms } from '../integrations/projects.ts';
+import { projectRegistry } from '../integrations/projects.ts';
 import { detectIsExpo, ownedDeviceLabel } from '../workspace/project.ts';
 import { detectAndroidPackage, detectAppIds, detectBundleId } from '../workspace/app-id.ts';
 import { getExecutor } from '../exec.ts';
@@ -56,6 +56,9 @@ test('detectIsExpo trusts the ios script: react-native script wins even with exp
     rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+const detectPlatforms = (...args: Parameters<typeof projectRegistry.detectProject>) =>
+  projectRegistry.detectProject(...args).platforms;
 
 describe('detectPlatforms without running project code', () => {
   let root: string;
