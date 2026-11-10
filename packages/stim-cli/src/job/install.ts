@@ -30,7 +30,7 @@ export async function installJobBuild(root: string, build: string, source: JobSo
     } else {
       const installs = join(root, scratchName());
       try {
-        const options = ['--cache', join(root, '.npm-cache'), '--prefer-offline', '--install-strategy=shallow'];
+        const options = ['--cache', join(root, '.npm-cache'), '--prefer-online', '--install-strategy=shallow'];
         const { dir } = await installServer(join(installs, 'versions'), source, process.execPath, log, options);
         renameSync(join(dir, 'node_modules', 'stim'), scratch);
       } finally {

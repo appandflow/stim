@@ -81,7 +81,10 @@ export async function fetchTree(
       });
     }
     const from = 'pack' in source ? { from: packs } : source;
-    const options = ['--cache', join(root, '.npm-cache'), '--prefer-offline', '--install-strategy=shallow'];
+    // npm's --prefer-offline answers from a cached packument without a staleness check, so a version published after
+    // it was cached fails with ETARGET. --prefer-online refetches packuments, takes tarballs from the cache, and falls
+    // back to the cache when the registry cannot be reached.
+    const options = ['--cache', join(root, '.npm-cache'), '--prefer-online', '--install-strategy=shallow'];
     const { dir } = await installServer(join(installs, 'versions'), from, process.execPath, log, options);
     renameSync(join(dir, 'node_modules', 'stim'), scratch);
   } finally {
