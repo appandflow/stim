@@ -54,8 +54,13 @@ const commands = new Map<string, () => Promise<CommandModule>>([
 function register(program: Command, command: CommandModule['default']): void {
   if (typeof command === 'function') return command(program, pkg.version);
   const listed = program.command([command.name, command.arguments].filter(Boolean).join(' '));
-  listed.description(command.description);
+  listed.description(command.description).allowExcessArguments();
   for (const option of Object.values(command.options)) listed.option(option.flags, option.description);
+  listed.action(async (...params: unknown[]) => {
+    const self = params.at(-1);
+    const code = self instanceof Command ? await runCli(command, ['--', ...self.args], { version: pkg.version }) : 0;
+    if (code !== 0) throw new CliExit(code);
+  });
 }
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
