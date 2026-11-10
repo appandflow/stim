@@ -39,6 +39,7 @@ export interface ArtifactAdapter<Artifact, Preparation, Placement, Failure> {
   temporaryReleaseFailed(error: unknown): void;
   /** Settles cache work that still reads owned temporary copies after acquisition fails. */
   settleFailed?(): Promise<void>;
+  settleBeforeRelease?(): Promise<void>;
 }
 
 export interface ArtifactRequest {
@@ -58,8 +59,17 @@ export type AcquiredArtifact<Artifact, Failure> =
   | { ok: true; artifact: Artifact; release: () => void }
   | { ok: false; failure: Failure };
 
-function unresolvedCleanup(error: unknown): boolean {
-  return error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error);
+export function unresolvedCleanup(error: unknown): boolean {
+  return (
+    error instanceof WorkspaceProcessCleanupError ||
+    (typeof error === 'object' && error !== null && 'reportCleanup' in error)
+  );
+}
+
+export function artifactErrorCode(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : undefined;
 }
 
 /** Waits for upload readers; unresolved child cleanup refuses deletion of their temporary inputs. */
@@ -67,6 +77,17 @@ export async function settleArtifactUploads(...uploads: readonly (Promise<unknow
   const results = await Promise.allSettled(uploads);
   const unresolved = results.find((result) => result.status === 'rejected' && unresolvedCleanup(result.reason));
   if (unresolved?.status === 'rejected') throw unresolved.reason;
+}
+
+export async function settleArtifactCleanup(
+  failure: unknown,
+  ...work: readonly (Promise<unknown> | void)[]
+): Promise<void> {
+  const results = await Promise.allSettled(work);
+  const errors = results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []));
+  if (!errors.length) return;
+  if (unresolvedCleanup(failure)) throw failure;
+  throw errors.find(unresolvedCleanup) ?? errors[0];
 }
 
 export async function acquireArtifact<Artifact, Preparation, Placement, Failure>(
@@ -78,22 +99,22 @@ export async function acquireArtifact<Artifact, Preparation, Placement, Failure>
   let buildLock: BuildLockHandle | null = null;
   let buildSlot: BuildSlotHandle | null = null;
 
-  const releaseLock = () => {
+  const releaseLock = (retain = false) => {
     if (!buildLock) return;
     const held = buildLock;
     buildLock = null;
     try {
-      deps.releaseBuildLock(held);
+      deps.releaseBuildLock(held, retain);
     } catch (error) {
       adapter.releaseFailed(`the build lock at ${held.path}`, error);
     }
   };
-  const releaseSlot = () => {
+  const releaseSlot = (retain = false) => {
     if (!buildSlot) return;
     const held = buildSlot;
     buildSlot = null;
     try {
-      deps.releaseBuildSlot(held);
+      deps.releaseBuildSlot(held, retain);
     } catch (error) {
       adapter.releaseFailed('the build slot', error);
     }
@@ -127,25 +148,49 @@ export async function acquireArtifact<Artifact, Preparation, Placement, Failure>
   try {
     const artifact = await runArtifactLifecycle({
       ...adapter.lifecycle(run),
-      release: () => {
+      release: async (failure) => {
+        let cleanupError: unknown;
+        try {
+          if (failure !== undefined) await adapter.settleFailed?.();
+          else if (buildLock?.claim || buildSlot?.claim) await adapter.settleBeforeRelease?.();
+        } catch (error) {
+          cleanupError = error;
+        }
+        const unresolved = unresolvedCleanup(failure) ? failure : cleanupError;
         const close = closeOffload;
         closeOffload = null;
+        if (unresolvedCleanup(unresolved)) {
+          try {
+            close?.();
+          } catch {}
+          const retained = (claim: BuildLockHandle['claim']) =>
+            claim &&
+            [failure, cleanupError].some(
+              (error) =>
+                unresolvedCleanup(error) &&
+                (!(error instanceof WorkspaceProcessCleanupError) ||
+                  error.claims.some((held) => held.path === claim.path && held.claimId === claim.claimId)),
+            );
+          try {
+            releaseLock(Boolean(retained(buildLock?.claim)));
+          } catch {}
+          try {
+            releaseSlot(Boolean(retained(buildSlot?.claim)));
+          } catch {}
+          if (cleanupError !== undefined && !unresolvedCleanup(failure)) throw cleanupError;
+          return;
+        }
         try {
           close?.();
         } finally {
           releaseLock();
           releaseSlot();
         }
+        if (cleanupError !== undefined) throw cleanupError;
       },
     });
     return { ok: true, artifact, release: owned.transfer() };
   } catch (error) {
-    try {
-      await adapter.settleFailed?.();
-    } catch (cleanupError) {
-      if (unresolvedCleanup(cleanupError)) owned.transfer();
-      throw cleanupError;
-    }
     if (unresolvedCleanup(error)) {
       owned.transfer();
       throw error;

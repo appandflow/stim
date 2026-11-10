@@ -55,6 +55,14 @@ export function operationState(context: StimContext | undefined): OperationState
   return state;
 }
 
+export function inheritDeclaredSpawns(parent: StimContext, child: StimContext): void {
+  const source = operationState(parent);
+  const target = operationState(child);
+  target.declaring = source.declaring;
+  target.running = source.running;
+  target.runSignal = source.runSignal;
+}
+
 /** Whether an abort reason asks the operation to terminate rather than interrupt it. */
 export function isTermination(reason: unknown): boolean {
   return reason === 'SIGTERM';

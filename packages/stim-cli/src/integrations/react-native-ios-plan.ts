@@ -1,7 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
-import { readDoctorFingerprint } from '../doctor-fingerprint.ts';
-import { memoizedFingerprint } from '../cache/fingerprint-memo.ts';
+import { readFingerprint } from '../fingerprint-precompute.ts';
+import { isUncertain } from '../fingerprint/key.ts';
 import { reportSignal } from '../report-runtime.ts';
 import chalk from 'chalk';
 import { buildCacheKey } from '../cache/build-cache.ts';
@@ -11,6 +11,7 @@ import { statsProjectKey } from '../engine/stats.ts';
 import { artifactCachePolicy, optimizationBuildProfile, resolveOptimizations } from '../optimizations.ts';
 import {
   cacheProviderSettingError,
+  fingerprintInputsSetting,
   publicUrlSetting,
   resolveIosProjectDir,
   type ResolvedProjectSettings,
@@ -40,7 +41,7 @@ import {
 import { hostedIosSelectors } from '../commands/ios/remote.ts';
 import type { FailArgs, IosCommandOptions } from '../commands/ios/types.ts';
 
-import type { PlanRefusal, ProjectPlanResult } from './project-plan.ts';
+import { fingerprintPlanRefusal, type PlanRefusal, type ProjectPlanResult } from './project-plan.ts';
 
 function refuse(refusal: PlanRefusal, lines: string[] = []): ProjectPlanResult {
   return { refusal, lines };
@@ -140,38 +141,33 @@ export async function planReactNativeIos(
     isReleaseConfiguration(configuration),
   );
 
+  const fingerprintInputs = fingerprintInputsSetting(settings);
+  const fpTarget = {
+    platform: 'ios' as const,
+    iosProjectPath: iosProject.relative,
+    ...(fingerprintInputs === undefined ? {} : { fingerprintInputs }),
+  };
   let fingerprint;
   try {
-    fingerprint = (
-      await memoizedFingerprint(
-        root,
-        { platform: PLATFORM, iosProjectPath: iosProject.relative },
-        {
-          consult: cachePolicy.read,
-          operation: operation && reportSignal(operation) ? undefined : operation,
-          record: false,
-          fingerprint: (projectRoot, fingerprintTarget) =>
-            operation && reportSignal(operation)
-              ? readDoctorFingerprint(operation, {
-                  root: projectRoot,
-                  platform: PLATFORM,
-                  iosProjectPath: iosProject.relative,
-                })
-              : d.fingerprintProject(projectRoot, fingerprintTarget),
-        },
-      )
-    ).fingerprint;
+    const embedMode = isReleaseConfiguration(configuration) ? 'production' : 'development';
+    const computed = reportSignal(operation)
+      ? await readFingerprint(operation, { root, ...fpTarget, embedMode })
+      : await d.fingerprint(root, fpTarget, {
+          env: operation.env,
+          signal: operation.signal,
+          operation,
+          embedMode,
+          index: 'skip',
+        });
+    operation.signal.throwIfAborted();
+    if (computed && isUncertain(computed)) return fingerprintPlanRefusal(root, computed);
+    if (computed) fingerprint = computed;
   } catch (error) {
-    operation?.signal.throwIfAborted();
+    if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
+    operation.signal.throwIfAborted();
     note(chalk.dim(`Fingerprinting failed: ${(error as Error)?.message || error}`));
   }
-  if (!fingerprint?.hash) {
-    return refuse({
-      code: 'STIM_NO_FINGERPRINT',
-      message: `Could not fingerprint ${root}: @expo/fingerprint produced no hash for it.`,
-      remedy: 'Check the project native inputs and the @expo/fingerprint error above, then retry.',
-    });
-  }
+  if (!fingerprint) return fingerprintPlanRefusal(root, null);
   const keyArch = (remoteArch: SimulatorArch | null) =>
     simulatorBuildArch({ physical: false, remoteArch, hostArch: d.hostSimulatorArch() });
   let arch = keyArch(null);
@@ -237,7 +233,7 @@ export async function planReactNativeIos(
       ...target,
       isExpo,
       fingerprint: fingerprint.hash,
-      sources: fingerprint.sources ?? [],
+      fingerprintData: fingerprint,
       cacheKey,
       cachePolicy,
       providerConfig: d.resolveCacheProviderConfig(settingsContext),

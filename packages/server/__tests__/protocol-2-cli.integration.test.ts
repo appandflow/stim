@@ -149,7 +149,7 @@ if (process.argv[2] === 'offer-native-gradle') {
     const out = join(input.area, 'out', input.job);
     mkdirSync(out, { recursive: true });
     writeFileSync(join(out, 'app.tgz'), bytes);
-    console.log(JSON.stringify({ type: 'result', ok: true, fingerprint: null,
+    console.log(JSON.stringify({ type: 'result', ok: true, fingerprintSettled: true, fingerprint: null,
       sourceDigest: input.native.sourceDigest, androidPackage: 'dev.example.sample',
       cacheArtifact: { identity, receipt }, artifact: { name: 'Sample.apk', size: bytes.length,
         sha256: createHash('sha256').update(bytes).digest('hex') }, timings: {} }));

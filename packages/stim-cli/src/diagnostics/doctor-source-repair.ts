@@ -1,19 +1,26 @@
 import type { StimContext } from '@stim-cli/core';
 import { join } from 'node:path';
-import {
-  changedDuringBuildLine,
-  configInputsChanged,
-  fingerprintProject,
-  refingerprintAfterMutation,
-} from '../cache/build-cache.ts';
+import { changedDuringBuildLine } from '../cache/build-cache.ts';
+import type { Fingerprint } from '../fingerprint/evaluate.ts';
+import { readFingerprint } from '../fingerprint-precompute.ts';
+import { configInputsChanged } from '../fingerprint/changes.ts';
+import { isUncertain } from '../fingerprint/key.ts';
 import { podAction } from '../commands/ios/support.ts';
 import { formatDuration, phaseLine, quotedPath } from '../command-output.ts';
 import { dependencyState } from '../dependency-state.ts';
 import { podsAreStale, readPodState, runPodInstall, type PodInstallResult } from '../engine/deps.ts';
-import { planPrebuildAsync, recordPrebuildAsync, runPrebuild, staleNativeDirRefusal } from '../engine/prebuild.ts';
+import { planPrebuildAsync, recordPrebuildAsync, runPrebuild, prebuildPlanRefusal } from '../engine/prebuild.ts';
 import { withWarmClaim, type WarmClaimHold } from '../engine/warm-claim.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { fenceDeclaredSpawns } from '../engine/spawn-claims.ts';
 import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
-import { resolveAndroidLayout, resolveIosProjectDir, type SettingsObject } from '../workspace/settings.ts';
+import {
+  fingerprintInputsSetting,
+  resolveAndroidLayout,
+  resolveIosProjectDir,
+  type SettingsObject,
+} from '../workspace/settings.ts';
 import {
   awaitInstallerSettled,
   installerSpawn,
@@ -59,6 +66,19 @@ interface RunContext extends SourceRepairOptions {
   hold: WarmClaimHold;
 }
 
+function preserveInstallerFailure(context: RunContext, failure: RefreshFailure | null): void {
+  if (!failure?.cleanupUnverified) return;
+  const claims = [...operationState(context.operation).declaring];
+  throw Object.assign(
+    new WorkspaceProcessCleanupError(
+      claims,
+      failure.message,
+      failure.remedy ?? 'Verify that the installer and its descendants have stopped.',
+    ),
+    { reportCleanup: true },
+  );
+}
+
 async function installPods(
   context: RunContext,
   { cleanPods = false, mayUpdatePods = false }: Pick<SourceRepairStep, 'cleanPods' | 'mayUpdatePods'>,
@@ -81,6 +101,7 @@ async function installPods(
       ),
     );
     const running = await awaitInstallerSettled(hold.installer, facts.root, 'the pod command', 'stim doctor --fix');
+    preserveInstallerFailure(context, running);
     return running
       ? { failed: true, code: running.code, reason: running.message, remedy: running.remedy ?? '' }
       : result;
@@ -113,73 +134,85 @@ async function installPods(
 async function repairPrebuild(context: RunContext, platform: NativePlatform, step: SourceRepairStep): Promise<boolean> {
   const { facts, repoRoot, settings, note } = context;
   const { root } = facts;
+  const inputs = fingerprintInputsSetting(settings);
   const options =
     platform === 'ios'
-      ? { platform, iosProjectPath: resolveIosProjectDir(settings, root).relative }
-      : { platform, androidLayout: resolveAndroidLayout(settings, root, repoRoot) };
+      ? {
+          platform,
+          iosProjectPath: resolveIosProjectDir(settings, root).relative,
+          ...(inputs === undefined ? {} : { fingerprintInputs: inputs }),
+        }
+      : {
+          platform,
+          androidLayout: resolveAndroidLayout(settings, root, repoRoot),
+          ...(inputs === undefined ? {} : { fingerprintInputs: inputs }),
+        };
   const fail = (message: string, lines: string[] = [], remedy: string | null = null): false => {
     describeFailure('prebuild', { code: 'STIM_PREBUILD_FAILED', message, lines, remedy }, note);
     return false;
   };
-  let before: Awaited<ReturnType<typeof fingerprintProject>>;
+  let before: Fingerprint;
   try {
-    before = await fingerprintProject(root, options);
+    const result = await readFingerprint(context.operation, { root, ...options, embedMode: 'development' });
+    if (!result || isUncertain(result))
+      return fail(`could not fingerprint ${root}: ${result?.uncertain ?? 'no result'}`);
+    before = result;
   } catch (error) {
+    if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
+    context.operation.signal.throwIfAborted();
     return fail(`could not fingerprint ${root}: ${error instanceof Error ? error.message : String(error)}`);
   }
-  if (!before?.hash) return fail(`could not fingerprint ${root}: @expo/fingerprint produced no hash for it`);
 
   const plan = await planPrebuildAsync(
     root,
     platform,
-    { isExpo: true, fingerprint: before.hash, sources: before.sources },
+    { isExpo: true, fingerprint: before.hash, native: before.native },
     context.operation.signal,
   );
   if (plan === 'refuse')
-    return fail(staleNativeDirRefusal(platform).message, [], staleNativeDirRefusal(platform).remedy);
+    return fail(prebuildPlanRefusal(root, platform).message, [], prebuildPlanRefusal(root, platform).remedy);
   if (plan === 'none') {
     note(phaseLine('prebuild', `${platform}/ is already current for this fingerprint`));
     return true;
   }
 
   await recordPrebuildAsync(root, platform, null);
-  const prebuilt = await runPrebuild(root, platform, null);
-  if (prebuilt.failed)
-    return fail(
-      prebuilt.reason ?? 'expo prebuild failed.',
-      (prebuilt.lastLines ?? []).slice(-5),
-      prebuilt.remedy ?? null,
+  const generated = await fenced(context, async () => {
+    const prebuilt = await runPrebuild(root, platform, null);
+    if (prebuilt.failed)
+      return fail(
+        prebuilt.reason ?? 'expo prebuild failed.',
+        (prebuilt.lastLines ?? []).slice(-5),
+        prebuilt.remedy ?? null,
+      );
+    note(
+      phaseLine(
+        'prebuild',
+        `${platform}/ ${plan === 'generate' ? 'generated' : 'updated in place'} (${formatDuration(prebuilt.durationMs ?? 0)})`,
+      ),
     );
-  note(
-    phaseLine(
-      'prebuild',
-      `${platform}/ ${plan === 'generate' ? 'generated' : 'updated in place'} (${formatDuration(prebuilt.durationMs ?? 0)})`,
-    ),
-  );
 
-  if (platform === 'ios') {
-    const iosDir = resolveIosProjectDir(settings, root).dir;
-    const podState = readPodState(root, iosDir);
-    const verdict = podsAreStale(podState.lockText, podState.manifestText, podState.dir);
-    if (podAction(podState, verdict, { prebuildRan: true }).install) {
-      const failure = await installPods(context, step);
-      if (failure) {
-        describeFailure('pods', failure, note);
-        return false;
+    if (platform === 'ios') {
+      const iosDir = resolveIosProjectDir(settings, root).dir;
+      const podState = readPodState(root, iosDir);
+      const verdict = podsAreStale(podState.lockText, podState.manifestText, podState.dir);
+      if (podAction(podState, verdict, { prebuildRan: true }).install) {
+        const failure = await installPods(context, step);
+        if (failure) {
+          describeFailure('pods', failure, note);
+          return false;
+        }
       }
     }
-  }
-
-  const after = await refingerprintAfterMutation({
-    projectRoot: root,
-    platform,
-    previousHash: before.hash,
-    ...(platform === 'ios'
-      ? { iosProjectPath: resolveIosProjectDir(settings, root).relative }
-      : { androidLayout: resolveAndroidLayout(settings, root, repoRoot) }),
+    return true;
   });
-  if (!after) return fail(`could not fingerprint ${root} after the prebuild, so its record was not written`);
-  const edited = configInputsChanged(before.sources, after.sources, { prebuildRan: true });
+  if (!generated) return false;
+
+  const after = await readFingerprint(context.operation, { root, ...options, embedMode: 'development' });
+  context.operation.signal.throwIfAborted();
+  if (!after || isUncertain(after))
+    return fail(`could not fingerprint ${root} after the prebuild: ${after?.uncertain ?? 'no result'}`);
+  const edited = configInputsChanged(before, after, { prebuildRan: true });
   if (edited.length)
     return fail(
       `${changedDuringBuildLine(edited).replace(/; the build will be installed but not cached$/, '')}, so the prebuild record was not written`,
@@ -194,23 +227,40 @@ async function runStep(context: RunContext, step: SourceRepairStep): Promise<boo
   if (step.id === 'deps') {
     const dependencies = dependencyState(facts.root, repoRoot);
     if (!dependencies) return true;
-    const failure = await runDependencyInstall({
-      dependencies,
-      subject: `source ${dependencies.root}: ${facts.deps?.reason === 'missing' ? 'no installed dependencies' : `the installed tree does not match ${dependencies.lock}`}`,
-      installer: hold.installer,
-      spawn: installerSpawn(hold.installer, null),
-      emit: note,
-      again: 'stim doctor --fix',
+    return fenced(context, async () => {
+      const failure = await runDependencyInstall({
+        dependencies,
+        subject: `source ${dependencies.root}: ${facts.deps?.reason === 'missing' ? 'no installed dependencies' : `the installed tree does not match ${dependencies.lock}`}`,
+        installer: hold.installer,
+        spawn: installerSpawn(hold.installer, null),
+        emit: note,
+        again: 'stim doctor --fix',
+      });
+      preserveInstallerFailure(context, failure);
+      if (failure) describeFailure('deps', failure, note);
+      return !failure;
     });
-    if (failure) describeFailure('deps', failure, note);
-    return !failure;
   }
-  if (step.id === 'pods') {
-    const failure = await installPods(context, step);
-    if (failure) describeFailure('pods', failure, note);
-    return !failure;
-  }
+  if (step.id === 'pods')
+    return fenced(context, async () => {
+      const failure = await installPods(context, step);
+      if (failure) describeFailure('pods', failure, note);
+      return !failure;
+    });
   return repairPrebuild(context, step.id === 'prebuild:ios' ? 'ios' : 'android', step);
+}
+
+async function fenced<T>(context: RunContext, work: () => Promise<T>): Promise<T> {
+  const fence = fenceDeclaredSpawns(context.operation);
+  let unverified: unknown;
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof Error && 'reportCleanup' in error) unverified = error;
+    throw error;
+  } finally {
+    await fence.finish(unverified);
+  }
 }
 
 const LABELS: Record<SourceRepairStep['id'], string> = {
@@ -254,7 +304,13 @@ export async function repairSourceCheckout(options: SourceRepairOptions): Promis
       facts.root,
       () =>
         withWarmClaim(
-          { repositoryRoot: options.repoRoot, phase: 'refresh', ceilingMs: 0, signal: operation.signal },
+          {
+            repositoryRoot: options.repoRoot,
+            phase: 'refresh',
+            ceilingMs: 0,
+            signal: operation.signal,
+            declareSpawnsFor: operation,
+          },
           (hold) =>
             runApproved(
               { ...options, hold },

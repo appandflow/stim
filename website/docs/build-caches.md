@@ -103,8 +103,7 @@ is never published under the caller's identity.
 
 ### React Native and Expo inputs
 
-Stim uses `@expo/fingerprint` to identify native inputs in both Expo and bare
-React Native projects. The cache key also includes the platform, target, and
+Stim computes its own native fingerprint for both Expo and bare React Native projects. The cache key also includes the platform, target, and
 build configuration or variant. A build for one CPU architecture adds it: an
 Android Debug build for a known ABI ends in that ABI (`-arm64-v8a`), and an iOS
 simulator build ends in the architecture it runs on (`-arm64` or `-x86-64`):
@@ -114,25 +113,71 @@ this Mac's for a local build in any configuration, the remote host's for a
 built on Apple silicon therefore no longer runs on an Intel Mac's simulator;
 build it with `--arch all` for that.
 
-Stim runs `@expo/fingerprint` with its default `balanced` preset, the one the
-project's own Expo uses:
+The fingerprint includes the evaluated app config and autolinking, native build
+scripts and their relevant environment, tracked native directories, patches,
+and native files of linked, local, git and file dependencies. Registry packages
+are identified by their package identity; edits made directly inside them are
+not detected. Version fields, EAS configuration and Metro-bundled JavaScript
+are excluded. A Release cache hit keeps the version it was built with.
 
-- An installed dependency counts by its name and version, not by its files. So
-  does a config plugin loaded from `node_modules`.
-- A package linked from outside `node_modules` counts by its files: a workspace
-  package, a `link:` dependency, or a local Expo module. A `file:` dependency
-  that the package manager copies into `node_modules` counts by version.
-- `patches/`, a committed `ios/` or `android/`, the evaluated app config, its
-  local config plugins and the files it names count by their contents. Stim also
-  hashes the `patches/` and `.yarn/patches/` directories next to a monorepo's
-  lockfile, and the patch hashes `pnpm-lock.yaml` records, wherever the patch
-  files live.
-- The app's `version`, `ios.buildNumber` and `android.versionCode`, `eas.json`,
-  `.easignore` and the path overrides in `react-native.config.js` are left out.
-  A Release cache hit keeps the version it was built with.
+Stim reads `extraSources` from `fingerprint.config.js` unless
+`cache.fingerprintInputs` is explicitly set. The latter is an array of paths
+relative to the app; even an empty array overrides `extraSources`. Other
+`fingerprint.config.js` options no longer change the key. Run `stim doctor`
+to see unsupported options. Doctor runs project config and autolinking in an isolated child to check determinism and worktree parity; run it only in a checkout whose project code you trust.
 
-To hash the files of every native dependency, set `preset: 'strict'` in
-`fingerprint.config.js`. That costs about twice the fingerprint's CPU time.
+### Inputs read only in a plugin callback
+
+Expo's `getConfig` does not run the callbacks a config plugin registers on mods
+(`withDangerousMod`, `withXcodeProject` and similar). An environment variable
+or file that a plugin reads only inside such a callback, at prebuild time, is
+not traced, so changing it does not change the key. Values and files read in
+the plugin function itself, outside a callback, are traced without any
+declaration. Declare the callback-only inputs yourself:
+
+```js title="fingerprint.config.js"
+module.exports = {
+  extraSources: [
+    { type: 'file', filePath: 'certs/push.pem' },
+    { type: 'contents', id: 'push-env', contents: process.env.PUSH_ENV ?? '' },
+  ],
+};
+```
+
+`file` and `dir` entries key the contents of the path. A `contents` entry that
+reads `process.env` when the config loads keys that value. If you set
+`cache.fingerprintInputs`, list the paths there instead; it replaces
+`extraSources`, and it takes paths only.
+
+If embedded config or a dependency reads a private Stim credential, or project
+config enumerates an environment containing one, Stim runs the build without
+the cache. Remove that credential from the build environment to retry caching.
+The private workspace replay record keeps `STIM_HOME` and `STIM_RUN_ID`; neither
+is sent to a build worker as a fingerprint input.
+
+The first build with this fingerprint definition misses older build-cache
+entries. For an existing generated Expo native directory with an older Stim
+prebuild record, align the project and global Stim versions, preserve any local
+changes, then move or remove the generated `ios/` or `android/` directory and
+retry. Stim generates it again. Tracked native directories are not removed.
+The workspace native-run lock serializes Stim builds in the same Stim home;
+separate Stim homes do not share that lock.
+
+A build worker receives the values of environment names included in the key,
+including values read by build scripts. They are sent only to the approved
+worker and used for install, prebuild and compilation. Project build tools may
+print their own environment in build logs. Stim removes its own access and setup
+credentials from the worker's build environment. A path or package instance that
+cannot be mapped safely to the worker prevents offload. If a config only
+probes or lists Git-ignored entries, the worker may not reproduce them and
+Stim falls back to a local build. List needed files or directories in
+`cache.fingerprintInputs` to include their contents in the key and transfer.
+
+For `patch-package` postinstalls, Stim can cache a direct apply invocation with
+a literal patch directory and supported error flags. Wrappers, compound commands
+and other modes make the fingerprint uncertain. Use a direct apply invocation
+to enable caching and offload.
+On Windows, use a double-quoted literal path without environment expansion.
 
 :::warning[Edits inside node_modules]
 
@@ -160,44 +205,20 @@ with another `--no-build-cache` build.
 installs the saved `.app` or `.apk`. A miss runs the native build and stores the
 result. Two matching misses use one build through a single-flight lock.
 
-Computing the fingerprint evaluates the app config and runs autolinking. After a
-full fingerprint, Stim records it under a static digest of the tree in
-`$STIM_HOME/fingerprint-memo` (`~/.stim` by default), shared by every worktree.
-The digest covers several inputs:
+Computing the fingerprint evaluates app config and autolinking in child processes.
+Stim stores reusable observations in `$STIM_HOME/fingerprint` (`~/.stim`
+by default). A run reuses a part only when its recorded inputs and environment
+still match. Opaque parts are evaluated again. A run that uses the index checks
+its result in the background; if the check disagrees, Stim drops the record and
+warns. At the end of a run, Stim cancels a check still running after three
+seconds and waits for its subprocess cleanup to finish.
+Cleanup proof covers evaluator process groups. Project-created detached
+sessions require project-managed cleanup.
 
-- the git blob ids of the tracked native inputs, and the contents of untracked,
-  modified and ignored ones;
-- the app config's sources and the files and directories they name;
-- each installed package's path and version, and the lockfile;
-- the environment variables the config and its `.env` files read.
-
-A later run whose tree has the same digest, in any worktree, uses the record and
-prints `matches a recorded fingerprint of this tree`. A full fingerprint then
-runs in the background at low priority. If it disagrees, Stim drops the record
-and prints a warning at the end of the run; run the command again to use the
-current tree.
-
-While `daemon.mode` is `on`, the daemon also records the fingerprint ahead of
-the run. When the git HEAD, the lockfile or the install stamp in `node_modules` of a workspace that is running, not
-idle and has an iOS or Android device recorded changes, the daemon computes the
-digest and, if no record has it, the full fingerprint in a low-priority child
-process, so the next `stim ios` or `stim android` finds the record. It starts
-at most two per minute tick, none while pressure is above normal or the host
-load exceeds 4 per core, and does not look at a tree again after a child ended, whatever its outcome,
-until one of those changes. A run still computes its own digest of the tree and
-reads the record only when the two match, so an edit made after the precompute,
-or an environment variable the config reads that has another value in your shell
-than in the daemon's, leaves the record unread and the run fingerprints in full.
-A `pod install` alone triggers nothing.
-
-A config that the digest cannot follow always gets a full fingerprint. That
-includes dynamic imports, `process.env` used other than by literal name, file,
-process or network access while the config is evaluated, and `dotenv`. Local
-config plugins count as evaluated, except that the files a plugin reads are not
-tracked when it applies mods; Stim assumes it reads them at prebuild, and the
-background check catches one that puts them in the config. The
-record is never used after `expo prebuild` or `pod install`, on a build machine,
-in `stim doctor`, or with `--no-build-cache`.
+With `daemon.mode` on, Stim can precompute fingerprints for active workspaces
+in low-priority child processes when their HEAD, lockfile or install stamp
+changes. A changed input or environment still invalidates the reused parts.
+Doctor and post-prebuild checks compute without the index.
 
 After local and configured-provider misses, development builds can reuse an
 exact completed archive from an enabled paired build worker with
@@ -344,36 +365,17 @@ on the workspace's build row. `builds.<platform>` keeps the same facts for the
 last 10 runs, so you can see which run turned a hit into a miss. `stim ios --plan` and `stim android --plan` give
 the same reason before a build, and the apps show it under "Next build".
 
+If a remote iOS pod install changes the key, Stim stores the artifact under the worker’s returned key. The worker does not return verified input rows for that new key, so that entry cannot serve as a detailed miss-explanation baseline.
+
 If identical worktrees build instead of reusing an artifact, compare their
 fingerprint sources before adding exclusions. A project-level
 `.fingerprintignore` can exclude generated output that does not affect native
 inputs. Never ignore an entire native dependency, its build scripts, or source
 files to force a cache hit.
 
-React Native Test App can put checkout-specific generated Android files under
-`node_modules/react-native-test-app/android/support/build`. When the differences
-are confined to that directory, add these entries to the app root's
-`.fingerprintignore`:
-
-```gitignore
-node_modules/react-native-test-app/android/support/build
-node_modules/react-native-test-app/android/support/build/**/*
-```
-
-Use the dependency path shown in the fingerprint sources; hoisted or linked
-layouts may differ. Keep `android/support/build.gradle` and native sources
-included. Verify that built worktrees agree and that changing a real native
-input still changes the fingerprint. Stim does not add these exclusions by
-default.
-
-A prompt to investigate a miss:
-
-> Investigate why these two worktrees do not share Stim's Android artifact
-> cache. Compare their fingerprint sources. If only React Native Test App's
-> generated support/build output differs, add a narrowly scoped
-> .fingerprintignore entry at the app root. Verify fingerprint parity and that
-> a real native input change still invalidates the cache. Do not ignore the
-> package, build scripts, or native sources. Report the evidence.
+Use the input names reported by Stim to identify an unnecessary generated file.
+Keep native source, build scripts and configuration in the key, and verify that
+a real native input change still invalidates it.
 
 ### EAS development builds
 

@@ -47,7 +47,7 @@ if (process.argv[2] !== 'build') {
   mkdirSync(output, { recursive: true });
   const bytes = 'verified archive';
   writeFileSync(join(output, 'app.tgz'), bytes);
-  console.log(JSON.stringify({ type: 'result', ok: true, fingerprint: job.expectedFingerprint, sourceDigest: job.native.sourceDigest,
+  console.log(JSON.stringify({ type: 'result', ok: true, fingerprintSettled: true, fingerprint: job.expectedFingerprint, sourceDigest: job.native.sourceDigest,
     artifact: { name: 'Sample.app', size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }, compilationCache: {}, timings: {} }));
 }
 `,
@@ -81,7 +81,7 @@ if (process.argv[2] !== 'build') {
             },
           },
         });
-      const job = launch();
+      const job = await launch();
       if ('error' in job) throw new Error(job.error.message);
       await writeFile(
         join(root, 'home', 'config.json'),
@@ -91,7 +91,7 @@ if (process.argv[2] !== 'build') {
       host.forget(job);
       await rm(join(host.clientDir('builder'), 'repos', 'app-1', 'out'), { recursive: true, force: true });
       const reason = 'server.buildsPaused';
-      expect(launch()).toMatchObject({ error: { code: 'build-busy', message: expect.stringContaining(reason) } });
+      expect(await launch()).toMatchObject({ error: { code: 'build-busy', message: expect.stringContaining(reason) } });
       const artifact = descriptor('verified archive');
       expect(await host.offer('builder', { repo: 'app-1', native: 'xcode', artifact: identity })).toMatchObject({
         result: { artifact: { ...identity, ...artifact }, capacity: { declined: expect.stringContaining(reason) } },
@@ -122,7 +122,7 @@ if (process.argv[2] !== 'build') {
         join(root, 'home', 'config.json'),
         JSON.stringify({ server: { maxLoadPerCore: 100_000, buildsPaused: false, devicesPaused: true } }),
       );
-      const resumed = launch();
+      const resumed = await launch();
       if ('error' in resumed) throw new Error(resumed.error.message);
       await resumed.done;
       host.forget(resumed);
@@ -171,6 +171,9 @@ if (mode === 'offer-native-gradle') {
       setInterval(() => {}, 1000);
     } else console.log(JSON.stringify({ identity }));
   } else if (existsSync(join(area, 'hold-build'))) {
+    process.on('SIGTERM', () => {
+      process.stdout.write(JSON.stringify({ type: 'result', ok: false, code: 'cancelled', message: 'Cancelled.', fingerprintSettled: true }) + '\\n', () => process.exit(0));
+    });
     writeFileSync(join(area, 'build-pid.partial'), String(process.pid));
     renameSync(join(area, 'build-pid.partial'), join(area, 'build-pid'));
     setInterval(() => {}, 1000);
@@ -179,7 +182,7 @@ if (mode === 'offer-native-gradle') {
     mkdirSync(output, { recursive: true });
     const bytes = 'verified native archive';
     writeFileSync(join(output, 'app.tgz'), bytes);
-    console.log(JSON.stringify({ type: 'result', ok: true, fingerprint: null, sourceDigest: input.native.sourceDigest,
+    console.log(JSON.stringify({ type: 'result', ok: true, fingerprintSettled: true, fingerprint: null, sourceDigest: input.native.sourceDigest,
       androidPackage: 'dev.example.sample', cacheArtifact: { identity, receipt },
       artifact: { name: 'Sample.apk', size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }, compilationCache: {}, timings: {} }));
   }
@@ -211,7 +214,7 @@ if (mode === 'offer-native-gradle') {
       gradleBuildCache: true,
     },
   };
-  const job = host.launch({
+  const job = await host.launch({
     client: 'builder',
     repo: 'app-1',
     session,
@@ -345,7 +348,7 @@ test('ending the job cancels its builds even when another repository query canno
   const area = join(host.clientDir('builder'), 'repos', 'other-repo');
   await mkdir(area, { recursive: true });
   await writeFile(join(area, 'hold-build'), '');
-  const job = host.launch({
+  const job = await host.launch({
     client: 'builder',
     repo: 'other-repo',
     session,
@@ -485,7 +488,7 @@ else {
  let text=''; for await (const chunk of process.stdin) text+=chunk; const input=JSON.parse(text);
    const out=join(input.area,'out',input.job); mkdirSync(out,{recursive:true});
    const bytes='verified RN archive'; writeFileSync(join(out,'app.tgz'),bytes); writeFileSync(join(input.area,'toolchain-seal'),'original');
-   console.log(JSON.stringify({type:'result',ok:true,fingerprint:input.expectedFingerprint,
+   console.log(JSON.stringify({type:'result',ok:true,fingerprintSettled:true,fingerprint:input.expectedFingerprint,
     artifact:{name:query.platform==='ios'?'Sample.app':'Sample.apk',size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')},
     ...(query.platform==='android'?{androidPackage:'dev.example.sample'}:{}),compilationCache:{},timings:{},
     reactNativeArtifact:{identity,receipt}}));
@@ -505,7 +508,7 @@ else {
       () => {},
     );
     try {
-      const job = host.launch({
+      const job = await host.launch({
         client: 'builder',
         repo: 'rn-1',
         session,

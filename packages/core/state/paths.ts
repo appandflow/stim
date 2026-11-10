@@ -292,17 +292,20 @@ function localSocket(path: string): string {
 }
 
 /** stimd's run directory: its single-instance claim, its record and, when the path fits, its CLI socket. */
-export function stimdRunDir(): string {
-  return join(configDir(), 'run');
+export function stimdRunDir(home?: string): string {
+  return join(home ?? configDir(), 'run');
 }
 
 /**
  * stimd's CLI socket: `run/stimd.sock`, or on Windows a named pipe named after the Stim home.
  */
-export function stimdSocket(): string {
+export function stimdSocket(home?: string): string {
   if (process.platform === 'win32')
-    return `\\\\.\\pipe\\stimd-${createHash('sha256').update(configDir()).digest('hex').slice(0, 16)}`;
-  return localSocket(join(stimdRunDir(), 'stimd.sock'));
+    return `\\\\.\\pipe\\stimd-${createHash('sha256')
+      .update(home ?? configDir())
+      .digest('hex')
+      .slice(0, 16)}`;
+  return localSocket(join(stimdRunDir(home), 'stimd.sock'));
 }
 
 /** `{format, pid, socket, build, version}` of the running stimd, written by stimd alone. */
@@ -316,8 +319,8 @@ export function desktopKeyFile(): string {
 }
 
 /** The exclusive claim that keeps one stimd per Stim home. */
-export function stimdClaimRoot(): string {
-  return join(stimdRunDir(), 'stimd');
+export function stimdClaimRoot(home?: string): string {
+  return join(stimdRunDir(home), 'stimd');
 }
 
 /** The home daemon's directory: its claim, log, snapshot and, when the path fits, its socket. */

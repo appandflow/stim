@@ -1,4 +1,6 @@
-import { readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import type { StimContext } from '@stim-cli/core';
+import { readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { ensurePrivateDir } from '@stim-cli/core';
 import { fingerprintIndexDir, fingerprintPendingVerifyDir } from '@stim-cli/core/state';
@@ -9,12 +11,11 @@ import {
   withIndexLock,
   dropRecords,
   indexDir,
-  newerThanInstall,
   nowNs,
   readWorkspaceEnv,
   writePrivate,
 } from './index-store.ts';
-import { installRoot, targetLayout, type StaticTarget } from './inputs.ts';
+import { targetLayout, type StaticTarget } from './inputs.ts';
 import { field } from './walk.ts';
 import { diffInputs, isUncertain, sha256, type InputChange, type Platform, type Uncertain } from './key.ts';
 
@@ -51,9 +52,17 @@ interface CheckResult {
   changes?: InputChange[];
 }
 
+type CheckOutcome = { value: CheckResult } | { failure: unknown };
+
+function checkValue(outcome: CheckOutcome): CheckResult {
+  if ('failure' in outcome) throw outcome.failure;
+  return outcome.value;
+}
+
 export interface BackgroundCheck {
+  join(): Promise<CheckResult>;
   settle(graceMs?: number): Promise<CheckResult>;
-  cancel(): void;
+  cancel(): Promise<void>;
 }
 
 function readJson(path: string): unknown {
@@ -69,9 +78,9 @@ function writeJson(path: string, value: unknown): void {
   writePrivate(path, JSON.stringify(value));
 }
 
-const requestDir = ({ root, target }: VerifyRequest) => {
+const requestDir = ({ root, target }: VerifyRequest, home?: string) => {
   const project = realpathSync.native(root);
-  return { project, dir: indexDir(target.platform, project, targetLayout(target)) };
+  return { project, dir: indexDir(target.platform, project, targetLayout(target), home) };
 };
 
 const trustFile = (dir: string) => join(dir, 'trust.json');
@@ -87,7 +96,7 @@ function readTrust(dir: string): Trust | null {
 }
 
 /** Counts one index hit and says whether the directory is past its trust bound (3 hits or 10 minutes unverified). */
-function countHit(dir: string, now: bigint): boolean {
+function countHit(dir: string, now: bigint, home?: string): boolean {
   return withIndexLock(() => {
     const trust = readTrust(dir) ?? { verifiedAtNs: null, firstHitNs: String(now), hits: 0 };
     trust.hits += 1;
@@ -95,27 +104,27 @@ function countHit(dir: string, now: bigint): boolean {
       writeJson(trustFile(dir), trust);
     } catch {}
     return trust.hits > TRUST_HITS || now - BigInt(trust.verifiedAtNs ?? trust.firstHitNs) > TRUST_NS;
-  });
+  }, home);
 }
 
-function markVerified(dir: string, now: bigint): void {
+function markVerified(dir: string, now: bigint, home?: string): void {
   withIndexLock(() => {
     if (statSync(dir, { throwIfNoEntry: false }) === undefined) return;
     try {
       writeJson(trustFile(dir), { verifiedAtNs: String(now), firstHitNs: String(now), hits: 0 });
     } catch {}
-  });
+  }, home);
 }
 
-const disagreementsFile = () => join(fingerprintIndexDir(), 'disagreements.json');
+const disagreementsFile = (home?: string) => join(fingerprintIndexDir(undefined, home), 'disagreements.json');
 
 interface Disagreements {
   count: number;
   unreported: { platform: Platform; recorded: string; current: string; changes: InputChange[] }[];
 }
 
-const readDisagreements = (): Disagreements => {
-  const value = readJson(disagreementsFile());
+const readDisagreements = (home?: string): Disagreements => {
+  const value = readJson(disagreementsFile(home));
   const count = field(value, 'count');
   const unreported = field(value, 'unreported');
   return {
@@ -129,34 +138,38 @@ const isDisagreement = (value: unknown): value is Disagreements['unreported'][nu
   Array.isArray(field(value, 'changes'));
 
 /** Drops a directory whose recorded parts gave another key than a full computation, and counts it. */
-function disagree(dir: string, platform: Platform, recorded: string, current: string, changes: InputChange[]): void {
+function disagree(
+  dir: string,
+  platform: Platform,
+  recorded: string,
+  current: string,
+  changes: InputChange[],
+  home?: string,
+): void {
   debugLog.log('fingerprint.index_disagreement', { platform, recorded, current, changes });
   withIndexLock(() => {
     dropRecords(dir);
-    const known = readDisagreements();
+    const known = readDisagreements(home);
     try {
-      writeJson(disagreementsFile(), {
+      writeJson(disagreementsFile(home), {
         count: known.count + 1,
         unreported: [...known.unreported, { platform, recorded, current, changes }].slice(-20),
       });
     } catch {}
-  });
+  }, home);
 }
 
 /** How many index hits a full computation has disagreed with on this machine. */
 export const disagreementCount = (): number => readDisagreements().count;
 
 /** Disagreements no run has warned about yet, cleared as they are returned, and the total ever counted. */
-export function takeDisagreements(): Disagreements {
+export function takeDisagreements(home?: string): Disagreements {
   try {
     return withIndexLock(() => {
-      const known = readDisagreements();
-      if (known.unreported.length > 0)
-        try {
-          writeJson(disagreementsFile(), { count: known.count, unreported: [] });
-        } catch {}
+      const known = readDisagreements(home);
+      if (known.unreported.length > 0) writeJson(disagreementsFile(home), { count: known.count, unreported: [] });
       return known;
-    });
+    }, home);
   } catch {
     return { count: 0, unreported: [] };
   }
@@ -168,24 +181,28 @@ async function recompute(
   env: NodeJS.ProcessEnv,
   hit: Pick<Fingerprint, 'hash' | 'inputs'>,
   signal: AbortSignal,
+  operation?: StimContext,
 ): Promise<CheckResult> {
-  const { dir } = requestDir(request);
+  const { dir } = requestDir(request, operation?.home);
   const compute = (index: 'use' | 'skip') =>
-    fingerprint(request.root, request.target, { env, embedMode: request.embedMode, index, signal }).catch(
-      (error: unknown): Uncertain => ({ uncertain: String(error) }),
+    fingerprint(request.root, request.target, { env, embedMode: request.embedMode, index, signal, operation }).catch(
+      (error: unknown): Uncertain => {
+        if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
+        return { uncertain: 'fingerprint verification failed' };
+      },
     );
   const current = await compute('skip');
   if (signal.aborted) return { status: 'abandoned', recorded: hit.hash, current: null };
   if (isUncertain(current)) return { status: 'failed', recorded: hit.hash, current: null };
   if (current.hash === hit.hash) {
-    locked(() => markVerified(dir, nowNs()));
+    locked(() => markVerified(dir, nowNs(), operation?.home));
     return { status: 'confirmed', recorded: hit.hash, current: current.hash };
   }
   const indexed = await compute('use');
   if (signal.aborted || isUncertain(indexed) || indexed.hash !== hit.hash)
     return { status: 'abandoned', recorded: hit.hash, current: current.hash };
   const changes = diffInputs(hit.inputs, current.inputs);
-  locked(() => disagree(dir, request.target.platform, hit.hash, current.hash, changes));
+  locked(() => disagree(dir, request.target.platform, hit.hash, current.hash, changes, operation?.home));
   return { status: 'disagreed', recorded: hit.hash, current: current.hash, changes };
 }
 
@@ -204,17 +221,22 @@ function locked(step: () => void): void {
 export function verifyHit(
   request: VerifyRequest,
   hit: Fingerprint,
-  { env, passes, signal }: { env: NodeJS.ProcessEnv; passes: boolean; signal?: AbortSignal },
+  {
+    env,
+    passes,
+    signal,
+    operation,
+  }: { env: NodeJS.ProcessEnv; passes: boolean; signal?: AbortSignal; operation?: StimContext },
 ): BackgroundCheck | null {
   if (hit.from !== 'index') return null;
-  const { project, dir } = requestDir(request);
+  const { project, dir } = requestDir(request, operation?.home);
   const now = nowNs();
   let pastBound = true;
   locked(() => {
-    pastBound = countHit(dir, now);
+    pastBound = countHit(dir, now, operation?.home);
   });
   if (passes && !pastBound) {
-    const envRef = readWorkspaceEnv(project);
+    const envRef = readWorkspaceEnv(project, operation?.home);
     if (envRef) {
       const pending: Pending = {
         ...request,
@@ -225,31 +247,41 @@ export function verifyHit(
         envRef: { id: sha256(project), digest: envRef.digest },
       };
       try {
-        writeJson(join(fingerprintPendingVerifyDir(), `${basename(dir)}-${checkoutTag(project)}.json`), pending);
+        writeJson(
+          join(fingerprintPendingVerifyDir(operation?.home), `${basename(dir)}-${checkoutTag(project)}.json`),
+          pending,
+        );
         return null;
       } catch {}
     }
   }
   const controller = new AbortController();
   const both = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-  let settled: CheckResult | null = null;
-  const result = recompute(request, env, hit, both)
-    .catch((): CheckResult => ({ status: 'failed', recorded: hit.hash, current: null }))
+  let settled: CheckOutcome | null = null;
+  const result: Promise<CheckOutcome> = recompute(request, env, hit, both, operation)
+    .then(
+      (value): CheckOutcome => ({ value }),
+      (failure: unknown): CheckOutcome => ({ failure }),
+    )
     .then((outcome) => (settled = outcome));
   return {
+    join: async () => checkValue(await result),
     settle: async (graceMs = FINGERPRINT_CHECK_GRACE_MS) => {
-      if (settled) return settled;
+      if (settled) return checkValue(settled);
       let timer: ReturnType<typeof setTimeout> | undefined;
       const late = new Promise<null>((resolve) => {
         timer = setTimeout(() => resolve(null), graceMs);
       });
       const outcome = await Promise.race([result, late]);
       clearTimeout(timer);
-      if (outcome) return outcome;
+      if (outcome) return checkValue(outcome);
       controller.abort();
-      return { status: 'abandoned', recorded: hit.hash, current: null };
+      return checkValue(await result);
     },
-    cancel: () => controller.abort(),
+    cancel: async () => {
+      controller.abort();
+      checkValue(await result);
+    },
   };
 }
 
@@ -263,67 +295,60 @@ const isPending = (value: unknown): value is Pending =>
  * The passes' share of verification: recomputes up to `perPass` pending hits, one per index directory, under the env
  * their workspace recorded. A hit whose workspace env changed since it was recorded is dropped unchecked.
  */
-export async function verifyPending({ perPass, signal }: { perPass: number; signal: AbortSignal }): Promise<number> {
+export async function verifyPending({
+  perPass,
+  signal,
+  root,
+  file,
+}: {
+  perPass: number;
+  signal: AbortSignal;
+  root?: string;
+  file?: string;
+}): Promise<number> {
+  const dir = fingerprintPendingVerifyDir();
   let names: string[];
   try {
-    names = readdirSync(fingerprintPendingVerifyDir()).filter((name) => name.endsWith('.json'));
+    names = file
+      ? basename(file) === file && file.endsWith('.json')
+        ? [file]
+        : []
+      : readdirSync(dir).filter((name) => name.endsWith('.json'));
   } catch {
     return 0;
   }
   let checked = 0;
   for (const name of names.slice(0, perPass)) {
-    const file = join(fingerprintPendingVerifyDir(), name);
-    const pending = readJson(file);
-    rmSync(file, { force: true });
-    if (!isPending(pending)) continue;
+    const original = join(dir, name);
+    const claimed = join(dir, `claim-${randomUUID()}.json`);
+    try {
+      renameSync(original, claimed);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw error;
+    }
+    const pending = readJson(claimed);
+    if (!isPending(pending)) {
+      rmSync(claimed, { force: true });
+      continue;
+    }
     let project: string;
     try {
       project = realpathSync.native(pending.root);
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') rmSync(claimed, { force: true });
       continue;
     }
+    if (root && project !== root) continue;
     const env = readWorkspaceEnv(project);
-    if (!env || env.digest !== pending.envRef.digest) continue;
+    if (!env || env.digest !== pending.envRef.digest) {
+      rmSync(claimed, { force: true });
+      continue;
+    }
     await recompute(pending, env.env, pending, signal);
+    if (signal.aborted) return checked;
+    rmSync(claimed, { force: true });
     checked += 1;
   }
   return checked;
-}
-
-/**
- * The local store gate: refuses a store when a patch or the lockfile is newer than the last install, or when the key
- * recomputed now (by stat through the index) differs from the one the build was looked up under.
- */
-export async function localStoreGate(
-  request: VerifyRequest,
-  key: Pick<Fingerprint, 'hash'>,
-  { env, signal }: { env: NodeJS.ProcessEnv; signal?: AbortSignal },
-): Promise<{ store: true } | { store: false; reason: string }> {
-  const project = realpathSync.native(request.root);
-  const pending = newerThanInstall({ project, install: installRoot(project) });
-  if (pending) return { store: false, reason: `${pending} changed after the last install` };
-  const now = await fingerprint(request.root, request.target, { env, embedMode: request.embedMode, signal });
-  if (isUncertain(now)) return { store: false, reason: now.uncertain };
-  return now.hash === key.hash
-    ? { store: true }
-    : { store: false, reason: 'the native inputs changed during the build' };
-}
-
-/** The remote store gate: a key that used the index is recomputed in full before anything is uploaded under it. */
-export async function remoteStoreGate(
-  request: VerifyRequest,
-  key: Pick<Fingerprint, 'hash' | 'from'>,
-  { env, signal }: { env: NodeJS.ProcessEnv; signal?: AbortSignal },
-): Promise<{ store: true } | { store: false; reason: string }> {
-  if (key.from !== 'index') return { store: true };
-  const full = await fingerprint(request.root, request.target, {
-    env,
-    embedMode: request.embedMode,
-    index: 'skip',
-    signal,
-  });
-  if (isUncertain(full)) return { store: false, reason: full.uncertain };
-  return full.hash === key.hash
-    ? { store: true }
-    : { store: false, reason: 'the key the index served differs from a full computation' };
 }

@@ -1,6 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
 import type { BuildCacheCapability } from '@stim-cli/cache';
-import type { FingerprintCheck } from '../cache/fingerprint-memo.ts';
+import type { FingerprintCheck } from '../fingerprint/operation.ts';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { IosRuntimeKind, IosRuntimePlan } from '../commands/ios/launch.ts';
 import type { FailArgs, IosCommandOptions } from '../commands/ios/types.ts';

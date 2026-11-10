@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import {
   existsSync,
   mkdirSync,
@@ -15,30 +16,27 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { fingerprintPendingVerifyDir } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { fingerprint, type Fingerprint } from '../fingerprint/evaluate.ts';
+import { fingerprintForBuild } from '../fingerprint/operation.ts';
+import * as daemonClient from '../daemon/client.ts';
+import { testContext } from './_context.ts';
 import {
   checkRead,
   indexDir,
   newRecord,
+  newerThanInstall,
   nowNs,
   recordFiles,
   takeRead,
   writeRecord,
 } from '../fingerprint/index-store.ts';
 import { fingerprintNotes } from '../fingerprint/doctor.ts';
-import { isUncertain } from '../fingerprint/key.ts';
+import { canonicalJson, isUncertain, sha256 } from '../fingerprint/key.ts';
 import { precomputePass } from '../fingerprint/precompute.ts';
-import {
-  disagreementCount,
-  localStoreGate,
-  remoteStoreGate,
-  takeDisagreements,
-  verifyHit,
-  verifyPending,
-} from '../fingerprint/verify.ts';
+import { disagreementCount, takeDisagreements, verifyHit, verifyPending } from '../fingerprint/verify.ts';
 
 const MOBILE_MODULES = fileURLToPath(new URL('../../../../apps/mobile/node_modules', import.meta.url));
 const REPO_LOCK = join(MOBILE_MODULES, '..', '..', '..', 'pnpm-lock.yaml');
@@ -55,9 +53,9 @@ beforeEach(() => {
   const real = getExecutor();
   setExecutor({
     ...real,
-    spawn: (file: string, args: string[], options: object) => {
-      spawned.push([file, ...args]);
-      return real.spawn(file, args, options);
+    runFileAsync: (file, args, options) => {
+      if (args.some((arg: string) => arg.endsWith('fp-trace.cjs'))) spawned.push([file, ...args]);
+      return real.runFileAsync(file, args, options);
     },
   });
 });
@@ -72,6 +70,32 @@ function write(path: string, text: string): void {
   mkdirSync(join(path, '..'), { recursive: true });
   writeFileSync(path, text);
 }
+
+test('install freshness follows declared custom patches and nested patch-package files', () => {
+  const root = join(base, 'patch-project');
+  const declared = join(root, 'vendor-patches', 'nested', 'declared.patch');
+  const nested = join(root, 'custom patches', 'nested', 'package.patch');
+  const stamp = join(root, 'node_modules', '.modules.yaml');
+  write(
+    join(root, 'package.json'),
+    JSON.stringify({
+      pnpm: { patchedDependencies: { 'fixture@1.0.0': 'vendor-patches/nested/declared.patch' } },
+      scripts: { postinstall: 'patch-package --patch-dir="custom patches"' },
+    }),
+  );
+  write(declared, 'declared patch');
+  write(nested, 'nested patch');
+  write(stamp, 'layoutVersion: 5\n');
+  const past = new Date(Date.now() - 60_000);
+  utimesSync(stamp, past, past);
+  expect(newerThanInstall({ project: root, install: root })).toBe(declared);
+  const future = new Date(Date.now() + 60_000);
+  utimesSync(stamp, future, future);
+  expect(newerThanInstall({ project: root, install: root })).toBeNull();
+  const newer = new Date(Date.now() + 120_000);
+  utimesSync(nested, newer, newer);
+  expect(newerThanInstall({ project: root, install: root })).toBe(nested);
+});
 
 /** A CNG Expo app installing nothing of its own: its node_modules is apps/mobile's, with this repository's lockfile. */
 function expoApp(dir: string, files: Record<string, string> = {}): string {
@@ -96,10 +120,18 @@ function expoApp(dir: string, files: Record<string, string> = {}): string {
 /** The racy guard trusts only files written more than 50 ms before a computation starts. */
 const settled = () => new Promise((resolve) => setTimeout(resolve, 100));
 
-const env = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({ PATH: process.env.PATH, ...extra });
+const env = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
+  PATH: process.env.PATH,
+  STIM_HOME: process.env.STIM_HOME,
+  ...extra,
+});
 const request = (root: string) => ({ root, target: { platform: 'ios' as const }, embedMode: 'development' as const });
 
-async function key(root: string, index: 'use' | 'skip' = 'use', extra: NodeJS.ProcessEnv = {}): Promise<Fingerprint> {
+async function key(
+  root: string,
+  index: 'use' | 'skip' | 'refresh' = 'use',
+  extra: NodeJS.ProcessEnv = {},
+): Promise<Fingerprint> {
   const result = await fingerprint(root, { platform: 'ios' }, { env: env(extra), embedMode: 'development', index });
   if (isUncertain(result)) throw new Error(JSON.stringify(result));
   return result;
@@ -196,6 +228,56 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))(
         expect(indexed.hash).not.toBe(hit.hash);
       },
     );
+
+    test('refresh computes every evaluator again and records a reusable result', SLOW, async () => {
+      const root = expoApp('refresh');
+      await settled();
+      const first = await key(root);
+      ran();
+      const refreshed = await fingerprintForBuild(
+        root,
+        { platform: 'ios' },
+        {
+          operation: testContext({ projectRoot: root, env: env() }),
+          embedMode: 'development',
+          consult: false,
+        },
+      );
+      if ('uncertain' in refreshed) throw new Error(refreshed.uncertain);
+      expect(refreshed.fingerprint.hash).toBe(first.hash);
+      expect(refreshed.fingerprint.from).toBe('evaluated');
+      expect(refreshed.check).toBeNull();
+      expect(ran()).toEqual(['config', 'embed', 'react-native-config', 'resolve']);
+      const reused = await key(root);
+      expect(reused.hash).toBe(refreshed.fingerprint.hash);
+      expect(reused.from).toBe('index');
+      expect(ran()).toEqual([]);
+    });
+
+    test('a queued index verification uses the operation home rather than the ambient home', SLOW, async () => {
+      const root = expoApp('selected-home');
+      const home = join(base, 'selected-home-state');
+      const selectedEnv = { ...env(), STIM_HOME: home };
+      const operation = testContext({ home, projectRoot: root, env: selectedEnv });
+      const availability = vi.spyOn(daemonClient, 'backgroundPassesAvailable').mockResolvedValue(true);
+      try {
+        await settled();
+        const first = await fingerprint(
+          root,
+          { platform: 'ios' },
+          { env: selectedEnv, operation, embedMode: 'development' },
+        );
+        if (isUncertain(first)) throw new Error(first.uncertain);
+        const hit = await fingerprintForBuild(root, { platform: 'ios' }, { operation, embedMode: 'development' });
+        if ('uncertain' in hit) throw new Error(hit.uncertain);
+        expect(hit.fingerprint.from).toBe('index');
+        expect(hit.check).toBeNull();
+        expect(readdirSync(join(home, 'fingerprint', 'pending-verify'))).toHaveLength(1);
+        expect(existsSync(fingerprintPendingVerifyDir())).toBe(false);
+      } finally {
+        availability.mockRestore();
+      }
+    });
 
     test('an env value change re-runs the parts that read or enumerate the env, not resolve', SLOW, async () => {
       const root = expoApp('app');
@@ -368,6 +450,42 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))('ve
     expect(takeDisagreements().unreported).toHaveLength(0);
   });
 
+  test('the next build reports a queued disagreement once in its selected home', SLOW, async () => {
+    const root = expoApp('queued-warning');
+    await settled();
+    await key(root);
+    corruptRecord(root);
+    const stale = await key(root);
+    const check = verifyHit(request(root), stale, { env: env(), passes: false });
+    expect(await check?.settle(60_000)).toMatchObject({ status: 'disagreed' });
+    const home = process.env.STIM_HOME;
+    assert(home);
+    const operation = testContext({ home, env: env(), projectRoot: root });
+    const warnings: string[] = [];
+    const first = await fingerprintForBuild(
+      root,
+      { platform: 'ios' },
+      {
+        operation,
+        embedMode: 'development',
+        onDisagreement: (line) => warnings.push(line),
+      },
+    );
+    if ('check' in first) await first.check?.settle(60_000);
+    expect(warnings).toEqual([expect.stringContaining('an earlier cache lookup used fingerprint')]);
+    const second = await fingerprintForBuild(
+      root,
+      { platform: 'ios' },
+      {
+        operation,
+        embedMode: 'development',
+        onDisagreement: (line) => warnings.push(line),
+      },
+    );
+    if ('check' in second) await second.check?.settle(60_000);
+    expect(warnings).toHaveLength(1);
+  });
+
   test('with the passes, three hits wait for them and the fourth is checked in the run', SLOW, async () => {
     const root = expoApp('app');
     await settled();
@@ -378,6 +496,93 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))('ve
     const check = verifyHit(request(root), hit, { env: env(), passes: true });
     expect(await check?.settle(60_000)).toMatchObject({ status: 'confirmed' });
     expect(verifyHit(request(root), hit, { env: env(), passes: true })).toBeNull();
+  });
+
+  test('a pending item for another root is left queued without evaluating it', async () => {
+    const first = expoApp('first');
+    const second = expoApp('second');
+    const directory = fingerprintPendingVerifyDir();
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      join(directory, 'pending.json'),
+      JSON.stringify({
+        root: second,
+        target: { platform: 'ios' },
+        embedMode: 'development',
+        hash: 'a',
+        inputs: [],
+        envRef: { id: 'fixture', digest: 'fixture' },
+      }),
+    );
+    const count = await verifyPending({
+      perPass: 1,
+      signal: new AbortController().signal,
+      root: first,
+      file: 'pending.json',
+    });
+    expect(count).toBe(0);
+    expect(readdirSync(directory)).toHaveLength(1);
+    expect(ran()).toEqual([]);
+  });
+
+  test('a pending item remains queued when its root cannot be inspected', async () => {
+    const root = expoApp('inaccessible');
+    const directory = fingerprintPendingVerifyDir();
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      join(directory, 'pending.json'),
+      JSON.stringify({
+        root,
+        target: { platform: 'ios' },
+        embedMode: 'development',
+        hash: 'a',
+        inputs: [],
+        envRef: { id: 'fixture', digest: 'fixture' },
+      }),
+    );
+    const denied = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    const spy = vi.spyOn(realpathSync, 'native').mockImplementation(() => {
+      throw denied;
+    });
+    try {
+      expect(await verifyPending({ perPass: 1, signal: new AbortController().signal, file: 'pending.json' })).toBe(0);
+      expect(readdirSync(directory)).toHaveLength(1);
+      expect(ran()).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('a cached embedded part that recorded a private read is refused', SLOW, async () => {
+    const root = expoApp('cached-private');
+    const secret = 'cached-private-fixture';
+    const requester = env({ STIM_ACCESS_TICKET: secret });
+    await settled();
+    const initial = await fingerprint(
+      root,
+      { platform: 'ios' },
+      { env: requester, embedMode: 'development', index: 'use' },
+    );
+    expect(isUncertain(initial)).toBe(false);
+    const [file] = recordFiles(indexOf(root));
+    assert(file);
+    const record: { parts: Record<string, { env: Array<[string, string | null]>; envNames: string[] }> } = JSON.parse(
+      readFileSync(file, 'utf8'),
+    );
+    const embedded = record.parts['configEmbedded:env'];
+    assert(embedded);
+    embedded.env.push(['STIM_ACCESS_TICKET', sha256(canonicalJson(['value', secret]))]);
+    embedded.envNames.push('STIM_ACCESS_TICKET');
+    writeFileSync(file, JSON.stringify(record));
+    ran();
+    const result = await fingerprint(
+      root,
+      { platform: 'ios' },
+      { env: requester, embedMode: 'development', index: 'use' },
+    );
+    expect(result).toMatchObject({ uncertain: expect.stringContaining('private Stim credential') });
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(ran()).not.toContain('embed');
   });
 
   test(
@@ -401,37 +606,6 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))('ve
       expect(readdirSync(fingerprintPendingVerifyDir())).toEqual([]);
     },
   );
-
-  test('the local gate refuses an unapplied patch and an input changed during the build', SLOW, async () => {
-    const root = expoApp('app');
-    await settled();
-    const built = await key(root);
-    expect(await localStoreGate(request(root), built, { env: env() })).toEqual({ store: true });
-    write(join(root, 'app.json'), JSON.stringify({ expo: { name: 'changed', slug: 'fp' } }));
-    expect(await localStoreGate(request(root), built, { env: env() })).toMatchObject({ store: false });
-    const stamped = expoApp('stamped');
-    await settled();
-    rmSync(join(stamped, 'node_modules'));
-    write(join(stamped, 'node_modules', '.modules.yaml'), 'layoutVersion: 5\n');
-    const installed = new Date(Date.now() - 60_000);
-    utimesSync(join(stamped, 'node_modules', '.modules.yaml'), installed, installed);
-    write(join(stamped, 'patches', 'expo+1.0.0.patch'), '--- a/x');
-    expect(await localStoreGate(request(stamped), built, { env: env() })).toMatchObject({
-      store: false,
-      reason: expect.stringContaining('patches'),
-    });
-  });
-
-  test('the remote gate recomputes a key the index served before storing under it', SLOW, async () => {
-    const root = expoApp('app');
-    await settled();
-    await key(root);
-    const hit = await key(root);
-    expect(await remoteStoreGate(request(root), hit, { env: env() })).toEqual({ store: true });
-    corruptRecord(root);
-    const stale = await key(root);
-    expect(await remoteStoreGate(request(root), stale, { env: env() })).toMatchObject({ store: false });
-  });
 });
 
 describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))('precompute and doctor', () => {
@@ -452,8 +626,9 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))('pr
       const pass = await precomputePass([request(root)], { admitted: true, signal });
       expect(pass).toEqual({
         precomputed: [{ root, outcome: 'computed', hash: computed.hash, from: 'index' }],
-        verified: 1,
       });
+      expect(ran()).toEqual([]);
+      expect(await verifyPending({ perPass: 1, signal })).toBe(1);
       expect(ran()).toEqual(['config', 'embed', 'react-native-config', 'resolve']);
     },
   );
@@ -468,6 +643,7 @@ describe.skipIf(process.platform === 'win32' || !existsSync(MOBILE_MODULES))('pr
     expect(notes.map((note) => note.message)).toEqual([
       "fingerprint.config.js ignorePaths is ignored by Stim's build-cache key",
       'no readable lockfile, so every native package is hashed by its files',
+      'an input cannot be safely reproduced on a build worker, so builds are not offloaded',
     ]);
   });
 });

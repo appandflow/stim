@@ -6,21 +6,23 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import {
-  fingerprintProject,
-  buildCacheKey,
-  storeBuild,
-  resolveBuild,
-  entryDir,
-} from '../../packages/stim-cli/src/cache/build-cache.ts';
+import { buildCacheKey, storeBuild, resolveBuild, entryDir } from '../../packages/stim-cli/src/cache/build-cache.ts';
 import { buildLockPath } from '../../packages/stim-cli/src/engine/build-lock.ts';
 import { loadConfig } from '../../packages/stim-cli/src/workspace/config.ts';
-import { createFingerprintAsync } from './fixtures/fingerprint-stub.mjs';
+import { staticInputs } from '../../packages/stim-cli/src/fingerprint/inputs.ts';
+import { trackedPaths } from '../../packages/stim-cli/src/fingerprint/git-index.ts';
+import { isUncertain, preimage, preimageHash } from '../../packages/stim-cli/src/fingerprint/key.ts';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
 const CLI = join(REPO, 'packages', 'stim-cli', 'bin', 'cli.ts');
 const LOCK_URL = pathToFileURL(join(REPO, 'packages', 'stim-cli', 'src', 'engine', 'build-lock.ts')).href;
 const CACHE_URL = pathToFileURL(join(REPO, 'packages', 'stim-cli', 'src', 'cache', 'build-cache.ts')).href;
+
+async function staticFingerprint(root, { platform }) {
+  const inputs = staticInputs({ root, tracked: await trackedPaths(root), expoResolves: false }, { platform });
+  assert.equal(isUncertain(inputs), false, 'the fixture has a complete static key');
+  return { hash: preimageHash(preimage(platform, inputs.native, inputs.layout, inputs.inputs)) };
+}
 
 const ctx = {};
 
@@ -59,10 +61,8 @@ test('cache workflows accept Git-created worktrees without Stim registration', (
 });
 
 test('two worktrees of one commit fingerprint identically when scoped', async () => {
-  const a = (await fingerprintProject(ctx.wt1, { platform: 'android', createFingerprint: createFingerprintAsync }))
-    ?.hash;
-  const b = (await fingerprintProject(ctx.wt2, { platform: 'android', createFingerprint: createFingerprintAsync }))
-    ?.hash;
+  const a = (await staticFingerprint(ctx.wt1, { platform: 'android' }))?.hash;
+  const b = (await staticFingerprint(ctx.wt2, { platform: 'android' }))?.hash;
   assert.ok(a && typeof a === 'string', 'a real hash came back');
   assert.equal(a, b, 'identical native trees at one commit hash identically -- the whole premise');
   ctx.androidHash1 = a;
@@ -72,27 +72,19 @@ test('a worktree-local path under ios/ changes the ios hash but NOT the android 
   writeFileSync(join(ctx.wt1, 'ios', 'Podfile.lock'), `PODS:\n  - hermes-engine (from \`${ctx.wt1}/ios\`)\n`);
   writeFileSync(join(ctx.wt2, 'ios', 'Podfile.lock'), `PODS:\n  - hermes-engine (from \`${ctx.wt2}/ios\`)\n`);
 
-  const iosA = (await fingerprintProject(ctx.wt1, { platform: 'ios', createFingerprint: createFingerprintAsync }))
-    ?.hash;
-  const iosB = (await fingerprintProject(ctx.wt2, { platform: 'ios', createFingerprint: createFingerprintAsync }))
-    ?.hash;
+  const iosA = (await staticFingerprint(ctx.wt1, { platform: 'ios' }))?.hash;
+  const iosB = (await staticFingerprint(ctx.wt2, { platform: 'ios' }))?.hash;
   assert.notEqual(iosA, iosB, 'the ios hash differs across worktrees -- an UNSCOPED hash would poison android too');
 
-  const androidA = (
-    await fingerprintProject(ctx.wt1, { platform: 'android', createFingerprint: createFingerprintAsync })
-  )?.hash;
-  const androidB = (
-    await fingerprintProject(ctx.wt2, { platform: 'android', createFingerprint: createFingerprintAsync })
-  )?.hash;
+  const androidA = (await staticFingerprint(ctx.wt1, { platform: 'android' }))?.hash;
+  const androidB = (await staticFingerprint(ctx.wt2, { platform: 'android' }))?.hash;
   assert.equal(androidA, androidB, 'scoping keeps the ios/ churn out of the android key');
   assert.equal(androidA, ctx.androidHash1, 'and the android hash did not move');
 });
 
 test('a build stored under wt1 key resolves from wt2 key: a cross-worktree HIT', async () => {
-  const hash1 = (await fingerprintProject(ctx.wt1, { platform: 'android', createFingerprint: createFingerprintAsync }))
-    ?.hash;
-  const hash2 = (await fingerprintProject(ctx.wt2, { platform: 'android', createFingerprint: createFingerprintAsync }))
-    ?.hash;
+  const hash1 = (await staticFingerprint(ctx.wt1, { platform: 'android' }))?.hash;
+  const hash2 = (await staticFingerprint(ctx.wt2, { platform: 'android' }))?.hash;
   const key1 = buildCacheKey('android', hash1, {});
   const key2 = buildCacheKey('android', hash2, {});
   assert.equal(key1, key2, 'same fingerprint, same options -> same cache key across worktrees');
@@ -114,9 +106,7 @@ test('changing a native input in wt2 changes the key and turns the hit into a MI
   const gradle = join(ctx.wt2, 'android', 'app', 'build.gradle');
   writeFileSync(gradle, readFileSync(gradle, 'utf-8') + '\n// native input changed by the e2e\n');
 
-  const changed = (
-    await fingerprintProject(ctx.wt2, { platform: 'android', createFingerprint: createFingerprintAsync })
-  )?.hash;
+  const changed = (await staticFingerprint(ctx.wt2, { platform: 'android' }))?.hash;
   assert.notEqual(changed, ctx.androidHash1, 'the fingerprint moved with the native input');
 
   const changedKey = buildCacheKey('android', changed, {});
