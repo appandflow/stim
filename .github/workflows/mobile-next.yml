@@ -8,6 +8,9 @@ on:
       - 'packages/core/**'
       - 'pnpm-lock.yaml'
       - '.github/workflows/mobile-next.yml'
+  # Picks up a head whose push run skipped the gate, and a build whose upload to TestFlight failed.
+  schedule:
+    - cron: '23 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -26,6 +29,9 @@ jobs:
       contents: read
       checks: read
     timeout-minutes: 120
+    env:
+      # eas submit reads the app config without the build profile's env, so the variant is set for every step.
+      APP_VARIANT: next
     defaults:
       run:
         shell: bash
@@ -97,26 +103,34 @@ jobs:
           eas-version: 24.10.0
           token: ${{ secrets.EXPO_TOKEN }}
 
-      # A `next` update's message starts with `next <sha> bundle:<hash>`; the commit and the exported bundle's
-      # hash are what the next run compares against, per native runtime.
-      - name: Choose a build, an update or nothing
+      # Only the latest finished next build counts: it is the binary TestFlight testers run. A next update's
+      # message starts with `next <sha> bundle:<hash>`, the commit and exported bundle the next run compares.
+      - name: Choose a build, an upload, an update or nothing
         id: plan
         if: steps.gate.outputs.skip != 'true'
         env:
-          APP_VARIANT: next
           SHA: ${{ steps.head.outputs.sha }}
         run: |
           runtime="$(npx expo-updates fingerprint:generate --platform ios | jq -r .hash)"
-          build_sha="$(eas build:list --platform ios --build-profile next --status finished --limit 20 --json --non-interactive |
-            jq -r --arg runtime "$runtime" '[.[] | select(.runtime.version == $runtime)][0].gitCommitHash // empty')"
           echo "runtime=$runtime" >> "$GITHUB_OUTPUT"
-          if [ -z "$build_sha" ]; then
-            echo "::notice::No finished next build has runtime $runtime; building one."
+          latest="$(eas build:list --platform ios --build-profile next --status finished --limit 1 --json --non-interactive | jq -c '.[0] // empty')"
+          if [ -z "$latest" ] || [ "$(jq -r '.runtime.version // empty' <<<"$latest")" != "$runtime" ]; then
+            echo "::notice::The latest finished next build is not on runtime $runtime; building one."
             echo "mode=build" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          build_id="$(jq -r .id <<<"$latest")"
+          build_number="$(jq -r .appBuildVersion <<<"$latest")"
+          build_sha="$(jq -r '.gitCommitHash // empty' <<<"$latest")"
+          if ! eas submit:status --platform ios --profile next --json --non-interactive |
+            jq -e --arg number "$build_number" '.ios.testFlightBuilds[] | select(.buildNumber == $number)' >/dev/null; then
+            echo "::notice::Next build $build_number ($build_id) is not on TestFlight; uploading it."
+            echo "build_id=$build_id" >> "$GITHUB_OUTPUT"
+            echo "mode=upload" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-          last="$(eas update:list --branch next --platform ios --limit 50 --json --non-interactive 2>/dev/null |
+          last="$(eas update:list --branch next --platform ios --limit 50 --json --non-interactive |
             jq -r --arg runtime "$runtime" '[(.currentPage // [])[] | select(.runtimeVersion == $runtime) | .message][0] // empty')"
           update_sha="$(sed -nE 's/^"?next ([0-9a-f]{40}) bundle:([0-9a-f]+).*/\1/p' <<<"$last")"
           update_hash="$(sed -nE 's/^"?next ([0-9a-f]{40}) bundle:([0-9a-f]+).*/\2/p' <<<"$last")"
@@ -146,12 +160,25 @@ jobs:
       - name: Publish a next update
         if: steps.plan.outputs.mode == 'update'
         env:
-          APP_VARIANT: next
           SHA: ${{ steps.head.outputs.sha }}
           HASH: ${{ steps.plan.outputs.hash }}
         run: |
           message="next $SHA bundle:$HASH $(git log -1 --format=%s "$SHA")"
           eas update --channel next --environment production --platform ios --message "$message" --non-interactive
+
+      - name: Upload the update's source maps to Sentry
+        if: steps.plan.outputs.mode == 'update'
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_URL: https://sentry.io/
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "SENTRY_AUTH_TOKEN is not set; skipping the Sentry source map upload."
+            exit 0
+          fi
+          npx sentry-expo-upload-sourcemaps dist
 
       - name: Build Stim Next
         id: build
@@ -170,7 +197,7 @@ jobs:
           echo "build_id=$build_id" >> "$GITHUB_OUTPUT"
 
       - name: Upload Stim Next to TestFlight for internal testers
-        if: steps.plan.outputs.mode == 'build'
+        if: steps.plan.outputs.mode == 'build' || steps.plan.outputs.mode == 'upload'
         env:
-          BUILD_ID: ${{ steps.build.outputs.build_id }}
+          BUILD_ID: ${{ steps.build.outputs.build_id || steps.plan.outputs.build_id }}
         run: eas submit --platform ios --profile next --id "$BUILD_ID" --non-interactive --wait
