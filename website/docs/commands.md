@@ -665,10 +665,12 @@ and physical devices use Exact's own commands.
 where the launcher looks for it:
 
 - Bun at the version `exact.mjs` pins or newer: `$BUN`, else
-  `~/.bun-<version>`, else `bun` on `PATH`.
+  `~/.bun-<version>`, else the Bun the launcher names, `bun` on `PATH` or the
+  path of the Bun that created the app.
 - The exact2 checkout `EXACT2` or the launcher's default path names, set up with
   Exact's setup.
-- rustup with the app's Rust toolchain and its `aarch64-apple-ios-sim` target,
+- rustup with `RUSTUP_TOOLCHAIN` or the app's Rust toolchain and its
+  `aarch64-apple-ios-sim` target,
   which Exact's setup does not add.
 
 Each missing piece is an `exact-tools` finding with the command that installs

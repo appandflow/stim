@@ -259,6 +259,11 @@ export function exactToolProblems(pins: ExactPins, env: NodeJS.ProcessEnv): Exac
   return problems;
 }
 
+function launcherFallbackBun(launcher: string): string {
+  const fallback = /else exec ('(?:[^']|'\\'')*'|\S+) "\$0"/.exec(launcher)?.[1] ?? 'bun';
+  return fallback.startsWith("'") ? fallback.slice(1, -1).replaceAll("'\\''", "'") : fallback;
+}
+
 function olderVersion(have: string, want: string): boolean {
   const a = have.split('.').map(Number);
   const b = want.split('.').map(Number);
@@ -269,8 +274,9 @@ function olderVersion(have: string, want: string): boolean {
 
 /**
  * What this Mac lacks for `./exact.mjs ios` in the Exact app at `root`, found the way its launcher looks: Bun from
- * `$BUN`, then `~/.bun-<pin>`, then PATH, at the pinned version or newer; exact2 at `EXACT2` or the launcher's
- * default, set up; and rustup with the app's Rust toolchain and the simulator target. Runs only `bun --version` and
+ * `$BUN`, then `~/.bun-<pin>`, then the launcher's fallback, at the pinned version or newer; exact2 at `EXACT2` or
+ * the launcher's default, set up; and rustup with `RUSTUP_TOOLCHAIN` or the app's Rust toolchain and the simulator
+ * target. Runs only `bun --version` and
  * `rustup`.
  */
 export function exactLocalToolProblems(root: string, env: NodeJS.ProcessEnv): ExactToolProblem[] {
@@ -288,11 +294,18 @@ export function exactLocalToolProblems(root: string, env: NodeJS.ProcessEnv): Ex
   const problems: ExactToolProblem[] = [];
   let bunCommand = `~/.bun-${pin}/bin/bun`;
   const versioned = join(home, `.bun-${pin}`, 'bin', 'bun');
-  const bun = env.BUN || (existsSync(versioned) ? versioned : executor.findExecutable('bun', { env }));
+  const fallback = launcherFallbackBun(launcher);
+  const bun =
+    env.BUN ||
+    (existsSync(versioned)
+      ? versioned
+      : fallback.includes('/')
+        ? fallback
+        : executor.findExecutable(fallback, { env }));
   const version = bun ? executor.runFileQuiet(bun, ['--version'], { timeoutMs: 20_000 }) : null;
   if (!bun || version === null)
     problems.push({
-      reason: `no Bun ${pin} (exact.mjs runs ${env.BUN ? `$BUN (${env.BUN})` : `~/.bun-${pin}/bin/bun, else bun on PATH`})`,
+      reason: `no Bun ${pin} (exact.mjs runs ${env.BUN ? `$BUN (${env.BUN})` : `~/.bun-${pin}/bin/bun, else ${fallback.includes('/') ? shownPath(fallback, home) : `${fallback} on PATH`}`})`,
       commands: [bunInstall(pin)],
     });
   else if (olderVersion(version, pin))
@@ -317,8 +330,8 @@ export function exactLocalToolProblems(root: string, env: NodeJS.ProcessEnv): Ex
     });
   } else if (!setupRan(exact2Dir, cargoHome))
     problems.push({ reason: `Exact's setup has not run for the exact2 checkout at ${shown}`, commands: [setup] });
-  let rust: string | null = null;
-  for (const dir of [root, exact2Dir]) {
+  let rust: string | null = env.RUSTUP_TOOLCHAIN ?? null;
+  for (const dir of rust ? [] : [root, exact2Dir]) {
     try {
       rust = exactRustChannel(readFileSync(join(dir, 'rust-toolchain.toml'), 'utf8'));
     } catch {}

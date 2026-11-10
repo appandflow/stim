@@ -186,6 +186,21 @@ test("doctor finds this Mac's Bun, exact2 and Rust where the app's launcher look
     `[ "$RUSTUP_AUTO_INSTALL" = 0 ] || exit 9; [ "$5" = 1.98.0 ] && printf '${EXACT_SIM_TARGET}\\n'`,
   );
   expect(exactLocalToolProblems(app, env)).toEqual([]);
+
+  const creator = join(root, "creator's bun");
+  writeFileSync(
+    join(app, 'exact.mjs'),
+    [
+      `':' //; if [ -n "$BUN" ]; then exec "$BUN" "$0" "$@"; else exec '${creator.replaceAll("'", "'\\''")}' "$0" "$@"; fi`,
+      `const EXACT2 = resolve(import.meta.dir, process.env.EXACT2 ?? "../../pins/exact2");`,
+      'ensureBun("1.4.2");',
+    ].join('\n'),
+  );
+  expect(exactLocalToolProblems(app, env).map((each) => each.reason)).toEqual([
+    `no Bun 1.4.2 (exact.mjs runs ~/.bun-1.4.2/bin/bun, else ${creator})`,
+  ]);
+  script(creator, 'echo 1.4.2');
+  expect(exactLocalToolProblems(app, env)).toEqual([]);
 });
 
 test('doctor asks build machines about the pins only for an Exact app they could build', async () => {
