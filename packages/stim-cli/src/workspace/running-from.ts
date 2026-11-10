@@ -68,6 +68,46 @@ export function readRunningProcesses(platform: NodeJS.Platform = process.platfor
   return runningFrom(ps, lsof === null ? null : parseLsof(lsof));
 }
 
+/**
+ * `running` without this process, its ancestors and its descendants, and without processes that have exited since the
+ * listing, so a command run from inside a folder (the shell that started it, and the ps and lsof it ran to list
+ * processes) does not count as something else using that folder; null stays null, and so does a process table that
+ * cannot be read.
+ */
+export async function othersRunningAsync(
+  running: RunningProcesses | null,
+  signal?: AbortSignal,
+): Promise<RunningProcesses | null> {
+  if (!running) return null;
+  const table = await getExecutor().runFileQuietAsync('ps', ['-axo', 'pid=,ppid='], {
+    timeoutMs: LIST_TIMEOUT_MS,
+    signal,
+  });
+  if (table === null) return null;
+  const parent = new Map<number, number>();
+  for (const row of table.split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(row);
+    if (match) parent.set(Number(match[1]), Number(match[2]));
+  }
+  const own = new Set<number>();
+  for (let pid: number | undefined = process.pid; pid !== undefined && pid > 1 && !own.has(pid); pid = parent.get(pid))
+    own.add(pid);
+  const isOwn = (pid: number): boolean => {
+    for (
+      let at: number | undefined = pid, hops = 0;
+      at !== undefined && at > 1 && hops < 256;
+      at = parent.get(at), hops++
+    )
+      if (at === process.pid) return true;
+    return own.has(pid);
+  };
+  const other = (pid: number): boolean => parent.has(pid) && !isOwn(pid);
+  return {
+    commands: running.commands.filter(({ pid }) => other(pid)),
+    cwds: running.cwds.filter(({ pid }) => other(pid)),
+  };
+}
+
 export async function readRunningProcessesAsync(
   signal?: AbortSignal,
   platform: NodeJS.Platform = process.platform,

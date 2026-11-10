@@ -1,4 +1,4 @@
-import { execSync, spawn } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
@@ -138,31 +138,43 @@ test('the idle stage deletes the git-ignored .dd and CMake output of a workspace
   expect(existsSync(join(root, 'build-device', 'Build'))).toBe(true);
 });
 
-test("the idle stage deletes an idle Exact app's Cargo target/, and keeps it while a process works in the app", async () => {
-  const { root } = bootedWorkspace('exact', 20 * MINUTE_MS);
-  execSync('git init -q', { cwd: root });
-  writeFileSync(join(root, '.gitignore'), '/target/\n');
-  for (const name of ['exact.mjs', 'Cargo.toml']) writeFileSync(join(root, name), '');
-  mkdirSync(join(root, 'target', 'debug'), { recursive: true });
-  writeFileSync(join(root, 'target', 'debug', 'app'), 'binary');
+test.skipIf(process.platform === 'win32')(
+  "the idle stage deletes an idle Exact app's Cargo target/, and keeps it while a process works in the app",
+  async () => {
+    const { root } = bootedWorkspace('exact', 20 * MINUTE_MS);
+    execSync('git init -q', { cwd: root });
+    writeFileSync(join(root, '.gitignore'), '/target/\n');
+    for (const name of ['exact.mjs', 'Cargo.toml']) writeFileSync(join(root, name), '');
+    mkdirSync(join(root, 'target', 'debug'), { recursive: true });
+    writeFileSync(join(root, 'target', 'debug', 'app'), 'binary');
 
-  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { cwd: root, stdio: 'ignore' });
-  try {
-    const [kept] = await pass();
-    expect(kept).toMatchObject({
-      path: root,
-      detail: expect.stringContaining(`process ${child.pid} works in its app`),
-    });
-    expect(existsSync(join(root, 'target', 'debug', 'app'))).toBe(true);
-  } finally {
-    child.kill();
-    await new Promise((done) => child.once('exit', done));
-  }
+    // A process outside this test's own process family: the shell exits and leaves its background sleep behind.
+    const pid = Number(execSync('sleep 60 >/dev/null 2>&1 & echo $!', { cwd: root, encoding: 'utf8' }).trim());
+    try {
+      const [kept] = await pass();
+      expect(kept).toMatchObject({
+        path: root,
+        detail: expect.stringContaining(`its app may be in use: process ${pid} works in its app`),
+      });
+      expect(existsSync(join(root, 'target', 'debug', 'app'))).toBe(true);
+    } finally {
+      process.kill(pid);
+      const alive = () => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      while (alive()) await new Promise(setImmediate);
+    }
 
-  bootedWorkspace('exact', 20 * MINUTE_MS);
-  await pass();
-  expect(existsSync(join(root, 'target'))).toBe(false);
-});
+    bootedWorkspace('exact', 20 * MINUTE_MS);
+    await pass();
+    expect(existsSync(join(root, 'target'))).toBe(false);
+  },
+);
 
 test('the idle stage keeps a .dd that git does not ignore', async () => {
   const { root } = bootedWorkspace('unignored', 20 * MINUTE_MS);

@@ -3,7 +3,7 @@ import { lstat, readdir } from 'node:fs/promises';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { gitQuietAsync } from './git.ts';
-import { readRunningProcessesAsync, runningFromReason } from './running-from.ts';
+import { othersRunningAsync, readRunningProcessesAsync, runningFromReason } from './running-from.ts';
 
 export type ArtifactKind = 'build' | 'dependencies';
 
@@ -180,8 +180,9 @@ export function isBuildDirPath(path: string): boolean {
 
 /**
  * Why `path`, inside the checkout at `root`, must not be deleted as a regenerable directory, or null when it is a real
- * directory inside `root` whose every file git ignores and, for an Exact app's `target/`, no process runs from or works
- * in that app: Exact's own commands (web, Android, tests) build into the same directory without Stim seeing them.
+ * directory inside `root` whose every file git ignores and, for an Exact app's `target/`, no other process runs from or
+ * works in that app: Exact's own commands (web, Android, tests) build into the same directory without Stim seeing them.
+ * Where the processes cannot be listed (Windows), that `target/` is kept.
  */
 export async function regenerableDirProblem(root: string, path: string, signal?: AbortSignal): Promise<string | null> {
   const rel = relative(root, path);
@@ -199,8 +200,9 @@ export async function regenerableDirProblem(root: string, path: string, signal?:
   if (unignored === null) return 'git cannot tell whether it ignores every file in it';
   if (unignored.trim()) return 'it holds files git does not ignore';
   if (basename(path) === CARGO_TARGET && (await readAsync(exactTargetDirs(dirname(path)))).includes(path)) {
-    const running = runningFromReason(dirname(path), await readRunningProcessesAsync(signal));
-    if (running) return `Exact's own commands may be using it: ${running.replace(/ it\b/, ' its app')}`;
+    const others = await othersRunningAsync(await readRunningProcessesAsync(signal), signal);
+    const running = runningFromReason(dirname(path), others);
+    if (running) return `its app may be in use: ${running.replace(/ it\b/, ' its app')}`;
   }
   return null;
 }

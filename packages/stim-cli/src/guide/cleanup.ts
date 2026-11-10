@@ -1328,8 +1328,10 @@ WORKSPACE BUILD OUTPUTS
   android/.gradle, .build, the CMake directories android/.cxx and
   android/<module>/.cxx, a .dd directory laid out as Xcode DerivedData
   (a Build/ directory beside ModuleCache.noindex or Logs/), and an Exact
-  app's Cargo target/ (beside its exact.mjs and Cargo.toml, kept while a
-  process runs from or works in the app) count with them
+  app's Cargo target/ (beside its exact.mjs and Cargo.toml; kept while
+  another process, such as a shell or an exact.mjs command, runs from or
+  works in the app, and on Windows, where processes cannot be listed) count
+  with them
   when git ignores every file in the directory and tracks none; one that
   fails that check, or is not in a
   git checkout, stays, and \`gc --delete\` prints why when the check fails

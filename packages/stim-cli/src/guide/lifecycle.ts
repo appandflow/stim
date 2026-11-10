@@ -449,8 +449,9 @@ that simulator, and build-only runs (stim ci build) are refused. Exact
 compiles incrementally in the checkout's target/ directory, so Stim keeps no
 artifact cache for it; a one-line Contract edit rebuilds in seconds. target/
 is build output: the idle stage and gc --delete clear it from an idle
-workspace (never while a process runs from or works in the app), and the next
-build then compiles from scratch.
+workspace (never while another process, such as a shell or an exact.mjs
+command, runs from or works in the app, nor on Windows), and the next build
+then compiles from scratch.
 
 Drive and test the app with Exact's own commands, with EXACT_SIM set to the
 simulator stim ios reported. Without it Exact picks a simulator by its own
