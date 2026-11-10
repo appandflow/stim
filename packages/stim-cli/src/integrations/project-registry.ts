@@ -276,7 +276,10 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     return platformsOf(inspect(root), resolved);
   }
 
-  function detectProject(root: string, resolved: ResolvedProjectSettings): ReturnType<ProjectRegistry['detectProject']> {
+  function detectProject(
+    root: string,
+    resolved: ResolvedProjectSettings,
+  ): ReturnType<ProjectRegistry['detectProject']> {
     root = canonicalPath(root);
     const matches = inspect(root);
     const devServer = (ownedRootProblem(root, matches) ?? operationProblem(root, matches, 'dev-server')) === null;

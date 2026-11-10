@@ -109,7 +109,10 @@ test('an Exact app selects the exact integration for iOS and has no dev server, 
   expect('id' in expoIos ? expoIos.id : expoIos.problem.message).toBe('react-native');
 
   const detect = (root: string) =>
-    projectRegistry.detectProject(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} });
+    projectRegistry.detectProject(root, {
+      context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+      settings: {},
+    });
   expect(detect(exact)).toEqual({ platforms: ['ios'], devServer: false });
   expect(detect(expo).devServer).toBe(true);
 });
