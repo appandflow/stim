@@ -898,7 +898,14 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
 
     const runtime = fingerprintRuntime(realRoot, process.env);
     if (isUncertain(runtime) || !isDeepStrictEqual(runtime, job.fingerprintRuntime))
-      return failed('fingerprint-runtime', 'The worker evaluator or Node version differs from the client.');
+      return failed(
+        'fingerprint-runtime',
+        isUncertain(runtime)
+          ? `The worker cannot identify its fingerprint runtime: ${runtime.uncertain}`
+          : runtime.node !== job.fingerprintRuntime?.node
+            ? `The worker evaluates the fingerprint with Node ${runtime.node} and the client with Node ${job.fingerprintRuntime?.node}; offloading needs the same Node major.minor on both.`
+            : 'The worker fingerprint evaluator or its project packages differ from the client.',
+      );
 
     const platform = job.platform;
     const layout = replayLayout(job, platform, realRoot, realSrc);
