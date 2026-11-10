@@ -1,7 +1,7 @@
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { createHash } from 'node:crypto';
-import { Command } from 'commander';
-import logsCommand from '../commands/logs.ts';
+import logsOp from '../commands/logs.ts';
+import { runCli } from '../cli/define-op.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { runStop } from '../commands/stop.ts';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
@@ -278,9 +278,7 @@ test('stim logs --errors --json pulls Android native records without progress on
   const cwd = process.cwd();
   process.chdir(root);
   try {
-    const program = new Command();
-    logsCommand(program);
-    await program.parseAsync(['node', 'stim', 'logs', '--errors', '--json']);
+    await runCli(logsOp, ['--errors', '--json'], { version: '9.9.9' });
     expect(output.mock.calls.map(([line]) => JSON.parse(String(line)))).toMatchObject([
       { src: 'device', platform: 'android', level: 'error', msg: 'FATAL EXCEPTION: main' },
     ]);
@@ -302,9 +300,7 @@ test('stim logs queries the host for native logs only when device records can be
   process.chdir(root);
   const run = async (...args: string[]) => {
     output.mockClear();
-    const program = new Command();
-    logsCommand(program);
-    await program.parseAsync(['node', 'stim', 'logs', '--json', ...args]);
+    await runCli(logsOp, ['--json', ...args], { version: '9.9.9' });
     return output.mock.calls.map(([line]) => JSON.parse(String(line)).msg);
   };
   const queries = () => methods.filter((entry) => entry.method === 'device-host.logs.query').length;

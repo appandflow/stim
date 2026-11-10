@@ -6,7 +6,8 @@ import { Command } from 'commander';
 import androidCommand from '../commands/android.ts';
 import { grantLine, registerDevice, releasedLine, runLock, runUnlock, type DeviceDeps } from '../commands/device.ts';
 import iosCommand from '../commands/ios.ts';
-import logsCommand from '../commands/logs.ts';
+import logsOp from '../commands/logs.ts';
+import { runCli } from '../cli/define-op.ts';
 import stopCommand from '../commands/stop.ts';
 import { fileLeaseIo, listLeaseFiles, takeLease, type DeviceLease, type LeaseIo } from '../engine/device-lease.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -586,11 +587,15 @@ describe('the command surface', () => {
     expect(provision.usage()).toMatch(/<platform> \[udid\]/);
   });
 
-  test('an invalid --slot is a commander usage error on every command that takes one', async () => {
-    for (const args of [['logs'], ['stop'], ['ios'], ['android'], ['device', 'lock', 'ios'], ['device', 'unlock']]) {
+  test('an invalid --slot is a usage error on every command that takes one', async () => {
+    await expect(runCli(logsOp, ['--slot', 'bad/slot'], { version: '9.9.9' })).rejects.toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringMatching(/'--slot <name>' argument 'bad\/slot' is invalid\. A device slot must be/),
+    });
+    for (const args of [['stop'], ['ios'], ['android'], ['device', 'lock', 'ios'], ['device', 'unlock']]) {
       const program = new Command();
       program.exitOverride().configureOutput({ writeErr: () => {} });
-      for (const register of [logsCommand, stopCommand, iosCommand, androidCommand, registerDevice]) register(program);
+      for (const register of [stopCommand, iosCommand, androidCommand, registerDevice]) register(program);
       await expect(program.parseAsync(['node', 'stim', ...args, '--slot', 'bad/slot'])).rejects.toMatchObject({
         code: 'commander.invalidArgument',
         message: expect.stringMatching(/'--slot <name>' argument 'bad\/slot' is invalid\. A device slot must be/),
@@ -599,10 +604,14 @@ describe('the command surface', () => {
   });
 
   test('web is reserved for the owned Chrome: only stop accepts it as a --slot', async () => {
-    for (const args of [['logs'], ['ios'], ['android'], ['device', 'lock', 'ios'], ['device', 'unlock']]) {
+    await expect(runCli(logsOp, ['--slot', 'web'], { version: '9.9.9' })).rejects.toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining("web names this workspace's owned Chrome (stim stop --slot web)"),
+    });
+    for (const args of [['ios'], ['android'], ['device', 'lock', 'ios'], ['device', 'unlock']]) {
       const program = new Command();
       program.exitOverride().configureOutput({ writeErr: () => {} });
-      for (const register of [logsCommand, stopCommand, iosCommand, androidCommand, registerDevice]) register(program);
+      for (const register of [stopCommand, iosCommand, androidCommand, registerDevice]) register(program);
       await expect(program.parseAsync(['node', 'stim', ...args, '--slot', 'web'])).rejects.toMatchObject({
         code: 'commander.invalidArgument',
         message: expect.stringContaining("web names this workspace's owned Chrome (stim stop --slot web)"),

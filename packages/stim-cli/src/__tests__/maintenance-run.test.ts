@@ -2,7 +2,6 @@ import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Command } from 'commander';
 import {
   maintenanceChildLogFile,
   maintenanceDir,
@@ -21,7 +20,8 @@ import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { maintenanceStatus } from '../stimd/passes/status.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { runGc } from '../commands/gc.ts';
-import statusCommand from '../commands/status.ts';
+import statusOp from '../commands/status.ts';
+import { runCli } from '../cli/define-op.ts';
 import { warnCriticalDisk } from '../stimd/passes/trigger.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
@@ -170,10 +170,7 @@ test('an unresolved claim produces only one child crash-log line', async () => {
 test('status and gc JSON each stay a single payload under the preAction disk warning', async () => {
   const out = vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
-  const program = new Command();
-  statusCommand(program);
-  program.hook('preAction', () => warnCriticalDisk(['status', '--json']));
-  await program.parseAsync(['status', '--json'], { from: 'user' });
+  await runCli(statusOp, ['--json'], { version: '9.9.9', before: () => warnCriticalDisk(['status', '--json']) });
   expect(out).toHaveBeenCalledTimes(1);
   expect(JSON.parse(String(out.mock.calls[0]![0]))).toMatchObject({
     environments: [],
