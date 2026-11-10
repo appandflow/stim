@@ -209,7 +209,8 @@ test('plans an uncached build on this machine with the bundle id from app.json',
       kind: 'cache-skipped',
       summary: 'Exact builds incrementally in its own target/ directory',
     }),
-    placement: 'this machine; Exact apps cannot use a hosted device',
+    placement:
+      'this machine; when auto picks a hosted device instead, the run refuses, since Exact apps cannot use one',
     bundleId: 'com.example.shop',
   });
 });

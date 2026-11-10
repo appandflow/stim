@@ -457,7 +457,8 @@ stim ios --plan (and Stim Desktop's Next Build) predicts that build without
 running it: fingerprint and cacheKey are null, cacheHit is false, missReason
 is cache-skipped, bundleId is app.json's app.id, placement is this machine,
 and buildPlacement names why a build that cannot offload stays here.
-ios.remote other than auto or local is refused, as the run refuses it.
+ios.remote other than auto or local is refused, as the run refuses it; with
+auto the run still refuses when auto picks a hosted device.
 
 Drive and test the app with Exact's own commands, with EXACT_SIM set to the
 simulator stim ios reported. Without it Exact picks a simulator by its own

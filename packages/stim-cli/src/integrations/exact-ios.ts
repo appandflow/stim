@@ -348,7 +348,9 @@ async function planExactIos(
   const bundleId = exactBundleId(root);
   return {
     ...plan,
-    placement: remote ? 'this machine; Exact apps cannot use a hosted device' : 'this machine',
+    placement: remote
+      ? 'this machine; when auto picks a hosted device instead, the run refuses, since Exact apps cannot use one'
+      : 'this machine',
     ...(placement && 'buildPlacement' in placement ? { buildPlacement: placement.buildPlacement } : {}),
     ...(bundleId ? { bundleId } : {}),
   };
