@@ -30,6 +30,7 @@ export default defineConfig({
     'stimd-thread': 'src/stimd/threads.ts',
     'stimd-status': 'src/stimd/status-thread.ts',
     'net-thread': '../server/src/net-thread.ts',
+    'kit-worker': 'src/kit-worker.ts',
     'supervisor-run': 'src/supervisor/run.ts',
     'web-run': 'src/web/run.ts',
     'macos-run': 'src/macos/run.ts',
