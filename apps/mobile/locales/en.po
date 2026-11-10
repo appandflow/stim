@@ -1834,6 +1834,10 @@ msgstr "est."
 msgid "est. {cache}"
 msgstr "est. {cache}"
 
+#: src/screens/device-view.tsx
+msgid "Exit Full Screen"
+msgstr "Exit Full Screen"
+
 #: src/components/touch.tsx
 msgid "expanded"
 msgstr "expanded"
@@ -1960,6 +1964,10 @@ msgstr "From {provider}. {runs}"
 #: src/screens/pair.tsx
 msgid "From Pair a Phone in Stim Desktop"
 msgstr "From Pair a Phone in Stim Desktop"
+
+#: src/screens/device-view.tsx
+msgid "Full Screen"
+msgstr "Full Screen"
 
 #: src/screens/welcome.tsx
 msgid "Get Tailscale"

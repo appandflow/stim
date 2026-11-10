@@ -433,7 +433,9 @@ Home on iOS or Back on Android and web, and both rotation directions. **More** (
 opens a native menu for Lock, Android Home and Apps, supported foldable postures,
 and simulator options. **Device Frame** in the app's Settings shows a simulator's or
 emulator's housing when matching artwork is available; an iPhone Duo has its own
-**Device Frame** entry in More, usable without a control lease. The bar stays below the screen in portrait and landscape
+**Device Frame** entry in More, usable without a control lease. **Full Screen** in the
+title bar hides the title bar and agent actions so the screen grows; the toolbar keeps
+**Exit Full Screen**. The bar stays below the screen in portrait and landscape
 and fits its common controls within the available width. An iOS simulator turns with
 the device, so a portrait-only app shows sideways in a turned frame; on an emulator the
 app in front still needs to support the requested orientation. Physical devices rotate
