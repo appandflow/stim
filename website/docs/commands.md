@@ -625,7 +625,10 @@ An [Exact](https://github.com/expo/exact) app has `exact.mjs` next to
 `./exact.mjs ios --no-install` with `EXACT_SIM` set to the workspace's owned
 simulator, installs the reported `.app` and launches it as a native process
 without Metro. Exact compiles incrementally in the checkout's `target/`
-directory, so Stim keeps no artifact cache for it. `--configuration Release`
+directory, so Stim keeps no artifact cache for it. `target/` is build output:
+the idle stage and `gc --delete` clear it from an idle workspace, never while
+another process, such as a shell or an `exact.mjs` command, runs from or works in
+the app, nor on Windows, and the next build then compiles from scratch. `--configuration Release`
 adds `--release`, Exact's shipping build, whose first build takes minutes.
 `--scheme` and any other configuration are refused. The build starts once Stim
 has booted the simulator, and build-only runs (`stim ci build`) are refused.
@@ -2349,8 +2352,8 @@ simulator booted: `derived-data/`, `gradle-build/`, `android-cas/`,
 `cache-provider/`, `js-swap-tmp/`, `macos/build`, staged `macos/<Product>.app`
 and interrupted-build `macos/staging-*` directories, and the project's
 git-ignored `android/app/build`, `android/build`, `android/.gradle`, `.build`,
-`android/.cxx`, `android/<module>/.cxx` and `.dd` (a directory laid out as
-Xcode DerivedData). They print the bytes freed per workspace. Plain `--delete` clears them
+`android/.cxx`, `android/<module>/.cxx`, `.dd` (a directory laid out as
+Xcode DerivedData) and an Exact app's Cargo `target/`. They print the bytes freed per workspace. Plain `--delete` clears them
 only through the pressure ladder, for a workspace with nothing running idle 2
 minutes or more and in the idle stage of a running one. A running, building, unverified or hosted
 macOS app keeps its workspace untouched. The workspace keeps its state, logs,
