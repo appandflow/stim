@@ -187,6 +187,7 @@ export function DeviceView({
   const [fullScreenChosen, setFullScreen] = useState(false);
   const canFullScreen = !book && !table;
   const fullScreen = fullScreenChosen && canFullScreen;
+  if (fullScreenChosen && !canFullScreen) setFullScreen(false);
   const frameSupported =
     !physical &&
     !(platform === 'android' && device?.host) &&
