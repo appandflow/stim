@@ -66,7 +66,8 @@ type HeldState =
 /**
  * A control session on one device. It ends when the screen unmounts, when the connection drops (the server
  * ends a disconnected client's sessions), and when the server ends it; input sent while no session is on is
- * dropped.
+ * dropped. A session lost to a dropped connection begins again, without taking over, once a connection that
+ * allows control is open.
  */
 export function useDeviceControl(
   workspace: string,
@@ -77,8 +78,14 @@ export function useDeviceControl(
   const { connection, state: link } = useMacConnection();
   const allowed = link.kind === 'open' ? link.capabilities.includes('control') : null;
   const [held, setHeld] = useState<HeldState>({ kind: 'off' });
-  const state: ControlState =
-    held.kind === 'on' && 'link' in held && held.link !== link
+  const dropped = held.kind === 'on' && 'link' in held && held.link !== link;
+  const supported =
+    connection !== null &&
+    (platform !== 'macos' || (link.kind === 'open' && link.hostCapabilities.includes('macos-window-control')));
+  const resumes = dropped && allowed === true && supported;
+  const state: ControlState = resumes
+    ? { kind: 'starting' }
+    : dropped
       ? { kind: 'off', ended: t`The connection dropped.` }
       : held;
   const session = state.kind === 'on' ? state.session : null;
@@ -104,14 +111,9 @@ export function useDeviceControl(
     };
   }, [connection, session]);
 
-  const begin = useCallback(
-    (takeOver = false) => {
-      if (
-        !connection ||
-        (platform === 'macos' && (link.kind !== 'open' || !link.hostCapabilities.includes('macos-window-control')))
-      )
-        return;
-      setHeld({ kind: 'starting' });
+  const request = useCallback(
+    (takeOver: boolean) => {
+      if (!connection) return;
       const target = { workspace, platform, slot, ...(physical ? { physical } : {}) };
       connection.request('control.begin', { ...target, ...(takeOver ? { takeOver } : {}) }).then(
         (result) => {
@@ -143,7 +145,21 @@ export function useDeviceControl(
     },
     [connection, link, workspace, platform, slot, physical],
   );
+  const begin = useCallback(
+    (takeOver = false) => {
+      if (!supported) return;
+      setHeld({ kind: 'starting' });
+      request(takeOver);
+    },
+    [supported, request],
+  );
   const end = useCallback(() => setHeld({ kind: 'off' }), []);
+  const resumedOn = useRef<unknown>(null);
+  useEffect(() => {
+    if (!resumes || resumedOn.current === link) return;
+    resumedOn.current = link;
+    request(false);
+  }, [resumes, link, request]);
   const send = useCallback(
     <
       M extends

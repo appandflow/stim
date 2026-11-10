@@ -252,3 +252,59 @@ test('sends the clipboard methods on the control session and returns the device 
     ['input.clipboard.get', { session: 'c2' }],
   ]);
 });
+
+test('begins control again, without taking over, when the connection that held it is replaced', async () => {
+  let sessions = 0;
+  const makeConnection = () => ({
+    request: jest.fn((method: string) =>
+      Promise.resolve(
+        method === 'control.begin' ? { session: `c${++sessions}`, platform: 'ios', lease: null, postures: [] } : {},
+      ),
+    ),
+    onControlEnded: () => () => {},
+    reconnect: () => {},
+  });
+  machines.setMacs(
+    [{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z', serverKey: 'k' }],
+    false,
+  );
+  const first = makeConnection();
+  openLink(first);
+  const { result } = await renderHook(() => useDeviceControl('/app', 'ios', 'default'));
+  await act(async () => result.current.begin());
+  expect(result.current.state).toMatchObject({ kind: 'on', session: 'c1' });
+
+  await act(async () => machines.patchLink('m1', { state: { kind: 'connecting' } }));
+  expect(result.current.state.kind).toBe('off');
+  expect(first.request.mock.calls.filter(([method]) => method === 'control.begin')).toHaveLength(1);
+
+  const second = makeConnection();
+  await act(async () => openLink(second));
+  expect(second.request.mock.calls).toContainEqual([
+    'control.begin',
+    { workspace: '/app', platform: 'ios', slot: 'default' },
+  ]);
+  expect(result.current.state).toMatchObject({ kind: 'on', session: 'c2' });
+});
+
+test('leaves a session the person ended off when the connection is replaced', async () => {
+  const makeConnection = () => ({
+    request: jest.fn((method: string) =>
+      Promise.resolve(method === 'control.begin' ? { session: 'c1', platform: 'ios', lease: null, postures: [] } : {}),
+    ),
+    onControlEnded: () => () => {},
+    reconnect: () => {},
+  });
+  machines.setMacs(
+    [{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z', serverKey: 'k' }],
+    false,
+  );
+  openLink(makeConnection());
+  const { result } = await renderHook(() => useDeviceControl('/app', 'ios', 'default'));
+  await act(async () => result.current.begin());
+  await act(async () => result.current.end());
+  const second = makeConnection();
+  await act(async () => openLink(second));
+  expect(second.request).not.toHaveBeenCalled();
+  expect(result.current.state.kind).toBe('off');
+});
