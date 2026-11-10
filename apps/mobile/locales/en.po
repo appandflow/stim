@@ -4311,6 +4311,10 @@ msgid "Type on the device"
 msgstr "Type on the device"
 
 #: src/lib/format.ts
+msgid "uncached build{why}"
+msgstr "uncached build{why}"
+
+#: src/lib/format.ts
 msgid "under a minute left"
 msgstr "under a minute left"
 
