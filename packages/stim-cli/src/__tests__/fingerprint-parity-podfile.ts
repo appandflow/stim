@@ -1,3 +1,4 @@
+// Legacy oracle from https://github.com/appandflow/stim/commit/6c5ef3bfcde179bcfe1f9d9186c399d3e313d44f.
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, join, posix, resolve } from 'node:path';
 import type { Options as FingerprintOptions } from '@expo/fingerprint';
@@ -7,8 +8,6 @@ type FileHook = NonNullable<FingerprintOptions['fileHookTransform']>;
 
 const CHECKOUT_PLACEHOLDER = '<stim-checkout>';
 const CHECKSUM_LINE = /^( {2}"?)([^":\s]+)("?: )([0-9a-f]{40})$/gm;
-
-export const stimOnlyHooks: WeakSet<FileHook> = new WeakSet<FileHook>();
 
 function checkoutRootOf(dir: string): string | null {
   for (let current = dir; ; current = dirname(current)) {
@@ -68,17 +67,6 @@ function podfileLockPath(iosProjectPath: string): string {
   return posix.normalize(posix.join(iosProjectPath, 'Podfile.lock'));
 }
 
-/** The Podfile.lock the iOS fingerprint hashes, as it hashes it; null when the project has none. */
-export function canonicalPodfileLockOf(projectRoot: string, iosProjectPath: string): string | null {
-  let text: string;
-  try {
-    text = readFileSync(join(projectRoot, podfileLockPath(iosProjectPath)), 'utf-8');
-  } catch {
-    return null;
-  }
-  return canonicalPodfileLock(text, join(projectRoot, iosProjectPath, 'Pods'), projectRoot);
-}
-
 /**
  * A `fileHookTransform` that hashes the project's Podfile.lock through `canonicalPodfileLock`, so two checkouts of one
  * commit that each ran `pod install` fingerprint alike. @expo/fingerprint calls a hook with the file in chunks and
@@ -104,6 +92,5 @@ export function podfileLockHook(projectRoot: string, iosProjectPath: string, pro
     const canonical = canonicalPodfileLock(text, join(projectRoot, iosProjectPath, 'Pods'), projectRoot);
     return canonical === text ? bytes : canonical;
   };
-  if (!projectHook) stimOnlyHooks.add(hook);
   return hook;
 }

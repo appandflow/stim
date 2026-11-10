@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { workspaceName, type StimContext } from '@stim-cli/core';
-import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
+import { claimIsFenced, declareSpawnsOn, stopDeclaringSpawnsOn, trackClaimActivity } from './spawn-claims.ts';
 import { WorkspaceProcessCleanupError } from './workspace-process-lock.ts';
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { getConfigDir } from '../workspace/config.ts';
@@ -147,11 +147,14 @@ function installerClaim(
   // Every group this claim has spawned and not yet watched die. The claim file records only the most
   // recent one, so a crash is covered for that group; the list covers all of them for this process.
   let groups: number[] = [];
+  let activity: ReturnType<typeof trackClaimActivity> | null = null;
 
   const forget = (): void => {
     groups = [];
+    activity?.settle();
+    activity = null;
     try {
-      clearClaimChild(claim);
+      if (!claimIsFenced(claim)) clearClaimChild(claim);
     } catch {
       // The claim store stopped accepting writes; releasing it will fail the same way and leave the
       // pending record, which reads as unresolvable rather than as free.
@@ -161,7 +164,10 @@ function installerClaim(
   const alive = (): number | null => groups.find((pid) => processGroupAlive(pid)) ?? null;
 
   return {
-    declare: () => markClaimChildPending(claim),
+    declare: () => {
+      markClaimChildPending(claim);
+      activity ??= trackClaimActivity(claim);
+    },
     record: (pid) => {
       // Node leaves pid undefined when the spawn itself failed, so there is no group and nothing to hold.
       if (pid === null) {
@@ -173,7 +179,7 @@ function installerClaim(
       let failure = captured.ok ? null : captured.reason;
       if (captured.ok) {
         try {
-          setClaimChild(claim, { pid, processToken: captured.token });
+          if (!claimIsFenced(claim)) setClaimChild(claim, { pid, processToken: captured.token });
           return;
         } catch (error) {
           failure = (error as Error)?.message ?? String(error);
@@ -198,7 +204,17 @@ function installerClaim(
           return { settled: true, pid: null, waitedMs: now() - started };
         }
         const elapsed = now() - started;
-        if (elapsed >= INSTALLER_CEILING_MS) return { settled: false, pid, waitedMs: elapsed };
+        if (elapsed >= INSTALLER_CEILING_MS) {
+          activity?.settle(
+            new WorkspaceProcessCleanupError(
+              [claim],
+              'Installer cleanup could not be verified.',
+              'Verify that the installer and its descendants have stopped.',
+            ),
+          );
+          activity = null;
+          return { settled: false, pid, waitedMs: elapsed };
+        }
         if (now() - lastProgress >= progressMs) {
           lastProgress = now();
           out(installerWaitingLine(pid, elapsed));

@@ -5,13 +5,23 @@ import { ensurePrivateDir } from '@stim-cli/core';
 import { fingerprintEnvDir, fingerprintIndexDir, fingerprintIndexLock, LOCKFILES } from '@stim-cli/core/state';
 import { withDirLock } from '../dir-lock.ts';
 import { gitLocation } from './git-index.ts';
-import { canonicalJson, FINGERPRINT_SCHEMA, sha256, type Input, type Layout, type Platform } from './key.ts';
+import { patches } from './inputs.ts';
+import {
+  canonicalJson,
+  FINGERPRINT_SCHEMA,
+  isUncertain,
+  sha256,
+  type Input,
+  type Layout,
+  type Platform,
+  type Uncertain,
+} from './key.ts';
 import { field, within, type Roots } from './walk.ts';
 
 const RECORDS_PER_DIR = 8;
 const DIRS_PER_PLATFORM = 256;
 /** Bumped when the record shape or what a part record derives from its trace changes. */
-const INDEX_FORMAT = 1;
+const INDEX_FORMAT = 3;
 const INSTALL_STAMPS = ['.modules.yaml', '.package-lock.json', '.yarn-integrity', '.yarn-state.yml'];
 /** Where `patch-package` and the yarn and pnpm patch commands keep patches, which change installed files. */
 const PATCH_DIRS = ['patches', 'cng-patches', '.yarn/patches'];
@@ -36,6 +46,7 @@ export interface Derived {
   modules: string[];
   opaque: string[];
   enumerated: boolean;
+  portable: boolean;
   autolinking: string | null;
 }
 
@@ -259,12 +270,12 @@ function stampReads(roots: Roots, since: bigint): Read[] | null {
  * The index directory of a checkout and layout: keyed by the git common dir and the app's path inside the work
  * tree, so every worktree of a repository shares it, or by the app's real path outside git.
  */
-export function indexDir(platform: Platform, project: string, layout: Layout): string {
+export function indexDir(platform: Platform, project: string, layout: Layout, home?: string): string {
   const git = gitLocation(project);
   const identity = git
     ? [realOf(git.commonDir) ?? git.commonDir, relative(git.top, project).split(sep).join('/')]
     : [project];
-  return join(fingerprintIndexDir(platform), sha256(canonicalJson([...identity, layout])));
+  return join(fingerprintIndexDir(platform, home), sha256(canonicalJson([...identity, layout])));
 }
 
 /** Writes a file owner-only through a temporary file and a rename. */
@@ -335,8 +346,10 @@ export function newRecord(key: RecordKey, checkout: string, stamps: Read[]): Eva
 }
 
 /** Runs a short read-modify-write of the index's shared files under `fingerprint.lock`. */
-export const withIndexLock = <T>(fn: () => T): T =>
-  withDirLock(fingerprintIndexLock(), fn, { ensureParent: () => ensurePrivateDir(dirname(fingerprintIndexLock())) });
+export const withIndexLock = <T>(fn: () => T, home?: string): T =>
+  withDirLock(fingerprintIndexLock(home), fn, {
+    ensureParent: () => ensurePrivateDir(dirname(fingerprintIndexLock(home))),
+  });
 
 let lastWritten = 0n;
 
@@ -382,12 +395,12 @@ export class FileHashes {
   private readonly roots: Roots;
   private readonly since: bigint;
 
-  constructor(dir: string, roots: Roots, since: bigint) {
+  constructor(dir: string, roots: Roots, since: bigint, consult = true) {
     this.roots = roots;
     this.since = since;
     this.file = join(dir, `h-${sha256(roots.project).slice(0, 16)}.json`);
     this.entries = {};
-    const value = readJson(this.file);
+    const value = consult ? readJson(this.file) : null;
     for (const [path, entry] of Object.entries(value && typeof value === 'object' ? value : {}))
       if (Array.isArray(entry) && typeof entry[0] === 'string' && typeof entry[1] === 'string')
         this.entries[path] = [entry[0], entry[1]];
@@ -417,16 +430,17 @@ export class FileHashes {
   }
 }
 
-const workspaceEnvFile = (project: string): string => join(fingerprintEnvDir(), `${sha256(project)}.json`);
+const workspaceEnvFile = (project: string, home?: string): string =>
+  join(fingerprintEnvDir(home), `${sha256(project)}.json`);
 
 /** Writes the env a workspace computed its fingerprint under, owner-only, when it changed; returns its digest. */
-export function writeWorkspaceEnv(project: string, env: Record<string, string>): string {
+export function writeWorkspaceEnv(project: string, env: Record<string, string>, home?: string): string {
   const text = canonicalJson(env);
   const digest = sha256(text);
-  const file = workspaceEnvFile(project);
+  const file = workspaceEnvFile(project, home);
   try {
     if (readHash(file) !== digest) {
-      ensurePrivateDir(fingerprintEnvDir());
+      ensurePrivateDir(fingerprintEnvDir(home));
       writePrivate(file, text);
     }
   } catch {}
@@ -434,11 +448,14 @@ export function writeWorkspaceEnv(project: string, env: Record<string, string>):
 }
 
 /** The env a workspace last computed its fingerprint under, with its digest, or null. */
-export function readWorkspaceEnv(project: string): { env: Record<string, string>; digest: string } | null {
+export function readWorkspaceEnv(
+  project: string,
+  home?: string,
+): { env: Record<string, string>; digest: string } | null {
   let text: string;
   let value: unknown;
   try {
-    text = readFileSync(workspaceEnvFile(project), 'utf8');
+    text = readFileSync(workspaceEnvFile(project, home), 'utf8');
     value = JSON.parse(text);
   } catch {
     return null;
@@ -471,18 +488,35 @@ const mtime = (path: string) => statSync(path, { throwIfNoEntry: false })?.mtime
  * A patch or the lockfile written after the newest install stamp, which an install has not applied yet; null when
  * every one is older, or no package manager wrote a stamp to compare with.
  */
-export function newerThanInstall(roots: Roots): string | null {
-  const dirs = [...new Set([roots.project, roots.install])];
-  const stamps = dirs.flatMap((dir) => INSTALL_STAMPS.flatMap((name) => mtime(join(dir, 'node_modules', name)) ?? []));
-  if (stamps.length === 0) return null;
-  const installed = Math.max(...stamps);
-  const inputs = [
-    ...LOCKFILES.map((name) => join(roots.install, name)),
-    ...dirs.flatMap((dir) =>
-      PATCH_DIRS.flatMap((name) => (listNames(join(dir, name)) ?? []).map((file) => join(dir, name, file))),
-    ),
-  ];
-  return inputs.find((path) => (mtime(path) ?? 0) > installed) ?? null;
+export function newerThanInstall(roots: Roots): string | Uncertain | null {
+  try {
+    const dirs = [...new Set([roots.project, roots.install])];
+    const stamps = dirs.flatMap((dir) =>
+      INSTALL_STAMPS.flatMap((name) => mtime(join(dir, 'node_modules', name)) ?? []),
+    );
+    if (stamps.length === 0) return null;
+    const installed = Math.max(...stamps);
+    const discovered = patches(roots);
+    if (isUncertain(discovered)) return discovered;
+    const seen = new Set<string>();
+    const files = (dir: string): string[] => {
+      const info = statSync(dir, { throwIfNoEntry: false });
+      if (!info) return [];
+      if (!info.isDirectory()) return [dir];
+      const real = realpathSync.native(dir);
+      if (seen.has(real)) return [];
+      seen.add(real);
+      return readdirSync(dir).flatMap((name) => files(join(dir, name)));
+    };
+    const inputs = [
+      ...LOCKFILES.map((name) => join(roots.install, name)),
+      ...discovered.files,
+      ...[...discovered.dirs, ...dirs.flatMap((dir) => PATCH_DIRS.map((name) => join(dir, name)))].flatMap(files),
+    ];
+    return inputs.find((path) => (mtime(path) ?? 0) > installed) ?? null;
+  } catch {
+    return { uncertain: 'patch inputs could not be inspected' };
+  }
 }
 
 /**
@@ -520,6 +554,7 @@ export function traceReads(
   packageRoot: (path: string) => string | null,
   named: (dir: string) => boolean,
   reals: Map<string, string | null>,
+  content: (dir: string) => boolean,
 ): Read[] | null {
   const reads = new Map<string, Read>();
   const real = (path: string): string | null => {
@@ -539,7 +574,10 @@ export function traceReads(
     const throughModules = inside && modulesSegment(path);
     if (throughModules && !realInModules.has(owner)) realInModules.set(owner, modulesSegment(real(owner) ?? ''));
     const installed =
-      throughModules && realInModules.get(owner) === true && !(kind === 'module' && root !== null && !named(root));
+      throughModules &&
+      realInModules.get(owner) === true &&
+      !(root !== null && content(root)) &&
+      !(kind === 'module' && root !== null && !named(root));
     if (root !== null && !linkables.has(root)) linkables.set(root, topLevel(root, roots));
     const linkable = root !== null && linkables.get(root) === true;
     if (installed && stamped && !linkable) continue;
@@ -576,14 +614,18 @@ export class IndexSession {
   readonly stamped: boolean;
   private readonly roots: Roots;
   private readonly key: RecordKey;
+  private readonly consult: boolean;
+  private readonly home?: string;
 
-  constructor(dir: string, roots: Roots, key: RecordKey, since: bigint) {
+  constructor(dir: string, roots: Roots, key: RecordKey, since: bigint, consult = true, home?: string) {
     this.dir = dir;
     this.roots = roots;
     this.key = key;
+    this.consult = consult;
+    this.home = home;
     this.since = since;
     this.stamped = installStamped(roots);
-    this.hashes = new FileHashes(dir, roots, since);
+    this.hashes = new FileHashes(dir, roots, since, consult);
   }
 
   private record(index: number): { record: EvalRecord; stamps: boolean; file: string } | null {
@@ -610,6 +652,7 @@ export class IndexSession {
 
   /** The newest record whose install stamps still hold, which the package facts and closure come from. */
   private base(): EvalRecord | null {
+    if (!this.consult) return null;
     for (let index = 0; this.record(index); index++) {
       const loaded = this.record(index);
       if (loaded?.stamps) {
@@ -636,6 +679,7 @@ export class IndexSession {
 
   /** A recorded part whose env digests and reads all hold, with its paths placed in this checkout. */
   part(slot: string, envDigest: (name: string) => string | null): PartRecord | null {
+    if (!this.consult) return null;
     for (let index = 0; this.record(index); index++) {
       const loaded = this.record(index);
       const recorded = loaded?.stamps ? loaded.record.parts[slot] : undefined;
@@ -721,7 +765,7 @@ export class IndexSession {
       withIndexLock(() => {
         if ([...this.used].every((file) => statSync(file, { throwIfNoEntry: false })))
           writeRecord(this.dir, record, checkoutTag(this.roots.project));
-      });
+      }, this.home);
     } catch {}
   }
 }

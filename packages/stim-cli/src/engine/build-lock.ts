@@ -162,8 +162,9 @@ export function acquireBuildLock({
   return holder ? { held: toRecord(holder), path } : { path };
 }
 
-export function releaseBuildLock(handle?: BuildLockHandle | null): boolean {
+export function releaseBuildLock(handle?: BuildLockHandle | null, retain = false): boolean {
   stopDeclaringSpawnsOn(ambientContext(), handle?.claim);
+  if (retain) return false;
   return releaseClaim(handle?.claim);
 }
 

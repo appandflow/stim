@@ -25,6 +25,12 @@ const GOLDEN: Record<number, Record<'preimage' | 'cng' | 'bare' | 'monorepo', st
     bare: 'ae3536e6a0cc0374ccf91d4a60104d4b661068f5d5646657c5d051ebfaa0905a',
     monorepo: 'eeedc14d5845a9bbb9d2525da78fb88660986b454853bbc28c90b3fdb8675aa7',
   },
+  2: {
+    preimage: 'd79850961fc73802e8b5133c398dfce8a72ce24074e014d4611f309aa05d3784',
+    cng: '5d5ed18489cfb8c72f7dbece65ba0c92d64a4c8b03f1ecd677199ab5f359383e',
+    bare: 'dc67d949fa858c081d157332fd7c9ce98751962baa909231bb2b4b30c81e3105',
+    monorepo: '9ffaf874910d7278ad17ec3edeec429d4e78a3d1f5db2b9235cc5a059c65c477',
+  },
 };
 
 const temps: string[] = [];
@@ -136,6 +142,46 @@ function goldenHashes(): Record<'preimage' | 'cng' | 'bare' | 'monorepo', string
 }
 
 describe('fingerprint key', () => {
+  test('project fingerprint inputs override extraSources, including an explicit empty list', () => {
+    const root = tree({ 'package.json': '{"name":"app"}', 'old.txt': 'old', 'new.txt': 'new' });
+    const context = {
+      root,
+      expoResolves: false,
+      tracked: new Set<string>(),
+      fingerprintConfig: { extraSources: [{ type: 'file', filePath: 'old.txt' }] },
+    };
+    const selected = staticInputs(context, { platform: 'ios', fingerprintInputs: ['new.txt'] });
+    if (isUncertain(selected)) throw new Error(selected.uncertain);
+    expect(selected.inputs.map((input) => input.name)).toContain('new.txt');
+    expect(selected.inputs.map((input) => input.name)).not.toContain('old.txt');
+    expect(selected.inputs.map((input) => input.name)).toContain('stim:fingerprintInputs');
+    const empty = staticInputs(context, { platform: 'ios', fingerprintInputs: [] });
+    if (isUncertain(empty)) throw new Error(empty.uncertain);
+    expect(empty.inputs.map((input) => input.name)).not.toContain('old.txt');
+    expect(empty.inputs.map((input) => input.name)).toContain('stim:fingerprintInputs');
+    expect(empty.inputs.find((input) => input.name === 'stim:fingerprintInputs')?.hash).not.toBe(
+      selected.inputs.find((input) => input.name === 'stim:fingerprintInputs')?.hash,
+    );
+  });
+
+  test('a missing tracked iOS Podfile.lock is keyed unless explicitly ignored', () => {
+    const root = tree({ 'package.json': '{"name":"app"}', 'ios/Podfile': 'platform :ios' });
+    const context = { root, expoResolves: false, tracked: new Set([join(root, 'ios/Podfile')]) };
+    const before = staticInputs(context, { platform: 'ios' });
+    if (isUncertain(before)) throw new Error(before.uncertain);
+    const absent = before.inputs.find((input) => input.name === 'ios/Podfile.lock');
+    expect(absent).toMatchObject({ kind: 'file' });
+    writeFileSync(join(root, 'ios/Podfile.lock'), 'PODS:\n  - Example (1.0)\n');
+    const after = staticInputs(context, { platform: 'ios' });
+    if (isUncertain(after)) throw new Error(after.uncertain);
+    expect(after.inputs.find((input) => input.name === 'ios/Podfile.lock')?.hash).not.toBe(absent?.hash);
+    rmSync(join(root, 'ios/Podfile.lock'));
+    writeFileSync(join(root, '.fingerprintignore'), 'ios/Podfile.lock\n');
+    const ignored = staticInputs(context, { platform: 'ios' });
+    if (isUncertain(ignored)) throw new Error(ignored.uncertain);
+    expect(ignored.inputs.find((input) => input.name === 'ios/Podfile.lock')).toBeUndefined();
+  });
+
   test(`the preimage format and the static stages match the golden of schema ${FINGERPRINT_SCHEMA}`, () => {
     const golden = GOLDEN[FINGERPRINT_SCHEMA];
     expect(golden, `add a golden entry for schema ${FINGERPRINT_SCHEMA}`).toBeDefined();

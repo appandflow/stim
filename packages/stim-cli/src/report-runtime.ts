@@ -1,4 +1,5 @@
 import { type StimContext } from '@stim-cli/core';
+import { inheritDeclaredSpawns } from './engine/operation-state.ts';
 
 interface ReportState {
   pending: Map<Promise<void>, Error | undefined>;
@@ -74,6 +75,7 @@ export async function runReport<T>(
       if (!signal.aborted) context.output(stream, text);
     }) satisfies StimContext['output'],
   };
+  inheritDeclaredSpawns(context, operation);
   const pending = new Map<Promise<void>, Error | undefined>();
   const state: ReportState = { pending, recoveries: new Map(), abort: (reason) => controller.abort(reason) };
   reports.set(operation, state);

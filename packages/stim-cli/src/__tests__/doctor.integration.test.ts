@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { getProject } from '../workspace/config.ts';
 import {
   checkBuildCacheProvider,
@@ -25,7 +25,6 @@ import {
   checkFingerprintParity,
   checkMetroCache,
   detectFingerprintParity,
-  detectLinkedLibraryGitMetadata,
   checkRemoteDevice,
   checkSimSlim,
   checkDeviceSigning,
@@ -46,6 +45,7 @@ import type { EasAuthResult } from '../engine/remote-cache.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import assert from 'node:assert';
 import { buildCacheKey } from '@stim-cli/core';
+import { processContext } from '../cli-operation.ts';
 import {
   analyzeStimVersions,
   compareStimVersions,
@@ -280,79 +280,6 @@ test('worktree.defaultBranch outranks origin/HEAD, and neither resolving stays s
     expect(await checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
   } finally {
     rmSync(base, { recursive: true, force: true });
-  }
-});
-
-test('a fingerprinted library directory that still hashes .git gets both .fingerprintignore entries', async () => {
-  const project = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-doctor-linked-git-')));
-  try {
-    const library = join(project, 'library');
-    mkdirSync(join(library, 'android'), { recursive: true });
-    writeFileSync(join(library, '.git'), 'gitdir: /elsewhere/.git/worktrees/library\n');
-    mkdirSync(join(project, 'node_modules', '@org'), { recursive: true });
-    symlinkSync(library, join(project, 'node_modules', '@org', 'native-lib'));
-    const calls: unknown[] = [];
-    const dir = (filePath: string, children: string[]) => ({
-      type: 'dir',
-      filePath,
-      reasons: [],
-      debugInfo: { path: filePath, hash: 'h', children: children.map((path) => ({ path, hash: 'h' })) },
-    });
-    let sources = [
-      dir('android', ['android/build.gradle']),
-      dir('node_modules/@org/native-lib', [
-        'node_modules/@org/native-lib/.git',
-        'node_modules/@org/native-lib/android',
-      ]),
-      dir('node_modules/ignored-lib', ['node_modules/ignored-lib/android']),
-    ];
-    const createFingerprint = (async (_root: string, options?: unknown) => {
-      calls.push(options);
-      return { hash: 'abc', sources };
-    }) as unknown as typeof import('@expo/fingerprint').createFingerprintAsync;
-
-    const result = await detectLinkedLibraryGitMetadata(project, { createFingerprint, platform: 'android' });
-    expect(calls).toEqual([expect.objectContaining({ platforms: ['android'], debug: true, silent: true })]);
-    expect(result?.code).toBe('linked-library-git-metadata');
-    expect(result?.detail).toContain('node_modules/@org/native-lib/.git');
-    expect(result?.detail).not.toContain('ignored-lib');
-    expect(result?.fix).toContain('`node_modules/@org/native-lib/.git`, `node_modules/@org/native-lib/.git/**/*`');
-
-    sources = [...sources, dir('../other-lib', ['../other-lib/.git', '../other-lib/ios'])];
-    const two = await detectLinkedLibraryGitMetadata(project, { createFingerprint });
-    expect(two?.title).toMatch(/^2 linked/);
-    expect(two?.fix).toContain('`../other-lib/.git`, `../other-lib/.git/**/*`');
-
-    sources = [dir('node_modules/@org/native-lib', ['node_modules/@org/native-lib/android'])];
-    expect(await detectLinkedLibraryGitMetadata(project, { createFingerprint })).toBeNull();
-    const failing = (async () => {
-      throw new Error('no fingerprint');
-    }) as unknown as typeof createFingerprint;
-    expect(await detectLinkedLibraryGitMetadata(project, { createFingerprint: failing })).toBeNull();
-
-    writeFileSync(join(project, 'fingerprint.config.js'), 'module.exports = {};\n');
-    const configured = calls.length;
-    expect((await detectLinkedLibraryGitMetadata(project, { createFingerprint }))?.code).toBe(
-      'fingerprint-config-skipped',
-    );
-    expect(calls.length).toBe(configured);
-    rmSync(join(project, 'fingerprint.config.js'));
-
-    rmSync(join(project, 'node_modules', '@org'), { recursive: true, force: true });
-    const before = calls.length;
-    expect(await detectLinkedLibraryGitMetadata(project, { createFingerprint })).toBeNull();
-    expect(calls.length).toBe(before);
-
-    execSync('git init -q', { cwd: project });
-    const app = join(project, 'apps', 'mobile');
-    mkdirSync(app, { recursive: true });
-    writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'mobile', dependencies: { 'react-native': '*' } }));
-    symlinkSync(library, join(project, 'node_modules', 'hoisted-lib'));
-    sources = [dir('../../node_modules/hoisted-lib', ['../../node_modules/hoisted-lib/.git'])];
-    const hoisted = await detectLinkedLibraryGitMetadata(app, { createFingerprint });
-    expect(hoisted?.fix).toContain('`../../node_modules/hoisted-lib/.git`, `../../node_modules/hoisted-lib/.git/**/*`');
-  } finally {
-    rmSync(project, { recursive: true, force: true });
   }
 });
 
@@ -619,8 +546,9 @@ test('Android doctor skips iOS architecture metadata and findings', async () => 
     const queries: string[] = [];
     setExecutor({
       runFileQuiet: () => null,
-      runFile(file: string) {
+      runFile(file: string, args: string[]) {
         queries.push(file);
+        if (args.some((arg) => arg.endsWith('fingerprint-precompute.mjs'))) return '[]';
         return '';
       },
       runQuiet: () => null,
@@ -1380,7 +1308,7 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
       const hash = createHash('sha1')
         .update(readFileSync(join(dir, 'app.json'), 'utf-8'))
         .digest('hex');
-      return { hash, sources: [{ type: 'file' as const, filePath: 'app.json', reasons: [], hash }] };
+      return { hash, portable: true, inputs: [{ name: 'app.json', kind: 'file', hash }] };
     };
 
     const executor = getExecutor();
@@ -1412,6 +1340,8 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
         }
       },
       runFileAsync(file, args, options) {
+        if (args.some((arg: string) => arg.endsWith('fingerprint-precompute.mjs')))
+          return createFingerprint(JSON.parse(String(options.input)).root).then(JSON.stringify);
         if (file === 'git' && args.includes('worktree') && args.includes('remove')) {
           throw new Error('Git removal failed');
         }
@@ -1422,7 +1352,7 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
     });
     const started = Date.now();
     let finished = false;
-    const pending = detectFingerprintParity(repo, { createFingerprint }).then((finding) => {
+    const pending = detectFingerprintParity(repo).then((finding) => {
       finished = true;
       return finding;
     });
@@ -1450,6 +1380,46 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
   }
 });
 
+test('parity retains its registered worktree when fingerprint cleanup is unverified', async () => {
+  const base = mkdtempSync(join(tmpdir(), 'stim-parity-retained-'));
+  const repo = join(base, 'repo');
+  mkdirSync(repo);
+  const git = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  let retained: string | undefined;
+  try {
+    git('init', '-q');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'test');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'app' }));
+    git('add', '.');
+    git('commit', '-qm', 'fixture');
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      runFileAsync(file, args, options) {
+        if (args.some((arg: string) => arg.endsWith('fingerprint-precompute.mjs')))
+          throw Object.assign(new Error('unverified fingerprint cleanup'), { reportCleanup: true });
+        return executor.runFileAsync(file, args, options);
+      },
+    });
+    const failure = await detectFingerprintParity(repo, { operation: processContext(repo) }).catch(
+      (error: unknown) => error,
+    );
+    const worktrees = git('worktree', 'list', '--porcelain')
+      .split('\n')
+      .filter((line) => line.startsWith('worktree '));
+    retained = worktrees.map((line) => line.slice('worktree '.length)).find((path) => path !== realpathSync(repo));
+    assert(retained, 'The temporary worktree should remain registered.');
+    expect(failure).toMatchObject({ reportCleanup: true, remedy: expect.stringContaining(retained) });
+    expect(existsSync(retained)).toBe(true);
+  } finally {
+    resetExecutor();
+    if (retained) git('worktree', 'remove', '--force', '--force', retained);
+    if (retained) rmSync(dirname(retained), { recursive: true, force: true });
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test('detectFingerprintParity against a real repo: a clean checkout is silent', async () => {
   resetExecutor();
   const base = mkdtempSync(join(tmpdir(), 'stim-parity-clean-'));
@@ -1470,83 +1440,21 @@ test('detectFingerprintParity against a real repo: a clean checkout is silent', 
       const hash = createHash('sha1')
         .update(readFileSync(join(dir, 'app.json'), 'utf-8'))
         .digest('hex');
-      return { hash, sources: [{ type: 'file' as const, filePath: 'app.json', reasons: [], hash }] };
+      return { hash, portable: true, inputs: [{ name: 'app.json', kind: 'file', hash }] };
     };
 
-    expect(await detectFingerprintParity(repo, { createFingerprint })).toBe(null);
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      runFileAsync: (file, args, options) =>
+        args.some((arg: string) => arg.endsWith('fingerprint-precompute.mjs'))
+          ? createFingerprint(JSON.parse(String(options.input)).root).then(JSON.stringify)
+          : executor.runFileAsync(file, args, options),
+    });
+    expect(await detectFingerprintParity(repo)).toBe(null);
     expect(execSync('git worktree list', { cwd: repo, encoding: 'utf-8' }).trim().split('\n').length).toBe(1);
   } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
-test('detectFingerprintParity never fingerprints or adds a worktree when an app without node_modules resolves Expo from the repository root', async () => {
-  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'stim-parity-hoisted-')));
-  const base = join(outside, 'repo');
-  const commands: string[][] = [];
-  setExecutor({
-    runQuiet: () => null,
-    runFileAsync: async (file: string, args: string[]) => {
-      commands.push([file, ...args]);
-      if (file === 'git' && args.includes('rev-parse')) return '.git';
-      throw new Error('Git unavailable');
-    },
-  });
-  try {
-    const app = join(base, 'apps', 'mobile');
-    mkdirSync(join(app, 'ios'), { recursive: true });
-    for (const name of ['expo', 'expo-modules-autolinking']) {
-      mkdirSync(join(base, 'node_modules', name), { recursive: true });
-      writeFileSync(join(base, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '2.0.0' }));
-    }
-    let called = false;
-    const createFingerprint = async () => {
-      called = true;
-      return { hash: 'x', sources: [] };
-    };
-
-    const finding = await detectFingerprintParity(app, { createFingerprint });
-    expect(finding?.code).toBe('fingerprint-parity-skipped');
-    expect(finding?.fix).toBeTruthy();
-    const link = join(outside, 'linked-app');
-    symlinkSync(app, link);
-    expect((await detectFingerprintParity(link, { createFingerprint }))?.code).toBe('fingerprint-parity-skipped');
-    expect(called).toBe(false);
-    expect(commands.filter((command) => command.includes('worktree'))).toEqual([]);
-  } finally {
     resetExecutor();
-    rmSync(outside, { recursive: true, force: true });
-  }
-});
-
-test('detectFingerprintParity never fingerprints a checkout whose fingerprint.config.js would run, in the tree or at HEAD', async () => {
-  resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-parity-config-'));
-  try {
-    const git = (cmd: string) => execSync(cmd, { cwd: base, encoding: 'utf-8' });
-    git('git init -q');
-    git('git config user.email test@example.com');
-    git('git config user.name test');
-    writeFileSync(join(base, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
-    writeFileSync(join(base, 'fingerprint.config.js'), 'module.exports = {};\n');
-    mkdirSync(join(base, 'ios'));
-    writeFileSync(join(base, 'ios', 'Podfile'), '');
-    git('git add . && git commit -q -m init');
-    let called = false;
-    const createFingerprint = async () => {
-      called = true;
-      return { hash: 'x', sources: [] };
-    };
-
-    const inTree = await detectFingerprintParity(base, { createFingerprint });
-    expect(inTree?.code).toBe('fingerprint-config-skipped');
-    expect(inTree?.title).toContain('fingerprint.config.js');
-
-    rmSync(join(base, 'fingerprint.config.js'));
-    expect((await detectFingerprintParity(base, { createFingerprint }))?.code).toBe('fingerprint-config-skipped');
-    expect(called).toBe(false);
-    expect(git('git worktree list').trim().split('\n').length).toBe(1);
-  } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });
@@ -1909,6 +1817,7 @@ test('doctor --platform android does not invoke Xcode tooling', async () => {
     },
     runFile: (file: string, args: string[]) => {
       calls.push([file, ...args].join(' '));
+      if (args.some((arg) => arg.endsWith('fingerprint-precompute.mjs'))) return '[]';
       return '';
     },
     runFileQuiet: (file: string, args: string[]) => {
@@ -1958,6 +1867,7 @@ test.each(['win32', 'linux'] as const)('doctor --platform ios on a %s host runs 
     },
     runFile: (file: string, args: string[]) => {
       calls.push([file, ...args].join(' '));
+      if (args.some((arg) => arg.endsWith('fingerprint-precompute.mjs'))) return '[]';
       return '';
     },
     runFileQuiet: (file: string, args: string[]) => {

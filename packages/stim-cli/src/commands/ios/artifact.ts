@@ -21,13 +21,18 @@ import {
   providerUploadOutcome,
   storedAppId,
 } from '../../cache/build-cache.ts';
-import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
+import { settleFingerprintCheck } from '../../fingerprint/operation.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../../cache/compilation-cache-corruption.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
 import { BuildSlotCapacityError } from '../../engine/build-slots.ts';
-import { acquireArtifact, settleArtifactUploads, type ArtifactRun } from '../../engine/acquire-artifact.ts';
+import {
+  acquireArtifact,
+  settleArtifactCleanup,
+  settleArtifactUploads,
+  type ArtifactRun,
+} from '../../engine/acquire-artifact.ts';
 import type { ReadyArtifact } from '../../engine/artifact-lifecycle.ts';
 import type { EasBuildResult } from '../../engine/eas-build.ts';
 import {
@@ -141,8 +146,6 @@ export interface PreparedIosArtifact {
   completeUploads(): Promise<boolean>;
   /** Waits for cache uploads that read temporary copies before removing them; repeated calls are safe. */
   release(): void | Promise<void>;
-  /** Stops a background fingerprint check that completeUploads() has not settled. */
-  cancelFingerprintCheck(): void;
 }
 
 type IosArtifactResult =
@@ -547,6 +550,9 @@ export async function acquireIosArtifact(
   }
 
   let localCocoapods: string | null = null;
+  let preflightInputs:
+    | ReturnType<NonNullable<NonNullable<IosArtifactRecipe['offload']>['fingerprintInputs']>>
+    | undefined;
 
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
   async function chooseMachine(candidate: Candidate): Promise<OffloadChoice | null> {
@@ -555,6 +561,18 @@ export async function acquireIosArtifact(
     let asked: PlacementCandidate[] = [];
     const target = await offload.target(candidate.runtime);
     localCocoapods = target.platform === 'ios' ? target.local.cocoapods : null;
+    const request = offload.request(candidate.runtime);
+    let queryPeer = Boolean(useBuildCache && cachePolicy.remote && storeHash && !request.native && !release);
+    if (queryPeer) {
+      preflightInputs = offload.fingerprintInputs?.().catch((error: unknown) => {
+        if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
+        signal?.throwIfAborted();
+        return { uncertain: error instanceof Error ? error.message : String(error) };
+      });
+      const inputs = await preflightInputs;
+      queryPeer = Boolean(inputs && !('uncertain' in inputs));
+      if (!queryPeer && candidate.cacheOnly) return null;
+    }
     const { chooseBuildMachine, closeOffload, placementLoad } = await import('../../offload/client.ts');
     const choice = await chooseBuildMachine({
       projectRoot: root,
@@ -565,9 +583,7 @@ export async function acquireIosArtifact(
       selected: buildMachine,
       onCandidates: (each) => (asked = each),
       cacheOnly: candidate.cacheOnly,
-      ...(useBuildCache && cachePolicy.remote && storeHash && !offload.request(candidate.runtime).native && !release
-        ? { reactNativeArtifact: { fingerprint: storeHash, request: offload.request(candidate.runtime) } }
-        : {}),
+      ...(queryPeer && storeHash ? { reactNativeArtifact: { fingerprint: storeHash, request } } : {}),
       ...(useBuildCache &&
       cachePolicy.remote &&
       storeHash &&
@@ -712,7 +728,7 @@ export async function acquireIosArtifact(
       choice,
       expectedFingerprint: storeHash,
       request: recipe.offload!.request(runtime),
-      fingerprintInputs: recipe.offload!.fingerprintInputs,
+      fingerprintInputs: preflightInputs ? () => preflightInputs! : recipe.offload!.fingerprintInputs,
       syncPlan: recipe.offload!.syncPlan,
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
@@ -731,10 +747,10 @@ export async function acquireIosArtifact(
     let stored: string | null = null;
     let reason = outcome.ok ? null : outcome.reason;
     if (outcome.ok) {
-      const rekeyed = outcome.builtFingerprint ? recipe.offload?.rekeyed?.(outcome.builtFingerprint) : undefined;
       if (!(await recipe.offload!.unchanged())) {
         reason = 'the checkout here changed while it built';
       } else {
+        const rekeyed = outcome.builtFingerprint ? recipe.offload?.rekeyed?.(outcome.builtFingerprint) : undefined;
         if (rekeyed) {
           note(
             chalk.dim(
@@ -1036,8 +1052,15 @@ export async function acquireIosArtifact(
           },
         };
       },
+      settleBeforeRelease: async () => {
+        await recipe.fingerprintCheck?.()?.join();
+      },
       settleFailed: async () => {
-        await settleArtifactUploads(uploadPending, providerUpload);
+        await settleArtifactCleanup(
+          undefined,
+          recipe.fingerprintCheck?.()?.cancel(),
+          settleArtifactUploads(uploadPending, providerUpload),
+        );
       },
       refuse: (error) => {
         if (error instanceof OffloadRefusal)
@@ -1063,7 +1086,7 @@ export async function acquireIosArtifact(
     { root, logFile, deps: d },
   );
   if (!acquired.ok) {
-    recipe.fingerprintCheck?.()?.cancel();
+    await recipe.fingerprintCheck?.()?.cancel();
     return { ok: false, failure: acquired.failure, compilationCache };
   }
   appPath = acquired.artifact;
@@ -1108,9 +1131,12 @@ export async function acquireIosArtifact(
       );
       return abandonedRemote || uploadWasAbandoned;
     },
-    cancelFingerprintCheck: () => recipe.fingerprintCheck?.()?.cancel(),
     release: async () => {
-      await settleArtifactUploads(providerUpload, uploadPending);
+      await settleArtifactCleanup(
+        undefined,
+        recipe.fingerprintCheck?.()?.cancel(),
+        settleArtifactUploads(providerUpload, uploadPending),
+      );
       acquired.release();
     },
   };
@@ -1146,7 +1172,6 @@ function recordedIosArtifact(recorded: RecordedBuild): { ok: true; artifact: Pre
       failureFields: {},
       completeUploads: async () => false,
       release: () => {},
-      cancelFingerprintCheck: () => {},
     },
   };
 }

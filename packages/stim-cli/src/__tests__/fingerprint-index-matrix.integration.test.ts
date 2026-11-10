@@ -125,7 +125,11 @@ function fixture(stamped: boolean): string {
 }
 
 async function key(index: 'use' | 'skip'): Promise<Fingerprint> {
-  const result = await fingerprint(app, { platform: 'ios' }, { env: ENV, embedMode: 'development', index });
+  const result = await fingerprint(
+    app,
+    { platform: 'ios' },
+    { env: { ...ENV, STIM_HOME: process.env.STIM_HOME }, embedMode: 'development', index },
+  );
   if (isUncertain(result)) throw new Error(JSON.stringify(result));
   return result;
 }

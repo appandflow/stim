@@ -409,17 +409,6 @@ export async function cloneIgnoredEntries({
         ? 'nested worktree'
         : missingDestinationReason(target, rel);
   const checks = new Map<string, Promise<string | null>>();
-  for (const rel of carryable) {
-    let copies: boolean;
-    try {
-      copies = keptReason(rel) === null;
-    } catch {
-      copies = true;
-    }
-    const check = copies ? withhold(rel) : null;
-    if (check) checks.set(rel, check);
-  }
-  const entries = [...carryable.filter((rel) => !checks.has(rel)), ...checks.keys()];
   const copied: string[] = [];
   const skipped: SkippedEntry[] = [];
   const failed: FailedEntry[] = [];
@@ -429,6 +418,20 @@ export async function cloneIgnoredEntries({
   const clonefile = () => (helper ??= clonefileHelper(operation));
   const trash = warmTrash(target, { signal: operation.signal });
   try {
+    for (const rel of carryable) {
+      let copies: boolean;
+      try {
+        copies = keptReason(rel) === null;
+      } catch {
+        copies = true;
+      }
+      const check = copies ? withhold(rel) : null;
+      if (check) {
+        void check.catch(() => {});
+        checks.set(rel, check);
+      }
+    }
+    const entries = [...carryable.filter((rel) => !checks.has(rel)), ...checks.keys()];
     for (const rel of entries) {
       operation.signal.throwIfAborted();
       const from = join(root, rel);
@@ -477,8 +480,22 @@ export async function cloneIgnoredEntries({
         failed.push({ file: rel, error: String((cause as Error)?.message || cause) });
       }
     }
+    const outcomes = await Promise.allSettled(checks.values());
+    const failure = outcomes.find((outcome) => outcome.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
   } catch (error) {
+    const outcomes = await Promise.allSettled(checks.values());
     await trash.dispose(operation).catch(() => {});
+    if (!(typeof error === 'object' && error !== null && 'reportCleanup' in error)) {
+      const unresolved = outcomes.find(
+        (outcome) =>
+          outcome.status === 'rejected' &&
+          typeof outcome.reason === 'object' &&
+          outcome.reason !== null &&
+          'reportCleanup' in outcome.reason,
+      );
+      if (unresolved?.status === 'rejected') throw unresolved.reason;
+    }
     throw error;
   }
   await trash.dispose(operation);

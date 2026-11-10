@@ -12,6 +12,7 @@ import type { Dirent } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { byCodeUnit, canonicalJson, sha256, type Input, type Uncertain } from './key.ts';
+import { projectPackagePath } from './closure.ts';
 
 export interface Roots {
   /** Real path of the app. */
@@ -30,7 +31,30 @@ interface Pattern {
 
 const LIMITS = { files: 50_000, bytes: 2 * 1024 ** 3 };
 const CHUNK = 1024 * 1024;
+
+export function contentHash(path: string, size: number): string {
+  const hash = createHash('sha256');
+  const buffer = Buffer.allocUnsafe(Math.min(CHUNK, Math.max(size, 1)));
+  const fd = openSync(path, 'r');
+  try {
+    for (let read = readSync(fd, buffer); read > 0; read = readSync(fd, buffer)) hash.update(buffer.subarray(0, read));
+  } finally {
+    closeSync(fd);
+  }
+  return hash.digest('hex');
+}
+export function symlinkHash(text: string, ...target: [] | [string | null]): string {
+  return sha256(canonicalJson(['symlink', text, ...target]));
+}
+
 const GRADLE_SCRIPTS = new Set(['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts']);
+
+function generatedDirectory(name: string, siblings: readonly string[]): boolean {
+  return (
+    (name === 'build' && siblings.some((n) => GRADLE_SCRIPTS.has(n) || n === 'Podfile' || n.endsWith('.xcodeproj'))) ||
+    (name === 'Pods' && siblings.includes('Podfile'))
+  );
+}
 
 const BUILT_IN = compileIgnore(
   [
@@ -142,6 +166,14 @@ function matchIgnore(patterns: readonly Pattern[], path: string, isDir: boolean)
   return result;
 }
 
+export function ignoredInput(patterns: readonly Pattern[], path: string): boolean {
+  const parts = path.split('/');
+  return (
+    matchIgnore(patterns, path, false) === true ||
+    parts.slice(0, -1).some((_, index) => matchIgnore(patterns, parts.slice(0, index + 1).join('/'), true) === true)
+  );
+}
+
 const toPosix = (path: string) => path.split(sep).join('/');
 
 /** An absolute POSIX path with no empty, `.` or `..` segment and no trailing separator: `path.relative` leaves it as is. */
@@ -182,10 +214,26 @@ function realOrNull(path: string): string | null {
  * `apple/`, `android/` and `cpp/`, any other top-level directory its podspecs or Android build files mention, its
  * codegen spec directory and its native manifests. The whole package when none of those exist.
  */
-export function nativeSubset(root: string, named: readonly string[] = []): string[] {
+export function nativeSubset(
+  root: string,
+  named: readonly string[] = [],
+  project?: string,
+  ignore: readonly Pattern[] = [],
+): string[] {
   const entries = readdirSync(root);
+  const included = (path: string): boolean => {
+    for (let dir = dirname(path); dir !== root && within(dir, root); dir = dirname(dir)) {
+      const own =
+        project && within(dir, project) ? matchIgnore(ignore, toPosix(relative(project, dir)), true) : undefined;
+      const parent = dirname(dir);
+      const siblings = statSync(parent, { throwIfNoEntry: false })?.isDirectory() ? readdirSync(parent) : [];
+      const generated = generatedDirectory(dir.slice(dir.lastIndexOf(sep) + 1), siblings);
+      if (own ?? (generated || (matchIgnore(BUILT_IN, toPosix(relative(root, dir)), true) ?? false))) return false;
+    }
+    return true;
+  };
   const sources = [
-    ...named,
+    ...named.filter(included),
     ...entries.filter((name) => name.endsWith('.podspec')).map((name) => join(root, name)),
     ...['ios', 'apple', 'android', 'cpp'].filter((name) => entries.includes(name)).map((name) => join(root, name)),
   ];
@@ -235,6 +283,7 @@ export interface WalkOptions {
   skip?: readonly string[];
   /** Paths that are inputs only while git tracks them or a file under them. */
   trackedOnly?: readonly string[];
+  workspaceInputs?: ReadonlySet<string>;
   keepSigningFiles?: boolean;
   /** Files hashed after a transform of their bytes, by real path. */
   transforms?: ReadonlyMap<string, (bytes: Buffer) => Buffer | string>;
@@ -286,31 +335,19 @@ export function walk(options: WalkOptions): WalkResult | Uncertain {
     return options.hashes ? options.hashes.hash(path, () => contentHash(path, size)) : contentHash(path, size);
   };
 
-  const contentHash = (path: string, size: number): string => {
-    const hash = createHash('sha256');
-    const buffer = Buffer.allocUnsafe(Math.min(CHUNK, Math.max(size, 1)));
-    const fd = openSync(path, 'r');
-    try {
-      for (let read = readSync(fd, buffer); read > 0; read = readSync(fd, buffer))
-        hash.update(buffer.subarray(0, read));
-    } finally {
-      closeSync(fd);
-    }
-    return hash.digest('hex');
-  };
-
   const isTracked = (path: string, isDir: boolean) =>
     tracked !== null && (isDir ? trackedDirs.has(path) : tracked.has(path));
 
   const excluded = (path: string, tree: string, isDir: boolean, siblings: readonly string[]): boolean => {
     const name = path.slice(path.lastIndexOf(sep) + 1);
     if ((isDir && path === roots.project) || skipped.has(path)) return true;
-    if (trackedOnly.has(path) || (isDir && name.endsWith('.xcworkspace'))) return !isTracked(path, isDir);
-    const generated =
-      isDir &&
-      ((name === 'build' &&
-        siblings.some((n) => GRADLE_SCRIPTS.has(n) || n === 'Podfile' || n.endsWith('.xcodeproj'))) ||
-        (name === 'Pods' && siblings.includes('Podfile')));
+    if (trackedOnly.has(path)) return !isTracked(path, isDir);
+    if ([...trackedOnly].some((root) => within(path, root)) && !isTracked(path, isDir)) return true;
+    if (isDir && name.endsWith('.xcworkspace')) {
+      const prefix = `${pathForm(path, roots)}/`;
+      return !isTracked(path, true) && ![...(options.workspaceInputs ?? [])].some((input) => input.startsWith(prefix));
+    }
+    const generated = isDir && generatedDirectory(name, siblings);
     const inTree = toPosix(relative(tree, path));
     const own = within(path, roots.project)
       ? matchIgnore(options.ignore ?? [], toPosix(relative(roots.project, path)), isDir)
@@ -329,16 +366,16 @@ export function walk(options: WalkOptions): WalkResult | Uncertain {
     const target = realOrNull(path);
     const stat = target ? statSync(target, { throwIfNoEntry: false }) : undefined;
     const inside = target !== null && (within(target, roots.project) || within(target, roots.install));
-    if (!target || !stat) sink(path, sha256(canonicalJson(['symlink', text, null])), false);
+    if (!target || !stat) sink(path, symlinkHash(text, null), false);
     else if (stat.isDirectory() && inside) {
       if (within(roots.project, target)) throw new AppLink(path);
-      sink(path, sha256(canonicalJson(['symlink', text])), false);
+      sink(path, symlinkHash(text), false);
       queue.push(target);
     } else if (stat.isDirectory()) {
-      sink(path, sha256(canonicalJson(['symlink', text, outsideDigest(target)])), true);
+      sink(path, symlinkHash(text, outsideDigest(target)), true);
     } else if (stat.isFile()) {
-      sink(path, sha256(canonicalJson(['symlink', text, hashFile(target, stat.size)])), !inside);
-    } else sink(path, sha256(canonicalJson(['symlink', text, null])), !inside);
+      sink(path, symlinkHash(text, hashFile(target, stat.size)), !inside);
+    } else sink(path, symlinkHash(text, null), !inside);
   };
 
   const visit = (dir: string, tree: string, sink: Sink): void => {
@@ -370,6 +407,7 @@ export function walk(options: WalkOptions): WalkResult | Uncertain {
   const row: Sink = (path, hash, outside) => {
     const name = pathForm(path, roots);
     if (outside || name.startsWith('outside:')) portable = false;
+    if (name.startsWith('npm:') && !projectPackagePath(roots.project, realOrNull(path) ?? path)) portable = false;
     const input: Input = { name: outside ? `outside:${sha256(name)}` : name, kind: 'file', hash };
     if (isTracked(path, false)) input.git = 'tracked';
     inputs.push(input);

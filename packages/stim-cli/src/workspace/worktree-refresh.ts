@@ -26,6 +26,7 @@ export interface RefreshFailure {
   message: string;
   lines: string[];
   remedy: string | null;
+  cleanupUnverified?: true;
 }
 
 export interface MainCheckoutState {
@@ -538,6 +539,7 @@ export async function awaitInstallerSettled(
   if (settled.settled) return null;
   return {
     code: DEPS_ERROR,
+    cleanupUnverified: true,
     message: `${what} exited but left a process group running (pid ${settled.pid}) in ${root} after ${formatElapsed(settled.waitedMs)}, so Stim cannot tell that it finished writing.`,
     lines: [],
     remedy: `Stop what pid ${settled.pid} leads (\`ps -g ${settled.pid}\`, then \`kill -TERM -${settled.pid}\`) and run ${again} again. The warm claim stays held until that group exits, so no copy reads a half-written tree in the meantime.`,
@@ -576,6 +578,7 @@ export async function runDependencyInstall({
     });
     emit(stepLine('deps', stepSubject, `${command} (${formatDuration(install.durationMs)})`));
     const running = await awaitInstallerSettled(installer, dependencies.root, `\`${command}\``, again);
+    if (running) return running;
     if (!install.ok) {
       return {
         code: DEPS_ERROR,
@@ -584,7 +587,7 @@ export async function runDependencyInstall({
         remedy: `Run \`cd ${dependencies.root} && ${remedy}\` and fix what it reports, then run ${again} again.`,
       };
     }
-    return running;
+    return null;
   };
   const postinstall = skippedPostinstall(dependencies) ? 'npm run postinstall' : null;
   const installFailure = await runStep(

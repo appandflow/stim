@@ -1,6 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
 import chalk from 'chalk';
-import type { FingerprintSource } from '@expo/fingerprint';
+import type { Fingerprint } from '../fingerprint/evaluate.ts';
 import {
   resolveTieredBuild,
   buildResolveTimeoutMs,
@@ -12,11 +12,12 @@ import {
 import type { loadCacheProvider } from '@stim-cli/cache';
 import { trackReportResource } from '../report-runtime.ts';
 import type { BuildCacheHit, BuildPlanPayload, StatsPlatform } from '@stim-cli/core/state';
-import { artifactIn, entryDir } from '../cache/build-cache.ts';
-import { predictBuildMiss } from '../cache/miss-reason.ts';
+import { artifactIn, entryDir, storedInputs } from '../cache/build-cache.ts';
+import { predictBuildMiss } from '../fingerprint/miss.ts';
+import { predictBuildMiss as predictNativeBuildMiss } from '../cache/miss-reason.ts';
 import { formatDuration, phaseLine, plural, shortHash } from '../command-output.ts';
 import { estimateBuild } from '../engine/build-progress.ts';
-import { staleNativeDirRefusal, type planPrebuildAsync, type PrebuildAction } from '../engine/prebuild.ts';
+import { prebuildPlanRefusal, type planPrebuildAsync, type PrebuildAction } from '../engine/prebuild.ts';
 import {
   easAuthNote,
   type checkEasAuth,
@@ -52,7 +53,8 @@ export interface PlanTarget {
 export interface CachedBuildLookup extends PlanTarget {
   isExpo: boolean;
   fingerprint: string;
-  sources: FingerprintSource[];
+  fingerprintData?: Fingerprint;
+  sources?: unknown[];
   cacheKey: string;
   cachePolicy: { read: boolean; remote: boolean };
   providerConfig: CacheProviderConfig | null;
@@ -170,10 +172,10 @@ async function finishProviderDownload(
 
 async function expoRemoteHit(lookup: CachedBuildLookup, deps: CachedBuildLookupDeps): Promise<string | null> {
   if (!lookup.expoRemote) return null;
-  const { root, platform, isExpo, fingerprint, sources } = lookup;
+  const { root, platform, isExpo, fingerprint, fingerprintData } = lookup;
   const loaded = await deps.loadProjectProvider(root, {
     isExpo,
-    sources,
+    config: fingerprintData?.config,
     context: deps.operation,
   });
   if (loaded?.unavailable) {
@@ -206,7 +208,7 @@ export async function planCachedBuild(
   lookup: CachedBuildLookup,
   deps: CachedBuildLookupDeps,
 ): Promise<BuildPlanPayload> {
-  const { root, platform, isExpo, fingerprint, sources, cacheKey, cachePolicy } = lookup;
+  const { root, platform, isExpo, fingerprint, fingerprintData, cacheKey, cachePolicy } = lookup;
   deps.operation?.signal.throwIfAborted();
   let cacheHit: BuildCacheHit = false;
   let provider: string | null = null;
@@ -223,15 +225,23 @@ export async function planCachedBuild(
   let refusal: Refusal | null = null;
   let missReason: BuildPlanPayload['missReason'];
   if (!cacheHit) {
-    prebuild = await deps.planPrebuild(root, platform, { isExpo, fingerprint, sources }, deps.operation?.signal);
-    if (prebuild === 'refuse') refusal = staleNativeDirRefusal(platform);
+    prebuild = await deps.planPrebuild(
+      root,
+      platform,
+      { isExpo, fingerprint, ...(fingerprintData ? { native: fingerprintData.native } : {}) },
+      deps.operation?.signal,
+    );
+    if (prebuild === 'refuse') refusal = prebuildPlanRefusal(root, platform);
     else if (cachePolicy.read) {
-      missReason = predictBuildMiss({
-        root,
-        platform,
-        current: { hash: fingerprint, sources },
-        prebuild: prebuild === 'generate' || prebuild === 'regenerate' ? prebuild : null,
-      });
+      const pending = prebuild === 'generate' || prebuild === 'regenerate' ? prebuild : null;
+      missReason = fingerprintData
+        ? predictBuildMiss({ root, platform, current: fingerprintData, deps: { storedInputs }, prebuild: pending })
+        : predictNativeBuildMiss({
+            root,
+            platform,
+            current: { hash: fingerprint, sources: lookup.sources ?? [] },
+            prebuild: pending,
+          });
     }
   }
   return planPayload(lookup, {

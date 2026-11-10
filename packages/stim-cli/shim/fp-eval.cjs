@@ -7,21 +7,17 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createRequire } = require('node:module');
 
-const RESULT_FD = 3;
+const resultFile = globalThis[Symbol.for('stim.fingerprint.outputs')]?.result;
 const [kind, root, platform, embedMode, constantsDir] = process.argv.slice(2);
 const fromRoot = createRequire(path.join(root, 'package.json'));
 const requireFrom = (dir, id) => require(createRequire(path.join(dir, 'package.json')).resolve(id));
 const packageDir = (from, name) => path.dirname(from.resolve(`${name}/package.json`));
 
 function write(result) {
-  const bytes = Buffer.from(JSON.stringify(result));
-  for (let offset = 0; offset < bytes.length;) {
-    try {
-      offset += fs.writeSync(RESULT_FD, bytes, offset);
-    } catch (error) {
-      if (error.code !== 'EAGAIN') throw error;
-    }
-  }
+  if (!resultFile) throw new Error('fingerprint result destination is unavailable');
+  const encoded = JSON.stringify(result);
+  if (Buffer.byteLength(encoded) > 64 * 1024 * 1024) throw new Error('fingerprint result exceeded its size limit');
+  fs.writeFileSync(resultFile, encoded, { mode: 0o600 });
 }
 
 // @expo/cli's `getConfigEnvMode` (SDK 58, @expo/env exporting consumeConfigEnvMode) and `setNodeEnv` (SDK 55 to 57,

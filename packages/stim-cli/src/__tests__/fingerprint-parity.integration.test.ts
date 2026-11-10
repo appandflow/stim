@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getExecutor } from '../exec.ts';
 import {
   cleanupWorktrees,
   hashes,
@@ -17,6 +18,7 @@ const MODULES = fileURLToPath(new URL('../../../../apps/mobile/node_modules', im
 const SLOW = 120_000;
 let fixtures: Record<'generated' | 'tracked', { root: string; baseline: Measurement; commit: string }>;
 const temps: string[] = [];
+const retained = new Set<string>();
 
 function fixture(native: boolean): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-parity-fixture-')));
@@ -110,16 +112,80 @@ describe.skipIf(!existsSync(MODULES))('fingerprint change-detection parity', () 
       },
     };
   }, SLOW);
+  beforeEach(() => {
+    if (retained.size) throw new Error('A parity fixture has unverified oracle cleanup; remaining cases cannot run.');
+  });
   afterEach(() => {
     cleanupWorktrees();
     for (const { root, commit } of Object.values(fixtures ?? {})) {
+      if (retained.has(root)) continue;
       git(root, 'reset', '--hard', commit);
       git(root, 'clean', '-ffdx', '-e', 'node_modules');
     }
   });
   afterAll(() => {
-    for (const root of temps) rmSync(root, { recursive: true, force: true });
+    for (const root of temps) if (!retained.has(root)) rmSync(root, { recursive: true, force: true });
   });
+
+  it.skipIf(process.env.FINGERPRINT_LEGACY_ORACLE !== '1').each([
+    ['generated', 'ios'],
+    ['generated', 'android'],
+    ['tracked', 'ios'],
+    ['tracked', 'android'],
+  ] as const)(
+    'matches the committed legacy oracle for %s %s',
+    async (kind, platform) => {
+      const baseline = '6c5ef3bfcde179bcfe1f9d9186c399d3e313d44f';
+      const repo = fileURLToPath(new URL('../../../..', import.meta.url));
+      const temp = mkdtempSync(join(tmpdir(), 'stim-legacy-oracle-'));
+      const signal = AbortSignal.timeout(80_000);
+      const run = (file: string, args: string[]) =>
+        getExecutor().runFileAsync(file, args, {
+          cwd: repo,
+          signal,
+          timeoutMs: 80_000,
+          cleanupOnExit: true,
+          containProcessTree: true,
+        });
+      const script = fileURLToPath(
+        new URL('../../../../scripts/agent-benchmark/verify-legacy-oracle.mjs', import.meta.url),
+      );
+      let cleanup = true;
+      try {
+        const archive = join(temp, 'baseline.tar');
+        await run('git', ['archive', `--output=${archive}`, baseline, 'packages/stim-cli']);
+        await run('tar', ['-xf', archive, '-C', temp]);
+        const original = join(temp, 'packages/stim-cli');
+        symlinkSync(join(repo, 'packages/stim-cli/node_modules'), join(original, 'node_modules'), 'junction');
+        symlinkSync(join(repo, 'node_modules'), join(temp, 'node_modules'), 'junction');
+        const adapter = fileURLToPath(new URL('./fingerprint-parity-legacy.ts', import.meta.url));
+        const output = await run(process.execPath, [
+          '--experimental-strip-types',
+          script,
+          join(original, 'src/cache/build-cache.ts'),
+          adapter,
+          fixtures[kind].root,
+          platform,
+        ]);
+        const result = JSON.parse(output);
+        expect(result).toMatchObject({ platform, hash: expect.any(String), sources: expect.any(Number) });
+        const version = JSON.parse(
+          readFileSync(join(repo, 'packages/stim-cli/node_modules/@expo/fingerprint/package.json'), 'utf8'),
+        ).version;
+        console.log(JSON.stringify({ ...result, baseline, expoFingerprint: version }));
+      } catch (error) {
+        if (typeof error === 'object' && error !== null && 'reportCleanup' in error) {
+          cleanup = false;
+          retained.add(fixtures[kind].root);
+          console.error(`Unverified oracle cleanup; retained ${temp} and ${fixtures[kind].root}`);
+        }
+        throw error;
+      } finally {
+        if (cleanup) rmSync(temp, { recursive: true, force: true });
+      }
+    },
+    SLOW,
+  );
 
   it.each(rows)(
     '$id [$class]: $description',

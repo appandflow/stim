@@ -189,7 +189,7 @@ test('EAS lookup and upload use their own home and output without executing the 
   );
 });
 
-test('an EAS fingerprint failure falls back to the local fingerprint and release builds exclude dev clients', async () => {
+test('an EAS fingerprint failure skips the EAS cache', async () => {
   const { ctx } = context('fallback', { CACHE_TEST_HASH_FAIL: '1' });
   const loaded = await loadProjectProvider(root);
   const result = await withAmbientContext(ctx, () =>
@@ -202,19 +202,41 @@ test('an EAS fingerprint failure falls back to the local fingerprint and release
       runOptions: { configuration: 'Release' },
     }),
   );
-  expect(result).toEqual({ appPath: join(root, 'fallback.app') });
-  expect(calls()).toContainEqual(
-    expect.objectContaining({
-      args: [
-        'build:download',
-        '--platform=ios',
-        '--fingerprint=local-key',
-        '--non-interactive',
-        '--no-dev-client',
-        '--json',
-      ],
+  expect(result).toBeNull();
+  expect(calls().map((call) => call.args[0])).toEqual(['fingerprint:generate']);
+});
+
+test('release EAS cache searches exclude dev clients', async () => {
+  const { ctx } = context('release');
+  const loaded = await loadProjectProvider(root);
+  await withAmbientContext(ctx, () =>
+    resolveRemote({
+      context: ctx,
+      provider: loaded.provider,
+      projectRoot: root,
+      platform: 'ios',
+      fingerprintHash: 'local-key',
+      runOptions: { configuration: 'Release' },
     }),
   );
+  expect(calls()).toContainEqual(expect.objectContaining({ args: expect.arrayContaining(['--no-dev-client']) }));
+});
+
+test('an EAS fingerprint failure skips upload', async () => {
+  const { ctx } = context('fallback', { CACHE_TEST_HASH_FAIL: '1' });
+  const loaded = await loadProjectProvider(root);
+  const result = await withAmbientContext(ctx, () =>
+    uploadRemote({
+      context: ctx,
+      provider: loaded.provider,
+      projectRoot: root,
+      platform: 'ios',
+      fingerprintHash: 'local-key',
+      buildPath: join(root, 'fixture.app'),
+    }),
+  );
+  expect(result).toEqual({ skipped: true });
+  expect(calls().map((call) => call.args[0])).toEqual(['fingerprint:generate']);
 });
 
 test('one deadline covers fingerprint and download, and timeout waits for its child to exit', async () => {

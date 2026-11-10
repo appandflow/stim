@@ -79,9 +79,9 @@ class Worker {
     });
   }
 
-  launch(args: Parameters<BuildHost['launch']>[0]) {
+  async launch(args: Parameters<BuildHost['launch']>[0]) {
     this.root.maintainAreas();
-    const job = this.host.launch(args);
+    const job = await this.host.launch(args);
     if (!('error' in job)) this.live.set(job, { client: args.client, repo: args.repo });
     return job;
   }
@@ -185,7 +185,7 @@ function launch(host: Worker, client: string, repo: string, gate?: string) {
     `import { existsSync } from 'node:fs';
 for await (const chunk of process.stdin) {}
 while (${gate ? `!existsSync(${JSON.stringify(gate)})` : 'false'}) await new Promise(resolve => setTimeout(resolve, 10));
-console.log(JSON.stringify({ type: 'result', ok: false, code: 'fixture', message: 'fixture' }));`,
+console.log(JSON.stringify({ type: 'result', ok: false, code: 'fixture', message: 'fixture', fingerprintSettled: true }));`,
   );
   return host.launch({
     client,
@@ -363,7 +363,7 @@ test('a build records its use, so it is what a later pass goes by', async () => 
   area('a', 'newest', 1);
   const path = area('a', 'subject', 30);
   const host = start();
-  const job = launch(host, 'a', 'subject');
+  const job = await launch(host, 'a', 'subject');
   assert(!('error' in job));
   await job.done;
   host.forget(job);
@@ -474,7 +474,7 @@ test('retains an area whose Gradle daemon log names a live process the process l
   expect(logs.join('\n')).toMatch(/may still use/);
 });
 
-test('a build refused for a build slot leaves no area and records no use', () => {
+test('a build refused for a build slot leaves no area and records no use', async () => {
   writeFileSync(
     join(home, 'config.json'),
     JSON.stringify({ server: { maxLoadPerCore: 1000 }, concurrency: { maxBuilds: 1 } }),
@@ -484,8 +484,8 @@ test('a build refused for a build slot leaves no area and records no use', () =>
   const old = area('a', 'old', 30);
   const recorded = readFileSync(join(old, 'last-used'), 'utf8');
   const host = start();
-  expect(launch(host, 'a', 'fresh')).toHaveProperty('error.code', 'build-busy');
-  expect(launch(host, 'a', 'old')).toHaveProperty('error.code', 'build-busy');
+  expect(await launch(host, 'a', 'fresh')).toHaveProperty('error.code', 'build-busy');
+  expect(await launch(host, 'a', 'old')).toHaveProperty('error.code', 'build-busy');
   expect(existsSync(areaPath('a', 'fresh'))).toBe(false);
   expect(readFileSync(join(old, 'last-used'), 'utf8')).toBe(recorded);
   releaseClaim(slot.claim);
@@ -503,11 +503,11 @@ test('a cached artifact miss creates no area', async () => {
   expect(existsSync(real)).toBe(true);
 });
 
-test('a build refused while an eviction holds the claim creates nothing in the area', () => {
+test('a build refused while an eviction holds the claim creates nothing in the area', async () => {
   const path = areaPath('a', 'subject');
   const claim = tryAcquireClaim({ root: `${path}.claims`, mode: 'exclusive' }).acquired;
   assert(claim);
-  const refused = launch(start(), 'a', 'subject');
+  const refused = await launch(start(), 'a', 'subject');
   expect(refused).toHaveProperty('error.code', 'build-busy');
   expect(existsSync(path)).toBe(false);
   releaseClaim(claim);
@@ -526,8 +526,10 @@ test('a build that starts while a pass lists processes keeps its area', async ()
   await host.evictAreas();
   expect(existsSync(join(path, 'src', 'file'))).toBe(true);
   writeFileSync(gate, '');
-  assert(job && !('error' in job));
-  await job.done;
+  assert(job);
+  const launched = await job;
+  assert(!('error' in launched));
+  await launched.done;
 });
 
 test('a use recorded while a pass lists processes saves the area', async () => {
@@ -549,7 +551,7 @@ test('a build that starts while an evicted area is being deleted gets a clean ar
   await reached;
   expect(existsSync(path)).toBe(false);
 
-  const job = launch(host, 'a', 'subject');
+  const job = await launch(host, 'a', 'subject');
   assert(!('error' in job));
   expect(existsSync(join(path, 'home'))).toBe(true);
   expect(existsSync(join(path, 'src'))).toBe(false);
@@ -1127,7 +1129,7 @@ test('keeps an area through an unfetched build and a hosted handoff, removing it
   area('a', 'newest', 0);
   const path = area('a', 'subject', 0);
   const host = start();
-  const job = launch(host, 'a', 'subject');
+  const job = await launch(host, 'a', 'subject');
   assert(!('error' in job));
   await job.done;
   const age = () => writeFileSync(join(path, 'last-used'), String(Date.now() - 30 * DAY));
@@ -1262,7 +1264,7 @@ test('a job starting near the floor starts a pass and its build is admitted with
   const evicted = join(root, 'a', 'evicted');
   const { reached, release } = gateRemovalOf((target) => dirname(target) === evicted);
   const host = start();
-  const job = launch(host, 'a', 'current');
+  const job = await launch(host, 'a', 'current');
   assert(!('error' in job));
   await reached;
   expect(existsSync(areaPath('a', 'stale'))).toBe(false);
@@ -1342,7 +1344,7 @@ test('a bundle that cannot be deleted does not pin its area', async () => {
   area('a', 'newest', 0);
   const path = area('a', 'subject', 0);
   const host = start();
-  const job = launch(host, 'a', 'subject');
+  const job = await launch(host, 'a', 'subject');
   assert(!('error' in job));
   await job.done;
   writeFileSync(join(areaPath('a', 'newest'), 'last-used'), String(Date.now()));
