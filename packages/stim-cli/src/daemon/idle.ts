@@ -1,3 +1,4 @@
+import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -132,6 +133,8 @@ async function candidate(path: string, project: ProjectRecord, input: IdlePassIn
       : resolveProjectSettings(path);
     settings = { keep: maintenanceKeepSetting(resolved.settings), minutes: idleMinutesSetting(resolved.settings) };
   } catch (error) {
+    if (isClaimUnavailable(error)) throw error;
+    input.operation?.signal.throwIfAborted();
     settings = { error: error instanceof Error ? error.message : String(error) };
   }
   const threshold = idleKeep({
@@ -343,6 +346,8 @@ export async function runIdlePass(input: IdlePassInput): Promise<DaemonWorkspace
         entry = { path, lastActivity: last, ...result };
       }
     } catch (error) {
+      if (isClaimUnavailable(error)) throw error;
+      input.operation?.signal.throwIfAborted();
       entry = {
         path,
         lastActivity: null,

@@ -616,6 +616,24 @@ CI=true alone does not change defaults, ownership or coordination. Persist only
 cache artifacts, not state, claims or device ledgers. Independent homes must
 not share a writable filesystem cache because its claims live in the home.
 
+If the selected machine engine predates attached CI hosting, run refuses with
+STIM_ENGINE_HOST_UNAVAILABLE. Run stim engine update to select a capable engine.
+An attached host or CI job retains its engine build until it ends. Work on the
+current engine defers its promotion while the host or job is active.
+
+Concurrent CI jobs must use separate Stim homes when a job owns an attached daemon.
+
+When Stim cannot verify that a Metro, tunnel or maintenance child and its
+descendants stopped, or the server worker fails to confirm cleanup or is forced
+to exit, it retains ownership claims and refuses new work in that home. Verify
+the named process tree has stopped, then remove the exact claims
+listed in the refusal. On Windows, a naturally exited Metro or tunnel leader
+does not prove its descendants stopped, so this can require manual reconciliation.
+An attached daemon killed unexpectedly, including during startup or forced
+shutdown, also leaves claims for manual reconciliation.
+When startup times out or is cancelled, Stim allows up to 10 seconds for the
+daemon to clean up before forcing it to exit.
+
 The programmatic API is import { buildCI, runCI } from 'stim/ci'. See its package
 README for result types, cancellation, cache policy, and coordination findings.`,
     },
@@ -1524,7 +1542,9 @@ result as proof instead of requiring an unrelated screenshot.`,
   expiry in the workspace state and makes sure the stim-daemon runs. \`stop\`
   prints \`<name> stays booted for N minutes\`, and \`stop --json\` reports
   \`device.ios\` as { status: "kept-booted", label, until } with \`ok\` true.
-  If any gate fails, \`stop\` shuts the simulator down as before.
+  Grace also requires a reachable persistent stimd in acting mode; an attached
+  stimd cannot enforce it after its command exits. If any gate fails, \`stop\`
+  shuts the simulator down as before.
     - \`ios\` in the workspace before the expiry uses the booted simulator, with
       no boot, and forgets the record.
     - \`worktree remove\` parks it booted under the park gates, or shuts it

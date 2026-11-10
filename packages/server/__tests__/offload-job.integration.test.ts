@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -34,12 +34,13 @@ afterEach(async () => {
   removeTree(home);
 });
 
-async function paired(): Promise<{ endpoint: Endpoint; credential: MachineCredential }> {
+async function paired(attached = false): Promise<{ endpoint: Endpoint; credential: MachineCredential }> {
   server = await startServer({
     hosts: ['127.0.0.1'],
     port: 0,
     stimCli,
     name: 'Worker',
+    attached,
     stimVersion: version,
     serverVersion: version,
     env: { ...process.env, npm_config_offline: 'false' },
@@ -91,6 +92,22 @@ async function open(endpoint: Endpoint, credential: MachineCredential): Promise<
 
 const runningJobs = async (): Promise<number> =>
   ((await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as { busy: { builds: number } }).busy.builds;
+
+test('an attached server refuses each offload job before starting it or accepting a package', async () => {
+  const { endpoint, credential } = await paired(true);
+  const connection = await open(endpoint, credential);
+  const base = { stim: version, build: 'a'.repeat(12), repo: 'app' };
+  for (const kind of ['offload-build', 'offload-probe']) {
+    for (const payload of [{ pack: true }, { package: { name: 'stim.tgz', size: 1, sha256: 'a'.repeat(64) } }]) {
+      expect(await connection.request('job.start', { ...base, kind, ...payload })).toMatchObject({
+        error: { code: 'build-busy', message: expect.stringContaining('stim serve') },
+      });
+    }
+  }
+  expect(await runningJobs()).toBe(0);
+  expect(existsSync(join(home, 'engine'))).toBe(false);
+  connection.close();
+});
 
 test('job.start runs the running build as __job: frames pass both ways, EOF and SIGTERM end the job', async () => {
   const { endpoint, credential } = await paired();

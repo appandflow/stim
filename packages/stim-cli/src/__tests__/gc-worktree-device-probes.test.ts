@@ -7,6 +7,7 @@ import { collectWorktreeSweep } from '../commands/gc/worktrees.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { upsertProject } from '../workspace/config.ts';
+import { testContext } from './_context.ts';
 
 const SIM = 'OWNED-SIM';
 const AVD = 'stim-worktree-device';
@@ -89,6 +90,30 @@ function registerDevice(ios: boolean) {
     platforms: ios ? { ios: { owned: true, deviceUdid: SIM } } : { android: { owned: true, avdName: AVD } },
   });
 }
+
+test.each(['simulators', 'AVDs'])('worktree report preserves marked %s cleanup over cancellation', async (phase) => {
+  registerDevice(phase === 'simulators');
+  const error = Object.assign(new Error('unverified cleanup'), {
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    reportCleanup: true,
+  });
+  const controller = new AbortController();
+  const executor = getExecutor();
+  setExecutor({
+    ...executor,
+    async runFileAsync(file, args, options) {
+      if (sdkPhase(file, args) === phase) {
+        controller.abort();
+        throw error;
+      }
+      return executor.runFileAsync(file, args, options);
+    },
+  });
+  const operation = testContext({ signal: controller.signal });
+  await expect(
+    collectWorktreeSweep({ idle: true, olderThan: null, now: Date.now(), graceMs: 0, operation }),
+  ).rejects.toBe(error);
+});
 
 test('an iOS device assigned during Android inventory is refused when its state was not inspected', async () => {
   registerDevice(true);

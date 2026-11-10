@@ -74,7 +74,14 @@ test.each([false, true])(
         },
         () => {},
       );
-      await thread.close();
+      const outcome = await thread.close().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(outcome instanceof AggregateError).toBe(failed);
+      expect(outcome instanceof Error ? outcome.message : null).toBe(
+        failed ? 'Server resources did not close cleanly.' : null,
+      );
       expect(fixture.monitorStop).toHaveBeenCalledOnce();
       expect(fixture.close).toHaveBeenCalledOnce();
       expect(process.exitCode).toBe(failed ? 1 : undefined);

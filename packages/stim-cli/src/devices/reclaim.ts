@@ -13,7 +13,7 @@ import {
 import { existsSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTreeAsync, pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../stimd/metro/stop-cause.ts';
-import { ensureStimd } from '../daemon/client.ts';
+import { ensurePersistentStimd, stopMetroTree } from '../daemon/client.ts';
 import { readBootedParkDeadline } from './booted-park.ts';
 import {
   teardownOwnedBrowser,
@@ -284,7 +284,8 @@ async function reclaimOwnedDevices(
     if (ios?.owned && ios.deviceUdid) {
       const udid = ios.deviceUdid as string;
       const label = (ios.deviceName as string | undefined) || udid;
-      const bootedUntil = park ? await readBootedParkDeadline('ios', operation) : null;
+      const deadline = park ? await readBootedParkDeadline('ios', operation) : null;
+      const bootedUntil = deadline && (await ensurePersistentStimd(operation?.env)) ? deadline : null;
       const r = await teardownOwnedIosSim(udid, {
         operation,
         del: true,
@@ -296,7 +297,6 @@ async function reclaimOwnedDevices(
       if (r.parked) {
         parkedDevices.push(r.parked);
         evictedDevices.push(...(r.evicted ?? []));
-        if (bootedUntil) await ensureStimd();
       } else if (r.status === 'torn-down') deletedDevices.push(r.label as string);
       if (!r.parked && (r.status === 'torn-down' || r.status === 'missing')) {
         await withConfigLockAsync(() => clearDevice(projectPath, 'ios', slot, udid));
@@ -516,7 +516,13 @@ async function reclaimIdleProject(
     await withWorkspaceStateLockAsync(path, () => requestDevServerStop(path, processToken, stopRequester)).catch(
       () => {},
     );
-    const signalled = await killMetroTreeAsync(supervisor.pid, supervisor.processToken, operation);
+    const signalled = await stopMetroTree(
+      path,
+      supervisor.pid,
+      supervisor.processToken,
+      () => killMetroTreeAsync(supervisor.pid, supervisor.processToken, operation),
+      signal,
+    );
     if (!signalled)
       await withWorkspaceStateLockAsync(path, () => withdrawDevServerStopRequest(path, processToken)).catch(() => {});
     if (signalled && (await waitForProcessExit(supervisor, 10_000, signal))) {

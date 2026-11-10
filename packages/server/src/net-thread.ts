@@ -14,7 +14,8 @@ export type ToNet =
 /** What the net thread sends stimd's main thread. */
 export type FromNet =
   | { type: 'listening'; port: number }
-  | { type: 'refused'; message: string }
+  | { type: 'refused'; message: string; clean: boolean }
+  | { type: 'closed'; error?: string }
   | { type: 'data'; id: number; chunk: Uint8Array }
   | { type: 'end'; id: number }
   | { type: 'idle' }
@@ -59,7 +60,11 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
       (why) => post({ type: 'update', why }),
     );
   } catch (error) {
-    post({ type: 'refused', message: error instanceof NetRefusal ? error.message : String((error as Error).stack) });
+    post({
+      type: 'refused',
+      message: error instanceof NetRefusal ? error.message : String((error as Error).stack),
+      clean: error instanceof NetRefusal,
+    });
     port.close();
     return;
   }
@@ -74,7 +79,13 @@ async function run(port: MessagePort, options: NetOptions): Promise<void> {
     else if (message.type === 'end') connections.get(message.id)?.push(null);
     else if (message.type === 'presence') server.publishPresence(message.params);
     else if (message.type === 'keep') keep();
-    else void close().finally(() => port.close());
+    else
+      void close()
+        .then(
+          () => post({ type: 'closed' }),
+          (error: unknown) => post({ type: 'closed', error: error instanceof Error ? error.message : String(error) }),
+        )
+        .finally(() => port.close());
   };
   for (const message of pending.splice(0)) handle(message);
   post({ type: 'listening', port: server.addresses[0]?.port ?? options.port });

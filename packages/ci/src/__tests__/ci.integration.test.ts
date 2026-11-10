@@ -10,12 +10,26 @@ const lifecycle = vi.hoisted(() => ({
   run: vi.fn<(options: { signal?: AbortSignal }) => Promise<unknown>>(),
   diagnostics: vi.fn<() => Promise<unknown>>(),
   stop: vi.fn<(options: { signal: AbortSignal }) => Promise<unknown>>(),
+  host: vi.fn<(env: NodeJS.ProcessEnv, options: { handover?: boolean }) => Promise<unknown>>(),
+  release: vi.fn<() => void>(),
+  hold: vi.fn<
+    (_env: NodeJS.ProcessEnv, _root: string, _instance: string | null, signal?: AbortSignal) => Promise<() => void>
+  >(),
+  steps: new Array<string>(),
 }));
 vi.mock('stim', () => ({
   createStim: (options: StimOptions) => {
     lifecycle.create(options);
     return lifecycle;
   },
+}));
+vi.mock('stim/attached-stimd', () => ({
+  bindCIEngine: async () => ({
+    host: lifecycle.host,
+    release: lifecycle.release,
+    hold: lifecycle.hold,
+    runOp: (name: 'run' | 'stop' | 'diagnostics', args: unknown[]) => Reflect.apply(lifecycle[name], lifecycle, args),
+  }),
 }));
 
 let root: string;
@@ -26,6 +40,16 @@ let options: CIOptions;
 beforeEach(() => {
   deviceId = 'owned-device';
   lifecycle.create.mockClear();
+  lifecycle.release.mockReset();
+  lifecycle.steps = [];
+  lifecycle.hold.mockReset().mockImplementation(async () => {
+    lifecycle.steps.push('hold');
+    return () => void lifecycle.steps.push('hold released');
+  });
+  lifecycle.host.mockReset().mockImplementation(async () => {
+    lifecycle.steps.push('host');
+    return { end: async () => void lifecycle.steps.push('host ended') };
+  });
   vi.stubEnv('GITHUB_ACTIONS', 'false');
   vi.stubEnv('RUNNER_ENVIRONMENT', '');
   vi.stubEnv('STIM_HOME', undefined);
@@ -219,10 +243,41 @@ it('uses the same job-local home and cache for native work and commands across h
   expect(lifecycle.create.mock.calls.map(([value]) => ({ home: value.home, cache: value.buildCache }))).toEqual([
     expected,
     expected,
+    expected,
+    expected,
+  ]);
+  expect(lifecycle.host.mock.calls.map(([env]) => ({ home: env.STIM_HOME, cache: env.STIM_BUILD_CACHE }))).toEqual([
+    expected,
+    expected,
   ]);
   expect(options.home).toBeUndefined();
   expect(process.env.STIM_HOME).toBeUndefined();
   expect(process.env.STIM_BUILD_CACHE).toBeUndefined();
+});
+
+it('hosts stimd for the whole job, ending it after cleanup and diagnostics and never handing it over', async () => {
+  lifecycle.run.mockImplementationOnce(async () => {
+    lifecycle.steps.push('run');
+    writeFileSync(active, 'running');
+    writeFileSync(join(root, 'native.log'), 'running');
+    return { platform: 'ios', facts: { udid: deviceId, bundleId: 'test.app', metroPort: 8181 } };
+  });
+  lifecycle.stop.mockImplementationOnce(async () => {
+    lifecycle.steps.push('stop');
+    rmSync(active);
+    return { ok: true, outcomes: {}, summary: 'Stopped' };
+  });
+  lifecycle.diagnostics.mockImplementationOnce(async () => {
+    lifecycle.steps.push('diagnostics');
+    return { directory: root, records: [] };
+  });
+  options.command = [process.execPath, '-e', 'process.exitCode = 3'];
+  const result = await runCI(options);
+  expect(result.exitCode).toBe(3);
+  expect(lifecycle.steps).toEqual(['host', 'hold', 'run', 'stop', 'diagnostics', 'hold released', 'host ended']);
+  expect(lifecycle.host.mock.calls[0]?.[1]).toMatchObject({ handover: false });
+  expect(lifecycle.create.mock.calls.at(-1)?.[0].env?.STIM_POOL_BOOTED_GRACE_MINUTES).toBe('0');
+  expect(lifecycle.host.mock.calls[0]?.[0].STIM_POOL_BOOTED_GRACE_MINUTES).toBe('0');
 });
 
 it('names the stim ci build command when no build is recorded', async () => {
@@ -295,4 +350,125 @@ it('asks Stim to install the recorded build from clean app state and never to bu
       cleanAppState: true,
     }),
   );
+});
+
+it('disables booted simulator grace only for work under its own attached host', async () => {
+  vi.stubEnv('STIM_POOL_BOOTED_GRACE_MINUTES', '15');
+  const output = join(root, 'grace.json');
+  options.command = [
+    process.execPath,
+    '-e',
+    `require('node:fs').writeFileSync(${JSON.stringify(output)}, JSON.stringify(process.env.STIM_POOL_BOOTED_GRACE_MINUTES));`,
+  ];
+  await runCI(options);
+  expect(JSON.parse(readFileSync(output, 'utf8'))).toBe('0');
+  expect(lifecycle.create.mock.calls.at(-1)?.[0].env?.STIM_POOL_BOOTED_GRACE_MINUTES).toBe('0');
+  lifecycle.host.mockResolvedValueOnce('held');
+  await runCI({ ...options, artifactsDir: join(root, 'second-results') });
+  expect(JSON.parse(readFileSync(output, 'utf8'))).toBe('15');
+  expect(lifecycle.create.mock.calls.at(-1)?.[0].env).toBeUndefined();
+});
+
+it.each([
+  ['blocked', 'STIM_SANDBOX_BLOCKED'],
+  ['held-attached', 'STIM_CI_ATTACHED_HOME'],
+  [null, 'STIM_CI_SETUP_FAILED'],
+])('refuses CI setup when its daemon host returns %s', async (hosted, code) => {
+  lifecycle.host.mockResolvedValueOnce(hosted);
+  const result = await runCI(options);
+  expect(result.exitCode).toBe(1);
+  expect(result.failure?.code).toBe(code);
+  expect(lifecycle.run).not.toHaveBeenCalled();
+  expect(lifecycle.stop).not.toHaveBeenCalled();
+});
+
+it.each([0, 3])('records cancellation during daemon shutdown after a test exits %i', async (testExit) => {
+  const controller = new AbortController();
+  let ending!: () => void;
+  let release!: () => void;
+  const started = new Promise<void>((done) => (ending = done));
+  const wait = new Promise<void>((done) => (release = done));
+  lifecycle.host.mockResolvedValueOnce({
+    end: async () => {
+      ending();
+      await wait;
+    },
+  });
+  options.command = [process.execPath, '-e', `process.exitCode = ${testExit}`];
+  const run = runCI({ ...options, signal: controller.signal });
+  await started;
+  controller.abort();
+  release();
+  const result = await run;
+  expect(result.exitCode).toBe(testExit || 130);
+  expect(result.failure?.code).toBe(testExit ? 'STIM_CI_TEST_FAILED' : 'STIM_CI_CANCELLED');
+  expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).exitCode).toBe(testExit || 130);
+});
+
+it('does not time out a passing run while its daemon host ends', async () => {
+  lifecycle.host.mockResolvedValueOnce({
+    end: async () => new Promise<void>((done) => setTimeout(done, 150)),
+  });
+  const result = await runCI({ ...options, command: undefined, timeoutMs: 100 });
+  expect(result.exitCode).toBe(0);
+  expect(result.failure).toBeUndefined();
+});
+
+it('reports a failed engine claim release after cleanup', async () => {
+  lifecycle.release.mockImplementationOnce(() => {
+    throw Object.assign(new Error('claim at /scratch/claim could not be released'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy: 'Restore claim store access',
+    });
+  });
+  const result = await runCI({ ...options, command: undefined });
+  expect(result.exitCode).toBe(1);
+  expect(result.failure).toMatchObject({
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    message: expect.stringContaining('/scratch/claim'),
+    remedy: 'Restore claim store access',
+  });
+});
+
+it.each([0, 3])('reports an abnormal daemon exit after a test exits %i', async (testExit) => {
+  lifecycle.host.mockResolvedValueOnce({
+    end: async () => {
+      throw new Error('Attached stimd exited with code 1.');
+    },
+  });
+  options.command = [process.execPath, '-e', `process.exitCode = ${testExit}`];
+  const result = await runCI(options);
+  expect(result.exitCode).toBe(testExit || 1);
+  expect(result.failure?.code).toBe(testExit ? 'STIM_CI_TEST_FAILED' : 'STIM_CI_CLEANUP_FAILED');
+  expect(result.cleanup.error?.message).toContain('Attached stimd exited');
+});
+
+it('cancels daemon admission before running and ends its owned host', async () => {
+  const controller = new AbortController();
+  lifecycle.hold.mockImplementation(async (_env, _root, _instance, signal) => {
+    controller.abort();
+    signal?.throwIfAborted();
+    return () => {};
+  });
+  const result = await runCI({ ...options, signal: controller.signal });
+  expect(result.exitCode).toBe(130);
+  expect(lifecycle.run).not.toHaveBeenCalled();
+  expect(lifecycle.steps).toContain('host ended');
+  expect(lifecycle.release).toHaveBeenCalled();
+});
+
+it('preserves a selector cleanup refusal when the job is cancelled', async () => {
+  const controller = new AbortController();
+  lifecycle.host.mockImplementation(async () => {
+    controller.abort();
+    throw Object.assign(new Error('Selector cleanup could not be verified.'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      remedy: 'Inspect the selector process.',
+    });
+  });
+  const result = await runCI({ ...options, signal: controller.signal });
+  expect(result.failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', remedy: 'Inspect the selector process.' });
+  expect(result.exitCode).not.toBe(0);
+  expect(lifecycle.run).not.toHaveBeenCalled();
+  expect(lifecycle.release).toHaveBeenCalled();
 });

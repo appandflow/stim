@@ -33,6 +33,7 @@ import { recordCapacityRefusal, recordCapacityWait } from './stats.ts';
 import {
   ClaimRefusedError,
   isClaimRefusal,
+  isClaimUnavailable,
   readClaimSet,
   releaseClaim,
   tryAcquireClaim,
@@ -304,6 +305,7 @@ function listed<T>(source: Listing<T>, empty: T, absent: (error: unknown) => boo
   try {
     return (typeof source === 'function' ? (source as () => T)() : source) ?? empty;
   } catch (error) {
+    if (isClaimUnavailable(error)) throw error;
     if (absent(error)) return empty;
     throw new DeviceCountUnavailable('', { cause: error });
   }
@@ -317,6 +319,7 @@ async function listedAwait<T>(
   try {
     return (await read()) ?? empty;
   } catch (error) {
+    if (isClaimUnavailable(error) && 'reportCleanup' in error) throw error;
     if (absent(error)) return empty;
     throw new DeviceCountUnavailable('', { cause: error });
   }

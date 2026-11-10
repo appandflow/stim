@@ -12,7 +12,11 @@ export async function runOperationFile(
   args: string[],
   options: ExecOptions,
 ): Promise<string> {
-  const signal = context ? (operationState(context).runSignal ?? context.signal) : options.signal;
+  const operationSignal = context ? (operationState(context).runSignal ?? context.signal) : undefined;
+  const signal =
+    operationSignal && options.signal && operationSignal !== options.signal
+      ? AbortSignal.any([operationSignal, options.signal])
+      : (operationSignal ?? options.signal);
   throwIfCancelled(signal, file);
   const environment = context ? childEnvironment(context.env) : { env: {}, omitEnv: [] };
   const output = await executor.runFileAsync(file, args, {

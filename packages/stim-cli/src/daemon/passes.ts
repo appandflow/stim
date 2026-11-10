@@ -1,3 +1,4 @@
+import { isClaimUnavailable } from '@stim-cli/core/ownership-claim';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
 import {
@@ -52,10 +53,12 @@ export async function runHomePasses({
   act,
   log,
   memoryWarningSince = null,
+  signal,
 }: {
   act: boolean;
   log: IdlePassInput['log'];
   memoryWarningSince?: string | null;
+  signal?: AbortSignal;
 }): Promise<HomePasses> {
   let mark = performance.now();
   const lap = () => {
@@ -66,8 +69,9 @@ export async function runHomePasses({
   };
   const config = loadConfig();
   const now = Date.now();
-  const operation = processContext(process.cwd(), new AbortController().signal);
-  const measured = await measureTick(config, now);
+  const operation = processContext(process.cwd(), signal ?? new AbortController().signal);
+  const measured = await measureTick(config, now, { signal: operation.signal, operation });
+  operation.signal.throwIfAborted();
   const measureMs = lap();
   const { thresholds, error } = diskThresholds(config);
   if (error) log('warn', 'pressure_settings_invalid', `${error}; that disk threshold is off until it is fixed`);
@@ -91,6 +95,7 @@ export async function runHomePasses({
     log,
     operation,
   });
+  operation.signal.throwIfAborted();
   const workspaces = await runIdlePass({
     config,
     now,
@@ -102,6 +107,7 @@ export async function runHomePasses({
     operation,
     ...(pressure.level === 'normal' ? {} : { pressure: { level: pressure.level, reasons: pressure.reasons } }),
   });
+  operation.signal.throwIfAborted();
   const actions: DaemonLadderAction[] = [
     ...parkedActions,
     ...(pressure.level === 'normal'
@@ -126,6 +132,7 @@ export async function runHomePasses({
   const idleMs = lap();
   const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
   actions.push(...(await runDormantPass({ config, act, log, ...reading })));
+  operation.signal.throwIfAborted();
   const dormantMs = lap();
   if (config && pressure.level !== 'normal') {
     const ladder = await runLadder(
@@ -136,7 +143,16 @@ export async function runHomePasses({
         ...reading,
         sims: measured.sims,
         remeasure: async () => {
-          const [disk, memory] = await Promise.all([measureDisk(config), measureMemory()]);
+          const results = await Promise.allSettled([
+            measureDisk(config, operation.signal),
+            measureMemory(operation.signal, operation),
+          ]);
+          const cleanup = results.find((result) => result.status === 'rejected' && isClaimUnavailable(result.reason));
+          if (cleanup?.status === 'rejected') throw cleanup.reason;
+          operation.signal.throwIfAborted();
+          if (results[0].status === 'rejected') throw results[0].reason;
+          if (results[1].status === 'rejected') throw results[1].reason;
+          const [disk, memory] = [results[0].value, results[1].value];
           return classify({ disk, memory });
         },
       },
@@ -145,6 +161,7 @@ export async function runHomePasses({
     actions.push(...ladder.actions);
     pressure = ladder.pressure;
   }
+  operation.signal.throwIfAborted();
   const ladderMs = lap();
   return {
     config,
@@ -185,6 +202,7 @@ export function createMaintenanceLane(
   precompute: { run(input: PrecomputeInput, act: boolean): Promise<void> } = createFingerprintPrecompute(log),
 ): MaintenanceLane {
   let current: Promise<void> | null = null;
+  let failure: unknown;
   let taken: DaemonLadderAction[] = [];
   return {
     start({ config, measured, operation, workspaces, pressure }, act) {
@@ -202,6 +220,8 @@ export function createMaintenanceLane(
       current = (async () => {
         const reading = { devices: measured.devices, simsFailed: measured.sims === null, operation };
         await precompute.run({ config, workspaces, pressure, operation }, act).catch((error: unknown) => {
+          if (isClaimUnavailable(error)) throw error;
+          operation.signal.throwIfAborted();
           log('warn', 'daemon_fingerprint_precompute', error instanceof Error ? error.message : String(error));
         });
         const fingerprintMs = lap();
@@ -222,6 +242,7 @@ export function createMaintenanceLane(
         });
       })()
         .catch((error: unknown) => {
+          if (error instanceof Error && 'reportCleanup' in error) failure = error;
           log('warn', 'daemon_maintenance_failed', error instanceof Error ? error.message : String(error));
         })
         .finally(() => {
@@ -237,6 +258,7 @@ export function createMaintenanceLane(
     },
     settled: async () => {
       await current;
+      if (failure) throw failure;
     },
   };
 }

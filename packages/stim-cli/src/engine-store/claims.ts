@@ -53,6 +53,7 @@ export function keptEntries(
     for (const claim of survey.live)
       for (const dir of Array.isArray(claim.details.engineDirs) ? claim.details.engineDirs : [])
         if (typeof dir === 'string') kept.add(dir);
+    for (const claim of survey.unresolved) for (const dir of claim.engineDirs ?? []) kept.add(dir);
   }
   return kept;
 }

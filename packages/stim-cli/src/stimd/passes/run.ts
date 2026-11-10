@@ -280,6 +280,10 @@ function tickDeviceActivity({ measured }: MaintenanceTick) {
   };
 }
 
+function throwUnverifiedCleanup(error: unknown): void {
+  if (error instanceof Error && 'reportCleanup' in error) throw error;
+}
+
 /**
  * One automatic maintenance pass in this process, when a check is due. Its idle check stops only workspaces with a
  * hosted device, after `maintenance.idleStopHours`; the activity pass decides idle for every other one. `report`
@@ -427,6 +431,7 @@ export async function runMaintenance(
             });
         }
       } catch (error) {
+        throwUnverifiedCleanup(error);
         const message = error instanceof Error ? error.message : String(error);
         failures.push(message);
         record('maintenance_failure', 'error', `${check} check failed: ${message}`, { target: check, error: message });
@@ -452,6 +457,7 @@ export async function runMaintenance(
         ...(tick ? { operation: tick.operation, deviceActivity: tickDeviceActivity(tick) } : {}),
       });
     } catch (error) {
+      throwUnverifiedCleanup(error);
       const message = error instanceof Error ? error.message : String(error);
       failures.push(message);
       record('maintenance_failure', 'error', `Could not plan maintenance: ${message}`, {
@@ -484,6 +490,7 @@ export async function runMaintenance(
         try {
           outcome = await executeAction(action, context);
         } catch (error) {
+          throwUnverifiedCleanup(error);
           outcome = { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
         }
         results.push({ action, outcome });
@@ -612,6 +619,7 @@ export async function runMaintenance(
     }
     writeState(state);
   } catch (error) {
+    throwUnverifiedCleanup(error);
     const message = error instanceof Error ? error.message : String(error);
     try {
       logger?.write('maintenance_failure', 'error', `Maintenance failed: ${message}`, {

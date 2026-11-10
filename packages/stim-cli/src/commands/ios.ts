@@ -4,7 +4,7 @@ import type { RuntimePreparationError, RuntimePreparationResult } from '../engin
 import { writeDevicePlacementAsync, hostedMetroSettings } from '../workspace/placement-state.ts';
 import type { DevicePlacement } from '@stim-cli/core/state';
 import { type StimContext, workspaceId } from '@stim-cli/core';
-import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
+import { exitCli, runProcessOperation } from '../cli-operation.ts';
 import { acquireIosArtifact, acquireIosArtifactOrRecorded, type PreparedIosArtifact } from './ios/artifact.ts';
 import { lookupRecordedBuild, type RecordedBuildRefusal } from '../engine/recorded-build.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
@@ -221,8 +221,8 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       const { value: completion, interrupted } = await runProcessOperation(root ?? process.cwd(), (context) =>
         runIosOperation(context, root, { ...opts, waitConflict: waitFlagConflict(process.argv) }, deps),
       );
-      if (!completion) process.exit(interrupted ?? 1);
-      else if (completion.uploadsAbandoned) exitAfterFlush(0);
+      if (!completion) exitCli(interrupted ?? 1);
+      else if (completion.uploadsAbandoned) exitCli(0);
     });
 }
 

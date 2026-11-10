@@ -25,14 +25,8 @@ function pointedDir(root: string): string | null {
   return dir;
 }
 
-/**
- * The engine's `runOp` when the machine engine runs another build than this copy, as the router decides for a CLI
- * command; null when no engine is installed, this copy runs from the store (a stimd's own clients and the engine's
- * own build follow switches by relaunching), this copy is a development tree, which runs in place, or the engine's
- * `dist/api.mjs` cannot load. Each call stats `current.json` once and reads it only
- * when it changed, so an op started after a switch runs the new build.
- */
-export function engineRunOp(env: NodeJS.ProcessEnv): Promise<RunOp | null> | null {
+/** The selected engine directory, or null for a development tree, store copy, or missing pointer. */
+export function selectedEngineDir(env: NodeJS.ProcessEnv): string | null {
   if (ownStoreEngine()) return null;
   const root = engineRoot(env);
   const dir = pointedDir(root);
@@ -43,9 +37,20 @@ export function engineRunOp(env: NodeJS.ProcessEnv): Promise<RunOp | null> | nul
   } catch {
     return null;
   }
+  return join(root, dir);
+}
+
+/** Loads the selected engine's API for an operation, or falls back to this build when unavailable. */
+export function engineRunOp(env: NodeJS.ProcessEnv): Promise<RunOp | null> | null {
+  const dir = selectedEngineDir(env);
+  return dir ? loadEngineRunOp(dir) : null;
+}
+
+/** Loads the selected engine's API, returning null when it is unavailable. */
+export function loadEngineRunOp(dir: string): Promise<RunOp | null> {
   let module = modules.get(dir);
   if (!module) {
-    module = import(pathToFileURL(join(root, dir, 'dist', 'api.mjs')).href).then(
+    module = import(pathToFileURL(join(dir, 'dist', 'api.mjs')).href).then(
       (api: { runOp?: unknown }) => {
         const { runOp } = api;
         if (typeof runOp !== 'function') return null;

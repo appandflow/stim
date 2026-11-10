@@ -244,7 +244,8 @@ async function gitFacts(root: string, operation?: StimContext): Promise<Archived
       operation?.signal.throwIfAborted();
       return result;
     } catch (error) {
-      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
       operation?.signal.throwIfAborted();
       return null;
     }
@@ -317,7 +318,8 @@ export async function archiveWorkspace(
   try {
     await enforceArchiveRetention(undefined, operation);
   } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     operation?.signal.throwIfAborted();
     archiveWarning(
       `could not enforce archive retention: ${String((error as Error)?.message ?? error).split('\n')[0]}`,
@@ -474,7 +476,8 @@ async function writeArchive(
     claim = undefined;
     staging = null;
   } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     if (staging) {
       try {
         await rm(staging, { recursive: true, force: true });
