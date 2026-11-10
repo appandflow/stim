@@ -1336,13 +1336,14 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   node_modules/.bin/expo does not exist. Install the project's dependencies.`,
     },
     STIM_METRO_TIMEOUT: {
-      summary: 'the supervisor is alive but Metro or the tunnel was not ready within the wait; --wait 180',
+      summary: 'Metro or the tunnel was not ready within the wait; --wait 180',
       body: () => `STIM_METRO_TIMEOUT
   "The dev server did not answer on port <n> within <s>s."
-  The dev server is alive, but Metro or its requested Expo tunnel is not ready.
+  The dev server started, but Metro or its requested Expo tunnel was not ready.
   A Debug \`ios\` or \`android\` run that starts the dev server reports the
-  same refusal after the default 60s; re-running it waits for the same
-  dev server again, and \`stim start --wait 180\` waits longer. \`start\` has already
+  same refusal after the default 60s. Stim stops a dev server that has not
+  answered when the command that started it ends, so a rerun starts it again;
+  \`stim start --wait 180\` waits longer. \`start\` has already
   printed the last lines of the global workspace logs/metro.stderr.log above this -- read
   them. A cold Metro on a large graph can genuinely need more than the default
   60s: re-run with \`--wait 180\`. Otherwise \`stim stop\`, then \`start\`.`,
