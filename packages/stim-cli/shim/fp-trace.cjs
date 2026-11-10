@@ -10,7 +10,11 @@ const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { fileURLToPath } = require('node:url');
 
-const TRACE_FD = 4;
+const control = JSON.parse(process.env.STIM_FP_CONTROL || '{}');
+const outputs = { trace: control.trace, result: control.result };
+if (control.original === undefined) delete process.env.STIM_FP_CONTROL;
+else process.env.STIM_FP_CONTROL = control.original;
+globalThis[Symbol.for('stim.fingerprint.outputs')] = outputs;
 const env = new Set();
 const enumerationSites = new Set();
 const enumerators = new Set();
@@ -38,7 +42,7 @@ function toPath(target) {
 // the parent could not tell its own listing from the one the evaluation saw. A single directory is listed by the parent.
 function record(kind, target) {
   const file = active && kind ? toPath(target) : null;
-  if (!file || reads.has(`${kind}\0${file}`)) return;
+  if (!file || file === outputs.trace || file === outputs.result || reads.has(`${kind}\0${file}`)) return;
   const entry = { path: file, kind };
   if (kind === 'tree')
     try {
@@ -294,12 +298,9 @@ process.on('exit', () => {
     modules: [...modules].map(([file, hash]) => ({ path: file, hash })),
     opaque: [...opaque, ...(hooks ? [] : ['module.registerHooks missing'])],
   });
-  const bytes = Buffer.from(trace);
-  for (let offset = 0; offset < bytes.length;) {
+  if (outputs.trace && Buffer.byteLength(trace) <= 64 * 1024 * 1024) {
     try {
-      offset += fs.writeSync(TRACE_FD, bytes, offset);
-    } catch (error) {
-      if (error.code !== 'EAGAIN') return;
-    }
+      fs.writeFileSync(outputs.trace, trace, { mode: 0o600 });
+    } catch {}
   }
 });

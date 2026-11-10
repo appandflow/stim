@@ -140,7 +140,10 @@ export type PhoneWebBrowserState = Omit<
   page?: (Omit<NonNullable<State.WebBrowserState['page']>, 'state'> & { state: string }) | null;
   activity?: PhoneDeviceActivity;
 };
-export type PhoneMacosAppState = Omit<State.MacosAppRecord, 'build' | 'hostLaunched' | 'host' | 'arguments'> & {
+export type PhoneMacosAppState = Omit<
+  State.MacosAppRecord,
+  'build' | 'hostLaunched' | 'host' | 'arguments' | 'runId'
+> & {
   arguments?: string[];
   state: string;
   build: Omit<State.MacosBuild, 'state'> & { state: string };

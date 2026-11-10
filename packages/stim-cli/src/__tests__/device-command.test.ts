@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import androidCommand from '../commands/android.ts';
-import { grantLine, registerDevice, releasedLine, runLock, runUnlock, type DeviceDeps } from '../commands/device.ts';
+import deviceCommand, { grantLine, releasedLine, runLock, runUnlock, type DeviceDeps } from '../commands/device.ts';
 import iosCommand from '../commands/ios.ts';
-import logsCommand from '../commands/logs.ts';
+import logsOp from '../commands/logs.ts';
+import { runCli } from '../cli/define-op.ts';
 import stopCommand from '../commands/stop.ts';
 import { fileLeaseIo, listLeaseFiles, takeLease, type DeviceLease, type LeaseIo } from '../engine/device-lease.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -551,11 +552,10 @@ describe('stim device unlock', () => {
 
 describe('the command surface', () => {
   test('lock, unlock, provision and the device tools are registered under device, with the flags the guide lists', () => {
-    const program = new Command();
-    registerDevice(program);
-    const device = program.commands.find((command) => command.name() === 'device');
-    assert(device);
-    expect(device.commands.map((command) => command.name()).toSorted()).toEqual([
+    const device = deviceCommand;
+    const longs = (op: (typeof device.commands)[number]): string[] =>
+      Object.values(op.options).map((option) => option.flags.split(' ')[0] ?? '');
+    expect(device.commands.map((command) => command.name).toSorted()).toEqual([
       'location',
       'lock',
       'network',
@@ -565,32 +565,37 @@ describe('the command surface', () => {
       'unlock',
     ]);
 
-    const lock = device.commands.find((command) => command.name() === 'lock');
+    const lock = device.commands.find((command) => command.name === 'lock');
     assert(lock);
-    expect(lock.options.map((option) => option.long).toSorted()).toEqual(['--for', '--json', '--slot', '--wait']);
-    expect(lock.usage()).toMatch(/<platform> \[id\]/);
+    expect(longs(lock).toSorted()).toEqual(['--for', '--json', '--slot', '--wait']);
+    expect(lock.arguments).toBe('<platform> [id]');
 
-    const unlock = device.commands.find((command) => command.name() === 'unlock');
+    const unlock = device.commands.find((command) => command.name === 'unlock');
     assert(unlock);
-    expect(unlock.options.map((option) => option.long)).toEqual(['--slot', '--json']);
-    expect(unlock.usage()).toMatch(/\[platform\]/);
+    expect(longs(unlock)).toEqual(['--slot', '--json']);
+    expect(unlock.arguments).toBe('[platform]');
 
-    const provision = device.commands.find((command) => command.name() === 'provision');
+    const provision = device.commands.find((command) => command.name === 'provision');
     assert(provision);
-    expect(provision.options.map((option) => option.long).toSorted()).toEqual([
-      '--configuration',
-      '--json',
-      '--scheme',
-      '--yes',
-    ]);
-    expect(provision.usage()).toMatch(/<platform> \[udid\]/);
+    expect(longs(provision).toSorted()).toEqual(['--configuration', '--json', '--scheme', '--yes']);
+    expect(provision.arguments).toBe('<platform> [udid]');
   });
 
-  test('an invalid --slot is a commander usage error on every command that takes one', async () => {
-    for (const args of [['logs'], ['stop'], ['ios'], ['android'], ['device', 'lock', 'ios'], ['device', 'unlock']]) {
+  test('an invalid --slot is a usage error on every command that takes one', async () => {
+    await expect(runCli(logsOp, ['--slot', 'bad/slot'], { version: '9.9.9' })).rejects.toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringMatching(/'--slot <name>' argument 'bad\/slot' is invalid\. A device slot must be/),
+    });
+    for (const args of [['lock', 'ios'], ['unlock']]) {
+      await expect(runCli(deviceCommand, [...args, '--slot', 'bad/slot'], { version: '9.9.9' })).rejects.toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringMatching(/'--slot <name>' argument 'bad\/slot' is invalid\. A device slot must be/),
+      });
+    }
+    for (const args of [['stop'], ['ios'], ['android']]) {
       const program = new Command();
       program.exitOverride().configureOutput({ writeErr: () => {} });
-      for (const register of [logsCommand, stopCommand, iosCommand, androidCommand, registerDevice]) register(program);
+      for (const register of [stopCommand, iosCommand, androidCommand]) register(program);
       await expect(program.parseAsync(['node', 'stim', ...args, '--slot', 'bad/slot'])).rejects.toMatchObject({
         code: 'commander.invalidArgument',
         message: expect.stringMatching(/'--slot <name>' argument 'bad\/slot' is invalid\. A device slot must be/),
@@ -599,10 +604,20 @@ describe('the command surface', () => {
   });
 
   test('web is reserved for the owned Chrome: only stop accepts it as a --slot', async () => {
-    for (const args of [['logs'], ['ios'], ['android'], ['device', 'lock', 'ios'], ['device', 'unlock']]) {
+    await expect(runCli(logsOp, ['--slot', 'web'], { version: '9.9.9' })).rejects.toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining("web names this workspace's owned Chrome (stim stop --slot web)"),
+    });
+    for (const args of [['lock', 'ios'], ['unlock']]) {
+      await expect(runCli(deviceCommand, [...args, '--slot', 'web'], { version: '9.9.9' })).rejects.toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringContaining("web names this workspace's owned Chrome (stim stop --slot web)"),
+      });
+    }
+    for (const args of [['ios'], ['android']]) {
       const program = new Command();
       program.exitOverride().configureOutput({ writeErr: () => {} });
-      for (const register of [logsCommand, stopCommand, iosCommand, androidCommand, registerDevice]) register(program);
+      for (const register of [stopCommand, iosCommand, androidCommand]) register(program);
       await expect(program.parseAsync(['node', 'stim', ...args, '--slot', 'web'])).rejects.toMatchObject({
         code: 'commander.invalidArgument',
         message: expect.stringContaining("web names this workspace's owned Chrome (stim stop --slot web)"),

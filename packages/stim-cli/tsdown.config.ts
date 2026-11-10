@@ -30,12 +30,11 @@ export default defineConfig({
     'stimd-thread': 'src/stimd/threads.ts',
     'stimd-status': 'src/stimd/status-thread.ts',
     'net-thread': '../server/src/net-thread.ts',
+    'kit-worker': 'src/kit-worker.ts',
     'supervisor-run': 'src/supervisor/run.ts',
-    'web-run': 'src/web/run.ts',
     'macos-run': 'src/macos/run.ts',
     'device-host-worker': 'src/device-host/run.ts',
     'status-worker': 'src/status-worker.ts',
-    'doctor-fingerprint': 'bin/doctor-fingerprint.ts',
     'fingerprint-precompute': 'bin/fingerprint-precompute.ts',
     'windows-report': 'bin/windows-report.ts',
     'engine-select': 'bin/engine-select.ts',
@@ -58,7 +57,7 @@ export default defineConfig({
     '@stim-cli/server/service-plist': resolve('../server/src/service-plist.ts'),
   },
   noExternal: [/^@stim-cli\//],
-  external: ['stim', /^stim\//],
+  deps: { neverBundle: ['stim', /^stim\//, '@expo/fingerprint', /^@expo\/fingerprint\//] },
   outputOptions: {
     advancedChunks: {
       includeDependenciesRecursively: false,

@@ -8,6 +8,7 @@ import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { parseLogcatLine } from './android.ts';
 import { parseDeviceConsoleLine } from './ios-device.ts';
 import { parseLogStreamLine } from './ios.ts';
+import { createOwnedStreams } from './owned.ts';
 
 if (!parentPort) throw new Error('the logs worker requires a parent port');
 const port = parentPort;
@@ -25,14 +26,22 @@ type Entry = {
   backfill: { since: number; live: Map<string, number>; warned: boolean; failed: boolean } | null;
 };
 const streams = new Map<string, Entry>();
+const owned = createOwnedStreams(
+  (level, event, msg) => port.postMessage({ event: 'owned-log', level, name: event, message: msg }),
+  (running) => port.postMessage({ event: 'owned-running', running }),
+);
 
 function nativeTimestamp(stream: Entry, line: string): unknown {
-  // https://github.com/appandflow/stim/issues/5387. Different native timestamp spellings may preserve duplicate evidence.
+  // https://github.com/appandflow/stim/issues/5387: different native timestamp spellings may preserve duplicate evidence.
   if (stream.platform === 'ios' && !stream.physical) return (JSON.parse(line) as { timestamp?: unknown }).timestamp;
   return /^\s*(\d+\.\d{3,6})\s/.exec(line)?.[1];
 }
 
 type Message =
+  | { op: 'owned-sync'; requestId: number; root?: string }
+  | { op: 'owned-drain'; requestId: number; root: string }
+  | { op: 'owned-observe-web'; requestId: number; root: string; pid: number; token: string }
+  | { op: 'owned-close'; requestId: number }
   | {
       op: 'open';
       requestId: number;
@@ -81,8 +90,44 @@ const add = (map: Map<string, number>, key: string): boolean => {
   return true;
 };
 
+type OwnedRequest = Extract<Message, { op: 'owned-sync' | 'owned-drain' | 'owned-observe-web' }>;
+
+function isOwnedRequest(message: Message): message is OwnedRequest {
+  return message.op === 'owned-sync' || message.op === 'owned-drain' || message.op === 'owned-observe-web';
+}
+
+function handleOwnedRequest(message: OwnedRequest): void {
+  const result =
+    message.op === 'owned-sync'
+      ? owned.sync(message.root)
+      : message.op === 'owned-drain'
+        ? owned.drain(message.root)
+        : owned.observeWeb(message.root, message.pid, message.token);
+  void result.then(
+    (error) => {
+      port.postMessage({ event: 'owned-running', running: owned.running() });
+      port.postMessage({ requestId: message.requestId, error });
+      return undefined;
+    },
+    (error: unknown) => port.postMessage({ requestId: message.requestId, error: String(error) }),
+  );
+}
+
+// oxlint-disable-next-line complexity -- The worker dispatches the existing message protocol in one handler.
 port.on('message', (message: Message) => {
   try {
+    if (isOwnedRequest(message)) {
+      handleOwnedRequest(message);
+      return;
+    }
+    if (message.op === 'owned-close') {
+      void owned.close().then(
+        (error) => port.postMessage({ requestId: message.requestId, error }),
+        (error: unknown) =>
+          port.postMessage({ requestId: message.requestId, error: String(error) || 'owned close failed' }),
+      );
+      return;
+    }
     if (message.op === 'open') {
       const writer = createNdjsonWriter(join(workspaceLogsDir(message.root), 'device.ndjson'), {
         maxBytes: LOG_ROTATE_BYTES,

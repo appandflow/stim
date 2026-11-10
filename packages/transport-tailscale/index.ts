@@ -1,6 +1,7 @@
 import type { ServeRoute } from '@stim-cli/core/protocol';
+import { peerEndpoint } from '@stim-cli/core/state';
 import { isIP } from 'node:net';
-import { TRANSPORT_API_VERSION, type Transport, type TransportInput } from '@stim-cli/transport';
+import type { Transport, TransportInput, TransportWatchEvent } from '@stim-cli/transport';
 import {
   findTailscale,
   readRawTailscaleStatus,
@@ -35,7 +36,6 @@ export {
 } from './src/tailscale.ts';
 export { watchTailscale, type TailscaleMonitor, type TailscaleSnapshot } from './src/tailscale-monitor.ts';
 
-export const apiVersion: typeof TRANSPORT_API_VERSION = TRANSPORT_API_VERSION;
 export const id = 'tailscale';
 
 /**
@@ -47,6 +47,7 @@ export interface TailscaleTransport extends Transport {
   snapshot(): TailscaleSnapshot;
   monitor: TailscaleMonitor | null;
   rawStatus(): Promise<unknown>;
+  resolve: NonNullable<Transport['resolve']>;
   serveRoute(target: number, timeoutMs?: number): Promise<ServeRoute>;
   setupRoute(target: number): Promise<ServeRoute>;
 }
@@ -55,34 +56,45 @@ export function isTailscaleTransport(transport: Transport): transport is Tailsca
   return transport.id === id && 'snapshot' in transport && typeof transport.snapshot === 'function';
 }
 
+function runningAddresses({ state }: TailscaleSnapshot): string[] {
+  return state.state === 'running' ? state.ips : [];
+}
+
 export function tailscaleTransport({
   env,
   snapshot,
   monitor = null,
+  status,
 }: {
   env: NodeJS.ProcessEnv;
   snapshot: TailscaleSnapshot;
   monitor?: TailscaleMonitor | null;
+  /** Reads the running `tailscale status --json`, or null; defaults to this transport's own `tailscale` call. */
+  status?: () => unknown;
 }): TailscaleTransport {
   const now = () => monitor?.current() ?? snapshot;
+  const rawStatus = async () => (status ? status() : readRawTailscaleStatus(now().binary, env));
   return {
     id,
-    traits: { privateNetwork: true, tls: 'end-to-end', peerIdentity: true },
     monitor,
     snapshot: now,
     ...(monitor && {
-      bindAddresses() {
-        const { state } = monitor.current();
-        return state.state === 'running' ? state.ips : [];
-      },
-      watch: (listener: () => void) => monitor.onChange(() => listener()),
+      bindAddresses: () => runningAddresses(monitor.current()),
+      watch: (listener: (event: TransportWatchEvent) => void) =>
+        monitor.onChange((current) => listener({ addresses: runningAddresses(current) })),
     }),
     async identify({ address }) {
       if (!isIP(address)) return null;
       const identity = await whois(now().binary, env, address);
       return identity && { id: identity.nodeId, name: identity.nodeName, user: identity.user };
     },
-    rawStatus: () => readRawTailscaleStatus(now().binary, env),
+    rawStatus,
+    async resolve({ name }) {
+      const [peer = '', port = ''] = name.split(':');
+      if (!peer || !/^\d{1,5}$/.test(port)) return { unresolved: `${name} is not a peer name and port` };
+      const found = peerEndpoint(peer, Number(port), await rawStatus());
+      return typeof found === 'string' ? { unresolved: found } : found;
+    },
     serveRoute(target, timeoutMs) {
       const { binary, state } = now();
       return serveRoute(binary, env, target, state.state === 'running' ? state.ips : [], timeoutMs);

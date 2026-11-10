@@ -21,7 +21,7 @@ async function packument(ctx: StimContext): Promise<Packument> {
       '--registry=https://registry.npmjs.org/',
       '--cache',
       join(engineRoot(ctx.env), '.npm-cache'),
-      '--prefer-offline',
+      '--prefer-online',
     ],
     { timeoutMs: 60_000, cwd: ctx.cwd, signal: ctx.signal },
   );

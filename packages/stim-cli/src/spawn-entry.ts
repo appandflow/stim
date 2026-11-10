@@ -7,11 +7,11 @@ import { STIM_VERSION } from './stim-version.ts';
 export type SpawnEntryName =
   | 'cli'
   | 'supervisor-run'
-  | 'web-run'
   | 'macos-run'
   | 'stimd-thread'
   | 'stimd-status'
   | 'net-thread'
+  | 'kit-worker'
   | 'engine-select'
   | 'engine-flip'
   | '__self-test';
@@ -19,11 +19,11 @@ export type SpawnEntryName =
 const DEV_ENTRIES: Record<SpawnEntryName, string> = {
   cli: '../bin/cli.ts',
   'supervisor-run': './supervisor/run.ts',
-  'web-run': './web/run.ts',
   'macos-run': './macos/run.ts',
   'stimd-thread': './stimd/threads.ts',
   'stimd-status': './stimd/status-thread.ts',
   'net-thread': '../../server/src/net-thread.ts',
+  'kit-worker': './kit-worker.ts',
   'engine-select': '../bin/engine-select.ts',
   'engine-flip': '../bin/engine-flip.ts',
   '__self-test': '../bin/self-test.ts',

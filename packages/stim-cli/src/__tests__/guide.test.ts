@@ -3,6 +3,7 @@ import { includesArchives } from '../commands/gc/caches.ts';
 import { registerIos } from '../commands/ios.ts';
 import { registerAndroid } from '../commands/android.ts';
 import { Command } from 'commander';
+import { runCli } from '../cli/define-op.ts';
 import {
   AGENT_TOOLS,
   APP_PROCESS_STATES,
@@ -28,7 +29,6 @@ import {
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_FINGERPRINT_IGNORES } from '../cache/build-cache.ts';
 import { WATCHMAN_NESTED_WORKTREES } from '../diagnostics/doctor-watchman.ts';
 import { SERVER_FINDING_CODES } from '../diagnostics/server-setup.ts';
 import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
@@ -790,14 +790,6 @@ test('the agent and cleanup guides shut down owned simulators without an occupan
   );
 });
 
-test('the guide names every path Stim ignores by default', () => {
-  const lifecycle = renderSection('lifecycle', 'builds') ?? '';
-  for (const path of DEFAULT_FINGERPRINT_IGNORES) {
-    const bare = path.replace(/^\*\*\//, '').replace(/\/\*\*(\/\*)?$/, '');
-    expect(lifecycle).toContain(bare);
-  }
-});
-
 test('the reload payload guide distinguishes dispatch from observed completion', () => {
   expect(renderSection('facts', 'payloads')).toMatch(/reload request was sent[\s\S]*does not observe completion/);
 });
@@ -861,16 +853,14 @@ test('ports guidance documents reverse and its cap', () => {
 });
 
 test('guide prints the status block before the index and the agent topic, and never before a section', async () => {
-  const { default: guideCommand } = await import('../commands/guide.ts');
+  const { guideOp } = await import('../commands/guide.ts');
   const status = async () => 'STATUS\n  Doctor is due for ios (never run).';
   const logs: string[] = [];
   const originalLog = console.log;
   console.log = (msg) => logs.push(String(msg));
   try {
     for (const args of [[], ['agent'], ['errors', 'STIM_NO_METRO']]) {
-      const program = new Command();
-      guideCommand(program, '9.9.9', status);
-      await program.parseAsync(['node', 'stim', 'guide', ...args]);
+      await runCli(guideOp(status), args, { version: '9.9.9' });
     }
   } finally {
     console.log = originalLog;

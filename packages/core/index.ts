@@ -34,8 +34,11 @@ export {
 
 const warnedRelative = new Set<string>();
 
-function absoluteEnvPath(name: 'STIM_HOME' | 'STIM_BUILD_CACHE' | 'STIM_METRO_CACHE'): string | null {
-  const value = ambientEnv()[name];
+function absoluteEnvPath(
+  name: 'STIM_HOME' | 'STIM_BUILD_CACHE' | 'STIM_METRO_CACHE',
+  env = ambientEnv(),
+): string | null {
+  const value = env[name];
   if (!value) return null;
   if (path.isAbsolute(value)) return value;
   if (!warnedRelative.has(name)) {
@@ -119,9 +122,9 @@ function logSize(file: string): number {
   }
 }
 
-export function cachePathSetting(key: 'buildCache' | 'metroCache'): string | null {
+export function cachePathSetting(key: 'buildCache' | 'metroCache', home?: string): string | null {
   try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(configDir(), 'config.json'), 'utf-8'));
+    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(home ?? configDir(), 'config.json'), 'utf-8'));
     const { value, error } = machineSettingValue(`caches.${key}`, { config: parsed, env: {} });
     return error ? null : ((value as string | undefined) ?? null);
   } catch {
@@ -137,8 +140,12 @@ export function cacheNameSegment(name: string | null | undefined): string {
   );
 }
 
-export function buildCacheRoot(): string {
-  return absoluteEnvPath('STIM_BUILD_CACHE') || cachePathSetting('buildCache') || path.join(configDir(), 'build-cache');
+export function buildCacheRoot(home?: string, env?: NodeJS.ProcessEnv): string {
+  return (
+    absoluteEnvPath('STIM_BUILD_CACHE', env) ||
+    cachePathSetting('buildCache', home) ||
+    path.join(home ?? configDir(), 'build-cache')
+  );
 }
 
 export function metroCacheRoot(name?: string | null): string {

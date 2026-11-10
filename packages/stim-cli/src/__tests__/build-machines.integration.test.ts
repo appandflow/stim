@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { keyFingerprint } from '@stim-cli/core/noise-session';
-import { buildMachinesFile, readBuildMachines } from '@stim-cli/core/state';
+import { buildMachinesFile, machineEndpoint, readBuildMachines } from '@stim-cli/core/state';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { inspectBuildMachines, resolveEndpoint, type Endpoint } from '../offload/build-machines.ts';
 import { keyConfirmer, realIo, type HelloReply, type MachineAuth, type TailnetMachineIo } from '../offload/tailnet.ts';
@@ -105,6 +105,16 @@ test('resolveEndpoint reads tailscale status without blocking the event loop, fa
     host: 'mini.tail1.ts.net:7443',
   });
   expect(asked).toEqual(['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale']);
+});
+
+test('resolveEndpoint gives each machine entry form the endpoint the core rules compute', async () => {
+  for (const machine of ['mini', 'MINI:8443', 'mini.tail1.ts.net', 'local:10.0.0.92', 'local:Nas.lan:9000']) {
+    expect(await resolveEndpoint({ machine }, () => status())).toEqual(machineEndpoint(machine, status()));
+  }
+  const named = status('macOS', 'local.tail1.ts.net.');
+  expect(await resolveEndpoint({ machine: 'local' }, () => named)).toEqual(machineEndpoint('local', named));
+  expect(await resolveEndpoint({ machine: 'ghost' }, () => status())).toBe('no peer on this tailnet is named ghost');
+  expect(await resolveEndpoint({ machine: 'mini' }, () => null)).toBe('Tailscale is not running');
 });
 
 describe('the tailnet a machine was approved on', () => {

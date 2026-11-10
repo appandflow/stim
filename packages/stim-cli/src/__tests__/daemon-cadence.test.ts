@@ -27,6 +27,18 @@ import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts'
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
 
 vi.mock('../stimd/threads.ts', () => import('./fixtures/inline-stimd-threads.ts'));
+vi.mock('../daemon/fingerprint-precompute.ts', () => ({
+  createFingerprintPrecompute: () => ({ run: async () => {} }),
+}));
+vi.mock('../stimd/logs/writer.ts', () => ({
+  createLogWriters: (_failure: unknown, _change: unknown, onOwned: (running: boolean) => void) => ({
+    ownedSync: async () => {
+      onOwned(false);
+    },
+    ownedClose: async () => {},
+    close: async () => {},
+  }),
+}));
 
 const MINUTE_MS = 60_000;
 let home: string;

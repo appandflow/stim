@@ -315,11 +315,11 @@
         "packages/stim-cli/src/cli-operation.ts",
         "packages/stim-cli/src/status-worker.ts",
         "packages/stim-cli/src/cli/status-entry.ts",
+        "packages/stim-cli/src/cli/define-op.ts",
         "packages/stim-cli/src/detached-entry.ts",
         "packages/stim-cli/src/supervisor/**",
         "packages/stim-cli/src/stimd/metro/**",
         "packages/stim-cli/src/stimd/logs/**",
-        "packages/stim-cli/src/web/run.ts",
         "packages/stim-cli/src/macos/run.ts",
         "packages/stim-cli/src/stimd/**",
         "packages/stim-cli/src/daemon/**",
@@ -562,6 +562,49 @@
                 "importNames": ["setTimeout", "setInterval"],
                 "message": "Use the fake-clock global timers in units."
               }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/stim-cli/src/cli/**/*.ts",
+        "packages/stim-cli/src/commands/status.ts",
+        "packages/stim-cli/src/commands/stats.ts",
+        "packages/stim-cli/src/commands/settings.ts",
+        "packages/stim-cli/src/commands/guide.ts",
+        "packages/stim-cli/src/commands/ports.ts",
+        "packages/stim-cli/src/commands/remote.ts",
+        "packages/stim-cli/src/commands/logs.ts",
+        "packages/stim-cli/src/commands/doctor.ts",
+        "packages/stim-cli/src/commands/gc.ts",
+        "packages/stim-cli/src/commands/device.ts",
+        "packages/stim-cli/src/commands/device-tools.ts",
+        "packages/stim-cli/src/commands/share.ts"
+      ],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "node:child_process",
+                "allowTypeImports": true,
+                "message": "Start child processes through getExecutor() in exec.ts."
+              },
+              {
+                "name": "child_process",
+                "allowTypeImports": true,
+                "message": "Start child processes through getExecutor() in exec.ts."
+              },
+              { "name": "cross-spawn", "message": "Start child processes through getExecutor() in exec.ts." },
+              {
+                "name": "@stim-cli/core",
+                "importNames": ["ambientContext", "ambientEnv", "withAmbientContext", "ambientWrite"],
+                "message": "Take a StimContext parameter; the ambient context is a temporary bridge for code not migrated yet."
+              },
+              { "name": "commander", "message": "Declare commands with defineOp from src/cli/define-op.ts." }
             ]
           }
         ]

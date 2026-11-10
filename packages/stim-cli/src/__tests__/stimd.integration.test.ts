@@ -1,9 +1,9 @@
 import assert from 'node:assert';
 import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { connect, type Socket } from 'node:net';
+import { connect, createServer, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn as spawnChild, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import {
@@ -30,9 +30,11 @@ import { allDrained, buildClaimRoot, keptEntries, readBuildClaims } from '../eng
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { takeWaitTicket } from '../engine/wait-queue.ts';
 import {
+  backgroundPassesAvailable,
   beforeCommand,
   ensurePersistentStimd,
   ensureStimd,
+  observeOwnedWeb,
   requestDaemonTick,
   stimdBuildId,
 } from '../daemon/client.ts';
@@ -47,6 +49,7 @@ import { createMaintenanceLane, runHomePasses } from '../daemon/passes.ts';
 import * as daemonPasses from '../daemon/passes.ts';
 import { macosDir } from '../macos/state.ts';
 import { runStimd } from '../stimd/main.ts';
+import * as netThread from '../stimd/net.ts';
 import * as maintenanceMeasure from '../stimd/passes/measure.ts';
 import * as maintenanceRun from '../stimd/passes/run.ts';
 import * as spawnEntry from '../spawn-entry.ts';
@@ -79,6 +82,51 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
   vi.unstubAllEnvs();
+});
+
+describe.skipIf(process.platform === 'win32')('background passes availability', () => {
+  test.each([
+    ['older daemon', {}, false],
+    ['report mode', { mode: 'report' }, false],
+    ['attached daemon', { mode: 'on', attached: true }, false],
+    ['persistent acting daemon', { mode: 'on' }, true],
+  ] as const)(
+    'background passes availability rejects %s unless it can act persistently',
+    async (_label, hello, expected) => {
+      const claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'fixture stimd' }).acquired;
+      assert(claim);
+      const socketPath = stimdSocket();
+      mkdirSync(dirname(socketPath), { recursive: true });
+      const server = createServer((socket) => {
+        let buffer = '';
+        let framed = false;
+        socket.on('data', (chunk) => {
+          buffer += String(chunk);
+          for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+            const line = buffer.slice(0, end);
+            buffer = buffer.slice(end + 1);
+            const message: Record<string, unknown> = JSON.parse(line);
+            if (!framed) {
+              framed = true;
+              if (message.build !== stimdBuildId()) {
+                socket.end(`${JSON.stringify({ op: 'engine-changed' })}\n`);
+                return;
+              }
+              socket.write(`${JSON.stringify({ op: 'hello', kind: 'stimd' })}\n`);
+            } else socket.end(`${JSON.stringify({ op: 'hello', ...hello })}\n`);
+          }
+        });
+      });
+      try {
+        await new Promise<void>((resolve, reject) => server.once('error', reject).listen(socketPath, resolve));
+        expect(await backgroundPassesAvailable()).toBe(expected);
+      } finally {
+        if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+        rmSync(socketPath, { force: true });
+        releaseClaim(claim);
+      }
+    },
+  );
 });
 
 /**
@@ -167,6 +215,71 @@ function lines(socket: Socket): string[] {
 }
 
 const frame = () => `${JSON.stringify({ kind: 'cli', build: stimdBuildId() })}\n`;
+
+test.skipIf(process.platform === 'win32')(
+  'targeted observers reject a generic old-daemon acknowledgement',
+  async () => {
+    const claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'fixture' }).acquired;
+    assert(claim);
+    mkdirSync(dirname(stimdSocket()), { recursive: true });
+    const requests: string[] = [];
+    const server = createServer((socket) => {
+      let data = '';
+      socket.on('data', (chunk) => {
+        data += chunk.toString();
+        const frames = data.split('\n');
+        if (frames.length < 3) return;
+        const requestFrame = frames[1];
+        if (requestFrame === undefined) return;
+        const request = JSON.parse(requestFrame);
+        requests.push(request.op);
+        socket.end(`${JSON.stringify({ op: 'hello' })}\n${JSON.stringify({ op: 'logs.observed', error: null })}\n`);
+      });
+    });
+    await new Promise<void>((done) => server.listen(stimdSocket(), done));
+    try {
+      expect(await observeOwnedWeb('/fixture', 123, 'token')).toContain('did not answer');
+      expect(requests).toEqual(['logs.observe-web']);
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()));
+      releaseClaim(claim);
+    }
+  },
+);
+
+test('shutdown retains the daemon claim until the net thread and observers close', async () => {
+  let finish: () => void = () => {};
+  const closing = new Promise<void>((done) => {
+    finish = done;
+  });
+  const close = vi.fn<() => Promise<void>>(() => closing);
+  const net = vi.spyOn(netThread, 'createNetThread').mockReturnValue({
+    ensure: async () => ({ listening: false, message: 'unused' }),
+    running: () => null,
+    connect: () => false,
+    presence: () => false,
+    close,
+  });
+  const before = new Set(process.listeners('SIGTERM'));
+  const run = runStimd({ tickMs: 60_000, mode: 'on' });
+  try {
+    await listening();
+    const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
+    assert(handler);
+    handler('SIGTERM');
+    expect(close).toHaveBeenCalledOnce();
+    const attempt = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'successor' });
+    expect(attempt.acquired).toBeUndefined();
+    if (attempt.pending) releaseClaim(attempt.pending);
+    finish();
+    await run;
+    expect(readClaimSet(stimdClaimRoot()).live).toEqual([]);
+  } finally {
+    finish();
+    await run;
+    net.mockRestore();
+  }
+});
 
 async function stopStimd(): Promise<void> {
   saveConfig({ version: 2, projects: {}, repos: {}, daemon: { mode: 'off' } });
@@ -458,6 +571,7 @@ describe.skipIf(process.platform === 'win32')('stimd', () => {
       process.exitCode = undefined;
       running = runStimd({ mode: 'on', tickMs: 60_000, attached: { handover: true } });
       await vi.waitFor(() => expect(existsSync(stimdRecordFile())).toBe(true), { timeout: 10_000, interval: 20 });
+      await requestDaemonTick({ ...process.env, STIM_DAEMON: 'on' });
       const handler = process.listeners('SIGTERM').find((listener) => !before.has(listener));
       assert(handler);
       handler('SIGTERM');

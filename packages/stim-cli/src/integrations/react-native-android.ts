@@ -1,16 +1,11 @@
 import chalk from 'chalk';
-import type { FingerprintSource } from '@expo/fingerprint';
+import { processContext } from '../cli-operation.ts';
 import {
   buildCacheKey,
   changedDuringBuildLine,
-  configInputsChanged,
-  expoProductionEnvFiles,
   filesystemBuildCapability,
   fingerprintDiffRecord,
-  fingerprintProject,
-  gitignoredFingerprintInputs,
-  inputsChangedDuringBuild,
-  refingerprintAfterMutation,
+  storedInputs,
   resolveBuild,
   storeBuild,
   type BuildStore,
@@ -18,8 +13,18 @@ import {
   untrackedMissLine,
   untrackedNativeFiles,
 } from '../cache/build-cache.ts';
-import { memoizedFingerprint, type FingerprintCheck } from '../cache/fingerprint-memo.ts';
-import { explainBuildMiss, fingerprintErrorMissReason } from '../cache/miss-reason.ts';
+import { configInputsChanged, inputsChangedDuringBuild } from '../fingerprint/changes.ts';
+import { fingerprint, type Fingerprint } from '../fingerprint/evaluate.ts';
+import {
+  fingerprintForBuild,
+  fingerprintInstallProblem,
+  fingerprintOffloadInputs,
+  type FingerprintCheck,
+} from '../fingerprint/operation.ts';
+import { explainBuildMiss } from '../fingerprint/miss.ts';
+import { isUncertain } from '../fingerprint/key.ts';
+import type { StaticTarget } from '../fingerprint/inputs.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
 import { formatDuration, shortHash } from '../command-output.ts';
 import { androidMetroRuntime, androidProcessRuntime } from '../commands/android/launch.ts';
 import { existsSync } from 'node:fs';
@@ -32,17 +37,23 @@ import {
   apkPackage,
   displayPath,
   dumpApkManifest,
-  NO_FINGERPRINT,
 } from '../commands/android/support.ts';
 import { resolveKeystore, swapApkBundle, zipalignAndSignApk } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import { resolveCcache } from '../engine/ccache.ts';
-import { planPrebuild, runPrebuild, staleNativeDirRefusal, recordPrebuildAsync } from '../engine/prebuild.ts';
+import {
+  planPrebuild,
+  runPrebuild,
+  prebuildPlanRefusal,
+  planUnfingerprintedPrebuild,
+  recordPrebuildAsync,
+} from '../engine/prebuild.ts';
 import { loadProjectProvider } from '../engine/remote-cache.ts';
 import { androidRequirements, androidToolchainAsync } from '../engine/toolchain.ts';
 import { detectAndroidPackage, detectAppIds } from '../workspace/app-id.ts';
 import { detectIsExpo } from '../workspace/project-files.ts';
 import {
+  fingerprintInputsSetting,
   resolveAndroidLayout,
   settingOriginScope,
   settingsLayers,
@@ -63,8 +74,8 @@ import { planReactNativeAndroid, type AndroidPlanDeps } from './react-native-and
 
 export interface ReactNativeAndroidDependencies {
   plan?: Partial<AndroidPlanDeps>;
-  fingerprint?: typeof fingerprintProject;
-  memoize?: typeof memoizedFingerprint;
+  fingerprint?: typeof fingerprint;
+  fingerprintForBuild?: typeof fingerprintForBuild;
   untracked?: typeof untrackedNativeFiles;
   resolveCached?: typeof resolveBuild;
   storeCached?: BuildStore;
@@ -130,7 +141,15 @@ export function reactNativeAndroidProject(
             return { ok: true, prepared: { metroPort: null } };
           }, 'embedded-js')
         : androidMetroRuntime(prepareMetro),
-    artifact: (artifactContext) => reactNativeAndroidArtifact(artifactContext, isExpo, layout, context, dependencies),
+    artifact: (artifactContext) =>
+      reactNativeAndroidArtifact(
+        artifactContext,
+        isExpo,
+        layout,
+        context,
+        fingerprintInputsSetting(settings),
+        dependencies,
+      ),
   };
 }
 
@@ -151,9 +170,10 @@ function reactNativeAndroidArtifact(
   isExpo: boolean,
   layout: AndroidLayout,
   context: ResolvedProjectSettings['context'],
+  fingerprintInputs: string[] | undefined,
   {
-    fingerprint = fingerprintProject,
-    memoize = memoizedFingerprint,
+    fingerprint: computeFingerprint = fingerprint,
+    fingerprintForBuild: computeForBuild = fingerprintForBuild,
     untracked = untrackedNativeFiles,
     resolveCached = resolveBuild,
     storeCached = storeBuild,
@@ -178,12 +198,38 @@ function reactNativeAndroidArtifact(
     ...(androidGradleProject(layout) ? { gradleProject: androidGradleProject(layout)! } : {}),
   };
   let hash = '';
-  let sources: FingerprintSource[] = [];
-  let initialSources: FingerprintSource[] = [];
+  const fpTarget: StaticTarget = {
+    platform: 'android',
+    androidLayout: layout,
+    ...(fingerprintInputs === undefined ? {} : { fingerprintInputs }),
+  };
+  const embedMode = release ? 'production' : 'development';
+  let lookupFingerprint: Fingerprint | null = null;
+  let storeFingerprint: Fingerprint | null = null;
   let prebuildRan = false;
   let editedConfig: string[] = [];
   let fingerprintCheck: FingerprintCheck | null = null;
   const identity = () => ({ hash, key: buildCacheKey('android', hash, runOptions) });
+
+  const computeFresh = async (): Promise<Fingerprint | null> => {
+    const runSignal = operation ? runCancellationSignal(operation) : undefined;
+    const signal = operation && runSignal ? AbortSignal.any([operation.signal, runSignal]) : operation?.signal;
+    try {
+      const result = await computeFingerprint(root, fpTarget, {
+        env: operation?.env ?? processContext(root).env,
+        embedMode,
+        signal,
+        operation,
+        index: 'skip',
+      });
+      signal?.throwIfAborted();
+      return isUncertain(result) ? null : result;
+    } catch (error) {
+      if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
+      signal?.throwIfAborted();
+      return null;
+    }
+  };
 
   const releaseKeystore = () => {
     const committed = settingOriginScope(settingsLayers(context), 'android.keystore') === 'committed';
@@ -254,60 +300,52 @@ function reactNativeAndroidArtifact(
     embedsJs: release,
     fingerprintCheck: () => fingerprintCheck,
     async identity() {
-      let computed;
       try {
-        const memo = await memoize(
-          root,
-          { platform: 'android', androidLayout: layout },
-          { consult: buildPlan.cache.read, record: true, operation, fingerprint },
-        );
-        computed = memo.fingerprint;
-        fingerprintCheck = memo.check;
-        if (memo.memoHit)
-          phase(
-            'fingerprint',
-            chalk.dim('matches a recorded fingerprint of this tree; confirming it in the background'),
-          );
+        const computed = await computeForBuild(root, fpTarget, {
+          operation,
+          embedMode,
+          consult: buildPlan.cache.read,
+          onDisagreement: (line) => phase('fingerprint', chalk.yellow(line)),
+        });
+        if ('uncertain' in computed) return { cacheIneligible: computed.uncertain };
+        lookupFingerprint = storeFingerprint = computed.fingerprint;
+        fingerprintCheck = computed.check;
+        hash = computed.fingerprint.hash;
+        if (computed.fingerprint.from === 'index')
+          phase('fingerprint', chalk.dim('matches a recorded fingerprint; confirming it in the background'));
+        return identity();
       } catch (error) {
-        const message = String((error as Error)?.message || error);
-        throw new AndroidRecipeRefusal(
-          {
-            code: NO_FINGERPRINT,
-            message: `@expo/fingerprint could not fingerprint ${root}: ${message}`,
-            remedy: 'Fix the @expo/fingerprint error above, then retry.',
-            extra: { lastBuildStatus: true },
-          },
-          fingerprintErrorMissReason(message),
-        );
+        if (typeof error === 'object' && error !== null && 'reportCleanup' in error) throw error;
+        operation?.signal.throwIfAborted();
+        if (operation) runCancellationSignal(operation)?.throwIfAborted();
+        return { cacheIneligible: `Could not fingerprint the native inputs: ${String(error)}` };
       }
-      if (!computed?.hash)
-        throw new AndroidRecipeRefusal(
-          {
-            code: NO_FINGERPRINT,
-            message: `@expo/fingerprint returned no hash for ${root}, so the build cache cannot be addressed.`,
-            remedy: 'Check the project native inputs and the @expo/fingerprint error above, then retry.',
-            extra: { lastBuildStatus: true },
-          },
-          fingerprintErrorMissReason('no hash'),
-        );
-      hash = computed.hash;
-      sources = initialSources = computed.sources ?? [];
-      return identity();
     },
     cache: (compiled = false) =>
       filesystemBuildCapability({
         context: operation,
         resolve: resolveCached,
         store: storeCached,
-        sources,
+        inputs: storeFingerprint
+          ? { schema: storeFingerprint.schema, hash: storeFingerprint.hash, inputs: storeFingerprint.inputs }
+          : null,
         readAppId: async (path) => apkPackage(await dumpApkManifest(path, { context: operation })),
         ...(compiled ? { assetManifest: release ? captureAssets(root, { variant, layout }) : null } : {}),
       }),
     async prepare(beforePrepare) {
-      const plan = planPrebuildFor(root, 'android', { isExpo, fingerprint: hash, sources });
+      const plan = storeFingerprint
+        ? planPrebuildFor(root, 'android', { isExpo, fingerprint: hash, native: storeFingerprint.native })
+        : await planUnfingerprintedPrebuild(root, 'android', isExpo, operation?.signal);
       prebuildRan = plan === 'generate' || plan === 'regenerate';
       if (plan === 'refuse') {
-        const refusal = staleNativeDirRefusal('android');
+        if (!storeFingerprint)
+          throw new AndroidRecipeRefusal({
+            code: 'STIM_NO_FINGERPRINT',
+            message: 'Cannot verify the existing Android native directory without a fingerprint.',
+            remedy: 'Resolve the fingerprint error and retry before changing generated native files.',
+            extra: { lastBuildStatus: true },
+          });
+        const refusal = prebuildPlanRefusal(root, 'android');
         throw new AndroidRecipeRefusal({ ...refusal, extra: { lastBuildStatus: true } });
       }
       if (!prebuildRan) return;
@@ -332,64 +370,56 @@ function reactNativeAndroidArtifact(
     },
     async reconcile() {
       const rekeyedBy: string[] = [];
-      if (prebuildRan) {
-        const after = await refingerprintAfterMutation({
-          projectRoot: root,
-          platform: 'android',
-          androidLayout: layout,
-          previousHash: hash,
-          fingerprint,
-        });
-        editedConfig = after ? configInputsChanged(initialSources, after.sources, { prebuildRan }) : [];
+      if (prebuildRan && lookupFingerprint && storeFingerprint) {
+        const after = await computeFresh();
+        editedConfig = after ? configInputsChanged(lookupFingerprint, after, { prebuildRan }) : [];
         if (after && !editedConfig.length) await recordPrebuildAsync(root, 'android', after.hash);
-        if (after?.moved && !editedConfig.length) {
+        if (!after || editedConfig.length || after.native !== storeFingerprint.native) {
+          hash = '';
+        } else if (after.hash !== hash) {
           rekeyedBy.push('prebuild');
           phase('fingerprint', chalk.dim(`${shortHash(hash)} -> ${shortHash(after.hash)} (after prebuild)`));
           hash = after.hash;
-          sources = after.sources;
+          storeFingerprint = after;
         }
       }
       return {
-        identity: identity(),
+        identity: hash ? identity() : null,
         rekeyedBy,
         cacheRefusal: editedConfig.length ? 'prebuild changed config inputs, so the APK cannot be cached' : null,
         ...(prebuildRan ? { androidPackage: await detectAndroidPackage(root, layout.moduleDir) } : {}),
       };
     },
     async validate() {
-      const after = editedConfig.length
-        ? null
-        : await refingerprintAfterMutation({
-            projectRoot: root,
-            platform: 'android',
-            androidLayout: layout,
-            previousHash: hash,
-            fingerprint,
-          });
+      if (editedConfig.length) {
+        phase('fingerprint', chalk.yellow(changedDuringBuildLine(editedConfig)));
+        return null;
+      }
+      if (!hash || !lookupFingerprint || !storeFingerprint) return null;
+      const installProblem = fingerprintInstallProblem(root);
+      if (installProblem) {
+        phase('fingerprint', chalk.yellow(`${installProblem}; the build will be installed but not cached`));
+        return null;
+      }
+      const after = await computeFresh();
       const changed = after
-        ? inputsChangedDuringBuild({
-            platform: 'android',
-            lookup: initialSources,
-            prebuildRan,
-            compiled: sources,
-            current: after.sources,
-          })
-        : editedConfig;
-      if (!after || changed.length) {
+        ? inputsChangedDuringBuild(lookupFingerprint, storeFingerprint, after, { prebuildRan })
+        : [];
+      if (!after || changed.length || after.native !== storeFingerprint.native) {
         phase(
           'fingerprint',
           chalk.yellow(
             changed.length
               ? changedDuringBuildLine(changed)
-              : 'unavailable after Gradle; the build will be installed but not cached',
+              : 'native inputs unavailable or changed after Gradle; the build will be installed but not cached',
           ),
         );
         return null;
       }
-      if (after.moved) {
+      if (after.hash !== hash) {
         phase('fingerprint', chalk.dim(`${shortHash(hash)} -> ${shortHash(after.hash)} (after Gradle)`));
         hash = after.hash;
-        sources = after.sources;
+        storeFingerprint = after;
       }
       return identity();
     },
@@ -413,9 +443,9 @@ function reactNativeAndroidArtifact(
       const explained = explainBuildMiss({
         root,
         platform: 'android',
-        current: { hash, sources },
+        current: { inputs: storeFingerprint?.inputs ?? [] },
         rekeyedBy,
-        baselineDeps: { readState },
+        deps: { storedInputs, readState },
       });
       return {
         reason: explained.reason,
@@ -431,7 +461,7 @@ function reactNativeAndroidArtifact(
       target.abi || cas || profile || !buildPlan.cache.remote
         ? null
         : {
-            load: () => loadProvider(root, { context: operation, isExpo, sources: initialSources }),
+            load: () => loadProvider(root, { context: operation, isExpo, config: lookupFingerprint?.config }),
             runOptions: Object.keys(runOptions).length ? runOptions : null,
           },
     offload: {
@@ -454,22 +484,13 @@ function reactNativeAndroidArtifact(
           ...androidJobLayout(layout),
         },
       },
-      fingerprintInputs: async () => ({
-        sources,
-        ignored: [
-          ...(await gitignoredFingerprintInputs(
-            root,
-            sources,
-            { platform: 'android', androidLayout: layout, keepSigningFiles: true },
-            { env: operation?.env },
-          )),
-          ...(release && isExpo
-            ? expoProductionEnvFiles(operation?.env)
-                .map((name) => join(root, name))
-                .filter((path) => existsSync(path))
-            : []),
-        ],
-      }),
+      fingerprintInputs: async () => {
+        if (!storeFingerprint) return { uncertain: 'the native fingerprint is unavailable' };
+        const full = await computeFresh();
+        if (!full || full.hash !== storeFingerprint.hash)
+          return { uncertain: 'the native inputs changed before offload' };
+        return fingerprintOffloadInputs(root, fpTarget, full, operation?.env ?? processContext(root).env);
+      },
       syncPlan: async (repoRoot: string, paths: readonly string[]) => {
         const keystore = resolveKeystore(root, settings, layout);
         const { androidSyncPlan } = await import('../offload/signing-files.ts');
@@ -512,14 +533,9 @@ function reactNativeAndroidArtifact(
           }
         : {}),
       unchanged: async () => {
-        const after = await refingerprintAfterMutation({
-          projectRoot: root,
-          platform: 'android',
-          androidLayout: layout,
-          previousHash: hash,
-          fingerprint,
-        });
-        return Boolean(after && !after.moved);
+        if (fingerprintInstallProblem(root)) return false;
+        const after = await computeFresh();
+        return Boolean(after && after.hash === hash);
       },
     },
   };

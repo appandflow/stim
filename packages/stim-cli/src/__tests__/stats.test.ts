@@ -23,9 +23,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
-import { Command } from 'commander';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import statsCommand from '../commands/stats.ts';
+import statsOp from '../commands/stats.ts';
+import { runCli } from '../cli/define-op.ts';
 import {
   recordCapacityWait,
   createRunRecorder,
@@ -157,8 +157,6 @@ describe('the stats file', () => {
 });
 
 async function runStats(argv: string[] = []): Promise<{ out: string[]; err: string[] }> {
-  const program = new Command();
-  statsCommand(program);
   const out: string[] = [];
   const err: string[] = [];
   const originalLog = console.log;
@@ -166,7 +164,7 @@ async function runStats(argv: string[] = []): Promise<{ out: string[]; err: stri
   console.log = (msg) => out.push(String(msg));
   console.error = (msg) => err.push(String(msg));
   try {
-    await program.parseAsync(['node', 'stim', 'stats', ...argv]);
+    await runCli(statsOp, argv, { version: '9.9.9' });
   } finally {
     console.log = originalLog;
     console.error = originalError;

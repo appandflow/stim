@@ -26,6 +26,7 @@ import {
   type HostedMacosDevice,
   type MacosAppRecord,
 } from '@stim-cli/core/state';
+import { removeTree } from '../engine-store/tree.ts';
 import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
 import { macosProcess, requiredMacosRecord } from '../macos/state.ts';
@@ -92,14 +93,16 @@ function assertInside(root: string, path: string): void {
 }
 
 function removeAppData(root: string, path: string): void {
+  let directory: boolean;
   try {
-    lstatSync(path);
+    directory = lstatSync(path).isDirectory();
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
   assertInside(root, path);
-  rmSync(path, { recursive: true, force: true });
+  if (directory) removeTree(path);
+  else rmSync(path, { recursive: true, force: true });
 }
 
 export async function runHostedMacosApp(
@@ -205,6 +208,7 @@ export async function runHostedMacosApp(
       executable,
       arguments: record.arguments ?? [],
       launchId: randomUUID(),
+      ...(record.runId ? { runId: record.runId } : {}),
       supervisor: macosProcess(process.pid),
       build: { state: 'ok', startedAt: new Date().toISOString() },
     };

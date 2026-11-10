@@ -18,7 +18,7 @@ import {
   includesGradleVersions,
 } from './gc/gradle-versions.ts';
 import chalk from 'chalk';
-import { InvalidArgumentError, type Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import { loadConfig, removeProject, withConfigLockAsync } from '../workspace/config.ts';
 import { plural, quotedPath } from '../command-output.ts';
 import { directorySizeAsync, isAbsentPath, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
@@ -1315,51 +1315,57 @@ async function runGcCore(
   return payload(deleteFailures);
 }
 
-export default function gcCommand(program: Command): void {
-  program
-    .command('gc')
-    .description(
-      "Report what Stim has left behind and what the stim-daemon's pressure ladder would reclaim: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees (ones a stim command ran in; a worktree another tool manages is kept) whose branch is merged or whose pull request was merged or closed, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, the build outputs and logs of each workspace, the memory of watchman, what the ladder would do at high and at critical with sizes, and each workspace's stage. Reports by default; pass --delete to act.",
-    )
-    .option(
-      '--worktrees',
-      'also remove clean, idle Stim-managed linked worktrees, not only merged ones: with --delete run `stim worktree remove` (never --force) on each; idle means unused for --older-than days, 7 without it',
-    )
-    .option(
-      '--delete',
-      "actually prune the reported entries, reap the reported devices, trim each workspace's Metro, client and device logs to their newest 8 MiB, shut down the shared watchman daemon (after removing its stale roots) when no client, subscription or trigger uses it, and run the pressure ladder to its end now at high whatever the machine measures: the idle stage for every workspace idle 2 minutes or more, parked devices, shared caches trimmed to half their caps, the dormant stage for workspaces idle 10 minutes or more, idle Gradle daemons, unpinned Gradle versions, TMPDIR leftovers and the worktree trash. With --cache all it runs the ladder at critical instead, which empties the Metro and compilation caches, makes every idle workspace dormant and deletes node_modules and Pods of idle linked worktrees. It never touches a workspace that is building, driven, leased, hosted or pinned by maintenance.keep",
-    )
-    .option(
-      '--older-than <days>',
-      'also reap owned devices whose workspace has not been used this long, trim shared cache entries nothing has used in that time and device recordings made before it, clear workspace build outputs under --cache workspaces only for workspaces idle this long, and let the pressure ladder delete parked devices only once parked this long',
-      (v: string) => {
+const gc: Op = defineOp({
+  name: 'gc',
+  description:
+    "Report what Stim has left behind and what the stim-daemon's pressure ladder would reclaim: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees (ones a stim command ran in; a worktree another tool manages is kept) whose branch is merged or whose pull request was merged or closed, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, the build outputs and logs of each workspace, the memory of watchman, what the ladder would do at high and at critical with sizes, and each workspace's stage. Reports by default; pass --delete to act.",
+  options: {
+    worktrees: {
+      flags: '--worktrees',
+      description:
+        'also remove clean, idle Stim-managed linked worktrees, not only merged ones: with --delete run `stim worktree remove` (never --force) on each; idle means unused for --older-than days, 7 without it',
+    },
+    delete: {
+      flags: '--delete',
+      description:
+        "actually prune the reported entries, reap the reported devices, trim each workspace's Metro, client and device logs to their newest 8 MiB, shut down the shared watchman daemon (after removing its stale roots) when no client, subscription or trigger uses it, and run the pressure ladder to its end now at high whatever the machine measures: the idle stage for every workspace idle 2 minutes or more, parked devices, shared caches trimmed to half their caps, the dormant stage for workspaces idle 10 minutes or more, idle Gradle daemons, unpinned Gradle versions, TMPDIR leftovers and the worktree trash. With --cache all it runs the ladder at critical instead, which empties the Metro and compilation caches, makes every idle workspace dormant and deletes node_modules and Pods of idle linked worktrees. It never touches a workspace that is building, driven, leased, hosted or pinned by maintenance.keep",
+    },
+    olderThan: {
+      flags: '--older-than <days>',
+      description:
+        'also reap owned devices whose workspace has not been used this long, trim shared cache entries nothing has used in that time and device recordings made before it, clear workspace build outputs under --cache workspaces only for workspaces idle this long, and let the pressure ladder delete parked devices only once parked this long',
+      parse: (v: string) => {
         const n = parseInt(v, 10);
         if (!Number.isFinite(n) || String(n) !== String(v).trim()) {
-          throw new InvalidArgumentError('must be a whole number of days, e.g. --older-than 30');
+          throw new Error('must be a whole number of days, e.g. --older-than 30');
         }
         return n;
       },
-    )
-    .option(
-      '--cache <name>',
-      'act on the shared caches whose name or directory contains <name>, every cache, the workspace build outputs and the device recordings with --cache all (and the pressure ladder at critical with --delete), only the workspace build outputs with --cache workspaces, only the device recordings with --cache recordings, only the parked simulators and emulators with --cache parked, the watchman daemon and its stale roots with --cache watchman, the Gradle and Kotlin compile daemons with --cache gradle-daemons, or the Gradle version caches and wrapper distributions no registered project pins with --cache gradle-versions; archived, archived:<id>, archived-logs, archived-recordings and archived-agent select archived history explicitly, and the three kind selectors also take :<id> (archived-logs:<id>) to clear one kind of one archive; --cache all excludes archives. all, workspaces, recordings, parked, archived, archived:<id>, archived-logs, archived-recordings, archived-agent, their :<id> forms, watchman, gradle-daemons and gradle-versions are reserved names that never select a single cache, and --cache all never includes watchman, gradle-daemons or gradle-versions. With --delete they are emptied whole (a parked device is erased and stays parked, watchman loses its stale roots and shuts down only when no client uses it, and only daemons proven idle stop), which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Archive ids, including the :<id> of a kind selector, ignore --older-than; archived and per-kind archive selectors without an id filter by removal age. Only those caches are reported; other devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
-      (v: string) => {
-        if (!v.trim()) throw new InvalidArgumentError('must name a cache, e.g. --cache "compilation cache"');
+    },
+    cache: {
+      flags: '--cache <name>',
+      description:
+        'act on the shared caches whose name or directory contains <name>, every cache, the workspace build outputs and the device recordings with --cache all (and the pressure ladder at critical with --delete), only the workspace build outputs with --cache workspaces, only the device recordings with --cache recordings, only the parked simulators and emulators with --cache parked, the watchman daemon and its stale roots with --cache watchman, the Gradle and Kotlin compile daemons with --cache gradle-daemons, or the Gradle version caches and wrapper distributions no registered project pins with --cache gradle-versions; archived, archived:<id>, archived-logs, archived-recordings and archived-agent select archived history explicitly, and the three kind selectors also take :<id> (archived-logs:<id>) to clear one kind of one archive; --cache all excludes archives. all, workspaces, recordings, parked, archived, archived:<id>, archived-logs, archived-recordings, archived-agent, their :<id> forms, watchman, gradle-daemons and gradle-versions are reserved names that never select a single cache, and --cache all never includes watchman, gradle-daemons or gradle-versions. With --delete they are emptied whole (a parked device is erased and stays parked, watchman loses its stale roots and shuts down only when no client uses it, and only daemons proven idle stop), which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Archive ids, including the :<id> of a kind selector, ignore --older-than; archived and per-kind archive selectors without an id filter by removal age. Only those caches are reported; other devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
+      parse: (v: string) => {
+        if (!v.trim()) throw new Error('must name a cache, e.g. --cache "compilation cache"');
         return v;
       },
-    )
-    .option('--json', 'print the report as JSON on stdout; every other line goes to stderr')
-    .action(async (opts: RunGcOptions) => {
-      if (opts.delete && !opts.cache) {
-        const { collectInstalledStore } = await import('../engine-store/gc.ts');
-        const { engineRoot } = await import('../engine-store/store.ts');
-        await collectInstalledStore(engineRoot(process.env)).catch((error: unknown) =>
-          console.error(`Stim: the engine store was not collected: ${error instanceof Error ? error.message : error}`),
-        );
-      }
-      const { interrupted } = await runProcessOperation(process.cwd(), (operation) =>
-        withDrainingCancellation(operation, operation.signal, () => runGc(opts, { operation })),
+    },
+    json: { flags: '--json', description: 'print the report as JSON on stdout; every other line goes to stderr' },
+  },
+  run: async ({ options: opts }) => {
+    if (opts.delete && !opts.cache) {
+      const { collectInstalledStore } = await import('../engine-store/gc.ts');
+      const { engineRoot } = await import('../engine-store/store.ts');
+      await collectInstalledStore(engineRoot(process.env)).catch((error: unknown) =>
+        console.error(`Stim: the engine store was not collected: ${error instanceof Error ? error.message : error}`),
       );
-      if (interrupted !== null) process.exitCode = interrupted;
-    });
-}
+    }
+    const { interrupted } = await runProcessOperation(process.cwd(), (operation) =>
+      withDrainingCancellation(operation, operation.signal, () => runGc(opts, { operation })),
+    );
+    if (interrupted !== null) process.exitCode = interrupted;
+  },
+});
+
+export default gc;

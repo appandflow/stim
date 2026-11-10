@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import {
   layerFile,
   readSettingsContext,
@@ -66,21 +66,88 @@ async function run(json: boolean, io: Output, action: () => void | Promise<void>
   }
 }
 
-interface SubcommandOptions {
-  scope?: string;
-  json?: boolean;
+function wantsJson(own: boolean | undefined, parent: Readonly<Record<string, unknown>>): boolean {
+  return Boolean(own ?? parent.json);
 }
 
-function wantsJson(opts: SubcommandOptions, command: Command): boolean {
-  return Boolean(opts.json ?? command.parent?.opts().json);
-}
+export function settingsOp(io: Output = CONSOLE, env: NodeJS.ProcessEnv = process.env): Op {
+  const get = defineOp({
+    name: 'get',
+    arguments: '<key>',
+    description: 'Print the effective value of a setting, or its value in one layer',
+    options: {
+      scope: { flags: '--scope <scope>', description: `read one layer: ${SETTING_SCOPES.join(', ')}` },
+      json: { flags: '--json', description: 'print the setting entry as JSON' },
+    },
+    run: ({ args: [key], options: opts, parent }) =>
+      run(wantsJson(opts.json, parent), io, async () => {
+        const setting = requireSetting(key);
+        const scope = opts.scope === undefined ? null : readScope(opts.scope, setting);
+        const context = await readSettingsContext(process.cwd(), env, io.note);
+        const entry = settingEntry(context, setting);
+        const value = scope ? (entry.layers[scope] ?? null) : entry.value;
+        if (wantsJson(opts.json, parent)) {
+          io.out(JSON.stringify(scope ? { key, scope, file: layerFile(context, scope, setting), value } : entry));
+          return;
+        }
+        if (value === null) return;
+        io.out(formatValue(value));
+        if (!scope && entry.defaultReason) io.note(chalk.dim(`(${formatOrigin(entry)})`));
+      }),
+  });
 
-export function registerSettings(program: Command, io: Output = CONSOLE, env: NodeJS.ProcessEnv = process.env): void {
-  const settings = program
-    .command('settings')
-    .description('Show every Stim setting with its effective value and layer, or change one')
-    .option('--json', 'print every setting, its origin, and each layer value as JSON')
-    .action((opts: { json?: boolean }) =>
+  const set = defineOp({
+    name: 'set',
+    arguments: '<key> <value>',
+    description: 'Write a setting to one layer',
+    options: {
+      scope: { flags: '--scope <scope>', description: `the layer to write: ${SETTING_SCOPES.join(', ')}` },
+      json: { flags: '--json', description: 'print the written setting as JSON' },
+    },
+    run: ({ args: [key, raw], options: opts, parent }) =>
+      run(wantsJson(opts.json, parent), io, async () => {
+        const result = await mutateSetting(
+          { action: 'set', key, value: raw, scope: opts.scope },
+          { cwd: process.cwd(), env, note: io.note },
+        );
+        report(io, wantsJson(opts.json, parent), result, 'set');
+      }),
+  });
+
+  const unset = defineOp({
+    name: 'unset',
+    arguments: '<key>',
+    description: 'Remove a setting from one layer',
+    options: {
+      scope: { flags: '--scope <scope>', description: `the layer to clear: ${SETTING_SCOPES.join(', ')}` },
+      json: { flags: '--json', description: 'print the setting after removal as JSON' },
+    },
+    run: ({ args: [key], options: opts, parent }) =>
+      run(wantsJson(opts.json, parent), io, async () => {
+        if (REMOVED_SETTINGS.has(key) && !settingDefinition(key)) {
+          const removal = await unsetReplacedSetting(
+            { key, scope: opts.scope },
+            { cwd: process.cwd(), env, note: io.note },
+          );
+          reportRemoval(io, wantsJson(opts.json, parent), removal, opts.scope);
+          return;
+        }
+        const result = await mutateSetting(
+          { action: 'unset', key, scope: opts.scope },
+          { cwd: process.cwd(), env, note: io.note },
+        );
+        report(io, wantsJson(opts.json, parent), result, 'unset');
+      }),
+  });
+
+  return defineOp({
+    name: 'settings',
+    description: 'Show every Stim setting with its effective value and layer, or change one',
+    options: {
+      json: { flags: '--json', description: 'print every setting, its origin, and each layer value as JSON' },
+    },
+    commands: [get, set, unset],
+    run: ({ options: opts }) =>
       run(Boolean(opts.json), io, async () => {
         const payload = await readSettingsPayload(await readSettingsContext(process.cwd(), env, io.note));
         if (opts.json) {
@@ -104,67 +171,7 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
           io.note(chalk.yellow(`Warning: ${entry.key} in ${entry.file} is not read by Stim.${instead}`));
         }
       }),
-    );
-
-  settings
-    .command('get <key>')
-    .description('Print the effective value of a setting, or its value in one layer')
-    .option('--scope <scope>', `read one layer: ${SETTING_SCOPES.join(', ')}`)
-    .option('--json', 'print the setting entry as JSON')
-    .action((key: string, opts: SubcommandOptions, command: Command) =>
-      run(wantsJson(opts, command), io, async () => {
-        const setting = requireSetting(key);
-        const scope = opts.scope === undefined ? null : readScope(opts.scope, setting);
-        const context = await readSettingsContext(process.cwd(), env, io.note);
-        const entry = settingEntry(context, setting);
-        const value = scope ? (entry.layers[scope] ?? null) : entry.value;
-        if (wantsJson(opts, command)) {
-          io.out(JSON.stringify(scope ? { key, scope, file: layerFile(context, scope, setting), value } : entry));
-          return;
-        }
-        if (value === null) return;
-        io.out(formatValue(value));
-        if (!scope && entry.defaultReason) io.note(chalk.dim(`(${formatOrigin(entry)})`));
-      }),
-    );
-
-  settings
-    .command('set <key> <value>')
-    .description('Write a setting to one layer')
-    .option('--scope <scope>', `the layer to write: ${SETTING_SCOPES.join(', ')}`)
-    .option('--json', 'print the written setting as JSON')
-    .action((key: string, raw: string, opts: SubcommandOptions, command: Command) =>
-      run(wantsJson(opts, command), io, async () => {
-        const result = await mutateSetting(
-          { action: 'set', key, value: raw, scope: opts.scope },
-          { cwd: process.cwd(), env, note: io.note },
-        );
-        report(io, wantsJson(opts, command), result, 'set');
-      }),
-    );
-
-  settings
-    .command('unset <key>')
-    .description('Remove a setting from one layer')
-    .option('--scope <scope>', `the layer to clear: ${SETTING_SCOPES.join(', ')}`)
-    .option('--json', 'print the setting after removal as JSON')
-    .action((key: string, opts: SubcommandOptions, command: Command) =>
-      run(wantsJson(opts, command), io, async () => {
-        if (REMOVED_SETTINGS.has(key) && !settingDefinition(key)) {
-          const removal = await unsetReplacedSetting(
-            { key, scope: opts.scope },
-            { cwd: process.cwd(), env, note: io.note },
-          );
-          reportRemoval(io, wantsJson(opts, command), removal, opts.scope);
-          return;
-        }
-        const result = await mutateSetting(
-          { action: 'unset', key, scope: opts.scope },
-          { cwd: process.cwd(), env, note: io.note },
-        );
-        report(io, wantsJson(opts, command), result, 'unset');
-      }),
-    );
+  });
 }
 
 function reportRemoval(io: Output, json: boolean, removal: ReplacedSettingRemoval, scope?: string): void {
@@ -193,6 +200,6 @@ function report(io: Output, json: boolean, result: SettingWriteResult, verb: 'se
   io.out(`${verb} ${write.key}${shown} in ${write.file}; effective value: ${effective}`);
 }
 
-export default function settingsCommand(program: Command): void {
-  registerSettings(program);
-}
+const settings: Op = settingsOp();
+
+export default settings;

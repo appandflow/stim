@@ -2,6 +2,7 @@ import { ensurePrivateDir, rotateLog } from '@stim-cli/core';
 import { runId, type NdjsonRecord } from '@stim-cli/core/state';
 import { closeSync, openSync, writeSync } from 'fs';
 import { dirname } from 'path';
+import { StringDecoder } from 'node:string_decoder';
 
 export {
   createNdjsonTail,
@@ -136,4 +137,23 @@ function stamp(record: unknown): NdjsonRecord {
   const withRun = typeof base.runId === 'string' ? base : { ...base, runId: runId() };
   if (typeof base.ts === 'number' && Number.isFinite(base.ts)) return withRun;
   return { ...withRun, ts: Date.now() };
+}
+
+export function logLines(stream: NodeJS.ReadableStream, write: (line: string) => void): void {
+  const decoder = new StringDecoder('utf8');
+  let pending = '';
+  stream.on('data', (chunk: Buffer) => {
+    pending += decoder.write(chunk);
+    while (pending.length > 65536 && !pending.includes('\n')) {
+      write(pending.slice(0, 65536));
+      pending = pending.slice(65536);
+    }
+    const lines = pending.split('\n');
+    pending = lines.pop() ?? '';
+    for (const line of lines) write(line.replace(/\r$/, ''));
+  });
+  stream.on('end', () => {
+    pending += decoder.end();
+    if (pending) write(pending);
+  });
 }

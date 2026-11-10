@@ -216,7 +216,7 @@ leased until <time>" for each one.`,
                   simulator Stim does not own
   runtime         that simulator's iOS runtime version ("26.5"), from the same
                   record. Null on the same paths as deviceType
-  fingerprint     the @expo/fingerprint hash of the native inputs, AS STORED.
+  fingerprint     Stim's native-input fingerprint, AS STORED.
                   A run that had to \`expo prebuild\` or \`pod install\`
                   rewrote fingerprinted files while it worked (the generated
                   native directory, package.json's scripts, the app config,
@@ -978,7 +978,8 @@ RULES
                               clears (android/app/build, android/build,
                               android/.gradle, .build, android/.cxx,
                               android/<module>/.cxx, a .dd laid out as
-                              DerivedData, node_modules,
+                              DerivedData, an Exact app's target/,
+                              node_modules,
                               ios/Pods, at the root, a
                               project root, or apps/* and packages/* for
                               build directories) and a root .pnpm-store,
@@ -1122,7 +1123,8 @@ RULES
                               lists the project's android/app/build,
                               android/build,
                               android/.gradle, .build, android/.cxx,
-                              android/<module>/.cxx and .dd that --delete
+                              android/<module>/.cxx, .dd and an Exact
+                              app's target/ that --delete
                               clears with them, every file in them
                               ignored by git and none tracked, and
                               bytes includes them; willClear marks the ones
@@ -1423,7 +1425,9 @@ RULES
   web  { browser, version, running, pid, supervisorPid, url, headless,
          viewport, profile, cdpEndpoint, targetId, page?, activity? }
 
-  running        the browser supervisor and Chrome are both verified live;
+  running        Chrome is verified live (supervisorPid is Chrome's own pid,
+                 or a browser supervisor's in a browser an older Stim
+                 started);
                  pid, supervisorPid, cdpEndpoint and targetId are null when
                  false, and page and activity are absent
   url            the page stim web opened; page.url is the document the page
@@ -1449,10 +1453,10 @@ RULES
                  DevTools client connected to cdpEndpoint (agent-browser,
                  agent-device, argent, playwright, puppeteer,
                  chrome-devtools-mcp, or the executable's name); Stim's own
-                 connections (the browser supervisor, stim-server, Stim
+                 connections (stimd, stim-server, Stim
                  Desktop, the stim CLI) are not drivers. basis: cdp-client
                  (one lsof of the DevTools port); agent-action (the newest
-                 agent input the browser supervisor recorded in web.ndjson)
+                 agent input stimd recorded in web.ndjson)
                  and page-log (the newest other
                  web.ndjson record) for recency
 

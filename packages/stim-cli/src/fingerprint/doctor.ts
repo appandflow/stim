@@ -41,6 +41,11 @@ export async function fingerprintNotes(
       message: `fingerprint.config.js ${key} is ignored by Stim's build-cache key`,
       remedy: key === 'preset' ? 'List extra native inputs in cache.fingerprintInputs.' : undefined,
     });
+  if (request.target.fingerprintInputs !== undefined && first.fingerprintConfigKeys.includes('extraSources'))
+    notes.push({
+      level: 'info',
+      message: 'fingerprint.config.js extraSources is ignored because cache.fingerprintInputs is set',
+    });
   if (lockfileClassifier(installRoot(realpathSync.native(request.root))).lockfile === null)
     notes.push({
       level: 'info',
@@ -48,7 +53,10 @@ export async function fingerprintNotes(
       remedy: 'Commit a text lockfile (package-lock.json, pnpm-lock.yaml, yarn.lock or bun.lock).',
     });
   if (!first.portable)
-    notes.push({ level: 'info', message: 'an input lies outside the project, so builds are not offloaded' });
+    notes.push({
+      level: 'info',
+      message: 'an input cannot be safely reproduced on a build worker, so builds are not offloaded',
+    });
   const byCase = new Map<string, string[]>();
   for (const { name } of first.inputs)
     byCase.set(name.toLowerCase(), [...(byCase.get(name.toLowerCase()) ?? []), name]);

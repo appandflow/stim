@@ -6,6 +6,7 @@ import type { DevicePlacement } from '@stim-cli/core/state';
 import { type StimContext, workspaceId } from '@stim-cli/core';
 import { exitCli, runProcessOperation } from '../cli-operation.ts';
 import { acquireIosArtifact, acquireIosArtifactOrRecorded, type PreparedIosArtifact } from './ios/artifact.ts';
+import { artifactErrorCode, settleArtifactCleanup, unresolvedCleanup } from '../engine/acquire-artifact.ts';
 import { lookupRecordedBuild, type RecordedBuildRefusal } from '../engine/recorded-build.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
@@ -787,6 +788,7 @@ async function runIos(
   const connected = await connectIosTarget(remoteSelection, selectors, d);
   if ('failure' in connected) return fail(connected.failure);
   const hostedTarget = connected.target;
+  let runFailure: unknown;
   try {
     const budget = await iosPlacementBudget(
       d,
@@ -1123,20 +1125,27 @@ async function runIos(
     }
 
     let artifact: PreparedIosArtifact | null = null;
+    let artifactFailure: unknown;
     const reportRunFailure = (error: unknown): null => {
-      const cancelled = cancelledFailure(context, PLATFORM, {
-        code: 'STIM_CANCELLED',
-        message: 'while finishing the run',
-      });
+      const cleanup = unresolvedCleanup(error);
+      const cancelled = cleanup
+        ? null
+        : cancelledFailure(context, PLATFORM, {
+            code: 'STIM_CANCELLED',
+            message: 'while finishing the run',
+          });
       if (cancelled) return fail(cancelled);
-      if (acquiredBuild) {
-        const { code } = error as { code?: unknown };
-        recordFailedBuild(acquiredBuild, typeof code === 'string' ? code : undefined, {
-          message: error instanceof Error ? error.message : String(error),
-        });
-        logWriter().write(thrownRunFailureRecord(error, progress.phase()));
+      try {
+        if (acquiredBuild) {
+          recordFailedBuild(acquiredBuild, artifactErrorCode(error), {
+            message: error instanceof Error ? error.message : String(error),
+          });
+          logWriter().write(thrownRunFailureRecord(error, progress.phase()));
+        }
+        recordRun({ failed: true, durationMs: elapsed() });
+      } catch (diagnosticError) {
+        if (!cleanup) throw diagnosticError;
       }
-      recordRun({ failed: true, durationMs: elapsed() });
       throw error;
     };
 
@@ -1412,13 +1421,19 @@ async function runIos(
         await releaseLease();
       }
     } catch (error) {
+      artifactFailure = error;
       return reportRunFailure(error);
     } finally {
-      artifact?.cancelFingerprintCheck();
-      await artifact?.release();
+      await settleArtifactCleanup(artifactFailure, artifact?.release());
     }
+  } catch (error) {
+    runFailure = error;
+    throw error;
   } finally {
-    await deviceWaitRun.finish();
-    hostedTarget?.host.connection.close();
+    try {
+      await settleArtifactCleanup(runFailure, deviceWaitRun.finish());
+    } finally {
+      hostedTarget?.host.connection.close();
+    }
   }
 }

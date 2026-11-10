@@ -2,27 +2,17 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 
 export function benchmarkFingerprint(projectRoot, stimPackage, platform) {
-  const script = [
-    'import { createRequire } from "node:module";',
-    'const fingerprint = createRequire(process.argv[1])("@expo/fingerprint");',
-    'const result = await fingerprint.createFingerprintAsync(process.cwd(), {',
-    '  platforms: [process.argv[2]],',
-    '  silent: true,',
-    '  ignorePaths: ["**/android/local.properties", "**/android/.idea/**"],',
-    '});',
-    'process.stdout.write(result.hash);',
-  ].join('\n');
-  return execFileSync(
-    process.execPath,
-    ['--input-type=module', '-e', script, join(stimPackage, 'package.json'), platform],
-    {
-      cwd: projectRoot,
-      encoding: 'utf8',
-      timeout: 2 * 60 * 1000,
-      maxBuffer: 64 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  ).trim();
+  const output = execFileSync(process.execPath, [join(stimPackage, 'dist', 'cli.mjs'), platform, '--plan', '--json'], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    timeout: 2 * 60 * 1000,
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const result = JSON.parse(output);
+  if (typeof result.fingerprint !== 'string' || !result.fingerprint)
+    throw new Error('installed stim did not return a fingerprint in its build plan');
+  return result.fingerprint;
 }
 
 export function selectBenchmarkCacheKey(platform, fingerprint, entries) {

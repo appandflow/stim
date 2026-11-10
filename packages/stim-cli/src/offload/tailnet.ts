@@ -39,6 +39,8 @@ import {
   rawTailscaleStatusAsync,
 } from '../tailscale-status.ts';
 export { tailscaleStatusAsync } from '../tailscale-status.ts';
+import { localTransport } from '@stim-cli/transport-local';
+import { tailscaleTransport } from '@stim-cli/transport-tailscale';
 import { readAccessTicket } from './access-ticket.ts';
 import {
   classifyTransport,
@@ -457,12 +459,24 @@ export async function resolveEndpoint(
   signal?: AbortSignal,
 ): Promise<Endpoint | string> {
   const parsed = parseMachine(credential.machine);
-  const current = parsed?.transport === 'tailscale' ? await status() : null;
-  const found = machineEndpoint(credential.machine, current);
-  if (typeof found !== 'string' || parsed?.transport !== 'tailscale' || findPeer(current, parsed.name) !== 'missing')
-    return found;
+  if (!parsed) return `${credential.machine} is not a tailnet name or local: address`;
+  let current: unknown = null;
+  const transport =
+    parsed.transport === 'local'
+      ? localTransport({ entries: () => [] })
+      : tailscaleTransport({
+          env: {},
+          snapshot: { binary: null, state: { state: 'unavailable', reason: 'status is read by the caller' } },
+          status: async () => (current = await status()),
+        });
+  const found = await transport.resolve({
+    name: `${parsed.name}:${parsed.port}`,
+    credential: { machine: credential.machine, address: credential.address, tailnet: credential.tailnet },
+  });
+  if (!('unresolved' in found)) return found;
+  if (parsed.transport !== 'tailscale' || findPeer(current, parsed.name) !== 'missing') return found.unresolved;
   const wrong = wrongTailnet(credential, current);
-  if (!wrong) return found;
+  if (!wrong) return found.unresolved;
   const { message, remedy } = wrongTailnetDiagnosis(credential.machine, wrong, localMachineName(current));
   return `${message} ${remedy}`.replace(/\.$/, '');
 }

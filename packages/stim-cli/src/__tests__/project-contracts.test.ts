@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Command } from 'commander';
+import { runCli } from '../cli/define-op.ts';
 import { planIos } from '../commands/ios/next-build.ts';
 import { DEFAULT_DEPS } from '../commands/ios/dependencies.ts';
 import { planAndroid } from '../commands/android/next-build.ts';
-import doctorCommand from '../commands/doctor.ts';
+import { doctorOp } from '../commands/doctor.ts';
 import { analyzeStimVersions } from '../diagnostics/stim-installations.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { createProjectRegistry, type ProjectIntegration } from '../integrations/project-registry.ts';
@@ -125,13 +125,12 @@ test('doctor combines shared findings with the selected native platform and reco
     nativeDoctor('ios'),
     nativeDoctor('android'),
   ]);
-  const program = new Command();
-  doctorCommand(program, '1.2.3', () => analyzeStimVersions('1.2.3', '/tools/stim', []), 'linux', {
+  const doctor = doctorOp(() => analyzeStimVersions('1.2.3', '/tools/stim', []), 'linux', {
     findProjectRoot: () => root,
     selectDoctor: registry.selectDoctor,
   });
   const payload = await output(async () => {
-    await program.parseAsync(['node', 'stim', 'doctor', '--platform', 'ios', '--json']);
+    await runCli(doctor, ['--platform', 'ios', '--json'], { version: '1.2.3' });
   });
   expect(payload.findings).toEqual(
     expect.arrayContaining([

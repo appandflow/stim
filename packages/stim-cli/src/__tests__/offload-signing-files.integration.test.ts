@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
-import { fingerprintProject } from '../cache/build-cache.ts';
+import { staticInputs } from '../fingerprint/inputs.ts';
+import { isUncertain, preimage, preimageHash, type Platform } from '../fingerprint/key.ts';
 
 let root: string;
 
@@ -21,12 +22,18 @@ function write(path: string, text = 'bytes'): string {
   return path;
 }
 
+function fingerprint(platform: Platform): string {
+  const result = staticInputs({ root, tracked: null, expoResolves: false }, { platform });
+  if (isUncertain(result)) throw new Error(result.uncertain);
+  return preimageHash(preimage(platform, result.native, result.layout, result.inputs));
+}
+
 test('adding a signing file does not move the Android fingerprint, so a worker agrees either way', async () => {
   write('package.json', '{"name":"app","version":"1.0.0"}');
   write('android/build.gradle', 'x');
-  const before = await fingerprintProject(root, { platform: 'android' });
+  const before = fingerprint('android');
   write('android/keystore.properties', 'x');
-  expect((await fingerprintProject(root, { platform: 'android' }))?.hash).toBe(before?.hash);
+  expect(fingerprint('android')).toBe(before);
 });
 
 test.each([
@@ -41,8 +48,8 @@ test.each([
   write('android/build.gradle', 'x');
   write('ios/Podfile', 'x');
   write(path, 'one');
-  const before = await fingerprintProject(root, { platform });
+  const before = fingerprint(platform);
   write(path, 'two');
-  const after = await fingerprintProject(root, { platform });
-  expect(after?.hash !== before?.hash).toBe(moves);
+  const after = fingerprint(platform);
+  expect(after !== before).toBe(moves);
 });

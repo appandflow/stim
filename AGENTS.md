@@ -794,10 +794,11 @@ emulators are shut down by `stop`.
 
 `stim web` launches the installed Chrome only with a profile Stim created under
 `$STIM_HOME/workspaces/<id>/web/`, listed under `web` in the created-devices
-ledger, and never attaches to a browser it did not start. Its supervisor holds
-an ownership claim with Chrome as the claim's child. Teardown goes through
-`devices/teardown.ts`, signals the supervisor or Chrome only after verifying
-the recorded identity, removes Chrome's `Singleton*` lock files only once Chrome
+ledger, and never attaches to a browser it did not start. The command starts
+Chrome through `spawnOwned`, which gives Chrome an ownership claim of its own,
+and stimd holds its DevTools session. Teardown goes through
+`devices/teardown.ts`, signals Chrome (or the browser supervisor an older Stim
+started) only after verifying the recorded identity, removes Chrome's `Singleton*` lock files only once Chrome
 is gone, and deletes a profile only when the ledger lists it.
 
 A physical device reached through `android --device` or `ios --device` is
@@ -941,15 +942,10 @@ tool at least once. Use a timeout around `simctl`.
 initial lookup and single-flight lock on the pre-mutation key. After a mutation,
 fingerprint again and resolve once under the new key before compiling. Store
 the artifact, `lastBuild`, and remote upload only under the post-mutation key.
-Do not store the same artifact under both keys. A recorded fingerprint from
-`$STIM_HOME/fingerprint-memo` may stand in only for the pre-mutation lookup.
-The post-mutation fingerprint, the build worker and `doctor` always compute it
-in full. Write a record only from a full fingerprint, never from a recorded one.
-A record's key is the static digest, which leaves out the Stim version. Bump
-`STATIC_SCHEMA` (`packages/stim-cli/src/cache/static-fingerprint.ts`) when the
-other version of a file listed in `scripts/static-fingerprint.json` could give
-a tree the same static digest but a different full fingerprint; `pnpm run lint`
-fails until `node scripts/static-fingerprint.mjs --update` records the change.
+Do not store the same artifact under both keys. Post-mutation checks, build
+workers and doctor compute without the fingerprint index. Bump
+`FINGERPRINT_SCHEMA` in `packages/core/state/fingerprint-index.ts` whenever the
+input rows or their bytes change; the golden preimage tests pin each schema.
 
 ### 11. Preserve launch status semantics
 

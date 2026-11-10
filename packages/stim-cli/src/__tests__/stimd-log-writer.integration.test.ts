@@ -246,6 +246,8 @@ test('a failed live write does not suppress a successful historical copy', async
   const writers = createLogWriters(
     () => {},
     () => {},
+    () => {},
+    () => {},
     observed,
     writeFailure,
   );
@@ -330,6 +332,30 @@ test('two historical queries before live attachment retain their overlap counts'
     await sink.closed();
     const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8'));
     expect(records.filter((record) => record.msg === 'cold')).toHaveLength(1);
+  } finally {
+    await writers.close();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('closing the worker rejects pending requests and can be repeated', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-log-writer-home-'));
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-log-writer-app-')));
+  vi.stubEnv('STIM_HOME', home);
+  const writers = createLogWriters(() => {});
+  try {
+    const sink = await writers.open(
+      { streamId: 'pending', slotKey: 'ios', root, platform: 'ios', physical: false, attribution: {} },
+      () => {},
+    );
+    const pending = sink.sync();
+    const closing = writers.close();
+    await expect(pending).rejects.toThrow('the logs worker is closed');
+    await closing;
+    await expect(writers.close()).resolves.toBeUndefined();
+    await expect(sink.sync()).rejects.toThrow('the logs worker is closed');
   } finally {
     await writers.close();
     vi.unstubAllEnvs();

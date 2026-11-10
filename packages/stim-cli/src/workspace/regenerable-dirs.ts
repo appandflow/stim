@@ -3,6 +3,7 @@ import { lstat, readdir } from 'node:fs/promises';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { gitQuietAsync } from './git.ts';
+import { othersRunningAsync, readRunningProcessesAsync, runningFromReason } from './running-from.ts';
 
 export type ArtifactKind = 'build' | 'dependencies';
 
@@ -113,16 +114,28 @@ function* derivedDataDirs(root: string): DirReads<{ path: string; named: boolean
   return found;
 }
 
+const CARGO_TARGET = 'target';
+const EXACT_APP_FILES = ['exact.mjs', 'Cargo.toml'];
+
+function* exactTargetDirs(root: string): DirReads<string[]> {
+  const names = yield* namesIn(root);
+  if (!EXACT_APP_FILES.every((name) => names.includes(name))) return [];
+  const path = join(root, CARGO_TARGET);
+  return (yield* realDirectory(path)) ? [path] : [];
+}
+
 function* discoveredBuildDirsReads(root: string): DirReads<string[]> {
   const cxx = yield* cxxDirs(root);
   const derived = yield* derivedDataDirs(root);
-  return [...cxx, ...derived.filter(({ named }) => named).map(({ path }) => path)];
+  const cargo = yield* exactTargetDirs(root);
+  return [...cxx, ...derived.filter(({ named }) => named).map(({ path }) => path), ...cargo];
 }
 
 /**
  * The directories under `root` that hold only what a build regenerates and that the fixed `ARTIFACT_DIRS.build` names
- * cannot list: the Android CMake directories `android/.cxx` and `android/<module>/.cxx`, and a `.dd` directory laid
- * out as DerivedData. A `.dd` that is not laid out as DerivedData is not one.
+ * cannot list: the Android CMake directories `android/.cxx` and `android/<module>/.cxx`, a `.dd` directory laid
+ * out as DerivedData, and an Exact app's Cargo `target/` (beside its `exact.mjs` and `Cargo.toml`). A `.dd` that is not
+ * laid out as DerivedData is not one, nor is a `target/` anywhere else.
  */
 export function discoveredBuildDirs(root: string): string[] {
   return readSync(discoveredBuildDirsReads(root));
@@ -161,12 +174,15 @@ export function isBuildDirPath(path: string): boolean {
     const parent = dirname(path);
     return basename(parent) === 'android' || basename(dirname(parent)) === 'android';
   }
+  if (name === CARGO_TARGET) return readSync(exactTargetDirs(dirname(path))).includes(path);
   return name === DERIVED_DATA_NAME && isDerivedDataLayout(path);
 }
 
 /**
  * Why `path`, inside the checkout at `root`, must not be deleted as a regenerable directory, or null when it is a real
- * directory inside `root` whose every file git ignores.
+ * directory inside `root` whose every file git ignores and, for an Exact app's `target/`, no other process runs from or
+ * works in that app: Exact's own commands (web, Android, tests) build into the same directory without Stim seeing them.
+ * Where the processes cannot be listed (Windows), that `target/` is kept.
  */
 export async function regenerableDirProblem(root: string, path: string, signal?: AbortSignal): Promise<string | null> {
   const rel = relative(root, path);
@@ -183,5 +199,10 @@ export async function regenerableDirProblem(root: string, path: string, signal?:
   const unignored = await gitQuietAsync(root, ['ls-files', '--others', '--exclude-standard', '--', rel], { signal });
   if (unignored === null) return 'git cannot tell whether it ignores every file in it';
   if (unignored.trim()) return 'it holds files git does not ignore';
+  if (basename(path) === CARGO_TARGET && (await readAsync(exactTargetDirs(dirname(path)))).includes(path)) {
+    const others = await othersRunningAsync(await readRunningProcessesAsync(signal), signal);
+    const running = runningFromReason(dirname(path), others);
+    if (running) return `its app may be in use: ${running.replace(/ it\b/, ' its app')}`;
+  }
   return null;
 }

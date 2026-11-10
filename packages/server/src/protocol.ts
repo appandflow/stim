@@ -2208,30 +2208,67 @@ export function protocolJsonSchema(): JsonSchema {
                 description: 'The id and hash of each source of fingerprint, to name the sources that differ.',
                 items: {
                   type: 'object',
-                  required: ['id', 'hash'],
+                  required: ['id', 'kind', 'hash'],
                   additionalProperties: false,
                   properties: {
                     id: { type: 'string', minLength: 1, maxLength: 1024 },
-                    hash: { type: ['string', 'null'], pattern: '^[0-9a-f]{1,128}$' },
+                    kind: { enum: ['file', 'package', 'config', 'autolinking', 'manifest', 'env'] },
+                    hash: { type: 'string', pattern: '^[0-9a-f]{64}$' },
                   },
                 },
               },
-              podsOnWorker: { type: 'boolean' },
-              reuseArtifact: { type: 'boolean' },
-              fingerprintIgnored: {
+              fingerprintSchema: { type: 'integer', minimum: 1 },
+              fingerprintEnv: {
+                type: 'object',
+                required: ['set', 'absent'],
+                additionalProperties: false,
+                properties: {
+                  set: {
+                    type: 'object',
+                    maxProperties: 20000,
+                    additionalProperties: {
+                      oneOf: [
+                        { type: 'string' },
+                        {
+                          type: 'object',
+                          required: ['path'],
+                          additionalProperties: false,
+                          properties: { path: { type: 'string', minLength: 1, maxLength: 1024 } },
+                        },
+                      ],
+                    },
+                  },
+                  absent: { type: 'array', maxItems: 20000, items: { type: 'string', minLength: 1, maxLength: 1024 } },
+                },
+              },
+              fingerprintNative: { enum: ['tracked', 'generated'] },
+              fingerprintLayout: {
+                type: 'object',
+                required: ['projectPath', 'gradleRoot', 'module'],
+                additionalProperties: false,
+                properties: {
+                  projectPath: { type: ['string', 'null'] },
+                  gradleRoot: { type: ['string', 'null'] },
+                  module: { type: ['string', 'null'] },
+                },
+              },
+              fingerprintRuntime: {
+                type: 'object',
+                required: ['node', 'evaluator', 'packages'],
+                additionalProperties: false,
+                properties: {
+                  node: { type: 'string', pattern: '^[0-9]+\\.[0-9]+$' },
+                  evaluator: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+                  packages: { type: 'object', maxProperties: 16, additionalProperties: { type: ['string', 'null'] } },
+                },
+              },
+              fingerprintInputs: {
                 type: 'array',
                 maxItems: 20000,
-                description:
-                  'Paths relative to project that git ignores for fingerprint on the caller, such as through .git/info/exclude.',
                 items: { type: 'string', minLength: 1, maxLength: 1024 },
               },
-              fingerprintTracked: {
-                type: 'array',
-                maxItems: 20000,
-                description:
-                  'Top-level entries of project that the caller git tracks for fingerprint although an ignore pattern matches them.',
-                items: { type: 'string', minLength: 1, maxLength: 255, pattern: '^[^/\\u0000]+$' },
-              },
+              podsOnWorker: { type: 'boolean' },
+              reuseArtifact: { type: 'boolean' },
               native: {
                 oneOf: [
                   {

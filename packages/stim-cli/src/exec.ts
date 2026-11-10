@@ -24,6 +24,8 @@ export interface ExecOptions {
   killSignal?: NodeJS.Signals;
   /** runFileAsync only: cancellation for this child; overrides the current report signal for bounded cleanup. */
   signal?: AbortSignal;
+  /** Selects the operation environment and report resource owner for this execution. */
+  context?: StimContext;
   cwd?: string;
   env?: Record<string, string>;
   omitEnv?: readonly string[];
@@ -80,10 +82,15 @@ interface ReportJobMarkers {
   closed: string;
 }
 
-function startsInReportJob(file: string, opts: SpawnOptions, containProcessTree: boolean): boolean {
+function startsInReportJob(
+  file: string,
+  opts: SpawnOptions,
+  containProcessTree: boolean,
+  context?: StimContext,
+): boolean {
   return (
     process.platform === 'win32' &&
-    (containProcessTree || Boolean(reportSignal(ambientContext()))) &&
+    (containProcessTree || Boolean(reportSignal(context ?? ambientContext()))) &&
     Boolean(executableIn(file, opts.env ?? ambientEnv(), opts.cwd ?? process.cwd()))
   );
 }
@@ -139,8 +146,9 @@ function reportChild(
   signal?: AbortSignal,
   failed?: (error: Error) => Error,
   contained = false,
+  selectedContext?: StimContext,
 ): { cancel: () => Promise<void>; closed: Promise<void> } | undefined {
-  const context = ambientContext();
+  const context = selectedContext ?? ambientContext();
   const report = reportSignal(context);
   signal ??= report;
   if (!signal) return;
@@ -432,21 +440,23 @@ const defaultExecutor: Executor = {
       cleanupOnExit,
       redact,
       signal: callSignal,
+      context: selectedContext,
     },
   ) {
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
-      const report = callSignal ?? reportSignal(ambientContext());
+      const context = selectedContext ?? ambientContext();
+      const report = callSignal ?? reportSignal(context);
       report?.throwIfAborted();
       const timeout = budgetMs(timeoutMs);
       const opts: SpawnOptions = detachedSilent
         ? { stdio: 'ignore', detached: true }
         : { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] };
       if (report && process.platform !== 'win32') opts.detached = true;
-      const childCwd = cwd ?? ambientContext()?.cwd;
+      const childCwd = cwd ?? context?.cwd;
       if (childCwd) opts.cwd = childCwd;
-      if (env || omitEnv?.length || ambientContext()) {
-        const childEnv = { ...ambientEnv(), ...env };
+      if (env || omitEnv?.length || context) {
+        const childEnv = { ...(context?.env ?? ambientEnv()), ...env };
         for (const key of omitEnv ?? []) delete childEnv[key];
         opts.env = childEnv;
       }
@@ -462,7 +472,7 @@ const defaultExecutor: Executor = {
               retainDeclaration = rejectDeclaration;
             })
           : undefined;
-      const contained = startsInReportJob(file, opts, containProcessTree || Boolean(report));
+      const contained = startsInReportJob(file, opts, containProcessTree || Boolean(report), context);
       const base =
         contained && timeout !== undefined ? join(tmpdir(), `stim-report-${process.pid}-${randomUUID()}`) : null;
       const markers = base ? { started: `${base}.started`, closed: `${base}.closed` } : undefined;
@@ -505,6 +515,7 @@ const defaultExecutor: Executor = {
             return failure;
           },
           contained,
+          context,
         );
         cancel = lifetime?.cancel;
         if (cleanupOnExit && cancel)

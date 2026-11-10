@@ -1,11 +1,24 @@
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { homedir, userInfo } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { projectNodeBin } from '@stim-cli/core/toolchain';
+import type { StimContext } from '@stim-cli/core';
+import type { BuildFingerprintSource } from '@stim-cli/core/protocol';
 import { getExecutor } from '../exec.ts';
-import { entryPoints, findPackage, installedPackage, packageIdentity, packageRoot, packageRows } from './closure.ts';
+import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
+import { processContext } from '../cli-operation.ts';
+import { withFingerprintOwnership } from '../engine/fingerprint-ownership.ts';
+import {
+  entryPoints,
+  findPackage,
+  installedPackage,
+  packageIdentity,
+  packageRoot,
+  packageRows,
+  projectPackagePath,
+} from './closure.ts';
 import {
   buildEnvRows,
   buildScripts,
@@ -15,6 +28,7 @@ import {
   evaluatorEnv,
   isDenied,
   isSessionName,
+  privateReplayEnv,
   workspaceEnv,
   scriptEnvNames,
   templateScripts,
@@ -51,6 +65,7 @@ import {
   type Uncertain,
 } from './key.ts';
 import { nativeSubset, pathForm, walk, within, type Roots } from './walk.ts';
+import { replayFiles } from './replay.ts';
 
 type PartName = 'config' | 'configEmbedded' | 'expoAutolinking' | 'rnConfig';
 export interface EvalUncertain extends Uncertain {
@@ -63,8 +78,10 @@ export interface FingerprintOptions {
   /** The config mode `expo-constants` embeds with: `development` for a Debug configuration or variant. */
   embedMode: 'development' | 'production';
   signal?: AbortSignal;
-  /** `skip` computes every part and writes no index record, as verification does. Default `use`. */
-  index?: 'use' | 'skip';
+  operation?: StimContext;
+  /** `skip` computes without an index; `refresh` computes without reading it and records the result. Default `use`. */
+  index?: 'use' | 'skip' | 'refresh';
+  replay?: { native: NativeMode; sources: BuildFingerprintSource[]; allowChanges?: boolean };
 }
 export interface Fingerprint {
   schema: number;
@@ -147,61 +164,77 @@ const failed = (part: PartName, why: string): EvalUncertain => ({
   remedy: LABELS[part][1],
 });
 
-function run(
+function readEvaluatorOutput(path: string): string {
+  const info = statSync(path, { throwIfNoEntry: false });
+  if (!info) return '';
+  if (info.size > 64 * 1024 * 1024) throw new Error('fingerprint output exceeded its size limit');
+  return readFileSync(path, 'utf8');
+}
+
+async function run(
   part: PartName,
   node: string,
   args: string[],
   root: string,
   env: Record<string, string>,
   signal?: AbortSignal,
-) {
-  return new Promise<{ result: string; stdout: string; trace: Trace } | EvalUncertain>((resolved) => {
-    if (signal?.aborted) return resolved(failed(part, 'was cancelled'));
-    const started = Date.now();
-    let settled = false;
-    const done = (value: { result: string; stdout: string; trace: Trace } | EvalUncertain) => {
-      if (!settled) resolved(value);
-      settled = true;
-    };
-    const child = getExecutor().spawn(node, ['--require', join(SHIMS, 'fp-trace.cjs'), ...args], {
+  operation?: StimContext,
+): Promise<{ result: string; stdout: string; trace: Trace } | EvalUncertain> {
+  if (signal?.aborted) return failed(part, 'was cancelled');
+  const directory = parentTemporaryRoot
+    ? mkdtempSync(join(parentTemporaryRoot, 'part-'))
+    : makeTemporaryDirectory(root, 'stim-fingerprint-', operation);
+  const resultPath = join(directory, 'result.json');
+  const tracePath = join(directory, 'trace.json');
+  const childSignal = signal ?? new AbortController().signal;
+  let retain = false;
+  try {
+    const stdout = await getExecutor().runFileAsync(node, ['--require', join(SHIMS, 'fp-trace.cjs'), ...args], {
       cwd: root,
-      env,
-      stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'],
+      env: {
+        ...env,
+        STIM_FP_CONTROL: JSON.stringify({ result: resultPath, trace: tracePath, original: env.STIM_FP_CONTROL }),
+      },
+      omitEnv: Object.keys(operation?.env ?? processContext(root).env).filter(
+        (name) => !(name in env) && name !== 'STIM_FP_CONTROL',
+      ),
+      timeoutMs: TIMEOUT_MS,
+      signal: childSignal,
+      context: operation,
+      declareFor: operation,
+      untrimmed: true,
+      redact: Object.values(env).filter((value) => value.length > 0),
     });
-    const chunks: Buffer[][] = [[], [], [], [], []];
-    child.stdio.forEach((stream, fd) => stream?.on('data', (chunk: Buffer) => chunks[fd]?.push(chunk)));
-    const stop = () => child.kill('SIGKILL');
-    const timer = setTimeout(() => {
-      stop();
-      finish('timed out');
-    }, TIMEOUT_MS);
-    signal?.addEventListener('abort', stop, { once: true });
-    const text = (fd: number) => Buffer.concat(chunks[fd] ?? []).toString('utf8');
-    const finish = (why: string | null) => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', stop);
-      if (why === null) {
-        let trace: unknown = null;
-        try {
-          trace = JSON.parse(text(4));
-        } catch {}
-        if (isTrace(trace)) return done({ result: text(3), stdout: text(1), trace });
-        why = 'wrote no readable trace';
-      }
-      done({
-        ...failed(part, `${why} after ${Date.now() - started} ms`),
-        stderrTail: text(2)
-          .trimEnd()
-          .split('\n')
-          .filter((line) => !/^\s+at /.test(line))
-          .slice(-20),
-      });
+    let trace: unknown;
+    try {
+      trace = JSON.parse(readEvaluatorOutput(tracePath));
+    } catch {
+      return failed(part, 'wrote no readable trace');
+    }
+    if (!isTrace(trace)) return failed(part, 'wrote no readable trace');
+    return { result: readEvaluatorOutput(resultPath), stdout, trace };
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'reportCleanup' in error) {
+      retain = true;
+      const remedy = 'remedy' in error && typeof error.remedy === 'string' ? `${error.remedy} ` : '';
+      throw Object.assign(error, { remedy: `${remedy}After confirming cleanup, remove ${directory}.` });
+    }
+    signal?.throwIfAborted();
+    const stderr =
+      error && typeof error === 'object' && 'stderr' in error && typeof error.stderr === 'string' ? error.stderr : '';
+    const status =
+      error && typeof error === 'object' && 'status' in error && typeof error.status === 'number' ? error.status : null;
+    return {
+      ...failed(part, status === null ? 'could not finish evaluation' : `exited ${status}`),
+      stderrTail: stderr
+        .trimEnd()
+        .split('\n')
+        .filter((line) => line && !/^\s+at /.test(line))
+        .slice(-20),
     };
-    child.on('error', (error) => finish(`could not start: ${error.message}`));
-    child.on('close', (code, killed) =>
-      finish(code === 0 ? null : killed ? `was stopped by ${killed}` : `exited ${code}`),
-    );
-  });
+  } finally {
+    if (!retain) removeTemporaryEntry(directory);
+  }
 }
 
 function parse(part: PartName, text: string): unknown {
@@ -299,18 +332,27 @@ function traceRows(
   roots: Roots,
   excluded: readonly string[],
   owner: (path: string) => string | null,
+  content: (dir: string) => boolean,
 ): Uncertain | Omit<Derived, 'autolinking'> {
   const rows: Input[] = [];
   const inApp = (path: string) =>
     (within(path, roots.project) || within(path, roots.install)) && !path.split(sep).includes('node_modules');
   const packages = new Set<string>();
   const modules: string[] = [];
+  let portable = true;
+  const contentRow = (path: string): Input => {
+    const row = fileRow(path, roots);
+    if (row.name.startsWith('npm:') && !projectPackagePath(roots.project, realOr(path))) portable = false;
+    return row;
+  };
   const ours = (path: string) => within(path, SHIMS) || excluded.some((dir) => within(path, dir));
   for (const { path, hash } of trace.modules) {
     if (ours(path) || SKIPPED_READS.has(basename(path))) continue;
     const dir = owner(path);
-    if (dir) packages.add(dir);
-    else if (existsSync(path)) {
+    if (dir) {
+      packages.add(dir);
+      if (content(dir)) rows.push(contentRow(path));
+    } else if (existsSync(path)) {
       const row = fileRow(path, roots);
       modules.push(row.name);
       rows.push(row);
@@ -319,7 +361,9 @@ function traceRows(
   const compiled = new Set(trace.modules.map((module) => module.path));
   const configPart = name === 'config' || name === 'configEmbedded';
   for (const { path, kind, hash } of trace.reads) {
-    if (packageRoot(path) || ours(path)) continue;
+    if (ours(path)) continue;
+    const dir = owner(path);
+    if (packageRoot(path) && (!dir || !content(dir))) continue;
     if (kind === 'resolve') continue;
     if (kind !== 'file') {
       if (inApp(path) && (name === 'config' || name === 'configEmbedded'))
@@ -343,7 +387,7 @@ function traceRows(
       !compiled.has(path)
     )
       return { uncertain: `${path} was read as a module this Node cannot capture; use Node 22.15 or later` };
-    rows.push(fileRow(path, roots));
+    rows.push(dir && content(dir) ? contentRow(path) : fileRow(path, roots));
   }
   return {
     rows,
@@ -351,6 +395,7 @@ function traceRows(
     modules,
     opaque: trace.opaque.map((call) => `${name}: ${call}`),
     enumerated: trace.enumerators.some(inApp),
+    portable,
   };
 }
 
@@ -386,6 +431,50 @@ const evaluatorKey = (): string =>
   (evaluatorDigest ??= sha256(
     ['fp-eval.cjs', 'fp-trace.cjs'].map((name) => readFileSync(join(SHIMS, name))).join('\0'),
   ));
+
+export interface FingerprintRuntime {
+  node: string;
+  evaluator: string;
+  packages: Record<string, string | null>;
+}
+
+export function fingerprintRuntime(root: string, env: NodeJS.ProcessEnv): FingerprintRuntime | Uncertain {
+  const node = projectNodeBin(root, env)?.version ?? process.version;
+  const version = /^v?(\d+\.\d+)/.exec(node)?.[1];
+  if (!version) return { uncertain: `cannot identify the project's Node version ${node}` };
+  const expo = findPackage(root, 'expo');
+  const expoCli = expo && findPackage(expo, '@expo/cli');
+  const rnCli = findPackage(root, '@react-native-community/cli');
+  const constants = findPackage(root, 'expo-constants');
+  const dirs: Record<string, string | null> = {
+    expo,
+    '@expo/cli': expoCli,
+    '@expo/config': expo && findPackage(expo, '@expo/config'),
+    '@expo/config-plugins': expo && findPackage(expo, '@expo/config-plugins'),
+    '@expo/env': expoCli && findPackage(expoCli, '@expo/env'),
+    'expo-modules-autolinking':
+      expo && (findPackage(expo, 'expo-modules-autolinking') ?? findPackage(root, 'expo-modules-autolinking')),
+    'expo-constants': constants,
+    'expo-constants:@expo/env': constants && findPackage(constants, '@expo/env'),
+    'react-native': findPackage(root, 'react-native'),
+    '@react-native-community/cli': rnCli,
+    '@react-native-community/cli-config': rnCli && findPackage(rnCli, '@react-native-community/cli-config'),
+  };
+  const packages: Record<string, string | null> = {};
+  for (const [name, dir] of Object.entries(dirs)) {
+    const identity = dir ? packageIdentity(dir) : null;
+    if (dir && (!identity || !identity.version)) return { uncertain: `cannot identify evaluator package ${name}` };
+    packages[name] = identity?.version ?? null;
+  }
+  if (
+    expo &&
+    ['@expo/cli', '@expo/config', '@expo/config-plugins', '@expo/env', 'expo-modules-autolinking'].some(
+      (name) => !packages[name],
+    )
+  )
+    return { uncertain: 'cannot identify the project Expo evaluator packages' };
+  return { node: version, evaluator: evaluatorKey(), packages };
+}
 
 /**
  * The env digest a part is checked against: a value's hash, a path's in its relocated form, or for `*` (code, its own
@@ -512,6 +601,7 @@ function packageIdentities(
   roots: Roots,
   session: IndexSession | null,
   classify: () => Classifier,
+  namedNativePaths: Readonly<Record<string, readonly string[]>> = {},
 ): Uncertain | { name: string; version: string; provenance: Provenance; content?: string }[] {
   const identities: { name: string; version: string; provenance: Provenance; content?: string }[] = [];
   for (const dir of new Set(dirs)) {
@@ -528,12 +618,79 @@ function packageIdentities(
       identities.push({ ...identity, provenance: entry.provenance });
       continue;
     }
-    const walked = walk({ roots, trees: nativeSubset(dir), tracked: null, hashes: session?.hashes });
+    const walked = walk({
+      roots,
+      trees: nativeSubset(dir, namedNativePaths[realOr(dir)] ?? []),
+      tracked: null,
+      hashes: session?.hashes,
+    });
     if (isUncertain(walked)) return walked;
     const content = sha256(canonicalJson(walked.inputs.map((input) => [input.name, input.hash])));
     identities.push({ ...identity, provenance: entry.provenance, content });
   }
   return identities;
+}
+
+function autolinkedPackages(
+  paths: Set<string>,
+  roots: Roots,
+): { packages: Set<string>; contentPackages: Set<string> } | { uncertain: string } {
+  const packages = new Set<string>();
+  const contentPackages = new Set<string>();
+  for (const path of paths) {
+    const dir = packageRoot(path);
+    if (dir) {
+      packages.add(dir);
+      continue;
+    }
+    let candidate = path;
+    while (
+      candidate !== roots.project &&
+      candidate !== roots.install &&
+      dirname(candidate) !== candidate &&
+      !existsSync(join(candidate, 'package.json'))
+    )
+      candidate = dirname(candidate);
+    if (existsSync(join(candidate, 'package.json')) && candidate !== roots.project && candidate !== roots.install)
+      contentPackages.add(candidate);
+    else if (!within(path, roots.project) && !within(path, roots.install))
+      return { uncertain: `autolinking names ${path}, which belongs to no package stim can hash` };
+  }
+  return { packages, contentPackages };
+}
+
+function addExpoNamedPaths(output: unknown, owners: Iterable<string>, named: Record<string, string[]>): void {
+  const modules = record(output).modules;
+  const directories = [...owners].toSorted((a, b) => b.length - a.length);
+  for (const module of Array.isArray(modules) ? modules : []) {
+    const entry = record(module);
+    for (const collection of [entry.pods, entry.projects, entry.plugins]) {
+      for (const item of Array.isArray(collection) ? collection : []) {
+        const descriptor = record(item);
+        for (const path of [descriptor.podspecDir, descriptor.sourceDir]) {
+          if (typeof path !== 'string' || !isAbsolute(path)) continue;
+          const actual = realOr(path);
+          const owner = directories.find((dir) => within(actual, realOr(dir)));
+          if (!owner || realOr(owner) === actual) continue;
+          (named[owner] ??= []).push(path);
+          if (owner !== realOr(owner)) (named[realOr(owner)] ??= []).push(path);
+        }
+      }
+    }
+  }
+}
+
+function rnNativePaths(root: string, platforms: Record<string, unknown>): string[] {
+  const ios = record(platforms.ios);
+  const android = record(platforms.android);
+  const names = [ios, android].flatMap((platform) =>
+    [platform.sourceDir, platform.podspecPath, platform.cmakeListsPath, platform.cxxModuleCMakeListsPath].flatMap(
+      (path) => (typeof path === 'string' && path ? [resolve(root, path)] : []),
+    ),
+  );
+  for (const path of [ios.podspecPath, android.cmakeListsPath, android.cxxModuleCMakeListsPath])
+    if (typeof path === 'string' && path) names.push(dirname(resolve(root, path)));
+  return names;
 }
 
 async function evaluate(
@@ -544,12 +701,14 @@ async function evaluate(
   opts: FingerprintOptions,
   session: IndexSession | null,
   settled: AbortSignal,
+  running: Promise<unknown>[],
 ) {
   const root = roots.project;
   let outsideValue = false;
   const form = (path: string) => {
     const keyed = realForm(path, roots);
     if (keyed.startsWith('outside:')) outsideValue = true;
+    if (keyed.startsWith('npm:') && !projectPackagePath(root, realOr(path))) outsideValue = true;
     return keyed;
   };
   const env = evaluatorEnv(opts.env, root, platform);
@@ -566,12 +725,18 @@ async function evaluate(
     if (!owners.has(dir)) owners.set(dir, installedPackage(path));
     return owners.get(dir) ?? null;
   };
-  const spawn = async (
+  let lockfile: Classifier | null = null;
+  const classify = () => (lockfile ??= lockfileClassifier(roots.install).classify);
+  const content = (dir: string): boolean => {
+    const identity = packageIdentity(realOr(dir));
+    return !identity || classify()(realOr(dir), identity).mode === 'content';
+  };
+  const spawnOne = async (
     name: PartName,
     args: string[],
     partEnv = env,
     slot: string = name,
-    signal = opts.signal,
+    signal = opts.signal ? AbortSignal.any([opts.signal, settled]) : settled,
   ): Promise<Part | EvalUncertain> => {
     const wrapped = args[0] === evaluator;
     const digest = envDigest(partEnv, roots);
@@ -589,11 +754,11 @@ async function evaluate(
         keep: unrecorded,
       };
     const since = session?.since ?? 0n;
-    const done = await run(name, node, args, root, partEnv, signal);
+    const done = await run(name, node, args, root, partEnv, signal, opts.operation);
     if (isUncertain(done)) return done;
     const output = parse(name, wrapped ? done.result : done.stdout);
     if (isUncertain(output)) return output;
-    const traced = traceRows(name, done.trace, roots, excluded, owner);
+    const traced = traceRows(name, done.trace, roots, excluded, owner, content);
     if (isUncertain(traced)) return traced;
     const derived: Derived = { ...traced, autolinking: autolinkingHash(name, output, wrapped, roots) };
     let keep = unrecorded;
@@ -621,6 +786,7 @@ async function evaluate(
         packageRoot,
         (dir) => owner(join(dir, 'package.json')) !== null,
         session.reals,
+        content,
       );
       const names = [...new Set([...done.trace.env, ...STARTUP_ENV])];
       if (done.trace.enumerators.length > 0) names.push('*');
@@ -638,6 +804,12 @@ async function evaluate(
       }
     }
     return { name, output, wrapped, envNames: done.trace.env, derived, env: partEnv, fromIndex: false, keep };
+  };
+  const spawn: typeof spawnOne = (...args) => {
+    const pending = spawnOne(...args);
+    running.push(pending);
+    void pending.catch(() => {});
+    return pending;
   };
   const parts: Promise<Part | EvalUncertain>[] = [];
   const rows: Input[] = [];
@@ -685,10 +857,7 @@ async function evaluate(
     }
   } else parts.push(spawn('rnConfig', [evaluator, 'rn', root, platform]));
   const { names: buildNames, scanned, scan, settle } = buildEnvNames(root, native, nativeDir, expo, session);
-  let lockfile: Classifier | null = null;
-  const classify = () => (lockfile ??= lockfileClassifier(roots.install).classify);
   const closure = session ? session.closure(() => entryPoints(root, expo)) : entryPoints(root, expo);
-  const closureIdentities = packageIdentities(closure.dirs, roots, session, classify);
   const linkedPackages = (part: Part): string[] => {
     const output = record(part.wrapped ? record(part.output).config : part.output);
     const paths =
@@ -728,28 +897,27 @@ async function evaluate(
   const rnOutput = record(rn?.wrapped ? record(rn.output).config : rn?.output);
   if (typeof rnOutput.dependencies !== 'object' || rnOutput.dependencies === null || !rn?.derived.autolinking)
     return failed('rnConfig', `has no dependencies for ${platform}`);
+  const namedNativePaths: Record<string, string[]> = {};
   for (const [name, dependency] of Object.entries(record(rnOutput.dependencies))) {
-    if (typeof record(dependency).root === 'string') autolinked.add(String(record(dependency).root));
+    const entry = record(dependency);
+    if (typeof entry.root === 'string') {
+      const dependencyRoot = entry.root;
+      autolinked.add(dependencyRoot);
+      const platforms = record(entry.platforms);
+      const names = rnNativePaths(dependencyRoot, platforms);
+      (namedNativePaths[dependencyRoot] ??= []).push(...names);
+      const actualRoot = realOr(dependencyRoot);
+      if (actualRoot !== dependencyRoot) (namedNativePaths[actualRoot] ??= []).push(...names);
+    }
     nativePackages.add(name);
   }
   rows.push({ name: 'autolinking:rn', kind: 'autolinking', hash: rn.derived.autolinking });
   for (const path of pathStrings(resolved?.output)) autolinked.add(path);
 
-  const contentPackages = new Set<string>();
-  const packages = new Set<string>();
-  for (const path of autolinked) {
-    const dir = packageRoot(path);
-    if (dir) {
-      packages.add(dir);
-      continue;
-    }
-    let dir2 = path;
-    while (dir2 !== root && dir2 !== roots.install && dirname(dir2) !== dir2 && !existsSync(join(dir2, 'package.json')))
-      dir2 = dirname(dir2);
-    if (existsSync(join(dir2, 'package.json')) && dir2 !== root && dir2 !== roots.install) contentPackages.add(dir2);
-    else if (!within(path, roots.project) && !within(path, roots.install))
-      return { uncertain: `autolinking names ${path}, which belongs to no package stim can hash` };
-  }
+  const linkedOwners = autolinkedPackages(autolinked, roots);
+  if ('uncertain' in linkedOwners) return linkedOwners;
+  const { packages, contentPackages } = linkedOwners;
+  addExpoNamedPaths(resolved?.output, [...packages, ...contentPackages], namedNativePaths);
 
   const config = byName.get('config');
   const output = record(config?.output ?? (rn?.wrapped ? rn.output : null));
@@ -757,7 +925,7 @@ async function evaluate(
   const opaque: string[] = [];
   const collect = (part: Part, prefix: string, pin: boolean) => {
     rows.push(...envRows(prefix, part.envNames, part.env, pin, form), ...part.derived.rows);
-    if (part.derived.enumerated) rows.push({ ...enumerationRow(part.env), name: `${prefix}*` });
+    if (part.derived.enumerated) rows.push({ ...enumerationRow(part.env, form, pin), name: `${prefix}*` });
     part.derived.packages.forEach((dir) => packages.add(dir));
     if (part.name === 'config' || part.name === 'configEmbedded') configModules.push(...part.derived.modules);
     opaque.push(...part.derived.opaque);
@@ -784,11 +952,22 @@ async function evaluate(
       const reuse =
         byMode &&
         opts.embedMode === mode &&
+        !config.derived.enumerated &&
         config.envNames.every((name) => isDenied(name) || env[name] === embedded[name]);
       const part = reuse
         ? { ...config, name: embeddedName, env: embedded }
         : await (early?.constants === constants ? early.part : embed(constants));
       if (isUncertain(part)) return part;
+      const privateNames = Object.keys(embedded).filter(privateReplayEnv);
+      if (
+        privateNames.some((name) => part.envNames.includes(name)) ||
+        (privateNames.length > 0 && part.derived.enumerated)
+      )
+        return {
+          uncertain: 'embedded project configuration reads a private Stim credential that cannot be replayed safely',
+          evaluator: 'configEmbedded' as const,
+          remedy: 'Remove the private Stim credential from the build environment and retry.',
+        };
       if (!reuse) part.keep();
       if (reuse) rows.push(...envRows('env@embed:', config.envNames, embedded, false, form));
       else {
@@ -842,6 +1021,7 @@ async function evaluate(
     return { uncertain: `stim cannot read a file the build env or config names: ${String(error)}` };
   }
   if (isUncertain(pathRows)) return pathRows;
+  const closureIdentities = packageIdentities(closure.dirs, roots, session, classify, namedNativePaths);
   if (isUncertain(closureIdentities)) return closureIdentities;
   const closureDirs = new Set(closure.dirs);
   const identities = packageIdentities(
@@ -849,6 +1029,7 @@ async function evaluate(
     roots,
     session,
     classify,
+    namedNativePaths,
   );
   if (isUncertain(identities)) return identities;
   rows.push(
@@ -863,12 +1044,14 @@ async function evaluate(
     config: output.config ? record(output.config) : null,
     fingerprintConfig: output.fingerprintConfig,
     contentPackages: [...contentPackages],
+    namedNativePaths,
     nativePackages: [...nativePackages].toSorted(byCodeUnit),
     configModules: [...new Set(configModules)].toSorted(byCodeUnit),
     opaque,
     fromIndex: evaluated.some((part) => part.fromIndex),
     portable:
       pathRows.portable &&
+      evaluated.every((part) => part.derived.portable) &&
       !outsideValue &&
       !configText.includes(home) &&
       !(username.length > 2 && configText.includes(username)),
@@ -880,41 +1063,119 @@ async function evaluate(
  * native build reads. Any evaluator failure is `Uncertain`, never a key with fewer inputs. With the index, a part
  * whose recorded env, stamps and reads all still hold is reused instead of re-run.
  */
+let delegatedOwnership = false;
+let parentTemporaryRoot: string | null = null;
+
+export function useParentFingerprintOwnership(temporaryRoot?: string): void {
+  delegatedOwnership = true;
+  parentTemporaryRoot = temporaryRoot ?? null;
+}
+
 export async function fingerprint(
+  root: string,
+  target: StaticTarget,
+  opts: FingerprintOptions,
+): Promise<Fingerprint | EvalUncertain> {
+  const signal = opts.operation
+    ? opts.signal
+      ? AbortSignal.any([opts.operation.signal, opts.signal])
+      : opts.operation.signal
+    : opts.signal;
+  if (delegatedOwnership) return fingerprintOwned(root, target, { ...opts, signal });
+  let operation = opts.operation;
+  if (!operation) {
+    const context = processContext(root, signal);
+    operation = {
+      ...context,
+      home: opts.env.STIM_HOME && isAbsolute(opts.env.STIM_HOME) ? opts.env.STIM_HOME : context.home,
+      env: opts.env,
+    };
+  }
+  return withFingerprintOwnership(
+    operation,
+    root,
+    () => fingerprintOwned(root, target, { ...opts, operation, signal }),
+    signal,
+  );
+}
+
+async function fingerprintOwned(
   root: string,
   target: StaticTarget,
   opts: FingerprintOptions,
 ): Promise<Fingerprint | EvalUncertain> {
   const since = startedAt();
   const project = realpathSync.native(root);
-  const roots: Roots = { project, install: installRoot(project), top: gitLocation(project)?.top };
+  const roots: Roots = {
+    project,
+    install: installRoot(project),
+    ...(opts.replay ? {} : { top: gitLocation(project)?.top }),
+  };
   const session =
-    opts.index === 'skip' || !existsSync(join(SHIMS, 'fp-trace.cjs'))
+    opts.replay || opts.index === 'skip' || !existsSync(join(SHIMS, 'fp-trace.cjs'))
       ? null
       : new IndexSession(
-          indexDir(target.platform, project, targetLayout(target)),
+          indexDir(target.platform, project, targetLayout(target), opts.operation?.home),
           roots,
           { evaluator: evaluatorKey(), runtime: projectNodeBin(project, opts.env)?.version ?? process.version },
           since,
+          opts.index !== 'refresh',
+          opts.operation?.home,
         );
-  const tracked = await trackedPaths(project, opts.signal);
+  const tracked = opts.replay ? null : await trackedPaths(project, opts.signal, opts.operation);
   const expoResolves = findPackage(project, 'expo') !== null;
   const nativeDir = nativeDirectory(project, target);
-  const native = nativeMode({ expoResolves, tracked }, nativeDir);
+  const native = opts.replay?.native ?? nativeMode({ expoResolves, tracked }, nativeDir);
   if (isUncertain(native)) return native;
   const settled = new AbortController();
-  const evaluated = await evaluate(roots, target.platform, native, nativeDir, opts, session, settled.signal).finally(
-    () => settled.abort(),
-  );
-  if (isUncertain(evaluated)) return evaluated;
+  const running: Promise<unknown>[] = [];
+  const evaluated = await evaluate(
+    roots,
+    target.platform,
+    native,
+    nativeDir,
+    opts,
+    session,
+    settled.signal,
+    running,
+  ).finally(async () => {
+    settled.abort();
+    const outcomes = await Promise.allSettled(running);
+    const failure = outcomes.find(
+      (outcome) =>
+        outcome.status === 'rejected' &&
+        typeof outcome.reason === 'object' &&
+        outcome.reason !== null &&
+        'reportCleanup' in outcome.reason,
+    );
+    if (failure?.status === 'rejected') throw failure.reason;
+  });
+  if ('uncertain' in evaluated) return evaluated;
+  const files = opts.replay ? replayFiles(opts.replay.sources, roots, target) : null;
+  if (files && isUncertain(files)) return files;
+  const override = opts.replay?.sources.find((source) => source.id === 'stim:fingerprintInputs');
+  if (override && override.kind !== 'manifest') return { uncertain: 'invalid fingerprint input override' };
   const statics = staticInputs(
     {
       root: project,
+      ...(files && opts.replay
+        ? {
+            replay: {
+              native,
+              files,
+              verifyMembership: opts.replay.allowChanges === true,
+              ...(override
+                ? { fingerprintInputs: { name: override.id, kind: override.kind, hash: override.hash } }
+                : {}),
+            },
+          }
+        : {}),
       tracked,
       expoResolves,
-      config: evaluated.config,
+      config: expoResolves ? evaluated.config : null,
       fingerprintConfig: evaluated.fingerprintConfig,
       contentPackages: evaluated.contentPackages,
+      namedNativePaths: evaluated.namedNativePaths,
       hashes: session?.hashes,
     },
     target,
@@ -926,11 +1187,28 @@ export async function fingerprint(
   } catch (error) {
     return { uncertain: error instanceof Error ? error.message : String(error) };
   }
+  if (opts.replay && !opts.replay.allowChanges) {
+    const expected = opts.replay.sources.map((source) => [source.id, source.kind, source.hash]);
+    const actual = inputs.map((input) => [input.name, input.kind, input.hash]);
+    if (canonicalJson(expected.toSorted(([a], [b]) => byCodeUnit(a ?? '', b ?? ''))) !== canonicalJson(actual))
+      return { uncertain: 'the worker fingerprint inputs differ from the client' };
+  }
   if (session) {
     session.save();
-    writeWorkspaceEnv(project, workspaceEnv(opts.env));
+    writeWorkspaceEnv(project, workspaceEnv(opts.env), opts.operation?.home);
   }
-  const portable = statics.portable && evaluated.portable && !inputs.some((input) => input.name.startsWith('outside:'));
+  const folded = new Set<string>();
+  const caseCollision = inputs.some((input) => {
+    const name = input.name.toLowerCase();
+    if (folded.has(name)) return true;
+    folded.add(name);
+    return false;
+  });
+  const portable =
+    statics.portable &&
+    evaluated.portable &&
+    !caseCollision &&
+    !inputs.some((input) => input.name.startsWith('outside:'));
   return {
     schema: FINGERPRINT_SCHEMA,
     hash: preimageHash(preimage(target.platform, statics.native, statics.layout, inputs)),

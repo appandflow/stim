@@ -136,12 +136,13 @@ describe('planAndroid', () => {
 
   async function plan(opts: AndroidPlanOptions, deps: Partial<AndroidPlanDeps> = {}) {
     const logs: string[] = [];
+    const errors: string[] = [];
     const origLog = console.log;
     const origErr = console.error;
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
     console.log = (line) => logs.push(String(line));
-    console.error = () => {};
+    console.error = (line) => errors.push(String(line));
     let exitCode: typeof process.exitCode;
     try {
       await planAndroid(
@@ -158,7 +159,20 @@ describe('planAndroid', () => {
                     load: async (resolved) =>
                       reactNativeAndroidProject(path, resolved, {
                         plan: {
-                          fingerprint: async () => ({ hash: HASH, sources: [] }),
+                          fingerprint: async () => ({
+                            schema: 2,
+                            hash: HASH,
+                            platform: 'android',
+                            native: 'tracked',
+                            inputs: [],
+                            nativePackages: [],
+                            configModules: [],
+                            config: null,
+                            portable: true,
+                            opaque: [],
+                            from: 'evaluated',
+                            fingerprintConfigKeys: [],
+                          }),
                           listSystemImages: () => [ARM, X86],
                           avdSystemImage: () => null,
                           avdDirectory: () => null,
@@ -180,8 +194,31 @@ describe('planAndroid', () => {
       process.exitCode = previousExitCode;
     }
     assert.equal(logs.length, 1);
-    return { payload: JSON.parse(logs[0]!), exitCode };
+    const [line] = logs;
+    assert(line);
+    return { payload: JSON.parse(line), exitCode, errors };
   }
+
+  test('plan reports the evaluator refusal and its redacted diagnostic', async () => {
+    const { payload, exitCode, errors } = await plan(
+      {},
+      {
+        fingerprint: async () => ({
+          uncertain: 'config evaluator exited 1',
+          evaluator: 'config',
+          remedy: 'Fix the app config.',
+          stderrTail: ['config failed: ***'],
+        }),
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(payload).toMatchObject({
+      code: 'STIM_NO_FINGERPRINT',
+      message: expect.stringContaining('config evaluator exited 1'),
+      remedy: 'Fix the app config.',
+    });
+    expect(errors.join('\n')).toContain('config failed: ***');
+  });
 
   test('plan honors explicit local device and build flags over remote settings without starting a runtime', async () => {
     saveConfig({ version: 2, projects: {}, repos: {}, remote: { build: 'remote-only' } });

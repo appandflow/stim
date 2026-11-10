@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -64,6 +64,24 @@ test('a .dd directory laid out as DerivedData and android CMake directories are 
       join(root, 'android', 'mylib', '.cxx'),
     ].toSorted(),
   );
+});
+
+test('the Cargo target/ of an Exact app is build output; a target/ in any other project, or a link, is not', () => {
+  for (const name of ['exact.mjs', 'Cargo.toml']) writeFileSync(join(root, name), '');
+  dir('target', 'debug');
+  dir('apple', 'target');
+  expect(discoveredBuildDirs(root)).toEqual([join(root, 'target')]);
+  expect(isBuildDirPath(join(root, 'target'))).toBe(true);
+  expect(isBuildDirPath(join(root, 'apple', 'target'))).toBe(false);
+
+  rmSync(join(root, 'exact.mjs'));
+  expect(discoveredBuildDirs(root)).toEqual([]);
+  expect(isBuildDirPath(join(root, 'target'))).toBe(false);
+
+  writeFileSync(join(root, 'exact.mjs'), '');
+  rmSync(join(root, 'target'), { recursive: true });
+  symlinkSync(dir('elsewhere', 'target'), join(root, 'target'));
+  expect(discoveredBuildDirs(root)).toEqual([]);
 });
 
 test('a .dd without the DerivedData layout, or a link to one, is not build output', () => {

@@ -32,12 +32,13 @@ DISPOSABLE STATE
 
 In every workspace, node_modules, ios/Pods, Xcode DerivedData and the build
 directories (android/app/build, android/build, android/.gradle, .build,
-android/.cxx, android/<module>/.cxx and a .dd directory laid out as DerivedData) are
-disposable. The stim-daemon deletes a workspace's build outputs when it goes
-idle, and node_modules and Pods of idle linked worktrees under critical disk
-pressure; the next start, ios or android restores them from the build cache
-or with worktree warm. Never fix a dependency by editing files inside them:
-the change is lost. Put dependency changes in the project's own patch
+android/.cxx, android/<module>/.cxx, a .dd directory laid out as DerivedData,
+and an Exact app's Cargo target/) are disposable. The stim-daemon deletes a
+workspace's build outputs when it goes idle, and node_modules and Pods of idle
+linked worktrees under critical disk pressure; the next start, ios or android
+restores them from the build cache or with worktree warm, except an Exact
+app's target/, which its next build recompiles in full. Never fix a
+dependency by editing files inside them: the change is lost. Put dependency changes in the project's own patch
 mechanism, such as patch-package, pnpm patch, yarn patch or a Podfile
 post_install hook, and commit them.
 
@@ -124,9 +125,9 @@ the printed remedy and keep concurrent runs on the same STIM_HOME.
 Before native work, run doctor for the platform in scope when the STATUS block
 at the top of this topic says it is due. No block means doctor is current and
 Stim is up to date. In the worktree workflow, run it from the linked worktree
-so it also checks the source checkout. Doctor never loads fingerprint.config.js
-or runs an eas from the project tree; its fingerprint checks can still run
-installed Expo packages, including hoisted ones, as a build does. warm,
+so it also checks the source checkout. Fingerprint checks evaluate project
+configuration, including fingerprint.config.js, in a child process. Doctor
+does not run eas from the project tree. warm,
 start, ios and android run project code. Follow each finding's printed remedy,
 and read the routed topic below before acting on one you do not understand. If
 the stim resolved from PATH is older than another installation, fix PATH or the

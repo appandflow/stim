@@ -1,4 +1,5 @@
 import { readFileSync, realpathSync, statSync } from 'node:fs';
+import type { StimContext } from '@stim-cli/core';
 import { dirname, join, resolve } from 'node:path';
 import { gitAsync } from '../workspace/git.ts';
 import { field } from './walk.ts';
@@ -108,7 +109,11 @@ export function gitLocation(root: string): { top: string; gitDir: string; common
  * The real paths git tracks in the work tree that holds `root`, or null when no work tree does. Reads
  * the index file in process, and runs `git ls-files` only for an index this reader does not handle.
  */
-export async function trackedPaths(root: string, signal?: AbortSignal): Promise<Set<string> | null> {
+export async function trackedPaths(
+  root: string,
+  signal?: AbortSignal,
+  context?: StimContext,
+): Promise<Set<string> | null> {
   const location = gitLocation(root);
   if (!location) return null;
   const { top, gitDir, commonDir } = location;
@@ -123,7 +128,15 @@ export async function trackedPaths(root: string, signal?: AbortSignal): Promise<
     }
     if (data) paths = parseGitIndex(data);
   }
-  paths ??= (await gitAsync(top, ['ls-files', '-z', '-c'], { untrimmed: true, timeoutMs: 60_000, signal }))
+  paths ??= (
+    await gitAsync(top, ['ls-files', '-z', '-c'], {
+      untrimmed: true,
+      timeoutMs: 60_000,
+      signal: signal ?? context?.signal,
+      context,
+      declareFor: context,
+    })
+  )
     .split('\0')
     .filter(Boolean);
   return new Set(paths.map((path) => join(top, path)));

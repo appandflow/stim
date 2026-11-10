@@ -32,30 +32,34 @@ import {
 import { basename, delimiter, dirname, join, relative, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
-import {
-  changedOnlyInside,
-  compareSourceLists,
-  fingerprintProject,
-  refingerprintAfterMutation,
-} from '../../cache/build-cache.ts';
+
 import { buildIos, buildAndroid, gradlewPath } from '../../integrations/react-native-build.ts';
 import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../../cache/compilation-cache-corruption.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../../engine/deps.ts';
-import { planPrebuild, recordPrebuild, runPrebuild } from '../../engine/prebuild.ts';
+import { planPrebuild, prebuildPlanRefusal, recordPrebuild, runPrebuild } from '../../engine/prebuild.ts';
 import type { CcacheActivity, CompilationCacheActivity } from '../../engine/build-facts.ts';
 import { CCACHE_UNAVAILABLE, resolveCcache } from '../../engine/ccache.ts';
 import { assembleTaskFor } from '../../engine/gradle.ts';
 
 import { getExecutor } from '../../exec.ts';
+import {
+  fingerprint as computeFingerprint,
+  fingerprintRuntime,
+  useParentFingerprintOwnership,
+  type Fingerprint,
+} from '../../fingerprint/evaluate.ts';
+import { jobEnv, materializeFingerprintEnv } from '../../fingerprint/env.ts';
+import { installRoot, targetLayout } from '../../fingerprint/inputs.ts';
+import { diffInputs, isUncertain, type Input } from '../../fingerprint/key.ts';
+import { resolveReplayEnvPath } from '../../fingerprint/replay.ts';
 import { git, gitQuiet } from '../../workspace/git.ts';
-import { logLines } from '../../macos/run.ts';
 import { stripAnsi } from '../../process-output.ts';
 import { resolveBundleExtras, stageBundle } from '../../macos/stage.ts';
 import { manifestDigest } from '../../offload/manifest.ts';
 import { pathNodeVersion, projectNodeLine, unmetNodePin, withProjectNode } from '../../stimd/metro/project-node.ts';
-import { parseNdjsonText, type NdjsonWriter } from '../../ndjson.ts';
+import { logLines, parseNdjsonText, type NdjsonWriter } from '../../ndjson.ts';
 import type { Optimizations } from '../../optimizations.ts';
-import { podAction } from '../../commands/ios/support.ts';
+import { isReleaseConfiguration, podAction } from '../../commands/ios/support.ts';
 import type { AndroidBuildOptions } from '../../offload/client.ts';
 import { workerToolchain } from '../../offload/toolchain.ts';
 import { availableIphone, useJdkMajor } from '../../engine/toolchain.ts';
@@ -119,9 +123,18 @@ interface ManifestEntry {
 }
 
 /** What stim-server hands this process on stdin; it has already checked every path and blob. */
-interface WorkerJob {
+interface WorkerJob extends Pick<
+  BuildStartParams,
+  | 'fingerprintSchema'
+  | 'fingerprintEnv'
+  | 'fingerprintNative'
+  | 'fingerprintLayout'
+  | 'fingerprintRuntime'
+  | 'fingerprintInputs'
+> {
   job: string;
   area: string;
+  fingerprintTemp: string;
   blobs: string;
   manifest: ManifestEntry[];
   platform: 'ios' | 'android' | 'macos';
@@ -144,10 +157,6 @@ interface WorkerJob {
   expectedFingerprint: string | null;
   /** The client's sources of `expectedFingerprint`, when its stim-server forwards them. */
   expectedSources?: BuildFingerprintSource[];
-  /** The paths the client's git ignored for `expectedFingerprint`, which this checkout's git may not. */
-  expectedIgnored?: string[];
-  /** The top-level entries the client counted although an ignore pattern matches them; this checkout has no index. */
-  expectedTracked?: string[];
   cacheArtifact?: boolean;
   /** The client has no Xcode and left pod install to this machine, which may then rekey sources in the iOS project. */
   podsOnWorker?: boolean;
@@ -511,11 +520,14 @@ function namedList(names: readonly string[]): string {
 function fingerprintMismatch(
   job: WorkerJob,
   there: string,
-  sources: readonly unknown[],
+  sources: readonly Input[],
   mutated: { steps: readonly string[]; files: readonly string[] },
 ): string {
   const differing = job.expectedSources
-    ? compareSourceLists(job.expectedSources, [...sources]).map((change) => change.name)
+    ? diffInputs(
+        job.expectedSources.map(({ id, kind, hash }) => ({ name: id, kind, hash })),
+        sources,
+      ).map((change) => change.name)
     : [];
   return [
     `the checkout there fingerprints ${there.slice(0, 12)}, here ${job.expectedFingerprint?.slice(0, 12)}`,
@@ -524,20 +536,21 @@ function fingerprintMismatch(
   ].join('; ');
 }
 
-/**
- * Why the synced checkout does not build under the client's fingerprint, or null. A client without Xcode left pod
- * install to this machine and cannot have the files it rewrites or generates in `iosDir`, so a fingerprint that
- * differs only in sources there stands; any other difference, such as the app config, still refuses.
- */
 function fingerprintRefusal(
   job: WorkerJob,
   iosDir: string,
-  built: { hash: string; sources: readonly unknown[] },
+  built: { hash: string; sources: readonly Input[] },
   mutated: () => { steps: readonly string[]; files: readonly string[] },
 ): string | null {
   if (built.hash === job.expectedFingerprint) return null;
-  if (job.podsOnWorker && job.expectedSources && changedOnlyInside(job.expectedSources, [...built.sources], iosDir))
-    return null;
+  if (job.podsOnWorker && job.expectedSources && mutated().steps.includes('pod install')) {
+    const changes = diffInputs(
+      job.expectedSources.map(({ id, kind, hash }) => ({ name: id, kind, hash })),
+      built.sources,
+    );
+    const lock = iosDir === '.' ? 'Podfile.lock' : `${iosDir}/Podfile.lock`;
+    if (changes.length > 0 && changes.every((change) => change.kind === 'file' && change.name === lock)) return null;
+  }
   return fingerprintMismatch(job, built.hash, built.sources, mutated());
 }
 
@@ -680,6 +693,102 @@ async function sha256Of(path: string): Promise<string> {
   return hash.digest('hex');
 }
 
+function replayEnvironment(job: WorkerJob, project: string) {
+  if (
+    !job.fingerprintEnv ||
+    !job.fingerprintRuntime ||
+    !job.expectedSources ||
+    !job.fingerprintNative ||
+    !job.fingerprintLayout
+  )
+    return 'The build has no fingerprint replay description.';
+  const roots = { project, install: installRoot(project) };
+  const clientEnv = materializeFingerprintEnv(job.fingerprintEnv, (path) => resolveReplayEnvPath(path, roots));
+  if (!clientEnv) return 'The fingerprint environment contains an invalid path.';
+  const enumerated = job.expectedSources.some((source) => source.id === 'env:*' || source.id === 'env@embed:*');
+  const embedded = job.expectedSources.some((source) => source.id === 'env@embed:*');
+  return {
+    env: jobEnv(process.env, clientEnv, enumerated, embedded),
+    native: job.fingerprintNative,
+    sources: job.expectedSources,
+  };
+}
+
+function replayLayout(job: WorkerJob, platform: 'ios' | 'android', root: string, source: string) {
+  let iosProject: IosProjectDir;
+  try {
+    iosProject = iosProjectDirSetting({ ios: { projectPath: job.iosProjectPath ?? undefined } }, root);
+  } catch (error) {
+    return { error: (error as Error).message } as const;
+  }
+  let androidLayout: AndroidLayout;
+  try {
+    androidLayout = androidLayoutSetting(
+      { android: { gradleRoot: job.android?.gradleRoot ?? undefined, module: job.android?.module ?? undefined } },
+      root,
+      source,
+    );
+  } catch (error) {
+    return { error: (error as Error).message } as const;
+  }
+  const target = {
+    platform,
+    iosProjectPath: iosProject.relative,
+    androidLayout,
+    ...(job.fingerprintInputs ? { fingerprintInputs: job.fingerprintInputs } : {}),
+  };
+  if (!isDeepStrictEqual(targetLayout(target), job.fingerprintLayout))
+    return { error: 'The worker native layout differs from the client.', layoutMismatch: true } as const;
+  return { iosProject, androidLayout, target } as const;
+}
+
+async function prepareReplayNative(
+  job: WorkerJob,
+  platform: 'ios' | 'android',
+  root: string,
+  source: string,
+  initial: Fingerprint,
+  iosProject: IosProjectDir,
+  log: NdjsonWriter,
+  time: Timer,
+): Promise<string[] | { code: string; message: string }> {
+  const plan = planPrebuild(root, platform, { isExpo: job.isExpo, fingerprint: initial.hash, native: initial.native });
+  if (plan === 'refuse') {
+    const refusal = prebuildPlanRefusal(root, platform);
+    return { code: 'prebuild-refused', message: `${refusal.message} ${refusal.remedy}` };
+  }
+  const mutations: string[] = [];
+  if (plan === 'generate' || plan === 'regenerate') {
+    note('prebuild', plan === 'generate' ? `generating ${platform}/` : `regenerating ${platform}/ with --clean`);
+    recordPrebuild(root, platform, null);
+    const result = await time('prebuildMs', () => runPrebuild(root, platform, log, { clean: plan === 'regenerate' }));
+    if (result?.failed)
+      return {
+        code: 'prebuild-failed',
+        message: [result.reason ?? 'expo prebuild failed.', unmetNodePin(root, process.env, { top: source })]
+          .filter(Boolean)
+          .join(' '),
+      };
+    mutations.push('expo prebuild');
+  }
+  if (platform === 'ios') {
+    useXcodeNode(iosProject.dir);
+    const podState = readPodState(root, iosProject.dir);
+    const pods = podAction(podState, podsAreStale(podState.lockText, podState.manifestText, podState.dir));
+    if (pods.install) {
+      note('pods', `${pods.reason ?? 'Pods are stale'} -> pod install`);
+      // CocoaPods refuses an external-source pod such as hermes-engine whose version differs from the one stored here
+      rmSync(join(iosProject.dir, 'Pods', 'Local Podspecs'), { recursive: true, force: true });
+      const result = await time('podsMs', () =>
+        runPodInstall(root, log, { directory: iosProject.dir, onHeartbeat: (line) => note('pods', line) }),
+      );
+      if (result?.failed) return { code: 'pods-failed', message: result.reason ?? 'pod install failed.' };
+      mutations.push('pod install');
+    }
+  }
+  return mutations;
+}
+
 async function build(job: WorkerJob): Promise<WorkerResult> {
   const timings: WorkerTimings = {
     syncMs: 0,
@@ -730,6 +839,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       if (!(await verifyGradleTransfer(src, job.project, job.native.inputs, job.manifest, job.native.sourceDigest)))
         throw new Error('The native source changed while the worker compiled it.');
     } catch (error) {
+      if (error instanceof Error && 'reportCleanup' in error) throw error;
       if (compiled.temporary) rmSync(compiled.temporary, { recursive: true, force: true });
       return failed('source-moved', (error as Error).message);
     }
@@ -748,6 +858,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       if (!(await verifyNativeTransfer(src, job.manifest, job.native.sourceDigest, metadataDirectories)))
         return failed('source-mismatch', 'The materialized native inputs do not match the source transfer.');
     } catch (error) {
+      if (error instanceof Error && 'reportCleanup' in error) throw error;
       return failed('source-mismatch', (error as Error).message);
     }
     const native = job.native;
@@ -761,6 +872,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       if (!(await verifyNativeTransfer(src, job.manifest, job.native.sourceDigest, metadataDirectories)))
         throw new Error('The native source changed while the worker compiled it.');
     } catch (error) {
+      if (error instanceof Error && 'reportCleanup' in error) throw error;
       if (compiled.temporary) rmSync(compiled.temporary, { recursive: true, force: true });
       return failed('source-moved', (error as Error).message);
     }
@@ -769,92 +881,67 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     fingerprint = job.expectedFingerprint;
     compiled = await compileSyncedManifest(job, root, realRoot, log, time);
   } else {
+    const replaySettings = replayEnvironment(job, realRoot);
+    if (typeof replaySettings === 'string') return failed('bad-request', replaySettings);
+    const { env } = replaySettings;
+    for (const name of Object.keys(process.env)) if (!Object.hasOwn(env, name)) delete process.env[name];
+    Object.assign(process.env, env);
     useProjectNode(realRoot, realSrc, job.platform);
     const nodeFailed = (code: string, message: string) =>
       failed(code, [message, unmetNodePin(realRoot, process.env, { top: realSrc })].filter(Boolean).join(' '));
     try {
       await time('depsMs', () => ensureDependencies(job, src));
     } catch (error) {
+      if (error instanceof Error && 'reportCleanup' in error) throw error;
       return nodeFailed('deps-failed', (error as Error).message);
     }
 
+    const runtime = fingerprintRuntime(realRoot, process.env);
+    if (isUncertain(runtime) || !isDeepStrictEqual(runtime, job.fingerprintRuntime))
+      return failed(
+        'fingerprint-runtime',
+        isUncertain(runtime)
+          ? `The worker cannot identify its fingerprint runtime: ${runtime.uncertain}`
+          : runtime.node !== job.fingerprintRuntime?.node
+            ? `The worker evaluates the fingerprint with Node ${runtime.node} and the client with Node ${job.fingerprintRuntime?.node}; offloading needs the same Node major.minor on both.`
+            : 'The worker fingerprint evaluator or its project packages differ from the client.',
+      );
+
     const platform = job.platform;
-    let iosProject: IosProjectDir;
-    try {
-      iosProject = iosProjectDirSetting({ ios: { projectPath: job.iosProjectPath ?? undefined } }, realRoot);
-    } catch (error) {
-      return failed('bad-request', (error as Error).message);
-    }
-    let androidLayout: AndroidLayout;
-    try {
-      androidLayout = androidLayoutSetting(
-        { android: { gradleRoot: job.android?.gradleRoot ?? undefined, module: job.android?.module ?? undefined } },
-        realRoot,
-        realSrc,
+    const layout = replayLayout(job, platform, realRoot, realSrc);
+    if (layout.error !== undefined)
+      return failed('layoutMismatch' in layout ? 'fingerprint-layout' : 'bad-request', layout.error);
+    const { iosProject, androidLayout, target } = layout;
+    const replay = (allowChanges = false) =>
+      computeFingerprint(realRoot, target, {
+        env: process.env,
+        embedMode:
+          platform === 'android'
+            ? isReleaseVariant(job.android?.variant)
+              ? 'production'
+              : 'development'
+            : isReleaseConfiguration(job.configuration)
+              ? 'production'
+              : 'development',
+        replay: { native: replaySettings.native, sources: replaySettings.sources, allowChanges },
+      });
+    const initial = await time('fingerprintMs', () => replay());
+    if (isUncertain(initial)) return failed('no-fingerprint', initial.uncertain);
+    if (initial.hash !== job.expectedFingerprint)
+      return failed(
+        'fingerprint-mismatch',
+        fingerprintMismatch(job, initial.hash, initial.inputs, { steps: [], files: [] }),
       );
-    } catch (error) {
-      return failed('bad-request', (error as Error).message);
-    }
-    const initial = await time('fingerprintMs', () =>
-      fingerprintProject(realRoot, {
-        platform,
-        iosProjectPath: iosProject.relative,
-        androidLayout,
-        ignoredPaths: job.expectedIgnored,
-        trackedPaths: job.expectedTracked,
-      }),
-    );
-    if (!initial) return failed('no-fingerprint', 'The remote machine could not fingerprint the project.');
-    const plan = planPrebuild(realRoot, platform, {
-      isExpo: job.isExpo,
-      fingerprint: initial.hash,
-      sources: initial.sources,
-    });
-    if (plan === 'refuse') {
-      return failed('prebuild-refused', `${platform}/ is not generated by prebuild and does not match.`);
-    }
-    const mutations: string[] = [];
-    if (plan === 'generate' || plan === 'regenerate') {
-      note('prebuild', plan === 'generate' ? `generating ${platform}/` : `regenerating ${platform}/ with --clean`);
-      recordPrebuild(realRoot, platform, null);
-      const result = await time('prebuildMs', () =>
-        runPrebuild(realRoot, platform, log, { clean: plan === 'regenerate' }),
-      );
-      if (result?.failed) return nodeFailed('prebuild-failed', result.reason ?? 'expo prebuild failed.');
-      mutations.push('expo prebuild');
-    }
-    if (platform === 'ios') {
-      useXcodeNode(iosProject.dir);
-      const podState = readPodState(realRoot, iosProject.dir);
-      const pods = podAction(podState, podsAreStale(podState.lockText, podState.manifestText, podState.dir));
-      if (pods.install) {
-        note('pods', `${pods.reason ?? 'Pods are stale'} -> pod install`);
-        // CocoaPods refuses an external-source pod such as hermes-engine whose version differs from the one stored here
-        rmSync(join(iosProject.dir, 'Pods', 'Local Podspecs'), { recursive: true, force: true });
-        const result = await time('podsMs', () =>
-          runPodInstall(realRoot, log, { directory: iosProject.dir, onHeartbeat: (line) => note('pods', line) }),
-        );
-        if (result?.failed) return failed('pods-failed', result.reason ?? 'pod install failed.');
-        mutations.push('pod install');
-      }
-    }
+    const mutations = await prepareReplayNative(job, platform, realRoot, realSrc, initial, iosProject, log, time);
+    if (!Array.isArray(mutations)) return failed(mutations.code, mutations.message);
     fingerprint = initial.hash;
-    let sources = initial.sources;
+    let sources = initial.inputs;
     if (mutations.length) {
-      const after = await time('fingerprintMs', () =>
-        refingerprintAfterMutation({
-          projectRoot: realRoot,
-          platform,
-          previousHash: initial.hash,
-          iosProjectPath: iosProject.relative,
-          androidLayout,
-          ignoredPaths: job.expectedIgnored,
-          trackedPaths: job.expectedTracked,
-        }),
-      );
-      if (!after) return failed('no-fingerprint', `No fingerprint after ${mutations.join(', ')}.`);
+      const after = await time('fingerprintMs', () => replay(true));
+      if (isUncertain(after))
+        return failed('no-fingerprint', `No fingerprint after ${mutations.join(', ')}: ${after.uncertain}`);
       fingerprint = after.hash;
-      sources = after.sources;
+      sources = after.inputs;
       if (mutations.includes('expo prebuild')) recordPrebuild(realRoot, platform, after.hash);
     }
     const refused = fingerprintRefusal(job, iosProject.relative, { hash: fingerprint, sources }, () => ({
@@ -874,18 +961,9 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
         : await compileIos(job, realRoot, log, time);
     if (!compiled.ok) return failed(compiled.code, compiled.message);
     const builtFingerprint = fingerprint;
-    const settled = await time('fingerprintMs', () =>
-      refingerprintAfterMutation({
-        projectRoot: realRoot,
-        platform,
-        previousHash: builtFingerprint,
-        iosProjectPath: iosProject.relative,
-        androidLayout,
-        ignoredPaths: job.expectedIgnored,
-        trackedPaths: job.expectedTracked,
-      }),
-    );
-    if (!settled || settled.moved) return failed('fingerprint-moved', 'The inputs changed during the build there.');
+    const settled = await time('fingerprintMs', () => replay(true));
+    if (isUncertain(settled) || settled.hash !== builtFingerprint)
+      return failed('fingerprint-moved', 'The inputs changed during the build there.');
     const after =
       query && receipt
         ? reactNativeArtifactReceipt(query, await reactNativeArtifactToolchain(platform, realRoot, iosProject.dir))
@@ -1493,7 +1571,13 @@ export async function runOffloadWorker(mode: string | undefined, arg?: string): 
   try {
     await workerMode(mode, arg);
   } catch (error) {
-    emit({ type: 'result', ok: false, code: 'worker-crashed', message: String((error as Error)?.message ?? error) });
+    emit({
+      type: 'result',
+      ok: false,
+      code: 'worker-crashed',
+      message: String((error as Error)?.message ?? error),
+      fingerprintSettled: false,
+    });
   }
 }
 
@@ -1564,9 +1648,23 @@ async function workerMode(mode: string | undefined, arg?: string): Promise<void>
     const job = JSON.parse(Buffer.concat(chunks).toString('utf8')) as WorkerJob;
     if (job.platform === 'android' && job.jdk) {
       const unavailable = useJdkMajor(job.jdk);
-      if (unavailable) return emit({ type: 'result', ok: false, code: 'build-refused', message: unavailable });
+      if (unavailable)
+        return emit({
+          type: 'result',
+          ok: false,
+          code: 'build-refused',
+          message: unavailable,
+          fingerprintSettled: true,
+        });
     }
-    return emit({ type: 'result', ...(await build(job)) });
+    const originalEnv = { ...process.env };
+    useParentFingerprintOwnership(job.fingerprintTemp);
+    try {
+      return emit({ type: 'result', ...(await build(job)), fingerprintSettled: true });
+    } finally {
+      for (const name of Object.keys(process.env)) if (!Object.hasOwn(originalEnv, name)) delete process.env[name];
+      Object.assign(process.env, originalEnv);
+    }
   }
   process.stderr.write(
     'usage: stim __job offload-worker offer | offer-native-xcode | offer-native-gradle | native-gradle-artifact | swiftpm-artifact | build < job.json\n',

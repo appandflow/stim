@@ -58,8 +58,8 @@ export function windowsShortDirKey(kind: 'checkout' | 'gradle', path: string): s
   return createHash('sha256').update(`${kind}:${path.toLowerCase()}`).digest('hex');
 }
 
-export function loadConfig(): Config | null {
-  const p = getConfigPath();
+export function loadConfig(home?: string): Config | null {
+  const p = home ? join(home, 'config.json') : getConfigPath();
   let parsed: unknown;
   try {
     parsed = readJsonFile(p);

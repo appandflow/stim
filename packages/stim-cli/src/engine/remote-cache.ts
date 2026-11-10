@@ -11,8 +11,6 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import { stripAnsi } from '../process-output.ts';
 import { resolvePackageJson } from '../workspace/project.ts';
 import { expoBinFromPackage, expoBinPath, expoTelemetryEnv, findBinUpward } from '../stimd/metro/server-expo.ts';
-import type { FingerprintSource } from '@expo/fingerprint';
-import { expoConfigContents } from '../cache/build-cache.ts';
 import { remoteCommand } from './node-cli.ts';
 
 const EAS_PROVIDER_PACKAGE = 'eas-build-cache-provider';
@@ -198,18 +196,8 @@ export async function readProjectConfig(
   }
 }
 
-/**
- * The app config the fingerprint already evaluated, for a dynamic config. @expo/fingerprint's ExpoConfigEASProject
- * skip removes `owner`, so a missing owner under the EAS provider cannot be told from a stripped one and is read from
- * `expo config --json` instead.
- */
-function fingerprintedConfig(
-  projectRoot: string,
-  sources?: readonly FingerprintSource[],
-): ReadProjectConfigResult | null {
-  if (!sources || !dynamicConfigFile(projectRoot)) return null;
-  const config = expoConfigContents(sources);
-  if (!config) return null;
+function fingerprintedConfig(projectRoot: string, config?: ProjectConfig | null): ReadProjectConfigResult | null {
+  if (!config || !dynamicConfigFile(projectRoot)) return null;
   const provider = normalizeProvider(providerFromConfig(config));
   if (provider?.reference === EAS_PROVIDER_PACKAGE && ownerFromConfig(config) === null) return null;
   return { config, source: 'fingerprint' };
@@ -223,20 +211,20 @@ export async function loadProjectProvider(
     run = null,
     requireFrom = null,
     timeoutMs = CONFIG_TIMEOUT_MS,
-    sources,
+    config,
   }: {
     context?: StimContext;
     isExpo?: boolean;
     run?: ExecFileFn | null;
     requireFrom?: ((root: string) => NodeRequire) | null;
     timeoutMs?: number;
-    sources?: readonly FingerprintSource[];
+    config?: ProjectConfig | null;
   } = {},
 ): Promise<LoadProjectProviderResult> {
   if (!isExpo) return { none: true };
 
   const read =
-    fingerprintedConfig(projectRoot, sources) ?? (await readProjectConfig(projectRoot, { context, run, timeoutMs }));
+    fingerprintedConfig(projectRoot, config) ?? (await readProjectConfig(projectRoot, { context, run, timeoutMs }));
   if (read.unavailable) return { unavailable: read.unavailable };
 
   const normalized = normalizeProvider(providerFromConfig(read.config));

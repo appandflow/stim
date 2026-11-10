@@ -35,7 +35,7 @@ if (mode === 'offer') {
     mkdirSync(output, { recursive: true });
     const bytes = 'verified SwiftPM archive';
     writeFileSync(join(output, 'app.tgz'), bytes);
-    console.log(JSON.stringify({ type: 'result', ok: true, fingerprint: input.expectedFingerprint,
+    console.log(JSON.stringify({ type: 'result', ok: true, fingerprintSettled: true, fingerprint: input.expectedFingerprint,
       swiftpmArtifact: { identity, receipt: { query, identity } },
       artifact: { name: 'App.app', size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }, compilationCache: {}, timings: {} }));
   } else throw new Error('Unexpected worker mode ' + mode);
@@ -66,7 +66,7 @@ if (mode === 'offer') {
     build: { product: 'App', infoPlist: 'Info.plist', resources: {}, assetCatalog: null },
   };
   try {
-    const job = host.launch({
+    const job = await host.launch({
       client: 'builder',
       repo: 'app-1',
       session,

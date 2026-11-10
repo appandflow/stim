@@ -24,12 +24,13 @@ export interface ArtifactLifecycle<Artifact, Preparation, Placement = never> {
     store(artifact: Artifact): Promise<void>;
     finish?(artifact: Artifact): Promise<Artifact>;
   };
-  release(): void;
+  release(failure?: unknown): void | Promise<void>;
 }
 
 export async function runArtifactLifecycle<Artifact, Preparation, Placement>(
   phases: ArtifactLifecycle<Artifact, Preparation, Placement>,
 ): Promise<Artifact> {
+  let failure: unknown;
   try {
     const resolved = await phases.resolve();
     if (resolved.kind === 'ready') return resolved.artifact;
@@ -54,7 +55,10 @@ export async function runArtifactLifecycle<Artifact, Preparation, Placement>(
     const artifact = await build.compile(placement, preparation);
     if ((await build.validate(preparation)) === 'cacheable') await build.store(artifact);
     return build.finish ? await build.finish(artifact) : artifact;
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    phases.release();
+    await phases.release(failure);
   }
 }

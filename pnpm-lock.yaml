@@ -484,9 +484,6 @@ importers:
 
   packages/stim-cli:
     dependencies:
-      '@expo/fingerprint':
-        specifier: ^0.21.5
-        version: 0.21.5(supports-color@8.1.1)
       '@xmldom/xmldom':
         specifier: 0.9.12
         version: 0.9.12
@@ -509,6 +506,9 @@ importers:
         specifier: ^8.21.3
         version: 8.21.3
     devDependencies:
+      '@expo/fingerprint':
+        specifier: ^0.21.5
+        version: 0.21.5(supports-color@8.1.1)
       '@stim-cli/agent-driver':
         specifier: workspace:*
         version: link:../agent-driver
@@ -527,6 +527,15 @@ importers:
       '@stim-cli/server':
         specifier: workspace:*
         version: link:../server
+      '@stim-cli/transport':
+        specifier: workspace:*
+        version: link:../transport
+      '@stim-cli/transport-local':
+        specifier: workspace:*
+        version: link:../transport-local
+      '@stim-cli/transport-tailscale':
+        specifier: workspace:*
+        version: link:../transport-tailscale
       '@types/cross-spawn':
         specifier: ^6.0.6
         version: 6.0.6
@@ -548,7 +557,7 @@ importers:
         version: link:../core
 
   packages/transport-local:
-    dependencies:
+    devDependencies:
       '@stim-cli/transport':
         specifier: workspace:*
         version: link:../transport
@@ -558,6 +567,7 @@ importers:
       '@stim-cli/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
       '@stim-cli/transport':
         specifier: workspace:*
         version: link:../transport

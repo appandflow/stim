@@ -510,12 +510,13 @@ async function main() {
       `the entry holds no ${ARTIFACT_EXT}: ${files.join(', ')}`,
     );
     assert(
-      files.includes('fingerprint-sources.json'),
-      'the entry has no fingerprint-sources.json sidecar, so a later miss cannot say what moved',
+      files.includes('inputs.json'),
+      'the entry has no inputs.json sidecar, so a later miss cannot say what moved',
     );
-    const sources = JSON.parse(readFileSync(join(entry, 'fingerprint-sources.json'), 'utf-8'));
-    c.ev(`fingerprint-sources.json parses and lists ${Array.isArray(sources) ? sources.length : '?'} source(s)`);
-    assert(Array.isArray(sources) && sources.length > 0, 'fingerprint-sources.json is empty');
+    const sources = JSON.parse(readFileSync(join(entry, 'inputs.json'), 'utf-8'));
+    c.ev(`inputs.json parses and lists ${Array.isArray(sources.inputs) ? sources.inputs.length : '?'} input(s)`);
+    assert(Array.isArray(sources.inputs) && sources.inputs.length > 0, 'inputs.json has no input rows');
+    assert(sources.hash === again.fingerprint, 'inputs.json fingerprint does not match the stored artifact');
 
     const configuration = String(again.configuration || 'debug').toLowerCase();
     if (PLATFORM === 'android' && configuration === 'release') {

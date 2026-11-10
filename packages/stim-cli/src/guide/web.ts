@@ -179,9 +179,10 @@ web line.
 
 OWNERSHIP AND CLEANUP
 
-A browser supervisor process holds the DevTools session and an ownership
-claim for its lifetime; Chrome is the claim's child. Stim signals the
-supervisor or Chrome only after verifying the process identity it recorded.
+Chrome holds an ownership claim of its own for its lifetime, and stimd holds
+the DevTools session that records the page's logs, attaching again after a
+stimd restart. Stim signals Chrome only after verifying the process identity
+it recorded.
   stim stop               closes Chrome and keeps the profile, so cookies and
                           storage survive the next stim web
   stim stop --slot web    closes only Chrome, keeping the profile, Metro and
@@ -194,6 +195,12 @@ Chrome is gone, Stim removes the SingletonLock files a killed Chrome leaves,
 which would otherwise block the next launch. status reports
 browser-unverified when an identity cannot be proven; follow stim guide
 errors teardown.
+Before removing workspace output, Stim waits for the browser observer to close
+and record buffered events. If that drain fails, cleanup is refused.
+If the log worker exits unexpectedly while observing output, Stim cannot
+verify its final buffered records and refuses cleanup while that daemon runs.
+Inspect the retained workspace and its owned processes before manually
+reconciling it.
 
 STIM DESKTOP
 

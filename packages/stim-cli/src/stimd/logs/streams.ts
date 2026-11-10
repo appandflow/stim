@@ -78,6 +78,10 @@ export function parseStreamSpec(value: unknown): StreamSpec | null {
 }
 
 export interface StreamTable {
+  ownedSync(root?: string): Promise<string | null>;
+  ownedDrain(root: string): Promise<string | null>;
+  ownedObserveWeb(root: string, pid: number, token: string): Promise<string | null>;
+  ownedRunning(): boolean;
   start(
     input: StreamSpec,
     env: Record<string, string>,
@@ -351,12 +355,20 @@ const matches = (stream: Stream, input: StreamSpec, root: string, envHash: strin
 const attribution = (slot: string, input: StreamSpec) =>
   slot === 'default' ? {} : { slot, deviceId: input.udid ?? input.serial };
 
-export function createStreams(log: (message: string) => void): StreamTable {
+export function createStreams(
+  log: (message: string) => void,
+  ownedLog: (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void = () => {},
+): StreamTable {
   const streams = new Map<string, Stream>();
   const queues = new Map<string, Promise<void>>();
   let writers: LogWriters | null = null;
   let writerFailure: Error | null = null;
   let writerRecovery: Promise<void> | null = null;
+  let ownedUnverified = false;
+  let ownedPending = 0;
+  let closing = false;
+  let closePromise: Promise<void> | null = null;
+  let ownedRunning = true;
   const serialize = <T>(key: string, work: () => Promise<T>): Promise<T> => {
     const result = (queues.get(key) ?? Promise.resolve()).then(work);
     const done = result.then(
@@ -399,8 +411,8 @@ export function createStreams(log: (message: string) => void): StreamTable {
       );
   };
   const getWriters = async (): Promise<LogWriters> => {
+    if (closing) throw new Error('the logs worker is closing');
     if (writerFailure) {
-      if (streams.size) throw writerFailure;
       writerRecovery ??= (async () => {
         await writers?.close();
         writers = null;
@@ -410,11 +422,14 @@ export function createStreams(log: (message: string) => void): StreamTable {
       });
       await writerRecovery;
     }
+    if (closing) throw new Error('the logs worker is closing');
     if (writers) return writers;
     // Node closes worker-owned process handles on worker exit: https://github.com/nodejs/node/issues/46569
     writers = createLogWriters(
       (error) => {
+        if (ownedRunning || ownedPending > 0) ownedUnverified = true;
         writerFailure = error;
+        ownedRunning = true;
         log(`the logs worker failed: ${error.message}`);
         for (const stream of new Set(streams.values())) {
           void abortAfterSignal(stream);
@@ -426,6 +441,10 @@ export function createStreams(log: (message: string) => void): StreamTable {
         stream.revision++;
         for (const wake of stream.waiters) wake(false);
       },
+      (running) => {
+        ownedRunning = running;
+      },
+      ownedLog,
       (streamId, generation) => {
         const stream = [...streams.values()].find((entry) => entry.id === streamId);
         if (stream && stream.generation === generation && stream.observedAt === null) stream.observedAt = Date.now();
@@ -606,12 +625,49 @@ export function createStreams(log: (message: string) => void): StreamTable {
     return coverage;
   };
   return {
+    async ownedSync(root) {
+      ownedPending++;
+      try {
+        await (await getWriters()).ownedSync(root);
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      } finally {
+        ownedPending--;
+      }
+    },
+    async ownedDrain(root) {
+      if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
+      ownedPending++;
+      try {
+        await (await getWriters()).ownedDrain(root);
+        if (ownedUnverified) return 'the previous owned log worker exited before its output could be verified';
+        return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      } finally {
+        ownedPending--;
+      }
+    },
+    async ownedObserveWeb(root, pid, token) {
+      ownedPending++;
+      try {
+        await (await getWriters()).ownedObserveWeb(root, pid, token);
+        return null;
+      } catch (error) {
+        return (error instanceof Error ? error.message : String(error)) || 'the browser observer failed';
+      } finally {
+        ownedPending--;
+      }
+    },
+    ownedRunning: () => ownedRunning || ownedUnverified,
     async start(
       input: StreamSpec,
       env: Record<string, string>,
       signal?: AbortSignal,
       runId?: string,
     ): Promise<{ streamId: string }> {
+      if (closing) throw new Error('the logs worker is closing');
       const root = realpathSync(input.root);
       const envHash = environmentHash(env);
       const slot = validateDeviceSlot(input.slot ?? 'default');
@@ -1042,11 +1098,24 @@ export function createStreams(log: (message: string) => void): StreamTable {
     },
     running: () => streams.size > 0,
     async close(): Promise<void> {
-      await Promise.all(queues.values());
-      const results = await Promise.allSettled([...new Set(streams.values())].map(stop));
-      await writers?.close();
-      const failure = results.find((result) => result.status === 'rejected');
-      if (failure?.status === 'rejected') throw failure.reason;
+      closing = true;
+      closePromise ??= (async () => {
+        await Promise.all(queues.values());
+        const results = await Promise.allSettled([...new Set(streams.values())].map(stop));
+        const recovery = await Promise.allSettled([writerRecovery]);
+        const owned = await Promise.allSettled([writers?.ownedClose()]);
+        const closed = await Promise.allSettled([writers?.close()]);
+        if (ownedUnverified)
+          throw new Error('the previous owned log worker exited before its output could be verified');
+        const failure = results.find((result) => result.status === 'rejected');
+        if (failure?.status === 'rejected') throw failure.reason;
+        for (const result of [...recovery, ...owned, ...closed]) if (result.status === 'rejected') throw result.reason;
+      })();
+      try {
+        await closePromise;
+      } finally {
+        closePromise = null;
+      }
     },
   };
 }

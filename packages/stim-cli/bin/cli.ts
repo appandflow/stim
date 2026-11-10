@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import { runId, trace } from '@stim-cli/core/state';
 import { debugLog } from '../src/debug-log.ts';
 import { CliExit } from '../src/cli-operation.ts';
+import { CliUsageError, runCli, type CliContext, type Op } from '../src/cli/define-op.ts';
 import { refuseRelativeStimPaths } from '../src/workspace/config.ts';
 
 if (process.argv[2] === '__stimd') {
@@ -17,7 +18,7 @@ if (process.argv[2] === '__job') {
   process.exit(code);
 }
 
-type CommandModule = { default: (program: Command, version: string) => void };
+type CommandModule = { default: ((program: Command, version: string) => void) | Op };
 
 const commands = new Map<string, () => Promise<CommandModule>>([
   ['doctor', () => import('../src/commands/doctor.ts')],
@@ -50,6 +51,22 @@ const commands = new Map<string, () => Promise<CommandModule>>([
   ['engine', () => import('../src/commands/engine.ts')],
 ]);
 
+const opBacked = new WeakSet<Command>();
+
+function register(program: Command, command: CommandModule['default'], before: CliContext['before']): void {
+  if (typeof command === 'function') return command(program, pkg.version);
+  const listed = program.command([command.name, command.arguments].filter(Boolean).join(' '));
+  listed.description(command.description).allowExcessArguments();
+  for (const option of Object.values(command.options)) listed.option(option.flags, option.description);
+  listed.action(async (...params: unknown[]) => {
+    const self = params.at(-1);
+    const code =
+      self instanceof Command ? await runCli(command, ['--', ...self.args], { version: pkg.version, before }) : 0;
+    if (code !== 0) throw new CliExit(code);
+  });
+  opBacked.add(listed);
+}
+
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf-8'));
 
 export interface MainContext {
@@ -71,16 +88,7 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
     refuseRelativeStimPaths();
     process.env.STIM_RUN_ID = runId();
     const first = argv[2];
-    const loadCommand = commands.get((first === 'help' ? argv[3] : first) ?? '');
-    if (loadCommand) {
-      (await loadCommand()).default(program, pkg.version);
-    } else if (first !== '--version' && first !== '-V') {
-      const modules = await Promise.all([...commands.values()].map((load) => load()));
-      for (const module of modules) module.default(program, pkg.version);
-    }
-    program.hook('preAction', async (_command, action) => {
-      const path: string[] = [];
-      for (let each: Command | null = action; each?.parent; each = each.parent) path.unshift(each.name());
+    const before = async (path: string[]) => {
       trace.command(`stim ${path.join(' ')}`, { version: pkg.version });
       if (debugLog.enabled()) {
         const started = Date.now();
@@ -115,11 +123,34 @@ export async function main(argv: string[], ctx: MainContext = {}): Promise<void>
         process.exit(1);
       }
       end = entered.end;
-    });
-    await program.parseAsync(argv);
+    };
+    const loadCommand = commands.get((first === 'help' ? argv[3] : first) ?? '');
+    const loaded = await loadCommand?.();
+    if (loaded && typeof loaded.default !== 'function') {
+      const args = first === 'help' ? ['--help', ...argv.slice(4)] : argv.slice(3);
+      const code = await runCli(loaded.default, args, { version: pkg.version, before });
+      if (code !== 0) exitCode = code;
+    } else {
+      if (loaded) {
+        register(program, loaded.default, before);
+      } else if (first !== '--version' && first !== '-V') {
+        const modules = await Promise.all([...commands.values()].map((load) => load()));
+        for (const module of modules) register(program, module.default, before);
+      }
+      program.hook('preAction', (_command, action) => {
+        if (opBacked.has(action)) return;
+        const path: string[] = [];
+        for (let each: Command | null = action; each?.parent; each = each.parent) path.unshift(each.name());
+        return before(path);
+      });
+      await program.parseAsync(argv);
+    }
   } catch (err) {
     if (err instanceof CliExit) {
       exitCode = err.exitCode;
+    } else if (err instanceof CliUsageError) {
+      process.stderr.write(`${err.message}\n`);
+      exitCode = 1;
     } else {
       const code = (err as { code?: unknown })?.code;
       const message = err instanceof Error ? err.message : String(err);

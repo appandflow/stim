@@ -72,7 +72,7 @@ const HOST_EXCLUSIONS = [
 
 /** Stim's own DevTools clients: the browser supervisor, `stim-frames` in stim-server, Stim Desktop, the stim CLI. */
 const CDP_EXCLUSIONS = [
-  /\bstim-(frames|server|web)\b|StimDesktop|\/stim(-cli)?\/(dist|bin)\/|\/bin\/stim(\s|$)|^stim(\s|$)/,
+  /\bstim-(frames|server|web)\b|StimDesktop|\/stim(-cli)?\/(dist|bin)\/|\/bin\/stim(\s|$)|^stim(d)?(\s|$)/,
 ];
 
 function namesDevice(command: string, id: string): boolean {

@@ -107,7 +107,7 @@ export async function easCache(
   try {
     signal?.throwIfAborted();
     if (!(await fileExists(join(projectRoot, 'eas.json')))) return null;
-    let hash = options.fingerprintHash;
+    let hash: string | null = null;
     try {
       const generated = await command([
         'fingerprint:generate',
@@ -115,11 +115,12 @@ export async function easCache(
         '--json',
         '--non-interactive',
       ]);
-      hash = jsonString(generated, 'hash') ?? hash;
+      hash = jsonString(generated, 'hash');
     } catch (error) {
       signal?.throwIfAborted();
       if (isTimeoutError(error)) throw error;
     }
+    if (!hash) return null;
     if (phase === 'resolve') {
       report('Searching the EAS build cache');
       const stdout = await command([

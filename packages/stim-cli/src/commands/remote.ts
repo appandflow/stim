@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import type { StimContext } from '@stim-cli/core';
 import { keyFingerprint } from '@stim-cli/core/noise-session';
 import {
@@ -168,20 +168,16 @@ export async function readRemoteList(
   return { machines, findings: [...build.findings, ...host.findings] };
 }
 
-export default function remoteCommand(program: Command, version: string, io: TailnetMachineIo = doctorIo()): void {
-  const remote = program
-    .command('remote')
-    .description(
-      'Manage remote.machines, the remote machines this machine builds on and hosts devices on. Works from any directory.',
-    );
-
-  remote
-    .command('add <machine>')
-    .description(
+export function remoteOp(io: TailnetMachineIo = doctorIo()): Op {
+  const addCommand = defineOp({
+    name: 'add',
+    arguments: '<machine>',
+    description:
       'Append a remote machine to remote.machines, keeping the existing entries, and ask it for build and device-host approval. Prints the stim setup command a person runs there to approve this machine.',
-    )
-    .option('--json', 'print the result as JSON')
-    .action((machine: string, opts: { json?: boolean }) =>
+    options: {
+      json: { flags: '--json', description: 'print the result as JSON' },
+    },
+    run: ({ args: [machine], options: opts, version }) =>
       run(Boolean(opts.json), async () => {
         requireMachine(machine);
         const { before, after } = await updateRemoteMachinesAsync(
@@ -211,13 +207,16 @@ export default function remoteCommand(program: Command, version: string, io: Tai
         console.log(`${machine}: ${stateLine(buildReport, hostReport)}`);
         printFindings(findings);
       }),
-    );
+  });
 
-  remote
-    .command('update <machine>')
-    .description('Update an approved remote machine to the newest compatible Stim release on its channel.')
-    .option('--channel <channel>', 'select versions from latest or next for this update')
-    .action((machine: string, opts: { channel?: string }) =>
+  const updateCommand = defineOp({
+    name: 'update',
+    arguments: '<machine>',
+    description: 'Update an approved remote machine to the newest compatible Stim release on its channel.',
+    options: {
+      channel: { flags: '--channel <channel>', description: 'select versions from latest or next for this update' },
+    },
+    run: ({ args: [machine], options: opts, version }) =>
       run(false, async () => {
         requireMachine(machine);
         const channel = opts.channel === 'latest' || opts.channel === 'next' ? opts.channel : undefined;
@@ -230,15 +229,16 @@ export default function remoteCommand(program: Command, version: string, io: Tai
           throw refusal('STIM_ENGINE_REFUSED', error instanceof Error ? error.message : String(error), null);
         }
       }),
-    );
+  });
 
-  remote
-    .command('list')
-    .description(
+  const listCommand = defineOp({
+    name: 'list',
+    description:
       'Contact each machine in remote.machines and report its build and device-host approval, in placement order. Completes the connection to a machine that approved since the last contact; asks nothing new.',
-    )
-    .option('--json', 'print the machines as JSON')
-    .action((opts: { json?: boolean }) =>
+    options: {
+      json: { flags: '--json', description: 'print the machines as JSON' },
+    },
+    run: ({ options: opts, version }) =>
       run(Boolean(opts.json), async () => {
         const { machines, findings } = await readRemoteList(version, io, confirmer(Boolean(opts.json)));
         if (opts.json) {
@@ -253,15 +253,17 @@ export default function remoteCommand(program: Command, version: string, io: Tai
           console.log(`${each.priority} ${each.machine}: ${stateLine(each.build, each.deviceHost)}`);
         printFindings(findings);
       }),
-    );
+  });
 
-  remote
-    .command('remove <machine>')
-    .description(
+  const removeCommand = defineOp({
+    name: 'remove',
+    arguments: '<machine>',
+    description:
       "Remove a machine from remote.machines and forget this machine's credentials for it. Approval on that machine stays until a person there revokes it; prints the command.",
-    )
-    .option('--json', 'print the result as JSON')
-    .action((machine: string, opts: { json?: boolean }) =>
+    options: {
+      json: { flags: '--json', description: 'print the result as JSON' },
+    },
+    run: ({ args: [machine], options: opts }) =>
       run(Boolean(opts.json), async () => {
         if (configuredMachines() === null) throw invalidSetting();
         let hosting: MachineCredential[];
@@ -317,5 +319,16 @@ export default function remoteCommand(program: Command, version: string, io: Tai
             ),
           );
       }),
-    );
+  });
+
+  return defineOp({
+    name: 'remote',
+    description:
+      'Manage remote.machines, the remote machines this machine builds on and hosts devices on. Works from any directory.',
+    commands: [addCommand, updateCommand, listCommand, removeCommand],
+  });
 }
+
+const remote: Op = remoteOp();
+
+export default remote;

@@ -1,50 +1,73 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { benchmarkFingerprint, selectBenchmarkCacheKey } from './cache-key.mjs';
 
 it.skipIf(process.platform === 'win32')(
-  'hashes native inputs with the pinned CLI dependency despite a conflicting fixture fingerprint package (skipped on Windows: @expo/fingerprint runs npx react-native through a /bin/sh bin stub)',
+  'gets a stable key from the built CLI and changes it when native input changes',
   () => {
     const root = mkdtempSync(join(tmpdir(), 'benchmark fingerprint '));
     const stimPackage = fileURLToPath(new URL('../../packages/stim-cli/', import.meta.url));
-    const previousStimHome = process.env.STIM_HOME;
-    process.env.STIM_HOME = join(root, 'stim-home');
+    const modules = fileURLToPath(new URL('../../apps/mobile/node_modules', import.meta.url));
+    const previous = Object.fromEntries(
+      ['STIM_HOME', 'STIM_ENGINE_ROOT', 'ANDROID_HOME', 'ANDROID_AVD_HOME'].map((name) => [name, process.env[name]]),
+    );
+    const home = join(root, 'stim-home');
+    const sdk = join(root, 'sdk');
+    process.env.STIM_HOME = home;
+    process.env.STIM_ENGINE_ROOT = join(root, 'engine');
+    process.env.ANDROID_HOME = sdk;
+    process.env.ANDROID_AVD_HOME = join(root, 'avds');
     try {
-      mkdirSync(join(root, 'android'));
+      mkdirSync(home);
+      writeFileSync(join(home, 'config.json'), JSON.stringify({ daemon: { mode: 'off' } }));
+      const cli = join(stimPackage, 'dist', 'cli.mjs');
+      for (const setting of ['iosSimulatorApp', 'androidEmulatorApp'])
+        execFileSync(process.execPath, [cli, 'settings', 'set', setting, 'stim-desktop'], { cwd: root });
+      const arch = process.arch === 'arm64' ? 'arm64-v8a' : 'x86_64';
+      mkdirSync(join(sdk, 'system-images/android-35/google_apis', arch), { recursive: true });
+      mkdirSync(join(root, 'android/app/src/main'), { recursive: true });
       mkdirSync(join(root, 'ios'));
-      mkdirSync(join(root, 'node_modules/@expo/fingerprint'), { recursive: true });
-      writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fingerprint-fixture', version: '1.0.0' }));
+      symlinkSync(modules, join(root, 'node_modules'));
       writeFileSync(
-        join(root, 'node_modules/@expo/fingerprint/package.json'),
-        JSON.stringify({ name: '@expo/fingerprint', main: 'index.js' }),
+        join(root, 'package.json'),
+        JSON.stringify({
+          name: 'fingerprint-fixture',
+          version: '1.0.0',
+          dependencies: { expo: '*', 'react-native': '*' },
+        }),
+      );
+      writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'Fixture', slug: 'fixture' } }));
+      writeFileSync(
+        join(root, 'android/settings.gradle'),
+        "rootProject.name = 'Fixture'\ninclude ':app'\nex.autolinkLibrariesFromCommand(expoAutolinking.rnConfigCommand)\n",
       );
       writeFileSync(
-        join(root, 'node_modules/@expo/fingerprint/index.js'),
-        'throw new Error("Fixture fingerprint must not be loaded");',
+        join(root, 'android/app/build.gradle'),
+        'android { namespace "dev.stim.fixture" }\nversion = "one"',
       );
-      // @expo/fingerprint runs `npx react-native config`; without this local bin, npx installs react-native from the registry.
-      mkdirSync(join(root, 'node_modules/.bin'));
-      writeFileSync(
-        join(root, 'node_modules/.bin/react-native'),
-        '#!/bin/sh\n: > "$PWD/react-native-config.ran"\nprintf \'{"root":"%s","dependencies":{}}\' "$PWD"\n',
-        { mode: 0o755 },
-      );
-      writeFileSync(join(root, 'android/build.gradle'), 'version = "one"');
+      writeFileSync(join(root, 'android/app/src/main/AndroidManifest.xml'), '<manifest package="dev.stim.fixture" />');
       writeFileSync(join(root, 'ios/native.m'), 'one');
+      execFileSync('git', ['init', '--quiet', root]);
+      execFileSync('git', ['-C', root, 'add', 'android', 'ios']);
       const initial = benchmarkFingerprint(root, stimPackage, 'android');
-      expect(existsSync(join(root, 'react-native-config.ran'))).toBe(true);
-      expect(initial).toMatch(/^[a-f0-9]{40}$/);
+      expect(initial).toBeTruthy();
       writeFileSync(join(root, 'android/local.properties'), 'sdk.dir=/machine-specific-sdk');
       writeFileSync(join(root, 'ios/native.m'), 'two');
       expect(benchmarkFingerprint(root, stimPackage, 'android')).toBe(initial);
-      writeFileSync(join(root, 'android/build.gradle'), 'version = "two"');
+      writeFileSync(
+        join(root, 'android/app/build.gradle'),
+        'android { namespace "dev.stim.fixture" }\nversion = "two"',
+      );
       expect(benchmarkFingerprint(root, stimPackage, 'android')).not.toBe(initial);
     } finally {
-      if (previousStimHome === undefined) delete process.env.STIM_HOME;
-      else process.env.STIM_HOME = previousStimHome;
+      for (const [name, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
       rmSync(root, { recursive: true, force: true });
     }
   },

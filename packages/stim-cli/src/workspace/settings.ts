@@ -810,6 +810,14 @@ export function resolveCacheProviderConfig({
   return { provider, options, baseDir };
 }
 
+export function fingerprintInputsSetting(settings: unknown): string[] | undefined {
+  const value = settingValueAt(settings, 'cache.fingerprintInputs');
+  if (value === undefined) return undefined;
+  const error = settingValueError('cache.fingerprintInputs', value);
+  if (error) throw new Error(`Invalid cache.fingerprintInputs setting ${JSON.stringify(value)}. Expected ${error}.`);
+  return value as string[];
+}
+
 export function cacheProviderSettingError(settings: SettingsObject): string | null {
   const block = settings.cache;
   if (!isPlainObject(block)) {
@@ -817,7 +825,11 @@ export function cacheProviderSettingError(settings: SettingsObject): string | nu
       ? null
       : `Invalid cache setting ${JSON.stringify(block)}. Expected an object with provider and options.`;
   }
-  return settingError(settings, 'cache.provider') ?? settingError(settings, 'cache.options');
+  return (
+    settingError(settings, 'cache.provider') ??
+    settingError(settings, 'cache.options') ??
+    settingError(settings, 'cache.fingerprintInputs')
+  );
 }
 
 export type IosRemoteTarget =
