@@ -14,9 +14,13 @@ export default function pairCommand(program: Command): void {
         command.error(`--port must be a port number, got ${opts.port}.`);
       const { pair } = await loadServerCli();
       await pair(port, opts.json === true, opts.control === true);
-      const { ensureNet } = await import('../daemon/client.ts');
+      const { ensureNet, stimdRefused } = await import('../daemon/client.ts');
       const answer = await ensureNet(false);
-      if (!answer) console.error('No stimd runs to take this pairing; run stim serve.');
+      if (!answer && stimdRefused())
+        console.error(
+          "This Stim home's stimd runs another Stim build, so this stim cannot check that its server listens. The pairing is saved for that server; if the device cannot pair, restart stimd on this build (quit Stim Desktop, or wait until nothing runs in the home) and pair again.",
+        );
+      else if (!answer) console.error('No stimd runs to take this pairing; run stim serve.');
       else if (!answer.listening) console.error(answer.message);
       else if (answer.port !== port)
         console.error(
