@@ -1,6 +1,10 @@
-import { register } from 'node:module';
+import nodeModule, { register } from 'node:module';
 import { parentPort, workerData } from 'node:worker_threads';
 
+const stimImport = (specifier: string) =>
+  `a plugin imports '${specifier}' at runtime; import types from 'stim/plugin' only`;
+
+/** Node before 22.15 has no `module.registerHooks`; its asynchronous hooks see `import` and not `require`. */
 const NO_STIM_IMPORT = `export async function resolve(specifier, context, next) {
   if (specifier === 'stim' || specifier.startsWith('stim/'))
     throw new Error("a plugin imports '" + specifier + "' at runtime; import types from 'stim/plugin' only");
@@ -30,11 +34,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function run(port: NonNullable<typeof parentPort>): Promise<void> {
-  const { href, factory, input } = workerData as { href: string; factory: string; input: unknown };
+  const { href, factory, input, capabilities } = workerData as {
+    href: string;
+    factory: string;
+    input: unknown;
+    capabilities: string[];
+  };
   const post = (reply: KitReply) => port.postMessage(reply);
   let module: Record<string, unknown>;
   try {
-    register(`data:text/javascript,${encodeURIComponent(NO_STIM_IMPORT)}`);
+    if (typeof nodeModule.registerHooks === 'function')
+      nodeModule.registerHooks({
+        resolve(specifier, context, next) {
+          if (specifier === 'stim' || specifier.startsWith('stim/')) throw new Error(stimImport(specifier));
+          return next(specifier, context);
+        },
+      });
+    else register(`data:text/javascript,${encodeURIComponent(NO_STIM_IMPORT)}`);
     const namespace: unknown = await import(href);
     const found =
       isRecord(namespace) && !(factory in namespace) && 'default' in namespace ? namespace.default : namespace;
@@ -53,10 +69,13 @@ async function run(port: NonNullable<typeof parentPort>): Promise<void> {
   } catch (error) {
     return post({ type: 'failed', message: `${factory}() failed: ${reason(error)}` });
   }
+  const malformed = capabilities.find((name) => instance[name] !== undefined && typeof instance[name] !== 'function');
+  if (malformed)
+    return post({ type: 'failed', message: `${factory}() returned a ${malformed} that is not a function` });
   post({
     type: 'ready',
     id: instance.id as string,
-    members: Object.keys(instance).filter((name) => typeof instance[name] === 'function'),
+    members: capabilities.filter((name) => typeof instance[name] === 'function'),
   });
 
   const stops = new Map<number, () => void>();
@@ -78,7 +97,8 @@ async function run(port: NonNullable<typeof parentPort>): Promise<void> {
             post({ type: 'error', seq, message: reason(error) });
           }
         });
-        if (typeof stop === 'function') stops.set(seq, stop as () => void);
+        if (typeof stop !== 'function') throw new Error(`${request.member}() did not return a function that stops it`);
+        stops.set(seq, stop as () => void);
         return post({ type: 'result', seq, value: null });
       }
       const value: unknown = await member.apply(instance, request.args);

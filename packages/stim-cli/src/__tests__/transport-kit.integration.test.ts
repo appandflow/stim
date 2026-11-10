@@ -30,6 +30,20 @@ test('an event or an identity that cannot cross the thread boundary fails its ch
   expect(Object.keys(identity)).toEqual(['identify answers null or an identity for a peer it does not know']);
 });
 
+test('a capability that is not a function, or a watch that returns no stop function, fails', async () => {
+  expect(await run(fixture('transport-fixture'), { break: 'member' })).toEqual([
+    { name: 'the module loads', passed: false, error: expect.stringContaining('bindAddresses that is not a function') },
+  ]);
+  const watch = failed(await run(fixture('transport-fixture'), { break: 'watch' }));
+  expect(Object.keys(watch)).toEqual(['watch delivers { addresses } events and stops']);
+});
+
+test('a module that requires stim at runtime does not load', async () => {
+  expect(await run(fixture('transport-fixture'), { break: 'require' })).toEqual([
+    { name: 'the module loads', passed: false, error: expect.stringContaining("imports 'stim/plugin' at runtime") },
+  ]);
+});
+
 test('a module that imports stim at runtime does not load', async () => {
   const results = await run(fixture('transport-fixture-imports-stim'));
   expect(results).toEqual([

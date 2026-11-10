@@ -7,7 +7,7 @@ const LOAD_TIMEOUT_MS = 10_000;
 /** A plugin module's instance in a worker thread; every argument and result crosses a `MessagePort`. */
 export interface KitWorker {
   id: string;
-  /** The names of the instance's function members. */
+  /** The capabilities the instance has, of those asked for. */
   members: string[];
   call(member: string, ...args: unknown[]): Promise<unknown>;
   /** Calls the member with a listener whose values arrive as messages; the result stops it. */
@@ -27,16 +27,21 @@ export async function startKitWorker({
   href,
   factory,
   input,
+  capabilities,
   timeoutMs = LOAD_TIMEOUT_MS,
 }: {
   href: string;
   factory: string;
   input: unknown;
+  /** The optional members of the kind's contract; one that is present and not a function fails the load. */
+  capabilities: readonly string[];
   timeoutMs?: number;
 }): Promise<KitWorker | { unavailable: string }> {
   let worker: Worker;
   try {
-    worker = new Worker(spawnEntry('kit-worker'), { workerData: { stimKit: true, href, factory, input } });
+    worker = new Worker(spawnEntry('kit-worker'), {
+      workerData: { stimKit: true, href, factory, input, capabilities },
+    });
   } catch (error) {
     return { unavailable: `the input could not be cloned: ${error instanceof Error ? error.message : String(error)}` };
   }

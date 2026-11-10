@@ -139,6 +139,7 @@ export async function runTransportContract(options: TransportContractOptions): P
       href: pathToFileURL(path).href,
       factory: 'createTransport',
       input: { env: { ...options.env }, options: options.options ?? {} },
+      capabilities: ['bindAddresses', 'watch', 'identify', 'expose', 'unexpose', 'resolve', 'close'],
     });
   } catch (error) {
     return [{ name: 'the module loads', passed: false, error: error instanceof Error ? error.message : String(error) }];
