@@ -803,17 +803,18 @@ export async function acquireIosArtifact(
     requireLocalBuild(buildMachine);
     builtOn = 'here';
     buildFailure = { ...buildFailure, builtOn };
-    phase('build', `compiling ${configuration || 'Debug'} with xcodebuild`);
+    const tool = recipe.buildTool ?? 'xcodebuild';
+    phase('build', `compiling ${configuration || 'Debug'} with ${tool}`);
     const result = await recipe.compile();
     compilationCache = result.compilationCache;
-    phase('cache', `compilation cache ${compilationCacheActivityLine(compilationCache)}`);
+    if (!recipe.buildTool) phase('cache', `compilation cache ${compilationCacheActivityLine(compilationCache)}`);
     if (!result.ok) {
       phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
-      printDiagnostics(note, result);
+      printDiagnostics(note, result, tool);
       const transcript = retainFailedTranscript(logFile);
       const report = result.compilationCacheCorruption
         ? await clearCorruptCompilationCache(result.compilationCacheCorruption, root)
-        : { code: result.code, ...xcodeFailureReport(result, transcript) };
+        : { code: result.code, ...xcodeFailureReport(result, transcript, tool) };
       fail({
         code: report.code,
         message: report.message,

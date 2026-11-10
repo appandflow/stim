@@ -428,6 +428,39 @@ Copyable agent request:
   --json. Verify its expected screen and interaction on the reported device,
   inspect stim logs --errors, then stop only this workspace with stim stop.`,
     },
+    'exact-ios': {
+      summary: 'Exact apps: building with exact.mjs, driving with Exact on the owned simulator, worktree limits',
+      body: () => `EXACT APPS
+An Exact app (https://github.com/expo/exact) has exact.mjs next to app.json.
+Run from that directory:
+
+  stim ios --json
+  EXACT_SIM=<udid from stim ios> ./exact.mjs agent ios tree "screenshot out.png"
+  EXACT_SIM=<udid> ./exact.mjs test ios
+  stim stop
+
+stim ios runs the app's own ./exact.mjs ios --no-install with EXACT_SIM set to
+the workspace's owned simulator, installs the .app it reports, and launches it
+as a native process without Metro (metroPort: null). --configuration Release
+adds --release (Exact's shipping build; its first build takes minutes); any other
+configuration and --scheme are refused. The build starts once Stim has booted
+that simulator, and build-only runs (stim ci build) are refused. Exact
+compiles incrementally in the checkout's target/ directory, so Stim keeps no
+artifact cache for it; a one-line Contract edit rebuilds in seconds.
+
+Drive and test the app with Exact's own commands, with EXACT_SIM set to the
+simulator stim ios reported. Without it Exact picks a simulator by its own
+rule, which another worktree of the same app may be using.
+
+A worktree of an Exact app needs the same folder name as the checkout it was
+created in (otherwise the build fails with "Cargo has no <name>-apple
+target"), and EXACT2 set to the Exact checkout when it sits at another folder
+depth (otherwise "no exact2 at ..."). Stim reports these Exact failures as
+they come.
+
+Only iOS simulators are supported. macOS, web, Android and physical devices
+use Exact's own commands.`,
+    },
     'native-android': {
       summary: 'native Gradle app selection, hosted emulators, build-worker inputs and current limits',
       body: () => `NATIVE ANDROID GRADLE APPS

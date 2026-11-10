@@ -93,6 +93,22 @@ test('RN admission is independent of advertised platforms and composes with Swif
   expect(projectRegistry.projectProblem(dir, 'android')).toBeNull();
 });
 
+test('an Exact app selects the exact integration for iOS while an Expo app.json stays React Native', () => {
+  const exact = join(dir, 'exact');
+  write(join(exact, 'package.json'), JSON.stringify({ name: 'shop', private: true }));
+  write(join(exact, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' }, host: { ios: {} } }));
+  write(join(exact, 'exact.mjs'));
+  const ios = projectRegistry.selectIos(exact);
+  expect('id' in ios ? ios.id : ios.problem.message).toBe('exact');
+  expect(projectRegistry.projectProblem(exact, 'android')?.kind).toBe('not-an-app');
+
+  const expo = join(dir, 'expo');
+  write(join(expo, 'package.json'), JSON.stringify({ dependencies: { expo: '57.0.0' } }));
+  write(join(expo, 'app.json'), JSON.stringify({ expo: {} }));
+  const expoIos = projectRegistry.selectIos(expo);
+  expect('id' in expoIos ? expoIos.id : expoIos.problem.message).toBe('react-native');
+});
+
 test('symlinks resolve native ownership and workspace identity by canonical paths', () => {
   const app = join(dir, 'app');
   packageAt(app);

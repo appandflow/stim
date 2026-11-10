@@ -813,7 +813,11 @@ files.
 
 Do not infer and rebuild commands from project scripts. Bare React Native hosts
 Metro from the project's dependencies. Expo runs its fixed start command. iOS
-and Android use fixed `xcodebuild` and Gradle arguments.
+and Android use fixed `xcodebuild` and Gradle arguments. An Exact app builds
+with its own `./exact.mjs ios --no-install` (plus `--release` for
+`--configuration Release`), with `EXACT_SIM` naming the
+workspace's owned simulator, started only once Stim has booted that simulator,
+so Exact never boots or shuts it down; build-only runs are refused.
 
 The explicit `ios|android --eas-profile <name>` path downloads a compatible
 completed EAS development build instead of compiling locally. Delegate profile
@@ -941,7 +945,7 @@ fails until `node scripts/static-fingerprint.mjs --update` records the change.
 
 `launched` can be `true`, `'bundling'`, `'unverified'`, or `false`. Use `true`
 only for a proven bundle request, or a live process of an app whose runtime has
-no Metro (a release build, or a native Xcode or Gradle app). Use `'bundling'`
+no Metro (a release build, or a native Xcode, Gradle or Exact app). Use `'bundling'`
 only for positive, non-error evidence from this workspace's Metro port. Use
 `'unverified'` when there is no evidence. Only `'unverified'` gets launch
 remedies. `false` is reserved and is not produced today.

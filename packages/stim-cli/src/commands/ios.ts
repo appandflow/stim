@@ -316,6 +316,24 @@ function iosProjectTargetRefusal(
   return null;
 }
 
+function workspaceBooted(
+  { elsewhere, created }: { elsewhere: unknown[]; created: Promise<void> | null },
+  boot: () => Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined>,
+): IosArtifactContext['target']['booted'] {
+  if (elsewhere.some(Boolean)) return undefined;
+  return async () => {
+    try {
+      if (created) await created;
+      const result = await boot();
+      return result?.ok && result.udid
+        ? { ok: true, udid: result.udid }
+        : { ok: false, reason: result?.reason ?? 'The owned simulator could not be booted.' };
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+  };
+}
+
 function iosArtifactTargetInputs({
   udid,
   pendingDevice,
@@ -327,6 +345,7 @@ function iosArtifactTargetInputs({
   lanAddress,
   metroPort,
   settings,
+  booted,
 }: {
   udid: string;
   /** The simulator this run is still waiting to create, which a build cannot name by udid. */
@@ -339,6 +358,7 @@ function iosArtifactTargetInputs({
   lanAddress: string | null;
   metroPort: number | null;
   settings: ReturnType<IosDeps['resolveSettings']>;
+  booted?: IosArtifactContext['target']['booted'];
 }): Pick<IosArtifactContext, 'target' | 'device'> {
   const unbound = pendingDevice !== null;
   const pendingRuntimeId = pendingDevice?.runtimeId ?? null;
@@ -354,6 +374,7 @@ function iosArtifactTargetInputs({
       offloadRuntime: () => hosted?.choice.runtimeId ?? (remote ? null : (pendingRuntimeId ?? simulatorRuntime(udid))),
       hostedArchitecture: hosted?.choice.architecture,
       offloadRefusal: physical ? 'device builds build here' : remote ? '--remote builds build here' : null,
+      ...(booted ? { booted } : {}),
     },
     device: physical
       ? {
@@ -1168,6 +1189,10 @@ async function runIos(
       const localBoot = remoteDevice || hostedTarget || pendingDevice ? null : startBoot();
       const deviceCreated = startWhenCreated(pendingDevice, startBoot);
       udid = (device.deviceUdid as string | undefined) ?? (await localBoot) ?? '';
+      const booted = workspaceBooted(
+        { elsewhere: [remoteDevice, hostedTarget, physical], created: deviceCreated },
+        () => bootPromise,
+      );
       const simulatorArch = simulatorBuildArch({
         physical,
         remoteArch,
@@ -1202,6 +1227,7 @@ async function runIos(
                 lanAddress,
                 metroPort,
                 settings,
+                booted,
               }),
               optimizations: optimizations.ios,
               easProfile: opts.easProfile,

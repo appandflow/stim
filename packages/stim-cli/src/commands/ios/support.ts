@@ -315,18 +315,23 @@ export function podAction(
 export function xcodeFailureReport(
   result: Extract<BuildIosResult, { ok: false }>,
   logPath: string,
+  tool = 'xcodebuild',
 ): { message: string; remedy: string } {
   const diagnostics = result.diagnostics;
   const code = result.exitCode;
   const how = code === null ? '' : ` (exit code ${code})`;
   const message = diagnostics.length
-    ? `\`xcodebuild\` failed${how} with ${diagnostics.length} diagnostic${diagnostics.length === 1 ? '' : 's'}.`
-    : `\`xcodebuild\` failed${how} with no recognizable diagnostic.`;
+    ? `\`${tool}\` failed${how} with ${diagnostics.length} diagnostic${diagnostics.length === 1 ? '' : 's'}.`
+    : `\`${tool}\` failed${how} with no recognizable diagnostic.`;
   const remedy = diagnostics.find((d) => d?.remedy)?.remedy || `See ${logPath} for the transcript.`;
   return { message, remedy };
 }
 
-export function printDiagnostics(note: (line: string) => void, result: Extract<BuildIosResult, { ok: false }>): void {
+export function printDiagnostics(
+  note: (line: string) => void,
+  result: Extract<BuildIosResult, { ok: false }>,
+  tool = 'xcodebuild',
+): void {
   const diagnostics = result.diagnostics;
   const shown = diagnostics.slice(0, MAX_PRINTED_DIAGNOSTICS);
   for (const diagnostic of shown) {
@@ -337,7 +342,7 @@ export function printDiagnostics(note: (line: string) => void, result: Extract<B
     note(chalk.dim(phaseLine('error', `... and ${hidden} more diagnostic${hidden === 1 ? '' : 's'} in the log`)));
   }
   if (diagnostics.length === 0) {
-    note(chalk.red(phaseLine('error', 'xcodebuild failed with no recognizable diagnostic; last lines:')));
+    note(chalk.red(phaseLine('error', `${tool} failed with no recognizable diagnostic; last lines:`)));
     for (const line of result.tail.slice(-5)) note(chalk.dim(phaseLine('', line)));
   }
 }
