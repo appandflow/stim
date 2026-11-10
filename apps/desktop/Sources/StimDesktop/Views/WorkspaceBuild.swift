@@ -147,7 +147,7 @@ struct WorkspaceActionsButton: View {
       WorkspaceActionsMenu(
         kind: .workspace(
           metroRunning: env.metro?.running == true, platforms: env.runPlatforms,
-          linkedWorktree: env.worktree != nil),
+          linkedWorktree: env.worktree != nil, devServer: env.devServer != false),
         path: env.path,
         busy: busy,
         removalAllowed: worktreeRemovalAllowed(git: env.worktree?.git),
@@ -330,7 +330,8 @@ struct WorktreeActionsMenuContent: View {
   private func appMenu(_ app: Workspace) -> some View {
     WorkspaceActionsMenu(
       kind: .workspace(
-        metroRunning: app.metro?.running == true, platforms: app.runPlatforms, linkedWorktree: false),
+        metroRunning: app.metro?.running == true, platforms: app.runPlatforms, linkedWorktree: false,
+        devServer: app.devServer != false),
       path: app.path, busy: actions.active(for: page.actionKey) != nil || actions.active(for: app.path) != nil,
       removalAllowed: worktreeRemovalAllowed(git: app.worktree?.git), building: app.build?.isRunning == true,
       reloadAllowed: app.canReload,

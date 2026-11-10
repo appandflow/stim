@@ -627,7 +627,7 @@ it('refuses a host on a Stim before peer with the peer-too-old remedy and closes
   const reply = await local.request('frames.subscribe', target());
   expect(reply.error).toMatchObject({ code: 'frames-failed' });
   expect(reply.error.message).toContain(
-    'peer-too-old: mini runs stim 1.41.0 (no peer), this Mac needs peer 2; run stim remote update mini',
+    `peer-too-old: mini runs stim 1.41.0 (no peer), this Mac needs peer ${PEER}; run stim remote update mini`,
   );
   expect(reply.error.message).toMatch(/on mini run: npm i -g stim@\S+ && stim service install/);
   expect(requests.map((request) => request.method)).toEqual(['hello']);

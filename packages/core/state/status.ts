@@ -671,6 +671,8 @@ export interface EnvironmentState {
   workspaceId?: string;
   /** Statically detected app platforms; always set by status, empty when none are detected. */
   platforms?: string[];
+  /** Whether the app has a dev server (Metro) that `stim start` and `stim reload` act on; always set by status. */
+  devServer?: boolean;
   /** Present when the app's app.json sets expo.extra.stimTutorial to a positive integer: that version. */
   tutorial?: { version: number };
   /** When `stim doctor` last ran in this workspace, per platform; absent until it has run. */

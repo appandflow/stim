@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonWorkspaceDecision } from '@stim-cli/core/state';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   createFingerprintPrecompute,
   MAX_PRECOMPUTES_PER_PASS,
@@ -31,10 +31,11 @@ function setup(paths: Record<string, DaemonWorkspaceDecision['outcome']>, level:
     },
     workspaces: Object.entries(paths).map(([path, outcome]) => live(path, outcome)),
     pressure: { level },
-    operation: testContext(),
+    operation: testContext({ home: base, env: { ...process.env, STIM_HOME: base } }),
   };
   const signatures = new Map<string, string>();
   const ran: string[] = [];
+  const verified: string[] = [];
   const records: { event: string; fields: Record<string, unknown> | undefined }[] = [];
   let deferred = false;
   let outcome: 'recorded' | 'present' | 'throw' = 'recorded';
@@ -46,11 +47,17 @@ function setup(paths: Record<string, DaemonWorkspaceDecision['outcome']>, level:
       if (outcome === 'throw') throw new Error('child failed');
       return { outcome };
     },
+    verify: async (_operation, request) => {
+      verified.push(request.root);
+      rmSync(join(base, 'fingerprint', 'pending-verify', request.pendingFile), { force: true });
+      return { verified: 1 };
+    },
     loadDeferred: () => deferred,
   });
   return {
     input,
     ran,
+    verified,
     records,
     signatures,
     run: (act = true) => step.run(input, act),
@@ -66,6 +73,63 @@ beforeEach(() => {
 afterEach(() => rmSync(base, { recursive: true, force: true }));
 
 describe('the daemon fingerprint precompute', () => {
+  test('verifies a queued hit after the workspace signature stops changing', async () => {
+    const project = join(base, 'project');
+    mkdirSync(project);
+    const t = setup({ [project]: 'active' });
+    await t.run();
+    const directory = join(base, 'fingerprint', 'pending-verify');
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, 'pending.json'), JSON.stringify({ root: project, target: { platform: 'ios' } }));
+    await t.run();
+    expect(t.ran).toEqual([project]);
+    expect(t.verified).toEqual([project]);
+  });
+
+  test('verifies at most one queued hit per project without a live workspace', async () => {
+    const first = join(base, 'first');
+    const second = join(base, 'second');
+    mkdirSync(first);
+    mkdirSync(second);
+    const t = setup({});
+    const directory = join(base, 'fingerprint', 'pending-verify');
+    mkdirSync(directory, { recursive: true });
+    for (const [name, root] of [
+      ['a', first],
+      ['b', first],
+      ['c', second],
+    ] as const)
+      writeFileSync(join(directory, `${name}.json`), JSON.stringify({ root, target: { platform: 'ios' } }));
+    await t.run();
+    expect(t.verified).toEqual([first, second]);
+  });
+
+  test('leaves queued verification for an acting pass when daemon mode is report', async () => {
+    const project = join(base, 'project');
+    mkdirSync(project);
+    const t = setup({});
+    const directory = join(base, 'fingerprint', 'pending-verify');
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, 'pending.json'), JSON.stringify({ root: project, target: { platform: 'android' } }));
+    await t.run(false);
+    expect(t.verified).toEqual([]);
+    await t.run();
+    expect(t.verified).toEqual([project]);
+  });
+
+  test('drops a queued verification whose workspace no longer exists', async () => {
+    const t = setup({});
+    const directory = join(base, 'fingerprint', 'pending-verify');
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      join(directory, 'pending.json'),
+      JSON.stringify({ root: join(base, 'gone'), target: { platform: 'ios' } }),
+    );
+    await t.run();
+    expect(t.verified).toEqual([]);
+    expect(readdirSync(directory)).toEqual([]);
+  });
+
   test.each(['signature', 'requests', 'run'])('preserves unverified %s cleanup after cancellation', async (stage) => {
     const controller = new AbortController();
     const failure = new WorkspaceProcessCleanupError([], 'child cleanup is unverified', 'Inspect the child.');

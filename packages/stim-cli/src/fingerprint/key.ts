@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
+import { FINGERPRINT_SCHEMA } from '@stim-cli/core/state';
 
-/** Bumped whenever a change alters which rows exist or their bytes for any project, so every key moves at once. */
-export const FINGERPRINT_SCHEMA = 1;
+export { FINGERPRINT_SCHEMA };
 
 type InputKind = 'file' | 'package' | 'config' | 'autolinking' | 'manifest' | 'env';
 export type Platform = 'ios' | 'android';
@@ -49,6 +49,14 @@ export const sha256 = (value: string | Buffer): string => createHash('sha256').u
 
 /** Code-unit order, which does not depend on the ICU data `localeCompare` reads. */
 export const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+export function fingerprintInputsRow(paths: readonly string[]): Input {
+  return {
+    name: 'stim:fingerprintInputs',
+    kind: 'manifest',
+    hash: sha256(canonicalJson([...new Set(paths)].toSorted(byCodeUnit))),
+  };
+}
 
 export function isUncertain(value: unknown): value is Uncertain {
   return typeof value === 'object' && value !== null && 'uncertain' in value;

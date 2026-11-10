@@ -27,6 +27,7 @@ import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
 import type { BuildTarget } from '../engine/toolchain.ts';
 import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
 import { getExecutor } from '../exec.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 const ports = new Map<string, number>();
 
@@ -244,6 +245,16 @@ let repo: string;
 let home: string;
 const machines: FakeMachine[] = [];
 
+const replayInputs = async () => ({
+  schema: 2,
+  sources: [],
+  ignored: [],
+  env: { set: {}, absent: [] },
+  native: 'tracked' as const,
+  layout: { projectPath: null, gradleRoot: null, module: null },
+  runtime: { node: '22.22', evaluator: '0'.repeat(64), packages: {} },
+});
+
 beforeEach(() => {
   repo = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-offload-')));
   home = mkdtempSync(join(tmpdir(), 'stim-offload-home-'));
@@ -272,6 +283,7 @@ async function run(names: string[], note: (line: string) => void) {
   return offloadBuild({
     choice,
     expectedFingerprint: 'f00d',
+    fingerprintInputs: replayInputs,
     request: {
       platform: 'ios',
       runtime: 'iOS-27-0',
@@ -420,6 +432,7 @@ describe('offloadBuild', () => {
     const outcome = await offloadBuild({
       choice,
       expectedFingerprint: 'f00d',
+      fingerprintInputs: replayInputs,
       request: {
         platform: 'ios',
         runtime: 'iOS-27-0',
@@ -864,8 +877,8 @@ test('native results with a different transfer digest are refused before artifac
 });
 
 test.each([
-  { client: 'without Xcode', xcode: null, returned: 'b'.repeat(40), built: 'b'.repeat(40) },
-  { client: 'with Xcode', xcode: 'Xcode 27.0', returned: 'b'.repeat(40), built: null },
+  { client: 'without Xcode', xcode: null, returned: 'b'.repeat(64), built: 'b'.repeat(64) },
+  { client: 'with Xcode', xcode: 'Xcode 27.0', returned: 'b'.repeat(64), built: null },
   { client: 'without Xcode', xcode: null, returned: '../escape', built: null },
 ])(
   'a client $client takes a build under the fingerprint after the worker pod install only when it left pod install there: $returned',
@@ -893,7 +906,16 @@ test.each([
     if (typeof choice === 'string') throw new Error(choice);
     const result = await offloadBuild({
       choice,
-      expectedFingerprint: 'f00d',
+      expectedFingerprint: 'a'.repeat(64),
+      fingerprintInputs: async () => ({
+        schema: 2,
+        sources: [],
+        ignored: [],
+        env: { set: {}, absent: [] },
+        native: 'tracked',
+        layout: { projectPath: null, gradleRoot: null, module: null },
+        runtime: { node: '22.22', evaluator: '0'.repeat(64), packages: {} },
+      }),
       request: {
         platform: 'ios',
         runtime: 'iOS-27-0',
@@ -916,8 +938,104 @@ test.each([
         ? { ok: true, builtFingerprint: built }
         : { ok: false, machine: 'mini', reason: 'The worker returned a different fingerprint.' },
     );
+    expect(result.ok ? readFileSync(join(result.artifactPath, 'Info.plist'), 'utf8') : null).toBe(
+      built ? 'plist' : null,
+    );
   },
 );
+
+test('an unverified fingerprint refuses offload before source transfer', async () => {
+  const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'unused' } });
+  machines.push(machine);
+  const choice = await chooseBuildMachine({
+    projectRoot: repo,
+    target: TARGET,
+    here: HERE,
+    note: () => {},
+    machines: [credential('mini')],
+  });
+  if (typeof choice === 'string') throw new Error(choice);
+  const result = await offloadBuild({
+    choice,
+    expectedFingerprint: 'a'.repeat(64),
+    fingerprintInputs: async () => ({ uncertain: 'the native inputs changed before offload' }),
+    request: {
+      platform: 'ios',
+      runtime: 'iOS-27-0',
+      configuration: null,
+      scheme: null,
+      iosProjectPath: 'ios',
+      isExpo: false,
+      optimizations: null,
+    },
+    stagingDir: join(repo, 'staging'),
+    onPhase: () => {},
+    onEnter: () => {},
+    onRecord: () => {},
+    note: () => {},
+  });
+  expect(result).toMatchObject({ ok: false, reason: 'the native inputs changed before offload' });
+  const offered = machine.requests.find((entry) => entry.method === 'build.offer');
+  expect(offered?.params).not.toHaveProperty('reactNativeArtifact');
+  expect(machine.methods).not.toContain('build.sync');
+  expect(machine.methods).not.toContain('build.start');
+});
+
+test.each([
+  ['plain', false],
+  ['plain', true],
+  ['class', false],
+  ['class', true],
+] as const)('offload preserves %s cleanup refusal when cancellation=%s', async (kind, cancel) => {
+  const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'unused' } });
+  machines.push(machine);
+  const choice = await chooseBuildMachine({
+    projectRoot: repo,
+    target: TARGET,
+    here: HERE,
+    note: () => {},
+    machines: [credential('mini')],
+  });
+  if (typeof choice === 'string') throw new Error(choice);
+  const controller = new AbortController();
+  const context = testContext({ signal: controller.signal });
+  const failure =
+    kind === 'plain'
+      ? { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true, message: 'unverified cleanup' }
+      : new WorkspaceProcessCleanupError([], 'unverified cleanup', 'Inspect the child.');
+  const staging = join(repo, 'staging');
+  mkdirSync(staging);
+  writeFileSync(join(staging, 'input'), 'retained');
+  const attempt = withAmbientContext(context, () =>
+    offloadBuild({
+      choice,
+      expectedFingerprint: 'a'.repeat(64),
+      fingerprintInputs: async () => {
+        if (cancel) controller.abort();
+        throw failure;
+      },
+      request: {
+        platform: 'ios',
+        runtime: 'iOS-27-0',
+        configuration: null,
+        scheme: null,
+        iosProjectPath: 'ios',
+        isExpo: false,
+        optimizations: null,
+      },
+      stagingDir: staging,
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    }),
+  );
+  await expect(attempt).rejects.toBe(failure);
+  await machine.closed;
+  expect(readFileSync(join(staging, 'input'), 'utf8')).toBe('retained');
+  expect(machine.methods).not.toContain('build.sync');
+  expect(machine.methods).not.toContain('build.start');
+});
 
 describe('exact peer artifacts', () => {
   test.each(['hit', 'miss', 'corrupt', 'changed-source', 'changed-during-fetch', 'crlf-listing'] as const)(
@@ -1115,6 +1233,7 @@ describe('exact peer artifacts', () => {
       choice,
       request,
       expectedFingerprint: 'native-fingerprint',
+      fingerprintInputs: replayInputs,
       stagingDir: join(repo, 'staging'),
       onPhase: () => {},
       onEnter: () => {},

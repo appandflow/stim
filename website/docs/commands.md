@@ -80,22 +80,15 @@ stim doctor [--platform <ios|android>] [--json] [--fix]
 
 Inspects the current app and, in a repository with linked worktrees, the source
 checkout's fitness as a seed. It reports missing or stale dependencies,
-CocoaPods state, cache conflicts, device capacity, remote session problems, and
-a linked native library whose Git metadata enters the fingerprint. On a
-checkout without installed dependencies, it also reports fingerprint
-differences against a fresh worktree. The checkout is left untouched unless
+CocoaPods state, cache conflicts, device capacity, remote session problems and
+fingerprint evaluation problems. The checkout is left untouched unless
 `--fix` is passed.
 
-Doctor never loads `fingerprint.config.js` or `fingerprint.config.cjs`: when
-either exists, it skips the fingerprint checks and reports that it did. It reads
-a project eas-cli's version from its `package.json`, and runs `eas whoami` only
-with an `eas` on `PATH` outside the repository and outside any `node_modules/.bin`
-above the project. On a checkout without its own dependencies, it skips the
-fingerprint parity check and says why when Expo packages resolve from outside
-the app or when the check would need `npx react-native config`, which it does for
-Android or a project without an `ios` directory. Its linked-library check can still run installed Expo packages on the
-main checkout, which evaluate a dynamic app config, as a build does.
-`worktree warm`, `start`, `ios`, and `android` run project code.
+Fingerprint checks evaluate project configuration, including
+`fingerprint.config.js`, in a child process. Doctor reads a project eas-cli's
+version from its `package.json` and runs `eas whoami` only with an `eas` on
+`PATH` outside the repository and its `node_modules/.bin` directories.
+`worktree warm`, `start`, `ios`, and `android` also run project code.
 
 `--platform ios` or `--platform android` limits native findings to that
 platform while keeping shared project checks. The selected project integration
@@ -633,7 +626,10 @@ An [Exact](https://github.com/expo/exact) app has `exact.mjs` next to
 `./exact.mjs ios --no-install` with `EXACT_SIM` set to the workspace's owned
 simulator, installs the reported `.app` and launches it as a native process
 without Metro. Exact compiles incrementally in the checkout's `target/`
-directory, so Stim keeps no artifact cache for it. `--configuration Release`
+directory, so Stim keeps no artifact cache for it. `target/` is build output:
+the idle stage and `gc --delete` clear it from an idle workspace, never while
+another process, such as a shell or an `exact.mjs` command, runs from or works in
+the app, nor on Windows, and the next build then compiles from scratch. `--configuration Release`
 adds `--release`, Exact's shipping build, whose first build takes minutes.
 `--scheme` and any other configuration are refused. The build starts once Stim
 has booted the simulator, and build-only runs (`stim ci build`) are refused.
@@ -1977,6 +1973,13 @@ bare app has no other route to web. macOS needs `Package.swift`,
 `macos.product` and `macos.infoPlist`. Detection never runs project scripts or
 executes app config code.
 
+Each environment also carries `devServer: boolean`: `true` when the app has a
+dev server that `stim start` and `stim reload` act on (React Native and Expo),
+`false` for Exact, native Xcode and Gradle apps, SwiftPM and web-only apps, and
+for a folder inside another project. An unreadable `package.json` keeps it `true`. Stim
+Desktop gives a workspace without one Stop and Show Logs instead of Start Dev
+Server and Reload, and no Metro section.
+
 In `--json`, an environment with a recorded run carries
 `lastBuilds: { ios?, android? }`, each
 `{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason?, buildMachine?, builtOn?, offloadedTo?, offloadFallback?, diagnostics? }`.
@@ -2357,8 +2360,8 @@ simulator booted: `derived-data/`, `gradle-build/`, `android-cas/`,
 `cache-provider/`, `js-swap-tmp/`, `macos/build`, staged `macos/<Product>.app`
 and interrupted-build `macos/staging-*` directories, and the project's
 git-ignored `android/app/build`, `android/build`, `android/.gradle`, `.build`,
-`android/.cxx`, `android/<module>/.cxx` and `.dd` (a directory laid out as
-Xcode DerivedData). They print the bytes freed per workspace. Plain `--delete` clears them
+`android/.cxx`, `android/<module>/.cxx`, `.dd` (a directory laid out as
+Xcode DerivedData) and an Exact app's Cargo `target/`. They print the bytes freed per workspace. Plain `--delete` clears them
 only through the pressure ladder, for a workspace with nothing running idle 2
 minutes or more and in the idle stage of a running one. A running, building, unverified or hosted
 macOS app keeps its workspace untouched. The workspace keeps its state, logs,

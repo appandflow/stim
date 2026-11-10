@@ -30,6 +30,7 @@ import { allDrained, buildClaimRoot, keptEntries, readBuildClaims } from '../eng
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { takeWaitTicket } from '../engine/wait-queue.ts';
 import {
+  backgroundPassesAvailable,
   ensurePersistentStimd,
   ensureStimd,
   observeOwnedWeb,
@@ -77,6 +78,51 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
   vi.unstubAllEnvs();
+});
+
+describe.skipIf(process.platform === 'win32')('background passes availability', () => {
+  test.each([
+    ['older daemon', {}, false],
+    ['report mode', { mode: 'report' }, false],
+    ['attached daemon', { mode: 'on', attached: true }, false],
+    ['persistent acting daemon', { mode: 'on' }, true],
+  ] as const)(
+    'background passes availability rejects %s unless it can act persistently',
+    async (_label, hello, expected) => {
+      const claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'fixture stimd' }).acquired;
+      assert(claim);
+      const socketPath = stimdSocket();
+      mkdirSync(dirname(socketPath), { recursive: true });
+      const server = createServer((socket) => {
+        let buffer = '';
+        let framed = false;
+        socket.on('data', (chunk) => {
+          buffer += String(chunk);
+          for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+            const line = buffer.slice(0, end);
+            buffer = buffer.slice(end + 1);
+            const message: Record<string, unknown> = JSON.parse(line);
+            if (!framed) {
+              framed = true;
+              if (message.build !== stimdBuildId()) {
+                socket.end(`${JSON.stringify({ op: 'engine-changed' })}\n`);
+                return;
+              }
+              socket.write(`${JSON.stringify({ op: 'hello', kind: 'stimd' })}\n`);
+            } else socket.end(`${JSON.stringify({ op: 'hello', ...hello })}\n`);
+          }
+        });
+      });
+      try {
+        await new Promise<void>((resolve, reject) => server.once('error', reject).listen(socketPath, resolve));
+        expect(await backgroundPassesAvailable()).toBe(expected);
+      } finally {
+        if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
+        rmSync(socketPath, { force: true });
+        releaseClaim(claim);
+      }
+    },
+  );
 });
 
 /**

@@ -1,10 +1,11 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { phaseLine } from '../command-output.ts';
+import { processContext } from '../cli-operation.ts';
+import { readFingerprintNotes } from '../fingerprint-precompute.ts';
 import {
   checkMainCheckout,
   detectFingerprintParity,
-  detectLinkedLibraryGitMetadata,
   mainCheckoutProjectRoot,
   reactNativeDoctorFindings,
   type DoctorPlatform,
@@ -26,7 +27,7 @@ import {
   iosToolchainAsync,
 } from '../engine/toolchain.ts';
 import { detectIsExpo } from '../workspace/project-files.ts';
-import { resolveAndroidLayout, resolveIosProjectDir } from '../workspace/settings.ts';
+import { fingerprintInputsSetting, resolveAndroidLayout, resolveIosProjectDir } from '../workspace/settings.ts';
 import type { ProjectDoctor } from './project-doctor.ts';
 import type { SettingsObject } from '../workspace/settings.ts';
 
@@ -72,20 +73,31 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
       const podsFlavor = checksIos ? podsFlavorFinding(root, sourceRoot, iosProjectPath, settings) : null;
       const prebuildRecords = machineSettings?.corrupt
         ? []
-        : (await inspectPrebuildRecords({ root: mainRoot, platform, host })).map(prebuildRecordFinding);
-      const parity = await detectFingerprintParity(root, {
-        platform,
+        : (await inspectPrebuildRecords({ root: mainRoot, platform, host, operation })).map(prebuildRecordFinding);
+      const fingerprintPlatform = platform ?? (checksIos ? 'ios' : 'android');
+      const fingerprintInputs = fingerprintInputsSetting(settings);
+      const request = {
+        root,
+        platform: fingerprintPlatform,
         iosProjectPath,
-        operation,
-      });
-      const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform, operation });
+        androidLayout: resolveAndroidLayout(settings, root, repoRoot ?? root),
+        fingerprintInputs,
+        embedMode: 'development' as const,
+      };
+      const fingerprintNotes = await readFingerprintNotes(operation ?? processContext(root), request);
+      const parity = await detectFingerprintParity(root, { ...request, operation });
       return [
         ...source,
         ...prebuildRecords,
         ...architectures,
         podsFlavor,
         parity,
-        linkedGit?.code === parity?.code ? null : linkedGit,
+        ...fingerprintNotes.map((note) => ({
+          level: 'note' as const,
+          title: 'Build fingerprint',
+          detail: note.message,
+          fix: note.remedy ?? null,
+        })),
       ].filter((finding) => finding !== null);
     },
     offloadTargets({ options: { platform, host = process.platform, operation }, settings, repoRoot }, iosRuntime) {
@@ -122,7 +134,7 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
       const sourceRoot = await mainCheckoutProjectRoot(root);
       const iosProjectPath = resolveIosProjectDir(settings, root).relative;
       const repoRoot = realpathOrSelf((await repoRootAsync(sourceRoot)) ?? sourceRoot);
-      const facts = await inspectSourceFacts({ root: sourceRoot, repoRoot, platform, host, iosProjectPath });
+      const facts = await inspectSourceFacts({ root: sourceRoot, repoRoot, platform, host, iosProjectPath, operation });
       const exitCode = await repairSourceCheckout({ facts, repoRoot, settings, operation, confirm, note });
       const flavor =
         platform !== 'android' && host === 'darwin'

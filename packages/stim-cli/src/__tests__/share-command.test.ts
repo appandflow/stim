@@ -1,8 +1,8 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { Command } from 'commander';
-import { registerShare, runShare, type ShareDeps } from '../commands/share.ts';
+import { runCli } from '../cli/define-op.ts';
+import { runShare, shareOp, type ShareDeps } from '../commands/share.ts';
 import { workspaceShareLinksFile } from '@stim-cli/core/state';
 import { LocalServerUnavailable, requestLocalServer } from '../local-server.ts';
 
@@ -96,9 +96,9 @@ describe('stim share', () => {
     const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      const program = new Command();
-      registerShare(program, '1.0.0', { findWorkspace: async () => '/work/app', startServer, request });
-      await program.parseAsync(['node', 'stim', 'share', 'ios', '--json']);
+      await runCli(shareOp({ findWorkspace: async () => '/work/app', startServer, request }), ['ios', '--json'], {
+        version: '1.0.0',
+      });
       expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toMatchObject({ code: 'STIM_SHARE_REFUSED' });
       expect(log).toHaveBeenCalledTimes(1);
       expect(process.exitCode).toBe(1);

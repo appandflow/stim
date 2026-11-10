@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { Command } from 'commander';
+import { defineOp, type Op } from '../cli/define-op.ts';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { RESERVED_SHARE_SLUGS, SHARE_SLUG_PATTERN, type Methods, type WebShareRow } from '@stim-cli/core/protocol';
 import { shareLinkKey, splitShareUrl, type SavedShare } from '@stim-cli/core/state';
@@ -601,36 +601,50 @@ const DEFAULT_DEPS = (version: string): ShareDeps => ({
   platform: process.platform,
 });
 
-export function registerShare(program: Command, version: string, deps: Partial<ShareDeps> = {}): void {
-  program
-    .command('share <action>')
-    .description(
+export function shareOp(deps: Partial<ShareDeps> = {}): Op {
+  return defineOp({
+    name: 'share',
+    arguments: '<action>',
+    description:
       "Share this workspace's running app through a public web link, with a generated password unless you set or drop it: share ios|android starts one (and the server inside stimd, when it does not run), share stop ends this workspace's shares, share list lists this Stim home's shares. Every share's link and password are saved for share ios|android --reuse, which starts a stopped share again until it expires (a new share, with a warning, when nothing is saved); share stop --forget deletes them.",
-    )
-    .option('--slot <name>', 'Share the device of this slot')
-    .option('--device', 'Share the physical device this workspace leases instead of its simulator or emulator')
-    .option('--control', 'Let viewers tap, type and press buttons (watch only without it)')
-    .option('--password <value>', 'Use this password (8 to 128 characters) instead of a generated one')
-    .option('--no-password', 'Need no password: anyone with the link can open the share')
-    .option(
-      '--view-password [value]',
-      'With --control, a second password that only watches (8 to 128 characters, generated without a value)',
-    )
-    .option(
-      '--slug <name>',
-      'Use /s/<name>/ as the link instead of a random token (3 to 32 lowercase letters, digits and hyphens; needs a password)',
-    )
-    .option(
-      '--reuse',
-      "Start the saved link and passwords of this workspace's last share of this target again, until it expires, or start a new share with a warning when nothing is saved (a saved share takes no --control, --password, --no-password, --view-password or --slug; --expires replaces the expiry)",
-    )
-    .option('--forget', "With stop, also delete this workspace's saved links so --reuse has nothing to start")
-    .option(
-      '--expires <minutes>',
-      `Minutes until the share ends, 1 to ${MAX_MINUTES} (default ${DEFAULT_MINUTES}; with --reuse, the saved expiry)`,
-    )
-    .option('--json', 'Emit one JSON payload')
-    .action(async (action: string, opts: ShareOptions) => {
+    options: {
+      slot: { flags: '--slot <name>', description: 'Share the device of this slot' },
+      device: {
+        flags: '--device',
+        description: 'Share the physical device this workspace leases instead of its simulator or emulator',
+      },
+      control: { flags: '--control', description: 'Let viewers tap, type and press buttons (watch only without it)' },
+      password: {
+        flags: '--password <value>',
+        description: 'Use this password (8 to 128 characters) instead of a generated one',
+      },
+      noPassword: { flags: '--no-password', description: 'Need no password: anyone with the link can open the share' },
+      viewPassword: {
+        flags: '--view-password [value]',
+        description:
+          'With --control, a second password that only watches (8 to 128 characters, generated without a value)',
+      },
+      slug: {
+        flags: '--slug <name>',
+        description:
+          'Use /s/<name>/ as the link instead of a random token (3 to 32 lowercase letters, digits and hyphens; needs a password)',
+      },
+      reuse: {
+        flags: '--reuse',
+        description:
+          "Start the saved link and passwords of this workspace's last share of this target again, until it expires, or start a new share with a warning when nothing is saved (a saved share takes no --control, --password, --no-password, --view-password or --slug; --expires replaces the expiry)",
+      },
+      forget: {
+        flags: '--forget',
+        description: "With stop, also delete this workspace's saved links so --reuse has nothing to start",
+      },
+      expires: {
+        flags: '--expires <minutes>',
+        description: `Minutes until the share ends, 1 to ${MAX_MINUTES} (default ${DEFAULT_MINUTES}; with --reuse, the saved expiry)`,
+      },
+      json: { flags: '--json', description: 'Emit one JSON payload' },
+    },
+    run: async ({ args: [action], options: opts, version }) => {
       const args = process.argv.slice(2);
       const bothPasswords =
         args.includes('--no-password') && args.some((arg) => arg === '--password' || arg.startsWith('--password='));
@@ -641,9 +655,10 @@ export function registerShare(program: Command, version: string, deps: Partial<S
         return;
       }
       console.log(opts.json ? JSON.stringify(result.output) : result.text);
-    });
+    },
+  });
 }
 
-export default function shareCommand(program: Command, version: string): void {
-  registerShare(program, version);
-}
+const share: Op = shareOp();
+
+export default share;

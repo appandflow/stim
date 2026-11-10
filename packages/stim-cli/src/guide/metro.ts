@@ -226,9 +226,9 @@ end the job with \`stim stop\`.
   collectors; and deletes the workspace's regenerable build outputs (its
   derived-data and other workspace build directories, the in-tree
   android/app/build, android/build, android/.gradle, .build, the CMake
-  directories android/.cxx and android/<module>/.cxx, and a .dd directory
+  directories android/.cxx and android/<module>/.cxx, a .dd directory
   laid out as Xcode DerivedData (a Build/ directory beside ModuleCache.noindex
-  or Logs/) that git ignores, and the Metro store unless another running dev
+  or Logs/), and an Exact app's Cargo target/ that git ignores, and the Metro store unless another running dev
   server shares it). ios/build stays: pod install writes generated sources
   there. Xcode output under any other name stays too; gc reports it. Activity is
   the newest of a Stim command in the workspace (start, ios, android, reload,

@@ -1,9 +1,14 @@
 import { parseArgs } from 'node:util';
 
 export interface OpOption {
-  /** Commander-style flags: `--json`, `--scope <scope>`, `--source <s...>`. */
+  /**
+   * Commander-style flags: `--json`, `--scope <scope>`, `--source <s...>`, `--name [value]` (an optional value), or
+   * `--no-name`, which sets the `--name` option's key to false and needs a `--name` option beside it.
+   */
   readonly flags: string;
   readonly description: string;
+  /** Refuse the command line when the option is absent, as commander's `requiredOption`. */
+  readonly mandatory?: boolean;
   /** Converts the value; a throw becomes a `STIM_BAD_ARG` usage error naming the flag and value. */
   readonly parse?: (value: string) => unknown;
 }
@@ -14,7 +19,19 @@ type OptionValue<O extends OpOption> = O extends { parse: (value: string) => inf
     ? string[]
     : O['flags'] extends `${string}<${string}>`
       ? string
-      : true;
+      : O['flags'] extends `${string}[${string}]`
+        ? string | true
+        : true;
+
+type LongName<F extends string> = F extends `--${infer N} ${string}` ? N : F extends `--${infer N}` ? N : never;
+type Negated<O extends Record<string, OpOption>> = {
+  [K in keyof O]: LongName<O[K]['flags']> extends `no-${infer P}` ? P : never;
+}[keyof O];
+type OptionValues<O extends Record<string, OpOption>> = {
+  readonly [K in keyof O as LongName<O[K]['flags']> extends `no-${string}` ? never : K]?:
+    | OptionValue<O[K]>
+    | (LongName<O[K]['flags']> extends Negated<O> ? false : never);
+};
 
 type ArgValue<S extends string> = S extends `<${string}>` ? string : string | undefined;
 type ArgValues<S extends string> = S extends `${infer Head} ${infer Tail}`
@@ -35,6 +52,8 @@ export interface OpInput<Options, Args> {
 export interface Op {
   readonly name: string;
   readonly arguments: string;
+  /** Help's `Arguments:` section, by argument name; commander lists every argument once any has a description. */
+  readonly argumentDescriptions: Readonly<Record<string, string>>;
   readonly description: string;
   readonly options: Readonly<Record<string, OpOption>>;
   /** Options after a subcommand's name belong to the subcommand, and the root's `-V` is not read. */
@@ -46,13 +65,21 @@ export interface Op {
 export function defineOp<const O extends Record<string, OpOption> = {}, const A extends string = ''>(definition: {
   name: string;
   arguments?: A;
+  argumentDescriptions?: Readonly<Record<string, string>>;
   description: string;
   options?: O;
   positionalOptions?: boolean;
   commands?: readonly Op[];
-  run?(input: OpInput<{ readonly [K in keyof O]?: OptionValue<O[K]> }, ArgValues<A>>): unknown;
+  run?(input: OpInput<OptionValues<O>, ArgValues<A>>): unknown;
 }): Op {
-  return { arguments: '', options: {}, positionalOptions: false, commands: [], ...definition };
+  return {
+    arguments: '',
+    argumentDescriptions: {},
+    options: {},
+    positionalOptions: false,
+    commands: [],
+    ...definition,
+  };
 }
 
 /** A command line the op does not accept, worded as commander words it. */
@@ -74,14 +101,35 @@ interface Spec {
   readonly option: OpOption;
   readonly long: string;
   readonly takesValue: boolean;
+  readonly optionalValue: boolean;
   readonly variadic: boolean;
+  /** The key a `--no-*` option sets to false. */
+  readonly negates?: string;
 }
 
 function specs(op: Op): Spec[] {
-  return Object.entries(op.options).map(([key, option]) => {
+  const entries = Object.entries(op.options);
+  return entries.map(([key, option]) => {
     const [long = '', value = ''] = option.flags.split(' ');
-    return { key, option, long, takesValue: value.startsWith('<'), variadic: value.endsWith('...>') };
+    let negates: string | undefined;
+    if (long.startsWith('--no-')) {
+      negates = entries.find(([, other]) => other.flags.split(' ')[0] === `--${long.slice(5)}`)?.[0];
+      if (negates === undefined) throw new Error(`${op.name}: ${long} needs a --${long.slice(5)} option`);
+    }
+    return {
+      key,
+      option,
+      long,
+      takesValue: value.startsWith('<'),
+      optionalValue: value.startsWith('['),
+      variadic: value.endsWith('...>'),
+      negates,
+    };
   });
+}
+
+function maybeOption(arg: string): boolean {
+  return arg.length > 1 && arg.startsWith('-');
 }
 
 function isNegativeNumber(arg: string): boolean {
@@ -117,8 +165,10 @@ function scan(op: Op, args: string[]): Scan {
   let unknown: string | undefined;
   let variadic: { spec: Spec; next: number } | undefined;
   let seen = -1;
+  let consumed = -1;
   const taken = new Set<number>();
   for (const token of tokens) {
+    if (token.index === consumed) continue;
     if (token.kind === 'option-terminator') {
       variadic = undefined;
       continue;
@@ -140,7 +190,9 @@ function scan(op: Op, args: string[]): Scan {
     seen = token.index;
     const raw = args[token.index] ?? '';
     const spec = byName.get(token.name);
-    const single = raw === token.rawName || (spec?.takesValue === true && token.inlineValue === true);
+    const single =
+      raw === token.rawName ||
+      ((spec?.takesValue === true || spec?.optionalValue === true) && token.inlineValue === true);
     if (op.commands.length === 0 && isNegativeNumber(raw)) {
       if (leading === undefined && !help && unknown === undefined && operands.length === 0) leading = token.index;
       operands.push(raw);
@@ -148,6 +200,20 @@ function scan(op: Op, args: string[]): Scan {
       help = true;
     } else if (spec && single) {
       taken.add(token.index);
+      if (spec.negates !== undefined) {
+        options[spec.negates] = false;
+        continue;
+      }
+      if (spec.optionalValue) {
+        const next = args[token.index + 1];
+        if (token.inlineValue) options[spec.key] = token.value;
+        else if (next !== undefined && (!maybeOption(next) || isNegativeNumber(next))) {
+          consumed = token.index + 1;
+          taken.add(consumed);
+          options[spec.key] = next;
+        } else options[spec.key] = true;
+        continue;
+      }
       if (!spec.takesValue) {
         options[spec.key] = true;
         continue;
@@ -274,7 +340,11 @@ function helpText(path: Op[], op: Op, width: number): string {
     sub.description,
   ]);
   if (op.commands.length > 0 && !op.run) commands.push(['help [command]', HELP.description]);
-  const pad = Math.max(...[...options, ...commands].map(([term]) => term.length));
+  const declared = op.arguments ? op.arguments.split(' ').map((arg) => arg.slice(1, -1)) : [];
+  const args: [string, string][] = Object.keys(op.argumentDescriptions).length
+    ? declared.map((name) => [name, op.argumentDescriptions[name] ?? ''])
+    : [];
+  const pad = Math.max(...[...args, ...options, ...commands].map(([term]) => term.length));
   const item = (term: string, description: string): string => {
     const remaining = width - pad - 4;
     const text =
@@ -288,6 +358,7 @@ function helpText(path: Op[], op: Op, width: number): string {
     `Usage: ${['stim', ...path.map((each) => each.name), ...usage].join(' ')}`,
     '',
     ...(op.description ? [boxWrap(op.description, width), ''] : []),
+    ...items('Arguments:', args),
     ...items('Options:', options),
     ...items('Commands:', commands),
   ].join('\n');
@@ -355,6 +426,10 @@ export async function runCli(op: Op, args: string[], context: CliContext): Promi
     }
     if (group && rest.length === 0) return showHelp(path, current, true);
     if (parsed.help) return showHelp(path, current, false);
+    for (const spec of specs(current)) {
+      if (spec.option.mandatory && parsed.options[spec.key] === undefined)
+        throw new CliUsageError(`error: required option '${spec.option.flags}' not specified`);
+    }
     if (group && word !== undefined) {
       const names = [...current.commands.map((each) => each.name), 'help'];
       throw new CliUsageError(`error: unknown command '${word}'${suggestSimilar(word, names)}`);

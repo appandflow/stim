@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { afterEach, describe, expect, test } from 'vitest';
 import { isUncertain, type Input, type NativeMode } from '../fingerprint/key.ts';
-import { staticInputs, type StaticContext, type StaticTarget } from '../fingerprint/inputs.ts';
+import { patches, staticInputs, type StaticContext, type StaticTarget } from '../fingerprint/inputs.ts';
 import { compileIgnore, nativeSubset, walk, within, type WalkOptions } from '../fingerprint/walk.ts';
 
 const temps: string[] = [];
@@ -41,6 +41,24 @@ function walked(root: string, options: Omit<Partial<WalkOptions>, 'ignore'> & { 
 
 const names = (inputs: Input[]) => inputs.map((input) => input.name).toSorted();
 const hashOf = (inputs: Input[], name: string) => inputs.find((input) => input.name === name)?.hash;
+
+test.each(['"%PATCH_DIR%"', '"patch!DIR!"', "'vendor patches'"])(
+  'Windows patch-package does not treat %s as a literal path',
+  (argument) => {
+    const root = project({
+      'package.json': JSON.stringify({ scripts: { postinstall: `patch-package --patch-dir ${argument}` } }),
+    });
+    const original = Object.getOwnPropertyDescriptor(process, 'platform');
+    try {
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+      expect(patches({ project: root, install: root })).toMatchObject({
+        uncertain: expect.stringContaining('patch-package'),
+      });
+    } finally {
+      if (original) Object.defineProperty(process, 'platform', original);
+    }
+  },
+);
 
 function inputsOf(root: string, context: Partial<StaticContext>, target: StaticTarget) {
   const result = staticInputs({ root, tracked: null, expoResolves: false, ...context }, target);
@@ -140,6 +158,42 @@ describe('fingerprint walk', () => {
     ]);
   });
 
+  test('tracked bundle assets do not admit untracked siblings or descendants', () => {
+    const root = tree({
+      'ios/assets/kept.png': 'first',
+      'ios/assets/generated.png': 'generated',
+      'ios/assets/sub/generated.png': 'generated',
+      'ios/assets/sub/kept.png': 'first',
+    });
+    const tracked = new Set(['ios/assets/kept.png', 'ios/assets/sub/kept.png'].map((path) => join(root, path)));
+    const options = { tracked, trackedOnly: [join(root, 'ios/assets')] };
+    const before = walked(root, options);
+    expect(names(before)).toEqual(['ios/assets/kept.png', 'ios/assets/sub/kept.png']);
+    write(root, { 'ios/assets/generated.png': 'changed', 'ios/assets/sub/generated.png': 'changed' });
+    expect(walked(root, options)).toEqual(before);
+    write(root, { 'ios/assets/sub/kept.png': 'changed' });
+    expect(hashOf(walked(root, options), 'ios/assets/sub/kept.png')).not.toBe(
+      hashOf(before, 'ios/assets/sub/kept.png'),
+    );
+    expect(names(walked(root, { ...options, ignore: 'ios/assets/kept.png' }))).toEqual(['ios/assets/sub/kept.png']);
+  });
+
+  test('replay discovers additions only within an originally listed workspace', () => {
+    const root = tree({
+      'ios/Kept.xcworkspace/contents.xcworkspacedata': '',
+      'ios/Kept.xcworkspace/xcshareddata/swiftpm/Package.resolved': 'new',
+      'ios/Other.xcworkspace/contents.xcworkspacedata': '',
+    });
+    const inputs = walked(root, {
+      tracked: null,
+      workspaceInputs: new Set(['ios/Kept.xcworkspace/contents.xcworkspacedata']),
+    });
+    expect(names(inputs)).toEqual([
+      'ios/Kept.xcworkspace/contents.xcworkspacedata',
+      'ios/Kept.xcworkspace/xcshareddata/swiftpm/Package.resolved',
+    ]);
+  });
+
   test('stops with no key past the file limit', () => {
     const root = tree({ a: '', b: '', c: '' });
     const result = walk({
@@ -232,7 +286,12 @@ describe('native subsets and static inputs', () => {
     });
     const app = join(repo, 'example');
     const { inputs } = inputsOf(app, { contentPackages: [repo] }, { platform: 'ios' });
-    expect(names(inputs)).toEqual(['<install>/Lib.podspec', '<install>/ios/Lib.swift', 'package.json#native']);
+    expect(names(inputs)).toEqual([
+      '<install>/Lib.podspec',
+      '<install>/ios/Lib.swift',
+      'ios/Podfile.lock',
+      'package.json#native',
+    ]);
   });
 
   const modes: [string, boolean, string[], NativeMode][] = [
@@ -269,6 +328,7 @@ describe('native subsets and static inputs', () => {
       '.fingerprintignore',
       'App.xcodeproj/project.pbxproj',
       'App/AppDelegate.swift',
+      'Podfile.lock',
       'modules/legacy/android/build.gradle',
       'package-lock.json',
       'package.json',

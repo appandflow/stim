@@ -19,6 +19,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { cloneIgnoredEntries, warmWorktreePaths } from '../workspace/worktree.ts';
 import { Command } from 'commander';
@@ -28,8 +29,13 @@ import { loadConfig, upsertProject } from '../workspace/config.ts';
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { READY_PHASE_MS, readWarmRecord } from '@stim-cli/core/state';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
-import { fingerprintProject } from '../cache/build-cache.ts';
+import { readFingerprint } from '../fingerprint-precompute.ts';
+import { isUncertain } from '../fingerprint/key.ts';
 import { recordPrebuild } from '../engine/prebuild.ts';
+import { workspaceName } from '@stim-cli/core';
+import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 const renameIo: { fail: boolean } = vi.hoisted(() => ({ fail: false }));
 
@@ -742,11 +748,11 @@ describe('an Expo app whose native directories git ignores', () => {
     write(root, 'app/package.json', '{"name":"cng","dependencies":{"expo":"57.0.0"}}\n');
     write(root, 'app/app.json', '{"expo":{"name":"cng","slug":"cng"}}\n');
     write(root, 'app/fingerprint.config.js', 'module.exports = { useRNCoreAutolinkingFromExpo: false };\n');
-    // @expo/fingerprint falls back to `npx react-native config` without Expo autolinking.
-    const cli = 'app/node_modules/.bin/react-native';
-    write(root, cli, '#!/usr/bin/env node\nconsole.log(JSON.stringify({ root: process.cwd(), dependencies: {} }));\n');
-    chmodSync(join(root, cli), 0o755);
-    write(root, `${cli}.cmd`, '@node "%~dp0react-native" %*\r\n');
+    symlinkSync(
+      fileURLToPath(new URL('../../../../apps/mobile/node_modules', import.meta.url)),
+      join(root, 'app/node_modules'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
     git(root, 'add', '.');
     git(root, 'commit', '-qm', 'cng app');
     git(target, 'merge', '-q', '--ff-only', 'main');
@@ -755,19 +761,110 @@ describe('an Expo app whose native directories git ignores', () => {
   });
 
   test('warm carries a native directory only when Stim generated it from the current fingerprint', async () => {
-    const current = await fingerprintProject(app(), { platform: 'ios', iosProjectPath: 'ios' });
-    assert(current?.hash);
+    const current = await readFingerprint(processContext(app()), {
+      root: app(),
+      platform: 'ios',
+      iosProjectPath: 'ios',
+      embedMode: 'development',
+    });
+    assert(current && !isUncertain(current));
     recordPrebuild(app(), 'ios', current.hash);
     recordPrebuild(app(), 'android', 'an-earlier-fingerprint');
+    const claimRoot = join(processContext(app()).home, 'workspaces', workspaceName(app()), 'native-run.lock');
+    const real = getExecutor();
+    let observed = false;
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, options) {
+        if (args?.includes(join(app(), 'ios'))) {
+          observed = true;
+          expect(readClaimSet(claimRoot).live.length).toBeGreaterThan(0);
+          const attempt = tryAcquireClaim({ root: claimRoot, mode: 'exclusive', label: 'test native-run' });
+          if (attempt.pending) releaseClaim(attempt.pending);
+          if (attempt.acquired) releaseClaim(attempt.acquired);
+          expect(attempt.acquired).toBeUndefined();
+        }
+        return real.runFileAsync(file, args, options);
+      },
+    });
     const result = await runWarm(join(target, 'app'));
+    expect(observed).toBe(true);
+    expect(readClaimSet(claimRoot).live).toEqual([]);
     expect(result.code).toBe(0);
     expect(result.stdout).toEqual([]);
     expect(readFileSync(join(target, 'app/ios/Podfile'), 'utf-8')).toBe("platform :ios, '15.1'\n");
-    expect(readWorkspaceState(join(target, 'app'))?.prebuild).toEqual({ ios: current.hash });
+    expect(readWorkspaceState(join(target, 'app'))?.prebuild).toEqual({
+      ios: { schema: current.schema, hash: current.hash },
+    });
     expect(existsSync(join(target, 'app/android'))).toBe(false);
     expect(result.stderr).toMatch(
       /left out app\/android: the source's android\/ was generated from fingerprint an-ear\.\./,
     );
+  }, 30_000);
+
+  test('two unresolved app checks retain both source claims', async () => {
+    write(root, '.gitignore', `${readFileSync(join(root, '.gitignore'), 'utf8')}other/ios/\n`);
+    write(root, 'other/package.json', '{"name":"other","dependencies":{"expo":"57.0.0"}}\n');
+    write(root, 'other/app.json', '{"expo":{"name":"other","slug":"other"}}\n');
+    write(root, 'other/fingerprint.config.js', 'module.exports = { useRNCoreAutolinkingFromExpo: false };\n');
+    symlinkSync(
+      fileURLToPath(new URL('../../../../apps/mobile/node_modules', import.meta.url)),
+      join(root, 'other/node_modules'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'second cng app');
+    git(target, 'merge', '-q', '--ff-only', 'main');
+    write(root, 'other/ios/Podfile', "platform :ios, '15.1'\n");
+    const apps = [app(), join(root, 'other')];
+    for (const source of apps) recordPrebuild(source, 'ios', 'a'.repeat(64));
+    const real = getExecutor();
+    const claims: ClaimHandle[] = [];
+    let ready!: () => void;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const both = new Promise<void>((resolve, reject) => {
+      ready = resolve;
+      timer = setTimeout(() => reject(new Error('Both source checks did not start')), 10_000);
+    });
+    setExecutor({
+      ...real,
+      async runFileAsync(file, args, options) {
+        if (
+          args?.some((arg: string) => arg.endsWith('fingerprint-precompute.mjs')) &&
+          options?.declareFor &&
+          typeof options.cwd === 'string' &&
+          apps.includes(options.cwd)
+        ) {
+          const claimRoot = join(
+            processContext(app()).home,
+            'workspaces',
+            workspaceName(options.cwd),
+            'native-run.lock',
+          );
+          const claim = [...operationState(options.declareFor).declaring].find((held) => held.root === claimRoot);
+          assert(claim);
+          claims.push(claim);
+          if (claims.length === 2) ready();
+          await both;
+          throw new WorkspaceProcessCleanupError([claim], 'Unverified source cleanup', 'Inspect.');
+        }
+        return real.runFileAsync(file, args, options);
+      },
+    });
+    try {
+      const result = await runWarm(join(target, 'app'));
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain('STIM_CLAIM_UNAVAILABLE');
+      expect(claims).toHaveLength(2);
+      for (const claim of claims) {
+        expect(result.stderr).toContain(claim.path);
+        expect(readClaimSet(claim.root).live.some((entry) => entry.claimId === claim.claimId)).toBe(true);
+      }
+    } finally {
+      clearTimeout(timer);
+      ready();
+      for (const claim of claims) releaseClaim(claim);
+    }
   }, 30_000);
 
   test('warm leaves out a native directory Stim has no prebuild record for', async () => {

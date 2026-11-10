@@ -28,7 +28,7 @@ import type { MetroResolution } from './metro.ts';
 import { countErrorsSinceMarker } from './diagnostics/error-index.ts';
 import { workspaceLogErrorIndex, workspaceLogsDir } from './workspace/paths.ts';
 import { readSupervisorState } from './commands/stop.ts';
-import { detectPlatforms } from './integrations/projects.ts';
+import { projectRegistry } from './integrations/projects.ts';
 import { detectTutorial, findServerWorkspace, readAppJson } from './workspace/project.ts';
 import { listAllIosSimsAsync, parseSimctlList } from './devices/ios.ts';
 import {
@@ -494,13 +494,13 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
       const phase = workspacePhase(state.live, saved, { now: leaseNow });
       Object.assign(state, builds, missing && phase.phase !== 'live' ? { phase: 'idle', phaseSince: null } : phase, {
         ...(missing ? { pathMissing: true as const } : {}),
-        platforms: (() => {
+        ...(() => {
           const context = {
             projectPath: path,
             gitCommonDir: gitCommonDirOnDisk(path),
             repoRoot: state.worktree?.path ?? path,
           };
-          return detectPlatforms(path, { context, settings: resolveSettings(context) });
+          return projectRegistry.detectProject(path, { context, settings: resolveSettings(context) });
         })(),
         recording: { enabled: workspaceRecordingEnabled(path, proj, cfg, process.env) },
       });

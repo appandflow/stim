@@ -92,7 +92,6 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "@expo/fingerprint": "^0.21.5",
     "@xmldom/xmldom": "0.9.12",
     "chalk": "^6.0.0",
     "commander": "^15.0.0",
@@ -102,6 +101,7 @@
     "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@expo/fingerprint": "^0.21.5",
     "@stim-cli/agent-driver": "workspace:*",
     "@stim-cli/agent-driver-agent-device": "workspace:*",
     "@stim-cli/cache": "workspace:*",
@@ -120,5 +120,6 @@
   },
   "engines": {
     "node": ">=22.12.0"
-  }
+  },
+  "peer": 3
 }

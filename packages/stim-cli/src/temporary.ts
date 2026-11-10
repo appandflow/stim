@@ -13,7 +13,7 @@ import {
 import { chmod, lstat, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { ambientEnv, buildCacheRoot } from '@stim-cli/core';
+import { ambientEnv, buildCacheRoot, type StimContext } from '@stim-cli/core';
 import { getConfigDir, loadConfig } from './workspace/config.ts';
 
 function existingPath(path: string): { existing: string; resolved: string } {
@@ -46,10 +46,10 @@ function inside(parent: string, path: string): boolean {
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
-export function temporaryRoot(near: string): string {
+export function temporaryRoot(near: string, context?: StimContext): string {
   const reference = existingPath(near);
   const insideReference = (path: string) => inside(reference.resolved, path);
-  const override = ambientEnv().STIM_TMPDIR ?? loadConfig()?.tempDir;
+  const override = (context?.env ?? ambientEnv()).STIM_TMPDIR ?? loadConfig(context?.home)?.tempDir;
   if (override !== undefined) {
     if (typeof override !== 'string' || !isAbsolute(override)) {
       throw new Error('STIM_TMPDIR / tempDir must be an absolute directory path.');
@@ -66,7 +66,7 @@ export function temporaryRoot(near: string): string {
   }
 
   const { existing } = reference;
-  const cache = existingPath(buildCacheRoot()).resolved;
+  const cache = existingPath(buildCacheRoot(context?.home, context?.env)).resolved;
   const device = statSync(existing).dev;
   const candidates = [tmpdir()];
   let current = existing === reference.resolved || !statSync(existing).isDirectory() ? dirname(existing) : existing;
@@ -87,12 +87,12 @@ export function temporaryRoot(near: string): string {
   }
   throw new Error(
     `No writable temporary directory on the filesystem containing ${near}. ` +
-      `Set STIM_TMPDIR or tempDir in ${join(getConfigDir(), 'config.json')} to a directory outside Git working trees.`,
+      `Set STIM_TMPDIR or tempDir in ${join(context?.home ?? getConfigDir(), 'config.json')} to a directory outside Git working trees.`,
   );
 }
 
-export function makeTemporaryDirectory(near: string, prefix: string): string {
-  const root = temporaryRoot(near);
+export function makeTemporaryDirectory(near: string, prefix: string, context?: StimContext): string {
+  const root = temporaryRoot(near, context);
   mkdirSync(root, { recursive: true, mode: 0o700 });
   return mkdtempSync(join(root, prefix));
 }

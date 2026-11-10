@@ -129,10 +129,10 @@ test.each([
   );
   expect(projectRegistry.findProjectRoot(root)).toBe(root);
   expect(
-    projectRegistry.detectPlatforms(root, {
+    projectRegistry.detectProject(root, {
       context: { projectPath: root, gitCommonDir: null, repoRoot: null },
       settings: {},
-    }),
+    }).platforms,
   ).toEqual(['ios']);
   for (const configuration of ['Debug', 'Release', 'Staging']) {
     expect(selectNativeXcodeProject(root, undefined, configuration).platform).toBe('ios');
@@ -264,10 +264,10 @@ test('macOS applications and libraries do not become runnable iOS projects', () 
   writeNativeXcodeProject(root, 'Library', 'iphoneos', 'framework');
   expect(projectRegistry.projectProblem(root, 'ios')?.kind).toBe('not-an-app');
   expect(
-    projectRegistry.detectPlatforms(root, {
+    projectRegistry.detectProject(root, {
       context: { projectPath: root, gitCommonDir: null, repoRoot: null },
       settings: {},
-    }),
+    }).platforms,
   ).toEqual([]);
 });
 
@@ -500,6 +500,11 @@ test('the registered native iOS provider builds Release without a device and reu
   expect(compile).toHaveBeenCalledTimes(1);
   expect(readFileSync(join(warm.appPath, 'Native'), 'utf8')).toBe(bytes);
   write(join(root, 'Native.swift'), 'struct EditedApp {}');
+  const plan = nativeXcodeIosProject(root).plan;
+  if (!plan) throw new Error('The native Xcode fixture has no plan.');
+  const preview = await plan({ configuration: 'Release' }, resolvedSettings(root));
+  expect(preview).toMatchObject({ cacheHit: false });
+  expect('cacheKey' in preview && preview.cacheKey).not.toBe(cold.cacheKey);
   const edited = await buildIosOperation(testContext(), root, options);
   expect(edited.cacheKey).not.toBe(cold.cacheKey);
   expect(compile).toHaveBeenCalledTimes(2);
