@@ -301,7 +301,6 @@ function attachedReply(attached: boolean, instance?: string): { attached?: true;
   return attached ? { attached: true, ...(instance ? { instance } : {}) } : {};
 }
 
-/** The build and version this stimd's own installation holds now, which an update in place changes under it. */
 const ownDist = () => dirname(fileURLToPath(import.meta.url));
 
 /** The identity and modification time of this stimd's `dist` directory, which a package update changes. */
@@ -314,6 +313,7 @@ function distStamp(): string {
   }
 }
 
+/** The build and version this stimd's own installation holds now, which an update in place changes under it. */
 function installedNow(): { build: string; version: string } | null {
   const dir = ownDist();
   const installed = stimBuildId(dir);

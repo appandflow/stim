@@ -291,7 +291,12 @@ test.skipIf(process.platform === 'win32')(
 
       const pinnedOp = await admitted(before);
       const waitingOp = await admitted(before);
-      waitingOp.write(`${JSON.stringify({ op: 'op.wait' })}\n`);
+      await new Promise<void>((resolve) => {
+        waitingOp.on('data', (chunk: string) => {
+          if (chunk.includes('"slot.waiting"')) resolve();
+        });
+        waitingOp.write(`${JSON.stringify({ op: 'op.wait' })}\n${JSON.stringify({ op: 'slot.wait' })}\n`);
+      });
       replaceDist(dist, next);
       expect(await first(after)).toMatchObject({ op: 'engine-changed', pid, handover: true });
       pinnedOp.destroy();
