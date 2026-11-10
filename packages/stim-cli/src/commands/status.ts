@@ -24,6 +24,7 @@ import type { Command } from 'commander';
 import { admissionLimits, getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { describeMetroLastStop } from '../stimd/metro/stop-cause.ts';
+import { projectRegistry } from '../integrations/projects.ts';
 import { detectIsExpo, projectShortcut } from '../workspace/project.ts';
 import { buildStatusLine } from '../engine/build-progress.ts';
 import { formatBytes, volumeRootFor } from '../fs-util.ts';
@@ -123,6 +124,12 @@ function androidStatusLines(record: EnvironmentState['android'], slotLabel: stri
   }
   if (record?.host) out.push(chalk.dim(`    agent: ${hostedAgentLine(record.host.agent, record.host.machine)}`));
   return out;
+}
+
+function appKind(path: string, isExpo: boolean | undefined): 'expo' | 'exact' | 'bare' {
+  if (isExpo ?? detectIsExpo(path)) return 'expo';
+  const ios = projectRegistry.selectIos(path);
+  return 'id' in ios && ios.id === 'exact' ? 'exact' : 'bare';
 }
 
 function formatGb(mb: number): string {
@@ -282,7 +289,7 @@ export function renderStatus(
     out.push(
       labelOnlyRoots[i]
         ? chalk.dim('  worktree root (holds the label; the app registers its own entry)')
-        : chalk.dim(`  app: ${proj.bundleId ?? '?'} (${(proj.isExpo ?? detectIsExpo(path)) ? 'expo' : 'bare'})`),
+        : chalk.dim(`  app: ${proj.bundleId ?? '?'} (${appKind(path, proj.isExpo)})`),
     );
 
     if (!labelOnlyRoots[i]) out.push(chalk.dim(stageLine(state, snapshot, now)));

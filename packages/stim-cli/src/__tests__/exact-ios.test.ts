@@ -113,6 +113,16 @@ test.skipIf(process.platform === 'win32')('reports error lines and a run that bu
   });
 });
 
+test.each([
+  [{ app: { id: 'com.example.shop' } }, 'com.example.shop'],
+  [{ app: { id: '' } }, null],
+  [{ app: 'com.example.shop' }, null],
+])('takes the bundle id from app.json app.id before any build: %j', async (manifest, id) => {
+  writeFileSync(join(root, 'app.json'), JSON.stringify(manifest));
+
+  expect(await exactIosProject(root).bundleId()).toBe(id);
+});
+
 test('reports an exact.mjs that cannot run', async () => {
   const result = await compile(context(null));
 
