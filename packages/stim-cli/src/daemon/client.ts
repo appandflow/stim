@@ -180,7 +180,7 @@ export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message:
           ]
         : [
             `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
-            `Run the command with Stim ${version}, or stop that stimd${pid === null ? '' : ` with \`kill ${pid}\``}; the next stim command starts one of this build.`,
+            `Run the command with Stim ${version}, or stop that stimd${pid === null ? '' : ` with \`kill ${pid}\``}, which also ends the builds, dev servers and shares it serves; the next stim command starts one of this build.`,
           ];
   return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }

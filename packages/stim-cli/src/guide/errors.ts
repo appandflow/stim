@@ -1980,8 +1980,9 @@ not on any remote"  (worktree remove)
   stim share also answers it when this home's stimd runs another Stim build
   and no stimd of this build replaced it. The message names that build and
   pid: wait for the commands it serves when it restarts on this build, run
-  the command with that build, or stop that stimd with kill <pid> so the
-  next command starts one of this build.`,
+  the command with that build, or stop that stimd with kill <pid>, which
+  also ends the builds, dev servers and shares it serves, so the next
+  command starts one of this build.`,
     },
     STIM_CI_ATTACHED_HOME: {
       summary: 'another command owns this home’s attached daemon',
