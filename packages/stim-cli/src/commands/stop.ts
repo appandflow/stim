@@ -79,13 +79,14 @@ import { sameCollectorRecord } from '../stimd/logs/state.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { readBootedParkDeadline } from '../devices/booted-park.ts';
 import { clearDeferredShutdown } from '../devices/deferred-shutdown.ts';
-import { ensurePersistentStimd, stopDeviceLogStream, stopMetroTree } from '../daemon/client.ts';
+import { ensurePersistentStimd, stopDeviceLogStream, stopMetroTree, type MetroTreeStop } from '../daemon/client.ts';
 import { removeOwnedEmulatorMetroReverses } from '../devices/android.ts';
 import { removePhoneReverses } from '../devices/phone-reverses.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { fileLeaseIo, releaseWorkspaceLeasesAsync, type ReleasedLease } from '../engine/device-lease.ts';
 import { stopTunnel } from '../engine/tunnel.ts';
-import { inspectProcessIdentity, waitForProcessExit, type ProcessRecord } from '../process-identity.ts';
+import { inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
+import { waitForTreeExit } from '../process-group-exit.ts';
 import {
   resolveSupervisorTarget,
   type SupervisorTarget,
@@ -581,7 +582,7 @@ async function stopWorkspace({
   const collectorRecords = collectors === undefined ? readCollectorState(root) : collectors;
   const reservedPort = typeof proj?.metroPort === 'number' ? proj.metroPort : null;
   const waiter =
-    waitForDeath ?? ((pid: number, processToken?: string) => waitForProcessExit({ pid, processToken }, waitMs));
+    waitForDeath ?? ((pid: number, processToken?: string) => waitForTreeExit({ pid, processToken }, waitMs));
 
   const outcomes: StopOutcomes = {
     supervisor: { status: 'none' },
@@ -1014,15 +1015,15 @@ async function stopSupervisor(
   },
 ): Promise<SupervisorOutcome> {
   await releaseReverses();
-  report(chalk.dim(phaseLine('stop', `sending SIGTERM to supervisor process group ${target.pid}`)));
+  report(chalk.dim(phaseLine('stop', `stopping dev server pid ${target.pid} and its process group`)));
   try {
     await withWorkspaceStateLockAsync(root, () =>
       requestDevServerStop(root, target.processToken, requester ?? { by: 'stim stop' }),
     );
   } catch {}
-  let signalled = false;
+  let stopped: MetroTreeStop;
   try {
-    signalled = await stopMetroTree(
+    stopped = await stopMetroTree(
       root,
       target.pid,
       target.processToken,
@@ -1030,41 +1031,35 @@ async function stopSupervisor(
       operation?.signal,
     );
   } catch (e) {
-    signalled = false;
-    report(
-      chalk.red(
-        phaseLine('stop', `could not signal supervisor pid ${target.pid}: ${String((e as Error)?.message || e)}`),
-      ),
-    );
+    stopped = {
+      stopped: false,
+      reason: `could not signal dev server pid ${target.pid}: ${String((e as Error)?.message || e)}`,
+      remedy: `Inspect it with \`ps -p ${target.pid}\`.`,
+    };
   }
-  if (!signalled) {
+  if (!stopped.stopped) {
     try {
       await withWorkspaceStateLockAsync(root, () => withdrawDevServerStopRequest(root, target.processToken));
     } catch {}
-    const reason = `could not signal supervisor pid ${target.pid}`;
-    report(chalk.red(phaseLine('stop', reason)));
-    return { status: 'failed', pid: target.pid, port: target.port ?? null, reason };
+    report(chalk.red(phaseLine('stop', stopped.reason)));
+    report(chalk.dim(phaseLine('', stopped.remedy)));
+    return { status: 'failed', pid: target.pid, port: target.port ?? null, reason: stopped.reason };
   }
   const died = await waiter(target.pid as number, target.processToken);
   if (died) {
     report(chalk.green(phaseLine('stop', `supervisor pid ${target.pid}`)));
     return { status: 'stopped', pid: target.pid, port: target.port ?? null, mode: target.mode ?? null };
   }
-  const reason = `supervisor pid ${target.pid} did not exit within ${Math.round(DEFAULT_WAIT_MS / 1000)}s of SIGTERM`;
+  const reason = `dev server pid ${target.pid} or a process in its group did not exit within ${Math.round(DEFAULT_WAIT_MS / 1000)}s of SIGTERM`;
   report(chalk.red(phaseLine('stop', reason)));
   report(
-    chalk.dim(phaseLine('', `inspect it with \`ps -p ${target.pid}\`, or signal it yourself: kill -9 -${target.pid}`)),
-  );
-  if (target.mode === MODE_COMMAND) {
-    report(
-      chalk.dim(
-        phaseLine(
-          '',
-          'metro.command runs in its own process group: once the supervisor is gone, run stim stop again to stop it',
-        ),
+    chalk.dim(
+      phaseLine(
+        '',
+        `inspect it with \`pgrep -g ${target.pid}\`, or signal it yourself: kill -9 -${target.pid}; then run stim stop again`,
       ),
-    );
-  }
+    ),
+  );
   return { status: 'timeout', pid: target.pid, port: target.port ?? null, reason };
 }
 

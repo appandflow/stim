@@ -24,6 +24,7 @@ import {
   type ParkRequest,
 } from './teardown.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
+import { waitForTreeExit } from '../process-group-exit.ts';
 import { readClaimSet, releaseClaim } from '../ownership-claim.ts';
 import { parkedMaxSetting } from './sim-pool.ts';
 import { verifyCollectorOwnership } from '../stimd/logs/ownership.ts';
@@ -560,19 +561,19 @@ async function reclaimIdleProject(
     await withWorkspaceStateLockAsync(path, () => requestDevServerStop(path, processToken, stopRequester)).catch(
       () => {},
     );
-    const signalled = await stopMetroTree(
+    const stopped = await stopMetroTree(
       path,
       supervisor.pid,
       supervisor.processToken,
       () => killMetroTreeAsync(supervisor.pid, supervisor.processToken, operation),
       signal,
     );
-    if (!signalled)
+    if (!stopped.stopped)
       await withWorkspaceStateLockAsync(path, () => withdrawDevServerStopRequest(path, processToken)).catch(() => {});
-    if (signalled && (await waitForProcessExit(supervisor, 10_000, signal))) {
+    if (stopped.stopped && (await waitForTreeExit(supervisor, 10_000, signal))) {
       killedPid = supervisor.pid!;
     } else {
-      skippedMetro = `could not confirm supervisor pid ${supervisor.pid} exited`;
+      skippedMetro = `could not confirm supervisor pid ${supervisor.pid} and its process group exited`;
       supervisorHeld = true;
     }
   } else if (supervisor.status === 'unverified') {

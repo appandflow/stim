@@ -1,6 +1,13 @@
 const state = vi.hoisted(() => {
-  const result: { reply: Record<string, unknown> | null; close: boolean; live: unknown[]; unresolved: unknown[] } = {
+  const result: {
+    reply: Record<string, unknown> | null;
+    refuse: boolean;
+    close: boolean;
+    live: unknown[];
+    unresolved: unknown[];
+  } = {
     reply: null,
+    refuse: false,
     close: true,
     live: [],
     unresolved: [],
@@ -15,7 +22,11 @@ vi.mock('node:net', async () => {
       class Socket extends EventEmitter {
         setEncoding() {}
         write() {
-          if (state.reply) this.emit('data', `${JSON.stringify({ op: 'hello' })}\n${JSON.stringify(state.reply)}\n`);
+          if (state.refuse) {
+            this.emit('data', `${JSON.stringify({ op: 'engine-changed', build: 'otherbuild00' })}\n`);
+            this.emit('close');
+          } else if (state.reply)
+            this.emit('data', `${JSON.stringify({ op: 'hello' })}\n${JSON.stringify(state.reply)}\n`);
           else if (state.close) this.emit('close');
         }
         destroy() {}
@@ -35,25 +46,26 @@ import { stopMetroTree } from '../daemon/client.ts';
 
 beforeEach(() => {
   state.reply = null;
+  state.refuse = false;
   state.close = true;
-  state.live = [{}];
+  state.live = [{ path: '/home/workspaces/w/metro.claim/exclusive/a.claim' }];
   state.unresolved = [];
 });
 
 test('uses the acknowledged managed stop without invoking the fallback', async () => {
   state.reply = { op: 'metro.stopped', state: 'stopped' };
   const fallback = vi.fn<() => boolean>(() => true);
-  expect(await stopMetroTree('/project', 42, 'token', fallback)).toBe(true);
+  expect(await stopMetroTree('/project', 42, 'token', fallback)).toEqual({ stopped: true });
   expect(fallback).not.toHaveBeenCalled();
 });
 
 test('falls back on explicit not-owned or absent daemon and claims', async () => {
   const fallback = vi.fn<() => boolean>(() => true);
   state.reply = { op: 'metro.stopped', state: 'not-owned' };
-  expect(await stopMetroTree('/project', 42, 'token', fallback)).toBe(true);
+  expect(await stopMetroTree('/project', 42, 'token', fallback)).toEqual({ stopped: true });
   state.reply = null;
   state.live = [];
-  expect(await stopMetroTree('/project', 42, 'token', fallback)).toBe(true);
+  expect(await stopMetroTree('/project', 42, 'token', fallback)).toEqual({ stopped: true });
   expect(fallback).toHaveBeenCalledTimes(2);
 });
 
@@ -63,19 +75,36 @@ test.each(['live', 'unresolved'])('refuses an unanswered stop with %s claims', a
     state.unresolved = [{}];
   }
   const fallback = vi.fn<() => boolean>(() => true);
-  expect(await stopMetroTree('/project', 42, 'token', fallback)).toBe(false);
+  expect(await stopMetroTree('/project', 42, 'token', fallback)).toMatchObject({ stopped: false });
   expect(fallback).not.toHaveBeenCalled();
 });
 
 test('refuses errors and cancellation without an external kill', async () => {
   const fallback = vi.fn<() => boolean>(() => true);
   state.reply = { op: 'error', code: 'metro-changed' };
-  expect(await stopMetroTree('/project', 42, 'token', fallback)).toBe(false);
+  expect(await stopMetroTree('/project', 42, 'token', fallback)).toMatchObject({ stopped: false });
   state.reply = null;
   state.close = false;
   const controller = new AbortController();
   const stopping = stopMetroTree('/project', 42, 'token', fallback, controller.signal);
   controller.abort();
-  expect(await stopping).toBe(false);
+  expect(await stopping).toMatchObject({ stopped: false });
+  expect(fallback).not.toHaveBeenCalled();
+});
+
+test('an unanswered stop names the Metro claim and the command that removes it', async () => {
+  const stopped = await stopMetroTree('/project', 42, 'token', () => true);
+  expect(stopped).toMatchObject({
+    stopped: false,
+    remedy: expect.stringContaining("rm -f '/home/workspaces/w/metro.claim/exclusive/a.claim'"),
+  });
+});
+
+test('leaves a Metro claimed under a stimd of another build to that build, naming it', async () => {
+  state.refuse = true;
+  const fallback = vi.fn<() => boolean>(() => true);
+  const stopping = stopMetroTree('/project', 42, 'token', fallback);
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(await stopping).toMatchObject({ stopped: false, remedy: expect.stringContaining('otherbuild00') });
   expect(fallback).not.toHaveBeenCalled();
 });

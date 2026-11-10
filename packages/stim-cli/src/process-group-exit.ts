@@ -1,6 +1,7 @@
 import { availableParallelism, loadavg } from 'node:os';
 import { cancellableSleep } from './cancellation.ts';
 import { processGroupAlive } from './ownership-claim.ts';
+import { waitForProcessExit, type ProcessRecord } from './process-identity.ts';
 
 const BASE_MS = 5_000;
 
@@ -20,4 +21,9 @@ export async function waitForGroupExit(pid: number, budgetMs: number): Promise<b
     await cancellableSleep(25);
   }
   return true;
+}
+
+/** Waits for `record` to exit and for the process group it led, if any, to empty: a leader can exit before its group. */
+export async function waitForTreeExit(record: ProcessRecord, ms: number, signal?: AbortSignal): Promise<boolean> {
+  return (await waitForProcessExit(record, ms, signal)) && (await waitForGroupExit(Number(record.pid), ms));
 }

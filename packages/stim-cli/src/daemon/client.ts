@@ -294,12 +294,14 @@ export async function ensureMetroThroughStimd(
   }
 }
 
+/** Whether {@link stopMetroTree} stopped the dev server, else why not and what to do. */
+export type MetroTreeStop = { stopped: true } | { stopped: false; reason: string; remedy: string };
+
 /**
  * Stops a workspace's dev server: through this home's stimd (`metro.stop`) when a stimd runs or a Metro claim shows
  * one ran it, starting a stimd to adopt a Metro an exited one left; through `fallback`, which signals the recorded
- * process tree, when stimd does not own it (a dev server supervisor an older Stim started), when the stimd runs
- * another build and refuses this one, or when neither exists.
- * Resolves whether it stopped.
+ * process tree, when stimd does not own it (a dev server supervisor an older Stim started) or when neither a stimd nor
+ * a Metro claim exists. A Metro under the claim of a stimd of another build stays: only that build stops it.
  */
 export async function stopMetroTree(
   root: string,
@@ -307,38 +309,74 @@ export async function stopMetroTree(
   processToken: string | undefined,
   fallback: () => Promise<boolean> | boolean,
   signal?: AbortSignal,
-): Promise<boolean> {
+): Promise<MetroTreeStop> {
+  const claimRoot = join(workspaceDir(root), 'metro.claim');
   const held = () => {
     try {
       const daemon = readClaimSet(stimdClaimRoot());
-      const metro = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+      const metro = readClaimSet(claimRoot);
       return {
         daemon: daemon.live.length > 0 || daemon.unresolved.length > 0,
         metro: metro.live.length > 0 || metro.unresolved.length > 0,
+        claim: metro.live[0]?.path ?? metro.unresolved[0]?.path ?? claimRoot,
       };
     } catch {
       return null;
     }
   };
+  const viaFallback = async (): Promise<MetroTreeStop> =>
+    (await fallback())
+      ? { stopped: true }
+      : {
+          stopped: false,
+          reason: `could not signal dev server pid ${pid}`,
+          remedy: `Inspect it with \`ps -p ${pid}\`; stop it with the tool that started it.`,
+        };
+  const unresolved = (reason: string, claim = held()?.claim ?? claimRoot): MetroTreeStop => ({
+    stopped: false,
+    reason: `${reason}; ${claim} still holds this workspace's Metro`,
+    remedy: `Verify dev server pid ${pid} and its process tree have stopped, then run ${claimRemoveCommand(claim)}.`,
+  });
   const before = held();
-  if (before && !before.daemon && !before.metro) return fallback();
-  if (
-    before &&
-    !before.daemon &&
-    process.platform !== 'win32' &&
-    (await ensureStimd(process.env, process.platform, false, undefined, undefined, false, undefined, true).catch(
-      () => false,
-    ))
-  )
-    await waitForStimdHello();
-  const answer = await askStimd('metro.stop', 40_000, { params: { root, pid, processToken } }, signal);
-  if (signal?.aborted) return false;
-  if (answer?.op === 'metro.stopped' && answer.state === 'stopped') return true;
-  if (answer?.op === 'metro.stopped' && answer.state === 'not-owned') return fallback();
-  if (answer) return false;
-  if (stimdRefused()) return fallback();
+  if (before && !before.daemon && !before.metro) return viaFallback();
+  let launchError: string | null = null;
+  if (before && !before.daemon && process.platform !== 'win32') {
+    const launched = await ensureStimd(
+      process.env,
+      process.platform,
+      false,
+      undefined,
+      undefined,
+      false,
+      undefined,
+      true,
+    ).catch((error: unknown) => {
+      launchError = error instanceof Error ? error.message : String(error);
+      return false;
+    });
+    if (launched) await waitForStimdHello();
+  }
+  const ask = () => askStimd('metro.stop', 40_000, { params: { root, pid, processToken } }, signal);
+  let answer = await ask();
+  if (!answer && stimdRefused() && !signal?.aborted && (await successorBound())) answer = await ask();
+  if (signal?.aborted) return { stopped: false, reason: 'the stop was cancelled', remedy: 'Run `stim stop` again.' };
+  if (answer?.op === 'metro.stopped' && answer.state === 'stopped') return { stopped: true };
+  if (answer?.op === 'metro.stopped' && answer.state === 'not-owned') return viaFallback();
+  if (answer) {
+    const reason = typeof answer.message === 'string' ? answer.message : 'stimd did not stop the dev server';
+    return typeof answer.remedy === 'string' ? { stopped: false, reason, remedy: answer.remedy } : unresolved(reason);
+  }
   const after = held();
-  return after && !after.daemon && !after.metro ? fallback() : false;
+  if (after && !after.daemon && !after.metro) return viaFallback();
+  if (stimdRefused()) {
+    if (after && !after.metro) return viaFallback();
+    return {
+      stopped: false,
+      reason: `this Stim home's stimd runs another Stim build (${refusedBuild}), which supervises this workspace's Metro`,
+      remedy: `Run \`stim stop\` here with the Stim build that started it (build ${refusedBuild}).`,
+    };
+  }
+  return unresolved(launchError ? `no stimd could adopt the dev server: ${launchError}` : 'stimd did not answer');
 }
 
 /**

@@ -925,6 +925,40 @@ afterEach(() => {
   resetExecutor();
 });
 
+test.skipIf(process.platform === 'win32')(
+  'a dev server whose wrapper exits while a process of its group ignores SIGTERM keeps its records and port',
+  async () => {
+    const wrapper = spawn('sh', ['-c', "(trap '' TERM; exec sleep 600) & wait"], { detached: true, stdio: 'ignore' });
+    const pid = wrapper.pid;
+    assert(pid);
+    try {
+      await delay(200);
+      const processToken = captureProcessToken(pid);
+      assert(processToken);
+      const { calls, opts } = seams({
+        root: tmpRoot,
+        state: { pid, processToken, port: 8083, mode: 'command' },
+        isAlive: undefined,
+        killGroup: undefined,
+        waitForDeath: undefined,
+        inspectIdentity: undefined,
+        waitMs: 1500,
+      });
+      const result = await runStop(opts);
+      await vi.waitFor(() => expect(wrapper.exitCode ?? wrapper.signalCode).not.toBeNull());
+      expect(result.outcomes.supervisor.status).toBe('timeout');
+      expect(result.ok).toBe(false);
+      expect(calls.stateCleared).toBe(0);
+      expect(calls.cleared).toBe(0);
+      expect(calls.freed).toEqual([]);
+    } finally {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {}
+    }
+  },
+);
+
 test('state-key cleanup waits for a concurrent state writer and retains its new session', async () => {
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7 } }));
   const script = join(tmpRoot, 'write-session-under-lock.mjs');

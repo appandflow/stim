@@ -3,7 +3,7 @@ import { killMetroTreeAsync, listeningPidsAsync, processCwds, resolveProjectMetr
 import { stopMetroTree } from '../../daemon/client.ts';
 import { isMetroRunning } from '../../ports.ts';
 import { throwIfCancelled } from '../../cancellation.ts';
-import { waitForProcessExit } from '../../process-identity.ts';
+import { waitForTreeExit } from '../../process-group-exit.ts';
 import { resolveSupervisorTarget } from './ownership.ts';
 import { clearWorkspaceSupervisor } from './state.ts';
 import { readWorkspaceState, withWorkspaceStateLockAsync } from '../../workspace/workspace-state.ts';
@@ -40,17 +40,19 @@ async function stopOwnedMetro(root: string, requester: StopRequester, signal?: A
   if (target.status !== 'ours') return { status: 'not-running' };
   const expected = { pid: target.pid, processToken: target.processToken };
   await withWorkspaceStateLockAsync(root, () => requestDevServerStop(root, target.processToken, requester), signal);
-  const signalled = await stopMetroTree(
+  const stopped = await stopMetroTree(
     root,
     target.pid,
     target.processToken,
     () => killMetroTreeAsync(target.pid, target.processToken),
     signal,
   );
-  if (!signalled)
+  if (!stopped.stopped) {
     await withWorkspaceStateLockAsync(root, () => withdrawDevServerStopRequest(root, target.processToken));
-  if (!signalled || !(await waitForProcessExit(expected, 10_000))) {
-    return { status: 'stuck', reason: `supervisor pid ${target.pid} did not exit` };
+    return { status: 'stuck', reason: `${stopped.reason}. ${stopped.remedy}` };
+  }
+  if (!(await waitForTreeExit(expected, 10_000))) {
+    return { status: 'stuck', reason: `dev server pid ${target.pid} or a process in its group did not exit` };
   }
   if (port && !(await resolve(port)).missing) {
     return { status: 'port-occupied', reason: `port ${port} is still occupied after stopping Metro` };
@@ -79,7 +81,7 @@ export async function stopOwnedMetroForReset(root: string, signal?: AbortSignal)
     case 'stuck':
       throw supervisorError(
         'STIM_SUPERVISOR_EXITED',
-        'The owned Metro supervisor could not be stopped for a cache reset.',
+        `The owned dev server could not be stopped for a cache reset: ${stopped.reason}`,
         'Inspect `stim status` and `stim logs`, then retry. No cache reset was recorded.',
       );
     case 'port-occupied':
