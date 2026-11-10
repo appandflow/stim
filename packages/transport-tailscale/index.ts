@@ -1,5 +1,5 @@
 import type { ServeRoute } from '@stim-cli/core/protocol';
-import { machineEndpoint } from '@stim-cli/core/state';
+import { peerEndpoint } from '@stim-cli/core/state';
 import { isIP } from 'node:net';
 import type { Transport, TransportInput, TransportWatchEvent } from '@stim-cli/transport';
 import {
@@ -90,7 +90,9 @@ export function tailscaleTransport({
     },
     rawStatus,
     async resolve({ name }) {
-      const found = machineEndpoint(name, await rawStatus());
+      const [peer = '', port = ''] = name.split(':');
+      if (!peer || !/^\d{1,5}$/.test(port)) return { unresolved: `${name} is not a peer name and port` };
+      const found = peerEndpoint(peer, Number(port), await rawStatus());
       return typeof found === 'string' ? { unresolved: found } : found;
     },
     serveRoute(target, timeoutMs) {

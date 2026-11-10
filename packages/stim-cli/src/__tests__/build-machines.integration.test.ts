@@ -111,6 +111,8 @@ test('resolveEndpoint gives each machine entry form the endpoint the core rules 
   for (const machine of ['mini', 'MINI:8443', 'mini.tail1.ts.net', 'local:10.0.0.92', 'local:Nas.lan:9000']) {
     expect(await resolveEndpoint({ machine }, () => status())).toEqual(machineEndpoint(machine, status()));
   }
+  const named = status('macOS', 'local.tail1.ts.net.');
+  expect(await resolveEndpoint({ machine: 'local' }, () => named)).toEqual(machineEndpoint('local', named));
   expect(await resolveEndpoint({ machine: 'ghost' }, () => status())).toBe('no peer on this tailnet is named ghost');
   expect(await resolveEndpoint({ machine: 'mini' }, () => null)).toBe('Tailscale is not running');
 });
