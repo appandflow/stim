@@ -81,7 +81,10 @@ export async function fetchTree(
       });
     }
     const from = 'pack' in source ? { from: packs } : source;
-    const options = ['--cache', join(root, '.npm-cache'), '--prefer-offline', '--install-strategy=shallow'];
+    // npm's --prefer-offline answers from a cached packument without a staleness check, so an exact version published
+    // after it was cached fails with ETARGET; a release refetches the packument, and its tarballs still come from the cache.
+    const freshness = 'release' in source ? '--prefer-online' : '--prefer-offline';
+    const options = ['--cache', join(root, '.npm-cache'), freshness, '--install-strategy=shallow'];
     const { dir } = await installServer(join(installs, 'versions'), from, process.execPath, log, options);
     renameSync(join(dir, 'node_modules', 'stim'), scratch);
   } finally {
