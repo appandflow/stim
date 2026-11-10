@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { createServer, type Server, type Socket } from 'node:net';
+import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Command } from 'commander';
@@ -8,7 +8,6 @@ import { stimdClaimRoot, stimdRunDir, stimdSocket } from '@stim-cli/core/state';
 
 let home: string;
 let server: Server | null = null;
-const connections = new Set<Socket>();
 let claim: ClaimHandle | null = null;
 let errors: string[];
 
@@ -21,8 +20,6 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  for (const connection of connections) connection.destroy();
-  connections.clear();
   await new Promise((done) => (server ? server.close(done) : done(undefined)));
   server = null;
   releaseClaim(claim);
@@ -47,7 +44,7 @@ test('a stimd of another Stim build is named, not reported as missing', async ()
   mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
   claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'test stimd' }).acquired ?? null;
   server = createServer((connection) => {
-    connections.add(connection);
+    connection.resume();
     connection.end(`${JSON.stringify({ op: 'engine-changed', build: 'aaaaaaaaaaaa' })}\n`);
   });
   await new Promise<void>((done) => server?.listen(socket, done));

@@ -18,7 +18,7 @@ export default function pairCommand(program: Command): void {
       const answer = await ensureNet(false);
       if (!answer && stimdRefused())
         console.error(
-          "This Stim home's stimd runs another Stim build, so this stim cannot check that its server listens. The pairing is saved for that server; if the device cannot pair, restart stimd on this build (quit Stim Desktop, or wait until nothing runs in the home) and pair again.",
+          "This Stim home's stimd runs another Stim build, so this stim cannot check that its server listens. The pairing is saved, and that server takes it if it listens.",
         );
       else if (!answer) console.error('No stimd runs to take this pairing; run stim serve.');
       else if (!answer.listening) console.error(answer.message);
