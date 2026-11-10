@@ -25,6 +25,7 @@ import {
   readBuildClients,
   readDeviceHostClients,
   readDevices,
+  readRegistries,
   readUnreadable,
   watchClientRegistries,
   renameDevice,
@@ -48,8 +49,6 @@ import type { TailscaleState } from '@stim-cli/transport-tailscale';
 import { readLanAddresses, watchServerSettings } from './lan.ts';
 import { createTailnet, tailscalePackage, type Tailnet } from './tailnet-helper.ts';
 import { hasTailnetMarker, markTailnet, tailnetMarkerFile } from './tailnet-marker.ts';
-
-export { markTailnet } from './tailnet-marker.ts';
 
 type TailscaleModule = Awaited<ReturnType<typeof tailscalePackage>>;
 
@@ -279,29 +278,71 @@ export async function serve(
 }
 
 /**
- * Loads the Tailscale transport at start when the tailnet marker exists or the running service recorded a
- * `tailscale serve` route, and later when the marker appears or a build or device-host client is approved while the
- * tailscale command is installed.
+ * `stim serve --tailnet`: records that this home's server listens on the tailnet from now on, and returns a line to
+ * print when Tailscale cannot carry it yet.
+ */
+export async function rememberTailnet(): Promise<string | null> {
+  markTailnet('stim serve --tailnet');
+  const { findTailscale, readTailscaleStatus } = await tailscalePackage();
+  return tailscaleNote(await readTailscaleStatus(findTailscale(process.env), process.env));
+}
+
+const RECONCILE_MS = 60_000;
+
+/**
+ * Loads the Tailscale transport once this machine uses the tailnet: while the tailnet marker exists, when the running
+ * service recorded a `tailscale serve` route, and when a build or device-host client is approved while the tailscale
+ * command is installed. File events are hints; a check every minute repairs a missed one and retries a failed load.
+ * A stimd that a service handed its start to has no service label, so it never sees the serve route; it needs none:
+ * `stim service install --serve` and setup's route step write the marker, a client a route recorded before them serves
+ * holds a registry record, and a request the route forwards loads the transport before it is identified.
  */
 async function watchTailnetTriggers(tailnet: Tailnet, label: string | null): Promise<() => void> {
-  const check = async (start: boolean) => {
+  let migrated = false;
+  const servedRoute = async () =>
+    !!label &&
+    !!(
+      await serviceManagerOrNull()
+        ?.read(label)
+        .catch(() => null)
+    )?.serve;
+  let served: Promise<boolean> | null = null;
+  let reported = '';
+  const check = async () => {
     if (tailnet.current()) return;
-    if (hasTailnetMarker()) return void (await tailnet.load('tailnet marker'));
-    if (start && label && (await serviceManagerOrNull()?.read(label))?.serve)
-      return void (await tailnet.load('service serve route'));
-    const approvals = readBuildClients().length + readDeviceHostClients().length;
     // compat C28 until removal-minor
-    const paired = start ? readDevices().length : 0;
+    if (!migrated) {
+      const { devices, build, deviceHost } = readRegistries();
+      if (devices.length + build.length + deviceHost.length + readUnreadable().length)
+        markTailnet('registry records at the first start');
+      migrated = true;
+    }
     // compat end
-    if (approvals + paired && (await tailnet.binary())) await tailnet.load('approved clients');
+    if (hasTailnetMarker()) return void (await tailnet.load('tailnet marker'));
+    if (await (served ??= servedRoute())) return void (await tailnet.load('service serve route'));
+    if (readBuildClients().length + readDeviceHostClients().length && (await tailnet.binary()))
+      await tailnet.load('approved clients');
   };
-  const checked = (start: boolean) =>
-    check(start).catch((error: unknown) =>
-      console.error(`stim-server: could not check whether this machine uses the tailnet: ${String(error)}`),
-    );
-  await checked(true);
+  const checked = async () => {
+    try {
+      await check();
+      reported = '';
+    } catch (error) {
+      const line = `stim-server: could not check whether this machine uses the tailnet: ${String(error)}`;
+      if (line !== reported) console.error(line);
+      reported = line;
+    }
+  };
   mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
-  return watchClientRegistries(() => void checked(false), [tailnetMarkerFile()]);
+  const unwatch = watchClientRegistries(() => void checked(), [tailnetMarkerFile()]);
+  const reconcile = setInterval(() => void checked(), RECONCILE_MS).unref();
+  const stop = () => {
+    unwatch();
+    clearInterval(reconcile);
+  };
+  tailnet.onLoad(stop);
+  await checked();
+  return stop;
 }
 
 function reportShutdownFailure(failure: unknown): void {

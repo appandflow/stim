@@ -39,6 +39,7 @@ import {
 } from './service-manager.ts';
 import { hostPermissionPanes, requestHostPermissions, type HostApp } from './stim-host.ts';
 import { tailscalePackage } from './tailnet-helper.ts';
+import { markTailnet } from './tailnet-marker.ts';
 import type { StartupState } from './startup.ts';
 import type { KeepAwakeReason, KeepAwakeStatus } from './keep-awake.ts';
 import { stimDist } from './release-install.ts';
@@ -312,6 +313,11 @@ export async function rewriteUnitToShim(label: string): Promise<boolean> {
   return true;
 }
 
+/** The server directory of the Stim home a service runs with `STIM_HOME` set to `stimHome`. */
+function serviceServerDir(stimHome: string | null | undefined): string {
+  return join(stimHome || join(homedir(), '.stim'), 'server');
+}
+
 export async function installJob(
   options: ServiceOptions,
   setup?: { script: string; host: HostApp | null; requestPermissions: false },
@@ -452,6 +458,7 @@ export async function installJob(
     );
   }
   if (serve) {
+    markTailnet('stim service install --serve', serviceServerDir(stimHome));
     notes.push(
       `Tailnet route: https port ${serve.port}, ${serve.created ? 'created by install; uninstall removes it' : 'already present; uninstall keeps it'}.`,
     );

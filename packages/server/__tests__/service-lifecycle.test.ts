@@ -369,6 +369,29 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     expect(await rewriteUnitToShim(label)).toBe(false);
   });
 
+  it('records that the Stim home the service runs uses the tailnet when it keeps a serve route', async () => {
+    const served = join(home, 'served');
+    writeFileSync(
+      plist,
+      (launchd.original = renderPlist({
+        label,
+        host: '/tmp/Stim Host.app/Contents/MacOS/stim-host',
+        node: process.execPath,
+        script: join(home, 'old-server.mjs'),
+        port: launchd.port,
+        env: [],
+        pathPrepend: [],
+        environment: { STIM_HOME: served },
+        logPath: join(home, 'server.log'),
+        workingDirectory: home,
+        serve: { port: 7449, created: false },
+      })),
+    );
+    await finish(installJob({ label, port: launchd.port, env: [], pathPrepend: [], stimHome: served, serve: false }));
+    expect(existsSync(join(served, 'server', 'tailnet.json'))).toBe(true);
+    expect(existsSync(join(home, 'state', 'server', 'tailnet.json'))).toBe(false);
+  });
+
   it('waits for the old child listener to release the port before bootstrapping', async () => {
     launchd.stopDelay = 1000;
     expect(await finish(install())).toContain(`stim-server 1.0.0 answers on 127.0.0.1:${launchd.port}.`);

@@ -4,18 +4,19 @@ import { serverDir, writeJson } from './registry.ts';
 
 /**
  * `server/tailnet.json` records that this machine uses the tailnet, and why, so the net thread loads the Tailscale
- * transport at every start from then on. It is written once and never removed.
+ * transport at every start from then on. Stim writes it once and never removes it; deleting it undoes it.
  */
-export function tailnetMarkerFile(): string {
-  return join(serverDir(), 'tailnet.json');
+export function tailnetMarkerFile(server: string = serverDir()): string {
+  return join(server, 'tailnet.json');
 }
 
 export function hasTailnetMarker(): boolean {
   return existsSync(tailnetMarkerFile());
 }
 
-export function markTailnet(reason: string): void {
-  if (hasTailnetMarker()) return;
-  mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
-  writeJson(tailnetMarkerFile(), { since: new Date().toISOString(), reason });
+/** Writes the marker into `server`, the server directory of the Stim home that uses the tailnet. */
+export function markTailnet(reason: string, server: string = serverDir()): void {
+  if (existsSync(tailnetMarkerFile(server))) return;
+  mkdirSync(server, { recursive: true, mode: 0o700 });
+  writeJson(tailnetMarkerFile(server), { since: new Date().toISOString(), reason });
 }
