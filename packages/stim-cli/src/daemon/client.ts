@@ -339,7 +339,10 @@ export async function stopMetroTree(
     remedy: `Verify dev server pid ${pid} and its process tree have stopped, then run ${claimRemoveCommand(claim)}.`,
   });
   const before = held();
-  if (before && !before.daemon && (!before.metro || process.platform === 'win32')) return viaFallback();
+  if (before && !before.daemon && (!before.metro || process.platform === 'win32')) {
+    const stopped = await viaFallback();
+    return stopped.stopped || !before.metro ? stopped : unresolved(stopped.reason, before.claim);
+  }
   let launchError: string | null = null;
   if (before && !before.daemon && process.platform !== 'win32') {
     const launched = await ensureStimd(

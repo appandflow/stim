@@ -106,6 +106,10 @@ test('on Windows, where no stimd adopts, a Metro whose stimd exited stops throug
     const fallback = vi.fn<() => boolean>(() => true);
     expect(await stopMetroTree('/project', 42, 'token', fallback)).toEqual({ stopped: true });
     expect(fallback).toHaveBeenCalledOnce();
+    expect(await stopMetroTree('/project', 42, 'token', () => false)).toMatchObject({
+      stopped: false,
+      remedy: expect.stringContaining("rm -f '/home/workspaces/w/metro.claim/exclusive/a.claim'"),
+    });
   } finally {
     if (platform) Object.defineProperty(process, 'platform', platform);
   }
