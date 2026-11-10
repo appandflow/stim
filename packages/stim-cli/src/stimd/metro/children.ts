@@ -113,6 +113,8 @@ interface MetroChild {
   ensuredAt: number;
   gone: boolean;
   stopping?: boolean;
+  /** Ends the wait for the child's first answer, which a stop does before it queues. */
+  readiness?: AbortController;
   /** Closes the hosted Metro links this child serves. */
   closeLinks: (() => Promise<void>) | null;
   roots: MetroWatchRoots | null;
@@ -136,6 +138,7 @@ export function setMetroInvocation(root: string, context: Invocation & { workspa
 const children = new Map<string, MetroChild>();
 const tunnels = new Map<string, TunnelChild>();
 const busy = new Map<string, Promise<Answer>>();
+const queued = new Map<string, number>();
 let backgroundStopped = false;
 let closingChildren = false;
 let tickWork: Promise<void> | null = null;
@@ -348,6 +351,7 @@ async function stopChild(child: MetroChild, why: string): Promise<void> {
 /** Runs `work` after every earlier piece of work on `key`, so no two ensure, restart or stop of one child overlap. */
 function serialize(key: string, work: () => Promise<Answer>): Promise<Answer> {
   if (closingChildren) return Promise.resolve({ op: 'error', code: 'metro', message: 'The Stim daemon is ending.' });
+  queued.set(key, (queued.get(key) ?? 0) + 1);
   const run = (busy.get(key) ?? Promise.resolve({}))
     .catch(() => ({}))
     .then(work)
@@ -363,7 +367,12 @@ function serialize(key: string, work: () => Promise<Answer>): Promise<Answer> {
       };
     });
   busy.set(key, run);
-  void run.finally(() => busy.get(key) === run && busy.delete(key));
+  void run.finally(() => {
+    if (busy.get(key) === run) busy.delete(key);
+    const left = (queued.get(key) ?? 1) - 1;
+    if (left > 0) queued.set(key, left);
+    else queued.delete(key);
+  });
   return run;
 }
 
@@ -467,6 +476,7 @@ async function start(
   operationEnv: NodeJS.ProcessEnv | undefined,
   launch: Launch,
   resetCache: boolean,
+  signal: AbortSignal | undefined,
 ): Promise<Answer> {
   ensureWorkspaceStorage(root);
   const logsDir = workspaceLogsDir(root);
@@ -617,20 +627,42 @@ async function start(
     msg: `stimd started the ${mode} dev server pid ${pid} on port ${port} for ${root}`,
   });
   log('info', 'metro_started', `${root}: the ${mode} dev server pid ${pid} on port ${port}`);
-  for (const deadline = Date.now() + READY_MS; Date.now() < deadline;) {
-    if (!running(child))
-      return {
-        op: 'error',
-        code: 'metro-exited',
-        message: lastLine(output.files.stderr) || 'the dev server exited before it answered',
-      };
-    if (await isMetroRunning(port, AbortSignal.timeout(PROBE_MS))) {
-      child.ready = true;
-      return answer(child, 'started');
+  return awaitReady(child, output.files.stderr, signal);
+}
+
+/**
+ * Waits up to `READY_MS` for a child this stimd just started to answer. A stop ends the wait at once. When the command
+ * that asked for it ends first, a child that still does not answer stops, unless another request for the workspace is
+ * queued behind this one and will use it.
+ */
+async function awaitReady(child: MetroChild, stderr: string, signal: AbortSignal | undefined): Promise<Answer> {
+  const readiness = new AbortController();
+  child.readiness = readiness;
+  try {
+    for (const deadline = Date.now() + READY_MS; Date.now() < deadline;) {
+      if (readiness.signal.aborted)
+        return { op: 'error', code: 'metro-stopping', message: 'a stop ended the dev server before it answered' };
+      if (!running(child))
+        return {
+          op: 'error',
+          code: 'metro-exited',
+          message: lastLine(stderr) || 'the dev server exited before it answered',
+        };
+      if (await isMetroRunning(child.port, AbortSignal.timeout(PROBE_MS))) {
+        child.ready = true;
+        return answer(child, 'started');
+      }
+      if (signal?.aborted) {
+        if ((queued.get(child.root) ?? 0) <= 1)
+          await stopChild(child, 'the command that started it ended before it answered');
+        return { op: 'error', code: 'cancelled', message: 'the operation ended before the dev server answered' };
+      }
+      await new Promise((done) => setTimeout(done, 100));
     }
-    await new Promise((done) => setTimeout(done, 100));
+    return answer(child, 'starting');
+  } finally {
+    if (child.readiness === readiness) child.readiness = undefined;
   }
-  return answer(child, 'starting');
 }
 
 async function ensure(
@@ -666,7 +698,7 @@ async function ensure(
   if (found.notOurs) return { op: 'error', code: 'port-taken', message: found.notOurs };
   if (signal?.aborted) return { op: 'error', code: 'cancelled', message: 'the operation ended' };
   const { resetCache = false, ...how } = options;
-  return start(root, port, log, operationEnv, how, resetCache);
+  return start(root, port, log, operationEnv, how, resetCache, signal);
 }
 
 /**
@@ -733,6 +765,7 @@ export function stopManagedMetro(params: unknown, log: Log): Promise<Answer> {
   } catch {
     return Promise.resolve({ op: 'error', code: 'bad-root', message: 'The workspace is unavailable.' });
   }
+  children.get(root)?.readiness?.abort();
   return serialize(root, async () => {
     await adoptFromPredecessor(root, log);
     const child = children.get(root);

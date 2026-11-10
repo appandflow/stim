@@ -1607,7 +1607,8 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(JSON.parse(result.logs[0] ?? '')).toEqual({
       code: 'STIM_METRO_TIMEOUT',
       message: 'The dev server did not answer on port 8155 within 1s.',
-      remedy: 'It may still be starting. Run `stim stop` to halt it, or `stim logs` to follow along.',
+      remedy:
+        'Stim stops a dev server that has not answered when this command ends. Read `stim logs --errors`, then retry with a longer --wait.',
     });
     const stderr = result.errs.join('\n');
     expect(stderr).toMatch(/did not answer on port 8155 within 1s/);

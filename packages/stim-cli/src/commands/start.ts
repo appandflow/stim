@@ -1087,7 +1087,8 @@ export async function startDevServer(
                 code: 'STIM_METRO_TIMEOUT',
                 message: `The dev server did not answer on port ${port} within ${waitSeconds}s.`,
                 lines,
-                remedy: 'It may still be starting. Run `stim stop` to halt it, or `stim logs` to follow along.',
+                remedy:
+                  'Stim stops a dev server that has not answered when this command ends. Read `stim logs --errors`, then retry with a longer --wait.',
               };
           const retryable = exited && !remote && metroPortSetting(settings, ambientEnv()).port === null;
           if (retryable && portBindRace(failure.lines ?? [], port)) throw new MetroPortRace(failure, port);
