@@ -1388,7 +1388,7 @@ result as proof instead of requiring an unrelated screenshot.`,
   \`lock        waiting 40s for stim worktree warm --refresh (pid 41233) -- stim guide lifecycle options\`.
 
   \`start\` names the port and the dev server mode on one line
-  (\`metro       starting on port 8083 (expo-child)\`),
+  (\`metro       starting on port 8083 (expo-child, supervisor pid 34856)\`),
   and \`stop\` reports what it released:
 
     stop        supervisor pid 34856
