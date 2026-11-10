@@ -1057,6 +1057,15 @@ export interface BuildOfferParams {
   gradleArtifact?: BuildGradleArtifactQuery;
   reactNativeArtifact?: BuildReactNativeArtifactQuery;
   swiftpmArtifact?: BuildSwiftpmArtifactQuery;
+  /** An Exact app's pins, which the machine checks its own Bun, Rust and exact2 against. */
+  exact?: BuildExactPins;
+}
+
+/** The exact2 commit and the Bun and Rust versions an Exact app builds with. */
+export interface BuildExactPins {
+  exact2: string;
+  bun: string;
+  rust: string;
 }
 
 /**
@@ -1190,6 +1199,8 @@ export interface BuildOfferResult {
   capacity: BuildCapacity;
   warm: { checkout: boolean; dependencies: boolean; build: boolean };
   artifact?: CachedBuildArtifact | null;
+  /** What of Exact's toolchain this machine lacks for the offer's `exact` pins, each with its install commands. */
+  exact?: { missing: Array<{ reason: string; commands: string[] }> };
 }
 
 /** One file of the client's checkout. A `link` blob holds the symlink's target. */
@@ -1302,6 +1313,12 @@ export interface BuildStartParams {
    * non-Debug request never carries it, because a retained app carries its builder's JS.
    */
   reuseArtifact?: boolean;
+  /**
+   * An Exact app's iOS build: the app directory's name (Exact names its generated crates after it), its pins, and the
+   * values of the settings its `app.json` declares that the client's environment or `.env.local` sets. `fingerprint`
+   * is the synced manifest's digest, and no artifact is retained.
+   */
+  exact?: BuildExactPins & { name: string; env: Record<string, string> };
 }
 
 export interface BuildJobParams {

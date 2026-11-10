@@ -167,6 +167,7 @@ const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
   disk: 'is low on disk',
   busy: 'is too busy to take builds',
   platform: 'cannot build this platform',
+  exact: "lacks Exact's toolchain for this app",
 };
 
 const NOTE_TITLES: Partial<Record<OffloadProblem['code'], string>> = {
@@ -204,6 +205,8 @@ function problemFix(problem: OffloadProblem, entry: string): string {
         commandFix(problem, entry) ??
         `Install the same CocoaPods version on ${entry}, on the PATH its stim-server sets. A build sent there with --remote-build ${entry} still runs; a version that differs rewrites the COCOAPODS line of a committed Podfile.lock.`
       );
+    case 'exact':
+      return commandFix(problem, entry) ?? `Install Exact's toolchain on ${entry} with Exact's own setup.`;
     case 'bundler':
       return `Install Bundler (\`gem install bundler\`) on ${entry}, on the PATH its stim-server's login shell sets.`;
     case 'runtime':

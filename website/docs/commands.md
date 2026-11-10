@@ -625,6 +625,51 @@ Run this native Xcode app with stim ios --scheme MyApp --configuration Debug
 inspect stim logs --errors, then stop only this workspace with stim stop.
 ```
 
+### Exact apps
+
+An [Exact](https://github.com/expo/exact) app has `exact.mjs` next to
+`app.json`. Run `stim ios` from that directory. It runs the app's own
+`./exact.mjs ios --no-install` with `EXACT_SIM` set to the workspace's owned
+simulator, installs the reported `.app` and launches it as a native process
+without Metro. Exact compiles incrementally in the checkout's `target/`
+directory, so Stim keeps no artifact cache for it. `--configuration Release`
+adds `--release`, Exact's shipping build, whose first build takes minutes.
+`--scheme` and any other configuration are refused. The build starts once Stim
+has booted the simulator, and build-only runs (`stim ci build`) are refused.
+
+Drive and test the app with Exact's own commands, pointed at the simulator
+`stim ios` reported:
+
+```sh
+EXACT_SIM=<udid> ./exact.mjs agent ios tree "screenshot out.png"
+EXACT_SIM=<udid> ./exact.mjs test ios
+```
+
+Exact limits worktrees: a worktree needs the same folder name as the checkout
+it was created in, and `EXACT2` set to the Exact checkout when it sits at
+another folder depth. Only iOS simulators are supported; macOS, web, Android
+and physical devices use Exact's own commands.
+
+With [remote machines](./remote-machines.md), `remote.build` and
+`--remote-build` place an Exact build like any iOS simulator build. The worker
+runs the same `./exact.mjs ios --no-install` in a checkout folder named like
+this app's, with `EXACT2` at `~/.exact/exact2/<commit>` and no simulator, and
+this Mac installs the `.app` on its owned simulator. Nothing is cached. The
+values of the settings `app.json` `env` declares travel with the build: this
+shell's, else `.env.local`'s, else `.env`'s, as Exact reads them. Apps whose
+`app.json` declares native modules, an `exact2` checkout with local changes and
+an app folder name that is not a plain ASCII file name build here. See
+[Exact apps on a worker](./remote-machines.md#exact-apps-on-the-worker) for
+what the worker needs.
+
+Copy this request to your agent:
+
+```text
+Run this Exact app with stim ios --json. Drive it with ./exact.mjs agent ios and
+test it with ./exact.mjs test ios, both with EXACT_SIM set to the simulator stim
+ios reported. Inspect stim logs --errors, then stop only this workspace with stim stop.
+```
+
 ## `android`
 
 ```text

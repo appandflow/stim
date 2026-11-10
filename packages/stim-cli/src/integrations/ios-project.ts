@@ -26,7 +26,15 @@ export interface IosSourcePreparation {
   mutationLabel: string;
 }
 
+export type IosCompileResult = Pick<BuildIosResult, 'durationMs' | 'transcriptLines' | 'compilationCache'> &
+  (
+    | { ok: true; appPath: string; bundleId: string }
+    | Omit<Extract<BuildIosResult, { ok: false }>, 'durationMs' | 'transcriptLines' | 'compilationCache'>
+  );
+
 export interface IosArtifactRecipe {
+  /** The tool named in build progress and failures; xcodebuild when absent. */
+  buildTool?: string;
   identity(): Promise<IosArtifactIdentity | { cacheIneligible: string }>;
   /** The background check of a memoized fingerprint that identity() used, if any. */
   fingerprintCheck?(): FingerprintCheck | null;
@@ -36,7 +44,7 @@ export interface IosArtifactRecipe {
   validate(): Promise<IosArtifactIdentity | null>;
   validateExternal(path: string): void | Promise<void>;
   materialize(path: string, options: { fresh: boolean; ownTemporary(directory: string): void }): Promise<string | null>;
-  compile(): Promise<BuildIosResult>;
+  compile(): Promise<IosCompileResult>;
   explain(rekeyedBy: string[]): { reason: BuildMissReason; diff: Record<string, unknown> | null };
   untrackedLine(): string | null;
   expoCache: {
@@ -44,6 +52,8 @@ export interface IosArtifactRecipe {
     runOptions: { configuration?: string; arch?: string } | null;
   } | null;
   offload: {
+    /** The app is never cached: an offloaded build is keyed by the synced sources and installed without a cache store. */
+    uncached?: true;
     context():
       | { runtime: string | null; unsupported: string | null }
       | Promise<{ runtime: string | null; unsupported: string | null }>;
@@ -53,7 +63,8 @@ export interface IosArtifactRecipe {
     request(runtime: string): Extract<Parameters<typeof offloadBuild>[0]['request'], { platform: 'ios' }>;
     fingerprintInputs?: Parameters<typeof offloadBuild>[0]['fingerprintInputs'];
     syncPlan?: Parameters<typeof offloadBuild>[0]['syncPlan'];
-    unchanged(): Promise<boolean>;
+    /** Whether the sources still match the build; an uncached offload passes the digest of the sources it synced. */
+    unchanged(sourceDigest?: string): Promise<boolean>;
     /** The identity of an app the machine built under another fingerprint, after its own pod install. */
     rekeyed?(fingerprint: string): IosArtifactIdentity;
   } | null;
@@ -75,6 +86,8 @@ export interface IosArtifactContext {
     offloadRuntime(): string | null;
     hostedArchitecture?: SimulatorArch;
     offloadRefusal: string | null;
+    /** Settles once this run's own boot of the workspace simulator has finished; absent when the run boots none. */
+    booted?(): Promise<{ ok: true; udid: string } | { ok: false; reason: string }>;
   };
   device: {
     udid: string;
