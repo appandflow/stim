@@ -62,6 +62,8 @@ export interface ActiveBuildRecord {
   waitingFor?: BuildWaitingFor;
   /** Whether the run created, adopted or cold-booted its device, once `ensureOwnedDevice`/`ensureDevice` returned. */
   deviceSetup?: boolean;
+  /** Whether the run's uncached build compiles on output an earlier build left, once its project integration said. */
+  incremental?: boolean;
   /** The run's cache outcome, once it entered a phase that settles it. */
   outcome?: RunOutcomeKind;
   /** The estimate the run made when it knew its project, and again when it knew its outcome. */
@@ -103,6 +105,9 @@ export interface BuildProgress {
   deviceSetup(setup: boolean | undefined): void;
   /** What `deviceSetup` recorded, or undefined before the run knows. */
   deviceSetupKnown(): boolean | undefined;
+  /** Records whether the run's uncached build compiles on output an earlier build left; its estimate then uses only such runs. */
+  incremental(incremental: boolean): void;
+  incrementalKnown(): boolean | undefined;
   /** Records the remote machine the run compiles on and its phase there; null when it compiles here again. */
   place(remote: { host: string; phase: string } | null): void;
   /** Records the workspace root whose build of the same artifact the run waits on; null when it is not known. */
@@ -140,6 +145,8 @@ export const NO_BUILD_PROGRESS: BuildProgress = {
   hit: () => {},
   deviceSetup: () => {},
   deviceSetupKnown: () => undefined,
+  incremental: () => {},
+  incrementalKnown: () => undefined,
   place: () => {},
   waitingOn: () => {},
   waitingFor: () => {},
@@ -294,7 +301,13 @@ export function startBuildProgress({
   const settle = (outcome: RunOutcomeKind): void => {
     record.outcome = outcome;
     if (projectKey && platform !== 'macos')
-      record.estimate = estimateBuild(projectHistory(projectKey), platform, outcome, record.deviceSetup);
+      record.estimate = estimateBuild(
+        projectHistory(projectKey),
+        platform,
+        outcome,
+        record.deviceSetup,
+        record.incremental,
+      );
   };
   const waits = new Map<BuildWaitingFor['kind'], BuildWaitingFor>();
   return {
@@ -325,6 +338,7 @@ export function startBuildProgress({
         platform,
         record.outcome ?? null,
         record.outcome ? record.deviceSetup : undefined,
+        record.incremental,
       );
       write();
     },
@@ -351,6 +365,14 @@ export function startBuildProgress({
     },
     deviceSetupKnown() {
       return record.deviceSetup;
+    },
+    incremental(incremental) {
+      record.incremental = incremental;
+      if (record.outcome) settle(record.outcome);
+      write();
+    },
+    incrementalKnown() {
+      return record.incremental;
     },
     place(remote) {
       const current = record.placement;
@@ -652,6 +674,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     ...(waitingOn ? { waitingOn } : {}),
     ...(waitingFor ? { waitingFor } : {}),
     ...(typeof record.deviceSetup === 'boolean' ? { deviceSetup: record.deviceSetup } : {}),
+    ...(typeof record.incremental === 'boolean' ? { incremental: record.incremental } : {}),
     ...(record.outcome === 'hit' || record.outcome === 'cold' ? { outcome: record.outcome } : {}),
     ...(estimate ? { estimate } : {}),
     ...(activity ? { activity } : {}),
@@ -767,10 +790,14 @@ export function estimateBuild(
   platform: BuildPlatform,
   known: RunOutcomeKind | null,
   deviceSetup?: boolean,
+  incremental?: boolean,
 ): BuildEstimate {
   const lists = platform === 'macos' ? undefined : history?.[platform];
   const outcome = known ?? latestOutcome(lists);
-  const samples = matchDeviceSetup((outcome && lists?.[outcome]) || [], deviceSetup);
+  const comparable = ((outcome && lists?.[outcome]) || []).filter(
+    (sample) => incremental === undefined || sample.incremental === incremental,
+  );
+  const samples = matchDeviceSetup(comparable, deviceSetup);
   const phaseMs: Partial<Record<BuildPhase, number>> = {};
   const planned: BuildPhase[] = [];
   for (const phase of BUILD_PHASES) {
@@ -815,7 +842,13 @@ export function buildReport(
 ): BuildReport {
   const estimate =
     record.estimate ??
-    estimateBuild(history, record.platform, record.outcome ?? null, record.outcome ? record.deviceSetup : undefined);
+    estimateBuild(
+      history,
+      record.platform,
+      record.outcome ?? null,
+      record.outcome ? record.deviceSetup : undefined,
+      record.incremental,
+    );
   const plannedPhases: PlannedPhase[] = estimate.planned.flatMap((phase) => {
     const expectedMs = estimate.phaseMs[phase];
     return expectedMs === undefined ? [] : [{ phase, expectedMs }];

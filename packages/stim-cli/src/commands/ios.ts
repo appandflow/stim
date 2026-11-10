@@ -502,6 +502,7 @@ async function runIos(
     note: (line) => note(chalk.dim(line)),
     phases: () => progress.durations(),
     deviceSetup: () => progress.deviceSetupKnown(),
+    incremental: () => progress.incrementalKnown(),
   });
   const deviceWaitRun = createIosDeviceWaitRun(stats, progress, runCancellationSignal(context));
   const recordRun = deviceWaitRun.record;
@@ -1269,6 +1270,7 @@ async function runIos(
               place: progress.place,
               waitingOn: progress.waitingOn,
               waitingFor: progress.waitingFor,
+              incremental: progress.incremental,
             },
           },
           d,

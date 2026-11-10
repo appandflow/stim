@@ -11046,6 +11046,7 @@ describe('registered iOS project recipes', () => {
                         ...project.artifact(context),
                         identity: async () => ({
                           cacheIneligible: 'native inputs include an undeclared external file',
+                          incremental: attempt > 1,
                         }),
                         reconcile: async () => ({ identity: null, rekeyedBy: [], mutationLabel: '' }),
                         cache,
@@ -11077,10 +11078,16 @@ describe('registered iOS project recipes', () => {
       slotHeld = false;
       return true;
     });
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    let attempt = 1;
+    const recorded: StatsRun[] = [];
+    for (; attempt <= 2; attempt++) {
       const result = await run(
         { json: true },
         {
+          recordStats: (statsRun) => {
+            recorded.push(statsRun);
+            return { recorded: true, note: null };
+          },
           projectRegistry,
           readBundleId,
           readBundleExecutable,
@@ -11112,6 +11119,10 @@ describe('registered iOS project recipes', () => {
     }
     expect(cache).not.toHaveBeenCalled();
     expect(loadProvider).not.toHaveBeenCalled();
+    expect(recorded.map(({ uncached, incremental }) => ({ uncached, incremental }))).toEqual([
+      { uncached: true, incremental: false },
+      { uncached: true, incremental: true },
+    ]);
   });
 
   test.each(['Debug', 'Release', 'Staging'])(
