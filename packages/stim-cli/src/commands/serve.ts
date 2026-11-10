@@ -35,7 +35,18 @@ export default function serveCommand(program: Command, version: string, legacy =
         command.error(`--port must be a port number, got ${opts.port}.`);
       const problem = validateServeEnvironment(opts.env, opts.pathPrepend, true);
       if (problem) command.error(problem);
-      if (opts.tailnet === true) (await loadServerCli()).markTailnet('stim serve --tailnet');
+      if (opts.tailnet === true) {
+        const narrower = opts.share === true ? '--share' : opts.loopbackOnly === true ? '--loopback-only' : null;
+        if (narrower) {
+          console.error(
+            `stim-server: STIM_BAD_ARG: --tailnet listens on the tailnet, and ${narrower} serves this machine only. Pass one of them.`,
+          );
+          process.exitCode = 1;
+          return;
+        }
+        const note = await (await loadServerCli()).rememberTailnet();
+        if (note) console.error(`stim-server: ${note}`);
+      }
       await serveInStimd({
         port,
         extraEnv: opts.env,

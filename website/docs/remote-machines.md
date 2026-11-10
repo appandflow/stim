@@ -855,6 +855,8 @@ A worker listens on its tailnet address only once something there uses the tailn
 
 <StimTabs code={`stim serve --tailnet`} />
 
+The worker remembers `--tailnet` in `$STIM_HOME/server/tailnet.json`, so every later start listens on the tailnet too. It refuses `--loopback-only` and `--share`, which serve that machine only, and warns when Tailscale is not installed or not running; the server starts listening on the tailnet once Tailscale runs. To undo it, delete `$STIM_HOME/server/tailnet.json` on the worker and restart its server. A start that finds a pairing or an approved build or device-host client writes the file again.
+
 ### Find out why a remote machine was slow or refused
 
 <StimTabs

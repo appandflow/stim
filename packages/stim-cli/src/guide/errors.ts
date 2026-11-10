@@ -436,6 +436,10 @@ or a checkout that changed while it built. Unsupported build kinds also refuse.
 A worker listens on its tailnet address only after a pairing, an approval, its
 setup route or a request forwarded by tailscale serve reached it; when an
 unreachable worker had none of these, run stim serve --tailnet on it once.
+--tailnet is remembered in STIM_HOME/server/tailnet.json on the worker, refuses
+with --loopback-only or --share (STIM_BAD_ARG), and warns when Tailscale is not
+installed or not running. To undo it, delete that file and restart the server;
+a start that finds a pairing or an approved client writes it again.
 No local xcodebuild, Gradle or SwiftPM compile or alternate machine follows a
 refusal. For stim android, a known toolchain refusal on the named machine stops
 before prebuild; busy, low disk and unreachable are checked again afterward.
