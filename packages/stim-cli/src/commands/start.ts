@@ -669,7 +669,27 @@ export async function startDevServer(
 
       const startMetro = (origin: string | null): MetroRequest => {
         const cancel = new AbortController();
-        const request: MetroRequest = { since: Date.now(), answer: undefined, cancel };
+        const previous = readWorkspaceState(root)?.supervisor?.processToken;
+        let announced = false;
+        const announce = (last: boolean) => {
+          if (announced) return;
+          const recorded = readWorkspaceState(root)?.supervisor;
+          const pid =
+            recorded?.port === port && recorded.processToken !== previous && typeof recorded.pid === 'number'
+              ? recorded.pid
+              : null;
+          if (pid === null && !last) return;
+          announced = true;
+          out(
+            chalk.dim(
+              phaseLine(
+                'metro',
+                `starting on port ${port} (${serverMode}${pid === null ? '' : `, supervisor pid ${pid}`})`,
+              ),
+            ),
+          );
+        };
+        const request: MetroRequest = { since: Date.now(), answer: undefined, cancel, announce };
         void (async () => {
           try {
             request.answer = await d.ensureMetro(
@@ -683,7 +703,6 @@ export async function startDevServer(
           }
         })();
         metro.request = request;
-        out(chalk.dim(phaseLine('metro', `starting on port ${port} (${serverMode})`)));
         return request;
       };
 
@@ -1080,8 +1099,12 @@ export async function startDevServer(
           root,
           port,
           seconds: waitSeconds,
-          aborted: () => refused() || managedTunnelExited(),
+          aborted: () => {
+            request.announce(false);
+            return refused() || managedTunnelExited();
+          },
         });
+        request.announce(true);
 
         if (!healthy) {
           if (managedTunnelExited()) return failExitedManagedTunnel();
@@ -1423,6 +1446,8 @@ interface MetroRequest {
   /** stimd's answer once it came: null when none did, undefined while it is pending. */
   answer: Record<string, unknown> | null | undefined;
   cancel: AbortController;
+  /** Prints the `starting on port` line once stimd records the Metro pid, or without it when `last`. */
+  announce: (last: boolean) => void;
 }
 
 const METRO_ANSWER_SLACK_MS = 10_000;

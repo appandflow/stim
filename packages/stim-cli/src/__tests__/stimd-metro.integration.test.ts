@@ -663,9 +663,10 @@ socket.on('data', chunk => {
       if (code !== 0) throw new Error(`stim ${args.join(' ')} exited ${code}: ${output}`);
       return output;
     };
-    await run(['start']);
+    const started = await run(['start']);
     const first = record();
     const metro = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor;
+    expect(started).toContain(`starting on port ${metro.port} (${metro.mode}, supervisor pid ${metro.pid})`);
     try {
       process.kill(Number(first?.pid), 'SIGKILL');
       await vi.waitFor(() => expect(alive(first?.pid)).toBe(false));
