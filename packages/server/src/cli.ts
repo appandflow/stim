@@ -293,9 +293,6 @@ const RECONCILE_MS = 60_000;
  * Loads the Tailscale transport once this machine uses the tailnet: while the tailnet marker exists, when the running
  * service recorded a `tailscale serve` route, and when a build or device-host client is approved while the tailscale
  * command is installed. File events are hints; a check every minute repairs a missed one and retries a failed load.
- * A stimd that a service handed its start to has no service label, so it never sees the serve route; it needs none:
- * `stim service install --serve` and setup's route step write the marker, a client a route recorded before them serves
- * holds a registry record, and a request the route forwards loads the transport before it is identified.
  */
 async function watchTailnetTriggers(tailnet: Tailnet, label: string | null): Promise<() => void> {
   let migrated = false;
@@ -311,7 +308,7 @@ async function watchTailnetTriggers(tailnet: Tailnet, label: string | null): Pro
   const check = async () => {
     if (tailnet.current()) return;
     // compat C28 until removal-minor
-    if (!migrated) {
+    if (!migrated && !hasTailnetMarker()) {
       const { devices, build, deviceHost } = readRegistries();
       if (devices.length + build.length + deviceHost.length + readUnreadable().length)
         markTailnet('registry records at the first start');

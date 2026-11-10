@@ -1011,6 +1011,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     const fixture = await routeServer(original);
     const client = await desktop();
     expect(await client.request('route.setup', {})).toMatchObject({ result: { state: 'routed', port: 7444 } });
+    expect(existsSync(join(root, 'home', 'server', 'tailnet.json'))).toBe(true);
     expect(fixture.commands()).toEqual([
       ['serve', 'status', '--json'],
       ['serve', '--bg', '--https=7444', `http://127.0.0.1:${fixture.port}`],

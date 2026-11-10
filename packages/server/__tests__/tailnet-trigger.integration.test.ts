@@ -93,7 +93,7 @@ const record = (id: string, capabilities: string[]) => ({
   lastSeenAt: null,
 });
 
-function writeRegistry(home: string, file: string, devices: unknown[]): void {
+function writeRegistry(home: string, file: string, devices: unknown): void {
   mkdirSync(join(home, 'server'), { recursive: true });
   writeFileSync(join(home, 'server', file), JSON.stringify({ version: 2, devices }));
 }
@@ -139,7 +139,24 @@ const cases: [string, TriggerCase][] = [
       marked: true,
     },
   ],
-  ['stim serve --tailnet', { after: async () => (await import('../src/cli.ts')).rememberTailnet(), marked: true }],
+  [
+    'the marker beside a registry this version cannot read',
+    {
+      before: (home) => {
+        writeRegistry(home, 'devices.json', {});
+        writeFileSync(join(home, 'server', 'tailnet.json'), '{}');
+      },
+      marked: true,
+    },
+  ],
+  [
+    'stim serve --tailnet',
+    {
+      after: async () =>
+        expect(await (await import('../src/cli.ts')).rememberTailnet()).toMatch(/^Tailscale is unavailable/),
+      marked: true,
+    },
+  ],
   [
     'stim pair while Tailscale runs',
     {

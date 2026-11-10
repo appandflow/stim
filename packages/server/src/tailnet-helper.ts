@@ -42,8 +42,7 @@ interface TailnetHealth {
 /**
  * The tailnet as stim-server reaches it: the Tailscale transport, loaded only when something asks for the tailnet, and
  * the reads `/health`, the server name and paired machines need meanwhile. Reads made before the transport loads come
- * from one `tailscale status` and one `tailscale serve status` kept for 30 seconds, the longest the transport's
- * monitor waits between reads, so `/health` is no staler before the load than after it.
+ * from one `tailscale status` and one `tailscale serve status` kept for 30 seconds.
  */
 export interface Tailnet {
   current(): TailscaleTransport | null;
