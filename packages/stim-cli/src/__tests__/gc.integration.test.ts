@@ -36,7 +36,7 @@ import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } fr
 import { operationState } from '../engine/operation-state.ts';
 import { testContext } from './_context.ts';
 import type { ClaimHandle } from '../ownership-claim.ts';
-import { Command } from 'commander';
+import { runCli } from '../cli/define-op.ts';
 import { getExecutor, setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
 import { getProject, saveConfig, loadConfig, upsertProject } from '../workspace/config.ts';
@@ -50,7 +50,7 @@ import * as ownershipClaim from '../ownership-claim.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
-import gcCommand, {
+import gcOp, {
   collectGcReport,
   deleteParkedSims,
   describeParkedSims,
@@ -843,9 +843,7 @@ function runGc(opts: Parameters<typeof runGcCommand>[0] = {}, deps: Parameters<t
 }
 
 async function cli(args: string[] = []) {
-  const program = new Command();
-  gcCommand(program);
-  await program.parseAsync(['node', 'stim', 'gc', ...args]);
+  await runCli(gcOp, args, { version: '9.9.9' });
 }
 
 async function sweepingGc(opts = {}) {
@@ -3338,22 +3336,14 @@ test('--cache all reaches caches only: never a device, never a project entry', a
 });
 
 test('rejects a non-numeric --older-than instead of silently skipping every entry', async () => {
-  const program = new Command();
-  program.exitOverride();
-  gcCommand(program);
-  await expect(() => program.parseAsync(['node', 'stim', 'gc', '--older-than', 'lastweek'])).rejects.toThrow(
+  await expect(() => runCli(gcOp, ['--older-than', 'lastweek'], { version: '9.9.9' })).rejects.toThrow(
     /must be a whole number of days/,
   );
 });
 
 test('rejects a blank --cache instead of widening the run', async () => {
   for (const value of ['', '   ']) {
-    const program = new Command();
-    program.exitOverride();
-    gcCommand(program);
-    await expect(() => program.parseAsync(['node', 'stim', 'gc', '--cache', value])).rejects.toThrow(
-      /must name a cache/,
-    );
+    await expect(() => runCli(gcOp, ['--cache', value], { version: '9.9.9' })).rejects.toThrow(/must name a cache/);
   }
 });
 
