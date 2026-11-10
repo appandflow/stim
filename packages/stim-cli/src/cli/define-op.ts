@@ -338,9 +338,10 @@ export async function runCli(op: Op, args: string[], context: CliContext): Promi
     if (sub && parsed.leading !== undefined) {
       const { leading, taken } = parsed;
       parent = current.positionalOptions ? scan(current, rest.slice(0, leading)).options : parsed.options;
-      rest = current.positionalOptions
+      const following = current.positionalOptions
         ? rest.slice(leading + 1)
         : rest.filter((_, index) => index > leading && !taken.has(index));
+      rest = end(rest) < leading ? ['--', ...following] : following;
       path.push(sub);
       current = sub;
       continue;
