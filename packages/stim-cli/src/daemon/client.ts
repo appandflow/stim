@@ -325,6 +325,7 @@ export async function stopMetroTree(
       const metro = readClaimSet(claimRoot);
       return {
         daemon: daemon.live.length > 0 || daemon.unresolved.length > 0,
+        daemonClaim: daemon.live[0]?.path ?? daemon.unresolved[0]?.path ?? stimdClaimRoot(),
         metro: metro.live.length > 0 || metro.unresolved.length > 0,
         claim: metro.live[0]?.path ?? metro.unresolved[0]?.path ?? claimRoot,
       };
@@ -387,6 +388,12 @@ export async function stopMetroTree(
       remedy: `Run \`stim stop\` here with the Stim build that started it (build ${refusedBuild}).`,
     };
   }
+  if (after?.daemon && !launchError)
+    return {
+      stopped: false,
+      reason: `stimd did not answer; ${after.daemonClaim} still holds this home's stimd`,
+      remedy: `Verify no stimd of this home runs, then run ${claimRemoveCommand(after.daemonClaim)}; dev server pid ${pid} still runs.`,
+    };
   return unresolved(launchError ? `no stimd could adopt the dev server: ${launchError}` : 'stimd did not answer');
 }
 

@@ -6,6 +6,7 @@ const state = vi.hoisted(() => {
     close: boolean;
     live: unknown[];
     unresolved: unknown[];
+    daemonLive: unknown[] | undefined;
   } = {
     reply: null,
     refuse: false,
@@ -13,6 +14,7 @@ const state = vi.hoisted(() => {
     close: true,
     live: [],
     unresolved: [],
+    daemonLive: undefined,
   };
   return result;
 });
@@ -43,7 +45,10 @@ vi.mock('@stim-cli/core/ownership-claim', async (original) => ({
   ...(await original<typeof import('@stim-cli/core/ownership-claim')>()),
   readClaimSet: (root: string) =>
     root.includes('metro.claim') || state.daemon
-      ? { live: state.live, unresolved: state.unresolved }
+      ? {
+          live: root.includes('metro.claim') ? state.live : (state.daemonLive ?? state.live),
+          unresolved: state.unresolved,
+        }
       : { live: [], unresolved: [] },
 }));
 
@@ -56,6 +61,7 @@ beforeEach(() => {
   state.close = true;
   state.live = [{ path: '/home/workspaces/w/metro.claim/exclusive/a.claim' }];
   state.unresolved = [];
+  state.daemonLive = undefined;
 });
 
 test('uses the acknowledged managed stop without invoking the fallback', async () => {
@@ -121,6 +127,18 @@ test('an unanswered stop names the Metro claim and the command that removes it',
     stopped: false,
     remedy: expect.stringContaining("rm -f '/home/workspaces/w/metro.claim/exclusive/a.claim'"),
   });
+});
+
+test('an unanswered stop under an unresolved stimd claim names that claim, not the Metro claim', async () => {
+  state.daemonLive = [{ path: '/home/stimd.claim/exclusive/d.claim' }];
+  const fallback = vi.fn<() => boolean>(() => true);
+  const stopped = await stopMetroTree('/project', 42, 'token', fallback);
+  expect(stopped).toMatchObject({
+    stopped: false,
+    reason: expect.stringContaining('/home/stimd.claim/exclusive/d.claim'),
+    remedy: expect.stringContaining("rm -f '/home/stimd.claim/exclusive/d.claim'"),
+  });
+  expect(fallback).not.toHaveBeenCalled();
 });
 
 test('leaves a Metro claimed under a stimd of another build to that build, naming it', async () => {
