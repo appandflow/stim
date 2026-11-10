@@ -1,6 +1,7 @@
 import type { Executor } from '../exec.ts';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -220,6 +221,15 @@ test('stamps and signs verified bytes, launches with an isolated home, and delet
   mkdirSync(logs, { recursive: true });
   const log = join(logs, 'macos.ndjson');
   writeFileSync(log, 'app output');
+  const engine = join(home, 'app-home', '.stim', 'engine', 'b1');
+  mkdirSync(join(engine, 'dist'), { recursive: true });
+  writeFileSync(join(engine, 'dist', 'cli.mjs'), 'sealed');
+  for (const [path, mode] of [
+    [join(engine, 'dist', 'cli.mjs'), 0o444],
+    [join(engine, 'dist'), 0o555],
+    [engine, 0o555],
+  ] as const)
+    chmodSync(path, mode);
   expect(await runHostedMacosApp('stop', request)).toEqual({ state: 'stopped', device });
   expect(native.stop).toHaveBeenCalledExactlyOnceWith(realpathSync(join(home, 'macos-app')));
   expect(native.quiet).toHaveBeenCalledExactlyOnceWith(
