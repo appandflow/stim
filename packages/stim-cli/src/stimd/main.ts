@@ -896,7 +896,7 @@ async function runStimdInner(
   let updatedInPlace: { build: string; version: string } | null = null;
   const checkedClients = new Map<string, string>();
   const noteClientBuild = (client: unknown) => {
-    if (follower || attached || updatedInPlace || typeof client !== 'string') return;
+    if (follower || attached || service || updatedInPlace || typeof client !== 'string') return;
     const stamp = distStamp();
     if (checkedClients.get(client) === stamp) return;
     checkedClients.set(client, stamp);
