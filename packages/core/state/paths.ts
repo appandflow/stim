@@ -80,10 +80,6 @@ export function workspaceStateLock(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'state.lock');
 }
 
-export function supervisorLogFile(projectRoot: string): string {
-  return join(workspaceLogsDir(projectRoot), 'supervisor.log');
-}
-
 export function emulatorLogFile(projectRoot: string): string {
   return join(workspaceLogsDir(projectRoot), 'emulator.log');
 }
