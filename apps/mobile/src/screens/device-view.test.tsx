@@ -330,6 +330,7 @@ it('keeps physical iPhones view-only without rotation buttons', async () => {
 
 it('lets a Duo viewer enable its device frame with Control off', async () => {
   mockControlling = false;
+  mockDeviceFrame = true;
   mockHostCapabilities = ['frames', 'device-frames', 'duo-frames'];
   const screen = await render(
     <I18nProvider i18n={i18n}>
@@ -339,10 +340,15 @@ it('lets a Duo viewer enable its device frame with Control off', async () => {
   await fireEvent.press(screen.getByLabelText('More'));
   const toggle = screen.getByLabelText('Device Frame');
   expect(toggle.props.accessibilityState.selected).toBe(false);
+  expect(mockStream.mock.calls.at(-1)?.[1].duoFrame).toBe(false);
   await fireEvent.press(toggle);
   expect(screen.getByLabelText('Device Frame').props.accessibilityState.selected).toBe(true);
+  expect(mockStream.mock.calls.at(-1)?.[1].duoFrame).toBe(true);
   expect(mockBegin).not.toHaveBeenCalled();
 });
+
+const housing = (screen: Awaited<ReturnType<typeof render>>) =>
+  screen.root!.queryAll((view) => view.props.source?.uri === 'data:image/png;base64,png');
 
 it('maps framed touches using the aperture layout rather than the housing fit when the Device Frame setting is on', async () => {
   mockArtwork = true;
@@ -355,6 +361,7 @@ it('maps framed touches using the aperture layout rather than the housing fit wh
   const views = screen.root!.queryAll(
     (view) => view.props.onResponderGrant !== undefined && view.props.pointerEvents === 'auto',
   );
+  expect(housing(screen)).not.toHaveLength(0);
   const aperture = views.find((view) => view.props.onResponderGrant)!;
   expect(views.filter((view) => view.props.onResponderGrant)).toHaveLength(1);
   await fireEvent(aperture, 'layout', { nativeEvent: { layout: { x: 30, y: 60, width: 300, height: 600 } } });
@@ -467,6 +474,7 @@ it('shows no toolbar for an iPhone viewer with frame artwork and Control off', a
   );
   expect(screen.queryByLabelText('More')).toBeNull();
   expect(screen.queryByLabelText('Device Frame')).toBeNull();
+  expect(housing(screen)).toHaveLength(0);
 });
 
 it.each([false, true])('keeps native mouse and window selection in the main bar (pinned: %s)', async (pinned) => {
