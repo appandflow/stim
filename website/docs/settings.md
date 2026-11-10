@@ -1054,7 +1054,7 @@ starts. `report` logs what
 each pass would do and acts on nothing. `off` runs no pass. In every mode
 `stimd` runs each workspace's Metro and tunnel and collects device logs, so
 `start`, `ios`, `android`, `web` and `revive` start it when they need one, also
-under `off`. Outside `on` it stops a dev server and the workspace's devices
+under `off`. Under `off` it stops a dev server and the workspace's devices
 after `idle.minutes`, nothing times a device with no dev server, and `stimd`
 exits once nothing runs in the home. It is `off` in CI unless `STIM_DAEMON` is
 set.

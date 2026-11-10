@@ -1434,7 +1434,7 @@ async function runStimdInner(
       shutdown(`the attached engine claim failed: ${retentionError}`, 'error');
       break;
     }
-    void metroTick(mode === 'on', log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
+    void metroTick(mode, log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
     if (mode === 'off') {
       await logs.ownedSync();
       if (hasOffWork()) {

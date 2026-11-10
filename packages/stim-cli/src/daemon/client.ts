@@ -269,6 +269,13 @@ export async function ensureMetroThroughStimd(
         true,
       );
       opToken = admittedOpToken(held);
+      if (!opToken && stimdRefused())
+        return {
+          op: 'error',
+          code: 'STIM_DAEMON_UNAVAILABLE',
+          message: `This Stim home's stimd runs another Stim build (${refusedBuild}), which runs its workspaces' Metro.`,
+          remedy: 'Run the command with that build, or wait for that stimd to exit once nothing runs in this home.',
+        };
       if (!opToken) return null;
     }
     const prepared = await askStimd('metro.prepare', 10_000, { opToken, params }, signal);
@@ -290,7 +297,8 @@ export async function ensureMetroThroughStimd(
 /**
  * Stops a workspace's dev server: through this home's stimd (`metro.stop`) when a stimd runs or a Metro claim shows
  * one ran it, starting a stimd to adopt a Metro an exited one left; through `fallback`, which signals the recorded
- * process tree, when stimd does not own it (a dev server supervisor an older Stim started) or neither exists.
+ * process tree, when stimd does not own it (a dev server supervisor an older Stim started), when the stimd runs
+ * another build and refuses this one, or when neither exists.
  * Resolves whether it stopped.
  */
 export async function stopMetroTree(
@@ -314,15 +322,21 @@ export async function stopMetroTree(
   };
   const before = held();
   if (before && !before.daemon && !before.metro) return fallback();
-  if (before && !before.daemon && process.platform !== 'win32')
-    await ensureStimd(process.env, process.platform, false, undefined, undefined, false, undefined, true).catch(
+  if (
+    before &&
+    !before.daemon &&
+    process.platform !== 'win32' &&
+    (await ensureStimd(process.env, process.platform, false, undefined, undefined, false, undefined, true).catch(
       () => false,
-    );
+    ))
+  )
+    await waitForStimdHello();
   const answer = await askStimd('metro.stop', 40_000, { params: { root, pid, processToken } }, signal);
   if (signal?.aborted) return false;
   if (answer?.op === 'metro.stopped' && answer.state === 'stopped') return true;
   if (answer?.op === 'metro.stopped' && answer.state === 'not-owned') return fallback();
   if (answer) return false;
+  if (stimdRefused()) return fallback();
   const after = held();
   return after && !after.daemon && !after.metro ? fallback() : false;
 }

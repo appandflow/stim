@@ -262,10 +262,9 @@ export function createMaintenanceLane(
 }
 
 /**
- * The pressure ladder in this process, for a command with no daemon holding the home: from rung 2, because the idle
- * stage of rung 1 is the activity pass, which a command runs only for workspaces with no dev server
- * (`runCommandIdle`). Measures and lists devices only when the level is above normal, and nothing while `daemon.mode`
- * is off. Logs to `daemon.ndjson` under `trigger`.
+ * The pressure ladder in this process, for a command with no daemon holding the home: from rung 2, because rung 1's
+ * idle stage is the daemon's activity pass. Measures and lists devices only when the level is above normal, and
+ * nothing while `daemon.mode` is off. Logs to `daemon.ndjson` under `trigger`.
  */
 async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv, protectedRoot?: string): Promise<void> {
   const mode = daemonMode(env);

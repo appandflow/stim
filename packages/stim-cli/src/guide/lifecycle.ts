@@ -2602,8 +2602,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   through the same teardown as \`stop\`: never deleted, and physical devices
   are never touched. It records deviceIdleShutdowns in state.json, so \`stim
   status\` shows "shut down after 15m idle" on the device until the next
-  \`ios\`, \`android\` or \`revive\` run boots it again. With daemon.mode report
-  or off, stimd checks each workspace whose dev server it runs on every tick and
+  \`ios\`, \`android\` or \`revive\` run boots it again. With daemon.mode off,
+  stimd checks each workspace whose dev server it runs on every tick and
   shuts its devices down after idle.minutes. With no daemon, nothing times a
   device whose workspace has no running dev server. Change the clock with
   \`stim settings set idle.minutes <minutes> --scope machine\`; 0 turns idle

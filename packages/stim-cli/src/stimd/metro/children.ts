@@ -8,6 +8,7 @@ import {
   IDLE_STOP_KEY,
   isJsonObject,
   readDevServerStopRequest,
+  type DaemonMode,
   readJsonObject,
   type DevServerStopRecord,
 } from '@stim-cli/core/state';
@@ -44,7 +45,8 @@ import {
   withWorkspaceStateLock,
   writeWorkspaceState,
 } from '../../workspace/workspace-state.ts';
-import { dueIdleDevices, shutDownIdleDevices } from '../../devices/idle-shutdown.ts';
+import { shutDownIdleDevices } from '../../devices/idle-shutdown.ts';
+import { workspaceDeviceLastUseAt } from '../../devices/activity.ts';
 import { withIdleWorkspace } from '../../workspace/in-use.ts';
 import { liveShareKeepReason } from '../../local-server.ts';
 import { PUBLIC_METRO_ENV } from '../../engine/metro-reach.ts';
@@ -885,10 +887,11 @@ async function idlePoint(child: MetroChild, since: number): Promise<boolean> {
 
 /**
  * The tick's Metro hook: forgets children that exited, restarts a Metro of other injected files at its workspace's
- * next idle point, and, while the passes do not act (`daemon.mode` other than `on`), stops a Metro that served no
- * request and no Stim command for the workspace's `idle.minutes`, as the supervisor's own idle timer did.
+ * next idle point, and, while no pass runs (`daemon.mode` off), stops a Metro that served no request and no Stim
+ * command for the workspace's `idle.minutes`, with the workspace's devices idle as long, as the supervisor's own idle
+ * timers did. Under `on` the idle stage does both, and `report` acts on nothing.
  */
-export function metroTick(act: boolean, log: Log): Promise<void> {
+export function metroTick(mode: DaemonMode, log: Log): Promise<void> {
   if (backgroundStopped || closingChildren) return Promise.resolve();
   if (tickWork) return tickWork;
   tickWork = (async () => {
@@ -913,7 +916,7 @@ export function metroTick(act: boolean, log: Log): Promise<void> {
         continue;
       }
       // compat end
-      if (act || child.mode === MODE_COMMAND) continue;
+      if (mode !== 'off' || child.mode === MODE_COMMAND) continue;
       const minutes = idleMinutesSetting(resolveProjectSettings(child.root).settings);
       if (minutes <= 0) continue;
       const idleMs = minutes * 60_000;
@@ -930,7 +933,10 @@ export function metroTick(act: boolean, log: Log): Promise<void> {
           },
           idleMs,
         );
-      } else if (dueIdleDevices(child.root, idleMs).length > 0) await shutDownIdle(child, idleMs, log);
+      } else {
+        const usedAt = workspaceDeviceLastUseAt(child.root);
+        if (!Number.isFinite(usedAt) || Date.now() - usedAt >= idleMs) await shutDownIdle(child, idleMs, log);
+      }
     }
     for (const [root, tunnel] of tunnels)
       if (

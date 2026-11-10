@@ -256,7 +256,7 @@ end the job with \`stim stop\`.
   pass records workspace_idle and supervisor_stopped lines in metro.ndjson,
   devServerStop and idleStage in state.json, so \`status\` shows the idle
   stage and
-  "stopped (idle)" rather than a crash. With daemon.mode report or off,
+  "stopped (idle)" rather than a crash. With daemon.mode off,
   stimd applies the same clock to the dev server and the workspace's
   devices, without deleting build outputs (\`guide settings\`). The next
   \`stim start\`
