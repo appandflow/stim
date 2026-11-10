@@ -7,19 +7,22 @@ if (variant !== 'production' && variant !== 'development' && variant !== 'next')
 const dev = variant === 'development';
 const next = variant === 'next';
 const id = dev ? 'com.appandflow.stim.dev' : next ? 'com.appandflow.stim.next' : 'com.appandflow.stim';
-const icon = (name: string) => `./assets/images/${name}${dev ? '-dev' : next ? '-next' : ''}.png`;
 
 const config: ExpoConfig = {
   name: dev ? 'Stim Dev' : next ? 'Stim Next' : 'Stim',
   slug: 'stim-mobile',
   version: '1.0.0',
   orientation: 'default',
-  icon: icon('icon'),
+  icon: dev ? './assets/images/icon-dev.png' : next ? './assets/images/icon-next.png' : './assets/images/icon.png',
   scheme: dev ? ['stim', 'stim-dev'] : next ? ['stim', 'stim-next'] : 'stim',
   userInterfaceStyle: 'automatic',
   ios: {
     bundleIdentifier: id,
-    icon: icon('icon-ios'),
+    icon: dev
+      ? './assets/images/icon-ios-dev.png'
+      : next
+        ? './assets/images/icon-ios-next.png'
+        : './assets/images/icon-ios.png',
     supportsTablet: true,
     config: {
       usesNonExemptEncryption: false,
@@ -34,7 +37,11 @@ const config: ExpoConfig = {
     package: id,
     adaptiveIcon: {
       backgroundColor: '#FFFFFF',
-      foregroundImage: icon('icon'),
+      foregroundImage: dev
+        ? './assets/images/icon-dev.png'
+        : next
+          ? './assets/images/icon-next.png'
+          : './assets/images/icon.png',
     },
     predictiveBackGestureEnabled: false,
     permissions: ['android.permission.CAMERA'],
