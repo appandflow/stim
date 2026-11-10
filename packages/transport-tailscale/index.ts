@@ -1,6 +1,6 @@
 import type { ServeRoute } from '@stim-cli/core/protocol';
 import { isIP } from 'node:net';
-import { TRANSPORT_API_VERSION, type Transport, type TransportInput } from '@stim-cli/transport';
+import type { Transport, TransportInput, TransportWatchEvent } from '@stim-cli/transport';
 import {
   findTailscale,
   readRawTailscaleStatus,
@@ -35,7 +35,6 @@ export {
 } from './src/tailscale.ts';
 export { watchTailscale, type TailscaleMonitor, type TailscaleSnapshot } from './src/tailscale-monitor.ts';
 
-export const apiVersion: typeof TRANSPORT_API_VERSION = TRANSPORT_API_VERSION;
 export const id = 'tailscale';
 
 /**
@@ -55,6 +54,10 @@ export function isTailscaleTransport(transport: Transport): transport is Tailsca
   return transport.id === id && 'snapshot' in transport && typeof transport.snapshot === 'function';
 }
 
+function runningAddresses({ state }: TailscaleSnapshot): string[] {
+  return state.state === 'running' ? state.ips : [];
+}
+
 export function tailscaleTransport({
   env,
   snapshot,
@@ -67,15 +70,12 @@ export function tailscaleTransport({
   const now = () => monitor?.current() ?? snapshot;
   return {
     id,
-    traits: { privateNetwork: true, tls: 'end-to-end', peerIdentity: true },
     monitor,
     snapshot: now,
     ...(monitor && {
-      bindAddresses() {
-        const { state } = monitor.current();
-        return state.state === 'running' ? state.ips : [];
-      },
-      watch: (listener: () => void) => monitor.onChange(() => listener()),
+      bindAddresses: () => runningAddresses(monitor.current()),
+      watch: (listener: (event: TransportWatchEvent) => void) =>
+        monitor.onChange((current) => listener({ addresses: runningAddresses(current) })),
     }),
     async identify({ address }) {
       if (!isIP(address)) return null;

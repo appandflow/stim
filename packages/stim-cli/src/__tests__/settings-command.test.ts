@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Command } from 'commander';
-import { registerSettings } from '../commands/settings.ts';
+import { settingsOp } from '../commands/settings.ts';
+import { runCli } from '../cli/define-op.ts';
 import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -59,9 +59,8 @@ afterEach(() => {
 async function settings(args: string[], env: NodeJS.ProcessEnv = {}) {
   const out: string[] = [];
   const note: string[] = [];
-  const program = new Command().exitOverride();
-  registerSettings(program, { out: (line) => out.push(line), note: (line) => note.push(line) }, env);
-  await program.parseAsync(['settings', ...args], { from: 'user' });
+  const op = settingsOp({ out: (line) => out.push(line), note: (line) => note.push(line) }, env);
+  await runCli(op, args, { version: '9.9.9' });
   const exitCode = process.exitCode ?? 0;
   process.exitCode = undefined;
   return { out, note, exitCode };

@@ -1,8 +1,8 @@
 import { expect, test } from 'vitest';
-import { loadTransport, TRANSPORT_API_VERSION, type Transport } from '../index.ts';
+import { loadTransport, type Transport } from '../index.ts';
 
 const input = { env: {}, options: {} };
-const transport: Transport = { id: 'fake', traits: { privateNetwork: false, tls: 'none', peerIdentity: false } };
+const transport: Transport = { id: 'fake' };
 
 test('closes a transport that a factory creates after the load timed out', async () => {
   let finish!: () => void;
@@ -10,7 +10,6 @@ test('closes a transport that a factory creates after the load timed out', async
     finish = resolve;
   });
   const module = {
-    apiVersion: TRANSPORT_API_VERSION,
     createTransport: async () => {
       await new Promise((resolve) => setTimeout(resolve, 40));
       return { ...transport, close: finish };

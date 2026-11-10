@@ -4839,7 +4839,6 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       transports: [
         {
           id: 'static',
-          traits: { privateNetwork: true, tls: 'none', peerIdentity: false },
           bindAddresses: () => ['::1'],
         },
       ],
@@ -4861,10 +4860,9 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       return { spawned, spawnHolder };
     }
     function remoteTransport(initial: string[]) {
-      const state = { addresses: initial, listeners: new Set<() => void>() };
+      const state = { addresses: initial, listeners: new Set<(event: { addresses: string[] }) => void>() };
       const transport: Transport = {
         id: 'static',
-        traits: { privateNetwork: true, tls: 'none', peerIdentity: false },
         bindAddresses: () => state.addresses,
         watch: (listener) => {
           state.listeners.add(listener);
@@ -4873,7 +4871,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       };
       const change = (addresses: string[]) => {
         state.addresses = addresses;
-        for (const listener of state.listeners) listener();
+        for (const listener of state.listeners) listener({ addresses });
       };
       return { transport, change };
     }
@@ -5158,7 +5156,6 @@ describe.skipIf(!lanIp)('the local network listener', () => {
     const other = second;
     const both: Transport = {
       id: 'both',
-      traits: { privateNetwork: false, tls: 'none', peerIdentity: false },
       bindAddresses: () => [host, other],
     };
     const port = await start({ transports: [both], pendingConnections: { max: 2, perPeer: 2 } });
@@ -5186,7 +5183,6 @@ describe.skipIf(!lanIp)('the local network listener', () => {
     let identified = 0;
     const counting: Transport = {
       id: 'counting',
-      traits: { privateNetwork: true, tls: 'end-to-end', peerIdentity: true },
       identify: async () => {
         identified++;
         return null;

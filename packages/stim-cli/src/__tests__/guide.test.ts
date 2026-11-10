@@ -3,6 +3,7 @@ import { includesArchives } from '../commands/gc/caches.ts';
 import { registerIos } from '../commands/ios.ts';
 import { registerAndroid } from '../commands/android.ts';
 import { Command } from 'commander';
+import { runCli } from '../cli/define-op.ts';
 import {
   AGENT_TOOLS,
   APP_PROCESS_STATES,
@@ -852,16 +853,14 @@ test('ports guidance documents reverse and its cap', () => {
 });
 
 test('guide prints the status block before the index and the agent topic, and never before a section', async () => {
-  const { default: guideCommand } = await import('../commands/guide.ts');
+  const { guideOp } = await import('../commands/guide.ts');
   const status = async () => 'STATUS\n  Doctor is due for ios (never run).';
   const logs: string[] = [];
   const originalLog = console.log;
   console.log = (msg) => logs.push(String(msg));
   try {
     for (const args of [[], ['agent'], ['errors', 'STIM_NO_METRO']]) {
-      const program = new Command();
-      guideCommand(program, '9.9.9', status);
-      await program.parseAsync(['node', 'stim', 'guide', ...args]);
+      await runCli(guideOp(status), args, { version: '9.9.9' });
     }
   } finally {
     console.log = originalLog;

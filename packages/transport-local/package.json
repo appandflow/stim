@@ -28,7 +28,7 @@
   "scripts": {
     "build": "tsdown"
   },
-  "dependencies": {
+  "devDependencies": {
     "@stim-cli/transport": "workspace:*"
   },
   "engines": {

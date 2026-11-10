@@ -3,7 +3,8 @@
     "src": {
       "as": 2,
       "nonNull": 0,
-      "refusalRemedy": 0
+      "refusalRemedy": 0,
+      "commander": 0
     },
     "test": {
       "as": 2,
@@ -36,7 +37,8 @@
     "src": {
       "as": 2,
       "nonNull": 0,
-      "refusalRemedy": 0
+      "refusalRemedy": 0,
+      "commander": 0
     },
     "test": {
       "as": 0,
@@ -47,7 +49,8 @@
     "src": {
       "as": 10,
       "nonNull": 8,
-      "refusalRemedy": 0
+      "refusalRemedy": 0,
+      "commander": 0
     },
     "test": {
       "as": 14,
@@ -58,7 +61,8 @@
     "src": {
       "as": 11,
       "nonNull": 1,
-      "refusalRemedy": 0
+      "refusalRemedy": 0,
+      "commander": 0
     },
     "test": {
       "as": 0,
@@ -69,7 +73,8 @@
     "src": {
       "as": 0,
       "nonNull": 0,
-      "refusalRemedy": 0
+      "refusalRemedy": 0,
+      "commander": 0
     },
     "test": {
       "as": 0,
@@ -80,7 +85,8 @@
     "src": {
       "as": 8,
       "nonNull": 5,
-      "refusalRemedy": 3
+      "refusalRemedy": 3,
+      "commander": 0
     },
     "test": {
       "as": 2,
@@ -89,9 +95,10 @@
   },
   "packages/core": {
     "src": {
-      "as": 171,
+      "as": 170,
       "nonNull": 49,
-      "refusalRemedy": 1
+      "refusalRemedy": 1,
+      "commander": 0
     },
     "test": {
       "as": 21,
@@ -102,7 +109,8 @@
     "src": {
       "as": 294,
       "nonNull": 110,
-      "refusalRemedy": 14
+      "refusalRemedy": 14,
+      "commander": 0
     },
     "test": {
       "as": 289,
@@ -111,12 +119,13 @@
   },
   "packages/stim-cli": {
     "src": {
-      "as": 844,
+      "as": 839,
       "nonNull": 341,
-      "refusalRemedy": 17
+      "refusalRemedy": 17,
+      "commander": 25
     },
     "test": {
-      "as": 441,
+      "as": 435,
       "nonNull": 609
     }
   },
@@ -124,7 +133,8 @@
     "src": {
       "as": 0,
       "nonNull": 0,
-      "refusalRemedy": 0
+      "refusalRemedy": 0,
+      "commander": 0
     },
     "test": {
       "as": 0,
@@ -135,7 +145,8 @@
     "src": {
       "as": 0,
       "nonNull": 0,
-      "refusalRemedy": 0
+      "refusalRemedy": 0,
+      "commander": 0
     },
     "test": {
       "as": 0,
@@ -146,7 +157,8 @@
     "src": {
       "as": 1,
       "nonNull": 3,
-      "refusalRemedy": 0
+      "refusalRemedy": 0,
+      "commander": 0
     },
     "test": {
       "as": 0,
