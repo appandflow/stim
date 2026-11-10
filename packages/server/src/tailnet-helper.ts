@@ -103,6 +103,7 @@ export function createTailnet(env: NodeJS.ProcessEnv, given: TailscaleTransport 
     }
     return cached.read;
   };
+  let failure: string | null = null;
   const currentState = async () => (transport ? transport.snapshot().state : (await read()).state);
   return {
     current: () => transport,
@@ -114,10 +115,11 @@ export function createTailnet(env: NodeJS.ProcessEnv, given: TailscaleTransport 
       if (transport) return Promise.resolve(transport);
       if (closed) return Promise.resolve(null);
       return (loading ??= (async () => {
-        console.log(`stim-server: loading the Tailscale transport (${reason}).`);
+        if (failure === null) console.log(`stim-server: loading the Tailscale transport (${reason}).`);
         const loaded = await loadTailscale(env);
         if (typeof loaded === 'string') {
-          console.error(`stim-server: ${loaded}`);
+          if (failure !== loaded) console.error(`stim-server: ${loaded}`);
+          failure = loaded;
           loading = null;
           return null;
         }
