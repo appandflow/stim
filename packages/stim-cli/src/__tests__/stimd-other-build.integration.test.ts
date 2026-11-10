@@ -1,11 +1,12 @@
 import assert from 'node:assert';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
-import { type Server } from 'node:net';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { createServer, type Server } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { releaseClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
+import { dirname, join } from 'node:path';
+import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
+import { stimdClaimRoot, stimdRunDir, stimdSocket } from '@stim-cli/core/state';
 
 let home: string;
 let server: Server | null = null;
@@ -24,6 +25,31 @@ afterEach(async () => {
   vi.resetModules();
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
+});
+
+test('stim share waits for a stimd that holds its claim but does not listen yet', async () => {
+  const socket = stimdSocket();
+  mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
+  mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
+  claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'test stimd' }).acquired ?? null;
+  server = createServer((connection) => {
+    let lines = 0;
+    connection.setEncoding('utf8');
+    connection.on('data', (chunk: string) => {
+      for (const _ of chunk.matchAll(/\n/g)) {
+        lines++;
+        connection.write(
+          `${JSON.stringify(lines === 1 ? { op: 'hello' } : { op: 'net', listening: true, port: 4321 })}\n`,
+        );
+      }
+    });
+  });
+  const listening = new Promise<void>((done) => setTimeout(() => server?.listen(socket, done), 300));
+  vi.resetModules();
+  const { ensureNet } = await import('../daemon/client.ts');
+
+  expect(await ensureNet(true)).toEqual({ listening: true, port: 4321 });
+  await listening;
 });
 
 test.skipIf(process.platform === 'win32')('a command names every unresolved daemon claim in one refusal', async () => {

@@ -939,6 +939,23 @@ export async function publishPresence(params: PresencePublishParams, timeoutMs: 
 const OBSERVE_MS = 30_000;
 
 /**
+ * Sends `ask` to the stimd that holds this home: again while it has its claim but does not listen yet (up to five
+ * seconds), and once more after a stimd of this build replaced one of another build that refused it.
+ */
+async function askHeldStimd(
+  ask: () => Promise<Record<string, unknown> | null>,
+): Promise<Record<string, unknown> | null> {
+  let reply = await ask();
+  const deadline = Date.now() + CLAIM_WAIT_MS;
+  while (!reply && !stimdRefused() && Date.now() < deadline) {
+    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
+    reply = await ask();
+  }
+  if (!reply && stimdRefused() && (await successorBound())) reply = await ask();
+  return reply;
+}
+
+/**
  * Asks this home's stimd to observe what the op at `root` launched through `spawnOwned`: the owned Chrome's DevTools
  * session. Starts a stimd when none runs, whatever `daemon.mode` says, since nothing else
  * records that output. Resolves to null once stimd observes it, or to why it does not.
@@ -950,14 +967,7 @@ async function ownedRequest(
   target?: { pid: number; token: string },
 ): Promise<string | null> {
   if (!stimdLive() && !(await claimTaken(launchStimd(env, daemonMode(env))))) return 'no stimd runs in this Stim home';
-  const ask = () => askStimd(op, OBSERVE_MS, { params: { root, ...target } });
-  let reply = await ask();
-  const deadline = Date.now() + CLAIM_WAIT_MS;
-  while (!reply && !stimdRefused() && Date.now() < deadline) {
-    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
-    reply = await ask();
-  }
-  if (!reply && stimdRefused() && (await successorBound())) reply = await ask();
+  const reply = await askHeldStimd(() => askStimd(op, OBSERVE_MS, { params: { root, ...target } }));
   const expected =
     op === 'logs.observe' ? 'logs.observed' : op === 'logs.observe-web' ? 'logs.web-observed' : 'logs.drained';
   if (reply?.op !== expected)
@@ -1004,7 +1014,9 @@ function netAnswer(reply: Record<string, unknown> | null): NetAnswer | null {
 export async function ensureNet(share: boolean, env: NodeJS.ProcessEnv = process.env): Promise<NetAnswer | null> {
   if (!stimdLive() && (!(share || spawnsDaemon(env)) || !(await claimTaken(launchStimd(env, daemonMode(env))))))
     return null;
-  return netAnswer(await askStimd('net.ensure', NET_START_MS, share ? { params: { share: true } } : {}));
+  return netAnswer(
+    await askHeldStimd(() => askStimd('net.ensure', NET_START_MS, share ? { params: { share: true } } : {})),
+  );
 }
 
 /**
