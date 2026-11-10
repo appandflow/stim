@@ -118,6 +118,8 @@ interface MetroChild {
   /** Closes the hosted Metro links this child serves. */
   closeLinks: (() => Promise<void>) | null;
   roots: MetroWatchRoots | null;
+  /** Whether its Metro requests reach `metro.ndjson`, without which no idle stop can tell it is unused. */
+  observesRequests: boolean;
 }
 
 interface TunnelChild {
@@ -585,6 +587,11 @@ async function start(
   }
   setClaimChild(claim, { pid, processToken });
   if (GROUPS) handle.child.unref();
+  const observesRequests = handle.observesRequests === true || mode === MODE_BARE;
+  let observed = claim;
+  try {
+    observed = updateClaimDetails(claim, { ...claim.details, observesRequests }) ?? claim;
+  } catch {}
   const child: MetroChild = {
     root,
     launch,
@@ -593,7 +600,7 @@ async function start(
     digest,
     pid,
     processToken,
-    claim,
+    claim: observed,
     writer,
     handle,
     startedAt: new Date().toISOString(),
@@ -603,10 +610,11 @@ async function start(
     gone: false,
     closeLinks: null,
     roots,
+    observesRequests,
   };
   children.set(root, child);
   token = processToken;
-  record(child, handle.observesRequests === true || mode === MODE_BARE);
+  record(child, observesRequests);
   recordForeignMetro(root, port, {});
   roots.started(pid);
   serveLinks(child, log);
@@ -875,13 +883,14 @@ function adoptAt(path: string, log: Log): void {
       gone: false,
       closeLinks: null,
       roots: null,
+      observesRequests: holder.details.observesRequests === true,
     };
     children.set(path, child);
     serveLinks(child, log);
     const supervisor = readWorkspaceState(path)?.supervisor;
     if (isJsonObject(supervisor) && typeof claim.details.engineDir === 'string')
       writeWorkspaceState(path, { supervisor: { ...supervisor, engineDir: claim.details.engineDir } });
-    else if (!isJsonObject(supervisor)) record(child, child.mode === MODE_BARE);
+    else if (!isJsonObject(supervisor)) record(child, child.observesRequests);
     log(
       'info',
       'metro_adopted',
@@ -947,7 +956,7 @@ export function metroTick(mode: DaemonMode, log: Log): Promise<void> {
         continue;
       }
       // compat end
-      if (mode !== 'off' || child.mode === MODE_COMMAND) continue;
+      if (mode !== 'off' || !child.observesRequests) continue;
       const minutes = idleMinutesSetting(resolveProjectSettings(child.root).settings);
       if (minutes <= 0) continue;
       const idleMs = minutes * 60_000;
