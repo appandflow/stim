@@ -115,6 +115,8 @@ test('an Exact app selects the exact integration for iOS and has no dev server, 
     });
   expect(detect(exact)).toEqual({ platforms: ['ios'], devServer: false });
   expect(detect(expo).devServer).toBe(true);
+  write(join(expo, 'package.json'), '{ "dependencies": ');
+  expect(detect(expo).devServer).toBe(true);
 });
 
 test('symlinks resolve native ownership and workspace identity by canonical paths', () => {

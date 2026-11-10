@@ -1974,7 +1974,8 @@ executes app config code.
 
 Each environment also carries `devServer: boolean`: `true` when the app has a
 dev server that `stim start` and `stim reload` act on (React Native and Expo),
-`false` for Exact, native Xcode and Gradle apps, SwiftPM and web-only apps. Stim
+`false` for Exact, native Xcode and Gradle apps, SwiftPM and web-only apps, and
+for a folder inside another project. An unreadable `package.json` keeps it `true`. Stim
 Desktop gives a workspace without one Stop and Show Logs instead of Start Dev
 Server and Reload, and no Metro section.
 

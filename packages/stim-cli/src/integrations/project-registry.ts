@@ -277,7 +277,8 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
   ): ReturnType<ProjectRegistry['detectProject']> {
     root = canonicalPath(root);
     const matches = inspect(root);
-    const devServer = (ownedRootProblem(root, matches) ?? operationProblem(root, matches, 'dev-server')) === null;
+    const devServer =
+      (ownedRootProblem(root, matches) ?? operationProblem(root, matches, 'dev-server'))?.kind !== 'not-an-app';
     return { platforms: platformsOf(matches, resolved), devServer };
   }
 
