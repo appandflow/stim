@@ -551,7 +551,7 @@ importers:
         version: link:../core
 
   packages/transport-local:
-    dependencies:
+    devDependencies:
       '@stim-cli/transport':
         specifier: workspace:*
         version: link:../transport
@@ -561,6 +561,7 @@ importers:
       '@stim-cli/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
       '@stim-cli/transport':
         specifier: workspace:*
         version: link:../transport
