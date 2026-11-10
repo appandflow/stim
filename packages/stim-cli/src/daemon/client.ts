@@ -119,6 +119,7 @@ export function stimdBuildId(): string {
 }
 
 let refusedBuild: string | null = null;
+let successorMissed = false;
 let refusal: {
   version: string;
   pid: number | null;
@@ -921,9 +922,11 @@ function successorExpected(): boolean {
 
 /**
  * Whether a stimd of this build replaced the one of an older build that refused it, within `HANDOVER_WAIT_MS` when
- * that one said it hands over (it drains, exits, and its successor boots) and `CLAIM_WAIT_MS` otherwise.
+ * that one said it hands over (it drains, exits, and its successor boots) and `CLAIM_WAIT_MS` otherwise. Once a wait
+ * ran out, it answers false at once for the rest of this process.
  */
 async function successorBound(): Promise<boolean> {
+  if (successorMissed) return false;
   const waitMs = refusal?.handover ? HANDOVER_WAIT_MS : CLAIM_WAIT_MS;
   for (const deadline = Date.now() + waitMs; Date.now() < deadline;) {
     if (readJsonObject(stimdRecordFile())?.build === stimdBuildId()) {
@@ -933,6 +936,7 @@ async function successorBound(): Promise<boolean> {
     }
     await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
   }
+  successorMissed = true;
   return false;
 }
 
