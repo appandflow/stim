@@ -300,8 +300,9 @@ export type MetroTreeStop = { stopped: true } | { stopped: false; reason: string
 /**
  * Stops a workspace's dev server: through this home's stimd (`metro.stop`) when a stimd runs or a Metro claim shows
  * one ran it, starting a stimd to adopt a Metro an exited one left; through `fallback`, which signals the recorded
- * process tree, when stimd does not own it (a dev server supervisor an older Stim started) or when neither a stimd nor
- * a Metro claim exists. A Metro under the claim of a stimd of another build stays: only that build stops it.
+ * process tree, when stimd does not own it (a dev server supervisor an older Stim started), when neither a stimd nor
+ * a Metro claim exists, or on Windows when no stimd runs. A Metro under the claim of a stimd of another build stays:
+ * only that build stops it.
  */
 export async function stopMetroTree(
   root: string,
@@ -338,7 +339,7 @@ export async function stopMetroTree(
     remedy: `Verify dev server pid ${pid} and its process tree have stopped, then run ${claimRemoveCommand(claim)}.`,
   });
   const before = held();
-  if (before && !before.daemon && !before.metro) return viaFallback();
+  if (before && !before.daemon && (!before.metro || process.platform === 'win32')) return viaFallback();
   let launchError: string | null = null;
   if (before && !before.daemon && process.platform !== 'win32') {
     const launched = await ensureStimd(

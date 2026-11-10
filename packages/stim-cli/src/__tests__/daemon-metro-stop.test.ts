@@ -2,12 +2,14 @@ const state = vi.hoisted(() => {
   const result: {
     reply: Record<string, unknown> | null;
     refuse: boolean;
+    daemon: boolean;
     close: boolean;
     live: unknown[];
     unresolved: unknown[];
   } = {
     reply: null,
     refuse: false,
+    daemon: true,
     close: true,
     live: [],
     unresolved: [],
@@ -39,7 +41,10 @@ vi.mock('node:net', async () => {
 });
 vi.mock('@stim-cli/core/ownership-claim', async (original) => ({
   ...(await original<typeof import('@stim-cli/core/ownership-claim')>()),
-  readClaimSet: () => ({ live: state.live, unresolved: state.unresolved }),
+  readClaimSet: (root: string) =>
+    root.includes('metro.claim') || state.daemon
+      ? { live: state.live, unresolved: state.unresolved }
+      : { live: [], unresolved: [] },
 }));
 
 import { stopMetroTree } from '../daemon/client.ts';
@@ -47,6 +52,7 @@ import { stopMetroTree } from '../daemon/client.ts';
 beforeEach(() => {
   state.reply = null;
   state.refuse = false;
+  state.daemon = true;
   state.close = true;
   state.live = [{ path: '/home/workspaces/w/metro.claim/exclusive/a.claim' }];
   state.unresolved = [];
@@ -90,6 +96,19 @@ test('refuses errors and cancellation without an external kill', async () => {
   controller.abort();
   expect(await stopping).toMatchObject({ stopped: false });
   expect(fallback).not.toHaveBeenCalled();
+});
+
+test('on Windows, where no stimd adopts, a Metro whose stimd exited stops through its recorded tree', async () => {
+  state.daemon = false;
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  try {
+    const fallback = vi.fn<() => boolean>(() => true);
+    expect(await stopMetroTree('/project', 42, 'token', fallback)).toEqual({ stopped: true });
+    expect(fallback).toHaveBeenCalledOnce();
+  } finally {
+    if (platform) Object.defineProperty(process, 'platform', platform);
+  }
 });
 
 test('an unanswered stop names the Metro claim and the command that removes it', async () => {

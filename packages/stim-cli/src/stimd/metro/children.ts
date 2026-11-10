@@ -583,10 +583,8 @@ async function start(
       message: 'the dev server started but its process identity could not be read',
     };
   }
-  if (GROUPS) {
-    setClaimChild(claim, { pid, processToken });
-    handle.child.unref();
-  }
+  setClaimChild(claim, { pid, processToken });
+  if (GROUPS) handle.child.unref();
   const child: MetroChild = {
     root,
     launch,
