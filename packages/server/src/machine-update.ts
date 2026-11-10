@@ -13,15 +13,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, sep } from 'node:path';
-import {
-  isJsonObject,
-  machineEndpoint,
-  parseMachine,
-  readBuildMachines,
-  readDeviceHostMachines,
-  type Endpoint,
-} from '@stim-cli/core/state';
+import { isJsonObject, readBuildMachines, readDeviceHostMachines, type Endpoint } from '@stim-cli/core/state';
 import { Upstream } from './hosted-relay.ts';
+import { dialEndpoint } from './tailnet-helper.ts';
 import type { MachineUpdateStatus, ProtocolError, EngineUpdateProgress } from './protocol.ts';
 
 const CHUNK_BYTES = 24 * 1024;
@@ -190,10 +184,7 @@ export class MachineUpdates {
     const credential = build ?? host;
     if (!credential?.serverKey)
       throw new Error(`${machine} has not approved this machine for builds or device hosting.`);
-    const found = machineEndpoint(
-      credential.machine,
-      parseMachine(credential.machine)?.transport === 'tailscale' ? await this.options.status() : null,
-    );
+    const found = await dialEndpoint(credential.machine, this.options.status);
     if (typeof found === 'string') throw new Error(found);
     const upstream = new Upstream(this.options.endpoint?.(found) ?? found, credential.serverKey);
     try {
