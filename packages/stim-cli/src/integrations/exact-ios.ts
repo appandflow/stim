@@ -52,6 +52,12 @@ const ERROR_LINE = /^error(?:\[\w+\])?: /;
 // CARGO_TARGET_DIR moves it, so such a run does not say; an enclosing Cargo workspace or a size-optimized Release reads as a first build.
 const SIMULATOR_RUST_TARGET = process.arch === 'arm64' ? 'aarch64-apple-ios-sim' : 'x86_64-apple-ios';
 
+function exactIncremental(root: string, configuration: string | null, env: NodeJS.ProcessEnv): boolean | undefined {
+  if (env.CARGO_TARGET_DIR) return undefined;
+  const profile = configuration === 'Release' ? 'release' : 'host-dev';
+  return existsSync(join(root, 'target', SIMULATOR_RUST_TARGET, profile));
+}
+
 function exactBuiltApp(lines: readonly string[]): string | null {
   for (const line of lines.toReversed()) {
     const app = BUILT_APP.exec(line)?.[1];
@@ -161,12 +167,8 @@ function exactRecipe(root: string, context: IosArtifactContext): IosArtifactReci
     buildTool: EXACT_CLI,
     identity: async () => {
       await boot();
-      const profile = context.configuration === 'Release' ? 'release' : 'host-dev';
-      if (context.operation?.env.CARGO_TARGET_DIR) return { cacheIneligible: CACHE_INELIGIBLE };
-      return {
-        cacheIneligible: CACHE_INELIGIBLE,
-        incremental: existsSync(join(root, 'target', SIMULATOR_RUST_TARGET, profile)),
-      };
+      const incremental = exactIncremental(root, context.configuration, context.operation?.env ?? {});
+      return { cacheIneligible: CACHE_INELIGIBLE, ...(incremental === undefined ? {} : { incremental }) };
     },
     cache: () =>
       filesystemBuildCapability({
@@ -321,7 +323,8 @@ async function planExactIos(
     signal: operation.signal,
   });
   if (modelRefusal) return { refusal: modelRefusal };
-  const schemeProblem = exactSchemeProblem(options.scheme, resolveConfiguration(options.configuration, settings));
+  const configuration = resolveConfiguration(options.configuration, settings);
+  const schemeProblem = exactSchemeProblem(options.scheme, configuration);
   if (schemeProblem)
     return {
       refusal: { code: schemeProblem.code, message: schemeProblem.message ?? '', remedy: schemeProblem.remedy ?? '' },
@@ -344,6 +347,7 @@ async function planExactIos(
       missReason: skippedMissReason(CACHE_INELIGIBLE),
       refusal: placement && 'refusal' in placement ? placement.refusal : null,
     },
+    exactIncremental(root, configuration, operation.env),
   );
   const bundleId = exactBundleId(root);
   return {

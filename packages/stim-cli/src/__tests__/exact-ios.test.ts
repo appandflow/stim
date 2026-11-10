@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
@@ -244,4 +244,19 @@ test('names why an Exact build that cannot offload stays here, and refuses a nam
 test('refuses a scheme or an Xcode configuration Exact does not have', async () => {
   expect(await plan({ scheme: 'App' })).toMatchObject({ refusal: { code: 'STIM_BAD_ARG' } });
   expect(await plan({ configuration: 'Staging' })).toMatchObject({ refusal: { code: 'STIM_BAD_ARG' } });
+});
+
+test('estimates from earlier incremental runs once target/ holds the simulator build', async () => {
+  const sample = (durationMs: number, incremental: boolean) => ({ at: 1, durationMs, phases: {}, incremental });
+  writeFileSync(
+    join(home, 'stats.json'),
+    JSON.stringify({
+      version: 1,
+      history: { [realpathSync(root)]: { ios: { cold: [sample(300_000, false), sample(30_000, true)] } } },
+    }),
+  );
+  expect(await plan({ remoteBuild: 'local' })).toMatchObject({ expectedMs: 300_000, basis: 1 });
+  const triple = process.arch === 'arm64' ? 'aarch64-apple-ios-sim' : 'x86_64-apple-ios';
+  mkdirSync(join(root, 'target', triple, 'host-dev'), { recursive: true });
+  expect(await plan({ remoteBuild: 'local' })).toMatchObject({ expectedMs: 30_000, basis: 1 });
 });

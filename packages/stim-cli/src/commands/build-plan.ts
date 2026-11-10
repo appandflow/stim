@@ -264,11 +264,12 @@ export function planPayload(
   > & {
     refusal: Refusal | null;
   },
+  incremental?: boolean,
 ): BuildPlanPayload {
   const { refusal, missReason, ...rest } = found;
   const outcome = refusal ? null : found.cacheHit ? 'hit' : 'cold';
   const estimate = outcome
-    ? estimateBuild(readStats().record?.history?.[projectKey], platform, outcome)
+    ? estimateBuild(readStats().record?.history?.[projectKey], platform, outcome, undefined, incremental)
     : { expectedMs: null, basis: 0 };
   return {
     platform,
