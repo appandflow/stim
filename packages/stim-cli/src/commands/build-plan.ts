@@ -286,6 +286,7 @@ function cacheLine(plan: BuildPlanPayload): string {
   if (plan.refusal) return `the build would refuse with ${plan.refusal.code}`;
   if (plan.cacheHit === 'local') return 'local cache hit';
   if (plan.cacheHit === 'remote') return `remote cache hit (${plan.provider})`;
+  if (plan.fingerprint === null) return 'no build cache: compiles';
   const why = plan.cacheSkipped ? 'cache reads are off' : 'cache miss';
   const prebuild =
     plan.prebuild === 'generate' || plan.prebuild === 'regenerate' ? `, ${plan.prebuild}s the native dir` : '';
@@ -314,7 +315,7 @@ export function plannedBuildPlacement(
     ...plan,
     placement:
       plan.placement ?? (easProfile ? 'unknown; device placement is selected when the command runs' : 'this machine'),
-    buildPlacement: { preference, reason },
+    buildPlacement: plan.buildPlacement ?? { preference, reason },
   };
 }
 
@@ -324,7 +325,9 @@ export function printPlan(plan: BuildPlanPayload, json: boolean): void {
     return;
   }
   const slot = plan.slot ? ` [${plan.slot}]` : '';
-  console.log(phaseLine('plan', `${plan.platform}${slot} ${shortHash(plan.fingerprint)} -> ${cacheLine(plan)}`));
+  const fingerprint = plan.fingerprint === null ? '' : ` ${shortHash(plan.fingerprint)}`;
+  console.log(phaseLine('plan', `${plan.platform}${slot}${fingerprint} -> ${cacheLine(plan)}`));
+  if (plan.bundleId) console.log(phaseLine('app', plan.bundleId));
   if (plan.placement) console.log(phaseLine('device', plan.placement));
   if (plan.buildPlacement)
     console.log(phaseLine('build', `${plan.buildPlacement.preference}: ${plan.buildPlacement.reason}`));

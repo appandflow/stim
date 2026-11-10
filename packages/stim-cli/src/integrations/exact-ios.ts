@@ -1,10 +1,23 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
-import { isJsonObject, readJsonObject } from '@stim-cli/core/state';
+import type { StimContext } from '@stim-cli/core';
+import { isJsonObject, machineCapacity, placementWord, readJsonObject } from '@stim-cli/core/state';
+import { OffloadRefusal } from '../build-placement.ts';
 import { filesystemBuildCapability } from '../cache/build-cache.ts';
 import { skippedMissReason } from '../cache/miss-reason.ts';
+import { processContext } from '../cli-operation.ts';
+import { planFlagRefusal, planPayload } from '../commands/build-plan.ts';
+import { DEFAULT_DEPS } from '../commands/ios/dependencies.ts';
 import { iosProcessRuntime } from '../commands/ios/launch.ts';
+import {
+  deviceModelRefusal,
+  resolveConfiguration,
+  resolveDeviceType,
+  resolveRuntime,
+} from '../commands/ios/support.ts';
+import type { FailArgs, IosCommandOptions } from '../commands/ios/types.ts';
 import { runCaptured } from '../engine/deps.ts';
+import { statsProjectKey } from '../engine/stats.ts';
 import { COMPILATION_CACHE_UNAVAILABLE, HEARTBEAT_INTERVAL_MS, readBundleId } from '../engine/xcode.ts';
 import { iosToolchainAsync } from '../engine/toolchain.ts';
 import { getExecutor } from '../exec.ts';
@@ -12,6 +25,13 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import { sourceManifest } from '../offload/native-source.ts';
 import { iosSyncPlan } from '../offload/signing-files.ts';
+import {
+  parseIosRemote,
+  remoteIosSetting,
+  type ResolvedProjectSettings,
+  SETTING_SHAPE_REMEDY,
+  settingShapeErrors,
+} from '../workspace/settings.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
 import { exactOffloadPlan, type ExactOffload } from './exact-offload.ts';
 import {
@@ -22,6 +42,7 @@ import {
   type IosProject,
 } from './ios-project.ts';
 import type { ProjectDoctor } from './project-doctor.ts';
+import type { PlanRefusal, ProjectPlanResult } from './project-plan.ts';
 
 const EXACT_CLI = 'exact.mjs';
 const CACHE_INELIGIBLE = 'Exact builds incrementally in its own target/ directory';
@@ -226,23 +247,122 @@ function exactBundleId(root: string): string | null {
   return typeof id === 'string' && id !== '' ? id : null;
 }
 
+function exactSchemeProblem(scheme: string | undefined, configuration: string | null | undefined): FailArgs | null {
+  if (scheme !== undefined || (configuration && configuration !== 'Debug' && configuration !== 'Release'))
+    return {
+      code: 'STIM_BAD_ARG',
+      message:
+        'Exact apps have no Xcode schemes; --configuration takes Debug (the development app) or Release (./exact.mjs ios --release).',
+      remedy: 'Drop --scheme, and pass --configuration Debug or Release.',
+    };
+  return null;
+}
+
+async function exactBuildPlacement(
+  root: string,
+  preference: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ refusal: PlanRefusal } | { buildPlacement: { preference: string; reason: string } } | null> {
+  if (placementWord(preference) === 'local') return null;
+  const planned = exactOffloadPlan(root, env);
+  if (!('unsupported' in planned)) return null;
+  const { buildPlacementCandidates, offloadPlacement } = await import('../offload/client.ts');
+  const { machines, localEnabled } = buildPlacementCandidates(preference);
+  try {
+    const placement = offloadPlacement({
+      machines: machines.length,
+      here: machineCapacity(),
+      unsupported: planned.unsupported,
+      localEnabled,
+      selected: preference,
+    });
+    return { buildPlacement: { preference, reason: `builds on this machine: ${placement.reason}` } };
+  } catch (error) {
+    if (!(error instanceof OffloadRefusal)) throw error;
+    return { refusal: { code: error.code, message: error.message, remedy: error.remedy } };
+  }
+}
+
+async function planExactIos(
+  root: string,
+  options: IosCommandOptions,
+  { context, settings }: ResolvedProjectSettings,
+  operation: StimContext,
+): Promise<ProjectPlanResult> {
+  if (options.easProfile !== undefined) return { refusal: planFlagRefusal('--eas-profile') };
+  const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
+  if (shapeError)
+    return {
+      refusal: { code: 'STIM_BAD_ARG', message: shapeError, remedy: SETTING_SHAPE_REMEDY },
+      lines: moreShapeErrors,
+    };
+  const remote = options.remote !== undefined ? parseIosRemote(options.remote) : remoteIosSetting(settings);
+  if (remote && !(remote.kind === 'machine' && remote.placement === 'auto'))
+    return {
+      refusal: {
+        code: 'STIM_BAD_ARG',
+        message: `This project integration does not support the ${remote.kind === 'backend' ? 'remote' : 'hosted'} iOS target.`,
+        remedy: 'Use a local iOS simulator for this integration.',
+      },
+    };
+  const layers = DEFAULT_DEPS.settingsLayers(context);
+  const slot = options.slot ?? 'default';
+  const modelRefusal = await deviceModelRefusal({
+    slot,
+    deviceTypeFlag: options.deviceType,
+    runtimeFlag: options.runtime,
+    deviceType: resolveDeviceType(options.deviceType, settings),
+    runtime: resolveRuntime(options.runtime, settings),
+    deviceTypeOrigin: DEFAULT_DEPS.settingOriginScope(layers, 'ios.deviceType'),
+    runtimeOrigin: DEFAULT_DEPS.settingOriginScope(layers, 'ios.runtime'),
+    physical: false,
+    remoteBackend: null,
+    listRuntimes: DEFAULT_DEPS.listIosRuntimes,
+    signal: operation.signal,
+  });
+  if (modelRefusal) return { refusal: modelRefusal };
+  const schemeProblem = exactSchemeProblem(options.scheme, resolveConfiguration(options.configuration, settings));
+  if (schemeProblem)
+    return {
+      refusal: { code: schemeProblem.code, message: schemeProblem.message ?? '', remedy: schemeProblem.remedy ?? '' },
+    };
+  const placement = await exactBuildPlacement(root, options.remoteBuild ?? 'auto', operation.env);
+  const plan = planPayload(
+    {
+      platform: 'ios',
+      slot,
+      root,
+      projectKey: statsProjectKey({ root, commonDir: context.gitCommonDir, repoRoot: context.repoRoot }),
+    },
+    {
+      fingerprint: null,
+      cacheKey: null,
+      cacheHit: false,
+      provider: null,
+      cacheSkipped: false,
+      prebuild: null,
+      missReason: skippedMissReason(CACHE_INELIGIBLE),
+      refusal: placement && 'refusal' in placement ? placement.refusal : null,
+    },
+  );
+  const bundleId = exactBundleId(root);
+  return {
+    ...plan,
+    placement: remote ? 'this machine; Exact apps cannot use a hosted device' : 'this machine',
+    ...(placement && 'buildPlacement' in placement ? { buildPlacement: placement.buildPlacement } : {}),
+    ...(bundleId ? { bundleId } : {}),
+  };
+}
+
 export function exactIosProject(root: string): IosProject {
   return {
+    plan: (options, resolved, operation) => planExactIos(root, options, resolved, operation ?? processContext(root)),
     isExpo: false,
     targets: ['simulator'],
     eas: false,
     runtimeKind: () => 'process',
     bundleId: () => exactBundleId(root),
-    schemeProblem(scheme, configuration) {
-      if (scheme !== undefined || (configuration && configuration !== 'Debug' && configuration !== 'Release'))
-        return {
-          code: 'STIM_BAD_ARG',
-          message:
-            'Exact apps have no Xcode schemes; --configuration takes Debug (the development app) or Release (./exact.mjs ios --release).',
-          remedy: 'Drop --scheme, and pass --configuration Debug or Release.',
-        };
-      return null;
-    },
+    schemeProblem: exactSchemeProblem,
     runtime: () => iosProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } })),
     artifact: (context) => exactRecipe(root, context),
   };

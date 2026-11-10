@@ -6,15 +6,23 @@ import { afterEach, beforeEach, expect, test } from 'vitest';
 import { exactIosProject } from '../integrations/exact-ios.ts';
 import { IosRecipeRefusal, type IosArtifactContext } from '../integrations/ios-project.ts';
 import { resolveOptimizations } from '../optimizations.ts';
+import type { IosCommandOptions } from '../commands/ios/types.ts';
+import { resolveSettings } from '../workspace/settings.ts';
+import { testContext } from './_context.ts';
 
 let root: string;
+let home: string;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'stim-exact-'));
+  home = mkdtempSync(join(tmpdir(), 'stim-exact-home-'));
+  process.env.STIM_HOME = home;
 });
 
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
+  delete process.env.STIM_HOME;
 });
 
 function exactScript(body: string): void {
@@ -175,4 +183,64 @@ test("an Exact build is incremental when target/ already holds the simulator's R
   mkdirSync(join(root, 'target', triple, 'host-dev'), { recursive: true });
   expect(await incremental('Debug')).toBe(true);
   expect(await incremental('Release')).toBe(false);
+});
+
+function plan(options: IosCommandOptions) {
+  const settingsContext = { projectPath: root, gitCommonDir: null, repoRoot: null };
+  const planner = exactIosProject(root).plan;
+  if (!planner) throw new Error('The Exact integration has no plan.');
+  return planner(options, { context: settingsContext, settings: resolveSettings(settingsContext) }, testContext());
+}
+
+test('plans an uncached build on this machine with the bundle id from app.json', async () => {
+  writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' } }));
+  expect(await plan({ remoteBuild: 'local', remote: 'auto' })).toEqual({
+    platform: 'ios',
+    fingerprint: null,
+    cacheKey: null,
+    cacheHit: false,
+    provider: null,
+    cacheSkipped: false,
+    prebuild: null,
+    outcome: 'cold',
+    expectedMs: null,
+    basis: 0,
+    missReason: expect.objectContaining({
+      kind: 'cache-skipped',
+      summary: 'Exact builds incrementally in its own target/ directory',
+    }),
+    placement: 'this machine; Exact apps cannot use a hosted device',
+    bundleId: 'com.example.shop',
+  });
+});
+
+test.each([
+  ['janics-mac-mini', 'hosted'],
+  ['eas', 'remote'],
+])('refuses to plan the %s device the run refuses', async (remote, target) => {
+  expect(await plan({ remote })).toEqual({
+    refusal: expect.objectContaining({
+      code: 'STIM_BAD_ARG',
+      message: `This project integration does not support the ${target} iOS target.`,
+    }),
+  });
+});
+
+test('names why an Exact build that cannot offload stays here, and refuses a named build machine', async () => {
+  writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' }, modules: ['camera'] }));
+  expect(await plan({ remoteBuild: 'auto' })).toMatchObject({
+    buildPlacement: { preference: 'auto', reason: 'builds on this machine: no remote machine is paired' },
+  });
+  expect(await plan({ remoteBuild: 'mini' })).toMatchObject({
+    outcome: null,
+    refusal: {
+      code: 'STIM_OFFLOAD_REFUSED',
+      message: expect.stringContaining('Exact apps that declare native modules build here'),
+    },
+  });
+});
+
+test('refuses a scheme or an Xcode configuration Exact does not have', async () => {
+  expect(await plan({ scheme: 'App' })).toMatchObject({ refusal: { code: 'STIM_BAD_ARG' } });
+  expect(await plan({ configuration: 'Staging' })).toMatchObject({ refusal: { code: 'STIM_BAD_ARG' } });
 });

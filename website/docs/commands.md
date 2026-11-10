@@ -633,6 +633,20 @@ adds `--release`, Exact's shipping build, whose first build takes minutes.
 `--scheme` and any other configuration are refused. The build starts once Stim
 has booted the simulator, and build-only runs (`stim ci build`) are refused.
 
+`stim ios --plan` and Stim Desktop's Next Build show the next run as an
+uncached build with the app's bundle id from `app.json`, where it builds, and an
+estimate from recorded runs:
+
+```text
+$ stim ios --plan --remote-build local
+  plan        ios -> no build cache: compiles
+  app         com.example.shop
+  device      this machine
+  build       local: builds on this machine
+  cache       miss: Exact builds incrementally in its own target/ directory
+  expect      unknown: no cold run of this project is recorded yet
+```
+
 Drive and test the app with Exact's own commands, pointed at the simulator
 `stim ios` reported:
 
@@ -871,7 +885,9 @@ the fingerprint before that prebuild. With
 `--eas-profile`, it asks EAS for a matching build and downloads nothing.
 
 `--json` prints
-`{ platform, slot?, fingerprint, cacheKey, cacheHit, provider, cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?, placement?, refusal? }`.
+`{ platform, slot?, fingerprint, cacheKey, cacheHit, provider, cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?, placement?, buildPlacement?, bundleId?, refusal? }`.
+`fingerprint` and `cacheKey` are `null` for an integration with no build cache,
+such as an [Exact app](#exact-apps), whose next build always compiles.
 `missReason` has the shape of `lastBuilds.<platform>.missReason` in
 [`stim status --json`](#status).
 `cacheHit` is `"local"`, `"remote"` or `false`. `expectedMs` is the median of

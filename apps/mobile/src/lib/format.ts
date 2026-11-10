@@ -256,6 +256,9 @@ export function nextBuild(plan: BuildPlan, withReason = true): string {
   if (plan.cacheHit === 'local') return t`cache hit (local)`;
   if (plan.cacheHit === 'remote') return t`cache hit (remote)`;
   if (plan.cacheHit !== false) return t`Unknown`;
+  const summary = plan.missReason?.summary ?? '';
+  const why = withReason && plan.missReason ? t`, ${summary}` : '';
+  if (plan.fingerprint === null) return t`uncached build${why}`;
   const off = plan.cacheSkipped ? t` (cache reads off)` : '';
   const prebuilds = plan.missReason?.kind !== 'prebuild-pending';
   const native =
@@ -264,8 +267,6 @@ export function nextBuild(plan: BuildPlan, withReason = true): string {
       : prebuilds && plan.prebuild === 'regenerate'
         ? t`, regenerates the native dir`
         : '';
-  const summary = plan.missReason?.summary ?? '';
-  const why = withReason && plan.missReason ? t`, ${summary}` : '';
   return t`cold build${off}${native}${why}`;
 }
 
