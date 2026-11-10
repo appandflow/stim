@@ -61,8 +61,7 @@ function clock(iso: string): string {
 
 export function daemonLine(status: DaemonStatus, now: number = Date.now()): string {
   const claim = status.claim ? `; unresolved claim ${status.claim.unresolved}; ${status.claim.removeCommand}` : '';
-  if (status.mode === 'off' && !status.running)
-    return `Daemon: off (daemon.mode); each dev server supervisor times its own idle stop${claim}`;
+  if (status.mode === 'off' && !status.running) return `Daemon: off (daemon.mode); no automatic pass runs${claim}`;
   const tickAt = Date.parse(status.lastTickAt ?? '');
   const tick = Number.isFinite(tickAt)
     ? `last tick ${formatLongDuration(Math.max(0, now - tickAt))} ago`
@@ -119,7 +118,7 @@ export function daemonFindings(
     findings.push({
       level: 'cost',
       title: 'The stim-daemon claim cannot be resolved',
-      detail: `${status.claim.unresolved}. While it stands no daemon decides idle in this Stim home, and dev server supervisors keep their own idle timers.`,
+      detail: `${status.claim.unresolved}. While it stands no daemon decides idle in this Stim home.`,
       fix: `If no stim-daemon process runs, remove it with \`${status.claim.removeCommand}\`.`,
     });
   if (status.mode === 'off') return findings;
@@ -132,7 +131,7 @@ export function daemonFindings(
     findings.push({
       level: 'cost',
       title: 'The stim-daemon has stopped ticking',
-      detail: `stim-daemon pid ${status.running.pid} holds its claim, but its last tick was ${Number.isFinite(tickAt) ? `${formatLongDuration(now - tickAt)} ago` : 'never written'}, so idle workspaces are not stopped and dev server supervisors stand down. Its log is ${daemonNdjsonFile()}.`,
+      detail: `stim-daemon pid ${status.running.pid} holds its claim, but its last tick was ${Number.isFinite(tickAt) ? `${formatLongDuration(now - tickAt)} ago` : 'never written'}, so idle workspaces and dev servers are not stopped. Its log is ${daemonNdjsonFile()}.`,
       fix: `Stop it with \`kill ${status.running.pid}\`; the next stim start, ios or android starts a new one.`,
     });
   if (!status.running && !status.claim) {
@@ -141,7 +140,7 @@ export function daemonFindings(
       findings.push({
         level: 'note',
         title: 'No stim-daemon runs while a dev server does',
-        detail: `${running.join(', ')} ${running.length === 1 ? 'runs a dev server' : 'run dev servers'}, so each supervisor times its own idle stop, without the idle stage's device and build output cleanup. ${daemonNdjsonFile()} says why the last daemon exited.`,
+        detail: `${running.join(', ')} ${running.length === 1 ? 'runs a dev server' : 'run dev servers'} that no stimd supervises, so nothing stops it when idle. ${daemonNdjsonFile()} says why the last daemon exited.`,
         fix: 'Run stim start in one of those workspaces; it starts the daemon.',
       });
   }

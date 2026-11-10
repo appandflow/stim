@@ -299,7 +299,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
   program
     .command('start')
     .description(
-      "Start this workspace's dev server under a detached supervisor and wait until it verifies as this project's. " +
+      "Start this workspace's dev server, run by this home's stimd, and wait until it verifies as this project's. " +
         'Idempotent: a healthy dev server on the reserved port is a no-op. Structured logs land in the global workspace logs directory.',
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')

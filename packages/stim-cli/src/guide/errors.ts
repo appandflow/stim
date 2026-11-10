@@ -1339,11 +1339,11 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       summary: 'the supervisor is alive but Metro or the tunnel was not ready within the wait; --wait 180',
       body: () => `STIM_METRO_TIMEOUT
   "The dev server did not answer on port <n> within <s>s."
-  The supervisor is alive, but Metro or its requested Expo tunnel is not ready.
+  The dev server is alive, but Metro or its requested Expo tunnel is not ready.
   A Debug \`ios\` or \`android\` run that starts the dev server reports the
   same refusal after the default 60s; re-running it waits for the same
-  supervisor again, and \`stim start --wait 180\` waits longer. \`start\` has already
-  printed the last lines of the global workspace logs/supervisor.log above this -- read
+  dev server again, and \`stim start --wait 180\` waits longer. \`start\` has already
+  printed the last lines of the global workspace logs/metro.stderr.log above this -- read
   them. A cold Metro on a large graph can genuinely need more than the default
   60s: re-run with \`--wait 180\`. Otherwise \`stim stop\`, then \`start\`.`,
     },
@@ -1359,13 +1359,13 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Metro. \`stim ports get\` prints the same message.`,
     },
     STIM_SUPERVISOR_EXITED: {
-      summary: 'the dev server failed outright; the quoted supervisor.log tail is the real error',
+      summary: 'the dev server failed outright; the quoted metro.stderr.log tail is the real error',
       body: () => `STIM_SUPERVISOR_EXITED
-  "The supervisor exited (<code|signal>) before the dev server came up"
+  "The dev server exited before it came up on port <n>."
   The dev server failed outright, and the quoted evidence is the real error:
-  the supervisor.log tail if it wrote one, plus this attempt's error records
+  the metro.stderr.log tail if it wrote one, plus this attempt's error records
   from the timeline (an expo child's config error -- a PluginError, a bad app
-  config -- lands THERE, not in supervisor.log). \`stim logs --errors\` has
+  config -- lands THERE). \`stim logs --errors\` has
   the full records. Fix that and run \`start\` again.
 
   A bind error on the reserved port ("listen EADDRINUSE ... :<port>") means

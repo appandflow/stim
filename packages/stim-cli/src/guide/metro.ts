@@ -1,12 +1,12 @@
 export default {
-  summary: 'The dev server: `stim start`, the supervisor, and starting your own',
+  summary: 'The dev server: `stim start`, stimd, and starting your own',
   body: () => `THE DEV SERVER
 
   stim start
   stim start --remote   # prepare Metro for a remote device
 
-Reserves (or reuses) this workspace's Metro port, starts the dev server under a
-detached SUPERVISOR, and waits until it both answers AND verifies as this
+Reserves (or reuses) this workspace's Metro port, has this home's stimd start
+the dev server as its own child, and waits until it both answers AND verifies as this
 project's before exiting. You get your shell back with a bundler running: no
 backgrounding idiom, no sleep, no poll loop, and no chance of building against
 another worktree's bundler.
@@ -27,19 +27,19 @@ comes from \`start --remote\`, eas/proxy in \`ios.remote\`, or \`android.remote\
 
 HOSTED IOS METRO
   ios --remote <machine> keeps Metro local and needs no start --remote.
-  The supervisor watches hosted Metro requests in workspace state and keeps a
+  stimd watches hosted Metro requests in workspace state and keeps a
   few authenticated connections open to the host for each session. The host
   pairs one with each connection the device makes to its loopback-only bridge,
-  and the supervisor forwards it to this Metro, so the host never connects back
+  and stimd forwards it to this Metro, so the host never connects back
   to this machine and a shared or ACL-restricted host works. For an Expo
   dev client the bridge listens on this machine's Metro port, which the dev server
   writes into the manifest. ios --remote starts Metro on a port free on both
   Macs; a running Metro or a pin on a port the host uses refuses the run before
-  the build. metro.tunnel and metro.publicUrl are ignored. Supervisor restart
+  the build. metro.tunnel and metro.publicUrl are ignored. A restarted stimd
   reopens the recorded links; stop or a stopped hosted session closes them. A recorded
   hosted session prevents Metro idle stop; maintenance.idleStopHours still stops the workspace and its hosted session (guide cleanup). Release runs skip the bridge.
-  Hosted Debug runs require a supervisor and a stim-server that support these
-  links before reservation. --no-metro-check refuses; restart a missing or older supervisor
+  Hosted Debug runs require a dev server stimd runs and a stim-server that support these
+  links before reservation. --no-metro-check refuses; restart a missing or older dev server
   with stim stop; stim start.
   Native iOS and Android logs are pulled from the host by stim logs, including --errors;
   JavaScript logs still arrive through Metro. Stop pulls native logs before
@@ -93,7 +93,7 @@ BUNDLE WARMUP
   Each request times out after 60 seconds and does not keep the command alive.
   Warmup failures do not fail the native build.
   Release builds and \`--no-metro-check\` skip warmup. Servers without Stim's
-  prefetch-aware response observer also skip it; restart an older supervisor
+  prefetch-aware response observer also skip it; restart an older dev server
   with the current CLI to enable warmup.
 
   Prefetch completion is not launch proof. Development launch verification
@@ -147,7 +147,7 @@ IDEMPOTENT
   STIM_METRO_PORT never moves: \`start\` refuses with STIM_BAD_ARG and names
   the holder before anything starts or the pin is reserved. This project's
   own Metro already on the pin is attached to. Changing the pin while this
-  workspace's dev server runs refuses until stim stop; a supervisor that cannot
+  workspace's dev server runs refuses until stim stop; a recorded dev server that cannot
   be verified also refuses, until you stop it with the tool that started it.
   You can also unset or restore the pin. stim web follows
   the same rules when its page uses Metro.
@@ -155,17 +155,21 @@ IDEMPOTENT
   then 8081, without probing, reserving or writing the registry. An invalid
   pin still refuses with STIM_BAD_ARG. Release builds still skip Metro.
 
-WHAT THE SUPERVISOR IS
-  One detached process per workspace. There is no machine-wide daemon, nothing
-  to install, and no cross-project state. It hosts the dev server, writes its
-  output as NDJSON into the global workspace logs directory
+WHO RUNS IT
+  This home's stimd (\`guide settings\`, THE STIM DAEMON) runs each workspace's
+  dev server as its own child, in its own process group, and \`start\` starts
+  stimd when none runs, whatever daemon.mode says. stimd writes the dev
+  server's output as NDJSON into the global workspace logs directory
   ($STIM_HOME/workspaces/<project>--<digest>/logs; see \`guide logs\`), and
-  records itself in that workspace's state.json before it starts serving. Three
+  records it in that workspace's state.json before it answers; the recorded
+  pid (supervisorPid, status's supervisor.pid) is the dev server's own. On
+  macOS and Linux the dev server outlives a stimd restart and the next stimd
+  takes it over through its metro.claim; on Windows it stops with stimd. Three
   modes: metro.command selects command-child, otherwise ecosystem detection
   picks one of the first two:
 
-    bare-inproc  bare React Native: Metro is hosted INSIDE the supervisor,
-                 from the project's own node_modules, with Stim's reporter
+    bare-inproc  bare React Native: Stim's Metro host runs Metro from the
+                 project's own node_modules, with Stim's reporter
                  attached. Bundler events, in-app console logs and redboxes
                  all arrive structured.
     expo-child   Expo: the project's own \`expo start --port <port>\` runs as
@@ -181,7 +185,7 @@ WHAT THE SUPERVISOR IS
                  launches stay UNVERIFIED: read \`stim logs --source metro\`
                  for the bundle lines.
 
-  expo-child and command-child put the Node the app pins (.nvmrc,
+  Every mode puts the Node the app pins (.nvmrc,
   .node-version, .tool-versions nodejs, or package.json volta.node), looking
   from the app directory up to its repository or worktree root, first on PATH
   when an nvm, fnm, Volta, asdf, mise or linked Homebrew
@@ -189,8 +193,7 @@ WHAT THE SUPERVISOR IS
   not; the metro log then records a project_node event naming it. When no
   install has the version the pin names, the newest install of the pinned
   major that is not older than the pin stands in, and a node on PATH of
-  that major and not older than the pin is kept. bare-inproc runs on the
-  supervisor's Node.
+  that major and not older than the pin is kept.
 
   In expo-child mode, remote intent plus metro.tunnel "expo" makes \`start\` pass
   \`--tunnel\` and EXPO_UNSTABLE_TUNNEL_V2=1 (the legacy ws-tunnel path is
@@ -199,39 +202,21 @@ WHAT THE SUPERVISOR IS
   happen here: \`ios --remote <proxy|eas>\` / \`android --remote <proxy|eas>\`
   cannot add \`--tunnel\` to
   an already-running dev server. A later \`start --remote\` refuses with a
-  stop-and-restart remedy when a healthy local Expo supervisor has no recorded
+  stop-and-restart remedy when a healthy local Expo dev server has no recorded
   Expo tunnel. See \`guide settings\` for metro.tunnel.
 
   \`stim status\` reports the pid, the mode, and whether it is answering.
-  \`stim stop\` is the inverse of \`start\`: it halts the supervisor, reaps
+  \`stim stop\` is the inverse of \`start\`: it has stimd stop the dev server, reaps
   the device-log collectors, shuts the owned device down (never deletes it)
   and frees the port.
 
 LINUX RUNNERS THAT REAP BACKGROUND PROCESSES
 
-Some command runners kill every descendant when a call ends, including Stim's
-detached Metro supervisor. If this happens on Linux and a user systemd manager
-is available, start Metro from the worktree in a transient user service. Choose
-a distinct unit name for each workspace:
-
-  systemd-run --user --collect --property=RemainAfterExit=yes \\
-    --working-directory="$PWD" --unit=stim-metro-my-worktree \\
-    bash -lc 'stim start'
-  journalctl --user --unit=stim-metro-my-worktree.service --no-pager
-
-Wait for the service's stim start to report ready before running stim ios or
-stim android. RemainAfterExit keeps systemd from stopping Metro when stim start
-returns; --scope and setsid do not escape a runner that reaps descendants.
-The service uses the user's login-shell environment. Check its journal if it
-cannot find stim or the project's Node version.
-
-Stim does not detect these runners or manage this transient unit. The stim-daemon
-needs no recipe: it starts as its own transient user service when a user systemd
-manager answers (guide settings, THE STIM DAEMON). At the end of
-the workflow, stop the workspace and the specific unit you created:
-
-  stim stop
-  systemctl --user stop stim-metro-my-worktree.service
+Some command runners kill every descendant when a call ends. The dev server is
+a child of stimd, which starts as its own transient user service when a user
+systemd manager answers (guide settings, THE STIM DAEMON), so such a runner
+does not reach it. Without one, run the command under \`stim ci run --\`, or
+end the job with \`stim stop\`.
 
   IDLE STOP: once the workspace has had no activity for idle.minutes
   (default 15; 0 never stops), the stim-daemon moves it into the idle stage
@@ -271,8 +256,8 @@ the workflow, stop the workspace and the specific unit you created:
   pass records workspace_idle and supervisor_stopped lines in metro.ndjson,
   devServerStop and idleStage in state.json, so \`status\` shows the idle
   stage and
-  "stopped (idle)" rather than a crash. With daemon.mode off, or while no
-  daemon runs, the supervisor applies the same clock to itself and its
+  "stopped (idle)" rather than a crash. With daemon.mode report or off,
+  stimd applies the same clock to the dev server and the workspace's
   devices, without deleting build outputs (\`guide settings\`). The next
   \`stim start\`
   starts it again and clears the
@@ -290,15 +275,13 @@ the workflow, stop the workspace and the specific unit you created:
   the launch on the device agent-device asked for, plus Metro. It refuses
   with STIM_NO_METRO when the last stop was not an idle stop or the
   workspace was stopped since, STIM_DEVICE_LOST when the owned device is
-  gone, and STIM_NO_RECORDED_BUILD when the app is. The setting is read
-  when \`start\` spawns the supervisor; a value that is not a whole number
-  of 0 or more is refused, as \`stim settings set\` refuses it.
+  gone, and STIM_NO_RECORDED_BUILD when the app is. stimd reads the
+  setting on each tick; a value that is not a whole number of 0 or more is
+  refused, as \`stim settings set\` refuses it.
 
-  WHY IT STOPPED: a supervisor that stops its dev server writes a
-  supervisor_stopped line (supervisor_idle_stopped for an idle stop) whose
-  stop field and message give the cause, and records the same cause as
-  devServerStop in state.json. A dev server that failed to start is
-  supervisor_failed instead. Plain \`status\` prints it after "not running"
+  WHY IT STOPPED: when a dev server stops, stimd writes a supervisor_stopped
+  line whose stop field and message give the cause, and records the same
+  cause as devServerStop in state.json. Plain \`status\` prints it after "not running"
   while the workspace keeps its port (\`stim stop\` releases the port, so its
   own stops show only in the log).
     requested      a Stim command stopped it and says which: stim stop,
@@ -312,41 +295,37 @@ the workflow, stop the workspace and the specific unit you created:
                    no request usually means something outside Stim signalled
                    the Expo process
     idle           idle.minutes, above
-  A supervisor killed with SIGKILL, or one that crashed, cannot write
-  anything; neither can one whose state file was not writable. The next
-  supervisor logs supervisor_vanished (level warn) for it, and until then
-  \`status\` reports metro.lastStop.reason "vanished".
+  A dev server that dies while no stimd runs, or whose state file was not
+  writable, records nothing: \`stop\` logs supervisor_vanished (level warn)
+  for it, and until then \`status\` reports metro.lastStop.reason "vanished".
 
   WATCHMAN ROOTS: a Metro that uses watchman registers a watch root in the
   shared watchman daemon and never removes it. Bare React Native Metro uses
   watchman whenever it is installed; Expo SDK 56 and later use it only when
-  metro.config.js sets resolver.useWatchman to true. When the supervisor stops
-  its dev server, it removes with \`watchman watch-del\` a root that appeared
+  metro.config.js sets resolver.useWatchman to true. When stimd stops a dev
+  server it started, it removes with \`watchman watch-del\` a root that appeared
   after it started, contains the workspace and carried this Metro's
   subscription, once no other client subscribes to it or has a trigger on it.
   It logs watchman_root_removed, or watchman_root_kept with the reason, in
   metro.ndjson. It never starts the daemon and leaves every other root alone,
   including those jest registers.
-  A supervisor that dies without stopping leaves its root: remove it with
+  A dev server that dies, or one a restarted stimd took over, leaves its root: remove it with
   \`watchman watch-del <root>\`. Removing a root stops its recrawls; the
   daemon's memory footprint shrinks only when the daemon restarts, which drops
   the watches of every other client. \`stim gc --cache watchman\` reports the
   daemon's footprint, roots and clients, and with --delete shuts it down only
   when no client is connected (\`guide cleanup memory\`).
 
-  ENVIRONMENT: the supervisor -- and through it the dev server, including a
-  metro.config.js evaluated inside the expo child -- inherits the environment
-  of the \`start\` call that SPAWNED it. A later \`start\` that finds a healthy
-  supervisor is a no-op and cannot change a running supervisor's env: to apply
-  a new env var, \`stop\` first, then \`start\` with it set.
+  ENVIRONMENT: the dev server, including a metro.config.js evaluated inside
+  the expo child, gets the environment of the command that STARTED it, which
+  the command forwards to stimd. A later \`start\` that finds a healthy dev
+  server is a no-op and cannot change its env: to apply a new env var,
+  \`stop\` first, then \`start\` with it set.
 
-  The supervisor's own stdio goes to the global workspace logs/supervisor.log, which is NOT
-  part of the NDJSON timeline. It is what a supervisor that died before it
-  could write a structured record leaves behind. In expo-child mode the child's
-  output is parsed into the TIMELINE instead, so a dev server that dies on a
-  config error leaves supervisor.log empty and its death cry in metro.ndjson.
-  A failed \`start\` quotes both for you: the supervisor.log tail when it has
-  one, and this attempt's error records from the timeline.
+  The dev server's own output goes to the global workspace
+  logs/metro.stdout.log and logs/metro.stderr.log, and stimd parses it into the
+  NDJSON TIMELINE (metro.ndjson). A failed \`start\` quotes the metro.stderr.log
+  tail and this attempt's error records from the timeline.
 
 STARTING YOUR OWN BUNDLER STILL WORKS
   A dev server YOU started is detected and left alone: \`start\` reports it
