@@ -79,7 +79,8 @@ export function watchHostedMetro(
   };
   const unpublished = new Map<string, HostedMetroLinks | null>();
   let republish: ReturnType<typeof setTimeout> | undefined;
-  const flush = async () => {
+  let flushing: Promise<void> = Promise.resolve();
+  const writeUnpublished = async () => {
     clearTimeout(republish);
     for (const [session, links] of unpublished) {
       try {
@@ -92,17 +93,20 @@ export function watchHostedMetro(
         });
       } catch {
         if (closed) return;
-        republish = setTimeout(() => void flush(), 1000);
+        republish = setTimeout(flush, 1000);
         republish.unref();
         return;
       }
-      unpublished.delete(session);
+      if (unpublished.get(session) === links) unpublished.delete(session);
     }
   };
+  function flush(): void {
+    flushing = flushing.then(writeUnpublished);
+  }
   const publish = (session: string, links: HostedMetroLinks | null) => {
     unpublished.delete(session);
     unpublished.set(session, links);
-    void flush();
+    flush();
   };
   const reconcile = async () => {
     if (closed) return;
