@@ -942,20 +942,33 @@ export function DeviceView({
             >
               {underBar ? <ViewerBackdrop /> : null}
               <View style={styles.bar} onLayout={(event) => setBarBottom(event.nativeEvent.layout.height)}>
-                <Touch
+                <View
+                  style={styles.barStart}
                   onLayout={(event) => {
                     const { width } = event.nativeEvent.layout;
                     setBarSides(([, right]) => [width, right]);
                   }}
-                  onPress={() => {
-                    Keyboard.dismiss();
-                    zoom.close();
-                  }}
-                  accessibilityLabel={t`Close`}
-                  style={styles.barButton}
                 >
-                  <Icon name="xmark" size={22} color={theme.media.text} />
-                </Touch>
+                  <Touch
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      zoom.close();
+                    }}
+                    accessibilityLabel={t`Close`}
+                    style={styles.barButton}
+                  >
+                    <Icon name="xmark" size={22} color={theme.media.text} />
+                  </Touch>
+                  {streams && canFullScreen ? (
+                    <Touch
+                      onPress={() => setFullScreen(true)}
+                      accessibilityLabel={t`Full Screen`}
+                      style={styles.barButton}
+                    >
+                      <Icon name="arrow.up.left.and.arrow.down.right" size={18} color={theme.media.text} />
+                    </Touch>
+                  ) : null}
+                </View>
                 <View
                   style={[
                     styles.titles,
@@ -1025,21 +1038,11 @@ export function DeviceView({
                   </View>
                 </View>
                 <View
-                  style={styles.barEnd}
                   onLayout={(event) => {
                     const { width } = event.nativeEvent.layout;
                     setBarSides(([left]) => [left, width]);
                   }}
                 >
-                  {streams && canFullScreen ? (
-                    <Touch
-                      onPress={() => setFullScreen(true)}
-                      accessibilityLabel={t`Full Screen`}
-                      style={styles.barButton}
-                    >
-                      <Icon name="arrow.up.left.and.arrow.down.right" size={18} color={theme.media.text} />
-                    </Touch>
-                  ) : null}
                   {!viewOnly && control.allowed !== null && (running || replaying) ? (
                     <ControlButton on={controlling} disabled={readOnly || replaying} onPress={toggle} />
                   ) : null}
@@ -1204,7 +1207,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.space.xs,
   },
   titles: { flex: 1, alignItems: 'center' },
-  barEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
+  barStart: { flexDirection: 'row', alignItems: 'center' },
   mediaText: { color: theme.media.text },
   subtitle: { color: theme.media.textTertiary, flexShrink: 1 },
   subtitleRow: {
