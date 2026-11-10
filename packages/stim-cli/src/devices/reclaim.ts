@@ -10,12 +10,13 @@ import {
   removeProject,
   withConfigLockAsync,
 } from '../workspace/config.ts';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTreeAsync, pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../stimd/metro/stop-cause.ts';
-import { ensurePersistentStimd, stopDeviceLogStream, stopMetroTree } from '../daemon/client.ts';
+import { drainOwned, ensurePersistentStimd, stopDeviceLogStream, stopMetroTree } from '../daemon/client.ts';
 import { readBootedParkDeadline } from './booted-park.ts';
 import {
+  BROWSER_LOCK,
   teardownOwnedBrowser,
   teardownOwnedIosSim,
   teardownOwnedAvd,
@@ -23,7 +24,7 @@ import {
   type ParkRequest,
 } from './teardown.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
-import { releaseClaim } from '../ownership-claim.ts';
+import { readClaimSet, releaseClaim } from '../ownership-claim.ts';
 import { parkedMaxSetting } from './sim-pool.ts';
 import { verifyCollectorOwnership } from '../stimd/logs/ownership.ts';
 import { sameCollectorRecord } from '../stimd/logs/state.ts';
@@ -36,17 +37,23 @@ import {
   type ManagedTunnelRecord,
 } from '../stimd/metro/state.ts';
 import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
-import { isJsonObject, LAST_BUILD_KEYS, readMacosRecord, hostedNativeRecords } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  LAST_BUILD_KEYS,
+  readMacosRecord,
+  hostedNativeRecords,
+  stimdClaimRoot,
+} from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
 import { macosAppPresent } from '../macos/state.ts';
-import { readWebRecord } from '../web/state.ts';
+import { readWebRecord, webLogFile } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { removePhoneReverses } from './phone-reverses.ts';
 import { stopTunnel, type StopTunnelResult } from '../engine/tunnel.ts';
 import { getExecutor } from '../exec.ts';
 import { runOperationFile } from '../engine/operation-exec.ts';
-import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { agentDeviceDaemon } from './activity.ts';
 import { phaseLine } from '../command-output.ts';
 import { workspaceAgentDeviceDir, workspaceDir } from '../workspace/paths.ts';
@@ -58,6 +65,18 @@ import {
   waitForProcessExit,
   type ProcessRecord,
 } from '../process-identity.ts';
+
+function hasOwnedLogs(root: string): boolean {
+  return readWebRecord(root) !== null || existsSync(webLogFile(root));
+}
+
+async function drainWorkspaceLogs(root: string, affected: boolean, operation: StimContext | undefined): Promise<void> {
+  if (!affected) return;
+  const claims = readClaimSet(stimdClaimRoot());
+  if (!claims.live.length && !claims.unresolved.length) return;
+  const failure = await drainOwned(root, operation?.env);
+  if (failure) throw new Error(`Could not drain workspace logs: ${failure}`);
+}
 
 function throwIfCleanupInterrupted(error: unknown, operation?: StimContext): void {
   if (error instanceof WorkspaceProcessCleanupError) throw error;
@@ -460,6 +479,7 @@ async function removeWorkspaceOutput(
   dir: string,
   archive: ReclaimOptions['archive'],
   state: ReturnType<typeof readWorkspaceState>,
+  lockDir: string,
   operation?: StimContext,
 ): Promise<void> {
   const stateDir = workspaceAgentDeviceDir(path);
@@ -483,7 +503,8 @@ async function removeWorkspaceOutput(
   }
   operation?.signal.throwIfAborted();
   if (archive) await archiveWorkspace(path, archive.removedBy, state, operation);
-  await emptyWorkspaceDir(dir, operation?.signal);
+  if (realpathSync(dir) !== lockDir) throw new Error('Workspace storage changed during cleanup');
+  await emptyWorkspaceDir(dir, operation?.signal, `${BROWSER_LOCK}.lock`);
 }
 
 async function reclaimIdleProject(
@@ -515,6 +536,7 @@ async function reclaimIdleProject(
   verifyAvdClaims(project, operation);
   const dereferenced = describeDereferenced(project);
   const initialState = readWorkspaceState(path);
+  const ownedLogs = hasOwnedLogs(path);
   await removePhoneReverses(path, { operation });
 
   let killedPid: number | null = null;
@@ -696,7 +718,18 @@ async function reclaimIdleProject(
     const dir = workspaceDir(path);
     if (existsSync(dir)) {
       try {
-        await removeWorkspaceOutput(path, dir, archive, initialState, operation);
+        const lockDir = realpathSync(dir);
+        await withWorkspaceProcessLock(
+          lockDir,
+          BROWSER_LOCK,
+          async () => {
+            if (realpathSync(dir) !== lockDir) throw new Error('Workspace storage changed during cleanup');
+            if (readWebRecord(path)) throw new Error('A replacement browser appeared during cleanup');
+            await drainWorkspaceLogs(path, ownedLogs || hasOwnedLogs(path), operation);
+            await removeWorkspaceOutput(path, dir, archive, initialState, lockDir, operation);
+          },
+          { external: true, waitMs: 0, ownerPurpose: 'workspace removal', signal, declareSpawnsFor: operation },
+        );
         if (workspaceExisted) removedWorkspaceDirs.push(dir);
       } catch (error) {
         throwIfCleanupInterrupted(error, operation);

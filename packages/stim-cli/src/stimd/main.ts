@@ -786,7 +786,7 @@ async function runStimdInner(
     desktopKey: key,
     script,
   });
-  const logs = createStreams((message) => log('warn', 'device_logs', message));
+  const logs = createStreams((message) => log('warn', 'device_logs', message), log);
   const threads = createThreadTable(log);
   let backgroundFailure: unknown;
   const lane = createPassesLane(threads, log, (error) => {
@@ -827,9 +827,11 @@ async function runStimdInner(
   };
   const open = new Set<Socket>();
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
+  const logsRunning = () => logs.running() || logs.ownedRunning();
   const hasOffWork = () =>
     Boolean(
       logs.running() ||
+      logs.ownedRunning() ||
       keepsServingWhenOff(lifetime.keepsServingWhenOff, ops.size > 0, Boolean(net.running()), restartingNet),
     );
   const opContexts = new Map<Socket, Invocation & { workspace: string }>();
@@ -944,6 +946,7 @@ async function runStimdInner(
       opControllers.delete(socket);
       if (ops.delete(socket)) void checkEngine();
     });
+    // eslint-disable-next-line complexity -- this handler dispatches the existing daemon operations.
     const onData = (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
       for (let end = buffer.indexOf(10); end >= 0; end = buffer.indexOf(10)) {
@@ -1134,6 +1137,31 @@ async function runStimdInner(
         } else if (op === 'op.wait' || op === 'op.resume') {
           if (ops.has(socket)) ops.set(socket, op === 'op.wait' ? 'waiting' : 'pinned');
           void checkEngine();
+        } else if (op === 'logs.observe' || op === 'logs.observe-web' || op === 'logs.drain') {
+          const root = isJsonObject(message.params) ? message.params.root : undefined;
+          const params = isJsonObject(message.params) ? message.params : {};
+          if (
+            typeof root !== 'string' ||
+            (op === 'logs.observe-web' &&
+              (typeof params.pid !== 'number' ||
+                !Number.isSafeInteger(params.pid) ||
+                params.pid <= 0 ||
+                typeof params.token !== 'string'))
+          )
+            socket.destroy();
+          else {
+            const request =
+              op === 'logs.observe'
+                ? logs.ownedSync(root)
+                : op === 'logs.observe-web'
+                  ? logs.ownedObserveWeb(root, params.pid as number, params.token as string)
+                  : logs.ownedDrain(root);
+            void request.then((error) =>
+              socket.end(
+                `${JSON.stringify({ op: op === 'logs.observe' ? 'logs.observed' : op === 'logs.observe-web' ? 'logs.web-observed' : 'logs.drained', error })}\n`,
+              ),
+            );
+          }
         } else if (op === 'metro.ensure' || op === 'tunnel.ensure' || op === 'metro.stop') {
           admissionRevision++;
           const context = opContexts.get(socket);
@@ -1244,9 +1272,11 @@ async function runStimdInner(
       alive: async (signal) =>
         net.running()
           ? 'the net thread serves'
-          : metroChildrenRun()
-            ? 'Metro or a tunnel is running'
-            : homeAlive(loadConfig(), await measureTick(loadConfig(), Date.now(), { probe: false, signal })),
+          : logs.ownedRunning()
+            ? 'owned app logs are being observed'
+            : metroChildrenRun()
+              ? 'Metro or a tunnel is running'
+              : homeAlive(loadConfig(), await measureTick(loadConfig(), Date.now(), { probe: false, signal })),
       waitMs,
       handover: attached?.handover ?? false,
       mode: effectiveMode,
@@ -1360,6 +1390,8 @@ async function runStimdInner(
   (retention ?? follower)?.record(Boolean(retention), [...workspaceEngineDirs(loadConfig()), ...metroEngineDirs()]);
   if (serve) void net.ensure(netOptions(serve)).then((answer) => onNet?.(answer));
   startup.signal.throwIfAborted();
+  await logs.ownedSync();
+  startup.signal.throwIfAborted();
   lifetime.serve(requestEnd, waitMs, instance);
   startup.finish?.();
   startup.finish = undefined;
@@ -1373,6 +1405,9 @@ async function runStimdInner(
   let emptyTicks = 0;
   let interval = tickMs;
   const kept = new Map<string, string>();
+  const syncOwned = () => {
+    if (!closing) void logs.ownedSync();
+  };
   for (;;) {
     if (!tickRequested && !closing) {
       await new Promise<void>((done) => {
@@ -1401,6 +1436,7 @@ async function runStimdInner(
     }
     void metroTick(mode === 'on', log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
     if (mode === 'off') {
+      await logs.ownedSync();
       if (hasOffWork()) {
         for (const socket of tickReplies.splice(0)) socket.destroy();
         continue;
@@ -1431,6 +1467,7 @@ async function runStimdInner(
       });
       const { config, now, measured, workspaces, pressure, actions, operation } = passes;
       operation.signal.throwIfAborted();
+      syncOwned();
       actions.push(...lane.take());
       if (maintenanceAllowed() && !dependencyWork && Date.now() - dependencyScanAt >= DEPENDENCY_SCAN_MS) {
         dependencyScanAt = Date.now();
@@ -1539,7 +1576,7 @@ async function runStimdInner(
     }
     if (!maintenanceAllowed()) break;
     const idle = !alive && !pending && !wentDormant && Date.now() - contactSince >= tickMs;
-    emptyTicks = countIdleTicks(idle, logs.running(), emptyTicks);
+    emptyTicks = countIdleTicks(idle, logsRunning(), emptyTicks);
     const tookMs = Math.round(performance.now() - tickStarted);
     await new Promise((done) => setTimeout(done, 0));
     log(

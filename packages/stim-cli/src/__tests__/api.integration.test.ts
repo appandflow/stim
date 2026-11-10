@@ -11,30 +11,64 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import assert from 'node:assert/strict';
 import type { ChildProcess } from 'node:child_process';
 import { workspaceName } from '@stim-cli/core';
 import { readWorkspaceState } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { deviceLeaseLockPath, deviceLeasePath, takeLease } from '../engine/device-lease.ts';
-import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { createStim, StimError } from '../api.ts';
 import * as hostedLogs from '../device-host/hosted-logs-sync.ts';
 
 let scratch: string;
+let homes: string[];
 
 beforeEach(() => {
   scratch = realpathSync(mkdtempSync(join(tmpdir(), 'stim-api-')));
-  vi.stubEnv('STIM_HOME', join(scratch, 'caller-home'));
+  const callerHome = join(scratch, 'caller-home');
+  homes = [callerHome];
+  vi.stubEnv('STIM_HOME', callerHome);
 });
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-  rmSync(scratch, { recursive: true, force: true });
+afterEach(async () => {
+  try {
+    for (const home of homes) {
+      const root = join(home, 'run', 'stimd');
+      const claims = readClaimSet(root);
+      assert.deepEqual(claims.unresolved, [], `Unverified fixture daemon; retained ${scratch}.`);
+      for (const { owner } of claims.live) {
+        assert.notEqual(owner.pid, process.pid, `Fixture claim is held by the test process; retained ${scratch}.`);
+        const identity = inspectProcessIdentity(owner);
+        if (identity === 'gone' || identity === 'different') continue;
+        assert.equal(identity, 'same', `Unverified fixture daemon ${owner.pid}; retained ${scratch}.`);
+        try {
+          process.kill(owner.pid, 'SIGTERM');
+        } catch (error) {
+          if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error;
+        }
+        assert(
+          await waitForProcessExit(owner, 10_000),
+          `Fixture daemon ${owner.pid} did not exit; retained ${scratch}.`,
+        );
+      }
+      const remaining = readClaimSet(root);
+      assert.deepEqual(remaining.live, [], `Fixture daemon still holds a claim; retained ${scratch}.`);
+      assert.deepEqual(remaining.unresolved, [], `Fixture daemon is unresolved; retained ${scratch}.`);
+      assert.deepEqual(remaining.dead, [], `Fixture daemon claim was not released; retained ${scratch}.`);
+      assert.deepEqual(remaining.orphans, [], `Fixture daemon child marker remains; retained ${scratch}.`);
+    }
+    rmSync(scratch, { recursive: true, force: true });
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
 function fixture(name: string) {
   const root = join(scratch, name);
   const home = join(scratch, `${name}-home`);
+  homes.push(home);
   mkdirSync(root);
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name, private: true }));
   const directory = join(home, 'workspaces', workspaceName(root), 'logs');

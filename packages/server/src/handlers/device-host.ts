@@ -224,7 +224,7 @@ export async function hostedMethod(
           : method === 'device-host.stop'
             ? ctx.hostedDevices.stop(session.id, raw)
             : method === 'device-host.app.offer'
-              ? ctx.hostedDevices.appOffer(session.id, raw)
+              ? ctx.hostedDevices.appOffer(session.id, raw, ctx.runId)
               : method === 'device-host.app.chunk'
                 ? await ctx.hostedDevices.appChunk(session.id, raw)
                 : method === 'device-host.app.handoff'

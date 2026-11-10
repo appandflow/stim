@@ -37,6 +37,7 @@ import {
   getPlatformDeviceLimits,
   hostedIdleStopHours,
   isJsonObject,
+  validRunId,
   parseHostedMacosDevice,
   parseHostedPlatformDevice,
   hostedDeviceId,
@@ -106,6 +107,7 @@ interface OwnedSession {
   data?: Promise<void>;
   logs?: { started: number; more: boolean; run?: WorkerRun; pending?: Promise<void> };
   stopping?: Promise<void>;
+  stopGeneration?: number;
   installing?: { attempt: string; done: Promise<void> };
   app?: HostedAppRecord;
   installedAttempt?: string;
@@ -1351,7 +1353,11 @@ export class DeviceHost {
     return record;
   }
 
-  appOffer(client: string, params: unknown): AppAnswer<Methods['device-host.app.offer']['result']> {
+  appOffer(
+    client: string,
+    params: unknown,
+    runId?: string | null,
+  ): AppAnswer<Methods['device-host.app.offer']['result']> {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
     const offer = parseHostedAppOffer(params);
     if (!offer)
@@ -1386,7 +1392,8 @@ export class DeviceHost {
         readHostedApp(record.id, record.appAttempt).state === 'receiving'
       )
         throw new Error('Complete the current app transfer or stop this hosted session before offering another app.');
-      const result = offerHostedApp(offer);
+      const initiatingRunId = record.platform === 'macos' ? validRunId(runId) : null;
+      const result = offerHostedApp(offer, initiatingRunId ?? undefined);
       this.change(record.id, (current) => {
         current.appAttempt = offer.attempt;
       });
@@ -1634,9 +1641,9 @@ export class DeviceHost {
         throw new Error(
           'Only a ready session attached to this server can install an app. Explicit stop must reconcile a lost owner.',
         );
-      const owned = this.acquire(record);
       const app = readHostedAppMetadata(record.id, (params as { attempt: string }).attempt);
       if (app.state !== 'receiving') return this.appAttach(client, params);
+      const owned = this.acquire(record);
       if (owned.stopping || owned.data || owned.installing)
         throw new Error('This hosted session already has a native operation in progress.');
       if (owned.metro && (!owned.metro.port || owned.metro.closing))
@@ -1663,6 +1670,16 @@ export class DeviceHost {
   }
 
   private async install(record: HostedDeviceSession, owned: OwnedSession, attempt: string): Promise<void> {
+    const generation = owned.stopGeneration ?? 0;
+    const interrupted = () => {
+      const current = readHostedSessions().find((entry) => entry.id === record.id);
+      return (
+        (owned.stopGeneration ?? 0) !== generation ||
+        this.owned.get(record.id) !== owned ||
+        current?.state !== 'ready' ||
+        current.appAttempt !== attempt
+      );
+    };
     try {
       if (record.platform !== 'macos' || this.options.agents.access(record.id))
         await this.stopAgent(
@@ -1677,13 +1694,17 @@ export class DeviceHost {
                 }
               : undefined,
         );
+      if (interrupted()) return;
       await this.closeView(owned);
+      if (interrupted()) return;
       await this.settleLogs(owned);
-      if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
+      if (interrupted() || this.closed || !this.options.allowed(record.client)) return;
       releaseClaim(takeHostedInputClaim(owned.claim));
+      if (interrupted()) return;
       const run = this.run(record, owned, 'install', attempt);
       owned.run = run;
       const outcome = await run.done;
+      if (interrupted()) return;
       const value = outcome.value;
       const installed =
         !owned.stopping &&
@@ -1703,6 +1724,7 @@ export class DeviceHost {
           (typeof value.pid === 'number' && Number.isSafeInteger(value.pid) && value.pid > 0))
       )
         await this.startAgent(record, attempt, value.pid as number);
+      if (interrupted() || this.closed || !this.options.allowed(record.client)) return;
       const app = changeHostedApp(record.id, attempt, (current) => {
         current.state = installed ? 'installed' : 'unknown';
         current.launched = installed ? (value as { launched: HostedAppDelivery['launched'] }).launched : null;
@@ -1871,6 +1893,7 @@ export class DeviceHost {
     if (record.state === 'stopped') return;
     const owned = this.acquire(record);
     if (owned.stopping) return;
+    owned.stopGeneration = (owned.stopGeneration ?? 0) + 1;
     const agentStop = this.stopAgent(
       record.id,
       record.platform !== 'macos',

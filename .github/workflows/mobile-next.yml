@@ -1,0 +1,230 @@
+name: Mobile next
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/core/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/mobile-next.yml'
+  # Picks up a head whose push run skipped the gate; it only warns about a build missing from TestFlight.
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-next
+  cancel-in-progress: false
+
+jobs:
+  next:
+    if: github.repository == 'appandflow/stim' && vars.MOBILE_NEXT_PAUSED != 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      checks: read
+    timeout-minutes: 120
+    env:
+      # eas submit reads the app config without the build profile's env, so the variant is set for every step.
+      APP_VARIANT: next
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/mobile
+    steps:
+      - name: Resolve the head of main
+        id: head
+        working-directory: .
+        run: |
+          sha=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY" refs/heads/main | cut -f1)
+          [ -n "$sha" ] || { echo "::error::could not resolve refs/heads/main"; exit 1; }
+          echo "head of main: $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # The main ruleset requires the merge queue's `merge gate` check, but repository admins can
+      # bypass it. A bypassed push ships only once the CI release-gate jobs passed on it.
+      - name: The head passed its required checks
+        id: gate
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          passed() {
+            local conclusion
+            conclusion=$(gh api -X GET "repos/$GITHUB_REPOSITORY/commits/$SHA/check-runs" -f check_name="$1" \
+              --jq '.check_runs | sort_by(.id) | last | .conclusion // ""')
+            [ "$conclusion" = success ]
+          }
+          if passed 'merge gate'; then
+            echo "merge gate passed on $SHA"
+          elif passed 'test (node 22)' && passed 'test (node 24)' && passed 'published runtime (node 22.12.0)'; then
+            echo "$SHA bypassed the merge queue; the CI release-gate jobs passed"
+          else
+            echo "::notice::$SHA has no passing merge gate or CI release gate yet; not shipping it"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          ref: ${{ steps.head.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          cache: false
+          install: false
+
+      - name: Install before any secret is loaded
+        if: steps.gate.outputs.skip != 'true'
+        run: pnpm install --frozen-lockfile --filter stim-mobile... --filter stim-monorepo
+
+      - name: Build the shared notification rules
+        if: steps.gate.outputs.skip != 'true'
+        run: pnpm --filter @stim-cli/core run build
+
+      - uses: expo/expo-github-action@eab7a230208c952974db8c3245cfd78402c7b385 # 9.0.0
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          eas-version: 24.10.0
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      # Only the latest finished next build counts: it is the binary TestFlight testers run. A next update's
+      # message starts with `next <sha> bundle:<hash>`, the commit and exported bundle the next run compares.
+      - name: Choose a build, an upload, an update or nothing
+        id: plan
+        if: steps.gate.outputs.skip != 'true'
+        env:
+          SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          runtime="$(npx expo-updates fingerprint:generate --platform ios | jq -r .hash)"
+          echo "runtime=$runtime" >> "$GITHUB_OUTPUT"
+          newest="$(eas build:list --platform ios --build-profile next --limit 1 --json --non-interactive | jq -c '.[0] // empty')"
+          case "$(jq -r '.status // empty' <<<"$newest")" in
+            NEW | IN_QUEUE | IN_PROGRESS | PENDING_CANCEL)
+              echo "::notice::Next build $(jq -r .id <<<"$newest") is still running; nothing to do until it finishes."
+              echo "mode=none" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          latest="$(eas build:list --platform ios --build-profile next --status finished --limit 1 --json --non-interactive | jq -c '.[0] // empty')"
+          if [ -z "$latest" ] || [ "$(jq -r '.runtime.version // empty' <<<"$latest")" != "$runtime" ]; then
+            if [ "$(jq -r '.gitCommitHash // empty' <<<"$newest")" = "$SHA" ]; then
+              echo "::warning::Next build $(jq -r .id <<<"$newest") of $SHA ended $(jq -r .status <<<"$newest"); not building the same commit again. The next commit on main, or eas build --profile next by hand, tries again."
+              echo "mode=none" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::notice::The latest finished next build is not on runtime $runtime; building one."
+            echo "mode=build" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          build_id="$(jq -r .id <<<"$latest")"
+          build_number="$(jq -r .appBuildVersion <<<"$latest")"
+          build_sha="$(jq -r '.gitCommitHash // empty' <<<"$latest")"
+          if ! testflight="$(eas submit:status --platform ios --profile next --json --non-interactive)"; then
+            echo "::error::Could not read Stim Next's TestFlight builds from App Store Connect."
+            exit 1
+          fi
+          if ! jq -e --arg id "$build_id" '.ios.testFlightBuilds[] | select(.easBuildId == $id)' <<<"$testflight" >/dev/null; then
+            if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+              echo "::warning::Next build $build_number ($build_id) is not on TestFlight. A push or a manual run uploads it again; the hourly run does not, so a rejected upload is not retried every hour."
+              echo "mode=none" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::notice::Next build $build_number ($build_id) is not on TestFlight; uploading it."
+            echo "build_id=$build_id" >> "$GITHUB_OUTPUT"
+            echo "mode=upload" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! updates="$(eas update:list --branch next --platform ios --limit 50 --json --non-interactive 2>"$RUNNER_TEMP/update-list.err")"; then
+            if ! grep -q 'Could not find branch' "$RUNNER_TEMP/update-list.err"; then
+              cat "$RUNNER_TEMP/update-list.err" >&2
+              exit 1
+            fi
+            updates='{}'
+          fi
+          last="$(jq -r --arg runtime "$runtime" '[(.currentPage // [])[] | select(.runtimeVersion == $runtime) | .message][0] // empty' <<<"$updates")"
+          update_sha="$(sed -nE 's/^"?next ([0-9a-f]{40}) bundle:([0-9a-f]+).*/\1/p' <<<"$last")"
+          update_hash="$(sed -nE 's/^"?next ([0-9a-f]{40}) bundle:([0-9a-f]+).*/\2/p' <<<"$last")"
+          base="${update_sha:-$build_sha}"
+          paths=(apps/mobile packages/core pnpm-lock.yaml ':(glob,exclude)**/*.md' ':(glob,exclude)**/*.test.*' ':(glob,exclude)**/__tests__/**')
+          if git cat-file -e "$base^{commit}" 2>/dev/null && git -C "$GITHUB_WORKSPACE" diff --quiet "$base" "$SHA" -- "${paths[@]}"; then
+            echo "::notice::Nothing the app ships changed since $base; publishing nothing."
+            echo "mode=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Hermes bytecode differs between two compiles of the same source; its file name carries Metro's hash of
+          # the JS, so the bytecode counts by name and every other file by content.
+          npx expo export --platform ios --output-dir "$RUNNER_TEMP/next-export" >/dev/null
+          hash="$(cd "$RUNNER_TEMP/next-export" &&
+            { find . -type f -name '*.hbc' | sort; find . -type f ! -name '*.hbc' -print0 | sort -z | xargs -0 sha256sum; } |
+            sha256sum | cut -c1-16)"
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+          if [ -n "$update_hash" ] && [ "$update_hash" = "$hash" ]; then
+            echo "::notice::The exported bundle ($hash) equals the last next update's; publishing nothing."
+            echo "mode=none" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Publishing a next update of bundle $hash on runtime $runtime."
+            echo "mode=update" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish a next update
+        if: steps.plan.outputs.mode == 'update'
+        env:
+          SHA: ${{ steps.head.outputs.sha }}
+          HASH: ${{ steps.plan.outputs.hash }}
+        run: |
+          message="next $SHA bundle:$HASH $(git log -1 --format=%s "$SHA")"
+          eas update --channel next --environment production --platform ios --message "$message" --non-interactive
+
+      - name: Upload the update's source maps to Sentry
+        if: steps.plan.outputs.mode == 'update'
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_URL: https://sentry.io/
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+            echo "SENTRY_AUTH_TOKEN is not set; skipping the Sentry source map upload."
+            exit 0
+          fi
+          npx sentry-expo-upload-sourcemaps dist
+
+      - name: Build Stim Next
+        id: build
+        if: steps.plan.outputs.mode == 'build'
+        env:
+          EXPO_APPLE_TEAM_ID: R7E8P23K3N
+          EXPO_APPLE_TEAM_TYPE: COMPANY_OR_ORGANIZATION
+        run: |
+          if ! jq -e '.submit.next.ios.ascAppId' eas.json >/dev/null; then
+            echo "::error::eas.json has no submit.next.ios.ascAppId. Create the Stim Next app in App Store Connect and add its Apple ID."
+            exit 1
+          fi
+          eas build --platform ios --profile next --non-interactive --json > build.json
+          build_id="$(jq -r '.[0].id // empty' build.json)"
+          [ -n "$build_id" ] || { echo "::error::eas build printed no build id."; exit 1; }
+          echo "build_id=$build_id" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Stim Next to TestFlight for internal testers
+        if: steps.plan.outputs.mode == 'build' || steps.plan.outputs.mode == 'upload'
+        env:
+          BUILD_ID: ${{ steps.build.outputs.build_id || steps.plan.outputs.build_id }}
+        run: eas submit --platform ios --profile next --id "$BUILD_ID" --non-interactive --wait

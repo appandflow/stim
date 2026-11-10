@@ -8,7 +8,7 @@ const dsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
 if (dsn) {
   Sentry.init({
     dsn,
-    environment: __DEV__ ? 'development' : 'production',
+    environment: __DEV__ ? 'development' : Updates.channel === 'next' ? 'next' : 'production',
     sendDefaultPii: false,
     attachScreenshot: false,
     attachViewHierarchy: false,

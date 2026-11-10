@@ -13,6 +13,9 @@ import { delimiter, join } from 'node:path';
 import type { Worker } from 'node:worker_threads';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { writeWebRecord } from '../web/state.ts';
 
 const captured = vi.hoisted(() => ({ workers: [] as Worker[] }));
 vi.mock('node:worker_threads', async (original) => {
@@ -27,6 +30,122 @@ vi.mock('node:worker_threads', async (original) => {
 });
 
 describe.skipIf(process.platform === 'win32')('logs worker failure', () => {
+  test('shutdown waits for recovery and refuses to create a replacement worker', async () => {
+    const { createStreams } = await import('../stimd/logs/streams.ts');
+    const home = mkdtempSync(join(tmpdir(), 'stim-worker-crash-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-worker-crash-app-')));
+    vi.stubEnv('STIM_HOME', home);
+    const streams = createStreams(() => {});
+    let release!: (code: number) => void;
+    const held = new Promise<number>((resolve) => {
+      release = resolve;
+    });
+    try {
+      expect(await streams.ownedSync(root)).toBeNull();
+      const worker = captured.workers.at(-1);
+      if (!worker) throw new Error('the logs worker was not started');
+      await worker.terminate();
+      const terminate = vi.spyOn(worker, 'terminate').mockReturnValue(held);
+      const recovery = streams.ownedSync(root);
+      await vi.waitFor(() => expect(terminate).toHaveBeenCalled());
+      const count = captured.workers.length;
+      const closing = streams.close();
+      expect(await streams.ownedSync(root)).toContain('closing');
+      release(0);
+      expect(await recovery).toContain('closing');
+      await closing;
+      expect(captured.workers).toHaveLength(count);
+      expect(await streams.ownedSync(root)).toContain('closing');
+    } finally {
+      release(0);
+      await streams.close().catch(() => {});
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a retained native claim does not block unrelated owned log recovery', async () => {
+    const { createStreams } = await import('../stimd/logs/streams.ts');
+    const home = mkdtempSync(join(tmpdir(), 'stim-worker-crash-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-worker-crash-app-')));
+    const bin = join(home, 'bin');
+    mkdirSync(bin);
+    vi.stubEnv('STIM_HOME', home);
+    const pidFile = join(home, 'pid');
+    const xcrun = join(bin, 'xcrun');
+    writeFileSync(xcrun, '#!/bin/sh\ntrap "" TERM\necho $$ > "$TEST_PID"\nexec sleep 600\n');
+    chmodSync(xcrun, 0o755);
+    const env = { ...process.env, STIM_HOME: home, TEST_PID: pidFile, PATH: [bin, process.env.PATH].join(delimiter) };
+    const streams = createStreams(() => {});
+    let pid = 0;
+    let token: string | null = null;
+    try {
+      const input = { root, platform: 'ios' as const, udid: 'U1', bundleId: 'com.test.app', appName: 'Test' };
+      await streams.start(input, env);
+      pid = await vi.waitFor(() => {
+        const written = Number(existsSync(pidFile) ? readFileSync(pidFile, 'utf8') : '');
+        expect(written).toBeGreaterThan(0);
+        return written;
+      });
+      token = captureProcessToken(pid);
+      if (!token) throw new Error('the child has no process identity');
+      const worker = captured.workers.at(-1);
+      if (!worker) throw new Error('the logs worker was not started');
+      await worker.terminate();
+      await vi.waitFor(() => expect(readWorkspaceState(root)?.collectors).toBeDefined());
+      await expect(streams.start(input, env)).rejects.toThrow('could not be stopped');
+      expect(readWorkspaceState(root)?.collectors).toBeDefined();
+      expect(await streams.ownedSync(root)).toBeNull();
+      expect(captured.workers.at(-1)).not.toBe(worker);
+    } finally {
+      if (token && inspectProcessIdentity({ pid, processToken: token }) === 'same') process.kill(-pid, 'SIGKILL');
+      await streams.close().catch(() => {});
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+  test('a worker exit while a browser is attaching makes drain and shutdown retain uncertainty', async () => {
+    const { createStreams } = await import('../stimd/logs/streams.ts');
+    const home = mkdtempSync(join(tmpdir(), 'stim-worker-crash-home-'));
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-worker-crash-app-')));
+    vi.stubEnv('STIM_HOME', home);
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    await once(child, 'spawn');
+    if (child.pid === undefined) throw new Error('the browser did not start');
+    const chrome = { pid: child.pid, processToken: captureProcessToken(child.pid) ?? '' };
+    writeWebRecord(root, {
+      ...chrome,
+      chromeProcess: chrome,
+      chrome: process.execPath,
+      headless: true,
+      viewport: 'desktop',
+      ignoreCertificateErrors: false,
+      cdpPort: 1,
+      profile: join(root, 'profile'),
+      url: 'http://localhost:1/',
+      startedAt: new Date().toISOString(),
+    });
+    const streams = createStreams(() => {});
+    try {
+      const count = captured.workers.length;
+      const attaching = streams.ownedSync(root);
+      await vi.waitFor(() => expect(captured.workers.length).toBeGreaterThan(count));
+      const worker = captured.workers.at(-1);
+      if (!worker) throw new Error('the logs worker was not started');
+      await worker.terminate();
+      expect(await attaching).not.toBeNull();
+      expect(await streams.ownedDrain(root)).toContain('previous owned log worker exited');
+      await expect(streams.close()).rejects.toThrow('previous owned log worker exited');
+    } finally {
+      child.kill('SIGKILL');
+      await streams.close().catch(() => {});
+      vi.unstubAllEnvs();
+      rmSync(home, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
   test('main reaps its native child and releases the claim after the worker exits', async () => {
     const { createStreams } = await import('../stimd/logs/streams.ts');
     const home = mkdtempSync(join(tmpdir(), 'stim-worker-crash-home-'));
@@ -44,8 +163,11 @@ describe.skipIf(process.platform === 'win32')('logs worker failure', () => {
     let child: { pid: number; processToken: string } | null = null;
     try {
       await streams.start({ root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' }, env);
-      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-      const pid = Number(readFileSync(pidFile, 'utf8'));
+      const pid = await vi.waitFor(() => {
+        const written = Number(existsSync(pidFile) ? readFileSync(pidFile, 'utf8') : '');
+        expect(written).toBeGreaterThan(0);
+        return written;
+      });
       const token = captureProcessToken(pid);
       if (!token) throw new Error('the child has no process identity');
       child = { pid, processToken: token };
