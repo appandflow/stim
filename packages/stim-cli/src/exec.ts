@@ -492,6 +492,10 @@ const defaultExecutor: Executor = {
           } catch {}
         }
       };
+      child.on('error', (error) => {
+        stopTimers();
+        reject(redactError(error, redact));
+      });
       try {
         lifetime = reportChild(
           child,
@@ -592,10 +596,6 @@ const defaultExecutor: Executor = {
       } else if (timeout !== undefined) arm(timeout);
       child.stdout?.on('data', (chunk: Buffer) => capture(stdout, chunk));
       child.stderr?.on('data', (chunk: Buffer) => capture(stderr, chunk));
-      child.on('error', (error) => {
-        stopTimers();
-        reject(redactError(error, redact));
-      });
       const finish = async (status: number | null, signal: NodeJS.Signals | null): Promise<void> => {
         stopTimers();
         await lifetime?.closed;

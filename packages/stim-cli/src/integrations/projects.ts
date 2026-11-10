@@ -124,6 +124,21 @@ const swiftPackage: ProjectIntegration = {
   },
 };
 
+const exactApp: ProjectIntegration = {
+  id: 'exact',
+  inspect(root) {
+    if (!existsSync(join(root, 'exact.mjs')) || !existsSync(join(root, 'app.json'))) return null;
+    return {
+      root: 'explicit',
+      application: true,
+      platforms: () => ['ios'],
+      validate: (operation) => (operation === 'ios' ? null : undefined),
+      ios: async () => (await import('./exact-ios.ts')).exactIosProject(root),
+      doctor: async () => (await import('./exact-ios.ts')).exactDoctor(),
+    };
+  },
+};
+
 const browserWeb: ProjectIntegration = {
   id: 'browser-web',
   inspect(root) {
@@ -141,6 +156,7 @@ export const projectIntegrations: readonly ProjectIntegration[] = [
   reactNativeProject,
   nativeAndroidIntegration,
   swiftPackage,
+  exactApp,
   browserWeb,
   nativeXcodeProjectIntegration,
 ];

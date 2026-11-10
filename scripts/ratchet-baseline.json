@@ -111,13 +111,13 @@
   },
   "packages/stim-cli": {
     "src": {
-      "as": 845,
-      "nonNull": 343,
+      "as": 844,
+      "nonNull": 341,
       "refusalRemedy": 17
     },
     "test": {
-      "as": 432,
-      "nonNull": 604
+      "as": 441,
+      "nonNull": 609
     }
   },
   "packages/transport": {

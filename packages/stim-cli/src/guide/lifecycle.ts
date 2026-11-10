@@ -428,6 +428,55 @@ Copyable agent request:
   --json. Verify its expected screen and interaction on the reported device,
   inspect stim logs --errors, then stop only this workspace with stim stop.`,
     },
+    'exact-ios': {
+      summary:
+        'Exact apps: building with exact.mjs, driving with Exact on the owned simulator, remote builds, worktree limits',
+      body: () => `EXACT APPS
+An Exact app (https://github.com/expo/exact) has exact.mjs next to app.json.
+Run from that directory:
+
+  stim ios --json
+  EXACT_SIM=<udid from stim ios> ./exact.mjs agent ios tree "screenshot out.png"
+  EXACT_SIM=<udid> ./exact.mjs test ios
+  stim stop
+
+stim ios runs the app's own ./exact.mjs ios --no-install with EXACT_SIM set to
+the workspace's owned simulator, installs the .app it reports, and launches it
+as a native process without Metro (metroPort: null). --configuration Release
+adds --release (Exact's shipping build; its first build takes minutes); any other
+configuration and --scheme are refused. The build starts once Stim has booted
+that simulator, and build-only runs (stim ci build) are refused. Exact
+compiles incrementally in the checkout's target/ directory, so Stim keeps no
+artifact cache for it; a one-line Contract edit rebuilds in seconds.
+
+Drive and test the app with Exact's own commands, with EXACT_SIM set to the
+simulator stim ios reported. Without it Exact picks a simulator by its own
+rule, which another worktree of the same app may be using.
+
+A worktree of an Exact app needs the same folder name as the checkout it was
+created in (otherwise the build fails with "Cargo has no <name>-apple
+target"), and EXACT2 set to the Exact checkout when it sits at another folder
+depth (otherwise "no exact2 at ..."). Stim reports these Exact failures as
+they come.
+
+Remote builds: with paired build Macs (guide remote), remote.build and
+--remote-build place an Exact build like any iOS simulator build. The worker
+runs the same ./exact.mjs ios --no-install [--release] in a checkout folder
+named like this app's, with EXACT2 at ~/.exact/exact2/<commit> and no simulator,
+and this Mac installs the .app on its owned simulator; nothing is cached. The
+worker needs Exact's own toolchain: Bun at ~/.bun-<version>, rustup with the
+Rust version exact2 pins and its aarch64-apple-ios-sim target, and the exact2
+commit this app uses, set up with Exact's setup. A machine that lacks one is
+skipped and the placement line names the missing piece and the command that
+installs it. The values of the settings app.json env declares travel with the
+build: this shell's, else .env.local's, else .env's, as Exact reads them. These
+build here: apps whose app.json declares native modules (Exact may read them on
+a simulator), an exact2 checkout with local changes, and an app folder name
+that is not a plain ASCII file name.
+
+Only iOS simulators are supported. macOS, web, Android and physical devices
+use Exact's own commands.`,
+    },
     'native-android': {
       summary: 'native Gradle app selection, hosted emulators, build-worker inputs and current limits',
       body: () => `NATIVE ANDROID GRADLE APPS
@@ -566,6 +615,24 @@ exclusive disposable providers can set their job-local paths explicitly.
 CI=true alone does not change defaults, ownership or coordination. Persist only
 cache artifacts, not state, claims or device ledgers. Independent homes must
 not share a writable filesystem cache because its claims live in the home.
+
+If the selected machine engine predates attached CI hosting, run refuses with
+STIM_ENGINE_HOST_UNAVAILABLE. Run stim engine update to select a capable engine.
+An attached host or CI job retains its engine build until it ends. Work on the
+current engine defers its promotion while the host or job is active.
+
+Concurrent CI jobs must use separate Stim homes when a job owns an attached daemon.
+
+When Stim cannot verify that a Metro, tunnel or maintenance child and its
+descendants stopped, or the server worker fails to confirm cleanup or is forced
+to exit, it retains ownership claims and refuses new work in that home. Verify
+the named process tree has stopped, then remove the exact claims
+listed in the refusal. On Windows, a naturally exited Metro or tunnel leader
+does not prove its descendants stopped, so this can require manual reconciliation.
+An attached daemon killed unexpectedly, including during startup or forced
+shutdown, also leaves claims for manual reconciliation.
+When startup times out or is cancelled, Stim allows up to 10 seconds for the
+daemon to clean up before forcing it to exit.
 
 The programmatic API is import { buildCI, runCI } from 'stim/ci'. See its package
 README for result types, cancellation, cache policy, and coordination findings.`,
@@ -1475,7 +1542,9 @@ result as proof instead of requiring an unrelated screenshot.`,
   expiry in the workspace state and makes sure the stim-daemon runs. \`stop\`
   prints \`<name> stays booted for N minutes\`, and \`stop --json\` reports
   \`device.ios\` as { status: "kept-booted", label, until } with \`ok\` true.
-  If any gate fails, \`stop\` shuts the simulator down as before.
+  Grace also requires a reachable persistent stimd in acting mode; an attached
+  stimd cannot enforce it after its command exits. If any gate fails, \`stop\`
+  shuts the simulator down as before.
     - \`ios\` in the workspace before the expiry uses the booted simulator, with
       no boot, and forgets the record.
     - \`worktree remove\` parks it booted under the park gates, or shuts it

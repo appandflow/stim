@@ -5,6 +5,7 @@ import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceDeviceLastUseAt } from '../devices/activity.ts';
 import { idleShutdownDueMs, shutDownIdleDevices, writeIdleShutdownEvent } from '../devices/idle-shutdown.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
+import { listAdbDevicesAsync } from '../devices/android.ts';
 import { countLiveOwnedDevicesByPlatformAsync } from '../engine/device-capacity.ts';
 import { liveWaiters } from '../engine/wait-queue.ts';
 import { liveShareKeepReason, readWebShares, shareKeepReason } from '../local-server.ts';
@@ -49,6 +50,7 @@ export async function reclaimForBootWaiters({
   operation: StimContext;
   now?: number;
 }): Promise<DaemonLadderAction | null> {
+  operation.signal.throwIfAborted();
   let waiters;
   try {
     waiters = liveWaiters('boot');
@@ -56,7 +58,11 @@ export async function reclaimForBootWaiters({
     return null;
   }
   if (!waiters.length || sims === null) return null;
-  const counts = await countLiveOwnedDevicesByPlatformAsync({ sims });
+  const counts = await countLiveOwnedDevicesByPlatformAsync({
+    sims,
+    adb: () => listAdbDevicesAsync({ signal: operation.signal, operation }),
+  });
+  operation.signal.throwIfAborted();
   if ('unknown' in counts) return null;
   const { maxDevices } = admissionLimits();
   const platformCaps = getPlatformDeviceLimits();
@@ -158,6 +164,7 @@ export async function reclaimForBootWaiters({
     );
     return null;
   }
+  operation.signal.throwIfAborted();
   const chosen = candidates.find(({ device }) => shareKeepReason(shares, device.project, now) === null);
   if (!chosen) return null;
   const { device, idleMs } = chosen;

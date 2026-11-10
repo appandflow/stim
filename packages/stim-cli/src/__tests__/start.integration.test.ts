@@ -1,3 +1,4 @@
+import { CliExit } from '../cli-operation.ts';
 import * as portProbes from '../ports.ts';
 import * as listeningPorts from '../listening-ports.ts';
 import assert from 'node:assert';
@@ -248,7 +249,12 @@ async function runAction(
   });
   process.chdir(root);
   try {
-    await run(opts);
+    try {
+      await run(opts);
+    } catch (error) {
+      if (!(error instanceof CliExit)) throw error;
+      exitCode = error.exitCode;
+    }
   } finally {
     process.chdir(originalCwd);
     console.log = origLog;
@@ -271,7 +277,14 @@ async function runConcurrentActions(opts: Record<string, unknown>, register: (cm
   process.exit = asProcessExit((code) => exits.push(code));
   process.chdir(root);
   try {
-    await Promise.all([run(opts), run(opts)]);
+    await Promise.all(
+      [run(opts), run(opts)].map((task) =>
+        Promise.resolve(task).catch((error: unknown) => {
+          if (!(error instanceof CliExit)) throw error;
+          exits.push(error.exitCode);
+        }),
+      ),
+    );
   } finally {
     process.chdir(originalCwd);
     console.log = origLog;

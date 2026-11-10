@@ -28,6 +28,7 @@ import { followHostedMacosLogs, syncHostedMacosLogs } from '../device-host/hoste
 import { agentRemoteConfig, connectHost, placeHostedMacos, probeHostedMacos } from '../device-host/hosted-macos.ts';
 import { readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
+import * as stimdClient from '../daemon/client.ts';
 import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { stopMacosApp } from '../macos/stop.ts';
 import * as offload from '../offload/client.ts';
@@ -283,6 +284,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   resetExecutor();
   rmSync(dir, { recursive: true, force: true });
   delete process.env.STIM_HOME;
@@ -943,6 +945,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test('workspace removal stops the hosted session, and keeps the workspace when the host cannot confirm', async () => {
+    const drain = vi.spyOn(stimdClient, 'drainOwned');
     await runMacos(testContext(), root, () => {}, 'mini');
     const placed = readMacosRecord(root)!;
     await host.close();
@@ -955,6 +958,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     const removed = await reclaimProject(root, { deleteOwnedDevices: true });
     expect(host.methods).toContain('device-host.stop');
     expect(removed.failedDevices).toEqual([]);
+    expect(drain).not.toHaveBeenCalled();
   });
 
   test.each(['device-host.stop', 'device-host.logs.query'])(

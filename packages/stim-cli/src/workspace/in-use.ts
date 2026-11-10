@@ -133,7 +133,8 @@ export async function workspaceInUseAsync(
   try {
     instances = checks.supervisor === false ? [] : await bundleInstancePidsAsync(root, signal, operation);
   } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     signal?.throwIfAborted();
     instances = error instanceof Error ? error : new Error(String(error));
   }
@@ -144,7 +145,7 @@ export async function workspaceInUseAsync(
   });
 }
 
-export async function emptyWorkspaceDir(dir: string, signal?: AbortSignal): Promise<void> {
+export async function emptyWorkspaceDir(dir: string, signal?: AbortSignal, preserve?: string): Promise<void> {
   signal?.throwIfAborted();
   const stat = await lstat(dir);
   signal?.throwIfAborted();
@@ -156,7 +157,7 @@ export async function emptyWorkspaceDir(dir: string, signal?: AbortSignal): Prom
   }
   for (const name of await readdir(dir)) {
     signal?.throwIfAborted();
-    if (name !== `${NATIVE_RUN}.lock`) await rm(join(dir, name), { recursive: true, force: true });
+    if (name !== `${NATIVE_RUN}.lock` && name !== preserve) await rm(join(dir, name), { recursive: true, force: true });
   }
 }
 
@@ -186,7 +187,8 @@ export async function withIdleWorkspace<T>(
       { external: true, waitMs: 0, ownerPurpose: purpose, signal, declareSpawnsFor: operation },
     );
   } catch (error) {
-    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+      throw error;
     signal?.throwIfAborted();
     if (workspaceProcessLockError(error)) return { ran: false, reasons: [NATIVE_RUN_HELD] };
     if (isClaimRefusal(error) || isClaimUnavailable(error)) {

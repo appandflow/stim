@@ -6,14 +6,19 @@ import { runOperation, type ApiOperation } from '../run-operation.ts';
 
 let dir: string;
 let env: NodeJS.ProcessEnv;
+let restoreAdmission: () => void;
 
-beforeEach(() => {
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'stim-run-operation-'));
   process.env.STIM_HOME = join(dir, 'home');
   env = { ...process.env, STIM_DAEMON: 'off' };
+  const client = await import('../daemon/client.ts');
+  const admission = vi.spyOn(client, 'beforeCommand').mockResolvedValue();
+  restoreAdmission = () => admission.mockRestore();
 });
 
 afterEach(() => {
+  restoreAdmission();
   delete process.env.STIM_HOME;
   rmSync(dir, { recursive: true, force: true });
 });
@@ -43,10 +48,34 @@ describe('runOperation', () => {
     await expect(api(null)).resolves.toEqual({ admitted: null });
   });
 
+  it('registers a resident native run without running admission passes', async () => {
+    const client = await import('../daemon/client.ts');
+    await expect(api('run', 'ios', 'none')).resolves.toEqual({ admitted: null });
+    expect(client.beforeCommand).toHaveBeenCalledWith(
+      'ios',
+      env,
+      expect.objectContaining({
+        recordUse: false,
+        passes: false,
+        pin: true,
+        deviceLogs: true,
+        held: expect.any(Array),
+      }),
+    );
+  });
+
   it('admits a top-level CLI command, but not a subcommand or --plan', async () => {
-    await expect(cli('ios')).resolves.toEqual({ admitted: 'ios' });
-    await expect(cli('')).resolves.toEqual({ admitted: null });
-    await expect(cli('ios', true)).resolves.toEqual({ admitted: null });
+    await expect(cli('ios')).resolves.toMatchObject({ admitted: 'ios', end: expect.any(Function) });
+    await expect(cli('')).resolves.toMatchObject({ admitted: null, end: expect.any(Function) });
+    await expect(cli('ios', true)).resolves.toMatchObject({ admitted: null, end: expect.any(Function) });
+  });
+
+  it('refuses an oversized environment before admitting either caller', async () => {
+    env.LARGE = 'x'.repeat(512 * 1024);
+    for (const entered of [await cli('ios'), await api('start')])
+      expect(entered).toMatchObject({
+        refusal: { code: 'STIM_ENV_TOO_LARGE', message: expect.stringContaining('LARGE') },
+      });
   });
 
   it('refuses a governed command while a removed variable is set, for both callers and with --plan', async () => {
@@ -55,7 +84,113 @@ describe('runOperation', () => {
       expect(entered).toMatchObject({
         refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('STIM_MAINTENANCE') },
       });
-    await expect(cli('doctor')).resolves.toEqual({ admitted: 'doctor' });
+    await expect(cli('doctor')).resolves.toMatchObject({ admitted: 'doctor', end: expect.any(Function) });
     await expect(api('build', 'android', 'none')).resolves.toEqual({ admitted: null });
   });
+});
+
+it('collects an attached host created after CLI admission', async () => {
+  const client = await import('../daemon/client.ts');
+  const end = vi.fn<() => void>();
+  const lookup = vi.spyOn(client, 'attachedHostEnd').mockReturnValue(async () => end());
+  try {
+    const entered = await cli('stop');
+    expect(lookup).not.toHaveBeenCalled();
+    if ('refusal' in entered) throw new Error('unexpected refusal');
+    await entered.end?.();
+    expect(end).toHaveBeenCalledOnce();
+  } finally {
+    lookup.mockRestore();
+  }
+});
+
+it.each(['STIM_DAEMON_UNAVAILABLE', 'STIM_ENGINE_UNAVAILABLE', 'STIM_CLAIM_UNAVAILABLE', 'STIM_CLAIM_REFUSED'])(
+  'refuses CLI admission for %s',
+  async (code) => {
+    const client = await import('../daemon/client.ts');
+    const failure = vi.spyOn(client, 'beforeCommand').mockRejectedValueOnce(
+      Object.assign(new Error('engine unavailable'), {
+        code,
+        remedy: 'repair the engine',
+      }),
+    );
+    try {
+      await expect(cli('ios')).resolves.toMatchObject({
+        refusal: { code, remedy: 'repair the engine' },
+      });
+    } finally {
+      failure.mockRestore();
+    }
+  },
+);
+
+it('preserves an admission refusal if its attached host already failed during cleanup', async () => {
+  const client = await import('../daemon/client.ts');
+  const before = vi
+    .spyOn(client, 'beforeCommand')
+    .mockRejectedValueOnce(
+      Object.assign(new Error('daemon unavailable'), { code: 'STIM_DAEMON_UNAVAILABLE', remedy: 'retry' }),
+    );
+  const end = vi.spyOn(client, 'attachedHostEnd').mockReturnValue(async () => {
+    throw new Error('host exited');
+  });
+  try {
+    await expect(cli('ios')).resolves.toMatchObject({
+      refusal: { code: 'STIM_DAEMON_UNAVAILABLE', message: 'daemon unavailable', remedy: 'retry' },
+    });
+    expect(end).toHaveBeenCalledOnce();
+  } finally {
+    before.mockRestore();
+    end.mockRestore();
+  }
+});
+
+it('keeps an attached host when an unrelated admission error is best effort', async () => {
+  const client = await import('../daemon/client.ts');
+  const before = vi.spyOn(client, 'beforeCommand').mockRejectedValueOnce(new Error('unrelated'));
+  const end = vi.spyOn(client, 'attachedHostEnd');
+  try {
+    await expect(cli('ios')).resolves.toMatchObject({ admitted: 'ios' });
+    expect(end).not.toHaveBeenCalled();
+  } finally {
+    before.mockRestore();
+    end.mockRestore();
+  }
+});
+
+it.each(['on', 'off'])('refuses a creating command on an unresolved home under daemon mode %s', async (mode) => {
+  restoreAdmission();
+  const { spawn } = await import('node:child_process');
+  const { resolve } = await import('node:path');
+  const workspace = await import('../daemon/command-workspace.ts');
+  const recorded = vi.spyOn(workspace, 'commandWorkspace');
+  const script = `
+    import { tryAcquireClaim, markClaimChildPending } from '@stim-cli/core/ownership-claim';
+    import { stimdClaimRoot } from '@stim-cli/core/state';
+    const claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive' }).acquired;
+    if (!claim) throw new Error('fixture claim unavailable');
+    markClaimChildPending(claim);
+  `;
+  try {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+      cwd: resolve('packages/stim-cli'),
+      env,
+      stdio: 'ignore',
+    });
+    expect(await new Promise<number | null>((done) => child.once('close', done))).toBe(0);
+    const result = await runOperation({
+      caller: 'cli',
+      command: 'start',
+      plan: false,
+      cwd: dir,
+      env: { ...env, STIM_DAEMON: mode },
+    });
+    expect(result).toMatchObject({
+      refusal: { code: 'STIM_CLAIM_UNAVAILABLE', remedy: expect.stringContaining('rm ') },
+    });
+    expect(recorded).not.toHaveBeenCalled();
+    expect(await cli('stop')).toHaveProperty('admitted', 'stop');
+  } finally {
+    recorded.mockRestore();
+  }
 });

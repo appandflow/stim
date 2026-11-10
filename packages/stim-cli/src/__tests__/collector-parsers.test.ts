@@ -1,11 +1,13 @@
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { getExecutor } from '../exec.ts';
 import { fileURLToPath } from 'node:url';
 import { levelForEvent, logStreamArgs, parseLogStreamLine } from '../stimd/logs/ios.ts';
 import { androidClockOffset, waitForAppPid, watchAppPid, parseLogcatLine } from '../stimd/logs/android.ts';
 import { deviceConsoleArgs, parseDeviceConsoleLine, CONSOLE_ENV } from '../stimd/logs/ios-device.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
-import { makeChildProcess, makeExecutor } from './_factories.ts';
+import { makeExecutor } from './_factories.ts';
 
 function isNotNull<T>(value: T | null): value is T {
   return value !== null;
@@ -108,6 +110,45 @@ describe('ios: demoting device noise', () => {
 });
 
 describe('android: logcat -v time', () => {
+  test('Windows adb probes resolve the caller PATH before switching to the safe directory', async () => {
+    const realProcess = process;
+    const env = { PATH: 'relative-tools' };
+    const calls: Array<{ file: string; cwd: string | undefined }> = [];
+    const exec = makeExecutor({
+      runFileAsync: async (file, args, opts) => {
+        calls.push({ file, cwd: opts.cwd });
+        return args.includes('date') ? String(Date.now()) : '3132';
+      },
+    });
+    const find = vi.spyOn(getExecutor(), 'findExecutable').mockReturnValue('C:\\caller\\relative-tools\\adb.exe');
+    try {
+      vi.stubGlobal('process', Object.create(realProcess, { platform: { value: 'win32' } }));
+      await androidClockOffset('serial', { exec, env, cwd: 'C:\\caller' });
+      await waitForAppPid({ serial: 'serial', packageName: 'com.x', exec, env, cwd: 'C:\\caller' });
+      expect(find).toHaveBeenCalledWith('adb', { env, cwd: 'C:\\caller' });
+      expect(calls).toEqual([
+        { file: 'C:\\caller\\relative-tools\\adb.exe', cwd: homedir() },
+        { file: 'C:\\caller\\relative-tools\\adb.exe', cwd: homedir() },
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+  test('Windows adb probes do not execute a different tool when caller lookup fails', async () => {
+    const realProcess = process;
+    const run = vi.fn<() => Promise<string>>();
+    const exec = makeExecutor({ runFileAsync: run });
+    vi.spyOn(getExecutor(), 'findExecutable').mockReturnValue(null);
+    try {
+      vi.stubGlobal('process', Object.create(realProcess, { platform: { value: 'win32' } }));
+      expect(await androidClockOffset('serial', { exec, env: { PATH: 'missing' }, cwd: 'C:\\caller' })).toBeNull();
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
   test('the clock sample and the pid reads use the async executor with their adb argument lists', async () => {
     const asyncCalls: string[][] = [];
     const exec = makeExecutor({
@@ -137,26 +178,34 @@ describe('android: logcat -v time', () => {
     ]);
   });
 
-  test('an adb read still in flight when the collector stops is killed instead of orphaned', async () => {
-    const killed: Array<NodeJS.Signals | number | undefined> = [];
-    const child = makeChildProcess({
-      kill: (signal?: NodeJS.Signals | number) => {
-        killed.push(signal);
-        return true;
-      },
-    });
+  test('adb reads pass cancellation to the executor cleanup boundary', async () => {
+    const signals: Array<AbortSignal | undefined> = [];
     const exec = makeExecutor({
-      runFileAsync: (_file, _args, options) => {
-        options.onSpawn?.(child);
-        return new Promise<string>(() => {});
+      runFileAsync: async (_file, _args, options) => {
+        signals.push(options.signal);
+        return '';
       },
     });
     const stopping = new AbortController();
-    void androidClockOffset('serial', { exec, signal: stopping.signal });
-    void waitForAppPid({ serial: 'serial', packageName: 'com.x', exec, signal: stopping.signal });
-    expect(killed).toEqual([]);
+    await androidClockOffset('serial', { exec, signal: stopping.signal });
+    await waitForAppPid({ serial: 'serial', packageName: 'com.x', exec, signal: stopping.signal, timeoutMs: 0 });
+    expect(signals).toEqual([stopping.signal, stopping.signal]);
     stopping.abort();
-    expect(killed).toEqual(['SIGKILL', 'SIGKILL']);
+    expect(signals.every((signal) => signal?.aborted)).toBe(true);
+  });
+
+  test('unverified adb cleanup errors are not converted to missing PID or clock', async () => {
+    const failure = Object.assign(new Error('query cleanup unknown'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+    });
+    const exec = makeExecutor({
+      runFileAsync: async () => {
+        throw failure;
+      },
+    });
+    await expect(androidClockOffset('serial', { exec })).rejects.toBe(failure);
+    await expect(waitForAppPid({ serial: 'serial', packageName: 'com.x', exec })).rejects.toBe(failure);
   });
 
   test('epoch logcat keeps device time and shifts timestamps without reviving buffered records', () => {

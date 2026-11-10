@@ -419,7 +419,9 @@ workspace's own owned simulator booted, so the next `stim ios` skips the boot.
 Absent means 15; `0` shuts it down at park and at `stop`. Stim keeps it booted
 only while macOS memory pressure is normal and a device slot is free.
 `STIM_POOL_BOOTED_GRACE_MINUTES` overrides it, and when `STIM_HOME` is set it is
-`0` unless that variable is set. Emulators are always shut down at park and at `stop`. It needs the stim-daemon: with `daemon.mode` `off` or `report`, or on Windows, `worktree remove` and `stop` shut the simulator down at once.
+`0` unless that variable is set. Emulators are always shut down at park and at `stop`. It needs a reachable persistent stimd in acting mode: with an attached stimd,
+`daemon.mode` `off` or `report`, or on Windows, `worktree remove` and `stop`
+shut the simulator down at once.
 
 `remote.buildPoolDisabled` and `remote.devicePoolDisabled` list members excluded
 from this requester's automatic build and simulator/emulator placement. Both default
@@ -1093,6 +1095,37 @@ ticking or a claim it cannot resolve.
 stages off. `idle.dormantDays` is a machine setting.
 
 <StimTabs code="stim settings set daemon.mode report --scope machine" />
+
+When a command cannot start stimd detached, as in an agent sandbox that blocks
+launchd, `systemd-run` or detached children, it runs stimd as its own child
+instead, and `stim ci run` does the same for the whole job so nothing is left
+on the runner. After that command ends, its stimd keeps serving the other
+commands still using it for up to `daemon.attachedExitWaitSeconds`
+(`STIM_DAEMON_ATTACHED_EXIT_WAIT_SECONDS`, a machine setting, default `120`;
+`0` exits at once), names them on stderr, then exits; the next command starts
+or hosts the next stimd. If the attached daemon cannot start or admit the
+command, including a command from a different build, it stops with
+`STIM_DAEMON_UNAVAILABLE`. Wait for the owning command to finish and retry, or
+use a separate `STIM_HOME`. If the sandbox denies stimd's socket itself, the
+command stops with `STIM_SANDBOX_BLOCKED`. On macOS, `stim doctor --fix` adds
+the socket to Claude Code's `sandbox.network.allowUnixSockets`. On Linux, run
+Stim outside the sandbox because Claude Code cannot allow a single socket path.
+An attached stimd refuses offloaded build and probe jobs, new Desktop start,
+run, build and maintenance work, hosted device setup,
+runtime installation, and app transfers and launches. Existing session
+inspection, stop, and control remain available. After the command ends, run
+`stim serve` outside the agent command to accept new work on a persistent
+stimd.
+
+If Stim cannot verify that a Metro, tunnel, or maintenance child and its descendants stopped, or the server worker
+fails to confirm cleanup or is forced to exit, it retains ownership
+claims and refuses new work in that home. Verify that the named process tree has stopped, then remove the exact claims
+listed in the refusal. On Windows, a naturally exited Metro or tunnel leader does not prove its descendants stopped,
+so this can require manual reconciliation.
+An attached daemon killed unexpectedly, including during startup or forced shutdown, also leaves claims for manual
+reconciliation.
+When startup times out or is cancelled, Stim allows up to 10 seconds for the daemon to clean up before forcing it to
+exit.
 
 Stim does not read the settings below. `stim doctor` and `stim settings` report
 any left in a config file or the environment, with the setting that replaces

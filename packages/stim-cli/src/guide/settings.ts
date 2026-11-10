@@ -740,6 +740,19 @@ running daemon's mode. Its log is STIM_HOME/daemon/daemon.ndjson and its last
 tick STIM_HOME/daemon/snapshot.json.
   stim settings set daemon.mode report --scope machine
 
+daemon.attachedExitWaitSeconds STIM_DAEMON_ATTACHED_EXIT_WAIT_SECONDS  default
+120. When a command cannot start stimd detached (a sandbox that blocks
+launchd, systemd-run or detached children), it runs stimd as its own child,
+and stim ci run does the same for the whole job. Once that command ends, its
+stimd keeps serving the other commands still using it for up to this many
+seconds, naming them on stderr, then writes STIM_HOME/run/stimd-journal.json
+and exits; 0 exits at once. An attached stimd never exits idle or under
+daemon.mode off, which turns off only its passes. It refuses offloaded build
+and probe jobs, new Desktop start, run, build and maintenance work, hosted
+device setup, runtime installation, app transfers and launches. Existing session inspection, stop and control remain available.
+After the command ends, run stim serve outside the agent command to accept
+new work on a persistent stimd.
+
 AUTOMATIC MAINTENANCE IS MACHINE-LEVEL
 Automatic maintenance runs in daemon.mode: it removes what gc would under the
 caps below, measures sizes at most hourly and waits while the one-minute load

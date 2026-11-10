@@ -820,6 +820,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const jobs: OffloadJobs = new OffloadJobs({
     stimCli: options.stimCli,
     machine: options.name,
+    attached: options.attached,
     env: () => options.currentEnv?.() ?? options.env,
     limits: builds.limits,
     admit: (client) => {
@@ -2098,7 +2099,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   try {
     for (const host of options.hosts) await listenOn(host);
   } catch (error) {
-    await close().catch(() => undefined);
+    try {
+      await close();
+    } catch (cleanup) {
+      throw new AggregateError([error, cleanup], 'server startup cleanup could not be verified', { cause: cleanup });
+    }
     throw error;
   }
   const binding = transports.filter((transport) => transport.bindAddresses);

@@ -277,6 +277,47 @@ describe('resolveOwnedAvdSerialAsync with a busy foreign emulator', () => {
     expect(aborted).toEqual(['emulator-5554']);
   });
 
+  test('waits for cancelled peer cleanup and preserves its refusal with an operation context', async () => {
+    let finishCleanup = () => {};
+    let aborted = false;
+    const failure = Object.assign(new Error('peer cleanup unverified'), {
+      code: 'STIM_CLAIM_UNAVAILABLE',
+      reportCleanup: true,
+    });
+    setExecutor(
+      makeExecutor({
+        runFileAsync: async (file, args = [], opts) => {
+          if (file === 'emulator') return 'stim-mine\n';
+          if (args[0] === 'devices') return 'List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\n';
+          if (args[1] === 'emulator-5556') return 'stim-mine\nOK';
+          return new Promise<string>((_resolve, reject) => {
+            opts.signal?.addEventListener('abort', () => {
+              aborted = true;
+              finishCleanup = () => reject(failure);
+            });
+          });
+        },
+      }),
+    );
+    let settled = false;
+    const result = resolveOwnedAvdSerialAsync('stim-mine', { operation: testContext() });
+    void result.then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      () => {
+        settled = true;
+        return undefined;
+      },
+    );
+    await vi.advanceTimersByTimeAsync(100);
+    expect(aborted).toBe(true);
+    expect(settled).toBe(false);
+    finishCleanup();
+    await expect(result).rejects.toBe(failure);
+  });
+
   test('wedged emulators cost one timeout together, not one each', async () => {
     AVD_BY_SERIAL['emulator-5560'] = undefined;
     try {

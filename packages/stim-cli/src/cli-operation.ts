@@ -69,6 +69,7 @@ export function processOperation(projectRoot: string): ProcessOperation {
       if (received) return exitNow(EXIT_CODES[received]);
       received = interrupt;
       if (!controller.signal.aborted) controller.abort(interrupt);
+      void import('./daemon/client.ts').then(({ cancelCliOp }) => cancelCliOp());
       if (state.draining) return;
       if (state.handled) return exitNow(EXIT_CODES[interrupt]);
       operation.dispose();
@@ -108,16 +109,14 @@ export async function runProcessOperation<T>(
   }
 }
 
-export function exitAfterFlush(
-  code = 0,
-  {
-    exit = (c: number) => process.exit(c),
-    stream = process.stdout,
-  }: { exit?: (code: number) => void; stream?: NodeJS.WriteStream } = {},
-): void {
-  try {
-    stream.write('', () => exit(code));
-  } catch {
-    exit(code);
+export class CliExit extends Error {
+  readonly exitCode: number;
+  constructor(exitCode: number) {
+    super();
+    this.exitCode = exitCode;
   }
+}
+
+export function exitCli(code = 0): never {
+  throw new CliExit(code);
 }

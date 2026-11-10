@@ -37,7 +37,7 @@ import { writeJson } from './registry.ts';
 export function appDelivery(
   record: Omit<HostedAppRecord, 'files'> & { files?: HostedAppRecord['files'] },
 ): HostedAppDelivery {
-  const { files: _files, manifest: _manifest, ...delivery } = record;
+  const { files: _files, manifest: _manifest, runId: _runId, ...delivery } = record;
   return delivery;
 }
 
@@ -59,7 +59,10 @@ export function changeHostedApp(
   });
 }
 
-export function offerHostedApp(offer: HostedAppOffer): {
+export function offerHostedApp(
+  offer: HostedAppOffer,
+  runId?: string,
+): {
   delivery: HostedAppDelivery;
   missing: { sha256: string; size: number; offset: number }[];
 } {
@@ -85,7 +88,13 @@ export function offerHostedApp(offer: HostedAppOffer): {
         () => {
           if (!existsSync(area)) {
             mkdirSync(area, { recursive: true, mode: 0o700 });
-            writeHostedApp({ ...next, files: [], state: 'receiving', launched: null });
+            writeHostedApp({
+              ...next,
+              ...(runId ? { runId } : {}),
+              files: [],
+              state: 'receiving',
+              launched: null,
+            });
           }
           const stored = readHostedApp(offer.session, offer.attempt);
           const previous = {

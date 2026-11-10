@@ -67,6 +67,7 @@ import type { SyncPlan } from './signing-files.ts';
 import { namedBuildMachine, OffloadRefusal, workerFailureReason } from '../build-placement.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import { toolchainMismatches, toolchainNotes, cocoapodsDifference, type OffloadProblem } from './toolchain.ts';
+import type { ExactOffload, ExactPins, ExactToolProblem } from '../integrations/exact-offload.ts';
 import { buildsOnlyOnWorker, type BuildTarget, type WorkerToolchain } from '../engine/toolchain.ts';
 import { ambientContext, dependencyLockfile, swiftpmArtifactQuery, type StimContext } from '@stim-cli/core';
 import {
@@ -211,6 +212,8 @@ export interface BuildOffer {
   };
   warm: { checkout: boolean; dependencies: boolean; build: boolean };
   artifact?: CachedBuildArtifact | null;
+  /** What of Exact's toolchain the machine lacks, when the offer asked for an Exact app's pins. */
+  exact?: { missing: ExactToolProblem[] };
 }
 
 type ArtifactLookup = BuildArtifactIdentity | 'swiftpm' | 'native-gradle' | 'react-native-ios' | 'react-native-android';
@@ -267,6 +270,15 @@ const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
 /** Every reason a machine's offer cannot take this build, in either mode; empty when it can. */
 export function offerProblems(offer: BuildOffer, target: BuildTarget, named = false): OffloadProblem[] {
   const problems = toolchainMismatches(target, offer.toolchain);
+  if (target.platform === 'ios' && target.exact && offer.exact)
+    problems.push(
+      ...offer.exact.missing.map(({ reason, commands }) => ({
+        code: 'exact' as const,
+        reason: `${reason} there (install: ${commands.join(' && ')})`,
+        commands,
+        lead: `install Exact's ${reason.replace(/^no /, '')}`,
+      })),
+    );
   const pods =
     !named && target.platform === 'ios' && !problems.some(({ code }) => code === 'platform')
       ? cocoapodsDifference(target, offer.toolchain)
@@ -370,7 +382,9 @@ function problemCode({ code }: OffloadProblem): string {
     ? code
     : code === 'runtime'
       ? 'no-matching-device'
-      : 'version-mismatch';
+      : code === 'exact'
+        ? 'exact-tools'
+        : 'version-mismatch';
 }
 
 export type Reply = { result: unknown } | { error: { code: string; message: string } };
@@ -795,7 +809,8 @@ function repositoryIdentity(projectRoot: string, repoRoot: string, common: strin
 }
 
 function dependencySelection(identity: RepoIdentity, target: BuildTarget): BuildOfferParams['dependencies'] {
-  if (!identity.lockfile || target.platform === 'macos' || target.native) return undefined;
+  if (!identity.lockfile || target.platform === 'macos' || target.native || (target.platform === 'ios' && target.exact))
+    return undefined;
   return {
     project: identity.project.split(sep).join('/'),
     packageName: packageName(join(identity.repoRoot, identity.project)),
@@ -856,6 +871,8 @@ export type OffloadOutcome =
       cacheHit?: boolean;
       /** The fingerprint the machine built under after its own pod install, when it differs from the requested one. */
       builtFingerprint?: string;
+      /** The digest of the sources this offload synced, for an uncached offload to check the checkout still matches. */
+      sourceDigest?: string;
       androidPackage?: string;
       compilationCache: CompilationCacheActivity;
       ccache: CcacheActivity;
@@ -927,6 +944,7 @@ async function probeMachine(
     gradleArtifact?: BuildGradleArtifactQuery;
     reactNativeArtifact?: BuildReactNativeArtifactQuery;
     swiftpmArtifact?: BuildSwiftpmArtifactQuery;
+    exact?: ExactPins;
   },
   {
     connectMs = CONNECT_TIMEOUT_MS,
@@ -967,6 +985,7 @@ async function probeMachine(
       ...(identity.swiftpmArtifact ? { swiftpmArtifact: identity.swiftpmArtifact } : {}),
       ...(identity.reactNativeArtifact ? { reactNativeArtifact: identity.reactNativeArtifact } : {}),
       ...(native === 'gradle' && identity.gradleArtifact ? { gradleArtifact: identity.gradleArtifact } : {}),
+      ...(identity.exact ? { exact: identity.exact } : {}),
     },
     offerMs,
   );
@@ -1075,6 +1094,7 @@ export async function chooseBuildMachine({
           rubyVersion,
           dependencies: dependencySelection(identity, target),
           ...(target.platform !== 'macos' ? { native: target.native } : {}),
+          ...(target.platform === 'ios' && target.exact ? { exact: target.exact } : {}),
           ...(artifact ? { artifact } : {}),
           ...(gradleQuery ? { gradleArtifact: gradleQuery } : {}),
           ...(reactNativeQuery ? { reactNativeArtifact: reactNativeQuery } : {}),
@@ -1157,6 +1177,7 @@ export type BuildRequest =
       iosProjectPath?: string;
       isExpo: boolean;
       optimizations: unknown;
+      exact?: ExactOffload;
     }
   | {
       platform: 'android';
@@ -1230,8 +1251,20 @@ function macosBuildParameters(request: Extract<BuildRequest, { platform: 'macos'
   };
 }
 
+function startIdentity(request: BuildRequest, synced: string, expected: string | null | undefined) {
+  if (request.platform === 'macos') return { fingerprint: synced };
+  return request.platform === 'ios' && request.exact
+    ? { fingerprint: synced, exact: request.exact }
+    : { fingerprint: expected };
+}
+
+function builtIdentity(request: BuildRequest, synced: string | null, expected: string | null | undefined) {
+  return request.platform === 'ios' && request.exact ? synced : expected;
+}
+
 function validArtifactIdentity(request: BuildRequest, fingerprint: string | null | undefined): boolean {
   if (request.platform === 'macos') return true;
+  if (request.platform === 'ios' && request.exact) return fingerprint === null;
   return request.native?.provider === 'gradle'
     ? fingerprint === null
     : typeof fingerprint === 'string' && fingerprint.length > 0;
@@ -1620,7 +1653,7 @@ function buildStartParams(
     repo: identity.repo,
     project: identity.project,
     platform: request.platform,
-    fingerprint: request.platform === 'macos' ? digest : expectedFingerprint,
+    ...startIdentity(request, digest, expectedFingerprint),
     ...fingerprintParams(inputs),
     ...(native
       ? {
@@ -1720,6 +1753,7 @@ export async function offloadBuild(
         ...identity,
         dependencies: dependencySelection(identity, choice.target),
         ...(native ? { native: native.provider } : {}),
+        ...(choice.target.platform === 'ios' && choice.target.exact ? { exact: choice.target.exact } : {}),
       });
     const deadline = Date.now() + RESUME_WINDOW_MS;
     let delay = RESUME_DELAY_MS;
@@ -1836,11 +1870,11 @@ export async function offloadBuild(
     let uploadedBytes = 0;
     let workerStarted = 0;
     let fingerprintInputs: Promise<FingerprintInputs | Uncertain | null> | undefined;
+    const keyedByFingerprint =
+      !native && request.platform !== 'macos' && !(request.platform === 'ios' && request.exact);
     const readFingerprintInputs = () =>
       (fingerprintInputs ??=
-        !native && request.platform !== 'macos' && input.fingerprintInputs
-          ? input.fingerprintInputs()
-          : Promise.resolve(null));
+        keyedByFingerprint && input.fingerprintInputs ? input.fingerprintInputs() : Promise.resolve(null));
     const moveOn = (why: string): boolean => {
       const next = choice.runnersUp.shift();
       if (!next) return false;
@@ -1861,7 +1895,7 @@ export async function offloadBuild(
         return fail(unsupported);
       }
       const candidate = await readFingerprintInputs();
-      if (!native && request.platform !== 'macos') {
+      if (keyedByFingerprint) {
         if (!candidate) return fail('The fingerprint cannot be safely reproduced on a build worker.');
         if ('uncertain' in candidate) return fail(candidate.uncertain);
       }
@@ -1931,7 +1965,12 @@ export async function offloadBuild(
     if (result.ok !== true) return await workerFailed(result);
     if (!cacheHit && native && (result.sourceDigest !== sourceDigest || result.fingerprint !== expectedFingerprint))
       return fail('The worker returned a different native source or artifact identity.');
-    const rebuilt = rebuiltFingerprint(choice, request, result.fingerprint, expectedFingerprint);
+    const rebuilt = rebuiltFingerprint(
+      choice,
+      request,
+      result.fingerprint,
+      builtIdentity(request, sourceDigest, expectedFingerprint),
+    );
     if (rebuilt === null) return fail('The worker returned a different fingerprint.');
     if (native?.provider === 'gradle' && !ANDROID_PACKAGE.test(String(result.androidPackage ?? '')))
       return fail('The worker returned no verified native APK package.');
@@ -1980,6 +2019,7 @@ export async function offloadBuild(
       ...(rebuilt ? { builtFingerprint: rebuilt } : {}),
       machine,
       artifactPath,
+      ...(sourceDigest ? { sourceDigest } : {}),
       ...(typeof declared.handoff === 'string' && /^[0-9a-f]{64}$/.test(declared.handoff)
         ? { handoff: { serverKey: choice.credential.serverKey!, token: declared.handoff, sha256: digest } }
         : {}),
@@ -2137,15 +2177,20 @@ export function offloadCheck(
         problems: [{ code: 'checkout', reason: `this app is not in a git checkout (${repository})` }],
       };
     }
+    resolved ??= targets();
+    const judged = await resolved;
+    const exact = judged.find((target) => target.platform === 'ios' && target.exact);
     const probe = await probeMachine(
       credential,
-      { ...repository, rubyVersion: readRubyVersion(projectRoot) ?? undefined },
+      {
+        ...repository,
+        rubyVersion: readRubyVersion(projectRoot) ?? undefined,
+        ...(exact?.platform === 'ios' && exact.exact ? { exact: exact.exact } : {}),
+      },
       { connectMs: DOCTOR_CONNECT_MS, offerMs: DOCTOR_OFFER_MS, kind: 'offload-probe' },
     );
     if ('failure' in probe) return { capacity: null, problems: [{ code: 'unreachable', reason: probe.failure }] };
     probe.connection.close();
-    resolved ??= targets();
-    const judged = await resolved;
     return {
       capacity: probe.offer.capacity,
       problems: machineProblems(probe.offer, judged),

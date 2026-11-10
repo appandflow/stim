@@ -36,6 +36,7 @@ export interface ClaimHolder {
   details: ClaimDetails;
   child: ClaimOwner | null;
   childDeclared: boolean;
+  childPending?: boolean;
 }
 
 export interface ClaimHandle {
@@ -66,6 +67,8 @@ export interface ClaimSetState {
 export interface ClaimProblem {
   path: string;
   reason: string;
+  engineDirs?: string[];
+  pendingChild?: boolean;
 }
 
 export interface ClaimSurvey {
@@ -80,6 +83,8 @@ export interface ClaimOptions {
   mode: ClaimMode;
   details?: ClaimDetails;
   label?: string;
+  /** The process whose liveness the claim follows: this process by default, or a process this one started and verified. */
+  owner?: ClaimOwner;
 }
 
 export const CLAIM_REFUSED = 'STIM_CLAIM_REFUSED';
@@ -270,11 +275,13 @@ function readRecord(path: string, what: string): string | null | Unreadable {
   }
 }
 
-function readChild(claimPath: string): { record: ClaimOwner | null } | null | Unreadable {
+function readChild(claimPath: string): { record: ClaimOwner | null; pending: boolean } | null | Unreadable {
   const text = readRecord(childPath(claimPath), 'child record');
   if (text === null || text instanceof Unreadable) return text;
   try {
-    return { record: asOwner((JSON.parse(text) as { record?: unknown })?.record) };
+    const value: unknown = JSON.parse(text);
+    const record = value && typeof value === 'object' && 'record' in value ? value.record : undefined;
+    return { record: asOwner(record), pending: record === null };
   } catch {
     return NOT_JSON;
   }
@@ -302,6 +309,7 @@ function readClaim(path: string, mode: ClaimMode): ClaimHolder | null | Unreadab
     details: (parsed.details && typeof parsed.details === 'object' ? parsed.details : {}) as ClaimDetails,
     child: child?.record ?? null,
     childDeclared: child !== null,
+    ...(child?.pending ? { childPending: true } : {}),
   };
 }
 
@@ -413,6 +421,14 @@ function survey(dir: string, mode: ClaimMode, into: ClaimSurvey): void {
     else {
       into.unresolved.push({
         path,
+        ...(holder.childPending ? { pendingChild: true } : {}),
+        ...(Array.isArray(holder.details.engineDirs)
+          ? {
+              engineDirs: holder.details.engineDirs.filter(
+                (entry): entry is string => typeof entry === 'string' && /^[0-9a-f]{12}$/.test(entry),
+              ),
+            }
+          : {}),
         reason:
           holder.childDeclared && !holder.child
             ? 'it spawned the process that holds it and was killed before recording which one'
@@ -664,8 +680,13 @@ function yieldToRemoval(): void {
   sleepSync(WIN32_SETTLE_STEP_MS);
 }
 
-export function tryAcquireClaim({ root, mode, details = {}, label = 'ownership' }: ClaimOptions): ClaimAttempt {
-  const owner = selfOwner();
+export function tryAcquireClaim({
+  root,
+  mode,
+  details = {},
+  label = 'ownership',
+  owner = selfOwner(),
+}: ClaimOptions): ClaimAttempt {
   const reaped: ClaimHolder[] = [];
   let denied = true;
   const retry = (why: Contention): void => {

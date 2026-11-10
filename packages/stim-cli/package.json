@@ -62,6 +62,11 @@
       "module-sync": "./dist/share-links.mjs",
       "default": "./dist/share-links.mjs"
     },
+    "./attached-stimd": {
+      "types": "./dist/attached-stimd.d.mts",
+      "module-sync": "./dist/attached-stimd.mjs",
+      "default": "./dist/attached-stimd.mjs"
+    },
     "./build-artifact-cache": {
       "types": "./dist/build-artifact-cache.d.mts",
       "module-sync": "./dist/build-artifact-cache.mjs",

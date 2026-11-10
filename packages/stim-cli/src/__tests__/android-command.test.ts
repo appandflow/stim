@@ -60,10 +60,9 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Command } from 'commander';
-import { collectorProcessTitle } from '../stimd/logs/ownership.ts';
 import {
   getProject,
   loadConfig,
@@ -95,7 +94,6 @@ import {
   androidDevClientScheme,
   androidSystemImageSetting,
   androidVariantSetting,
-  collectorLogFile,
   isReleaseVariant,
   resolveSystemImage,
   resolveVariant,
@@ -125,7 +123,7 @@ import { LAUNCH_UNVERIFIED, verifyLaunch } from '../engine/launch-verify.ts';
 import type { AssetManifest } from '../engine/asset-manifest.ts';
 import { PREBUILD_ERROR } from '../engine/prebuild.ts';
 import type { recordCapacityRefusal as recordRefusal, RecordStatsResult, StatsRun } from '../engine/stats.ts';
-import { asProcessExit, makeChildProcess, makeError, makeExecutor, writeCasToolchain } from './_factories.ts';
+import { collectorProcessTitle, asProcessExit, makeError, makeExecutor, writeCasToolchain } from './_factories.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 import { writeSignedApk } from './_signed-apk.ts';
 
@@ -240,13 +238,6 @@ const never = (what: string) => () => {
   throw new Error(`${what} must not run in this case`);
 };
 
-interface SpawnCall {
-  cmd: string;
-  args: readonly string[];
-  opts: Record<string, unknown>;
-  unrefed?: boolean;
-}
-
 interface AcquireLockArgs {
   platform?: string;
   key?: string;
@@ -300,6 +291,7 @@ interface VerifyArgs {
   metroPort?: string | number | null;
   platform?: string | null;
   timeoutMs?: number;
+  deviceStreamId?: string | null;
 }
 
 interface Calls {
@@ -320,7 +312,7 @@ interface Calls {
   verifyRelease: unknown[];
   swapApk: SwapArgs[];
   scheme: unknown[][];
-  spawn: SpawnCall[];
+  logStarts: import('../stimd/logs/streams.ts').StreamSpec[];
   kill: unknown[][];
   loadProvider: unknown[][];
   resolveRemoteBuild: RemoteBuildArgs[];
@@ -369,7 +361,7 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
     verifyRelease: [],
     swapApk: [],
     scheme: [],
-    spawn: [],
+    logStarts: [],
     kill: [],
     loadProvider: [],
     resolveRemoteBuild: [],
@@ -560,16 +552,9 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       calls.readApkPackage.push(apkPath);
       return null;
     },
-    spawn: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => {
-      calls.spawn.push({ cmd, args, opts });
-      return makeChildProcess({
-        pid: 9001,
-        unref: () => {
-          const last = calls.spawn.at(-1);
-          if (last) last.unrefed = true;
-          return makeChildProcess();
-        },
-      });
+    startLogStream: async (spec: import('../stimd/logs/streams.ts').StreamSpec) => {
+      calls.logStarts.push(spec);
+      return { streamId: 'stream-1' };
     },
     kill: (pid: number, signal: NodeJS.Signals) => {
       calls.kill.push([pid, signal]);
@@ -674,6 +659,7 @@ test.each([true, false])('a declared custom Android patch newer=%s controls the 
 });
 
 test.each([false, true])('the Android API preserves retained Metro cleanup after cancellation=%s', async (cancel) => {
+  const admission = vi.spyOn(await import('../daemon/client.ts'), 'beforeCommand').mockResolvedValue();
   const controller = new AbortController();
   const retainedClaimRoots = [join(home, 'retained-metro')];
   const adapter = vi.spyOn(androidOperation, 'runAndroidOperation').mockImplementation((context) =>
@@ -696,7 +682,7 @@ test.each([false, true])('the Android API preserves retained Metro cleanup after
   );
   try {
     await expect(
-      createStim({ projectRoot: root }).run({ platform: 'android', signal: controller.signal }),
+      createStim({ projectRoot: root, admission: 'none' }).run({ platform: 'android', signal: controller.signal }),
     ).rejects.toMatchObject({
       code: 'STIM_CLAIM_UNAVAILABLE',
       remedy: 'Recover Metro.',
@@ -704,6 +690,7 @@ test.each([false, true])('the Android API preserves retained Metro cleanup after
     });
   } finally {
     adapter.mockRestore();
+    admission.mockRestore();
   }
 });
 
@@ -1241,6 +1228,7 @@ describe('explicit remote backend behavior', () => {
     writeWorkspaceState(root, { collectors: { android: { pid: PREVIOUS_COLLECTOR_PID, startedAt: 'then' } } });
     const { h } = remoteHarness('eas', {
       verifyCollector: () => ({ status: 'ours' as const }),
+      pidAlive: () => false,
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
         checkCapacity: async () => null,
@@ -1251,7 +1239,7 @@ describe('explicit remote backend behavior', () => {
         createdSessionId: () => null,
         webPreviewUrl: () => null,
       }),
-      spawn: never('the local adb collector'),
+      startLogStream: never('the local adb collector'),
     });
 
     expect((await h.run()).ok).toBe(true);
@@ -1844,7 +1832,7 @@ describe('explicit remote backend behavior', () => {
       }),
       resolveEasBin: () => ({ file: '/bin/eas', args: [] }),
       launchRelease: never('the local release launcher'),
-      spawn: never('the local adb collector'),
+      startLogStream: never('the local adb collector'),
       verifyReleaseLaunched: never('the local release verifier'),
     };
     const h = harness(options);
@@ -1891,7 +1879,7 @@ describe('a cache hit', () => {
     expect(labelled(h.stderr, 'device')[0]).toMatch(/stim-app-412 \(emulator-5584\) booted/);
     expect(labelled(h.stderr, 'metro')[0]).toMatch(/port 8082 \(pid 41233\)/);
     expect(labelled(h.stderr, 'launch')[0]).toMatch(/com\.example\.app/);
-    expect(labelled(h.stderr, 'logs')[0]).toMatch(/collector pid 9001/);
+    expect(labelled(h.stderr, 'logs')[0]).toContain(workspaceLogsDir(root));
     expect(labelled(h.stderr, 'fingerprint')[0]).toMatch(/\(\d+m?\d*s\)$/);
     expect(labelled(h.stderr, 'device')[0]).toMatch(/booted \(\d+m?\d*s\)$/);
     expect(labelled(h.stderr, 'install')[0]).toMatch(/app-debug\.apk -> emulator-5584 \(\d+m?\d*s\)$/);
@@ -2139,8 +2127,8 @@ describe('owned AVD identity after the build', () => {
     expect(readySerials).toEqual(['emulator-5586']);
     expect(h.calls.install.map((call) => call.serial)).toEqual(['emulator-5586']);
     expect(h.calls.launch.map((call) => [call.serial, call.metroPort])).toEqual([['emulator-5586', 8082]]);
-    expect(JSON.stringify(h.calls.spawn)).toContain('emulator-5586');
-    expect(JSON.stringify(h.calls.spawn)).not.toContain('emulator-5584');
+    expect(JSON.stringify(h.calls.logStarts)).toContain('emulator-5586');
+    expect(JSON.stringify(h.calls.logStarts)).not.toContain('emulator-5584');
     expect(loadConfig()?.projects[root]?.platforms?.android).toEqual({ ...device, consolePort: 5586 });
     expect(readState().launches.android.deviceId).toBe('emulator-5586');
     expect(result.facts?.serial).toBe('emulator-5586');
@@ -3720,32 +3708,6 @@ function collectorExits(child: ChildProcess, timeoutMs = 5_000): Promise<boolean
 }
 
 describe('Contract 5: the device-log collector', () => {
-  test("is spawned detached and unreferenced with this platform's identity", async () => {
-    const h = harness();
-    await h.run();
-    expect(h.calls.spawn.length).toBe(1);
-    const spawn0 = h.calls.spawn[0];
-    assert(spawn0);
-    const { args, opts, unrefed } = spawn0;
-    expect(args[0]).toBe(join(import.meta.dirname, '..', 'collector', 'run.ts'));
-    expect(args.slice(1)).toEqual([
-      '--platform',
-      'android',
-      '--root',
-      root,
-      '--serial',
-      'emulator-5584',
-      '--package',
-      'com.example.app',
-    ]);
-    expect(opts.detached).toBe(true);
-    expect(Array.isArray(opts.stdio)).toBe(true);
-    expect((opts.stdio as unknown[])[0]).toBe('ignore');
-    expect(existsSync(collectorLogFile(root))).toBe(true);
-    expect(opts.cwd).toBe(process.platform === 'win32' ? homedir() : root);
-    expect(unrefed).toBe(true);
-  });
-
   test('the previous android collector, proven ours, is killed first -- replaced, not duplicated', async () => {
     writeWorkspaceState(root, {
       collectors: { android: { pid: PREVIOUS_COLLECTOR_PID, startedAt: 'then' }, ios: { pid: 777, startedAt: 'then' } },
@@ -3753,7 +3715,7 @@ describe('Contract 5: the device-log collector', () => {
     const h = harness({ verifyCollector: () => ({ status: 'ours' as const }), pidAlive: () => false });
     await h.run();
     expect(h.calls.kill).toEqual([[PREVIOUS_COLLECTOR_PID, 'SIGTERM']]);
-    expect(h.calls.spawn.length).toBe(1);
+    expect(h.calls.logStarts.length).toBe(1);
   });
 
   test('a previous android collector proven gone is left alone, never signalled', async () => {
@@ -3761,10 +3723,10 @@ describe('Contract 5: the device-log collector', () => {
     const h = harness({ verifyCollector: () => ({ status: 'gone' as const }) });
     await h.run();
     expect(h.calls.kill).toEqual([]);
-    expect(h.calls.spawn.length).toBe(1);
+    expect(h.calls.logStarts.length).toBe(1);
   });
 
-  test('a previous android collector that cannot be proven ours is left running, noted, and replaced anyway', async () => {
+  test('a previous android collector that cannot be proven ours is retained and blocks replacement', async () => {
     writeWorkspaceState(root, { collectors: { android: { pid: PREVIOUS_COLLECTOR_PID, startedAt: 'then' } } });
     const h = harness({
       verifyCollector: () => ({
@@ -3774,8 +3736,10 @@ describe('Contract 5: the device-log collector', () => {
     });
     await h.run();
     expect(h.calls.kill).toEqual([]);
-    expect(h.calls.spawn.length).toBe(1);
-    expect(h.stderr.some((l) => l.includes(`pid ${PREVIOUS_COLLECTOR_PID}`) && /not signalled/.test(l))).toBeTruthy();
+    expect(h.calls.logStarts.length).toBe(0);
+    expect(
+      h.stderr.some((l) => l.includes(`pid ${PREVIOUS_COLLECTOR_PID}`) && /cannot be verified/.test(l)),
+    ).toBeTruthy();
   });
 
   test('the default ownership check is wired through: a live process with a persisted identity is signalled', async () => {
@@ -3827,15 +3791,20 @@ describe('Contract 5: the device-log collector', () => {
     expect(h.calls.kill).toEqual([]);
   });
 
-  test('a collector that cannot be spawned does not fail the run', async () => {
-    const h = harness({
-      spawn: () => {
-        throw new Error('EAGAIN');
-      },
-    });
+  test('readiness identifies the current device stream', async () => {
+    const h = harness();
+    await h.run();
+    const verify = h.calls.verify[0];
+    expect(verify?.deviceStreamId).toBe('stream-1');
+  });
+
+  test('a device log stream that cannot start does not fail the run', async () => {
+    const h = harness({ startLogStream: async () => ({ error: 'EAGAIN' }) });
     const result = await h.run();
     expect(result.ok).toBe(true);
     expect(labelled(h.stderr, 'logs')[0]).toMatch(/EAGAIN/);
+    const verify = h.calls.verify[0];
+    expect(verify?.deviceStreamId).toBeNull();
   });
 });
 
@@ -4174,6 +4143,31 @@ describe('launch verification', () => {
     expect(text.includes('Fix the JavaScript')).toBe(event === 'bundle_build_failed');
     expect(text).toContain('stim reload android');
     expect(text).toMatch(/Do not run `stim android` unless native inputs changed or the app process exits/);
+  });
+
+  test('delivered bundle with unavailable device logs remains unverified without a false Metro diagnosis', async () => {
+    const h = harness({
+      verifyLaunched: async () => ({ verified: false, record: { event: 'bundle_response_finished' } }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(result.facts?.launched).toBe(LAUNCH_UNVERIFIED);
+    expect(h.stderr.join('\n')).toContain('bundle delivered, but device log evidence is unavailable');
+    expect(h.stderr.join('\n')).not.toContain('no bundle request reached');
+  });
+
+  test('unverified coverage still reports captured app errors', async () => {
+    const h = harness({
+      verifyLaunched: async () => ({
+        verified: false,
+        record: { event: 'bundle_response_finished' },
+        errors: [{ src: 'client', msg: 'a redbox from the app' }],
+      }),
+    });
+    const result = await h.run();
+    expect(result.facts?.launched).toBe(LAUNCH_UNVERIFIED);
+    expect(h.stderr.join('\n')).toContain('a redbox from the app');
+    expect(h.stdout[0]).toMatch(/^WARNING: .*app errors detected/);
   });
 
   test('a bare app with no bundle request is unverified and gets a relaunch remedy', async () => {
@@ -4751,7 +4745,7 @@ describe('release skips Metro entirely', () => {
     expect(h.calls.verify.length).toBe(0);
     expect(h.calls.verifyRelease.length).toBe(1);
     expect(labelled(h.stderr, 'verify')[0]).toMatch(/process alive/);
-    expect(h.calls.spawn.length).toBe(1);
+    expect(h.calls.logStarts.length).toBe(1);
   });
 
   test('a workspace with NO Metro reservation still runs a release build', async () => {
@@ -5708,9 +5702,9 @@ test('a new android collector waits for the previous one to exit before it is sp
     root,
     serial: 'emulator-5584',
     packageName: 'com.example.app',
-    spawn: (_cmd, _args, _opts) => {
-      order.push('spawn');
-      return makeChildProcess({ pid: 9001 });
+    startStream: async () => {
+      order.push('start');
+      return { streamId: 'stream-1' };
     },
     kill: (target: number, signal: NodeJS.Signals) => {
       order.push(`kill ${target} ${signal}`);
@@ -5725,10 +5719,10 @@ test('a new android collector waits for the previous one to exit before it is sp
     sleep: async () => {},
     out: () => {},
   });
-  expect(pid).toBe(9001);
+  expect(pid).toBe('stream-1');
   expect(order[0]).toBe(`kill ${PREVIOUS_COLLECTOR_PID} SIGTERM`);
-  expect(order.at(-1)).toBe('spawn');
-  expect(order.filter((o) => o === 'alive').length).toBe(3);
+  expect(order.at(-1)).toBe('start');
+  expect(order).toContain('alive');
 });
 
 test('nothing recorded means nothing to wait for: the collector starts immediately', async () => {
@@ -5737,9 +5731,9 @@ test('nothing recorded means nothing to wait for: the collector starts immediate
     root,
     serial: 'emulator-5584',
     packageName: 'com.example.app',
-    spawn: () => {
-      order.push('spawn');
-      return makeChildProcess({ pid: 9002 });
+    startStream: async () => {
+      order.push('start');
+      return { streamId: 'stream-2' };
     },
     kill: () => true,
     alive: () => {
@@ -5749,7 +5743,7 @@ test('nothing recorded means nothing to wait for: the collector starts immediate
     sleep: async () => {},
     out: () => {},
   });
-  expect(order).toEqual(['spawn']);
+  expect(order).toEqual(['start']);
 });
 
 describe('the project cache provider', () => {
@@ -7568,7 +7562,7 @@ test('a named Android run scopes allocation, launch verification and collector s
   expect(h.calls.ensureDevice[0]).toMatchObject({ slot: 'phone' });
   expect(h.calls.booted[0]).toMatchObject({ projectPath: root, slot: 'phone' });
   expect(h.calls.verify[0]).toMatchObject({ slot: 'phone' });
-  expect(h.calls.spawn.some((call) => call.args.includes('--slot') && call.args.includes('phone'))).toBe(true);
+  expect(h.calls.logStarts.some((call) => call.slot === 'phone')).toBe(true);
   const facts = JSON.parse(h.stdout.at(-1)!);
   expect(facts.slot).toBe('phone');
 });
@@ -8594,7 +8588,7 @@ describe('named Android hosting placement', () => {
       expect(readWorkspaceState(root)?.android).toMatchObject({ host: delivered });
       expect(h.calls.ensureDevice).toEqual([]);
       expect(h.calls.booted).toEqual([]);
-      expect(h.calls.spawn).toEqual([]);
+      expect(h.calls.logStarts).toEqual([]);
     },
   );
 

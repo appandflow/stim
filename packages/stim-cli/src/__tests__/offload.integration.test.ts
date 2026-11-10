@@ -162,6 +162,18 @@ describe('pickOffer', () => {
   });
 });
 
+test("an Exact build skips a machine that lacks Exact's toolchain and names the command that installs it", () => {
+  const exact = { exact2: 'a'.repeat(40), bun: '1.4.2', rust: '1.97.0' };
+  const EXACT: BuildTarget = { ...IOS, runtime: null, exact };
+  const missing = [{ reason: 'no Bun 1.4.2 at ~/.bun-1.4.2', commands: ['install-bun'] }];
+  const offers = (each: BuildOffer['exact']) => [{ machine: 'mini', offer: offer({ exact: each }) }];
+  const refused = pickOffer({ here: IDLE, target: EXACT, offers: offers({ missing }) });
+  expect(refused.order).toEqual([]);
+  expect(refused.reasons).toEqual(['mini: no Bun 1.4.2 at ~/.bun-1.4.2 there (install: install-bun)']);
+  expect(pickOffer({ here: IDLE, target: EXACT, offers: offers({ missing: [] }) }).order).toEqual([0]);
+  expect(offerProblems(offer({ exact: { missing }, toolchain: { cocoapods: null } }), EXACT)).toHaveLength(1);
+});
+
 describe('pickOffer for an Xcode the worker does not select', () => {
   const app = (name: string, version: string, build: string, checks: Partial<XcodeApp> = {}): XcodeApp => ({
     path: `/Applications/${name}.app`,
@@ -669,6 +681,60 @@ describe('strict client routing', () => {
       note: () => {},
     });
     expect(synced.toSorted()).toEqual([...names, 'apps/app/ios/.env'].toSorted());
+  });
+
+  it('an Exact build asks for its pins in the offer and starts on the synced digest with the declared settings', async () => {
+    const exact = { name: 'shop-app', exact2: 'a'.repeat(40), bun: '1.4.2', rust: '1.97.0', env: { API_URL: 'x' } };
+    const pins = { exact2: exact.exact2, bun: exact.bun, rust: exact.rust };
+    let started: unknown = null;
+    const offered: unknown[] = [];
+    const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method, params) => {
+      if (method === 'job.start') return { result: { job: 'job-1' } };
+      if (method === 'build.offer') {
+        offered.push(params);
+        return { result: offer({ capacity: capacity({ loadPerCore: 1.5 }), exact: { missing: [] } }) };
+      }
+      if (method === 'build.sync') return { result: { missing: [] } };
+      started = params;
+      return { error: { code: 'busy', message: 'stop here' } };
+    });
+    const connection: BuildConnection = Object.assign(Object.create(BuildConnection.prototype), {
+      host: [],
+      request,
+      close: vi.fn<() => void>(),
+      onProgress: () => {},
+    });
+    vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
+    const choice = await chooseBuildMachine({
+      projectRoot: root,
+      selected: 'mini',
+      target: { ...IOS, runtime: null, exact: pins },
+      here: IDLE,
+      machines: credentials,
+      note: () => {},
+    });
+    assert(typeof choice !== 'string');
+    const outcome = await offloadBuild({
+      choice,
+      expectedFingerprint: null,
+      request: {
+        platform: 'ios',
+        runtime: RUNTIME,
+        configuration: null,
+        scheme: null,
+        isExpo: false,
+        optimizations: null,
+        exact,
+      },
+      stagingDir: join(root, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(outcome).toMatchObject({ ok: false, reason: 'start: busy: stop here' });
+    expect(offered).toEqual([expect.objectContaining({ exact: pins })]);
+    expect(started).toMatchObject({ platform: 'ios', exact, fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/) });
   });
 
   it('a sync plan refusal stops the build before any file list or byte reaches the worker', async () => {

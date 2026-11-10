@@ -420,7 +420,8 @@ async function reportDeviceReads(keys: readonly string[], operation?: StimContex
     try {
       sims = await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, operation, signal });
     } catch (error) {
-      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
       signal?.throwIfAborted();
     }
   }
@@ -437,7 +438,8 @@ async function reportDeviceReads(keys: readonly string[], operation?: StimContex
     try {
       avds.set(name, { value: await resolver(name) });
     } catch (error) {
-      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
       signal?.throwIfAborted();
       avds.set(name, { error });
     }
@@ -492,7 +494,8 @@ function deviceUseOf(keys: readonly string[], devices: DeviceReads): string[] {
           if (devices.avdSerial(android.avdName).serial) {
             reasons.push(`its owned emulator ${android.avdName} is running; \`stim stop\` in ${key} shuts it down`);
           }
-        } catch {
+        } catch (error) {
+          if (error instanceof Error && 'reportCleanup' in error) throw error;
           reasons.push(`the state of its owned emulator ${android.avdName} cannot be read`);
         }
       }

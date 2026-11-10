@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { connect, createServer, type Server } from 'node:net';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 /** A lock the kernel holds for this process: a bound socket, gone when the process exits. */
 export interface StoreLock {
@@ -16,6 +16,13 @@ export interface StoreLock {
 export async function takeLock(root: string, name: '.lock.sock' | '.flip.sock'): Promise<StoreLock | null> {
   mkdirSync(root, { recursive: true });
   const path = lockPath(join(realpathSync(root), name));
+  if (process.platform !== 'win32' && path.startsWith('/tmp/stim-sockets-')) {
+    const dir = dirname(path);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const owner = lstatSync(dir);
+    if (!owner.isDirectory() || owner.uid !== (process.getuid?.() ?? 0))
+      throw new Error(`${dir} is not a directory this user owns, so the engine lock is not bound there.`);
+  }
   for (let attempt = 0; attempt < 3; attempt++) {
     const server = createServer();
     const bound = await new Promise<NodeJS.ErrnoException | null>((resolve) => {
@@ -23,7 +30,7 @@ export async function takeLock(root: string, name: '.lock.sock' | '.flip.sock'):
       server.listen(path, () => resolve(null));
     });
     if (!bound) return { release: () => closeLock(server) };
-    if (bound.code !== 'EADDRINUSE') throw bound;
+    if (bound.code !== 'EADDRINUSE') throw Object.assign(bound, { socketPath: path });
     if (process.platform === 'win32') return null;
     const leftover = lstatSync(path, { throwIfNoEntry: false })?.ino;
     const stale = await new Promise<boolean>((resolve) => {
@@ -48,12 +55,22 @@ function lockPath(path: string): string {
   if (process.platform === 'win32') return `\\\\.\\pipe\\stim-engine-${hash.slice(0, 32)}`;
   if (Buffer.byteLength(path) <= (process.platform === 'linux' ? 107 : 103)) return path;
   const uid = process.getuid?.() ?? 0;
-  const dir = join('/tmp', `stim-sockets-${uid}`);
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const owner = lstatSync(dir);
-  if (!owner.isDirectory() || owner.uid !== uid)
-    throw new Error(`${dir} is not a directory this user owns, so the engine lock is not bound there.`);
-  return join(dir, `${hash}.sock`);
+  return join('/tmp', `stim-sockets-${uid}`, `${hash}.sock`);
+}
+
+/** The socket used for the engine store's short lock, including its long-path fallback. */
+export function engineLockSocket(root: string, name: '.lock.sock' | '.flip.sock' = '.lock.sock'): string {
+  let existing = root;
+  const missing: string[] = [];
+  while (!existsSync(existing) && dirname(existing) !== existing) {
+    missing.unshift(basename(existing));
+    existing = dirname(existing);
+  }
+  let canonical = root;
+  try {
+    canonical = join(realpathSync(existing), ...missing);
+  } catch {}
+  return lockPath(join(canonical, name));
 }
 
 function closeLock(server: Server): Promise<void> {

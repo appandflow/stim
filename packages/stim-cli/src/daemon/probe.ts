@@ -33,10 +33,12 @@ export function parseAvdName(args: string): string | null {
   return /(?:^|\s)-avd\s+(\S+)/.exec(args)?.[1] ?? /(?:^|\s)@(\S+)/.exec(args)?.[1] ?? null;
 }
 
-async function read(exec: Executor, file: string, args: string[]): Promise<string | null> {
+async function read(exec: Executor, file: string, args: string[], signal?: AbortSignal): Promise<string | null> {
   try {
-    return await exec.runFileAsync(file, args, { timeoutMs: PROBE_TIMEOUT_MS });
-  } catch {
+    return await exec.runFileAsync(file, args, { timeoutMs: PROBE_TIMEOUT_MS, signal });
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'STIM_CLAIM_UNAVAILABLE') throw error;
+    signal?.throwIfAborted();
     return null;
   }
 }
@@ -50,25 +52,32 @@ async function read(exec: Executor, file: string, args: string[]): Promise<strin
 export async function probeFocusedDeviceUse({
   platform = process.platform,
   exec = getExecutor(),
-}: { platform?: NodeJS.Platform; exec?: Executor } = {}): Promise<FocusedDeviceUse | null> {
+  signal,
+}: { platform?: NodeJS.Platform; exec?: Executor; signal?: AbortSignal } = {}): Promise<FocusedDeviceUse | null> {
   if (platform !== 'darwin') return null;
   const idleMs = parseHidIdleMs(
-    (await read(exec, 'ioreg', ['-r', '-c', 'IOHIDSystem', '-k', 'HIDIdleTime', '-d', '1'])) ?? '',
+    (await read(exec, 'ioreg', ['-r', '-c', 'IOHIDSystem', '-k', 'HIDIdleTime', '-d', '1'], signal)) ?? '',
   );
   if (idleMs === null || idleMs >= RECENT_INPUT_MS) return null;
-  const asn = (await read(exec, 'lsappinfo', ['front']))?.trim();
+  const asn = (await read(exec, 'lsappinfo', ['front'], signal))?.trim();
   if (!asn) return null;
   const front = parseFrontApp(
-    (await read(exec, 'lsappinfo', ['info', '-only', 'bundleid', '-only', 'pid', '-only', 'executablepath', asn])) ??
-      '',
+    (await read(
+      exec,
+      'lsappinfo',
+      ['info', '-only', 'bundleid', '-only', 'pid', '-only', 'executablepath', asn],
+      signal,
+    )) ?? '',
   );
   if (front.bundleId === DEVICE_HUB_BUNDLE_ID) return { platform: 'ios', udid: null, idleMs };
   if (front.bundleId === SIMULATOR_BUNDLE_ID) {
-    const udid = (await read(exec, 'defaults', ['read', 'com.apple.iphonesimulator', 'CurrentDeviceUDID']))?.trim();
+    const udid = (
+      await read(exec, 'defaults', ['read', 'com.apple.iphonesimulator', 'CurrentDeviceUDID'], signal)
+    )?.trim();
     return { platform: 'ios', udid: udid || null, idleMs };
   }
   if (front.pid !== null && /(?:^|\/)qemu-system-[^/]*$/.test(front.executable ?? '')) {
-    const avdName = parseAvdName((await read(exec, 'ps', ['-o', 'args=', '-p', String(front.pid)])) ?? '');
+    const avdName = parseAvdName((await read(exec, 'ps', ['-o', 'args=', '-p', String(front.pid)], signal)) ?? '');
     return avdName ? { platform: 'android', avdName, idleMs } : null;
   }
   return null;

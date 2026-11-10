@@ -436,7 +436,14 @@ outside it moves to its own issue and pull request.
   `*.p8`, `*.p12`, `*.mobileprovision` and `*.provisionprofile` that no Xcode build file names. A release variant's worker
   builds any other signing config unsigned
   (`packages/stim-cli/shim/android-worker-release.gradle`) and the client signs it
-  with its `zipalign` then `apksigner` path, or refuses. An offloaded build runs
+  with its `zipalign` then `apksigner` path, or refuses. An offloaded Exact
+  build is keyed by the synced manifest's digest, installed from the fetched
+  app and never cached; it carries the values of the settings `app.json` `env`
+  declares that the client's environment, `.env.local` or `.env` sets, and only for an
+  app that declares no native modules. Its worker needs Exact's own Bun, Rust
+  and exact2 for the app's pins, reports what it lacks in the offer, and builds
+  an app at the repository root in a checkout folder named like the client's; it shares the worker
+  user's `~/.cargo` and `~/.cache/exact` across clients. An offloaded build runs
   the client's exact Stim build on the worker: the worker's stimd answers
   `job.start` by running that build's `dist/cli.mjs __job offload-build` (or
   `offload-probe` for an offer) from its engine store with a Node that meets the
@@ -787,10 +794,11 @@ emulators are shut down by `stop`.
 
 `stim web` launches the installed Chrome only with a profile Stim created under
 `$STIM_HOME/workspaces/<id>/web/`, listed under `web` in the created-devices
-ledger, and never attaches to a browser it did not start. Its supervisor holds
-an ownership claim with Chrome as the claim's child. Teardown goes through
-`devices/teardown.ts`, signals the supervisor or Chrome only after verifying
-the recorded identity, removes Chrome's `Singleton*` lock files only once Chrome
+ledger, and never attaches to a browser it did not start. The command starts
+Chrome through `spawnOwned`, which gives Chrome an ownership claim of its own,
+and stimd holds its DevTools session. Teardown goes through
+`devices/teardown.ts`, signals Chrome (or the browser supervisor an older Stim
+started) only after verifying the recorded identity, removes Chrome's `Singleton*` lock files only once Chrome
 is gone, and deletes a profile only when the ledger lists it.
 
 A physical device reached through `android --device` or `ios --device` is
@@ -813,7 +821,14 @@ files.
 
 Do not infer and rebuild commands from project scripts. Bare React Native hosts
 Metro from the project's dependencies. Expo runs its fixed start command. iOS
-and Android use fixed `xcodebuild` and Gradle arguments.
+and Android use fixed `xcodebuild` and Gradle arguments. An Exact app builds
+with its own `./exact.mjs ios --no-install` (plus `--release` for
+`--configuration Release`), with `EXACT_SIM` naming the
+workspace's owned simulator, started only once Stim has booted that simulator,
+so Exact never boots or shuts it down; build-only runs are refused. A build
+worker runs the same command with no `EXACT_SIM`, and only for an app whose
+`app.json` declares no native modules, because Exact may run code on a
+simulator during the build to read an app's native modules.
 
 The explicit `ios|android --eas-profile <name>` path downloads a compatible
 completed EAS development build instead of compiling locally. Delegate profile
@@ -936,7 +951,7 @@ input rows or their bytes change; the golden preimage tests pin each schema.
 
 `launched` can be `true`, `'bundling'`, `'unverified'`, or `false`. Use `true`
 only for a proven bundle request, or a live process of an app whose runtime has
-no Metro (a release build, or a native Xcode or Gradle app). Use `'bundling'`
+no Metro (a release build, or a native Xcode, Gradle or Exact app). Use `'bundling'`
 only for positive, non-error evidence from this workspace's Metro port. Use
 `'unverified'` when there is no evidence. Only `'unverified'` gets launch
 remedies. `false` is reserved and is not produced today.

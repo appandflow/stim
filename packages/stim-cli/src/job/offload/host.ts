@@ -95,6 +95,7 @@ import { fingerprintEnvName } from '../../fingerprint/env.ts';
 import { FINGERPRINT_SCHEMA, fingerprintInputsRow } from '../../fingerprint/key.ts';
 import { spawnEntry } from '../../spawn-entry.ts';
 import { BuildArtifactCache, validArtifactIdentity } from '../../offload/build-artifact-cache.ts';
+import { exactOffloadParam, exactPinsParam, exactToolProblems } from '../../integrations/exact-offload.ts';
 import { runArtifactQuery, type ArtifactQueryResult } from './artifact-query.ts';
 
 const DIGEST_BYTES = 32;
@@ -584,6 +585,9 @@ export class BuildHost {
     }
     if (params.native !== undefined && params.native !== 'xcode' && params.native !== 'gradle')
       return refusal('bad-request', 'build.offer supports native Xcode or Gradle toolchains.');
+    const exactPins = params.exact === undefined ? undefined : exactPinsParam(params.exact);
+    if (exactPins === null || (exactPins !== undefined && params.native !== undefined))
+      return refusal('bad-request', 'An Exact offer needs the exact2 commit and the Bun and Rust versions.');
     if (params.artifact !== undefined && (params.native !== 'xcode' || !validArtifactIdentity(params.artifact)))
       return refusal('bad-request', 'An artifact lookup needs a complete native Xcode identity.');
     const query = params.gradleArtifact === undefined ? undefined : gradleArtifactQuery(params.gradleArtifact);
@@ -647,6 +651,7 @@ export class BuildHost {
           build: false,
         },
         ...(artifact !== undefined ? { artifact } : {}),
+        ...(exactPins ? { exact: { missing: exactToolProblems(exactPins, this.environment()) } } : {}),
       },
     };
   }
@@ -1586,6 +1591,9 @@ export class BuildSession {
         'An android build needs params.android: variant and abi (string or null), gradleBuildCache, pch and compilerCache.',
       );
     }
+    const exact = params.exact === undefined ? undefined : exactOffloadParam(params.exact);
+    if (exact === null || (exact !== undefined && (platform !== 'ios' || native)))
+      return refusal('bad-request', 'An Exact build needs an iOS request with its app name, pins and settings.');
     let macos: BuildStartParams['macos'] = null;
     if (platform === 'macos') {
       const parsed = macosBuildOptions(params);
@@ -1623,6 +1631,7 @@ export class BuildSession {
         isExpo: params.isExpo === true,
         cacheArtifact: params.cacheArtifact === true,
         ...podsOnWorkerJob(params),
+        ...(exact ? { exact } : {}),
         stimBuild: params.stimBuild,
         compat,
         ...(typeof params.jdk === 'string' ? { jdk: params.jdk } : {}),

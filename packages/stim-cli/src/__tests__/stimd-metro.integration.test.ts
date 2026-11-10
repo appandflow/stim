@@ -16,9 +16,10 @@ import { connect, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { processGroupAlive } from '@stim-cli/core/ownership-claim';
+import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
+import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
-import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));
 const cli = join(repo, 'packages/stim-cli/dist/cli.mjs');
@@ -62,7 +63,7 @@ exports.runServer = (config) => new Promise((resolve) => {
   );
   write(
     join(dir, 'nvm', 'versions', 'node', 'v1.2.3', 'bin', 'node'),
-    `#!/bin/sh\necho $$ >> ${JSON.stringify(join(dir, 'pinned-node'))}\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
+    `#!/bin/sh\necho $$ >> ${JSON.stringify(join(dir, 'pinned-node'))}\necho "$APP_ENV" >> ${JSON.stringify(join(dir, 'metro-env'))}\nexec ${JSON.stringify(process.execPath)} "$@"\n`,
     0o755,
   );
   return realpathSync(root);
@@ -100,7 +101,7 @@ async function stopStimd(): Promise<void> {
   await exited;
 }
 
-function ask(op: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+function ask(op: string, params: Record<string, unknown>, opToken?: string): Promise<Record<string, unknown>> {
   const { socket: path, build } = record() ?? { socket: '', build: '' };
   return new Promise((resolve, reject) => {
     const socket = connect(path);
@@ -109,7 +110,9 @@ function ask(op: string, params: Record<string, unknown>): Promise<Record<string
     socket.setEncoding('utf8');
     socket.once('error', reject);
     socket.once('connect', () =>
-      socket.write(`${JSON.stringify({ kind: 'cli', build })}\n${JSON.stringify({ op, params })}\n`),
+      socket.write(
+        `${JSON.stringify({ kind: 'cli', build })}\n${JSON.stringify({ op, params, ...(opToken ? { opToken } : {}) })}\n`,
+      ),
     );
     socket.on('data', (chunk: string) => {
       buffer += chunk;
@@ -145,7 +148,8 @@ beforeEach(() => {
   mkdirSync(home);
   write(
     join(dir, 'bin', 'cloudflared'),
-    '#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = --logfile ] && log="$2"; shift; done\n' +
+    `#!/bin/sh\necho "$APP_ENV" >> ${JSON.stringify(join(dir, 'tunnel-env'))}\n` +
+      'while [ $# -gt 0 ]; do [ "$1" = --logfile ] && log="$2"; shift; done\n' +
       'echo "https://fixture-words.trycloudflare.com" >> "$log"\nexec sleep 600\n',
     0o755,
   );
@@ -161,23 +165,153 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await stopStimd();
-  for (const kind of ['metro', 'tunnel']) {
-    const root = join(home, 'workspaces');
-    for (const workspace of existsSync(root) ? readdirSync(root) : []) {
-      const claims = join(root, workspace, `${kind}.claim`, 'exclusive');
-      for (const name of existsSync(claims) ? readdirSync(claims) : []) {
-        if (!name.endsWith('.child')) continue;
-        const { record: child } = JSON.parse(readFileSync(join(claims, name), 'utf8'));
-        if (child && processGroupAlive(child.pid)) process.kill(-child.pid, 'SIGKILL');
+  try {
+    await stopStimd();
+    for (const kind of ['metro', 'tunnel']) {
+      const root = join(home, 'workspaces');
+      for (const workspace of existsSync(root) ? readdirSync(root) : []) {
+        const claims = join(root, workspace, `${kind}.claim`, 'exclusive');
+        for (const name of existsSync(claims) ? readdirSync(claims) : []) {
+          if (!name.endsWith('.child')) continue;
+          const { record: child } = JSON.parse(readFileSync(join(claims, name), 'utf8'));
+          if (!child || !processGroupAlive(child.pid)) continue;
+          if (inspectProcessIdentity(child) !== 'same')
+            throw new Error(`Cannot verify fixture process ${child.pid}; retained ${dir}.`);
+          process.kill(-child.pid, 'SIGKILL');
+          if (!(await waitForProcessExit(child, 5000)))
+            throw new Error(`Fixture process ${child.pid} remains; retained ${dir}.`);
+          const deadline = Date.now() + 5000;
+          while (processGroupAlive(child.pid) && Date.now() < deadline)
+            await new Promise((done) => setTimeout(done, 50));
+          if (processGroupAlive(child.pid))
+            throw new Error(`Fixture process group ${child.pid} remains; retained ${dir}.`);
+        }
       }
     }
+    rmSync(dir, { recursive: true, force: true });
+  } finally {
+    vi.unstubAllEnvs();
   }
-  vi.unstubAllEnvs();
-  rmSync(dir, { recursive: true, force: true });
 });
 
+test.skipIf(process.platform !== 'win32')(
+  'Windows stop and restart preserve managed Metro ownership',
+  async () => {
+    const root = bareProject();
+    rmSync(join(root, '.nvmrc'));
+    await startStimd();
+    const port = await freePort();
+    try {
+      const first = await ask('metro.ensure', { root, port });
+      expect(first).toMatchObject({ op: 'metro' });
+      const stop = spawn(process.execPath, [cli, 'stop'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = '';
+      stop.stdout?.on('data', (chunk) => (output += String(chunk)));
+      stop.stderr?.on('data', (chunk) => (output += String(chunk)));
+      const [code] = await once(stop, 'exit');
+      if (code !== 0) throw new Error(`stim stop exited ${code}: ${output}`);
+      const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+      expect(claims.unresolved).toEqual([]);
+      expect(claims.live).toEqual([]);
+      await expect(ask('metro.ensure', { root, port })).resolves.toMatchObject({ op: 'metro' });
+    } finally {
+      if (existsSync(workspaceStateFile(root))) {
+        const supervisor = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor;
+        if (supervisor) await ask('metro.stop', { root, pid: supervisor.pid, processToken: supervisor.processToken });
+      }
+    }
+  },
+  30_000,
+);
+
 describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel children', () => {
+  test('an attached stimd hands over when only a tunnel is running', async () => {
+    const root = bareProject();
+    write(join(dir, 'bin', 'launchctl'), '#!/bin/sh\nexit 0\n', 0o755);
+    write(join(dir, 'bin', 'systemd-run'), '#!/bin/sh\nexit 0\n', 0o755);
+    const child = spawn(process.execPath, [cli, '__stimd', '--attached'], { env, stdio: ['pipe', 'ignore', 'ignore'] });
+    stimd = child;
+    await vi.waitFor(() => expect(record()?.pid).toBe(child.pid), { timeout: 15_000, interval: 50 });
+    expect(await ask('tick', {})).toHaveProperty('op', 'ticked');
+    await expect(
+      ask('tunnel.ensure', { root, provider: 'cloudflared', port: await freePort(), requireReachable: false }),
+    ).resolves.toMatchObject({ op: 'tunnel' });
+    const exited = once(child, 'exit');
+    child.stdin?.end();
+    await exited;
+    expect(JSON.parse(readFileSync(join(home, 'run', 'stimd-journal.json'), 'utf8')).alive).toBe(
+      'Metro or a tunnel is running',
+    );
+  }, 30_000);
+
+  test('attached shutdown seals admission and joins an in-flight tunnel start before releasing home', async () => {
+    const root = bareProject();
+    const started = join(dir, 'tunnel-started');
+    const release = join(dir, 'tunnel-release');
+    write(
+      join(dir, 'bin', 'cloudflared'),
+      `#!/bin/sh
+while [ $# -gt 0 ]; do [ "$1" = --logfile ] && log="$2"; shift; done
+touch ${JSON.stringify(started)}
+while [ ! -e ${JSON.stringify(release)} ]; do sleep 0.05; done
+echo "https://fixture-words.trycloudflare.com" >> "$log"
+exec sleep 600
+`,
+      0o755,
+    );
+    write(join(dir, 'bin', 'launchctl'), '#!/bin/sh\nexit 0\n', 0o755);
+    write(join(dir, 'bin', 'systemd-run'), '#!/bin/sh\nexit 0\n', 0o755);
+    const child = spawn(process.execPath, [cli, '__stimd', '--attached'], { env, stdio: ['pipe', 'ignore', 'ignore'] });
+    stimd = child;
+    await vi.waitFor(() => expect(record()?.pid).toBe(child.pid), { timeout: 15_000, interval: 50 });
+    expect(await ask('tick', {})).toHaveProperty('op', 'ticked');
+    const pending = ask('tunnel.ensure', {
+      root,
+      provider: 'cloudflared',
+      port: await freePort(),
+      requireReachable: false,
+    });
+    const exited = once(child, 'exit');
+    try {
+      await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 10_000, interval: 20 });
+      child.stdin?.end();
+      await new Promise((done) => setTimeout(done, 700));
+      expect(alive(child.pid)).toBe(true);
+      expect(await ask('op.begin', {})).toMatchObject({ op: 'error', code: 'daemon-ending' });
+      writeFileSync(release, '');
+      expect(await pending).toHaveProperty('op', 'tunnel');
+      await exited;
+      expect(existsSync(join(home, 'run', 'stimd-journal.json'))).toBe(true);
+    } finally {
+      writeFileSync(release, '');
+      await pending.catch(() => {});
+    }
+  }, 30_000);
+
+  test('the attached watchdog leaves home ownership unresolved when tunnel startup outlasts shutdown', async () => {
+    const root = bareProject();
+    const started = join(dir, 'slow-tunnel-started');
+    write(join(dir, 'bin', 'cloudflared'), `#!/bin/sh\ntouch ${JSON.stringify(started)}\nexec sleep 600\n`, 0o755);
+    const child = spawn(process.execPath, [cli, '__stimd', '--attached'], {
+      env: { ...env, STIM_DAEMON_ATTACHED_EXIT_WAIT_SECONDS: '0' },
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    stimd = child;
+    await vi.waitFor(() => expect(record()?.pid).toBe(child.pid), { timeout: 15_000, interval: 50 });
+    expect(await ask('tick', {})).toHaveProperty('op', 'ticked');
+    void ask('tunnel.ensure', {
+      root,
+      provider: 'cloudflared',
+      port: await freePort(),
+      requireReachable: false,
+    }).catch(() => {});
+    const exited = once(child, 'exit');
+    await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 10_000, interval: 20 });
+    child.stdin?.end();
+    await exited;
+    expect(readClaimSet(join(home, 'run', 'stimd')).unresolved).toHaveLength(1);
+  }, 30_000);
+
   test("metro.ensure starts Metro through metro-host.cjs on the project's Node, and a warm child answers at once", async () => {
     const root = bareProject();
     const port = await freePort();
@@ -198,6 +332,241 @@ describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel
     expect(Number(ppid)).toBe(stimdPid);
     expect(await (await fetch(`http://localhost:${port}/status`)).text()).toBe('packager-status:running');
     await expect(ask('metro.ensure', { root, port })).resolves.toEqual({ ...started, state: 'running' });
+  });
+
+  test('a Metro request uses its operation environment when another operation begins later', async () => {
+    const root = bareProject();
+    const port = await freePort();
+    await startStimd();
+    const { socket: path, build } = record() ?? { socket: '', build: '' };
+    const open = async (value: string) => {
+      const socket = connect(path);
+      socket.setEncoding('utf8');
+      const lines: Record<string, unknown>[] = [];
+      let buffer = '';
+      socket.on('data', (chunk: string) => {
+        buffer += chunk;
+        for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+          lines.push(JSON.parse(buffer.slice(0, end)));
+          buffer = buffer.slice(end + 1);
+        }
+      });
+      await once(socket, 'connect');
+      socket.write(
+        `${JSON.stringify({ kind: 'cli', build })}\n${JSON.stringify({ op: 'op.begin', params: { workspace: root, forwarded: { cwd: root, env: { ...env, APP_ENV: value } } } })}\n`,
+      );
+      await vi.waitFor(() => expect(lines[1]?.op).toBe('op.begun'));
+      return { socket, lines };
+    };
+    const first = await open('first');
+    const second = await open('second');
+    try {
+      first.socket.write(`${JSON.stringify({ op: 'metro.ensure', params: { root, port } })}\n`);
+      await vi.waitFor(() => expect(first.lines[2]).toMatchObject({ op: 'metro', state: 'started' }), {
+        timeout: 15_000,
+      });
+      expect(readFileSync(join(dir, 'metro-env'), 'utf8').trim()).toBe('first');
+      first.socket.write(
+        `${JSON.stringify({ op: 'tunnel.ensure', params: { root, port, provider: 'cloudflared', requireReachable: false } })}\n`,
+      );
+      await vi.waitFor(() => expect(first.lines[3]).toMatchObject({ op: 'tunnel' }), { timeout: 15_000 });
+      expect(readFileSync(join(dir, 'tunnel-env'), 'utf8').trim()).toBe('first');
+    } finally {
+      first.socket.destroy();
+      second.socket.destroy();
+    }
+  });
+
+  test('operation tickets preserve shared device leases and the requesting Metro environment', async () => {
+    const root = bareProject();
+    const port = await freePort();
+    await startStimd();
+    const { socket: path, build } = record() ?? { socket: '', build: '' };
+    const open = async (value: string) => {
+      const socket = connect(path);
+      socket.setEncoding('utf8');
+      const lines: Record<string, unknown>[] = [];
+      let buffer = '';
+      socket.on('data', (chunk: string) => {
+        buffer += chunk;
+        for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+          lines.push(JSON.parse(buffer.slice(0, end)));
+          buffer = buffer.slice(end + 1);
+        }
+      });
+      await once(socket, 'connect');
+      socket.write(
+        `${JSON.stringify({ kind: 'cli', build })}\n${JSON.stringify({ op: 'op.begin', params: { workspace: root, forwarded: { cwd: root, env: { ...env, APP_ENV: value } } } })}\n`,
+      );
+      await vi.waitFor(() => expect(lines[1]?.op).toBe('op.begun'));
+      return { socket, token: String(lines[1]?.opToken) };
+    };
+    const first = await open('first-ticket');
+    const second = await open('second-ticket');
+    const request = {
+      root,
+      platform: 'ios',
+      slot: 'default',
+      id: 'phone',
+      deviceName: null,
+      idLabel: 'udid',
+      waitSeconds: 0,
+      noWait: false,
+      installBoundMs: 60_000,
+      appId: null,
+    };
+    try {
+      const a = await ask('lease.prepare', request, first.token);
+      const b = await ask('lease.prepare', request, second.token);
+      const leaseA = await ask('lease.acquire', { ticket: a.ticket }, first.token);
+      const leaseB = await ask('lease.acquire', { ticket: b.ticket }, second.token);
+      expect(leaseA).toMatchObject({ op: 'lease.acquired', result: { status: 'leased', kind: 'run' } });
+      expect(leaseB).toMatchObject({ op: 'lease.acquired', result: { status: 'leased', kind: 'run' } });
+      const { deviceLeasePath, parseLease } = await import('../engine/device-lease.ts');
+      const leasePath = deviceLeasePath('ios', 'phone');
+      first.socket.destroy();
+      await vi.waitFor(async () =>
+        expect(await ask('lease.acquire', { ticket: a.ticket }, first.token)).toMatchObject({ op: 'error' }),
+      );
+      expect(parseLease(readFileSync(leasePath, 'utf8'))?.holder).toBe(root);
+      const metro = await ask('metro.prepare', { root, port }, second.token);
+      expect(metro).toMatchObject({ op: 'metro.prepared', state: 'starting', ticket: expect.any(String) });
+      expect(await ask('metro.wait', { ticket: metro.ticket }, second.token)).toMatchObject({
+        op: 'metro',
+        state: 'started',
+      });
+      expect(readFileSync(join(dir, 'metro-env'), 'utf8').trim()).toBe('second-ticket');
+      const retained = parseLease(readFileSync(leasePath, 'utf8'));
+      second.socket.destroy();
+      await vi.waitFor(async () =>
+        expect(await ask('lease.acquire', { ticket: b.ticket }, second.token)).toMatchObject({ op: 'error' }),
+      );
+      expect(parseLease(readFileSync(leasePath, 'utf8'))).toEqual(retained);
+    } finally {
+      first.socket.destroy();
+      second.socket.destroy();
+    }
+  }, 30_000);
+
+  test.skipIf(process.platform === 'win32')(
+    'retains a run lease when a killed client leaves its installer alive',
+    async () => {
+      const root = bareProject();
+      const other = join(dir, 'other');
+      mkdirSync(other);
+      await startStimd();
+      const { socket: path, build } = record()!;
+      const script = join(dir, 'lease-client.cjs');
+      write(
+        script,
+        `
+const { connect } = require('node:net');
+const { spawn } = require('node:child_process');
+const [path, build, root] = process.argv.slice(2);
+const socket = connect(path);
+let buffer = '', stage = 0, token = '', ticket = '';
+socket.setEncoding('utf8');
+socket.on('connect', () => socket.write(JSON.stringify({kind:'cli',build})+'\\n'+JSON.stringify({op:'op.begin',params:{workspace:root,forwarded:{cwd:root,env:{}}}})+'\\n'));
+socket.on('data', chunk => {
+  buffer += chunk;
+  for (let end; (end = buffer.indexOf('\\n')) >= 0;) {
+    const msg = JSON.parse(buffer.slice(0,end)); buffer = buffer.slice(end+1);
+    if (msg.op === 'op.begun') { token = msg.opToken; socket.write(JSON.stringify({op:'lease.prepare',params:{root,platform:'ios',slot:'default',id:'phone',deviceName:null,idLabel:'udid',waitSeconds:0,noWait:false,installBoundMs:60000,appId:null}})+'\\n'); }
+    if (msg.op === 'lease.prepared') { ticket = msg.ticket; socket.write(JSON.stringify({op:'lease.acquire',params:{ticket}})+'\\n'); }
+    if (msg.op === 'lease.acquired' && !stage++) {
+      const installer = spawn(process.execPath,['-e','setInterval(() => {}, 1000)'],{detached:true,stdio:'ignore'});
+      process.stdout.write(JSON.stringify({pid:installer.pid,token,ticket})+'\\n');
+    }
+  }
+});
+`,
+      );
+      const client = spawn(process.execPath, [script, path, build, root], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let installerPid = 0;
+      try {
+        const [chunk] = await once(client.stdout!, 'data');
+        const { pid, token, ticket } = JSON.parse(String(chunk));
+        installerPid = pid;
+        expect(alive(installerPid)).toBe(true);
+        const exited = once(client, 'exit');
+        client.kill('SIGKILL');
+        await exited;
+        await vi.waitFor(async () =>
+          expect(await ask('lease.acquire', { ticket }, token)).toMatchObject({ op: 'error' }),
+        );
+        const { deviceLeasePath, parseLease } = await import('../engine/device-lease.ts');
+        const leasePath = deviceLeasePath('ios', 'phone');
+        await vi.waitFor(() => expect(parseLease(readFileSync(leasePath, 'utf8'))?.holder).toBe(root));
+        expect(alive(installerPid)).toBe(true);
+        const { acquireRunLease } = await import('../engine/device-lease-run.ts');
+        expect(
+          await acquireRunLease({
+            root: other,
+            platform: 'ios',
+            id: 'phone',
+            idLabel: 'udid',
+            waitSeconds: 0,
+            noWait: false,
+            installBoundMs: 60000,
+          }),
+        ).toMatchObject({ status: 'refused' });
+      } finally {
+        if (client.exitCode === null && client.signalCode === null) client.kill('SIGKILL');
+        if (installerPid && alive(installerPid)) process.kill(-installerPid, 'SIGKILL');
+      }
+    },
+    30_000,
+  );
+
+  test('an operation starts a log stream and its token expires when the operation disconnects', async () => {
+    const root = bareProject();
+    const pidFile = join(dir, 'log-pid');
+    write(
+      join(dir, 'bin', 'xcrun'),
+      `#!/bin/sh\necho $$ > "$TEST_PID"\necho '{"eventType":"logEvent","eventMessage":"device ready"}'\nexec sleep 600\n`,
+      0o755,
+    );
+    await startStimd();
+    const { socket: path, build } = record() ?? { socket: '', build: '' };
+    const socket = connect(path);
+    socket.setEncoding('utf8');
+    const lines: Record<string, unknown>[] = [];
+    let buffer = '';
+    socket.on('data', (chunk: string) => {
+      buffer += chunk;
+      for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+        lines.push(JSON.parse(buffer.slice(0, end)));
+        buffer = buffer.slice(end + 1);
+      }
+    });
+    await once(socket, 'connect');
+    socket.write(
+      `${JSON.stringify({ kind: 'cli', build })}\n${JSON.stringify({ op: 'op.begin', params: { workspace: root, forwarded: { cwd: root, env: { ...env, TEST_PID: pidFile } } } })}\n`,
+    );
+    await vi.waitFor(() => expect(lines[1]?.op).toBe('op.begun'));
+    const token = String(lines[1]?.opToken);
+    const spec = { root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' };
+    try {
+      const started = await ask('logs.start', spec, token);
+      expect(started).toMatchObject({ op: 'logs.started', streamId: expect.any(String) });
+      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
+      await vi.waitFor(() => {
+        const records = readFileSync(join(workspaceLogsDir(root), 'device.ndjson'), 'utf8');
+        expect(records).toContain('device ready');
+      });
+      const pid = Number(readFileSync(pidFile, 'utf8'));
+      socket.destroy();
+      await vi.waitFor(async () =>
+        expect(await ask('logs.start', spec, token)).toMatchObject({ op: 'error', code: 'bad-workspace' }),
+      );
+      expect(await ask('logs.stop', { root, platform: 'ios', slot: 'default', streamId: started.streamId })).toEqual({
+        op: 'logs.stopped',
+        stopped: true,
+      });
+      expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
+    } finally {
+      socket.destroy();
+    }
   });
 
   test('a stale heartbeat whose /status probe fails restarts Metro', async () => {
@@ -227,8 +596,17 @@ describe.skipIf(process.platform === 'win32')('stimd supervises Metro and tunnel
 
     await stopStimd();
     expect([alive(metro.pid), alive(tunnel.pid)]).toEqual([true, true]);
+    const metroClaim = claimFile(root, 'metro');
+    const priorClaim = JSON.parse(readFileSync(metroClaim, 'utf8'));
+    writeFileSync(
+      metroClaim,
+      JSON.stringify({ ...priorClaim, details: { ...priorClaim.details, engineDir: 'bbbbbbbbbbbb' } }),
+    );
     appendFileSync(join(workspaceLogsDir(root), 'metro.stderr.log'), 'error: written while no stimd ran\n');
     await startStimd();
+    await vi.waitFor(() =>
+      expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor.engineDir).toBe('bbbbbbbbbbbb'),
+    );
     await vi.waitFor(
       () =>
         expect(readFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), 'utf8')).toContain(

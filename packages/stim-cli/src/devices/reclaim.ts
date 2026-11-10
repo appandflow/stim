@@ -2,7 +2,7 @@ import { endWorkspaceShares } from '../local-server.ts';
 import type { StimContext } from '@stim-cli/core';
 import { archiveWorkspace } from '../archive.ts';
 import { clearNamedPorts } from '../named-ports.ts';
-import { projectDeviceSlots } from './device-slots.ts';
+import { parseDeviceSlotKey, projectDeviceSlots } from './device-slots.ts';
 import {
   type ProjectRecord,
   clearDevice,
@@ -10,12 +10,13 @@ import {
   removeProject,
   withConfigLockAsync,
 } from '../workspace/config.ts';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { resolveProjectMetro, killMetroTreeAsync, pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from '../stimd/metro/stop-cause.ts';
-import { ensureStimd } from '../daemon/client.ts';
+import { drainOwned, ensurePersistentStimd, stopDeviceLogStream, stopMetroTree } from '../daemon/client.ts';
 import { readBootedParkDeadline } from './booted-park.ts';
 import {
+  BROWSER_LOCK,
   teardownOwnedBrowser,
   teardownOwnedIosSim,
   teardownOwnedAvd,
@@ -23,9 +24,10 @@ import {
   type ParkRequest,
 } from './teardown.ts';
 import { acquireAvdClaim } from './avd-claim.ts';
-import { releaseClaim } from '../ownership-claim.ts';
+import { readClaimSet, releaseClaim } from '../ownership-claim.ts';
 import { parkedMaxSetting } from './sim-pool.ts';
 import { verifyCollectorOwnership } from '../stimd/logs/ownership.ts';
+import { sameCollectorRecord } from '../stimd/logs/state.ts';
 import {
   MODE_COMMAND,
   clearManagedMetroTunnel,
@@ -35,17 +37,23 @@ import {
   type ManagedTunnelRecord,
 } from '../stimd/metro/state.ts';
 import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
-import { isJsonObject, LAST_BUILD_KEYS, readMacosRecord, hostedNativeRecords } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  LAST_BUILD_KEYS,
+  readMacosRecord,
+  hostedNativeRecords,
+  stimdClaimRoot,
+} from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
 import { macosAppPresent } from '../macos/state.ts';
-import { readWebRecord } from '../web/state.ts';
+import { readWebRecord, webLogFile } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { removePhoneReverses } from './phone-reverses.ts';
 import { stopTunnel, type StopTunnelResult } from '../engine/tunnel.ts';
 import { getExecutor } from '../exec.ts';
 import { runOperationFile } from '../engine/operation-exec.ts';
-import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { agentDeviceDaemon } from './activity.ts';
 import { phaseLine } from '../command-output.ts';
 import { workspaceAgentDeviceDir, workspaceDir } from '../workspace/paths.ts';
@@ -58,6 +66,18 @@ import {
   type ProcessRecord,
 } from '../process-identity.ts';
 
+function hasOwnedLogs(root: string): boolean {
+  return readWebRecord(root) !== null || existsSync(webLogFile(root));
+}
+
+async function drainWorkspaceLogs(root: string, affected: boolean, operation: StimContext | undefined): Promise<void> {
+  if (!affected) return;
+  const claims = readClaimSet(stimdClaimRoot());
+  if (!claims.live.length && !claims.unresolved.length) return;
+  const failure = await drainOwned(root, operation?.env);
+  if (failure) throw new Error(`Could not drain workspace logs: ${failure}`);
+}
+
 function throwIfCleanupInterrupted(error: unknown, operation?: StimContext): void {
   if (error instanceof WorkspaceProcessCleanupError) throw error;
   operation?.signal.throwIfAborted();
@@ -67,10 +87,12 @@ async function reapCollectors(
   root: string,
   {
     verify = verifyCollectorOwnership,
+    stopStream = stopDeviceLogStream,
     collectors,
     operation,
   }: {
     verify?: typeof verifyCollectorOwnership;
+    stopStream?: typeof stopDeviceLogStream;
     collectors: Record<string, unknown>;
     operation?: StimContext;
   },
@@ -79,6 +101,23 @@ async function reapCollectors(
   const failedDevices: SkippedDevice[] = [];
   for (const [platform, record] of Object.entries(collectors)) {
     operation?.signal.throwIfAborted();
+    if (isJsonObject(record) && record.kind === 'stream') {
+      const parsed = parseDeviceSlotKey(platform);
+      const result =
+        parsed && typeof record.streamId === 'string'
+          ? await stopStream(root, parsed.platform, parsed.slot, record.streamId, operation)
+          : { error: 'the stream identity is invalid' };
+      if ('error' in result) {
+        const entry: SkippedDevice = {
+          platform: parsed?.platform ?? 'ios',
+          name: `${platform} log stream`,
+          reason: `${result.error}; keeping its ownership record`,
+        };
+        skippedDevices.push(entry);
+        failedDevices.push(entry);
+      }
+      continue;
+    }
     const rec = record as ProcessRecord | null;
     const pid = rec?.pid;
     if (typeof pid !== 'number' || pid <= 0 || pid === process.pid || !pidExists(pid)) continue;
@@ -284,7 +323,8 @@ async function reclaimOwnedDevices(
     if (ios?.owned && ios.deviceUdid) {
       const udid = ios.deviceUdid as string;
       const label = (ios.deviceName as string | undefined) || udid;
-      const bootedUntil = park ? await readBootedParkDeadline('ios', operation) : null;
+      const deadline = park ? await readBootedParkDeadline('ios', operation) : null;
+      const bootedUntil = deadline && (await ensurePersistentStimd(operation?.env)) ? deadline : null;
       const r = await teardownOwnedIosSim(udid, {
         operation,
         del: true,
@@ -296,7 +336,6 @@ async function reclaimOwnedDevices(
       if (r.parked) {
         parkedDevices.push(r.parked);
         evictedDevices.push(...(r.evicted ?? []));
-        if (bootedUntil) await ensureStimd();
       } else if (r.status === 'torn-down') deletedDevices.push(r.label as string);
       if (!r.parked && (r.status === 'torn-down' || r.status === 'missing')) {
         await withConfigLockAsync(() => clearDevice(projectPath, 'ios', slot, udid));
@@ -387,6 +426,7 @@ type ReclaimOptions = {
   stopMetroTunnel?: StopMetroTunnelFn;
   releaseLeases?: (root: string) => ReleasedLease[];
   verifyCollector?: typeof verifyCollectorOwnership;
+  stopStream?: typeof stopDeviceLogStream;
   teardownBrowser?: typeof teardownOwnedBrowser;
   stopRequester?: StopRequester;
 };
@@ -439,6 +479,7 @@ async function removeWorkspaceOutput(
   dir: string,
   archive: ReclaimOptions['archive'],
   state: ReturnType<typeof readWorkspaceState>,
+  lockDir: string,
   operation?: StimContext,
 ): Promise<void> {
   const stateDir = workspaceAgentDeviceDir(path);
@@ -462,7 +503,8 @@ async function removeWorkspaceOutput(
   }
   operation?.signal.throwIfAborted();
   if (archive) await archiveWorkspace(path, archive.removedBy, state, operation);
-  await emptyWorkspaceDir(dir, operation?.signal);
+  if (realpathSync(dir) !== lockDir) throw new Error('Workspace storage changed during cleanup');
+  await emptyWorkspaceDir(dir, operation?.signal, `${BROWSER_LOCK}.lock`);
 }
 
 async function reclaimIdleProject(
@@ -477,6 +519,7 @@ async function reclaimIdleProject(
     stopMetroTunnel = defaultStopMetroTunnel,
     releaseLeases = releaseWorkspaceLeases,
     verifyCollector = verifyCollectorOwnership,
+    stopStream,
     teardownBrowser = teardownOwnedBrowser,
     stopRequester = { by: 'stim gc --delete' },
     operation,
@@ -493,6 +536,7 @@ async function reclaimIdleProject(
   verifyAvdClaims(project, operation);
   const dereferenced = describeDereferenced(project);
   const initialState = readWorkspaceState(path);
+  const ownedLogs = hasOwnedLogs(path);
   await removePhoneReverses(path, { operation });
 
   let killedPid: number | null = null;
@@ -516,7 +560,13 @@ async function reclaimIdleProject(
     await withWorkspaceStateLockAsync(path, () => requestDevServerStop(path, processToken, stopRequester)).catch(
       () => {},
     );
-    const signalled = await killMetroTreeAsync(supervisor.pid, supervisor.processToken, operation);
+    const signalled = await stopMetroTree(
+      path,
+      supervisor.pid,
+      supervisor.processToken,
+      () => killMetroTreeAsync(supervisor.pid, supervisor.processToken, operation),
+      signal,
+    );
     if (!signalled)
       await withWorkspaceStateLockAsync(path, () => withdrawDevServerStopRequest(path, processToken)).catch(() => {});
     if (signalled && (await waitForProcessExit(supervisor, 10_000, signal))) {
@@ -557,6 +607,7 @@ async function reclaimIdleProject(
 
   const { skippedDevices: skippedCollectors, failedDevices: failedCollectors } = await reapCollectors(path, {
     verify: verifyCollector,
+    stopStream,
     collectors: initialState?.collectors ?? {},
     operation,
   });
@@ -577,11 +628,7 @@ async function reclaimIdleProject(
       (currentProject?.supervisor && !sameProcessRecord(currentProject.supervisor, project?.supervisor)) ||
       readWebRecord(path) !== null ||
       Object.entries(currentState?.collectors ?? {}).some(
-        ([platform, record]) =>
-          !sameProcessRecord(
-            record as ProcessRecord,
-            initialState?.collectors?.[platform] as ProcessRecord | undefined,
-          ),
+        ([platform, record]) => !sameCollectorRecord(record, initialState?.collectors?.[platform]),
       ),
     );
     if (replacement) {
@@ -671,7 +718,18 @@ async function reclaimIdleProject(
     const dir = workspaceDir(path);
     if (existsSync(dir)) {
       try {
-        await removeWorkspaceOutput(path, dir, archive, initialState, operation);
+        const lockDir = realpathSync(dir);
+        await withWorkspaceProcessLock(
+          lockDir,
+          BROWSER_LOCK,
+          async () => {
+            if (realpathSync(dir) !== lockDir) throw new Error('Workspace storage changed during cleanup');
+            if (readWebRecord(path)) throw new Error('A replacement browser appeared during cleanup');
+            await drainWorkspaceLogs(path, ownedLogs || hasOwnedLogs(path), operation);
+            await removeWorkspaceOutput(path, dir, archive, initialState, lockDir, operation);
+          },
+          { external: true, waitMs: 0, ownerPurpose: 'workspace removal', signal, declareSpawnsFor: operation },
+        );
         if (workspaceExisted) removedWorkspaceDirs.push(dir);
       } catch (error) {
         throwIfCleanupInterrupted(error, operation);

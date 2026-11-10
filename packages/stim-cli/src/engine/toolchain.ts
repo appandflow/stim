@@ -8,6 +8,7 @@ import { androidHome } from '../devices/android.ts';
 import { getExecutor } from '../exec.ts';
 import { bundlerPin } from '../engine/bundler.ts';
 import { podEnvForRuby, podEnvForRubyAsync, readRubyVersion } from '../engine/deps.ts';
+import type { ExactPins } from '../integrations/exact-offload.ts';
 import type { OffloadProblem } from '../offload/toolchain.ts';
 
 /** What must be identical on this Mac and a remote Mac for an iOS simulator build to come out the same. */
@@ -81,6 +82,8 @@ export type BuildTarget =
       cocoapodsPinned: boolean;
       /** No CPU comparison: doctor's target for a client without Xcode, whose app runs on a simulator of the Mac that builds it. */
       runsOnWorker?: true;
+      /** An Exact app's pins, which the machine's own Bun, Rust and exact2 must provide. */
+      exact?: ExactPins;
     }
   | { platform: 'android'; native?: 'gradle'; local: AndroidToolchain; requires: AndroidRequirements }
   | { platform: 'macos'; local: MacosToolchain; runsOnWorker?: true };

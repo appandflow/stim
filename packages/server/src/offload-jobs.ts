@@ -65,6 +65,8 @@ interface Upload {
 export interface OffloadJobsOptions {
   /** This build's `dist/cli.mjs`, which fetches client builds into the engine store. */
   stimCli: string;
+  /** Refuses jobs while this server is bound to a command. */
+  attached?: boolean;
   /** This machine's name, for refusals. */
   machine: string;
   /** The environment jobs start with, read at each start so they see tools installed since. */
@@ -163,6 +165,11 @@ export class OffloadJobs {
   }
 
   async start(client: JobClient, socket: NoiseSocket, params: unknown): Promise<Answer> {
+    if (this.options.attached)
+      return refused(
+        'build-busy',
+        'This machine is serving from an attached Stim command. After that command ends, run `stim serve` outside the agent command, then retry.',
+      );
     if (this.spliced.has(socket)) return refused('bad-request', 'This connection already runs a job.');
     if (isJsonObject(params) && typeof params.attach === 'string') return this.attach(client, socket, params.attach);
     if (

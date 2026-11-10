@@ -1,3 +1,4 @@
+import { checkPhysicalIosLog } from '../../daemon/client.ts';
 import { ensureIosRuntime } from '../../devices/ios-runtime.ts';
 import type { installHostedIosRuntime } from '../../device-host/ios-runtime.ts';
 import { projectRegistry } from '../../integrations/projects.ts';
@@ -187,6 +188,7 @@ export interface IosDeps {
     ...args: Parameters<typeof sealAppForDevice>
   ) => Awaited<ReturnType<typeof sealAppForDevice>> | ReturnType<typeof sealAppForDevice>;
   installIosDeviceApp: typeof installIosDeviceApp;
+  checkPhysicalIosLog: typeof checkPhysicalIosLog;
   awaitIosDeviceLaunch: typeof awaitIosDeviceLaunch;
   acquireRunLease: typeof acquireRunLease;
   runLease: typeof runLease;
@@ -301,6 +303,7 @@ export const DEFAULT_DEPS: IosDeps = {
   gateProfileForDevice,
   sealAppForDevice,
   installIosDeviceApp,
+  checkPhysicalIosLog,
   awaitIosDeviceLaunch,
   acquireRunLease,
   runLease,

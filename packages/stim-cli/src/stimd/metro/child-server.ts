@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { NdjsonRecord, NdjsonWriter } from '../../ndjson.ts';
 import { createLineReader } from '../../process-output.ts';
 import { cancellableSleep } from '../../cancellation.ts';
+import { captureProcessToken, inspectProcessIdentity } from '../../process-identity.ts';
 
 interface ChildExitInfo {
   code: number | null;
@@ -14,6 +15,7 @@ interface ChildExitInfo {
 export interface ChildServerHandle {
   mode: string;
   serverPid: number | null;
+  processToken: string | null;
   observesRequests?: boolean;
   child: ChildProcess;
   /** The follower of the child's output files, when it writes files instead of pipes. */
@@ -151,6 +153,7 @@ export function superviseChildServer({
   output?: ChildOutput | null;
 }): ChildServerHandle {
   const records = childRecords({ log, toRecord, onRecord });
+  const processToken = child.pid ? captureProcessToken(child.pid) : null;
   child.stdout?.setEncoding?.('utf-8');
   child.stderr?.setEncoding?.('utf-8');
   child.stdout?.on('data', (chunk) => records.push(chunk, 'stdout'));
@@ -177,6 +180,7 @@ export function superviseChildServer({
   return {
     mode,
     serverPid: child.pid ?? null,
+    processToken,
     child,
     tail,
     onExit(cb) {
@@ -194,8 +198,17 @@ export function superviseChildServer({
         return !running();
       };
       if (!running()) return;
+      const verify = () => {
+        if (
+          alive &&
+          (!child.pid || !processToken || inspectProcessIdentity({ pid: child.pid, processToken }) !== 'same')
+        )
+          throw new Error(`Could not verify the dev-server process group for pid ${child.pid ?? 'unknown'}.`);
+      };
+      verify();
       signal('SIGTERM');
       if (!(await gone())) {
+        verify();
         signal('SIGKILL');
         if (!(await gone())) throw new Error(`Could not confirm shutdown of dev-server pid ${child.pid ?? 'unknown'}.`);
       }

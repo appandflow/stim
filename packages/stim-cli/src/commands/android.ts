@@ -11,7 +11,7 @@ import {
 import { finishHostedAndroidRun } from './android/hosted.ts';
 import type { followHostedLaunchLogs } from '../device-host/hosted-logs-sync.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
-import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
+import { exitCli, runProcessOperation } from '../cli-operation.ts';
 import { parseMachine } from '@stim-cli/core/state';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
@@ -35,7 +35,6 @@ import {
   type recordFinishedBuild,
 } from '../engine/build-progress.ts';
 import { join } from 'node:path';
-import type { ChildProcess } from 'node:child_process';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import type { loadCacheProvider } from '@stim-cli/cache';
@@ -149,7 +148,7 @@ import {
   displayPath,
   pooledAndroidDevice,
 } from './android/support.ts';
-import { getExecutor } from '../exec.ts';
+import { startDeviceLogStream } from '../daemon/client.ts';
 import { emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
@@ -164,7 +163,7 @@ import { androidImageInstallPolicy, ensureSystemImage } from '../devices/android
 
 export { androidFacts, lastBuildRecord } from './android/result.ts';
 
-export { collectorLogFile, killPreviousCollector, startCollector } from './android/collector.ts';
+export { killPreviousCollector, startCollector } from './android/collector.ts';
 
 export {
   androidVariantSetting,
@@ -290,8 +289,8 @@ export function registerAndroid(program: Command): void {
       const { value: result, interrupted } = await runProcessOperation(root, (context) =>
         runAndroidOperation(context, root, { ...opts, waitConflict: waitFlagConflict(process.argv) }),
       );
-      if (!result.ok) process.exit(interrupted ?? 1);
-      else if (result.uploadsAbandoned) exitAfterFlush(0);
+      if (!result.ok) exitCli(interrupted ?? 1);
+      else if (result.uploadsAbandoned) exitCli(0);
     });
 }
 
@@ -431,7 +430,7 @@ interface RunAndroidOptions {
   launchRelease?: typeof launchAndroidReleaseApp;
   verifyReleaseLaunched?: typeof verifyAndroidReleaseLaunch;
   resolveDevClientScheme?: typeof androidDevClientScheme;
-  spawn?: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
+  startLogStream?: typeof startDeviceLogStream;
   kill?: (pid: number, signal: NodeJS.Signals) => boolean;
   createWriter?: typeof createNdjsonWriter;
   writeLaunch?: typeof writeWorkspaceLaunchAsync;
@@ -516,7 +515,7 @@ function resolveRunAndroidOptions(
     verifyReleaseLaunched = verifyAndroidReleaseLaunch,
     resolveDevClientScheme = (projectRoot, apkPath, options) =>
       androidDevClientScheme(projectRoot, apkPath, { ...options, context }),
-    spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
+    startLogStream = startDeviceLogStream,
     kill = (pid, signal) => process.kill(pid, signal),
     createWriter = createNdjsonWriter,
     writeLaunch = writeWorkspaceLaunchAsync,
@@ -598,7 +597,7 @@ function resolveRunAndroidOptions(
     launchRelease,
     verifyReleaseLaunched,
     resolveDevClientScheme,
-    spawn,
+    startLogStream,
     kill,
     createWriter,
     writeLaunch,
@@ -754,7 +753,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     launchRelease,
     verifyReleaseLaunched,
     resolveDevClientScheme,
-    spawn,
+    startLogStream,
     kill,
     createWriter,
     writeLaunch,
@@ -1516,17 +1515,20 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     let leaseHandle: RunLease | null = null;
     let stopLeaseSignals: (() => void) | null = null;
+    let releasingLease: Promise<void> | null = null;
     const releaseLease = () => {
+      if (releasingLease) return releasingLease;
       const held = leaseHandle;
       const stopSignals = stopLeaseSignals;
       leaseHandle = null;
       stopLeaseSignals = null;
       stopSignals?.();
-      try {
-        held?.release();
-      } catch (err) {
-        out(phaseLine('lease', chalk.dim(`could not release this run's lease: ${(err as Error)?.message || err}`)));
-      }
+      releasingLease = Promise.resolve()
+        .then(() => held?.release())
+        .catch((err) => {
+          out(phaseLine('lease', chalk.dim(`could not release this run's lease: ${(err as Error)?.message || err}`)));
+        });
+      return releasingLease;
     };
     if (physical) {
       progress.step('device');
@@ -1539,6 +1541,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         waitSeconds: target.lease.waitSeconds,
         noWait: target.lease.noWait,
         installBoundMs: ADB_INSTALL_TIMEOUT_MS,
+        signal: context.signal,
+        operation: context,
         appId: androidPackage,
         holderAppId: (holder: string) => getProject(holder)?.androidPackage ?? null,
         now,
@@ -1552,8 +1556,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       leaseHandle = makeRunLease({
         root,
         platform: PLATFORM,
-        kind: acquired.status === 'leased' ? acquired.kind : null,
-        expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
+        ...(acquired.status === 'leased'
+          ? { kind: acquired.kind, expiresAt: acquired.expiresAt, token: acquired.token, ticket: acquired.ticket }
+          : { kind: null, expiresAt: null }),
+        operation: context,
       });
       if (acquired.status === 'leased') {
         stopLeaseSignals = onLeaseSignal(context, releaseLease);
@@ -1620,7 +1626,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         resolveDevClientScheme,
         verifyLaunched,
         verifyReleaseLaunched,
-        spawn,
+        startLogStream,
         kill,
         pidAlive,
         verifyCollector,
@@ -1646,7 +1652,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           ).catch((e) => ({ failed: true as const, reason: String((e as Error)?.message || e) })),
       });
     } finally {
-      releaseLease();
+      await releaseLease();
     }
   };
 

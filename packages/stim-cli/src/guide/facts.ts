@@ -1423,7 +1423,9 @@ RULES
   web  { browser, version, running, pid, supervisorPid, url, headless,
          viewport, profile, cdpEndpoint, targetId, page?, activity? }
 
-  running        the browser supervisor and Chrome are both verified live;
+  running        Chrome is verified live (supervisorPid is Chrome's own pid,
+                 or a browser supervisor's in a browser an older Stim
+                 started);
                  pid, supervisorPid, cdpEndpoint and targetId are null when
                  false, and page and activity are absent
   url            the page stim web opened; page.url is the document the page
@@ -1449,10 +1451,10 @@ RULES
                  DevTools client connected to cdpEndpoint (agent-browser,
                  agent-device, argent, playwright, puppeteer,
                  chrome-devtools-mcp, or the executable's name); Stim's own
-                 connections (the browser supervisor, stim-server, Stim
+                 connections (stimd, stim-server, Stim
                  Desktop, the stim CLI) are not drivers. basis: cdp-client
                  (one lsof of the DevTools port); agent-action (the newest
-                 agent input the browser supervisor recorded in web.ndjson)
+                 agent input stimd recorded in web.ndjson)
                  and page-log (the newest other
                  web.ndjson record) for recency
 

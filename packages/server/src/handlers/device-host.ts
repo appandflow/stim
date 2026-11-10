@@ -8,6 +8,16 @@ import { type ScreenSize, simulatorScreen, androidScreen } from '../device-scree
 import { subscribeFrames } from './frames.ts';
 import { input } from './control.ts';
 
+const ATTACHED_WORK = new Set([
+  'device-host.runtime.install',
+  'device-host.offer',
+  'device-host.reserve',
+  'device-host.app.offer',
+  'device-host.app.chunk',
+  'device-host.app.handoff',
+  'device-host.app.launch',
+]);
+
 const CLOSE_METRO_RESET = 4410;
 
 const METRO_LINK_PING_MS = 15_000;
@@ -106,6 +116,12 @@ export async function hostedMethod(
   raw: unknown,
   session: PairedDevice,
 ): Promise<void> {
+  if (ctx.options.attached && ATTACHED_WORK.has(method))
+    return ctx.error(
+      id,
+      'device-busy',
+      'This machine is serving from an attached Stim command. After that command ends, run `stim serve` outside the agent command, then retry.',
+    );
   if (method === 'device-host.metro.link') return linkMetro(ctx, id, raw, session);
   if (method === 'device-host.agent.link') return linkAgent(ctx, id, raw, session);
   const params = isJsonObject(raw) ? raw : {};
@@ -208,7 +224,7 @@ export async function hostedMethod(
           : method === 'device-host.stop'
             ? ctx.hostedDevices.stop(session.id, raw)
             : method === 'device-host.app.offer'
-              ? ctx.hostedDevices.appOffer(session.id, raw)
+              ? ctx.hostedDevices.appOffer(session.id, raw, ctx.runId)
               : method === 'device-host.app.chunk'
                 ? await ctx.hostedDevices.appChunk(session.id, raw)
                 : method === 'device-host.app.handoff'

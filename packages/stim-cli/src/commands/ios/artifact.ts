@@ -1,7 +1,7 @@
 import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import { throwIfCancelled } from '../../cancellation.ts';
-import { rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, renameSync, rmSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import chalk from 'chalk';
 import {
   createWarnOnce,
@@ -485,7 +485,7 @@ export async function acquireIosArtifact(
 
   /** Whether this build should leave this machine, before any machine is asked; null builds here. */
   async function placeBuild(): Promise<Candidate | null> {
-    if (cacheIneligible) {
+    if (cacheIneligible && !recipe.offload?.uncached) {
       if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, cacheIneligible);
       hereReason = cacheIneligible;
       return null;
@@ -596,7 +596,13 @@ export async function acquireIosArtifact(
       if (candidate.cacheOnly) return null;
       const only = candidate.machines.length === 1 ? candidate.machines[0]!.machine : null;
       if (only && choice.startsWith(`${only}: `)) fallbackMachine = only;
-      fallBack(choice, choice, { code: 'no-remote-mac-took-it', candidates: asked });
+      fallBack(choice, choice, {
+        code: 'no-remote-mac-took-it',
+        candidates: asked,
+        ...(asked.some((each) => each.code === 'exact-tools')
+          ? { remedy: 'Run the install command above on that machine, or rerun with --remote-build local.' }
+          : {}),
+      });
       return null;
     }
     run.openOffload(() => closeOffload(choice));
@@ -612,6 +618,96 @@ export async function acquireIosArtifact(
     return choice;
   }
 
+  /** Builds on the chosen machine and installs the fetched app, kept in the workspace until the next offload, with no cache store; false builds here instead unless a machine was named. */
+  async function compileElsewhereUncached({
+    choice,
+    candidate,
+  }: {
+    choice: OffloadChoice;
+    candidate: Candidate;
+  }): Promise<boolean> {
+    const offload = recipe.offload;
+    if (!offload) return false;
+    const { offloadBuild, remotePhaseText, placementLoad } = await import('../../offload/client.ts');
+    const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
+    const outcome = await offloadBuild({
+      choice,
+      expectedFingerprint: null,
+      request: offload.request(candidate.runtime),
+      syncPlan: offload.syncPlan,
+      stagingDir,
+      onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
+      onEnter: (name) => {
+        if (name === 'compile' || name === 'build') {
+          builtOn = choice.machine;
+          buildFailure = { ...buildFailure, builtOn };
+        }
+        place({ host: choice.machine, phase: name });
+        step('compile');
+      },
+      onRecord: (record) => logWriter().write({ ...record, offloadedTo: choice.machine }),
+      note: (line) => phase('build', line),
+    });
+    place(null);
+    let reason = outcome.ok ? null : outcome.reason;
+    let prepared: string | null = null;
+    if (outcome.ok) {
+      if (!outcome.sourceDigest || !(await offload.unchanged(outcome.sourceDigest))) {
+        reason = 'the checkout here changed while it built';
+      } else {
+        const kept = join(workspaceDir(root), 'offload', `${PLATFORM}-app`);
+        try {
+          rmSync(kept, { recursive: true, force: true });
+          mkdirSync(kept, { recursive: true });
+          const app = join(kept, basename(outcome.artifactPath));
+          renameSync(outcome.artifactPath, app);
+          prepared = await recipe.materialize(app, { fresh: true, ownTemporary: (directory) => run.own(directory) });
+          if (!prepared) reason = 'the fetched app is not installable';
+        } catch (e) {
+          reason = `could not keep the fetched app: ${e instanceof Error ? e.message : String(e)}`;
+        }
+      }
+    }
+    try {
+      rmSync(stagingDir, { recursive: true, force: true });
+    } catch {}
+    throwIfCancelled(signal, 'offloaded build');
+    step('compile');
+    if (!outcome.ok || !prepared) {
+      const why = reason ?? 'the fetched app is not installable';
+      fallbackMachine = choice.machine;
+      fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
+        code: 'offload-failed',
+        machine: choice.machine,
+      });
+      logWriter().write({ src: 'build', level: 'warn', event: 'offload_failed', msg: why, machine: choice.machine });
+      return false;
+    }
+    const { timings } = outcome;
+    appPath = prepared;
+    builtOn = outcome.machine;
+    offloadedTo = outcome.machine;
+    stats.setPlacement({
+      decision: 'offloaded',
+      machine: outcome.machine,
+      reason: `${candidate.reason}${placementLoad(choice)}`,
+      buildMs: timings.totalMs,
+    });
+    phase(
+      'build',
+      `built on ${outcome.machine} in ${formatDuration(timings.totalMs)}: offer ${formatDuration(timings.offerMs)}, ` +
+        `sync ${formatDuration(timings.syncMs)}, build ${formatDuration(timings.workerMs)}, fetch ${formatDuration(timings.fetchMs)}`,
+    );
+    logWriter().write({
+      src: 'build',
+      level: 'info',
+      event: 'offload_done',
+      msg: `built on ${outcome.machine}`,
+      timings,
+    });
+    return true;
+  }
+
   /** Builds on the chosen machine and stores the app under the post-mutation key; false builds here instead unless a machine was named. */
   async function compileElsewhere({
     choice,
@@ -621,6 +717,7 @@ export async function acquireIosArtifact(
     candidate: Candidate;
   }): Promise<boolean> {
     const runtime = candidate.runtime;
+    if (recipe.offload?.uncached) return compileElsewhereUncached({ choice, candidate });
     if (!storeKey || !storeHash) {
       if (namedBuildMachine(buildMachine)) fallBack('the build fingerprint or cache key is unavailable');
       return false;
@@ -790,9 +887,10 @@ export async function acquireIosArtifact(
   ): Promise<ReadyArtifact<string> | null> {
     explainMiss(rekeyedBy);
     step('compile');
-    if (!storeKey)
+    const uncached = recipe.offload?.uncached === true;
+    if (!storeKey && !uncached)
       fallBack('no cache key to store the app under', 'offload failed: no cache key to store the app under');
-    const choice = storeKey ? await chooseMachine(offload) : null;
+    const choice = storeKey || uncached ? await chooseMachine(offload) : null;
     if (choice) await compileElsewhere({ choice, candidate: offload });
     return appPath ? { ready: appPath } : null;
   }
@@ -819,17 +917,18 @@ export async function acquireIosArtifact(
     requireLocalBuild(buildMachine);
     builtOn = 'here';
     buildFailure = { ...buildFailure, builtOn };
-    phase('build', `compiling ${configuration || 'Debug'} with xcodebuild`);
+    const tool = recipe.buildTool ?? 'xcodebuild';
+    phase('build', `compiling ${configuration || 'Debug'} with ${tool}`);
     const result = await recipe.compile();
     compilationCache = result.compilationCache;
-    phase('cache', `compilation cache ${compilationCacheActivityLine(compilationCache)}`);
+    if (!recipe.buildTool) phase('cache', `compilation cache ${compilationCacheActivityLine(compilationCache)}`);
     if (!result.ok) {
       phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
-      printDiagnostics(note, result);
+      printDiagnostics(note, result, tool);
       const transcript = retainFailedTranscript(logFile);
       const report = result.compilationCacheCorruption
         ? await clearCorruptCompilationCache(result.compilationCacheCorruption, root)
-        : { code: result.code, ...xcodeFailureReport(result, transcript) };
+        : { code: result.code, ...xcodeFailureReport(result, transcript, tool) };
       fail({
         code: report.code,
         message: report.message,

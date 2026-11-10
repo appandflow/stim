@@ -482,6 +482,7 @@ async function start(
     loopbackOnly?: boolean;
     keepAwake?: ServerOptions['keepAwake'];
     hostsDevices?: boolean;
+    attached?: boolean;
     exit?: boolean;
     whoisDelayMs?: number;
     authTimeoutMs?: number;
@@ -532,6 +533,7 @@ async function start(
   server = await startServer({
     host: overrides.host,
     hostsDevices: overrides.hostsDevices ?? true,
+    attached: overrides.attached,
     hosts: ['127.0.0.1'],
     port: 0,
     stimCli,
@@ -727,6 +729,16 @@ afterEach(async () => {
   terminateClients();
   await server?.close();
   for (const close of reloadBrowsers.splice(0)) await close();
+  const claims = readClaimSet(join(root, 'home', 'run', 'stimd'));
+  assert.deepEqual(claims.unresolved, []);
+  for (const { owner } of claims.live) {
+    assert.notEqual(owner.pid, process.pid);
+    const status = inspectProcessIdentity(owner);
+    if (status === 'gone' || status === 'different') continue;
+    assert.equal(status, 'same');
+    process.kill(owner.pid, 'SIGTERM');
+    await vi.waitFor(() => assert.match(inspectProcessIdentity(owner), /^(gone|different)$/), { timeout: 10_000 });
+  }
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
 });
@@ -2862,6 +2874,37 @@ describe('setup approval in Stim Desktop on this machine', () => {
 });
 
 describe('hosted device sessions', () => {
+  test('an attached server refuses hosted work before starting a worker while allowing session queries', async () => {
+    const port = await start({ attached: true });
+    const pending = setupClient(['device-host'], 'Client');
+    const client = await returning(port, pending.keyPair, '100.64.0.2', 'device-host');
+    const session = '12345678-1234-1234-1234-123456789abc';
+    const attempt = 'test-attempt';
+    const hash = 'a'.repeat(64);
+    const requests: [string, unknown][] = [
+      ['device-host.runtime.install', { runtime: '17.2' }],
+      ['device-host.offer', { platform: 'ios' }],
+      ['device-host.reserve', { workspace: '/client/app', slot: 'default', platform: 'ios', attempt }],
+      [
+        'device-host.app.offer',
+        { session, attempt, bundleId: 'dev.test.app', mode: 'development', manifest: { sha256: hash, size: 1 } },
+      ],
+      ['device-host.app.chunk', { session, attempt, sha256: hash, offset: 0, data: 'YQ==' }],
+      ['device-host.app.handoff', { session, attempt, build: { handoff: 'test', sha256: hash } }],
+      ['device-host.app.launch', { session, attempt }],
+    ];
+    for (const [method, params] of requests)
+      expect(await client.request(method, params)).toMatchObject({
+        error: { code: 'device-busy', message: expect.stringContaining('stim serve') },
+      });
+    expect(await client.request('device-host.attach', { session })).not.toMatchObject({
+      error: { code: 'device-busy' },
+    });
+    expect(await client.request('device-host.stop', { session })).not.toMatchObject({ error: { code: 'device-busy' } });
+    expect(readHostedSessions()).toEqual([]);
+    client.socket.close();
+  });
+
   test.skipIf(!fakeTailscale)(
     'reserves through the socket, reconnects to the same session and stops it on revocation',
     async () => {
@@ -13580,5 +13623,56 @@ describe('the web share listener of a server', () => {
     await start(overrides);
     await new Promise((done) => setTimeout(done, 200));
     expect(await answers(port)).toBe(false);
+  });
+});
+
+describe('attached Desktop admission', () => {
+  test('refuses new lifecycle and setup work before opening a subscription', async () => {
+    await start({ attached: true, desktopBootstrap: null });
+    assert(server);
+    const client = await localConnect(server);
+    await client.request('hello', { client: CLIENT, desktopBootstrap: true });
+    const api = vi.spyOn(stim, 'createStim');
+    const methods = [
+      'desktop.start.subscribe',
+      'desktop.run.subscribe',
+      'desktop.build.subscribe',
+      'desktop.gc.subscribe',
+      'desktop.worktree.warm.subscribe',
+      'desktop.worktree.remove.subscribe',
+      'desktop.machine-access.subscribe',
+      'desktop.remedy.subscribe',
+      'desktop.setup.subscribe',
+    ];
+    for (const method of methods)
+      expect(await client.request(method, { cwd: root })).toMatchObject({
+        error: { code: 'action-failed', message: expect.stringContaining('stim serve') },
+      });
+    expect(api).not.toHaveBeenCalled();
+    api.mockRestore();
+    expect(await client.request('desktop.stop.subscribe', {})).toHaveProperty('error.code', 'bad-request');
+    expect(await client.request('desktop.settings.schema', {})).toHaveProperty('result');
+    client.socket.close();
+  });
+
+  test('a persistent server still accepts Desktop lifecycle requests for validation', async () => {
+    await start({ desktopBootstrap: null });
+    assert(server);
+    const client = await localConnect(server);
+    await client.request('hello', { client: CLIENT, desktopBootstrap: true });
+    const original = stim.createStim;
+    const startWork = vi.fn<() => Promise<never>>(async () => {
+      throw new Error('fixture start');
+    });
+    const api = vi
+      .spyOn(stim, 'createStim')
+      .mockImplementation((options) => ({ ...original(options), start: startWork }));
+    try {
+      expect(await client.request('desktop.start.subscribe', { cwd: root })).toHaveProperty('result.subscription');
+      await until(() => startWork.mock.calls.length > 0);
+    } finally {
+      api.mockRestore();
+      client.socket.close();
+    }
   });
 });

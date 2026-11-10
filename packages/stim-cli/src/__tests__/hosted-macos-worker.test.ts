@@ -137,6 +137,7 @@ function receipt(args?: string[]) {
       attempt: 'app',
       bundleId,
       mode: 'release',
+      runId: 'hosted-initiator',
       ...(args ? { arguments: args } : {}),
       manifest: { sha256, size: manifest.length },
       state: 'installing',
@@ -204,6 +205,7 @@ test('stamps and signs verified bytes, launches with an isolated home, and delet
   expect(readMacosRecord(realpathSync(join(home, 'macos-app')))).toMatchObject({
     bundleId: `${bundleId}.hosted3`,
     arguments: offeredArguments,
+    runId: 'hosted-initiator',
     build: { state: 'ok' },
   });
   const preferences = join(process.env.HOME!, 'Library', 'Preferences');

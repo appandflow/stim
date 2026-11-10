@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
+import { exitCli, runProcessOperation } from '../cli-operation.ts';
 import { restoreLightenedDependencies } from '../workspace/lightened.ts';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { EventEmitter } from 'node:events';
@@ -396,7 +396,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         if (json) {
           console.log(JSON.stringify(startError({ code, message, remedy })));
         }
-        process.exit(exitCode);
+        exitCli(exitCode);
       };
 
       const wait = parseWait(opts.wait);
@@ -486,7 +486,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         waited: result.waited,
         links: await workspaceLinks(root),
       });
-      if (interrupted !== null) exitAfterFlush(interrupted);
+      if (interrupted !== null) exitCli(interrupted);
     });
 }
 

@@ -297,6 +297,7 @@ export async function verifyLaunch({
   pollMs = VERIFY_POLL_MS,
   readRecords = null,
   readDeviceRecords = null,
+  deviceStreamId,
   readClientRecords = null,
   readNativeCrashes = null,
   processAlive = null,
@@ -321,6 +322,7 @@ export async function verifyLaunch({
   pollMs?: number;
   readRecords?: (() => NdjsonRecord[]) | null;
   readDeviceRecords?: (() => NdjsonRecord[]) | null;
+  deviceStreamId?: string | null;
   readClientRecords?: (() => NdjsonRecord[]) | null;
   readNativeCrashes?: (() => NdjsonRecord[] | Promise<NdjsonRecord[]>) | null;
   processAlive?: (() => boolean | null | Promise<boolean | null>) | null;
@@ -339,7 +341,10 @@ export async function verifyLaunch({
   now?: () => number;
   /** Rejects the wait with STIM_CANCELLED once aborted. Ignored when `sleep` is passed. */
   signal?: AbortSignal;
-  sleep?: (ms: number) => Promise<unknown>;
+  sleep?: ((ms: number) => Promise<unknown>) & {
+    coverage?: () => 'pending' | 'covered' | 'failed';
+    coverThrough?: (at: number) => void;
+  };
 } = {}): Promise<VerifyLaunchResult> {
   const delivered = (record: NdjsonRecord) => deliveryOwner(record, { slot, appPid, platformShared }) === 'this';
   const read = readRecords || tailNdjson(logsDir, 'metro.ndjson');
@@ -370,12 +375,14 @@ export async function verifyLaunch({
   });
   let bundlingAt: NdjsonRecord | null = null;
   let reported: 'bundling' | 'waiting-ready' | null = null;
+  let coverageCandidate: string | null = null;
   const report = (name: typeof reported, at: number) => {
     if (name === reported) return;
     reported = name;
     onActivity?.(name, at);
   };
   const loop = async (): Promise<VerifyLaunchResult> => {
+    if (sleep.coverage) await sleep(0);
     while (true) {
       const metroRecords = read().filter((record) => after(record, since));
       const bundleRecords = metroRecords.filter(
@@ -383,7 +390,10 @@ export async function verifyLaunch({
           (!requireBundleResponse || String(record.event).startsWith('bundle_response_')) && delivered(record),
       );
       const deviceRecords = readDevice().filter(
-        (record) => after(record, since) && (slot === undefined || (record.slot ?? 'default') === slot),
+        (record) =>
+          after(record, since) &&
+          (slot === undefined || (record.slot ?? 'default') === slot) &&
+          (deviceStreamId === undefined || (deviceStreamId !== null && record.streamId === deviceStreamId)),
       );
       const clientRecords = readClient().filter((record) => after(record, since) && !platformShared);
       bundleDeadline = manifestDeadline(
@@ -453,6 +463,7 @@ export async function verifyLaunch({
       const jsRunningAt = jsRunningSince(signals, completedAt, runtimeWaiting, platform);
       const windowEnd = settledWindowEnd(stabilityDeadline, jsRunningAt);
       const readinessDeadline = completedAt !== null ? completedAt + APP_READINESS_TIMEOUT_MS : bundleDeadline;
+      if (windowEnd !== null && deviceNow() >= windowEnd) sleep.coverThrough?.(windowEnd);
       if (pendingAt === null) {
         const pending = signals.find(
           (record) =>
@@ -531,6 +542,32 @@ export async function verifyLaunch({
         const actionableErrors = errors.filter((record) => !isIosConnectionRefusal(record, platform));
         const appErrors = actionableErrors.some(isAppLaunchError);
         if ((!runtimeWaiting && pendingAt === null) || appErrors || ready || deviceNow() >= readinessDeadline) {
+          const candidate = `${windowEnd}:${pendingAt}:${ready}:${appErrors}:${runtimeWaiting}`;
+          if (candidate !== coverageCandidate) {
+            coverageCandidate = candidate;
+            sleep.coverThrough?.(now());
+          }
+          const coverage = sleep.coverage?.();
+          const coverageDeadline = pendingAt !== null ? readinessDeadline : bundleDeadline;
+          if (
+            deviceStreamId === null ||
+            coverage === 'failed' ||
+            (coverage === 'pending' && now() >= coverageDeadline)
+          ) {
+            return {
+              verified: false,
+              record: proof,
+              errors: actionableErrors,
+              processAlive: alive,
+              mode,
+              waitedMs,
+              timedOut: coverage === 'pending',
+            };
+          }
+          if (coverage === 'pending') {
+            await sleep(Math.min(pollMs, Math.max(0, coverageDeadline - now())));
+            continue;
+          }
           return {
             verified: true,
             record: proof,
@@ -542,6 +579,7 @@ export async function verifyLaunch({
             ...jsRunningFields(jsRunningAt),
           };
         }
+        coverageCandidate = null;
       }
 
       if ((!proof || runtimeWaiting) && now() >= bundleDeadline) {

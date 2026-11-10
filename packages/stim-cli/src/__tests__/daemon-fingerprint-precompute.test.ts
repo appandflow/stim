@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonWorkspaceDecision } from '@stim-cli/core/state';
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
   createFingerprintPrecompute,
   MAX_PRECOMPUTES_PER_PASS,
@@ -12,6 +12,8 @@ import {
 import type { FingerprintPrecomputeRequest } from '../fingerprint-precompute.ts';
 import { getExecutor } from '../exec.ts';
 import { testContext } from './_context.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import * as workspaceGit from '../workspace/git.ts';
 
 const live = (path: string, outcome: DaemonWorkspaceDecision['outcome'] = 'active'): DaemonWorkspaceDecision => ({
   path,
@@ -128,6 +130,41 @@ describe('the daemon fingerprint precompute', () => {
     expect(readdirSync(directory)).toEqual([]);
   });
 
+  test.each(['signature', 'requests', 'run'])('preserves unverified %s cleanup after cancellation', async (stage) => {
+    const controller = new AbortController();
+    const failure = new WorkspaceProcessCleanupError([], 'child cleanup is unverified', 'Inspect the child.');
+    const fail = () => {
+      controller.abort();
+      throw failure;
+    };
+    const step = createFingerprintPrecompute(() => {}, {
+      signature: async () => (stage === 'signature' ? fail() : 'head'),
+      requests: async () => (stage === 'requests' ? fail() : [{ root: base, platform: 'ios' }]),
+      run: async () => (stage === 'run' ? fail() : { outcome: 'recorded' }),
+      loadDeferred: () => false,
+    });
+    await expect(
+      step.run(
+        {
+          config: { version: 2, repos: {}, projects: { [base]: { platforms: { ios: {} } } } },
+          workspaces: [live(base)],
+          pressure: { level: 'normal' },
+          operation: testContext({ signal: controller.signal }),
+        },
+        true,
+      ),
+    ).rejects.toBe(failure);
+  });
+
+  test('tree signature preserves an unverified git child instead of replacing it with no-head', async () => {
+    const failure = new WorkspaceProcessCleanupError([], 'git cleanup is unverified', 'Inspect git.');
+    const read = vi.spyOn(workspaceGit, 'gitAsync').mockRejectedValueOnce(failure);
+    try {
+      await expect(treeSignature(base, new AbortController().signal)).rejects.toBe(failure);
+    } finally {
+      read.mockRestore();
+    }
+  });
   test('starts a child for a live, non-idle workspace once per HEAD and lockfile, and again when they change', async () => {
     const t = setup({ '/a': 'active' });
     await t.run();

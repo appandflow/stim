@@ -4,7 +4,7 @@ import type { RuntimePreparationError, RuntimePreparationResult } from '../engin
 import { writeDevicePlacementAsync, hostedMetroSettings } from '../workspace/placement-state.ts';
 import type { DevicePlacement } from '@stim-cli/core/state';
 import { type StimContext, workspaceId } from '@stim-cli/core';
-import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
+import { exitCli, runProcessOperation } from '../cli-operation.ts';
 import { acquireIosArtifact, acquireIosArtifactOrRecorded, type PreparedIosArtifact } from './ios/artifact.ts';
 import { artifactErrorCode, settleArtifactCleanup, unresolvedCleanup } from '../engine/acquire-artifact.ts';
 import { lookupRecordedBuild, type RecordedBuildRefusal } from '../engine/recorded-build.ts';
@@ -108,7 +108,7 @@ export { lastBuildRecord, iosFacts, writeLastBuild, cacheDescription } from './i
 
 export { devClientScheme, schemesFromInfoPlist, pickDevClientScheme } from './dev-client.ts';
 
-export { collectorEntry, replaceCollector } from './ios/collector.ts';
+export { replaceCollector } from './ios/collector.ts';
 
 export { ensureWorkspaceStorageSafely } from './native-runtime.ts';
 
@@ -222,8 +222,8 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       const { value: completion, interrupted } = await runProcessOperation(root ?? process.cwd(), (context) =>
         runIosOperation(context, root, { ...opts, waitConflict: waitFlagConflict(process.argv) }, deps),
       );
-      if (!completion) process.exit(interrupted ?? 1);
-      else if (completion.uploadsAbandoned) exitAfterFlush(0);
+      if (!completion) exitCli(interrupted ?? 1);
+      else if (completion.uploadsAbandoned) exitCli(0);
     });
 }
 
@@ -317,6 +317,24 @@ function iosProjectTargetRefusal(
   return null;
 }
 
+function workspaceBooted(
+  { elsewhere, created }: { elsewhere: unknown[]; created: Promise<void> | null },
+  boot: () => Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined>,
+): IosArtifactContext['target']['booted'] {
+  if (elsewhere.some(Boolean)) return undefined;
+  return async () => {
+    try {
+      if (created) await created;
+      const result = await boot();
+      return result?.ok && result.udid
+        ? { ok: true, udid: result.udid }
+        : { ok: false, reason: result?.reason ?? 'The owned simulator could not be booted.' };
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+  };
+}
+
 function iosArtifactTargetInputs({
   udid,
   pendingDevice,
@@ -328,6 +346,7 @@ function iosArtifactTargetInputs({
   lanAddress,
   metroPort,
   settings,
+  booted,
 }: {
   udid: string;
   /** The simulator this run is still waiting to create, which a build cannot name by udid. */
@@ -340,6 +359,7 @@ function iosArtifactTargetInputs({
   lanAddress: string | null;
   metroPort: number | null;
   settings: ReturnType<IosDeps['resolveSettings']>;
+  booted?: IosArtifactContext['target']['booted'];
 }): Pick<IosArtifactContext, 'target' | 'device'> {
   const unbound = pendingDevice !== null;
   const pendingRuntimeId = pendingDevice?.runtimeId ?? null;
@@ -355,6 +375,7 @@ function iosArtifactTargetInputs({
       offloadRuntime: () => hosted?.choice.runtimeId ?? (remote ? null : (pendingRuntimeId ?? simulatorRuntime(udid))),
       hostedArchitecture: hosted?.choice.architecture,
       offloadRefusal: physical ? 'device builds build here' : remote ? '--remote builds build here' : null,
+      ...(booted ? { booted } : {}),
     },
     device: physical
       ? {
@@ -458,17 +479,20 @@ async function runIos(
   setRemoteLogSink(context, (record) => logWriter().write(record));
   let leaseHandle: RunLease | null = null;
   let stopLeaseSignals: (() => void) | null = null;
+  let releasingLease: Promise<void> | null = null;
   const releaseLease = () => {
+    if (releasingLease) return releasingLease;
     const held = leaseHandle;
     const stopSignals = stopLeaseSignals;
     leaseHandle = null;
     stopLeaseSignals = null;
     stopSignals?.();
-    try {
-      held?.release();
-    } catch (e) {
-      note(chalk.dim(`Could not release this run's device lease: ${(e as Error)?.message || e}`));
-    }
+    releasingLease = Promise.resolve()
+      .then(() => held?.release())
+      .catch((e) => {
+        note(chalk.dim(`Could not release this run's device lease: ${(e as Error)?.message || e}`));
+      });
+    return releasingLease;
   };
 
   const stats = createRunRecorder({
@@ -1177,6 +1201,10 @@ async function runIos(
       const localBoot = remoteDevice || hostedTarget || pendingDevice ? null : startBoot();
       const deviceCreated = startWhenCreated(pendingDevice, startBoot);
       udid = (device.deviceUdid as string | undefined) ?? (await localBoot) ?? '';
+      const booted = workspaceBooted(
+        { elsewhere: [remoteDevice, hostedTarget, physical], created: deviceCreated },
+        () => bootPromise,
+      );
       const simulatorArch = simulatorBuildArch({
         physical,
         remoteArch,
@@ -1211,6 +1239,7 @@ async function runIos(
                 lanAddress,
                 metroPort,
                 settings,
+                booted,
               }),
               optimizations: optimizations.ios,
               easProfile: opts.easProfile,
@@ -1310,6 +1339,8 @@ async function runIos(
           waitSeconds,
           noWait,
           installBoundMs: iosDeviceBounds(wireless).installMs,
+          signal: context.signal,
+          operation: context,
           appId: artifact.bundleId ?? proj?.bundleId ?? null,
           holderAppId: (holder: string) => d.getProject(holder)?.bundleId ?? null,
           now: d.now,
@@ -1326,8 +1357,10 @@ async function runIos(
         leaseHandle = d.runLease({
           root,
           platform: PLATFORM,
-          kind: acquired.status === 'leased' ? acquired.kind : null,
-          expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
+          ...(acquired.status === 'leased'
+            ? { kind: acquired.kind, expiresAt: acquired.expiresAt, token: acquired.token, ticket: acquired.ticket }
+            : { kind: null, expiresAt: null }),
+          operation: context,
         });
         if (acquired.status === 'leased') {
           stopLeaseSignals = d.releaseLeaseOnAbort(context, releaseLease);
@@ -1385,7 +1418,7 @@ async function runIos(
           enterActivity: progress.activity,
         });
       } finally {
-        releaseLease();
+        await releaseLease();
       }
     } catch (error) {
       artifactFailure = error;

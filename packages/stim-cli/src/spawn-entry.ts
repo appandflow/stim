@@ -7,25 +7,23 @@ import { STIM_VERSION } from './stim-version.ts';
 export type SpawnEntryName =
   | 'cli'
   | 'supervisor-run'
-  | 'collector-run'
-  | 'web-run'
   | 'macos-run'
   | 'stimd-thread'
   | 'stimd-status'
   | 'net-thread'
   | 'engine-select'
+  | 'engine-flip'
   | '__self-test';
 
 const DEV_ENTRIES: Record<SpawnEntryName, string> = {
   cli: '../bin/cli.ts',
   'supervisor-run': './supervisor/run.ts',
-  'collector-run': './collector/run.ts',
-  'web-run': './web/run.ts',
   'macos-run': './macos/run.ts',
   'stimd-thread': './stimd/threads.ts',
   'stimd-status': './stimd/status-thread.ts',
   'net-thread': '../../server/src/net-thread.ts',
   'engine-select': '../bin/engine-select.ts',
+  'engine-flip': '../bin/engine-flip.ts',
   '__self-test': '../bin/self-test.ts',
 };
 

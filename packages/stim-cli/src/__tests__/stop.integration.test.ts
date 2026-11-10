@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -1203,6 +1203,44 @@ test('clearCollectorState drops only the collectors key', () => {
   clearCollectorState(tmpRoot);
   const left = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
   expect(left).toEqual({ supervisor: { pid: 7 }, lastBuild: { fingerprint: 'abc' } });
+});
+
+test('stop retains a stream record when its owner cannot stop it', async () => {
+  const stopStream = vi.fn<() => Promise<{ error: string }>>(async () => ({ error: 'ownership unresolved' }));
+  const { calls, opts } = seams({ collectors: { ios: { kind: 'stream', streamId: 'stream-1' } }, stopStream });
+  const result = await runStop(opts);
+  expect(result.ok).toBe(false);
+  expect(result.outcomes.collectors.entries).toMatchObject([{ status: 'failed', reason: 'ownership unresolved' }]);
+  expect(calls.collectorSignals).toEqual([]);
+  expect(calls.collectorsCleared).toBe(0);
+});
+
+test('collector cleanup keeps a replacement stream record', () => {
+  const old = { kind: 'stream', streamId: 'old' };
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({ collectors: { ios: { kind: 'stream', streamId: 'new' } } }),
+  );
+  expect(clearCollectorState(tmpRoot, { ios: old })).toBe(false);
+  expect(readCollectorState(tmpRoot).ios).toMatchObject({ kind: 'stream', streamId: 'new' });
+});
+
+test('collector cleanup retains an unrelated replacement when a shared stream ends', async () => {
+  const { unregisterStreamAll } = await import('../stimd/logs/state.ts');
+  const root = realpathSync(tmpRoot);
+  ensureWorkspaceStorage(root);
+  writeFileSync(
+    workspaceStateFile(root),
+    JSON.stringify({
+      collectors: {
+        ios: { kind: 'stream', streamId: 'shared' },
+        'ios:phone': { kind: 'stream', streamId: 'shared' },
+        'android:tablet': { kind: 'stream', streamId: 'other' },
+      },
+    }),
+  );
+  unregisterStreamAll(root, 'shared');
+  expect(readCollectorState(root)).toEqual({ 'android:tablet': { kind: 'stream', streamId: 'other' } });
 });
 
 test('an occupied sim names the UI-test runner that decided the skip', async () => {

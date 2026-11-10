@@ -499,6 +499,13 @@ Rerun with --remote-build auto or remote for placement with local fallback, or
   left untouched. The remedy tells you what to check and which command to run
   again, and when the run held ownership claims it lists the exact \`rm\`
   command for each retained claim.
+  When a Metro, tunnel, maintenance child or server worker cannot be verified
+  stopped, Stim also retains the home, shared daemon and engine claims and
+  refuses new work in that home.
+  On Windows, the leader's exit alone does not prove its descendants stopped;
+  verify the process tree before removing the listed claims.
+  An attached daemon killed unexpectedly can also leave home, shared daemon
+  and engine claims requiring the same check, including during startup or forced shutdown.
   Warm also reports this code for EACCES, EPERM, EROFS and ENOENT while taking a claim.
   The message names the claim path and original filesystem error. Restore write
   access to the existing claim store, checking parent permissions, symlink
@@ -1281,17 +1288,17 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       summary: 'the previous owned Chrome could not be stopped or verified; it was left running',
       body: () => `STIM_WEB_BROWSER_HELD
   stim web replaces the workspace's owned Chrome when its options change, and
-  the previous one could not be stopped: its supervisor or Chrome did not
-  exit, or their process identities could not be verified. Stim never signals
+  the previous one could not be stopped: Chrome did not exit, or its process
+  identity could not be verified. Stim never signals
   a process it cannot verify. Check stim status for browser-unverified, then
   follow stim guide errors teardown.`,
     },
     STIM_WEB_LAUNCH_FAILED: {
       summary: 'the owned Chrome did not start or did not open DevTools on its reserved port',
       body: () => `STIM_WEB_LAUNCH_FAILED
-  The browser supervisor exited before Chrome answered on its reserved
-  DevTools port. The remedy names the supervisor log; web.ndjson carries the
-  failure as web_browser_failed, and browser.log holds Chrome's own output.
+  Chrome did not answer on its reserved DevTools port, or stimd could not
+  attach to its page. web.ndjson carries the failure as web_browser_failed,
+  and browser.log, which the remedy names, holds Chrome's own output.
   A port another process bound first also lands here: run stim web again to
   reserve a fresh one.`,
     },
@@ -1395,6 +1402,12 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   removed. Nothing was started. Build first with the same selectors and the same
   Stim home (\`stim ci build\`, or the API build), then run again. \`stim guide ci\`
   has the flow. \`stim ios\` and \`stim android\` never use it.`,
+    },
+    STIM_ENV_TOO_LARGE: {
+      summary: 'the invocation environment exceeds the forwarding limit',
+      body: () => `STIM_ENV_TOO_LARGE
+  The environment forwarded to stimd exceeds 512 KB. The refusal names the
+  five largest variables. Reduce or unset them, then rerun the command.`,
     },
     STIM_BAD_ARG: {
       summary: 'an argument, setting, directory, flavor, or device name refused before anything starts',
@@ -1843,15 +1856,20 @@ not on any remote"  (worktree remove)
   Stim knows about; the rest is other software.`,
     },
     sandbox: {
-      summary: 'running under a sandboxing harness: EPERM under STIM_HOME, CoreSimulatorService, adb',
+      summary: 'running under a sandboxing harness: EPERM under STIM_HOME, the stimd socket, CoreSimulatorService, adb',
       body: () => `RUNNING UNDER A SANDBOX
 
   An agent harness that sandboxes shell commands typically permits writes
-  inside the project and blocks the rest. Three things Stim needs sit outside
-  that boundary, and none of the failures names the sandbox:
+  inside the project and blocks the rest. Four things Stim needs sit outside
+  that boundary, and only the second failure names the sandbox:
 
     EPERM: operation not permitted, mkdir '<STIM_HOME>/workspaces/...'
       writes to STIM_HOME (~/.stim unless set)
+
+    STIM_SANDBOX_BLOCKED: <STIM_HOME>/run/stimd.sock is outside this
+    sandbox's allowance; run Stim outside the sandbox or see stim guide errors sandbox
+      stimd's socket, which start, ios, android, web, macos and revive
+      connect to or bind (see that code's entry)
 
     CoreSimulatorService connection became invalid   (macOS)
     Unable to locate device set: ... Code=61 "Connection refused"
@@ -1861,14 +1879,15 @@ not on any remote"  (worktree remove)
     could not install *smartsocket* listener: Operation not permitted
       the adb server socket on tcp:5037
 
-  Measured on Claude Code and on Codex: the three fail the same way in both,
+  Measured on Claude Code and on Codex: the first, third and fourth fail the same way in both,
   so this is the shape of the problem, not one harness's quirk. Codex also
   blocks network egress by default, which breaks a cache lookup and a fetch.
 
-  \`stim doctor\` names this when a write to STIM_HOME actually fails, not
-  merely when a harness that can sandbox is present. \`stim doctor --fix\`
+  \`stim doctor\` names this when a write to STIM_HOME or a connection to
+  stimd's socket actually fails, not merely when a harness that can sandbox
+  is present. \`stim doctor --fix\`
   writes only when the report shows that finding, and only what the finding
-  names: the three keys, into .claude/settings.local.json, the per-user file,
+  names: the four keys, into .claude/settings.local.json, the per-user file,
   merging with what is there. A report without the finding, with or without
   --platform, leaves that file alone. It refuses under Codex, which
   has no per-path allowance to add, and refuses any settings file it cannot
@@ -1879,12 +1898,21 @@ not on any remote"  (worktree remove)
   does.
 
   Two ways out, and choosing at the start of a session beats discovering it
-  three failures in. Either run Stim with the harness's sandbox disabled, or
-  allow the three. In Claude Code that is settings.json:
+  four failures in. Either run Stim with the harness's sandbox disabled, or
+  allow the four. In Claude Code that is settings.json:
 
     sandbox.filesystem.allowWrite     ["~/.stim"]
     sandbox.network.allowMachLookup   ["com.apple.coresimulator.*"]
+    sandbox.network.allowUnixSockets  ["<STIM_HOME>/run/stimd.sock"]
     sandbox.network.allowLocalBinding true
+
+  The socket entry is the absolute path stim doctor prints; when that path is
+  longer than the platform's socket limit (103 bytes on macOS) stimd uses
+  /tmp/stim-sockets-<uid>/<hash>.sock instead, and doctor writes that one.
+
+  On Linux, Claude Code cannot allow individual Unix sockets through seccomp.
+  If the socket is denied, run Stim outside the sandbox; doctor does not
+  automatically enable access to every Unix socket.
 
   In Codex the sandbox is one flag, \`codex -s\`, with no per-path allowance:
   workspace-write still refuses STIM_HOME.
@@ -1940,13 +1968,57 @@ not on any remote"  (worktree remove)
   the remedy names: npx stim@<this version> engine rollback, or
   npx stim@<this version> engine use <this version>.`,
     },
+    STIM_DAEMON_UNAVAILABLE: {
+      summary: 'an attached Stim daemon could not start or admit the command',
+      body: () => `STIM_DAEMON_UNAVAILABLE
+  An attached daemon may still be starting, ending, or serving a different
+  build. Wait for its owning command to finish and retry, or use a separate
+  STIM_HOME. After startup times out or is cancelled, Stim allows up to 10
+  seconds for cleanup before forcing the daemon to exit. If startup still
+  fails, run stim doctor or run outside the sandbox.`,
+    },
+    STIM_CI_ATTACHED_HOME: {
+      summary: 'another command owns this home’s attached daemon',
+      body: () => `STIM_CI_ATTACHED_HOME
+  A concurrent CI job cannot share a daemon tied to another command's lifetime.
+  Use a separate STIM_HOME for each concurrent CI job.`,
+    },
+    STIM_ENGINE_HOST_UNAVAILABLE: {
+      summary: 'the selected engine predates attached CI hosting',
+      body: () => `STIM_ENGINE_HOST_UNAVAILABLE
+  The selected machine engine cannot host the daemon for stim ci run.
+  Run stim engine update to select an engine that supports attached hosting.`,
+    },
+    STIM_SANDBOX_BLOCKED: {
+      summary: "a sandbox denies stimd's socket, so the command can neither reach nor host stimd",
+      body: () => `STIM_SANDBOX_BLOCKED  ("<STIM_HOME>/run/stimd.sock is outside this sandbox's
+                       allowance; run Stim outside the sandbox or see stim guide errors sandbox")
+  start, ios, android, web, macos and revive run under this home's stimd.
+  They start it detached; when a detached start has not bound within 2 s
+  (a harness that blocks launchd, systemd-run or detached children), the
+  command runs stimd as its own child for its lifetime instead, and after the
+  command ends that stimd waits up to daemon.attachedExitWaitSeconds (120)
+  for other commands still using it, then writes run/stimd-journal.json and
+  exits; the next command starts or hosts the next one. The refusal comes
+  only when the sandbox itself denies the socket (EPERM or EACCES): a stimd
+  started outside the sandbox holds the home and this command may not
+  connect, the attached stimd may not bind, or its engine store lock is denied.
+  If the attached daemon cannot start or admit the command, it refuses with
+  STIM_DAEMON_UNAVAILABLE instead.
+  On macOS, run stim doctor --fix inside Claude Code, then restart the session.
+  On Linux, a path-specific socket allowance is unsupported; run the command
+  outside the sandbox. status, logs, reload, doctor and other read commands
+  keep working inside the sandbox.`,
+    },
     STIM_ENGINE_SWITCHED: {
       summary: 'the machine engine switched to a newer build while this run waited',
       body: () => `STIM_ENGINE_SWITCHED  ("Stim updated to <version>; rerun")
   A build waiting at its build slot, stim logs --follow and stim status
   --watch end when the engine switches builds under them; the CLI prints the
   quoted line and exits 75. While a newer build is staged, a cache miss waits
-  at its build slot for up to 10 minutes so running builds can finish.
+  at its build slot for up to 10 minutes so running builds can finish. When the
+  current engine is retained by an attached host, CI job or active native log
+  stream, builds skip that wait.
   Rerun the same command: it runs the new build.`,
     },
     STIM_ROUTER_TOO_OLD: {
