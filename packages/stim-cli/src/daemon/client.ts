@@ -75,8 +75,8 @@ const claimList = (claims: ClaimProblem[]) => claims.map((claim) => `${claim.pat
 const removeCommands = (claims: ClaimProblem[]) => claims.map((claim) => claimRemoveCommand(claim.path)).join('; ');
 
 function requireResolvedStimdHome(): void {
+  if (readClaimSet(stimdClaimRoot()).unresolved.length === 0) return;
   const claims = unresolvedDaemonClaims();
-  if (claims.length === 0) return;
   throw Object.assign(
     new Error(
       `The Stim daemon ${claims.length === 1 ? 'claim at' : 'claims at'} ${claimList(claims)} cannot be resolved.`,
@@ -112,7 +112,7 @@ export function stimdBuildId(): string {
 }
 
 let refusedBuild: string | null = null;
-let refusal: { version: string; pid: unknown; handover: boolean } | null = null;
+let refusal: { version: string; pid: number | null; handover: boolean } | null = null;
 let opSocket: Socket | null = null;
 const opTokens = new WeakMap<Socket, string>();
 let following: Promise<never> | null = null;
@@ -148,8 +148,8 @@ function noteRefusal(message: Record<string, unknown>): void {
   refusedBuild ??= String(message.build);
   refusal = {
     version: String(message.version ?? message.build),
-    pid: message.pid,
-    handover: message.handover === true,
+    pid: typeof message.pid === 'number' ? message.pid : null,
+    handover: message.handover === true || message.build === stimdBuildId(),
   };
 }
 
@@ -160,20 +160,20 @@ function noteRefusal(message: Record<string, unknown>): void {
 export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message: string; remedy: string } | null {
   if (!refusal) return null;
   const { version, pid, handover } = refusal;
-  const runs = `This Stim home's stimd (pid ${String(pid)}) runs Stim ${version}, not this stim's ${stimBuild().version}`;
+  const stimd = `This Stim home's stimd${pid === null ? '' : ` (pid ${pid})`}`;
   const [why, remedy] = refusedByAttached
     ? [
-        `${runs}, as the child of another command.`,
+        `${stimd} runs Stim ${version} as the child of another command.`,
         'Run the command again once that command ends, or set STIM_HOME to a separate home for this build.',
       ]
     : handover
       ? [
-          `${runs}; it restarts on this build once the commands it serves end.`,
+          `${stimd} runs another Stim build; it restarts on this build once the commands it serves end.`,
           'Run the command again once those commands end.',
         ]
       : [
-          `${runs}, and does not restart on this build.`,
-          `Run the command with Stim ${version}, or stop that stimd with \`kill ${String(pid)}\`; the next stim command starts one of this build.`,
+          `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
+          `Run the command with Stim ${version}, or stop that stimd${pid === null ? '' : ` with \`kill ${pid}\``}; the next stim command starts one of this build.`,
         ];
   return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }
