@@ -217,11 +217,14 @@ test.skipIf(process.platform === 'win32')(
         }),
       );
       const before = stimBuildId(dist);
+      assert(before);
       await until('the stimd of the installed build', () => record()?.build === before);
       const pid = record()?.pid;
 
-      expect(await first('ffffffffffff')).toMatchObject({ op: 'engine-changed', pid });
-      expect(record()?.pid).toBe(pid);
+      const other = await first('ffffffffffff');
+      expect(other).toMatchObject({ op: 'engine-changed', pid });
+      expect(other).not.toHaveProperty('handover');
+      expect(await first(before)).toMatchObject({ op: 'hello', pid });
 
       updateInPlace(dist);
       const after = stimBuildId(dist);
