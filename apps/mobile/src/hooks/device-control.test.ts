@@ -308,3 +308,41 @@ test('leaves a session the person ended off when the connection is replaced', as
   expect(second.request).not.toHaveBeenCalled();
   expect(result.current.state.kind).toBe('off');
 });
+
+test('ends a session whose begin answers after the person turned Control off', async () => {
+  const begins: ((result: unknown) => void)[] = [];
+  const request = jest.fn((method: string) =>
+    method === 'control.begin' ? new Promise((resolve) => begins.push(resolve)) : Promise.resolve({}),
+  );
+  machines.setMacs(
+    [{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z', serverKey: 'k' }],
+    false,
+  );
+  openLink({ request, onControlEnded: () => () => {}, reconnect: () => {} });
+  const { result } = await renderHook(() => useDeviceControl('/app', 'ios', 'default'));
+  await act(async () => result.current.begin());
+  await act(async () => result.current.end());
+  await act(async () => begins[0]!({ session: 'c1', platform: 'ios', lease: null, postures: [] }));
+  expect(request.mock.calls.at(-1)).toEqual(['control.end', { session: 'c1' }]);
+  expect(result.current.state.kind).toBe('off');
+});
+
+test('resumes on the next connection when the resume request is lost with its connection', async () => {
+  const begun = { session: 'c1', platform: 'ios', lease: null, postures: [] };
+  const makeConnection = (begin: () => Promise<unknown>) => ({
+    request: jest.fn((method: string) => (method === 'control.begin' ? begin() : Promise.resolve({}))),
+    onControlEnded: () => () => {},
+    reconnect: () => {},
+  });
+  machines.setMacs(
+    [{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z', serverKey: 'k' }],
+    false,
+  );
+  openLink(makeConnection(() => Promise.resolve(begun)));
+  const { result } = await renderHook(() => useDeviceControl('/app', 'ios', 'default'));
+  await act(async () => result.current.begin());
+  await act(async () => openLink(makeConnection(() => Promise.reject(new Error('Connection closed.')))));
+  expect(result.current.state.kind).toBe('starting');
+  await act(async () => openLink(makeConnection(() => Promise.resolve({ ...begun, session: 'c3' }))));
+  expect(result.current.state).toMatchObject({ kind: 'on', session: 'c3' });
+});
