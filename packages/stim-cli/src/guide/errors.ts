@@ -1979,9 +1979,11 @@ not on any remote"  (worktree remove)
   fails, run stim doctor or run outside the sandbox.
   stim share, share list and share stop also answer it when this home's
   stimd runs another Stim build and no stimd of this build replaced it. The
-  message names that build and pid: wait for the commands or live shares it
-  serves when it restarts on this build once they end, run
-  the command with that build, or stop that stimd with kill <pid>, which
+  message names that build, its pid and what holds its restart on this
+  build: wait for the commands it serves; let its live shares expire; for
+  device log streams, run npx stim@<its version> stop in the workspaces it
+  names. Or run the command with that build, or stop that stimd with
+  kill <pid>, which
   also ends the builds, dev servers and shares it serves, so the next
   command starts one of this build.`,
     },

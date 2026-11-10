@@ -936,7 +936,14 @@ async function runStimdInner(
     if (message.kind !== 'desktop') noteClientBuild(message.build);
     const handover =
       updatedInPlace?.build === message.build
-        ? { handover: true, ...(net.running()?.shareOnly ? { heldBy: 'shares' } : {}) }
+        ? {
+            handover: true,
+            ...(logs.running()
+              ? { heldBy: 'logs', workspaces: logs.roots() }
+              : net.running()?.shareOnly
+                ? { heldBy: 'shares' }
+                : {}),
+          }
         : {};
     socket.end(
       `${JSON.stringify({ op: 'engine-changed', build, ...lifetime.refusal, pid: process.pid, ...handover, ...switchedTo })}\n`,

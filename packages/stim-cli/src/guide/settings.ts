@@ -705,10 +705,13 @@ run waiting to boot, and automatic maintenance.
           When that build is what stimd's own installation now holds (an
           npm update in place) and stimd was started by a command, not by
           stim serve, Stim Desktop or a service unit, stimd restarts on it
-          once the commands it serves end and no share-only server runs,
-          and the command waits up to 15 s for it. Otherwise stim share,
-          share list and share stop refuse with STIM_DAEMON_UNAVAILABLE,
-          naming the running build, and other commands run without stimd;
+          once no command it admitted remains, no share-only server runs and
+          no device log stream runs, and the command waits up to 15 s for
+          it. A device log stream runs until stim stop or the idle stop in
+          its workspace; a successor does not resume it, so stimd waits.
+          Otherwise stim share, share list and share stop refuse with
+          STIM_DAEMON_UNAVAILABLE, naming the running build and what holds
+          it, and other commands run without stimd;
           stimd keeps serving until nothing runs in the home, and the next
           command starts its own build's stimd. stimd stops a
           stim-daemon from Stim 1.40 to 1.42 when it starts.

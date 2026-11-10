@@ -119,7 +119,13 @@ export function stimdBuildId(): string {
 }
 
 let refusedBuild: string | null = null;
-let refusal: { version: string; pid: number | null; handover: boolean; heldByShares: boolean } | null = null;
+let refusal: {
+  version: string;
+  pid: number | null;
+  handover: boolean;
+  heldBy: 'shares' | 'logs' | null;
+  workspaces: string[];
+} | null = null;
 let opSocket: Socket | null = null;
 const opTokens = new WeakMap<Socket, string>();
 let following: Promise<never> | null = null;
@@ -157,7 +163,10 @@ function noteRefusal(message: Record<string, unknown>): void {
     version: String(message.version ?? message.build),
     pid: typeof message.pid === 'number' ? message.pid : null,
     handover: message.handover === true || message.build === stimdBuildId(),
-    heldByShares: message.heldBy === 'shares',
+    heldBy: message.heldBy === 'shares' || message.heldBy === 'logs' ? message.heldBy : null,
+    workspaces: Array.isArray(message.workspaces)
+      ? message.workspaces.filter((entry): entry is string => typeof entry === 'string')
+      : [],
   };
 }
 
@@ -167,27 +176,33 @@ function noteRefusal(message: Record<string, unknown>): void {
  */
 export function otherBuildRefusal(): { code: 'STIM_DAEMON_UNAVAILABLE'; message: string; remedy: string } | null {
   if (!refusal) return null;
-  const { version, pid, handover, heldByShares } = refusal;
+  const { version, pid, handover, heldBy, workspaces } = refusal;
+  const kill = `stop that stimd${pid === null ? '' : ` with \`kill ${pid}\``}, which also ends the builds, dev servers and shares it serves`;
   const stimd = `This Stim home's stimd${pid === null ? '' : ` (pid ${pid})`}`;
   const [why, remedy] = refusedByAttached
     ? [
         `${stimd} runs Stim ${version} as the child of another command.`,
         'Run the command again once that command ends, or set STIM_HOME to a separate home for this build.',
       ]
-    : heldByShares
+    : heldBy === 'logs'
       ? [
-          `${stimd} runs another Stim build and serves live web shares; it restarts on this build once they end.`,
-          `The shares end at their expiry. To end them now, stop that stimd${pid === null ? '' : ` with \`kill ${pid}\``}, which also ends the builds and dev servers it serves; the next stim command starts one of this build.`,
+          `${stimd} runs Stim ${version} and streams device logs for ${workspaces.join(', ')}; it restarts on this build once those streams end.`,
+          `Run \`npx stim@${version} stop\` in ${workspaces.length === 1 ? 'that workspace' : 'those workspaces'} to end them, or ${kill}; then run the command again.`,
         ]
-      : handover
+      : heldBy === 'shares'
         ? [
-            `${stimd} runs another Stim build; it restarts on this build once the commands it serves end.`,
-            'Run the command again once those commands end.',
+            `${stimd} runs another Stim build and serves live web shares; it restarts on this build once they end.`,
+            `The shares end at their expiry. To end them now, ${kill}; the next stim command starts one of this build.`,
           ]
-        : [
-            `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
-            `Run the command with Stim ${version}, or stop that stimd${pid === null ? '' : ` with \`kill ${pid}\``}, which also ends the builds, dev servers and shares it serves; the next stim command starts one of this build.`,
-          ];
+        : handover
+          ? [
+              `${stimd} runs another Stim build; it restarts on this build once the commands it serves end.`,
+              'Run the command again once those commands end.',
+            ]
+          : [
+              `${stimd} runs Stim ${version}, not this stim's ${stimBuild().version}, and has not restarted on this build.`,
+              `Run the command with Stim ${version}, or ${kill}; the next stim command starts one of this build.`,
+            ];
   return { code: 'STIM_DAEMON_UNAVAILABLE', message: why, remedy };
 }
 
@@ -897,11 +912,11 @@ export async function holdExistingStimd(ownedInstance: string | null, signal?: A
 
 /**
  * Whether the stimd of another build that refused this process may be replaced by one of this build: one that said
- * it hands over and is not held by live shares, or any but an attached one when this build runs from the engine
- * store, whose stimds follow the engine pointer.
+ * it hands over and is not held by live shares or device log streams, or any but an attached one when this build runs
+ * from the engine store, whose stimds follow the engine pointer.
  */
 function successorExpected(): boolean {
-  return !refusedByAttached && !refusal?.heldByShares && (refusal?.handover === true || ownStoreEngine() !== null);
+  return !refusedByAttached && !refusal?.heldBy && (refusal?.handover === true || ownStoreEngine() !== null);
 }
 
 /**

@@ -46,50 +46,61 @@ test.each([
     stimd: 'of another installation',
     reply: { version: '1.0.0-other' },
     message: '1.0.0-other',
+    remedy: 'kill 4242',
+  },
+  {
+    stimd: 'that hands over once its device log streams end',
+    reply: { version: '1.0.0-other', handover: true, heldBy: 'logs', workspaces: ['/work/app'] },
+    message: 'streams device logs for /work/app',
+    remedy: 'npx stim@1.0.0-other stop',
   },
   {
     stimd: 'that hands over once its live shares end',
     reply: { version: '1.0.0-other', handover: true, heldBy: 'shares' },
     message: 'serves live web shares',
+    remedy: 'kill 4242',
   },
-])('share list names a stimd $stimd and how to replace it, not that no stimd runs', async ({ reply, message }) => {
-  const socket = stimdSocket();
-  mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
-  mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
-  claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'test stimd' }).acquired ?? null;
-  server = createServer((connection) => {
-    connection.resume();
-    connection.end(`${JSON.stringify({ op: 'engine-changed', build: 'aaaaaaaaaaaa', pid: 4242, ...reply })}\n`);
-  });
-  await new Promise<void>((done) => server?.listen(socket, done));
-  vi.resetModules();
-  const { runShare } = await import('../commands/share.ts');
-  const { otherBuildRefusal } = await import('../daemon/client.ts');
-  const { requestLocalServer } = await import('../local-server.ts');
+])(
+  'share list names a stimd $stimd and how to replace it, not that no stimd runs',
+  async ({ reply, message, remedy }) => {
+    const socket = stimdSocket();
+    mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
+    mkdirSync(stimdRunDir(), { recursive: true, mode: 0o700 });
+    claim = tryAcquireClaim({ root: stimdClaimRoot(), mode: 'exclusive', label: 'test stimd' }).acquired ?? null;
+    server = createServer((connection) => {
+      connection.resume();
+      connection.end(`${JSON.stringify({ op: 'engine-changed', build: 'aaaaaaaaaaaa', pid: 4242, ...reply })}\n`);
+    });
+    await new Promise<void>((done) => server?.listen(socket, done));
+    vi.resetModules();
+    const { runShare } = await import('../commands/share.ts');
+    const { otherBuildRefusal } = await import('../daemon/client.ts');
+    const { requestLocalServer } = await import('../local-server.ts');
 
-  const result = await runShare(
-    'list',
-    {},
-    {
-      findWorkspace: async () => null,
-      request: (method, params) => requestLocalServer(method, params, { version: '9.9.9' }),
-      startServer: async () => null,
-      otherBuild: otherBuildRefusal,
-      note: () => {},
-      platform: 'darwin',
-    },
-    '9.9.9',
-  );
+    const result = await runShare(
+      'list',
+      {},
+      {
+        findWorkspace: async () => null,
+        request: (method, params) => requestLocalServer(method, params, { version: '9.9.9' }),
+        startServer: async () => null,
+        otherBuild: otherBuildRefusal,
+        note: () => {},
+        platform: 'darwin',
+      },
+      '9.9.9',
+    );
 
-  expect(result).toMatchObject({
-    ok: false,
-    error: {
-      code: 'STIM_DAEMON_UNAVAILABLE',
-      message: expect.stringContaining(message),
-      remedy: expect.stringContaining('kill 4242'),
-    },
-  });
-});
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'STIM_DAEMON_UNAVAILABLE',
+        message: expect.stringContaining(message),
+        remedy: expect.stringContaining(remedy),
+      },
+    });
+  },
+);
 
 test('stim share waits for a stimd that holds its claim but does not listen yet', async () => {
   const socket = stimdSocket();
