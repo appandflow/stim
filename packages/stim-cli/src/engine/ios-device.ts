@@ -572,7 +572,12 @@ function devicectlErrorText(records: readonly NdjsonRecord[]): string {
         .join('\n');
 }
 
-export function collectorRecordsFor(records: readonly NdjsonRecord[], collectorPid: number | null): NdjsonRecord[] {
+export function collectorRecordsFor(
+  records: readonly NdjsonRecord[],
+  collectorPid: number | null,
+  streamId?: string | null,
+): NdjsonRecord[] {
+  if (streamId) return records.filter((entry) => entry.streamId === streamId);
   if (!collectorPid) return [];
   const marker = new RegExp(`\\bcollector pid ${collectorPid}\\b`);
   const start = records.findIndex(
@@ -586,6 +591,7 @@ export async function awaitIosDeviceLaunch({
   bundleId,
   appName,
   collectorPid = null,
+  collectorStreamId = null,
   readRecords,
   probe,
   wireless = false,
@@ -598,6 +604,7 @@ export async function awaitIosDeviceLaunch({
   bundleId: string;
   appName: string;
   collectorPid?: number | null;
+  collectorStreamId?: string | null;
   readRecords: () => NdjsonRecord[];
   probe?: () => AppProcessProbe | Promise<AppProcessProbe>;
   wireless?: boolean;
@@ -609,7 +616,7 @@ export async function awaitIosDeviceLaunch({
   const probeProcess = probe ?? (() => iosDeviceProcess({ udid, appName }));
   const deadline = now() + Math.max(0, timeoutMs);
   for (;;) {
-    const records = collectorRecordsFor(readRecords(), collectorPid);
+    const records = collectorRecordsFor(readRecords(), collectorPid, collectorStreamId);
     const ended = records.find((entry) => typeof entry.event === 'string' && COLLECTOR_ENDED_EVENTS.has(entry.event));
     const running = await probeProcess();
     if (running.state === 'running') return { pid: running.pid };

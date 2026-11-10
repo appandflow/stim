@@ -1,45 +1,28 @@
-import { fileURLToPath } from 'node:url';
 import assert from 'node:assert';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { chmodSync, realpathSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import type { ChildProcess } from 'node:child_process';
+import { realpathSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join, resolve as absolute } from 'node:path';
+import { join } from 'node:path';
 import { parseNdjsonText } from '../ndjson.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
-import { parseArgs, readCollectors, registerCollector, runCollector, unregisterCollector } from '../collector/run.ts';
+import { runCollector } from '../stimd/logs/collector.ts';
+import { awaitIosDeviceLaunch, iosLaunchRemedy } from '../engine/ios-device.ts';
 
 import { makeChildProcess } from './_factories.ts';
 
-const ENTRY = fileURLToPath(new URL('../collector/run.ts', import.meta.url));
-
-function childPid(child: ChildProcess): number {
-  assert(child.pid !== undefined, 'spawned child has no pid');
-  return child.pid;
-}
-
 let tmpHome: string;
 let root: string;
-let shimDir: string;
-let running: ChildProcess[] = [];
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'ws' }));
-  shimDir = mkdtempSync(join(tmpdir(), 'stim-shim-'));
-  running = [];
 });
 
 afterEach(() => {
-  for (const child of running) {
-    try {
-      process.kill(childPid(child), 'SIGKILL');
-    } catch {}
-  }
   rmSync(tmpHome, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
-  rmSync(shimDir, { recursive: true, force: true });
   delete process.env.STIM_HOME;
 });
 
@@ -72,82 +55,61 @@ async function until<T>(
   }
 }
 
-describe('parseArgs', () => {
-  const absRoot = absolute('/abs');
-
-  test('accepts the ios invocation and derives the predicate app name from the bundle id', () => {
-    expect(
-      parseArgs(['--platform', 'ios', '--root', absRoot, '--udid', 'U1', '--bundle', 'com.example.MyApp']),
-    ).toEqual({
-      platform: 'ios',
-      root: absRoot,
-      udid: 'U1',
-      bundleId: 'com.example.MyApp',
-      appName: 'MyApp',
-      appExecutable: null,
-      serial: null,
-      packageName: null,
-      physical: false,
-      payloadUrl: null,
-    });
-  });
-
-  test('--physical is refused on android, and --payload-url without it', () => {
-    expect(
-      parseArgs(['--platform', 'android', '--root', '/abs', '--serial', 'S', '--package', 'com.x', '--physical']).error,
-    ).toMatch(/--physical is an iOS option/);
-    expect(
-      parseArgs(['--platform', 'ios', '--root', '/abs', '--udid', 'U1', '--bundle', 'com.x', '--payload-url', 'u'])
-        .error,
-    ).toMatch(/--payload-url only applies to --physical/);
-    expect(
-      parseArgs(['--platform', 'ios', '--root', '/abs', '--udid', 'U1', '--bundle', 'com.x', '--payload-url']).error,
-    ).toMatch(/--payload-url needs a URL/);
-  });
-
-  test('--app-executable carries CFBundleExecutable separately from the .app basename', () => {
-    expect(
-      parseArgs([
-        '--platform',
-        'ios',
-        '--root',
-        '/abs',
-        '--udid',
-        'U1',
-        '--bundle',
-        'com.example.app',
-        '--app-name',
-        'MyAppDev',
-        '--app-executable',
-        'MyApp',
-      ]).appExecutable,
-    ).toBe('MyApp');
-  });
-
-  test('refuses a missing or unknown platform, a relative root, and each missing per-platform argument', () => {
-    expect(parseArgs([]).error).toMatch(/--platform/);
-    expect(parseArgs(['--platform', 'web', '--root', '/abs']).error).toMatch(/--platform/);
-    expect(parseArgs(['--platform', 'ios', '--root', 'rel']).error).toMatch(/absolute/);
-    expect(parseArgs(['--platform', 'ios', '--root', '/abs']).error).toMatch(/--udid/);
-    expect(parseArgs(['--platform', 'ios', '--root', '/abs', '--udid', 'U']).error).toMatch(/--bundle/);
-    expect(parseArgs(['--platform', 'android', '--root', '/abs']).error).toMatch(/--serial/);
-    expect(parseArgs(['--platform', 'android', '--root', '/abs', '--serial', 'S']).error).toMatch(/--package/);
-  });
-});
-
-describe('Contract 5: the registration', () => {
-  test('a stale unregister from a replaced collector does not clobber the newer registration', () => {
-    // #182: a replaced collector (proven unverified) is left running instead of signalled, so
-    // it can still reach its own finish() -> unregisterCollector after a newer collector has
-    // registered over the same platform key. Its own pid must not match the current record.
-    registerCollector(root, 'ios', { pid: 1, startedAt: 'a', processToken: 'token' });
-    registerCollector(root, 'ios', { pid: 2, startedAt: 'b', processToken: 'token' });
-    unregisterCollector(root, 'ios', 1, 'token');
-    expect(readCollectors(root)).toEqual({ ios: { pid: 2, startedAt: 'b', processToken: 'token' } });
-  });
-});
-
 describe('runCollector seams', () => {
+  test('a failed physical console drains its final diagnostic before launch readiness resolves', async () => {
+    const child = makeChildProcess({ pid: 4242 });
+    await runCollector({
+      platform: 'ios',
+      root,
+      udid: 'U1',
+      appName: 'MyApp',
+      bundleId: 'com.test.app',
+      physical: true,
+      startStream: () => child,
+      onExit: () => {},
+    });
+    assert(child.stderr);
+    child.stderr.emit('data', 'BSErrorCodeDescription = Locked');
+    child.emit('exit', 1, null);
+    expect(deviceLog().some((record) => record.event === 'collector_failed')).toBe(false);
+    const result = await awaitIosDeviceLaunch({
+      udid: 'U1',
+      bundleId: 'com.test.app',
+      appName: 'MyApp',
+      collectorStreamId: 'one',
+      readRecords: () => deviceLog().map((record) => Object.assign(record, { streamId: 'one' })),
+      probe: () => ({ state: 'stopped' }),
+      sleep: async () => {
+        child.emit('close', 1, null);
+      },
+    });
+    expect(result.remedy).toBe(iosLaunchRemedy('locked', { udid: 'U1', bundleId: 'com.test.app' }));
+    const records = deviceLog();
+    expect(records.findIndex((record) => record.msg === 'BSErrorCodeDescription = Locked')).toBeLessThan(
+      records.findIndex((record) => record.event === 'collector_failed'),
+    );
+  });
+  test('stopping a worker-owned stream ends its child and records its end without a collector process record', async () => {
+    const controller = new AbortController();
+    const child = makeChildProcess({ pid: 4242 });
+    const kill = vi.spyOn(child, 'kill');
+    const ended = vi.fn<() => void>();
+    const result = await runCollector({
+      platform: 'ios',
+      root,
+      udid: 'U1',
+      appName: 'MyApp',
+      startStream: () => child,
+      signal: controller.signal,
+      onExit: ended,
+    });
+    assert(result);
+    controller.abort();
+    expect(kill).toHaveBeenCalledWith('SIGTERM');
+    expect(ended).toHaveBeenCalledOnce();
+    expect(deviceLog().some((record) => record.event === 'collector_stopped')).toBe(true);
+  });
+
   test('a stream that fails to start is an error record rather than a throw', async () => {
     let code = null;
     const result = await runCollector({
@@ -158,7 +120,6 @@ describe('runCollector seams', () => {
       startStream: () => {
         throw new Error('spawn xcrun ENOENT');
       },
-      attachSignals: false,
       onExit: (c) => {
         code = c;
       },
@@ -173,6 +134,40 @@ describe('runCollector seams', () => {
 
 describe('runCollector reattach seams', () => {
   const fakeChild = (pid: number | null | undefined) => makeChildProcess({ pid: pid ?? undefined });
+
+  test('late output retains the child that produced it after Android reattachment', async () => {
+    const started: ChildProcess[] = [];
+    const lines: ChildProcess[] = [];
+    let reportPid: ((pid: number) => void | Promise<void>) | undefined;
+    const result = await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: () => 0,
+      watchPid: ({ onChange }) => {
+        reportPid = onChange;
+        return { stop: () => {}, probe: async () => 4200, pid: 3132 };
+      },
+      startStream: ({ pid }) => {
+        const child = fakeChild(pid);
+        started.push(child);
+        return child;
+      },
+      stopStream: async () => {},
+      recordLine: (_line, _offset, child) => lines.push(child),
+      onExit: () => {},
+    });
+    assert(reportPid);
+    await reportPid(4200);
+    await until(() => started.length === 2, { label: 'the reattached stream' });
+    started[0]!.stdout!.emit('data', 'old line\n');
+    started[1]!.stdout!.emit('data', 'new line\n');
+    expect(lines).toEqual([started[0], started[1]]);
+    assert(result);
+    result.finish(0, 'info', 'done', 'collector_stopped');
+  });
 
   test('a newer pid reported while a reattach reads the device clock replaces it instead of adding a stream', async () => {
     const started: ChildProcess[] = [];
@@ -196,22 +191,173 @@ describe('runCollector reattach seams', () => {
         started.push(c);
         return c;
       },
-      attachSignals: false,
       onExit: () => {},
     });
     const firstStream = started[0];
     assert(firstStream);
-    firstStream.emit('exit', 0, null);
+    firstStream.emit('close', 0, null);
     await until(() => pendingClocks.length === 1, { label: 'the reattach clock read' });
     assert(reportPid);
     void reportPid(4300);
+    const firstClock = pendingClocks[0];
+    assert(firstClock);
+    firstClock();
     await until(() => pendingClocks.length === 2, { label: 'the second clock read' });
-    for (const release of pendingClocks) release();
+    const secondClock = pendingClocks[1];
+    assert(secondClock);
+    secondClock();
     await until(() => started.length === 2, { label: 'the reattached stream' });
     await new Promise((r) => setTimeout(r, 50));
     expect(started.map((c) => c.pid)).toEqual([3132, 4300]);
     assert(result);
     result.finish(0, 'info', 'done', 'collector_stopped');
+  });
+
+  test('overlapping exit and watcher reports attach only one replacement', async () => {
+    const started: ChildProcess[] = [];
+    let reportPid: ((pid: number) => void | Promise<void>) | undefined;
+    let releaseStop = () => {};
+    let stopStarted = false;
+    const stopped = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const result = await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: () => 0,
+      watchPid: ({ onChange }) => {
+        reportPid = onChange;
+        return { stop: () => {}, probe: async () => 4200, pid: 3132 };
+      },
+      startStream: ({ pid }) => {
+        const child = fakeChild(pid);
+        started.push(child);
+        return child;
+      },
+      stopStream: async () => {
+        stopStarted = true;
+        await stopped;
+      },
+      onExit: () => {},
+    });
+    const initial = started[0];
+    assert(initial);
+    initial.emit('close', 0, null);
+    await until(() => stopStarted, { label: 'reattach stop' });
+    assert(reportPid);
+    const duplicate = reportPid(4200);
+    releaseStop();
+    await duplicate;
+    expect(started.map((child) => child.pid)).toEqual([3132, 4200]);
+    assert(result);
+    result.finish(0, 'info', 'done', 'collector_stopped');
+  });
+
+  test('stopping during reattachment prevents a replacement child', async () => {
+    const started: ChildProcess[] = [];
+    const controller = new AbortController();
+    let reportPid: ((pid: number) => void | Promise<void>) | undefined;
+    let releaseStop = () => {};
+    let stopStarted = false;
+    const stopped = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      signal: controller.signal,
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: () => 0,
+      watchPid: ({ onChange }) => {
+        reportPid = onChange;
+        return { stop: () => {}, probe: async () => null, pid: 3132 };
+      },
+      startStream: ({ pid }) => {
+        const child = fakeChild(pid);
+        started.push(child);
+        return child;
+      },
+      stopStream: async () => {
+        stopStarted = true;
+        await stopped;
+      },
+      onExit: () => {},
+    });
+    assert(reportPid);
+    const transition = reportPid(4200);
+    await until(() => stopStarted, { label: 'reattach stop' });
+    controller.abort();
+    releaseStop();
+    await transition;
+    expect(started.map((child) => child.pid)).toEqual([3132]);
+  });
+
+  test('stopping joins an in-flight reattachment clock read', async () => {
+    const controller = new AbortController();
+    let reportPid: ((pid: number) => void | Promise<void>) | undefined;
+    let releaseClock = () => {};
+    let clockStarted = false;
+    let reads = 0;
+    const clock = new Promise<number>((resolve) => {
+      releaseClock = () => resolve(0);
+    });
+    const result = await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      signal: controller.signal,
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: () => (++reads === 1 ? 0 : ((clockStarted = true), clock)),
+      watchPid: ({ onChange }) => {
+        reportPid = onChange;
+        return { stop: () => {}, probe: async () => null, pid: 3132 };
+      },
+      startStream: ({ pid }) => fakeChild(pid),
+      stopStream: async () => {},
+      onExit: () => {},
+    });
+    assert(reportPid);
+    assert(result);
+    void reportPid(4200);
+    await until(() => clockStarted, { label: 'reattach clock' });
+    controller.abort();
+    let settled = false;
+    const joined = result.settled().then(() => {
+      settled = true;
+      return undefined;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    releaseClock();
+    await joined;
+    expect(settled).toBe(true);
+  });
+
+  test('a late child close after finish does not start another PID query', async () => {
+    const probe = vi.fn<() => Promise<number | null>>().mockResolvedValue(null);
+    const child = fakeChild(3132);
+    const result = await runCollector({
+      platform: 'android',
+      root,
+      serial: 'emulator-5554',
+      packageName: 'com.example.app',
+      resolvePid: async () => ({ ok: true, pid: 3132 }),
+      resolveClockOffset: () => 0,
+      watchPid: () => ({ stop: () => {}, probe, pid: 3132 }),
+      startStream: () => child,
+      onExit: () => {},
+    });
+    assert(result);
+    result.finish(0, 'info', 'done', 'collector_stopped');
+    child.emit('close', 0, null);
+    await result.settled();
+    expect(probe).not.toHaveBeenCalled();
   });
 
   test('finish aborts the adb reads the collector still has in flight', async () => {
@@ -232,7 +378,6 @@ describe('runCollector reattach seams', () => {
         return { stop: () => {}, probe: async () => 3132, pid: 3132 };
       },
       startStream: ({ pid: streamPid }) => fakeChild(streamPid),
-      attachSignals: false,
       onExit: () => {},
     });
     assert(result);
@@ -254,13 +399,12 @@ describe('runCollector reattach seams', () => {
       pidOf: () => null,
       pidWatchMs: 60000,
       startStream: ({ pid: streamPid }) => fakeChild(streamPid),
-      attachSignals: false,
       onExit: (c) => {
         code = c;
       },
     });
     assert(result?.child);
-    result.child.emit('exit', 0, null);
+    result.child.emit('close', 0, null);
     await until(() => code === 0, { label: 'the collector to finish' });
     expect(code).toBe(0);
     expect(deviceLog().some((r) => r.event === 'collector_stopped')).toBeTruthy();
@@ -300,14 +444,13 @@ describe('the collector never signals a pid it does not own', () => {
           started.push(c);
           return c;
         },
-        attachSignals: false,
         onExit: () => {},
       });
 
       pid = 4200;
       const firstStarted = started[0];
       assert(firstStarted);
-      firstStarted.emit('exit', 0, null);
+      firstStarted.emit('close', 0, null);
 
       await until(() => started.length === 2, { label: 'the reattached stream' });
       expect(killedHandles).toEqual(['SIGTERM']);
@@ -320,153 +463,3 @@ describe('the collector never signals a pid it does not own', () => {
     }
   });
 });
-
-test('named collectors attribute their output and finish without unregistering a sibling', async () => {
-  const streams = [makeChildProcess({ pid: 3132 }), makeChildProcess({ pid: 3133 })];
-  const handles = [];
-  for (const [index, slot] of ['phone', 'tablet'].entries()) {
-    const handle = await runCollector({
-      platform: 'android',
-      root,
-      slot,
-      serial: slot,
-      packageName: 'com.example.app',
-      resolvePid: async () => ({ ok: true, pid: 3132 + index }),
-      resolveClockOffset: () => 0,
-      startStream: () => streams[index]!,
-      pidOf: () => 3132 + index,
-      pidWatchMs: 60_000,
-      attachSignals: false,
-      onExit: () => {},
-    });
-    assert(handle);
-    handles.push(handle);
-  }
-  try {
-    expect(Object.keys(readCollectors(root))).toEqual(['android:phone', 'android:tablet']);
-    streams[0]!.stdout!.emit('data', ' 1788902582.542 I/ReactNativeJS( 3132): phone-output\n');
-    streams[1]!.stdout!.emit('data', ' 1788902582.542 I/ReactNativeJS( 3133): tablet-output\n');
-    expect(
-      deviceLog()
-        .filter((r) => String(r.msg).endsWith('-output'))
-        .map((r) => [r.slot, r.deviceId]),
-    ).toEqual([
-      ['phone', 'phone'],
-      ['tablet', 'tablet'],
-    ]);
-    handles[0]!.finish(0, 'info', 'done', 'collector_stopped');
-    expect(Object.keys(readCollectors(root))).toEqual(['android:tablet']);
-  } finally {
-    for (const handle of handles) handle.finish(0, 'info', 'done', 'collector_stopped');
-  }
-});
-
-describe.skipIf(process.platform === 'win32')('spawned collector lifecycle', { timeout: 30_000 }, () => {
-  test('resolves the app pid, filters logcat on it, and cleans up on SIGTERM', async () => {
-    writeShim(
-      'adb',
-      [
-        `case "$*" in`,
-        `  '-s emulator-5554 shell pidof -s com.example.app')`,
-        `    if [ -f "${join(shimDir, 'started')}" ]; then echo 3132; else touch "${join(shimDir, 'started')}"; fi ;;`,
-        `  '-s emulator-5554 logcat --pid 3132 -v time,epoch')`,
-        `    echo '--------- beginning of main'`,
-        `    echo '08-21 17:51:19.507 I/ReactNativeJS(  3132): Running "App" with {"rootTag":11}'`,
-        `    echo '08-21 17:51:20.100 E/ReactNativeJS(  3132): TypeError: undefined is not a function'`,
-        `    exec sleep 30 ;;`,
-        `  *) echo "unexpected argv: $*" >&2; exit 9 ;;`,
-        `esac`,
-      ].join('\n'),
-    );
-
-    const child = spawnCollector([
-      '--platform',
-      'android',
-      '--root',
-      root,
-      '--serial',
-      'emulator-5554',
-      '--package',
-      'com.example.app',
-    ]);
-
-    const registered = await until(() => readCollectors(root).android as CollectorEntry, {
-      label: 'the android registration',
-    });
-    expect(registered.pid).toBe(child.pid);
-
-    const errors = await until(
-      () => {
-        const r = deviceLog().filter((x) => x.level === 'error');
-        return r.length ? r : null;
-      },
-      { label: 'a parsed logcat record' },
-    );
-    const firstError = errors[0];
-    assert(firstError);
-    expect(firstError.msg).toMatch(/undefined is not a function/);
-    expect(firstError.proc).toBe('ReactNativeJS(3132)');
-    expect(deviceLog().some((r) => r.msg?.includes('beginning of main'))).toBe(false);
-
-    process.kill(childPid(child), 'SIGTERM');
-    expect(await exited(child)).toEqual({ code: 0, signal: null });
-    expect('collectors' in (state() || {})).toBe(false);
-  });
-
-  test('a devicectl refusal is a failure, not a silent empty section', async () => {
-    writeShim('xcrun', ['echo "ERROR: The specified device was not found. (Name: UDID-1)" >&2', 'exit 1'].join('\n'));
-    const child = spawnCollector([
-      '--platform',
-      'ios',
-      '--root',
-      root,
-      '--udid',
-      'UDID-1',
-      '--bundle',
-      'com.example.MyApp',
-      '--physical',
-    ]);
-    expect((await exited(child)).code).toBe(1);
-    const log = deviceLog();
-    expect(
-      log.some((r) => r.level === 'error' && String(r.msg).startsWith('ERROR: The specified device')),
-    ).toBeTruthy();
-    const empty = log.find((r) => r.event === 'collector_empty');
-    expect(empty).toBeFalsy();
-    const failed = log.find((r) => r.event === 'collector_failed');
-    assert(failed);
-    expect(failed.level).toBe('error');
-    expect(failed.msg).toMatch(/the devicectl console ended with exit code 1/);
-    expect('collectors' in (state() || {})).toBe(false);
-  });
-});
-function writeShim(name: string, body: string) {
-  const file = join(shimDir, name);
-  writeFileSync(file, `#!/bin/sh\n${body}`);
-  chmodSync(file, 0o755);
-  return file;
-}
-
-function spawnCollector(args: string[], env: Record<string, string> = {}) {
-  const child = spawn(process.execPath, [ENTRY, ...args], {
-    env: { ...process.env, PATH: `${shimDir}${delimiter}${process.env.PATH}`, STIM_HOME: tmpHome, ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  running.push(child);
-  return child;
-}
-
-function exited(child: ChildProcess, timeoutMs = 6000) {
-  return new Promise<{ code: number | null; signal: string | null }>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`timed out after ${timeoutMs}ms waiting for the collector (pid ${child.pid}) to exit`)),
-      timeoutMs,
-    );
-    child.on('exit', (code, signal) => {
-      clearTimeout(timer);
-      resolve({ code, signal });
-    });
-  });
-}
-
-type CollectorEntry = { pid?: number; startedAt?: string };

@@ -242,6 +242,15 @@ THE RECORD
              host time using a bounded clock query at each collector attachment
     clockOffsetMs the offset added to deviceTs; absent if the query failed.
              A collector_clock warning then says timestamps retain device time.
+    collector_backfill_failed warns when historical launch logs could not be read.
+             Launch verification remains unverified without that coverage.
+             On Android, check that adb shell date works and retry the launch.
+             If local device logs cannot start, the app keeps running and its
+             launch remains unverified.
+    collector_backfill_dedup_limited warns that a busy overlap exceeded the
+             bounded deduplication window; duplicate records may remain.
+             Different native timestamp spellings or clock alignments can also
+             leave duplicate records.
     raw      true when the level was inferred from a line of text rather than
              reported by the producer (every expo-child and command-child
              record)

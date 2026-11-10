@@ -1,3 +1,5 @@
+import { createMetroTickets, handleMetroTicketRequest } from './metro/tickets.ts';
+import { createLeaseTickets, handleLeaseRequest } from './lease-tickets.ts';
 import { randomUUID } from 'node:crypto';
 import type { StimContext } from '@stim-cli/core';
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -90,9 +92,13 @@ import {
   ensureTunnel,
   metroChildrenRun,
   metroOpFlags,
+  setMetroInvocation,
   metroTick,
 } from './metro/children.ts';
+import { invocation, traceInvocation, withInvocation, type Invocation } from './forwarded.ts';
 import { createPassesLane, createThreadTable } from './threads.ts';
+import { createStreams } from './logs/streams.ts';
+import { handleLogRequest } from './logs/protocol.ts';
 import { writeDesktopKey } from './desktop-key.ts';
 import { createNetThread, type NetOptions } from './net.ts';
 import { followEngine } from './engine-follow.ts';
@@ -313,7 +319,19 @@ function handleNetStop(
 }
 
 function refusesSealedOperation(sealed: boolean, op: unknown): boolean {
-  return sealed && ['op.begin', 'net.ensure', 'metro.ensure', 'tunnel.ensure'].includes(String(op));
+  return (
+    sealed &&
+    [
+      'op.begin',
+      'net.ensure',
+      'metro.ensure',
+      'tunnel.ensure',
+      'logs.start',
+      'metro.prepare',
+      'lease.prepare',
+      'lease.acquire',
+    ].includes(String(op))
+  );
 }
 
 function endingForeground(ending: string | null, attached: boolean, error: unknown): boolean {
@@ -338,6 +356,35 @@ function handleForegroundError(
   return isUnverifiedCleanup(error) ? error : undefined;
 }
 
+function createNetAndLogsClose(
+  net: ReturnType<typeof createNetThread>,
+  logs: ReturnType<typeof createStreams>,
+): () => Promise<void> {
+  let netAndLogsClose: Promise<void> | undefined;
+  return (): Promise<void> => {
+    netAndLogsClose ??= (async () => {
+      let netFailure: unknown;
+      try {
+        await net.close();
+      } catch (error) {
+        netFailure = error;
+      }
+      try {
+        await logs.close();
+      } catch (error) {
+        if (logs.running())
+          throw Object.assign(new ClaimUnavailableError(`device log cleanup could not be verified: ${String(error)}`), {
+            reportCleanup: true,
+            remedy: 'Inspect the device log claim and verify its process tree has stopped.',
+          });
+        throw error;
+      }
+      if (netFailure) throw netFailure;
+    })();
+    return netAndLogsClose;
+  };
+}
+
 function attachedCleanupError(
   initial: unknown,
   background: unknown,
@@ -349,6 +396,10 @@ function attachedCleanupError(
     ...results.flatMap((result) => (result.status === 'rejected' ? [result.reason] : [])),
   ];
   return errors.find(isUnverifiedCleanup) ?? errors.find(Boolean);
+}
+
+function countIdleTicks(idle: boolean, streamsRunning: boolean, previous: number): number {
+  return idle && !streamsRunning ? previous + 1 : 0;
 }
 
 function resolveForeground(): void {}
@@ -735,6 +786,7 @@ async function runStimdInner(
     desktopKey: key,
     script,
   });
+  const logs = createStreams((message) => log('warn', 'device_logs', message));
   const threads = createThreadTable(log);
   let backgroundFailure: unknown;
   const lane = createPassesLane(threads, log, (error) => {
@@ -775,6 +827,17 @@ async function runStimdInner(
   };
   const open = new Set<Socket>();
   const ops = new Map<Socket, 'pinned' | 'waiting'>();
+  const hasOffWork = () =>
+    Boolean(
+      logs.running() ||
+      keepsServingWhenOff(lifetime.keepsServingWhenOff, ops.size > 0, Boolean(net.running()), restartingNet),
+    );
+  const opContexts = new Map<Socket, Invocation & { workspace: string }>();
+  const opControllers = new Map<Socket, AbortController>();
+  const opTokens = new Map<string, Socket>();
+  const leaseTickets = createLeaseTickets((message) => log('warn', 'device_lease_release_failed', message));
+  const metroTickets = createMetroTickets(log);
+  const socketTokens = new WeakMap<Socket, string>();
   const opCommands = new WeakMap<Socket, string>();
   let ending: string | null = null;
   let endingLevel: Level = 'info';
@@ -804,6 +867,7 @@ async function runStimdInner(
     [...ops.values()].includes('pinned') ||
     listBuildSlots().some((slot) => slot.alive && slot.client !== null) ||
     (net.running() !== null && readHostedSessions().some(hostedNativeWork));
+  const enginePinned = (): boolean => pinned() || logs.running();
   const failBackground = (error: unknown, why: string) => {
     backgroundFailure = error;
     keepOwn = true;
@@ -821,14 +885,14 @@ async function runStimdInner(
     if (!follower || switchedTo || closing) return;
     let next: Awaited<ReturnType<typeof follower.check>>;
     try {
-      follower.record(pinned(), [...engineDirs, ...metroEngineDirs()]);
-      next = await follower.check(pinned);
+      follower.record(enginePinned(), [...engineDirs, ...metroEngineDirs()], logs.running());
+      next = await follower.check(enginePinned);
     } catch (error) {
       log('warn', 'engine_check_failed', error instanceof Error ? error.message : String(error));
       return;
     }
     if (!next || switchedTo || closing) return;
-    if (!pinned()) {
+    if (!enginePinned()) {
       relaunchDone = relaunch(next, follower.engine.root);
       void relaunchDone.catch(() => {});
     } else if (!heldSwitch) {
@@ -871,6 +935,13 @@ async function runStimdInner(
     socket.on('error', () => drop(socket));
     socket.on('close', () => {
       drop(socket);
+      opContexts.delete(socket);
+      const token = socketTokens.get(socket);
+      if (token) opTokens.delete(token);
+      opControllers.get(socket)?.abort();
+      leaseTickets.drop(socket);
+      metroTickets.drop(socket);
+      opControllers.delete(socket);
       if (ops.delete(socket)) void checkEngine();
     });
     const onData = (chunk: Buffer) => {
@@ -919,6 +990,40 @@ async function runStimdInner(
           );
           continue;
         }
+        if (
+          handleLogRequest({
+            message,
+            socket,
+            streams: logs,
+            operations: opContexts,
+            controllers: opControllers,
+            tokens: opTokens,
+            attached: attached !== undefined,
+          })
+        )
+          continue;
+        if (
+          handleMetroTicketRequest({
+            message,
+            socket,
+            tickets: metroTickets,
+            operations: opContexts,
+            controllers: opControllers,
+            tokens: opTokens,
+          })
+        )
+          continue;
+        if (
+          handleLeaseRequest({
+            message,
+            socket,
+            tickets: leaseTickets,
+            operations: opContexts,
+            controllers: opControllers,
+            tokens: opTokens,
+          })
+        )
+          continue;
         if (op === 'hello') {
           hasten?.();
           socket.end(
@@ -979,6 +1084,7 @@ async function runStimdInner(
           admissionRevision++;
           hasten?.();
           ops.set(socket, 'pinned');
+          opControllers.set(socket, new AbortController());
           opCommands.set(socket, typeof message.command === 'string' ? message.command : 'a command');
           void (follower?.admit() ?? Promise.resolve(null))
             .catch((error: unknown) => {
@@ -986,10 +1092,37 @@ async function runStimdInner(
               return null;
             })
             .then((next) => {
+              if (socket.destroyed) return undefined;
               if (!next) {
+                const params = isJsonObject(message.params) ? message.params : {};
+                const forwarded = isJsonObject(params.forwarded) ? params.forwarded : {};
+                if (
+                  typeof params.workspace === 'string' &&
+                  typeof forwarded.cwd === 'string' &&
+                  isJsonObject(forwarded.env)
+                ) {
+                  const env = Object.fromEntries(
+                    Object.entries(forwarded.env).filter(
+                      (entry): entry is [string, string] => typeof entry[1] === 'string',
+                    ),
+                  );
+                  const context = invocation(forwarded.cwd, env);
+                  if ('code' in context) {
+                    ops.delete(socket);
+                    void checkEngine();
+                    socket.end(`${JSON.stringify({ op: 'error', ...context })}\n`);
+                    return undefined;
+                  }
+                  opContexts.set(socket, { ...context, workspace: params.workspace });
+                  const token = randomUUID();
+                  opTokens.set(token, socket);
+                  socketTokens.set(socket, token);
+                  setMetroInvocation(params.workspace, { ...context, workspace: params.workspace });
+                }
                 reply({
                   op: 'op.begun',
                   ...metroOpFlags(message.params),
+                  ...(socketTokens.has(socket) ? { opToken: socketTokens.get(socket) } : {}),
                   ...attachedReply(attached !== undefined, instance),
                 });
                 return undefined;
@@ -1003,19 +1136,50 @@ async function runStimdInner(
           void checkEngine();
         } else if (op === 'metro.ensure' || op === 'tunnel.ensure' || op === 'metro.stop') {
           admissionRevision++;
-          const ask =
+          const context = opContexts.get(socket);
+          if (ops.has(socket) && !context) {
+            reply({ op: 'error', code: 'op-not-ready', message: 'the operation has no admitted workspace' });
+            continue;
+          }
+          const fields = isJsonObject(message.params) ? message.params : {};
+          let operationEnv: NodeJS.ProcessEnv | undefined;
+          try {
+            if (
+              context &&
+              typeof fields.root === 'string' &&
+              realpathSync(fields.root) === realpathSync(context.workspace)
+            )
+              operationEnv = context.forwarded.env;
+          } catch {}
+          if (context && !operationEnv) {
+            reply({
+              op: 'error',
+              code: 'bad-workspace',
+              message: 'the request does not match the operation workspace',
+            });
+            continue;
+          }
+          const perform = () =>
             op === 'metro.ensure'
-              ? ensureMetro(message.params, log)
+              ? ensureMetro(message.params, log, operationEnv, opControllers.get(socket)?.signal)
               : op === 'metro.stop'
                 ? stopManagedMetro(message.params)
-                : ensureTunnel(message.params);
+                : ensureTunnel(message.params, operationEnv);
+          const controller = opControllers.get(socket);
+          const ask =
+            context && controller
+              ? traceInvocation(context, `stimd.${op}`, () => withInvocation(context, controller.signal, perform))
+              : perform();
           void ask
             .catch((error: unknown) => ({
               op: 'error',
               code: op,
               message: error instanceof Error ? error.message : String(error),
             }))
-            .then((answer) => socket.end(`${JSON.stringify(answer)}\n`));
+            .then((answer) => {
+              if (ops.has(socket)) return reply(answer);
+              return socket.end(`${JSON.stringify(answer)}\n`);
+            });
         } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
         else if (op === 'status') void statuses.answer(message.params).then((answer) => socket.end(`${answer}\n`));
         else if (op === 'tick') {
@@ -1043,6 +1207,7 @@ async function runStimdInner(
   });
   let bound = false;
   const waitMs = attachedExitWaitMs();
+  const closeNetAndLogs = createNetAndLogsClose(net, logs);
   let attachedCleanup: Promise<void> | undefined;
   const closeAttachedWork = (why: string, initial?: unknown): Promise<void> => {
     attachedCleanup ??= (async () => {
@@ -1051,7 +1216,7 @@ async function runStimdInner(
         lane.settled(),
         dependencyWork,
         closeMetroChildren(),
-        net.close(),
+        closeNetAndLogs(),
       ]);
       const error = attachedCleanupError(initial, backgroundFailure, results);
       if (error) {
@@ -1134,8 +1299,8 @@ async function runStimdInner(
       waitForeground(foregroundDone, () => foregroundFailure),
       lane.settled(),
       dependencyWork,
-      net.close(),
       closeMetroChildren(),
+      closeNetAndLogs(),
     ])
       .then(async (results) => {
         const error = attachedCleanupError(undefined, backgroundFailure, results);
@@ -1236,9 +1401,7 @@ async function runStimdInner(
     }
     void metroTick(mode === 'on', log).catch((error: unknown) => log('warn', 'metro_tick_failed', String(error)));
     if (mode === 'off') {
-      if (
-        keepsServingWhenOff(lifetime.keepsServingWhenOff, hasActiveCommands(), Boolean(net.running()), restartingNet)
-      ) {
+      if (hasOffWork()) {
         for (const socket of tickReplies.splice(0)) socket.destroy();
         continue;
       }
@@ -1376,7 +1539,7 @@ async function runStimdInner(
     }
     if (!maintenanceAllowed()) break;
     const idle = !alive && !pending && !wentDormant && Date.now() - contactSince >= tickMs;
-    emptyTicks = idle ? emptyTicks + 1 : 0;
+    emptyTicks = countIdleTicks(idle, logs.running(), emptyTicks);
     const tookMs = Math.round(performance.now() - tickStarted);
     await new Promise((done) => setTimeout(done, 0));
     log(

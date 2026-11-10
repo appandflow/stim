@@ -7,7 +7,6 @@ import { STIM_VERSION } from './stim-version.ts';
 export type SpawnEntryName =
   | 'cli'
   | 'supervisor-run'
-  | 'collector-run'
   | 'web-run'
   | 'macos-run'
   | 'stimd-thread'
@@ -20,7 +19,6 @@ export type SpawnEntryName =
 const DEV_ENTRIES: Record<SpawnEntryName, string> = {
   cli: '../bin/cli.ts',
   'supervisor-run': './supervisor/run.ts',
-  'collector-run': './collector/run.ts',
   'web-run': './web/run.ts',
   'macos-run': './macos/run.ts',
   'stimd-thread': './stimd/threads.ts',

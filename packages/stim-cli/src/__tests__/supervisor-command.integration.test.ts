@@ -33,7 +33,16 @@ describe('startCommandServer', () => {
     mkdirSync(logsDir);
     const output = openChildOutput(logsDir);
     try {
-      await startCommandServer({ root, port: 8095, logsDir, command, spawnFn, platform: 'darwin', output });
+      await startCommandServer({
+        root,
+        port: 8095,
+        logsDir,
+        command,
+        spawnFn,
+        platform: 'darwin',
+        output,
+        baseEnv: { PATH: process.env.PATH, APP_ENV: 'staging' },
+      });
       await startCommandServer({ root, port: 8095, logsDir, command, spawnFn, platform: 'win32', output });
     } finally {
       for (const fd of output.fds) closeSync(fd);
@@ -41,7 +50,12 @@ describe('startCommandServer', () => {
 
     expect(calls[0]?.cmd).toBe('node');
     expect(calls[0]?.args).toEqual(['../react-native/cli.js', 'start', '--port', '8095']);
-    expect(calls[0]?.opts).toMatchObject({ cwd: root, detached: true, stdio: ['ignore', ...output.fds] });
+    expect(calls[0]?.opts).toMatchObject({
+      cwd: root,
+      detached: true,
+      stdio: ['ignore', ...output.fds],
+      env: { APP_ENV: 'staging' },
+    });
     expect(calls[1]?.opts.detached).toBe(false);
   });
 

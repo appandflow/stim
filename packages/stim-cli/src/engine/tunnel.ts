@@ -427,6 +427,7 @@ async function waitUntilReachable({
 }
 
 export interface StartTunnelOptions {
+  env?: NodeJS.ProcessEnv;
   claims?: readonly ClaimHandle[];
   signal?: AbortSignal;
   provider: ManagedProvider;
@@ -463,6 +464,7 @@ export type StartTunnelResult =
 const CLEANUP_TIMEOUT_MS = 1_000;
 
 export async function startTunnel({
+  env,
   claims = [],
   signal,
   provider,
@@ -487,13 +489,19 @@ export async function startTunnel({
   let child: ChildProcess | undefined;
   try {
     const binary =
-      provider === 'tailscale' ? resolveTailscaleBinary((bin) => getExecutor().findExecutable(bin)) : provider;
+      provider === 'tailscale'
+        ? resolveTailscaleBinary((bin) => getExecutor().findExecutable(bin, env ? { env } : undefined))
+        : provider;
     if (!binary) throw new Error('Install Tailscale and sign in to your tailnet.');
     const { bin, args } = tunnelArgv(provider, port, ngrokUrl, outputFile, binary);
     for (const claim of claims) markClaimChildPending(claim);
     const fd = outputFile && provider === 'tailscale' ? openSync(outputFile, 'a') : 'ignore';
     try {
-      child = spawn(bin, args, { stdio: outputFile ? ['ignore', fd, fd] : ['ignore', 'pipe', 'pipe'], detached: true });
+      child = spawn(bin, args, {
+        stdio: outputFile ? ['ignore', fd, fd] : ['ignore', 'pipe', 'pipe'],
+        detached: true,
+        ...(env ? { env } : {}),
+      });
     } finally {
       if (typeof fd === 'number') closeSync(fd);
     }

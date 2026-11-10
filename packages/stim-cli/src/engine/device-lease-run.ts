@@ -1,5 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
 import { operationState } from './operation-state.ts';
+import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { deviceSlotKey } from '../devices/device-slots.ts';
 import { clockTime, formatElapsed } from '../command-output.ts';
 import { MANIFEST_VERIFY_TIMEOUT_MS } from './launch-verify.ts';
@@ -189,7 +190,7 @@ export interface RunLease {
   expiresAt: string | null;
   lost: boolean;
   raise: (boundMs: number) => RunLeaseStep;
-  release: () => void;
+  release: () => void | Promise<void>;
   facts: () => { kind: LeaseKind; expiresAt: string } | null;
 }
 
@@ -199,6 +200,9 @@ export function runLease({
   slot = 'default',
   kind,
   expiresAt,
+  token,
+  ticket,
+  operation,
   io = fileLeaseIo,
 }: {
   root: string;
@@ -206,6 +210,9 @@ export function runLease({
   slot?: string;
   kind: LeaseKind | null;
   expiresAt: string | null;
+  token?: string;
+  ticket?: string;
+  operation?: StimContext;
   io?: LeaseIo;
 }): RunLease {
   const handle: RunLease = {
@@ -216,7 +223,7 @@ export function runLease({
       if (handle.kind === null || handle.lost) {
         return { ok: !handle.lost, holder: null, expiresAt: handle.expiresAt };
       }
-      const result = raiseLease({ root, platform, slot, minMs: leaseStepMs(boundMs) }, io);
+      const result = raiseLease({ root, platform, slot, minMs: leaseStepMs(boundMs), token }, io);
       if (result.status === 'raised') {
         handle.expiresAt = result.lease.expiresAt;
         return { ok: true, holder: result.lease.holder, expiresAt: result.lease.expiresAt };
@@ -226,8 +233,15 @@ export function runLease({
       return { ok: false, holder: taken?.holder ?? null, expiresAt: taken?.expiresAt ?? null };
     },
     release() {
-      if (handle.kind === null) return;
-      releaseRunLease({ root, platform, slot }, io);
+      if (ticket && operation) {
+        if (operation.signal.aborted) return undefined;
+        return import('../daemon/client.ts').then(({ releaseDeviceTicket }) =>
+          operation.signal.aborted ? undefined : releaseDeviceTicket(ticket, operation),
+        );
+      }
+      if (handle.kind === null) return undefined;
+      releaseRunLease({ root, platform, slot, token }, io);
+      return undefined;
     },
     facts() {
       if (handle.kind === null || handle.lost || handle.expiresAt === null) return null;
@@ -249,7 +263,7 @@ export function releaseLeaseOnAbort(context: StimContext, release: () => void): 
 }
 
 export type AcquireRunLeaseResult =
-  | { status: 'leased'; kind: LeaseKind; expiresAt: string }
+  | { status: 'leased'; kind: LeaseKind; expiresAt: string; token?: string; ticket?: string }
   | { status: 'unleased' }
   | { status: 'refused'; refusal: RunLeaseRefusal };
 
@@ -275,6 +289,7 @@ export async function waitForDevice({
   io = fileLeaseIo,
   deadline,
   lastLine,
+  signal,
 }: {
   root: string;
   platform: LeasePlatform;
@@ -291,9 +306,11 @@ export async function waitForDevice({
   io?: LeaseIo;
   deadline: number;
   lastLine: { at: number | null };
+  signal?: AbortSignal;
 }): Promise<LeaseWaitOutcome> {
   const path = deviceLeasePath(platform, id);
   for (;;) {
+    throwIfCancelled(signal, 'device lease wait');
     const raw = io.readLease(path);
     const current = parseLease(raw);
     if (raw !== null && !current) return { status: 'refused', refusal: unreadableRefusal(path) };
@@ -327,9 +344,11 @@ export async function acquireRunLease({
   appId = null,
   holderAppId = () => null,
   now = Date.now,
-  sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+  sleep,
   warn = () => {},
   io = fileLeaseIo,
+  signal,
+  operation,
 }: {
   root: string;
   platform: LeasePlatform;
@@ -346,7 +365,18 @@ export async function acquireRunLease({
   sleep?: (ms: number) => Promise<void>;
   warn?: (line: string) => void;
   io?: LeaseIo;
+  signal?: AbortSignal;
+  operation?: StimContext;
 }): Promise<AcquireRunLeaseResult> {
+  if (operation) {
+    const { acquireDeviceTicket, operationToken } = await import('../daemon/client.ts');
+    if (operationToken(operation))
+      return acquireDeviceTicket(
+        { root, platform, slot, id, deviceName, idLabel, waitSeconds, noWait, installBoundMs, appId },
+        operation,
+        warn,
+      );
+  }
   const recorded = io.readHolder(root)[deviceSlotKey(platform, slot)];
   let held = recorded;
   if (recorded && recorded.id !== id) {
@@ -362,12 +392,18 @@ export async function acquireRunLease({
   const lastLine: { at: number | null } = { at: null };
 
   for (;;) {
+    throwIfCancelled(signal, 'device lease wait');
     const current = parseLease(io.readLease(path));
     const mine = current && held && current.token === held.token ? { lease: current, record: held } : null;
     if (mine && (mine.record.kind === 'run' || !leaseIsExpired(mine.lease, now()))) {
       const raised = raiseLease({ root, platform, slot, minMs: leaseStepMs(installBoundMs) }, io);
       if (raised.status === 'raised') {
-        return { status: 'leased', kind: mine.record.kind, expiresAt: raised.lease.expiresAt };
+        return {
+          status: 'leased',
+          kind: mine.record.kind,
+          expiresAt: raised.lease.expiresAt,
+          token: mine.record.token,
+        };
       }
     }
 
@@ -382,12 +418,14 @@ export async function acquireRunLease({
       appId,
       holderAppId,
       now,
-      sleep,
+      sleep: sleep ?? ((ms) => cancellableSleep(ms, { signal, what: 'device lease wait' })),
       warn,
       io,
       deadline,
       lastLine,
+      signal,
     });
+    throwIfCancelled(signal, 'device lease wait');
     if (outcome.status === 'refused') return outcome;
     if (outcome.status === 'bypassed') return { status: 'unleased' };
     if (outcome.status === 'ours') return { status: 'refused', refusal: untokenedRefusal(outcome.lease, now()) };
@@ -402,6 +440,7 @@ export async function acquireRunLease({
         status: 'leased',
         kind: taken.status === 'set' ? (held?.kind ?? 'run') : 'run',
         expiresAt: taken.lease.expiresAt,
+        token: taken.lease.token,
       };
     }
   }

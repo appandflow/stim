@@ -296,3 +296,5 @@ export function writeAvdProcessLock(avdDirectory: string, contents: string): voi
   mkdirSync(lock, { recursive: true });
   writeFileSync(join(lock, 'pid'), contents);
 }
+
+export const collectorProcessTitle = (platform: string, root: string) => `stim-collector-${platform} --root ${root}`;

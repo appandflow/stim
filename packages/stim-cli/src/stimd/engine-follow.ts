@@ -31,7 +31,7 @@ type Log = (
 export interface EngineFollower {
   engine: StoreEngine;
   /** Records whether this stimd has pinned work and which builds its home's supervisors and collectors run. */
-  record(pinned: boolean, engineDirs: string[]): void;
+  record(pinned: boolean, engineDirs: string[], activeRetained?: boolean): void;
   /**
    * Admits an `op.begin`: records the work as pinned, then waits out a switch under way. Returns the build the engine
    * switched to meanwhile, which the op must not run on, or null.
@@ -72,13 +72,15 @@ export function followEngine(log: Log, retained = false): EngineFollower | null 
   if (!claim) return null;
   let flipping = false;
   let dirs: string[] = [];
-  const record = (pinned: boolean, engineDirs: string[]) => {
+  let activeRetained = false;
+  const record = (pinned: boolean, engineDirs: string[], active = activeRetained) => {
+    activeRetained = active;
     dirs = [...new Set(engineDirs)].toSorted();
     const details = {
       home: getConfigDir(),
       drained: !pinned,
       engineDirs: dirs,
-      ...(retained ? { retained: true } : {}),
+      ...(retained || activeRetained ? { retained: true } : {}),
     };
     if (retained && claim && !readClaimSet(root).live.some((holder) => holder.claimId === claim?.claimId))
       throw new ClaimUnavailableError('the retained engine claim is missing or unreadable', { claimPath: claim.path });

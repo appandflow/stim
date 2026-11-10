@@ -1,147 +1,22 @@
-import { deviceSlotKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { isAbsolute, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import type { Executor } from '../exec.ts';
+import { join } from 'node:path';
+import type { Executor } from '../../exec.ts';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
-import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
-import { createLineReader } from '../process-output.ts';
-import { parseDeviceConsoleLine, startIosDeviceConsole } from '../stimd/logs/ios-device.ts';
-import { appNameFromBundleId, parseLogStreamLine, startIosLogStream } from '../stimd/logs/ios.ts';
-import { collectorProcessTitle } from '../stimd/logs/ownership.ts';
+import { type NdjsonWriter, createNdjsonWriter } from '../../ndjson.ts';
+import { workspaceLogsDir } from '../../workspace/paths.ts';
+import { createLineReader } from '../../process-output.ts';
+import { parseDeviceConsoleLine } from './ios-device.ts';
+import { parseLogStreamLine } from './ios.ts';
 import {
   type PidResolution,
   type PidWatcher,
+  type QueryGuard,
   androidClockOffset,
+  isLogCleanupError,
   parseLogcatLine,
-  startAndroidLogcat,
   waitForAppPid,
   watchAppPid,
-} from '../stimd/logs/android.ts';
-
-export const PLATFORMS: string[] = ['ios', 'android'];
-
-export interface ParsedCollectorArgs {
-  slot?: string;
-  platform?: string;
-  root?: string;
-  udid?: string;
-  bundleId?: string;
-  appName?: string;
-  appExecutable?: string | null;
-  serial?: string | null;
-  packageName?: string | null;
-  physical?: boolean;
-  payloadUrl?: string | null;
-  error?: string;
-}
-
-export function parseArgs(argv: string[]): ParsedCollectorArgs {
-  let slot: string | undefined;
-  let platform: string | undefined;
-  let root: string | undefined;
-  let udid: string | undefined;
-  let bundleId: string | undefined;
-  let appName: string | undefined;
-  let appExecutable: string | null = null;
-  let serial: string | null = null;
-  let packageName: string | null = null;
-  let physical = false;
-  let payloadUrl: string | null = null;
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === '--slot') {
-      slot = argv[++i];
-      if (!slot) return { error: '--slot needs a name.' };
-      try {
-        validateDeviceSlot(slot);
-      } catch (error) {
-        return { error: String((error as Error).message) };
-      }
-      continue;
-    }
-    if (arg === '--platform') {
-      platform = argv[++i];
-      continue;
-    }
-    if (arg === '--root') {
-      root = argv[++i];
-      continue;
-    }
-    if (arg === '--udid') {
-      udid = argv[++i];
-      continue;
-    }
-    if (arg === '--bundle') {
-      bundleId = argv[++i];
-      continue;
-    }
-    if (arg === '--app-name') {
-      appName = argv[++i];
-      continue;
-    }
-    if (arg === '--app-executable') {
-      appExecutable = argv[++i] ?? null;
-      continue;
-    }
-    if (arg === '--serial') {
-      serial = argv[++i] ?? null;
-      continue;
-    }
-    if (arg === '--package') {
-      packageName = argv[++i] ?? null;
-      continue;
-    }
-    if (arg === '--physical') {
-      physical = true;
-      continue;
-    }
-    if (arg === '--payload-url') {
-      payloadUrl = argv[++i] ?? null;
-      if (!payloadUrl) return { error: '--payload-url needs a URL.' };
-      continue;
-    }
-    return { error: `Unknown collector argument "${arg}".` };
-  }
-  if (!platform || !PLATFORMS.includes(platform)) {
-    return { error: `--platform must be one of ${PLATFORMS.join(', ')}, got "${platform}".` };
-  }
-  if (!root) return { error: 'Missing --root.' };
-  if (!isAbsolute(root)) return { error: `--root must be an absolute path, got "${root}".` };
-  root = resolve(root);
-  if (platform === 'ios') {
-    if (!udid) return { error: 'Missing --udid (required for --platform ios).' };
-    if (!bundleId) return { error: 'Missing --bundle (required for --platform ios).' };
-    if (!appName) appName = appNameFromBundleId(bundleId);
-  } else {
-    if (physical) return { error: '--physical is an iOS option; --platform android reads a serial.' };
-    if (!serial) return { error: 'Missing --serial (required for --platform android).' };
-    if (!packageName) return { error: 'Missing --package (required for --platform android).' };
-  }
-  if (payloadUrl && !physical) {
-    return { error: '--payload-url only applies to --physical, which launches the app itself.' };
-  }
-  return {
-    platform,
-    root,
-    udid,
-    bundleId,
-    appName,
-    appExecutable,
-    serial,
-    packageName,
-    physical,
-    payloadUrl,
-    ...(slot ? { slot } : {}),
-  };
-}
-
-import { readCollectors, registerCollector, unregisterCollector } from '../stimd/logs/state.ts';
-import { captureProcessToken } from '../process-identity.ts';
-import { ownStoreEngine } from '../daemon/engine-switch.ts';
-export { readCollectors, registerCollector, unregisterCollector };
+} from './android.ts';
 
 export interface RunCollectorOptions {
   slot?: string;
@@ -155,19 +30,17 @@ export interface RunCollectorOptions {
   packageName?: string | null;
   physical?: boolean;
   payloadUrl?: string | null;
-  startStream?:
-    | ((opts: {
-        platform: string;
-        udid?: string | null;
-        appName?: string | null;
-        appExecutable?: string | null;
-        bundleId?: string | null;
-        serial?: string | null;
-        physical?: boolean;
-        payloadUrl?: string | null;
-        pid?: number | null;
-      }) => ChildProcess)
-    | null;
+  startStream: (opts: {
+    platform: string;
+    udid?: string | null;
+    appName?: string | null;
+    appExecutable?: string | null;
+    bundleId?: string | null;
+    serial?: string | null;
+    physical?: boolean;
+    payloadUrl?: string | null;
+    pid?: number | null;
+  }) => ChildProcess;
   resolvePid?:
     | ((opts: { serial?: string | null; packageName?: string | null; timeoutMs: number }) => Promise<PidResolution>)
     | null;
@@ -183,12 +56,25 @@ export interface RunCollectorOptions {
   watchPid?: typeof watchAppPid;
   resolveClockOffset?: (
     serial: string,
-    opts: { now?: () => number; signal?: AbortSignal },
+    opts: {
+      now?: () => number;
+      signal?: AbortSignal;
+      env?: Record<string, string>;
+      cwd?: string;
+      guardQuery?: QueryGuard;
+    },
   ) => number | null | Promise<number | null>;
   now?: () => number;
-  onExit?: (code: number) => void;
-  attachSignals?: boolean;
+  onExit: (code: number) => void;
+  signal?: AbortSignal;
+  env?: Record<string, string>;
+  stopStream?: (child: ChildProcess | null) => Promise<void>;
+  writer?: NdjsonWriter;
+  recordLine?: (line: string, clockOffsetMs: number | null, child: ChildProcess) => void;
+  beforeFinish?: (signalled: boolean) => void;
   stderr?: (line: string) => void;
+  onCleanupFailure?: (error: Error) => void;
+  guardQuery?: QueryGuard;
 }
 
 export interface RunCollectorHandle {
@@ -197,14 +83,12 @@ export interface RunCollectorHandle {
   finish: (code: number, level: string, msg: string, event: string) => void;
   startedAt: string;
   pid: number | null;
+  settled(): Promise<void>;
 }
-
-const noopFlush = () => {};
 
 function startMessage({
   platform,
   physical,
-  pid,
   appName,
   bundleId,
   udid,
@@ -214,7 +98,6 @@ function startMessage({
 }: {
   platform: string;
   physical?: boolean;
-  pid: number;
   appName?: string | null;
   bundleId?: string | null;
   udid?: string | null;
@@ -223,10 +106,10 @@ function startMessage({
   appPid?: number | null;
 }): string {
   if (platform !== 'ios') {
-    return `device log collector pid ${pid} streaming ${packageName} (pid ${appPid}) on ${serial}`;
+    return `device log stream streaming ${packageName} (pid ${appPid}) on ${serial}`;
   }
-  if (!physical) return `device log collector pid ${pid} streaming ${appName} on ${udid}`;
-  return `device log collector pid ${pid} launching ${bundleId} on device ${udid} and streaming its console; subsystem, category and severity are not carried on hardware -- see \`stim guide logs\``;
+  if (!physical) return `device log stream streaming ${appName} on ${udid}`;
+  return `device log stream launching ${bundleId} on device ${udid} and streaming its console; subsystem, category and severity are not carried on hardware -- see \`stim guide logs\``;
 }
 
 export async function runCollector({
@@ -241,7 +124,7 @@ export async function runCollector({
   packageName = null,
   physical = false,
   payloadUrl = null,
-  startStream = null,
+  startStream,
   resolvePid = null,
   pidTimeoutMs = 30000,
   pidOf = null,
@@ -249,32 +132,38 @@ export async function runCollector({
   watchPid = watchAppPid,
   resolveClockOffset = androidClockOffset,
   now = Date.now,
-  onExit = (code: number) => process.exit(code),
-  attachSignals = true,
+  onExit,
+  signal: operationSignal,
+  env,
+  stopStream,
+  writer: suppliedWriter,
+  recordLine,
+  beforeFinish,
   stderr = (line: string) => console.error(line),
+  onCleanupFailure = () => {},
+  guardQuery,
 }: RunCollectorOptions): Promise<RunCollectorHandle | null> {
-  const key = deviceSlotKey(platform, slot);
   const attribution = slot === 'default' ? {} : { slot, deviceId: udid ?? serial };
-  const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'device.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+  const writer =
+    suppliedWriter ?? createNdjsonWriter(join(workspaceLogsDir(root), 'device.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
   const startedAt = new Date(now()).toISOString();
-  const processToken = captureProcessToken(process.pid);
-  if (!processToken) {
-    stderr('Stim collector: could not capture process identity; refusing to start an unmanaged collector.');
-    writer.close();
-    onExit(1);
-    return null;
-  }
-
   let finished = false;
   const shutdown = new AbortController();
   let captured = 0;
   let watcher: PidWatcher | null = null;
+  let cleanupFailure: Error | null = null;
+  const failCleanup = (error: unknown) => {
+    if (!isLogCleanupError(error)) return;
+    cleanupFailure ??= error;
+    onCleanupFailure(error);
+  };
   const finish = (code: number, level: string, msg: string, event: string, { signalled = false } = {}) => {
     if (finished) return;
     finished = true;
     shutdown.abort();
     watcher?.stop();
-    if (physical && captured === 0 && !signalled) {
+    if (beforeFinish) beforeFinish(signalled);
+    else if (physical && captured === 0 && !signalled) {
       writer.write({
         ...attribution,
         src: 'device',
@@ -285,9 +174,7 @@ export async function runCollector({
       });
     }
     writer.write({ ...attribution, src: 'device', platform, level, event, msg });
-    try {
-      unregisterCollector(root, key, process.pid, processToken);
-    } catch {}
+    operationSignal?.removeEventListener('abort', stop);
     const closed = writer.close();
     if (closed.dropped > 0) {
       stderr(`Stim collector: dropped ${closed.dropped} record(s); last error: ${describe(closed.lastError)}`);
@@ -296,33 +183,13 @@ export async function runCollector({
   };
 
   let child: ChildProcess | null = null;
-  let flushReaders = noopFlush;
-  if (attachSignals) {
-    for (const signal of ['SIGTERM', 'SIGINT']) {
-      process.on(signal, () => {
-        flushReaders();
-        killChild(child);
-        finish(0, 'info', `device log collector received ${signal}; detaching`, 'collector_stopped', {
-          signalled: true,
-        });
-      });
-    }
-  }
-
-  try {
-    registerCollector(root, key, {
-      ...attribution,
-      pid: process.pid,
-      processToken,
-      startedAt,
-      ...(ownStoreEngine() ? { engineDir: ownStoreEngine()?.build } : {}),
-    });
-  } catch (err) {
-    stderr(`Stim collector: could not record the collector in ${root}: ${describe(err)}`);
-    finish(1, 'error', 'Could not persist collector identity', 'collector_failed');
-    return null;
-  }
-
+  const stop = () => {
+    killChild(child);
+    finish(0, 'info', 'device log stream stopped', 'collector_stopped', { signalled: true });
+  };
+  if (operationSignal?.aborted) stop();
+  else operationSignal?.addEventListener('abort', stop, { once: true });
+  if (finished) return null;
   let pid: number | null = null;
   if (platform === 'android') {
     const resolved = resolvePid
@@ -332,6 +199,9 @@ export async function runCollector({
           packageName: packageName as string,
           timeoutMs: pidTimeoutMs,
           signal: shutdown.signal,
+          env,
+          cwd: root,
+          guardQuery,
         });
     if (!resolved.ok) {
       finish(1, 'error', `device log collector could not attach: ${resolved.reason}`, 'collector_failed');
@@ -349,7 +219,6 @@ export async function runCollector({
     msg: startMessage({
       platform,
       physical,
-      pid: process.pid,
       appName,
       bundleId,
       udid,
@@ -361,7 +230,9 @@ export async function runCollector({
 
   const parse = platform === 'ios' ? (physical ? parseDeviceConsoleLine : parseLogStreamLine) : parseLogcatLine;
   const readClockOffset = async (): Promise<number | null> =>
-    platform === 'android' ? await resolveClockOffset(serial as string, { now, signal: shutdown.signal }) : null;
+    platform === 'android'
+      ? await resolveClockOffset(serial as string, { now, signal: shutdown.signal, env, cwd: root, guardQuery })
+      : null;
   const attach = (streamPid: number | null, clockOffsetMs: number | null): ChildProcess => {
     if (platform === 'android') {
       writer.write({
@@ -378,18 +249,23 @@ export async function runCollector({
       });
     }
     const onLine = (line: string) => {
+      if (recordLine) return recordLine(line, clockOffsetMs, spawned);
       const record = parse(line, { now, clockOffsetMs });
       if (!record) return;
       captured++;
       writer.write({ ...attribution, ...record, platform });
     };
-    const spawned = startStream
-      ? startStream({ platform, udid, appName, appExecutable, bundleId, serial, physical, payloadUrl, pid: streamPid })
-      : platform === 'ios'
-        ? physical
-          ? startIosDeviceConsole({ udid: udid as string, bundleId: bundleId as string, payloadUrl })
-          : startIosLogStream({ udid: udid as string, appName: appName as string, executableName: appExecutable })
-        : startAndroidLogcat({ serial: serial as string, pid: streamPid as number });
+    const spawned = startStream({
+      platform,
+      udid,
+      appName,
+      appExecutable,
+      bundleId,
+      serial,
+      physical,
+      payloadUrl,
+      pid: streamPid,
+    });
     const outReader = createLineReader(onLine);
     // devicectl --console connects the app's stderr to its own, and the os_log
     // mirror and every crash report arrive there rather than on stdout.
@@ -411,20 +287,19 @@ export async function runCollector({
             }
           },
     );
-    flushReaders = () => {
+    spawned.once('close', () => {
       outReader.flush();
       errReader.flush();
-    };
+    });
     spawned.stdout?.setEncoding?.('utf-8');
     spawned.stderr?.setEncoding?.('utf-8');
     spawned.stdout?.on('data', (chunk) => outReader.push(chunk));
     spawned.stderr?.on('data', (chunk) => errReader.push(chunk));
 
-    spawned.on('exit', (code, signal) => {
-      if (spawned !== child) return;
-      flushReaders();
+    spawned.on('close', (code, signal) => {
+      if (finished || spawned !== child) return;
       const settle = (next: number | null) => {
-        if (spawned !== child) return;
+        if (finished || spawned !== child) return;
         if (next && next !== pid) {
           void reattach(next, 'the log stream ended');
           return;
@@ -446,11 +321,38 @@ export async function runCollector({
     return spawned;
   };
 
-  const reattach = async (nextPid: number, why = 'the app restarted') => {
+  let reattachment = Promise.resolve();
+  let requestedPid: number | null = null;
+  const reattach = (nextPid: number, why = 'the app restarted'): Promise<void> => {
+    requestedPid = nextPid;
+    reattachment = reattachment
+      .then(() => reattachNow(nextPid, why))
+      .catch((error: unknown) => {
+        failCleanup(error);
+        finish(1, 'error', `device log collector could not reattach: ${describe(error)}`, 'collector_failed');
+      });
+    return reattachment;
+  };
+  const reattachNow = async (nextPid: number, why: string) => {
     if (finished || nextPid === pid) return;
     const previous = pid;
-    flushReaders();
-    killChild(child);
+    try {
+      if (stopStream) {
+        const previousChild = child;
+        child = null;
+        await stopStream(previousChild);
+      } else killChild(child);
+    } catch (err) {
+      failCleanup(err);
+      finish(
+        1,
+        'error',
+        `device log collector could not stop the previous stream: ${describe(err)}`,
+        'collector_failed',
+      );
+      return;
+    }
+    if (finished) return;
     child = null;
     pid = nextPid;
     writer.write({
@@ -462,7 +364,7 @@ export async function runCollector({
       msg: `${why}: ${packageName} is now pid ${nextPid} on ${serial} (was ${previous}); reattaching the log stream`,
     });
     const clockOffsetMs = await readClockOffset();
-    if (finished || pid !== nextPid) return;
+    if (finished || pid !== nextPid || requestedPid !== nextPid) return;
     try {
       child = attach(nextPid, clockOffsetMs);
     } catch (err) {
@@ -491,12 +393,32 @@ export async function runCollector({
       pid,
       intervalMs: pidWatchMs,
       signal: shutdown.signal,
+      env,
+      cwd: root,
+      guardQuery,
       resolve: pidOf || undefined,
       onChange: (nextPid) => reattach(nextPid),
+      onFailure: (error) => {
+        failCleanup(error);
+        finish(1, 'error', `device log PID cleanup failed: ${describe(error)}`, 'collector_failed');
+      },
     });
   }
 
-  return { child, writer, finish, startedAt, pid };
+  return {
+    get child() {
+      return child;
+    },
+    writer,
+    finish,
+    async settled() {
+      await reattachment;
+      await watcher?.settled?.();
+      if (cleanupFailure) throw cleanupFailure;
+    },
+    startedAt,
+    pid,
+  };
 }
 
 // ChildProcess.kill signals through the handle, so it can only reach a process
@@ -511,38 +433,4 @@ function killChild(child: ChildProcess | null): void {
 function describe(err: unknown): string {
   if (!err) return 'unknown error';
   return (err as Error).message || String(err);
-}
-
-export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
-  const parsed = parseArgs(argv);
-  if (parsed.error) {
-    console.error(`Stim collector: ${parsed.error}`);
-    process.exit(2);
-    return;
-  }
-  const root = parsed.root as string;
-  if (!existsSync(root)) {
-    console.error(`Stim collector: --root ${root} does not exist.`);
-    process.exit(2);
-    return;
-  }
-  process.title = collectorProcessTitle(parsed.platform as string, root);
-  await runCollector(parsed as RunCollectorOptions);
-}
-
-function invokedDirectly() {
-  const entry = process.argv[1];
-  if (!entry) return false;
-  try {
-    return resolve(entry) === fileURLToPath(import.meta.url);
-  } catch {
-    return false;
-  }
-}
-
-if (invokedDirectly()) {
-  main().catch((err) => {
-    console.error(`Stim collector: ${describe(err)}`);
-    process.exit(1);
-  });
 }

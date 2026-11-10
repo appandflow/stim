@@ -6,14 +6,19 @@ import { runOperation, type ApiOperation } from '../run-operation.ts';
 
 let dir: string;
 let env: NodeJS.ProcessEnv;
+let restoreAdmission: () => void;
 
-beforeEach(() => {
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'stim-run-operation-'));
   process.env.STIM_HOME = join(dir, 'home');
   env = { ...process.env, STIM_DAEMON: 'off' };
+  const client = await import('../daemon/client.ts');
+  const admission = vi.spyOn(client, 'beforeCommand').mockResolvedValue();
+  restoreAdmission = () => admission.mockRestore();
 });
 
 afterEach(() => {
+  restoreAdmission();
   delete process.env.STIM_HOME;
   rmSync(dir, { recursive: true, force: true });
 });
@@ -43,10 +48,34 @@ describe('runOperation', () => {
     await expect(api(null)).resolves.toEqual({ admitted: null });
   });
 
+  it('registers a resident native run without running admission passes', async () => {
+    const client = await import('../daemon/client.ts');
+    await expect(api('run', 'ios', 'none')).resolves.toEqual({ admitted: null });
+    expect(client.beforeCommand).toHaveBeenCalledWith(
+      'ios',
+      env,
+      expect.objectContaining({
+        recordUse: false,
+        passes: false,
+        pin: true,
+        deviceLogs: true,
+        held: expect.any(Array),
+      }),
+    );
+  });
+
   it('admits a top-level CLI command, but not a subcommand or --plan', async () => {
     await expect(cli('ios')).resolves.toMatchObject({ admitted: 'ios', end: expect.any(Function) });
     await expect(cli('')).resolves.toMatchObject({ admitted: null, end: expect.any(Function) });
     await expect(cli('ios', true)).resolves.toMatchObject({ admitted: null, end: expect.any(Function) });
+  });
+
+  it('refuses an oversized environment before admitting either caller', async () => {
+    env.LARGE = 'x'.repeat(512 * 1024);
+    for (const entered of [await cli('ios'), await api('start')])
+      expect(entered).toMatchObject({
+        refusal: { code: 'STIM_ENV_TOO_LARGE', message: expect.stringContaining('LARGE') },
+      });
   });
 
   it('refuses a governed command while a removed variable is set, for both callers and with --plan', async () => {
@@ -130,6 +159,7 @@ it('keeps an attached host when an unrelated admission error is best effort', as
 });
 
 it.each(['on', 'off'])('refuses a creating command on an unresolved home under daemon mode %s', async (mode) => {
+  restoreAdmission();
   const { spawn } = await import('node:child_process');
   const { resolve } = await import('node:path');
   const workspace = await import('../daemon/command-workspace.ts');
