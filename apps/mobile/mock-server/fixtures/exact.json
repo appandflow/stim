@@ -1,0 +1,79 @@
+[
+  {
+    "path": "/Users/dev/Developer/exact-app",
+    "live": true,
+    "phase": "live",
+    "phaseSince": null,
+    "devServer": false,
+    "platforms": ["ios"],
+    "memoryMb": 1276,
+    "memorySource": "footprint",
+    "warnings": [],
+    "issues": [],
+    "ios": {
+      "name": "stim-exact-app (iPhone 18 Pro 27.0)",
+      "udid": "6A1F3C2E-8B4D-4E7A-9C15-2D3E4F5A6B7C",
+      "owned": true,
+      "state": "Booted",
+      "app": {
+        "id": "dev.example.exact",
+        "state": "unknown"
+      },
+      "appPresence": null
+    },
+    "android": null,
+    "metro": null,
+    "supervisor": null,
+    "logs": {
+      "dir": "/Users/dev/.stim/workspaces/exact-app--4ec74c0718fadc40/logs",
+      "errorsSinceMarker": 0
+    },
+    "worktree": {
+      "path": "/Users/dev/Developer/exact-app",
+      "branch": "main",
+      "repository": "/Users/dev/Developer/exact-app",
+      "git": {
+        "changed": 0,
+        "untracked": 0,
+        "upstream": null,
+        "ahead": null,
+        "behind": null,
+        "mergedInto": null
+      },
+      "gitChip": {
+        "parts": [{ "kind": "no-upstream" }],
+        "ci": null
+      }
+    },
+    "remoteDevices": [],
+    "build": null,
+    "lastBuilds": {
+      "ios": {
+        "platform": "ios",
+        "status": "ok",
+        "cacheHit": false,
+        "cacheSkipped": true,
+        "durationMs": 76085,
+        "fingerprint": null,
+        "startedAt": "2026-09-25T04:15:09.012Z",
+        "finishedAt": "2026-09-25T04:16:25.097Z",
+        "missReason": {
+          "kind": "cache-skipped",
+          "summary": "Exact builds incrementally in its own target/ directory",
+          "changes": [],
+          "changeCount": 0,
+          "baseline": null,
+          "rekeyedBy": []
+        },
+        "buildMachine": "local",
+        "builtOn": "here"
+      }
+    },
+    "stage": {
+      "kind": "running",
+      "since": null,
+      "platform": null,
+      "closedApps": []
+    }
+  }
+]

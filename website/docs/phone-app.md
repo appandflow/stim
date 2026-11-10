@@ -199,7 +199,7 @@ the server's authorization, use the Mac-side action above.
 
 | With read access                                                | With control added                                               |
 | --------------------------------------------------------------- | ---------------------------------------------------------------- |
-| Watch builds and workspace status.                              | Reload the app and Stop the workspace.                           |
+| Watch builds and workspace status.                              | Reload an app served by Metro and Stop the workspace.            |
 | Read captured logs, build diagnostics and supported text diffs. | Tap, swipe, pinch, type and use buttons on controllable devices. |
 | View device screens and supported replay.                       | Control a leased Android phone while its lease is valid.         |
 
