@@ -651,6 +651,41 @@ socket.on('data', chunk => {
     }
   }, 40_000);
 
+  test('start under daemon.mode off has a stimd adopt a running Metro whose stimd was killed', async () => {
+    const root = bareProject();
+    write(join(dir, 'bin', 'launchctl'), '#!/bin/sh\nexit 1\n', 0o755);
+    const run = async (args: string[], extra: NodeJS.ProcessEnv = {}) => {
+      const child = spawn(process.execPath, [cli, ...args], { cwd: root, env: { ...env, ...extra }, stdio: 'pipe' });
+      let output = '';
+      child.stdout?.on('data', (chunk) => (output += String(chunk)));
+      child.stderr?.on('data', (chunk) => (output += String(chunk)));
+      const [code] = await once(child, 'exit');
+      if (code !== 0) throw new Error(`stim ${args.join(' ')} exited ${code}: ${output}`);
+      return output;
+    };
+    await run(['start']);
+    const first = record();
+    const metro = JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).supervisor;
+    try {
+      process.kill(Number(first?.pid), 'SIGKILL');
+      await vi.waitFor(() => expect(alive(first?.pid)).toBe(false));
+      expect(processGroupAlive(metro.pid)).toBe(true);
+
+      await run(['start'], { STIM_DAEMON: 'off' });
+      const next = record();
+      expect(next?.pid).not.toBe(first?.pid);
+      expect(alive(next?.pid)).toBe(true);
+      const claims = readClaimSet(join(workspaceDir(root), 'metro.claim'));
+      expect(claims.live.map((holder) => [holder.owner.pid, holder.child?.pid])).toEqual([[next?.pid, metro.pid]]);
+    } finally {
+      await run(['stop']);
+      const last = record()?.pid;
+      if (last && alive(last)) process.kill(last, 'SIGTERM');
+      await vi.waitFor(() => expect(last === undefined || !alive(last)).toBe(true), { timeout: 15_000 });
+    }
+    expect(processGroupAlive(metro.pid)).toBe(false);
+  }, 90_000);
+
   test('a stale heartbeat whose /status probe fails restarts Metro', async () => {
     const root = bareProject();
     const port = await freePort();

@@ -4,7 +4,7 @@ import * as listeningPorts from '../listening-ports.ts';
 import assert from 'node:assert';
 import { workspaceId } from '@stim-cli/core';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
-import { captureProcessToken } from '../process-identity.ts';
+import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { SpawnOptions } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
@@ -70,8 +70,11 @@ type ActionFn = (opts: Record<string, unknown>) => void | Promise<void>;
 type StartOverrides = NonNullable<Parameters<typeof registerStart>[1]>;
 
 /** stimd's `metro.ensure`, run through the executor: the spawned stand-in is the Metro stimd starts, and its exit is stimd's `metro-exited`. */
-const stimdMetro: NonNullable<StartOverrides['ensureMetro']> = (params, _timeoutMs, _operation, signal) =>
-  new Promise((resolve) => {
+const stimdMetro: NonNullable<StartOverrides['ensureMetro']> = (params, _timeoutMs, _operation, signal) => {
+  const recorded = readWorkspaceState(params.root)?.supervisor;
+  if (recorded?.port === params.port && inspectProcessIdentity(recorded) === 'same')
+    return Promise.resolve({ op: 'metro', state: 'running', pid: recorded.pid, port: params.port });
+  return new Promise((resolve) => {
     signal?.addEventListener('abort', () => resolve(null), { once: true });
     const args = [
       'metro.ensure',
@@ -93,6 +96,7 @@ const stimdMetro: NonNullable<StartOverrides['ensureMetro']> = (params, _timeout
       resolve({ op: 'error', code: 'metro-start', message: String(error) });
     }
   });
+};
 
 const registerPosixStart = (cmd: Command, overrides: StartOverrides = {}) =>
   registerStart(cmd, {

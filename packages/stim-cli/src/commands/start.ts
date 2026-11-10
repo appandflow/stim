@@ -965,6 +965,23 @@ export async function startDevServer(
           }
         };
 
+        const heldByStimd = async (): Promise<void> => {
+          if (!supervisor) return;
+          const answer = await d.ensureMetro(
+            { root, port, tunnel, publicOrigin },
+            waitSeconds * 1000 + METRO_ANSWER_SLACK_MS,
+            ambientContext(),
+            operationSignal,
+          );
+          if (answer === null)
+            fail({
+              code: 'STIM_DAEMON_UNAVAILABLE',
+              message: `The Stim daemon did not answer for the dev server on port ${port}.`,
+              remedy: 'Run `stim doctor`, then retry `stim start`.',
+            });
+          else if (answer.op === 'error') fail(metroRefusal(answer, port));
+        };
+
         if (!metro.request && resolution.metro) {
           if (managedTunnelExited()) return failExitedManagedTunnel();
           if (tunnel && supervisor) {
@@ -1000,6 +1017,7 @@ export async function startDevServer(
             () => clearWorkspaceStateKeys(root, [IDLE_STOP_KEY]),
             operationSignal,
           );
+          await heldByStimd();
           return startFacts({ root, port, supervisor, logsDir, alreadyRunning: true });
         }
 
@@ -1050,6 +1068,7 @@ export async function startDevServer(
             (tunnel ? null : supervisor);
           requireExpoTunnel();
           if (managedTunnelExited()) return failExitedManagedTunnel();
+          await heldByStimd();
           return startFacts({ root, port, supervisor, logsDir, alreadyRunning: true });
         }
 
