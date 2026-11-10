@@ -974,12 +974,16 @@ describe('Rust panics in captured app stderr (rustc 1.97.0 output)', () => {
       'app: loading feed',
       'app: feed loaded',
       '',
-      'app: retrying',
+      ...Array.from({ length: 8 }, (_, line) => `app: log ${line}`),
+      '',
+      "thread 'main' (7) panicked at src/main.rs:20:1:",
+      'third',
       '',
     ].join('\n');
     expect(rustPanics(text)).toEqual([
       "thread 'main' panicked at src/main.rs:2:5:\nfirst",
       "thread 'worker' (7) panicked at src/lib.rs:9:1:\nsecond",
+      "thread 'main' (7) panicked at src/main.rs:20:1:\nthird",
     ]);
   });
 
