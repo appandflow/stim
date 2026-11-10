@@ -4,8 +4,9 @@ import Foundation
 /// this alone; runtime specifics such as which external apps are installed are resolved by the caller.
 public enum ActionRowKind: Hashable, Sendable {
   /// A provisioned workspace, with its dev server's current state and the platforms it can run on. `linkedWorktree`
-  /// is false for the repository's source checkout, which `stim worktree remove` leaves in place.
-  case workspace(metroRunning: Bool, platforms: [String], linkedWorktree: Bool)
+  /// is false for the repository's source checkout, which `stim worktree remove` leaves in place. `devServer` is false
+  /// for an app with no dev server, which gets neither Reload nor Start Dev Server.
+  case workspace(metroRunning: Bool, platforms: [String], linkedWorktree: Bool, devServer: Bool = true)
   /// A worktree Stim has not registered an environment for.
   case worktree
   /// A project's row in the sidebar, which acts on every live workspace under it.
@@ -38,12 +39,12 @@ public enum WorkspaceMenuItem: Hashable, Sendable {
 /// workspace detail's "..." menu both render this list, so the two never drift apart.
 public func workspaceMenuItems(for kind: ActionRowKind) -> [WorkspaceMenuItem?] {
   switch kind {
-  case .workspace(let metroRunning, let platforms, let linkedWorktree):
+  case .workspace(let metroRunning, let platforms, let linkedWorktree, let devServer):
     return [
       .openInEditor, .openInTerminal, .revealInFinder, .copyPath, .lastOutput,
       nil,
     ] + platforms.map { .run(platform: $0) }
-      + (platforms.contains("macos") && !platforms.contains { $0 == "ios" || $0 == "android" }
+      + (!devServer || (platforms.contains("macos") && !platforms.contains { $0 == "ios" || $0 == "android" })
         ? [.stopDevServer, .showLogs]
         : [
           .reload, metroRunning ? .stopDevServer : .startDevServer, .showLogs,

@@ -138,7 +138,7 @@ struct WorkspaceActions<Content: View>: View {
       WorkspaceActionsMenu(
         kind: .workspace(
           metroRunning: env.metro?.running == true, platforms: env.runPlatforms,
-          linkedWorktree: env.worktree != nil),
+          linkedWorktree: env.worktree != nil, devServer: env.devServer != false),
         path: env.path,
         busy: actions.active(for: env.path) != nil,
         removalAllowed: worktreeRemovalAllowed(git: env.worktree?.git),
