@@ -5,6 +5,7 @@ import type { Transport, TransportInput, TransportWatchEvent } from '@stim-cli/t
 export const id = 'local';
 
 const POLL_MS = 5000;
+const DEFAULT_PORT = 7787;
 
 type Interfaces = NodeJS.Dict<NetworkInterfaceInfo[]>;
 
@@ -62,6 +63,7 @@ export interface LocalTransport extends Transport {
   id: typeof id;
   lan(): LanAddresses;
   bindAddresses(): string[];
+  resolve: NonNullable<Transport['resolve']>;
   watch(listener: (event: TransportWatchEvent) => void): () => void;
 }
 
@@ -107,6 +109,11 @@ export function localTransport({
         clearInterval(timer);
         timers.delete(timer);
       };
+    },
+    async resolve({ name }) {
+      const [host = '', port = String(DEFAULT_PORT)] = name.split(':');
+      if (!host || !/^\d{1,5}$/.test(port)) return { unresolved: `${name} is not a host name and port` };
+      return { url: `ws://${host}:${port}`, servername: host, host: `${host}:${port}` };
     },
     close() {
       for (const timer of timers) clearInterval(timer);
