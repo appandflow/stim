@@ -33,7 +33,13 @@ import {
   settingShapeErrors,
 } from '../workspace/settings.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
-import { exactLocalToolProblems, exactOffloadPlan, type ExactOffload, type ExactPins } from './exact-offload.ts';
+import {
+  exactDeclaresModules,
+  exactLocalToolProblems,
+  exactOffloadPlan,
+  type ExactOffload,
+  type ExactPins,
+} from './exact-offload.ts';
 import {
   IosRecipeRefusal,
   type IosArtifactContext,
@@ -129,13 +135,27 @@ async function compile(
   context: IosArtifactContext,
   booting: ReturnType<NonNullable<IosArtifactContext['target']['booted']>> | null,
 ): Promise<IosCompileResult> {
-  if (!booting)
-    throw new IosRecipeRefusal({
-      code: 'STIM_BAD_ARG',
-      message:
-        "An Exact build needs this workspace's own booted simulator, because Exact may run the app on it to read its native modules.",
-      remedy: 'Build and run Exact apps with stim ios; build-only runs (stim ci build) are not supported.',
+  const run = (env: NodeJS.ProcessEnv) =>
+    runExactIosBuild({
+      root,
+      release: context.configuration === 'Release',
+      env,
+      logWriter: context.logWriter(),
+      onHeartbeat: context.note,
+      estimateMs: context.estimates().coldBuildMs,
     });
+  if (!booting) {
+    const manifest = readJsonObject(join(root, 'app.json'));
+    if (manifest && exactDeclaresModules(manifest))
+      throw new IosRecipeRefusal({
+        code: 'STIM_BAD_ARG',
+        message:
+          "This Exact app declares native modules in app.json, and Exact may run code on a simulator to read them, so it builds only on this workspace's own booted simulator.",
+        remedy:
+          'Build and run it with stim ios; build-only runs (stim ci build) support Exact apps without native modules.',
+      });
+    return run({ ...context.operation?.env });
+  }
   const booted = await booting;
   if (!booted.ok)
     throw new IosRecipeRefusal({
@@ -143,14 +163,7 @@ async function compile(
       message: booted.reason,
       remedy: 'Run stim ios again to re-establish an owned simulator for this workspace.',
     });
-  return runExactIosBuild({
-    root,
-    release: context.configuration === 'Release',
-    env: { ...context.operation?.env, EXACT_SIM: booted.udid },
-    logWriter: context.logWriter(),
-    onHeartbeat: context.note,
-    estimateMs: context.estimates().coldBuildMs,
-  });
+  return run({ ...context.operation?.env, EXACT_SIM: booted.udid });
 }
 
 async function exactOffloadTarget(root: string, { exact2, bun, rust }: ExactPins): Promise<BuildTarget> {

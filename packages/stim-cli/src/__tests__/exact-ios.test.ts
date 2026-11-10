@@ -140,10 +140,22 @@ test('reports an exact.mjs that cannot run', async () => {
   });
 });
 
-test('refuses without a booted workspace simulator', async () => {
+test.skipIf(process.platform === 'win32')(
+  'builds without a simulator unless app.json declares native modules',
+  async () => {
+    exactScript('echo "sim=$EXACT_SIM $*"\nexit 1');
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' }, modules: [] }));
+
+    expect(await compile(context(null, null))).toMatchObject({ diagnostics: [{ message: 'sim= ios --no-install' }] });
+
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ app: { id: 'com.example.shop' }, modules: ['shop-map'] }));
+    await expect(compile(context(null, null))).rejects.toBeInstanceOf(IosRecipeRefusal);
+  },
+);
+
+test('refuses when the workspace simulator does not boot', async () => {
   exactScript('exit 0');
 
-  await expect(compile(context(null, null))).rejects.toBeInstanceOf(IosRecipeRefusal);
   await expect(compile(context(null, async () => ({ ok: false, reason: 'boot timed out' })))).rejects.toMatchObject({
     failure: { code: 'STIM_NO_DEVICE', message: 'boot timed out' },
   });
