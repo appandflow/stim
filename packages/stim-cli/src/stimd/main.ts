@@ -1191,7 +1191,7 @@ async function runStimdInner(
             op === 'metro.ensure'
               ? ensureMetro(message.params, log, operationEnv, opControllers.get(socket)?.signal)
               : op === 'metro.stop'
-                ? stopManagedMetro(message.params)
+                ? stopManagedMetro(message.params, log)
                 : ensureTunnel(message.params, operationEnv);
           const controller = opControllers.get(socket);
           const ask =

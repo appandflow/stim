@@ -2,7 +2,15 @@ import { withInvocation, type Invocation } from '../forwarded.ts';
 import { closeSync, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
-import { IDLE_STOP_KEY, isJsonObject, readJsonObject } from '@stim-cli/core/state';
+import {
+  DEV_SERVER_STOP_REQUEST_KEY,
+  DEVICE_METRO_IDLE_STOP_REASON,
+  IDLE_STOP_KEY,
+  isJsonObject,
+  readDevServerStopRequest,
+  readJsonObject,
+  type DevServerStopRecord,
+} from '@stim-cli/core/state';
 import {
   markClaimChildPending,
   claimRemoveCommand,
@@ -30,7 +38,16 @@ import {
   resolveProjectSettings,
   runnableMetroCommand,
 } from '../../workspace/settings.ts';
-import { clearWorkspaceStateKeys, readWorkspaceState, writeWorkspaceState } from '../../workspace/workspace-state.ts';
+import {
+  clearWorkspaceStateKeys,
+  readWorkspaceState,
+  withWorkspaceStateLock,
+  writeWorkspaceState,
+} from '../../workspace/workspace-state.ts';
+import { dueIdleDevices, shutDownIdleDevices } from '../../devices/idle-shutdown.ts';
+import { withIdleWorkspace } from '../../workspace/in-use.ts';
+import { liveShareKeepReason } from '../../local-server.ts';
+import { PUBLIC_METRO_ENV } from '../../engine/metro-reach.ts';
 import { ownStoreEngine } from '../../daemon/engine-switch.ts';
 import type { ManagedProvider } from '../../engine/metro-reach.ts';
 import { metroRequestAt } from '../passes/idle-stop.ts';
@@ -44,12 +61,15 @@ import {
   type OutputTail,
 } from './child-server.ts';
 import { workspaceIdleProbe } from './idle-stop.ts';
+import { watchHostedMetro } from './hosted-metro.ts';
+import { devServerStopLevel, devServerStopRecord, describeDevServerStop } from './stop-cause.ts';
+import { trackMetroWatchRoots, type MetroWatchRoots } from './watchman-roots.ts';
 import { injectedDigest, injectedDir } from './injected.ts';
 import { metroStoreRoot, registerMetroStore } from './metro-store.ts';
 import { projectNodeLine, withProjectNode } from './project-node.ts';
 import { startCommandServer } from './server-command.ts';
 import { recordFromLine, repositoryRoot, startExpoServer } from './server-expo.ts';
-import { clearWorkspaceSupervisor, MODE_BARE, MODE_COMMAND, MODE_EXPO } from './state.ts';
+import { clearExpoMetroTunnel, clearWorkspaceSupervisor, MODE_BARE, MODE_COMMAND, MODE_EXPO } from './state.ts';
 
 type Log = (level: 'debug' | 'info' | 'warn' | 'error', event: string, msg: string) => void;
 type Answer = Record<string, unknown>;
@@ -63,8 +83,17 @@ const IDLE_POINT_MS = 2 * 60_000;
 const GROUPS = process.platform !== 'win32';
 const PROVIDERS: ManagedProvider[] = ['cloudflared', 'ngrok', 'tailscale'];
 
+/** How a workspace's Metro starts, kept in its claim so that a restart or an adopting stimd starts it the same way. */
+interface Launch {
+  /** Expo's own tunnel (`expo start --tunnel`). */
+  tunnel: boolean;
+  /** The managed tunnel's origin, which Metro and Expo put in the URLs they serve. */
+  publicOrigin: string | null;
+}
+
 interface MetroChild {
   root: string;
+  launch: Launch;
   port: number;
   mode: string;
   digest: string | null;
@@ -82,6 +111,9 @@ interface MetroChild {
   ensuredAt: number;
   gone: boolean;
   stopping?: boolean;
+  /** Closes the hosted Metro links this child serves. */
+  closeLinks: (() => Promise<void>) | null;
+  roots: MetroWatchRoots | null;
 }
 
 interface TunnelChild {
@@ -193,21 +225,65 @@ function lastLine(file: string): string {
   }
 }
 
-/** Forgets a child that exited or was stopped: its record, its claim and its tail. */
-function forget(child: MetroChild, msg: string, level: 'info' | 'warn' = 'info'): void {
+function launchOf(details: Record<string, unknown>): Launch {
+  return {
+    tunnel: details.tunnel === true,
+    publicOrigin: typeof details.publicOrigin === 'string' ? details.publicOrigin : null,
+  };
+}
+
+/** The stop a command asked for with `requestDevServerStop`, else what `trigger` says, or null for neither. */
+function stopRecord(
+  child: MetroChild,
+  trigger: Parameters<typeof devServerStopRecord>[0] | null,
+): DevServerStopRecord | null {
+  const request = readDevServerStopRequest(readWorkspaceState(child.root));
+  const own = request?.processToken === child.processToken ? request : null;
+  return own || trigger
+    ? devServerStopRecord(trigger ?? { kind: 'signal', signal: 'SIGTERM' }, own, new Date().toISOString())
+    : null;
+}
+
+/** Forgets a child that exited or was stopped: its record, its claim, its tail and its hosted links. */
+function forget(
+  child: MetroChild,
+  msg: string,
+  level: 'info' | 'warn' | 'error' = 'info',
+  stop: DevServerStopRecord | null = null,
+): void {
   if (child.gone) return;
   child.gone = true;
   child.tail?.stop();
+  void child.closeLinks?.();
   if (children.get(child.root) === child) children.delete(child.root);
   const identity = { pid: child.pid, processToken: child.processToken };
+  try {
+    withWorkspaceStateLock(child.root, () => {
+      if (stop) writeWorkspaceState(child.root, { [IDLE_STOP_KEY]: stop });
+      clearWorkspaceStateKeys(child.root, [DEV_SERVER_STOP_REQUEST_KEY]);
+    });
+  } catch {}
   try {
     clearWorkspaceSupervisor(child.root, identity);
     clearSupervisor(child.root, identity);
   } catch {}
   rmSync(heartbeatFile(child.root), { force: true });
   releaseClaim(child.claim);
-  child.writer.write({ src: 'metro', level, event: 'supervisor_stopped', msg });
+  child.writer.write({ src: 'metro', level, event: 'supervisor_stopped', msg, ...(stop ? { stop } : {}) });
   child.writer.close();
+}
+
+/** Forgets a child whose process tree exited without a stop from this stimd, with the cause it can name. */
+function forgetExited(child: MetroChild, code: number | null, signal: string | null): void {
+  const stop = stopRecord(child, { kind: 'server-exit', mode: child.mode, code, signal });
+  forget(
+    child,
+    stop?.reason === 'requested'
+      ? `the ${child.mode} dev server exited; ${describeDevServerStop(stop)}`
+      : `${stop ? describeDevServerStop(stop) : `the ${child.mode} dev server exited`} (pid ${child.pid})`,
+    stop ? devServerStopLevel(stop) : 'warn',
+    stop,
+  );
 }
 
 async function gone(alive: () => boolean, ms: number): Promise<boolean> {
@@ -228,6 +304,7 @@ function unverifiedChild(claim: ClaimHandle, pid: number, reason: string): Error
 async function stopChild(child: MetroChild, why: string): Promise<void> {
   if (child.stopping && cleanupFailure) throw cleanupFailure;
   child.stopping = true;
+  await child.roots?.beforeClose();
   try {
     if (!GROUPS) {
       if (
@@ -256,7 +333,14 @@ async function stopChild(child: MetroChild, why: string): Promise<void> {
   } catch (error) {
     throw unverifiedChild(child.claim, child.pid, error instanceof Error ? error.message : String(error));
   }
-  forget(child, `stimd stopped the ${child.mode} dev server: ${why}`);
+  await child.roots?.afterClose();
+  const stop = stopRecord(child, null);
+  forget(
+    child,
+    `stimd stopped the ${child.mode} dev server: ${stop ? describeDevServerStop(stop) : why}`,
+    'info',
+    stop,
+  );
 }
 
 /** Runs `work` after every earlier piece of work on `key`, so no two ensure, restart or stop of one child overlap. */
@@ -315,6 +399,7 @@ function spawnHost(
   writer: NdjsonWriter,
   baseEnv: NodeJS.ProcessEnv,
   spawn: ReturnType<typeof getExecutor>['spawn'],
+  resetCache: boolean,
 ): ChildServerHandle {
   const settings = resolveProjectSettings(root).settings;
   const storeRoot = resolveMetroSharedCache(settings) ? metroStoreRoot(root) : null;
@@ -338,6 +423,7 @@ function spawnHost(
     '--heartbeat',
     heartbeatFile(root),
     ...(storeRoot ? ['--store-root', storeRoot] : []),
+    ...(resetCache ? ['--reset-cache'] : []),
   ];
   const child = spawn('node', args, {
     cwd: root,
@@ -363,7 +449,23 @@ function spawnHost(
   });
 }
 
-async function start(root: string, port: number, log: Log, operationEnv?: NodeJS.ProcessEnv): Promise<Answer> {
+/** Opens the hosted Metro links (`device-host.metro.link`, reverse ports, agent relay) this workspace's sessions ask for. */
+function serveLinks(child: MetroChild, log: Log): void {
+  try {
+    child.closeLinks = watchHostedMetro(child.root, child.port, child.processToken);
+  } catch (error) {
+    log('warn', 'metro_links_failed', `${child.root}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function start(
+  root: string,
+  port: number,
+  log: Log,
+  operationEnv: NodeJS.ProcessEnv | undefined,
+  launch: Launch,
+  resetCache: boolean,
+): Promise<Answer> {
   ensureWorkspaceStorage(root);
   const logsDir = workspaceLogsDir(root);
   mkdirSync(logsDir, { recursive: true });
@@ -371,7 +473,7 @@ async function start(root: string, port: number, log: Log, operationEnv?: NodeJS
   const command = runnableMetroCommand(settings);
   const mode = command ? MODE_COMMAND : detectIsExpo(root) ? MODE_EXPO : MODE_BARE;
   const digest = injectedDigest();
-  const details = { port, mode, digest, engineDir: ownStoreEngine()?.build ?? null };
+  const details = { port, mode, digest, engineDir: ownStoreEngine()?.build ?? null, ...launch };
   const attempt = tryAcquireClaim({ root: claimRoot(root, 'metro'), mode: 'exclusive', label: 'Metro', details });
   if (attempt.pending) releaseClaim(attempt.pending);
   if (!attempt.acquired)
@@ -384,7 +486,24 @@ async function start(root: string, port: number, log: Log, operationEnv?: NodeJS
     STIM_METRO_HEARTBEAT: heartbeatFile(root),
     STIM_METRO_PORT: String(port),
     ...(digest ? { STIM_INJECTED_DIGEST: digest } : {}),
+    ...(launch.publicOrigin
+      ? { [PUBLIC_METRO_ENV]: launch.publicOrigin, EXPO_PACKAGER_PROXY_URL: launch.publicOrigin }
+      : {}),
   };
+  clearExpoMetroTunnel(root);
+  let token: string | undefined;
+  const onTunnelUrl = (url: string) => {
+    try {
+      withWorkspaceStateLock(root, () => {
+        if (token && readWorkspaceState(root)?.supervisor?.processToken === token)
+          writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url } });
+      });
+    } catch (error) {
+      log('warn', 'expo_tunnel_unrecorded', `${root}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    writer.write({ src: 'metro', level: 'info', event: 'expo_tunnel_ready', msg: `Expo tunnel ready: ${url}` });
+  };
+  const roots = trackMetroWatchRoots({ workspaceRoot: root, writer });
   const output = openChildOutput(logsDir);
   let handle: ChildServerHandle;
   let spawned: ReturnType<ReturnType<typeof getExecutor>['spawn']> | undefined;
@@ -417,8 +536,11 @@ async function start(root: string, port: number, log: Log, operationEnv?: NodeJS
             extraEnv: env,
             spawnFn: spawn,
             baseEnv,
+            tunnel: launch.tunnel,
+            resetCache,
+            onTunnelUrl,
           })
-        : spawnHost(root, port, output, env, writer, baseEnv, spawn);
+        : spawnHost(root, port, output, env, writer, baseEnv, spawn, resetCache);
   } catch (error) {
     if (spawned?.pid) {
       writer.close();
@@ -455,6 +577,7 @@ async function start(root: string, port: number, log: Log, operationEnv?: NodeJS
   }
   const child: MetroChild = {
     root,
+    launch,
     port,
     mode,
     digest,
@@ -468,21 +591,22 @@ async function start(root: string, port: number, log: Log, operationEnv?: NodeJS
     ready: false,
     ensuredAt: Date.now(),
     gone: false,
+    closeLinks: null,
+    roots,
   };
   children.set(root, child);
+  token = processToken;
   record(child, handle.observesRequests === true || mode === MODE_BARE);
   recordForeignMetro(root, port, {});
+  roots.started(pid);
+  serveLinks(child, log);
   handle.onExit((info) => {
     if (child.stopping || (GROUPS && processGroupAlive(child.pid))) return;
     if (!GROUPS) {
       failedCleanup(unverifiedChild(child.claim, child.pid, `Could not confirm the dev-server tree exited.`));
       return;
     }
-    forget(
-      child,
-      `the ${mode} dev server exited (code ${info?.code ?? 'none'}, signal ${info?.signal ?? 'none'})`,
-      'warn',
-    );
+    forgetExited(child, info?.code ?? null, info?.signal ?? null);
   });
   writer.write({
     src: 'metro',
@@ -514,6 +638,7 @@ async function ensure(
   log: Log,
   operationEnv?: NodeJS.ProcessEnv,
   signal?: AbortSignal,
+  options: Launch & { resetCache?: boolean } = { tunnel: false, publicOrigin: null },
 ): Promise<Answer> {
   await adoptFromPredecessor(root, log);
   if (signal?.aborted) return { op: 'error', code: 'cancelled', message: 'the operation ended' };
@@ -538,15 +663,18 @@ async function ensure(
   }
   if (found.notOurs) return { op: 'error', code: 'port-taken', message: found.notOurs };
   if (signal?.aborted) return { op: 'error', code: 'cancelled', message: 'the operation ended' };
-  return start(root, port, log, operationEnv);
+  const { resetCache = false, ...how } = options;
+  return start(root, port, log, operationEnv, how, resetCache);
 }
 
 /**
- * `metro.ensure {root, port?, launch?}`: makes sure the workspace's Metro runs as a child of this stimd and answers
- * `{op: 'metro', state, pid, port, mode}`. A spawned child whose handle runs and whose heartbeat is under 3 s old
- * answers at once; a stale heartbeat probes `/status` for 500 ms and restarts Metro when it fails. A Metro on the port
- * that runs from the project and that Stim did not start is reused and recorded in `metro.foreign.json`. With
- * `launch`, a Metro of other injected files is restarted first.
+ * `metro.ensure {root, port?, launch?, tunnel?, publicOrigin?, resetCache?}`: makes sure the workspace's Metro runs as
+ * a child of this stimd and answers `{op: 'metro', state, pid, port, mode}`. A spawned child whose handle runs and
+ * whose heartbeat is under 3 s old answers at once; a stale heartbeat probes `/status` for 500 ms and restarts Metro
+ * when it fails. A Metro on the port that runs from the project and that Stim did not start is reused and recorded in
+ * `metro.foreign.json`. With `launch`, a Metro of other injected files is restarted first. A Metro this call starts
+ * runs Expo's own tunnel with `tunnel`, serves `publicOrigin` (a managed tunnel's URL) and, with `resetCache`, starts
+ * with empty Metro caches; a restart keeps the first two.
  */
 export function ensureMetro(
   params: unknown,
@@ -587,10 +715,15 @@ export function ensureMetro(
     child.ensuredAt = Date.now();
     return Promise.resolve(answer(child));
   }
-  return serialize(root, () => ensure(root, port, fields.launch === true, log, operationEnv, signal));
+  const options = {
+    tunnel: fields.tunnel === true,
+    publicOrigin: typeof fields.publicOrigin === 'string' ? fields.publicOrigin : null,
+    resetCache: fields.resetCache === true,
+  };
+  return serialize(root, () => ensure(root, port, fields.launch === true, log, operationEnv, signal, options));
 }
 
-export function stopManagedMetro(params: unknown): Promise<Answer> {
+export function stopManagedMetro(params: unknown, log: Log): Promise<Answer> {
   const fields = isJsonObject(params) ? params : {};
   let root: string;
   try {
@@ -599,6 +732,7 @@ export function stopManagedMetro(params: unknown): Promise<Answer> {
     return Promise.resolve({ op: 'error', code: 'bad-root', message: 'The workspace is unavailable.' });
   }
   return serialize(root, async () => {
+    await adoptFromPredecessor(root, log);
     const child = children.get(root);
     if (!child) return { op: 'metro.stopped', state: 'not-owned' };
     if (child.pid !== fields.pid || child.processToken !== fields.processToken)
@@ -693,6 +827,7 @@ function adoptAt(path: string, log: Log): void {
     const records = childRecords({ log: writer, toRecord: outputRecord(mode) });
     const child: MetroChild = {
       root: path,
+      launch: launchOf(holder.details),
       port: Number(holder.details.port),
       mode,
       digest,
@@ -705,8 +840,11 @@ function adoptAt(path: string, log: Log): void {
       ready: true,
       ensuredAt: 0,
       gone: false,
+      closeLinks: null,
+      roots: null,
     };
     children.set(path, child);
+    serveLinks(child, log);
     const supervisor = readWorkspaceState(path)?.supervisor;
     if (isJsonObject(supervisor) && typeof claim.details.engineDir === 'string')
       writeWorkspaceState(path, { supervisor: { ...supervisor, engineDir: claim.details.engineDir } });
@@ -765,7 +903,7 @@ export function metroTick(act: boolean, log: Log): Promise<void> {
           failedCleanup(unverifiedChild(child.claim, child.pid, `Could not confirm the dev-server tree exited.`));
           continue;
         }
-        forget(child, `the ${child.mode} dev server pid ${child.pid} is gone`, 'warn');
+        forgetExited(child, null, null);
         continue;
       }
       // compat C6 permanent
@@ -777,7 +915,9 @@ export function metroTick(act: boolean, log: Log): Promise<void> {
       // compat end
       if (act || child.mode === MODE_COMMAND) continue;
       const minutes = idleMinutesSetting(resolveProjectSettings(child.root).settings);
-      if (minutes > 0 && (await idlePoint(child, Date.now() - minutes * 60_000))) {
+      if (minutes <= 0) continue;
+      const idleMs = minutes * 60_000;
+      if (await idlePoint(child, Date.now() - idleMs)) {
         if (backgroundStopped) break;
         await restartAt(
           child,
@@ -788,8 +928,9 @@ export function metroTick(act: boolean, log: Log): Promise<void> {
           {
             [IDLE_STOP_KEY]: { reason: 'idle', at: new Date().toISOString(), idleMinutes: minutes },
           },
+          idleMs,
         );
-      }
+      } else if (dueIdleDevices(child.root, idleMs).length > 0) await shutDownIdle(child, idleMs, log);
     }
     for (const [root, tunnel] of tunnels)
       if (
@@ -811,7 +952,48 @@ export function metroTick(act: boolean, log: Log): Promise<void> {
   return tickWork;
 }
 
-/** Stops the child, unless an ensure took it over meanwhile, and starts it again when `again`, all in its root's turn. */
+/**
+ * Shuts down, through centralized teardown, the workspace's owned devices idle for `idleMs` while the passes do not act
+ * and no live share keeps them, under the workspace's native-run lock. Returns what it did and kept, for the log.
+ */
+async function shutDownIdle(
+  child: MetroChild,
+  idleMs: number,
+  log: Log,
+  reason?: typeof DEVICE_METRO_IDLE_STOP_REASON,
+): Promise<string[]> {
+  const lines: string[] = [];
+  try {
+    if (await liveShareKeepReason(child.root)) return lines;
+    await withIdleWorkspace(
+      child.root,
+      () =>
+        shutDownIdleDevices(
+          child.root,
+          idleMs,
+          (entry) => {
+            child.writer.write({ src: 'metro', ...entry });
+            lines.push(entry.msg);
+          },
+          Date.now(),
+          reason ? { reason, kept: (line) => lines.push(line) } : {},
+        ),
+      { purpose: 'device idle shutdown', supervisor: false, managedLocks: false },
+    );
+  } catch (error) {
+    log(
+      'warn',
+      'device_idle_shutdown_failed',
+      `${child.root}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return lines;
+}
+
+/**
+ * Stops the child, unless an ensure took it over meanwhile, and starts it again when `again`, all in its root's turn.
+ * An idle stop (`idleMs`) first shuts down the workspace's devices idle as long.
+ */
 function restartAt(
   child: MetroChild,
   decidedAt: number,
@@ -819,16 +1001,17 @@ function restartAt(
   log: Log,
   again: boolean,
   state: Record<string, unknown> = {},
+  idleMs?: number,
 ): Promise<Answer> {
   return serialize(child.root, async () => {
     if (children.get(child.root) !== child || child.gone || child.ensuredAt >= decidedAt) return {};
-    await stopChild(child, why);
+    const devices = idleMs ? await shutDownIdle(child, idleMs, log, DEVICE_METRO_IDLE_STOP_REASON) : [];
+    await stopChild(child, [why, ...devices].join('; '));
     writeWorkspaceState(child.root, state);
     if (!again) return {};
     const context = invocations.get(child.root);
-    const answered = context
-      ? await withInvocation(context, new AbortController().signal, () => ensure(child.root, child.port, false, log))
-      : await ensure(child.root, child.port, false, log);
+    const restart = () => ensure(child.root, child.port, false, log, undefined, undefined, child.launch);
+    const answered = context ? await withInvocation(context, new AbortController().signal, restart) : await restart();
     if (answered.op === 'error') log('warn', 'metro_restart_failed', `${child.root}: ${String(answered.message)}`);
     return answered;
   });

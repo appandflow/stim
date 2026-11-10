@@ -118,18 +118,18 @@ test.skipIf(process.platform === 'win32')(
         }),
     );
     expect(await ensureMetro({ root, port: 8181 }, log)).toMatchObject({ op: 'metro' });
-    expect(await stopManagedMetro({ root, pid: 424243, processToken: 'test-token' })).toMatchObject({
+    expect(await stopManagedMetro({ root, pid: 424243, processToken: 'test-token' }, log)).toMatchObject({
       op: 'error',
       code: 'metro-changed',
     });
     expect(fixtures.close).not.toHaveBeenCalled();
-    const stopping = stopManagedMetro({ root, pid: 424242, processToken: 'test-token' });
+    const stopping = stopManagedMetro({ root, pid: 424242, processToken: 'test-token' }, log);
     await vi.waitFor(() => expect(fixtures.close).toHaveBeenCalledOnce());
     expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toHaveLength(1);
     finish();
     await expect(stopping).resolves.toMatchObject({ op: 'metro.stopped', state: 'stopped' });
     expect(readClaimSet(join(workspaceDir(root), 'metro.claim')).live).toEqual([]);
-    await expect(stopManagedMetro({ root, pid: 424242, processToken: 'test-token' })).resolves.toMatchObject({
+    await expect(stopManagedMetro({ root, pid: 424242, processToken: 'test-token' }, log)).resolves.toMatchObject({
       op: 'metro.stopped',
       state: 'not-owned',
     });
