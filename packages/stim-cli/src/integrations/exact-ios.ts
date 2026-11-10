@@ -1,5 +1,6 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { isJsonObject, readJsonObject } from '@stim-cli/core/state';
 import { filesystemBuildCapability } from '../cache/build-cache.ts';
 import { skippedMissReason } from '../cache/miss-reason.ts';
 import { iosProcessRuntime } from '../commands/ios/launch.ts';
@@ -211,13 +212,19 @@ function exactRecipe(root: string, context: IosArtifactContext): IosArtifactReci
   };
 }
 
+function exactBundleId(root: string): string | null {
+  const app = readJsonObject(join(root, 'app.json'))?.app;
+  const id = isJsonObject(app) ? app.id : undefined;
+  return typeof id === 'string' && id !== '' ? id : null;
+}
+
 export function exactIosProject(root: string): IosProject {
   return {
     isExpo: false,
     targets: ['simulator'],
     eas: false,
     runtimeKind: () => 'process',
-    bundleId: () => null,
+    bundleId: () => exactBundleId(root),
     schemeProblem(scheme, configuration) {
       if (scheme !== undefined || (configuration && configuration !== 'Debug' && configuration !== 'Release'))
         return {
