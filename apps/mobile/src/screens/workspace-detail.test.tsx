@@ -24,6 +24,7 @@ beforeEach(() => {
   mockDetail = { data: mockArchiveDetails['stim--archive-1'] as ArchiveDetailResult, error: null };
   mockConnection.request.mockReset();
   mockArchives = mockCaptured.payload.archived as ArchivedWorkspace[];
+  mockActions = { available: null, pending: null };
 });
 jest.mock('expo-router', () => {
   const { View, Text } = jest.requireActual('react-native');
@@ -60,7 +61,8 @@ jest.mock('@/hooks/archive-detail', () => ({
 jest.mock('@/hooks/app-foreground', () => ({ useAppForeground: () => true }));
 jest.mock('@/hooks/header-inset', () => ({ useHeaderInset: () => 0 }));
 jest.mock('@/hooks/build-plans', () => ({ useWorkspaceBuildPlans: () => () => undefined }));
-jest.mock('@/hooks/workspace-actions', () => ({ useAction: () => ({ available: null, pending: null }) }));
+let mockActions: { available: string[] | null; pending: null; run?: jest.Mock } = { available: null, pending: null };
+jest.mock('@/hooks/workspace-actions', () => ({ useAction: () => mockActions }));
 jest.mock('@/hooks/recents', () => ({ useRecents: () => ({ touch: () => {} }) }));
 jest.mock('@/hooks/screen-reader', () => ({ useAnnounce: () => {} }));
 jest.mock('@/hooks/use-now', () => ({ useNow: () => Date.parse('2026-10-05T12:00:00Z') }));
@@ -220,4 +222,42 @@ it('keeps expired recordings available while the server still lists spans', asyn
   const screen = await render(archivedBody());
   expect(screen.getAllByText('Expired').length).toBeGreaterThan(0);
   expect(screen.getByText('tablet')).toBeTruthy();
+});
+
+describe('Reload for apps without a dev server', () => {
+  beforeEach(() => {
+    mockActions = { available: ['reload', 'stop'], pending: null, run: jest.fn(async () => null) };
+  });
+
+  it('is offered while status omits devServer, as a Stim that predates it does', async () => {
+    mockEnvironments = [mobile()];
+    const screen = await render(body());
+    expect(screen.getByText('Reload')).toBeTruthy();
+  });
+
+  it('is not offered for a single app without a dev server, which keeps Stop', async () => {
+    mockEnvironments = [{ ...mobile(), devServer: false }];
+    const screen = await render(body());
+    expect(screen.queryByText('Reload')).toBeNull();
+    expect(screen.getByText('Stop')).toBeTruthy();
+  });
+
+  it('reloads only the checkout apps that have a dev server', async () => {
+    mockEnvironments = [
+      { ...mobile('a'), devServer: false },
+      { ...mobile('b'), devServer: true, android: null },
+    ];
+    const screen = await render(body('/checkout/apps/a'));
+    await fireEvent.press(screen.getByText('Reload'));
+    expect(mockActions.run).toHaveBeenCalledWith('reload', { workspace: '/checkout/apps/b', platform: 'ios' });
+  });
+
+  it('is not offered when no live checkout app has a dev server', async () => {
+    mockEnvironments = [
+      { ...mobile('a'), devServer: false },
+      { ...mobile('b'), devServer: false },
+    ];
+    const screen = await render(body('/checkout/apps/a'));
+    expect(screen.queryByText('Reload')).toBeNull();
+  });
 });

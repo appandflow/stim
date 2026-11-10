@@ -785,6 +785,10 @@ the workspace **...** menu shows **Reload** and **Stop**:
 - **Reload** runs `stim reload` at once. When the workspace has both a running
   owned iOS simulator and a running owned Android emulator, it asks which app
   to reload, because `stim reload` without a platform refuses to choose.
+  It is not offered for an app whose status reports `devServer` false, such as
+  an Exact or native Xcode app, because `stim reload` refuses without Metro; in
+  a worktree with several apps it chooses only among apps with a dev server.
+  Status from a Stim that predates `devServer` keeps Reload.
 - **Stop** asks for confirmation, then runs `stim stop`.
 
 A toast shows the action while it runs, then its result or the server's error
@@ -1091,6 +1095,8 @@ has no simulators of its own: `bot/onboarding-copy`, an iOS simulator hosted on
 running on `janics-mac-mini-2`. `pnpm run mock-server --linux-owner --name floco`
 lists only them as workspaces, with `simctlAvailable` false, no device leases and no archives;
 the machine's usage, `machine.details` and notifications stay the captured machine's.
+`exact.json` adds `exact-app`, an Exact app running on its owned iOS simulator with no Metro and
+`devServer` false, as `stim status --json` reports it; its menu offers Stop and no Reload.
 The `a4-multi-device` workspace also carries a macOS app that
 `stim macos --remote janics-mac-mini` placed on another machine, added by hand in the
 `macos.host` shape.
