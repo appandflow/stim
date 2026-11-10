@@ -83,8 +83,11 @@ describe.skipIf(process.platform === 'win32')('logs worker failure', () => {
     try {
       const input = { root, platform: 'ios' as const, udid: 'U1', bundleId: 'com.test.app', appName: 'Test' };
       await streams.start(input, env);
-      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-      pid = Number(readFileSync(pidFile, 'utf8'));
+      pid = await vi.waitFor(() => {
+        const written = Number(existsSync(pidFile) ? readFileSync(pidFile, 'utf8') : '');
+        expect(written).toBeGreaterThan(0);
+        return written;
+      });
       token = captureProcessToken(pid);
       if (!token) throw new Error('the child has no process identity');
       const worker = captured.workers.at(-1);
@@ -160,8 +163,11 @@ describe.skipIf(process.platform === 'win32')('logs worker failure', () => {
     let child: { pid: number; processToken: string } | null = null;
     try {
       await streams.start({ root, platform: 'ios', udid: 'U1', bundleId: 'com.test.app', appName: 'Test' }, env);
-      await vi.waitFor(() => expect(existsSync(pidFile)).toBe(true));
-      const pid = Number(readFileSync(pidFile, 'utf8'));
+      const pid = await vi.waitFor(() => {
+        const written = Number(existsSync(pidFile) ? readFileSync(pidFile, 'utf8') : '');
+        expect(written).toBeGreaterThan(0);
+        return written;
+      });
       const token = captureProcessToken(pid);
       if (!token) throw new Error('the child has no process identity');
       child = { pid, processToken: token };
