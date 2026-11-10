@@ -157,7 +157,6 @@ jobs:
             packages/stim-cli/package.json
             packages/stim-cli/src/engine/eas-machine-root-guard-env.ts
             packages/stim-cli/src/commands/gc/temp-leftovers-guard-env.ts
-            packages/stim-cli/src/daemon/passes-guard-env.ts
             package.json
             pnpm-lock.yaml
             vitest.bench.config.ts

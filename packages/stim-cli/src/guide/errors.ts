@@ -1971,13 +1971,17 @@ not on any remote"  (worktree remove)
   npx stim@<this version> engine use <this version>.`,
     },
     STIM_DAEMON_UNAVAILABLE: {
-      summary: 'an attached Stim daemon could not start or admit the command',
+      summary: 'no Stim daemon of this build could run the dev server or admit the command',
       body: () => `STIM_DAEMON_UNAVAILABLE
   An attached daemon may still be starting, ending, or serving a different
   build. Wait for its owning command to finish and retry, or use a separate
   STIM_HOME. After startup times out or is cancelled, Stim allows up to 10
   seconds for cleanup before forcing the daemon to exit. If startup still
-  fails, run stim doctor or run outside the sandbox.`,
+  fails, run stim doctor or run outside the sandbox.
+  When this home's stimd runs another Stim build, that stimd runs the home's
+  Metro and refuses this build. Run the command with the build the message
+  names, or set STIM_HOME to a separate home for this build. stim stop leaves
+  a Metro that stimd supervises to that build.`,
     },
     STIM_CI_ATTACHED_HOME: {
       summary: 'another command owns this home’s attached daemon',

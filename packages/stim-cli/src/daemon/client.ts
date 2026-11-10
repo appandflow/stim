@@ -274,7 +274,7 @@ export async function ensureMetroThroughStimd(
           op: 'error',
           code: 'STIM_DAEMON_UNAVAILABLE',
           message: `This Stim home's stimd runs another Stim build (${refusedBuild}), which runs its workspaces' Metro.`,
-          remedy: 'Run the command with that build, or wait for that stimd to exit once nothing runs in this home.',
+          remedy: `Run the command with that Stim build (${refusedBuild}), or set STIM_HOME to a separate home for this build.`,
         };
       if (!opToken) return null;
     }
