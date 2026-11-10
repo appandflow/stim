@@ -659,8 +659,8 @@ EXACT_SIM=<udid> ./exact.mjs test ios
 Exact limits worktrees: a worktree needs the same folder name as the checkout
 it was created in, and `EXACT2` set to the Exact checkout when it sits at
 another folder depth. Only iOS simulators are supported; macOS, web, Android
-and physical devices use Exact's own commands. `stim android` and `stim start`
-refuse an Exact app with `STIM_NO_PROJECT`, since it runs without Metro.
+and physical devices use Exact's own commands. `stim android` (iOS
+simulators only) and `stim start` (no Metro) refuse an Exact app with `STIM_NO_PROJECT`.
 
 `stim doctor --platform ios` checks what `./exact.mjs ios` needs on this Mac,
 where the launcher looks for it:

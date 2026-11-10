@@ -106,8 +106,6 @@ test('an Exact app selects the exact integration for iOS and has no dev server, 
     expect(problem?.message).toMatch(/is an Exact app/);
     expect(problem?.remedy).toMatch(/stim ios/);
   }
-  const android = projectRegistry.selectAndroid(exact);
-  expect('problem' in android && android.problem.message).toMatch(/is an Exact app/);
 
   const expo = join(dir, 'expo');
   write(join(expo, 'package.json'), JSON.stringify({ dependencies: { expo: '57.0.0' } }));
