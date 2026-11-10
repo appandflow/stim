@@ -19,7 +19,7 @@ import type { FailArgs, IosCommandOptions } from '../commands/ios/types.ts';
 import { runCaptured } from '../engine/deps.ts';
 import { statsProjectKey } from '../engine/stats.ts';
 import { COMPILATION_CACHE_UNAVAILABLE, HEARTBEAT_INTERVAL_MS, readBundleId } from '../engine/xcode.ts';
-import { iosToolchainAsync } from '../engine/toolchain.ts';
+import { iosToolchainAsync, type BuildTarget } from '../engine/toolchain.ts';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { manifestDigest } from '../offload/manifest.ts';
@@ -33,7 +33,7 @@ import {
   settingShapeErrors,
 } from '../workspace/settings.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
-import { exactOffloadPlan, type ExactOffload } from './exact-offload.ts';
+import { exactLocalToolProblems, exactOffloadPlan, type ExactOffload, type ExactPins } from './exact-offload.ts';
 import {
   IosRecipeRefusal,
   type IosArtifactContext,
@@ -153,6 +153,16 @@ async function compile(
   });
 }
 
+async function exactOffloadTarget(root: string, { exact2, bun, rust }: ExactPins): Promise<BuildTarget> {
+  return {
+    platform: 'ios',
+    local: await iosToolchainAsync(root, null),
+    runtime: null,
+    cocoapodsPinned: false,
+    exact: { exact2, bun, rust },
+  };
+}
+
 function exactRecipe(root: string, context: IosArtifactContext): IosArtifactRecipe {
   let booting: ReturnType<NonNullable<IosArtifactContext['target']['booted']>> | null = null;
   const boot = () => (booting ??= context.target.booted?.() ?? null);
@@ -207,16 +217,7 @@ function exactRecipe(root: string, context: IosArtifactContext): IosArtifactReci
                 : null),
         };
       },
-      target: async () => {
-        const { exact2, bun, rust } = offloaded();
-        return {
-          platform: 'ios',
-          local: await iosToolchainAsync(root, null),
-          runtime: null,
-          cocoapodsPinned: false,
-          exact: { exact2, bun, rust },
-        };
-      },
+      target: () => exactOffloadTarget(root, offloaded()),
       request: (runtime) => ({
         platform: 'ios',
         runtime,
@@ -376,7 +377,7 @@ export function exactIosProject(root: string): IosProject {
 
 export function exactDoctor(): ProjectDoctor {
   return {
-    inspect: ({ options }) =>
+    inspect: ({ root, options }) =>
       options.platform && options.platform !== 'ios'
         ? []
         : [
@@ -386,6 +387,21 @@ export function exactDoctor(): ProjectDoctor {
               detail: `stim ios builds with ./${EXACT_CLI} ios --no-install (--release for --configuration Release) on the workspace's own simulator and launches it without Metro. Run Exact's own commands (test, agent) with EXACT_SIM set to that simulator.`,
               fix: null,
             },
+            ...((options.host ?? process.platform) === 'darwin'
+              ? exactLocalToolProblems(root, options.operation?.env ?? options.remoteEnv ?? {})
+              : []
+            ).map(({ reason, commands }) => ({
+              code: 'exact-tools',
+              level: 'cost' as const,
+              title: "This Mac lacks part of Exact's toolchain",
+              detail: `${reason}. ./${EXACT_CLI} ios needs it to build this app.`,
+              fix: commands.join(' && '),
+            })),
           ],
+    offloadTargets: ({ root, options: { platform, operation, remoteEnv } }) => {
+      if (platform && platform !== 'ios') return null;
+      const plan = exactOffloadPlan(root, operation?.env ?? remoteEnv ?? {});
+      return 'unsupported' in plan ? null : async () => [await exactOffloadTarget(root, plan)];
+    },
   };
 }
